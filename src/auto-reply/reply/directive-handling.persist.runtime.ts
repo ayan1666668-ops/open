@@ -1,2 +1,5 @@
-/** Lazy runtime boundary for the shipped model-selection service. */
-export { applySessionModelSelection } from "../../model-picker/apply-session-model-selection.js";
+/** Lazy runtime boundary for session selection application. */
+export {
+  applySessionExecutionSelection,
+  resolveExecutionSelectionExecutorKind,
+} from "../../model-picker/apply-session-model-selection.js";

@@ -2,9 +2,15 @@
 import os from "node:os";
 import path from "node:path";
 import { expectDefined } from "@openclaw/normalization-core";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import * as sessionAccessor from "../config/sessions/session-accessor.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import {
+  projectPluginSessionEntry,
+  projectPluginSessionEntryPatch,
+  type SessionEntry as PluginSessionEntry,
+} from "../plugin-sdk/session-store-runtime-internal.js";
 import { createDeferredCore } from "../shared/deferred.js";
 import { resolveUserPath } from "../utils.js";
 import {
@@ -20,6 +26,8 @@ import { disposePluginRegistryInstances, withPluginRegistrationContext } from ".
 import { getPluginRuntimeGatewayRequestScope } from "./runtime/gateway-request-scope.js";
 import { createPluginRuntime } from "./runtime/index.js";
 import type { PluginRuntime } from "./runtime/types.js";
+
+afterEach(() => vi.restoreAllMocks());
 
 describe("plugin registration runtime admission", () => {
   function fixture() {
@@ -728,18 +736,22 @@ describe("plugin registry runtime config scope", () => {
     "rejects %s writes resumed after their plugin is replaced",
     async (method) => {
       let entry: SessionEntry = { sessionId: "session-1", updatedAt: 1, label: "before" };
-      const commitPatch = (patch: Partial<SessionEntry> | null) => {
-        if (patch) {
-          entry = { ...entry, ...patch };
-        }
-        return entry;
+      const commitPatch = (patch: Partial<PluginSessionEntry> | null) => {
+        if (patch) entry = { ...entry, ...projectPluginSessionEntryPatch(patch, entry) };
+        return projectPluginSessionEntry(entry);
       };
       const runtime = createPluginRuntime();
-      runtime.agent.session.getSessionEntry = () => ({ ...entry });
+      vi.spyOn(sessionAccessor, "loadSessionEntryReadOnly").mockImplementation(() => ({
+        ...entry,
+      }));
       runtime.agent.session.patchSessionEntry = async (params) =>
-        commitPatch(await params.update({ ...entry }, { existingEntry: { ...entry } }));
+        commitPatch(
+          await params.update(projectPluginSessionEntry(entry), {
+            existingEntry: projectPluginSessionEntry(entry),
+          }),
+        );
       runtime.agent.session.updateSessionStoreEntry = async (params) =>
-        commitPatch(await params.update({ ...entry }));
+        commitPatch(await params.update(projectPluginSessionEntry(entry)));
       const pluginRegistry = createRuntimeTestRegistry(runtime);
       const recordParams = {
         id: "session-editor",
@@ -751,7 +763,7 @@ describe("plugin registry runtime config scope", () => {
       const record = createPluginRecord(recordParams);
       const api = pluginRegistry.createApi(record, { config: {} as OpenClawConfig });
       const entered = createDeferredCore();
-      const resume = createDeferredCore<Partial<SessionEntry>>();
+      const resume = createDeferredCore<Partial<PluginSessionEntry>>();
       const scope = { sessionKey: "agent:main:ordinary", storePath: "/tmp/sessions.json" };
       try {
         const pending = api.runtime.agent.session[method]({

@@ -3,6 +3,7 @@ import type { runEmbeddedAgent } from "../../agents/embedded-agent.js";
 import type { FailoverReason } from "../../agents/failover/signal.js";
 import type { CompactionRequestBudget } from "../../agents/sessions/compaction/request-budget.js";
 import type { SessionEntry } from "../../config/sessions.js";
+import type { ExecutionSelection } from "../../model-picker/execution-selection.js";
 import type { TemplateContext } from "../templating.js";
 import type { VerboseLevel } from "../thinking.js";
 import type { ReplyPayload } from "../types.js";
@@ -47,6 +48,7 @@ export type AgentTurnInternalResult =
   | {
       kind: "completed";
       maintenanceAuthProfile?: CompletedAgentAuthSelection;
+      maintenanceExecutionSelection?: ExecutionSelection;
       compactionRequestBudget?: CompactionRequestBudget;
       result: Awaited<ReturnType<typeof runEmbeddedAgent>>;
       fallbackProvider?: string;
@@ -66,16 +68,17 @@ export type AgentTurnInternalResult =
   | {
       kind: "final";
       payload: ReplyPayload;
-      resolved?: { provider: string; model: string };
+      resolved?: { provider?: string; model?: string };
       postCompactionModelFailure?: true;
     };
 
 type SettledAgentTurnBase = {
   kind: "settled";
   maintenanceAuthProfile?: CompletedAgentAuthSelection;
+  maintenanceExecutionSelection?: ExecutionSelection;
   compactionRequestBudget?: CompactionRequestBudget;
   result: Awaited<ReturnType<typeof runEmbeddedAgent>>;
-  resolved: { provider: string; model: string };
+  resolved: { provider?: string; model?: string };
   fallback: { exhausted: boolean; attempts: RuntimeFallbackAttempt[] };
   autoCompactionCount: number;
   compaction?: AgentTurnCompaction;
@@ -108,7 +111,7 @@ export type AgentTurnExecutionResult = {
         kind: "rejected";
         compaction?: AgentTurnCompaction;
         payload: ReplyPayload;
-        resolved?: { provider: string; model: string };
+        resolved?: { provider?: string; model?: string };
         postCompactionModelFailure?: true;
       };
 };

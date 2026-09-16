@@ -2,6 +2,7 @@ import { hasCompletedSourceReplyDeliveryEvidence } from "../../agents/embedded-a
 import { formatErrorMessage } from "../../infra/errors.js";
 import { recordMessageToolRunOutcome } from "../../infra/message-tool-run-outcome-store.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
+import { isModelExecutionSelection } from "../../model-picker/execution-selection.js";
 import { resolveAgentTurnExecutionStatus } from "./agent-runner-execution-status.js";
 import type { AgentTurnExecutionResult, AgentTurnParams } from "./agent-runner-execution.types.js";
 
@@ -35,12 +36,14 @@ export function recordAgentTurnExecutionOutcome(
     executionStatus === "ok" ? "completed" : executionStatus === "failed" ? "errored" : "aborted";
   const toolDelivered =
     outcome?.kind === "settled" && hasCompletedSourceReplyDeliveryEvidence(outcome.result);
+  const selection = params.followupRun.run.executionSelection;
+  const selectedModel = isModelExecutionSelection(selection) ? selection.model : undefined;
   const values = {
     runId: result?.runId ?? params.opts?.runId ?? "unknown",
     sessionKey,
     agentId: params.followupRun.run.agentId,
-    provider: resolved?.provider ?? params.followupRun.run.executionSelection.model.provider,
-    model: resolved?.model ?? params.followupRun.run.executionSelection.model.id,
+    provider: resolved?.provider ?? selectedModel?.provider,
+    model: resolved?.model ?? selectedModel?.id,
     outcome: toolDelivered ? ("tool_delivered" as const) : ("mute" as const),
     runStatus,
     occurredAt: Date.now(),

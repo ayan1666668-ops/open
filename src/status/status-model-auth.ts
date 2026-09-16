@@ -6,8 +6,8 @@ import { getPreparedModelRuntimeAuthStore } from "../agents/prepared-model-runti
 import type { PreparedModelRuntimeSnapshot } from "../agents/prepared-model-runtime.types.js";
 import type { SessionEntry } from "../config/sessions.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { getSessionExecutionSelection } from "../model-picker/execution-selection-state.js";
-import { isAcpExecutionSelection } from "../model-picker/execution-selection.js";
+import { getSessionExecutionSelection } from "../model-picker/execution-selection.js";
+import { isModelExecutionSelection } from "../model-picker/execution-selection.js";
 import { isUserModelAuthProfileId } from "../state/user-model-account-id.js";
 
 /** Native status uses the same prepared account and route as model selection. */
@@ -20,7 +20,7 @@ export function createStatusModelAuthResolver(params: {
   owner?: PreparedModelRuntimeSnapshot;
 }) {
   const { owner, sessionEntry } = params;
-  const selection = getSessionExecutionSelection(sessionEntry, params.cfg);
+  const selection = getSessionExecutionSelection(sessionEntry);
   const authStore = owner && getPreparedModelRuntimeAuthStore(owner);
   const decisions =
     owner && authStore
@@ -42,7 +42,9 @@ export function createStatusModelAuthResolver(params: {
               ? sessionEntry.authProfileOverride
               : undefined,
           profileProvider:
-            selection && !isAcpExecutionSelection(selection) ? selection.model.provider : undefined,
+            selection && isModelExecutionSelection(selection)
+              ? selection.model.provider
+              : undefined,
         })
       : undefined;
   return async (selection: {

@@ -12,7 +12,7 @@ import {
   LOCAL_INSTALLATION_TARGET_UNSUPPORTED,
 } from "../../infra/installation-target-context.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
-import { normalizeAgentId, resolveAgentIdFromSessionKey } from "../../routing/session-key.js";
+import { normalizeAgentId } from "../../routing/session-key.js";
 import type { RuntimeEnv } from "../../runtime.js";
 import {
   getAdmittedRunDelegatedAuthority,
@@ -107,9 +107,7 @@ export async function runAcpAgentCommand(params: {
       terminalOutcome = "blocked";
       throw turnPolicyError;
     }
-    const acpAgent = normalizeAgentId(
-      params.acpResolution.meta.agent || resolveAgentIdFromSessionKey(params.sessionKey),
-    );
+    const acpAgent = normalizeAgentId(params.acpResolution.selection.executor.agent);
     const agentPolicyError = resolveAcpAgentPolicyError(params.cfg, acpAgent);
     if (agentPolicyError) {
       terminalOutcome = "blocked";

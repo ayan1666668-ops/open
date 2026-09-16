@@ -33,7 +33,6 @@ type HandleDirectiveOnlyCoreParams = {
     ReturnType<typeof import("../../agents/prepared-model-catalog.js").readPreparedModelCatalog>
   >;
   thinkingCatalog?: ModelCatalogEntry[];
-  resetModelOverride: boolean;
   provider: string;
   model: string;
   initialModelLabel: string;

@@ -182,8 +182,14 @@ async function withDemandFixture(
         {
           sessionId,
           updatedAt: Date.now(),
-          providerOverride: "anthropic",
-          modelOverride: "claude-test",
+          executionSelection: {
+            state: "accepted",
+            selection: {
+              model: { provider: "anthropic", id: "claude-test" },
+              executor: { kind: "harness", id: "openclaw" },
+            },
+            fallbackPermission: "explicit",
+          },
           worktree: { id: key, branch: "test", repoRoot: state.workspaceDir },
         },
       );

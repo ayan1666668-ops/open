@@ -223,6 +223,7 @@ export function useQueuedCollectorFixture() {
         completionOwnerSessionKey: parentKey,
         creationPolicy: { actor: { type: "agent", id: "main" } },
         modelPatch: {},
+        executionRequest: { kind: "initialize" },
         swarmGroupId: groupId,
         collect: true,
       }),

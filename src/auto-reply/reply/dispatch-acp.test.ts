@@ -62,6 +62,7 @@ import type { ReplyDispatcher } from "./reply-dispatcher.types.js";
 import { buildTestCtx } from "./test-ctx.js";
 import {
   createAcpSessionMeta,
+  createReadyAcpSessionResolution,
   createAcpTestConfig,
   createAcpTestReplyDispatcherFixture as createDispatcher,
 } from "./test-fixtures/acp-runtime.js";
@@ -337,12 +338,13 @@ function dispatcherCall(
 }
 
 function setReadyAcpResolution() {
-  managerMocks.resolveSession.mockReturnValue({
-    kind: "ready",
-    sessionKey,
-    agentId: "codex-acp",
-    meta: createAcpSessionMeta(),
-  });
+  managerMocks.resolveSession.mockReturnValue(
+    createReadyAcpSessionResolution({
+      sessionKey,
+      agentId: "codex-acp",
+      meta: createAcpSessionMeta(),
+    }),
+  );
 }
 
 function createAcpConfigWithVisibleToolTags(): OpenClawConfig {
@@ -700,12 +702,16 @@ describe("tryDispatchAcpReplyCore", () => {
         receipts.push(receipt);
         return true;
       });
-      managerMocks.resolveSession.mockReturnValue({
-        kind: "ready",
-        sessionKey: resolvedSessionKey,
-        agentId: "codex-acp",
-        meta: createAcpSessionMeta({ agent: "private-agent-must-not-leak" }),
-      });
+      managerMocks.resolveSession.mockReturnValue(
+        createReadyAcpSessionResolution({
+          sessionKey: resolvedSessionKey,
+          agentId: "codex-acp",
+          selection: {
+            executor: { kind: "acp", backend: "acpx", agent: "private-agent-must-not-leak" },
+            model: "native-managed",
+          },
+        }),
+      );
       managerMocks.runTurn.mockImplementationOnce(
         async ({
           onLifecycle,
@@ -3302,12 +3308,13 @@ describe("tryDispatchAcpReplyCore", () => {
   it("unbinds stale bindings on ACP runTurn missing-metadata failures", async () => {
     const aliasSessionKey = "main";
     const canonicalSessionKey = "agent:main:main";
-    managerMocks.resolveSession.mockReturnValue({
-      kind: "ready",
-      sessionKey: canonicalSessionKey,
-      agentId: "main",
-      meta: createAcpSessionMeta(),
-    });
+    managerMocks.resolveSession.mockReturnValue(
+      createReadyAcpSessionResolution({
+        sessionKey: canonicalSessionKey,
+        agentId: "main",
+        meta: createAcpSessionMeta(),
+      }),
+    );
     managerMocks.runTurn.mockRejectedValueOnce(
       new AcpRuntimeError(
         "ACP_SESSION_INIT_FAILED",
@@ -3348,19 +3355,20 @@ describe("tryDispatchAcpReplyCore", () => {
   it("uses canonical session keys for bound-session identity notices", async () => {
     const aliasSessionKey = "main";
     const canonicalSessionKey = "agent:main:main";
-    managerMocks.resolveSession.mockReturnValue({
-      kind: "ready",
-      sessionKey: canonicalSessionKey,
-      agentId: "main",
-      meta: createAcpSessionMeta({
-        identity: {
-          state: "pending",
-          source: "ensure",
-          lastUpdatedAt: Date.now(),
-          acpxRecordId: "rec-main",
-        },
+    managerMocks.resolveSession.mockReturnValue(
+      createReadyAcpSessionResolution({
+        sessionKey: canonicalSessionKey,
+        agentId: "main",
+        meta: createAcpSessionMeta({
+          identity: {
+            state: "pending",
+            source: "ensure",
+            lastUpdatedAt: Date.now(),
+            acpxRecordId: "rec-main",
+          },
+        }),
       }),
-    });
+    );
     bindingServiceMocks.listBySession.mockImplementation((targetSessionKey: string) =>
       targetSessionKey === canonicalSessionKey
         ? [
@@ -3379,6 +3387,18 @@ describe("tryDispatchAcpReplyCore", () => {
           ]
         : [],
     );
+    const identityResolution = createReadyAcpSessionResolution({
+      sessionKey: canonicalSessionKey,
+      agentId: "main",
+      meta: createAcpSessionMeta({
+        identity: {
+          state: "resolved",
+          source: "status",
+          lastUpdatedAt: Date.now(),
+          acpxSessionId: "acpx-main",
+        },
+      }),
+    });
     sessionMetaMocks.readAcpSessionEntry.mockImplementation(
       (params: { sessionKey: string; cfg?: OpenClawConfig }) =>
         params.sessionKey === canonicalSessionKey
@@ -3387,14 +3407,8 @@ describe("tryDispatchAcpReplyCore", () => {
               storePath: "/tmp/openclaw-session-store.json",
               sessionKey: canonicalSessionKey,
               storeSessionKey: canonicalSessionKey,
-              acp: createAcpSessionMeta({
-                identity: {
-                  state: "resolved",
-                  source: "status",
-                  lastUpdatedAt: Date.now(),
-                  acpxSessionId: "acpx-main",
-                },
-              }),
+              entry: identityResolution.entry,
+              acp: identityResolution.meta,
             }
           : null,
     );
@@ -3416,19 +3430,20 @@ describe("tryDispatchAcpReplyCore", () => {
 
   it("honors the configured default account when checking bound-session identity notices", async () => {
     const canonicalSessionKey = "agent:main:main";
-    managerMocks.resolveSession.mockReturnValue({
-      kind: "ready",
-      sessionKey: canonicalSessionKey,
-      agentId: "main",
-      meta: createAcpSessionMeta({
-        identity: {
-          state: "pending",
-          source: "ensure",
-          lastUpdatedAt: Date.now(),
-          acpxRecordId: "rec-work",
-        },
+    managerMocks.resolveSession.mockReturnValue(
+      createReadyAcpSessionResolution({
+        sessionKey: canonicalSessionKey,
+        agentId: "main",
+        meta: createAcpSessionMeta({
+          identity: {
+            state: "pending",
+            source: "ensure",
+            lastUpdatedAt: Date.now(),
+            acpxRecordId: "rec-work",
+          },
+        }),
       }),
-    });
+    );
     bindingServiceMocks.listBySession.mockImplementation((targetSessionKey: string) =>
       targetSessionKey === canonicalSessionKey
         ? [
@@ -3447,6 +3462,18 @@ describe("tryDispatchAcpReplyCore", () => {
           ]
         : [],
     );
+    const identityResolution = createReadyAcpSessionResolution({
+      sessionKey: canonicalSessionKey,
+      agentId: "main",
+      meta: createAcpSessionMeta({
+        identity: {
+          state: "resolved",
+          source: "status",
+          lastUpdatedAt: Date.now(),
+          acpxSessionId: "acpx-work",
+        },
+      }),
+    });
     sessionMetaMocks.readAcpSessionEntry.mockImplementation(
       (params: { sessionKey: string; cfg?: OpenClawConfig }) =>
         params.sessionKey === canonicalSessionKey
@@ -3455,14 +3482,8 @@ describe("tryDispatchAcpReplyCore", () => {
               storePath: "/tmp/openclaw-session-store.json",
               sessionKey: canonicalSessionKey,
               storeSessionKey: canonicalSessionKey,
-              acp: createAcpSessionMeta({
-                identity: {
-                  state: "resolved",
-                  source: "status",
-                  lastUpdatedAt: Date.now(),
-                  acpxSessionId: "acpx-work",
-                },
-              }),
+              entry: identityResolution.entry,
+              acp: identityResolution.meta,
             }
           : null,
     );

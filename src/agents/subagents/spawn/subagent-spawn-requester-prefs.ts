@@ -1,6 +1,6 @@
 import type { SessionEntry } from "../../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
-import { getSessionExecutionSelection } from "../../../model-picker/apply-session-model-selection.js";
+import { getSessionExecutionSelection } from "../../../model-picker/execution-selection.js";
 import { isModelExecutionSelection } from "../../../model-picker/execution-selection.js";
 import type { FastMode } from "../../../shared/fast-mode.js";
 import { resolveFastModeState } from "../../fast-mode.js";
@@ -39,7 +39,7 @@ function resolveRequesterModel(params: RequesterPreferencesContext, entry?: Sess
   if (!entry) {
     return { defaultModel, selectedModel: undefined };
   }
-  const selection = getSessionExecutionSelection(entry, params.cfg);
+  const selection = getSessionExecutionSelection(entry);
   const selectedModel =
     selection && isModelExecutionSelection(selection)
       ? { provider: selection.model.provider, model: selection.model.id }

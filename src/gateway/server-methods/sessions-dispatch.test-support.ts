@@ -99,21 +99,26 @@ type DispatchSessionEntry = Pick<
   | "sessionId"
   | "worktree"
   | "agentHarnessId"
-  | "agentRuntimeOverride"
+  | "executionSelection"
   | "archivedAt"
   | "modelSelectionLocked"
-  | "providerOverride"
-  | "modelOverride"
   | "permissionMode"
   | "sessionRoot"
 >;
 
 export function makeSessionTarget(entry?: DispatchSessionEntry) {
-  // Pin an anthropic model by default: the effective-runtime fallback consults
-  // the process-global harness registry, so the default openai model resolves
-  // to "codex" whenever a sibling test in the shard registered that harness.
-  const pinnedEntry = entry
-    ? { providerOverride: "anthropic", modelOverride: "claude-test", ...entry }
+  const pinnedEntry: DispatchSessionEntry | undefined = entry
+    ? {
+        executionSelection: {
+          state: "accepted",
+          selection: {
+            model: { provider: "test-provider", id: "test-model" },
+            executor: { kind: "harness", id: "openclaw" },
+          },
+          fallbackPermission: "explicit",
+        },
+        ...entry,
+      }
     : undefined;
   return {
     agentId: "main",

@@ -1,17 +1,19 @@
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { normalizeOptionalAgentRuntimeId } from "../agents/agent-runtime-id.js";
-import { resolveInitialEmbeddedRunModel } from "../agents/embedded-agent-runner/run/runtime-resolution.js";
-import { resolveSessionRuntimeOverrideForProvider } from "../agents/session-runtime-compat.js";
 import {
   parseSqliteSessionFileMarker,
   sqliteSessionFileMarkerMatchesTarget,
 } from "../config/sessions/legacy-sqlite-marker.js";
 import { resolveSessionEntryAccessTarget } from "../config/sessions/session-accessor.entry.js";
+import {
+  loadSessionEntryReadOnly,
+  listSessionEntriesReadOnly,
+} from "../config/sessions/session-accessor.js";
 import { resolveSessionStorePathForScope } from "../config/sessions/session-store-path.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { getSessionExecutionSelection } from "../model-picker/execution-selection-state.js";
+import { getSessionExecutionSelection } from "../model-picker/execution-selection.js";
 import {
   classifySessionKeyShape,
   isUnscopedSessionKeySentinel,
@@ -26,6 +28,11 @@ import {
 import type { PluginRegistryState } from "./registry-state.js";
 import type { PluginRegistry } from "./registry-types.js";
 import type { PluginRuntime } from "./runtime/types.js";
+
+type SessionOwnershipFields = Pick<
+  SessionEntry,
+  "modelSelectionLocked" | "pluginOwnerId" | "agentHarnessId"
+>;
 
 const PLUGIN_GATEWAY_SESSION_MUTATION_METHODS = new Set([
   "agent",
@@ -123,7 +130,7 @@ export function createPluginSessionOwnership(
   };
   const resolveLockedSessionHarnessRegistration = (
     sessionKey: string,
-    entry: SessionEntry,
+    entry: SessionOwnershipFields,
     action: string,
   ) => {
     if (entry.modelSelectionLocked !== true) {
@@ -162,7 +169,7 @@ export function createPluginSessionOwnership(
   };
   const assertLockedSessionEntryOwned = (
     sessionKey: string,
-    entry: SessionEntry,
+    entry: SessionOwnershipFields,
     action: string,
   ): void => {
     const resolved = resolveLockedSessionHarnessRegistration(sessionKey, entry, action);
@@ -177,7 +184,7 @@ export function createPluginSessionOwnership(
   };
   const assertSessionEntryOwned = (params: {
     action: string;
-    entry?: SessionEntry;
+    entry?: SessionOwnershipFields;
     sessionKey: string;
   }): void => {
     if (params.entry) {
@@ -209,7 +216,7 @@ export function createPluginSessionOwnership(
       return { entry: target.entry, sessionKey: target.canonicalKey };
     }
     return {
-      entry: registryParams.runtime.agent.session.getSessionEntry({
+      entry: loadSessionEntryReadOnly({
         sessionKey: params.sessionKey,
         readConsistency: "latest",
         ...(params.agentId !== undefined ? { agentId: params.agentId } : {}),
@@ -299,10 +306,9 @@ export function createPluginSessionOwnership(
     if (sessionIds.size === 0 && sessionFiles.size === 0) {
       return;
     }
-    const entries = registryParams.runtime.agent.session.listSessionEntries({
+    const entries = listSessionEntriesReadOnly({
       ...(agentId ? { agentId } : {}),
       ...(storePath ? { storePath } : {}),
-      readOnly: true,
     });
     for (const { sessionKey, entry } of entries) {
       if (sessionIds.has(entry.sessionId)) {
@@ -340,10 +346,9 @@ export function createPluginSessionOwnership(
       if (!marker) {
         throw new Error("Plugin session ownership checks require a SQLite transcript marker.");
       }
-      const markerEntries = registryParams.runtime.agent.session.listSessionEntries({
+      const markerEntries = listSessionEntriesReadOnly({
         agentId: marker.agentId,
         storePath: marker.storePath,
-        readOnly: true,
       });
       const matches = markerEntries.filter(({ entry }) => entry.sessionId === marker.sessionId);
       if (matches.length === 0) {
@@ -389,7 +394,7 @@ export function createPluginSessionOwnership(
           })
         : storePath;
     const entry = sessionKey
-      ? registryParams.runtime.agent.session.getSessionEntry({
+      ? loadSessionEntryReadOnly({
           sessionKey,
           readConsistency: "latest",
           ...(agentId ? { agentId } : {}),
@@ -470,8 +475,9 @@ export function createPluginSessionOwnership(
     });
     // Reuse the authorized snapshot, but never manufacture a native pin or replace
     // a turn-local request (including auto). Detached and raw-model runs own their selection.
+    const selection = getSessionExecutionSelection(entry);
     if (
-      !getSessionExecutionSelection(entry, params.config ?? currentSessionConfig()) ||
+      !selection ||
       params.agentHarnessRuntimeOverride !== undefined ||
       params.sessionPersistence === "detached" ||
       params.modelRun ||
@@ -479,19 +485,9 @@ export function createPluginSessionOwnership(
     ) {
       return {};
     }
-    const cfg = params.config ?? currentSessionConfig();
-    const { provider } = resolveInitialEmbeddedRunModel({
-      config: cfg,
-      agentId: ownershipAgentId,
-      provider: params.provider,
-      model: params.model,
-    });
     return {
-      agentHarnessRuntimeOverride: resolveSessionRuntimeOverrideForProvider({
-        provider,
-        entry,
-        cfg,
-      }),
+      agentHarnessRuntimeOverride:
+        selection.executor.kind === "acp" ? undefined : selection.executor.id,
     };
   };
   const assertGatewaySessionRequestOwned = (
@@ -538,8 +534,8 @@ export function createPluginSessionOwnership(
   };
   const assertStoreEntryOwned = (params: {
     action: string;
-    before?: SessionEntry;
-    entry: SessionEntry;
+    before?: SessionOwnershipFields;
+    entry: SessionOwnershipFields;
     sessionKey: string;
   }): void => {
     if (params.entry.modelSelectionLocked === true) {

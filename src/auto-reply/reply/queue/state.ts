@@ -3,7 +3,10 @@ import { normalizeOptionalString } from "@openclaw/normalization-core/string-coe
 import type { QueueMode } from "../../../../packages/gateway-protocol/src/schema/logs-chat.js";
 import type { ModelCatalogEntry } from "../../../agents/model-catalog.types.js";
 import { resolveThinkingDefault } from "../../../agents/model-thinking-default.js";
-import type { ModelExecutionSelection } from "../../../model-picker/execution-selection.js";
+import {
+  isModelExecutionSelection,
+  type ExecutionSelection,
+} from "../../../model-picker/execution-selection.js";
 import { resolveGlobalMap } from "../../../shared/global-singleton.js";
 import { applyQueueRuntimeSettings } from "../../../utils/queue-helpers.js";
 import { normalizeThinkLevel, resolveSupportedThinkingLevel } from "../../thinking.js";
@@ -200,7 +203,7 @@ export function refreshQueuedFollowupSession(params: {
   previousSessionId?: string;
   nextSessionId?: string;
   nextSessionFile?: string;
-  nextSelection?: ModelExecutionSelection;
+  nextSelection?: ExecutionSelection;
   nextAuthProfileId?: string;
   nextAuthProfileIdSource?: "auto" | "user";
   nextThinking?: {
@@ -253,16 +256,20 @@ export function refreshQueuedFollowupSession(params: {
       }
       if (params.nextThinking) {
         run.thinkingCatalog = params.nextThinking.catalog;
+        const explicitLevel =
+          run.thinkLevelOverride === "default"
+            ? undefined
+            : (run.thinkLevelOverride ?? normalizeThinkLevel(params.nextThinking.level));
+        if (!isModelExecutionSelection(run.executionSelection)) {
+          run.thinkLevel = explicitLevel;
+          return;
+        }
         const thinkingPolicy = {
           provider: run.executionSelection.model.provider,
           model: run.executionSelection.model.id,
           catalog: params.nextThinking.catalog,
           agentRuntime: run.executionSelection.executor.id,
         };
-        const explicitLevel =
-          run.thinkLevelOverride === "default"
-            ? undefined
-            : (run.thinkLevelOverride ?? normalizeThinkLevel(params.nextThinking.level));
         run.thinkLevel = resolveSupportedThinkingLevel({
           ...thinkingPolicy,
           level:

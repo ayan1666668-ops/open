@@ -4,6 +4,7 @@ import {
   resolveProviderIdForAuth,
   type ProviderAuthAliasLookupParams,
 } from "../../agents/provider-auth-aliases.js";
+import { isModelExecutionSelection } from "../../model-picker/execution-selection.js";
 import type { FollowupRun } from "./queue.js";
 
 /** Keeps an auth profile only when the current provider shares the primary auth scope. */
@@ -35,9 +36,11 @@ export function resolveRunAuthProfile(
   provider: string,
   params?: { config?: ProviderAuthAliasLookupParams["config"] },
 ) {
+  const selection = run.executionSelection;
+  if (!isModelExecutionSelection(selection)) return {};
   return resolveProviderScopedAuthProfile({
     provider,
-    primaryProvider: run.executionSelection.model.provider,
+    primaryProvider: selection.model.provider,
     authProfileId: run.authProfileId,
     authProfileIdSource: run.authProfileIdSource,
     config: params?.config ?? run.config,

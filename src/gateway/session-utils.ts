@@ -6,7 +6,7 @@ export type {
   SessionsPreviewEntry,
   SessionsPreviewResult,
 } from "./session-utils.types.js";
-export { resolveSessionModelRef } from "../agents/session-model-ref.js";
+export { resolveSessionModelRefCore as resolveSessionModelRef } from "../agents/session-model-ref.js";
 export { loadCombinedSessionStoreForGatewayCore } from "../config/sessions/combined-store-gateway.js";
 export { deriveSessionTitle } from "./session-utils-core.js";
 export { resolveDeletedAgentIdFromSessionKey } from "./session-utils-store.js";

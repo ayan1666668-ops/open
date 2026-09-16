@@ -91,7 +91,7 @@ import {
 } from "./runtime-plan/resolve-auth.js";
 import type { AgentRuntimeAuthPlan } from "./runtime-plan/types.js";
 import { resolveSandboxContext } from "./sandbox/context.js";
-import { resolveSessionModelRef } from "./session-model-ref.js";
+import { resolveSessionModelRefCore as resolveSessionModelRef } from "./session-model-ref.js";
 import { resolveSessionPlacementSandbox } from "./session-placement-admission.js";
 import { resolveSessionRuntimeOverrideForProvider } from "./session-runtime-compat.js";
 import { stripToolResultDetails } from "./session-transcript-repair.js";

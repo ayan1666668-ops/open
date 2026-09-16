@@ -19,6 +19,7 @@ import {
   settleRequesterAfterSessionSpawns,
 } from "../../agents/subagents/registry/subagent-registry.test-helpers.js";
 import { recordAgentRunTerminalOutcome } from "../../channels/turn/agent-run-terminal-outcome.js";
+import type { SessionEntry } from "../../config/sessions/types.js";
 import {
   claimAgentRunDelegatedAuthority,
   releaseAgentRunDelegatedAuthority,
@@ -73,12 +74,16 @@ const mocks = getAgentTestMocks();
 
 // Shared by every spawn control plane whose child turn reaches the gateway as a
 // plain `agent` run: ACP manual spawns, plugin subagents, and native subagents.
-function mockSpawnedChildSessionEntry(childSessionKey: string, storePath = "/tmp/sessions.json") {
+function mockSpawnedChildSessionEntry(
+  childSessionKey: string,
+  storePath = "/tmp/sessions.json",
+  selection: Pick<SessionEntry, "executionSelection" | "acp"> = {},
+) {
   mocks.userTurnStorePath = storePath;
   mocks.loadSessionEntry.mockReturnValue({
     cfg: {},
     storePath,
-    entry: { sessionId: "spawned-child-session", updatedAt: Date.now() },
+    entry: { sessionId: "spawned-child-session", updatedAt: Date.now(), ...selection },
     canonicalKey: childSessionKey,
   });
   mocks.updateSessionStore.mockResolvedValue(undefined);
@@ -3465,21 +3470,33 @@ describe("gateway agent handler", () => {
 
   describe("ACP manual-spawn child turn task tracking", () => {
     const confirmedAcpMeta: NonNullable<ReturnType<typeof readAcpSessionMeta>> = {
-      backend: "acpx",
-      agent: "codex",
       runtimeSessionName: "runtime-1",
       mode: "persistent",
       state: "idle",
       lastActivityAt: Date.now(),
     };
 
+    function mockConfirmedAcpChild(childSessionKey: string) {
+      mockSpawnedChildSessionEntry(childSessionKey, "/tmp/sessions.json", {
+        acp: confirmedAcpMeta,
+        executionSelection: {
+          state: "accepted",
+          fallbackPermission: "explicit",
+          selection: {
+            model: "native-managed",
+            executor: { kind: "acp", backend: "acpx", agent: "fixture-agent" },
+          },
+        },
+      });
+      mocks.readAcpSessionMeta.mockReturnValue(confirmedAcpMeta);
+    }
+
     it("suppresses the gateway CLI task row for confirmed ACP manual-spawn child turns", async () => {
       await withTestDir({ prefix: "openclaw-gateway-acp-suppress-" }, async (root) => {
         useTestStateDir(root);
         resetAgentTaskRegistryForTests();
         const childSessionKey = "agent:main:acp:child-confirmed";
-        mockSpawnedChildSessionEntry(childSessionKey);
-        mocks.readAcpSessionMeta.mockReturnValue(confirmedAcpMeta);
+        mockConfirmedAcpChild(childSessionKey);
         const createRunningTaskRunSpy = spyDetachedCreateRunningTaskRun();
 
         await invokeAgent(
@@ -3535,13 +3552,12 @@ describe("gateway agent handler", () => {
         useTestStateDir(root);
         resetAgentTaskRegistryForTests();
         const childSessionKey = "agent:main:acp:child-operator-write";
-        mockSpawnedChildSessionEntry(childSessionKey);
+        mockConfirmedAcpChild(childSessionKey);
         // Persisted ACP metadata is present and the turn looks like a manual
         // spawn, but the caller is an operator-write control-UI client, not the
         // in-process backend ACP spawn path. That caller never creates a
         // replacement `acp` row, so CLI tracking must stay on to avoid losing the
         // run entirely.
-        mocks.readAcpSessionMeta.mockReturnValue(confirmedAcpMeta);
         const createRunningTaskRunSpy = spyDetachedCreateRunningTaskRun();
 
         await invokeAgent(
@@ -3661,7 +3677,7 @@ describe("gateway agent handler", () => {
         useTestStateDir(root);
         resetAgentTaskRegistryForTests();
         const childSessionKey = "agent:main:acp:child-not-spawn";
-        mockSpawnedChildSessionEntry(childSessionKey);
+        mockConfirmedAcpChild(childSessionKey);
         // Metadata is present but the turn lacks acpTurnSource, so the spawn
         // control plane does not own this row; CLI tracking must stay on.
         mocks.readAcpSessionMeta.mockReturnValue(confirmedAcpMeta);
@@ -3693,8 +3709,7 @@ describe("gateway agent handler", () => {
         resetSubagentRegistryForTests({ persist: false });
         const childSessionKey = "agent:main:acp:plugin-child";
         const runId = "acp-plugin-subagent-run";
-        mockSpawnedChildSessionEntry(childSessionKey);
-        mocks.readAcpSessionMeta.mockReturnValue(confirmedAcpMeta);
+        mockConfirmedAcpChild(childSessionKey);
         const createRunningTaskRunSpy = spyDetachedCreateRunningTaskRun();
 
         const baseClient = requireValue(backendGatewayClient(), "expected backend client");

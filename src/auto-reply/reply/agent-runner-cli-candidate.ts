@@ -21,6 +21,7 @@ import { createAgentRunSupersededAbortError } from "../../agents/run-termination
 import { withLocalSessionPlacementTurnSettlement } from "../../agents/session-placement-admission.js";
 import { normalizeChatType } from "../../channels/chat-type.js";
 import { loadSessionEntry } from "../../config/sessions/session-accessor.js";
+import { isModelExecutionSelection } from "../../model-picker/execution-selection.js";
 import { shouldPreserveUserFacingSessionStateForInputProvenance } from "../../sessions/input-provenance.js";
 import {
   getGeneratedMediaTaskIdsForSessionKey,
@@ -52,17 +53,22 @@ export async function runCliFallbackCandidate(
   result: Awaited<ReturnType<typeof runCliAgentWithLifecycle>>;
   bootstrapPromptWarningSignaturesSeen: string[];
 }> {
+  const selection = params.candidateRun.executionSelection;
+  if (!isModelExecutionSelection(selection) || selection.executor.kind !== "cli") {
+    throw new Error("CLI dispatch requires a concrete CLI selection.");
+  }
+  const { provider, id: model } = selection.model;
   const turn = params.turn;
   const expectedLifecycleRevision = turn.getActiveSessionEntry()?.lifecycleRevision;
   const selectedModelEntry = findModelInCatalog(
     params.candidateRun.thinkingCatalog ?? [],
-    params.provider,
-    params.model,
+    provider,
+    model,
   );
   const modelHasVision = await resolveRunModelHasVision({
     run: params.candidateRun,
-    provider: params.provider,
-    model: params.model,
+    provider: provider,
+    model: model,
   });
   const sessionKey = turn.sessionKey ?? turn.followupRun.run.sessionKey;
   const sessionTarget =
@@ -143,7 +149,7 @@ export async function runCliFallbackCandidate(
   const bridgeCliDurableCommentary =
     Boolean(params.presentation.blockReplyHandler) &&
     (turn.blockStreamingEnabled || turn.opts?.commentaryPayloadsEnabled === true);
-  const toolAuthorityRoute = { provider: params.provider, model: params.model };
+  const toolAuthorityRoute = { provider: provider, model: model };
   const toolAuthorityFingerprint = turn.replyOperation?.bindToolAuthorityRoute(toolAuthorityRoute);
   const result = await params.timing.measure("cli_run", () =>
     withLocalSessionPlacementTurnSettlement(
@@ -171,7 +177,7 @@ export async function runCliFallbackCandidate(
         const authProfileId = allowCliAuthProfileForwarding
           ? resolveCliExecutionAuthProfileId({
               cliExecutionProvider: params.cliExecutionProvider,
-              authProfileProvider: params.provider,
+              authProfileProvider: provider,
               config: params.runtimeConfig,
               agentDir: params.candidateRun.agentDir,
               selected: params.candidateRun,
@@ -377,8 +383,8 @@ export async function runCliFallbackCandidate(
                 toolsAllow: turn.opts?.toolsAllow,
               }),
             ),
-            modelProvider: params.provider,
-            requesterModel: { provider: params.provider, model: params.model },
+            modelProvider: provider,
+            requesterModel: { provider, model },
             modelHasVision,
             modelContextWindow: selectedModelEntry?.contextWindow,
             modelContextTokens: selectedModelEntry?.contextTokens,
@@ -386,7 +392,7 @@ export async function runCliFallbackCandidate(
             provider: params.cliExecutionProvider,
             execOverrides: turn.followupRun.run.execOverrides,
             bashElevated: turn.followupRun.run.bashElevated,
-            model: params.model,
+            model: model,
             thinkLevel: params.candidateThinkLevel,
             fastMode: params.candidateFastMode.fastMode,
             fastModeStartedAtMs: params.fastModeStartedAtMs,

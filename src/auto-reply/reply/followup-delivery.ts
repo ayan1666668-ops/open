@@ -12,6 +12,7 @@ import {
 } from "../../agents/embedded-agent-runner/result-fallback-classifier.js";
 import { buildAgentRuntimeDeliveryPlan } from "../../agents/runtime-plan/build.js";
 import { logVerbose } from "../../globals.js";
+import { isModelExecutionSelection } from "../../model-picker/execution-selection.js";
 import { isSubagentSessionKey } from "../../routing/session-key.js";
 import { defaultRuntime } from "../../runtime.js";
 import { sessionDeliveryChannel } from "../../utils/delivery-context.shared.js";
@@ -51,7 +52,7 @@ type FollowupDeliveryDecision =
   | {
       kind: "deliver";
       payloads: ReplyPayload[];
-      resolved?: { provider: string; model: string };
+      resolved?: { provider?: string; model?: string };
     }
   | {
       kind: "suppress";
@@ -61,12 +62,12 @@ type FollowupDeliveryDecision =
       kind: "retry-source-delivery";
       run: FollowupRun;
       finalTextLength: number;
-      resolved: { provider: string; model: string };
+      resolved: { provider?: string; model?: string };
     }
   | {
       kind: "deliver-diagnostic";
       payload: ReplyPayload;
-      resolved: { provider: string; model: string };
+      resolved: { provider?: string; model?: string };
     };
 
 /** Resolves one final queued delivery action without performing transport I/O. */
@@ -327,18 +328,27 @@ async function sendFollowupPayloads(params: {
   runId: string;
   kind: ReplyDispatchKind;
   mirror?: boolean;
-  resolved?: { provider: string; model: string };
+  resolved?: { provider?: string; model?: string };
 }): Promise<ReplyPayload[]> {
   const { turn, defaults } = params;
   const { originatingChannel, originatingTo } = turn.queued;
   const originRoutable = Boolean(isRoutableChannel(originatingChannel) && originatingTo);
-  const deliveryPlan = buildAgentRuntimeDeliveryPlan({
-    provider: params.resolved?.provider ?? turn.queued.run.executionSelection.model.provider,
-    modelId: params.resolved?.model ?? turn.queued.run.executionSelection.model.id,
-    config: turn.config,
-    workspaceDir: turn.queued.run.workspaceDir,
-    agentDir: turn.queued.run.agentDir,
-  });
+  const selection = turn.queued.run.executionSelection;
+  const observed =
+    params.resolved ??
+    (isModelExecutionSelection(selection)
+      ? { provider: selection.model.provider, model: selection.model.id }
+      : undefined);
+  const deliveryPlan =
+    observed?.provider && observed.model
+      ? buildAgentRuntimeDeliveryPlan({
+          provider: observed.provider,
+          modelId: observed.model,
+          config: turn.config,
+          workspaceDir: turn.queued.run.workspaceDir,
+          agentDir: turn.queued.run.agentDir,
+        })
+      : buildAgentRuntimeDeliveryPlan();
   const payloads = params.payloads.filter(
     (payload) =>
       hasOutboundReplyContent(payload) &&

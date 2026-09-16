@@ -1,11 +1,12 @@
 import fs from "node:fs/promises";
 import {
   resolveAcpSessionCwd,
-  resolveAcpThreadSessionDetailLines,
+  resolveAcpLifecycleDetailLines,
 } from "@openclaw/acp-core/runtime/session-identifiers";
 import type { AcpRuntimeSessionMode } from "@openclaw/acp-core/runtime/types";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { getAcpSessionManager } from "../../../acp/control-plane/manager.js";
+import { requireAcpExecutionSelection } from "../../../acp/control-plane/manager.utils.js";
 import { formatThinkingLevels } from "../../../auto-reply/thinking.js";
 import {
   resolveThreadBindingIntroText,
@@ -226,6 +227,9 @@ export async function bindPreparedAcpThread(params: {
   binding: SessionBindingRecord;
   sessionEntry: SessionEntry | undefined;
 }> {
+  const { executor } = requireAcpExecutionSelection(
+    params.initializedRuntime.initialized.sessionEntry,
+  );
   const binding = await getSessionBindingService().bind({
     targetSessionKey: params.sessionKey,
     targetKind: "session",
@@ -260,8 +264,9 @@ export async function bindPreparedAcpThread(params: {
           accountId: params.preparedBinding.accountId,
         }),
         sessionCwd: resolveAcpSessionCwd(params.initializedRuntime.initialized.meta),
-        sessionDetails: resolveAcpThreadSessionDetailLines({
-          sessionKey: params.sessionKey,
+        sessionDetails: resolveAcpLifecycleDetailLines({
+          backend: executor.backend,
+          agent: executor.agent,
           meta: params.initializedRuntime.initialized.meta,
         }),
       }),

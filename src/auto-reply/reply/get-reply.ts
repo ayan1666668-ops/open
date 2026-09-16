@@ -3,7 +3,6 @@ import fs from "node:fs/promises";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { isImplicitAcpWorkspaceCandidate } from "../../agents/agent-scope-config.js";
 import {
-  resolveAgentConfig,
   resolveAgentDir,
   resolveAgentWorkspaceDir,
   resolveSessionAgentId,
@@ -37,11 +36,8 @@ import { createSubsystemLogger } from "../../logging/subsystem.js";
 import type { ApplyMediaUnderstandingResult } from "../../media-understanding/apply.js";
 import type { ExtractedFileImage } from "../../media-understanding/extracted-file-images.js";
 import { hasStagedMediaFacts, normalizeMediaFacts } from "../../media/media-facts.js";
-import { getSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
-import {
-  isAcpExecutionSelection,
-  isModelExecutionSelection,
-} from "../../model-picker/execution-selection.js";
+import { getSessionExecutionSelection } from "../../model-picker/execution-selection.js";
+import { isModelExecutionSelection } from "../../model-picker/execution-selection.js";
 import { defaultRuntime } from "../../runtime.js";
 import {
   isModelSelectionLocked,
@@ -62,7 +58,6 @@ import {
   type ReplyPayload,
 } from "../reply-payload.js";
 import type { RuntimeMsgContext as MsgContext } from "../templating.js";
-import { normalizeThinkLevel } from "../thinking.js";
 import { SILENT_REPLY_TOKEN } from "../tokens.js";
 import { resolveDefaultModel } from "./directive-handling.defaults.js";
 import { resolveActiveExplicitSteerSessionKey } from "./explicit-steer-routing.js";
@@ -83,7 +78,6 @@ import {
   hasInboundMediaForUnderstanding,
 } from "./inbound-media.js";
 import { emitPreAgentMessageHooks } from "./message-preprocess-hooks.js";
-import { createModelSelectionState } from "./model-selection.js";
 import { resolveOriginMessageProvider } from "./origin-routing.js";
 import {
   PENDING_FINAL_DELIVERY_CLEAR_PATCH,
@@ -92,7 +86,6 @@ import {
 import { getPreparedReplyDispatchRuntime } from "./prepared-reply-dispatch-context.js";
 import { attachProgressNarratorToReplyOptions } from "./progress-narrator.js";
 import { prepareReplyConversation } from "./prompt-session-context.js";
-import { createReplyModelLevelResolver } from "./reply-model-levels.js";
 import {
   recordReplyPreRunRejection,
   resolveReplyOperationRunState,
@@ -409,10 +402,6 @@ export async function getReplyFromConfig(
   let extractedFileImages: ExtractedFileImage[] | undefined;
   let enableLocalPathSelfServe: ApplyMediaUnderstandingResult["enableLocalPathSelfServe"];
   const agentCfg = cfg.agents?.defaults;
-  const agentEntry = resolveAgentConfig(cfg, agentId);
-  const configuredThinkingDefault =
-    normalizeThinkLevel(agentEntry?.thinkingDefault) ??
-    normalizeThinkLevel(agentCfg?.thinkingDefault);
   const sessionCfg = cfg.session;
   const { defaultProvider, defaultModel, aliasIndex } = resolverTiming.measureSync(
     "reply.resolve_default_model",
@@ -870,7 +859,7 @@ export async function getReplyFromConfig(
       : null;
   const primaryProvider = resolvedChannelModelOverride?.ref.provider ?? defaultProvider;
   const primaryModel = resolvedChannelModelOverride?.ref.model ?? defaultModel;
-  const acceptedSelection = getSessionExecutionSelection(sessionEntry, cfg);
+  const acceptedSelection = getSessionExecutionSelection(sessionEntry);
   const hasEffectiveStoredModelOverride = acceptedSelection !== undefined;
   if (
     !hasResolvedHeartbeatModelOverride &&
@@ -1164,9 +1153,7 @@ export async function getReplyFromConfig(
       heartbeatAuthProfile.model === runModel
         ? { configuredProfileId: heartbeatAuthProfile.profileId }
         : {}),
-      requestedRouteResolution: runAutoFallbackPrimaryProbe
-        ? runModelState.requestedRouteResolution
-        : requestedRouteResolution,
+      requestedRouteResolution,
       perMessageQueueMode,
       perMessageQueueOptions,
       typing,

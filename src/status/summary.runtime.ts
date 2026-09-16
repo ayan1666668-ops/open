@@ -23,8 +23,8 @@ import { resolveAgentModelPrimaryValue } from "../config/model-input.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.js";
 import { resolveStoredSessionKeyForAgentStore } from "../gateway/session-store-key.js";
-import { getSessionExecutionSelection } from "../model-picker/execution-selection-state.js";
-import { isAcpExecutionSelection } from "../model-picker/execution-selection.js";
+import { getSessionExecutionSelection } from "../model-picker/execution-selection.js";
+import { isModelExecutionSelection } from "../model-picker/execution-selection.js";
 import { classifySessionKind } from "../sessions/classify-session-kind.js";
 import { resolveAgentRuntimeLabel } from "./agent-runtime-label.js";
 
@@ -142,7 +142,7 @@ function resolveSessionModelRef(
   entry?: Partial<SessionEntry>,
 ): { provider: string; model: string } {
   const selection = getSessionExecutionSelection(entry);
-  return selection && !isAcpExecutionSelection(selection)
+  return selection && isModelExecutionSelection(selection)
     ? { provider: selection.model.provider, model: selection.model.id }
     : resolved;
 }
@@ -174,6 +174,7 @@ function resolveSessionRuntime(params: {
     agentId: acpAgentId,
     entry: params.entry,
   });
+  const selection = getSessionExecutionSelection(params.entry);
   const runtime = resolveCurrentSessionAgentRuntimeMetadata({
     cfg: params.cfg,
     agentId: params.agentId ?? "",
@@ -182,7 +183,7 @@ function resolveSessionRuntime(params: {
     sessionKey: acpSessionKey,
     sessionEntry: params.entry,
     acpRuntime: acpMeta != null,
-    acpBackend: acpMeta?.backend,
+    acpBackend: selection?.executor.kind === "acp" ? selection.executor.backend : undefined,
   });
   const id = normalizeOptionalLowercaseString(runtime.id);
   // OpenClaw/auto are generic labels; concrete harness ids give better operator signal.

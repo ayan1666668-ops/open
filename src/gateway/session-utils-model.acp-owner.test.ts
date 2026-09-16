@@ -7,6 +7,7 @@ import {
 } from "../agents/harness/registry.js";
 import { restoreRegisteredAgentHarnesses } from "../agents/harness/registry.test-support.js";
 import * as thinking from "../auto-reply/thinking.js";
+import type { SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 
 const { readAcpSessionMeta, readAcpSessionMetaForEntry } = vi.hoisted(() => ({
@@ -163,6 +164,51 @@ describe("resolveGatewaySessionThinkingProjectionInternal", () => {
     },
   );
 
+  it.each(["harness", "acp"] as const)(
+    "projects the accepted %s executor on an ordinary key despite different configured policy",
+    (kind) => {
+      const cfg: OpenClawConfig = {
+        agents: {
+          defaults: {
+            models: { "fixture-provider/fixture-model": { agentRuntime: { id: "openclaw" } } },
+          },
+        },
+      };
+      const entry: SessionEntry = {
+        sessionId: "accepted-projection",
+        updatedAt: 1,
+        agentHarnessId: "old-producer",
+        executionSelection: {
+          state: "accepted",
+          fallbackPermission: "explicit",
+          selection:
+            kind === "acp"
+              ? {
+                  model: { id: "fixture-model" },
+                  executor: { kind: "acp", backend: "accepted-backend", agent: "fixture-agent" },
+                }
+              : {
+                  model: { provider: "fixture-provider", id: "fixture-model" },
+                  executor: { kind: "harness", id: "accepted-harness" },
+                },
+        },
+      };
+      const projection = resolveGatewaySessionThinkingProjectionInternal({
+        cfg,
+        agentId: "main",
+        provider: "fixture-provider",
+        model: "fixture-model",
+        sessionKey: "agent:main:dashboard:accepted",
+        entry,
+      });
+      expect(projection.agentRuntime).toEqual({
+        id: kind === "acp" ? "accepted-backend" : "accepted-harness",
+        source: "session",
+      });
+      expect(readAcpSessionMeta).not.toHaveBeenCalled();
+    },
+  );
+
   it("reads bare-key ACP metadata under the resolved row owner", () => {
     const cfg: OpenClawConfig = {
       session: { scope: "global", store: "/tmp/shared.sqlite" },
@@ -194,8 +240,6 @@ describe("resolveGatewaySessionThinkingProjectionInternal", () => {
     const entry = { sessionId: "original", lifecycleRevision: "original-revision", updatedAt: 1 };
     const sessionKey = "agent:ops:acp:owned";
     readAcpSessionMeta.mockReturnValue({
-      backend: "replacement-backend",
-      agent: "ops",
       runtimeSessionName: "replacement",
       mode: "persistent",
       state: "idle",

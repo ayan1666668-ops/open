@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getSessionExecutionSelection } from "../../model-picker/execution-selection-state.js";
+import { getSessionExecutionSelection } from "../../model-picker/execution-selection.js";
 import { withOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
 import { createEmptyPluginRegistry } from "../registry-empty.js";
 import {
@@ -11,12 +11,13 @@ import { createRuntimeAgent } from "./runtime-agent.js";
 
 describe("plugin runtime session creation colors", () => {
   it.each([
-    { color: " Blue ", expectedColor: "blue" },
-    { color: "invalid", expectedColor: undefined },
-    { color: undefined, expectedColor: undefined },
+    { color: " Blue ", expectedColor: "blue", initialize: true },
+    { color: "Blue", expectedColor: "blue", initialize: false },
+    { color: "invalid", expectedColor: undefined, initialize: true },
+    { color: undefined, expectedColor: undefined, initialize: true },
   ])(
-    "creates a plugin-owned CLI fork with canonical color $color",
-    async ({ color, expectedColor }) => {
+    "creates a plugin-owned CLI fork with canonical color $color, initializer $initialize",
+    async ({ color, expectedColor, initialize }) => {
       await withOpenClawTestState({ label: "plugin-runtime-cli-session-create" }, async () => {
         const previousRegistry = captureActivePluginRegistrySnapshot();
         const registry = createEmptyPluginRegistry();
@@ -47,13 +48,16 @@ describe("plugin runtime session creation colors", () => {
                 forkNextResume: true,
               },
             },
-            afterCreate: async ({ entry }) => {
-              expect(entry.initializationPending).toBe(true);
-              expect(entry.color).toBe(expectedColor);
-            },
+            afterCreate: initialize
+              ? async ({ entry }) => {
+                  expect(entry.initializationPending).toBe(true);
+                  expect(entry.color).toBe(expectedColor);
+                }
+              : undefined,
           });
           expect(created.entry.color).toBe(expectedColor);
-          expect(getSessionExecutionSelection(created.entry, {})).toEqual({
+          expect(created.entry.initializationPending).toBeUndefined();
+          expect(getSessionExecutionSelection(created.entry)).toEqual({
             executor: { kind: "cli", id: "claude-cli" },
             model: { provider: "claude-cli", id: "qa-native-model" },
           });

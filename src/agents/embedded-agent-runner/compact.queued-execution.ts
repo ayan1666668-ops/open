@@ -4,7 +4,7 @@ import {
   loadSessionEntryReadOnly,
   type SessionTranscriptRuntimeTarget,
 } from "../../config/sessions/session-accessor.js";
-import { projectPublicSessionEntry } from "../../config/sessions/session-entry-projection.js";
+import { stripPrivateSessionEntryFields } from "../../config/sessions/session-entry-projection.js";
 import {
   SessionTranscriptWriterClaimReboundError,
   withOwnedSessionTranscriptWrites,
@@ -605,7 +605,7 @@ export async function executeQueuedContextEngineCompaction(input: {
                 sessionFile: postCompactionSessionFile,
                 sessionTarget: postCompactionSessionTarget,
                 ...(successor.entry
-                  ? { sessionEntry: projectPublicSessionEntry(successor.entry) }
+                  ? { sessionEntry: stripPrivateSessionEntryFields(successor.entry) }
                   : {}),
                 runtimeModel: effectiveRuntimeModel,
                 contextEngine,

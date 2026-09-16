@@ -1,7 +1,11 @@
 import { vi } from "vitest";
 // Test fixture helpers for constructing ACP runtime session metadata.
-import type { SessionAcpMeta } from "../../../config/sessions/types.js";
+import type { AcpSessionResolution } from "../../../acp/control-plane/manager.types.js";
+import type { SessionAcpLifecycle, SessionEntry } from "../../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
+import { commitSessionExecutionSelection } from "../../../model-picker/apply-session-model-selection.js";
+import type { AcpExecutionSelection } from "../../../model-picker/execution-selection.js";
+import { resolveAgentIdFromSessionKey } from "../../../routing/session-key.js";
 import type { ReplyDispatcher } from "../reply-dispatcher.types.js";
 
 const settledCounts = (delivered: number) => ({
@@ -62,10 +66,10 @@ export function createAcpTestConfig(overrides?: Partial<OpenClawConfig>): OpenCl
   } as OpenClawConfig;
 }
 
-export function createAcpSessionMeta(overrides?: Partial<SessionAcpMeta>): SessionAcpMeta {
+export function createAcpSessionMeta(
+  overrides?: Partial<SessionAcpLifecycle>,
+): SessionAcpLifecycle {
   return {
-    backend: "acpx",
-    agent: "codex",
     runtimeSessionName: "runtime:1",
     mode: "persistent",
     state: "idle",
@@ -77,5 +81,28 @@ export function createAcpSessionMeta(overrides?: Partial<SessionAcpMeta>): Sessi
       lastUpdatedAt: Date.now(),
     },
     ...overrides,
+  };
+}
+
+export function createReadyAcpSessionResolution(params: {
+  sessionKey: string;
+  agentId?: string;
+  entry?: SessionEntry;
+  meta?: SessionAcpLifecycle;
+  selection?: AcpExecutionSelection;
+}): Extract<AcpSessionResolution, { kind: "ready" }> {
+  const selection: AcpExecutionSelection = params.selection ?? {
+    executor: { kind: "acp", backend: "acpx", agent: "codex" },
+    model: "native-managed",
+  };
+  const entry = structuredClone(params.entry ?? { sessionId: "session-1", updatedAt: 1 });
+  commitSessionExecutionSelection(entry, selection);
+  return {
+    kind: "ready",
+    sessionKey: params.sessionKey,
+    agentId: params.agentId ?? resolveAgentIdFromSessionKey(params.sessionKey),
+    entry,
+    selection,
+    meta: params.meta ?? createAcpSessionMeta(),
   };
 }

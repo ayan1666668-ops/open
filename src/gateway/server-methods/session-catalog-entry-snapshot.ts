@@ -12,6 +12,7 @@ import {
 } from "../../config/sessions/session-accessor.js";
 import { sessionCreatorProfileId } from "../../config/sessions/session-entry-provenance.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { projectPluginSessionEntry } from "../../plugin-sdk/session-store-runtime-internal.js";
 import type {
   SessionCatalogEntrySnapshot,
   SessionCatalogProvider,
@@ -46,6 +47,10 @@ export function createSessionCatalogRequestEntrySnapshot(params: {
   sessionKeys?: readonly string[];
 }): SessionCatalogRequestEntrySnapshot {
   const entriesByAgentId = new Map<string, readonly SessionEntrySummary[]>();
+  const publicEntriesByAgentId = new Map<
+    string,
+    ReturnType<SessionCatalogEntrySnapshot["entriesForAgent"]>
+  >();
   const entryIndexByAgentId = new Map<string, ReadonlyMap<string, SessionEntry>>();
   const actorBySessionKey = new Map<string, SessionCatalogSession["createdActor"]>();
   let frozen = false;
@@ -91,6 +96,18 @@ export function createSessionCatalogRequestEntrySnapshot(params: {
     return entriesByAgentId.get(agentId) ?? [];
   };
 
+  const publicEntriesForAgent: SessionCatalogEntrySnapshot["entriesForAgent"] = (rawAgentId) => {
+    const agentId = normalizeAgentId(rawAgentId);
+    const cached = publicEntriesByAgentId.get(agentId);
+    if (cached) return cached;
+    const entries = entriesForAgent(agentId).map(({ sessionKey, entry }) => ({
+      sessionKey,
+      entry: projectPluginSessionEntry(structuredClone(entry)),
+    }));
+    publicEntriesByAgentId.set(agentId, entries);
+    return entries;
+  };
+
   const entriesForCatalog: NonNullable<SessionCatalogEntrySnapshot["entriesForCatalog"]> = () => {
     if (catalogEntries) {
       return catalogEntries;
@@ -100,7 +117,7 @@ export function createSessionCatalogRequestEntrySnapshot(params: {
       ...listAgentIds(params.cfg).filter((agentId) => agentId !== params.fallbackAgentId),
     ];
     catalogEntries = agentIds.flatMap((agentId) =>
-      entriesForAgent(agentId).map((entry) => Object.assign({}, entry, { agentId })),
+      publicEntriesForAgent(agentId).map((entry) => Object.assign({}, entry, { agentId })),
     );
     return catalogEntries;
   };
@@ -153,7 +170,7 @@ export function createSessionCatalogRequestEntrySnapshot(params: {
   };
 
   return {
-    sessionEntries: { entriesForAgent, entriesForCatalog },
+    sessionEntries: { entriesForAgent: publicEntriesForAgent, entriesForCatalog },
     freeze: () => {
       // Capture before provider admission/IO, even when a provider first reads after awaiting.
       // A key first resolved after deletion/recreation cannot prove the original adoption.

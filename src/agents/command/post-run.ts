@@ -392,15 +392,15 @@ export async function finalizeEmbeddedAgentCommand(params: {
       !sessionReboundDuringRun &&
       !isHeartbeatLifecycleRun &&
       cfg.agents?.defaults?.compaction?.enabled !== false &&
-      embeddedMaintenance
+      embeddedMaintenance &&
+      params.attempt.maintenanceExecutionSelection
         ? {
             prepared: { cfg, sessionKey, storePath, timeoutMs },
             followupRun: createCommandMaintenanceFollowup({
               prepared: params.prepared,
               sessionEntry,
               embeddedSessionState: params.embeddedSessionState,
-              provider: agentMeta?.provider ?? fallbackProvider,
-              model: agentMeta?.model ?? fallbackModel,
+              executionSelection: params.attempt.maintenanceExecutionSelection,
               thinkLevel: effectiveTurnThinkLevel,
               auth: params.attempt.maintenanceAuthProfile,
             }),

@@ -7,7 +7,6 @@ import {
   errorShape,
   type SessionsPatchParams,
 } from "../../packages/gateway-protocol/src/index.js";
-import { readAcpSessionMetaForEntry } from "../acp/runtime/session-meta.js";
 import {
 isDefaultAgentRuntimeId, normalizeOptionalAgentRuntimeId,
 } from "../agents/agent-runtime-id.js";
@@ -41,17 +40,20 @@ import { projectCanonicalSessionEntryShape } from "../config/sessions/store-entr
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { normalizeExecTarget } from "../infra/exec-approvals.js";
 import {
+  resolveExecutionSelectionExecutorKind,
   commitSessionModelSelectionWithAuth,
+  commitStoredSessionExecutionSelection,
+  commitSessionExecutionSelection,
   prepareSessionExecutionSelection,
   type ExecutionSelectionRequest,
   type PreparedSessionExecutionSelection,
 } from "../model-picker/apply-session-model-selection.js";
-import { readAcpExecutionSelection } from "../model-picker/execution-selection-codec.js";
+import { getSessionExecutionSelection } from "../model-picker/execution-selection.js";
 import {
-  executionSelectionCodecMetadata,
-  getSessionExecutionSelection,
-} from "../model-picker/execution-selection-state.js";
-import { isAcpExecutionSelection } from "../model-picker/execution-selection.js";
+  isAcpExecutionSelection,
+  isModelExecutionSelection,
+  type SessionExecutionSelection,
+} from "../model-picker/execution-selection.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
 import {
   isSubagentSessionKey,
@@ -116,6 +118,7 @@ type SessionPatchProjectionParams = {
   /** Resolved spawn identity supplied only by the trusted creation owner. */
   preparedModelSelection?: ModelRef;
   preparedExecution?: Extract<PreparedSessionExecutionSelection, { status: "ready" }>;
+  initialExecutionSelection?: SessionExecutionSelection;
 };
 
 type SessionPatchProjectionResult =
@@ -246,16 +249,10 @@ function* projectSessionPatchSteps(
     model: string,
     entry?: SessionEntry,
   ): string => {
-    // ACP metadata can own canonical agent keys (for example agent:main:main),
-    // so key shape alone cannot identify the runtime that validates thinking.
-    const acpMeta = readAcpSessionMetaForEntry({
-      sessionKey: storeKey,
-      agentId: sessionAgentId,
-      entry,
-    });
+    const selected = getSessionExecutionSelection(entry);
     return (
       params.preparedAgentRuntime ??
-      readAcpExecutionSelection(acpMeta)?.executor.backend ??
+      (selected && isAcpExecutionSelection(selected) ? selected.executor.backend : undefined) ??
       resolveEffectiveAgentRuntime({
         cfg,
         provider,
@@ -318,6 +315,9 @@ function* projectSessionPatchSteps(
     // Stamp only genuinely new rows; existing placeholder aliases must not be restamped.
     ...(creation && params.existingEntry === undefined ? buildSessionCreationStamp(creation) : {}),
   };
+  if (!existing?.executionSelection && params.initialExecutionSelection) {
+    commitStoredSessionExecutionSelection(next, params.initialExecutionSelection);
+  }
   if (existing && !existing.sessionId) {
     delete next.label;
     delete next.autoLabel;
@@ -438,9 +438,9 @@ function* projectSessionPatchSteps(
   } else if (rawThinking !== undefined) {
     const normalized = normalizeThinkLevel(rawThinking);
     if (!normalized) {
-      const hintProvider =
-        (() => { const selection = getSessionExecutionSelection(existing, cfg); return selection && !isAcpExecutionSelection(selection) ? selection.model.provider : resolvedDefault.provider; })();
-      const hintModel = getSessionExecutionSelection(existing, cfg)?.model?.id ?? resolvedDefault.model;
+      const accepted = getSessionExecutionSelection(existing);
+      const hintProvider = accepted && isModelExecutionSelection(accepted) ? accepted.model.provider : resolvedDefault.provider;
+      const hintModel = accepted && accepted.model !== "native-managed" ? accepted.model.id : resolvedDefault.model;
       const profile = yield* loadThinkingProfileForPatch(hintProvider, hintModel, existing);
       return invalid(
         `invalid thinkingLevel (use ${profile.levels.map(({ label }) => label).join("|")})`,
@@ -569,8 +569,8 @@ function* projectSessionPatchSteps(
     next.permissionMode = patch.permissionMode;
   }
   if (
-    "agentRuntime" in patch &&
-    readAcpSessionMetaForEntry({ sessionKey: storeKey, agentId: sessionAgentId, entry: existing })
+    typeof patch.agentRuntime === "string" &&
+    getSessionExecutionSelection(existing)?.executor.kind === "acp"
   ) {
     return invalid("Runtime selection is owned by this ACP session.");
   }
@@ -585,128 +585,143 @@ function* projectSessionPatchSteps(
     if (typeof raw === "string" && !normalizeOptionalString(raw)) {
       return invalid("invalid model: empty");
     }
-    const catalog = yield* loadPreparedModelCatalogForPatch();
-    let selection:
-      | { provider: string; model: string; profile?: string; isDefault: boolean }
-      | undefined;
-    if (raw === null || (raw === undefined && patch.agentRuntime === null)) {
-      selection = { ...resolvedDefault, isDefault: true };
-    } else if (raw !== undefined) {
-      const trimmed = normalizeOptionalString(raw) ?? "";
-      if (!trimmed) {
-        return invalid("invalid model: empty");
-      }
-      if (!catalog) {
-        return {
-          ok: false,
-          error: errorShape(
-            ErrorCodes.UNAVAILABLE,
-            "model catalog is still loading; retry in a few seconds",
-          ),
-        };
-      }
-      const resolved = resolveSessionPatchModelSelection({
-        cfg,
-        agentId: sessionAgentId,
-        catalog,
-        raw: trimmed,
-        defaultProvider: resolvedDefault.provider,
-        defaultModel: resolvedDefault.model,
-        subagentModelHint,
-        preparedModelSelection: params.preparedModelSelection,
-      });
-      if (!resolved.ok) {
-        return invalid(resolved.error);
-      }
-      selection = resolved;
-    }
-    if (selection) {
-      if (typeof patch.agentRuntime === "string") {
-        if (
-          splitTrailingAuthProfile(raw ?? "").model !== `${selection.provider}/${selection.model}`
-        ) {
-          return invalid("agentRuntime requires an explicit canonical provider/model selection");
-        }
-        const runtime = normalizeOptionalAgentRuntimeId(patch.agentRuntime);
-        if (runtime !== patch.agentRuntime || isDefaultAgentRuntimeId(runtime)) {
-          return invalid("Use a canonical agentRuntime id, or null to reset configured routing");
-        }
-      }
-      if (selection.profile && isUserModelAuthProfileId(selection.profile)) {
-        if (params.personalModelSelection?.authProfileId !== selection.profile) {
-          return {
-            ok: false,
-            error: errorShape(
-              ErrorCodes.FORBIDDEN,
-              "Choose your personal account from an identified Gateway connection.",
-            ),
-          };
-        }
-        params.personalModelSelection.assertCurrent();
-      }
-      const runtimeId =
-        typeof patch.agentRuntime === "string" ? patch.agentRuntime : params.preparedAgentRuntime;
-      const executorKind = runtimeId
-        ? executionSelectionCodecMetadata(cfg).classifyExecutor(runtimeId)
+    const preparedAcp =
+      params.preparedExecution && isAcpExecutionSelection(params.preparedExecution.selection)
+        ? params.preparedExecution
         : undefined;
-      if (runtimeId && !executorKind) {
-        return invalid(
-          "Could not confirm support for the selected app. Your selection is unchanged.",
-        );
-      }
-      if (!params.preparedExecution) {
-        return {
-          entry: selection.profile
-            ? {
-                ...next,
-                authProfileOverride: selection.profile,
-                authProfileOverrideSource: "user",
-                authProfileOverrideCompactionCount: undefined,
-              }
-            : next,
-          agentId: sessionAgentId,
-          request:
-            raw === null || (raw === undefined && patch.agentRuntime === null)
-              ? { kind: "reset" }
-              : patch.agentRuntime === null
-                ? { kind: "reset", model: { provider: selection.provider, id: selection.model } }
-                : {
-                    kind: "model",
-                    model: { provider: selection.provider, id: selection.model },
-                    ...(runtimeId && executorKind
-                      ? { executor: { kind: executorKind, id: runtimeId } }
-                      : {}),
-                  },
-        };
-      }
-      const prepared = params.preparedExecution;
-      const validationError = prepared.validateCommit?.();
-      if (validationError) {
-        return invalid(validationError);
-      }
-      if (isAcpExecutionSelection(prepared.selection)) {
-        return invalid("Model selection must be applied through this session's app.");
-      }
-      const before = getSessionExecutionSelection(existing, cfg);
-      commitSessionModelSelectionWithAuth({
-        cfg,
-        agentId: sessionAgentId,
-        entry: next,
-        currentProvider:
-          before && !isAcpExecutionSelection(before)
-            ? before.model.provider
-            : resolvedDefault.provider,
-        selection: prepared.selection,
-        profileOverride: selection.profile,
-        ...(params.providerAuthMetadataSnapshot
-          ? { metadataSnapshot: params.providerAuthMetadataSnapshot }
-          : {}),
-        markLiveSwitchPending: true,
+    if (preparedAcp) {
+      const error = preparedAcp.validateCommit();
+      if (error) return invalid(error);
+      commitSessionExecutionSelection(next, preparedAcp.selection, {
         cause: {
           kind:
             raw === null || (raw === undefined && patch.agentRuntime === null) ? "reset" : "user",
         },
+        markLiveSwitchPending: true,
       });
+    } else {
+      const catalog = yield* loadPreparedModelCatalogForPatch();
+      let selection:
+        | { provider: string; model: string; profile?: string; isDefault: boolean }
+        | undefined;
+      if (raw === null || (raw === undefined && patch.agentRuntime === null)) {
+        selection = { ...resolvedDefault, isDefault: true };
+      } else if (raw !== undefined) {
+        const trimmed = normalizeOptionalString(raw) ?? "";
+        if (!trimmed) {
+          return invalid("invalid model: empty");
+        }
+        if (!catalog) {
+          return {
+            ok: false,
+            error: errorShape(
+              ErrorCodes.UNAVAILABLE,
+              "model catalog is still loading; retry in a few seconds",
+            ),
+          };
+        }
+        const resolved = resolveSessionPatchModelSelection({
+          cfg,
+          agentId: sessionAgentId,
+          catalog,
+          raw: trimmed,
+          defaultProvider: resolvedDefault.provider,
+          defaultModel: resolvedDefault.model,
+          subagentModelHint,
+          preparedModelSelection: params.preparedModelSelection,
+        });
+        if (!resolved.ok) {
+          return invalid(resolved.error);
+        }
+        selection = resolved;
+      }
+      if (selection) {
+        if (typeof patch.agentRuntime === "string") {
+          if (
+            splitTrailingAuthProfile(raw ?? "").model !== `${selection.provider}/${selection.model}`
+          ) {
+            return invalid("agentRuntime requires an explicit canonical provider/model selection");
+          }
+          const runtime = normalizeOptionalAgentRuntimeId(patch.agentRuntime);
+          if (runtime !== patch.agentRuntime || isDefaultAgentRuntimeId(runtime)) {
+            return invalid("Use a canonical agentRuntime id, or null to reset configured routing");
+          }
+        }
+        if (selection.profile && isUserModelAuthProfileId(selection.profile)) {
+          if (params.personalModelSelection?.authProfileId !== selection.profile) {
+            return {
+              ok: false,
+              error: errorShape(
+                ErrorCodes.FORBIDDEN,
+                "Choose your personal account from an identified Gateway connection.",
+              ),
+            };
+          }
+          params.personalModelSelection.assertCurrent();
+        }
+        const runtimeId =
+          typeof patch.agentRuntime === "string" ? patch.agentRuntime : params.preparedAgentRuntime;
+        const executorKind = runtimeId
+          ? resolveExecutionSelectionExecutorKind(cfg, runtimeId)
+          : undefined;
+        if (runtimeId && !executorKind) {
+          return invalid(
+            "Could not confirm support for the selected app. Your selection is unchanged.",
+          );
+        }
+        if (!params.preparedExecution) {
+          return {
+            entry: selection.profile
+              ? {
+                  ...next,
+                  authProfileOverride: selection.profile,
+                  authProfileOverrideSource: "user",
+                  authProfileOverrideCompactionCount: undefined,
+                }
+              : next,
+            agentId: sessionAgentId,
+            request:
+              raw === null || (raw === undefined && patch.agentRuntime === null)
+                ? { kind: "reset" }
+                : patch.agentRuntime === null
+                  ? { kind: "reset", model: { provider: selection.provider, id: selection.model } }
+                  : {
+                      kind: "model",
+                      model: { provider: selection.provider, id: selection.model },
+                      ...(runtimeId && executorKind
+                        ? { executor: { kind: executorKind, id: runtimeId } }
+                        : {}),
+                    },
+          };
+        }
+        const prepared = params.preparedExecution;
+        const validationError = prepared.validateCommit?.();
+        if (validationError) {
+          return invalid(validationError);
+        }
+        if (isAcpExecutionSelection(prepared.selection))
+          throw new Error("Expected model execution selection");
+        const before = getSessionExecutionSelection(existing);
+        commitSessionModelSelectionWithAuth({
+          cfg,
+          agentId: sessionAgentId,
+          entry: next,
+          currentProvider:
+            before && isModelExecutionSelection(before)
+              ? before.model.provider
+              : resolvedDefault.provider,
+          selection: prepared.selection,
+          profileOverride: selection.profile,
+          ...(params.providerAuthMetadataSnapshot
+            ? { metadataSnapshot: params.providerAuthMetadataSnapshot }
+            : {}),
+          markLiveSwitchPending: true,
+          cause: {
+            kind:
+              raw === null || (raw === undefined && patch.agentRuntime === null) ? "reset" : "user",
+          },
+        });
+      }
     }
     if (agentModelFallback) {
       next.modelFallback = agentModelFallback;
@@ -714,12 +729,13 @@ function* projectSessionPatchSteps(
   }
 
   if ("thinkingLevel" in patch || "model" in patch || "agentRuntime" in patch) {
-    const accepted = getSessionExecutionSelection(next, cfg);
+    const accepted = getSessionExecutionSelection(next);
     const effectiveProvider =
-      accepted && !isAcpExecutionSelection(accepted)
+      accepted && isModelExecutionSelection(accepted)
         ? accepted.model.provider
         : resolvedDefault.provider;
-    const effectiveModel = accepted?.model?.id ?? resolvedDefault.model;
+    const effectiveModel =
+      accepted && accepted.model !== "native-managed" ? accepted.model.id : resolvedDefault.model;
     const thinkingLevel = normalizeThinkLevel(next.thinkingLevel);
     if (!thinkingLevel) {
       delete next.thinkingLevel;

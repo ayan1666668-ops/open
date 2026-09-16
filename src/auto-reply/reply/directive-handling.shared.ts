@@ -5,7 +5,7 @@ import type { StickyModelSelectionDispatchOutcome } from "../../agents/sticky-mo
 import { formatCliCommand } from "../../cli/command-format.js";
 import {
   adoptPersistedSessionSnapshot,
-  SESSION_MODEL_OVERRIDE_TRANSACTION_FIELDS,
+  SESSION_EXECUTION_SELECTION_TRANSACTION_FIELDS,
   sessionModelOverrideChangesApplied,
   sessionSnapshotChangesApplied,
 } from "../../config/sessions/session-snapshot-merge.js";
@@ -133,7 +133,7 @@ export function resolveDirectiveTouchedSessionFields(params: {
   const { directives } = params;
   const fields = new Set<keyof SessionEntry>();
   if (directives.hasModelDirective) {
-    for (const field of SESSION_MODEL_OVERRIDE_TRANSACTION_FIELDS) {
+    for (const field of SESSION_EXECUTION_SELECTION_TRANSACTION_FIELDS) {
       fields.add(field);
     }
   }

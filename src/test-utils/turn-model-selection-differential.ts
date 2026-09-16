@@ -277,7 +277,14 @@ export const TURN_MODEL_DIFFERENTIAL_FIXTURES: TurnModelDifferentialFixture[] = 
         parentSessionKey: "agent:main:telegram:group:parent",
         override: TURN_MODEL_SESSION_REF,
       }),
-      modelOverrideSource: "default",
+      executionSelection: {
+        state: "accepted",
+        fallbackPermission: "configured",
+        selection: {
+          model: { provider: TURN_MODEL_DEFAULT_REF.provider, id: TURN_MODEL_DEFAULT_REF.model },
+          executor: { kind: "harness", id: "openclaw" },
+        },
+      },
     },
     parent: {
       key: "agent:main:telegram:group:parent",

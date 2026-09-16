@@ -14,6 +14,7 @@ import {
   type TestModelFallbackRunnerParams,
 } from "../../agents/test-helpers/model-fallback-runner.test-support.js";
 import type { ModelDefinitionConfig } from "../../config/types.models.js";
+import { isModelExecutionSelection } from "../../model-picker/execution-selection.js";
 import {
   createUserTurnTranscriptRecorder,
   type PersistedUserTurnMessage,
@@ -297,17 +298,19 @@ vi.mock("./agent-runner-utils.js", async () => ({
           senderContext: {},
           runBaseParams: {
             runId: params.runId,
-            provider: params.provider,
-            model: params.model,
+            provider: isModelExecutionSelection(params.run.executionSelection)
+              ? params.run.executionSelection.model.provider
+              : undefined,
+            model: isModelExecutionSelection(params.run.executionSelection)
+              ? params.run.executionSelection.model.id
+              : undefined,
             thinkLevel: params.run.thinkLevel,
-            authProfileId:
-              params.provider === params.run.executionSelection.model.provider
-                ? params.run.authProfileId
-                : undefined,
-            authProfileIdSource:
-              params.provider === params.run.executionSelection.model.provider
-                ? params.run.authProfileIdSource
-                : undefined,
+            authProfileId: isModelExecutionSelection(params.run.executionSelection)
+              ? params.run.authProfileId
+              : undefined,
+            authProfileIdSource: isModelExecutionSelection(params.run.executionSelection)
+              ? params.run.authProfileIdSource
+              : undefined,
           },
         },
   resolveQueuedReplyRuntimeConfig: <T>(config: T) => config,

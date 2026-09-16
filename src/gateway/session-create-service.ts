@@ -34,7 +34,7 @@ import {
   resolveDefaultModelForAgent,
   resolveSubagentConfiguredModelSelection,
 } from "../agents/model-selection.js";
-import { resolveSessionModelRef } from "../agents/session-model-ref.js";
+import { resolveSessionModelRefCore as resolveSessionModelRef } from "../agents/session-model-ref.js";
 import { resolveEffectiveAgentRuntime } from "../agents/thinking-runtime.js";
 import {
   forkSessionFromParentWithDecision,
@@ -70,11 +70,9 @@ import {
   triggerInternalHook,
 } from "../hooks/internal-hooks.js";
 import { formatErrorMessage } from "../infra/errors.js";
-import {
-  commitSessionExecutionSelection,
-  commitStoredSessionExecutionSelection,
-} from "../model-picker/apply-session-model-selection.js";
-import { getSessionExecutionSelection } from "../model-picker/apply-session-model-selection.js";
+import { commitSessionExecutionSelection } from "../model-picker/apply-session-model-selection.js";
+import type { PublicSessionEntry } from "../model-picker/execution-selection-projection.js";
+import { getSessionExecutionSelection } from "../model-picker/execution-selection.js";
 import { isModelExecutionSelection } from "../model-picker/execution-selection.js";
 import type { SessionExecutionSelection } from "../model-picker/execution-selection.js";
 import {
@@ -170,7 +168,7 @@ async function existingSessionSelectionWouldChange(params: {
     // keep catalog-owned model/runtime adoption fail-closed.
     return true;
   }
-  const accepted = getSessionExecutionSelection(params.existingEntry, params.cfg);
+  const accepted = getSessionExecutionSelection(params.existingEntry);
   if (
     params.requestedAgentRuntime !== undefined &&
     (accepted?.executor.kind === "acp" || params.requestedAgentRuntime !== accepted?.executor.id)
@@ -277,7 +275,7 @@ type GatewaySessionCommitResult =
       ok: true;
       key: string;
       agentId: string;
-      entry: SessionEntry;
+      entry: PublicSessionEntry;
       resolved: { modelProvider: string; model: string };
       resetExisting: boolean;
     }
@@ -876,7 +874,7 @@ export async function createGatewaySession(params: {
         ok: true,
         key: resetResult.key,
         agentId: resetResult.agentId,
-        entry: projectPublicSessionEntry(resetResult.entry),
+        entry: resetResult.entry,
         resolved: resetResult.resolved,
         resetExisting: true,
         postCommit: { status: "completed" },
@@ -1269,12 +1267,10 @@ export async function createGatewaySession(params: {
             };
           }
         }
-        if (params.executionSelection) {
-          commitStoredSessionExecutionSelection(targetEntry, params.executionSelection);
-        }
         const patched = await projectSessionsPatchEntry({
           cfg: params.cfg,
           existingEntry: targetEntry,
+          initialExecutionSelection: params.executionSelection,
           isLabelInUse,
           storeKey: target.canonicalKey,
           agentId: target.agentId,
@@ -1645,7 +1641,7 @@ export async function createGatewaySession(params: {
     createdContext = {
       key: target.canonicalKey,
       agentId: target.agentId,
-      entry: projectPublicSessionEntry(created.entry),
+      entry: created.entry,
       storePath: target.storePath,
       isNew: createdNewEntry,
     };
@@ -1664,9 +1660,9 @@ export async function createGatewaySession(params: {
       // The created fact belongs to this row generation; record it before a
       // same-key delete can acquire the lifecycle fence and purge that state.
       recordSessionCreated({
-        sessionKey: createdContext.key,
-        agentId: createdContext.agentId,
-        entry: createdContext.entry,
+        sessionKey: target.canonicalKey,
+        agentId: target.agentId,
+        entry: created.entry,
       });
     }
 

@@ -1,8 +1,11 @@
 // Verifies plugin runtime session ownership and execution admission.
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { formatSqliteSessionFileMarker } from "../config/sessions/legacy-sqlite-marker.js";
+import * as sessionAccessor from "../config/sessions/session-accessor.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { commitSessionExecutionSelection } from "../model-picker/apply-session-model-selection.js";
+import { projectPluginSessionEntry } from "../plugin-sdk/session-store-runtime-internal.js";
 import { createPluginRecord } from "./loader-records.js";
 import { createRuntimeTestRegistry } from "./registry-runtime.test-helpers.js";
 import { getPluginRuntimeGatewayRequestScope } from "./runtime/gateway-request-scope.js";
@@ -10,6 +13,7 @@ import { createPluginRuntime } from "./runtime/index.js";
 import type { PluginRuntime } from "./runtime/types.js";
 
 describe("plugin registry runtime session ownership", () => {
+  afterEach(() => vi.restoreAllMocks());
   it("resolves persisted runtime requests at the plugin execution boundary", async () => {
     const sessionKey = "agent:worker:voice";
     const entry: SessionEntry = {
@@ -29,8 +33,12 @@ describe("plugin registry runtime session ownership", () => {
     };
     const runtime = createPluginRuntime();
     runtime.config.current = () => cfg;
-    runtime.agent.session.getSessionEntry = vi.fn(() => entry);
-    runtime.agent.session.listSessionEntries = vi.fn(() => [{ sessionKey, entry }]);
+    vi.spyOn(sessionAccessor, "loadSessionEntryReadOnly").mockImplementation(() =>
+      structuredClone(entry),
+    );
+    vi.spyOn(sessionAccessor, "listSessionEntriesReadOnly").mockImplementation(() => [
+      { sessionKey, entry: structuredClone(entry) },
+    ]);
     let executionScope = getPluginRuntimeGatewayRequestScope();
     const runEmbeddedAgent = vi.fn<PluginRuntime["agent"]["runEmbeddedAgent"]>(async () => {
       executionScope = getPluginRuntimeGatewayRequestScope();
@@ -78,9 +86,20 @@ describe("plugin registry runtime session ownership", () => {
         name: "request config provider",
         storedRuntime: "codex",
         request: { config: { agents: { defaults: { model: "anthropic/request-model" } } } },
+        expected: "codex",
       },
-      { name: "incompatible provider", storedRuntime: "codex", request: { provider: "anthropic" } },
-      { name: "model-ref provider", storedRuntime: "codex", request: { model: "anthropic/other" } },
+      {
+        name: "different requested provider",
+        storedRuntime: "codex",
+        request: { provider: "anthropic" },
+        expected: "codex",
+      },
+      {
+        name: "model-ref provider",
+        storedRuntime: "codex",
+        request: { model: "anthropic/other" },
+        expected: "codex",
+      },
       {
         name: "explicit runtime",
         storedRuntime: "codex",
@@ -98,7 +117,14 @@ describe("plugin registry runtime session ownership", () => {
       { name: "observation only", request: {} },
     ];
     for (const scenario of cases) {
-      entry.agentRuntimeOverride = scenario.storedRuntime;
+      if (scenario.storedRuntime) {
+        commitSessionExecutionSelection(entry, {
+          executor: { kind: "harness", id: scenario.storedRuntime },
+          model: { provider: "qa-provider", id: "qa-model" },
+        });
+      } else {
+        delete entry.executionSelection;
+      }
       await api.runtime.agent.runEmbeddedAgent({ ...runParams, ...scenario.request });
       const forwarded = runEmbeddedAgent.mock.calls.at(-1)?.[0];
       expect(forwarded?.agentHarnessId, scenario.name).toBeUndefined();
@@ -134,8 +160,9 @@ describe("plugin registry runtime session ownership", () => {
     };
     const ordinaryEntry = { sessionId: "ordinary-session", updatedAt: 1 };
     const ordinaryAliasEntry = { sessionId: reservedEntry.sessionId, updatedAt: 1 };
-    const ordinaryNoIdEntry = { updatedAt: 1 };
+    const ordinaryNoIdEntry = { sessionId: "", updatedAt: 1 };
     const lockedNoIdEntry = {
+      sessionId: "",
       updatedAt: 1,
       agentHarnessId: "codex",
       modelSelectionLocked: true as const,
@@ -169,7 +196,7 @@ describe("plugin registry runtime session ownership", () => {
       [lockedOrdinaryKey]: lockedOrdinaryEntry,
       [legacyPrefixedKey]: legacyPrefixedEntry,
     };
-    const typedEntries = entries as unknown as Record<string, SessionEntry>;
+    const typedEntries: Record<string, SessionEntry> = entries;
     const subagent = {
       complete: vi.fn(async () => ({ text: "completed" })),
       run: vi.fn(async () => ({ runId: "subagent-run" })),
@@ -179,24 +206,35 @@ describe("plugin registry runtime session ownership", () => {
     } satisfies PluginRuntime["subagent"];
     const runtime = createPluginRuntime({ subagent });
     const session = runtime.agent.session;
-    session.getSessionEntry = vi.fn((params) => typedEntries[params.sessionKey]);
-    session.listSessionEntries = vi.fn(() =>
-      Object.entries(typedEntries).map(([sessionKey, entry]) => ({ sessionKey, entry })),
+    const readEntry = vi
+      .spyOn(sessionAccessor, "loadSessionEntryReadOnly")
+      .mockImplementation((params) => {
+        const entry = typedEntries[params.sessionKey];
+        return entry ? structuredClone(entry) : undefined;
+      });
+    vi.spyOn(sessionAccessor, "listSessionEntriesReadOnly").mockImplementation(() =>
+      Object.entries(typedEntries).map(([sessionKey, entry]) => ({
+        sessionKey,
+        entry: structuredClone(entry),
+      })),
     );
     session.patchSessionEntry = vi.fn(async (params) => {
       const entry = typedEntries[params.sessionKey];
       if (!entry) {
         return null;
       }
-      const patch = await params.update(structuredClone(entry), {
-        existingEntry: structuredClone(entry),
+      const patch = await params.update(projectPluginSessionEntry(structuredClone(entry)), {
+        existingEntry: projectPluginSessionEntry(structuredClone(entry)),
       });
-      return patch ? { ...entry, ...patch } : entry;
+      return patch
+        ? { ...projectPluginSessionEntry(entry), ...patch }
+        : projectPluginSessionEntry(entry);
     });
     session.upsertSessionEntry = vi.fn(async () => {});
-    session.updateSessionStoreEntry = vi.fn(
-      async (params) => typedEntries[params.sessionKey] ?? null,
-    );
+    session.updateSessionStoreEntry = vi.fn(async (params) => {
+      const entry = typedEntries[params.sessionKey];
+      return entry ? projectPluginSessionEntry(entry) : null;
+    });
     let admissionScope = getPluginRuntimeGatewayRequestScope();
     session.runWithWorkAdmission = vi.fn(async (_params, run) => {
       admissionScope = getPluginRuntimeGatewayRequestScope();
@@ -506,7 +544,7 @@ describe("plugin registry runtime session ownership", () => {
       ),
     ).resolves.toBe("admitted");
     const ownershipChangedRun = vi.fn(async () => "must-not-run");
-    vi.mocked(session.getSessionEntry)
+    readEntry
       .mockImplementationOnce(() => legacyPrefixedEntry)
       .mockImplementationOnce(() => reservedEntry);
     await expect(

@@ -36,8 +36,8 @@ import {
   loadProviderUsageSummary,
   resolveUsageProviderId,
 } from "../infra/provider-usage.js";
-import { getSessionExecutionSelection } from "../model-picker/execution-selection-state.js";
-import { isAcpExecutionSelection } from "../model-picker/execution-selection.js";
+import { getSessionExecutionSelection } from "../model-picker/execution-selection.js";
+import { isModelExecutionSelection } from "../model-picker/execution-selection.js";
 import { resolveActiveProviderThinkingProfile } from "../plugins/provider-thinking-active.js";
 import { normalizeAccountId } from "../routing/account-id.js";
 import { resolveNormalizedAccountEntry } from "../routing/account-lookup.js";
@@ -318,13 +318,22 @@ export async function buildStatusReplyParts(
     params.workspaceDir ??
     sessionEntry?.spawnedWorkspaceDir ??
     resolveAgentWorkspaceDir(cfg, statusAgentId);
-  const selection = getSessionExecutionSelection(sessionEntry, cfg);
+  const selection = getSessionExecutionSelection(sessionEntry);
+  const nativeManaged = selection?.model === "native-managed";
   const selectedProvider = params.activeModel
     ? (params.activeModel.provider ?? "")
-    : selection && !isAcpExecutionSelection(selection)
-      ? selection.model.provider
-      : provider;
-  const selectedModel = params.activeModel?.model ?? selection?.model?.id ?? model;
+    : nativeManaged
+      ? (sessionEntry?.modelProvider ?? "")
+      : selection && isModelExecutionSelection(selection)
+        ? selection.model.provider
+        : provider;
+  const selectedModel =
+    params.activeModel?.model ??
+    (nativeManaged
+      ? (sessionEntry?.model ?? "")
+      : selection && selection.model !== "native-managed"
+        ? selection.model.id
+        : model);
   const parseSelectedProvider = false;
   const modelParams = { selectedProvider, selectedModel, sessionEntry, parseSelectedProvider };
   const activeModel = params.activeModel
@@ -338,8 +347,11 @@ export async function buildStatusReplyParts(
     ...modelParams,
     sessionEntry: activeModel ?? sessionEntry,
   });
-  const selectedLookupProvider = modelRefs.selected.provider || selectedProvider || provider;
-  const selectedLookupModel = modelRefs.selected.model || selectedModel || model;
+  const selectedLookupProvider =
+    modelRefs.selected.provider || selectedProvider || (nativeManaged ? "" : provider);
+  const selectedLookupModel =
+    modelRefs.selected.model || selectedModel || (nativeManaged ? "" : model);
+  const hasModelIdentity = Boolean(selectedLookupProvider && selectedLookupModel);
   const effectiveHarness =
     params.resolvedHarness ??
     (await resolveStatusHarnessId({
@@ -377,7 +389,7 @@ export async function buildStatusReplyParts(
     harnessRuntime: effectiveHarness,
     config: cfg,
   });
-  const activeProvider = modelRefs.active.provider || provider;
+  const activeProvider = modelRefs.active.provider || (nativeManaged ? "" : provider);
   const activeStatusProvider = resolveStatusRuntimeProvider({
     provider: activeProvider,
     effectiveHarness,
@@ -389,15 +401,17 @@ export async function buildStatusReplyParts(
   });
   let selectedModelAuth = Object.hasOwn(params, "modelAuthOverride")
     ? params.modelAuthOverride
-    : await resolveAuth({
-        provider: selectedStatusProvider,
-        model: selectedLookupModel,
-        runtimeId: effectiveHarness,
-        acceptedProviderIds: selectedAuthProviders,
-      });
+    : hasModelIdentity
+      ? await resolveAuth({
+          provider: selectedStatusProvider,
+          model: selectedLookupModel,
+          runtimeId: effectiveHarness,
+          acceptedProviderIds: selectedAuthProviders,
+        })
+      : undefined;
   const activeModelAuth = Object.hasOwn(params, "activeModelAuthOverride")
     ? params.activeModelAuthOverride
-    : modelRefs.activeDiffers
+    : modelRefs.activeDiffers && modelRefs.active.provider && modelRefs.active.model
       ? await resolveAuth({
           provider: activeStatusProvider,
           model: modelRefs.active.model || model,
@@ -456,6 +470,7 @@ export async function buildStatusReplyParts(
     resolveUsageProviderId(usageProvider, { credentialType: usageCredentialType });
   let usageLine: string | null = null;
   if (
+    hasModelIdentity &&
     currentUsageProvider &&
     shouldLoadUsageSummary({
       provider: currentUsageProvider,
@@ -598,22 +613,22 @@ export async function buildStatusReplyParts(
   const initialActiveCatalogEntry = findModelInCatalog(
     thinkingCatalog ?? [],
     activeProvider,
-    modelRefs.active.model || model,
+    modelRefs.active.model || (nativeManaged ? "" : model),
   );
   const requestedThinkLevel =
     resolvedThinkLevel ??
     normalizeThinkLevel(sessionEntry?.thinkingLevel) ??
     configuredThinkingDefault ??
-    (await resolveDefaultThinkingLevel({
+    (hasModelIdentity ? await resolveDefaultThinkingLevel({
       provider: selectedLookupProvider,
       model: selectedLookupModel,
       agentRuntime: effectiveHarness,
-    })) ??
+    }) : undefined) ??
     "off";
   // Active profiles can forbid `off` (for example, always-thinking models). Absence means
   // there is no prepared policy fact, so status must not fall back to manifest discovery.
   const activeThinkingProfile =
-    requestedThinkLevel === "off"
+    hasModelIdentity && requestedThinkLevel === "off"
       ? resolveActiveProviderThinkingProfile({
           provider: selectedLookupProvider,
           context: {
@@ -626,9 +641,10 @@ export async function buildStatusReplyParts(
   const activeProfileSupportsOff = activeThinkingProfile?.levels.some(
     (level) => level.id === "off",
   );
-  const effectiveThinkLevel =
-    requestedThinkLevel === "off" &&
-    (activeThinkingProfile == null || activeProfileSupportsOff === true)
+  const effectiveThinkLevel = !hasModelIdentity
+    ? requestedThinkLevel
+    : requestedThinkLevel === "off" &&
+        (activeThinkingProfile == null || activeProfileSupportsOff === true)
       ? "off"
       : (await loadThinkingLevelRuntime()).resolveSupportedThinkingLevel({
           provider: selectedLookupProvider,

@@ -340,7 +340,8 @@ export async function runAgentHarnessAttempt(
                 : (input) => {
                     const policies = resolvePluginHarnessToolPolicies({
                       ...input.run,
-                      modelId: input.run.model,
+                      provider: effectiveAttemptParams.provider,
+                      modelId: effectiveAttemptParams.modelId,
                       sandboxSessionKey: input.run.runtimePolicySessionKey,
                       messageChannel: input.originatingChannel,
                       toolsAllow: input.toolsAllow,
@@ -512,7 +513,6 @@ function withoutInternalHarnessAuthority(
   const pluginParams = withoutPluginHarnessPrivateState(params);
   const host = createAgentHarnessHostCapabilities({
     attempt: params,
-    harnessId: harness.id,
     requiredNodeCommands: harness.cloudPlacement?.devicePlacement?.requiredNodeCommands,
     pluginId:
       ownerPluginId ??

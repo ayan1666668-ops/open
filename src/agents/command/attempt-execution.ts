@@ -1314,7 +1314,6 @@ export function runAgentAttempt(params: {
 
   const embeddedRunParams: RunEmbeddedAgentInternalParams = {
     preparedRunAdmission: params.preparedRunAdmission,
-    executionSelection,
     sessionId: params.sessionId,
     sessionKey: params.sessionKey,
     chatType: params.sessionEntry?.chatType,

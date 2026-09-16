@@ -825,7 +825,6 @@ function createDirectiveHandlingParams(
     aliasIndex: baseAliasIndex(),
     allowedModelKeys: new Set(["anthropic/claude-opus-4-6", "openai/gpt-4o"]),
     allowedModelCatalog: [],
-    resetModelOverride: false,
     provider: "anthropic",
     model: "claude-opus-4-6",
     initialModelLabel: "anthropic/claude-opus-4-6",
@@ -877,7 +876,6 @@ async function resolveModelInfoReply(
     allowedModelCatalog: [],
     currentThinkLevel: "medium",
     runtimePolicySessionKey: "agent:main:main",
-    resetModelOverride: false,
     ...overrides,
   });
 }

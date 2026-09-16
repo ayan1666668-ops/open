@@ -1,11 +1,12 @@
 // Tests ACP dispatch abort behavior and emitted lifecycle hooks.
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../../test/helpers/promise.js";
-import type {
-  AcpSessionResolution,
-  SessionAcpMeta,
-} from "../../acp/control-plane/manager.types.js";
-import { resolveAcpSessionTarget } from "../../acp/control-plane/manager.utils.js";
+import type { AcpSessionResolution } from "../../acp/control-plane/manager.types.js";
+import {
+  requireAcpExecutionSelection,
+  resolveAcpSessionTarget,
+} from "../../acp/control-plane/manager.utils.js";
+import type { AcpSessionStoreEntry } from "../../acp/runtime/session-meta.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import type {
   AcpRuntime,
@@ -14,6 +15,7 @@ import type {
   AcpRuntimeHandle,
   AcpRuntimeTurnInput,
 } from "../../plugin-sdk/acp-runtime.js";
+import { createAcpSessionStoreEntryFixture } from "../../test-utils/acp-session-store-entry.js";
 import { createInternalHookEventPayload } from "../../test-utils/internal-hook-event-payload.js";
 import { markCommandReplyForDelivery } from "../reply-payload.js";
 import {
@@ -103,12 +105,14 @@ function createMockAcpSessionManager() {
       const entry = acpMocks.readAcpSessionEntry({
         cfg: params.cfg,
         ...target,
-      }) as { acp?: SessionAcpMeta } | null;
-      if (entry?.acp) {
+      }) as AcpSessionStoreEntry | null;
+      if (entry?.acp && entry.entry) {
         return {
           kind: "ready",
           ...target,
           meta: entry.acp,
+          entry: entry.entry,
+          selection: requireAcpExecutionSelection(entry.entry),
         };
       }
       return { kind: "none", ...target };
@@ -141,9 +145,7 @@ function createMockAcpSessionManager() {
           cfg: params.cfg,
           sessionKey: params.sessionKey,
           agentId: params.agentId,
-        }) as {
-          acp?: { agent?: string; mode?: string };
-        } | null;
+        }) as AcpSessionStoreEntry | null;
         const runtimeBackend = acpMocks.requireAcpRuntimeBackend() as {
           runtime?: AcpRuntime;
         };
@@ -154,7 +156,7 @@ function createMockAcpSessionManager() {
           sessionKey: params.sessionKey,
           agentId: params.agentId,
           mode: (entry?.acp?.mode || "persistent") as AcpRuntimeEnsureInput["mode"],
-          agent: entry?.acp?.agent || "codex",
+          agent: requireAcpExecutionSelection(entry?.entry).executor.agent,
         });
         const stream = runtimeBackend.runtime.runTurn({
           handle,
@@ -277,12 +279,8 @@ describe("dispatchReplyFromConfig ACP abort", () => {
       cancel: vi.fn(async () => {}),
       close: vi.fn(async () => {}),
     } satisfies AcpRuntime;
-    acpMocks.readAcpSessionEntry.mockReturnValue({
+    const storedAcpEntry = createAcpSessionStoreEntryFixture({
       sessionKey: "agent:codex-acp:session-1",
-      storeSessionKey: "agent:codex-acp:session-1",
-      cfg: {},
-      storePath: "/tmp/mock-sessions.json",
-      entry: {},
       acp: {
         backend: "acpx",
         agent: "codex",
@@ -292,6 +290,8 @@ describe("dispatchReplyFromConfig ACP abort", () => {
         lastActivityAt: Date.now(),
       },
     });
+    sessionStoreMocks.currentEntry = storedAcpEntry.entry;
+    acpMocks.readAcpSessionEntry.mockReturnValue(storedAcpEntry);
     acpMocks.requireAcpRuntimeBackend.mockReturnValue({
       id: "acpx",
       runtime,
@@ -585,24 +585,21 @@ describe("dispatchReplyFromConfig ACP abort", () => {
         ? (existing as Record<string, unknown>)
         : undefined;
     });
+    const boundEntry = createAcpSessionStoreEntryFixture({
+      sessionKey: boundAcpSessionKey,
+      entry: sessionStore[boundAcpSessionKey],
+      acp: {
+        backend: "acpx",
+        agent: "codex",
+        runtimeSessionName: "runtime:bound",
+        mode: "persistent",
+        state: "idle",
+        lastActivityAt: Date.now(),
+      },
+    });
+    sessionStore[boundAcpSessionKey] = boundEntry.entry;
     acpMocks.readAcpSessionEntry.mockImplementation((params: { sessionKey: string }) =>
-      params.sessionKey === boundAcpSessionKey
-        ? {
-            sessionKey: boundAcpSessionKey,
-            storeSessionKey: boundAcpSessionKey,
-            cfg: {},
-            storePath: "/tmp/mock-sessions.json",
-            entry: sessionStore[boundAcpSessionKey],
-            acp: {
-              backend: "acpx",
-              agent: "codex",
-              runtimeSessionName: "runtime:bound",
-              mode: "persistent",
-              state: "idle",
-              lastActivityAt: Date.now(),
-            },
-          }
-        : null,
+      params.sessionKey === boundAcpSessionKey ? structuredClone(boundEntry) : null,
     );
 
     const tailDispatchStarted = createDeferred();

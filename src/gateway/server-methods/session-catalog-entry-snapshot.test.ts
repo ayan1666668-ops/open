@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   buildSessionCreationStamp,
   inheritSessionCreationPolicy,
-  type SessionCreatedActor,
 } from "../../config/sessions/session-entry-provenance.js";
+import type { InternalSessionEntry } from "../../config/sessions/types.js";
 import { createEmptyPluginRegistry } from "../../plugins/registry-empty.js";
 import { markPluginRegistryActive } from "../../plugins/registry-lifecycle.js";
 import type { PluginRegistry } from "../../plugins/registry-types.js";
@@ -25,10 +25,7 @@ const hoisted = vi.hoisted(() => ({
   listSessionEntriesReadOnly: vi.fn<
     (scope?: { agentId?: string; clone?: boolean; projection?: "full" | "list" }) => Array<{
       sessionKey: string;
-      entry: {
-        createdActor?: SessionCreatedActor;
-        updatedAt?: number;
-      };
+      entry: InternalSessionEntry;
     }>
   >(() => []),
 }));
@@ -81,6 +78,36 @@ function provider(id: string, sessionKey: string): SessionCatalogProvider {
 }
 
 describe("session catalog entry snapshots", () => {
+  it("projects plugin snapshots without changing the canonical actor index or exposing private fields", () => {
+    const entry: InternalSessionEntry = {
+      sessionId: "qa-session",
+      updatedAt: 1,
+      activeWriterRunId: "qa-writer",
+      executionSelection: {
+        state: "accepted",
+        fallbackPermission: "explicit",
+        selection: {
+          model: { provider: "qa-provider", id: "qa-model" },
+          executor: { kind: "harness", id: "openclaw" },
+        },
+      },
+      pluginExtensions: { fixture: { value: "original" } },
+    };
+    hoisted.listSessionEntriesReadOnly.mockReturnValue([{ sessionKey: "agent:main:qa", entry }]);
+    const snapshot = createSessionCatalogRequestEntrySnapshot({ cfg: {}, fallbackAgentId: "main" });
+    const projected = snapshot.sessionEntries.entriesForAgent("main")[0]?.entry;
+    expect(projected).toMatchObject({ providerOverride: "qa-provider", modelOverride: "qa-model" });
+    expect(projected).not.toHaveProperty("activeWriterRunId");
+    if (!projected?.pluginExtensions?.fixture)
+      throw new Error("Expected projected plugin metadata");
+    projected.pluginExtensions.fixture.value = "external mutation";
+    expect(snapshot.entryForSession("agent:main:qa")).toEqual(entry);
+    expect(entry.pluginExtensions?.fixture?.value).toBe("original");
+    expect(snapshot.sessionEntries.entriesForAgent("main")).toBe(
+      snapshot.sessionEntries.entriesForAgent("main"),
+    );
+  });
+
   afterEach(() => vi.restoreAllMocks());
 
   beforeEach(() => {
@@ -204,6 +231,8 @@ describe("session catalog entry snapshots", () => {
         host.sessions.map((session, index) => ({
           sessionKey: session.sessionKey,
           entry: {
+            sessionId: session.threadId,
+            updatedAt: 1,
             createdVia: "operator",
             createdActor: {
               type: "human" as const,
@@ -250,11 +279,19 @@ describe("session catalog entry snapshots", () => {
     hoisted.listSessionEntriesReadOnly.mockReturnValue([
       {
         sessionKey: "agent:main:alpha-adopted",
-        entry: { createdActor: { type: "agent", id: "worker-alpha" }, updatedAt: 2 },
+        entry: {
+          sessionId: "alpha-session",
+          createdActor: { type: "agent", id: "worker-alpha" },
+          updatedAt: 2,
+        },
       },
       {
         sessionKey: "agent:main:zeta-adopted",
-        entry: { createdActor: { type: "system", id: "scheduler" }, updatedAt: 1 },
+        entry: {
+          sessionId: "zeta-session",
+          createdActor: { type: "system", id: "scheduler" },
+          updatedAt: 1,
+        },
       },
     ]);
     const flattenedEntries: unknown[] = [];
@@ -370,10 +407,14 @@ describe("session catalog entry snapshots", () => {
       now: 1,
     });
     const entries = [
-      { sessionKey: "agent:main:child", entry: { ...creation, updatedAt: 1 } },
+      {
+        sessionKey: "agent:main:child",
+        entry: { ...creation, sessionId: "child-session", updatedAt: 1 },
+      },
       {
         sessionKey: "agent:main:channel",
         entry: {
+          sessionId: "channel-session",
           ...buildSessionCreationStamp({
             via: "channel",
             actor: { type: "human", source: "channel", id: "former" },

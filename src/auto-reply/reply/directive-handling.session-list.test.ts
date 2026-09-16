@@ -76,7 +76,6 @@ it.each([
         aliasIndex: { byAlias: new Map(), byKey: new Map() },
         allowedModelKeys: new Set(["openai/gpt-5.5"]),
         allowedModelCatalog: [],
-        resetModelOverride: false,
         messageProvider: "telegram",
         commandAuthorized: authorized,
       });

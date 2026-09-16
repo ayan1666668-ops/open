@@ -1,6 +1,7 @@
 import { resolveSandboxWorkspaceAuthority } from "../../agents/sandbox/workspace-authority.js";
 // Plugin runtime entrypoint assembles runtime helpers available to activated plugins.
 import { getRuntimeConfig } from "../../config/config.js";
+import { loadSessionEntryReadOnly } from "../../config/sessions/session-accessor.js";
 import {
   listImageGenerationProviders,
   listMusicGenerationProviders,
@@ -163,13 +164,13 @@ function createRuntimeWorktrees(): PluginRuntime["worktrees"] {
   };
 }
 
-function createRuntimeSandbox(agent: PluginRuntime["agent"]): PluginRuntime["sandbox"] {
+function createRuntimeSandbox(): PluginRuntime["sandbox"] {
   const resolveWorkspaceAuthority = (
     params: Parameters<PluginRuntime["sandbox"]["resolveWorkspaceAuthority"]>[0],
   ) =>
     resolveSandboxWorkspaceAuthority({
       ...params,
-      sessionEntry: agent.session.getSessionEntry({
+      sessionEntry: loadSessionEntryReadOnly({
         agentId: params.agentId,
         sessionKey: params.sessionKey,
       }),
@@ -220,7 +221,7 @@ export const createPluginRuntime: PluginRuntimeFactory = (
     },
     subagent: _options.subagent ?? createUnavailableSubagentRuntime(),
     nodes: _options.nodes ?? createUnavailableNodesRuntime(),
-    sandbox: createRuntimeSandbox(agent),
+    sandbox: createRuntimeSandbox(),
     worktrees: createRuntimeWorktrees(),
     system: base.system,
     media: createRuntimeMedia(),

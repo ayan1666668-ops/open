@@ -4,7 +4,6 @@
  * Reports and updates session runtime state, model overrides, visibility, task status, and delivery context.
  */
 import { randomUUID } from "node:crypto";
-import { isDeepStrictEqual } from "node:util";
 import { readStringValue } from "@openclaw/normalization-core/string-coerce";
 import { Type } from "typebox";
 import type {
@@ -23,10 +22,11 @@ import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { triggerSessionPatchHook } from "../../gateway/session-patch-hooks.js";
 import {
   prepareSessionExecutionSelection,
+  applySessionExecutionSelection,
   commitSessionModelSelectionWithAuth,
+  executionSelectionTransactionChanged,
 } from "../../model-picker/apply-session-model-selection.js";
-import { executionSelectionTransactionChanged } from "../../model-picker/apply-session-model-selection.js";
-import { getSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
+import { getSessionExecutionSelection } from "../../model-picker/execution-selection.js";
 import {
   isAcpExecutionSelection,
   isModelExecutionSelection,
@@ -81,7 +81,10 @@ import {
 } from "../model-selection.js";
 import { resolveThinkingDefault } from "../model-thinking-default.js";
 import { loadPublishedPreparedModelCatalog } from "../prepared-model-catalog.js";
-import { resolveSessionModelRef, resolveSessionModelIdentityRef } from "../session-model-ref.js";
+import {
+  resolveSessionModelRefCore as resolveSessionModelRef,
+  resolveSessionModelIdentityRef,
+} from "../session-model-ref.js";
 import {
   describeSessionStatusTool,
   SESSION_STATUS_TOOL_DISPLAY_SUMMARY,
@@ -959,7 +962,7 @@ export function createSessionStatusTool(opts?: {
             if (isModelSelectionLocked(initialEntry)) {
               throw new ModelSelectionLockedError();
             }
-            const accepted = getSessionExecutionSelection(initialEntry, cfg);
+            const accepted = getSessionExecutionSelection(initialEntry);
             const assertCurrentSelectionAccess = () => {
               assertCurrentAccess();
               const current = scopedResolved.persisted
@@ -984,7 +987,7 @@ export function createSessionStatusTool(opts?: {
             if (accepted && isAcpExecutionSelection(accepted)) {
               const model = normalizeToolModelOverride(modelRaw);
               resetModelRequested = !model;
-              const prepared = await prepareSessionExecutionSelection({
+              const applied = await applySessionExecutionSelection({
                 cfg,
                 agentId,
                 sessionKey: scopedResolved.key,
@@ -994,21 +997,13 @@ export function createSessionStatusTool(opts?: {
                   kind: "selection",
                   selection: { ...accepted, model: model ? { id: model } : "native-managed" },
                 },
-                prepareAcp: async (selection) => {
-                  const { getAcpSessionManager } =
-                    await import("../../acp/control-plane/manager.js");
+                validateCommit: () => {
                   assertCurrentSelectionAccess();
-                  return await getAcpSessionManager().setExecutionSelection({
-                    cfg,
-                    agentId,
-                    sessionKey: scopedResolved.key,
-                    selection,
-                    assertActive: assertCurrentSelectionAccess,
-                  });
+                  return undefined;
                 },
               });
-              if (prepared.status !== "ready") {
-                throw new Error(prepared.message);
+              if (applied.status !== "applied") {
+                throw new Error(applied.message);
               }
               const current = loadSessionEntryReadOnly({
                 agentId,
@@ -1020,8 +1015,8 @@ export function createSessionStatusTool(opts?: {
                 throw new Error(`Unknown sessionKey: ${scopedResolved.key}`);
               }
               scopedResolved = { entry: current, key: scopedResolved.key, persisted: true };
-              changedModel = !isDeepStrictEqual(accepted, prepared.selection);
-              modelChangeMessage = prepared.message;
+              changedModel = applied.changed;
+              modelChangeMessage = applied.message;
             } else {
               const parsed = await resolveModelOverride({
                 cfg,
@@ -1150,7 +1145,7 @@ export function createSessionStatusTool(opts?: {
                 agentId,
                 `${configured.provider}/${configured.model}`,
               );
-          const statusSelection = getSessionExecutionSelection(scopedResolved.entry, cfg);
+          const statusSelection = getSessionExecutionSelection(scopedResolved.entry);
           const selectedModel =
             statusSelection && statusSelection.model !== "native-managed"
               ? {
@@ -1241,7 +1236,10 @@ export function createSessionStatusTool(opts?: {
             statusSelection && isModelExecutionSelection(statusSelection)
               ? statusSelection.model.provider
               : undefined;
-          const resultOverrideModel = statusSelection?.model?.id;
+          const resultOverrideModel =
+            statusSelection && statusSelection.model !== "native-managed"
+              ? statusSelection.model.id
+              : undefined;
           const liveSessionKeySet = new Set(
             liveSessionKeys
               .map((value) => value?.trim())

@@ -42,6 +42,7 @@ import { drainAgentRunTerminalWrites } from "../../infra/agent-run-terminal-writ
 import { isDiagnosticsEnabled } from "../../infra/diagnostic-events.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { logSessionTurnCreated } from "../../logging/diagnostic.js";
+import { isModelExecutionSelection } from "../../model-picker/execution-selection.js";
 import {
   bindGatewayContextResolver,
   getPluginRuntimeGatewayRequestScope,
@@ -287,8 +288,10 @@ async function executeAgentTurnInternalLoop(
   };
   const notifyUserAboutCompaction = shouldNotifyUserAboutCompaction(runtimeConfig);
   let runResult: Awaited<ReturnType<typeof runEmbeddedAgent>>;
-  let fallbackProvider = params.followupRun.run.executionSelection.model.provider;
-  let fallbackModel = params.followupRun.run.executionSelection.model.id;
+  const selection = params.followupRun.run.executionSelection;
+  const selectedModel = isModelExecutionSelection(selection) ? selection.model : undefined;
+  let fallbackProvider = selectedModel?.provider;
+  let fallbackModel = selectedModel?.id;
   let fallbackAttempts: RuntimeFallbackAttempt[] = [];
   let fallbackExhausted = false;
   let terminalRunFailed = false;
@@ -488,6 +491,7 @@ async function executeAgentTurnInternalLoop(
   return {
     kind: "completed",
     maintenanceAuthProfile: fallbackCycleState.maintenanceAuthProfile,
+    maintenanceExecutionSelection: fallbackCycleState.maintenanceExecutionSelection,
     compactionRequestBudget: fallbackCycleState.compactionRequestBudget,
     result: runResult,
     fallbackProvider,
@@ -640,14 +644,16 @@ async function executeAgentTurnOutcome(params: AgentTurnParams): Promise<AgentTu
         },
       };
     }
+    const selectedExecution = executionParams.followupRun.run.executionSelection;
+    const selectedModel = isModelExecutionSelection(selectedExecution)
+      ? selectedExecution.model
+      : undefined;
     const provider =
       internal.fallbackProvider ??
       internal.result.meta?.agentMeta?.provider ??
-      executionParams.followupRun.run.executionSelection.model.provider;
+      selectedModel?.provider;
     const model =
-      internal.fallbackModel ??
-      internal.result.meta?.agentMeta?.model ??
-      executionParams.followupRun.run.executionSelection.model.id;
+      internal.fallbackModel ?? internal.result.meta?.agentMeta?.model ?? selectedModel?.id;
     const terminalStatus = internal.terminalFailurePayload
       ? {
           status: "failed" as const,
@@ -662,6 +668,7 @@ async function executeAgentTurnOutcome(params: AgentTurnParams): Promise<AgentTu
       outcome: {
         kind: "settled",
         maintenanceAuthProfile: internal.maintenanceAuthProfile,
+        maintenanceExecutionSelection: internal.maintenanceExecutionSelection,
         compactionRequestBudget: internal.compactionRequestBudget,
         ...terminalStatus,
         result: internal.result,

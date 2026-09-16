@@ -5,11 +5,14 @@ import type {
   RunEmbeddedAgentInternalParams,
 } from "../../agents/embedded-agent-runner/run/internal-params.js";
 import { runEmbeddedAgent } from "../../agents/embedded-agent.js";
-import { resolveAgentHarnessPolicy } from "../../agents/harness/policy.js";
 import { resolveOpenAIRuntimeProvider } from "../../agents/openai-routing.js";
 import type { CompactionRequestBudget } from "../../agents/sessions/compaction/request-budget.js";
 import { resolveGroupSessionKey } from "../../config/sessions.js";
 import { logVerbose } from "../../globals.js";
+import {
+  isAcpExecutionSelection,
+  isModelExecutionSelection,
+} from "../../model-picker/execution-selection.js";
 import { resolveSessionPinnedHarnessId } from "../../sessions/agent-harness-session-key.js";
 import {
   isMarkdownCapableMessageChannel,
@@ -35,7 +38,6 @@ import {
 export async function runEmbeddedFallbackCandidate(
   params: AgentFallbackCandidateCommonParams & {
     effectiveRun: AgentFallbackCandidateCommonParams["candidateRun"];
-    sessionRuntimeOverride?: string;
     getLifecycleGeneration: () => string;
     onLifecycleGeneration: (generation: string) => void;
     allowTransientCooldownProbe?: boolean;
@@ -53,6 +55,10 @@ export async function runEmbeddedFallbackCandidate(
   compactionRequestBudget?: CompactionRequestBudget;
   bootstrapPromptWarningSignaturesSeen: string[];
 }> {
+  const selection = params.candidateRun.executionSelection;
+  if (isAcpExecutionSelection(selection))
+    throw new Error("This execution belongs to the native manager.");
+  const model = isModelExecutionSelection(selection) ? selection.model : undefined;
   const turn = params.turn;
   let maintenanceAuthProfile: CompletedAgentAuthSelection | undefined;
   let compactionRequestBudget: CompactionRequestBudget | undefined;
@@ -67,37 +73,23 @@ export async function runEmbeddedFallbackCandidate(
     replyRoute: turn.followupRun,
     sessionCtx: turn.sessionCtx,
     hasRepliedRef: turn.opts?.hasRepliedRef,
-    provider: params.provider,
     runId: params.runId,
     promptCacheKey: turn.opts?.promptCacheKey,
     allowTransientCooldownProbe: params.allowTransientCooldownProbe,
-    model: params.model,
   });
   if (sourceReplyDeliveryRuntime) {
     bindSourceReplyDeliveryRuntime(runBaseParams, sourceReplyDeliveryRuntime);
   }
-  const agentHarnessPolicy = params.sessionRuntimeOverride
-    ? ({ runtime: params.sessionRuntimeOverride, runtimeSource: "model" } as const)
-    : resolveAgentHarnessPolicy({
-        provider: params.provider,
-        modelId: params.model,
+  const embeddedRunProvider = model
+    ? resolveOpenAIRuntimeProvider({
+        provider: model.provider,
+        harnessRuntime: selection.executor.id,
+        authProfileProvider: runBaseParams.authProfileId?.split(":", 1)[0],
+        authProfileId: runBaseParams.authProfileId,
         config: params.runtimeConfig,
-        agentId: turn.followupRun.run.agentId,
-        sessionKey: turn.followupRun.run.runtimePolicySessionKey ?? turn.sessionKey,
-      });
-  const embeddedRunProvider = resolveOpenAIRuntimeProvider({
-    provider: params.provider,
-    harnessRuntime: agentHarnessPolicy.runtime,
-    authProfileProvider: runBaseParams.authProfileId?.split(":", 1)[0],
-    authProfileId: runBaseParams.authProfileId,
-    config: params.runtimeConfig,
-    workspaceDir: turn.followupRun.run.workspaceDir,
-  });
-  const embeddedRunHarnessOverride =
-    params.sessionRuntimeOverride ??
-    (agentHarnessPolicy.runtime === "openclaw" && embeddedRunProvider !== params.provider
-      ? "openclaw"
-      : undefined);
+        workspaceDir: turn.followupRun.run.workspaceDir,
+      })
+    : undefined;
   let attemptCompactionCount = 0;
   let postCompactionModelAttempted = false;
   let compactionAccounting: CompactionAccountingFact | undefined;
@@ -141,9 +133,8 @@ export async function runEmbeddedFallbackCandidate(
         lane: params.runLane,
         provider: embeddedRunProvider,
         agentHarnessId: resolveSessionPinnedHarnessId(turn.getActiveSessionEntry()),
-        agentHarnessRuntimeOverride: embeddedRunHarnessOverride,
-        agentHarnessRuntimePreparationHint:
-          agentHarnessPolicy.runtimeSource !== "implicit" ? agentHarnessPolicy.runtime : undefined,
+        agentHarnessRuntimeOverride: selection.executor.id,
+        agentHarnessRuntimePreparationHint: selection.executor.id,
         fastModeStartedAtMs: params.fastModeStartedAtMs,
         fastModeAutoProgressState: params.fastModeAutoProgressState,
         isFinalFallbackAttempt: params.isFinalFallbackAttempt,
@@ -286,8 +277,8 @@ export async function runEmbeddedFallbackCandidate(
               (sourceReplyDeliveryRuntime?.currentMode ??
                 turn.followupRun.run.sourceReplyDeliveryMode) === "message_tool_only",
             messageToolDeliveryState: params.messageToolDeliveryState,
-            provider: params.provider,
-            model: params.model,
+            provider: model?.provider,
+            model: model?.id,
             runId: params.runId,
             effectiveSessionId: params.effectiveRun.sessionId,
             notifyUserAboutCompaction: params.notifyUserAboutCompaction,

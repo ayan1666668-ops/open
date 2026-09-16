@@ -30,7 +30,6 @@ describe("sessions.move abandonment", () => {
     mocks.resolveTarget.mockReturnValue(
       makeSessionTarget({
         sessionId,
-        agentRuntimeOverride: "openclaw",
         worktree: { id: "worktree-1", branch: "openclaw/device-test", repoRoot: "/repo" },
       }),
     );

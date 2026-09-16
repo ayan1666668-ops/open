@@ -5,13 +5,16 @@ import { consolidateLiveModelSwitchAfterRun } from "../../agents/live-model-swit
 import { resolveCollapsedSessionAuthPinSource } from "../../config/sessions/auth-profile-override-provenance.js";
 import { updateSessionEntry } from "../../config/sessions/session-accessor.js";
 import { logVerbose } from "../../globals.js";
-import { getSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
-import { isAcpExecutionSelection } from "../../model-picker/execution-selection.js";
+import { getSessionExecutionSelection } from "../../model-picker/execution-selection.js";
+import {
+  isAcpExecutionSelection,
+  isModelExecutionSelection,
+} from "../../model-picker/execution-selection.js";
 import { shouldPreserveUserFacingSessionStateForInputProvenance } from "../../sessions/input-provenance.js";
 import { resolveFallbackTransition } from "../fallback-state.js";
 import { normalizeVerboseLevel } from "../thinking.js";
 import type { ReplyPayload } from "../types.js";
-import { refreshSessionEntryFromStore, resolveFallbackOriginModel } from "./agent-runner-core.js";
+import { refreshSessionEntryFromStore } from "./agent-runner-core.js";
 import type { AgentTurnCompaction } from "./agent-runner-execution.types.js";
 import { buildReplyDiagnosticsPayload } from "./agent-runner-result-diagnostics.js";
 import type { FinalizeReplyAgentRunInput } from "./agent-runner-result.types.js";
@@ -30,7 +33,6 @@ type AgentTurnAccountingContext = Pick<
   | "activeSessionStore"
   | "blockReplyPipeline"
   | "cfg"
-  | "defaultModel"
   | "followupRun"
   | "isHeartbeat"
   | "pendingToolTasks"
@@ -80,7 +82,6 @@ export async function accountAgentTurn(context: AgentTurnAccountingContext) {
     activeSessionStore,
     blockReplyPipeline,
     cfg,
-    defaultModel,
     followupRun,
     isHeartbeat,
     pendingToolTasks,
@@ -159,11 +160,13 @@ export async function accountAgentTurn(context: AgentTurnAccountingContext) {
 
   const usage = runResult.meta?.agentMeta?.usage;
   const promptTokens = runResult.meta?.agentMeta?.promptTokens;
-  const modelUsed = runResult.meta?.agentMeta?.model ?? fallbackModel ?? defaultModel;
+  const executionSelection = followupRun.run.executionSelection;
+  const requestedModel = isModelExecutionSelection(executionSelection)
+    ? executionSelection.model
+    : undefined;
+  const modelUsed = runResult.meta?.agentMeta?.model ?? fallbackModel ?? requestedModel?.id;
   const providerUsed =
-    runResult.meta?.agentMeta?.provider ??
-    fallbackProvider ??
-    followupRun.run.executionSelection.model.provider;
+    runResult.meta?.agentMeta?.provider ?? fallbackProvider ?? requestedModel?.provider;
   const runtimeModelSelection = runResult.meta?.agentMeta?.runtimeModelSelection;
   // A tool-free finalizer owns its response usage, not the session's next model.
   const sessionModel = runtimeModelSelection ?? { provider: providerUsed, model: modelUsed };
@@ -199,8 +202,8 @@ export async function accountAgentTurn(context: AgentTurnAccountingContext) {
     sessionId: followupRun.run.sessionId,
     chatType: typeof sessionCtx.ChatType === "string" ? sessionCtx.ChatType : undefined,
     authMode: runResult.meta?.requestShaping?.authMode ?? undefined,
-    requestedProvider: followupRun.run.executionSelection.model.provider,
-    requestedModel: followupRun.run.executionSelection.model.id,
+    requestedProvider: requestedModel?.provider,
+    requestedModel: requestedModel?.id,
     durationMs: Date.now() - runStartedAt,
     compactionCount: typeof compactions === "number" ? compactions : undefined,
     contextTokenBudget:
@@ -218,13 +221,8 @@ export async function accountAgentTurn(context: AgentTurnAccountingContext) {
   );
   const fallbackStateEntry =
     activeSessionEntry ?? (sessionKey ? activeSessionStore?.[sessionKey] : undefined);
-  const configuredFallbackModel = resolveFallbackOriginModel({
-    run: followupRun.run,
-    fallbackStateEntry,
-    runtimeModelSelection,
-  });
-  const selectedProvider = configuredFallbackModel.provider;
-  const selectedModel = configuredFallbackModel.model;
+  const selectedProvider = runtimeModelSelection?.provider ?? requestedModel?.provider;
+  const selectedModel = runtimeModelSelection?.model ?? requestedModel?.id;
   const fallbackTransition = resolveFallbackTransition({
     selectedProvider,
     selectedModel,
@@ -344,7 +342,6 @@ export async function accountAgentTurn(context: AgentTurnAccountingContext) {
     autoCompactionCount,
     compactionCount,
     expectedSession,
-    configuredFallbackModel,
     contextTokensUsed,
     didLogHeartbeatStrip,
     directlySentBlockKeys,
@@ -400,7 +397,6 @@ export async function accountFollowupTurn(params: {
     activeSessionStore: turn.sessionStore,
     blockReplyPipeline: null,
     cfg: turn.config,
-    defaultModel: defaults.defaultModel,
     followupRun: turn.queued,
     isHeartbeat: defaults.opts?.isHeartbeat === true,
     pendingToolTasks: execution.pendingToolTasks,
@@ -424,7 +420,7 @@ export async function accountFollowupTurn(params: {
     !accounting.preserveUserFacingSessionState
   ) {
     const entry = turn.session.current();
-    const accepted = getSessionExecutionSelection(entry, turn.queued.run.config);
+    const accepted = getSessionExecutionSelection(entry);
     refreshQueuedFollowupSession({
       key: queueKey,
       previousSessionId: turn.queued.run.sessionId,

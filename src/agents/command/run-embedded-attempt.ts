@@ -208,6 +208,7 @@ export async function runEmbeddedAgentAttempt(params: RunEmbeddedAgentAttemptPar
       sessionEntryForAttempt = sessionEntry;
     },
   });
+  let maintenanceExecutionSelection: ExecutionSelection | undefined;
   let maintenanceAuthProfile:
     | { authProfileId?: string; authProfileIdSource?: "auto" | "user" }
     | undefined;
@@ -276,6 +277,7 @@ export async function runEmbeddedAgentAttempt(params: RunEmbeddedAgentAttemptPar
         clearAgentRunTerminalWriteContext(params.preparedRunAdmission.operationalRunInstance);
         const candidateAccounting = compactionAccounting.beginCandidate(deferredLifecycle.signal);
         maintenanceAuthProfile = undefined;
+        maintenanceExecutionSelection = undefined;
         attemptMediaTaskIds = sessionKey
           ? getGeneratedMediaTaskIdsForSessionKey(sessionKey)
           : new Set<string>();
@@ -450,6 +452,7 @@ export async function runEmbeddedAgentAttempt(params: RunEmbeddedAgentAttemptPar
             onSuccessfulAuthProfile: (selection) => {
               // Absence is a valid ambient-auth result; only an uncalled observer is unknown.
               maintenanceAuthProfile = selection;
+              maintenanceExecutionSelection = candidateSelection;
             },
             onLifecycleGenerationChanged: (nextLifecycleGeneration) => {
               lifecycleGeneration = nextLifecycleGeneration;
@@ -658,6 +661,7 @@ export async function runEmbeddedAgentAttempt(params: RunEmbeddedAgentAttemptPar
     lifecycleGeneration,
     effectiveTurnThinkLevel,
     maintenanceAuthProfile,
+    maintenanceExecutionSelection,
     compactionAccounting: compactionAccounting.fact,
     compactionRequestBudget: compactionAccounting.requestBudget,
     internalSessionTarget,

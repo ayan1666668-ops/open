@@ -26,7 +26,7 @@ import { resolveHeartbeatSummariesForAgents } from "../infra/heartbeat-summary-p
 import { hasResolvableHeartbeatOwnerRoute } from "../infra/outbound/targets.js";
 import { readStartupMigrationWarning } from "../infra/state-migrations.messages.js";
 import { peekSystemEvents } from "../infra/system-events.js";
-import { getSessionExecutionSelection } from "../model-picker/execution-selection-state.js";
+import { getSessionExecutionSelection } from "../model-picker/execution-selection.js";
 import {
   listActiveDegradedPlugins,
   toPublicPluginVerificationDiagnostic,
@@ -214,21 +214,29 @@ async function prepareSessionStatusDetails(cfg: OpenClawConfig, now: number) {
         });
         const configuredSessionModel = configuredForSession.model ?? DEFAULT_MODEL;
         const configuredSessionModelLabel = `${configuredForSession.provider ?? DEFAULT_PROVIDER}/${configuredSessionModel}`;
-        const resolvedModel = resolveSessionModelRef(configuredForSession, entry);
-        const model = resolvedModel.model ?? configuredSessionModel ?? null;
-        const lookupModel =
-          resolveStatusModelLookupRef({
-            provider: resolvedModel.provider,
-            model,
-            defaultProvider: configuredForSession.provider ?? DEFAULT_PROVIDER,
-          }) ?? resolvedModel;
+        const nativeManaged = getSessionExecutionSelection(entry)?.model === "native-managed";
+        const resolvedModel = nativeManaged
+          ? { provider: entry.modelProvider?.trim() ?? "", model: entry.model?.trim() ?? "" }
+          : resolveSessionModelRef(configuredForSession, entry);
+        const model = nativeManaged
+          ? resolvedModel.model || null
+          : (resolvedModel.model ?? configuredSessionModel ?? null);
+        const lookupModel = nativeManaged
+          ? resolvedModel
+          : (resolveStatusModelLookupRef({
+              provider: resolvedModel.provider,
+              model,
+              defaultProvider: configuredForSession.provider ?? DEFAULT_PROVIDER,
+            }) ?? resolvedModel);
         const lookupModelId = lookupModel.model ?? model;
-        const modelContext = await resolveStaticModelContext(
-          lookupModel.provider,
-          lookupModelId ?? undefined,
-        );
-        const selectedModelLabel =
-          resolvedModel.provider && model ? `${resolvedModel.provider}/${model}` : model;
+        const modelContext = nativeManaged
+          ? undefined
+          : await resolveStaticModelContext(lookupModel.provider, lookupModelId ?? undefined);
+        const selectedModelLabel = nativeManaged
+          ? "the app's default model"
+          : resolvedModel.provider && model
+            ? `${resolvedModel.provider}/${model}`
+            : model;
         const configuredSessionModelComparisonLabel = resolveStatusModelComparisonLabel({
           provider: configuredForSession.provider ?? DEFAULT_PROVIDER,
           model: configuredSessionModel,
@@ -251,21 +259,24 @@ async function prepareSessionStatusDetails(cfg: OpenClawConfig, now: number) {
           ? configuredForSession.provider
           : lookupModel.provider;
         const modelSelectionDiffers =
+          !nativeManaged &&
           selectedModelComparisonLabel != null &&
           configuredSessionModelComparisonLabel != null &&
           selectedModelComparisonLabel !== configuredSessionModelComparisonLabel &&
           !runtimeMatchesConfiguredModel &&
-          Boolean(getSessionExecutionSelection(entry, cfg));
+          Boolean(getSessionExecutionSelection(entry));
         // Session rows show the live selected model and warn for user-pinned
         // differences as well as runtime fallback selections (#96126).
-        const resolvedContextTokens = resolveContextTokensForModel({
-          cfg,
-          provider: lookupModel.provider,
-          model: lookupModelId,
-          ...modelContext,
-          fallbackContextTokens: configContextTokens ?? undefined,
-          allowAsyncLoad: false,
-        });
+        const resolvedContextTokens = nativeManaged
+          ? undefined
+          : resolveContextTokensForModel({
+              cfg,
+              provider: lookupModel.provider,
+              model: lookupModelId,
+              ...modelContext,
+              fallbackContextTokens: configContextTokens ?? undefined,
+              allowAsyncLoad: false,
+            });
         const runtime = resolveSessionRuntime({
           cfg,
           entry,
@@ -281,12 +292,14 @@ async function prepareSessionStatusDetails(cfg: OpenClawConfig, now: number) {
             model: lookupModelId,
             agentHarnessId: runtime.id,
             resolvedContextTokens,
-            authoredContextTokens: resolveAuthoredModelContextTokens({
-              cfg,
-              provider: lookupModel.provider,
-              modelProvider: contextModelProvider,
-              model: lookupModelId,
-            }),
+            authoredContextTokens: nativeManaged
+              ? undefined
+              : resolveAuthoredModelContextTokens({
+                  cfg,
+                  provider: lookupModel.provider,
+                  modelProvider: contextModelProvider,
+                  model: lookupModelId,
+                }),
           }) ?? null;
         const total = resolveSessionTotalTokens(entry);
         const freshTotal = resolveFreshSessionTotalTokens(entry);

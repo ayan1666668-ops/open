@@ -14,7 +14,7 @@ import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import { formatErrorMessage } from "../../../infra/errors.js";
 import { getSessionBindingService } from "../../../infra/outbound/session-binding-service.js";
 import { createSubsystemLogger } from "../../../logging/subsystem.js";
-import { getCommittedSessionExecutionSelection } from "../../../model-picker/apply-session-model-selection.js";
+import { getCommittedSessionExecutionSelection } from "../../../model-picker/execution-selection.js";
 import { isAcpExecutionSelection } from "../../../model-picker/execution-selection.js";
 import { isSubagentSessionKey, parseAgentSessionKey } from "../../../routing/session-key.js";
 import { normalizeDeliveryContext } from "../../../utils/delivery-context.shared.js";

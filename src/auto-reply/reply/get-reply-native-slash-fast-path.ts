@@ -12,7 +12,7 @@ import { resolveChannelModelOverride } from "../../channels/model-overrides.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import { isModelSelectionLocked } from "../../sessions/model-overrides.js";
 import { recordSessionCreated } from "../../sessions/session-state-events.js";
-import { resolveStoredModelOverride } from "../../sessions/stored-model-overrides.js";
+import { resolveStoredModelOverrideCore } from "../../sessions/stored-model-overrides.js";
 import { createLazyImportLoader } from "../../shared/lazy-promise.js";
 import type { SkillCommandSpec } from "../../skills/types.js";
 import {
@@ -180,7 +180,7 @@ export async function maybeResolveNativeSlashCommandFastReply(params: {
     const canApplyStoredModel =
       params.provider === params.defaultProvider && params.model === params.defaultModel;
     const storedModelOverride = canApplyStoredModel
-      ? resolveStoredModelOverride({
+      ? resolveStoredModelOverrideCore({
           sessionEntry: targetSessionEntry,
           sessionStore: sessionState.sessionStore,
           sessionKey: sessionState.sessionKey,

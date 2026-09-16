@@ -13,6 +13,11 @@ import {
 } from "../../config/sessions/session-entry-provenance.js";
 import type { SessionCreatedActor } from "../../config/sessions/session-entry-provenance.js";
 import { mergeSessionSnapshotChanges } from "../../config/sessions/session-snapshot-merge.js";
+import {
+  isModelExecutionSelection,
+  type ModelExecutionSelection,
+  type NativeManagedExecutionSelection,
+} from "../../model-picker/execution-selection.js";
 import { isCronSessionKey } from "../../sessions/session-key-utils.js";
 import { isSessionWorkAdmissionActive } from "../../sessions/session-lifecycle-admission.js";
 import type { SkillSnapshot } from "../../skills/types.js";
@@ -48,7 +53,9 @@ export type MutableCronSession = ReturnType<typeof resolveCronSession> & {
   sessionEntry: MutableCronSessionEntry;
 };
 /** Live provider/model/auth-profile selection reported by the running session. */
-export type CronLiveSelection = LiveSessionModelSelection;
+export type CronLiveSelection = Omit<LiveSessionModelSelection, "selection"> & {
+  selection: ModelExecutionSelection | NativeManagedExecutionSelection;
+};
 
 /**
  * Accessor-backed guarded write: `update` receives the freshest persisted row
@@ -459,11 +466,11 @@ export async function persistCronSkillsSnapshotIfChanged(params: {
  */
 export function setCronSessionRuntimeModel(params: {
   entry: MutableCronSessionEntry;
-  provider: string;
-  model: string;
+  provider?: string;
+  model?: string;
 }) {
-  const provider = params.provider.trim();
-  const model = params.model.trim();
+  const provider = params.provider?.trim();
+  const model = params.model?.trim();
   if (!provider || !model) {
     return false;
   }
@@ -505,10 +512,12 @@ export function syncCronSessionLiveSelection(params: {
   entry: MutableCronSessionEntry;
   liveSelection: CronLiveSelection;
 }) {
+  const selection = params.liveSelection.selection;
+  if (!isModelExecutionSelection(selection)) return;
   setCronSessionRuntimeModel({
     entry: params.entry,
-    provider: params.liveSelection.selection.model.provider,
-    model: params.liveSelection.selection.model.id,
+    provider: selection.model.provider,
+    model: selection.model.id,
   });
   setCronSessionAgentHarnessId({
     entry: params.entry,

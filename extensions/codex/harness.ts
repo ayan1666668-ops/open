@@ -144,16 +144,8 @@ export function createCodexAppServerAgentHarness(
         ? {
             model: "native",
             auth: binding.connectionScope === "supervision" ? "native" : "host",
-            ...(params.selection &&
-            params.selection.executor.kind === "harness" &&
-            params.selection.model !== "native-managed" &&
-            "provider" in params.selection.model
-              ? {
-                  modelRef: {
-                    provider: params.selection.model.provider,
-                    model: params.selection.model.id,
-                  },
-                }
+            ...(binding.model?.trim() && binding.modelProvider
+              ? { modelRef: { provider: binding.modelProvider, model: binding.model } }
               : {}),
           }
         : undefined;

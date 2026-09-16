@@ -1,14 +1,12 @@
 /** Resolves agent runtime metadata from model/provider policy and ACP session overlays. */
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { getSessionExecutionSelection } from "../model-picker/execution-selection.js";
 import { applyAcpRuntimeOverlay, type AgentRuntimeMetadata } from "./acp-runtime-overlay.js";
 import { isDefaultAgentRuntimeId } from "./agent-runtime-id.js";
 import { resolveAvailableAgentHarnessPolicy } from "./harness/availability.js";
 import type { AgentRuntimePolicyScope } from "./model-runtime-policy.js";
 import { resolveDefaultModelForAgent } from "./model-selection.js";
-import {
-  resolvePersistedSessionRuntimeId,
-  resolveSessionRuntimeOverrideForProvider,
-} from "./session-runtime-compat.js";
+import { resolvePersistedSessionRuntimeId } from "./session-runtime-compat.js";
 
 type ModelAgentRuntimeMetadataParams = {
   cfg: OpenClawConfig;
@@ -65,22 +63,12 @@ export function resolveCurrentSessionAgentRuntimeMetadata(
   params: ModelAgentRuntimeMetadataParams,
 ): AgentRuntimeMetadata {
   const { sessionEntry, ...configuredParams } = params;
-  const sessionRuntime = resolveSessionRuntimeOverrideForProvider({
-    provider: params.provider,
-    entry: sessionEntry,
-    cfg: params.cfg,
-  });
-  if (params.acpRuntime || !sessionRuntime) {
-    return resolveModelAgentRuntimeMetadata(configuredParams);
+  const selection = getSessionExecutionSelection(sessionEntry);
+  if (selection) {
+    return {
+      id: selection.executor.kind === "acp" ? selection.executor.backend : selection.executor.id,
+      source: "session",
+    };
   }
-  const runtime = resolveModelAgentRuntimeMetadata({
-    ...configuredParams,
-    ...(sessionEntry?.modelSelectionLocked === true
-      ? { sessionEntry }
-      : { agentHarnessRuntimeOverride: sessionRuntime }),
-  });
-  return {
-    id: runtime.id,
-    source: sessionEntry?.modelSelectionLocked === true ? "session" : "session-key",
-  };
+  return resolveModelAgentRuntimeMetadata(configuredParams);
 }

@@ -16,6 +16,10 @@ import { resolveSessionStorePathCore, type SessionEntry } from "../config/sessio
 import type { GatewayStoredSessionTargets } from "../config/sessions/combined-store-gateway.js";
 import { resolveConcreteSessionStorePath } from "../config/sessions/paths.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import {
+  getSessionExecutionSelection,
+  isAcpExecutionSelection,
+} from "../model-picker/execution-selection.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
 import type { SynchronousWork } from "../shared/synchronous-work.js";
 import type { SessionEntryPair } from "./session-list-order.js";
@@ -223,8 +227,8 @@ export function resolveGatewaySessionRuntimeSelectionLocked(
 
 export function resolveGatewaySessionRuntimeProjection(params: {
   cfg: OpenClawConfig;
-  provider: string;
-  model: string;
+  provider?: string;
+  model?: string;
   agentId: string;
   sessionKey: string;
   entry?: SessionEntry;
@@ -242,6 +246,7 @@ export function resolveGatewaySessionRuntimeProjection(params: {
       : entry
         ? readAcpSessionMetaForEntry({ cfg, sessionKey, agentId, entry })
         : readAcpSessionMeta({ sessionKey, agentId }));
+  const selection = getSessionExecutionSelection(entry);
   const agentRuntime = resolveCurrentSessionAgentRuntimeMetadata({
     cfg: params.cfg,
     agentScope: { kind: "prepared", agentId: params.agentId },
@@ -250,11 +255,14 @@ export function resolveGatewaySessionRuntimeProjection(params: {
     sessionKey: params.sessionKey,
     sessionEntry: params.entry,
     acpRuntime: acpMeta != null,
-    acpBackend: acpMeta?.backend,
+    acpBackend:
+      selection && isAcpExecutionSelection(selection) ? selection.executor.backend : undefined,
   });
-  if (agentRuntime.id === "auto" && entry) {
+  if (agentRuntime.id === "auto" && entry && params.provider && params.model) {
     agentRuntime.id = resolveWorkerPlacementModelRuntime({
       ...params,
+      provider: params.provider,
+      model: params.model,
       entry,
       preparedEnvironment: params.rowContext
         ? (params.rowContext.workerPlacementEnvironment ??= captureRuntimeStateEnvironment())

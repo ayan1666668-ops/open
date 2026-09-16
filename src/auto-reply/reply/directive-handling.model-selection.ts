@@ -1,12 +1,21 @@
 /** Resolves /model directive selections and auth profile overrides. */
 import { ensureAuthProfileStore } from "../../agents/auth-profiles.js";
+import { splitTrailingAuthProfile } from "../../agents/model-ref-profile.js";
 import type { ModelAliasIndex } from "../../agents/model-selection.js";
 import type { ModelVisibilityPolicy } from "../../agents/model-visibility-policy.js";
 import { resolveProviderIdForAuth } from "../../agents/provider-auth-aliases.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import {
+  isAcpExecutionSelection,
+  type ExecutionSelection,
+} from "../../model-picker/execution-selection.js";
 import { resolveProfileOverride } from "./directive-handling.auth-profile.js";
 import type { InlineDirectives } from "./directive-handling.parse.js";
 import { type ModelDirectiveSelection, resolveModelDirectiveSelection } from "./model-selection.js";
+
+export type DirectiveModelSelection = Omit<ModelDirectiveSelection, "provider"> & {
+  provider?: string;
+};
 
 function resolveStoredNumericProfileModelDirective(params: { raw: string; agentDir: string }): {
   modelRaw: string;
@@ -55,8 +64,9 @@ export function resolveModelSelectionFromDirective(params: {
   provider: string;
   agentId?: string;
   requesterProfileId?: string;
+  executionSelection?: ExecutionSelection;
 }): {
-  modelSelection?: ModelDirectiveSelection;
+  modelSelection?: DirectiveModelSelection;
   profileOverride?: string;
   errorText?: string;
   validateAuthProfileSelection?: () => string | undefined;
@@ -69,6 +79,16 @@ export function resolveModelSelectionFromDirective(params: {
   }
 
   const raw = params.directives.rawModelDirective.trim();
+  if (params.executionSelection && isAcpExecutionSelection(params.executionSelection)) {
+    if (params.directives.rawModelProfile || splitTrailingAuthProfile(raw).profile) {
+      return { errorText: "This app owns its account selection. Change accounts in the app." };
+    }
+    return {
+      modelSelection: /^default$/i.test(raw)
+        ? { model: raw, isDefault: true, resetToDefault: true }
+        : { model: raw, isDefault: false },
+    };
+  }
   if (/^default$/i.test(raw)) {
     return {
       modelSelection: {

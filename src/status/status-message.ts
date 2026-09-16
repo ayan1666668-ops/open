@@ -56,7 +56,7 @@ import {
   summarizeDecisionReason,
 } from "../media-understanding/runner.entries.js";
 import type { MediaUnderstandingDecision } from "../media-understanding/types.js";
-import { getSessionExecutionSelection } from "../model-picker/execution-selection-state.js";
+import { getSessionExecutionSelection } from "../model-picker/execution-selection.js";
 import { resolveAgentIdFromSessionKey } from "../routing/session-key.js";
 import { formatFastModeStatusValue } from "../shared/fast-mode.js";
 import { resolveStatusTtsSnapshot } from "../tts/status-config.js";
@@ -110,7 +110,7 @@ type StatusArgs = {
   resolvedElevated?: ElevatedLevel;
   modelAuth?: string;
   activeModelAuth?: string;
-  activeModel?: { modelProvider: string; model: string };
+  activeModel?: { modelProvider?: string; model: string };
   usageLine?: string;
   timeLine?: string;
   uptimeValue?: string;
@@ -507,7 +507,7 @@ function resolveChannelModelNote(params: {
   if (!params.config || !params.entry) {
     return undefined;
   }
-  if (getSessionExecutionSelection(params.entry, params.config)) {
+  if (getSessionExecutionSelection(params.entry)) {
     return undefined;
   }
   const channelOverride = resolveChannelModelOverride({
@@ -879,15 +879,20 @@ export function buildStatusMessageParts(args: StatusArgs): StatusMessageParts {
     .filter(Boolean)
     .join(" · ");
 
-  const selectedModelLabel = modelRefs.selected.label || "unknown";
+  const nativeManaged = getSessionExecutionSelection(entry)?.model === "native-managed";
+  const selectedModelLabel = nativeManaged
+    ? "the app's default model"
+    : modelRefs.selected.label || "unknown";
   const selectedAuthMode =
-    normalizeAuthMode(args.modelAuth) ?? resolveModelAuthMode(selectedLookupProvider, args.config);
+    normalizeAuthMode(args.modelAuth) ??
+    (nativeManaged ? undefined : resolveModelAuthMode(selectedLookupProvider, args.config));
   const rawSelectedAuthLabelValue =
     selectedAuthMode && selectedAuthMode !== "unknown"
       ? (args.modelAuth ?? selectedAuthMode)
       : undefined;
   const activeAuthMode =
-    normalizeAuthMode(args.activeModelAuth) ?? resolveModelAuthMode(activeProvider, args.config);
+    normalizeAuthMode(args.activeModelAuth) ??
+    (nativeManaged ? undefined : resolveModelAuthMode(activeProvider, args.config));
   const activeAuthLabelValue =
     activeAuthMode && activeAuthMode !== "unknown"
       ? (args.activeModelAuth ?? activeAuthMode)
@@ -937,10 +942,9 @@ export function buildStatusMessageParts(args: StatusArgs): StatusMessageParts {
 
   const modelNote = channelModelNote ? ` · ${channelModelNote}` : "";
   const configuredDefaultModelLabel = normalizeOptionalString(args.configuredDefaultModelLabel);
-  const sessionHasPersistedModelSelection = Boolean(
-    getSessionExecutionSelection(entry, args.config),
-  );
+  const sessionHasPersistedModelSelection = Boolean(getSessionExecutionSelection(entry));
   const configDefaultDiffersFromSession =
+    !nativeManaged &&
     sessionHasPersistedModelSelection &&
     configuredDefaultModelLabel &&
     selectedModelLabel !== configuredDefaultModelLabel &&

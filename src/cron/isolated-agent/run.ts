@@ -20,6 +20,7 @@ import {
 import { isDiagnosticsEnabled } from "../../infra/diagnostic-events.js";
 import { isFastTestRuntimeEnv } from "../../infra/env.js";
 import { createDiagnosticMessageLifecycle } from "../../logging/message-lifecycle.js";
+import { isModelExecutionSelection } from "../../model-picker/execution-selection.js";
 import { withPluginRuntimeGenerationScope } from "../../plugins/runtime/generation-scope.js";
 import { isCommandLaneTaskTimeoutError } from "../../process/command-queue.js";
 import { CommandLane } from "../../process/lanes.js";
@@ -119,6 +120,10 @@ export async function runCronIsolatedAgentTurn(
           let runContextOwnerToken: string | undefined;
           let runLifecycleGeneration = admittedLifecycleGeneration;
           let executionStarted = false;
+          const selectedModel = () => {
+            const selection = prepared.context.liveSelection.selection;
+            return isModelExecutionSelection(selection) ? selection.model : undefined;
+          };
           const notifyExecutionStarted = (info?: {
             lifecycleGeneration?: string;
             isFallback?: boolean;
@@ -136,8 +141,8 @@ export async function runCronIsolatedAgentTurn(
               sessionKey: prepared.context.runSessionKey,
               ...(info?.isFallback === true ? { isFallback: true } : {}),
               phase: "runner_entered",
-              provider: info?.provider ?? prepared.context.liveSelection.provider,
-              model: info?.model ?? prepared.context.liveSelection.model,
+              provider: info?.provider ?? selectedModel()?.provider,
+              model: info?.model ?? selectedModel()?.id,
             });
           };
           const notifyExecutionPhase = (
@@ -149,8 +154,8 @@ export async function runCronIsolatedAgentTurn(
               agentId: prepared.context.agentId,
               sessionId: prepared.context.currentRunSessionId(),
               sessionKey: prepared.context.runSessionKey,
-              provider: prepared.context.liveSelection.provider,
-              model: prepared.context.liveSelection.model,
+              provider: selectedModel()?.provider,
+              model: selectedModel()?.id,
               ...info,
             });
           };
@@ -318,7 +323,7 @@ export async function runCronIsolatedAgentTurn(
             // Preserve the provider's closed reason before user-facing text replaces the error object.
             const errorReason = resolveCronRunErrorReason(
               isCronLaneTimeout ? error : err,
-              prepared.context.liveSelection.provider,
+              selectedModel()?.provider,
             );
             outcome = "error";
             outcomeError = error;
@@ -352,8 +357,8 @@ export async function runCronIsolatedAgentTurn(
               // Task-run history keeps provider/model attribution instead of looking like
               // an un-attributed cron timeout. finalizeCronRun does the same via
               // telemetry on the aborted path; this catch never reaches it.
-              provider: prepared.context.liveSelection.provider,
-              model: prepared.context.liveSelection.model,
+              provider: selectedModel()?.provider,
+              model: selectedModel()?.id,
               diagnostics: mergeCronRunDiagnostics(
                 prepared.context.preflightDiagnostics,
                 createCronRunDiagnosticsFromError(

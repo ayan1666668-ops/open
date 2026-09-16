@@ -91,7 +91,6 @@ export async function prepareReplyAgentPayloads(state: {
     typingSignals,
   } = context;
   const {
-    configuredFallbackModel,
     contextTokensUsed,
     directlySentBlockKeys,
     directBlockDeliveries,
@@ -161,8 +160,7 @@ export async function prepareReplyAgentPayloads(state: {
   const shouldDeliverTerminalFailure = Boolean(
     terminalFailurePayload && !successfulTerminalDelivery,
   );
-  const fallbackFailureKnown =
-    fallbackAttempts.length > 0 || configuredFallbackModel.persistedAutoFallback;
+  const fallbackFailureKnown = fallbackAttempts.length > 0;
   const hasSpecificFallbackFailure = fallbackTransition.fallbackActive && fallbackFailureKnown;
   const isInteractive =
     followupRun.currentInboundEventKind !== "room_event" &&

@@ -11,9 +11,10 @@ import {
 } from "../config/sessions/session-accessor.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { getSessionExecutionSelection } from "../model-picker/apply-session-model-selection.js";
+import { getSessionExecutionSelection } from "../model-picker/execution-selection.js";
 import {
-  isAcpExecutionSelection,
+  isModelExecutionSelection,
+  type ExecutionSelection,
   type ModelExecutionSelection,
 } from "../model-picker/execution-selection.js";
 import { resolveSessionAgentId } from "./agent-scope.js";
@@ -32,8 +33,8 @@ function resolveSelectionFromSessionEntry(params: {
   cfg: OpenClawConfig;
   entry: SessionEntry | undefined;
 }): LiveSessionModelSelection | undefined {
-  const selection = getSessionExecutionSelection(params.entry, params.cfg);
-  if (!selection || isAcpExecutionSelection(selection)) {
+  const selection = getSessionExecutionSelection(params.entry);
+  if (!selection || !isModelExecutionSelection(selection)) {
     return undefined;
   }
   const authProfileId = normalizeOptionalString(params.entry?.authProfileOverride);
@@ -48,7 +49,7 @@ function resolveSelectionFromSessionEntry(params: {
 
 function hasDifferentLiveSessionModelSelection(
   current: {
-    execution: ModelExecutionSelection;
+    execution: ExecutionSelection;
     authProfileId?: string;
     authProfileIdSource?: string;
   },
@@ -88,7 +89,7 @@ export function shouldSwitchToLiveModel(params: {
   sessionKey?: string;
   agentId?: string;
   sessionPersistence?: "durable" | "detached";
-  currentExecution: ModelExecutionSelection;
+  currentExecution: ExecutionSelection;
   currentAuthProfileId?: string;
   currentAuthProfileIdSource?: string;
 }): LiveSessionModelSelection | undefined {

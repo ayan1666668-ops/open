@@ -32,8 +32,8 @@ import type { SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { resolveStoredSessionKeyForAgentStore } from "../gateway/session-store-key.js";
 import { info } from "../globals.js";
-import { executionSelectionModelOverrideProjection } from "../model-picker/execution-selection-codec.js";
-import { readAcpExecutionSelection } from "../model-picker/execution-selection-codec.js";
+import { executionSelectionModelOverrideProjection } from "../model-picker/execution-selection-projection.js";
+import { getSessionExecutionSelection } from "../model-picker/execution-selection.js";
 import type { ExecutionSelection } from "../model-picker/execution-selection.js";
 import { parseAgentSessionKey } from "../routing/session-key.js";
 import { type RuntimeEnv, writeRuntimeJson } from "../runtime.js";
@@ -68,10 +68,10 @@ const formatKTokens = (value: number) => `${(value / 1000).toFixed(value >= 10_0
 
 /** True ACP sessions use the child runtime's model, not the configured fallback. */
 function applyAcpModelOverlayIfNeeded(
-  modelRef: { provider: string; model: string },
+  modelRef: { provider?: string; model: string },
   sessionKey: string,
   acpRuntime: boolean,
-): { provider: string; model: string } {
+): { provider?: string; model: string } {
   if (!acpRuntime || !isAcpSessionKey(sessionKey)) {
     return modelRef;
   }
@@ -157,7 +157,7 @@ function resolveSessionRuntimeLabel(params: {
   cfg: OpenClawConfig;
   entry: SessionEntry;
   agentRuntime: ReturnType<typeof resolveModelAgentRuntimeMetadata>;
-  modelProvider: string;
+  modelProvider?: string;
   classifyCliProvider: CliProviderClassifier;
 }): string {
   const id = normalizeOptionalLowercaseString(params.agentRuntime.id);
@@ -337,6 +337,7 @@ export async function sessionsCommand(
   });
   const rows = sessionEntries.map(({ acpSessionKey, agentId, entry, row }) => {
     const acpMeta = acpSessionMetaByEntry.get(entry);
+    const selected = getSessionExecutionSelection(entry);
     const acpRuntime = acpMeta != null;
     // ACP rows need stored-key metadata before model/runtime resolution so
     // bridge sessions and true ACP runtime sessions display differently.
@@ -353,7 +354,7 @@ export async function sessionsCommand(
       model: modelRef.model,
       sessionKey: acpSessionKey,
       acpRuntime,
-      acpBackend: readAcpExecutionSelection(acpMeta)?.executor.backend,
+      acpBackend: selected?.executor.kind === "acp" ? selected.executor.backend : undefined,
     });
     const hasPersistedContextTokens =
       typeof entry.contextTokens === "number" && entry.contextTokens > 0;
@@ -361,21 +362,24 @@ export async function sessionsCommand(
     // the runtime's context policy, so retain their model-only offline fallback.
     const usesCliContextFallback =
       !hasPersistedContextTokens && classifyCliProvider(agentRuntime.id);
-    const modelContext = usesCliContextFallback
-      ? {
-          contextTokens: lookupContextTokens(modelRef.model, { allowAsyncLoad: false }),
-          authoredContextTokens: resolveAuthoredModelContextTokens({
-            cfg,
-            provider: modelRef.provider,
-            model: modelRef.model,
-          }),
-        }
-      : resolveModelContextTokenProjection({
-          cfg,
-          provider: modelRef.provider,
-          model: modelRef.model,
-          allowAsyncLoad: false,
-        });
+    const modelContext =
+      selected?.model === "native-managed"
+        ? { contextTokens: undefined, authoredContextTokens: undefined }
+        : usesCliContextFallback
+          ? {
+              contextTokens: lookupContextTokens(modelRef.model, { allowAsyncLoad: false }),
+              authoredContextTokens: resolveAuthoredModelContextTokens({
+                cfg,
+                provider: modelRef.provider,
+                model: modelRef.model,
+              }),
+            }
+          : resolveModelContextTokenProjection({
+              cfg,
+              provider: modelRef.provider,
+              model: modelRef.model,
+              allowAsyncLoad: false,
+            });
     const contextTokens = resolveProjectedSessionContextTokens({
       entry,
       provider: modelRef.provider,

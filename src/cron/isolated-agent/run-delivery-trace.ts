@@ -152,8 +152,8 @@ export function buildCronDeliveryTrace(params: {
 export async function createCronToolsAllowPreflightDiagnostics(params: {
   cfg: OpenClawConfig;
   jobId: string;
-  provider: string;
-  model: string;
+  provider?: string;
+  model?: string;
   modelApi?: string;
   agentId?: string;
   agentDir?: string;
@@ -187,7 +187,7 @@ export async function createCronToolsAllowPreflightDiagnostics(params: {
     }
     return undefined;
   }
-  if (!toolsAllowRequestsWebSearch(toolsAllow)) {
+  if (!params.provider || !params.model || !toolsAllowRequestsWebSearch(toolsAllow)) {
     return undefined;
   }
   try {

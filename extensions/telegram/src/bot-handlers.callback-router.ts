@@ -681,7 +681,12 @@ async function handleTelegramModelCallback(params: {
     }
     const escapeHtml = (text: string) =>
       text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    await editMessageWithButtons(`✅ ${escapeHtml(applied.message)}`, [], {
+    const selectedLabel =
+      modelData.modelCatalog.find(
+        (entry) => entry.provider === applied.provider && entry.id === applied.model,
+      )?.name ?? "the selected model";
+    const message = applied.message ?? `Model changed to ${selectedLabel}.`;
+    await editMessageWithButtons(`✅ ${escapeHtml(message)}`, [], {
       parse_mode: "HTML",
     });
   } catch (err) {

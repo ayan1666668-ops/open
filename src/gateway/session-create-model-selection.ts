@@ -9,8 +9,10 @@ import { normalizeOptionalAgentRuntimeId } from "../agents/agent-runtime-id.js";
 import { resolveDefaultModelForAgent, type ModelRef } from "../agents/model-selection.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { prepareSessionExecutionSelection } from "../model-picker/apply-session-model-selection.js";
-import { resolveExecutionSelectionExecutorKind } from "../model-picker/apply-session-model-selection.js";
+import {
+  prepareSessionExecutionSelection,
+  resolveExecutionSelectionExecutorKind,
+} from "../model-picker/apply-session-model-selection.js";
 import { isModelExecutionSelection } from "../model-picker/execution-selection.js";
 import { resolveSessionPatchModelSelection } from "./server-methods/sessions-patch-model-selection.js";
 import type { GatewaySessionTitleModelSelection } from "./session-lifecycle-preparation.js";

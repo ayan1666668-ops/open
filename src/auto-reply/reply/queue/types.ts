@@ -20,7 +20,7 @@ import type { GroupToolPolicyConfig } from "../../../config/types.tools.js";
 import type { GatewayUiCommandTarget } from "../../../gateway/ui-command-target.types.js";
 import type { MediaFact } from "../../../media/media-facts.js";
 import type { PromptImageOrderEntry } from "../../../media/prompt-image-order.js";
-import type { ModelExecutionSelection } from "../../../model-picker/execution-selection.js";
+import type { ExecutionSelection } from "../../../model-picker/execution-selection.js";
 import type { PluginHookChannelContext } from "../../../plugins/hook-types.js";
 import type { RuntimePluginToolGrant } from "../../../plugins/runtime/tool-grant.js";
 import type { InputProvenance } from "../../../sessions/input-provenance.js";
@@ -226,7 +226,7 @@ export type FollowupRun = {
     config: OpenClawConfig;
     toolOverrides?: SessionToolOverrides;
     skillsSnapshot?: SkillSnapshot;
-    executionSelection: ModelExecutionSelection;
+    executionSelection: ExecutionSelection;
     /** Prevents the queued run from selecting configured fallback models. */
     modelSelectionLocked?: boolean;
     /** Session belongs to a spawn-owned child; applies the subagent fallback ladder. */

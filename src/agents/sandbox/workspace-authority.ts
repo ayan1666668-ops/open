@@ -10,7 +10,7 @@ import {
   resolveSubagentToolPolicyForSession,
 } from "../agent-tools.policy.js";
 import { buildModelAliasIndex, resolveModelRefFromString } from "../model-selection.js";
-import { resolveSessionModelRef } from "../session-model-ref.js";
+import { resolveSessionModelRefCore as resolveSessionModelRef } from "../session-model-ref.js";
 import { isToolAllowedByPolicies } from "../tool-policy-match.js";
 import {
   expandToolGroups,

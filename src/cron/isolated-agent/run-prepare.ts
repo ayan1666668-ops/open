@@ -17,8 +17,11 @@ import {
   commitSessionExecutionSelection,
   prepareSessionExecutionSelection,
 } from "../../model-picker/apply-session-model-selection.js";
-import { getSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
-import { isAcpExecutionSelection } from "../../model-picker/execution-selection.js";
+import { getSessionExecutionSelection } from "../../model-picker/execution-selection.js";
+import {
+  isAcpExecutionSelection,
+  isModelExecutionSelection,
+} from "../../model-picker/execution-selection.js";
 import { isCronSessionKey, parseAgentSessionKey } from "../../routing/session-key.js";
 import {
   AGENT_HARNESS_SESSION_ID_LOCKED_MESSAGE,
@@ -368,7 +371,7 @@ export async function prepareCronRunContext(params: {
     }
 
     const selectionSource = sourceEntry ?? cronSession.initialSessionEntry;
-    if (selectionSource && !getSessionExecutionSelection(cronSession.sessionEntry, runtimeCfg)) {
+    if (selectionSource && !getSessionExecutionSelection(cronSession.sessionEntry)) {
       const initialSelection = await prepareSessionExecutionSelection({
         cfg: runtimeCfg,
         agentId,
@@ -423,16 +426,22 @@ export async function prepareCronRunContext(params: {
       (resolvedModelSelection.modelSource === "default" ||
         resolvedModelSelection.modelSource === "agent");
 
-    const preflight = await resolveCronPreflight({
-      cfg: cfgWithAgentDefaults,
-      job: input.job,
-      agentId: modelOwner.agentId,
-      provider: resolvedModelSelection.provider,
-      model: resolvedModelSelection.model,
-      useSubagentFallbacks,
-      inheritDefaultFallbacksForAgentStringModel,
-    });
-    if (!preflight.ok) {
+    const storedSelection = getSessionExecutionSelection(cronSession.sessionEntry);
+    const nativeManaged =
+      resolvedModelSelection.modelSource === "session" &&
+      storedSelection?.model === "native-managed";
+    const preflight = nativeManaged
+      ? undefined
+      : await resolveCronPreflight({
+          cfg: cfgWithAgentDefaults,
+          job: input.job,
+          agentId: modelOwner.agentId,
+          provider: resolvedModelSelection.provider,
+          model: resolvedModelSelection.model,
+          useSubagentFallbacks,
+          inheritDefaultFallbacksForAgentStringModel,
+        });
+    if (preflight && !preflight.ok) {
       logWarn(`[cron:${input.job.id}] ${preflight.reason}`);
       sessionWorkAdmission.release();
       return {
@@ -448,22 +457,18 @@ export async function prepareCronRunContext(params: {
         }),
       };
     }
-    const { provider, model, modelFallbacksOverride, runtimePluginCandidates } = preflight;
-    const thinkingSelection = await resolveCronThinkingSelection({
-      cfg: cfgWithAgentDefaults,
-      owner: modelOwner,
-      provider,
-      model,
-      jobThinking: input.job.payload.kind === "agentTurn" ? input.job.payload.thinking : undefined,
-      hookThinking: isGmailHook ? runtimeCfg.hooks?.gmail?.thinking : undefined,
-      sessionThinking: cronSession.sessionEntry.thinkingLevel,
-    });
+    const provider = preflight?.provider ?? resolvedModelSelection.provider;
+    const model = preflight?.model ?? resolvedModelSelection.model;
+    const modelFallbacksOverride = preflight?.modelFallbacksOverride;
+    const runtimePluginCandidates = preflight?.runtimePluginCandidates ?? [];
     const preparedSelection = await prepareSessionExecutionSelection({
       cfg: cfgWithAgentDefaults,
       agentId: modelOwner.agentId,
       sessionEntry: cronSession.sessionEntry,
       modelCatalog: modelOwner.modelCatalog.entries,
-      request: { kind: "model", model: { provider, id: model } },
+      request: nativeManaged
+        ? { kind: "initialize" }
+        : { kind: "model", model: { provider, id: model } },
     });
     if (preparedSelection.status !== "ready") {
       throw new Error(preparedSelection.message);
@@ -472,7 +477,7 @@ export async function prepareCronRunContext(params: {
       throw new Error("This automation requires a direct execution selection.");
     }
     const executionSelection = preparedSelection.selection;
-    if (!getSessionExecutionSelection(cronSession.sessionEntry, cfgWithAgentDefaults)) {
+    if (!getSessionExecutionSelection(cronSession.sessionEntry)) {
       commitSessionExecutionSelection(cronSession.sessionEntry, executionSelection, {
         cfg: cfgWithAgentDefaults,
         cause: { kind: "initialize" },
@@ -480,8 +485,17 @@ export async function prepareCronRunContext(params: {
       validateInitialSelection = preparedSelection.validateCommit;
     }
     const effectiveAgentRuntime = executionSelection.executor.id;
+    const thinkingSelection = await resolveCronThinkingSelection({
+      cfg: cfgWithAgentDefaults,
+      owner: modelOwner,
+      provider: nativeManaged ? undefined : provider,
+      model: nativeManaged ? undefined : model,
+      jobThinking: input.job.payload.kind === "agentTurn" ? input.job.payload.thinking : undefined,
+      hookThinking: isGmailHook ? runtimeCfg.hooks?.gmail?.thinking : undefined,
+      sessionThinking: cronSession.sessionEntry.thinkingLevel,
+    });
     let requestedThinkLevel = thinkingSelection.requestedThinkLevel;
-    if (!requestedThinkLevel) {
+    if (!nativeManaged && !requestedThinkLevel) {
       requestedThinkLevel = resolveThinkingDefault({
         cfg: cfgWithAgentDefaults,
         agentId: modelOwner.agentId,
@@ -492,6 +506,8 @@ export async function prepareCronRunContext(params: {
       });
     }
     if (
+      !nativeManaged &&
+      requestedThinkLevel &&
       !isThinkingLevelSupported({
         provider,
         model,
@@ -552,16 +568,19 @@ export async function prepareCronRunContext(params: {
     // Preserve explicit timeout provenance so the idle watchdog does not reapply 120s when defaults match.
     const runTimeoutOverrideMs = resolveCronRunTimeoutOverrideMs(explicitTimeoutSeconds);
     const agentPayload = input.job.payload.kind === "agentTurn" ? input.job.payload : null;
-    const configuredProvider = cfgWithAgentDefaults.models?.providers?.[provider];
-    const modelApi =
-      findModelInCatalog(thinkingSelection.catalog, provider, model)?.api ??
-      configuredProvider?.models?.find((candidate) => candidate.id === model)?.api ??
-      configuredProvider?.api;
+    const configuredProvider = nativeManaged
+      ? undefined
+      : cfgWithAgentDefaults.models?.providers?.[provider];
+    const modelApi = nativeManaged
+      ? undefined
+      : (findModelInCatalog(thinkingSelection.catalog, provider, model)?.api ??
+        configuredProvider?.models?.find((candidate) => candidate.id === model)?.api ??
+        configuredProvider?.api);
     const preflightDiagnostics = await createCronToolsAllowPreflightDiagnostics({
       cfg: cfgWithAgentDefaults,
       jobId: input.job.id,
-      provider,
-      model,
+      provider: nativeManaged ? undefined : provider,
+      model: nativeManaged ? undefined : model,
       modelApi,
       agentId: modelOwner.agentId,
       agentDir: modelOwner.agentDir,
@@ -662,19 +681,22 @@ export async function prepareCronRunContext(params: {
       job: input.job,
       cronSession,
     });
-    const authSelection = await resolveCronAuthSelection({
-      cfg: cfgWithAgentDefaults,
-      provider,
-      modelId: model,
-      ...(provider === resolvedModelSelection.provider && resolvedModelSelection.configuredProfileId
-        ? { configuredProfileId: resolvedModelSelection.configuredProfileId }
-        : {}),
-      harnessRuntime: effectiveAgentRuntime,
-      agentDir,
-      cronSession,
-      sessionKey: agentSessionKey,
-      isNewSession: cronSession.isNewSession && input.job.sessionTarget !== "isolated",
-    });
+    const authSelection = isModelExecutionSelection(executionSelection)
+      ? await resolveCronAuthSelection({
+          cfg: cfgWithAgentDefaults,
+          provider,
+          modelId: model,
+          ...(provider === resolvedModelSelection.provider &&
+          resolvedModelSelection.configuredProfileId
+            ? { configuredProfileId: resolvedModelSelection.configuredProfileId }
+            : {}),
+          harnessRuntime: effectiveAgentRuntime,
+          agentDir,
+          cronSession,
+          sessionKey: agentSessionKey,
+          isNewSession: cronSession.isNewSession && input.job.sessionTarget !== "isolated",
+        })
+      : undefined;
     const authProfileId = authSelection?.profileId;
     const liveSelection: CronLiveSelection = {
       selection: executionSelection,

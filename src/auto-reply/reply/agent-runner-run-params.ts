@@ -9,7 +9,10 @@ import {
 } from "../../config/model-provider-config.js";
 import type { SessionEntry } from "../../config/sessions/types.js";
 import { resolveSessionExecutionFallbacks } from "../../model-picker/apply-session-model-selection.js";
-import type { resolveProviderScopedAuthProfile } from "./agent-runner-auth-profile.js";
+import {
+  isAcpExecutionSelection,
+  isModelExecutionSelection,
+} from "../../model-picker/execution-selection.js";
 import type { FollowupRun } from "./queue.js";
 
 /** Callback used to detect providers that require final-answer tags. */
@@ -29,18 +32,21 @@ export function resolveModelFallbackOptions(
   sessionEntry?: Partial<SessionEntry>,
 ) {
   const config = configOverride;
+  const selection = run.executionSelection;
+  if (!isModelExecutionSelection(selection))
+    throw new Error("Native execution does not use host model fallbacks.");
   const modelFallbackAvailability = resolveSessionExecutionFallbacks({
     cfg: config,
     agentId: run.agentId,
     sessionKey: run.sessionKey,
     sessionEntry,
-    selection: run.executionSelection,
+    selection,
     subagentSpawnLineage: run.subagentSpawnLineage,
   });
   return {
     cfg: config,
-    provider: run.executionSelection.model.provider,
-    model: run.executionSelection.model.id,
+    provider: selection.model.provider,
+    model: selection.model.id,
     requestedRouteResolution: "resolved" as const,
     agentDir: run.agentDir,
     agentId: run.agentId,
@@ -111,29 +117,36 @@ export async function resolveRunModelHasVision(params: {
 /** Builds the shared embedded-agent run params from a queued follow-up run. */
 export async function buildEmbeddedRunBaseParams(params: {
   run: FollowupRun["run"];
-  provider: string;
-  model: string;
   runId: string;
   promptCacheKey?: string;
-  authProfile: ReturnType<typeof resolveProviderScopedAuthProfile>;
   allowTransientCooldownProbe?: boolean;
   isReasoningTagProvider?: ReasoningTagProviderResolver;
 }) {
   const config = params.run.config;
-  const modelFallbackAvailability = resolveSessionExecutionFallbacks({
-    cfg: config,
-    agentId: params.run.agentId,
-    sessionKey: params.run.sessionKey,
-    selection: params.run.executionSelection,
-    subagentSpawnLineage: params.run.subagentSpawnLineage,
-  });
-  const modelFallbacksOverride = modelFallbackOverrideFromAvailability(modelFallbackAvailability);
-  const enforceFinalTag = resolveEnforceFinalTagWithResolver(
-    params.run,
-    params.provider,
-    params.model,
-    params.isReasoningTagProvider,
-  );
+  const selection = params.run.executionSelection;
+  if (isAcpExecutionSelection(selection))
+    throw new Error("This execution belongs to the native manager.");
+  const model = isModelExecutionSelection(selection) ? selection.model : undefined;
+  const modelFallbackAvailability = isModelExecutionSelection(selection)
+    ? resolveSessionExecutionFallbacks({
+        cfg: config,
+        agentId: params.run.agentId,
+        sessionKey: params.run.sessionKey,
+        selection,
+        subagentSpawnLineage: params.run.subagentSpawnLineage,
+      })
+    : undefined;
+  const modelFallbacksOverride = modelFallbackAvailability
+    ? modelFallbackOverrideFromAvailability(modelFallbackAvailability)
+    : undefined;
+  const enforceFinalTag = model
+    ? resolveEnforceFinalTagWithResolver(
+        params.run,
+        model.provider,
+        model.id,
+        params.isReasoningTagProvider,
+      )
+    : false;
   // Runtime policy keys may differ from session keys for direct-message scoped policy.
   const runParams = {
     sessionFile: params.run.sessionFile,
@@ -166,14 +179,21 @@ export async function buildEmbeddedRunBaseParams(params: {
     taskSuggestionDeliveryMode: params.run.taskSuggestionDeliveryMode,
     skillWorkshopProposalRevision: params.run.skillWorkshopProposalRevision,
     skillLibraryAuthoring: params.run.skillLibraryAuthoring,
-    provider: params.provider,
-    model: params.model,
-    modelHasVision: await resolveRunModelHasVision(params),
+    provider: model?.provider,
+    model: model?.id,
+    modelHasVision: model
+      ? await resolveRunModelHasVision({
+          run: params.run,
+          provider: model.provider,
+          model: model.id,
+        })
+      : undefined,
     requestedRouteResolution: "resolved" as const,
     modelSelectionLocked: params.run.modelSelectionLocked,
     modelFallbackAvailability,
     modelFallbacksOverride,
-    ...params.authProfile,
+    authProfileId: model ? params.run.authProfileId : undefined,
+    authProfileIdSource: model ? params.run.authProfileIdSource : undefined,
     thinkLevel: params.run.thinkLevel,
     fastMode: params.run.fastMode,
     fastModeAutoOnSeconds: params.run.fastModeAutoOnSeconds,

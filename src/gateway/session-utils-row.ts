@@ -3,7 +3,6 @@ import { asNonNegativeFiniteNumber } from "@openclaw/normalization-core/number-c
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { SESSION_PARTICIPANT_LIMIT } from "../../packages/gateway-protocol/src/schema/session-participant.js";
 import { resolveModelContextTokenProjection } from "../agents/context.js";
-import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "../agents/defaults.js";
 import { resolveFastModeState } from "../agents/fast-mode.js";
 import type { ModelCatalogEntry } from "../agents/model-catalog.js";
 import { resolveModelContextWindowProfile } from "../agents/model-context-window.js";
@@ -31,7 +30,7 @@ import {
   resolveProjectedAgentRunModel,
   type ProjectedAgentRunIndex,
 } from "../infra/agent-run-registry.js";
-import { executionSelectionWireSourceProjection } from "../model-picker/execution-selection-codec.js";
+import { executionSelectionWireSourceProjection } from "../model-picker/execution-selection-projection.js";
 import { projectPluginSessionExtensionsSync } from "../plugins/host-hook-state.js";
 import { resolveActiveSessionAgentStatus } from "../sessions/session-agent-status.js";
 import { deriveSessionUnread } from "../shared/session-unread.js";
@@ -203,8 +202,8 @@ export function readSessionRowInputs(params: {
   const thinkingProjection = resolveGatewaySessionThinkingProjectionInternal({
     cfg,
     agentId,
-    provider: provider ?? DEFAULT_PROVIDER,
-    model: model ?? DEFAULT_MODEL,
+    provider,
+    model,
     sessionKey: resolveStoredSessionKeyForAgentStore({
       cfg,
       agentId,
@@ -349,7 +348,7 @@ export function resolveGatewaySessionActiveModel(params: {
   sessionId?: string;
   sessionKey: string;
   projectedAgentRuns: ProjectedAgentRunIndex;
-  selectedModel?: { provider: string; model: string };
+  selectedModel?: { provider?: string; model?: string };
   modelSource?: GatewaySessionModelSource;
   entry?: InternalSessionEntry;
   storePath?: string;
@@ -378,7 +377,7 @@ export function resolveGatewaySessionActiveModel(params: {
           sessionKey: params.sessionKey,
         })
       : undefined);
-  if (!selectedModel) {
+  if (!selectedModel?.provider || !selectedModel.model) {
     return undefined;
   }
 

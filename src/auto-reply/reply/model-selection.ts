@@ -21,12 +21,13 @@ import {
 } from "../../agents/model-visibility-policy.js";
 import { listOpenAIAuthProfileProvidersForAgentRuntime } from "../../agents/openai-routing.js";
 import { needsThinkHydration, resolveEffectiveAgentRuntime } from "../../agents/thinking-runtime.js";
+import { resolveCollapsedSessionAuthPinSource } from "../../config/sessions/auth-profile-override-provenance.js";
 import { SessionWorkStartInvalidatedError } from "../../config/sessions/lifecycle.js";
 import { adoptPersistedSessionSnapshot } from "../../config/sessions/session-snapshot-merge.js";
 import type { SessionEntry } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { isDiagnosticFlagEnabled } from "../../infra/diagnostic-flags.js";
-import { getSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
+import { getSessionExecutionSelection } from "../../model-picker/execution-selection.js";
 import {
   isAcpExecutionSelection,
   isModelExecutionSelection,
@@ -63,9 +64,6 @@ type ModelSelectionState = {
   allowedModelKeys: Set<string>;
   allowedModelCatalog: ModelCatalog;
   policyAliasIndex: ModelAliasIndex;
-  resetModelOverride: boolean;
-  resetModelOverrideRef?: string;
-  resetModelOverrideReason?: "disallowed" | "stale" | "temporarily-unavailable";
   modelPolicyConfigPath?: string;
   modelPolicyRepairConfigPath?: string;
   resolveThinkingCatalog: (
@@ -188,10 +186,7 @@ export async function createModelSelectionState(params: {
   // Whether the loaded catalog is a complete/live snapshot. A degraded catalog
   // (discovery threw, static/empty fallback) must not destroy a pinned override.
   let catalogAuthoritative = true;
-  const resetModelOverride = false;
-  const resetModelOverrideRef = undefined;
-  const resetModelOverrideReason = undefined;
-  const acceptedSelection = getSessionExecutionSelection(sessionEntry, cfg);
+  const acceptedSelection = getSessionExecutionSelection(sessionEntry);
   if (needsModelCatalog) {
     const catalogSnapshot = await loadRuntimeCatalogSnapshot();
     modelCatalog = catalogSnapshot.entries;
@@ -310,7 +305,8 @@ export async function createModelSelectionState(params: {
     sessionEntry &&
     sessionStore &&
     sessionKey &&
-    sessionEntry.authProfileOverride
+    sessionEntry.authProfileOverride &&
+    resolveCollapsedSessionAuthPinSource(sessionEntry) === "auto"
   ) {
     const { ensureAuthProfileStore } = await import("../../agents/auth-profiles.runtime.js");
     const store = ensureAuthProfileStore(
@@ -466,9 +462,6 @@ export async function createModelSelectionState(params: {
     allowedModelKeys,
     allowedModelCatalog,
     policyAliasIndex: visibilityPolicy.policyAliasIndex,
-    resetModelOverride,
-    resetModelOverrideRef,
-    resetModelOverrideReason,
     modelPolicyConfigPath: visibilityPolicy.allowConfigPath ?? undefined,
     modelPolicyRepairConfigPath: visibilityPolicy.allowRepairConfigPath,
     resolveThinkingCatalog,

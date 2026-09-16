@@ -10,7 +10,7 @@ import { listSessionEntriesReadOnly } from "../../../config/sessions/session-acc
 import type { SessionEntry } from "../../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import { formatDurationCompact } from "../../../infra/format-time/format-duration.js";
-import { getSessionExecutionSelection } from "../../../model-picker/apply-session-model-selection.js";
+import { getSessionExecutionSelection } from "../../../model-picker/execution-selection.js";
 import { isModelExecutionSelection } from "../../../model-picker/execution-selection.js";
 import { parseAgentSessionKey } from "../../../routing/session-key.js";
 import {

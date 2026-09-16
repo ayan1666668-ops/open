@@ -6,7 +6,7 @@ import {
   loadSessionEntryReadOnly,
   type SessionTranscriptRuntimeTarget,
 } from "../../config/sessions/session-accessor.js";
-import { projectPublicSessionEntry } from "../../config/sessions/session-entry-projection.js";
+import { stripPrivateSessionEntryFields } from "../../config/sessions/session-entry-projection.js";
 import { OPENCLAW_EMBEDDED_CONTEXT_ENGINE_HOST } from "../../context-engine/host-compat.js";
 import { ensureContextEnginesInitialized } from "../../context-engine/init.js";
 import {
@@ -223,7 +223,7 @@ export async function compactEmbeddedAgentSession(
     const resolvedParams = {
       ...params,
       config: projectedConfig,
-      sessionEntry: entry ? projectPublicSessionEntry(entry) : undefined,
+      sessionEntry: entry ? stripPrivateSessionEntryFields(entry) : undefined,
       agentHarnessId: resolveSessionPinnedHarnessId(entry) ?? params.agentHarnessId,
       modelSelectionLocked: entry?.modelSelectionLocked ?? params.modelSelectionLocked,
       agentId: runtimeTarget.agentId,

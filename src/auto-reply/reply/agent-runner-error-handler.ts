@@ -17,6 +17,7 @@ import {
 import { isAgentHarnessPreflightError } from "../../agents/harness/errors.js";
 import { LiveSessionModelSwitchError } from "../../agents/live-model-switch-error.js";
 import { formatErrorMessage } from "../../infra/errors.js";
+import { isModelExecutionSelection } from "../../model-picker/execution-selection.js";
 import { CommandLaneClearedError, GatewayDrainingError } from "../../process/command-queue.js";
 import { defaultRuntime } from "../../runtime.js";
 import type { ReplyPayload } from "../types.js";
@@ -123,7 +124,7 @@ export async function handleAgentExecutionError(params: {
     const visibleReplyDelivered = await turn.resolveVisibleReplyDelivery?.();
     defaultRuntime.error(
       `Live model switch failed after ${MAX_LIVE_SWITCH_RETRIES} retries ` +
-        `(${sanitizeForLog(err.provider)}/${sanitizeForLog(err.model)}). The requested model may be unavailable.`,
+        `(${sanitizeForLog(err.selection.model.provider)}/${sanitizeForLog(err.selection.model.id)}). The requested model may be unavailable.`,
     );
     takePendingLifecycleTerminal().emit("error", err);
     const switchErrorText = params.shouldSurfaceToControlUi
@@ -231,8 +232,12 @@ export async function handleAgentExecutionError(params: {
           preserveSessionMapping: true,
           cfg: params.runtimeConfig,
           agentId: turn.followupRun.run.agentId,
-          primaryProvider: turn.followupRun.run.executionSelection.model.provider,
-          primaryModel: turn.followupRun.run.executionSelection.model.id,
+          primaryProvider: isModelExecutionSelection(turn.followupRun.run.executionSelection)
+            ? turn.followupRun.run.executionSelection.model.provider
+            : undefined,
+          primaryModel: isModelExecutionSelection(turn.followupRun.run.executionSelection)
+            ? turn.followupRun.run.executionSelection.model.id
+            : undefined,
           runtimeProvider: params.state.attemptedRuntimeProvider,
           runtimeModel: params.state.attemptedRuntimeModel,
           activeSessionEntry: turn.getActiveSessionEntry(),

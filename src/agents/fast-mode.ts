@@ -33,17 +33,20 @@ type FastModeState = {
 /** Resolve the effective fast-mode setting and its source. */
 export function resolveFastModeState(params: {
   cfg: OpenClawConfig | undefined;
-  provider: string;
-  model: string;
+  provider?: string;
+  model?: string;
   agentId?: string;
   sessionEntry?: Pick<SessionEntry, "fastMode"> | undefined;
 }): FastModeState {
-  const { modelParams, agentModelParams } = resolveModelExtraParamSources({
-    config: params.cfg,
-    provider: params.provider,
-    modelId: params.model,
-    agentId: params.agentId,
-  });
+  const { modelParams, agentModelParams } =
+    params.provider && params.model
+      ? resolveModelExtraParamSources({
+          config: params.cfg,
+          provider: params.provider,
+          modelId: params.model,
+          agentId: params.agentId,
+        })
+      : {};
   const fastAutoOnSeconds = resolveFastModeModelAutoOnSeconds({
     ...params,
     modelParamSources: [agentModelParams, modelParams],

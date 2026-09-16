@@ -8,6 +8,7 @@ import {
 import { logVerbose } from "../../globals.js";
 import { emitAgentEvent } from "../../infra/agent-events.js";
 import { formatErrorMessage } from "../../infra/errors.js";
+import { isModelExecutionSelection } from "../../model-picker/execution-selection.js";
 import { defaultRuntime } from "../../runtime.js";
 import { buildContextOverflowRecoveryText } from "./agent-runner-context-recovery.js";
 import { resolveSourceReplyPolicy } from "./agent-runner-core.js";
@@ -36,10 +37,12 @@ export async function settleAgentFallbackCycle(params: {
   // fallback backstop so downstream waiters never have to rederive them.
   const terminalMetadata = fallbackResult.terminal.metadata;
   const terminalOutcome = fallbackResult.terminal.outcome;
+  const pendingTerminal = cycle.state.pendingLifecycleTerminal;
   const settledLifecycleTerminal =
-    cycle.state.pendingLifecycleTerminal?.provider === fallbackProvider &&
-    cycle.state.pendingLifecycleTerminal.model === fallbackModel
-      ? cycle.state.pendingLifecycleTerminal.backstop
+    pendingTerminal &&
+    pendingTerminal.provider === fallbackProvider &&
+    pendingTerminal.model === fallbackModel
+      ? pendingTerminal.backstop
       : undefined;
   cycle.state.pendingLifecycleTerminal = undefined;
   if (turn.isRestartRecoveryArmed?.()) {
@@ -104,8 +107,12 @@ export async function settleAgentFallbackCycle(params: {
           preserveSessionMapping: true,
           cfg: cycle.runtimeConfig,
           agentId: turn.followupRun.run.agentId,
-          primaryProvider: turn.followupRun.run.executionSelection.model.provider,
-          primaryModel: turn.followupRun.run.executionSelection.model.id,
+          primaryProvider: isModelExecutionSelection(turn.followupRun.run.executionSelection)
+            ? turn.followupRun.run.executionSelection.model.provider
+            : undefined,
+          primaryModel: isModelExecutionSelection(turn.followupRun.run.executionSelection)
+            ? turn.followupRun.run.executionSelection.model.id
+            : undefined,
           runtimeProvider: cycle.state.attemptedRuntimeProvider,
           runtimeModel: cycle.state.attemptedRuntimeModel,
           activeSessionEntry: turn.getActiveSessionEntry(),

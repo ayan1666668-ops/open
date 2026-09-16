@@ -64,7 +64,6 @@ export async function applyMixedDirectives(params: {
     allowedModelKeys: new Set(allowedModels.map((entry) => `${entry.provider}/${entry.id}`)),
     allowedModelCatalog: allowedModels,
     policyAliasIndex: aliasIndex,
-    resetModelOverride: false,
     resolveThinkingCatalog: async () => allowedModels,
     resolveDefaultThinkingLevel: params.resolveDefaultThinkingLevel ?? (async () => "off"),
     resolveDefaultReasoningLevel: async () => "off",

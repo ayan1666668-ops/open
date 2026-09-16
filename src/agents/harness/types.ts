@@ -408,7 +408,6 @@ type AgentHarnessRunCapability<
   supports(ctx: AgentHarnessSupportContext): AgentHarnessSupport;
   /** Synchronous private ownership read; no discovery, auth loading, or native connection setup. */
   resolveSessionRuntimeOwnership?(params: {
-    selection?: import("../../model-picker/execution-selection.js").ExecutionSelection;
     config?: OpenClawConfig;
     agentId?: string;
     sessionId: string;

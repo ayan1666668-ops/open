@@ -244,7 +244,7 @@ export async function recoverEmbeddedRunAttempt(input: {
     });
     log.info(
       `live session model switch requested during active attempt for ${params.sessionId}: ` +
-        `${preparedRuntime.provider}/${preparedRuntime.modelId} -> ${requestedSelection.provider}/${requestedSelection.model}`,
+        `${preparedRuntime.provider}/${preparedRuntime.modelId} -> ${requestedSelection.selection.model.provider}/${requestedSelection.selection.model.id}`,
     );
     throw new LiveSessionModelSwitchError(requestedSelection);
   }

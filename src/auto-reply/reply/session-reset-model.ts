@@ -14,16 +14,16 @@ import { SessionWorkStartInvalidatedError } from "../../config/sessions/lifecycl
 import {
   adoptPersistedSessionSnapshot,
   mergeSessionSnapshotChanges,
-  SESSION_MODEL_OVERRIDE_TRANSACTION_FIELDS,
+  SESSION_EXECUTION_SELECTION_TRANSACTION_FIELDS,
   sessionModelOverrideChangesApplied,
 } from "../../config/sessions/session-snapshot-merge.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import {
   prepareSessionExecutionSelection,
   commitSessionModelSelectionWithAuth,
+  executionSelectionTransactionChanged,
 } from "../../model-picker/apply-session-model-selection.js";
-import { executionSelectionTransactionChanged } from "../../model-picker/apply-session-model-selection.js";
-import { getSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
+import { getSessionExecutionSelection } from "../../model-picker/execution-selection.js";
 import {
   isAcpExecutionSelection,
   isModelExecutionSelection,
@@ -100,7 +100,7 @@ async function applySelectionToSession(params: {
   if (isAcpExecutionSelection(prepared.selection)) {
     throw new Error("Change the model in its own request for this session");
   }
-  const previous = getSessionExecutionSelection(sessionEntry, params.cfg);
+  const previous = getSessionExecutionSelection(sessionEntry);
   commitSessionModelSelectionWithAuth({
     cfg: params.cfg,
     agentId,
@@ -121,7 +121,7 @@ async function applySelectionToSession(params: {
       sessionKey,
       initialEntry: initialSessionEntry,
       entry: nextSessionEntry,
-      touchedFields: SESSION_MODEL_OVERRIDE_TRANSACTION_FIELDS,
+      touchedFields: SESSION_EXECUTION_SELECTION_TRANSACTION_FIELDS,
       requireModelSelectionUnlocked: true,
       validateCommit: prepared.validateCommit,
     });

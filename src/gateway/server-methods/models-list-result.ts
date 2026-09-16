@@ -53,7 +53,7 @@ import {
 } from "../../agents/prepared-model-runtime.errors.js";
 import { isPreparedModelCatalogFull } from "../../agents/prepared-model-runtime.full-catalog.js";
 import { preparedModelRuntimeConfigsMatch } from "../../agents/prepared-model-runtime.js";
-import { resolveSessionModelRef } from "../../agents/session-model-ref.js";
+import { resolveSessionModelRefCore as resolveSessionModelRef } from "../../agents/session-model-ref.js";
 import { resolveAutomaticUtilityModelRef } from "../../agents/utility-model.js";
 import { resolveDefaultAgentWorkspaceDir } from "../../agents/workspace.js";
 import { createThinkingCatalogResolver } from "../../auto-reply/thinking.js";

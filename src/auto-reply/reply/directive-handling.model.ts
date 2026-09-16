@@ -235,7 +235,6 @@ export async function maybeHandleModelDirectiveInfo(params: {
   runtimePolicySessionKey?: string;
   sessionKey?: string;
   storePath?: string;
-  resetModelOverride: boolean;
   workspaceDir?: string;
   surface?: string;
   sessionEntry?: InternalSessionEntry;
@@ -402,9 +401,6 @@ export async function maybeHandleModelDirectiveInfo(params: {
     `Agent: ${params.activeAgentId}`,
     `Auth store: ${formatPath(resolveAuthStorePathForDisplay(params.agentDir))}`,
   ].filter((line): line is string => Boolean(line));
-  if (params.resetModelOverride) {
-    lines.push(`(previous selection reset to default)`);
-  }
 
   const byProvider = new Map<string, ModelPickerCatalogEntry[]>();
   const statusCatalog = filterMissingAuthNestedProviderDuplicates({

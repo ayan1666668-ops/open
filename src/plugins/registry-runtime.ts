@@ -2,7 +2,6 @@ import { createHostChannelInboundEventContextBuilder } from "../channels/inbound
 import { registerChannelIngressHostOwner } from "../channels/message-access/ingress-host-owner.js";
 import { createChannelIngressDrain } from "../channels/message/ingress-drain.js";
 import { createChannelIngressQueue } from "../channels/message/ingress-queue.js";
-import type { SessionEntry } from "../config/sessions/types.js";
 import {
   createPluginBlobStore,
   type OpenBlobStoreOptions,
@@ -426,9 +425,7 @@ export function createPluginRuntimeResolver(state: PluginRegistryState) {
                     if (!patch) {
                       return patch;
                     }
-                    const next = params.replaceEntry
-                      ? (patch as SessionEntry)
-                      : ({ ...entry, ...patch } satisfies SessionEntry);
+                    const next = params.replaceEntry ? patch : { ...entry, ...patch };
                     assertStoreEntryOwned({
                       action: "patch",
                       before: context.existingEntry ?? entry,

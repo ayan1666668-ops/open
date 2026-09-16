@@ -10,6 +10,10 @@ import type { RunEmbeddedAgentParams } from "../agents/embedded-agent-runner/run
 import type { EmbeddedAgentRunMeta } from "../agents/embedded-agent-runner/types.js";
 import type { ReplyToolAuthorityOverlay } from "../auto-reply/reply/reply-run-registry.contracts.js";
 import {
+  loadSessionEntryReadOnly,
+  patchSessionEntryCore,
+} from "../config/sessions/session-accessor.js";
+import {
   buildSessionCreationStamp,
   inheritSessionCreationPolicy,
 } from "../config/sessions/session-entry-provenance.js";
@@ -104,7 +108,7 @@ export function assertRealtimeVoiceAgentConsultModelSelectionUnlocked(params: {
   }
 
   for (const { agentId, sessionKey, storePath } of candidates.values()) {
-    const entry = params.agentRuntime.session.getSessionEntry({
+    const entry = loadSessionEntryReadOnly({
       agentId,
       storePath,
       sessionKey,
@@ -165,7 +169,7 @@ function resolveRealtimeVoiceAgentDeliveryContext(params: {
       const storePath =
         candidate.storePath ??
         params.agentRuntime.session.resolveStorePath(params.cfg.session?.store, { agentId });
-      const entry = params.agentRuntime.session.getSessionEntry({
+      const entry = loadSessionEntryReadOnly({
         agentId,
         storePath,
         sessionKey: candidate.sessionKey,
@@ -202,7 +206,7 @@ export function prepareRealtimeVoiceAgentExecutionContext(params: {
     params.agentRuntime.session.resolveStorePath(params.cfg.session?.store, { agentId });
   const sessionEntry =
     params.sessionEntry ??
-    params.agentRuntime.session.getSessionEntry({
+    loadSessionEntryReadOnly({
       agentId,
       storePath,
       sessionKey: params.sessionKey,
@@ -250,7 +254,7 @@ async function resolveRealtimeVoiceAgentConsultSessionEntry(params: {
   const requesterSessionKey = params.spawnedBy?.trim();
   const requesterAgentId = parseAgentSessionKey(requesterSessionKey)?.agentId;
   const requesterEntry = requesterSessionKey
-    ? params.agentRuntime.session.getSessionEntry({
+    ? loadSessionEntryReadOnly({
         agentId: requesterAgentId ?? params.agentId,
         storePath: params.agentRuntime.session.resolveStorePath(params.cfg.session?.store, {
           agentId: requesterAgentId ?? params.agentId,
@@ -304,16 +308,13 @@ async function resolveRealtimeVoiceAgentConsultSessionEntry(params: {
     }
   }
 
-  patched ??= await params.agentRuntime.session.patchSessionEntry({
-    agentId: params.agentId,
-    storePath: params.storePath,
-    sessionKey: params.sessionKey,
-    fallbackEntry: {
-      ...creationStamp,
-      sessionId: "",
-      updatedAt: now,
+  patched ??= await patchSessionEntryCore(
+    {
+      agentId: params.agentId,
+      storePath: params.storePath,
+      sessionKey: params.sessionKey,
     },
-    update: async (entry) => {
+    async (entry) => {
       if (entry.sessionId?.trim()) {
         return { ...deliveryFields, updatedAt: now };
       }
@@ -324,7 +325,8 @@ async function resolveRealtimeVoiceAgentConsultSessionEntry(params: {
         updatedAt: now,
       };
     },
-  });
+    { fallbackEntry: { ...creationStamp, sessionId: "", updatedAt: now } },
+  );
   if (forkDecisionWarning) {
     params.logger.warn(`[talk] ${forkDecisionWarning}`);
   }
@@ -426,7 +428,7 @@ export async function consultRealtimeVoiceAgent(params: {
         new Error("Realtime voice agent consult interrupted by a session lifecycle change."),
       ),
     assertAllowed: () => {
-      const currentEntry = params.agentRuntime.session.getSessionEntry({
+      const currentEntry = loadSessionEntryReadOnly({
         agentId,
         storePath,
         sessionKey: params.sessionKey,

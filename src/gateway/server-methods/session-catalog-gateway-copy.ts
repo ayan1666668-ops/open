@@ -7,7 +7,7 @@ import type {
 import { parseModelRef } from "../../agents/model-selection-normalize.js";
 import { getModelRefStatus } from "../../agents/model-selection-shared.js";
 import { resolveDefaultModelForAgent } from "../../agents/model-selection.js";
-import { resolveSessionModelRef } from "../../agents/session-model-ref.js";
+import { resolveSessionModelRefCore as resolveSessionModelRef } from "../../agents/session-model-ref.js";
 import { importSessionCatalogHistory } from "../../plugins/session-catalog-history-import.js";
 import type {
   SessionCatalogContinueProviderParams,

@@ -4,6 +4,7 @@ import { resolveModelAuthMode } from "../../agents/model-auth.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { resolveSessionExecutionFallbacks } from "../../model-picker/apply-session-model-selection.js";
+import { isModelExecutionSelection } from "../../model-picker/execution-selection.js";
 import { normalizeVerboseLevel, type VerboseLevel } from "../thinking.js";
 import type { ReplyPayload } from "../types.js";
 import { buildInlinePluginStatusPayload } from "./agent-runner-core.js";
@@ -21,8 +22,8 @@ export async function buildReplyDiagnosticsPayload(params: {
   followupRun: Pick<FollowupRun, "run">;
   accounting: {
     runResult: EmbeddedAgentRunResult;
-    providerUsed: string;
-    modelUsed: string;
+    providerUsed?: string;
+    modelUsed?: string;
     contextTokensUsed: number;
     promptTokens?: number;
   };
@@ -77,7 +78,7 @@ export async function buildReplyDiagnosticsPayload(params: {
     const requestShaping = {
       authMode:
         runResult.meta?.requestShaping?.authMode ??
-        (cfg?.models?.providers && providerUsed in cfg.models.providers
+        (providerUsed && cfg?.models?.providers && providerUsed in cfg.models.providers
           ? (resolveModelAuthMode(providerUsed, cfg, undefined, {
               workspaceDir: followupRun.run.workspaceDir,
             }) ?? undefined)
@@ -96,14 +97,15 @@ export async function buildReplyDiagnosticsPayload(params: {
         normalizeOptionalString(activeSessionEntry?.traceLevel),
       fallbackEligible:
         runResult.meta?.requestShaping?.fallbackEligible ??
-        resolveSessionExecutionFallbacks({
-          cfg: cfg ?? {},
-          agentId: followupRun.run.agentId,
-          sessionKey: followupRun.run.sessionKey,
-          sessionEntry: activeSessionEntry,
-          selection: followupRun.run.executionSelection,
-          subagentSpawnLineage: followupRun.run.subagentSpawnLineage,
-        }).kind === "active",
+        (isModelExecutionSelection(followupRun.run.executionSelection) &&
+          resolveSessionExecutionFallbacks({
+            cfg: cfg ?? {},
+            agentId: followupRun.run.agentId,
+            sessionKey: followupRun.run.sessionKey,
+            sessionEntry: activeSessionEntry,
+            selection: followupRun.run.executionSelection,
+            subagentSpawnLineage: followupRun.run.subagentSpawnLineage,
+          }).kind === "active"),
       blockStreaming:
         runResult.meta?.requestShaping?.blockStreaming ??
         normalizeOptionalString(resolvedBlockStreamingBreak),

@@ -16,7 +16,7 @@ import {
 import { resolveAgentModelPrimaryValue } from "../config/model-input.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import {
-  isAcpExecutionSelection,
+  isModelExecutionSelection,
   type ExecutionSelection,
 } from "../model-picker/execution-selection.js";
 
@@ -121,11 +121,14 @@ export function resolveSessionDisplayModelRef(
   row: SessionDisplayModelRow,
   classifyCliProvider: CliProviderClassifier = (provider) => isCliProvider(provider, cfg),
   ownerAgentId?: string,
-): SessionDisplayModelRef {
+): { provider?: string; model: string } {
   const agentId =
     ownerAgentId ?? (row.key.startsWith("agent:") ? row.key.split(":")[1] : undefined);
   const defaultRef = resolveDefaultModelRef(cfg, agentId);
-  if (row.executionSelection && !isAcpExecutionSelection(row.executionSelection)) {
+  if (row.executionSelection?.model === "native-managed") {
+    return { provider: row.modelProvider, model: row.model ?? "the app's default model" };
+  }
+  if (row.executionSelection && isModelExecutionSelection(row.executionSelection)) {
     return {
       provider: row.executionSelection.model.provider,
       model: row.executionSelection.model.id,

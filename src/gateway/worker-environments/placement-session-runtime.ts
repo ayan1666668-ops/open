@@ -7,6 +7,7 @@ import { resolveEffectiveAgentRuntime } from "../../agents/thinking-runtime.js";
 import { captureRuntimeStateEnvironment } from "../../config/paths.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { getCommittedSessionExecutionSelection } from "../../model-picker/execution-selection.js";
 import type { PluginMetadataSnapshot } from "../../plugins/plugin-metadata-snapshot.types.js";
 import { resolveSessionPinnedHarnessId } from "../../sessions/agent-harness-session-key.js";
 import type { GatewayAgentRuntime } from "../../shared/session-types.js";
@@ -26,6 +27,10 @@ export function resolveWorkerPlacementSessionRuntime(params: {
   agentId: string;
   sessionKey: string;
 }): string {
+  const accepted = getCommittedSessionExecutionSelection(params.entry);
+  if (accepted) {
+    return accepted.executor.kind === "acp" ? accepted.executor.backend : accepted.executor.id;
+  }
   const { provider, model } = resolveSessionSelectedModelRef({
     ...params,
     source: {
@@ -42,6 +47,9 @@ export function resolveWorkerPlacementSessionRuntime(params: {
       },
     },
   });
+  if (!provider || !model) {
+    throw new Error("Prepare a model selection before choosing session placement.");
+  }
   return resolveWorkerPlacementModelRuntime({ ...params, provider, model });
 }
 

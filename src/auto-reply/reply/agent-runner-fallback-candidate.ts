@@ -1,6 +1,10 @@
 import { resolveCliBackendConfig } from "../../agents/cli-backends.js";
-import { runEmbeddedAgentEntry } from "../../agents/embedded-agent-runner/run-entry.js";
+import {
+  runEmbeddedAgentEntry,
+  type RunEntryCandidateOptions,
+} from "../../agents/embedded-agent-runner/run-entry.js";
 import type { FastModeAutoProgressState } from "../../agents/fast-mode.js";
+import type { ModelFallbackStepFields } from "../../agents/model-fallback-observation.js";
 import { buildGenericCliContextEngineHostSupport } from "../../context-engine/host-compat.js";
 import { prepareGitHubPublicationAvailability } from "../../gateway/github-publication-availability.js";
 import { revokeMessageActionTurnCapability } from "../../gateway/message-action-turn-capability.js";
@@ -9,7 +13,8 @@ import { RUN_STALE_TAKEOVER_MS } from "../../logging/diagnostic-run-activity.js"
 import { prepareSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
 import {
   isAcpExecutionSelection,
-  type ModelExecutionSelection,
+  isModelExecutionSelection,
+  type ExecutionSelection,
 } from "../../model-picker/execution-selection.js";
 import { CommandLane } from "../../process/lanes.js";
 import type { AgentLifecycleTerminalBackstop } from "./agent-lifecycle-terminal.js";
@@ -89,26 +94,248 @@ export async function runAgentFallbackCandidates(params: AgentFallbackCycleParam
     sessionKey: turn.sessionKey,
     milestone: "before_model_fallback",
   });
+  const resolveCandidateRuntime = (candidate: ExecutionSelection) => {
+    if (isAcpExecutionSelection(candidate))
+      throw new Error("This reply belongs to the native manager.");
+    return {
+      candidateRun: {
+        ...params.effectiveRun,
+        executionSelection: candidate,
+        ...(isModelExecutionSelection(candidate)
+          ? resolveRunAuthProfile(params.effectiveRun, candidate.model.provider, {
+              config: params.runtimeConfig,
+            })
+          : { authProfileId: undefined, authProfileIdSource: undefined }),
+      },
+      cliExecutionProvider: candidate.executor.kind === "cli" ? candidate.executor.id : undefined,
+    };
+  };
+  const runCandidate = async (
+    candidate: ExecutionSelection,
+    runOptions: RunEntryCandidateOptions,
+  ) => {
+    if (isAcpExecutionSelection(candidate))
+      throw new Error("This reply belongs to the native manager.");
+    const selectedModel = isModelExecutionSelection(candidate) ? candidate.model : undefined;
+    const provider = selectedModel?.provider;
+    const model = selectedModel?.id;
+    clearAgentRunTerminalWriteContext(params.preparedRunAdmission.operationalRunInstance);
+    params.state.maintenanceAuthProfile = undefined;
+    params.state.maintenanceExecutionSelection = undefined;
+    params.state.compactionRequestBudget = undefined;
+    invalidateTurnCompactionContext(params.state.compaction);
+    params.state.attemptedRuntimeProvider = provider;
+    params.state.attemptedRuntimeModel = model;
+    const runtime = params.timing.measureSync("fallback_resolve_runtime", () =>
+      resolveCandidateRuntime(candidate),
+    );
+    const candidateRun = runtime.candidateRun;
+    bindSourceReplyDeliveryRuntime(candidateRun, sourceReplyDeliveryRuntime);
+    // CLI prompts are fixed to their session binding, so dispatch must publish that
+    // same stable mode or a valid assistant reply can be silently suppressed.
+    const candidateSourceReplyDeliveryMode =
+      sourceReplyDeliveryModeOrigin === "runtime_default" &&
+      runtime.cliExecutionProvider !== undefined
+        ? (candidateRun.cliSessionBindingFacts?.sourceReplyDeliveryMode ?? "automatic")
+        : sourceReplyDeliveryRuntime.currentMode;
+    const applySourceReplyDeliveryModeBeforeInvocation =
+      sourceReplyDeliveryModeOrigin !== "runtime_default" ||
+      runtime.cliExecutionProvider !== undefined;
+    if (candidateSourceReplyDeliveryMode && applySourceReplyDeliveryModeBeforeInvocation) {
+      sourceReplyDeliveryRuntime.applyMode(candidateRun, candidateSourceReplyDeliveryMode);
+    }
+    let candidateThinkLevel = candidateRun.thinkLevel;
+    let candidateFastMode = {
+      fastMode: candidateRun.fastMode,
+      fastModeAutoOnSeconds: candidateRun.fastModeAutoOnSeconds,
+    };
+    if (selectedModel) {
+      const { provider, id: model } = selectedModel;
+      candidateThinkLevel = resolveRunThinkingLevelForFallbackCandidate({
+        cfg: params.runtimeConfig,
+        provider,
+        modelId: model,
+        run: turn.followupRun.run,
+        catalog: turn.followupRun.run.thinkingCatalog,
+        agentId: turn.followupRun.run.agentId,
+        sessionKey: turn.followupRun.run.runtimePolicySessionKey ?? turn.sessionKey,
+        sessionEntry: turn.getActiveSessionEntry(),
+        agentRuntime: candidate.executor.id,
+      });
+      candidateFastMode = resolveRunFastModeForFallbackCandidate({
+        run: candidateRun,
+        config: params.runtimeConfig,
+        provider,
+        model,
+        sessionEntry: turn.getActiveSessionEntry(),
+      });
+      turn.opts?.onModelSelected?.({ provider, model, thinkLevel: candidateThinkLevel });
+    }
+    const signalExecutionPhaseForCandidate: AgentFallbackCandidateCommonParams["signalExecutionPhaseForTyping"] =
+      (info) => {
+        if (
+          params.state.compaction.count > 0 &&
+          (info.phase === "model_call_started" || info.phase === "process_spawned")
+        ) {
+          params.state.postCompactionModelAttempted = true;
+        }
+        params.signalExecutionPhaseForTyping(info);
+      };
+    const messageActionTurnCapability = mintReplyMessageActionTurnCapability(turn, params.runId);
+    try {
+      const common = {
+        preparedRunAdmission: params.preparedRunAdmission,
+        messageActionTurnCapability,
+        turn,
+        candidateRun,
+        runtimeConfig: params.runtimeConfig,
+        candidateThinkLevel,
+        candidateFastMode,
+        runId: params.runId,
+        runAbortSignal: params.runAbortSignal,
+        runLane,
+        isFallbackRetry: runOptions.isFallbackRetry,
+        isFinalFallbackAttempt: runOptions?.isFinalFallbackAttempt,
+        suppressQueuedUserPersistenceForCandidate:
+          (turn.followupRun.run.suppressNextUserMessagePersistence ?? false) ||
+          queuedUserMessagePersistedAcrossFallback,
+        userTurnTranscriptRecorder,
+        contextEngineLogicalTurnLease: runOptions.contextEngineLogicalTurnLease,
+        onContextEngineTurnCandidate: runOptions.onContextEngineTurnCandidate,
+        assistantErrorTranscript: runOptions.assistantErrorTranscript,
+        authProfileFailurePolicy: runOptions.authProfileFailurePolicy,
+        notifyUserMessagePersisted: () => {
+          queuedUserMessagePersistedAcrossFallback = true;
+        },
+        fastModeStartedAtMs,
+        fastModeAutoProgressState,
+        bootstrapContextRunKind,
+        bootstrapPromptWarningSignaturesSeen: params.state.bootstrapPromptWarningSignaturesSeen,
+        currentTurnImages: params.currentTurnImages,
+        signalExecutionPhaseForTyping: signalExecutionPhaseForCandidate,
+        notifyAgentRunStart: params.notifyAgentRunStart,
+        preserveProgressCallbackStartOrder,
+        presentation: params.presentation,
+        timing: params.timing,
+        onLifecycleBackstop: (backstop: AgentLifecycleTerminalBackstop) => {
+          params.state.pendingLifecycleTerminal = { provider, model, backstop };
+        },
+        deferredLifecycle: params.state.deferredLifecycle,
+      } satisfies AgentFallbackCandidateCommonParams;
+      if (runtime.cliExecutionProvider !== undefined) {
+        const candidate = await runCliFallbackCandidate({
+          ...common,
+          cliExecutionProvider: runtime.cliExecutionProvider,
+          classifyResult: runOptions.classifyResult,
+          lifecycleGeneration: params.state.lifecycleGeneration,
+        });
+        params.state.bootstrapPromptWarningSignaturesSeen =
+          candidate.bootstrapPromptWarningSignaturesSeen;
+        return candidate.result;
+      }
+      const candidate = await runEmbeddedFallbackCandidate({
+        ...common,
+        githubPublicationAvailable: await (githubPublicationAvailability ??=
+          turn.sessionKey && params.effectiveRun.agentId
+            ? prepareGitHubPublicationAvailability({
+                sessionId: turn.followupRun.run.sessionId,
+                sessionKey: turn.sessionKey,
+                agentId: params.effectiveRun.agentId,
+              })
+            : Promise.resolve(false)),
+        effectiveRun: params.effectiveRun,
+        getLifecycleGeneration: () => params.state.lifecycleGeneration,
+        onLifecycleGeneration: (generation) => {
+          params.state.lifecycleGeneration = generation;
+        },
+        allowTransientCooldownProbe: runOptions?.allowTransientCooldownProbe,
+        notifyUserAboutCompaction: params.notifyUserAboutCompaction,
+        messageToolDeliveryState,
+        onCompactionFacts: ({ accounting, postCompactionModelAttempted }) => {
+          if (accounting) {
+            recordTurnCompaction(params.state.compaction, accounting);
+          }
+          params.state.postCompactionModelAttempted ||= postCompactionModelAttempted;
+        },
+      });
+      params.state.bootstrapPromptWarningSignaturesSeen =
+        candidate.bootstrapPromptWarningSignaturesSeen;
+      params.state.maintenanceAuthProfile = candidate.maintenanceAuthProfile;
+      params.state.maintenanceExecutionSelection = candidateRun.executionSelection;
+      params.state.compactionRequestBudget = candidate.compactionRequestBudget;
+      return candidate.result;
+    } finally {
+      revokeMessageActionTurnCapability(messageActionTurnCapability);
+    }
+  };
+  const common = {
+    identity: {
+      runId: params.runId,
+      agentId: turn.followupRun.run.agentId,
+      sessionId: turn.followupRun.run.sessionId,
+      sessionKey: params.effectiveRun.runtimePolicySessionKey ?? params.effectiveRun.sessionKey,
+      lane: runLane,
+    },
+    behavior: {
+      kind: "channel-delivery" as const,
+      readDeliveryEvidence: () => ({
+        hasRetryBlockedDelivery:
+          turn.blockReplyPipeline?.hasRetryBlockedDelivery() === true ||
+          params.directBlockDeliveries.some(hasBlockReplyDeliveryCustody),
+        hasDirectlySentBlockReply: params.directlySentBlockKeys.size > 0,
+        hasBlockReplyPipelineOutput: Boolean(
+          turn.blockReplyPipeline?.hasBuffered() || turn.blockReplyPipeline?.didStream(),
+        ),
+      }),
+    },
+    onAcceptedTerminal: () => {
+      params.commitTerminalOutcome();
+      return turn.replyOperation
+        ? beginReplyOperationFinalizationWork(turn.replyOperation, RUN_STALE_TAKEOVER_MS)
+        : undefined;
+    },
+    abortSignal: params.runAbortSignal,
+    onFallbackStep: (step: ModelFallbackStepFields) => {
+      emitModelFallbackStepLifecycle({ runId: params.runId, sessionKey: turn.sessionKey, step });
+    },
+    runCandidate,
+  };
+  const accepted = params.effectiveRun.executionSelection;
+  if (isAcpExecutionSelection(accepted))
+    throw new Error("This reply requires a direct execution selection.");
+  if (accepted.model === "native-managed") {
+    return params.timing.measure("native_execution", async () => {
+      const prepared = await prepareSessionExecutionSelection({
+        cfg: params.runtimeConfig,
+        agentId: turn.followupRun.run.agentId,
+        sessionKey: turn.sessionKey,
+        storePath: turn.storePath,
+        readSessionEntry: !turn.storePath ? turn.getActiveSessionEntry : undefined,
+        sessionEntry: params.liveModelSwitchRuntimeEntry ?? turn.getActiveSessionEntry(),
+        request: { kind: "selection", selection: accepted },
+      });
+      if (prepared.status !== "ready") throw new Error(prepared.message);
+      return runEmbeddedAgentEntry<EmbeddedAgentRunResult>({
+        ...common,
+        kind: "native",
+        selection: {
+          cfg: params.runtimeConfig,
+          agentDir: params.effectiveRun.agentDir,
+          executionSelection: accepted,
+          validateCommit: prepared.validateCommit,
+        },
+        harness: { workspaceDir: turn.followupRun.run.workspaceDir, sessionKey: turn.sessionKey },
+      });
+    });
+  }
   const selection = resolveModelFallbackOptions(
     params.effectiveRun,
     params.runtimeConfig,
     params.liveModelSwitchRuntimeEntry ?? turn.getActiveSessionEntry(),
   );
-  const resolveCandidateRuntime = (candidate: ModelExecutionSelection) => ({
-    candidateRun: {
-      ...params.effectiveRun,
-      executionSelection: candidate,
-      ...resolveRunAuthProfile(params.effectiveRun, candidate.model.provider, {
-        config: params.runtimeConfig,
-      }),
-    },
-    sessionRuntimeOverride: candidate.executor.id,
-    cliExecutionProvider:
-      candidate.executor.kind === "cli" ? candidate.executor.id : candidate.model.provider,
-    useCliExecution: candidate.executor.kind === "cli",
-  });
   return params.timing.measure("model_fallback", () =>
     runEmbeddedAgentEntry<EmbeddedAgentRunResult>({
+      ...common,
       selection: {
         cfg: selection.cfg,
         provider: selection.provider,
@@ -120,13 +347,6 @@ export async function runAgentFallbackCandidates(params: AgentFallbackCycleParam
           turn.followupRun.run.authProfileIdSource === "user"
             ? turn.followupRun.run.authProfileId
             : undefined,
-      },
-      identity: {
-        runId: params.runId,
-        agentId: turn.followupRun.run.agentId,
-        sessionId: turn.followupRun.run.sessionId,
-        sessionKey: selection.sessionKey,
-        lane: runLane,
       },
       harness: {
         workspaceDir: turn.followupRun.run.workspaceDir,
@@ -147,21 +367,21 @@ export async function runAgentFallbackCandidates(params: AgentFallbackCycleParam
               kind: "fallback",
               selection: {
                 model: { provider, id: model },
-                executor: params.effectiveRun.executionSelection.executor,
+                executor: accepted.executor,
               },
             },
           });
           if (prepared.status !== "ready") {
             throw new Error(prepared.message);
           }
-          if (isAcpExecutionSelection(prepared.selection)) {
+          if (!isModelExecutionSelection(prepared.selection)) {
             throw new Error("This reply requires a direct execution selection.");
           }
           return { selection: prepared.selection, validateCommit: prepared.validateCommit };
         },
         resolveContextEngineHost: (candidate) => {
           const runtime = resolveCandidateRuntime(candidate);
-          if (!runtime.useCliExecution) {
+          if (!runtime.cliExecutionProvider) {
             return undefined;
           }
           const backend = resolveCliBackendConfig(
@@ -177,173 +397,7 @@ export async function runAgentFallbackCandidates(params: AgentFallbackCycleParam
           });
         },
       },
-      behavior: {
-        kind: "channel-delivery",
-        readDeliveryEvidence: () => ({
-          hasRetryBlockedDelivery:
-            turn.blockReplyPipeline?.hasRetryBlockedDelivery() === true ||
-            params.directBlockDeliveries.some(hasBlockReplyDeliveryCustody),
-          hasDirectlySentBlockReply: params.directlySentBlockKeys.size > 0,
-          hasBlockReplyPipelineOutput: Boolean(
-            turn.blockReplyPipeline?.hasBuffered() || turn.blockReplyPipeline?.didStream(),
-          ),
-        }),
-      },
-      onAcceptedTerminal: () => {
-        params.commitTerminalOutcome();
-        return turn.replyOperation
-          ? beginReplyOperationFinalizationWork(turn.replyOperation, RUN_STALE_TAKEOVER_MS)
-          : undefined;
-      },
-      abortSignal: params.runAbortSignal,
-      onFallbackStep: (step) => {
-        emitModelFallbackStepLifecycle({ runId: params.runId, sessionKey: turn.sessionKey, step });
-      },
-      runCandidate: async (candidate, runOptions) => {
-        const { provider, id: model } = candidate.model;
-        clearAgentRunTerminalWriteContext(params.preparedRunAdmission.operationalRunInstance);
-        params.state.maintenanceAuthProfile = undefined;
-        params.state.compactionRequestBudget = undefined;
-        invalidateTurnCompactionContext(params.state.compaction);
-        params.state.attemptedRuntimeProvider = provider;
-        params.state.attemptedRuntimeModel = model;
-        const runtime = params.timing.measureSync("fallback_resolve_runtime", () =>
-          resolveCandidateRuntime(candidate),
-        );
-        const candidateRun = runtime.candidateRun;
-        bindSourceReplyDeliveryRuntime(candidateRun, sourceReplyDeliveryRuntime);
-        // CLI prompts are fixed to their session binding, so dispatch must publish that
-        // same stable mode or a valid assistant reply can be silently suppressed.
-        const candidateSourceReplyDeliveryMode =
-          sourceReplyDeliveryModeOrigin === "runtime_default" && runtime.useCliExecution
-            ? (candidateRun.cliSessionBindingFacts?.sourceReplyDeliveryMode ?? "automatic")
-            : sourceReplyDeliveryRuntime.currentMode;
-        const applySourceReplyDeliveryModeBeforeInvocation =
-          sourceReplyDeliveryModeOrigin !== "runtime_default" || runtime.useCliExecution;
-        if (candidateSourceReplyDeliveryMode && applySourceReplyDeliveryModeBeforeInvocation) {
-          sourceReplyDeliveryRuntime.applyMode(candidateRun, candidateSourceReplyDeliveryMode);
-        }
-        const candidateThinkLevel = resolveRunThinkingLevelForFallbackCandidate({
-          cfg: params.runtimeConfig,
-          provider,
-          modelId: model,
-          run: turn.followupRun.run,
-          catalog: turn.followupRun.run.thinkingCatalog,
-          agentId: turn.followupRun.run.agentId,
-          sessionKey: turn.followupRun.run.runtimePolicySessionKey ?? turn.sessionKey,
-          sessionEntry: turn.getActiveSessionEntry(),
-          agentRuntime: candidate.executor.id,
-        });
-        const candidateFastMode = resolveRunFastModeForFallbackCandidate({
-          run: candidateRun,
-          config: params.runtimeConfig,
-          provider,
-          model,
-          sessionEntry: turn.getActiveSessionEntry(),
-        });
-        turn.opts?.onModelSelected?.({ provider, model, thinkLevel: candidateThinkLevel });
-        const signalExecutionPhaseForCandidate: AgentFallbackCandidateCommonParams["signalExecutionPhaseForTyping"] =
-          (info) => {
-            if (
-              params.state.compaction.count > 0 &&
-              (info.phase === "model_call_started" || info.phase === "process_spawned")
-            ) {
-              params.state.postCompactionModelAttempted = true;
-            }
-            params.signalExecutionPhaseForTyping(info);
-          };
-        const messageActionTurnCapability = mintReplyMessageActionTurnCapability(
-          turn,
-          params.runId,
-        );
-        try {
-          const common = {
-            preparedRunAdmission: params.preparedRunAdmission,
-            messageActionTurnCapability,
-            turn,
-            candidateRun,
-            runtimeConfig: params.runtimeConfig,
-            provider,
-            model,
-            candidateThinkLevel,
-            candidateFastMode,
-            runId: params.runId,
-            runAbortSignal: params.runAbortSignal,
-            runLane,
-            isFallbackRetry: runOptions.isFallbackRetry,
-            isFinalFallbackAttempt: runOptions?.isFinalFallbackAttempt,
-            suppressQueuedUserPersistenceForCandidate:
-              (turn.followupRun.run.suppressNextUserMessagePersistence ?? false) ||
-              queuedUserMessagePersistedAcrossFallback,
-            userTurnTranscriptRecorder,
-            contextEngineLogicalTurnLease: runOptions.contextEngineLogicalTurnLease,
-            onContextEngineTurnCandidate: runOptions.onContextEngineTurnCandidate,
-            assistantErrorTranscript: runOptions.assistantErrorTranscript,
-            authProfileFailurePolicy: runOptions.authProfileFailurePolicy,
-            notifyUserMessagePersisted: () => {
-              queuedUserMessagePersistedAcrossFallback = true;
-            },
-            fastModeStartedAtMs,
-            fastModeAutoProgressState,
-            bootstrapContextRunKind,
-            bootstrapPromptWarningSignaturesSeen: params.state.bootstrapPromptWarningSignaturesSeen,
-            currentTurnImages: params.currentTurnImages,
-            signalExecutionPhaseForTyping: signalExecutionPhaseForCandidate,
-            notifyAgentRunStart: params.notifyAgentRunStart,
-            preserveProgressCallbackStartOrder,
-            presentation: params.presentation,
-            timing: params.timing,
-            onLifecycleBackstop: (backstop: AgentLifecycleTerminalBackstop) => {
-              params.state.pendingLifecycleTerminal = { provider, model, backstop };
-            },
-            deferredLifecycle: params.state.deferredLifecycle,
-          } satisfies AgentFallbackCandidateCommonParams;
-          if (runtime.useCliExecution) {
-            const candidate = await runCliFallbackCandidate({
-              ...common,
-              cliExecutionProvider: runtime.cliExecutionProvider,
-              classifyResult: runOptions.classifyResult,
-              lifecycleGeneration: params.state.lifecycleGeneration,
-            });
-            params.state.bootstrapPromptWarningSignaturesSeen =
-              candidate.bootstrapPromptWarningSignaturesSeen;
-            return candidate.result;
-          }
-          const candidate = await runEmbeddedFallbackCandidate({
-            ...common,
-            githubPublicationAvailable: await (githubPublicationAvailability ??=
-              turn.sessionKey && params.effectiveRun.agentId
-                ? prepareGitHubPublicationAvailability({
-                    sessionId: turn.followupRun.run.sessionId,
-                    sessionKey: turn.sessionKey,
-                    agentId: params.effectiveRun.agentId,
-                  })
-                : Promise.resolve(false)),
-            effectiveRun: params.effectiveRun,
-            sessionRuntimeOverride: runtime.sessionRuntimeOverride,
-            getLifecycleGeneration: () => params.state.lifecycleGeneration,
-            onLifecycleGeneration: (generation) => {
-              params.state.lifecycleGeneration = generation;
-            },
-            allowTransientCooldownProbe: runOptions?.allowTransientCooldownProbe,
-            notifyUserAboutCompaction: params.notifyUserAboutCompaction,
-            messageToolDeliveryState,
-            onCompactionFacts: ({ accounting, postCompactionModelAttempted }) => {
-              if (accounting) {
-                recordTurnCompaction(params.state.compaction, accounting);
-              }
-              params.state.postCompactionModelAttempted ||= postCompactionModelAttempted;
-            },
-          });
-          params.state.bootstrapPromptWarningSignaturesSeen =
-            candidate.bootstrapPromptWarningSignaturesSeen;
-          params.state.maintenanceAuthProfile = candidate.maintenanceAuthProfile;
-          params.state.compactionRequestBudget = candidate.compactionRequestBudget;
-          return candidate.result;
-        } finally {
-          revokeMessageActionTurnCapability(messageActionTurnCapability);
-        }
-      },
+      runCandidate,
     }),
   );
 }

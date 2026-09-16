@@ -24,7 +24,6 @@ import {
 } from "../agents/model-selection.js";
 import { resolveThinkingDefaultCore } from "../agents/model-thinking-default-core.js";
 import { publishedModelCatalogOwnerMatchesAgent } from "../agents/prepared-model-catalog-owner.js";
-import { resolveSessionModelRef } from "../agents/session-model-ref.js";
 import {
   concretizeAgentRuntime,
   resolveEffectiveAgentRuntime,
@@ -49,6 +48,7 @@ import {
   type GatewayModelThinkingProfile,
   type SessionListRowContext,
 } from "./session-utils-contracts.js";
+import { resolveSessionSelectedModelRef } from "./session-utils-model-selection.js";
 import { resolveGatewaySessionRuntimeProjection } from "./session-utils-projection.js";
 import type { GatewaySessionsDefaults, SessionsPatchResult } from "./session-utils.types.js";
 import { projectWorkerPlacementAgentRuntime } from "./worker-environments/placement-session-runtime.js";
@@ -220,8 +220,8 @@ export function resolveGatewayModelThinkingProfile(params: {
 
 type GatewaySessionThinkingProjectionParams = {
   cfg: OpenClawConfig;
-  provider: string;
-  model: string;
+  provider?: string;
+  model?: string;
   agentId: string;
   sessionKey: string;
   entry?: SessionEntry;
@@ -237,7 +237,22 @@ export function resolveGatewaySessionThinkingProjectionInternal(
 ) {
   const { acpMeta, agentRuntime, runtimeSelectionLocked } =
     resolveGatewaySessionRuntimeProjection(params);
-  // ACP owns runtime selection, but context-window projection still needs model metadata.
+  if (!params.provider || !params.model) {
+    const thinkingLevel = normalizeThinkLevel(
+      acpMeta?.runtimeOptions?.thinking ?? params.entry?.thinkingLevel,
+    );
+    return {
+      catalogEntry: undefined,
+      agentRuntime,
+      runtimeSelectionLocked,
+      thinkingLevel,
+      effectiveThinkingLevel: thinkingLevel,
+      thinkingLevels: [],
+      thinkingOptions: [],
+      thinkingDefault: undefined,
+    };
+  }
+  // Concrete routes can supply catalog metadata; opaque app models cannot.
   const logicalEntry = params.modelCatalog
     ? (params.rowContext?.findModelCatalogEntry ?? findModelCatalogEntry)(params.modelCatalog, {
         provider: params.provider,
@@ -245,7 +260,7 @@ export function resolveGatewaySessionThinkingProjectionInternal(
       })
     : undefined;
   const thinkingRuntime = acpMeta
-    ? concretizeAgentRuntime(acpMeta.backend ?? agentRuntime.id)
+    ? concretizeAgentRuntime(agentRuntime.id)
     : agentRuntime.source === "session"
       ? agentRuntime.id
       : resolveEffectiveAgentRuntime({
@@ -664,7 +679,12 @@ export function projectSessionPatchResult(params: {
     sessionKey: params.canonicalKey,
     agentId: params.targetAgentId,
   });
-  const resolved = resolveSessionModelRef(params.cfg, params.entry, agentId);
+  const resolved = resolveSessionSelectedModelRef({
+    cfg: params.cfg,
+    agentId,
+    sessionKey: params.canonicalKey,
+    source: { entry: params.entry, loadSessionEntry: () => undefined },
+  });
   const displayModel = resolveSessionDisplayModelIdentityRef({
     cfg: params.cfg,
     provider: resolved.provider,

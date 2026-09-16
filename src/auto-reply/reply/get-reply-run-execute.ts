@@ -20,7 +20,11 @@ import { conversationIdentityFromMsgContext } from "../../config/sessions/conver
 import { resolveGroupSessionKey } from "../../config/sessions/group.js";
 import { normalizeMediaFacts } from "../../media/media-facts.js";
 import { prepareSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
-import { isAcpExecutionSelection } from "../../model-picker/execution-selection.js";
+import { getSessionExecutionSelection } from "../../model-picker/execution-selection.js";
+import {
+  isAcpExecutionSelection,
+  isModelExecutionSelection,
+} from "../../model-picker/execution-selection.js";
 import { MEDIA_ONLY_USER_TEXT } from "../../sessions/user-turn-media.js";
 import {
   createUserTurnTranscriptRecorder,
@@ -122,7 +126,6 @@ export async function executePreparedReplyRun(state: PreparedReplyRunAdmission) 
     command,
     provider,
     model,
-    requestedRouteResolution,
     typing,
     opts,
     defaultModel,
@@ -143,11 +146,14 @@ export async function executePreparedReplyRun(state: PreparedReplyRunAdmission) 
     elevatedAllowed,
   } = params;
 
-  let runExecutionSelection = params.modelState.executionSelection;
+  let runExecutionSelection = params.directives.hasModelDirective
+    ? getSessionExecutionSelection(preparedSessionState.sessionEntry)
+    : params.modelState.executionSelection;
   if (
     !runExecutionSelection ||
-    runExecutionSelection.model.provider !== provider ||
-    runExecutionSelection.model.id !== model
+    (isModelExecutionSelection(runExecutionSelection) &&
+      (runExecutionSelection.model.provider !== provider ||
+        runExecutionSelection.model.id !== model))
   ) {
     const selectionResult = await prepareSessionExecutionSelection({
       cfg,
@@ -161,11 +167,11 @@ export async function executePreparedReplyRun(state: PreparedReplyRunAdmission) 
       typing.cleanup();
       return { text: selectionResult.message };
     }
-    if (isAcpExecutionSelection(selectionResult.selection)) {
-      typing.cleanup();
-      return { text: "This session requires its connected app." };
-    }
     runExecutionSelection = selectionResult.selection;
+  }
+  if (isAcpExecutionSelection(runExecutionSelection)) {
+    typing.cleanup();
+    return { text: "This session requires its connected app." };
   }
   const originatingThreadId = resolveRoutedDeliveryThreadId({ ctx, sessionKey });
   // Abort-signal attachment for queued followups:
@@ -498,6 +504,11 @@ export async function executePreparedReplyRun(state: PreparedReplyRunAdmission) 
         if (useFastReplyRuntime) {
           return { fastMode: false, fastModeAutoOnSeconds: undefined, fastModeOverride: true };
         }
+        if (!isModelExecutionSelection(runExecutionSelection))
+          return {
+            fastMode: params.resolvedFastMode,
+            fastModeAutoOnSeconds: params.resolvedFastModeAutoOnSeconds,
+          };
         const fastModeState = resolveFastModeState({
           cfg,
           provider,
@@ -560,6 +571,7 @@ export async function executePreparedReplyRun(state: PreparedReplyRunAdmission) 
         : {}),
       ...(opts?.skillLibraryAuthoring ? { skillLibraryAuthoring: opts.skillLibraryAuthoring } : {}),
       ...(!useFastReplyRuntime &&
+      isModelExecutionSelection(runExecutionSelection) &&
       isReasoningTagProvider(provider, { config: cfg, workspaceDir, modelId: model })
         ? { enforceFinalTag: true }
         : {}),

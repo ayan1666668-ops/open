@@ -34,8 +34,9 @@ vi.mock("./directive-handling.impl.js", () => ({
   handleDirectiveOnly: (params: HandleDirectiveOnlyParams) => mocks.handleDirective(params),
 }));
 
-vi.mock("./directive-handling.persist.runtime.js", () => ({
-  applySessionModelSelection: (...args: unknown[]) => mocks.applyModelSelection(...args),
+vi.mock("./directive-handling.persist.runtime.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./directive-handling.persist.runtime.js")>()),
+  applySessionExecutionSelection: (...args: unknown[]) => mocks.applyModelSelection(...args),
 }));
 
 beforeEach(() => {
@@ -151,141 +152,98 @@ describe("applyInlineDirectiveOverrides", () => {
     expect(result.runtimeIsSandboxed).toBe(true);
   });
 
-  it.each([
-    {
-      rejectedRef: "ollama/Gemma4-26b-a4-it-gguf",
-      reason: "disallowed" as const,
-      modelPolicyConfigPath: undefined,
-      modelPolicyRepairConfigPath: undefined,
-      expected:
-        "Model override ollama/Gemma4-26b-a4-it-gguf is not allowed for this agent by modelPolicy.allow; reverted to openai/gpt-5.5. Add ollama/Gemma4-26b-a4-it-gguf to modelPolicy.allow or pick an allowed model with /model list.",
-    },
-    {
-      rejectedRef: undefined,
-      reason: "disallowed" as const,
-      modelPolicyConfigPath: undefined,
-      modelPolicyRepairConfigPath: undefined,
-      expected: "Model override not allowed for this agent; reverted to openai/gpt-5.5.",
-    },
-    {
-      rejectedRef: "openai/gpt-4o",
-      reason: "stale" as const,
-      modelPolicyConfigPath: undefined,
-      modelPolicyRepairConfigPath: undefined,
-      expected:
-        "Stored model override openai/gpt-4o is stale for this session; reverted to openai/gpt-5.5. Pick a model again with /model if you still want to override the default.",
-    },
-    {
-      rejectedRef: "external/sensitive",
-      reason: "disallowed" as const,
-      modelPolicyConfigPath: "agents.defaults.models",
-      modelPolicyRepairConfigPath: "agents.defaults.modelPolicy.allow",
-      expected:
-        "Model override external/sensitive is not allowed for this agent by agents.defaults.models; reverted to openai/gpt-5.5. Add external/sensitive to agents.defaults.modelPolicy.allow or pick an allowed model with /model list.",
-    },
-  ])(
-    "emits the $reason reset event before rejecting a locked mixed directive",
-    async ({
-      rejectedRef,
-      reason,
-      modelPolicyConfigPath,
-      modelPolicyRepairConfigPath,
-      expected,
-    }) => {
-      const directives = parseInlineSessionDirectives(
-        "hello /model openai/gpt-5.4 --runtime openclaw",
-      );
-      const typing = createMockTypingController();
-      const sessionEntry = {
-        sessionId: "session-1",
-        updatedAt: 1,
-        providerOverride: "openai",
-        modelOverride: "gpt-5.5",
-        agentHarnessId: "codex",
-        agentRuntimeOverride: "codex",
-        modelSelectionLocked: true,
-      };
-      const modelState = createModelSelectionStateFixture({
-        agentCfg: {},
-        provider: "openai",
-        model: "gpt-5.5",
-      });
-      Object.assign(modelState, {
-        resetModelOverride: true,
-        resetModelOverrideRef: rejectedRef,
-        resetModelOverrideReason: reason,
-        modelPolicyConfigPath,
-        modelPolicyRepairConfigPath,
-      });
-
-      const result = await applyInlineDirectiveOverrides({
-        ctx: buildTestCtx({
-          Body: "hello /model openai/gpt-5.4 --runtime openclaw",
-          CommandAuthorized: true,
-        }),
-        cfg: {},
-        agentId: "main",
-        agentDir: "/tmp/agent",
-        workspaceDir: "/tmp/workspace",
-        agentCfg: {},
-        sessionEntry,
-        sessionStore: { "agent:main:main": sessionEntry },
-        sessionKey: "agent:main:main",
-        sessionScope: undefined,
-        isGroup: false,
-        allowTextCommands: true,
-        command: {
-          surface: "webchat",
-          channel: "webchat",
-          ownerList: [],
-          senderIsOwner: true,
-          isAuthorizedSender: true,
-          rawBodyNormalized: "hello /model openai/gpt-5.4 --runtime openclaw",
-          commandBodyNormalized: "hello /model openai/gpt-5.4 --runtime openclaw",
+  it("rejects a locked mixed model directive without changing the selection or publishing success", async () => {
+    const directives = parseInlineSessionDirectives(
+      "hello /model fixture/after --runtime openclaw",
+    );
+    const typing = createMockTypingController();
+    const sessionEntry = {
+      sessionId: "session-1",
+      updatedAt: 1,
+      executionSelection: {
+        state: "accepted" as const,
+        selection: {
+          model: { provider: "fixture", id: "before" },
+          executor: { kind: "harness" as const, id: "openclaw" },
         },
-        directives,
-        messageProviderKey: "webchat",
-        elevatedEnabled: true,
-        elevatedAllowed: true,
-        elevatedFailures: [],
-        defaultProvider: "openai",
-        defaultModel: "gpt-5.5",
-        aliasIndex: { byAlias: new Map(), byKey: new Map() },
-        provider: "openai",
-        model: "gpt-5.5",
-        modelState,
-        initialModelLabel: "openai/gpt-5.5",
-        formatModelSwitchEvent: (label) => label,
-        resolvedElevatedLevel: "off",
-        defaultActivation: () => "always",
-        contextTokens: 8192,
-        effectiveModelDirective: directives.rawModelDirective,
-        typing,
-      });
+        fallbackPermission: "explicit" as const,
+      },
+      modelSelectionLocked: true,
+    };
+    const modelState = createModelSelectionStateFixture({
+      agentCfg: {},
+      provider: "fixture",
+      model: "before",
+    });
 
-      expect(result).toEqual({
-        kind: "reply",
-        reply: { text: MODEL_SELECTION_LOCKED_MESSAGE, isError: true },
-        preRunRejection: "model-selection-locked",
-      });
-      expect(typing.cleanup).toHaveBeenCalledOnce();
-      expect(mocks.handleDirective).not.toHaveBeenCalled();
-      expect(mocks.applyModelSelection).not.toHaveBeenCalled();
-      expect(mocks.systemEvent).toHaveBeenCalledWith(expected, {
-        sessionKey: "agent:main:main",
-        contextKey: "model:reset:openai/gpt-5.5",
-      });
-      expect(sessionEntry).toEqual({
-        sessionId: "session-1",
-        updatedAt: 1,
-        providerOverride: "openai",
-        modelOverride: "gpt-5.5",
-        agentHarnessId: "codex",
-        agentRuntimeOverride: "codex",
-        modelSelectionLocked: true,
-      });
-    },
-  );
+    const result = await applyInlineDirectiveOverrides({
+      ctx: buildTestCtx({
+        Body: "hello /model fixture/after --runtime openclaw",
+        CommandAuthorized: true,
+      }),
+      cfg: {},
+      agentId: "main",
+      agentDir: "/tmp/agent",
+      workspaceDir: "/tmp/workspace",
+      agentCfg: {},
+      sessionEntry,
+      sessionStore: { "agent:main:main": sessionEntry },
+      sessionKey: "agent:main:main",
+      sessionScope: undefined,
+      isGroup: false,
+      allowTextCommands: true,
+      command: {
+        surface: "webchat",
+        channel: "webchat",
+        ownerList: [],
+        senderIsOwner: true,
+        isAuthorizedSender: true,
+        rawBodyNormalized: "hello /model fixture/after --runtime openclaw",
+        commandBodyNormalized: "hello /model fixture/after --runtime openclaw",
+      },
+      directives,
+      messageProviderKey: "webchat",
+      elevatedEnabled: true,
+      elevatedAllowed: true,
+      elevatedFailures: [],
+      defaultProvider: "fixture",
+      defaultModel: "before",
+      aliasIndex: { byAlias: new Map(), byKey: new Map() },
+      provider: "fixture",
+      model: "before",
+      modelState,
+      initialModelLabel: "fixture/before",
+      formatModelSwitchEvent: (label) => label,
+      resolvedElevatedLevel: "off",
+      defaultActivation: () => "always",
+      contextTokens: 8192,
+      effectiveModelDirective: directives.rawModelDirective,
+      typing,
+    });
+
+    expect(result).toEqual({
+      kind: "reply",
+      reply: { text: MODEL_SELECTION_LOCKED_MESSAGE, isError: true },
+      preRunRejection: "model-selection-locked",
+    });
+    expect(typing.cleanup).toHaveBeenCalledOnce();
+    expect(mocks.handleDirective).not.toHaveBeenCalled();
+    expect(mocks.applyModelSelection).not.toHaveBeenCalled();
+    expect(mocks.systemEvent).not.toHaveBeenCalled();
+    expect(sessionEntry).toEqual({
+      sessionId: "session-1",
+      updatedAt: 1,
+      executionSelection: {
+        state: "accepted" as const,
+        selection: {
+          model: { provider: "fixture", id: "before" },
+          executor: { kind: "harness" as const, id: "openclaw" },
+        },
+        fallbackPermission: "explicit" as const,
+      },
+      modelSelectionLocked: true,
+    });
+  });
 
   it.each([
     {

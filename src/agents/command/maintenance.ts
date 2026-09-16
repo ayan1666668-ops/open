@@ -2,6 +2,7 @@ import type { FollowupRun } from "../../auto-reply/reply/queue.js";
 import { resolveCollapsedSessionAuthPinSource } from "../../config/sessions/auth-profile-override-provenance.js";
 import type { SessionEntry } from "../../config/sessions/types.js";
 import { assertAgentRunLifecycleGenerationCurrent } from "../../infra/agent-events.js";
+import type { ExecutionSelection } from "../../model-picker/execution-selection.js";
 import { readPendingUserTurnTranscriptAdmission } from "../../sessions/user-turn-transcript-admission.js";
 import {
   prepareAgentCommandExecutionIdentity,
@@ -20,8 +21,7 @@ export function createCommandMaintenanceFollowup(params: {
   prepared: PreparedAgentCommandExecution;
   sessionEntry: SessionEntry;
   embeddedSessionState: EmbeddedSessionState;
-  provider: string;
-  model: string;
+  executionSelection: ExecutionSelection;
   thinkLevel: FollowupRun["run"]["thinkLevel"];
   auth?: Pick<FollowupRun["run"], "authProfileId" | "authProfileIdSource">;
 }): FollowupRun {
@@ -46,8 +46,7 @@ export function createCommandMaintenanceFollowup(params: {
     sessionEntry,
     cfg: prepared.cfg,
     sessionKey: prepared.sessionKey,
-    provider: params.provider,
-    model: params.model,
+    executionSelection: params.executionSelection,
     auth: params.auth ?? {
       authProfileId: sessionEntry.authProfileOverride?.trim() || undefined,
       authProfileIdSource: resolveCollapsedSessionAuthPinSource(sessionEntry),
@@ -148,8 +147,7 @@ async function runCommandPreflightMaintenance(
   const followupRun = createCommandMaintenanceFollowup({
     ...params,
     sessionEntry,
-    provider: modelSelection.provider,
-    model: modelSelection.model,
+    executionSelection: modelSelection.executionSelection,
     thinkLevel: modelSelection.effectiveTurnThinkLevel,
     auth: {
       authProfileId: modelSelection.sessionEntryForAttempt?.authProfileOverride,

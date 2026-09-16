@@ -14,12 +14,15 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import {
   prepareSessionExecutionSelection,
   commitSessionExecutionSelection,
+  executionSelectionTransactionChanged,
+  formatExecutionSelectionAcknowledgment,
 } from "../model-picker/apply-session-model-selection.js";
-import { getSessionExecutionSelection } from "../model-picker/apply-session-model-selection.js";
+import { getCommittedSessionExecutionSelection } from "../model-picker/execution-selection.js";
+import { isModelSelectionLocked } from "../sessions/model-overrides.js";
 import { resolveSessionAgentId } from "./agent-scope.js";
 import { resolveFailoverReasonFromError } from "./failover-error.js";
 import type { FailoverReason } from "./failover/signal.js";
-import { resolveSessionModelRef } from "./session-model-ref.js";
+import { resolveSessionModelRefCore as resolveSessionModelRef } from "./session-model-ref.js";
 
 // Revert only when the chosen model is definitively unusable. Transient
 // provider states (rate_limit/overloaded/timeout/server_error) hit working
@@ -73,6 +76,7 @@ async function reconcileAgentPatchedSessionModel(params: {
           sessionKey: params.sessionKey,
           sessionEntry: {
             ...rollbackEntry,
+            executionSelection: rollbackMarker.previous,
             authProfileOverride: rollbackMarker.prevAuthProfileOverride,
             authProfileOverrideSource: resolveCollapsedSessionAuthPinSource({
               authProfileOverride: rollbackMarker.prevAuthProfileOverride,
@@ -83,11 +87,7 @@ async function reconcileAgentPatchedSessionModel(params: {
             authProfileOverrideCompactionCount:
               rollbackMarker.prevAuthProfileOverrideCompactionCount,
           },
-          profileProvider: rollbackMarker.prevProvider,
-          request: {
-            kind: "model",
-            model: { provider: rollbackMarker.prevProvider, id: rollbackMarker.prevModel },
-          },
+          request: { kind: "initialize" },
         })
       : undefined;
   let note: string | undefined;
@@ -131,33 +131,36 @@ async function reconcileAgentPatchedSessionModel(params: {
         !rollback ||
         rollback.status !== "ready" ||
         !rollbackEntry ||
-        rollbackMarker?.ts !== marker.ts ||
-        entry.authProfileOverride !== rollbackEntry.authProfileOverride ||
-        entry.authProfileOverrideSource !== rollbackEntry.authProfileOverrideSource ||
-        entry.authProfileOverrideCompactionCount !==
-          rollbackEntry.authProfileOverrideCompactionCount ||
+        isModelSelectionLocked(entry) ||
+        entry.sessionId !== rollbackEntry.sessionId ||
+        entry.lifecycleRevision !== rollbackEntry.lifecycleRevision ||
+        !isDeepStrictEqual(rollbackMarker, marker) ||
         entry.thinkingLevel !== rollbackEntry.thinkingLevel ||
         entry.contextWindow !== rollbackEntry.contextWindow ||
-        !isDeepStrictEqual(
-          getSessionExecutionSelection(entry, params.cfg),
-          getSessionExecutionSelection(rollbackEntry, params.cfg),
-        )
+        executionSelectionTransactionChanged(rollbackEntry, entry)
       ) {
         result = "kept";
         note = rollback?.status === "rejected" ? rollback.message : undefined;
         return null;
       }
-      const selectionError = rollback.validateCommit?.();
+      const selectionError = rollback.validateCommit();
       if (selectionError) {
         throw new Error(selectionError);
       }
       const next = { ...entry };
       commitSessionExecutionSelection(next, rollback.selection, {
         cfg: params.cfg,
-        cause: { kind: "rollback", fallback: marker },
+        cause: { kind: "inherit", entry: { executionSelection: marker.previous } },
       });
       result = "reverted";
-      note = rollback.message;
+      note =
+        "The requested model could not be used. Restored the previous selection. " +
+        formatExecutionSelectionAcknowledgment({
+          selection: rollback.selection,
+          before: getCommittedSessionExecutionSelection(rollbackEntry),
+          reason: "explicit",
+          catalog: rollback.catalogEntry ? [rollback.catalogEntry] : [],
+        });
       return {
         ...next,
         authProfileOverride: marker.prevAuthProfileOverride,

@@ -13,7 +13,7 @@ import type { InternalSessionEntry as SessionEntry } from "../../config/sessions
 /** Resolves provider/model precedence for isolated cron runs. */
 import type { AgentConfig } from "../../config/types.agents.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
-import { getSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
+import { getSessionExecutionSelection } from "../../model-picker/execution-selection.js";
 import { isModelExecutionSelection } from "../../model-picker/execution-selection.js";
 import type { CronJob } from "../types.js";
 import { resolveCronAgentConfig } from "./run-config.js";
@@ -153,8 +153,8 @@ async function resolveCronThinkingCatalog(params: {
 export async function resolveCronThinkingSelection(params: {
   cfg: OpenClawConfig;
   owner: CronModelSelectionOwner;
-  provider: string;
-  model: string;
+  provider?: string;
+  model?: string;
   agentRuntime: string;
   jobThinking?: string;
   hookThinking?: string;
@@ -175,16 +175,26 @@ export async function resolveCronThinkingSelection(params: {
     normalizeThinkLevel(params.sessionThinking);
   const requestedThinkLevel =
     immutableThinkLevel ??
-    resolveConfiguredThinkingDefault({
-      cfg: params.cfg,
-      agentId: params.owner.agentId,
-      provider: params.provider,
-      model: params.model,
-    });
+    (params.provider && params.model
+      ? resolveConfiguredThinkingDefault({
+          cfg: params.cfg,
+          agentId: params.owner.agentId,
+          provider: params.provider,
+          model: params.model,
+        })
+      : normalizeThinkLevel(
+          resolveAgentConfig(params.cfg, params.owner.agentId)?.thinkingDefault ??
+            params.cfg.agents?.defaults?.thinkingDefault,
+        ));
   const catalog =
-    requestedThinkLevel === "off" && params.agentRuntime === "openclaw"
+    !params.provider || !params.model || (requestedThinkLevel === "off" && params.agentRuntime === "openclaw")
       ? params.owner.modelCatalog.entries
-      : await resolveCronThinkingCatalog(params);
+      : await resolveCronThinkingCatalog({
+          owner: params.owner,
+          provider: params.provider,
+          model: params.model,
+          agentRuntime: params.agentRuntime,
+        });
   return {
     catalog,
     immutableThinkLevel,
@@ -319,8 +329,11 @@ export async function resolveCronModelSelection(
   }
 
   if (!modelOverride && !hooksGmailModelApplied) {
-    const selection = getSessionExecutionSelection(params.sessionEntry, owner.config);
-    if (selection && isModelExecutionSelection(selection)) {
+    const selection = getSessionExecutionSelection(params.sessionEntry);
+    if (selection?.model === "native-managed") {
+      modelSource = "session";
+      configuredProfileId = undefined;
+    } else if (selection && isModelExecutionSelection(selection)) {
       const selected = { provider: selection.model.provider, model: selection.model.id };
       if (getModelRefStatus({ ...selectionParams, ref: selected }).allowed) {
         provider = selected.provider;

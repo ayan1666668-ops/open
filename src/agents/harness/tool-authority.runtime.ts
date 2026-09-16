@@ -22,7 +22,11 @@ type ToolAuthorityAttempt = Pick<
   AgentHarnessAttemptParamsV2,
   | Exclude<
       keyof ReplyToolAuthorityInput["run"],
-      "model" | "runtimePolicySessionKey" | "elevatedLevel" | "traceAuthorized"
+      | "model"
+      | "executionSelection"
+      | "runtimePolicySessionKey"
+      | "elevatedLevel"
+      | "traceAuthorized"
     >
   | "modelId"
   | "sandboxSessionKey"

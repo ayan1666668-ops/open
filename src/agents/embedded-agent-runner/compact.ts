@@ -4,7 +4,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { resolveAgentModelFallbackValues } from "../../config/model-input.js";
 import { loadSessionEntryReadOnly } from "../../config/sessions/session-accessor.js";
-import { projectPublicSessionEntry } from "../../config/sessions/session-entry-projection.js";
+import { stripPrivateSessionEntryFields } from "../../config/sessions/session-entry-projection.js";
 import { isAbortError } from "../../infra/abort-signal.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { withPluginRuntimeGenerationScope } from "../../plugins/runtime/generation-scope.js";
@@ -276,7 +276,7 @@ export async function compactEmbeddedAgentSessionDirect(
       paramsBase.config,
       Boolean(transcriptBytePreflightAuthority),
     ),
-    sessionEntry: entry ? projectPublicSessionEntry(entry) : undefined,
+    sessionEntry: entry ? stripPrivateSessionEntryFields(entry) : undefined,
     agentHarnessId: lockedHarnessRuntime ?? paramsBase.agentHarnessId,
     modelSelectionLocked: entry?.modelSelectionLocked ?? paramsBase.modelSelectionLocked,
     agentId: runSessionTarget.agentId,

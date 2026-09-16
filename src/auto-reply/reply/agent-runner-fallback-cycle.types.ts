@@ -7,6 +7,7 @@ import type { ContextEngineLogicalTurnLease } from "../../agents/harness/context
 import type { CompactionRequestBudget } from "../../agents/sessions/compaction/request-budget.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import type { ExecutionSelection } from "../../model-picker/execution-selection.js";
 import type { ThinkLevel } from "../thinking.js";
 import type { AgentLifecycleTerminalBackstop } from "./agent-lifecycle-terminal.js";
 import type {
@@ -29,8 +30,6 @@ export type AgentFallbackCandidateCommonParams = {
   turn: AgentTurnParams;
   candidateRun: FollowupRun["run"];
   runtimeConfig: OpenClawConfig;
-  provider: string;
-  model: string;
   candidateThinkLevel?: ThinkLevel;
   candidateFastMode: Pick<RunEmbeddedAgentParams, "fastMode" | "fastModeAutoOnSeconds">;
   runId: string;
@@ -40,7 +39,7 @@ export type AgentFallbackCandidateCommonParams = {
   isFinalFallbackAttempt?: boolean;
   suppressQueuedUserPersistenceForCandidate: boolean;
   userTurnTranscriptRecorder: RunEmbeddedAgentParams["userTurnTranscriptRecorder"];
-  contextEngineLogicalTurnLease: ContextEngineLogicalTurnLease;
+  contextEngineLogicalTurnLease?: ContextEngineLogicalTurnLease;
   onContextEngineTurnCandidate: RunEmbeddedAgentParams["onContextEngineTurnCandidate"];
   assistantErrorTranscript: RunEmbeddedAgentParams["assistantErrorTranscript"];
   authProfileFailurePolicy: RunEmbeddedAgentParams["authProfileFailurePolicy"];
@@ -63,6 +62,7 @@ export type AgentFallbackCandidateCommonParams = {
 
 export type AgentFallbackCycleState = {
   maintenanceAuthProfile?: CompletedAgentAuthSelection;
+  maintenanceExecutionSelection?: ExecutionSelection;
   compactionRequestBudget?: CompactionRequestBudget;
   deferredLifecycle: DeferredEmbeddedRunLifecycleManager;
   lifecycleGeneration: string;
@@ -71,12 +71,12 @@ export type AgentFallbackCycleState = {
   compaction: AgentTurnCompaction;
   /** Failure attribution only; model start does not prove current token freshness. */
   postCompactionModelAttempted: boolean;
-  attemptedRuntimeProvider: string;
-  attemptedRuntimeModel: string;
+  attemptedRuntimeProvider?: string;
+  attemptedRuntimeModel?: string;
   bootstrapPromptWarningSignaturesSeen: string[];
   pendingLifecycleTerminal?: {
-    provider: string;
-    model: string;
+    provider?: string;
+    model?: string;
     backstop: AgentLifecycleTerminalBackstop;
   };
 };
@@ -84,8 +84,8 @@ export type AgentFallbackCycleState = {
 type CompletedFallbackCycle = {
   kind: "completed";
   runResult: EmbeddedAgentRunResult;
-  fallbackProvider: string;
-  fallbackModel: string;
+  fallbackProvider?: string;
+  fallbackModel?: string;
   fallbackExhausted: boolean;
   fallbackAttempts: RuntimeFallbackAttempt[];
   terminalRunFailed: boolean;

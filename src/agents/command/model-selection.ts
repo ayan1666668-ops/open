@@ -12,7 +12,7 @@ import {
   commitSessionExecutionSelection,
   prepareSessionExecutionSelection,
 } from "../../model-picker/apply-session-model-selection.js";
-import { getSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
+import { getSessionExecutionSelection } from "../../model-picker/execution-selection.js";
 import {
   isAcpExecutionSelection,
   isModelExecutionSelection,
@@ -114,7 +114,7 @@ export async function resolveEmbeddedModelSelection(params: {
   let model = defaultModel;
   let requestedRouteResolution: ModelFallbackRouteResolution = "resolved";
   let sessionEntry = params.sessionEntry;
-  const acceptedSelection = getSessionExecutionSelection(sessionEntry, params.cfg);
+  const acceptedSelection = getSessionExecutionSelection(sessionEntry);
   const explicitProviderOverride =
     typeof params.opts.provider === "string"
       ? normalizeExplicitOverrideInput(params.opts.provider, "provider")

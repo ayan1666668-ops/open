@@ -10,6 +10,10 @@ import {
 import { assertAgentRunLifecycleGenerationCurrent } from "../../infra/agent-events.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
+import {
+  isModelExecutionSelection,
+  type ExecutionSelection,
+} from "../../model-picker/execution-selection.js";
 import { getPluginRegistryForContext } from "../../plugins/runtime.js";
 import {
   getPluginRuntimeGatewayRequestScope,
@@ -71,8 +75,7 @@ export function createSessionMaintenanceFollowup(params: {
   cfg: OpenClawConfig;
   sessionKey?: string;
   runtimePolicySessionKey?: string;
-  provider: string;
-  model: string;
+  executionSelection: ExecutionSelection;
   auth: Pick<FollowupRun["run"], "authProfileId" | "authProfileIdSource">;
 }): FollowupRun {
   const { run, sessionEntry } = params;
@@ -97,8 +100,7 @@ export function createSessionMaintenanceFollowup(params: {
       groupId: run.groupId,
       groupChannel: run.groupChannel,
       groupSpace: run.groupSpace,
-      provider: params.provider,
-      model: params.model,
+      executionSelection: structuredClone(params.executionSelection),
       authProfileId: params.auth.authProfileId,
       authProfileIdSource: params.auth.authProfileIdSource,
       blockReplyBreak: "message_end",
@@ -120,7 +122,8 @@ export function scheduleSessionMaintenance(
 ): void {
   const { prepared, followupRun } = request;
   const sessionKey = prepared.sessionKey;
-  if (!sessionKey) {
+  const selection = followupRun.run.executionSelection;
+  if (!sessionKey || !isModelExecutionSelection(selection)) {
     return;
   }
   if (request.oneShotCliRun) {
@@ -219,7 +222,7 @@ export function scheduleSessionMaintenance(
                   cfg: prepared.cfg,
                   followupRun,
                   promptForEstimate: "",
-                  defaultModel: followupRun.run.model,
+                  defaultModel: selection.model.id,
                   resolvedVerboseLevel: followupRun.run.verboseLevel ?? "off",
                   sessionEntry: entry,
                   sessionStore,
@@ -248,7 +251,7 @@ export function scheduleSessionMaintenance(
                   sessionKey,
                   runtimePolicySessionKey: prepared.runtimePolicySessionKey ?? sessionKey,
                   storePath: prepared.storePath,
-                  defaultModel: followupRun.run.model,
+                  defaultModel: selection.model.id,
                   isHeartbeat: false,
                   agentHarnessId: request.agentHarnessId,
                   abortSignal: owner.signal,

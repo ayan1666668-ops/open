@@ -305,9 +305,14 @@ describe("sessions.dispatch", () => {
       mocks.resolveTarget.mockReturnValue(
         targetWithEntry({
           sessionId,
-          agentRuntimeOverride: runtime,
-          providerOverride: provider,
-          modelOverride: "model-test",
+          executionSelection: {
+            state: "accepted",
+            selection: {
+              model: { provider, id: "model-test" },
+              executor: { kind: "harness", id: runtime },
+            },
+            fallbackPermission: "explicit",
+          },
           worktree: { id: "worktree-1", branch: "openclaw/cloud-test", repoRoot: "/repo" },
         }),
       );
@@ -415,9 +420,14 @@ describe("sessions.dispatch", () => {
     mocks.resolveTarget.mockReturnValue(
       targetWithEntry({
         sessionId,
-        agentRuntimeOverride: "codex",
-        providerOverride: "openai",
-        modelOverride: "gpt-test",
+        executionSelection: {
+          state: "accepted",
+          selection: {
+            model: { provider: "openai", id: "gpt-test" },
+            executor: { kind: "harness", id: "codex" },
+          },
+          fallbackPermission: "explicit",
+        },
         worktree: { id: "worktree-1", branch: "openclaw/cloud-test", repoRoot: "/repo" },
       }),
     );
@@ -866,8 +876,14 @@ describe("sessions.dispatch", () => {
     mocks.resolveTarget.mockReturnValue(
       targetWithEntry({
         sessionId,
-        providerOverride: "anthropic",
-        modelOverride: "claude-test",
+        executionSelection: {
+          state: "accepted",
+          selection: {
+            model: { provider: "anthropic", id: "claude-test" },
+            executor: { kind: _kind === "CLI" ? "cli" : "harness", id: runtimeId },
+          },
+          fallbackPermission: "configured",
+        },
         worktree: { id: "worktree-1", branch: "openclaw/cloud-test", repoRoot: "/repo" },
       }),
     );
@@ -977,7 +993,6 @@ describe("sessions.dispatch", () => {
     mocks.resolveTarget.mockReturnValue(
       targetWithEntry({
         sessionId,
-        agentRuntimeOverride: "openclaw",
         worktree: { id: "worktree-1", branch: "openclaw/cloud-test", repoRoot: "/repo" },
       }),
     );

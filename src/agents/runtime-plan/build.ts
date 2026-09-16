@@ -91,11 +91,15 @@ export function resolvePreparedProviderRuntimeHandle(
 }
 
 /** Build delivery-specific runtime decisions for one provider/model. */
+export function buildAgentRuntimeDeliveryPlan(): AgentRuntimeDeliveryPlan;
 export function buildAgentRuntimeDeliveryPlan(
   params: BuildAgentRuntimeDeliveryPlanParams,
+): AgentRuntimeDeliveryPlan;
+export function buildAgentRuntimeDeliveryPlan(
+  params?: BuildAgentRuntimeDeliveryPlanParams,
 ): AgentRuntimeDeliveryPlan {
-  const config = asOpenClawConfig(params.config);
-  const providerRuntimeHandle = resolvePreparedProviderRuntimeHandle(params);
+  const config = asOpenClawConfig(params?.config);
+  const providerRuntimeHandle = params ? resolvePreparedProviderRuntimeHandle(params) : undefined;
   return {
     isSilentPayload(payload): boolean {
       return (
@@ -104,6 +108,7 @@ export function buildAgentRuntimeDeliveryPlan(
       );
     },
     resolveFollowupRoute(routeParams) {
+      if (!params) return undefined;
       return resolveProviderFollowupFallbackRoute({
         provider: params.provider,
         config,

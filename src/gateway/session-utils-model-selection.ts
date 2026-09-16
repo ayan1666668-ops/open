@@ -2,6 +2,10 @@ import { readSessionRuntimeOwnership } from "../agents/harness/session-runtime-o
 import type { ModelManifestNormalizationContext } from "../agents/model-ref-shared.js";
 import { resolveSessionModelRefCore } from "../agents/session-model-ref.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import {
+  getCommittedSessionExecutionSelection,
+  isAcpExecutionSelection,
+} from "../model-picker/execution-selection.js";
 import { normalizeAgentId } from "../routing/session-key.js";
 import {
   resolveStoredModelOverrideCore,
@@ -21,9 +25,18 @@ export function resolveSessionSelectedModelRef(
     rowContext?: Pick<SessionListRowContext, "selectedModelByOverrideRef">;
     allowPluginNormalization?: boolean;
   } & ModelManifestNormalizationContext,
-): ReturnType<typeof resolveSessionModelRefCore> & {
+): {
+  provider?: string;
+  model?: string;
   storedOverrideSource: StoredModelOverride["source"] | null;
 } {
+  const accepted = getCommittedSessionExecutionSelection(params.source.entry);
+  if (accepted && isAcpExecutionSelection(accepted)) {
+    return {
+      model: accepted.model === "native-managed" ? undefined : accepted.model.id,
+      storedOverrideSource: "session",
+    };
+  }
   // Ownership is session-specific; never reuse the ordinary override cache for native tuples.
   const ownership = readSessionRuntimeOwnership({
     config: params.cfg,
@@ -57,26 +70,15 @@ export function resolveSessionSelectedModelRef(
   if (!storedOverride) {
     return { ...configuredDefault, storedOverrideSource: null };
   }
-  const selectedEntry = {
-    providerOverride: storedOverride.provider,
-    modelOverride: storedOverride.model,
-    ...(storedOverride.routeResolution === "resolved"
-      ? { modelOverrideRouteResolution: "resolved" as const }
-      : {}),
-  };
-  const key = `${cachePrefix}${[
-    selectedEntry.providerOverride ?? "",
-    selectedEntry.modelOverride,
-    storedOverride.routeResolution,
-  ].join("\0")}`;
+  const key = `${cachePrefix}${[storedOverride.provider ?? configuredDefault.provider, storedOverride.model].join("\0")}`;
   const cached = params.rowContext?.selectedModelByOverrideRef.get(key);
   if (cached) {
     return { ...cached, storedOverrideSource: storedOverride.source };
   }
-  const selected = resolveSessionModelRefCore(params.cfg, selectedEntry, params.agentId, {
-    allowPluginNormalization: params.allowPluginNormalization,
-    manifestPlugins: params.manifestPlugins,
-  });
+  const selected = {
+    provider: storedOverride.provider ?? configuredDefault.provider,
+    model: storedOverride.model,
+  };
   params.rowContext?.selectedModelByOverrideRef.set(key, selected);
   return { ...selected, storedOverrideSource: storedOverride.source };
 }

@@ -12,6 +12,10 @@ import { getChannelPlugin } from "../channels/plugins/index.js";
 import type { ChannelId, ChannelPlugin } from "../channels/plugins/types.public.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import {
+  getSessionExecutionSelection,
+  isModelExecutionSelection,
+} from "../model-picker/execution-selection.js";
 import { getActivePluginChannelRegistry } from "../plugins/runtime.js";
 import type { HeartbeatConfig } from "./heartbeat-config.js";
 
@@ -42,7 +46,7 @@ function resolveHeartbeatModelRef(params: {
   agentId: string;
   heartbeat?: HeartbeatConfig;
   entry?: SessionEntry;
-}): ModelRef {
+}): ModelRef | undefined {
   const { defaultProvider, defaultModel, aliasIndex } = resolveDefaultModel({
     cfg: params.cfg,
     agentId: params.agentId,
@@ -61,16 +65,13 @@ function resolveHeartbeatModelRef(params: {
   if (heartbeatRef) {
     return heartbeatRef;
   }
-  return {
-    provider:
-      normalizeOptionalString(params.entry?.providerOverride) ??
-      normalizeOptionalString(params.entry?.modelProvider) ??
-      defaultProvider,
-    model:
-      normalizeOptionalString(params.entry?.modelOverride) ??
-      normalizeOptionalString(params.entry?.model) ??
-      defaultModel,
-  };
+  const selection = getSessionExecutionSelection(params.entry);
+  if (selection) {
+    return isModelExecutionSelection(selection)
+      ? { provider: selection.model.provider, model: selection.model.id }
+      : undefined;
+  }
+  return { provider: defaultProvider, model: defaultModel };
 }
 
 function usesCodexHarness(params: {
@@ -81,6 +82,10 @@ function usesCodexHarness(params: {
   sessionKey?: string;
 }): boolean {
   const modelRef = resolveHeartbeatModelRef(params);
+  if (!modelRef) {
+    const selection = getSessionExecutionSelection(params.entry);
+    return selection?.executor.kind === "harness" && selection.executor.id === "codex";
+  }
   return (
     resolveEffectiveAgentRuntime({
       cfg: params.cfg,

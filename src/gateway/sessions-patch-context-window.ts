@@ -7,8 +7,8 @@ import {
   type ModelCatalogSnapshot,
 } from "../agents/model-catalog.js";
 import type { InternalSessionEntry as SessionEntry } from "../config/sessions.js";
-import { getSessionExecutionSelection } from "../model-picker/execution-selection-state.js";
-import { isAcpExecutionSelection } from "../model-picker/execution-selection.js";
+import { getSessionExecutionSelection } from "../model-picker/execution-selection.js";
+import { isModelExecutionSelection } from "../model-picker/execution-selection.js";
 
 export function* applySessionContextWindowPatch(params: {
   defaultModel: string;
@@ -52,10 +52,11 @@ export function* applySessionContextWindowPatch(params: {
   }
   const selection = getSessionExecutionSelection(params.next);
   const provider =
-    selection && !isAcpExecutionSelection(selection)
+    selection && isModelExecutionSelection(selection)
       ? selection.model.provider
       : params.defaultProvider;
-  const model = selection?.model?.id ?? params.defaultModel;
+  const model =
+    selection && selection.model !== "native-managed" ? selection.model.id : params.defaultModel;
   const catalog = yield* params.loadModelCatalog();
   const logical = catalog
     ? findModelCatalogEntry(catalog, { provider, modelId: model })

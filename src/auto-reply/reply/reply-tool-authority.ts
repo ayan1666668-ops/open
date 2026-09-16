@@ -20,6 +20,7 @@ import { normalizeChatType } from "../../channels/chat-type.js";
 import { cloneConfigWithResolutionFacts } from "../../config/resolution-facts.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import { resolveGroupSessionKey } from "../../config/sessions/group.js";
+import { isModelExecutionSelection } from "../../model-picker/execution-selection.js";
 import { GATEWAY_OWNER_ONLY_CORE_TOOLS } from "../../security/dangerous-tools.js";
 import type { RuntimeMsgContext } from "../templating.js";
 import { resolveOriginMessageProvider } from "./origin-routing.js";
@@ -44,8 +45,7 @@ export type ReplyToolAuthorityInput = {
       | "agentId"
       | "agentDir"
       | "agentAccountId"
-      | "provider"
-      | "model"
+      | "executionSelection"
       | "messageProvider"
       | "chatType"
       | "conversationToolPolicy"
@@ -79,7 +79,8 @@ export type ReplyToolAuthorityInput = {
       | "toolBindings"
     >
   > &
-    Pick<FollowupRun["run"], "sessionId" | "sessionFile" | "workspaceDir" | "provider" | "model">;
+    Pick<FollowupRun["run"], "sessionId" | "sessionFile" | "workspaceDir"> &
+    Partial<ReplyToolAuthorityRoute>;
 };
 
 /** Projects current inbound facts against the active run's frozen authority snapshot. */
@@ -146,6 +147,7 @@ function snapshotFollowupRunToolAuthority(run: ReplyToolAuthorityInput): ReplyTo
     disableTools: run.disableTools === true,
     run: {
       ...run.run,
+      executionSelection: structuredClone(run.run.executionSelection),
       config: run.run.config ? cloneConfigWithResolutionFacts(run.run.config) : undefined,
       conversationToolPolicy: structuredClone(run.run.conversationToolPolicy),
       inputProvenance: structuredClone(run.run.inputProvenance),
@@ -208,8 +210,12 @@ function resolveReplyToolAuthorityContext(
   route?: ReplyToolAuthorityRoute,
 ) {
   const execution = snapshot.run;
-  const provider = route?.provider ?? execution.provider;
-  const model = route?.model ?? execution.model;
+  const selectedModel =
+    execution.executionSelection && isModelExecutionSelection(execution.executionSelection)
+      ? execution.executionSelection.model
+      : undefined;
+  const provider = route?.provider ?? selectedModel?.provider ?? execution.provider;
+  const model = route?.model ?? selectedModel?.id ?? execution.model;
   const policySessionKey = execution.runtimePolicySessionKey ?? execution.sessionKey;
   const sandboxRuntime = resolveSandboxRuntimeStatus({
     cfg: execution.config,

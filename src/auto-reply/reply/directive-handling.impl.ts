@@ -11,14 +11,25 @@ import {
 import { persistStickyModelSelectionBestEffort } from "../../agents/sticky-model-selection.js";
 import { resolveEffectiveAgentRuntime } from "../../agents/thinking-runtime.js";
 import { resolveCollapsedSessionAuthPinSource } from "../../config/sessions/auth-profile-override-provenance.js";
+import { loadSessionEntryReadOnly } from "../../config/sessions/session-accessor.js";
 import { triggerSessionPatchHook } from "../../gateway/session-patch-hooks.js";
 import { enqueueSystemEvent } from "../../infra/system-events.js";
 import {
+  resolveExecutionSelectionExecutorKind,
   prepareSessionExecutionSelection,
   commitSessionModelSelectionWithAuth,
+  commitSessionExecutionSelection,
+  formatExecutionSelectionAcknowledgment,
+  withPreparedSessionExecutionSelection,
+  executionSelectionTransactionChanged,
+  resolveSessionExecutionControlFailure,
 } from "../../model-picker/apply-session-model-selection.js";
-import { executionSelectionCodecMetadata } from "../../model-picker/execution-selection-state.js";
-import { isAcpExecutionSelection } from "../../model-picker/execution-selection.js";
+import {
+  getCommittedSessionExecutionSelection,
+  isAcpExecutionSelection,
+  isModelExecutionSelection,
+  type ExecutionSelection,
+} from "../../model-picker/execution-selection.js";
 import {
   isModelSelectionLocked,
   MODEL_SELECTION_LOCKED_MESSAGE,
@@ -61,6 +72,8 @@ import type { ReasoningLevel, ThinkLevel } from "./directives.js";
 import { findSelectedCatalogEntry } from "./model-runtime-normalization.js";
 import { refreshQueuedFollowupSession } from "./queue.js";
 
+class DirectiveCommitError extends Error {}
+
 /** Handles inline directives that can be acknowledged without a model turn. */
 export async function handleDirectiveOnly(
   params: HandleDirectiveOnlyParams,
@@ -79,7 +92,6 @@ export async function handleDirectiveOnly(
     policyAliasIndex,
     allowedModelKeys,
     allowedModelCatalog,
-    resetModelOverride,
     provider,
     model,
     formatModelSwitchEvent,
@@ -139,7 +151,6 @@ export async function handleDirectiveOnly(
     runtimePolicySessionKey,
     sessionKey,
     storePath,
-    resetModelOverride,
     workspaceDir: params.workspaceDir,
     surface: params.surface,
     sessionEntry,
@@ -161,6 +172,7 @@ export async function handleDirectiveOnly(
     agentId: activeAgentId,
     modelPolicy: params.modelPolicy,
     requesterProfileId: params.ctx ? readSessionInputProfileId(params.ctx) : undefined,
+    executionSelection: getCommittedSessionExecutionSelection(sessionEntry),
   });
   if (modelResolution.errorText) {
     return rejectModelTransaction(modelResolution.errorText);
@@ -175,7 +187,7 @@ export async function handleDirectiveOnly(
   const runtimeRequest = resolveModelRuntimeDirective(directives.rawModelRuntime);
   const kind =
     runtimeRequest.kind === "set"
-      ? executionSelectionCodecMetadata(params.cfg).classifyExecutor(runtimeRequest.runtime)
+      ? resolveExecutionSelectionExecutorKind(params.cfg, runtimeRequest.runtime)
       : undefined;
   if (runtimeRequest.kind === "set" && !kind) {
     return rejectModelTransaction(
@@ -199,7 +211,10 @@ export async function handleDirectiveOnly(
         request: modelSelection.resetToDefault
           ? { kind: "reset" }
           : runtimeRequest.kind === "clear"
-            ? { kind: "reset", model: { provider: resolvedProvider, id: resolvedModel } }
+            ? {
+                kind: "reset",
+                model: { provider: modelSelection.provider, id: modelSelection.model },
+              }
             : {
                 kind: "model",
                 model: { provider: resolvedProvider, id: resolvedModel },
@@ -212,7 +227,7 @@ export async function handleDirectiveOnly(
   if (preparedModel?.status === "rejected") {
     return rejectModelTransaction(preparedModel.message);
   }
-  if (preparedModel && !isAcpExecutionSelection(preparedModel.selection)) {
+  if (preparedModel && isModelExecutionSelection(preparedModel.selection)) {
     resolvedProvider = preparedModel.selection.model.provider;
     resolvedModel = preparedModel.selection.model.id;
     if (modelSelection) {
@@ -221,6 +236,9 @@ export async function handleDirectiveOnly(
     }
   }
   const validateRuntimeSelection = preparedModel?.validateCommit;
+  let acceptedSelection = preparedModel?.selection;
+  let modelAcknowledgment = preparedModel?.message;
+  const acpModelSelection = preparedModel && isAcpExecutionSelection(preparedModel.selection);
   if (preparedModel?.catalogEntry) {
     const selected = preparedModel.catalogEntry;
     thinkingCatalog = [
@@ -235,19 +253,20 @@ export async function handleDirectiveOnly(
     provider: resolvedProvider,
     model: resolvedModel,
   });
-  const thinkingRuntime =
-    preparedModel && !isAcpExecutionSelection(preparedModel.selection)
-      ? preparedModel.selection.executor.id
-      : resolveEffectiveAgentRuntime({
-          cfg: params.cfg,
-          provider: resolvedProvider,
-          modelId: resolvedModel,
-          modelApi: selectedCatalogEntry?.api,
-          modelBaseUrl: selectedCatalogEntry?.baseUrl,
-          agentId: activeAgentId,
-          sessionKey: runtimePolicySessionKey,
-          sessionEntry,
-        });
+  const thinkingRuntime = preparedModel
+    ? isAcpExecutionSelection(preparedModel.selection)
+      ? preparedModel.selection.executor.backend
+      : preparedModel.selection.executor.id
+    : resolveEffectiveAgentRuntime({
+        cfg: params.cfg,
+        provider: resolvedProvider,
+        modelId: resolvedModel,
+        modelApi: selectedCatalogEntry?.api,
+        modelBaseUrl: selectedCatalogEntry?.baseUrl,
+        agentId: activeAgentId,
+        sessionKey: runtimePolicySessionKey,
+        sessionEntry,
+      });
   const thinkingPolicy = {
     provider: resolvedProvider,
     model: resolvedModel,
@@ -464,7 +483,9 @@ export async function handleDirectiveOnly(
   // Model changes normalize stored choices; inherited defaults must remain unpinned.
   const nextThinkLevel = sessionEntry.thinkingLevel as ThinkLevel | undefined;
   const remappedUnsupportedThinkLevel =
-    nextThinkLevel && (params.persistenceState ? modelSelection : !directives.hasThinkDirective)
+    !acpModelSelection &&
+    nextThinkLevel &&
+    (params.persistenceState ? modelSelection : !directives.hasThinkDirective)
       ? resolveSupportedThinkingLevel({
           ...thinkingPolicy,
           level: nextThinkLevel,
@@ -508,70 +529,161 @@ export async function handleDirectiveOnly(
       return rejectModelTransaction(authProfileError);
     }
     const initialSessionEntry = { ...sessionEntry };
-    const directiveFieldsUpdated =
-      !params.persistenceState &&
-      applySessionDirectiveFields({
-        directives,
-        sessionEntry,
-        allowPrivilegedPersistence,
-        allowElevatedPersistence: elevatedEnabled && elevatedAllowed,
-      });
-    if (shouldRemapUnsupportedThinkLevel && remappedUnsupportedThinkLevel) {
-      sessionEntry.thinkingLevel = remappedUnsupportedThinkLevel;
-    }
-    if (modelSelection) {
-      if (!preparedModel || isAcpExecutionSelection(preparedModel.selection)) {
-        return rejectModelTransaction("This selection must be applied by its connected app.");
+    const readCurrentEntry = () =>
+      storePath
+        ? loadSessionEntryReadOnly({ agentId: activeAgentId, sessionKey, storePath })
+        : sessionStore[sessionKey];
+    const assertActive = () => {
+      const current = readCurrentEntry();
+      if (
+        !current ||
+        current.sessionId !== initialSessionEntry.sessionId ||
+        current.lifecycleRevision !== initialSessionEntry.lifecycleRevision
+      ) {
+        throw new DirectiveCommitError(
+          "Model change was not applied because the session changed. Retry.",
+        );
       }
-      modelSelectionUpdated = commitSessionModelSelectionWithAuth({
-        cfg: params.cfg,
-        agentId: activeAgentId,
-        entry: sessionEntry,
-        currentProvider: provider,
-        selection: preparedModel.selection,
-        profileOverride,
-        markLiveSwitchPending: true,
-        cause: {
-          kind: modelSelection.resetToDefault ? "reset" : "user",
-        },
-      }).changed;
-    }
-    sessionEntry.updatedAt = Date.now();
-    sessionStore[sessionKey] = sessionEntry;
-    if (storePath) {
-      const persistence = await persistSessionDirectiveSnapshot({
-        storePath,
-        sessionKey,
-        initialEntry: initialSessionEntry,
-        sessionEntry,
-        sessionStore,
-        hasModelSelection: Boolean(modelSelection),
-        reassertLiveModelSwitchPending:
-          modelSelectionUpdated && sessionEntry.liveModelSwitchPending === true,
-        touchedFields: touchedSessionFields,
-        validateCommit: () =>
-          modelResolution.validateAuthProfileSelection?.() ?? validateRuntimeSelection?.(),
-      });
-      if (persistence.status !== "applied") {
-        const errorText =
-          persistence.status === "commit-rejected"
-            ? persistence.error
-            : persistence.status === "model-selection-locked"
-              ? MODEL_SELECTION_LOCKED_MESSAGE
-              : modelSelection
-                ? "Model change was not applied because the session changed. Retry."
-                : "Session settings were not applied because the session changed. Retry.";
-        return rejectModelTransaction(errorText);
+      if (modelSelection && isModelSelectionLocked(current)) {
+        throw new DirectiveCommitError(MODEL_SELECTION_LOCKED_MESSAGE);
+      }
+    };
+    const assertSelectionCurrent = () => {
+      assertActive();
+      const current = readCurrentEntry();
+      if (!current || executionSelectionTransactionChanged(initialSessionEntry, current)) {
+        throw new DirectiveCommitError(
+          "Model change was not applied because the session changed. Retry.",
+        );
+      }
+    };
+    let directiveFieldsUpdated = false;
+    let selectionCommitted = false;
+    const commitDirectives = async (selection?: ExecutionSelection): Promise<void> => {
+      directiveFieldsUpdated =
+        !params.persistenceState &&
+        applySessionDirectiveFields({
+          directives,
+          sessionEntry,
+          allowPrivilegedPersistence,
+          allowElevatedPersistence: elevatedEnabled && elevatedAllowed,
+        });
+      if (shouldRemapUnsupportedThinkLevel && remappedUnsupportedThinkLevel) {
+        sessionEntry.thinkingLevel = remappedUnsupportedThinkLevel;
+      }
+      if (modelSelection && selection) {
+        acceptedSelection = selection;
+        if (selection.model !== "native-managed") {
+          modelSelection.model = selection.model.id;
+          modelSelection.provider = isModelExecutionSelection(selection)
+            ? selection.model.provider
+            : undefined;
+        }
+        modelSelectionUpdated = isAcpExecutionSelection(selection)
+          ? commitSessionExecutionSelection(sessionEntry, selection, {
+              cfg: params.cfg,
+              markLiveSwitchPending: true,
+              cause: { kind: modelSelection.resetToDefault ? "reset" : "user" },
+            }).changed
+          : commitSessionModelSelectionWithAuth({
+              cfg: params.cfg,
+              agentId: activeAgentId,
+              entry: sessionEntry,
+              currentProvider: provider,
+              selection,
+              profileOverride,
+              markLiveSwitchPending: true,
+              cause: { kind: modelSelection.resetToDefault ? "reset" : "user" },
+            }).changed;
+      }
+      sessionEntry.updatedAt = Date.now();
+      sessionStore[sessionKey] = sessionEntry;
+      if (storePath) {
+        const persistence = await persistSessionDirectiveSnapshot({
+          storePath,
+          sessionKey,
+          initialEntry: initialSessionEntry,
+          sessionEntry,
+          sessionStore,
+          hasModelSelection: Boolean(modelSelection),
+          reassertLiveModelSwitchPending:
+            modelSelectionUpdated && sessionEntry.liveModelSwitchPending === true,
+          touchedFields: touchedSessionFields,
+          validateCommit: () =>
+            modelResolution.validateAuthProfileSelection?.() ?? validateRuntimeSelection?.(),
+        });
+        if (persistence.status !== "applied") {
+          const errorText =
+            persistence.status === "commit-rejected"
+              ? persistence.error
+              : persistence.status === "model-selection-locked"
+                ? MODEL_SELECTION_LOCKED_MESSAGE
+                : modelSelection
+                  ? "Model change was not applied because the session changed. Retry."
+                  : "Session settings were not applied because the session changed. Retry.";
+          throw new DirectiveCommitError(errorText);
+        }
+      }
+      selectionCommitted = true;
+    };
+    try {
+      if (preparedModel) {
+        await withPreparedSessionExecutionSelection({
+          cfg: params.cfg,
+          agentId: activeAgentId,
+          sessionKey,
+          prepared: preparedModel,
+          assertActive,
+          assertSelectionCurrent,
+          commitAccepted: commitDirectives,
+        });
+        modelAcknowledgment = acceptedSelection
+          ? formatExecutionSelectionAcknowledgment({
+              selection: acceptedSelection,
+              before: preparedModel.before,
+              reason: preparedModel.reason,
+              catalog: thinkingCatalog ?? [],
+            })
+          : preparedModel.message;
+      } else {
+        await commitDirectives();
+      }
+    } catch (error) {
+      const failure = acpModelSelection
+        ? await resolveSessionExecutionControlFailure(error, {
+            cfg: params.cfg,
+            agentId: activeAgentId,
+            sessionKey,
+            sessionId: initialSessionEntry.sessionId,
+            lifecycleRevision: initialSessionEntry.lifecycleRevision,
+            selectionCommitted,
+          })
+        : undefined;
+      if (selectionCommitted && failure && acceptedSelection && preparedModel) {
+        modelAcknowledgment = `${formatExecutionSelectionAcknowledgment({
+          selection: acceptedSelection,
+          before: preparedModel.before,
+          reason: preparedModel.reason,
+          catalog: thinkingCatalog ?? [],
+        })}${failure.confirmationNotice ? ` ${failure.confirmationNotice}` : ""}`;
+      } else if (error instanceof DirectiveCommitError) {
+        return rejectModelTransaction(error.message);
+      } else if (failure) {
+        return rejectModelTransaction(failure.message);
+      } else {
+        throw error;
       }
     }
     if (
       modelSelection &&
+      acceptedSelection &&
+      isModelExecutionSelection(acceptedSelection) &&
       params.canPersistStickyModelSelection === true &&
       params.stickyModelSelectionTarget
     ) {
       configuredDefaultUpdate = persistStickyModelSelectionBestEffort({
         agentId: activeAgentId,
-        model: `${modelSelection.provider}/${modelSelection.model}`,
+        model: `${acceptedSelection.model.provider}/${acceptedSelection.model.id}`,
         target: params.stickyModelSelectionTarget,
       });
     }
@@ -580,13 +692,7 @@ export async function handleDirectiveOnly(
     if (sessionKey && (sessionSettingsUpdated || modelSelectionUpdated)) {
       emitSessionLifecycleEvent({ sessionKey, agentId: activeAgentId, reason: "patch" });
     }
-    if (
-      modelSelection &&
-      preparedModel &&
-      !isAcpExecutionSelection(preparedModel.selection) &&
-      modelSelectionUpdated &&
-      sessionKey
-    ) {
+    if (modelSelection && acceptedSelection && modelSelectionUpdated && sessionKey) {
       triggerSessionPatchHook({
         cfg: params.cfg,
         sessionEntry,
@@ -594,7 +700,10 @@ export async function handleDirectiveOnly(
         patch: {
           key: sessionKey,
           model:
-            directives.rawModelDirective ?? `${modelSelection.provider}/${modelSelection.model}`,
+            directives.rawModelDirective ??
+            (modelSelection.provider
+              ? `${modelSelection.provider}/${modelSelection.model}`
+              : modelSelection.model),
         },
       });
       // `/model` should retarget queued/future work without interrupting the
@@ -602,7 +711,7 @@ export async function handleDirectiveOnly(
       // selection once the current turn finishes.
       refreshQueuedFollowupSession({
         key: sessionKey,
-        nextSelection: preparedModel.selection,
+        nextSelection: acceptedSelection,
         nextAuthProfileId: sessionEntry.authProfileOverride,
         nextAuthProfileIdSource: resolveCollapsedSessionAuthPinSource(sessionEntry),
         nextThinking: {
@@ -613,7 +722,9 @@ export async function handleDirectiveOnly(
     }
   }
   if (modelSelection) {
-    const nextLabel = `${modelSelection.provider}/${modelSelection.model}`;
+    const nextLabel = modelSelection.provider
+      ? `${modelSelection.provider}/${modelSelection.model}`
+      : modelSelection.model;
     if (nextLabel !== params.initialModelLabel) {
       enqueueSystemEvent(formatModelSwitchEvent(nextLabel, modelSelection.alias), {
         sessionKey,
@@ -704,10 +815,8 @@ export async function handleDirectiveOnly(
     }
   }
   if (modelSelection) {
-    const label = `${modelSelection.provider}/${modelSelection.model}`;
-    const labelWithAlias = modelSelection.alias ? `${modelSelection.alias} (${label})` : label;
-    if (preparedModel) {
-      parts.push(preparedModel.message);
+    if (modelAcknowledgment) {
+      parts.push(modelAcknowledgment);
       const defaultAck = formatConfiguredDefaultSelectionAck({
         configuredDefaultUpdate,
         stickyModelSelectionTarget: params.stickyModelSelectionTarget,

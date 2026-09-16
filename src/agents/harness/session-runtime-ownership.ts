@@ -2,6 +2,7 @@ import { resolveSessionStorePathCore } from "../../config/sessions/paths.js";
 import { loadSessionEntryReadOnly } from "../../config/sessions/session-accessor.js";
 import type { SessionEntry } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { getCommittedSessionExecutionSelection } from "../../model-picker/execution-selection.js";
 import { resolveSessionPinnedHarnessId } from "../../sessions/agent-harness-session-key.js";
 import { resolveSessionAgentIdsStrict } from "../agent-scope.js";
 import { AgentHarnessPreflightError } from "./errors.js";
@@ -15,14 +16,33 @@ export function readSessionRuntimeOwnership(params: {
   sessionKey?: string;
   storePath?: string;
   sessionEntry?: Partial<
-    Pick<SessionEntry, "sessionId" | "agentHarnessId" | "modelSelectionLocked" | "pluginOwnerId">
+    Pick<
+      SessionEntry,
+      | "sessionId"
+      | "agentHarnessId"
+      | "modelSelectionLocked"
+      | "pluginOwnerId"
+      | "executionSelection"
+    >
   >;
+  candidateHarnessId?: string;
   assertCurrent?: () => void;
 }): AgentHarnessSessionRuntimeOwnership | undefined {
   const entry = params.sessionEntry;
   const sessionId = entry?.sessionId;
-  const harnessId = resolveSessionPinnedHarnessId(entry);
-  if (!sessionId || !harnessId) {
+  const selected = getCommittedSessionExecutionSelection(entry);
+  const requested =
+    entry?.executionSelection?.state === "deferred"
+      ? entry.executionSelection.request.executor
+      : undefined;
+  const executor = selected?.executor ?? requested;
+  const harnessId = executor?.kind === "harness" ? executor.id : params.candidateHarnessId;
+  if (
+    !sessionId ||
+    !harnessId ||
+    !resolveSessionPinnedHarnessId(entry) ||
+    (params.candidateHarnessId && params.candidateHarnessId !== harnessId)
+  ) {
     return undefined;
   }
   const harness = getRegisteredAgentHarness(harnessId)?.harness;

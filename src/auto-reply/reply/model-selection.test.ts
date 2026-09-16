@@ -182,6 +182,43 @@ describe("createModelSelectionState catalog loading", () => {
       ...options,
     });
   }
+  it.each(["user", "user-link", undefined] as const)(
+    "preserves a missing explicit account (%s) while a model directive is prepared",
+    async (source) => {
+      const entry: SessionEntry = {
+        sessionId: "qa-session",
+        updatedAt: 1,
+        authProfileOverride: "qa-provider:missing-account",
+        authProfileOverrideSource: source,
+        executionSelection: {
+          state: "accepted",
+          fallbackPermission: "explicit",
+          selection: {
+            model: { provider: "qa-provider", id: "qa-model" },
+            executor: { kind: "harness", id: "openclaw" },
+          },
+        },
+      };
+      const initial = structuredClone(entry);
+      const cfg: OpenClawConfig = {};
+      const sessionStore = { main: entry };
+      await createModelSelectionState({
+        cfg,
+        agentCfg: undefined,
+        sessionEntry: entry,
+        sessionStore,
+        sessionKey: "main",
+        defaultProvider: "qa-provider",
+        defaultModel: "qa-model",
+        provider: "qa-provider",
+        model: "qa-model",
+        hasModelDirective: true,
+      });
+      expect(entry).toEqual(initial);
+      expect(sessionStore.main.authProfileOverride).toBe("qa-provider:missing-account");
+      expect(authProfileStoreMock.ensureAuthProfileStore).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([false, true])(
     "retains automatic-primary reasoning from prepared=%s metadata outside manual policy",
@@ -1631,7 +1668,6 @@ describe("createModelSelectionState respects session model override", () => {
     expect(state).toMatchObject({
       provider: "anthropic",
       model: "claude-opus-4-8",
-      resetModelOverride: false,
     });
     expect(sessionStore[sessionKey]).toMatchObject({
       providerOverride: "claude-cli",
@@ -1751,7 +1787,6 @@ describe("createModelSelectionState respects session model override", () => {
       expect(state).toMatchObject({
         provider: "openai",
         model: automaticOrigin === "stale-again" ? "gpt-4o" : "gpt-5.5",
-        resetModelOverride: false,
       });
       expect(sessionPersistenceMocks.persistReplySessionEntry).toHaveBeenCalledOnce();
       const persistenceRequest =

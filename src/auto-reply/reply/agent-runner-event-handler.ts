@@ -33,8 +33,8 @@ export function createAgentRunEventHandler(params: {
   lifecycleBackstop: AgentLifecycleTerminalBackstop;
   notifyAgentRunStart: () => void;
   sourceRepliesAreToolOnly: boolean;
-  provider: string;
-  model: string;
+  provider?: string;
+  model?: string;
   runId: string;
   effectiveSessionId?: string;
   notifyUserAboutCompaction: boolean;
@@ -272,7 +272,10 @@ export function createAgentRunEventHandler(params: {
 
     const compactionCount = params.onCompactionCompleted();
     if (backend === CODEX_APP_SERVER_COMPACTION_BACKEND) {
-      const modelRef = formatCompactionModelRef(params.provider, params.model);
+      const modelRef =
+        params.provider && params.model
+          ? formatCompactionModelRef(params.provider, params.model)
+          : "the native app";
       const consoleMessage =
         `codex app-server auto-compaction succeeded for ${modelRef}; ` +
         "refreshed session context";

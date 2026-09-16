@@ -12,6 +12,7 @@ import {
   setRuntimeConfigSnapshot,
   type OpenClawConfig,
 } from "../../config/config.js";
+import * as sessionAccessor from "../../config/sessions/session-accessor.js";
 import { onAgentEvent } from "../../infra/agent-events.js";
 import { requestHeartbeat, setHeartbeatWakeHandler } from "../../infra/heartbeat-wake.js";
 import * as execModule from "../../process/exec.js";
@@ -279,7 +280,7 @@ describe("plugin runtime command execution", () => {
   it("includes persisted session exec overrides in sandbox authority", () => {
     const runtime = createPluginRuntime();
     const getSessionEntry = vi
-      .spyOn(runtime.agent.session, "getSessionEntry")
+      .spyOn(sessionAccessor, "loadSessionEntryReadOnly")
       .mockReturnValue({ sessionId: "session", updatedAt: 1, execHost: "gateway" });
     const config: OpenClawConfig = {
       agents: {
@@ -304,7 +305,7 @@ describe("plugin runtime command execution", () => {
 
   it("prepares the live sandbox before returning workspace authority", async () => {
     const runtime = createPluginRuntime();
-    vi.spyOn(runtime.agent.session, "getSessionEntry").mockReturnValue(undefined);
+    vi.spyOn(sessionAccessor, "loadSessionEntryReadOnly").mockReturnValue(undefined);
     sandboxContextMocks.resolveSandboxContext.mockResolvedValue({ backendId: "docker" });
     const config: OpenClawConfig = {
       agents: {

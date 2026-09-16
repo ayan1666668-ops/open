@@ -32,7 +32,6 @@ describe("placement session authorization", () => {
     mocks.resolveTarget.mockReturnValue(
       makeSessionTarget({
         sessionId,
-        agentRuntimeOverride: "openclaw",
         worktree: { id: "worktree-1", branch: "openclaw/cloud-test", repoRoot: "/repo" },
       }),
     );

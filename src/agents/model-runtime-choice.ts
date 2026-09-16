@@ -1,7 +1,8 @@
+import { resolveCollapsedSessionAuthPinSource } from "../config/sessions/auth-profile-override-provenance.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { getSessionExecutionSelection } from "../model-picker/execution-selection-state.js";
-import { isAcpExecutionSelection } from "../model-picker/execution-selection.js";
+import { getSessionExecutionSelection } from "../model-picker/execution-selection.js";
+import { isModelExecutionSelection } from "../model-picker/execution-selection.js";
 import { resolveAgentHarnessPolicy } from "./harness/policy.js";
 import { buildAgentHarnessSupportContext } from "./harness/support.js";
 import type { ModelCatalogEntry } from "./model-catalog.types.js";
@@ -41,7 +42,7 @@ export async function evaluatePublishedModelRuntimeChoice(params: {
   if (!authStore) {
     return { kind: "unknown", message: unavailable };
   }
-  const accepted = getSessionExecutionSelection(params.sessionEntry, params.cfg);
+  const accepted = getSessionExecutionSelection(params.sessionEntry);
   const decisions = createModelCatalogDecisions({
     cfg: owner.config,
     agentId: owner.agentId ?? params.agentId,
@@ -56,12 +57,12 @@ export async function evaluatePublishedModelRuntimeChoice(params: {
     isCurrent: owner.isCurrent,
     preferredProfileId: params.sessionEntry?.authProfileOverride,
     pinnedProfileId:
-      params.sessionEntry?.authProfileOverrideSource === "user"
-        ? params.sessionEntry.authProfileOverride
+      resolveCollapsedSessionAuthPinSource(params.sessionEntry) === "user"
+        ? params.sessionEntry?.authProfileOverride
         : undefined,
     profileProvider:
       params.profileProvider ??
-      (accepted && !isAcpExecutionSelection(accepted) ? accepted.model.provider : undefined),
+      (accepted && isModelExecutionSelection(accepted) ? accepted.model.provider : undefined),
   });
   let entry = decisions.snapshot.entries.find(
     (row) => modelKey(row.provider, row.id) === modelKey(params.provider, params.model),

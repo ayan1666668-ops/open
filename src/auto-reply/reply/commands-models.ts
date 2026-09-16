@@ -49,7 +49,7 @@ import { resolveDefaultAgentWorkspaceDir } from "../../agents/workspace.js";
 import { getChannelPlugin } from "../../channels/plugins/index.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
-import { getSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
+import { getSessionExecutionSelection } from "../../model-picker/execution-selection.js";
 import { isModelExecutionSelection } from "../../model-picker/execution-selection.js";
 import { resolveProviderChannelLoginChoice } from "../../plugins/provider-login-options.js";
 import { formatProviderLoginCommand } from "../../shared/provider-login-command.js";
@@ -233,7 +233,7 @@ async function projectPreparedModelsProviderData(
   if (!authStore) {
     throw new Error("Model catalog owner omitted its auth store");
   }
-  const selection = getSessionExecutionSelection(options.sessionEntry, cfg);
+  const selection = getSessionExecutionSelection(options.sessionEntry);
   const decisions = createModelCatalogDecisions({
     cfg,
     agentId: owner.agentId ?? agentId ?? "main",

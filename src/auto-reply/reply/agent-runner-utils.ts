@@ -31,7 +31,6 @@ import {
 } from "../../gateway/message-action-turn-capability.js";
 import { isReasoningTagProvider } from "../../utils/provider-utils.js";
 import type { TemplateContext } from "../templating.js";
-import { resolveRunAuthProfile } from "./agent-runner-auth-profile.js";
 import type { AgentTurnParams } from "./agent-runner-execution.types.js";
 import { buildEmbeddedRunBaseParams as buildEmbeddedRunBaseParamsCore } from "./agent-runner-run-params.js";
 import { hasInboundAudio } from "./inbound-media.js";
@@ -255,14 +254,6 @@ export function resolveRunFastModeForFallbackCandidate(params: {
       : state.fastAutoOnSeconds,
   };
 }
-/** Builds base embedded run params with auth and provider runtime hints. */
-function buildEmbeddedRunBaseParams(params: Parameters<typeof buildEmbeddedRunBaseParamsCore>[0]) {
-  return buildEmbeddedRunBaseParamsCore({
-    ...params,
-    isReasoningTagProvider,
-  });
-}
-
 function buildEmbeddedContextFromTemplate(params: {
   run: FollowupRun["run"];
   replyRoute?: EmbeddedReplyRoute;
@@ -390,13 +381,10 @@ export async function buildEmbeddedRunExecutionParams(params: {
   replyRoute?: EmbeddedReplyRoute;
   sessionCtx: TemplateContext;
   hasRepliedRef: { value: boolean } | undefined;
-  provider: string;
-  model: string;
   runId: string;
   promptCacheKey?: string;
   allowTransientCooldownProbe?: boolean;
 }) {
-  const authProfile = resolveRunAuthProfile(params.run, params.provider);
   const embeddedContext = buildEmbeddedContextFromTemplate({
     run: params.run,
     replyRoute: params.replyRoute,
@@ -404,13 +392,11 @@ export async function buildEmbeddedRunExecutionParams(params: {
     hasRepliedRef: params.hasRepliedRef,
   });
   const senderContext = buildTemplateSenderContext(params.sessionCtx);
-  const runBaseParams = await buildEmbeddedRunBaseParams({
+  const runBaseParams = await buildEmbeddedRunBaseParamsCore({
     run: params.run,
-    provider: params.provider,
-    model: params.model,
     runId: params.runId,
     promptCacheKey: params.promptCacheKey,
-    authProfile,
+    isReasoningTagProvider,
     allowTransientCooldownProbe: params.allowTransientCooldownProbe,
   });
   return {

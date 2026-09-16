@@ -22,8 +22,8 @@ export function recordMessageToolRunOutcome(params: {
   runId: string;
   sessionKey: string;
   agentId: string;
-  provider: string;
-  model: string;
+  provider?: string;
+  model?: string;
   outcome: "tool_delivered" | "mute";
   runStatus: "completed" | "errored" | "aborted";
   occurredAt: number;
@@ -34,8 +34,9 @@ export function recordMessageToolRunOutcome(params: {
     run_id: params.runId,
     session_key: params.sessionKey,
     agent_id: params.agentId,
-    provider: params.provider,
-    model: params.model,
+    // A native attempt can stop before reporting a model; empty observations retain that outcome.
+    provider: params.provider ?? "",
+    model: params.model ?? "",
     outcome: params.outcome,
     run_status: params.runStatus,
     occurred_at: params.occurredAt,

@@ -90,13 +90,20 @@ function buildFallbackAttemptSummaries(attempts: RuntimeFallbackAttempt[]): stri
 
 /** Builds the visible notice shown when runtime falls back from the selected model. */
 export function buildFallbackNotice(params: {
-  selectedProvider: string;
-  selectedModel: string;
-  activeProvider: string;
-  activeModel: string;
+  selectedProvider?: string;
+  selectedModel?: string;
+  activeProvider?: string;
+  activeModel?: string;
   attempts: RuntimeFallbackAttempt[];
   cfg?: OpenClawConfig;
 }): string | null {
+  if (
+    !params.selectedProvider ||
+    !params.selectedModel ||
+    !params.activeProvider ||
+    !params.activeModel
+  )
+    return null;
   const selected = buildModelCatalogRef(params.selectedProvider, params.selectedModel);
   const active = buildModelCatalogRef(params.activeProvider, params.activeModel);
   if (areRuntimeModelRefsEquivalent(selected, active, { config: params.cfg })) {
@@ -123,10 +130,11 @@ export function buildProviderPolicyRetryNotice(params: {
 
 /** Builds the visible notice shown when runtime returns to the selected model. */
 export function buildFallbackClearedNotice(params: {
-  selectedProvider: string;
-  selectedModel: string;
+  selectedProvider?: string;
+  selectedModel?: string;
   previousActiveModel?: string;
-}): string {
+}): string | null {
+  if (!params.selectedProvider || !params.selectedModel) return null;
   const selected = buildModelCatalogRef(params.selectedProvider, params.selectedModel);
   const previous = normalizeOptionalString(params.previousActiveModel);
   if (previous && previous !== selected) {
@@ -136,8 +144,8 @@ export function buildFallbackClearedNotice(params: {
 }
 
 type ResolvedFallbackTransition = {
-  selectedModelRef: string;
-  activeModelRef: string;
+  selectedModelRef?: string;
+  activeModelRef?: string;
   fallbackActive: boolean;
   fallbackTransitioned: boolean;
   fallbackCleared: boolean;
@@ -158,26 +166,32 @@ type ResolvedFallbackTransition = {
 
 /** Resolves fallback state transitions and the next persisted notice-state fields. */
 export function resolveFallbackTransition(params: {
-  selectedProvider: string;
-  selectedModel: string;
-  activeProvider: string;
-  activeModel: string;
+  selectedProvider?: string;
+  selectedModel?: string;
+  activeProvider?: string;
+  activeModel?: string;
   attempts: RuntimeFallbackAttempt[];
   state?: FallbackNoticeState;
   cfg?: OpenClawConfig;
 }): ResolvedFallbackTransition {
-  const selectedModelRef = buildModelCatalogRef(params.selectedProvider, params.selectedModel);
-  const activeModelRef = buildModelCatalogRef(params.activeProvider, params.activeModel);
+  const selectedModelRef =
+    params.selectedProvider && params.selectedModel
+      ? buildModelCatalogRef(params.selectedProvider, params.selectedModel)
+      : undefined;
+  const activeModelRef =
+    params.activeProvider && params.activeModel
+      ? buildModelCatalogRef(params.activeProvider, params.activeModel)
+      : undefined;
   const previousState = {
     selectedModel: normalizeOptionalString(params.state?.fallbackNotice?.selectedModel),
     activeModel: normalizeOptionalString(params.state?.fallbackNotice?.activeModel),
     reason: normalizeOptionalString(params.state?.fallbackNotice?.reason),
   };
   const comparisonOptions = { config: params.cfg };
-  const fallbackActive = !areRuntimeModelRefsEquivalent(
-    selectedModelRef,
-    activeModelRef,
-    comparisonOptions,
+  const fallbackActive = Boolean(
+    selectedModelRef &&
+    activeModelRef &&
+    !areRuntimeModelRefsEquivalent(selectedModelRef, activeModelRef, comparisonOptions),
   );
   const fallbackTransitioned =
     fallbackActive &&
@@ -197,7 +211,9 @@ export function resolveFallbackTransition(params: {
           comparisonOptions,
         ),
       );
-  const fallbackCleared = !fallbackActive && previousStateWasRealFallback;
+  const fallbackCleared = Boolean(
+    selectedModelRef && activeModelRef && !fallbackActive && previousStateWasRealFallback,
+  );
   const reasonSummary = buildFallbackReasonSummary(params.attempts);
   const attemptSummaries = buildFallbackAttemptSummaries(params.attempts);
   const nextState = fallbackActive

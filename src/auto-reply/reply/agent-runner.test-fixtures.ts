@@ -9,6 +9,7 @@ import {
 import type { SessionEntry } from "../../config/sessions.js";
 import { replaceSessionEntry } from "../../config/sessions/session-accessor.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { isModelExecutionSelection } from "../../model-picker/execution-selection.js";
 import { extractTextFromChatContent } from "../../shared/chat-content.js";
 import type { TemplateContext } from "../templating.js";
 import type { FollowupRun, QueueSettings } from "./queue.js";
@@ -68,13 +69,15 @@ export function createTestFollowupRun(
       workspaceDir: rootDir,
       config: {},
       skillsSnapshot: { prompt: "", skills: [] },
-      thinkingCatalog: [
-        {
-          provider: executionSelection.model.provider,
-          id: executionSelection.model.id,
-          input: ["text"],
-        },
-      ],
+      thinkingCatalog: isModelExecutionSelection(executionSelection)
+        ? [
+            {
+              provider: executionSelection.model.provider,
+              id: executionSelection.model.id,
+              input: ["text"],
+            },
+          ]
+        : [],
       thinkLevel: "low",
       verboseLevel: "off",
       elevatedLevel: "off",
@@ -111,8 +114,11 @@ export function withTestModelContextTokens(params: {
   if (params.contextTokens === undefined) {
     return params.cfg;
   }
-  const provider = params.followupRun.run.executionSelection.model.provider;
-  const model = params.followupRun.run.executionSelection.model.id ?? params.defaultModel;
+  const selection = params.followupRun.run.executionSelection;
+  if (!isModelExecutionSelection(selection))
+    throw new Error("Context limit fixtures require a concrete model.");
+  const provider = selection.model.provider;
+  const model = selection.model.id;
   const providerConfig = params.cfg.models?.providers?.[provider];
   const configuredModels = providerConfig?.models ?? [];
   const configuredModel = configuredModels.find((entry) => entry.id === model);

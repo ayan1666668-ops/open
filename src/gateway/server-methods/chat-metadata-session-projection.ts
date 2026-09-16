@@ -6,9 +6,13 @@ import { readSessionRuntimeOwnership } from "../../agents/harness/session-runtim
 import type { ModelCatalogEntry, ModelCatalogSnapshot } from "../../agents/model-catalog.types.js";
 import { getPreparedModelRuntimeAuthMaterializations } from "../../agents/prepared-model-runtime-auth.js";
 import type { PreparedModelRuntimeSnapshot } from "../../agents/prepared-model-runtime.js";
-import { resolveSessionModelRef } from "../../agents/session-model-ref.js";
+import { resolveSessionModelRefCore as resolveSessionModelRef } from "../../agents/session-model-ref.js";
 import { resolveCollapsedSessionAuthPinSource } from "../../config/sessions/auth-profile-override-provenance.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import {
+  getSessionExecutionSelection,
+  isModelExecutionSelection,
+} from "../../model-picker/execution-selection.js";
 import { normalizeAgentId } from "../../routing/session-key.js";
 import { resolveGatewaySessionRuntimeSelectionLocked } from "../session-utils-projection.js";
 import type {
@@ -102,9 +106,11 @@ export function resolveSessionCatalogProfiles(
   runtimeOverride?: string;
 } {
   const profileId = sessionEntry?.authProfileOverride?.trim();
-  const runtime = sessionEntry?.agentRuntimeOverride?.trim();
+  const selection = getSessionExecutionSelection(sessionEntry);
+  const runtime =
+    selection && selection.executor.kind !== "acp" ? selection.executor.id : undefined;
   const provider =
-    sessionEntry?.providerOverride ??
+    (selection && isModelExecutionSelection(selection) ? selection.model.provider : undefined) ??
     (runtime
       ? resolveSessionModelRef(config, sessionEntry, agentId, {
           allowPluginNormalization: false,

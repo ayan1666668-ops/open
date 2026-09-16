@@ -23,18 +23,25 @@ export function resolveCompactionLiveModelSelection(params: {
   }
   if (requested.authProfileId) {
     return {
-      provider: requested.provider,
-      model: requested.model,
+      provider: requested.selection.model.provider,
+      model: requested.selection.model.id,
       authProfileId: requested.authProfileId,
       authProfileIdSource: requested.authProfileIdSource ?? "auto",
     };
   }
-  if (normalizeProviderId(requested.provider) === normalizeProviderId(current.provider)) {
-    return { ...current, provider: requested.provider, model: requested.model };
+  if (
+    normalizeProviderId(requested.selection.model.provider) ===
+    normalizeProviderId(current.provider)
+  ) {
+    return {
+      ...current,
+      provider: requested.selection.model.provider,
+      model: requested.selection.model.id,
+    };
   }
   return {
-    provider: requested.provider,
-    model: requested.model,
+    provider: requested.selection.model.provider,
+    model: requested.selection.model.id,
     authProfileIdSource: "auto",
   };
 }

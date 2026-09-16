@@ -83,8 +83,14 @@ export function registerSessionRuntimeWindowTests(harness: {
             {
               sessionId: sessionKey,
               updatedAt: 1,
-              providerOverride: "openai",
-              modelOverride: "gpt-5.6-sol",
+              executionSelection: {
+                state: "accepted",
+                selection: {
+                  model: { provider: base.provider, id: base.id },
+                  executor: { kind: "harness", id: "openclaw" },
+                },
+                fallbackPermission: "explicit",
+              },
             },
           );
           expect(

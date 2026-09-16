@@ -111,8 +111,6 @@ function resolveEffectiveSelectedModelRefs(params: { cfg: OpenClawConfig; agentI
       cfg,
       agentId,
       sessionKey: `agent:${agentId}:subagent:codex-diagnostic`,
-      hasSessionModelOverride: true,
-      modelOverrideSource: "auto",
     }) ?? [];
   const values = new Set<string>();
   for (const raw of [mainPrimaryRaw, ...mainFallbacks, subagentPrimaryRaw, ...subagentFallbacks]) {

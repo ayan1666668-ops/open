@@ -52,17 +52,22 @@ import {
 const dispatchTestMocks = getDispatchTestMocks();
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 
-function useDeviceSession(agentRuntimeOverride?: string): void {
+function useDeviceSession(runtime?: string): void {
   dispatchTestMocks.resolveTarget.mockReturnValue(
     makeSessionTarget({
       sessionId: dispatchTestSessionId,
-      ...(agentRuntimeOverride
+      ...(runtime
         ? {
-            agentHarnessId: agentRuntimeOverride,
-            agentRuntimeOverride,
+            agentHarnessId: runtime,
             modelSelectionLocked: true,
-            modelOverride: "gpt-test",
-            providerOverride: "openai",
+            executionSelection: {
+              state: "accepted" as const,
+              selection: {
+                model: { provider: "openai", id: "gpt-test" },
+                executor: { kind: "harness" as const, id: runtime },
+              },
+              fallbackPermission: "explicit" as const,
+            },
           }
         : {}),
       worktree: { id: "worktree-1", branch: "openclaw/device-test", repoRoot: "/repo" },

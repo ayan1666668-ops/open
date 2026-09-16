@@ -1,7 +1,7 @@
 import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import { resolveAgentEffectiveModelPrimary } from "../agents/agent-scope.js";
 import { splitTrailingAuthProfile } from "../agents/model-ref-profile.js";
-import { resolveSessionModelRef } from "../agents/session-model-ref.js";
+import { resolveSessionModelRefCore as resolveSessionModelRef } from "../agents/session-model-ref.js";
 import { resolveSessionRuntimeOverrideForProvider } from "../agents/session-runtime-compat.js";
 import { resolveUtilityModelRefForAgent } from "../agents/utility-model.js";
 import { generateConversationLabelWithFallback } from "../auto-reply/reply/conversation-label-generator.js";
@@ -248,6 +248,7 @@ export async function prepareDashboardSessionTitle(params: {
   cfg: OpenClawConfig;
   agentId: string;
   entry?: DashboardSessionTitleModelEntry;
+  executionSelection?: ModelExecutionSelection;
   userMessage: string;
   abortSignal?: AbortSignal;
   assertCurrent?: () => void;

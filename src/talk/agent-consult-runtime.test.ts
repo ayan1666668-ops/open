@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../test/helpers/promise.js";
 import type { RunEmbeddedAgentParams } from "../agents/embedded-agent-runner/run/params.js";
+import * as sessionAccessor from "../config/sessions/session-accessor.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import {
   emitTrustedDiagnosticEvent,
@@ -64,66 +65,28 @@ function testTempPath(name: string): string {
 }
 
 function createAgentRuntime(payloads: unknown[] = [{ text: "Speak this." }]) {
-  const sessionStore: Record<
-    string,
-    {
-      sessionId?: string;
-      updatedAt?: number;
-      createdVia?: SessionEntry["createdVia"];
-      createdActor?: SessionEntry["createdActor"];
-      createdAt?: number;
-      sandbox?: SessionEntry["sandbox"];
-      archivedAt?: number;
-      sessionFile?: string;
-      spawnedBy?: string;
-      agentHarnessId?: string;
-      modelSelectionLocked?: boolean;
-      forkedFromParent?: boolean;
-      totalTokens?: number;
-      delivery?: SessionEntry["delivery"];
-      permissionMode?: SessionEntry["permissionMode"];
-      toolOverrides?: SessionEntry["toolOverrides"];
-    }
-  > = {};
+  const sessionStore: Record<string, SessionEntry> = {};
   const runEmbeddedAgent = vi.fn(async (_params?: RunEmbeddedAgentParams) => ({
     payloads,
     meta: {},
   }));
-  const updateSessionStore = vi.fn(
-    async (
-      _storePath: string,
-      mutator: (store: Record<string, { sessionId?: string; updatedAt?: number }>) => unknown,
-    ) => {
-      return await mutator(sessionStore);
-    },
-  );
-  const getSessionEntry = vi.fn(
-    (params: { sessionKey: string }) => sessionStore[params.sessionKey],
-  );
-  const patchSessionEntry = vi.fn(
-    async (params: {
-      sessionKey: string;
-      fallbackEntry?: Record<string, unknown>;
-      update: (
-        entry: Record<string, unknown>,
-      ) => Promise<Record<string, unknown> | null> | Record<string, unknown> | null;
-    }) => {
-      const existing = sessionStore[params.sessionKey] ?? params.fallbackEntry;
-      if (!existing) {
-        return null;
-      }
-      const patch = await params.update({ ...existing });
-      if (!patch) {
-        return existing;
-      }
-      const next = { ...existing, ...patch };
-      sessionStore[params.sessionKey] = next;
-      return next;
-    },
-  );
-  const upsertSessionEntry = vi.fn(
-    async (params: { sessionKey: string; entry: Record<string, unknown> }) => {
-      sessionStore[params.sessionKey] = { ...params.entry };
+  vi.spyOn(sessionAccessor, "loadSessionEntryReadOnly").mockImplementation(({ sessionKey }) => {
+    const entry = sessionStore[sessionKey];
+    return entry ? structuredClone(entry) : undefined;
+  });
+  vi.spyOn(sessionAccessor, "patchSessionEntryCore").mockImplementation(
+    async (scope, update, options) => {
+      const persisted = sessionStore[scope.sessionKey];
+      const entry = persisted ?? options?.fallbackEntry;
+      if (!entry) return null;
+      const patch = await update(structuredClone(entry), {
+        existingEntry: persisted ? structuredClone(persisted) : undefined,
+      });
+      if (!patch) return persisted ?? null;
+      options?.assertCommitAllowed?.();
+      const next = { ...entry, ...patch };
+      sessionStore[scope.sessionKey] = next;
+      return structuredClone(next);
     },
   );
   return {
@@ -134,16 +97,6 @@ function createAgentRuntime(payloads: unknown[] = [{ text: "Speak this." }]) {
       resolveAgentTimeoutMs: vi.fn(() => 30_000),
       session: {
         resolveStorePath: vi.fn(() => testTempPath("sessions.json")),
-        loadSessionStore: vi.fn(() => sessionStore),
-        saveSessionStore: vi.fn(async () => {}),
-        updateSessionStore,
-        getSessionEntry,
-        patchSessionEntry,
-        upsertSessionEntry,
-        resolveSessionFilePath: vi.fn(
-          (_sessionId: string, entry?: { sessionFile?: string }) =>
-            entry?.sessionFile ?? testTempPath("session.json"),
-        ),
       },
       runEmbeddedAgent,
     },
@@ -193,6 +146,7 @@ describe("realtime voice agent consult runtime", () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     sessionForkMocks.forkSessionEntryFromParent.mockReset();
     const tempDir = testTempDir;
     testTempDir = undefined;
@@ -399,6 +353,7 @@ describe("realtime voice agent consult runtime", () => {
     const { runtime, runEmbeddedAgent, sessionStore } = createAgentRuntime();
     sessionStore["agent:main:voice"] = {
       sessionId: "voice-session",
+      updatedAt: 1,
       permissionMode: "workspace",
       toolOverrides: { webSearch: false },
     };
@@ -493,7 +448,7 @@ describe("realtime voice agent consult runtime", () => {
       }),
     ).rejects.toThrow('Session "voice:archived" is archived. Restore it before starting new work.');
     expect(runtime.ensureAgentWorkspace).not.toHaveBeenCalled();
-    expect(runtime.session.patchSessionEntry).not.toHaveBeenCalled();
+    expect(sessionAccessor.patchSessionEntryCore).not.toHaveBeenCalled();
     expect(runEmbeddedAgent).not.toHaveBeenCalled();
   });
 
@@ -524,7 +479,7 @@ describe("realtime voice agent consult runtime", () => {
       }),
     ).rejects.toThrow(MODEL_SELECTION_LOCKED_MESSAGE);
     expect(runtime.ensureAgentWorkspace).not.toHaveBeenCalled();
-    expect(runtime.session.patchSessionEntry).not.toHaveBeenCalled();
+    expect(sessionAccessor.patchSessionEntryCore).not.toHaveBeenCalled();
     expect(runEmbeddedAgent).not.toHaveBeenCalled();
   });
 
@@ -557,7 +512,7 @@ describe("realtime voice agent consult runtime", () => {
     ).rejects.toThrow(MODEL_SELECTION_LOCKED_MESSAGE);
     expect(forkSessionEntryFromParent).not.toHaveBeenCalled();
     expect(runtime.ensureAgentWorkspace).not.toHaveBeenCalled();
-    expect(runtime.session.patchSessionEntry).not.toHaveBeenCalled();
+    expect(sessionAccessor.patchSessionEntryCore).not.toHaveBeenCalled();
     expect(runEmbeddedAgent).not.toHaveBeenCalled();
   });
 
@@ -637,7 +592,7 @@ describe("realtime voice agent consult runtime", () => {
       'Session "voice:archive-race" is archived. Restore it before starting new work.',
     );
     expect(runtime.ensureAgentWorkspace).not.toHaveBeenCalled();
-    expect(runtime.session.patchSessionEntry).not.toHaveBeenCalled();
+    expect(sessionAccessor.patchSessionEntryCore).not.toHaveBeenCalled();
     expect(runEmbeddedAgent).not.toHaveBeenCalled();
   });
 
@@ -838,7 +793,7 @@ describe("realtime voice agent consult runtime", () => {
         sessionKey: "agent:main:subagent:google-meet:meet-1",
       }),
     );
-    expect(runtime.session.patchSessionEntry).not.toHaveBeenCalled();
+    expect(sessionAccessor.patchSessionEntryCore).not.toHaveBeenCalled();
     const forkedEntry = sessionStore["agent:main:subagent:google-meet:meet-1"];
     if (!forkedEntry) {
       throw new Error("Expected forked consult session entry");
@@ -912,7 +867,7 @@ describe("realtime voice agent consult runtime", () => {
     expect(warn).toHaveBeenCalledWith(
       "[talk] Parent context is too large to fork (150000/100000 tokens); starting with isolated context instead.",
     );
-    expect(runtime.session.patchSessionEntry).toHaveBeenCalled();
+    expect(sessionAccessor.patchSessionEntryCore).toHaveBeenCalled();
     const call = requireEmbeddedAgentCall(runEmbeddedAgent);
     expectNonEmptyString(call.sessionId);
     expect(call.sessionFile).toBeUndefined();

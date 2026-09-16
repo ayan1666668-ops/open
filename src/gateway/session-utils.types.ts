@@ -15,6 +15,7 @@ import type {
   SessionGoal,
   SessionOrigin,
 } from "../config/sessions/types.js";
+import type { PublicSessionEntry } from "../model-picker/execution-selection-projection.js";
 import type { PluginSessionExtensionProjection } from "../plugins/host-hooks.js";
 import type { FastModeSource } from "../shared/fast-mode.js";
 import type {
@@ -150,8 +151,8 @@ export type SessionsListResult = SessionsListResultBase<GatewaySessionsDefaults,
  */
 export type SessionListModelCatalog = ReadonlyMap<string, PreparedGatewayModelCatalog | undefined>;
 
-export type SessionsPatchResult = SessionsPatchResultBase<SessionEntry> & {
-  entry: SessionEntry;
+export type SessionsPatchResult = SessionsPatchResultBase<PublicSessionEntry> & {
+  entry: PublicSessionEntry;
   resolved?: {
     modelProvider?: string;
     model?: string;

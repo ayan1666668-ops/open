@@ -13,10 +13,13 @@ import { sanitizeForLog } from "../../packages/terminal-core/src/ansi.js";
 import { getAcpSessionManager } from "../acp/control-plane/manager.js";
 import { isAcpOwnerRepairRequired } from "../acp/control-plane/manager.runtime-owner.js";
 import { tryPrepareFreshManagerRuntimeSession } from "../acp/control-plane/manager.runtime-resume-state.js";
-import { requireAcpExecutionSelection } from "../acp/control-plane/manager.utils.js";
-import { resolveAcpSessionTarget } from "../acp/control-plane/manager.utils.js";
+import {
+  requireAcpExecutionSelection,
+  resolveAcpSessionTarget,
+} from "../acp/control-plane/manager.utils.js";
 import { getAcpRuntimeBackend } from "../acp/runtime/registry.js";
 import { buildAcpDatabaseSessionKey } from "../acp/runtime/session-meta-keys.js";
+import { readSessionEntryFromStore } from "../acp/runtime/session-meta-store.js";
 import {
   readAcpSessionMeta,
   listAcpSessionEntries,
@@ -34,7 +37,7 @@ import {
 } from "../agents/bootstrap-cache.js";
 import { clearAllCliSessions } from "../agents/cli-session.js";
 import { resetRegisteredAgentHarnessSessions } from "../agents/harness/registry.js";
-import { resolveSessionModelRef } from "../agents/session-model-ref.js";
+import { resolveSessionModelRefCore as resolveSessionModelRef } from "../agents/session-model-ref.js";
 import { managedWorktrees } from "../agents/worktrees/service.js";
 import {
   buildSessionEndHookPayload,
@@ -70,7 +73,7 @@ import {
   type SessionCreatedActor,
   type SessionCreatedVia,
 } from "../config/sessions/session-entry-provenance.js";
-import type { SessionAcpMeta } from "../config/sessions/types.js";
+import type { SessionAcpLifecycle } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { logVerbose } from "../globals.js";
 import { createInternalHookEvent, triggerInternalHook } from "../hooks/internal-hooks.js";
@@ -80,8 +83,8 @@ import {
   isSessionAutoResetReason,
 } from "../hooks/session-auto-reset.js";
 import { getSessionBindingService } from "../infra/outbound/session-binding-service.js";
-import { commitAcpExecutionSelection } from "../model-picker/apply-session-model-selection.js";
 import { executionSelectionTransactionChanged } from "../model-picker/apply-session-model-selection.js";
+import type { PublicSessionEntry } from "../model-picker/execution-selection-projection.js";
 import { getGlobalHookRunner } from "../plugins/hook-runner-global.js";
 import { runPluginHostCleanup } from "../plugins/host-hook-cleanup.js";
 import { getActivePluginRegistry } from "../plugins/runtime.js";
@@ -553,9 +556,9 @@ async function closeAcpRuntimeForSession(params: {
   agentId?: string;
   fallbackSessionKeys?: Array<string | undefined>;
   reason: "session-reset" | "session-delete";
-  onResetMeta?: (params: { sessionKey: string; meta: SessionAcpMeta }) => void;
+  onResetMeta?: (params: { sessionKey: string; meta: SessionAcpLifecycle }) => void;
   deferResetState?: boolean;
-  onDeferredResetState?: (params: { sessionKey: string; meta: SessionAcpMeta }) => void;
+  onDeferredResetState?: (params: { sessionKey: string; meta: SessionAcpLifecycle }) => void;
   assertCurrent?: () => void;
   shouldCleanup?: () => boolean;
 }) {
@@ -570,7 +573,7 @@ async function closeAcpRuntimeForSession(params: {
         .filter(Boolean),
     ),
   );
-  let acpMeta: SessionAcpMeta | undefined;
+  let acpMeta: SessionAcpLifecycle | undefined;
   let acpSessionKey = params.sessionKey;
   for (const sessionKey of sessionKeys) {
     acpMeta = readAcpSessionMeta({ sessionKey, agentId: params.agentId, cfg: params.cfg });
@@ -682,7 +685,7 @@ async function closeAcpRuntimeForSession(params: {
   return undefined;
 }
 
-function buildPendingAcpMeta(base: SessionAcpMeta, now: number): SessionAcpMeta {
+function buildPendingAcpMeta(base: SessionAcpLifecycle, now: number): SessionAcpLifecycle {
   const currentIdentity = base.identity;
   const nextIdentity = currentIdentity
     ? {
@@ -692,15 +695,12 @@ function buildPendingAcpMeta(base: SessionAcpMeta, now: number): SessionAcpMeta 
         lastUpdatedAt: now,
       }
     : undefined;
-  const next = commitAcpExecutionSelection(
-    {
-      ...base,
-      identity: nextIdentity,
-      state: "idle",
-      lastActivityAt: now,
-    },
-    requireAcpExecutionSelection(base),
-  );
+  const next: SessionAcpLifecycle = {
+    ...base,
+    identity: nextIdentity,
+    state: "idle",
+    lastActivityAt: now,
+  };
   delete next.lastError;
   return next;
 }
@@ -710,10 +710,10 @@ async function ensureFreshAcpResetState(params: {
   sessionKey: string;
   agentId?: string;
   reason: "session-reset" | "session-delete";
-  acpMeta: SessionAcpMeta;
+  acpMeta: SessionAcpLifecycle;
   assertCurrent?: () => void;
   shouldApply?: () => boolean;
-}): Promise<SessionAcpMeta | undefined> {
+}): Promise<SessionAcpLifecycle | undefined> {
   if (params.reason !== "session-reset") {
     return undefined;
   }
@@ -740,6 +740,7 @@ async function ensureFreshAcpResetState(params: {
     deps: { getRuntimeBackend: getAcpRuntimeBackend },
     cfg: params.cfg,
     meta: latestMeta,
+    selection: requireAcpExecutionSelection(readSessionEntryFromStore(params).entry),
     ...resolveAcpSessionTarget(params),
     logPrefix: `sessions.${params.reason}`,
   });
@@ -749,7 +750,7 @@ async function ensureFreshAcpResetState(params: {
   params.assertCurrent?.();
 
   const now = Date.now();
-  let resetMeta: SessionAcpMeta | undefined;
+  let resetMeta: SessionAcpLifecycle | undefined;
   if (params.shouldApply && !params.shouldApply()) {
     return undefined;
   }
@@ -868,7 +869,7 @@ export async function cleanupSessionBeforeMutation(params: {
   legacyKey?: string;
   canonicalKey?: string;
   reason: "session-reset" | "session-delete";
-  onAcpResetMeta?: (params: { sessionKey: string; meta: SessionAcpMeta }) => void;
+  onAcpResetMeta?: (params: { sessionKey: string; meta: SessionAcpLifecycle }) => void;
   assertCurrent?: () => void;
 }) {
   const cleanupError = await ensureSessionRuntimeCleanup({
@@ -1062,7 +1063,7 @@ export async function performGatewaySessionReset(params: {
   | {
       ok: true;
       key: string;
-      entry: SessionEntry;
+      entry: PublicSessionEntry;
       resolved: { modelProvider: string; model: string };
       agentId: string;
       storePath: string;
@@ -1457,7 +1458,7 @@ export async function performGatewaySessionReset(params: {
           return false;
         }
       };
-      let deferredAcpResetState: { sessionKey: string; meta: SessionAcpMeta } | undefined;
+      let deferredAcpResetState: { sessionKey: string; meta: SessionAcpLifecycle } | undefined;
       const hookEvent = createInternalHookEvent(
         "command",
         params.reason,
@@ -1862,7 +1863,7 @@ export async function performGatewaySessionReset(params: {
               entry: mutation.nextEntry,
             });
           }
-          let committedAcpResetState: { sessionKey: string; meta: SessionAcpMeta } | undefined;
+          let committedAcpResetState: { sessionKey: string; meta: SessionAcpLifecycle } | undefined;
           if (deferredAcpResetState) {
             const identity = deferredAcpResetState.meta.identity;
             if (
@@ -1896,6 +1897,7 @@ export async function performGatewaySessionReset(params: {
               deps: { getRuntimeBackend: getAcpRuntimeBackend },
               cfg,
               meta: committedAcpResetState.meta,
+              selection: requireAcpExecutionSelection(mutation.nextEntry),
               sessionKey: committedAcpResetState.sessionKey,
               agentId,
               logPrefix: "sessions.session-reset",
@@ -1938,7 +1940,7 @@ export async function performGatewaySessionReset(params: {
       };
       // Runtime model identity is a response projection, not reset persistence. Keep the
       // established RPC entry shape while the stored row retains selection intent only.
-      const responseEntry: SessionEntry = {
+      const responseEntry: PublicSessionEntry = {
         ...projectPublicSessionEntry(next),
         modelProvider: resolved.modelProvider,
         model: resolved.model,

@@ -11,6 +11,8 @@ import {
 } from "../../../packages/gateway-protocol/src/index.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { loadSessionLogs, loadSessionUsageTimeSeries } from "../../infra/session-cost-usage.js";
+import { executionSelectionModelOverrideProjection } from "../../model-picker/execution-selection-projection.js";
+import { getSessionExecutionSelection } from "../../model-picker/execution-selection.js";
 import { normalizeAgentId } from "../../routing/session-key.js";
 import { createUsageAggregateAccumulator } from "../../shared/usage-aggregates.js";
 import type {
@@ -296,8 +298,9 @@ export const usageHandlers: GatewayRequestHandlers = {
                 channel,
                 chatType,
                 origin,
-                modelOverride: merged.storeEntry?.modelOverride,
-                providerOverride: merged.storeEntry?.providerOverride,
+                ...executionSelectionModelOverrideProjection(
+                  getSessionExecutionSelection(merged.storeEntry),
+                ),
                 modelProvider: merged.storeEntry?.modelProvider,
                 model: merged.storeEntry?.model,
                 usage,

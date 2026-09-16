@@ -1,5 +1,5 @@
 // Dispatches reply turns through ACP runtimes and projects their events.
-import { resolveAcpThreadSessionDetailLines } from "@openclaw/acp-core/runtime/session-identifiers";
+import { resolveAcpLifecycleDetailLines } from "@openclaw/acp-core/runtime/session-identifiers";
 import {
   isSessionIdentityPending,
   resolveSessionIdentityFromMeta,
@@ -10,6 +10,7 @@ import {
   normalizeOptionalString,
 } from "@openclaw/normalization-core/string-coerce";
 import type { AcpTurnAttachment } from "../../acp/control-plane/manager.types.js";
+import { requireAcpExecutionSelection } from "../../acp/control-plane/manager.utils.js";
 import { resolveAcpAgentPolicyError, resolveAcpDispatchPolicyError } from "../../acp/policy.js";
 import {
   AcpRuntimeError,
@@ -418,15 +419,18 @@ async function finalizeAcpTurnOutput(params: {
 
   if (params.shouldEmitResolvedIdentityNotice) {
     const { readAcpSessionEntry } = await loadDispatchAcpManagerRuntime();
-    const currentMeta = readAcpSessionEntry({
+    const current = readAcpSessionEntry({
       cfg: params.cfg,
       sessionKey: params.sessionKey,
       agentId: params.agentId,
-    })?.acp;
+    });
+    const currentMeta = current?.acp;
     const identityAfterTurn = resolveSessionIdentityFromMeta(currentMeta);
     if (!isSessionIdentityPending(identityAfterTurn)) {
-      const resolvedDetails = resolveAcpThreadSessionDetailLines({
-        sessionKey: params.sessionKey,
+      const { executor } = requireAcpExecutionSelection(current?.entry);
+      const resolvedDetails = resolveAcpLifecycleDetailLines({
+        backend: executor.backend,
+        agent: executor.agent,
         meta: currentMeta,
       });
       if (resolvedDetails.length > 0) {
@@ -543,9 +547,7 @@ export async function tryDispatchAcpReplyCore(params: {
 
   const resolvedAcpAgent =
     acpResolution.kind === "ready"
-      ? (normalizeOptionalString(acpResolution.meta.agent) ??
-        normalizeOptionalString(params.cfg.acp?.defaultAgent) ??
-        resolveAgentIdFromSessionKey(canonicalSessionKey))
+      ? acpResolution.selection.executor.agent
       : resolveAgentIdFromSessionKey(canonicalSessionKey);
   const normalizedDispatchChannel = normalizeOptionalLowercaseString(
     params.ctx.OriginatingChannel ?? params.ctx.Surface ?? params.ctx.Provider,

@@ -7,6 +7,7 @@ import { hasRestartRecoverySourceClaim } from "../../config/sessions/restart-rec
 import { loadSessionEntry, updateSessionEntry } from "../../config/sessions/session-accessor.js";
 import { logVerbose } from "../../globals.js";
 import { measureDiagnosticsTimelineSpan } from "../../infra/diagnostics-timeline.js";
+import { isModelExecutionSelection } from "../../model-picker/execution-selection.js";
 import { hasOutboundReplyContent } from "../../plugin-sdk/reply-payload.js";
 import {
   getGatewayContextResolver,
@@ -136,7 +137,9 @@ export async function runReplyAgent(
     ? [replyOperationRunState]
     : undefined;
   const traceAttributes = {
-    provider: followupRun.run.executionSelection.model.provider,
+    provider: isModelExecutionSelection(followupRun.run.executionSelection)
+      ? followupRun.run.executionSelection.model.provider
+      : null,
     hasSessionKey: Boolean(sessionKey ?? followupRun.run.sessionKey),
     isHeartbeat,
     queueMode: resolvedQueue.mode,

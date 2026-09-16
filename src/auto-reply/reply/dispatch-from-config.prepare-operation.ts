@@ -1,6 +1,6 @@
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { resolveAgentIdentity } from "../../agents/identity.js";
-import { resolveSessionModelRef } from "../../agents/session-model-ref.js";
+import { resolveSessionModelRefCore as resolveSessionModelRef } from "../../agents/session-model-ref.js";
 import { logVerbose } from "../../globals.js";
 import { getSessionBindingService } from "../../infra/outbound/session-binding-service.js";
 import {

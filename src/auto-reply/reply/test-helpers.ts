@@ -2,6 +2,7 @@
 import path from "node:path";
 import { onTestFinished, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
+import { isModelExecutionSelection } from "../../model-picker/execution-selection.js";
 import type { FollowupRun } from "./queue.js";
 import type { ReplyOperation } from "./reply-run-registry.js";
 import type { TypingController } from "./typing.js";
@@ -163,13 +164,15 @@ export function createMockFollowupRun(
       },
       executionSelection,
 
-      thinkingCatalog: [
-        {
-          provider: executionSelection.model.provider,
-          id: executionSelection.model.id,
-          input: ["text"],
-        },
-      ],
+      thinkingCatalog: isModelExecutionSelection(executionSelection)
+        ? [
+            {
+              provider: executionSelection.model.provider,
+              id: executionSelection.model.id,
+              input: ["text"],
+            },
+          ]
+        : [],
       verboseLevel: "off",
       elevatedLevel: "off",
       bashElevated: {

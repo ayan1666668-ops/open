@@ -19,11 +19,9 @@ import { loadSessionEntryReadOnly } from "../../config/sessions/session-accessor
 import {
   prepareSessionExecutionSelection,
   resolveSessionExecutionFallbacks,
-} from "../../model-picker/apply-session-model-selection.js";
-import {
   resolveExecutionSelectionExecutorKind,
-  getSessionExecutionSelection,
 } from "../../model-picker/apply-session-model-selection.js";
+import { getSessionExecutionSelection } from "../../model-picker/execution-selection.js";
 import {
   isAcpExecutionSelection,
   isModelExecutionSelection,
@@ -112,7 +110,7 @@ export const runPluginEmbeddedAgent: PluginRuntime["agent"]["runEmbeddedAgent"] 
           readConsistency: "latest",
         })
       : undefined;
-    const accepted = getSessionExecutionSelection(sessionEntry, config);
+    const accepted = getSessionExecutionSelection(sessionEntry);
     const configured = resolveDefaultModelForAgent({ cfg: config, agentId });
     const selectedModel =
       accepted && isModelExecutionSelection(accepted)
@@ -157,6 +155,9 @@ export const runPluginEmbeddedAgent: PluginRuntime["agent"]["runEmbeddedAgent"] 
     ) {
       throw new Error("The selected app cannot run this embedded operation.");
     }
+    const model = isModelExecutionSelection(prepared.selection)
+      ? prepared.selection.model
+      : undefined;
     const selectionError = prepared.validateCommit?.();
     if (selectionError) {
       throw new Error(selectionError);
@@ -166,18 +167,20 @@ export const runPluginEmbeddedAgent: PluginRuntime["agent"]["runEmbeddedAgent"] 
       ...params,
       config,
       preparedRunAdmission,
-      provider: prepared.selection.model.provider,
-      model: prepared.selection.model.id,
+      provider: model?.provider,
+      model: model?.id,
       agentHarnessId: prepared.selection.executor.id,
       agentHarnessRuntimeOverride: prepared.selection.executor.id,
-      modelFallbackAvailability: resolveSessionExecutionFallbacks({
-        cfg: config,
-        agentId,
-        sessionKey,
-        sessionEntry,
-        selection: prepared.selection,
-        modelFallbacksOverride: params.modelFallbacksOverride,
-      }),
+      modelFallbackAvailability: isModelExecutionSelection(prepared.selection)
+        ? resolveSessionExecutionFallbacks({
+            cfg: config,
+            agentId,
+            sessionKey,
+            sessionEntry,
+            selection: prepared.selection,
+            modelFallbacksOverride: params.modelFallbacksOverride,
+          })
+        : undefined,
     });
     if (admittedRunContext && getAdmittedRunDelegatedAuthority(admittedRunContext)) {
       recordRuntimeActionDecision({

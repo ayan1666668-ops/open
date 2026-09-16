@@ -1,5 +1,6 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../config/config.js";
+import { createAcpSessionStoreEntryFixture } from "../../test-utils/acp-session-store-entry.js";
 import {
   acpMocks,
   hookMocks,
@@ -41,11 +42,8 @@ describe("dispatchReplyFromConfig ACP reply privacy", () => {
       { type: "done" },
     ]);
     sessionStoreMocks.currentEntry = { sessionId: "privacy-session", updatedAt: Date.now() };
-    acpMocks.readAcpSessionEntry.mockReturnValue({
+    const storedAcpEntry = createAcpSessionStoreEntryFixture({
       sessionKey,
-      storeSessionKey: sessionKey,
-      cfg: {},
-      storePath: "/tmp/mock-sessions.json",
       entry: sessionStoreMocks.currentEntry,
       acp: {
         backend: "acpx",
@@ -56,6 +54,8 @@ describe("dispatchReplyFromConfig ACP reply privacy", () => {
         lastActivityAt: Date.now(),
       },
     });
+    sessionStoreMocks.currentEntry = storedAcpEntry.entry;
+    acpMocks.readAcpSessionEntry.mockReturnValue(storedAcpEntry);
     acpMocks.requireAcpRuntimeBackend.mockReturnValue({ id: "acpx", runtime });
 
     const dispatcher = createReplyDispatcher({ deliver: vi.fn(async () => {}) });

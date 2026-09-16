@@ -69,7 +69,22 @@ export const sessionTitleHandlers: GatewayRequestHandlers = {
         { client, context, signal },
         params.model,
       );
+      const selection = await resolveSessionCreateModelSelection(
+        cfg,
+        agent.agentId,
+        catalog?.target ?? params.model,
+      );
+      if (!selection) {
+        respond(true, { title: null });
+        return;
+      }
       const assertCurrent = () => {
+        const selectionError = selection.validate();
+        if (selectionError) {
+          throw new SessionMutationAuthorizationChangedError(
+            errorShape(ErrorCodes.UNAVAILABLE, selectionError),
+          );
+        }
         personalSelection?.assertCurrent();
         const currentCreationError = authorizeGatewaySessionCreation({
           cfg: context.getRuntimeConfig(),
@@ -80,19 +95,12 @@ export const sessionTitleHandlers: GatewayRequestHandlers = {
           throw new SessionMutationAuthorizationChangedError(currentCreationError);
         }
       };
-      const entry = resolveSessionCreateModelSelection(
-        cfg,
-        agent.agentId,
-        catalog?.target ?? params.model,
-      );
-      if (!entry) {
-        respond(true, { title: null });
-        return;
-      }
+      assertCurrent();
       const title = await prepareDashboardSessionTitle({
         cfg,
         agentId: agent.agentId,
-        entry,
+        entry: { authProfileOverride: selection.authProfileOverride },
+        executionSelection: selection.executionSelection,
         userMessage: params.message,
         abortSignal: signal,
         assertCurrent,

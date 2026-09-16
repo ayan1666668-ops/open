@@ -6,7 +6,7 @@
 import type { CliSessionBinding, SessionEntry } from "../config/sessions.js";
 import { getCliSessionBinding } from "../config/sessions/cli-session-binding.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { getSessionExecutionSelection } from "../model-picker/apply-session-model-selection.js";
+import { getSessionExecutionSelection } from "../model-picker/execution-selection.js";
 import { resolveSessionPinnedHarnessId } from "../sessions/agent-harness-session-key.js";
 import { isDefaultAgentRuntimeId, normalizeOptionalAgentRuntimeId } from "./agent-runtime-id.js";
 import { isCliRuntimeAliasForProvider } from "./model-runtime-aliases.js";
@@ -63,7 +63,7 @@ export function resolveSessionRuntimeOverrideForProvider(params: {
   entry?: SessionRuntimeCompatEntry;
   cfg?: OpenClawConfig;
 }): string | undefined {
-  const selection = getSessionExecutionSelection(params.entry, params.cfg);
+  const selection = getSessionExecutionSelection(params.entry);
   return selection && selection.executor.kind !== "acp" ? selection.executor.id : undefined;
 }
 
@@ -73,7 +73,7 @@ export function resolveManualCompactionCliTarget(params: {
   entry?: ManualCompactionRuntimeEntry;
   cfg?: OpenClawConfig;
 }): ManualCompactionCliTarget {
-  const selection = getSessionExecutionSelection(params.entry, params.cfg);
+  const selection = getSessionExecutionSelection(params.entry);
   const runtimeOverride =
     selection && selection.executor.kind !== "acp" ? selection.executor.id : undefined;
   const runtimeConfig =

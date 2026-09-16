@@ -4,6 +4,7 @@ import {
   scheduleSessionMaintenance,
 } from "../../agents/session-maintenance/run.js";
 import type { SessionEntry } from "../../config/sessions/types.js";
+import { isModelExecutionSelection } from "../../model-picker/execution-selection.js";
 import type { AccountedAgentTurn } from "./agent-runner-result-accounting.js";
 import type { FinalizeReplyAgentRunInput } from "./agent-runner-result.types.js";
 
@@ -17,11 +18,13 @@ export function scheduleReplySessionMaintenance(params: {
   const { replyOperation, followupRun, cfg, sessionKey, storePath } = context;
   const meta = accounting.runResult.meta;
   const auth = context.execution.maintenanceAuthProfile;
+  const executionSelection = context.execution.maintenanceExecutionSelection;
   if (
     !sessionEntry ||
     !sessionKey ||
     !storePath ||
-    !accounting.providerUsed ||
+    !executionSelection ||
+    !isModelExecutionSelection(executionSelection) ||
     !replyOperation.ownerSettlement ||
     !replyOperation.lifecycleGeneration ||
     context.isHeartbeat ||
@@ -55,8 +58,7 @@ export function scheduleReplySessionMaintenance(params: {
         sessionKey,
         runtimePolicySessionKey:
           context.runtimePolicySessionKey ?? followupRun.run.runtimePolicySessionKey,
-        provider: accounting.providerUsed,
-        model: accounting.modelUsed,
+        executionSelection,
         auth,
       }),
       sessionId: sessionEntry.sessionId,

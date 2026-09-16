@@ -12,8 +12,11 @@ import {
 import { isCliProvider, type CliProviderClassifier } from "../agents/model-selection.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { getSessionExecutionSelection } from "../model-picker/execution-selection-state.js";
-import { isAcpExecutionSelection } from "../model-picker/execution-selection.js";
+import { getSessionExecutionSelection } from "../model-picker/execution-selection.js";
+import {
+  isAcpExecutionSelection,
+  isModelExecutionSelection,
+} from "../model-picker/execution-selection.js";
 import { resolveSessionPinnedHarnessId } from "../sessions/agent-harness-session-key.js";
 
 // Status runtime labels turn harness/provider/session state into a short
@@ -35,7 +38,7 @@ type AgentRuntimeLabelArgs = {
 };
 
 export function resolveAgentRuntimeLabel(args: AgentRuntimeLabelArgs): string {
-  const selection = getSessionExecutionSelection(args.sessionEntry, args.config);
+  const selection = getSessionExecutionSelection(args.sessionEntry);
   const acp = selection && isAcpExecutionSelection(selection) ? selection : undefined;
   const acpAgentRaw = normalizeOptionalString(acp?.executor.agent);
   const acpAgent = acpAgentRaw ? sanitizeTerminalText(acpAgentRaw) : undefined;
@@ -58,7 +61,7 @@ export function resolveAgentRuntimeLabel(args: AgentRuntimeLabelArgs): string {
     const providerRaw =
       normalizeOptionalString(args.sessionEntry?.modelProvider) ??
       normalizeOptionalString(
-        selection && !isAcpExecutionSelection(selection) ? selection.model.provider : undefined,
+        selection && isModelExecutionSelection(selection) ? selection.model.provider : undefined,
       ) ??
       normalizeOptionalString(args.fallbackProvider);
     const provider = providerRaw ? sanitizeTerminalText(providerRaw) : undefined;

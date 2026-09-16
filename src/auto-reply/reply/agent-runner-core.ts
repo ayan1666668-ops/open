@@ -1,6 +1,5 @@
 import { hasVisibleCommittedMessagingToolDeliveryEvidence } from "../../agents/embedded-agent-runner/delivery-evidence.js";
 import { MODEL_FALLBACK_SKIPPED_CODE } from "../../agents/model-fallback.types.js";
-import type { ModelRef } from "../../agents/model-ref-shared.js";
 import { areRuntimeModelRefsEquivalent } from "../../agents/model-runtime-aliases.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import {
@@ -100,6 +99,7 @@ export function buildSilentFallbackFailurePayload(params: {
   }
   const selected = params.fallbackTransition.selectedModelRef;
   const active = params.fallbackTransition.activeModelRef;
+  if (!selected || !active) return undefined;
   const attempts = params.fallbackAttempts;
   const selectedAttempts = attempts.filter((attempt) =>
     areRuntimeModelRefsEquivalent(`${attempt.provider}/${attempt.model}`, selected, {
@@ -219,22 +219,6 @@ export function hasSuccessfulTerminalSourceReplyDelivery(params: {
   return (
     params.blockReplyPipeline?.didStreamTerminalReply?.() === true || sentTerminalBlock === true
   );
-}
-
-export function resolveFallbackOriginModel(params: {
-  run: FollowupRun["run"];
-  fallbackStateEntry?: SessionEntry;
-  runtimeModelSelection?: ModelRef;
-}): { provider: string; model: string; persistedAutoFallback: boolean } {
-  // Runtime-owned selection is not a fallback from the caller's nominal model.
-  if (params.runtimeModelSelection) {
-    return { ...params.runtimeModelSelection, persistedAutoFallback: false };
-  }
-  return {
-    provider: params.run.executionSelection.model.provider,
-    model: params.run.executionSelection.model.id,
-    persistedAutoFallback: false,
-  };
 }
 
 export function buildInlinePluginStatusPayload(params: {
