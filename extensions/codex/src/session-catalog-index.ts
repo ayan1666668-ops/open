@@ -5,7 +5,6 @@ import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { buildCodexAppServerConnectionFingerprint } from "./app-server/plugin-app-cache-key.js";
 import type { CodexThreadListParams } from "./app-server/protocol.js";
 import { normalizeLimit, readControlCursor } from "./session-catalog-parsing.js";
-import { CodexCatalogSourceBackoff } from "./session-catalog-source-backoff.js";
 import type {
   CodexCatalogHome,
   CodexSessionCatalogPage,
@@ -68,7 +67,6 @@ export class CodexCatalogIndex {
 
   constructor(
     private readonly now: () => number,
-    private readonly beginRefresh: () => ReturnType<CodexCatalogSourceBackoff["begin"]>,
     private readonly cwd: string | undefined,
     private readonly onSettled: () => void,
   ) {}
@@ -239,10 +237,6 @@ export class CodexCatalogIndex {
     ) {
       return query.head.page;
     }
-    const attempt = this.beginRefresh();
-    if (!attempt.allowed) {
-      throw attempt.error;
-    }
     if (!cursor) {
       query.stale = true;
     }
@@ -259,19 +253,12 @@ export class CodexCatalogIndex {
       },
       read,
     )
-      .then(
-        (value) => {
-          if (!cursor) {
-            query.stale = false;
-          }
-          attempt.resolved();
-          return value;
-        },
-        (error: unknown) => {
-          attempt.rejected(error);
-          throw error;
-        },
-      )
+      .then((value) => {
+        if (!cursor) {
+          query.stale = false;
+        }
+        return value;
+      })
       .finally(() => {
         query.pending.delete(pendingKey);
         this.onSettled();
@@ -301,7 +288,6 @@ function pruneIndexes(indexes: Map<string, CodexCatalogIndex>, protectedIndex?: 
 }
 
 export function createCodexCatalogIndexResolver(params: { now: () => number }) {
-  const sourceBackoff = new CodexCatalogSourceBackoff(params.now);
   const indexes = new WeakMap<OpenClawConfig, Map<string, Map<string, CodexCatalogIndex>>>();
   const noConfig: OpenClawConfig = {};
   return (
@@ -332,12 +318,7 @@ export function createCodexCatalogIndexResolver(params: { now: () => number }) {
     const key = cwd?.trim() || "";
     let index = cwdIndexes.get(key);
     if (!index) {
-      index = new CodexCatalogIndex(
-        params.now,
-        () => sourceBackoff.begin(config, agentId, source?.sourceHomeId),
-        key || undefined,
-        () => pruneIndexes(cwdIndexes),
-      );
+      index = new CodexCatalogIndex(params.now, key || undefined, () => pruneIndexes(cwdIndexes));
     }
     cwdIndexes.delete(key);
     cwdIndexes.set(key, index);

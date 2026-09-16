@@ -18,7 +18,7 @@ export async function projectCodexCatalogPage(
     sanitize: typeof sanitizeTerminalText;
   },
 ) {
-  const { diagnostics, sanitize: sanitizeTerminalText } = params;
+  const { diagnostics, sanitize } = params;
   const responseStarted = performance.now();
   const rows: CodexCatalogIndexRow[] = [];
   try {
@@ -26,7 +26,7 @@ export async function projectCodexCatalogPage(
     // Also bound direct/pinned adapters before the first asynchronous provenance read.
     for (const thread of response.data) {
       if (typeof thread.preview === "string") {
-        thread.preview = truncateCodexCatalogPreview(thread.preview, sanitizeTerminalText);
+        thread.preview = truncateCodexCatalogPreview(thread.preview, sanitize);
       }
     }
     for (const thread of response.data) {
@@ -41,7 +41,7 @@ export async function projectCodexCatalogPage(
         const rolloutPath = typeof thread.path === "string" ? thread.path.trim() : "";
         page.managedThreads = [{ threadId: thread.id, ...(rolloutPath ? { rolloutPath } : {}) }];
       } else {
-        const session = toCatalogSession(thread, false, sanitizeTerminalText);
+        const session = toCatalogSession(thread, false, sanitize);
         if (session) {
           page.sessions.push(session);
         }

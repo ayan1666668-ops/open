@@ -47,6 +47,7 @@ import {
 } from "./session-catalog-parsing.js";
 import { projectCodexCatalogPage } from "./session-catalog-projection.js";
 import { readCodexSessionMeta } from "./session-catalog-provenance.js";
+import { CodexCatalogSourceBackoff } from "./session-catalog-source-backoff.js";
 import type {
   CodexSessionCatalogControl,
   CodexSessionCatalogControlFactory,
@@ -98,6 +99,7 @@ function codexCatalogPageCacheKey(
 }
 
 type CodexSessionCatalogRequestSnapshot = {
+  beginList: () => ReturnType<CodexCatalogSourceBackoff["begin"]>;
   index: (cwd?: string) => CodexCatalogIndex;
   requestTimeoutMs: number;
   listThreads(
@@ -135,9 +137,11 @@ function createCodexCatalogRequestSnapshot(
   requestTimeoutMs: number,
   request: CodexCatalogRequest,
   index: (cwd?: string) => CodexCatalogIndex,
+  beginList: CodexSessionCatalogRequestSnapshot["beginList"],
 ): CodexSessionCatalogRequestSnapshot {
   return {
     index,
+    beginList,
     requestTimeoutMs,
     listThreads: (params, timeoutMs, observation) =>
       request(CODEX_CONTROL_METHODS.listThreads, params, timeoutMs, undefined, observation),
@@ -276,6 +280,7 @@ function createCodexSessionCatalogControlFromRequests(params: {
     retireConnection: params.retireConnection,
     async listPage(pageParams, diagnostics = startCodexCatalogPageDiagnostics("uncached")) {
       let outcome: "resolved" | "rejected" = "rejected";
+      let sourceAttempt: ReturnType<CodexCatalogSourceBackoff["begin"]> | undefined;
       try {
         readControlCursor(pageParams.cursor, "request");
         const queryParams = readPageParams(pageParams);
@@ -286,6 +291,10 @@ function createCodexSessionCatalogControlFromRequests(params: {
           const remainingTimeoutMs = Math.ceil(deadline - params.now());
           if (remainingTimeoutMs <= 0) {
             throw new Error("Codex session catalog listing timed out");
+          }
+          sourceAttempt ??= requests.beginList();
+          if (!sourceAttempt.allowed) {
+            throw sourceAttempt.error;
           }
           const started = performance.now();
           if (diagnostics) {
@@ -361,8 +370,16 @@ function createCodexSessionCatalogControlFromRequests(params: {
         if (diagnostics) {
           diagnostics.fields.stopReason = stopReason;
         }
+        if (sourceAttempt?.allowed) {
+          sourceAttempt.resolved();
+        }
         outcome = "resolved";
         return catalogPage;
+      } catch (error) {
+        if (sourceAttempt?.allowed) {
+          sourceAttempt.rejected(error);
+        }
+        throw error;
       } finally {
         diagnostics?.finish(outcome);
       }
@@ -401,6 +418,8 @@ export function createCodexSessionCatalogControl(params: {
   managedThreads?: CodexManagedThreadStore;
 }): CodexSessionCatalogControlFactory {
   const now = params.now ?? Date.now;
+  const sourceBackoff = new CodexCatalogSourceBackoff(now);
+  const noConfig: OpenClawConfig = {};
   const getPluginConfig = () => params.getPluginConfig();
   const homeResolver = createCodexCatalogHomeResolver({
     config: params.getRuntimeConfig() ?? params.config ?? {},
@@ -481,6 +500,7 @@ export function createCodexSessionCatalogControl(params: {
         });
       },
       (cwd) => indexFor(agentId, source, runtime, requestOptions.config, cwd),
+      () => sourceBackoff.begin(requestOptions.config ?? noConfig, agentId, source?.sourceHomeId),
     );
   };
 
@@ -534,6 +554,7 @@ export function createCodexSessionCatalogControl(params: {
               ...(observation ? { controlObservation: observation } : {}),
             }),
           (cwd) => indexFor(agentId, source, runtime, runtimeConfig, cwd),
+          () => sourceBackoff.begin(runtimeConfig ?? noConfig, agentId, source?.sourceHomeId),
         );
         const pinnedControl: CodexSessionCatalogControl =
           createCodexSessionCatalogControlFromRequests({
