@@ -112,6 +112,7 @@ export function resolveSandboxDockerConfig(params: {
     network: agentDocker?.network ?? globalDocker?.network ?? "none",
     user: agentDocker?.user ?? globalDocker?.user,
     capDrop: agentDocker?.capDrop ?? globalDocker?.capDrop ?? ["ALL"],
+    capAdd: agentDocker?.capAdd ?? globalDocker?.capAdd ?? [],
     env,
     setupCommand: agentDocker?.setupCommand ?? globalDocker?.setupCommand,
     pidsLimit: agentDocker?.pidsLimit ?? globalDocker?.pidsLimit,

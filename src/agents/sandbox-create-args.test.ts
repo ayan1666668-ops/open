@@ -127,6 +127,31 @@ describe("buildSandboxCreateArgs", () => {
     expectFlagValues(args, "--ulimit", ["nofile=1024:2048", "nproc=128", "core=0"]);
   });
 
+  it("emits --cap-add for each added capability, alongside --cap-drop", () => {
+    const cfg = createSandboxConfig({ capDrop: ["ALL"], capAdd: ["NET_RAW", "NET_ADMIN"] });
+    const { argv: args } = buildSandboxCreateArgs({
+      name: "openclaw-sbx-test",
+      cfg,
+      scopeKey: "main",
+      createdAtMs: 1700000000000,
+      labels: {},
+    });
+    expectFlagValues(args, "--cap-drop", ["ALL"]);
+    expectFlagValues(args, "--cap-add", ["NET_RAW", "NET_ADMIN"]);
+  });
+
+  it("omits --cap-add when no capabilities are added", () => {
+    const cfg = createSandboxConfig({ capDrop: ["ALL"] });
+    const { argv: args } = buildSandboxCreateArgs({
+      name: "openclaw-sbx-test",
+      cfg,
+      scopeKey: "main",
+      createdAtMs: 1700000000000,
+      labels: {},
+    });
+    expect(args).not.toContain("--cap-add");
+  });
+
   it("omits non-finite numeric Docker resource flags", () => {
     const cfg = createSandboxConfig({
       pidsLimit: Number.POSITIVE_INFINITY,
