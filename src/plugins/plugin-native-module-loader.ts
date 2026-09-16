@@ -13,6 +13,26 @@ import type { PluginModuleLoaderOwner } from "./plugin-instance.types.js";
 import type { PluginOrigin } from "./plugin-origin.types.js";
 import { isPluginSdkAliasSpecifier } from "./sdk-alias.js";
 
+function getBunImportConditions(): Set<string> {
+  const conditions = new Set(["bun", "node", "import"]);
+  if (!process.execArgv.includes("--no-addons")) {
+    conditions.add("node-addons");
+  }
+  for (let index = 0; index < process.execArgv.length; index += 1) {
+    const argument = process.execArgv[index];
+    if (argument === "--conditions") {
+      const condition = process.execArgv[index + 1];
+      if (condition && !condition.startsWith("-")) {
+        conditions.add(condition);
+        index += 1;
+      }
+    } else if (argument?.startsWith("--conditions=")) {
+      conditions.add(argument.slice("--conditions=".length));
+    }
+  }
+  return conditions;
+}
+
 /** Native adapters acquire source through the instance's artifact without replacing evaluation. */
 export function bindNativePluginInstanceModuleLoader(
   params: {
@@ -77,13 +97,27 @@ export function bindNativePluginInstanceModuleLoader(
                 captured.target.search || captured.target.hash
                   ? captured.target.href
                   : fileURLToPath(captured.target);
-            } else if (captured?.additions.length && original) {
+            } else if (captured && "retryNative" in captured) {
               try {
-                const selected = moduleResolve(
-                  request,
-                  pathToFileURL(original),
-                  new Set(["bun", "node", "import"]),
-                );
+                let selected: URL;
+                try {
+                  selected = moduleResolve(
+                    request,
+                    pathToFileURL(parent),
+                    getBunImportConditions(),
+                  );
+                } catch (error) {
+                  if (
+                    !(error instanceof Error) ||
+                    !("code" in error) ||
+                    error.code !== "ERR_MODULE_NOT_FOUND" ||
+                    !("url" in error) ||
+                    typeof error.url !== "string"
+                  ) {
+                    throw error;
+                  }
+                  selected = new URL(error.url);
+                }
                 const capturedTarget = artifact.captureResolvedModule(fileURLToPath(selected));
                 if (capturedTarget) {
                   const capturedUrl = pathToFileURL(capturedTarget);
@@ -102,7 +136,7 @@ export function bindNativePluginInstanceModuleLoader(
               ? artifact.captureResolvedModule(
                   request.startsWith("file:") ? fileURLToPath(request) : request,
                 )
-              : source === request && parent
+              : source === request
                 ? request
                 : undefined;
           if (target) {
