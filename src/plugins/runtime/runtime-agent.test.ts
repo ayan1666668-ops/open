@@ -726,6 +726,10 @@ describe("plugin runtime session creation", () => {
         cliSessionBindings: { "claude-cli": cliSessionBinding },
       };
       await runtime.session.upsertSessionEntry({ storePath, sessionKey: key, entry: existing });
+      const stored = structuredClone(
+        runtime.session.getSessionEntry({ sessionKey: key, readConsistency: "latest" }),
+      );
+      expect(stored).toMatchObject(existing);
 
       await expect(
         runtime.session.createSessionEntry({
@@ -746,7 +750,7 @@ describe("plugin runtime session creation", () => {
       ).rejects.toThrow("does not match its trusted recovery state");
       expect(
         runtime.session.getSessionEntry({ sessionKey: key, readConsistency: "latest" }),
-      ).toEqual(existing);
+      ).toStrictEqual(stored);
     });
   });
 

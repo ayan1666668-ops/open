@@ -460,6 +460,7 @@ describe("createModelSelectionState catalog loading", () => {
       const cfg = {
         agents: {
           defaults: {
+            model: { primary: "openai/gpt-5.4" },
             models: {
               "openai/gpt-5.4": { agentRuntime: { id: "openclaw" } },
             },
@@ -1000,18 +1001,26 @@ describe("createModelSelectionState catalog loading", () => {
   });
 
   it.each([
-    ["anthropic", "claude-opus-4-5", "openai/*", "gpt-5.5-codex", 1],
-    ["openai/team", "claude-opus-4-5", "openai/*", "gpt-5.5-codex", 1],
-    ["openai", "openai/team/Reader", "openai/team/*", "team/Reader", 1],
-    ["openai", "team/Reader", "openai/team/*", "team/Reader", 0],
+    ["anthropic", "claude-opus-4-5", "openai/*", "anthropic", "claude-opus-4-5", 1, false],
+    ["openai/team", "claude-opus-4-5", "openai/*", "openai", "team/claude-opus-4-5", 1, true],
+    ["openai", "openai/team/Reader", "openai/team/*", "openai", "team/Reader", 1, true],
+    ["openai", "team/Reader", "openai/team/*", "openai", "team/Reader", 0, true],
   ] as const)(
-    "selects %s/%s with wildcard %s",
-    async (defaultProvider, defaultModel, allow, selectedModel, catalogLoads) => {
+    "initializes configured %s/%s without substituting a browse match for wildcard %s",
+    async (
+      defaultProvider,
+      defaultModel,
+      allow,
+      selectedProvider,
+      selectedModel,
+      catalogLoads,
+      manualAllowed,
+    ) => {
       vi.mocked(loadModelCatalogLocal).mockClear();
       if (catalogLoads) {
         vi.mocked(loadModelCatalogLocal).mockResolvedValueOnce([
           { provider: defaultProvider, id: defaultModel, name: "Configured primary" },
-          { provider: "openai", id: selectedModel, name: "Allowed model" },
+          { provider: "openai", id: "team/browse-match", name: "Allowed model" },
           { provider: "vllm", id: "qwen3-local", name: "Qwen3 Local" },
         ]);
       }
@@ -1026,8 +1035,11 @@ describe("createModelSelectionState catalog loading", () => {
 
       const state = await createInitialState(cfg, defaultProvider, defaultModel);
 
-      expect(state.provider).toBe("openai");
+      expect(state.provider).toBe(selectedProvider);
       expect(state.model).toBe(selectedModel);
+      expect(state.modelPolicy.allows({ provider: state.provider, model: state.model })).toBe(
+        manualAllowed,
+      );
       expect(loadModelCatalogLocal).toHaveBeenCalledTimes(catalogLoads);
     },
   );

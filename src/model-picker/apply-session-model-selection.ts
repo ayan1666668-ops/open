@@ -49,6 +49,7 @@ import {
   type ExecutionSelection,
   type ModelExecutionSelection,
 } from "./execution-selection.js";
+import { sessionExecutionSelectionSchema } from "./execution-selection.schema.js";
 
 export function inheritSessionExecutionSelection(
   entry: Partial<SessionEntry> | undefined,
@@ -62,7 +63,7 @@ export function commitStoredSessionExecutionSelection(
   entry: Partial<SessionEntry>,
   fact: SessionExecutionSelection,
 ): void {
-  entry.executionSelection = structuredClone(fact);
+  entry.executionSelection = sessionExecutionSelectionSchema.parse(fact);
 }
 
 /** Synchronous SDK intake records a request for the async owner; it makes no readiness claim. */
@@ -173,7 +174,6 @@ export function reconcileSessionExecutionSelectionView(
       patch.acp.runtimeOptions?.model !== projected.acp?.runtimeOptions?.model);
   const entry: Pick<SessionEntry, "executionSelection" | "modelFallback"> = {};
   if (patch.executionSelection && !isDeepStrictEqual(before, patch.executionSelection)) {
-    if (current?.modelSelectionLocked) throw new ModelSelectionLockedError();
     const proposed = patch.executionSelection;
     commitStoredSessionExecutionSelection(entry, {
       state: "deferred",
@@ -185,7 +185,6 @@ export function reconcileSessionExecutionSelectionView(
       ...(previous ? { previous } : {}),
     });
   } else if (changed || acpChanged) {
-    if (current?.modelSelectionLocked) throw new ModelSelectionLockedError();
     const normalizedRuntime = normalizeOptionalAgentRuntimeId(next.agentRuntimeOverride);
     const runtime = isDefaultAgentRuntimeId(normalizedRuntime) ? undefined : normalizedRuntime;
     const request: DeferredExecutionSelectionRequest =
@@ -223,6 +222,9 @@ export function reconcileSessionExecutionSelectionView(
     });
   } else if (before) {
     commitStoredSessionExecutionSelection(entry, before);
+  }
+  if (current?.modelSelectionLocked && !isDeepStrictEqual(before, entry.executionSelection)) {
+    throw new ModelSelectionLockedError();
   }
   if (Object.hasOwn(patch, "modelFallback") || (replace && projected.modelFallback)) {
     const fallback = patch.modelFallback;

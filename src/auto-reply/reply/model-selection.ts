@@ -249,6 +249,7 @@ export async function createModelSelectionState(params: {
       sessionKey,
       sessionEntry,
       modelCatalog: modelCatalog ?? allowedModelCatalog,
+      manifestPlugins: runtimeModelNormalization.manifestPlugins,
       request: turnLocalSelection
         ? { kind: "model", model: { provider, id: model } }
         : { kind: "initialize" },

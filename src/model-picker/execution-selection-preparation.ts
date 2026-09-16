@@ -32,7 +32,11 @@ export async function prepareSessionExecutionSelection(
   params: PrepareSessionExecutionSelectionParams,
 ): Promise<PreparedSessionExecutionSelection> {
   const sessionSnapshot = params.sessionEntry ? { ...params.sessionEntry } : undefined;
-  const configured = resolveDefaultModelForAgent({ cfg: params.cfg, agentId: params.agentId });
+  const configured = resolveDefaultModelForAgent({
+    cfg: params.cfg,
+    agentId: params.agentId,
+    manifestPlugins: params.manifestPlugins,
+  });
   const stored = sessionSnapshot?.executionSelection;
   const deferred = stored?.state === "deferred" ? stored.request : undefined;
   const before = getCommittedSessionExecutionSelection(sessionSnapshot);
@@ -158,9 +162,11 @@ export async function prepareSessionExecutionSelection(
         : requestedModel
           ? params.request.executor
             ? { model: requestedModel, executor: params.request.executor }
-            : initial
-              ? { model: requestedModel, executor: initial.executor }
-              : undefined
+            : before || pinned || deferred?.runtime
+              ? initial
+                ? { model: requestedModel, executor: initial.executor }
+                : undefined
+              : chooseConfigured(requestedModel)
           : undefined;
     reason = params.request.executor ? "explicit" : before ? "model" : "initialized";
   }

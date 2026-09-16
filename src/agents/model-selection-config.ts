@@ -19,7 +19,8 @@ export function resolveDefaultModelForAgent(
     defaultProvider: DEFAULT_PROVIDER,
     defaultModel: DEFAULT_MODEL,
     allowManifestNormalization: params.allowManifestNormalization,
-    allowPluginNormalization: params.allowPluginNormalization,
+    allowPluginNormalization:
+      params.cfg.plugins?.enabled === false ? false : params.allowPluginNormalization,
     manifestPlugins: params.manifestPlugins,
   });
 }

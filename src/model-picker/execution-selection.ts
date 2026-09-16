@@ -1,5 +1,6 @@
 import type { AgentModelPrimaryWriteTarget } from "../agents/agent-scope.js";
 import type { ModelCatalogEntry } from "../agents/model-catalog.js";
+import type { ModelManifestNormalizationContext } from "../agents/model-ref-shared.js";
 import type { ModelVisibilityPolicy } from "../agents/model-visibility-policy.js";
 import type { StickyModelSelectionDispatchOutcome } from "../agents/sticky-model-selection.js";
 import type { ThinkLevel } from "../auto-reply/thinking.shared.js";
@@ -158,7 +159,7 @@ export type ApplySessionExecutionSelectionParams = {
   stickyModelSelectionTarget?: AgentModelPrimaryWriteTarget;
   patchModel?: string;
 };
-export type PrepareSessionExecutionSelectionParams = {
+export type PrepareSessionExecutionSelectionParams = ModelManifestNormalizationContext & {
   cfg: OpenClawConfig;
   agentId: string;
   sessionKey?: string;

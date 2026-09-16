@@ -15,16 +15,23 @@ import {
   upsertSessionEntry,
   type SessionEntry,
 } from "../plugin-sdk/session-store-runtime.js";
+import { getActivePluginRegistryVersion } from "../plugins/runtime.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 
 vi.mock("../agents/model-runtime-choice.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../agents/model-runtime-choice.js")>()),
   evaluatePublishedModelRuntimeChoice: vi.fn(
-    async (params: { runtimeId: string; provider: string; model: string }) => ({
-      kind: "ready" as const,
-      entry: { provider: params.provider, id: params.model, name: "Requested" },
-      validate: () => undefined,
-    }),
+    async (params: { runtimeId: string; provider: string; model: string }) => {
+      const generation = getActivePluginRegistryVersion();
+      return {
+        kind: "ready" as const,
+        entry: { provider: params.provider, id: params.model, name: "Requested" },
+        validate: () =>
+          generation === getActivePluginRegistryVersion()
+            ? undefined
+            : "Prepared selection is no longer current.",
+      };
+    },
   ),
 }));
 
@@ -186,6 +193,66 @@ describe("released model-selection SDK entry points", () => {
       expect(row.liveModelSwitchPending).toBe(pending ? true : undefined);
     },
   );
+
+  it.each(["auto", "user"] as const)("replaces an explicit default with a %s request", (source) => {
+    const row = entry();
+    applyModelOverrideToSessionEntry({
+      entry: row,
+      selection: { ...selection, isDefault: true },
+      explicitDefaultSelection: true,
+    });
+    row.contextTokens = 4096;
+    row.contextTokensSource = "runtime";
+    applyModelOverrideToSessionEntry({
+      entry: row,
+      selection,
+      selectionSource: source,
+      markLiveSwitchPending: true,
+    });
+    expect(row.executionSelection).toMatchObject({
+      state: "deferred",
+      request: { model: { provider: selection.provider, id: selection.model } },
+      fallbackPermission: source === "auto" ? "configured" : "explicit",
+    });
+    expect(row.contextTokens).toBeUndefined();
+    expect(row.contextTokensSource).toBeUndefined();
+    expect(row.liveModelSwitchPending).toBe(true);
+  });
+
+  it("invalidates context and signals a default reset", () => {
+    const row = { ...entry(), contextTokens: 4096, contextTokensSource: "runtime" as const };
+    applyModelOverrideToSessionEntry({
+      entry: row,
+      selection: { ...selection, isDefault: true },
+      explicitDefaultSelection: true,
+      markLiveSwitchPending: true,
+    });
+    expect(row.executionSelection).toMatchObject({
+      state: "deferred",
+      fallbackPermission: "configured",
+    });
+    expect(row.contextTokens).toBeUndefined();
+    expect(row.contextTokensSource).toBeUndefined();
+    expect(row.liveModelSwitchPending).toBe(true);
+  });
+
+  it("signals an account-only change while retaining the accepted pair", () => {
+    const row = {
+      ...entry(),
+      authProfileOverride: "old-account",
+      authProfileOverrideSource: "user" as const,
+    };
+    const before = structuredClone(row.executionSelection);
+    applyModelOverrideToSessionEntry({
+      entry: row,
+      selection: { provider: "fixture", model: "before" },
+      profileOverride: "new-account",
+      markLiveSwitchPending: true,
+    });
+    expect(row.executionSelection).toEqual(before);
+    expect(row.authProfileOverride).toBe("new-account");
+    expect(row.liveModelSwitchPending).toBe(true);
+  });
 
   it.each([false, true])("preserves account metadata only when requested=%s", (preserve) => {
     const row = {

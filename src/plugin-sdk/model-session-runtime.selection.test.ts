@@ -2,11 +2,13 @@ import { afterEach, beforeEach, expect, expectTypeOf, test, vi } from "vitest";
 import * as acpManager from "../acp/control-plane/manager.js";
 import { evaluatePublishedModelRuntimeChoice } from "../agents/model-runtime-choice.js";
 import type { ModelVisibilityPolicy } from "../agents/model-visibility-policy.js";
+import { resolveSessionStorePathCore } from "../config/sessions/paths.js";
 import {
   loadSessionEntryReadOnly,
   replaceSessionEntry,
 } from "../config/sessions/session-accessor.js";
 import type { SessionEntry } from "../config/sessions/types.js";
+import { getActivePluginRegistryVersion } from "../plugins/runtime.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import {
   applySessionModelSelection,
@@ -56,10 +58,16 @@ function request(entry = ordinary): ApplySessionModelSelectionParams {
 beforeEach(() => {
   vi.mocked(evaluatePublishedModelRuntimeChoice)
     .mockReset()
-    .mockResolvedValue({
-      kind: "ready",
-      entry: { provider: "fixture", id: "requested", name: "Requested", contextTokens: 4096 },
-      validate: () => undefined,
+    .mockImplementation(async () => {
+      const generation = getActivePluginRegistryVersion();
+      return {
+        kind: "ready",
+        entry: { provider: "fixture", id: "requested", name: "Requested", contextTokens: 4096 },
+        validate: () =>
+          generation === getActivePluginRegistryVersion()
+            ? undefined
+            : "Prepared selection is no longer current.",
+      };
     });
 });
 afterEach(() => vi.restoreAllMocks());
@@ -93,6 +101,61 @@ test("the released operation returns all flat fields and a matching public entry
     >();
   });
 });
+
+test.each([
+  { name: "set", before: "cli", runtime: { kind: "set", runtime: "openclaw" }, changed: true },
+  {
+    name: "set idempotently",
+    before: "harness",
+    runtime: { kind: "set", runtime: "openclaw" },
+    changed: false,
+  },
+  { name: "clear", before: "cli", runtime: { kind: "clear" }, changed: true },
+  { name: "clear idempotently", before: "harness", runtime: { kind: "clear" }, changed: false },
+  { name: "leave unchanged", before: "harness", runtime: { kind: "unchanged" }, changed: false },
+] as const)(
+  "preserves the released runtime result when asked to $name",
+  async ({ before, runtime, changed }) => {
+    await withOpenClawTestState({ label: "sdk-runtime-result" }, async () => {
+      const entry: SessionEntry = {
+        ...ordinary,
+        executionSelection: {
+          state: "accepted",
+          selection: {
+            model: { provider: "fixture", id: "requested" },
+            executor:
+              before === "cli"
+                ? { kind: "cli", id: "fixture-cli" }
+                : { kind: "harness", id: "openclaw" },
+          },
+          fallbackPermission: "explicit",
+        },
+      };
+      await replaceSessionEntry(scope, entry);
+      const params = request(entry);
+      params.storePath = resolveSessionStorePathCore(undefined, { agentId: scope.agentId });
+      params.request.runtime = runtime;
+      const result = await applySessionModelSelection(params);
+      expect(result).toMatchObject({
+        status: "applied",
+        agentRuntime: "openclaw",
+        provider: "fixture",
+        model: "requested",
+        changed,
+      });
+      expect(result.status === "applied" && result.runtimeChange).toEqual(
+        runtime.kind === "unchanged" ? undefined : runtime,
+      );
+      expect(loadSessionEntryReadOnly(scope)?.executionSelection).toMatchObject({
+        state: "accepted",
+        selection: {
+          model: { provider: "fixture", id: "requested" },
+          executor: { kind: "harness", id: "openclaw" },
+        },
+      });
+    });
+  },
+);
 
 test.each(["native-managed", { id: "opaque" }] as const)(
   "rejects ACP %j before backend or storage effects",
@@ -167,6 +230,7 @@ test("rechecks released caller custody after preparation", async () => {
   await withOpenClawTestState({ label: "sdk-flat-custody" }, async () => {
     const params = request();
     vi.mocked(evaluatePublishedModelRuntimeChoice).mockImplementationOnce(async () => {
+      const generation = getActivePluginRegistryVersion();
       params.sessionStore[scope.sessionKey] = projectPluginSessionEntry({
         ...ordinary,
         executionSelection: {
@@ -181,7 +245,10 @@ test("rechecks released caller custody after preparation", async () => {
       return {
         kind: "ready",
         entry: { provider: "fixture", id: "requested", name: "Requested" },
-        validate: () => undefined,
+        validate: () =>
+          generation === getActivePluginRegistryVersion()
+            ? undefined
+            : "Prepared selection is no longer current.",
       };
     });
     const before = structuredClone(params.sessionEntry);

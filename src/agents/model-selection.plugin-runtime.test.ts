@@ -1,6 +1,26 @@
 // Covers plugin-owned model id normalization through selection surfaces.
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { migrateSessionExecutionSelection } from "../commands/doctor/shared/session-execution-selection.js";
+import { normalizePersistedSessionEntryShape } from "../config/sessions/store-entry-shape.js";
+import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { createPluginMetadataSnapshotFixture } from "../plugins/plugin-metadata.test-support.js";
+import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
+import {
+  capturePluginRegistryLifecycleEpoch,
+  capturePluginRegistryLifecycleSignal,
+} from "../plugins/registry-lifecycle.js";
+import {
+  getActivePluginRegistry,
+  getActivePluginRegistryVersion,
+  resetPluginRuntimeStateForTest,
+  setActivePluginRegistry,
+} from "../plugins/runtime.js";
+import {
+  getPreparedModelRuntimeAuthStore,
+  setPreparedModelRuntimeAuthStore,
+} from "./prepared-model-runtime-auth.js";
+import type { PreparedModelRuntimeSnapshot } from "./prepared-model-runtime.types.js";
+import { AuthStorage, ModelRegistry } from "./sessions/index.js";
 
 const normalizeProviderModelIdWithPluginMock = vi.fn();
 
@@ -37,6 +57,26 @@ const emptyPluginMetadataSnapshot = {
 };
 const getCurrentPluginMetadataSnapshotMock = vi.hoisted(() => vi.fn());
 const loadPreparedModelCatalogSnapshotMock = vi.hoisted(() => vi.fn());
+const publishedOwners = vi.hoisted(
+  () => new WeakMap<OpenClawConfig, PreparedModelRuntimeSnapshot>(),
+);
+
+vi.mock("./prepared-model-catalog.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./prepared-model-catalog.js")>()),
+  getPublishedPreparedModelCatalogOwnerSnapshot: ({
+    config,
+    agentId,
+    workspaceDir,
+  }: { config?: OpenClawConfig; agentId?: string; workspaceDir?: string } = {}) => {
+    const owner = config ? publishedOwners.get(config) : undefined;
+    return owner &&
+      (!agentId || agentId === owner.agentId) &&
+      (!workspaceDir || workspaceDir === owner.workspaceDir) &&
+      owner.isCurrent()
+      ? owner
+      : undefined;
+  },
+}));
 
 vi.mock("./provider-model-normalization.runtime.js", () => ({
   normalizeProviderModelIdWithRuntime: (params: unknown) =>
@@ -55,6 +95,65 @@ vi.mock("./model-catalog.runtime.js", () => ({
   loadPreparedModelCatalogSnapshot: loadPreparedModelCatalogSnapshotMock,
 }));
 
+function publishRuntimeOwner(cfg: OpenClawConfig, modelIds: string[]) {
+  const registry = getActivePluginRegistry();
+  if (!registry) throw new Error("Expected the active fixture registry");
+  const version = getActivePluginRegistryVersion();
+  const epoch = capturePluginRegistryLifecycleEpoch(registry);
+  const signal = capturePluginRegistryLifecycleSignal(registry, epoch);
+  if (!signal) throw new Error("Expected the registry lifecycle signal");
+  const entries = modelIds.map((id) => ({ provider: "custom-provider", id, name: id }));
+  const authStore = Object.freeze({
+    version: 1,
+    profiles: Object.freeze({
+      "custom-provider:fixture": Object.freeze({
+        type: "api_key" as const,
+        provider: "custom-provider",
+        key: "synthetic-normalization-credential",
+      }),
+    }),
+  });
+  const owner: PreparedModelRuntimeSnapshot = {
+    config: cfg,
+    observationConfig: cfg,
+    catalogOwner: { agentId: "main", workspaceDir: "/tmp/model-normalization" },
+    agentId: "main",
+    agentDir: "/tmp/model-normalization/agent",
+    workspaceDir: "/tmp/model-normalization",
+    activeProjectKeys: [],
+    authModes: { "custom-provider": "api_key" },
+    metadataSnapshot: emptyPluginMetadataSnapshot,
+    pluginRegistry: registry,
+    isCurrent: () =>
+      publishedOwners.get(cfg) === owner &&
+      getActivePluginRegistry() === registry &&
+      getActivePluginRegistryVersion() === version &&
+      !signal.aborted &&
+      getPreparedModelRuntimeAuthStore(owner) === authStore,
+    allowGatewaySubagentBinding: false,
+    modelCatalog: { entries, routeVariants: entries },
+    configuredRuntimeModels: [],
+    inlineProviderModels: [],
+    createStores() {
+      const authStorage = AuthStorage.inMemory({});
+      return { authStorage, modelRegistry: ModelRegistry.inMemory(authStorage) };
+    },
+  };
+  setPreparedModelRuntimeAuthStore(owner, authStore);
+  publishedOwners.set(cfg, owner);
+}
+
+function migrateStoredModel(sessionId: string, model: string) {
+  const migrated = migrateSessionExecutionSelection({
+    entry: { sessionId, updatedAt: 1, providerOverride: "custom-provider", modelOverride: model },
+    defaultProvider: "custom-provider",
+    classifyExecutor: (id) => (id === "openclaw" ? "harness" : undefined),
+  });
+  const entry = normalizePersistedSessionEntryShape(migrated.entry);
+  if (!entry) throw new Error("Expected Doctor's canonical session row");
+  return entry;
+}
+
 let createModelSelectionStateForTest: typeof import("../auto-reply/reply/model-selection.js").createModelSelectionState;
 let resolveSessionModelRef: typeof import("./session-model-ref.js").resolveSessionModelRef;
 
@@ -65,7 +164,11 @@ describe("model-selection plugin runtime normalization", () => {
     ({ resolveSessionModelRef } = await import("./session-model-ref.js"));
   });
 
+  afterEach(() => resetPluginRuntimeStateForTest());
+
   beforeEach(() => {
+    resetPluginRuntimeStateForTest();
+    setActivePluginRegistry(createEmptyPluginRegistry());
     normalizeProviderModelIdWithPluginMock.mockReset();
     getCurrentPluginMetadataSnapshotMock.mockReset();
     getCurrentPluginMetadataSnapshotMock.mockReturnValue(emptyPluginMetadataSnapshot);
@@ -162,7 +265,12 @@ describe("model-selection plugin runtime normalization", () => {
 
   it("normalizes an unrestricted reply default before selecting it", async () => {
     normalizeProviderModelIdWithPluginMock.mockImplementation(normalizeLegacyFixtureModel);
-    const cfg = { agents: { defaults: { modelPolicy: { allow: [] } } } };
+    const cfg = {
+      agents: {
+        defaults: { model: "custom-provider/custom-legacy-model", modelPolicy: { allow: [] } },
+      },
+    };
+    publishRuntimeOwner(cfg, ["custom-modern-model"]);
     const state = await createModelSelectionStateForTest({
       cfg,
       agentCfg: cfg.agents.defaults,
@@ -179,14 +287,33 @@ describe("model-selection plugin runtime normalization", () => {
     });
   });
 
+  it("refuses a normalized reply after its prepared registry generation is replaced", async () => {
+    normalizeProviderModelIdWithPluginMock.mockImplementation(normalizeLegacyFixtureModel);
+    const cfg = { agents: { defaults: { model: "custom-provider/custom-legacy-model" } } };
+    publishRuntimeOwner(cfg, ["custom-modern-model"]);
+    setActivePluginRegistry(createEmptyPluginRegistry());
+
+    await expect(
+      createModelSelectionStateForTest({
+        cfg,
+        agentCfg: cfg.agents.defaults,
+        defaultProvider: "custom-provider",
+        defaultModel: "custom-legacy-model",
+        provider: "custom-provider",
+        model: "custom-legacy-model",
+        hasModelDirective: false,
+      }),
+    ).rejects.toThrow("Could not confirm support");
+  });
+
   it("keeps plugin-normalized stored overrides allowed in auto-reply runtime selection", async () => {
-    // Stored session overrides are runtime inputs, so provider-owned
-    // normalization keeps old persisted ids usable without resetting them.
+    // Doctor resolves legacy model input before the reply consumes accepted intent.
     normalizeProviderModelIdWithPluginMock.mockImplementation(normalizeLegacyFixtureModel);
 
     const cfg = {
       agents: {
         defaults: {
+          model: "custom-provider/custom-legacy-model",
           models: {
             "custom-provider/custom-legacy-model": {},
           },
@@ -194,12 +321,8 @@ describe("model-selection plugin runtime normalization", () => {
       },
     };
     const sessionKey = "agent:main:discord:channel:c1";
-    const sessionEntry = {
-      sessionId: sessionKey,
-      updatedAt: 1,
-      providerOverride: "custom-provider",
-      modelOverride: "custom-legacy-model",
-    };
+    publishRuntimeOwner(cfg, ["custom-modern-model"]);
+    const sessionEntry = migrateStoredModel("plugin-normalized-stored", "custom-legacy-model");
     const sessionStore = { [sessionKey]: sessionEntry };
 
     const state = await createModelSelectionStateForTest({
@@ -217,7 +340,14 @@ describe("model-selection plugin runtime normalization", () => {
 
     expect(state.provider).toBe("custom-provider");
     expect(state.model).toBe("custom-modern-model");
-    expect(state.resetModelOverride).toBe(false);
+    expect(sessionEntry.executionSelection).toEqual({
+      state: "accepted",
+      selection: {
+        model: { provider: "custom-provider", id: "custom-modern-model" },
+        executor: { kind: "harness", id: "openclaw" },
+      },
+      fallbackPermission: "explicit",
+    });
   });
 
   it("keeps resolved persisted overrides off plugin runtime hooks", () => {
@@ -267,12 +397,17 @@ describe("model-selection plugin runtime normalization", () => {
     const cfg = {
       agents: {
         defaults: {
+          model: "custom-provider/model-0",
           modelPolicy: { allow: Object.keys(configuredRefs) },
           models: configuredRefs,
         },
       },
     };
 
+    publishRuntimeOwner(
+      cfg,
+      Array.from({ length: 20 }, (_, index) => `model-${index}`),
+    );
     const state = await createModelSelectionStateForTest({
       cfg,
       agentCfg: cfg.agents.defaults,
@@ -284,11 +419,11 @@ describe("model-selection plugin runtime normalization", () => {
     });
 
     expect(state.allowedModelCatalog).toHaveLength(20);
-    expect(getCurrentPluginMetadataSnapshotMock).toHaveBeenCalledTimes(1);
-    expect(getCurrentPluginMetadataSnapshotMock).toHaveBeenCalledWith({
-      config: cfg,
-      allowWorkspaceScopedSnapshot: true,
-    });
+    // Credential-placeholder discovery is process-scoped and may cold-load independently.
+    const scopedMetadataReads = getCurrentPluginMetadataSnapshotMock.mock.calls.filter(
+      ([lookup]) => lookup.config === cfg,
+    );
+    expect(scopedMetadataReads).toEqual([[{ config: cfg, allowWorkspaceScopedSnapshot: true }]]);
   });
 
   it("keeps concurrent model-policy runs isolated while sharing metadata", async () => {
@@ -377,12 +512,8 @@ describe("model-selection plugin runtime normalization", () => {
       },
     };
     const sessionKey = "agent:main:discord:channel:c1";
-    const sessionEntry = {
-      sessionId: sessionKey,
-      updatedAt: 1,
-      providerOverride: "custom-provider",
-      modelOverride: "stored-legacy",
-    };
+    publishRuntimeOwner(cfg, ["configured-modern", "stored-modern", "fallback-modern"]);
+    const sessionEntry = migrateStoredModel("plugin-discovery-stored", "stored-legacy");
 
     const state = await createModelSelectionStateForTest({
       cfg,
