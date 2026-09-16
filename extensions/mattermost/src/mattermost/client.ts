@@ -645,6 +645,7 @@ export async function createMattermostPost(
     rootId?: string;
     fileIds?: string[];
     props?: Record<string, unknown>;
+    postType?: string;
   },
 ): Promise<MattermostPost> {
   const payload: Record<string, unknown> = {
@@ -659,6 +660,9 @@ export async function createMattermostPost(
   }
   if (params.props) {
     payload.props = params.props;
+  }
+  if (params.postType) {
+    payload.type = params.postType;
   }
   const post = await client.request<MattermostPost>("/posts", {
     method: "POST",
