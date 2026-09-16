@@ -1,39 +1,33 @@
-import { drainSessionWriteLockStateForTest } from "../agents/session-write-lock.js";
+// Cleans session-related shared state after tests.
+import { waitForSessionTranscriptIndexReconcilesInStateDir } from "../config/sessions/session-transcript-reconcile.js";
 import {
   clearSessionStoreCacheForTest,
-  drainSessionStoreLockQueuesForTest,
-} from "../config/sessions/store.js";
+  drainSessionStoreWriterQueuesForTest,
+} from "../config/sessions/store-writer-state.js";
 import { drainFileLockStateForTest } from "../infra/file-lock.js";
+import { closeOpenClawAgentDatabasesAsync } from "../state/openclaw-agent-db-lifecycle.js";
+import { closeOpenClawStateDatabaseByPathAsync } from "../state/openclaw-state-db.js";
+import { resolveOpenClawStateSqlitePath } from "../state/openclaw-state-db.paths.js";
 
-let fileLockDrainerForTests: typeof drainFileLockStateForTest | null = null;
-let sessionStoreLockQueueDrainerForTests: typeof drainSessionStoreLockQueuesForTest | null = null;
-let sessionWriteLockDrainerForTests: typeof drainSessionWriteLockStateForTest | null = null;
-
-export function setSessionStateCleanupRuntimeForTests(params: {
-  drainFileLockStateForTest?: typeof drainFileLockStateForTest | null;
-  drainSessionStoreLockQueuesForTest?: typeof drainSessionStoreLockQueuesForTest | null;
-  drainSessionWriteLockStateForTest?: typeof drainSessionWriteLockStateForTest | null;
-}): void {
-  if ("drainFileLockStateForTest" in params) {
-    fileLockDrainerForTests = params.drainFileLockStateForTest ?? null;
+export async function cleanupSessionStateForTest(
+  options: { stateDir?: string } = {},
+): Promise<void> {
+  await drainSessionStoreWriterQueuesForTest();
+  if (options.stateDir) {
+    // Writers can publish deferred reconciles as the initial drain settles.
+    // Finish those owners and their writes before closing fixture databases.
+    await waitForSessionTranscriptIndexReconcilesInStateDir(options.stateDir);
+    await drainSessionStoreWriterQueuesForTest();
   }
-  if ("drainSessionStoreLockQueuesForTest" in params) {
-    sessionStoreLockQueueDrainerForTests = params.drainSessionStoreLockQueuesForTest ?? null;
-  }
-  if ("drainSessionWriteLockStateForTest" in params) {
-    sessionWriteLockDrainerForTests = params.drainSessionWriteLockStateForTest ?? null;
-  }
-}
-
-export function resetSessionStateCleanupRuntimeForTests(): void {
-  fileLockDrainerForTests = null;
-  sessionStoreLockQueueDrainerForTests = null;
-  sessionWriteLockDrainerForTests = null;
-}
-
-export async function cleanupSessionStateForTest(): Promise<void> {
-  await (sessionStoreLockQueueDrainerForTests ?? drainSessionStoreLockQueuesForTest)();
+  await drainFileLockStateForTest();
   clearSessionStoreCacheForTest();
-  await (fileLockDrainerForTests ?? drainFileLockStateForTest)();
-  await (sessionWriteLockDrainerForTests ?? drainSessionWriteLockStateForTest)();
+  if (!options.stateDir) {
+    return;
+  }
+  // Close agent handles before shared state: releasing their leases can reopen
+  // shared state. Unrelated fixtures keep their handles.
+  await closeOpenClawAgentDatabasesAsync(options.stateDir);
+  await closeOpenClawStateDatabaseByPathAsync(
+    resolveOpenClawStateSqlitePath({ ...process.env, OPENCLAW_STATE_DIR: options.stateDir }),
+  );
 }

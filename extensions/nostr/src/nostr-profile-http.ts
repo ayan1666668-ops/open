@@ -8,22 +8,34 @@
  */
 
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { z } from "openclaw/plugin-sdk/zod";
+import { KeyedAsyncQueue } from "openclaw/plugin-sdk/keyed-async-queue";
+import { isLoopbackHost } from "openclaw/plugin-sdk/ssrf-runtime";
 import {
-  createFixedWindowRateLimiter,
-  isBlockedHostnameOrIp,
-  readJsonBodyWithLimit,
-  requestBodyErrorToText,
-} from "../api.js";
+  isRecord,
+  normalizeLowercaseStringOrEmpty,
+  normalizeOptionalLowercaseString,
+  readStringValue,
+} from "openclaw/plugin-sdk/string-coerce-runtime";
+import { z } from "zod";
 import { publishNostrProfile, getNostrProfileState } from "./channel.js";
 import { NostrProfileSchema, type NostrProfile } from "./config-schema.js";
+import {
+  createFixedWindowRateLimiter,
+  getPluginRuntimeGatewayRequestScope,
+  readJsonBodyWithLimit,
+  requestBodyErrorToText,
+} from "./nostr-profile-http-runtime.js";
 import { importProfileFromRelays, mergeProfiles } from "./nostr-profile-import.js";
+import {
+  normalizeNostrProfileUrlForRuntime,
+  validateUrlSafety,
+} from "./nostr-profile-url-safety.js";
 
 // ============================================================================
 // Types
 // ============================================================================
 
-export interface NostrProfileHttpContext {
+interface NostrProfileHttpContext {
   /** Get current profile from config */
   getConfigProfile: (accountId: string) => NostrProfile | undefined;
   /** Update profile in config (after successful publish) */
@@ -51,18 +63,6 @@ const profileRateLimiter = createFixedWindowRateLimiter({
   maxTrackedKeys: RATE_LIMIT_MAX_TRACKED_KEYS,
 });
 
-export function clearNostrProfileRateLimitStateForTest(): void {
-  profileRateLimiter.clear();
-}
-
-export function getNostrProfileRateLimitStateSizeForTest(): number {
-  return profileRateLimiter.size();
-}
-
-export function isNostrProfileRateLimitedForTest(accountId: string, nowMs: number): boolean {
-  return profileRateLimiter.isRateLimited(accountId, nowMs);
-}
-
 function checkRateLimit(accountId: string): boolean {
   return !profileRateLimiter.isRateLimited(accountId);
 }
@@ -71,59 +71,11 @@ function checkRateLimit(accountId: string): boolean {
 // Mutex for Concurrent Publish Prevention
 // ============================================================================
 
-const publishLocks = new Map<string, Promise<void>>();
+const publishLocks = new KeyedAsyncQueue();
 
 async function withPublishLock<T>(accountId: string, fn: () => Promise<T>): Promise<T> {
-  // Atomic mutex using promise chaining - prevents TOCTOU race condition
-  const prev = publishLocks.get(accountId) ?? Promise.resolve();
-  let resolve: () => void;
-  const next = new Promise<void>((r) => {
-    resolve = r;
-  });
-  // Atomically replace the lock before awaiting - any concurrent request
-  // will now wait on our `next` promise
-  publishLocks.set(accountId, next);
-
-  // Wait for previous operation to complete
-  await prev.catch(() => {});
-
-  try {
-    return await fn();
-  } finally {
-    resolve!();
-    // Clean up if we're the last in chain
-    if (publishLocks.get(accountId) === next) {
-      publishLocks.delete(accountId);
-    }
-  }
+  return await publishLocks.enqueue(accountId, fn);
 }
-
-// ============================================================================
-// SSRF Protection
-// ============================================================================
-
-function validateUrlSafety(urlStr: string): { ok: true } | { ok: false; error: string } {
-  try {
-    const url = new URL(urlStr);
-
-    if (url.protocol !== "https:") {
-      return { ok: false, error: "URL must use https:// protocol" };
-    }
-
-    const hostname = url.hostname.toLowerCase();
-
-    if (isBlockedHostnameOrIp(hostname)) {
-      return { ok: false, error: "URL must not point to private/internal addresses" };
-    }
-
-    return { ok: true };
-  } catch {
-    return { ok: false, error: "Invalid URL format" };
-  }
-}
-
-// Export for use in import validation
-export { validateUrlSafety };
 
 // ============================================================================
 // Validation Schemas
@@ -146,6 +98,42 @@ const ProfileUpdateSchema = NostrProfileSchema.extend({
   nip05: nip05FormatSchema,
   lud16: lud16FormatSchema,
 });
+
+const PROFILE_MUTATION_SCOPE = "operator.admin";
+const PROFILE_URL_FIELDS = ["picture", "banner", "website"] as const;
+
+function normalizeProfileUpdateUrlInputs(value: unknown): unknown {
+  if (!isRecord(value)) {
+    return value;
+  }
+  const record = value;
+  let normalized: Record<string, unknown> | undefined;
+  for (const field of PROFILE_URL_FIELDS) {
+    const input = record[field];
+    if (typeof input !== "string") {
+      continue;
+    }
+    const next = normalizeNostrProfileUrlForRuntime(input);
+    if (next !== input) {
+      normalized ??= { ...record };
+      normalized[field] = next;
+    }
+  }
+  return normalized ?? value;
+}
+
+function restoreProfileUpdateUrlInputs(profile: NostrProfile, value: unknown): NostrProfile {
+  if (!isRecord(value)) {
+    return profile;
+  }
+  const record = value;
+  return {
+    ...profile,
+    ...(typeof record.picture === "string" ? { picture: record.picture } : {}),
+    ...(typeof record.banner === "string" ? { banner: record.banner } : {}),
+    ...(typeof record.website === "string" ? { website: record.website } : {}),
+  };
+}
 
 // ============================================================================
 // Request Helpers
@@ -193,7 +181,7 @@ function isLoopbackRemoteAddress(remoteAddress: string | undefined): boolean {
     return false;
   }
 
-  const ipLower = remoteAddress.toLowerCase().replace(/^\[|\]$/g, "");
+  const ipLower = normalizeLowercaseStringOrEmpty(remoteAddress).replace(/^\[|\]$/g, "");
 
   // IPv6 loopback
   if (ipLower === "::1") {
@@ -217,8 +205,7 @@ function isLoopbackRemoteAddress(remoteAddress: string | undefined): boolean {
 function isLoopbackOriginLike(value: string): boolean {
   try {
     const url = new URL(value);
-    const hostname = url.hostname.toLowerCase();
-    return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+    return isLoopbackHost(url.hostname);
   } catch {
     return false;
   }
@@ -228,7 +215,7 @@ function firstHeaderValue(value: string | string[] | undefined): string | undefi
   if (Array.isArray(value)) {
     return value[0];
   }
-  return typeof value === "string" ? value : undefined;
+  return readStringValue(value);
 }
 
 function normalizeIpCandidate(raw: string): string {
@@ -290,7 +277,9 @@ function enforceLoopbackMutationGuards(
     return false;
   }
 
-  const secFetchSite = firstHeaderValue(req.headers["sec-fetch-site"])?.trim().toLowerCase();
+  const secFetchSite = normalizeOptionalLowercaseString(
+    firstHeaderValue(req.headers["sec-fetch-site"]),
+  );
   if (secFetchSite === "cross-site") {
     ctx.log?.warn?.("Rejected mutation with cross-site sec-fetch-site header");
     sendJson(res, 403, { ok: false, error: "Forbidden" });
@@ -313,6 +302,21 @@ function enforceLoopbackMutationGuards(
   }
 
   return true;
+}
+
+function enforceGatewayMutationScope(
+  ctx: NostrProfileHttpContext,
+  accountId: string,
+  res: ServerResponse,
+): boolean {
+  const runtimeScopes = getPluginRuntimeGatewayRequestScope()?.client?.connect?.scopes;
+  const scopes = Array.isArray(runtimeScopes) ? runtimeScopes : [];
+  if (scopes.includes(PROFILE_MUTATION_SCOPE)) {
+    return true;
+  }
+  ctx.log?.warn?.(`[${accountId}] Rejected profile mutation missing ${PROFILE_MUTATION_SCOPE}`);
+  sendJson(res, 403, { ok: false, error: `missing scope: ${PROFILE_MUTATION_SCOPE}` });
+  return false;
 }
 
 // ============================================================================
@@ -360,6 +364,9 @@ export function createNostrProfileHttpHandler(
       sendJson(res, 405, { ok: false, error: "Method not allowed" });
       return true;
     } catch (err) {
+      if (res.writableEnded) {
+        return true;
+      }
       ctx.log?.error(`Profile HTTP error: ${String(err)}`);
       sendJson(res, 500, { ok: false, error: "Internal server error" });
       return true;
@@ -397,6 +404,9 @@ async function handleUpdateProfile(
   req: IncomingMessage,
   res: ServerResponse,
 ): Promise<true> {
+  if (!enforceGatewayMutationScope(ctx, accountId, res)) {
+    return true;
+  }
   if (!enforceLoopbackMutationGuards(ctx, req, res)) {
     return true;
   }
@@ -417,14 +427,14 @@ async function handleUpdateProfile(
   }
 
   // Validate profile
-  const parseResult = ProfileUpdateSchema.safeParse(body);
+  const parseResult = ProfileUpdateSchema.safeParse(normalizeProfileUpdateUrlInputs(body));
   if (!parseResult.success) {
     const errors = parseResult.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`);
     sendJson(res, 400, { ok: false, error: "Validation failed", details: errors });
     return true;
   }
 
-  const profile = parseResult.data;
+  const profile = restoreProfileUpdateUrlInputs(parseResult.data, body);
 
   // SSRF check for picture URL
   if (profile.picture) {
@@ -463,11 +473,13 @@ async function handleUpdateProfile(
   // Publish with mutex to prevent concurrent publishes
   try {
     const result = await withPublishLock(accountId, async () => {
+      await getPluginRuntimeGatewayRequestScope()?.revalidate?.();
       return await publishNostrProfile(accountId, mergedProfile);
     });
 
     // Only persist if at least one relay succeeded
     if (result.successes.length > 0) {
+      await getPluginRuntimeGatewayRequestScope()?.revalidate?.();
       await ctx.updateConfigProfile(accountId, mergedProfile);
       ctx.log?.info(`[${accountId}] Profile published to ${result.successes.length} relay(s)`);
     } else {
@@ -483,6 +495,9 @@ async function handleUpdateProfile(
       persisted: result.successes.length > 0,
     });
   } catch (err) {
+    if (res.writableEnded) {
+      return true;
+    }
     ctx.log?.error(`[${accountId}] Profile publish error: ${String(err)}`);
     sendJson(res, 500, { ok: false, error: `Publish failed: ${String(err)}` });
   }
@@ -500,6 +515,9 @@ async function handleImportProfile(
   req: IncomingMessage,
   res: ServerResponse,
 ): Promise<true> {
+  if (!enforceGatewayMutationScope(ctx, accountId, res)) {
+    return true;
+  }
   if (!enforceLoopbackMutationGuards(ctx, req, res)) {
     return true;
   }
@@ -529,6 +547,7 @@ async function handleImportProfile(
     // Ignore body parse errors - use defaults
   }
 
+  await getPluginRuntimeGatewayRequestScope()?.revalidate?.();
   ctx.log?.info(`[${accountId}] Importing profile for ${pubkey.slice(0, 8)}...`);
 
   // Import from relays
@@ -549,6 +568,7 @@ async function handleImportProfile(
 
   // If autoMerge is requested, merge and save
   if (autoMerge && result.profile) {
+    await getPluginRuntimeGatewayRequestScope()?.revalidate?.();
     const localProfile = ctx.getConfigProfile(accountId);
     const merged = mergeProfiles(localProfile, result.profile);
     await ctx.updateConfigProfile(accountId, merged);

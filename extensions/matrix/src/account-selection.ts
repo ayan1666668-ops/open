@@ -1,3 +1,4 @@
+// Matrix plugin module implements account selection behavior.
 import {
   listCombinedAccountIds,
   listConfiguredAccountIds,
@@ -9,11 +10,104 @@ import {
   normalizeAccountId,
   normalizeOptionalAccountId,
 } from "openclaw/plugin-sdk/account-id";
-import type { OpenClawConfig } from "openclaw/plugin-sdk/config-runtime";
+import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
+import { hasConfiguredSecretInput } from "openclaw/plugin-sdk/secret-input";
+import { isRecord, normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
+import {
+  resolveMatrixAccountStringValues,
+  type MatrixResolvedStringField,
+} from "./auth-precedence.js";
 import { listMatrixEnvAccountIds } from "./env-vars.js";
+import {
+  resolveGlobalMatrixEnvConfig,
+  resolveScopedMatrixEnvConfig,
+} from "./matrix/client/env-auth.js";
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+type MatrixTopologyStringSources = Partial<Record<MatrixResolvedStringField, string>>;
+
+function readConfiguredMatrixString(value: unknown): string {
+  return normalizeOptionalString(value) ?? "";
+}
+
+function readConfiguredMatrixSecretSource(value: unknown): string {
+  return hasConfiguredSecretInput(value) ? "configured" : "";
+}
+
+function resolveMatrixChannelStringSources(
+  entry: Record<string, unknown> | null,
+): MatrixTopologyStringSources {
+  if (!entry) {
+    return {};
+  }
+  return {
+    homeserver: readConfiguredMatrixString(entry.homeserver),
+    userId: readConfiguredMatrixString(entry.userId),
+    accessToken: readConfiguredMatrixSecretSource(entry.accessToken),
+    password: readConfiguredMatrixSecretSource(entry.password),
+    deviceId: readConfiguredMatrixString(entry.deviceId),
+    deviceName: readConfiguredMatrixString(entry.deviceName),
+  };
+}
+
+function hasUsableResolvedMatrixAuth(values: {
+  homeserver: string;
+  userId: string;
+  accessToken: string;
+}): boolean {
+  // Account discovery must keep homeserver+userId shapes because auth can still
+  // resolve through cached Matrix credentials even when no fresh token/password
+  // is present in config or env.
+  return Boolean(values.homeserver && (values.accessToken || values.userId));
+}
+
+function hasFreshResolvedMatrixAuth(values: {
+  homeserver: string;
+  userId: string;
+  accessToken: string;
+  password: string;
+}): boolean {
+  return Boolean(values.homeserver && (values.accessToken || (values.userId && values.password)));
+}
+
+function resolveEffectiveMatrixAccountSources(params: {
+  channel: Record<string, unknown> | null;
+  accountId: string;
+  env: NodeJS.ProcessEnv;
+}): ReturnType<typeof resolveMatrixAccountStringValues> {
+  const normalizedAccountId = normalizeAccountId(params.accountId);
+  return resolveMatrixAccountStringValues({
+    accountId: normalizedAccountId,
+    scopedEnv: resolveScopedMatrixEnvConfig(normalizedAccountId, params.env),
+    channel: resolveMatrixChannelStringSources(params.channel),
+    globalEnv: resolveGlobalMatrixEnvConfig(params.env),
+  });
+}
+
+function hasUsableEffectiveMatrixAccountSource(params: {
+  channel: Record<string, unknown> | null;
+  accountId: string;
+  env: NodeJS.ProcessEnv;
+}): boolean {
+  return hasUsableResolvedMatrixAuth(resolveEffectiveMatrixAccountSources(params));
+}
+
+function hasFreshEffectiveMatrixAccountSource(params: {
+  channel: Record<string, unknown> | null;
+  accountId: string;
+  env: NodeJS.ProcessEnv;
+}): boolean {
+  return hasFreshResolvedMatrixAuth(resolveEffectiveMatrixAccountSources(params));
+}
+
+function hasConfiguredDefaultMatrixAccountSource(params: {
+  channel: Record<string, unknown> | null;
+  env: NodeJS.ProcessEnv;
+}): boolean {
+  return hasFreshEffectiveMatrixAccountSource({
+    channel: params.channel,
+    accountId: DEFAULT_ACCOUNT_ID,
+    env: params.env,
+  });
 }
 
 export function resolveMatrixChannelConfig(cfg: OpenClawConfig): Record<string, unknown> | null {
@@ -42,12 +136,21 @@ export function resolveConfiguredMatrixAccountIds(
   env: NodeJS.ProcessEnv = process.env,
 ): string[] {
   const channel = resolveMatrixChannelConfig(cfg);
+  const configuredAccountIds = listConfiguredAccountIds({
+    accounts: channel && isRecord(channel.accounts) ? channel.accounts : undefined,
+    normalizeAccountId,
+  });
+  if (hasConfiguredDefaultMatrixAccountSource({ channel, env })) {
+    configuredAccountIds.push(DEFAULT_ACCOUNT_ID);
+  }
+  const readyEnvAccountIds = listMatrixEnvAccountIds(env).filter((accountId) =>
+    normalizeAccountId(accountId) === DEFAULT_ACCOUNT_ID
+      ? hasConfiguredDefaultMatrixAccountSource({ channel, env })
+      : hasUsableEffectiveMatrixAccountSource({ channel, accountId, env }),
+  );
   return listCombinedAccountIds({
-    configuredAccountIds: listConfiguredAccountIds({
-      accounts: channel && isRecord(channel.accounts) ? channel.accounts : undefined,
-      normalizeAccountId,
-    }),
-    additionalAccountIds: listMatrixEnvAccountIds(env),
+    configuredAccountIds,
+    additionalAccountIds: readyEnvAccountIds,
     fallbackAccountIdWhenEmpty: channel ? DEFAULT_ACCOUNT_ID : undefined,
   });
 }
@@ -82,6 +185,9 @@ export function requiresExplicitMatrixDefaultAccount(
   }
   const configuredAccountIds = resolveConfiguredMatrixAccountIds(cfg, env);
   if (configuredAccountIds.length <= 1) {
+    return false;
+  }
+  if (configuredAccountIds.includes(DEFAULT_ACCOUNT_ID)) {
     return false;
   }
   const configuredDefault = normalizeOptionalAccountId(

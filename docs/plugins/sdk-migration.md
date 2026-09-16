@@ -1,180 +1,173 @@
 ---
-title: "Plugin SDK Migration"
-sidebarTitle: "Migrate to SDK"
 summary: "Migrate from the legacy backwards-compatibility layer to the modern plugin SDK"
+title: "Plugin SDK migration"
+sidebarTitle: "Migrate to SDK"
 read_when:
-  - You see the OPENCLAW_PLUGIN_SDK_COMPAT_DEPRECATED warning
-  - You see the OPENCLAW_EXTENSION_API_DEPRECATED warning
+  - You used api.registerEmbeddedExtensionFactory before OpenClaw 2026.4.25
   - You are updating a plugin to the modern plugin architecture
   - You maintain an external OpenClaw plugin
 ---
 
-# Plugin SDK Migration
+OpenClaw replaced a broad backwards-compatibility layer with a modern plugin
+architecture built from small, focused imports. If your plugin predates that
+change, this guide gets it onto the current contracts.
 
-OpenClaw has moved from a broad backwards-compatibility layer to a modern plugin
-architecture with focused, documented imports. If your plugin was built before
-the new architecture, this guide helps you migrate.
+## What changed
 
-## What is changing
+Several wide-open import surfaces used to let plugins reach almost anything
+from a single entry point:
 
-The old plugin system provided two wide-open surfaces that let plugins import
-anything they needed from a single entry point:
+- **`openclaw/plugin-sdk`** and **`openclaw/plugin-sdk/compat`** - re-exported
+  dozens of helpers while the focused SDK was being built. Both roots are now
+  removed. Import a documented subpath instead.
+- **`openclaw/plugin-sdk/infra-runtime`** - a broad barrel mixing system
+  events, heartbeat state, delivery queues, fetch/proxy helpers, file helpers,
+  approval types, and unrelated utilities.
+- **`openclaw/plugin-sdk/config-runtime`** - a broad config barrel retained
+  for compatibility, including deprecated direct `loadConfig` and
+  `writeConfigFile` exports. Those methods were removed from the injected
+  plugin runtime, not from this retained barrel.
+- **`openclaw/extension-api`** - a removed bridge that gave plugins direct
+  access to host-side helpers like the embedded agent runner.
+- **`api.registerEmbeddedExtensionFactory(...)`** - a removed embedded-runner-only
+  hook that observed embedded-runner events such as `tool_result`. Use agent
+  tool-result middleware instead (see [Migrate embedded tool-result extensions
+  to middleware](/plugins/sdk-migration/how-to-migrate#how-to-migrate)).
 
-- **`openclaw/plugin-sdk/compat`** — a single import that re-exported dozens of
-  helpers. It was introduced to keep older hook-based plugins working while the
-  new plugin architecture was being built.
-- **`openclaw/extension-api`** — a bridge that gave plugins direct access to
-  host-side helpers like the embedded agent runner.
-
-Both surfaces are now **deprecated**. They still work at runtime, but new
-plugins must not use them, and existing plugins should migrate before the next
-major release removes them.
+The root SDK, compat barrel, extension bridge, and embedded extension factory
+have been removed. `infra-runtime` and `config-runtime` remain only for their
+separately recorded later windows. New plugins should use focused subpaths.
 
 <Warning>
-  The backwards-compatibility layer will be removed in a future major release.
-  Plugins that still import from these surfaces will break when that happens.
+  Plugins importing the removed root, compat, or extension surfaces no longer
+  load. Follow the [import path mappings](/plugins/sdk-migration/import-paths) before upgrading.
 </Warning>
 
-## Why this changed
+OpenClaw does not remove or reinterpret documented plugin behavior in the same
+change that introduces a replacement. Breaking contract changes go through a
+compatibility adapter, diagnostics, docs, and a deprecation window first. That
+applies to SDK imports, manifest fields, setup APIs, hooks, and runtime
+registration behavior.
 
-The old approach caused problems:
+`ChatCommandDefinition.category` retains the `"docks"` value accepted by the
+2026.8.1 SDK. Command lists display these legacy definitions under **Tools**.
+The category does not enable channel docking or restore retired docking commands.
+New definitions should use `"tools"`.
 
-- **Slow startup** — importing one helper loaded dozens of unrelated modules
-- **Circular dependencies** — broad re-exports made it easy to create import cycles
-- **Unclear API surface** — no way to tell which exports were stable vs internal
+### Why
 
-The modern plugin SDK fixes this: each import path (`openclaw/plugin-sdk/\<subpath\>`)
-is a small, self-contained module with a clear purpose and documented contract.
+- **Slow startup** - importing one helper loaded dozens of unrelated modules.
+- **Circular dependencies** - broad re-exports made import cycles easy to
+  create.
+- **Unclear API surface** - no way to tell stable exports from internal ones.
 
-## How to migrate
+The typed public SDK is organized into focused subpaths with documented
+contracts. Not every SDK build entrypoint is a public plugin API.
 
-<Steps>
-  <Step title="Find deprecated imports">
-    Search your plugin for imports from either deprecated surface:
+Legacy provider convenience seams for bundled channels are gone too -
+channel-branded helper shortcuts were private mono-repo conveniences, not
+stable plugin contracts. Use narrow generic SDK subpaths instead. Inside the
+bundled plugin workspace, keep provider-owned helpers in that plugin's own
+`api.ts` or `runtime-api.ts`:
 
-    ```bash
-    grep -r "plugin-sdk/compat" my-plugin/
-    grep -r "openclaw/extension-api" my-plugin/
-    ```
+- Anthropic keeps Claude-specific stream helpers in its own `api.ts` /
+  `contract-api.ts` seam.
+- OpenAI keeps provider builders, default-model helpers, and realtime provider
+  builders in its own `api.ts`.
+- OpenRouter keeps provider builder and onboarding/config helpers in its own
+  `api.ts`.
 
-  </Step>
+## Where each topic lives
 
-  <Step title="Replace with focused imports">
-    Each export from the old surface maps to a specific modern import path:
+Every section of the single-page version lives on one of the six pages below.
+The anchors from the single-page version still resolve here.
 
-    ```typescript
-    // Before (deprecated backwards-compatibility layer)
-    import {
-      createChannelReplyPipeline,
-      createPluginRuntimeStore,
-      resolveControlCommandGate,
-    } from "openclaw/plugin-sdk/compat";
+### Migration steps
 
-    // After (modern focused imports)
-    import { createChannelReplyPipeline } from "openclaw/plugin-sdk/channel-reply-pipeline";
-    import { createPluginRuntimeStore } from "openclaw/plugin-sdk/runtime-store";
-    import { resolveControlCommandGate } from "openclaw/plugin-sdk/command-auth";
-    ```
+[How to migrate a plugin](/plugins/sdk-migration/how-to-migrate) — the ordered migration steps.
 
-    For host-side helpers, use the injected plugin runtime instead of importing
-    directly:
+- <a id="how-to-migrate"></a>[How to migrate](/plugins/sdk-migration/how-to-migrate#how-to-migrate)
+- <a id="migrate-runtime-config-load%2Fwrite-helpers"></a>[Migrate runtime config load/write helpers](/plugins/sdk-migration/how-to-migrate#migrate-runtime-config-load%2Fwrite-helpers)
+- <a id="migrate-embedded-tool-result-extensions-to-middleware"></a>[Migrate embedded tool-result extensions to middleware](/plugins/sdk-migration/how-to-migrate#migrate-embedded-tool-result-extensions-to-middleware)
+- <a id="migrate-approval-native-handlers-to-capability-facts"></a>[Migrate approval-native handlers to capability facts](/plugins/sdk-migration/how-to-migrate#migrate-approval-native-handlers-to-capability-facts)
+- <a id="audit-windows-wrapper-fallback-behavior"></a>[Audit Windows wrapper fallback behavior](/plugins/sdk-migration/how-to-migrate#audit-windows-wrapper-fallback-behavior)
+- <a id="find-deprecated-imports"></a>[Find deprecated imports](/plugins/sdk-migration/how-to-migrate#find-deprecated-imports)
+- <a id="replace-with-focused-imports"></a>[Replace with focused imports](/plugins/sdk-migration/how-to-migrate#replace-with-focused-imports)
+- <a id="replace-broad-infra-runtime-imports"></a>[Replace broad `infra-runtime` imports](/plugins/sdk-migration/how-to-migrate#replace-broad-infra-runtime-imports)
+- <a id="migrate-channel-route-helpers"></a>[Migrate channel route helpers](/plugins/sdk-migration/how-to-migrate#migrate-channel-route-helpers)
+- <a id="build-and-test"></a>[Build and test](/plugins/sdk-migration/how-to-migrate#build-and-test)
 
-    ```typescript
-    // Before (deprecated extension-api bridge)
-    import { runEmbeddedPiAgent } from "openclaw/extension-api";
-    const result = await runEmbeddedPiAgent({ sessionId, prompt });
+### Import paths
 
-    // After (injected runtime)
-    const result = await api.runtime.agent.runEmbeddedPiAgent({ sessionId, prompt });
-    ```
+[Import path reference](/plugins/sdk-migration/import-paths) — which typed-public subpath replaces each legacy import.
 
-    The same pattern applies to other legacy bridge helpers:
+- <a id="import-path-reference"></a>[Import path reference](/plugins/sdk-migration/import-paths#import-path-reference)
+- <a id="retained-channel-facade-mappings"></a>[Retained channel facade mappings](/plugins/sdk-migration/import-paths#retained-channel-facade-mappings)
 
-    | Old import | Modern equivalent |
-    | --- | --- |
-    | `resolveAgentDir` | `api.runtime.agent.resolveAgentDir` |
-    | `resolveAgentWorkspaceDir` | `api.runtime.agent.resolveAgentWorkspaceDir` |
-    | `resolveAgentIdentity` | `api.runtime.agent.resolveAgentIdentity` |
-    | `resolveThinkingDefault` | `api.runtime.agent.resolveThinkingDefault` |
-    | `resolveAgentTimeoutMs` | `api.runtime.agent.resolveAgentTimeoutMs` |
-    | `ensureAgentWorkspace` | `api.runtime.agent.ensureAgentWorkspace` |
-    | session store helpers | `api.runtime.agent.session.*` |
+### Removed surfaces and replacements
 
-  </Step>
+[Removed surfaces and replacements](/plugins/sdk-migration/removed-surfaces) — what was removed, and the replacement for each legacy API.
 
-  <Step title="Build and test">
-    ```bash
-    pnpm build
-    pnpm test -- my-plugin/
-    ```
-  </Step>
-</Steps>
+- <a id="removed-compatibility-surfaces"></a>[Removed compatibility surfaces](/plugins/sdk-migration/removed-surfaces#removed-compatibility-surfaces)
+- <a id="process-global-api-provider-publication"></a>[Process-global API-provider publication](/plugins/sdk-migration/removed-surfaces#process-global-api-provider-publication)
+- <a id="deactivate-hook-alias"></a>[Deactivate hook alias](/plugins/sdk-migration/removed-surfaces#deactivate-hook-alias)
+- <a id="private-testing-barrel"></a>[Private testing barrel](/plugins/sdk-migration/removed-surfaces#private-testing-barrel)
+- <a id="migration-reference"></a>[Migration reference](/plugins/sdk-migration/removed-surfaces#migration-reference)
+- <a id="command-auth"></a>[`command-auth` help builders -> `command-status`](/plugins/sdk-migration/removed-surfaces#command-auth)
+- <a id="mention"></a>[Mention gating helpers -> `resolveInboundMentionDecision`](/plugins/sdk-migration/removed-surfaces#mention)
+- <a id="channel-runtime-shim-and-channel-actions-helpers"></a>[Channel runtime shim and channel actions helpers](/plugins/sdk-migration/removed-surfaces#channel-runtime-shim-and-channel-actions-helpers)
+- <a id="web"></a>[Web search provider `tool()` helper -> `createTool()` on the plugin](/plugins/sdk-migration/removed-surfaces#web)
+- <a id="plaintext"></a>[Plaintext channel envelopes -> `BodyForAgent`](/plugins/sdk-migration/removed-surfaces#plaintext)
+- <a id="subagent-spawning"></a>[`subagent_spawning` hook -> core thread binding](/plugins/sdk-migration/removed-surfaces#subagent-spawning)
+- <a id="provider"></a>[Provider discovery types -> provider catalog types](/plugins/sdk-migration/removed-surfaces#provider)
+- <a id="thinking"></a>[Thinking policy hooks -> `resolveThinkingProfile`](/plugins/sdk-migration/removed-surfaces#thinking)
+- <a id="external"></a>[External auth providers -> `contracts.externalAuthProviders`](/plugins/sdk-migration/removed-surfaces#external)
+- <a id="provider-1"></a>[Provider env-var lookup -> `setup.providers[].envVars`](/plugins/sdk-migration/removed-surfaces#provider-1)
+- <a id="memory"></a>[Memory plugin registration -> `registerMemoryCapability`](/plugins/sdk-migration/removed-surfaces#memory)
+- <a id="memory-embedding-provider-api"></a>[Memory embedding provider API](/plugins/sdk-migration/removed-surfaces#memory-embedding-provider-api)
+- <a id="raw"></a>[Raw channel send results -> `OutboundDeliveryResult`](/plugins/sdk-migration/removed-surfaces#raw)
+- <a id="subagent-session-messages-types-renamed"></a>[Subagent session messages types renamed](/plugins/sdk-migration/removed-surfaces#subagent-session-messages-types-renamed)
+- <a id="removed-session-and-transcript-file-apis"></a>[Removed session and transcript file APIs](/plugins/sdk-migration/removed-surfaces#removed-session-and-transcript-file-apis)
+- <a id="agent"></a>[Agent harness attempt params -> V2 host-capability contract](/plugins/sdk-migration/removed-surfaces#agent)
+- <a id="runtime-tasks-flow"></a>[`runtime.tasks.flow` -> `runtime.tasks.managedFlows`](/plugins/sdk-migration/removed-surfaces#runtime-tasks-flow)
+- <a id="embedded"></a>[Embedded extension factories -> agent tool-result middleware](/plugins/sdk-migration/removed-surfaces#embedded)
+- <a id="openclawschematype"></a>[`OpenClawSchemaType` alias -> `OpenClawConfig`](/plugins/sdk-migration/removed-surfaces#openclawschematype)
 
-## Import path reference
+### Talk and voice
 
-<Accordion title="Full import path table">
-  | Import path | Purpose | Key exports |
-  | --- | --- | --- |
-  | `plugin-sdk/plugin-entry` | Canonical plugin entry helper | `definePluginEntry` |
-  | `plugin-sdk/core` | Channel entry definitions, channel builders, base types | `defineChannelPluginEntry`, `createChatChannelPlugin` |
-  | `plugin-sdk/channel-setup` | Setup wizard adapters | `createOptionalChannelSetupSurface` |
-  | `plugin-sdk/channel-pairing` | DM pairing primitives | `createChannelPairingController` |
-  | `plugin-sdk/channel-reply-pipeline` | Reply prefix + typing wiring | `createChannelReplyPipeline` |
-  | `plugin-sdk/channel-config-helpers` | Config adapter factories | `createHybridChannelConfigAdapter` |
-  | `plugin-sdk/channel-config-schema` | Config schema builders | Channel config schema types |
-  | `plugin-sdk/channel-policy` | Group/DM policy resolution | `resolveChannelGroupRequireMention` |
-  | `plugin-sdk/channel-lifecycle` | Account status tracking | `createAccountStatusSink` |
-  | `plugin-sdk/channel-runtime` | Runtime wiring helpers | Channel runtime utilities |
-  | `plugin-sdk/channel-send-result` | Send result types | Reply result types |
-  | `plugin-sdk/runtime-store` | Persistent plugin storage | `createPluginRuntimeStore` |
-  | `plugin-sdk/approval-runtime` | Approval prompt helpers | Exec/plugin approval payload and reply helpers |
-  | `plugin-sdk/collection-runtime` | Bounded cache helpers | `pruneMapToMaxSize` |
-  | `plugin-sdk/diagnostic-runtime` | Diagnostic gating helpers | `isDiagnosticFlagEnabled`, `isDiagnosticsEnabled` |
-  | `plugin-sdk/error-runtime` | Error formatting helpers | `formatUncaughtError`, error graph helpers |
-  | `plugin-sdk/fetch-runtime` | Wrapped fetch/proxy helpers | `resolveFetch`, proxy helpers |
-  | `plugin-sdk/host-runtime` | Host normalization helpers | `normalizeHostname`, `normalizeScpRemoteHost` |
-  | `plugin-sdk/retry-runtime` | Retry helpers | `RetryConfig`, `retryAsync`, policy runners |
-  | `plugin-sdk/allow-from` | Allowlist formatting | `formatAllowFromLowercase` |
-  | `plugin-sdk/allowlist-resolution` | Allowlist input mapping | `mapAllowlistResolutionInputs` |
-  | `plugin-sdk/command-auth` | Command gating | `resolveControlCommandGate` |
-  | `plugin-sdk/secret-input` | Secret input parsing | Secret input helpers |
-  | `plugin-sdk/webhook-ingress` | Webhook request helpers | Webhook target utilities |
-  | `plugin-sdk/webhook-request-guards` | Webhook body guard helpers | Request body read/limit helpers |
-  | `plugin-sdk/reply-payload` | Message reply types | Reply payload types |
-  | `plugin-sdk/provider-onboard` | Provider onboarding patches | Onboarding config helpers |
-  | `plugin-sdk/keyed-async-queue` | Ordered async queue | `KeyedAsyncQueue` |
-  | `plugin-sdk/testing` | Test utilities | Test helpers and mocks |
-</Accordion>
+[Talk and realtime voice migration](/plugins/sdk-migration/talk) — the unified Talk session API and its method map.
 
-Use the narrowest import that matches the job. If you cannot find an export,
-check the source at `src/plugin-sdk/` or ask in Discord.
+- <a id="talk-and-realtime-voice-migration"></a>[Talk and realtime voice migration](/plugins/sdk-migration/talk#talk-and-realtime-voice-migration)
 
-## Removal timeline
+### Compatibility records
 
-| When                   | What happens                                                            |
-| ---------------------- | ----------------------------------------------------------------------- |
-| **Now**                | Deprecated surfaces emit runtime warnings                               |
-| **Next major release** | Deprecated surfaces will be removed; plugins still using them will fail |
+[Compatibility policy and records](/plugins/sdk-migration/compatibility-policy) — what is retained, why, and on what condition it can be removed.
 
-All core plugins have already been migrated. External plugins should migrate
-before the next major release.
+- <a id="compatibility-policy"></a>[Compatibility policy](/plugins/sdk-migration/compatibility-policy#compatibility-policy)
+- <a id="retained-helper-contracts"></a>[Retained helper contracts](/plugins/sdk-migration/compatibility-policy#retained-helper-contracts)
+- <a id="harness-attempt-result-migration"></a>[Harness attempt result migration](/plugins/sdk-migration/compatibility-policy#harness-attempt-result-migration)
+- <a id="model-provider-result-compatibility"></a>[Model-provider result compatibility](/plugins/sdk-migration/compatibility-policy#model-provider-result-compatibility)
+- <a id="memory-read-missing-results"></a>[Memory read missing results](/plugins/sdk-migration/compatibility-policy#memory-read-missing-results)
+- <a id="config-record-migrations"></a>[Config record migrations](/plugins/sdk-migration/compatibility-policy#config-record-migrations)
+- <a id="plugin-state-migration-declarations"></a>[Plugin state migration declarations](/plugins/sdk-migration/compatibility-policy#plugin-state-migration-declarations)
+- <a id="authstorage-sqlite-migration"></a>[AuthStorage SQLite migration](/plugins/sdk-migration/compatibility-policy#authstorage-sqlite-migration)
+- <a id="published-channel-setup-compatibility"></a>[Published channel setup compatibility](/plugins/sdk-migration/compatibility-policy#published-channel-setup-compatibility)
+- <a id="channel-setup-input-field-compatibility"></a>[Channel setup input field compatibility](/plugins/sdk-migration/compatibility-policy#channel-setup-input-field-compatibility)
+- <a id="verifying-readers"></a>[Verifying readers](/plugins/sdk-migration/compatibility-policy#verifying-readers)
+- <a id="media-legacy-projection"></a>[Media legacy projection](/plugins/sdk-migration/compatibility-policy#media-legacy-projection)
 
-## Suppressing the warnings temporarily
+### Timeline
 
-Set these environment variables while you work on migrating:
+[Removal timeline](/plugins/sdk-migration/removal-timeline) — when deprecated surfaces become eligible for removal.
 
-```bash
-OPENCLAW_SUPPRESS_PLUGIN_SDK_COMPAT_WARNING=1 openclaw gateway run
-OPENCLAW_SUPPRESS_EXTENSION_API_WARNING=1 openclaw gateway run
-```
-
-This is a temporary escape hatch, not a permanent solution.
+- <a id="removal-timeline"></a>[Removal timeline](/plugins/sdk-migration/removal-timeline#removal-timeline)
 
 ## Related
 
-- [Getting Started](/plugins/building-plugins) — build your first plugin
-- [SDK Overview](/plugins/sdk-overview) — full subpath import reference
-- [Channel Plugins](/plugins/sdk-channel-plugins) — building channel plugins
-- [Provider Plugins](/plugins/sdk-provider-plugins) — building provider plugins
-- [Plugin Internals](/plugins/architecture) — architecture deep dive
-- [Plugin Manifest](/plugins/manifest) — manifest schema reference
+- [Getting Started](/plugins/building-plugins) - build your first plugin
+- [SDK Overview](/plugins/sdk-overview) - full subpath import reference
+- [Channel Plugins](/plugins/sdk-channel-plugins) - building channel plugins
+- [Provider Plugins](/plugins/sdk-provider-plugins) - building provider plugins
+- [Plugin Internals](/plugins/architecture) - architecture deep dive
+- [Plugin Manifest](/plugins/manifest) - manifest schema reference
+- [Plugin hooks](/plugins/hooks) - typed and custom hook surfaces

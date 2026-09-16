@@ -1,3 +1,30 @@
+/** Coerces arbitrary provider content values into displayable text without throwing. */
+export function coerceChatContentText(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (value == null) {
+    return "";
+  }
+  if (
+    typeof value === "number" ||
+    typeof value === "boolean" ||
+    typeof value === "bigint" ||
+    typeof value === "symbol"
+  ) {
+    return String(value);
+  }
+  if (typeof value === "object") {
+    try {
+      return JSON.stringify(value) ?? "";
+    } catch {
+      return "";
+    }
+  }
+  return "";
+}
+
+/** Extracts normalized plain text from string content or OpenAI-style text blocks. */
 export function extractTextFromChatContent(
   content: unknown,
   opts?: {
@@ -6,38 +33,12 @@ export function extractTextFromChatContent(
     normalizeText?: (text: string) => string;
   },
 ): string | null {
-  const normalizeText = opts?.normalizeText ?? ((text: string) => text.replace(/\s+/g, " ").trim());
+  const normalize = opts?.normalizeText ?? ((text: string) => text.replace(/\s+/g, " ").trim());
   const joinWith = opts?.joinWith ?? " ";
-  const coerceText = (value: unknown): string => {
-    if (typeof value === "string") {
-      return value;
-    }
-    if (value == null) {
-      return "";
-    }
-    if (
-      typeof value === "number" ||
-      typeof value === "boolean" ||
-      typeof value === "bigint" ||
-      typeof value === "symbol"
-    ) {
-      return String(value);
-    }
-    if (typeof value === "object") {
-      try {
-        return JSON.stringify(value) ?? "";
-      } catch {
-        return "";
-      }
-    }
-    return "";
-  };
   const sanitize = (text: unknown): string => {
-    const raw = coerceText(text);
-    const sanitized = opts?.sanitizeText ? opts.sanitizeText(raw) : raw;
-    return coerceText(sanitized);
+    const raw = coerceChatContentText(text);
+    return opts?.sanitizeText ? opts.sanitizeText(raw) : raw;
   };
-  const normalize = (text: unknown): string => coerceText(normalizeText(coerceText(text)));
 
   if (typeof content === "string") {
     const value = sanitize(content);
@@ -54,6 +55,7 @@ export function extractTextFromChatContent(
     if (!block || typeof block !== "object") {
       continue;
     }
+    // Non-text blocks can contain media or tool payloads; callers here need visible text only.
     if ((block as { type?: unknown }).type !== "text") {
       continue;
     }

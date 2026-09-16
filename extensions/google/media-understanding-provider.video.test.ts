@@ -1,52 +1,70 @@
-import * as ssrf from "openclaw/plugin-sdk/infra-runtime";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { withFetchPreconnect } from "../../test/helpers/plugins/fetch-mock.js";
-import { createRequestCaptureJsonFetch } from "../../test/helpers/plugins/media-understanding.js";
-import { describeGeminiVideo } from "./media-understanding-provider.js";
+// Google tests cover media understanding provider.video plugin behavior.
+import { createServer, type Server } from "node:http";
+import { createCapturedPluginRegistration } from "openclaw/plugin-sdk/plugin-test-runtime";
+import { withFetchPreconnect } from "openclaw/plugin-sdk/test-env";
+import {
+  createRequestCaptureJsonFetch,
+  installPinnedHostnameTestHooks,
+} from "openclaw/plugin-sdk/test-media-understanding";
+import { describe, expect, it } from "vitest";
+import googlePlugin from "./index.js";
+import { describeGeminiVideo, transcribeGeminiAudio } from "./media-understanding-provider.js";
+import { resolveGoogleGenerativeAiHttpRequestConfig } from "./runtime-api.js";
 
-const TEST_NET_IP = "203.0.113.10";
+installPinnedHostnameTestHooks();
 
-function stubPinnedHostname(hostname: string) {
-  const normalized = hostname.trim().toLowerCase().replace(/\.$/, "");
-  const addresses = [TEST_NET_IP];
-  return {
-    hostname: normalized,
-    addresses,
-    lookup: ssrf.createPinnedLookup({ hostname: normalized, addresses }),
-  };
+const LOOPBACK_RESPONSE_BYTES = 18 * 1024 * 1024;
+
+async function listenLoopbackServer(server: Server): Promise<number> {
+  return await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      server.off("error", reject);
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        reject(new Error("expected loopback TCP address"));
+        return;
+      }
+      resolve(address.port);
+    });
+  });
+}
+
+function createOversizedJsonServer(): { server: Server; closed: Promise<number> } {
+  let resolveClosed: (sentBytes: number) => void = () => {};
+  const closed = new Promise<number>((resolve) => {
+    resolveClosed = resolve;
+  });
+  const server = createServer((_req, res) => {
+    let sentBytes = 0;
+    const chunk = Buffer.alloc(64 * 1024, 0x20);
+    res.writeHead(200, { "content-type": "application/json" });
+    const timer = setInterval(() => {
+      if (sentBytes >= LOOPBACK_RESPONSE_BYTES) {
+        clearInterval(timer);
+        res.end();
+        return;
+      }
+      sentBytes += chunk.length;
+      res.write(chunk);
+    }, 1);
+    res.on("close", () => {
+      clearInterval(timer);
+      resolveClosed(sentBytes);
+    });
+  });
+  return { server, closed };
 }
 
 describe("describeGeminiVideo", () => {
-  let resolvePinnedHostnameWithPolicySpy: ReturnType<typeof vi.spyOn>;
-  let resolvePinnedHostnameSpy: ReturnType<typeof vi.spyOn>;
-
-  beforeEach(() => {
-    resolvePinnedHostnameWithPolicySpy = vi
-      .spyOn(ssrf, "resolvePinnedHostnameWithPolicy")
-      .mockImplementation(async (hostname) => stubPinnedHostname(hostname));
-    resolvePinnedHostnameSpy = vi
-      .spyOn(ssrf, "resolvePinnedHostname")
-      .mockImplementation(async (hostname) => stubPinnedHostname(hostname));
-  });
-
-  afterEach(() => {
-    resolvePinnedHostnameWithPolicySpy?.mockRestore();
-    resolvePinnedHostnameSpy?.mockRestore();
-    resolvePinnedHostnameWithPolicySpy = undefined;
-    resolvePinnedHostnameSpy = undefined;
-  });
-
   it("respects case-insensitive x-goog-api-key overrides", async () => {
     let seenKey: string | null = null;
     const fetchFn = withFetchPreconnect(async (_input: RequestInfo | URL, init?: RequestInit) => {
       const headers = new Headers(init?.headers);
       seenKey = headers.get("x-goog-api-key");
-      return new Response(
-        JSON.stringify({
-          candidates: [{ content: { parts: [{ text: "video ok" }] } }],
-        }),
-        { status: 200, headers: { "content-type": "application/json" } },
-      );
+      return Response.json({
+        candidates: [{ content: { parts: [{ text: "video ok" }] } }],
+      });
     });
 
     const result = await describeGeminiVideo({
@@ -60,6 +78,30 @@ describe("describeGeminiVideo", () => {
 
     expect(seenKey).toBe("override");
     expect(result.text).toBe("video ok");
+  });
+
+  it("keeps private-network disabled for the default Google media endpoint", async () => {
+    expect(
+      resolveGoogleGenerativeAiHttpRequestConfig({
+        apiKey: "test-key",
+        capability: "video",
+        transport: "media-understanding",
+      }).allowPrivateNetwork,
+    ).toBe(false);
+
+    const fetchFn = withFetchPreconnect(async () => {
+      return Response.json({
+        candidates: [{ content: { parts: [{ text: "video ok" }] } }],
+      });
+    });
+
+    await describeGeminiVideo({
+      buffer: Buffer.from("video"),
+      fileName: "clip.mp4",
+      apiKey: "test-key",
+      timeoutMs: 1000,
+      fetchFn,
+    });
   });
 
   it("builds the expected request payload", async () => {
@@ -78,16 +120,18 @@ describe("describeGeminiVideo", () => {
       fileName: "clip.mp4",
       apiKey: "test-key",
       timeoutMs: 1500,
-      baseUrl: "https://example.com/v1beta/",
+      baseUrl: "https://generativelanguage.googleapis.com/v1beta/",
       model: "gemini-3-pro",
       headers: { "X-Other": "1" },
       fetchFn,
     });
     const { url: seenUrl, init: seenInit } = getRequest();
 
-    expect(result.model).toBe("gemini-3-pro-preview");
+    expect(result.model).toBe("gemini-3.1-pro-preview");
     expect(result.text).toBe("first\nsecond");
-    expect(seenUrl).toBe("https://example.com/v1beta/models/gemini-3-pro-preview:generateContent");
+    expect(seenUrl).toBe(
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro-preview:generateContent",
+    );
     expect(seenInit?.method).toBe("POST");
     expect(seenInit?.signal).toBeInstanceOf(AbortSignal);
 
@@ -107,6 +151,108 @@ describe("describeGeminiVideo", () => {
     expect(body.contents?.[0]?.parts?.[1]?.inline_data?.mime_type).toBe("video/mp4");
     expect(body.contents?.[0]?.parts?.[1]?.inline_data?.data).toBe(
       Buffer.from("video-bytes").toString("base64"),
+    );
+  });
+
+  it.each([
+    { method: "describeVideo", baseUrl: "", fileName: "clip.mp4" },
+    { method: "transcribeAudio", baseUrl: "   ", fileName: "clip.wav" },
+  ] as const)(
+    "uses the canonical endpoint for blank $method base URLs through registration",
+    async ({ method, baseUrl, fileName }) => {
+      const captured = createCapturedPluginRegistration({ id: "google" });
+      googlePlugin.register(captured.api);
+      const handler = captured.mediaUnderstandingProviders.find(
+        (provider) => provider.id === "google",
+      )?.[method];
+      if (!handler) {
+        throw new Error(`Expected registered Google ${method}`);
+      }
+      const { fetchFn, getRequest } = createRequestCaptureJsonFetch({
+        candidates: [{ content: { parts: [{ text: "media ok" }] } }],
+      });
+
+      const result = await handler({
+        buffer: Buffer.from("media-bytes"),
+        fileName,
+        apiKey: "test-key",
+        baseUrl,
+        timeoutMs: 1500,
+        fetchFn,
+      });
+
+      const { url, init } = getRequest();
+      expect(result.text).toBe("media ok");
+      expect(url).toBe(
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent",
+      );
+      expect(new Headers(init?.headers).get("x-goog-api-client")).toMatch(/^openclaw\//u);
+    },
+  );
+
+  it("bounds oversized video JSON responses and closes the stream early", async () => {
+    const { server, closed } = createOversizedJsonServer();
+    const port = await listenLoopbackServer(server);
+    const fetchFn = withFetchPreconnect(async () =>
+      fetch(`http://127.0.0.1:${port}/google-video-json`),
+    );
+
+    try {
+      await expect(
+        describeGeminiVideo({
+          buffer: Buffer.from("video-bytes"),
+          fileName: "clip.mp4",
+          apiKey: "test-key",
+          timeoutMs: 1500,
+          fetchFn,
+        }),
+      ).rejects.toThrow(/JSON response exceeds 16777216 bytes/u);
+      await expect(closed).resolves.toBeLessThan(LOOPBACK_RESPONSE_BYTES);
+    } finally {
+      server.close();
+    }
+  });
+
+  it("rejects non-Google video base URLs before sending authenticated requests", async () => {
+    await expect(
+      describeGeminiVideo({
+        buffer: Buffer.from("video-bytes"),
+        fileName: "clip.mp4",
+        apiKey: "test-key",
+        timeoutMs: 1500,
+        baseUrl: "https://example.com/v1beta/",
+        fetchFn: async () => {
+          throw new Error("fetch should not run");
+        },
+      }),
+    ).rejects.toThrow(
+      "Google Generative AI baseUrl must use https://generativelanguage.googleapis.com",
+    );
+  });
+
+  it("formats Google audio transcription HTTP errors with provider details", async () => {
+    await expect(
+      transcribeGeminiAudio({
+        buffer: Buffer.from("audio-bytes"),
+        fileName: "clip.wav",
+        apiKey: "test-key",
+        timeoutMs: 1500,
+        fetchFn: async () =>
+          new Response(
+            JSON.stringify({
+              error: {
+                message: "Unsupported audio",
+                status: "INVALID_ARGUMENT",
+              },
+            }),
+            {
+              status: 400,
+              headers: { "x-request-id": "google_audio_req" },
+            },
+          ),
+      }),
+    ).rejects.toThrow(
+      "Audio transcription failed (400): Unsupported audio [code=INVALID_ARGUMENT] [request_id=google_audio_req]",
     );
   });
 });

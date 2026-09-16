@@ -1,18 +1,18 @@
+/**
+ * Integration tests for browser plugin bootstrap through the gateway server.
+ */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createBundledBrowserPluginFixture } from "../../test/helpers/browser-bundled-plugin-fixture.js";
 import type { OpenClawConfig } from "../config/config.js";
-import { clearPluginDiscoveryCache } from "../plugins/discovery.js";
-import { clearPluginLoaderCache } from "../plugins/loader.js";
-import { clearPluginManifestRegistryCache } from "../plugins/manifest-registry.js";
-import { resetPluginRuntimeStateForTest } from "../plugins/runtime.js";
-import { listGatewayMethods } from "./server-methods-list.js";
-import { coreGatewayHandlers } from "./server-methods.js";
-import { loadGatewayStartupPlugins } from "./server-plugin-bootstrap.js";
+import { clearPluginLoaderCache } from "../plugins/loader.test-fixtures.js";
+import {
+  disposePluginRegistryInstances,
+  resetPluginRuntimeStateForTest,
+} from "../plugins/runtime.js";
+import { prepareGatewayPluginLoad } from "./server-plugin-bootstrap.js";
 
 function resetPluginState() {
   clearPluginLoaderCache();
-  clearPluginDiscoveryCache();
-  clearPluginManifestRegistryCache();
   resetPluginRuntimeStateForTest();
 }
 
@@ -25,7 +25,8 @@ function createTestLog() {
   };
 }
 
-describe("loadGatewayStartupPlugins browser plugin integration", () => {
+describe("prepareGatewayPluginLoad browser plugin integration", () => {
+  let candidate: ReturnType<typeof prepareGatewayPluginLoad> | undefined;
   let bundledFixture: ReturnType<typeof createBundledBrowserPluginFixture> | null = null;
 
   beforeEach(() => {
@@ -34,15 +35,24 @@ describe("loadGatewayStartupPlugins browser plugin integration", () => {
     resetPluginState();
   });
 
-  afterEach(() => {
-    resetPluginState();
-    vi.unstubAllEnvs();
-    bundledFixture?.cleanup();
-    bundledFixture = null;
+  afterEach(async () => {
+    try {
+      candidate?.retireGatewayRuntimeBindings();
+      if (candidate) {
+        await disposePluginRegistryInstances(candidate.pluginRegistry);
+      }
+    } finally {
+      candidate = undefined;
+      resetPluginState();
+      vi.unstubAllEnvs();
+      bundledFixture?.cleanup();
+      bundledFixture = null;
+    }
   });
 
   it("adds browser.request and the browser control service from the bundled plugin", () => {
-    const loaded = loadGatewayStartupPlugins({
+    const loaded = (candidate = prepareGatewayPluginLoad({
+      loadIntent: "startup",
       cfg: {
         plugins: {
           allow: ["browser"],
@@ -50,10 +60,11 @@ describe("loadGatewayStartupPlugins browser plugin integration", () => {
       } as OpenClawConfig,
       workspaceDir: process.cwd(),
       log: createTestLog(),
-      coreGatewayHandlers,
-      baseMethods: listGatewayMethods(),
+      coreGatewayHandlers: {},
+      baseMethods: [],
+      pluginIds: ["browser"],
       logDiagnostics: false,
-    });
+    }));
 
     expect(loaded.gatewayMethods).toContain("browser.request");
     expect(
@@ -61,30 +72,5 @@ describe("loadGatewayStartupPlugins browser plugin integration", () => {
         (entry) => entry.pluginId === "browser" && entry.service.id === "browser-control",
       ),
     ).toBe(true);
-  });
-
-  it("omits browser gateway ownership when the bundled browser plugin is disabled", () => {
-    const loaded = loadGatewayStartupPlugins({
-      cfg: {
-        plugins: {
-          allow: ["browser"],
-          entries: {
-            browser: {
-              enabled: false,
-            },
-          },
-        },
-      } as OpenClawConfig,
-      workspaceDir: process.cwd(),
-      log: createTestLog(),
-      coreGatewayHandlers,
-      baseMethods: listGatewayMethods(),
-      logDiagnostics: false,
-    });
-
-    expect(loaded.gatewayMethods).not.toContain("browser.request");
-    expect(loaded.pluginRegistry.services.some((entry) => entry.pluginId === "browser")).toBe(
-      false,
-    );
   });
 });

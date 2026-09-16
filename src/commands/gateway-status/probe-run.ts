@@ -1,19 +1,27 @@
+/** Runs gateway discovery, optional SSH tunneling, and per-target probes. */
+import {
+  normalizeOptionalString,
+  readStringValue,
+} from "@openclaw/normalization-core/string-coerce";
 import type { OpenClawConfig } from "../../config/types.js";
 import { probeGateway } from "../../gateway/probe.js";
+import { isAbortError } from "../../infra/abort-signal.js";
 import {
   discoverGatewayBeacons,
   type GatewayBonjourBeacon,
 } from "../../infra/bonjour-discovery.js";
+import { formatErrorMessage } from "../../infra/errors.js";
+import { pickGatewaySelfPresence } from "../gateway-presence.js";
 import { pickAutoSshTargetFromDiscovery } from "./discovery.js";
 import {
   extractConfigSummary,
-  pickGatewaySelfPresence,
   resolveAuthForTarget,
   resolveProbeBudgetMs,
   type GatewayConfigSummary,
   type GatewayStatusTarget,
 } from "./helpers.js";
 
+/** Single gateway status target plus probe details and derived display metadata. */
 export type GatewayStatusProbedTarget = {
   target: GatewayStatusTarget;
   probe: Awaited<ReturnType<typeof probeGateway>>;
@@ -22,6 +30,7 @@ export type GatewayStatusProbedTarget = {
   authDiagnostics: string[];
 };
 
+/** Probes configured, explicit, and optionally SSH-discovered gateway targets. */
 export async function runGatewayStatusProbePass(params: {
   cfg: OpenClawConfig;
   opts: {
@@ -37,6 +46,8 @@ export async function runGatewayStatusProbePass(params: {
   sshTarget: string | null;
   sshIdentity: string | null;
   loadSshTunnelModule: () => Promise<typeof import("../../infra/ssh-tunnel.js")>;
+  localTlsFingerprint?: string;
+  signal?: AbortSignal;
 }): Promise<{
   discovery: GatewayBonjourBeacon[];
   probed: GatewayStatusProbedTarget[];
@@ -57,6 +68,10 @@ export async function runGatewayStatusProbePass(params: {
     if (!sshTarget) {
       return null;
     }
+    if (params.signal?.aborted) {
+      sshTunnelError = "Aborted";
+      return null;
+    }
     try {
       const { startSshPortForward } = await params.loadSshTunnelModule();
       const tunnel = await startSshPortForward({
@@ -65,11 +80,16 @@ export async function runGatewayStatusProbePass(params: {
         localPortPreferred: params.remotePort,
         remotePort: params.remotePort,
         timeoutMs: Math.min(1500, params.overallTimeoutMs),
+        signal: params.signal,
       });
       sshTunnelStarted = true;
       return tunnel;
     } catch (err) {
-      sshTunnelError = err instanceof Error ? err.message : String(err);
+      if (isAbortError(err)) {
+        sshTunnelError = "Aborted";
+        return null;
+      }
+      sshTunnelError = formatErrorMessage(err);
       return null;
     }
   };
@@ -83,10 +103,12 @@ export async function runGatewayStatusProbePass(params: {
     sshTarget = pickAutoSshTargetFromDiscovery({
       discovery,
       parseSshTarget,
-      sshUser: process.env.USER?.trim() || "",
+      sshUser: normalizeOptionalString(process.env.USER) ?? "",
     });
   }
 
+  // Prefer the concurrently-started tunnel, but allow auto-discovered SSH
+  // targets to start after Bonjour finishes.
   const tunnel =
     tunnelFirst ||
     (sshTarget && !sshTunnelStarted && !sshTunnelError ? await tryStartTunnel() : null);
@@ -115,16 +137,29 @@ export async function runGatewayStatusProbePass(params: {
     const probed = await Promise.all(
       targets.map(async (target) => {
         const authResolution = await resolveAuthForTarget(params.cfg, target, {
-          token: typeof params.opts.token === "string" ? params.opts.token : undefined,
-          password: typeof params.opts.password === "string" ? params.opts.password : undefined,
+          token: readStringValue(params.opts.token),
+          password: readStringValue(params.opts.password),
         });
         const probe = await probeGateway({
           url: target.url,
+          config: params.cfg,
+          // Explicit, configured-remote, and SSH targets must not inherit the
+          // local Gateway's device token, even when the transport is loopback.
+          ...(target.kind === "sshTunnel"
+            ? { suppressStoredDeviceAuth: true }
+            : target.kind !== "localLoopback"
+              ? { originScopedDeviceAuth: true }
+              : {}),
           auth: {
             token: authResolution.token,
             password: authResolution.password,
           },
+          tlsFingerprint:
+            target.kind === "localLoopback" && target.url.startsWith("wss://")
+              ? params.localTlsFingerprint
+              : undefined,
           timeoutMs: resolveProbeBudgetMs(params.overallTimeoutMs, target),
+          signal: params.signal,
         });
         return {
           target,
@@ -148,7 +183,7 @@ export async function runGatewayStatusProbePass(params: {
       try {
         await tunnel.stop();
       } catch {
-        // best-effort
+        // Status output must not fail just because tunnel cleanup races process exit.
       }
     }
   }

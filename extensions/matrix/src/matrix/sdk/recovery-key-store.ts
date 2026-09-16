@@ -1,6 +1,16 @@
-import fs from "node:fs";
 import path from "node:path";
+// Matrix plugin module implements recovery key store behavior.
 import { decodeRecoveryKey } from "matrix-js-sdk/lib/crypto-api/recovery-key.js";
+import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
+import { getMatrixRuntime } from "../../runtime.js";
+import {
+  migrateLegacyMatrixRecoveryKeyFilePathToStoreAsync,
+  readLegacyMatrixRecoveryKeyFile,
+  readMatrixRecoveryKeyStateForPathAsync,
+  writeMatrixRecoveryKeyStateForPathAsync,
+  type MatrixSnapshotStateRuntime,
+} from "../crypto-state-store.js";
+import { formatMatrixErrorReason } from "../errors.js";
 import { LogService } from "./logger.js";
 import type {
   MatrixCryptoBootstrapApi,
@@ -11,7 +21,7 @@ import type {
 } from "./types.js";
 
 export function isRepairableSecretStorageAccessError(err: unknown): boolean {
-  const message = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  const message = formatMatrixErrorReason(err);
   if (!message) {
     return false;
   }
@@ -33,16 +43,82 @@ export class MatrixRecoveryKeyStore {
     { key: Uint8Array; keyInfo?: MatrixStoredRecoveryKey["keyInfo"] }
   >();
   private stagedRecoveryKey: MatrixStoredRecoveryKey | null = null;
+  private stagedRecoveryKeyUsed = false;
   private readonly stagedCacheKeyIds = new Set<string>();
+  private readonly storageRootDir?: string;
+  private readonly recoveryKeyPath?: string;
+  private legacyRecoveryKeyPathOnMigrationFailure?: string;
 
-  constructor(private readonly recoveryKeyPath?: string) {}
+  private pendingPersistence: Promise<void> = Promise.resolve();
+  private closed = false;
+  private readonly stateRuntime?: MatrixSnapshotStateRuntime;
+
+  constructor(recoveryKeyPath?: string, stateRuntime?: MatrixSnapshotStateRuntime) {
+    this.recoveryKeyPath = recoveryKeyPath;
+    this.storageRootDir = recoveryKeyPath ? path.dirname(recoveryKeyPath) : undefined;
+    if (recoveryKeyPath) {
+      this.stateRuntime = stateRuntime ?? getMatrixRuntime().state;
+      const runtime = this.stateRuntime;
+      void this.enqueuePersistence(async () => {
+        try {
+          await migrateLegacyMatrixRecoveryKeyFilePathToStoreAsync(recoveryKeyPath, runtime);
+        } catch (err) {
+          this.legacyRecoveryKeyPathOnMigrationFailure = recoveryKeyPath;
+          LogService.warn("MatrixClientLite", "Failed to migrate Matrix recovery key state:", err);
+        }
+      });
+    }
+  }
+
+  private enqueuePersistence<T>(run: () => Promise<T>): Promise<T> {
+    if (this.closed) {
+      return Promise.reject(new Error("Matrix recovery key store is closed"));
+    }
+    const pending = this.pendingPersistence.then(run);
+    this.pendingPersistence = pending.then(
+      () => {},
+      () => {},
+    );
+    return pending;
+  }
+
+  private async afterPersistence<T>(read: () => T | Promise<T>): Promise<T> {
+    for (;;) {
+      const pending = this.pendingPersistence;
+      await pending;
+      if (pending === this.pendingPersistence) {
+        return read();
+      }
+    }
+  }
+
+  async drainPendingPersistence(): Promise<void> {
+    await this.afterPersistence(() => {});
+  }
+
+  async close(): Promise<void> {
+    this.closed = true;
+    await this.drainPendingPersistence();
+  }
 
   buildCryptoCallbacks(): MatrixCryptoCallbacks {
-    return {
-      getSecretStorageKey: async ({ keys }) => {
+    const getSecretStorageKey = ({
+      keys,
+    }: Parameters<NonNullable<MatrixCryptoCallbacks["getSecretStorageKey"]>>[0]): Promise<
+      [string, Uint8Array] | null
+    > =>
+      this.afterPersistence(async () => {
+        if (this.closed) {
+          return null;
+        }
         const requestedKeyIds = Object.keys(keys ?? {});
         if (requestedKeyIds.length === 0) {
           return null;
+        }
+
+        const staged = this.resolveStagedSecretStorageKey(requestedKeyIds);
+        if (staged) {
+          return staged;
         }
 
         for (const keyId of requestedKeyIds) {
@@ -52,23 +128,14 @@ export class MatrixRecoveryKeyStore {
           }
         }
 
-        const staged = this.stagedRecoveryKey;
-        if (staged?.privateKeyBase64) {
-          const privateKey = new Uint8Array(Buffer.from(staged.privateKeyBase64, "base64"));
-          if (privateKey.length > 0) {
-            const stagedKeyId =
-              staged.keyId && requestedKeyIds.includes(staged.keyId)
-                ? staged.keyId
-                : requestedKeyIds[0];
-            if (stagedKeyId) {
-              this.rememberSecretStorageKey(stagedKeyId, privateKey, staged.keyInfo);
-              this.stagedCacheKeyIds.add(stagedKeyId);
-              return [stagedKeyId, privateKey];
-            }
-          }
+        const pending = this.pendingPersistence;
+        const stored = await this.loadStoredRecoveryKey();
+        if (this.closed) {
+          return null;
         }
-
-        const stored = this.loadStoredRecoveryKey();
+        if (pending !== this.pendingPersistence) {
+          return getSecretStorageKey({ keys });
+        }
         if (!stored?.privateKeyBase64) {
           return null;
         }
@@ -88,8 +155,13 @@ export class MatrixRecoveryKeyStore {
         }
         this.rememberSecretStorageKey(firstRequestedKeyId, privateKey, stored.keyInfo);
         return [firstRequestedKeyId, privateKey];
-      },
+      });
+    return {
+      getSecretStorageKey,
       cacheSecretStorageKey: (keyId, keyInfo, key) => {
+        if (this.closed) {
+          return;
+        }
         const privateKey = new Uint8Array(key);
         const normalizedKeyInfo: MatrixStoredRecoveryKey["keyInfo"] = {
           passphrase: keyInfo?.passphrase,
@@ -97,23 +169,18 @@ export class MatrixRecoveryKeyStore {
         };
         this.rememberSecretStorageKey(keyId, privateKey, normalizedKeyInfo);
 
-        const stored = this.loadStoredRecoveryKey();
-        this.saveRecoveryKeyToDisk({
-          keyId,
-          keyInfo: normalizedKeyInfo,
-          privateKey,
-          encodedPrivateKey: stored?.encodedPrivateKey,
-        });
+        // The SDK's void callback admits a write; getters and dispatch join it.
+        void this.saveRecoveryKeyToDisk({ keyId, keyInfo: normalizedKeyInfo, privateKey }, true);
       },
     };
   }
 
-  getRecoveryKeySummary(): {
+  async getRecoveryKeySummary(): Promise<{
     encodedPrivateKey?: string;
     keyId?: string | null;
     createdAt?: string;
-  } | null {
-    const stored = this.loadStoredRecoveryKey();
+  } | null> {
+    const stored = await this.afterPersistence(() => this.loadStoredRecoveryKey());
     if (!stored) {
       return null;
     }
@@ -122,6 +189,39 @@ export class MatrixRecoveryKeyStore {
       keyId: stored.keyId,
       createdAt: stored.createdAt,
     };
+  }
+
+  getSecretStorageKeyCandidate(keyId: string): Promise<Uint8Array | null> {
+    return this.afterPersistence(async () => {
+      if (this.closed) {
+        return null;
+      }
+      const normalizedKeyId = keyId.trim();
+      if (!normalizedKeyId) {
+        return null;
+      }
+      const staged = this.resolveStagedSecretStorageKey([normalizedKeyId]);
+      if (staged) {
+        return staged[1];
+      }
+      const pending = this.pendingPersistence;
+      const stored = await this.loadStoredRecoveryKey();
+      if (this.closed) {
+        return null;
+      }
+      if (pending !== this.pendingPersistence) {
+        return this.getSecretStorageKeyCandidate(keyId);
+      }
+      if (!stored?.privateKeyBase64) {
+        return null;
+      }
+      const privateKey = new Uint8Array(Buffer.from(stored.privateKeyBase64, "base64"));
+      if (privateKey.length === 0) {
+        return null;
+      }
+      this.rememberSecretStorageKey(normalizedKeyId, privateKey, stored.keyInfo);
+      return privateKey;
+    });
   }
 
   private resolveEncodedRecoveryKeyInput(params: {
@@ -142,9 +242,9 @@ export class MatrixRecoveryKeyStore {
     try {
       privateKey = decodeRecoveryKey(encodedPrivateKey);
     } catch (err) {
-      throw new Error(
-        `Invalid Matrix recovery key: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      throw new Error(`Invalid Matrix recovery key: ${formatErrorMessage(err)}`, {
+        cause: err,
+      });
     }
     const keyId =
       typeof params.keyId === "string" && params.keyId.trim() ? params.keyId.trim() : null;
@@ -152,75 +252,68 @@ export class MatrixRecoveryKeyStore {
       encodedPrivateKey,
       privateKey,
       keyId,
-      keyInfo: params.keyInfo ?? this.loadStoredRecoveryKey()?.keyInfo,
+      keyInfo: params.keyInfo,
     };
-  }
-
-  storeEncodedRecoveryKey(params: {
-    encodedPrivateKey: string;
-    keyId?: string | null;
-    keyInfo?: MatrixStoredRecoveryKey["keyInfo"];
-  }): {
-    encodedPrivateKey?: string;
-    keyId?: string | null;
-    createdAt?: string;
-  } {
-    const prepared = this.resolveEncodedRecoveryKeyInput(params);
-    this.saveRecoveryKeyToDisk({
-      keyId: prepared.keyId,
-      keyInfo: prepared.keyInfo,
-      privateKey: prepared.privateKey,
-      encodedPrivateKey: prepared.encodedPrivateKey,
-    });
-    if (prepared.keyId) {
-      this.rememberSecretStorageKey(prepared.keyId, prepared.privateKey, prepared.keyInfo);
-    }
-    return this.getRecoveryKeySummary() ?? {};
   }
 
   stageEncodedRecoveryKey(params: {
     encodedPrivateKey: string;
     keyId?: string | null;
     keyInfo?: MatrixStoredRecoveryKey["keyInfo"];
-  }): void {
+  }): Promise<void> {
     const prepared = this.resolveEncodedRecoveryKeyInput(params);
-    this.discardStagedRecoveryKey();
-    this.stagedRecoveryKey = {
-      version: 1,
-      createdAt: new Date().toISOString(),
-      keyId: prepared.keyId,
-      encodedPrivateKey: prepared.encodedPrivateKey,
-      privateKeyBase64: Buffer.from(prepared.privateKey).toString("base64"),
-      keyInfo: prepared.keyInfo,
-    };
+    return this.enqueuePersistence(async () => {
+      const keyInfo = prepared.keyInfo ?? (await this.loadStoredRecoveryKey())?.keyInfo;
+      this.clearStagedCache();
+      this.stagedRecoveryKey = {
+        version: 1,
+        createdAt: new Date().toISOString(),
+        keyId: prepared.keyId,
+        encodedPrivateKey: prepared.encodedPrivateKey,
+        privateKeyBase64: Buffer.from(prepared.privateKey).toString("base64"),
+        keyInfo,
+      };
+    });
   }
 
-  commitStagedRecoveryKey(params?: {
+  hasStagedRecoveryKeyBeenUsed(): boolean {
+    return this.stagedRecoveryKeyUsed;
+  }
+
+  async commitStagedRecoveryKey(params?: {
     keyId?: string | null;
     keyInfo?: MatrixStoredRecoveryKey["keyInfo"];
-  }): {
+  }): Promise<{
     encodedPrivateKey?: string;
     keyId?: string | null;
     createdAt?: string;
-  } | null {
-    if (!this.stagedRecoveryKey) {
-      return this.getRecoveryKeySummary();
-    }
-    const staged = this.stagedRecoveryKey;
-    const privateKey = new Uint8Array(Buffer.from(staged.privateKeyBase64, "base64"));
-    const keyId =
-      typeof params?.keyId === "string" && params.keyId.trim() ? params.keyId.trim() : staged.keyId;
-    this.saveRecoveryKeyToDisk({
-      keyId,
-      keyInfo: params?.keyInfo ?? staged.keyInfo,
-      privateKey,
-      encodedPrivateKey: staged.encodedPrivateKey,
+  } | null> {
+    await this.enqueuePersistence(async () => {
+      if (!this.stagedRecoveryKey) {
+        return;
+      }
+      const staged = this.stagedRecoveryKey;
+      const privateKey = new Uint8Array(Buffer.from(staged.privateKeyBase64, "base64"));
+      const keyId =
+        typeof params?.keyId === "string" && params.keyId.trim()
+          ? params.keyId.trim()
+          : staged.keyId;
+      await this.persistRecoveryKey({
+        keyId,
+        keyInfo: params?.keyInfo ?? staged.keyInfo,
+        privateKey,
+        encodedPrivateKey: staged.encodedPrivateKey,
+      });
+      this.clearStagedRecoveryKeyTracking();
     });
-    this.clearStagedRecoveryKeyTracking();
     return this.getRecoveryKeySummary();
   }
 
-  discardStagedRecoveryKey(): void {
+  discardStagedRecoveryKey(): Promise<void> {
+    return this.enqueuePersistence(async () => this.clearStagedCache());
+  }
+
+  private clearStagedCache(): void {
     for (const keyId of this.stagedCacheKeyIds) {
       this.secretStorageKeyCache.delete(keyId);
     }
@@ -233,8 +326,10 @@ export class MatrixRecoveryKeyStore {
       setupNewKeyBackup?: boolean;
       allowSecretStorageRecreateWithoutRecoveryKey?: boolean;
       forceNewSecretStorage?: boolean;
+      forceNewRecoveryKey?: boolean;
     } = {},
   ): Promise<void> {
+    await this.drainPendingPersistence();
     let status: MatrixSecretStorageStatus | null = null;
     const getSecretStorageStatus = crypto.getSecretStorageStatus; // pragma: allowlist secret
     if (typeof getSecretStorageStatus === "function") {
@@ -247,12 +342,13 @@ export class MatrixRecoveryKeyStore {
 
     const hasDefaultSecretStorageKey = Boolean(status?.defaultKeyId);
     const hasKnownInvalidSecrets = Object.values(status?.secretStorageKeyValidityMap ?? {}).some(
-      (valid) => valid === false,
+      (valid) => !valid,
     );
     let generatedRecoveryKey = false;
-    const storedRecovery = this.loadStoredRecoveryKey();
+    const storedRecovery = await this.afterPersistence(() => this.loadStoredRecoveryKey());
     const stagedRecovery = this.stagedRecoveryKey;
-    const sourceRecovery = stagedRecovery ?? storedRecovery;
+    const sourceRecovery =
+      options.forceNewRecoveryKey === true ? null : (stagedRecovery ?? storedRecovery);
     let recoveryKey: MatrixGeneratedSecretStorageKey | null = sourceRecovery
       ? {
           keyInfo: sourceRecovery.keyInfo,
@@ -263,19 +359,24 @@ export class MatrixRecoveryKeyStore {
 
     if (recoveryKey && status?.defaultKeyId) {
       const defaultKeyId = status.defaultKeyId;
-      this.rememberSecretStorageKey(defaultKeyId, recoveryKey.privateKey, recoveryKey.keyInfo);
-      if (!stagedRecovery && storedRecovery && storedRecovery.keyId !== defaultKeyId) {
-        this.saveRecoveryKeyToDisk({
-          keyId: defaultKeyId,
-          keyInfo: recoveryKey.keyInfo,
-          privateKey: recoveryKey.privateKey,
-          encodedPrivateKey: recoveryKey.encodedPrivateKey,
-        });
+      if (!stagedRecovery) {
+        this.rememberSecretStorageKey(defaultKeyId, recoveryKey.privateKey, recoveryKey.keyInfo);
+        if (storedRecovery && storedRecovery.keyId !== defaultKeyId) {
+          await this.saveRecoveryKeyToDisk({
+            keyId: defaultKeyId,
+            keyInfo: recoveryKey.keyInfo,
+            privateKey: recoveryKey.privateKey,
+            encodedPrivateKey: recoveryKey.encodedPrivateKey,
+          });
+        }
       }
     }
 
     const ensureRecoveryKey = async (): Promise<MatrixGeneratedSecretStorageKey> => {
       if (recoveryKey) {
+        if (stagedRecovery) {
+          this.stagedRecoveryKeyUsed = true;
+        }
         return recoveryKey;
       }
       if (typeof crypto.createRecoveryKeyFromPassphrase !== "function") {
@@ -284,7 +385,7 @@ export class MatrixRecoveryKeyStore {
         );
       }
       recoveryKey = await crypto.createRecoveryKeyFromPassphrase();
-      this.saveRecoveryKeyToDisk(recoveryKey);
+      await this.saveRecoveryKeyToDisk(recoveryKey);
       generatedRecoveryKey = true;
       return recoveryKey;
     };
@@ -314,7 +415,11 @@ export class MatrixRecoveryKeyStore {
     }
 
     try {
-      await crypto.bootstrapSecretStorage(secretStorageOptions);
+      try {
+        await crypto.bootstrapSecretStorage(secretStorageOptions);
+      } finally {
+        await this.drainPendingPersistence();
+      }
     } catch (err) {
       const shouldRecreateWithoutRecoveryKey =
         options.allowSecretStorageRecreateWithoutRecoveryKey === true &&
@@ -329,24 +434,57 @@ export class MatrixRecoveryKeyStore {
         "MatrixClientLite",
         "Secret storage exists on the server but local recovery material cannot unlock it; recreating secret storage during explicit bootstrap.",
       );
-      await crypto.bootstrapSecretStorage({
-        setupNewSecretStorage: true,
-        setupNewKeyBackup: options.setupNewKeyBackup === true,
-        createSecretStorageKey: ensureRecoveryKey,
-      });
+      try {
+        await crypto.bootstrapSecretStorage({
+          setupNewSecretStorage: true,
+          setupNewKeyBackup: options.setupNewKeyBackup === true,
+          createSecretStorageKey: ensureRecoveryKey,
+        });
+      } finally {
+        await this.drainPendingPersistence();
+      }
     }
 
-    if (generatedRecoveryKey && this.recoveryKeyPath) {
+    if (generatedRecoveryKey && this.storageRootDir) {
       LogService.warn(
         "MatrixClientLite",
-        `Generated Matrix recovery key and saved it to ${this.recoveryKeyPath}. Keep this file secure.`,
+        "Generated Matrix recovery key and saved it to Matrix SQLite state. Keep the displayed recovery key secure.",
       );
     }
   }
 
   private clearStagedRecoveryKeyTracking(): void {
     this.stagedRecoveryKey = null;
+    this.stagedRecoveryKeyUsed = false;
     this.stagedCacheKeyIds.clear();
+  }
+
+  private resolveStagedSecretStorageKey(requestedKeyIds: string[]): [string, Uint8Array] | null {
+    const staged = this.stagedRecoveryKey;
+    if (!staged?.privateKeyBase64) {
+      return null;
+    }
+    const privateKey = new Uint8Array(Buffer.from(staged.privateKeyBase64, "base64"));
+    if (privateKey.length === 0) {
+      return null;
+    }
+    const keyId =
+      staged.keyId && requestedKeyIds.includes(staged.keyId) ? staged.keyId : requestedKeyIds[0];
+    if (!keyId) {
+      return null;
+    }
+    this.rememberStagedSecretStorageKey(keyId, privateKey, staged.keyInfo);
+    this.stagedCacheKeyIds.add(keyId);
+    return [keyId, privateKey];
+  }
+
+  private rememberStagedSecretStorageKey(
+    keyId: string,
+    key: Uint8Array,
+    keyInfo?: MatrixStoredRecoveryKey["keyInfo"],
+  ): void {
+    this.stagedRecoveryKeyUsed = true;
+    this.rememberSecretStorageKey(keyId, key, keyInfo);
   }
 
   private rememberSecretStorageKey(
@@ -363,46 +501,42 @@ export class MatrixRecoveryKeyStore {
     });
   }
 
-  private loadStoredRecoveryKey(): MatrixStoredRecoveryKey | null {
-    if (!this.recoveryKeyPath) {
+  private async loadStoredRecoveryKey(): Promise<MatrixStoredRecoveryKey | null> {
+    if (!this.recoveryKeyPath || !this.stateRuntime) {
       return null;
     }
     try {
-      if (!fs.existsSync(this.recoveryKeyPath)) {
-        return null;
+      const stored = await readMatrixRecoveryKeyStateForPathAsync(
+        this.recoveryKeyPath,
+        this.stateRuntime,
+      );
+      if (stored) {
+        return stored;
       }
-      const raw = fs.readFileSync(this.recoveryKeyPath, "utf8");
-      const parsed = JSON.parse(raw) as Partial<MatrixStoredRecoveryKey>;
-      if (
-        parsed.version !== 1 ||
-        typeof parsed.createdAt !== "string" ||
-        typeof parsed.privateKeyBase64 !== "string" || // pragma: allowlist secret
-        !parsed.privateKeyBase64.trim()
-      ) {
-        return null;
-      }
-      return {
-        version: 1,
-        createdAt: parsed.createdAt,
-        keyId: typeof parsed.keyId === "string" ? parsed.keyId : null,
-        encodedPrivateKey:
-          typeof parsed.encodedPrivateKey === "string" ? parsed.encodedPrivateKey : undefined,
-        privateKeyBase64: parsed.privateKeyBase64,
-        keyInfo:
-          parsed.keyInfo && typeof parsed.keyInfo === "object"
-            ? {
-                passphrase: parsed.keyInfo.passphrase,
-                name: typeof parsed.keyInfo.name === "string" ? parsed.keyInfo.name : undefined,
-              }
-            : undefined,
-      };
     } catch {
-      return null;
+      // If the SQLite migration failed during construction, keep the readable
+      // legacy file usable for this run and leave it unarchived for retry.
     }
+    if (this.legacyRecoveryKeyPathOnMigrationFailure) {
+      return readLegacyMatrixRecoveryKeyFile(this.legacyRecoveryKeyPathOnMigrationFailure);
+    }
+    return null;
   }
 
-  private saveRecoveryKeyToDisk(params: MatrixGeneratedSecretStorageKey): void {
-    if (!this.recoveryKeyPath) {
+  private saveRecoveryKeyToDisk(
+    params: MatrixGeneratedSecretStorageKey,
+    preserveEncodedPrivateKey = false,
+  ): Promise<void> {
+    return this.enqueuePersistence(() =>
+      this.persistRecoveryKey(params, preserveEncodedPrivateKey),
+    );
+  }
+
+  private async persistRecoveryKey(
+    params: MatrixGeneratedSecretStorageKey,
+    preserveEncodedPrivateKey = false,
+  ): Promise<void> {
+    if (!this.recoveryKeyPath || !this.stateRuntime) {
       return;
     }
     try {
@@ -419,9 +553,12 @@ export class MatrixRecoveryKeyStore {
             }
           : undefined,
       };
-      fs.mkdirSync(path.dirname(this.recoveryKeyPath), { recursive: true });
-      fs.writeFileSync(this.recoveryKeyPath, JSON.stringify(payload, null, 2), "utf8");
-      fs.chmodSync(this.recoveryKeyPath, 0o600);
+      await writeMatrixRecoveryKeyStateForPathAsync({
+        recoveryKeyPath: this.recoveryKeyPath,
+        payload,
+        stateRuntime: this.stateRuntime,
+        preserveEncodedPrivateKey,
+      });
     } catch (err) {
       LogService.warn("MatrixClientLite", "Failed to persist recovery key:", err);
     }

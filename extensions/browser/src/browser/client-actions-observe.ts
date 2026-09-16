@@ -1,184 +1,154 @@
-import type { BrowserActionPathResult, BrowserActionTargetOk } from "./client-actions-types.js";
-import { buildProfileQuery, withBaseUrl } from "./client-actions-url.js";
-import { fetchBrowserJson } from "./client-fetch.js";
+/**
+ * Browser client observation helpers.
+ *
+ * Wraps browser-control endpoints that read console/debug data or save page
+ * output without directly mutating page state.
+ */
+import type { BrowserActionPathResult } from "./client-actions-types.js";
+import {
+  browserClientTimeout,
+  postBrowserJson,
+  requestBrowserJson,
+  type BrowserClientTarget,
+} from "./client-request.js";
 import type {
   BrowserConsoleMessage,
   BrowserNetworkRequest,
   BrowserPageError,
 } from "./pw-session.js";
 
-function buildQuerySuffix(params: Array<[string, string | boolean | undefined]>): string {
-  const query = new URLSearchParams();
+function buildQuery(params: Array<[string, string | boolean | undefined]>) {
+  const query: Record<string, string | boolean | undefined> = {};
   for (const [key, value] of params) {
     if (typeof value === "boolean") {
-      query.set(key, String(value));
+      query[key] = value;
       continue;
     }
     if (typeof value === "string" && value.length > 0) {
-      query.set(key, value);
+      query[key] = value;
     }
   }
-  const encoded = query.toString();
-  return encoded.length > 0 ? `?${encoded}` : "";
+  return query;
 }
 
+/** Read browser console messages for a tab. */
 export async function browserConsoleMessages(
-  baseUrl: string | undefined,
-  opts: { level?: string; targetId?: string; profile?: string } = {},
-): Promise<{ ok: true; messages: BrowserConsoleMessage[]; targetId: string }> {
-  const suffix = buildQuerySuffix([
+  baseUrl: BrowserClientTarget,
+  opts: { level?: string; targetId?: string; profile?: string; signal?: AbortSignal } = {},
+): Promise<{ ok: true; messages: BrowserConsoleMessage[]; targetId: string; url?: string }> {
+  const query = buildQuery([
     ["level", opts.level],
     ["targetId", opts.targetId],
-    ["profile", opts.profile],
   ]);
-  return await fetchBrowserJson<{
-    ok: true;
-    messages: BrowserConsoleMessage[];
-    targetId: string;
-  }>(withBaseUrl(baseUrl, `/console${suffix}`), { timeoutMs: 20000 });
-}
-
-export async function browserPdfSave(
-  baseUrl: string | undefined,
-  opts: { targetId?: string; profile?: string } = {},
-): Promise<BrowserActionPathResult> {
-  const q = buildProfileQuery(opts.profile);
-  return await fetchBrowserJson<BrowserActionPathResult>(withBaseUrl(baseUrl, `/pdf${q}`), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ targetId: opts.targetId }),
-    timeoutMs: 20000,
+  return await requestBrowserJson(baseUrl, "/console", {
+    query,
+    profile: opts.profile,
+    timeoutMs: browserClientTimeout(baseUrl, undefined, 20000),
+    signal: opts.signal,
   });
 }
 
-export async function browserPageErrors(
-  baseUrl: string | undefined,
-  opts: { targetId?: string; clear?: boolean; profile?: string } = {},
-): Promise<{ ok: true; targetId: string; errors: BrowserPageError[] }> {
-  const suffix = buildQuerySuffix([
-    ["targetId", opts.targetId],
-    ["clear", typeof opts.clear === "boolean" ? opts.clear : undefined],
-    ["profile", opts.profile],
-  ]);
-  return await fetchBrowserJson<{
-    ok: true;
-    targetId: string;
-    errors: BrowserPageError[];
-  }>(withBaseUrl(baseUrl, `/errors${suffix}`), { timeoutMs: 20000 });
-}
-
+/** Read the collected network request log for a tab. */
 export async function browserRequests(
-  baseUrl: string | undefined,
+  baseUrl: BrowserClientTarget,
   opts: {
-    targetId?: string;
     filter?: string;
     clear?: boolean;
+    targetId?: string;
     profile?: string;
+    signal?: AbortSignal;
   } = {},
-): Promise<{ ok: true; targetId: string; requests: BrowserNetworkRequest[] }> {
-  const suffix = buildQuerySuffix([
-    ["targetId", opts.targetId],
+): Promise<{ ok: true; requests: BrowserNetworkRequest[]; targetId: string; url?: string }> {
+  const query = buildQuery([
     ["filter", opts.filter],
-    ["clear", typeof opts.clear === "boolean" ? opts.clear : undefined],
-    ["profile", opts.profile],
+    ["clear", opts.clear],
+    ["targetId", opts.targetId],
   ]);
-  return await fetchBrowserJson<{
-    ok: true;
-    targetId: string;
-    requests: BrowserNetworkRequest[];
-  }>(withBaseUrl(baseUrl, `/requests${suffix}`), { timeoutMs: 20000 });
+  return await requestBrowserJson(baseUrl, "/requests", {
+    query,
+    profile: opts.profile,
+    timeoutMs: browserClientTimeout(baseUrl, undefined, 20000),
+    signal: opts.signal,
+  });
 }
 
-export async function browserTraceStart(
-  baseUrl: string | undefined,
+/** Read the collected page error log for a tab. */
+export async function browserErrors(
+  baseUrl: BrowserClientTarget,
   opts: {
+    clear?: boolean;
     targetId?: string;
-    screenshots?: boolean;
-    snapshots?: boolean;
-    sources?: boolean;
     profile?: string;
+    signal?: AbortSignal;
   } = {},
-): Promise<BrowserActionTargetOk> {
-  const q = buildProfileQuery(opts.profile);
-  return await fetchBrowserJson<BrowserActionTargetOk>(withBaseUrl(baseUrl, `/trace/start${q}`), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      targetId: opts.targetId,
-      screenshots: opts.screenshots,
-      snapshots: opts.snapshots,
-      sources: opts.sources,
-    }),
-    timeoutMs: 20000,
+): Promise<{ ok: true; errors: BrowserPageError[]; targetId: string; url?: string }> {
+  const query = buildQuery([
+    ["clear", opts.clear],
+    ["targetId", opts.targetId],
+  ]);
+  return await requestBrowserJson(baseUrl, "/errors", {
+    query,
+    profile: opts.profile,
+    timeoutMs: browserClientTimeout(baseUrl, undefined, 20000),
+    signal: opts.signal,
   });
 }
 
-export async function browserTraceStop(
-  baseUrl: string | undefined,
-  opts: { targetId?: string; path?: string; profile?: string } = {},
-): Promise<BrowserActionPathResult> {
-  const q = buildProfileQuery(opts.profile);
-  return await fetchBrowserJson<BrowserActionPathResult>(withBaseUrl(baseUrl, `/trace/stop${q}`), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ targetId: opts.targetId, path: opts.path }),
-    timeoutMs: 20000,
-  });
-}
-
-export async function browserHighlight(
-  baseUrl: string | undefined,
-  opts: { ref: string; targetId?: string; profile?: string },
-): Promise<BrowserActionTargetOk> {
-  const q = buildProfileQuery(opts.profile);
-  return await fetchBrowserJson<BrowserActionTargetOk>(withBaseUrl(baseUrl, `/highlight${q}`), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ targetId: opts.targetId, ref: opts.ref }),
-    timeoutMs: 20000,
-  });
-}
-
-export async function browserResponseBody(
-  baseUrl: string | undefined,
+/** Read bounded visible text without executing page-supplied code. */
+export async function browserPageText(
+  baseUrl: BrowserClientTarget,
   opts: {
-    url: string;
     targetId?: string;
-    timeoutMs?: number;
-    maxChars?: number;
+    selector?: string;
+    maxChars: number;
     profile?: string;
+    signal?: AbortSignal;
   },
-): Promise<{
-  ok: true;
-  targetId: string;
-  response: {
-    url: string;
-    status?: number;
-    headers?: Record<string, string>;
-    body: string;
-    truncated?: boolean;
+): Promise<{ ok: true; targetId: string; url?: string; text: string; truncated: boolean }> {
+  const query = {
+    ...buildQuery([
+      ["targetId", opts.targetId],
+      ["selector", opts.selector],
+    ]),
+    maxChars: opts.maxChars,
   };
-}> {
-  const q = buildProfileQuery(opts.profile);
-  return await fetchBrowserJson<{
-    ok: true;
-    targetId: string;
-    response: {
-      url: string;
-      status?: number;
-      headers?: Record<string, string>;
-      body: string;
-      truncated?: boolean;
-    };
-  }>(withBaseUrl(baseUrl, `/response/body${q}`), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      targetId: opts.targetId,
-      url: opts.url,
-      timeoutMs: opts.timeoutMs,
-      maxChars: opts.maxChars,
-    }),
-    timeoutMs: 20000,
+  return await requestBrowserJson(baseUrl, "/text", {
+    query,
+    profile: opts.profile,
+    timeoutMs: browserClientTimeout(baseUrl, undefined, 20000),
+    signal: opts.signal,
   });
+}
+
+/** Apply one of the browser control service's existing emulation settings. */
+export async function browserEmulateSetting(
+  baseUrl: BrowserClientTarget,
+  opts: {
+    setting: "device" | "media" | "timezone" | "locale";
+    body: Record<string, string | undefined>;
+    profile?: string;
+    signal?: AbortSignal;
+  },
+): Promise<{ ok: true; targetId: string }> {
+  return await postBrowserJson(
+    baseUrl,
+    `/set/${opts.setting}`,
+    opts.body,
+    browserClientTimeout(baseUrl, undefined, 20000),
+    opts,
+  );
+}
+
+/** Save the current page as PDF through browser control. */
+export async function browserPdfSave(
+  baseUrl: BrowserClientTarget,
+  opts: { targetId?: string; profile?: string; signal?: AbortSignal } = {},
+): Promise<BrowserActionPathResult> {
+  return await postBrowserJson(
+    baseUrl,
+    "/pdf",
+    { targetId: opts.targetId },
+    browserClientTimeout(baseUrl, undefined, 20000),
+    opts,
+  );
 }

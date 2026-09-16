@@ -1,12 +1,19 @@
-import { escapeRegExp } from "../utils.js";
+/**
+ * Encodes terminal key, hex, literal, and paste inputs into PTY byte
+ * sequences. The encoder handles xterm modifiers and DECCKM application
+ * cursor mode.
+ */
+import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
 
 const ESC = "\x1b";
 const CR = "\r";
 const TAB = "\t";
 const BACKSPACE = "\x7f";
 
-export const BRACKETED_PASTE_START = `${ESC}[200~`;
-export const BRACKETED_PASTE_END = `${ESC}[201~`;
+/** Bracketed-paste prefix emitted before pasted text. */
+const BRACKETED_PASTE_START = `${ESC}[200~`;
+/** Bracketed-paste suffix emitted after pasted text. */
+const BRACKETED_PASTE_END = `${ESC}[201~`;
 
 type Modifiers = {
   ctrl: boolean;
@@ -101,17 +108,18 @@ const modifiableNamedKeys = new Set([
   "dc",
 ]);
 
-export type KeyEncodingRequest = {
+type KeyEncodingRequest = {
   keys?: string[];
   hex?: string[];
   literal?: string;
 };
 
-export type KeyEncodingResult = {
-  data: string;
+type KeyEncodingResult = {
+  data: Buffer;
   warnings: string[];
 };
 
+/** True when request keys depend on normal vs application cursor-key mode. */
 export function hasCursorModeSensitiveKeys(request: KeyEncodingRequest): boolean {
   return (
     request.keys?.some((raw) => {
@@ -123,42 +131,39 @@ export function hasCursorModeSensitiveKeys(request: KeyEncodingRequest): boolean
       if (hasAnyModifier(parsed.mods)) {
         return false;
       }
-      return parsed.base.toLowerCase() in DECCKM_SS3_KEYS;
+      return normalizeLowercaseStringOrEmpty(parsed.base) in DECCKM_SS3_KEYS;
     }) ?? false
   );
 }
 
+/** Encodes literal, hex, and named key tokens into one PTY byte payload. */
 export function encodeKeySequence(
   request: KeyEncodingRequest,
   cursorKeyMode?: "normal" | "application",
 ): KeyEncodingResult {
   const warnings: string[] = [];
-  let data = "";
-
-  if (request.literal) {
-    data += request.literal;
-  }
-
-  if (request.hex?.length) {
-    for (const raw of request.hex) {
-      const byte = parseHexByte(raw);
-      if (byte === null) {
-        warnings.push(`Invalid hex byte: ${raw}`);
-        continue;
-      }
-      data += String.fromCharCode(byte);
+  const hexBytes: number[] = [];
+  for (const raw of request.hex ?? []) {
+    const byte = parseHexByte(raw);
+    if (byte === null) {
+      warnings.push(`Invalid hex byte: ${raw}`);
+      continue;
     }
+    hexBytes.push(byte);
   }
-
-  if (request.keys?.length) {
-    for (const token of request.keys) {
-      data += encodeKeyToken(token, warnings, cursorKeyMode);
-    }
-  }
-
+  const keys = request.keys
+    ?.map((token) => encodeKeyToken(token, warnings, cursorKeyMode))
+    .join("");
+  // Hex values are already bytes; only text fragments pass through UTF-8 encoding.
+  const data = Buffer.concat([
+    Buffer.from(request.literal ?? ""),
+    Buffer.from(hexBytes),
+    Buffer.from(keys ?? ""),
+  ]);
   return { data, warnings };
 }
 
+/** Wraps pasted text in bracketed-paste markers when enabled. */
 export function encodePaste(text: string, bracketed = true): string {
   if (!bracketed) {
     return text;
@@ -177,7 +182,7 @@ function encodeKeyToken(
   }
 
   if (token.length === 2 && token.startsWith("^")) {
-    const ctrl = toCtrlChar(token[1]);
+    const ctrl = toCtrlChar(token.charAt(1));
     if (ctrl) {
       return ctrl;
     }
@@ -185,7 +190,7 @@ function encodeKeyToken(
 
   const parsed = parseModifiers(token);
   const base = parsed.base;
-  const baseLower = base.toLowerCase();
+  const baseLower = normalizeLowercaseStringOrEmpty(base);
 
   if (baseLower === "tab" && parsed.mods.shift) {
     return `${ESC}[Z`;
@@ -206,21 +211,13 @@ function encodeKeyToken(
 
   const baseSeq = namedKeyMap.get(baseLower);
   if (baseSeq) {
-    let seq = baseSeq;
     if (modifiableNamedKeys.has(baseLower) && hasAnyModifier(parsed.mods)) {
-      const mod = xtermModifier(parsed.mods);
-      if (mod > 1) {
-        const modified = applyXtermModifier(seq, mod);
-        if (modified) {
-          seq = modified;
-          return seq;
-        }
-      }
+      // Every modifiable named key is a CSI sequence from namedKeyMap.
+      // Bare cursor sequences omit the first parameter; xterm modifiers require it.
+      const parameter = baseSeq.slice(2, -1) || "1";
+      return `${ESC}[${parameter};${xtermModifier(parsed.mods)}${baseSeq.at(-1)}`;
     }
-    if (parsed.mods.alt) {
-      return `${ESC}${seq}`;
-    }
-    return seq;
+    return parsed.mods.alt ? `${ESC}${baseSeq}` : baseSeq;
   }
 
   if (base.length === 1) {
@@ -239,7 +236,7 @@ function parseModifiers(token: string) {
   let sawModifiers = false;
 
   while (rest.length > 2 && rest[1] === "-") {
-    const mod = rest[0].toLowerCase();
+    const mod = normalizeLowercaseStringOrEmpty(rest[0]);
     if (mod === "c") {
       mods.ctrl = true;
     } else if (mod === "m") {
@@ -301,31 +298,13 @@ function xtermModifier(mods: Modifiers): number {
   return mod;
 }
 
-function applyXtermModifier(sequence: string, modifier: number): string | null {
-  const escPattern = escapeRegExp(ESC);
-  const csiNumber = new RegExp(`^${escPattern}\\[(\\d+)([~A-Z])$`);
-  const csiArrow = new RegExp(`^${escPattern}\\[(A|B|C|D|H|F)$`);
-
-  const numberMatch = sequence.match(csiNumber);
-  if (numberMatch) {
-    return `${ESC}[${numberMatch[1]};${modifier}${numberMatch[2]}`;
-  }
-
-  const arrowMatch = sequence.match(csiArrow);
-  if (arrowMatch) {
-    return `${ESC}[1;${modifier}${arrowMatch[1]}`;
-  }
-
-  return null;
-}
-
 function hasAnyModifier(mods: Modifiers): boolean {
   return mods.ctrl || mods.alt || mods.shift;
 }
 
 function parseHexByte(raw: string): number | null {
-  const trimmed = raw.trim().toLowerCase();
-  const normalized = trimmed.startsWith("0x") ? trimmed.slice(2) : trimmed;
+  const lower = normalizeLowercaseStringOrEmpty(raw);
+  const normalized = lower.startsWith("0x") ? lower.slice(2) : lower;
   if (!/^[0-9a-f]{1,2}$/.test(normalized)) {
     return null;
   }

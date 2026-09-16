@@ -1,16 +1,16 @@
-import {
-  resolvePayloadMediaUrls,
-  sendPayloadMediaSequence,
-  sendPayloadMediaSequenceAndFinalize,
-  sendPayloadMediaSequenceOrFallback,
-  sendTextMediaPayload,
-} from "openclaw/plugin-sdk/reply-payload";
+/**
+ * Direct text/media outbound adapter helpers.
+ *
+ * Builds lightweight SDK-backed send adapters with chunking, sanitization, and media limits.
+ */
+import { asOptionalRecord as asRecord } from "@openclaw/normalization-core/record-coerce";
 import { chunkText } from "../../../auto-reply/chunk.js";
-import type { OpenClawConfig } from "../../../config/config.js";
+import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import type { OutboundSendDeps } from "../../../infra/outbound/deliver.js";
+import { sanitizeForPlainText } from "../../../infra/outbound/sanitize-text.js";
 import type { OutboundMediaAccess } from "../../../media/load-options.js";
 import { resolveChannelMediaMaxBytes } from "../media-limits.js";
-import type { ChannelOutboundAdapter } from "../types.js";
+import type { ChannelOutboundAdapter } from "../types.adapters.js";
 
 type DirectSendOptions = {
   cfg: OpenClawConfig;
@@ -30,42 +30,39 @@ type DirectSendFn<TOpts extends Record<string, unknown>, TResult extends DirectS
   text: string,
   opts: TOpts,
 ) => Promise<TResult>;
-export {
-  resolvePayloadMediaUrls,
-  sendPayloadMediaSequence,
-  sendPayloadMediaSequenceAndFinalize,
-  sendPayloadMediaSequenceOrFallback,
-  sendTextMediaPayload,
-} from "openclaw/plugin-sdk/reply-payload";
 
-export function resolveScopedChannelMediaMaxBytes(params: {
-  cfg: OpenClawConfig;
-  accountId?: string | null;
-  resolveChannelLimitMb: (params: { cfg: OpenClawConfig; accountId: string }) => number | undefined;
-}): number | undefined {
-  return resolveChannelMediaMaxBytes({
-    cfg: params.cfg,
-    resolveChannelLimitMb: params.resolveChannelLimitMb,
-    accountId: params.accountId,
-  });
+function readNumberField(record: Record<string, unknown> | undefined, key: string) {
+  const value = record?.[key];
+  return typeof value === "number" ? value : undefined;
 }
 
-export function createScopedChannelMediaMaxBytesResolver(channel: "imessage" | "signal") {
+/**
+ * Builds a media byte-limit resolver for channels with `mediaMaxMb` config.
+ */
+export function createScopedChannelMediaMaxBytesResolver(channel: string) {
   return (params: { cfg: OpenClawConfig; accountId?: string | null }) =>
-    resolveScopedChannelMediaMaxBytes({
+    resolveChannelMediaMaxBytes({
       cfg: params.cfg,
       accountId: params.accountId,
-      resolveChannelLimitMb: ({ cfg, accountId }) =>
-        cfg.channels?.[channel]?.accounts?.[accountId]?.mediaMaxMb ??
-        cfg.channels?.[channel]?.mediaMaxMb,
+      resolveChannelLimitMb: ({ cfg, accountId }) => {
+        const channelConfig = asRecord(cfg.channels?.[channel]);
+        const accountConfig = asRecord(asRecord(channelConfig?.accounts)?.[accountId]);
+        return (
+          readNumberField(accountConfig, "mediaMaxMb") ??
+          readNumberField(channelConfig, "mediaMaxMb")
+        );
+      },
     });
 }
 
+/**
+ * Creates a channel outbound adapter backed by direct text/media send functions.
+ */
 export function createDirectTextMediaOutbound<
   TOpts extends Record<string, unknown>,
   TResult extends DirectSendResult,
 >(params: {
-  channel: "imessage" | "signal";
+  channel: string;
   resolveSender: (deps: OutboundSendDeps | undefined) => DirectSendFn<TOpts, TResult>;
   resolveMaxBytes: (params: {
     cfg: OpenClawConfig;
@@ -112,8 +109,11 @@ export function createDirectTextMediaOutbound<
     chunker: chunkText,
     chunkerMode: "text",
     textChunkLimit: 4000,
-    sendPayload: async (ctx) =>
-      await sendTextMediaPayload({ channel: params.channel, ctx, adapter: outbound }),
+    sanitizeText: ({ text }) => sanitizeForPlainText(text),
+    sendPayload: async (ctx) => {
+      const { sendTextMediaPayload } = await import("openclaw/plugin-sdk/reply-payload");
+      return await sendTextMediaPayload({ channel: params.channel, ctx, adapter: outbound });
+    },
     sendText: async ({ cfg, to, text, accountId, deps, replyToId }) => {
       return await sendDirect({
         cfg,
@@ -142,6 +142,8 @@ export function createDirectTextMediaOutbound<
         to,
         text,
         mediaUrl,
+        // Older callers pass local media access as split roots/readFile fields;
+        // normalize them into the newer mediaAccess object before option building.
         mediaAccess:
           mediaAccess ??
           (mediaLocalRoots || mediaReadFile

@@ -1,5 +1,12 @@
+/**
+ * Browser mutation CSRF guard.
+ *
+ * Blocks browser-control mutation requests from browser-like cross-site
+ * contexts while allowing CLI, Gateway, and local service clients.
+ */
 import type { NextFunction, Request, Response } from "express";
-import { isLoopbackHost } from "../gateway/net.js";
+import { isLoopbackHost } from "openclaw/plugin-sdk/ssrf-runtime";
+import { normalizeLowercaseStringOrEmpty } from "openclaw/plugin-sdk/string-coerce-runtime";
 
 function firstHeader(value: string | string[] | undefined): string {
   return Array.isArray(value) ? (value[0] ?? "") : (value ?? "");
@@ -23,7 +30,8 @@ function isLoopbackUrl(value: string): boolean {
   }
 }
 
-export function shouldRejectBrowserMutation(params: {
+/** Return true when a request should be rejected as browser-originated CSRF. */
+function shouldRejectBrowserMutation(params: {
   method: string;
   origin?: string;
   referer?: string;
@@ -35,7 +43,7 @@ export function shouldRejectBrowserMutation(params: {
 
   // Strong signal when present: browser says this is cross-site.
   // Avoid being overly clever with "same-site" since localhost vs 127.0.0.1 may differ.
-  const secFetchSite = (params.secFetchSite ?? "").trim().toLowerCase();
+  const secFetchSite = normalizeLowercaseStringOrEmpty(params.secFetchSite);
   if (secFetchSite === "cross-site") {
     return true;
   }
@@ -54,6 +62,7 @@ export function shouldRejectBrowserMutation(params: {
   return false;
 }
 
+/** Create middleware that rejects unsafe browser-control mutations. */
 export function browserMutationGuardMiddleware(): (
   req: Request,
   res: Response,

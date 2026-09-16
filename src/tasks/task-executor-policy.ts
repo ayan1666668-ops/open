@@ -1,23 +1,20 @@
-import type { TaskEventRecord, TaskRecord, TaskStatus } from "./task-registry.types.js";
-
-export function isTerminalTaskStatus(status: TaskStatus): boolean {
-  return (
-    status === "succeeded" ||
-    status === "failed" ||
-    status === "timed_out" ||
-    status === "cancelled" ||
-    status === "lost"
-  );
-}
+// Decides task executor delivery, terminal update, and follow-up message policy.
+import { SUBAGENT_KILL_TASK_ERROR } from "./detached-task-runtime-contract.js";
+import {
+  isTerminalTaskStatus,
+  type TaskEventRecord,
+  type TaskRecord,
+} from "./task-registry.types.js";
+import { formatTaskStatusTitleText, sanitizeTaskStatusText } from "./task-status.js";
 
 function resolveTaskDisplayTitle(task: TaskRecord): string {
-  return (
+  return formatTaskStatusTitleText(
     task.label?.trim() ||
-    (task.runtime === "acp"
-      ? "ACP background task"
-      : task.runtime === "subagent"
-        ? "Subagent task"
-        : task.task.trim() || "Background task")
+      (task.runtime === "acp"
+        ? "ACP background task"
+        : task.runtime === "subagent"
+          ? "Subagent task"
+          : task.task.trim() || "Background task"),
   );
 }
 
@@ -25,15 +22,26 @@ function resolveTaskRunLabel(task: TaskRecord): string {
   return task.runId ? ` (run ${task.runId.slice(0, 8)})` : "";
 }
 
-export function formatTaskTerminalMessage(task: TaskRecord): string {
+export function formatTaskTerminalMessage(
+  task: TaskRecord,
+  options: { surface?: "direct" | "parent_session" } = {},
+): string {
   const title = resolveTaskDisplayTitle(task);
   const runLabel = resolveTaskRunLabel(task);
-  const summary = task.terminalSummary?.trim();
   if (task.status === "succeeded") {
+    const summary = sanitizeTaskStatusText(task.terminalSummary, {
+      errorContext: task.terminalOutcome === "blocked",
+    });
     if (task.terminalOutcome === "blocked") {
       return summary
         ? `Background task blocked: ${title}${runLabel}. ${summary}`
         : `Background task blocked: ${title}${runLabel}.`;
+    }
+    if (options.surface === "parent_session") {
+      const reviewNext = "Next: parent will review/verify before calling it done.";
+      return summary
+        ? `Background task ready for review: ${title}${runLabel}. ${summary} ${reviewNext}`
+        : `Background task ready for review: ${title}${runLabel}. ${reviewNext}`;
     }
     return summary
       ? `Background task done: ${title}${runLabel}. ${summary}`
@@ -42,16 +50,32 @@ export function formatTaskTerminalMessage(task: TaskRecord): string {
   if (task.status === "timed_out") {
     return `Background task timed out: ${title}${runLabel}.`;
   }
-  if (task.status === "lost") {
-    return `Background task lost: ${title}${runLabel}. ${task.error ?? "Backing session disappeared."}`;
-  }
   if (task.status === "cancelled") {
+    if (task.runtime === "subagent") {
+      // A final reply can win the kill race and reconcile this row to success.
+      // Report the operator action without claiming an irreversible outcome.
+      return `Background task cancellation requested: ${title}${runLabel}.`;
+    }
     return `Background task cancelled: ${title}${runLabel}.`;
   }
-  const error = task.error?.trim();
-  return error
-    ? `Background task failed: ${title}${runLabel}. ${error}`
+  const detail =
+    sanitizeTaskStatusText(task.error, { errorContext: true }) ||
+    sanitizeTaskStatusText(task.terminalSummary, { errorContext: true });
+  if (task.status === "lost") {
+    return `Background task lost: ${title}${runLabel}. ${detail || "Backing session disappeared."}`;
+  }
+  return detail
+    ? `Background task failed: ${title}${runLabel}. ${detail}`
     : `Background task failed: ${title}${runLabel}.`;
+}
+
+export function shouldUseParentReviewTaskTerminalMessage(task: TaskRecord): boolean {
+  return (
+    task.runtime === "acp" &&
+    task.status === "succeeded" &&
+    task.terminalOutcome !== "blocked" &&
+    Boolean(task.childSessionKey?.trim())
+  );
 }
 
 export function formatTaskBlockedFollowupMessage(task: TaskRecord): string | null {
@@ -60,7 +84,9 @@ export function formatTaskBlockedFollowupMessage(task: TaskRecord): string | nul
   }
   const title = resolveTaskDisplayTitle(task);
   const runLabel = resolveTaskRunLabel(task);
-  const summary = task.terminalSummary?.trim() || "Task is blocked and needs follow-up.";
+  const summary =
+    sanitizeTaskStatusText(task.terminalSummary, { errorContext: true }) ||
+    "Task is blocked and needs follow-up.";
   return `Task needs follow-up: ${title}${runLabel}. ${summary}`;
 }
 
@@ -73,7 +99,8 @@ export function formatTaskStateChangeMessage(
     return `Background task started: ${title}.`;
   }
   if (event.kind === "progress") {
-    return event.summary ? `Background task update: ${title}. ${event.summary}` : null;
+    const summary = sanitizeTaskStatusText(event.summary);
+    return summary ? `Background task update: ${title}. ${summary}` : null;
   }
   return null;
 }
@@ -83,6 +110,15 @@ export function shouldAutoDeliverTaskTerminalUpdate(task: TaskRecord): boolean {
     return false;
   }
   if (task.runtime === "subagent" && task.status !== "cancelled") {
+    // Subagent lifecycle owns provider-result publication.
+    return false;
+  }
+  if (
+    task.runtime === "subagent" &&
+    task.status === "cancelled" &&
+    task.error === SUBAGENT_KILL_TASK_ERROR
+  ) {
+    // A direct kill is provisional until lifecycle reconciliation settles.
     return false;
   }
   if (!isTerminalTaskStatus(task.status)) {
@@ -102,9 +138,19 @@ export function shouldAutoDeliverTaskStateChange(task: TaskRecord): boolean {
 export function shouldSuppressDuplicateTerminalDelivery(params: {
   task: TaskRecord;
   preferredTaskId?: string;
+  peerDeliveryCovered?: boolean;
 }): boolean {
-  if (params.task.runtime !== "acp" || !params.task.runId?.trim()) {
+  if (!params.task.runId?.trim()) {
     return false;
+  }
+  const sharesRunDelivery =
+    params.task.runtime === "acp" ||
+    (params.task.runtime === "subagent" && params.task.status === "cancelled");
+  if (!sharesRunDelivery) {
+    return false;
+  }
+  if (params.task.runtime === "subagent" && params.peerDeliveryCovered) {
+    return true;
   }
   return Boolean(params.preferredTaskId && params.preferredTaskId !== params.task.taskId);
 }

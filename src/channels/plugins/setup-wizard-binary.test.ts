@@ -1,3 +1,4 @@
+// Setup wizard binary tests cover channel setup wizard binary selection and invocation.
 import { describe, expect, it, vi } from "vitest";
 import {
   createCliPathTextInput,
@@ -9,6 +10,39 @@ import type { ChannelSetupWizard } from "./setup-wizard.js";
 
 describe("createDetectedBinaryStatus", () => {
   it("builds status lines, hint, and score from binary detection", async () => {
+    const resolveConfigured = vi.fn(() => true);
+    const resolveBinaryPath = vi.fn(() => "/usr/local/bin/signal-cli");
+    const status = createDetectedBinaryStatus({
+      channelLabel: "Signal",
+      binaryLabel: "signal-cli",
+      configuredLabel: "configured",
+      unconfiguredLabel: "needs setup",
+      configuredHint: "signal-cli found",
+      unconfiguredHint: "signal-cli missing",
+      configuredScore: 1,
+      unconfiguredScore: 0,
+      resolveConfigured,
+      resolveBinaryPath,
+      detectBinary: vi.fn(async () => true),
+    });
+
+    expect(await status.resolveConfigured({ cfg: {}, accountId: "work" })).toBe(true);
+    expect(resolveConfigured).toHaveBeenCalledWith({ cfg: {}, accountId: "work" });
+    expect(await status.resolveStatusLines?.({ cfg: {}, configured: true })).toEqual([
+      "Signal: configured",
+      "signal-cli: found (/usr/local/bin/signal-cli)",
+    ]);
+    expect(resolveBinaryPath).toHaveBeenCalledWith({ cfg: {}, accountId: undefined });
+    expect(await status.resolveSelectionHint?.({ cfg: {}, configured: true })).toBe(
+      "signal-cli found",
+    );
+    expect(await status.resolveQuickstartScore?.({ cfg: {}, configured: true })).toBe(1);
+  });
+
+  it("passes accountId into binary path resolution", async () => {
+    const resolveBinaryPath = vi.fn(({ accountId }: { accountId?: string }) =>
+      accountId === "work" ? "/opt/work-signal-cli" : "/usr/local/bin/signal-cli",
+    );
     const status = createDetectedBinaryStatus({
       channelLabel: "Signal",
       binaryLabel: "signal-cli",
@@ -19,19 +53,14 @@ describe("createDetectedBinaryStatus", () => {
       configuredScore: 1,
       unconfiguredScore: 0,
       resolveConfigured: () => true,
-      resolveBinaryPath: () => "/usr/local/bin/signal-cli",
-      detectBinary: vi.fn(async () => true),
+      resolveBinaryPath,
+      detectBinary: vi.fn(async () => false),
     });
 
-    expect(await status.resolveConfigured({ cfg: {} })).toBe(true);
-    expect(await status.resolveStatusLines?.({ cfg: {}, configured: true })).toEqual([
-      "Signal: configured",
-      "signal-cli: found (/usr/local/bin/signal-cli)",
-    ]);
-    expect(await status.resolveSelectionHint?.({ cfg: {}, configured: true })).toBe(
-      "signal-cli found",
-    );
-    expect(await status.resolveQuickstartScore?.({ cfg: {}, configured: true })).toBe(1);
+    expect(
+      await status.resolveStatusLines?.({ cfg: {}, accountId: "work", configured: false }),
+    ).toEqual(["Signal: needs setup", "signal-cli: missing (/opt/work-signal-cli)"]);
+    expect(resolveBinaryPath).toHaveBeenCalledWith({ cfg: {}, accountId: "work" });
   });
 });
 
@@ -59,20 +88,18 @@ describe("createCliPathTextInput", () => {
 
 describe("createDelegatedSetupWizardStatusResolvers", () => {
   it("forwards optional status resolvers to the loaded wizard", async () => {
-    const loadWizard = vi.fn(
-      async (): Promise<ChannelSetupWizard> => ({
-        channel: "demo",
-        status: {
-          configuredLabel: "configured",
-          unconfiguredLabel: "needs setup",
-          resolveConfigured: () => true,
-          resolveStatusLines: async () => ["line"],
-          resolveSelectionHint: async () => "hint",
-          resolveQuickstartScore: async () => 7,
-        },
-        credentials: [],
-      }),
-    );
+    const loadWizard = vi.fn(async (): Promise<ChannelSetupWizard> => ({
+      channel: "demo",
+      status: {
+        configuredLabel: "configured",
+        unconfiguredLabel: "needs setup",
+        resolveConfigured: () => true,
+        resolveStatusLines: async () => ["line"],
+        resolveSelectionHint: async () => "hint",
+        resolveQuickstartScore: async () => 7,
+      },
+      credentials: [],
+    }));
 
     const status = createDelegatedSetupWizardStatusResolvers(loadWizard);
 
@@ -84,24 +111,22 @@ describe("createDelegatedSetupWizardStatusResolvers", () => {
 
 describe("createDelegatedTextInputShouldPrompt", () => {
   it("forwards shouldPrompt for the requested input key", async () => {
-    const loadWizard = vi.fn(
-      async (): Promise<ChannelSetupWizard> => ({
-        channel: "demo",
-        status: {
-          configuredLabel: "configured",
-          unconfiguredLabel: "needs setup",
-          resolveConfigured: () => true,
+    const loadWizard = vi.fn(async (): Promise<ChannelSetupWizard> => ({
+      channel: "demo",
+      status: {
+        configuredLabel: "configured",
+        unconfiguredLabel: "needs setup",
+        resolveConfigured: () => true,
+      },
+      credentials: [],
+      textInputs: [
+        {
+          inputKey: "cliPath",
+          message: "CLI path",
+          shouldPrompt: async ({ currentValue }) => currentValue !== "imsg",
         },
-        credentials: [],
-        textInputs: [
-          {
-            inputKey: "cliPath",
-            message: "CLI path",
-            shouldPrompt: async ({ currentValue }) => currentValue !== "imsg",
-          },
-        ],
-      }),
-    );
+      ],
+    }));
 
     const shouldPrompt = createDelegatedTextInputShouldPrompt({
       loadWizard,

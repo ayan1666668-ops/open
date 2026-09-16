@@ -1,166 +1,43 @@
 ---
-title: "Plugin Entry Points"
+summary: "Reference for defineToolPlugin, definePluginEntry, defineChannelPluginEntry, and defineSetupPluginEntry"
+title: "Plugin entry points"
 sidebarTitle: "Entry Points"
-summary: "Reference for definePluginEntry, defineChannelPluginEntry, and defineSetupPluginEntry"
 read_when:
-  - You need the exact type signature of definePluginEntry or defineChannelPluginEntry
+  - You need the exact type signature of defineToolPlugin, definePluginEntry, or defineChannelPluginEntry
   - You want to understand registration mode (full vs setup vs CLI metadata)
   - You are looking up entry point options
 ---
 
-# Plugin Entry Points
+Every plugin exports a default entry object. The SDK provides a helper for
+each entry shape: `defineToolPlugin`, `definePluginEntry`,
+`defineChannelPluginEntry`, `defineSetupPluginEntry`.
 
-Every plugin exports a default entry object. The SDK provides three helpers for
-creating them.
+All plugin APIs are [experimental](/plugins/sdk-overview#api-stability),
+including these entry helpers. Pin and test the OpenClaw host versions your
+plugin supports.
 
 <Tip>
-  **Looking for a walkthrough?** See [Channel Plugins](/plugins/sdk-channel-plugins)
-  or [Provider Plugins](/plugins/sdk-provider-plugins) for step-by-step guides.
+  **Looking for a walkthrough?** See [Tool Plugins](/plugins/tool-plugins),
+  [Channel Plugins](/plugins/sdk-channel-plugins), or
+  [Provider Plugins](/plugins/sdk-provider-plugins) for step-by-step guides.
 </Tip>
 
-## `definePluginEntry`
+## Where each section moved
 
-**Import:** `openclaw/plugin-sdk/plugin-entry`
+Every section of the single-page version now lives on this page or on one of
+the eight child pages below. The anchors from the single-page version still
+resolve here.
 
-For provider plugins, tool plugins, hook plugins, and anything that is **not**
-a messaging channel.
-
-```typescript
-import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
-
-export default definePluginEntry({
-  id: "my-plugin",
-  name: "My Plugin",
-  description: "Short summary",
-  register(api) {
-    api.registerProvider({
-      /* ... */
-    });
-    api.registerTool({
-      /* ... */
-    });
-  },
-});
-```
-
-| Field          | Type                                                             | Required | Default             |
-| -------------- | ---------------------------------------------------------------- | -------- | ------------------- |
-| `id`           | `string`                                                         | Yes      | —                   |
-| `name`         | `string`                                                         | Yes      | —                   |
-| `description`  | `string`                                                         | Yes      | —                   |
-| `kind`         | `string`                                                         | No       | —                   |
-| `configSchema` | `OpenClawPluginConfigSchema \| () => OpenClawPluginConfigSchema` | No       | Empty object schema |
-| `register`     | `(api: OpenClawPluginApi) => void`                               | Yes      | —                   |
-
-- `id` must match your `openclaw.plugin.json` manifest.
-- `kind` is for exclusive slots: `"memory"` or `"context-engine"`.
-- `configSchema` can be a function for lazy evaluation.
-
-## `defineChannelPluginEntry`
-
-**Import:** `openclaw/plugin-sdk/core`
-
-Wraps `definePluginEntry` with channel-specific wiring. Automatically calls
-`api.registerChannel({ plugin })`, exposes an optional root-help CLI metadata
-seam, and gates `registerFull` on registration mode.
-
-```typescript
-import { defineChannelPluginEntry } from "openclaw/plugin-sdk/core";
-
-export default defineChannelPluginEntry({
-  id: "my-channel",
-  name: "My Channel",
-  description: "Short summary",
-  plugin: myChannelPlugin,
-  setRuntime: setMyRuntime,
-  registerCliMetadata(api) {
-    api.registerCli(/* ... */);
-  },
-  registerFull(api) {
-    api.registerGatewayMethod(/* ... */);
-  },
-});
-```
-
-| Field                 | Type                                                             | Required | Default             |
-| --------------------- | ---------------------------------------------------------------- | -------- | ------------------- |
-| `id`                  | `string`                                                         | Yes      | —                   |
-| `name`                | `string`                                                         | Yes      | —                   |
-| `description`         | `string`                                                         | Yes      | —                   |
-| `plugin`              | `ChannelPlugin`                                                  | Yes      | —                   |
-| `configSchema`        | `OpenClawPluginConfigSchema \| () => OpenClawPluginConfigSchema` | No       | Empty object schema |
-| `setRuntime`          | `(runtime: PluginRuntime) => void`                               | No       | —                   |
-| `registerCliMetadata` | `(api: OpenClawPluginApi) => void`                               | No       | —                   |
-| `registerFull`        | `(api: OpenClawPluginApi) => void`                               | No       | —                   |
-
-- `setRuntime` is called during registration so you can store the runtime reference
-  (typically via `createPluginRuntimeStore`). It is skipped during CLI metadata
-  capture.
-- `registerCliMetadata` runs during both `api.registrationMode === "cli-metadata"`
-  and `api.registrationMode === "full"`.
-  Use it as the canonical place for channel-owned CLI descriptors so root help
-  stays non-activating while normal CLI command registration remains compatible
-  with full plugin loads.
-- `registerFull` only runs when `api.registrationMode === "full"`. It is skipped
-  during setup-only loading.
-- For plugin-owned root CLI commands, prefer `api.registerCli(..., { descriptors: [...] })`
-  when you want the command to stay lazy-loaded without disappearing from the
-  root CLI parse tree. For channel plugins, prefer registering those descriptors
-  from `registerCliMetadata(...)` and keep `registerFull(...)` focused on runtime-only work.
-
-## `defineSetupPluginEntry`
-
-**Import:** `openclaw/plugin-sdk/core`
-
-For the lightweight `setup-entry.ts` file. Returns just `{ plugin }` with no
-runtime or CLI wiring.
-
-```typescript
-import { defineSetupPluginEntry } from "openclaw/plugin-sdk/core";
-
-export default defineSetupPluginEntry(myChannelPlugin);
-```
-
-OpenClaw loads this instead of the full entry when a channel is disabled,
-unconfigured, or when deferred loading is enabled. See
-[Setup and Config](/plugins/sdk-setup#setup-entry) for when this matters.
-
-## Registration mode
-
-`api.registrationMode` tells your plugin how it was loaded:
-
-| Mode              | When                              | What to register              |
-| ----------------- | --------------------------------- | ----------------------------- |
-| `"full"`          | Normal gateway startup            | Everything                    |
-| `"setup-only"`    | Disabled/unconfigured channel     | Channel registration only     |
-| `"setup-runtime"` | Setup flow with runtime available | Channel + lightweight runtime |
-| `"cli-metadata"`  | Root help / CLI metadata capture  | CLI descriptors only          |
-
-`defineChannelPluginEntry` handles this split automatically. If you use
-`definePluginEntry` directly for a channel, check mode yourself:
-
-```typescript
-register(api) {
-  if (api.registrationMode === "cli-metadata" || api.registrationMode === "full") {
-    api.registerCli(/* ... */);
-    if (api.registrationMode === "cli-metadata") return;
-  }
-
-  api.registerChannel({ plugin: myPlugin });
-  if (api.registrationMode !== "full") return;
-
-  // Heavy runtime-only registrations
-  api.registerService(/* ... */);
-}
-```
-
-For CLI registrars specifically:
-
-- use `descriptors` when the registrar owns one or more root commands and you
-  want OpenClaw to lazy-load the real CLI module on first invocation
-- make sure those descriptors cover every top-level command root exposed by the
-  registrar
-- use `commands` alone only for eager compatibility paths
+- <a id="tool-policy-vocabulary" />[Tool policy vocabulary](/plugins/sdk-entrypoints/tool-policy-and-sandbox#tool-policy-vocabulary)
+- <a id="sandbox-bind-parsing" />[Sandbox bind parsing](/plugins/sdk-entrypoints/tool-policy-and-sandbox#sandbox-bind-parsing)
+- <a id="package-entries" />[Package entries](/plugins/sdk-entrypoints/package-entries#package-entries)
+- <a id="definetoolplugin" />[defineToolPlugin](/plugins/sdk-entrypoints/define-tool-plugin#definetoolplugin)
+- <a id="definepluginentry" />[definePluginEntry](/plugins/sdk-entrypoints/define-plugin-entry#definepluginentry)
+- <a id="native-provider-factories" />[Native provider factories](/plugins/sdk-entrypoints/native-providers#native-provider-factories)
+- <a id="computer-use-providers" />[Computer Use providers](/plugins/sdk-entrypoints/native-providers#computer-use-providers)
+- <a id="definechannelpluginentry" />[defineChannelPluginEntry](/plugins/sdk-entrypoints/define-channel-plugin-entry#definechannelpluginentry)
+- <a id="definesetuppluginentry" />[defineSetupPluginEntry](/plugins/sdk-entrypoints/define-setup-plugin-entry#definesetuppluginentry)
+- <a id="registration-mode" />[Registration mode](/plugins/sdk-entrypoints/registration-mode#registration-mode)
 
 ## Plugin shapes
 
@@ -177,8 +54,31 @@ Use `openclaw plugins inspect <id>` to see a plugin's shape.
 
 ## Related
 
-- [SDK Overview](/plugins/sdk-overview) — registration API and subpath reference
-- [Runtime Helpers](/plugins/sdk-runtime) — `api.runtime` and `createPluginRuntimeStore`
-- [Setup and Config](/plugins/sdk-setup) — manifest, setup entry, deferred loading
-- [Channel Plugins](/plugins/sdk-channel-plugins) — building the `ChannelPlugin` object
-- [Provider Plugins](/plugins/sdk-provider-plugins) — provider registration and hooks
+- [Plugin SDK overview](/plugins/sdk-overview) - registration API and subpath reference
+- [Plugin runtime helpers](/plugins/sdk-runtime) - `api.runtime` and `createPluginRuntimeStore`
+- [Plugin setup and config](/plugins/sdk-setup) - manifest and setup entry loading
+- [Building channel plugins](/plugins/sdk-channel-plugins) - building the `ChannelPlugin` object
+- [Building provider plugins](/plugins/sdk-provider-plugins) - provider registration and hooks
+
+## MCP subprocess runtime
+
+**Import:** `mcpStdioRuntime` from `openclaw/plugin-sdk/agent-harness-runtime` using dynamic `import()` when opening a connection. Its frozen object lazily loads one factory:
+
+```ts
+const { mcpStdioRuntime } = await import("openclaw/plugin-sdk/agent-harness-runtime");
+const { createMcpStdioClient } = await mcpStdioRuntime.load();
+```
+
+Use `createMcpStdioClient(params)` for a caller-owned MCP proxy subprocess fronting a stateful driver. OpenClaw owns the subprocess and its descendants, newline framing and JSON-RPC validation, initialization, request admission, deadlines, and shutdown. The client starts connecting when the factory returns. Keep this runtime out of plugin registration and paths that do not open MCP connections.
+
+Supply `command`, optional `args`, and an exact `env`. The child inherits no other environment variables. Set `clientInfo` (`name` and `version`), the required `protocolVersion`, `startupTimeoutMs`, `maxPendingRequests`, and `maxFrameBytes`. The server must return exactly the requested protocol version. OpenClaw retains a fixed 32 KiB stderr tail for unexpected-exit diagnostics. The decoder bounds pending bytes plus each incoming chunk before buffering, preserves fragmented UTF-8, skips empty lines, and requires safe integer response IDs.
+
+The caller supplies `errors.unavailable(message, cause?)` and `errors.protocol(message, cause?)`, each returning an `Error`. The first classifies process, lifecycle, admission, deadline, and cancellation failures. The second classifies malformed frames, non-timeout JSON-RPC errors, and handshake contract violations. Plugin-specific tool-result normalization stays with the caller.
+
+The returned client exposes three methods:
+
+- `isAvailable()` synchronously reports whether initialization completed and the connection remains usable.
+- `request(method, params, { timeoutMs, signal? })` waits for startup and returns the object result. An already-aborted signal or a full pending-request limit rejects only that call. After admission, cancellation or timeout retires the entire connection and rejects pending requests with the retained fatal error. The client suppresses SDK cancellation notifications because it terminates the process instead. A non-timeout JSON-RPC error response rejects only its matching request through `errors.protocol`.
+- `stop()` closes admission, retires pending requests, and awaits startup settlement and owned-process cleanup. It rejects through `errors.unavailable` with `proxy cleanup could not be confirmed` if cleanup is uncertain. It never stops a separately started service reached through the proxy's socket.
+
+Malformed frames, incompatible initialization, write failures, and unexpected process exit also retire the whole connection. The first fatal error is retained. Create a new client to reconnect. Timeout classification follows the SDK error code, so a timeout-coded server error also retires the connection.

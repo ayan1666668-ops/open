@@ -1,40 +1,11 @@
-import path from "node:path";
 import type { Command } from "commander";
-import { resolveUserPath } from "../utils.js";
-import { resolveFileNpmSpecToLocalPath } from "./plugins-command-helpers.js";
-
-export type PluginInstallInvalidConfigPolicy = "deny" | "recover-matrix-only";
-
-export type PluginInstallRequestContext = {
-  rawSpec: string;
-  normalizedSpec: string;
-  resolvedPath?: string;
-  marketplace?: string;
-};
-
-type PluginInstallRequestResolution =
-  | { ok: true; request: PluginInstallRequestContext }
-  | { ok: false; error: string };
+import {
+  resolvePluginInstallRequestContext,
+  type PluginInstallRequestContext,
+} from "../plugins/install-config.js";
 
 function isPluginInstallCommand(commandPath: string[]): boolean {
   return commandPath[0] === "plugins" && commandPath[1] === "install";
-}
-
-function isExplicitMatrixInstallRequest(request: PluginInstallRequestContext): boolean {
-  if (request.marketplace) {
-    return false;
-  }
-  const candidates = [request.rawSpec.trim(), request.normalizedSpec.trim()];
-  if (candidates.includes("@openclaw/matrix")) {
-    return true;
-  }
-  if (!request.resolvedPath) {
-    return false;
-  }
-  return (
-    path.basename(request.resolvedPath) === "matrix" &&
-    path.basename(path.dirname(request.resolvedPath)) === "extensions"
-  );
 }
 
 function resolvePluginInstallArgvTokens(commandPath: string[], argv: string[]): string[] {
@@ -60,7 +31,10 @@ function resolvePluginInstallArgvRequest(commandPath: string[], argv: string[]) 
   let rawSpec: string | null = null;
   let marketplace: string | undefined;
   for (let index = 0; index < tokens.length; index += 1) {
-    const token = tokens[index];
+    const token = tokens.at(index);
+    if (token === undefined) {
+      break;
+    }
     if (token.startsWith("--marketplace=")) {
       marketplace = token.slice("--marketplace=".length);
       continue;
@@ -81,38 +55,7 @@ function resolvePluginInstallArgvRequest(commandPath: string[], argv: string[]) 
   return rawSpec ? { rawSpec, marketplace } : null;
 }
 
-export function resolvePluginInstallRequestContext(params: {
-  rawSpec: string;
-  marketplace?: string;
-}): PluginInstallRequestResolution {
-  if (params.marketplace) {
-    return {
-      ok: true,
-      request: {
-        rawSpec: params.rawSpec,
-        normalizedSpec: params.rawSpec,
-        marketplace: params.marketplace,
-      },
-    };
-  }
-  const fileSpec = resolveFileNpmSpecToLocalPath(params.rawSpec);
-  if (fileSpec && !fileSpec.ok) {
-    return {
-      ok: false,
-      error: fileSpec.error,
-    };
-  }
-  const normalizedSpec = fileSpec && fileSpec.ok ? fileSpec.path : params.rawSpec;
-  return {
-    ok: true,
-    request: {
-      rawSpec: params.rawSpec,
-      normalizedSpec,
-      resolvedPath: resolveUserPath(normalizedSpec),
-    },
-  };
-}
-
+/** Recover the plugin install request from Commander state plus raw argv fallback parsing. */
 export function resolvePluginInstallPreactionRequest(params: {
   actionCommand: Command;
   commandPath: string[];
@@ -136,13 +79,4 @@ export function resolvePluginInstallPreactionRequest(params: {
   }
   const request = resolvePluginInstallRequestContext({ rawSpec, marketplace });
   return request.ok ? request.request : null;
-}
-
-export function resolvePluginInstallInvalidConfigPolicy(
-  request: PluginInstallRequestContext | null,
-): PluginInstallInvalidConfigPolicy {
-  if (!request) {
-    return "deny";
-  }
-  return isExplicitMatrixInstallRequest(request) ? "recover-matrix-only" : "deny";
 }

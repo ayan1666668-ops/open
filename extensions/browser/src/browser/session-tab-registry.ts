@@ -1,189 +1,239 @@
-import { browserCloseTab } from "./client.js";
+/**
+ * Session-owned browser tabs. Host-local durable ownership is canonical in
+ * plugin SQLite; all other tabs remain process-local.
+ */
+import {
+  type CleanupKind,
+  type CloseParams,
+  closeDurableTab,
+  isIgnorableTabCloseError,
+} from "./session-tab-cleanup-claim.js";
+import {
+  deleteVolatileRegistrations,
+  sameVolatileSessionTab,
+  type VolatileSessionTab as VolatileTab,
+  volatileRegistrationsForTarget,
+  volatileSessionTabTargetKey,
+  volatileTabCleanupByTarget,
+  volatileTabsBySession,
+} from "./session-tab-process-state.js";
+import {
+  readBrowserDashboardStopIntents,
+  type BrowserSessionTabRecord,
+} from "./session-tab-store.js";
+import {
+  selectStaleTrackedTabs,
+  selectTrackedTabsForSessions,
+} from "./session-tab-sweep-selection.js";
+import { readDurableTabs, resolveVolatile, type DurableTab } from "./session-tab-tracking.js";
 
-export type TrackedSessionBrowserTab = {
-  sessionKey: string;
-  targetId: string;
-  baseUrl?: string;
-  profile?: string;
-  trackedAt: number;
-};
+export {
+  trackSessionBrowserTab,
+  touchSessionBrowserTab,
+  untrackSessionBrowserTab,
+} from "./session-tab-tracking.js";
 
-const trackedTabsBySession = new Map<string, Map<string, TrackedSessionBrowserTab>>();
+type TrackedTab = VolatileTab | DurableTab;
 
-function normalizeSessionKey(raw: string): string {
-  return raw.trim().toLowerCase();
-}
-
-function normalizeTargetId(raw: string): string {
-  return raw.trim();
-}
-
-function normalizeProfile(raw?: string): string | undefined {
-  if (!raw) {
-    return undefined;
-  }
-  const trimmed = raw.trim();
-  return trimmed ? trimmed.toLowerCase() : undefined;
-}
-
-function normalizeBaseUrl(raw?: string): string | undefined {
-  if (!raw) {
-    return undefined;
-  }
-  const trimmed = raw.trim();
-  return trimmed ? trimmed : undefined;
-}
-
-function toTrackedTabId(params: { targetId: string; baseUrl?: string; profile?: string }): string {
-  return `${params.targetId}\u0000${params.baseUrl ?? ""}\u0000${params.profile ?? ""}`;
-}
-
-function isIgnorableCloseError(err: unknown): boolean {
-  const message = String(err).toLowerCase();
-  return (
-    message.includes("tab not found") ||
-    message.includes("target closed") ||
-    message.includes("target not found") ||
-    message.includes("no such target")
-  );
-}
-
-export function trackSessionBrowserTab(params: {
-  sessionKey?: string;
-  targetId?: string;
-  baseUrl?: string;
-  profile?: string;
-}): void {
-  const sessionKeyRaw = params.sessionKey?.trim();
-  const targetIdRaw = params.targetId?.trim();
-  if (!sessionKeyRaw || !targetIdRaw) {
-    return;
-  }
-  const sessionKey = normalizeSessionKey(sessionKeyRaw);
-  const targetId = normalizeTargetId(targetIdRaw);
-  const baseUrl = normalizeBaseUrl(params.baseUrl);
-  const profile = normalizeProfile(params.profile);
-  const tracked: TrackedSessionBrowserTab = {
-    sessionKey,
-    targetId,
-    baseUrl,
-    profile,
-    trackedAt: Date.now(),
+async function performVolatileCleanup(
+  candidate: VolatileTab,
+  params: CloseParams,
+  cleanupKind: CleanupKind,
+): Promise<number> {
+  const inFlight = volatileTabCleanupByTarget();
+  const targetKey = volatileSessionTabTargetKey(candidate);
+  const resolveCurrent = () => {
+    const current = resolveVolatile(candidate)?.tab;
+    return current?.registration === candidate.registration &&
+      (cleanupKind !== "sweep" || sameVolatileSessionTab(current, candidate))
+      ? current
+      : undefined;
   };
-  const trackedId = toTrackedTabId(tracked);
-  let trackedForSession = trackedTabsBySession.get(sessionKey);
-  if (!trackedForSession) {
-    trackedForSession = new Map();
-    trackedTabsBySession.set(sessionKey, trackedForSession);
-  }
-  trackedForSession.set(trackedId, tracked);
-}
-
-export function untrackSessionBrowserTab(params: {
-  sessionKey?: string;
-  targetId?: string;
-  baseUrl?: string;
-  profile?: string;
-}): void {
-  const sessionKeyRaw = params.sessionKey?.trim();
-  const targetIdRaw = params.targetId?.trim();
-  if (!sessionKeyRaw || !targetIdRaw) {
-    return;
-  }
-  const sessionKey = normalizeSessionKey(sessionKeyRaw);
-  const trackedForSession = trackedTabsBySession.get(sessionKey);
-  if (!trackedForSession) {
-    return;
-  }
-  const trackedId = toTrackedTabId({
-    targetId: normalizeTargetId(targetIdRaw),
-    baseUrl: normalizeBaseUrl(params.baseUrl),
-    profile: normalizeProfile(params.profile),
-  });
-  trackedForSession.delete(trackedId);
-  if (trackedForSession.size === 0) {
-    trackedTabsBySession.delete(sessionKey);
-  }
-}
-
-function takeTrackedTabsForSessionKeys(
-  sessionKeys: Array<string | undefined>,
-): TrackedSessionBrowserTab[] {
-  const uniqueSessionKeys = new Set<string>();
-  for (const key of sessionKeys) {
-    if (!key?.trim()) {
-      continue;
+  while (true) {
+    const current = resolveCurrent();
+    if (!current) {
+      return 0;
     }
-    uniqueSessionKeys.add(normalizeSessionKey(key));
-  }
-  if (uniqueSessionKeys.size === 0) {
-    return [];
-  }
-  const seenTrackedIds = new Set<string>();
-  const tabs: TrackedSessionBrowserTab[] = [];
-  for (const sessionKey of uniqueSessionKeys) {
-    const trackedForSession = trackedTabsBySession.get(sessionKey);
-    if (!trackedForSession || trackedForSession.size === 0) {
-      continue;
-    }
-    trackedTabsBySession.delete(sessionKey);
-    for (const tracked of trackedForSession.values()) {
-      const trackedId = toTrackedTabId(tracked);
-      if (seenTrackedIds.has(trackedId)) {
-        continue;
+    const existing = inFlight.get(targetKey);
+    if (existing) {
+      await existing.promise;
+      if (existing.registrations.some((owned) => owned.registration === candidate.registration)) {
+        return 0;
       }
-      seenTrackedIds.add(trackedId);
-      tabs.push(tracked);
+      continue;
     }
-  }
-  return tabs;
-}
 
-export async function closeTrackedBrowserTabsForSessions(params: {
-  sessionKeys: Array<string | undefined>;
-  closeTab?: (tab: { targetId: string; baseUrl?: string; profile?: string }) => Promise<void>;
-  onWarn?: (message: string) => void;
-}): Promise<number> {
-  const tabs = takeTrackedTabsForSessionKeys(params.sessionKeys);
-  if (tabs.length === 0) {
-    return 0;
-  }
-  const closeTab =
-    params.closeTab ??
-    (async (tab: { targetId: string; baseUrl?: string; profile?: string }) => {
-      await browserCloseTab(tab.baseUrl, tab.targetId, {
-        profile: tab.profile,
-      });
+    let complete!: (operation: Promise<number>) => void;
+    const cleanup = new Promise<number>((resolve) => {
+      complete = resolve;
     });
-  let closed = 0;
-  for (const tab of tabs) {
+    // Preparation and dispatch share one reservation, including reentrant closers.
+    // Completion retires only the acquired registrations.
+    const owner = { registrations: volatileRegistrationsForTarget(targetKey), promise: cleanup };
+    const performClose = async () => {
+      let tab = current;
+      let closeTab = params.closeTab;
+      try {
+        if (!closeTab && tab.route.kind === "browser-control") {
+          const { browserCloseTabByRawTargetId } = await import("./client.js");
+          const latest = resolveCurrent();
+          if (!latest) {
+            // No dispatch occurred: a lifecycle joiner may retry a touched sweep.
+            owner.registrations = [];
+            return 0;
+          }
+          tab = latest;
+          closeTab = ({ baseUrl, targetId, profile }) =>
+            browserCloseTabByRawTargetId(baseUrl, targetId, { profile });
+        }
+        if (closeTab) {
+          await closeTab({
+            targetId: tab.targetId,
+            ...(tab.route.kind === "browser-control" && tab.route.baseUrl
+              ? { baseUrl: tab.route.baseUrl }
+              : {}),
+            ...(tab.route.kind === "node-proxy" ? { route: tab.route } : {}),
+            ...(tab.profile ? { profile: tab.profile } : {}),
+          });
+        } else if (tab.route.kind === "node-proxy") {
+          const outcome = await tab.route.closeTarget({
+            targetId: tab.targetId,
+            profile: tab.profile,
+            ownership: tab.ownership,
+          });
+          if (outcome.status === "cancelled" || outcome.status === "unavailable") {
+            params.onWarn?.(
+              `deferred tracked browser tab ${tab.targetId}: ${outcome.status === "unavailable" ? outcome.reason : "cleanup cancelled"}`,
+            );
+            return 0;
+          }
+          if (outcome.status === "ownership-mismatch") {
+            params.onWarn?.(`retired tracked browser tab ${tab.targetId}: ownership mismatch`);
+          }
+          deleteVolatileRegistrations(owner.registrations);
+          return outcome.status === "closed" ? 1 : 0;
+        }
+      } catch (error) {
+        if (closeTab && tab.route.kind === "browser-control" && isIgnorableTabCloseError(error)) {
+          deleteVolatileRegistrations(owner.registrations);
+          return 0;
+        }
+        params.onWarn?.(`failed to close tracked browser tab ${tab.targetId}: ${String(error)}`);
+        return 0;
+      }
+      deleteVolatileRegistrations(owner.registrations);
+      return 1;
+    };
+    inFlight.set(targetKey, owner);
     try {
-      await closeTab({
-        targetId: tab.targetId,
-        baseUrl: tab.baseUrl,
-        profile: tab.profile,
-      });
-      closed += 1;
-    } catch (err) {
-      if (!isIgnorableCloseError(err)) {
-        params.onWarn?.(`failed to close tracked browser tab ${tab.targetId}: ${String(err)}`);
+      complete(performClose());
+      return await cleanup;
+    } finally {
+      // Queued handoff callers must see the reservation until its completion settles.
+      if (inFlight.get(targetKey) === owner) {
+        inFlight.delete(targetKey);
       }
     }
+  }
+}
+
+async function closeTrackedTabs(
+  tabs: TrackedTab[],
+  params: CloseParams & { cleanupKind: CleanupKind; now?: number },
+): Promise<number> {
+  let closed = 0;
+  const now = params.now ?? Date.now();
+  for (const tab of tabs) {
+    closed +=
+      tab.kind === "durable"
+        ? await closeDurableTab(tab, params, now, params.cleanupKind)
+        : await performVolatileCleanup(tab, params, params.cleanupKind);
   }
   return closed;
 }
 
-export function __resetTrackedSessionBrowserTabsForTests(): void {
-  trackedTabsBySession.clear();
+/** Closes and untracks tabs for the supplied session keys. */
+export async function closeTrackedBrowserTabsForSessions(
+  params: CloseParams & { sessionKeys: Array<string | undefined>; now?: number },
+): Promise<number> {
+  let dashboardClosed = 0;
+  if (
+    readDurableTabs(params.onWarn).some((tab) => tab.dashboard) ||
+    readBrowserDashboardStopIntents().length > 0
+  ) {
+    const { reconcileBrowserDashboards } = await import("../browser-dashboard.js");
+    dashboardClosed = await reconcileBrowserDashboards(params);
+  }
+  const tabs = selectTrackedTabsForSessions({
+    durable: readDurableTabs(params.onWarn),
+    sessionKeys: params.sessionKeys,
+  });
+  return (
+    dashboardClosed +
+    (await closeTrackedTabs(tabs, {
+      ...params,
+      cleanupKind: "lifecycle",
+    }))
+  );
 }
 
-export function __countTrackedSessionBrowserTabsForTests(sessionKey?: string): number {
-  if (typeof sessionKey === "string" && sessionKey.trim()) {
-    return trackedTabsBySession.get(normalizeSessionKey(sessionKey))?.size ?? 0;
+/** Closes and untracks stale, pending, or excess browser tabs. */
+export async function sweepTrackedBrowserTabs(
+  params: CloseParams & {
+    now?: number;
+    idleMs?: number;
+    maxTabsPerSession?: number;
+    ordinaryCleanup?: boolean;
+    sessionFilter?: (sessionKey: string) => boolean;
+  },
+): Promise<number> {
+  const now = params.now ?? Date.now();
+  let dashboardClosed = 0;
+  if (
+    readDurableTabs(params.onWarn).some((tab) => tab.dashboard) ||
+    readBrowserDashboardStopIntents().length > 0
+  ) {
+    const { reconcileBrowserDashboards } = await import("../browser-dashboard.js");
+    dashboardClosed = await reconcileBrowserDashboards(params);
   }
-  let count = 0;
-  for (const tracked of trackedTabsBySession.values()) {
-    count += tracked.size;
+  if (params.ordinaryCleanup === false) {
+    return dashboardClosed;
   }
-  return count;
+  const volatile: VolatileTab[] = [];
+  for (const tabs of volatileTabsBySession().values()) {
+    volatile.push(...tabs.values());
+  }
+  return (
+    dashboardClosed +
+    (await closeTrackedTabs(
+      selectStaleTrackedTabs({
+        tabs: [...readDurableTabs(params.onWarn), ...volatile],
+        now,
+        idleMs: params.idleMs,
+        maxTabsPerSession: params.maxTabsPerSession,
+        sessionFilter: params.sessionFilter,
+      }),
+      { ...params, now, cleanupKind: "sweep" },
+    ))
+  );
+}
+
+/** Browser dashboard lifetime changes reuse fingerprinted cleanup and its claim owner. */
+export async function closeBrowserDashboardTabs(
+  tabs: Array<BrowserSessionTabRecord & { storageKey: string }>,
+  params: CloseParams = {},
+): Promise<number> {
+  return await closeTrackedTabs(
+    tabs.map((tab) => ({ ...tab, kind: "durable" as const })),
+    {
+      ...params,
+      getResolvedBrowserConfig:
+        params.getResolvedBrowserConfig ??
+        (async () => {
+          const { getBrowserControlState } = await import("../browser-control-state.js");
+          return getBrowserControlState()?.resolved ?? null;
+        }),
+      cleanupKind: "lifecycle",
+    },
+  );
 }

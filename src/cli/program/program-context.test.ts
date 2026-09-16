@@ -1,3 +1,4 @@
+// Program context tests cover command context creation and propagation.
 import { Command } from "commander";
 import { describe, expect, it } from "vitest";
 import type { ProgramContext } from "./context.js";
@@ -6,9 +7,8 @@ import { getProgramContext, setProgramContext } from "./program-context.js";
 function makeCtx(version: string): ProgramContext {
   return {
     programVersion: version,
-    channelOptions: ["telegram"],
-    messageChannelOptions: "telegram",
-    agentChannelOptions: "last|telegram",
+    messageChannelOptions: "quietchat",
+    agentChannelOptions: "last|quietchat",
   };
 }
 

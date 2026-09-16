@@ -1,71 +1,83 @@
+import type { OpenAICompatibleModelDiscoveryOptions } from "openclaw/plugin-sdk/provider-catalog-live-runtime";
+// Minimax provider module implements model/runtime integration.
 import type {
   ModelDefinitionConfig,
   ModelProviderConfig,
 } from "openclaw/plugin-sdk/provider-model-shared";
 import {
-  MINIMAX_DEFAULT_MODEL_ID,
-  MINIMAX_TEXT_MODEL_CATALOG,
-  MINIMAX_TEXT_MODEL_ORDER,
-} from "./provider-models.js";
+  DEFAULT_MINIMAX_MAX_TOKENS,
+  MINIMAX_API_BASE_URL,
+  resolveMinimaxApiCost,
+} from "./model-definitions.js";
+import { MINIMAX_TEXT_MODEL_CATALOG, MINIMAX_TEXT_MODEL_ORDER } from "./provider-models.js";
 
-const MINIMAX_PORTAL_BASE_URL = "https://api.minimax.io/anthropic";
-const MINIMAX_DEFAULT_CONTEXT_WINDOW = 204800;
-const MINIMAX_DEFAULT_MAX_TOKENS = 131072;
-const MINIMAX_API_COST = {
-  input: 0.3,
-  output: 1.2,
-  cacheRead: 0.06,
-  cacheWrite: 0.375,
-};
-
-function buildMinimaxModel(params: {
-  id: string;
-  name: string;
-  reasoning: boolean;
-  input: ModelDefinitionConfig["input"];
-}): ModelDefinitionConfig {
+export function buildMinimaxModelDiscovery(
+  { baseUrl, api }: Pick<ModelProviderConfig, "baseUrl" | "api">,
+  authMode: "api_key" | "oauth" = "api_key",
+): OpenAICompatibleModelDiscoveryOptions {
+  const usesOpenAI = api === "openai-completions";
+  const basePath = new URL(baseUrl).pathname.replace(/\/+$/, "");
   return {
-    id: params.id,
-    name: params.name,
-    reasoning: params.reasoning,
-    input: params.input,
-    cost: MINIMAX_API_COST,
-    contextWindow: MINIMAX_DEFAULT_CONTEXT_WINDOW,
-    maxTokens: MINIMAX_DEFAULT_MAX_TOKENS,
+    endpointPath: usesOpenAI || basePath.endsWith("/v1") ? "models" : "v1/models",
+    // Anthropic API keys use X-Api-Key; OpenAI-compatible catalogs and portal
+    // OAuth use Bearer authentication.
+    buildRequestHeaders: ({ apiKey, discoveryApiKey }): HeadersInit => {
+      const requestApiKey = discoveryApiKey ?? apiKey;
+      if (!requestApiKey) {
+        return {};
+      }
+      return usesOpenAI || authMode === "oauth"
+        ? { Authorization: `Bearer ${requestApiKey}` }
+        : { "X-Api-Key": requestApiKey };
+    },
   };
 }
 
-function buildMinimaxTextModel(params: {
-  id: string;
-  name: string;
-  reasoning: boolean;
-}): ModelDefinitionConfig {
-  return buildMinimaxModel({ ...params, input: ["text"] });
+export function resolveMinimaxCatalogBaseUrl(env: NodeJS.ProcessEnv = process.env): string {
+  const rawHost = env.MINIMAX_API_HOST?.trim();
+  if (!rawHost) {
+    return MINIMAX_API_BASE_URL;
+  }
+
+  try {
+    const url = new URL(rawHost);
+    const basePath = url.pathname.replace(/\/+$/, "");
+    if (basePath.endsWith("/anthropic")) {
+      return `${url.origin}${basePath}`;
+    }
+    return `${url.origin}/anthropic`;
+  } catch {
+    return MINIMAX_API_BASE_URL;
+  }
 }
 
 function buildMinimaxCatalog(): ModelDefinitionConfig[] {
   return MINIMAX_TEXT_MODEL_ORDER.map((id) => {
     const model = MINIMAX_TEXT_MODEL_CATALOG[id];
-    return buildMinimaxTextModel({
+    return {
       id,
       name: model.name,
       reasoning: model.reasoning,
-    });
+      input: [...model.input],
+      cost: resolveMinimaxApiCost(id),
+      contextWindow: model.contextWindow,
+      maxTokens: DEFAULT_MINIMAX_MAX_TOKENS,
+    };
   });
 }
 
-export function buildMinimaxProvider(): ModelProviderConfig {
+export function buildMinimaxProvider(env?: NodeJS.ProcessEnv): ModelProviderConfig {
   return {
-    baseUrl: MINIMAX_PORTAL_BASE_URL,
+    baseUrl: resolveMinimaxCatalogBaseUrl(env),
     api: "anthropic-messages",
     authHeader: true,
     models: buildMinimaxCatalog(),
   };
 }
 
-export function buildMinimaxPortalProvider(): ModelProviderConfig {
+export function buildMinimaxPortalProvider(env?: NodeJS.ProcessEnv): ModelProviderConfig {
   return {
-    baseUrl: MINIMAX_PORTAL_BASE_URL,
+    baseUrl: resolveMinimaxCatalogBaseUrl(env),
     api: "anthropic-messages",
     authHeader: true,
     models: buildMinimaxCatalog(),

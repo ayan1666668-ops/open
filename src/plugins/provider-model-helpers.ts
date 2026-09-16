@@ -1,36 +1,22 @@
 import { normalizeModelCompat } from "./provider-model-compat.js";
-import type { ProviderResolveDynamicModelContext, ProviderRuntimeModel } from "./types.js";
+import {
+  buildFamilyForwardCompatModel,
+  buildFirstTemplateModel,
+} from "./provider-model-construction.js";
+import type { ProviderRuntimeModel } from "./provider-runtime-model.types.js";
 
-export function matchesExactOrPrefix(id: string, values: readonly string[]): boolean {
-  const normalizedId = id.trim().toLowerCase();
-  return values.some((value) => {
-    const normalizedValue = value.trim().toLowerCase();
-    return normalizedId === normalizedValue || normalizedId.startsWith(normalizedValue);
-  });
+export { matchesExactOrPrefix } from "./provider-model-id-match.js";
+
+// Cold catalog completion consumes these results without runner normalization.
+// Keep its constructed-model contract separate from policy-free metadata construction.
+export function cloneFirstTemplateModel(
+  params: Parameters<typeof buildFirstTemplateModel>[0],
+): ProviderRuntimeModel | undefined {
+  return buildFirstTemplateModel(params, normalizeModelCompat);
 }
 
-export function cloneFirstTemplateModel(params: {
-  providerId: string;
-  modelId: string;
-  templateIds: readonly string[];
-  ctx: ProviderResolveDynamicModelContext;
-  patch?: Partial<ProviderRuntimeModel>;
-}): ProviderRuntimeModel | undefined {
-  const trimmedModelId = params.modelId.trim();
-  for (const templateId of [...new Set(params.templateIds)].filter(Boolean)) {
-    const template = params.ctx.modelRegistry.find(
-      params.providerId,
-      templateId,
-    ) as ProviderRuntimeModel | null;
-    if (!template) {
-      continue;
-    }
-    return normalizeModelCompat({
-      ...template,
-      id: trimmedModelId,
-      name: trimmedModelId,
-      ...params.patch,
-    } as ProviderRuntimeModel);
-  }
-  return undefined;
+export function resolveFamilyForwardCompatModel(
+  params: Parameters<typeof buildFamilyForwardCompatModel>[0],
+): ProviderRuntimeModel | undefined {
+  return buildFamilyForwardCompatModel(params, normalizeModelCompat);
 }

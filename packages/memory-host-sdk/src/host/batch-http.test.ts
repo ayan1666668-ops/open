@@ -1,74 +1,75 @@
+// Memory Host SDK tests cover batch http behavior.
+import { createRetryRunner } from "@openclaw/retry";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { postJsonWithRetry } from "./batch-http.js";
+import { withRemoteHttpResponse } from "./remote-http.js";
 
-vi.mock("../../../../src/infra/retry.js", () => ({
-  retryAsync: vi.fn(async (run: () => Promise<unknown>) => await run()),
+vi.mock("./remote-http.js", () => ({
+  withRemoteHttpResponse: vi.fn(),
 }));
 
-vi.mock("./post-json.js", () => ({
-  postJson: vi.fn(),
-}));
+const remoteHttpMock = vi.mocked(withRemoteHttpResponse);
 
 describe("postJsonWithRetry", () => {
-  let retryAsyncMock: ReturnType<
-    typeof vi.mocked<typeof import("../../../../src/infra/retry.js").retryAsync>
-  >;
-  let postJsonMock: ReturnType<typeof vi.mocked<typeof import("./post-json.js").postJson>>;
-  let postJsonWithRetry: typeof import("./batch-http.js").postJsonWithRetry;
-
-  beforeEach(async () => {
-    vi.resetModules();
+  beforeEach(() => {
     vi.clearAllMocks();
-    vi.resetModules();
-    ({ postJsonWithRetry } = await import("./batch-http.js"));
-    const retryModule = await import("../../../../src/infra/retry.js");
-    const postJsonModule = await import("./post-json.js");
-    retryAsyncMock = vi.mocked(retryModule.retryAsync);
-    postJsonMock = vi.mocked(postJsonModule.postJson);
   });
 
-  it("posts JSON and returns parsed response payload", async () => {
-    postJsonMock.mockImplementationOnce(async (params) => {
-      return await params.parse({ ok: true, ids: [1, 2] });
-    });
+  it("returns the batch payload after a transient failure", async () => {
+    remoteHttpMock
+      .mockImplementationOnce(async (params) =>
+        params.onResponse(new Response("busy", { status: 503 })),
+      )
+      .mockImplementationOnce(async (params) =>
+        params.onResponse(Response.json({ ok: true, ids: [1, 2] })),
+      );
+    const waits: number[] = [];
 
-    const result = await postJsonWithRetry<{ ok: boolean; ids: number[] }>({
-      url: "https://memory.example/v1/batch",
-      headers: { Authorization: "Bearer test" },
-      body: { chunks: ["a", "b"] },
-      errorPrefix: "memory batch failed",
-    });
-
-    expect(result).toEqual({ ok: true, ids: [1, 2] });
-    expect(postJsonMock).toHaveBeenCalledWith(
-      expect.objectContaining({
+    await expect(
+      postJsonWithRetry({
         url: "https://memory.example/v1/batch",
-        headers: { Authorization: "Bearer test" },
+        headers: {},
         body: { chunks: ["a", "b"] },
         errorPrefix: "memory batch failed",
-        attachStatus: true,
+        retryImpl: createRetryRunner({
+          random: () => 0.5,
+          sleep: async (delayMs) => void waits.push(delayMs),
+        }),
       }),
-    );
+    ).resolves.toEqual({ ok: true, ids: [1, 2] });
 
-    const retryOptions = retryAsyncMock.mock.calls[0]?.[1] as
-      | {
-          attempts: number;
-          minDelayMs: number;
-          maxDelayMs: number;
-          shouldRetry: (err: unknown) => boolean;
-        }
-      | undefined;
-    expect(retryOptions?.attempts).toBe(3);
-    expect(retryOptions?.minDelayMs).toBe(300);
-    expect(retryOptions?.maxDelayMs).toBe(2000);
-    expect(retryOptions?.shouldRetry({ status: 429 })).toBe(true);
-    expect(retryOptions?.shouldRetry({ status: 503 })).toBe(true);
-    expect(retryOptions?.shouldRetry({ status: 400 })).toBe(false);
+    expect(remoteHttpMock).toHaveBeenCalledTimes(2);
+    expect(waits).toEqual([300]);
   });
 
-  it("attaches status to non-ok errors", async () => {
-    postJsonMock.mockRejectedValueOnce(
-      Object.assign(new Error("memory batch failed: 503 backend down"), { status: 503 }),
+  it.each([429, 503])("keeps HTTP %s on the existing short batch retry budget", async (status) => {
+    remoteHttpMock.mockImplementation(async (params) =>
+      params.onResponse(new Response("retry later", { status, headers: { "Retry-After": "60" } })),
     );
+    const waits: number[] = [];
+
+    await expect(
+      postJsonWithRetry({
+        url: "https://memory.example/v1/batch",
+        headers: {},
+        body: { chunks: ["a"] },
+        errorPrefix: "memory batch failed",
+        retryImpl: createRetryRunner({
+          random: () => 0.5,
+          sleep: async (delayMs) => void waits.push(delayMs),
+        }),
+      }),
+    ).rejects.toMatchObject({ status, retryAfterMs: 60_000 });
+
+    expect(remoteHttpMock).toHaveBeenCalledTimes(3);
+    expect(waits).toEqual([300, 600]);
+  });
+
+  it("does not retry rejected batch input", async () => {
+    remoteHttpMock.mockImplementationOnce(async (params) =>
+      params.onResponse(new Response("invalid input", { status: 400 })),
+    );
+    const sleep = vi.fn(async () => {});
 
     await expect(
       postJsonWithRetry({
@@ -76,10 +77,11 @@ describe("postJsonWithRetry", () => {
         headers: {},
         body: { chunks: [] },
         errorPrefix: "memory batch failed",
+        retryImpl: createRetryRunner({ sleep }),
       }),
-    ).rejects.toMatchObject({
-      message: expect.stringContaining("memory batch failed: 503 backend down"),
-      status: 503,
-    });
+    ).rejects.toMatchObject({ status: 400, message: "memory batch failed (400): invalid input" });
+
+    expect(remoteHttpMock).toHaveBeenCalledOnce();
+    expect(sleep).not.toHaveBeenCalled();
   });
 });

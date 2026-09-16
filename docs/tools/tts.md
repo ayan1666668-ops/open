@@ -1,416 +1,243 @@
 ---
-summary: "Text-to-speech (TTS) for outbound replies"
+summary: "Index of the OpenClaw text-to-speech documentation, one page per reader job"
+title: "Text-to-speech"
+sidebarTitle: "Text to speech (TTS)"
 read_when:
   - Enabling text-to-speech for replies
-  - Configuring TTS providers or limits
-  - Using /tts commands
-title: "Text-to-Speech"
+  - Configuring a TTS provider, fallback chain, or persona
+  - Using /tts commands or directives
 ---
 
-# Text-to-speech (TTS)
+OpenClaw converts outbound replies into native voice messages on Feishu, Matrix,
+Telegram, and WhatsApp. Every other channel receives an audio attachment.
+Telephony and Talk receive PCM or Ulaw streams.
 
-OpenClaw can convert outbound replies into audio using ElevenLabs, Microsoft, or OpenAI.
-It works anywhere OpenClaw can send audio.
+TTS is the speech-output half of [Talk](/nodes/talk)'s `stt-tts` mode (`talk.speak` calls this
+same synthesis path). Provider-native `realtime` Talk sessions synthesize
+speech inside the realtime provider instead. `transcription` sessions never
+synthesize an assistant voice reply.
 
-## Supported services
+This page is an index. Text-to-speech is documented on seven pages, one per
+reader job. Open the page that matches your task.
 
-- **ElevenLabs** (primary or fallback provider)
-- **Microsoft** (primary or fallback provider; current bundled implementation uses `node-edge-tts`)
-- **OpenAI** (primary or fallback provider; also used for summaries)
+| Page                                                         | Read it when                                                                                 |
+| ------------------------------------------------------------ | -------------------------------------------------------------------------------------------- |
+| [Text-to-speech quickstart](/tools/tts/quickstart)           | You are turning TTS on, choosing a provider, and testing it from chat.                       |
+| [Text-to-speech configuration](/tools/tts/configuration)     | You need the `tts` config block, a provider snippet, a local engine, or override precedence. |
+| [Text-to-speech personas](/tools/tts/personas)               | You want one stable spoken identity, its provider bindings, and its fallback policy.         |
+| [Commands and directives](/tools/tts/commands)               | You need `[[tts:...]]` directives, the `/tts` commands, or where local preferences live.     |
+| [Output and Auto-TTS behavior](/tools/tts/output)            | You need the audio format per channel, transcoding rules, or when Auto-TTS summarizes.       |
+| [Text-to-speech field reference](/tools/tts/field-reference) | You need the type, default, env var, or legacy alias for one TTS field.                      |
+| [Agent tool and Gateway RPC](/tools/tts/api)                 | You are calling TTS from an agent tool call or a Gateway RPC method.                         |
 
-### Microsoft speech notes
+## Where each section moved
 
-The bundled Microsoft speech provider currently uses Microsoft Edge's online
-neural TTS service via the `node-edge-tts` library. It's a hosted service (not
-local), uses Microsoft endpoints, and does not require an API key.
-`node-edge-tts` exposes speech configuration options and output formats, but
-not all options are supported by the service. Legacy config and directive input
-using `edge` still works and is normalized to `microsoft`.
+Every section heading from the previous single-page version keeps its anchor
+here, so an existing link such as `/tools/tts#per-agent-voice-overrides` still
+resolves. Each entry points at the page that now holds the content.
 
-Because this path is a public web service without a published SLA or quota,
-treat it as best-effort. If you need guaranteed limits and support, use OpenAI
-or ElevenLabs.
+- <a id="quick-start" />[Quick start](/tools/tts/quickstart#quick-start)
+- <a id="supported-providers" />[Supported providers](/tools/tts/quickstart#supported-providers)
+- <a id="configuration" />[Configuration](/tools/tts/configuration#configuration)
+- <a id="local-speech-swift-and-speech-core" />[Local Speech Swift and speech-core](/tools/tts/configuration#local-speech-swift-and-speech-core)
+- <a id="per-agent-voice-overrides" />[Per-agent voice overrides](/tools/tts/configuration#per-agent-voice-overrides)
+- <a id="personas" />[Personas](/tools/tts/personas#personas)
+- <a id="minimal-persona" />[Minimal persona](/tools/tts/personas#minimal-persona)
+- <a id="full-persona-(provider-specific-shaping)" />[Full persona (provider-specific shaping)](</tools/tts/personas#full-persona-(provider-specific-shaping)>)
+- <a id="persona-resolution" />[Persona resolution](/tools/tts/personas#persona-resolution)
+- <a id="custom-persona-shaping" />[Custom persona shaping](/tools/tts/personas#custom-persona-shaping)
+- <a id="fallback-policy" />[Fallback policy](/tools/tts/personas#fallback-policy)
+- <a id="model-driven-directives" />[Model-driven directives](/tools/tts/commands#model-driven-directives)
+- <a id="slash-commands" />[Slash commands](/tools/tts/commands#slash-commands)
+- <a id="per-user-preferences" />[Per-user preferences](/tools/tts/commands#per-user-preferences)
+- <a id="output-formats" />[Output formats](/tools/tts/output#output-formats)
+- <a id="auto-tts-behavior" />[Auto-TTS behavior](/tools/tts/output#auto-tts-behavior)
+- <a id="field-reference" />[Field reference](/tools/tts/field-reference#field-reference)
+- <a id="inworld-primary" />[Inworld primary](/tools/tts/field-reference#inworld-primary)
+- <a id="agent-tool" />[Agent tool](/tools/tts/api#agent-tool)
+- <a id="gateway-rpc" />[Gateway RPC](/tools/tts/api#gateway-rpc)
+- <a id="full-persona-provider-specific-shaping" />[Full persona (provider-specific shaping)](/tools/tts/personas#full-persona-provider-specific-shaping)
 
-## Optional keys
+## Component anchors
 
-If you want OpenAI or ElevenLabs:
+The previous single-page version also minted an anchor for every step, tab,
+accordion, and field. Those anchors are preserved here so that any deep link
+into the old page still resolves. Nine accordion anchors lost a `-1` suffix
+when the tab that shared their slug moved to a different page. The stub below
+keeps the old id and points at the new one.
 
-- `ELEVENLABS_API_KEY` (or `XI_API_KEY`)
-- `OPENAI_API_KEY`
+**Quickstart**
 
-Microsoft speech does **not** require an API key.
+- <a id="pick-a-provider" />[Pick a provider](/tools/tts/quickstart#pick-a-provider)
+- <a id="set-the-api-key" />[Set the API key](/tools/tts/quickstart#set-the-api-key)
+- <a id="enable-in-config" />[Enable in config](/tools/tts/quickstart#enable-in-config)
+- <a id="try-it-in-chat" />[Try it in chat](/tools/tts/quickstart#try-it-in-chat)
 
-If multiple providers are configured, the selected provider is used first and the others are fallback options.
-Auto-summary uses the configured `summaryModel` (or `agents.defaults.model.primary`),
-so that provider must also be authenticated if you enable summaries.
+**Configuration**
+
+- <a id="azure-speech" />[Azure Speech](/tools/tts/configuration#azure-speech)
+- <a id="elevenlabs" />[ElevenLabs](/tools/tts/configuration#elevenlabs)
+- <a id="fish-audio" />[Fish Audio](/tools/tts/configuration#fish-audio)
+- <a id="google-gemini" />[Google Gemini](/tools/tts/configuration#google-gemini)
+- <a id="gradium" />[Gradium](/tools/tts/configuration#gradium)
+- <a id="inworld" />[Inworld](/tools/tts/configuration#inworld)
+- <a id="local-cli" />[Local CLI](/tools/tts/configuration#local-cli)
+- <a id="microsoft-no-key" />[Microsoft (no key)](/tools/tts/configuration#microsoft-no-key)
+- <a id="minimax" />[MiniMax](/tools/tts/configuration#minimax)
+- <a id="openai-%2B-elevenlabs" />[OpenAI + ElevenLabs](/tools/tts/configuration#openai-%2B-elevenlabs)
+- <a id="openrouter" />[OpenRouter](/tools/tts/configuration#openrouter)
+- <a id="volcengine" />[Volcengine](/tools/tts/configuration#volcengine)
+- <a id="xai" />[xAI](/tools/tts/configuration#xai)
+- <a id="xiaomi-mimo" />[Xiaomi MiMo](/tools/tts/configuration#xiaomi-mimo)
+- <a id="macos-http" />[macOS HTTP](/tools/tts/configuration#macos-http)
+- <a id="macos-cli" />[macOS CLI](/tools/tts/configuration#macos-cli)
+- <a id="linux-cli" />[Linux CLI](/tools/tts/configuration#linux-cli)
+- <a id="windows-cli" />[Windows CLI](/tools/tts/configuration#windows-cli)
+
+**Field reference**
+
+- <a id="top-level-tts" />[Top-level tts.*](/tools/tts/field-reference#top-level-tts)
+- <a id="param-auto" />[Top-level tts.* → `auto`](/tools/tts/field-reference#param-auto)
+- <a id="param-enabled" />[Top-level tts.* → `enabled`](/tools/tts/field-reference#param-enabled)
+- <a id="param-mode" />[Top-level tts.* → `mode`](/tools/tts/field-reference#param-mode)
+- <a id="param-provider" />[Top-level tts.* → `provider`](/tools/tts/field-reference#param-provider)
+- <a id="param-persona" />[Top-level tts.* → `persona`](/tools/tts/field-reference#param-persona)
+- <a id="param-personas-id" />[Top-level tts.* → `personas.<id>`](/tools/tts/field-reference#param-personas-id)
+- <a id="param-summary-model" />[Top-level tts.* → `summaryModel`](/tools/tts/field-reference#param-summary-model)
+- <a id="param-model-overrides" />[Top-level tts.* → `modelOverrides`](/tools/tts/field-reference#param-model-overrides)
+- <a id="param-providers-id" />[Top-level tts.* → `providers.<id>`](/tools/tts/field-reference#param-providers-id)
+- <a id="param-max-text-length" />[Top-level tts.* → `maxTextLength`](/tools/tts/field-reference#param-max-text-length)
+- <a id="param-timeout-ms" />[Top-level tts.* → `timeoutMs`](/tools/tts/field-reference#param-timeout-ms)
+- <a id="azure-speech-1" />[Azure Speech](/tools/tts/field-reference#azure-speech)
+- <a id="param-api-key" />[Azure Speech → `apiKey`](/tools/tts/field-reference#param-api-key)
+- <a id="param-region" />[Azure Speech → `region`](/tools/tts/field-reference#param-region)
+- <a id="param-endpoint" />[Azure Speech → `endpoint`](/tools/tts/field-reference#param-endpoint)
+- <a id="param-speaker-voice" />[Azure Speech → `speakerVoice`](/tools/tts/field-reference#param-speaker-voice)
+- <a id="param-lang" />[Azure Speech → `lang`](/tools/tts/field-reference#param-lang)
+- <a id="param-output-format" />[Azure Speech → `outputFormat`](/tools/tts/field-reference#param-output-format)
+- <a id="param-voice-note-output-format" />[Azure Speech → `voiceNoteOutputFormat`](/tools/tts/field-reference#param-voice-note-output-format)
+- <a id="elevenlabs-1" />[ElevenLabs](/tools/tts/field-reference#elevenlabs)
+- <a id="param-api-key-1" />[ElevenLabs → `apiKey`](/tools/tts/field-reference#param-api-key-1)
+- <a id="param-model" />[ElevenLabs → `model`](/tools/tts/field-reference#param-model)
+- <a id="param-speaker-voice-id" />[ElevenLabs → `speakerVoiceId`](/tools/tts/field-reference#param-speaker-voice-id)
+- <a id="param-voice-settings" />[ElevenLabs → `voiceSettings`](/tools/tts/field-reference#param-voice-settings)
+- <a id="param-apply-text-normalization" />[ElevenLabs → `applyTextNormalization`](/tools/tts/field-reference#param-apply-text-normalization)
+- <a id="param-language-code" />[ElevenLabs → `languageCode`](/tools/tts/field-reference#param-language-code)
+- <a id="param-seed" />[ElevenLabs → `seed`](/tools/tts/field-reference#param-seed)
+- <a id="param-base-url" />[ElevenLabs → `baseUrl`](/tools/tts/field-reference#param-base-url)
+- <a id="google-gemini-1" />[Google Gemini](/tools/tts/field-reference#google-gemini)
+- <a id="param-api-key-2" />[Google Gemini → `apiKey`](/tools/tts/field-reference#param-api-key-2)
+- <a id="param-model-1" />[Google Gemini → `model`](/tools/tts/field-reference#param-model-1)
+- <a id="param-speaker-voice-1" />[Google Gemini → `speakerVoice`](/tools/tts/field-reference#param-speaker-voice-1)
+- <a id="param-audio-profile" />[Google Gemini → `audioProfile`](/tools/tts/field-reference#param-audio-profile)
+- <a id="param-speaker-name" />[Google Gemini → `speakerName`](/tools/tts/field-reference#param-speaker-name)
+- <a id="param-prompt-template" />[Google Gemini → `promptTemplate`](/tools/tts/field-reference#param-prompt-template)
+- <a id="param-persona-prompt" />[Google Gemini → `personaPrompt`](/tools/tts/field-reference#param-persona-prompt)
+- <a id="param-base-url-1" />[Google Gemini → `baseUrl`](/tools/tts/field-reference#param-base-url-1)
+- <a id="gradium-1" />[Gradium](/tools/tts/field-reference#gradium)
+- <a id="param-api-key-3" />[Gradium → `apiKey`](/tools/tts/field-reference#param-api-key-3)
+- <a id="param-base-url-2" />[Gradium → `baseUrl`](/tools/tts/field-reference#param-base-url-2)
+- <a id="param-speaker-voice-id-1" />[Gradium → `speakerVoiceId`](/tools/tts/field-reference#param-speaker-voice-id-1)
+- <a id="inworld-1" />[Inworld](/tools/tts/field-reference#inworld)
+- <a id="param-api-key-4" />[Inworld → `apiKey`](/tools/tts/field-reference#param-api-key-4)
+- <a id="param-base-url-3" />[Inworld → `baseUrl`](/tools/tts/field-reference#param-base-url-3)
+- <a id="param-model-id" />[Inworld → `modelId`](/tools/tts/field-reference#param-model-id)
+- <a id="param-speaker-voice-id-2" />[Inworld → `speakerVoiceId`](/tools/tts/field-reference#param-speaker-voice-id-2)
+- <a id="param-temperature" />[Inworld → `temperature`](/tools/tts/field-reference#param-temperature)
+- <a id="local-cli-tts-local-cli" />[Local CLI (tts-local-cli)](/tools/tts/field-reference#local-cli-tts-local-cli)
+- <a id="param-command" />[Local CLI (tts-local-cli) → `command`](/tools/tts/field-reference#param-command)
+- <a id="param-args" />[Local CLI (tts-local-cli) → `args`](/tools/tts/field-reference#param-args)
+- <a id="param-output-format-1" />[Local CLI (tts-local-cli) → `outputFormat`](/tools/tts/field-reference#param-output-format-1)
+- <a id="param-timeout-ms-1" />[Local CLI (tts-local-cli) → `timeoutMs`](/tools/tts/field-reference#param-timeout-ms-1)
+- <a id="param-cwd" />[Local CLI (tts-local-cli) → `cwd`](/tools/tts/field-reference#param-cwd)
+- <a id="param-env" />[Local CLI (tts-local-cli) → `env`](/tools/tts/field-reference#param-env)
+- <a id="microsoft-no-api-key" />[Microsoft (no API key)](/tools/tts/field-reference#microsoft-no-api-key)
+- <a id="param-enabled-1" />[Microsoft (no API key) → `enabled`](/tools/tts/field-reference#param-enabled-1)
+- <a id="param-speaker-voice-2" />[Microsoft (no API key) → `speakerVoice`](/tools/tts/field-reference#param-speaker-voice-2)
+- <a id="param-lang-1" />[Microsoft (no API key) → `lang`](/tools/tts/field-reference#param-lang-1)
+- <a id="param-output-format-2" />[Microsoft (no API key) → `outputFormat`](/tools/tts/field-reference#param-output-format-2)
+- <a id="param-rate-pitch-volume" />[Microsoft (no API key) → `rate / pitch / volume`](/tools/tts/field-reference#param-rate-pitch-volume)
+- <a id="param-save-subtitles" />[Microsoft (no API key) → `saveSubtitles`](/tools/tts/field-reference#param-save-subtitles)
+- <a id="param-proxy" />[Microsoft (no API key) → `proxy`](/tools/tts/field-reference#param-proxy)
+- <a id="param-timeout-ms-2" />[Microsoft (no API key) → `timeoutMs`](/tools/tts/field-reference#param-timeout-ms-2)
+- <a id="param-edge" />[Microsoft (no API key) → `edge.*`](/tools/tts/field-reference#param-edge)
+- <a id="minimax-1" />[MiniMax](/tools/tts/field-reference#minimax)
+- <a id="param-api-key-5" />[MiniMax → `apiKey`](/tools/tts/field-reference#param-api-key-5)
+- <a id="param-base-url-4" />[MiniMax → `baseUrl`](/tools/tts/field-reference#param-base-url-4)
+- <a id="param-model-2" />[MiniMax → `model`](/tools/tts/field-reference#param-model-2)
+- <a id="param-speaker-voice-id-3" />[MiniMax → `speakerVoiceId`](/tools/tts/field-reference#param-speaker-voice-id-3)
+- <a id="param-speed" />[MiniMax → `speed`](/tools/tts/field-reference#param-speed)
+- <a id="param-vol" />[MiniMax → `vol`](/tools/tts/field-reference#param-vol)
+- <a id="param-pitch" />[MiniMax → `pitch`](/tools/tts/field-reference#param-pitch)
+- <a id="openai" />[OpenAI](/tools/tts/field-reference#openai)
+- <a id="param-api-key-6" />[OpenAI → `apiKey`](/tools/tts/field-reference#param-api-key-6)
+- <a id="param-model-3" />[OpenAI → `model`](/tools/tts/field-reference#param-model-3)
+- <a id="param-speaker-voice-3" />[OpenAI → `speakerVoice`](/tools/tts/field-reference#param-speaker-voice-3)
+- <a id="param-instructions" />[OpenAI → `instructions`](/tools/tts/field-reference#param-instructions)
+- <a id="param-response-format" />[OpenAI → `responseFormat`](/tools/tts/field-reference#param-response-format)
+- <a id="param-extra-body-extra-body" />[OpenAI → `extraBody / extra_body`](/tools/tts/field-reference#param-extra-body-extra-body)
+- <a id="param-base-url-5" />[OpenAI → `baseUrl`](/tools/tts/field-reference#param-base-url-5)
+- <a id="openrouter-1" />[OpenRouter](/tools/tts/field-reference#openrouter)
+- <a id="param-api-key-7" />[OpenRouter → `apiKey`](/tools/tts/field-reference#param-api-key-7)
+- <a id="param-base-url-6" />[OpenRouter → `baseUrl`](/tools/tts/field-reference#param-base-url-6)
+- <a id="param-model-4" />[OpenRouter → `model`](/tools/tts/field-reference#param-model-4)
+- <a id="param-speaker-voice-4" />[OpenRouter → `speakerVoice`](/tools/tts/field-reference#param-speaker-voice-4)
+- <a id="param-response-format-1" />[OpenRouter → `responseFormat`](/tools/tts/field-reference#param-response-format-1)
+- <a id="param-speed-1" />[OpenRouter → `speed`](/tools/tts/field-reference#param-speed-1)
+- <a id="volcengine-byteplus-seed-speech" />[Volcengine (BytePlus Seed Speech)](/tools/tts/field-reference#volcengine-byteplus-seed-speech)
+- <a id="param-api-key-8" />[Volcengine (BytePlus Seed Speech) → `apiKey`](/tools/tts/field-reference#param-api-key-8)
+- <a id="param-resource-id" />[Volcengine (BytePlus Seed Speech) → `resourceId`](/tools/tts/field-reference#param-resource-id)
+- <a id="param-app-key" />[Volcengine (BytePlus Seed Speech) → `appKey`](/tools/tts/field-reference#param-app-key)
+- <a id="param-base-url-7" />[Volcengine (BytePlus Seed Speech) → `baseUrl`](/tools/tts/field-reference#param-base-url-7)
+- <a id="param-speaker-voice-5" />[Volcengine (BytePlus Seed Speech) → `speakerVoice`](/tools/tts/field-reference#param-speaker-voice-5)
+- <a id="param-speed-ratio" />[Volcengine (BytePlus Seed Speech) → `speedRatio`](/tools/tts/field-reference#param-speed-ratio)
+- <a id="param-emotion" />[Volcengine (BytePlus Seed Speech) → `emotion`](/tools/tts/field-reference#param-emotion)
+- <a id="param-app-id-token-cluster" />[Volcengine (BytePlus Seed Speech) → `appId / token / cluster`](/tools/tts/field-reference#param-app-id-token-cluster)
+- <a id="xai-1" />[xAI](/tools/tts/field-reference#xai)
+- <a id="param-api-key-9" />[xAI → `apiKey`](/tools/tts/field-reference#param-api-key-9)
+- <a id="param-base-url-8" />[xAI → `baseUrl`](/tools/tts/field-reference#param-base-url-8)
+- <a id="param-speaker-voice-id-4" />[xAI → `speakerVoiceId`](/tools/tts/field-reference#param-speaker-voice-id-4)
+- <a id="param-language" />[xAI → `language`](/tools/tts/field-reference#param-language)
+- <a id="param-response-format-2" />[xAI → `responseFormat`](/tools/tts/field-reference#param-response-format-2)
+- <a id="param-speed-2" />[xAI → `speed`](/tools/tts/field-reference#param-speed-2)
+- <a id="xiaomi-mimo-1" />[Xiaomi MiMo](/tools/tts/field-reference#xiaomi-mimo)
+- <a id="param-api-key-10" />[Xiaomi MiMo → `apiKey`](/tools/tts/field-reference#param-api-key-10)
+- <a id="param-base-url-9" />[Xiaomi MiMo → `baseUrl`](/tools/tts/field-reference#param-base-url-9)
+- <a id="param-model-5" />[Xiaomi MiMo → `model`](/tools/tts/field-reference#param-model-5)
+- <a id="param-speaker-voice-6" />[Xiaomi MiMo → `speakerVoice`](/tools/tts/field-reference#param-speaker-voice-6)
+- <a id="param-format" />[Xiaomi MiMo → `format`](/tools/tts/field-reference#param-format)
+- <a id="param-style" />[Xiaomi MiMo → `style`](/tools/tts/field-reference#param-style)
 
 ## Service links
 
-- [OpenAI Text-to-Speech guide](https://platform.openai.com/docs/guides/text-to-speech)
-- [OpenAI Audio API reference](https://platform.openai.com/docs/api-reference/audio)
-- [ElevenLabs Text to Speech](https://elevenlabs.io/docs/api-reference/text-to-speech)
+- [Azure Speech provider](/providers/azure-speech)
+- [Azure Speech REST text-to-speech](https://learn.microsoft.com/azure/ai-services/speech-service/rest-text-to-speech)
+- [ElevenLabs provider](/providers/elevenlabs)
 - [ElevenLabs Authentication](https://elevenlabs.io/docs/api-reference/authentication)
-- [node-edge-tts](https://github.com/SchneeHertz/node-edge-tts)
+- [ElevenLabs Text to Speech](https://elevenlabs.io/docs/api-reference/text-to-speech)
+- [Fish Audio provider](/providers/fish-audio)
+- [Gradium](/providers/gradium)
+- [Inworld provider](/providers/inworld)
+- [Inworld TTS API](https://docs.inworld.ai/tts/tts)
 - [Microsoft Speech output formats](https://learn.microsoft.com/azure/ai-services/speech-service/rest-text-to-speech#audio-outputs)
+- [MiniMax provider](/providers/minimax)
+- [MiniMax T2A v2 API](https://platform.minimaxi.com/document/T2A%20V2)
+- [node-edge-tts](https://github.com/SchneeHertz/node-edge-tts)
+- [OpenAI provider](/providers/openai)
+- [OpenAI Audio API reference](https://platform.openai.com/docs/api-reference/audio)
+- [OpenAI text-to-speech guide](https://platform.openai.com/docs/guides/text-to-speech)
+- [speech-core](https://github.com/soniqo/speech-core)
+- [Speech Swift](https://github.com/soniqo/speech-swift)
+- [Volcengine TTS HTTP API](/providers/volcengine#text-to-speech)
+- [xAI provider](/providers/xai)
+- [xAI text to speech](https://docs.x.ai/developers/rest-api-reference/inference/voice#text-to-speech-rest)
+- [Xiaomi MiMo speech synthesis](/providers/xiaomi#text-to-speech)
 
-## Is it enabled by default?
+## Related
 
-No. Auto‑TTS is **off** by default. Enable it in config with
-`messages.tts.auto` or per session with `/tts always` (alias: `/tts on`).
-
-When `messages.tts.provider` is unset, OpenClaw picks the first configured
-speech provider in registry auto-select order.
-
-## Config
-
-TTS config lives under `messages.tts` in `openclaw.json`.
-Full schema is in [Gateway configuration](/gateway/configuration).
-
-### Minimal config (enable + provider)
-
-```json5
-{
-  messages: {
-    tts: {
-      auto: "always",
-      provider: "elevenlabs",
-    },
-  },
-}
-```
-
-### OpenAI primary with ElevenLabs fallback
-
-```json5
-{
-  messages: {
-    tts: {
-      auto: "always",
-      provider: "openai",
-      summaryModel: "openai/gpt-4.1-mini",
-      modelOverrides: {
-        enabled: true,
-      },
-      providers: {
-        openai: {
-          apiKey: "openai_api_key",
-          baseUrl: "https://api.openai.com/v1",
-          model: "gpt-4o-mini-tts",
-          voice: "alloy",
-        },
-        elevenlabs: {
-          apiKey: "elevenlabs_api_key",
-          baseUrl: "https://api.elevenlabs.io",
-          voiceId: "voice_id",
-          modelId: "eleven_multilingual_v2",
-          seed: 42,
-          applyTextNormalization: "auto",
-          languageCode: "en",
-          voiceSettings: {
-            stability: 0.5,
-            similarityBoost: 0.75,
-            style: 0.0,
-            useSpeakerBoost: true,
-            speed: 1.0,
-          },
-        },
-      },
-    },
-  },
-}
-```
-
-### Microsoft primary (no API key)
-
-```json5
-{
-  messages: {
-    tts: {
-      auto: "always",
-      provider: "microsoft",
-      providers: {
-        microsoft: {
-          enabled: true,
-          voice: "en-US-MichelleNeural",
-          lang: "en-US",
-          outputFormat: "audio-24khz-48kbitrate-mono-mp3",
-          rate: "+10%",
-          pitch: "-5%",
-        },
-      },
-    },
-  },
-}
-```
-
-### Disable Microsoft speech
-
-```json5
-{
-  messages: {
-    tts: {
-      providers: {
-        microsoft: {
-          enabled: false,
-        },
-      },
-    },
-  },
-}
-```
-
-### Custom limits + prefs path
-
-```json5
-{
-  messages: {
-    tts: {
-      auto: "always",
-      maxTextLength: 4000,
-      timeoutMs: 30000,
-      prefsPath: "~/.openclaw/settings/tts.json",
-    },
-  },
-}
-```
-
-### Only reply with audio after an inbound voice message
-
-```json5
-{
-  messages: {
-    tts: {
-      auto: "inbound",
-    },
-  },
-}
-```
-
-### Disable auto-summary for long replies
-
-```json5
-{
-  messages: {
-    tts: {
-      auto: "always",
-    },
-  },
-}
-```
-
-Then run:
-
-```
-/tts summary off
-```
-
-### Notes on fields
-
-- `auto`: auto‑TTS mode (`off`, `always`, `inbound`, `tagged`).
-  - `inbound` only sends audio after an inbound voice message.
-  - `tagged` only sends audio when the reply includes `[[tts]]` tags.
-- `enabled`: legacy toggle (doctor migrates this to `auto`).
-- `mode`: `"final"` (default) or `"all"` (includes tool/block replies).
-- `provider`: speech provider id such as `"elevenlabs"`, `"microsoft"`, or `"openai"` (fallback is automatic).
-- If `provider` is **unset**, OpenClaw uses the first configured speech provider in registry auto-select order.
-- Legacy `provider: "edge"` still works and is normalized to `microsoft`.
-- `summaryModel`: optional cheap model for auto-summary; defaults to `agents.defaults.model.primary`.
-  - Accepts `provider/model` or a configured model alias.
-- `modelOverrides`: allow the model to emit TTS directives (on by default).
-  - `allowProvider` defaults to `false` (provider switching is opt-in).
-- `providers.<id>`: provider-owned settings keyed by speech provider id.
-- Legacy direct provider blocks (`messages.tts.openai`, `messages.tts.elevenlabs`, `messages.tts.microsoft`, `messages.tts.edge`) are auto-migrated to `messages.tts.providers.<id>` on load.
-- `maxTextLength`: hard cap for TTS input (chars). `/tts audio` fails if exceeded.
-- `timeoutMs`: request timeout (ms).
-- `prefsPath`: override the local prefs JSON path (provider/limit/summary).
-- `apiKey` values fall back to env vars (`ELEVENLABS_API_KEY`/`XI_API_KEY`, `OPENAI_API_KEY`).
-- `providers.elevenlabs.baseUrl`: override ElevenLabs API base URL.
-- `providers.openai.baseUrl`: override the OpenAI TTS endpoint.
-  - Resolution order: `messages.tts.providers.openai.baseUrl` -> `OPENAI_TTS_BASE_URL` -> `https://api.openai.com/v1`
-  - Non-default values are treated as OpenAI-compatible TTS endpoints, so custom model and voice names are accepted.
-- `providers.elevenlabs.voiceSettings`:
-  - `stability`, `similarityBoost`, `style`: `0..1`
-  - `useSpeakerBoost`: `true|false`
-  - `speed`: `0.5..2.0` (1.0 = normal)
-- `providers.elevenlabs.applyTextNormalization`: `auto|on|off`
-- `providers.elevenlabs.languageCode`: 2-letter ISO 639-1 (e.g. `en`, `de`)
-- `providers.elevenlabs.seed`: integer `0..4294967295` (best-effort determinism)
-- `providers.microsoft.enabled`: allow Microsoft speech usage (default `true`; no API key).
-- `providers.microsoft.voice`: Microsoft neural voice name (e.g. `en-US-MichelleNeural`).
-- `providers.microsoft.lang`: language code (e.g. `en-US`).
-- `providers.microsoft.outputFormat`: Microsoft output format (e.g. `audio-24khz-48kbitrate-mono-mp3`).
-  - See Microsoft Speech output formats for valid values; not all formats are supported by the bundled Edge-backed transport.
-- `providers.microsoft.rate` / `providers.microsoft.pitch` / `providers.microsoft.volume`: percent strings (e.g. `+10%`, `-5%`).
-- `providers.microsoft.saveSubtitles`: write JSON subtitles alongside the audio file.
-- `providers.microsoft.proxy`: proxy URL for Microsoft speech requests.
-- `providers.microsoft.timeoutMs`: request timeout override (ms).
-- `edge.*`: legacy alias for the same Microsoft settings.
-
-## Model-driven overrides (default on)
-
-By default, the model **can** emit TTS directives for a single reply.
-When `messages.tts.auto` is `tagged`, these directives are required to trigger audio.
-
-When enabled, the model can emit `[[tts:...]]` directives to override the voice
-for a single reply, plus an optional `[[tts:text]]...[[/tts:text]]` block to
-provide expressive tags (laughter, singing cues, etc) that should only appear in
-the audio.
-
-`provider=...` directives are ignored unless `modelOverrides.allowProvider: true`.
-
-Example reply payload:
-
-```
-Here you go.
-
-[[tts:voiceId=pMsXgVXv3BLzUgSXRplE model=eleven_v3 speed=1.1]]
-[[tts:text]](laughs) Read the song once more.[[/tts:text]]
-```
-
-Available directive keys (when enabled):
-
-- `provider` (registered speech provider id, for example `openai`, `elevenlabs`, or `microsoft`; requires `allowProvider: true`)
-- `voice` (OpenAI voice) or `voiceId` (ElevenLabs)
-- `model` (OpenAI TTS model or ElevenLabs model id)
-- `stability`, `similarityBoost`, `style`, `speed`, `useSpeakerBoost`
-- `applyTextNormalization` (`auto|on|off`)
-- `languageCode` (ISO 639-1)
-- `seed`
-
-Disable all model overrides:
-
-```json5
-{
-  messages: {
-    tts: {
-      modelOverrides: {
-        enabled: false,
-      },
-    },
-  },
-}
-```
-
-Optional allowlist (enable provider switching while keeping other knobs configurable):
-
-```json5
-{
-  messages: {
-    tts: {
-      modelOverrides: {
-        enabled: true,
-        allowProvider: true,
-        allowSeed: false,
-      },
-    },
-  },
-}
-```
-
-## Per-user preferences
-
-Slash commands write local overrides to `prefsPath` (default:
-`~/.openclaw/settings/tts.json`, override with `OPENCLAW_TTS_PREFS` or
-`messages.tts.prefsPath`).
-
-Stored fields:
-
-- `enabled`
-- `provider`
-- `maxLength` (summary threshold; default 1500 chars)
-- `summarize` (default `true`)
-
-These override `messages.tts.*` for that host.
-
-## Output formats (fixed)
-
-- **Feishu / Matrix / Telegram / WhatsApp**: Opus voice message (`opus_48000_64` from ElevenLabs, `opus` from OpenAI).
-  - 48kHz / 64kbps is a good voice message tradeoff.
-- **Other channels**: MP3 (`mp3_44100_128` from ElevenLabs, `mp3` from OpenAI).
-  - 44.1kHz / 128kbps is the default balance for speech clarity.
-- **Microsoft**: uses `microsoft.outputFormat` (default `audio-24khz-48kbitrate-mono-mp3`).
-  - The bundled transport accepts an `outputFormat`, but not all formats are available from the service.
-  - Output format values follow Microsoft Speech output formats (including Ogg/WebM Opus).
-  - Telegram `sendVoice` accepts OGG/MP3/M4A; use OpenAI/ElevenLabs if you need
-    guaranteed Opus voice messages.
-  - If the configured Microsoft output format fails, OpenClaw retries with MP3.
-
-OpenAI/ElevenLabs output formats are fixed per channel (see above).
-
-## Auto-TTS behavior
-
-When enabled, OpenClaw:
-
-- skips TTS if the reply already contains media or a `MEDIA:` directive.
-- skips very short replies (< 10 chars).
-- summarizes long replies when enabled using `agents.defaults.model.primary` (or `summaryModel`).
-- attaches the generated audio to the reply.
-
-If the reply exceeds `maxLength` and summary is off (or no API key for the
-summary model), audio
-is skipped and the normal text reply is sent.
-
-## Flow diagram
-
-```
-Reply -> TTS enabled?
-  no  -> send text
-  yes -> has media / MEDIA: / short?
-          yes -> send text
-          no  -> length > limit?
-                   no  -> TTS -> attach audio
-                   yes -> summary enabled?
-                            no  -> send text
-                            yes -> summarize (summaryModel or agents.defaults.model.primary)
-                                      -> TTS -> attach audio
-```
-
-## Slash command usage
-
-There is a single command: `/tts`.
-See [Slash commands](/tools/slash-commands) for enablement details.
-
-Discord note: `/tts` is a built-in Discord command, so OpenClaw registers
-`/voice` as the native command there. Text `/tts ...` still works.
-
-```
-/tts off
-/tts always
-/tts inbound
-/tts tagged
-/tts status
-/tts provider openai
-/tts limit 2000
-/tts summary off
-/tts audio Hello from OpenClaw
-```
-
-Notes:
-
-- Commands require an authorized sender (allowlist/owner rules still apply).
-- `commands.text` or native command registration must be enabled.
-- `off|always|inbound|tagged` are per‑session toggles (`/tts on` is an alias for `/tts always`).
-- `limit` and `summary` are stored in local prefs, not the main config.
-- `/tts audio` generates a one-off audio reply (does not toggle TTS on).
-- `/tts status` includes fallback visibility for the latest attempt:
-  - success fallback: `Fallback: <primary> -> <used>` plus `Attempts: ...`
-  - failure: `Error: ...` plus `Attempts: ...`
-  - detailed diagnostics: `Attempt details: provider:outcome(reasonCode) latency`
-- OpenAI and ElevenLabs API failures now include parsed provider error detail and request id (when returned by the provider), which is surfaced in TTS errors/logs.
-
-## Agent tool
-
-The `tts` tool converts text to speech and returns an audio attachment for
-reply delivery. When the channel is Feishu, Matrix, Telegram, or WhatsApp,
-the audio is delivered as a voice message rather than a file attachment.
-
-## Gateway RPC
-
-Gateway methods:
-
-- `tts.status`
-- `tts.enable`
-- `tts.disable`
-- `tts.convert`
-- `tts.setProvider`
-- `tts.providers`
+- [Media overview](/tools/media-overview)
+- [Media playback](/nodes/media-playback)
+- [Music generation](/tools/music-generation)
+- [Video generation](/tools/video-generation)
+- [Slash commands](/tools/slash-commands)
+- [Voice call plugin](/plugins/voice-call)

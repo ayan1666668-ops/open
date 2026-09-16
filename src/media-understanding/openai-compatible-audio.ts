@@ -1,8 +1,13 @@
-import path from "node:path";
+import { OPENAI_AUDIO_TRANSCRIPTIONS_API } from "./openai-audio-api.js";
+// OpenAI-compatible audio transcription adapter for providers exposing the
+// /audio/transcriptions API shape.
 import {
   assertOkOrThrowHttpError,
-  normalizeBaseUrl,
+  buildAudioTranscriptionFormData,
+  buildOpenAiCompatibleAuthHeaders,
   postTranscriptionRequest,
+  readProviderJsonObjectResponse,
+  resolveProviderHttpRequestConfig,
   requireTranscriptionText,
 } from "./shared.js";
 import type { AudioTranscriptionRequest, AudioTranscriptionResult } from "./types.js";
@@ -10,57 +15,67 @@ import type { AudioTranscriptionRequest, AudioTranscriptionResult } from "./type
 type OpenAiCompatibleAudioParams = AudioTranscriptionRequest & {
   defaultBaseUrl: string;
   defaultModel: string;
+  provider?: string;
 };
 
+// Shared implementation for OpenAI-style /audio/transcriptions providers.
 function resolveModel(model: string | undefined, fallback: string): string {
   const trimmed = model?.trim();
   return trimmed || fallback;
 }
 
+/** Sends an OpenAI-compatible audio transcription request and returns validated text output. */
 export async function transcribeOpenAiCompatibleAudio(
   params: OpenAiCompatibleAudioParams,
 ): Promise<AudioTranscriptionResult> {
   const fetchFn = params.fetchFn ?? fetch;
-  const baseUrl = normalizeBaseUrl(params.baseUrl, params.defaultBaseUrl);
-  const allowPrivate = Boolean(params.baseUrl?.trim());
+  const { baseUrl, allowPrivateNetwork, headers, dispatcherPolicy } =
+    resolveProviderHttpRequestConfig({
+      baseUrl: params.baseUrl,
+      defaultBaseUrl: params.defaultBaseUrl,
+      headers: params.headers,
+      request: params.request,
+      defaultHeaders: buildOpenAiCompatibleAuthHeaders(params),
+      provider: params.provider,
+      api: OPENAI_AUDIO_TRANSCRIPTIONS_API,
+      capability: "audio",
+      transport: "media-understanding",
+    });
   const url = `${baseUrl}/audio/transcriptions`;
 
   const model = resolveModel(params.model, params.defaultModel);
-  const form = new FormData();
-  const fileName = params.fileName?.trim() || path.basename(params.fileName) || "audio";
-  const bytes = new Uint8Array(params.buffer);
-  const blob = new Blob([bytes], {
-    type: params.mime ?? "application/octet-stream",
+  // Keep multipart construction centralized so provider tests cover filename and MIME behavior.
+  const form = buildAudioTranscriptionFormData({
+    buffer: params.buffer,
+    fileName: params.fileName,
+    mime: params.mime,
+    fields: {
+      model,
+      language: params.language,
+      prompt: params.prompt,
+    },
   });
-  form.append("file", blob, fileName);
-  form.append("model", model);
-  if (params.language?.trim()) {
-    form.append("language", params.language.trim());
-  }
-  if (params.prompt?.trim()) {
-    form.append("prompt", params.prompt.trim());
-  }
-
-  const headers = new Headers(params.headers);
-  if (!headers.has("authorization")) {
-    headers.set("authorization", `Bearer ${params.apiKey}`);
-  }
 
   const { response: res, release } = await postTranscriptionRequest({
     url,
     headers,
     body: form,
     timeoutMs: params.timeoutMs,
+    ...(params.signal ? { signal: params.signal } : {}),
     fetchFn,
-    allowPrivateNetwork: allowPrivate,
+    pinDns: false,
+    allowPrivateNetwork,
+    dispatcherPolicy,
   });
 
   try {
-    await assertOkOrThrowHttpError(res, "Audio transcription failed");
+    await assertOkOrThrowHttpError(res, "Audio transcription failed", { requestHeaders: headers });
 
-    const payload = (await res.json()) as { text?: string };
+    const payload = await readProviderJsonObjectResponse(res, "Audio transcription failed", {
+      requestHeaders: headers,
+    });
     const text = requireTranscriptionText(
-      payload.text,
+      typeof payload.text === "string" ? payload.text : undefined,
       "Audio transcription response missing text",
     );
     return { text, model };

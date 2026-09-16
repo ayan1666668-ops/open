@@ -1,43 +1,36 @@
+/**
+ * Resolves fast-mode state from agent config and runtime defaults.
+ */
+import type { FastMode } from "@openclaw/normalization-core/string-coerce";
 import { normalizeFastMode } from "../auto-reply/thinking.shared.js";
-import type { OpenClawConfig } from "../config/config.js";
 import type { SessionEntry } from "../config/sessions.js";
+import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { type FastModeSource, resolveFastModeModelAutoOnSeconds } from "../shared/fast-mode.js";
 import { resolveAgentConfig } from "./agent-scope.js";
+import { resolveModelExtraParamSources } from "./model-extra-params.js";
 
-export type FastModeState = {
+export {
+  DEFAULT_FAST_MODE_AUTO_ON_SECONDS,
+  formatFastModeAutoProgressText,
+  formatFastModeCommandOptions,
+  formatFastModeCurrentStatus,
+  formatFastModeSourceSuffix,
+  formatFastModeStatusValue,
+  formatFastModeValue,
+  resolveFastModeForElapsed,
+} from "../shared/fast-mode.js";
+export type { FastModeAutoProgressState } from "../shared/fast-mode.js";
+
+// Resolves effective fast-mode state from session, agent, model config, then
+// default. Callers keep the source for diagnostics and prompt explanations.
+type FastModeState = {
+  mode: FastMode;
   enabled: boolean;
-  source: "session" | "agent" | "config" | "default";
+  source: FastModeSource;
+  fastAutoOnSeconds: number;
 };
 
-export function resolveFastModeParam(
-  extraParams: Record<string, unknown> | undefined,
-): boolean | undefined {
-  return normalizeFastMode(
-    (extraParams?.fastMode ?? extraParams?.fast_mode) as string | boolean | null | undefined,
-  );
-}
-
-function resolveConfiguredFastModeRaw(params: {
-  cfg: OpenClawConfig | undefined;
-  provider: string;
-  model: string;
-}): unknown {
-  const modelKey = `${params.provider}/${params.model}`;
-  const modelConfig = params.cfg?.agents?.defaults?.models?.[modelKey];
-  return modelConfig?.params?.fastMode ?? modelConfig?.params?.fast_mode;
-}
-
-export function resolveConfiguredFastMode(params: {
-  cfg: OpenClawConfig | undefined;
-  provider: string;
-  model: string;
-}): boolean {
-  return (
-    normalizeFastMode(
-      resolveConfiguredFastModeRaw(params) as string | boolean | null | undefined,
-    ) ?? false
-  );
-}
-
+/** Resolve the effective fast-mode setting and its source. */
 export function resolveFastModeState(params: {
   cfg: OpenClawConfig | undefined;
   provider: string;
@@ -45,24 +38,40 @@ export function resolveFastModeState(params: {
   agentId?: string;
   sessionEntry?: Pick<SessionEntry, "fastMode"> | undefined;
 }): FastModeState {
-  const sessionOverride = normalizeFastMode(params.sessionEntry?.fastMode);
-  if (sessionOverride !== undefined) {
-    return { enabled: sessionOverride, source: "session" };
+  const { modelParams, agentModelParams } = resolveModelExtraParamSources({
+    config: params.cfg,
+    provider: params.provider,
+    modelId: params.model,
+    agentId: params.agentId,
+  });
+  const fastAutoOnSeconds = resolveFastModeModelAutoOnSeconds({
+    ...params,
+    modelParamSources: [agentModelParams, modelParams],
+  });
+  let mode = normalizeFastMode(params.sessionEntry?.fastMode);
+  let source: FastModeSource = "session";
+  if (mode === undefined) {
+    mode = normalizeFastMode(
+      params.agentId && params.cfg
+        ? resolveAgentConfig(params.cfg, params.agentId)?.fastModeDefault
+        : undefined,
+    );
+    source = "agent";
+  }
+  if (mode === undefined) {
+    const configuredRaw =
+      agentModelParams?.fastMode ??
+      agentModelParams?.fast_mode ??
+      modelParams?.fastMode ??
+      modelParams?.fast_mode;
+    mode = normalizeFastMode(configuredRaw as string | boolean | null | undefined);
+    source = "config";
   }
 
-  const agentDefault =
-    params.agentId && params.cfg
-      ? resolveAgentConfig(params.cfg, params.agentId)?.fastModeDefault
-      : undefined;
-  if (typeof agentDefault === "boolean") {
-    return { enabled: agentDefault, source: "agent" };
-  }
-
-  const configuredRaw = resolveConfiguredFastModeRaw(params);
-  const configured = normalizeFastMode(configuredRaw as string | boolean | null | undefined);
-  if (configured !== undefined) {
-    return { enabled: configured, source: "config" };
-  }
-
-  return { enabled: false, source: "default" };
+  return {
+    mode: mode ?? false,
+    enabled: mode === "auto" || mode === true,
+    source: mode === undefined ? "default" : source,
+    fastAutoOnSeconds,
+  };
 }

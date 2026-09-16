@@ -1,10 +1,25 @@
-import { listDescendantRunsForRequester } from "../../agents/subagent-registry.js";
-import { readLatestAssistantReply } from "../../agents/tools/agent-step.js";
-import { SILENT_REPLY_TOKEN } from "../../auto-reply/tokens.js";
-import { callGateway } from "../../gateway/call.js";
+/** Reads or waits for descendant subagent summaries after isolated cron orchestration. */
+import { readLatestAssistantReply, waitForAgentRunsToDrain } from "../../agents/run-wait.js";
+import { resolveSubagentCompletionResultText } from "../../agents/subagents/completion/subagent-completion-result.js";
+import {
+  hasDescendantRunAwaitingSettle,
+  listDescendantRunsForRequester,
+} from "../../agents/subagents/registry/subagent-registry-read.js";
+import { isRetainedUnendedSubagentRun } from "../../agents/subagents/registry/subagent-run-liveness.js";
+import { bindAgentToolGatewayRequest } from "../../agents/tools/in-process-gateway.js";
+import { selectDeliverableSessionsReply } from "../../agents/tools/sessions-send-tokens.js";
+import { stripHeartbeatToken } from "../../auto-reply/heartbeat.js";
+import {
+  HEARTBEAT_TOKEN,
+  isSilentReplyPayloadText,
+  SILENT_REPLY_TOKEN,
+} from "../../auto-reply/tokens.js";
+import { sleepWithAbort } from "../../infra/backoff.js";
+import { isFastTestRuntimeEnv } from "../../infra/env.js";
+import { isLikelyInterimCronMessage } from "./subagent-followup-hints.js";
 
 function resolveCronSubagentTimings() {
-  const fastTestMode = process.env.OPENCLAW_TEST_FAST === "1";
+  const fastTestMode = isFastTestRuntimeEnv();
   return {
     waitMinMs: fastTestMode ? 10 : 30_000,
     finalReplyGraceMs: fastTestMode ? 50 : 5_000,
@@ -12,92 +27,41 @@ function resolveCronSubagentTimings() {
   };
 }
 
-const SUBAGENT_FOLLOWUP_HINTS = [
-  "subagent spawned",
-  "spawned a subagent",
-  "auto-announce when done",
-  "both subagents are running",
-  "wait for them to report back",
-] as const;
-
-const INTERIM_CRON_HINTS = [
-  "on it",
-  "pulling everything together",
-  "give me a few",
-  "give me a few min",
-  "few minutes",
-  "let me compile",
-  "i'll gather",
-  "i will gather",
-  "working on it",
-  "retrying now",
-  "should be about",
-  "should have your summary",
-  "it'll auto-announce when done",
-  "it will auto-announce when done",
-  ...SUBAGENT_FOLLOWUP_HINTS,
-] as const;
-
-function normalizeHintText(value: string): string {
-  return value.trim().toLowerCase().replace(/\s+/g, " ");
-}
-
-export function isLikelyInterimCronMessage(value: string): boolean {
-  const normalized = normalizeHintText(value);
-  if (!normalized) {
-    // Empty text after payload filtering means the agent either returned
-    // NO_REPLY (deliberately silent) or produced no deliverable content.
-    // Do not treat this as an interim acknowledgement that needs a rerun.
-    return false;
-  }
-  const words = normalized.split(" ").filter(Boolean).length;
-  return words <= 45 && INTERIM_CRON_HINTS.some((hint) => normalized.includes(hint));
-}
-
-export function expectsSubagentFollowup(value: string): boolean {
-  const normalized = normalizeHintText(value);
-  return Boolean(normalized && SUBAGENT_FOLLOWUP_HINTS.some((hint) => normalized.includes(hint)));
-}
-
+/** Reads completed descendant subagent replies when the orchestrator only emitted interim text. */
 export async function readDescendantSubagentFallbackReply(params: {
   sessionKey: string;
   runStartedAt: number;
 }): Promise<string | undefined> {
-  const descendants = listDescendantRunsForRequester(params.sessionKey)
-    .filter(
-      (entry) =>
-        typeof entry.endedAt === "number" &&
-        entry.endedAt >= params.runStartedAt &&
-        entry.childSessionKey.trim().length > 0,
-    )
-    .toSorted((a, b) => (a.endedAt ?? 0) - (b.endedAt ?? 0));
+  const descendants = listDescendantRunsForRequester(params.sessionKey).filter(
+    (entry) =>
+      typeof entry.execution.endedAt === "number" &&
+      entry.execution.endedAt >= params.runStartedAt &&
+      entry.childSessionKey.trim().length > 0,
+  );
   if (descendants.length === 0) {
     return undefined;
   }
 
-  const latestByChild = new Map<string, (typeof descendants)[number]>();
-  for (const entry of descendants) {
-    const childKey = entry.childSessionKey.trim();
-    if (!childKey) {
-      continue;
-    }
-    const current = latestByChild.get(childKey);
-    if (!current || (entry.endedAt ?? 0) >= (current.endedAt ?? 0)) {
-      latestByChild.set(childKey, entry);
-    }
-  }
-
+  const callGateway = bindAgentToolGatewayRequest({ hostedOnly: true });
   const replies: string[] = [];
-  const latestRuns = [...latestByChild.values()]
-    .toSorted((a, b) => (a.endedAt ?? 0) - (b.endedAt ?? 0))
+  // Limit fallback synthesis to the latest few children so a noisy run does not
+  // flood the cron announce with stale descendant output.
+  const latestRuns = descendants
+    .toSorted((a, b) => (a.execution.endedAt ?? 0) - (b.execution.endedAt ?? 0))
     .slice(-4);
   for (const entry of latestRuns) {
-    let reply = (await readLatestAssistantReply({ sessionKey: entry.childSessionKey }))?.trim();
-    // Fall back to the registry's frozen result text when the session transcript
-    // is unavailable (e.g. child session already deleted by announce cleanup).
-    if (!reply && typeof entry.frozenResultText === "string" && entry.frozenResultText.trim()) {
-      reply = entry.frozenResultText.trim();
-    }
+    const completionReply = resolveSubagentCompletionResultText(entry);
+    // Producer-owned terminal evidence and private resume transcripts must
+    // never be replaced by an older visible child-session reply.
+    const canReadTranscript =
+      entry.completion?.terminalReply === undefined &&
+      entry.execution.transcriptTarget === undefined;
+    const reply = canReadTranscript
+      ? selectDeliverableSessionsReply(
+          await readLatestAssistantReply({ sessionKey: entry.childSessionKey, callGateway }),
+          completionReply,
+        )
+      : completionReply;
     if (!reply || reply.toUpperCase() === SILENT_REPLY_TOKEN.toUpperCase()) {
       continue;
     }
@@ -114,90 +78,125 @@ export async function readDescendantSubagentFallbackReply(params: {
 
 /**
  * Waits for descendant subagents to complete using a push-based approach:
- * each active descendant run is awaited via `agent.wait` (gateway RPC) instead
- * of a busy-poll loop.  After all active runs settle, a short grace period
- * polls the cron agent's session for a post-orchestration synthesis message.
+ * running descendants use `agent.wait`; registry settlement spans yielded
+ * tasks, successor admission, and completion delivery between executions.
+ * Only after settlement does the synthesis grace period begin.
  */
 export async function waitForDescendantSubagentSummary(params: {
   sessionKey: string;
   initialReply?: string;
   timeoutMs: number;
   observedActiveDescendants?: boolean;
+  abortSignal?: AbortSignal;
 }): Promise<string | undefined> {
   const timings = resolveCronSubagentTimings();
+  const requestGateway = bindAgentToolGatewayRequest({ hostedOnly: true });
   const initialReply = params.initialReply?.trim();
   const deadline = Date.now() + Math.max(timings.waitMinMs, Math.floor(params.timeoutMs));
 
-  // Snapshot the currently active descendant run IDs.
+  const callGateway: typeof requestGateway = (request) =>
+    requestGateway({
+      ...request,
+      signal: params.abortSignal,
+      timeoutMs: Math.min(request.timeoutMs ?? Infinity, Math.max(1, deadline - Date.now())),
+    });
+
   const getActiveRuns = () =>
-    listDescendantRunsForRequester(params.sessionKey).filter(
-      (entry) => typeof entry.endedAt !== "number",
-    );
-
+    params.abortSignal?.aborted
+      ? []
+      : listDescendantRunsForRequester(params.sessionKey).filter((entry) =>
+          isRetainedUnendedSubagentRun(entry),
+        );
   const initialActiveRuns = getActiveRuns();
-  const sawActiveDescendants =
-    params.observedActiveDescendants === true || initialActiveRuns.length > 0;
+  const sawPendingDescendants =
+    params.observedActiveDescendants === true ||
+    initialActiveRuns.length > 0 ||
+    hasDescendantRunAwaitingSettle(params.sessionKey);
 
-  if (!sawActiveDescendants) {
-    // No active descendants and none were observed before the call – nothing to wait for.
+  if (params.abortSignal?.aborted) {
+    return undefined;
+  }
+  if (!sawPendingDescendants) {
     return initialReply;
   }
 
-  // --- Push-based wait for all active descendants ---
-  // We iterate in case first-level descendants spawn their own subagents while
-  // we wait, so new active runs can appear between rounds.
-  let pendingRunIds = new Set<string>(initialActiveRuns.map((e) => e.runId));
-
-  while (pendingRunIds.size > 0 && Date.now() < deadline) {
-    const remainingMs = Math.max(1, deadline - Date.now());
-    // Wait for all currently pending runs concurrently.  If any fails or times
-    // out, allSettled absorbs the error so we proceed to the next iteration.
-    await Promise.allSettled(
-      [...pendingRunIds].map((runId) =>
-        callGateway<{ status?: string }>({
-          method: "agent.wait",
-          params: { runId, timeoutMs: remainingMs },
-          timeoutMs: remainingMs + 2_000,
-        }).catch(() => undefined),
-      ),
-    );
-
-    // Refresh: check for newly created active descendants (e.g. spawned by
-    // the runs that just finished) and keep looping if any exist.
-    pendingRunIds = new Set<string>(getActiveRuns().map((e) => e.runId));
-  }
-
-  // --- Grace period: wait for the cron agent's synthesis ---
-  // After the subagent announces fire and the cron agent processes them, it
-  // produces a new assistant message.  Poll briefly (bounded by
-  // finalReplyGraceMs) to capture that synthesis.
-  const gracePeriodDeadline = Math.min(Date.now() + timings.finalReplyGraceMs, deadline);
-
-  const resolveUsableLatestReply = async () => {
-    const latest = (await readLatestAssistantReply({ sessionKey: params.sessionKey }))?.trim();
-    if (
-      latest &&
-      latest.toUpperCase() !== SILENT_REPLY_TOKEN.toUpperCase() &&
-      (latest !== initialReply || !isLikelyInterimCronMessage(latest))
-    ) {
-      return latest;
+  try {
+    // Delivery text has already lost MEDIA directives. Compare history against
+    // its own text so the unchanged parent cannot masquerade as new synthesis.
+    const initialParentReply = (
+      await readLatestAssistantReply({ sessionKey: params.sessionKey, callGateway })
+    )?.trim();
+    let pendingRunIds = initialActiveRuns.map((entry) => entry.runId);
+    while (Date.now() < deadline && !params.abortSignal?.aborted) {
+      await waitForAgentRunsToDrain({
+        deadlineAtMs: deadline,
+        callGateway,
+        initialPendingRunIds: pendingRunIds,
+        getPendingRunIds: () => getActiveRuns().map((entry) => entry.runId),
+      });
+      if (!hasDescendantRunAwaitingSettle(params.sessionKey)) {
+        break;
+      }
+      // A yielded task still owns completion while no execution can be waited
+      // on. Observe the registry's handoff without waking a competing parent.
+      await sleepWithAbort(
+        Math.min(timings.gracePollMs, Math.max(0, deadline - Date.now())),
+        params.abortSignal,
+      );
+      pendingRunIds = getActiveRuns().map((entry) => entry.runId);
     }
-    return undefined;
-  };
+    if (params.abortSignal?.aborted || hasDescendantRunAwaitingSettle(params.sessionKey)) {
+      return undefined;
+    }
 
-  while (Date.now() < gracePeriodDeadline) {
+    // --- Grace period: wait for the cron agent's synthesis ---
+    // After the subagent announces fire and the cron agent processes them, it
+    // produces a new assistant message.  Poll briefly (bounded by
+    // finalReplyGraceMs) to capture that synthesis.
+    const gracePeriodDeadline = Math.min(Date.now() + timings.finalReplyGraceMs, deadline);
+
+    const resolveUsableLatestReply = async () => {
+      const latest = (
+        await readLatestAssistantReply({ sessionKey: params.sessionKey, callGateway })
+      )?.trim();
+      if (
+        latest &&
+        latest.toUpperCase() !== SILENT_REPLY_TOKEN.toUpperCase() &&
+        // Parent heartbeat acknowledgments remain in chat.history after the
+        // child settles and must not masquerade as descendant output.
+        !stripHeartbeatToken(latest, { mode: "heartbeat", maxAckChars: 0 }).shouldSkip &&
+        !isSilentReplyPayloadText(latest, HEARTBEAT_TOKEN) &&
+        (latest !== initialParentReply || !isLikelyInterimCronMessage(latest))
+      ) {
+        // Ignore the original interim acknowledgement; only a new synthesis or a
+        // non-interim reply should replace descendant fallback text.
+        return latest;
+      }
+      return undefined;
+    };
+
+    while (Date.now() < gracePeriodDeadline) {
+      const latest = await resolveUsableLatestReply();
+      if (latest) {
+        return latest;
+      }
+      await sleepWithAbort(
+        Math.min(timings.gracePollMs, gracePeriodDeadline - Date.now()),
+        params.abortSignal,
+      );
+    }
+
+    // Final read after grace period expires.
     const latest = await resolveUsableLatestReply();
     if (latest) {
       return latest;
     }
-    await new Promise<void>((resolve) => setTimeout(resolve, timings.gracePollMs));
-  }
 
-  // Final read after grace period expires.
-  const latest = await resolveUsableLatestReply();
-  if (latest) {
-    return latest;
+    return undefined;
+  } catch (error) {
+    if (params.abortSignal?.aborted || Date.now() >= deadline) {
+      return undefined;
+    }
+    throw error;
   }
-
-  return undefined;
 }

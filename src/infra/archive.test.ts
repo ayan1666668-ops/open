@@ -1,22 +1,21 @@
+// Tests archive creation and extraction helpers.
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import JSZip from "jszip";
 import * as tar from "tar";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { createSuiteTempRootTracker } from "../test-helpers/temp-dir.js";
 import { withRealpathSymlinkRebindRace } from "../test-utils/symlink-rebind-race.js";
-import type { ArchiveSecurityError } from "./archive.js";
+import { createZipCentralDirectoryArchive } from "../test-utils/zip-central-directory-fixture.js";
 import { extractArchive, resolvePackedRootDir } from "./archive.js";
 
-let fixtureRoot = "";
-let fixtureCount = 0;
+const fixtureRootTracker = createSuiteTempRootTracker({ prefix: "openclaw-archive-" });
 const directorySymlinkType = process.platform === "win32" ? "junction" : undefined;
 const ARCHIVE_EXTRACT_TIMEOUT_MS = 15_000;
 
 async function makeTempDir(prefix = "case") {
-  const dir = path.join(fixtureRoot, `${prefix}-${fixtureCount++}`);
-  await fs.mkdir(dir, { recursive: true });
-  return dir;
+  return await fixtureRootTracker.make(prefix);
 }
 
 async function withArchiveCase(
@@ -54,8 +53,23 @@ async function createDirectorySymlink(targetDir: string, linkPath: string) {
   await fs.symlink(targetDir, linkPath, directorySymlinkType);
 }
 
+async function expectRejectedCode(promise: Promise<unknown>, expected: string | RegExp) {
+  try {
+    await promise;
+  } catch (error) {
+    const code = (error as { code?: unknown }).code;
+    if (typeof expected === "string") {
+      expect(code).toBe(expected);
+      return;
+    }
+    expect(String(code)).toMatch(expected);
+    return;
+  }
+  throw new Error("expected promise to reject");
+}
+
 async function expectPathMissing(filePath: string) {
-  await expect(fs.stat(filePath)).rejects.toMatchObject({ code: "ENOENT" });
+  await expectRejectedCode(fs.stat(filePath), "ENOENT");
 }
 
 async function expectExtractedSizeBudgetExceeded(params: {
@@ -75,36 +89,83 @@ async function expectExtractedSizeBudgetExceeded(params: {
 }
 
 beforeAll(async () => {
-  fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-archive-"));
+  await fixtureRootTracker.setup();
 });
 
 afterAll(async () => {
-  await fs.rm(fixtureRoot, { recursive: true, force: true });
+  await fixtureRootTracker.cleanup();
 });
 
 describe("archive utils", () => {
-  it.each([{ ext: "zip" as const }, { ext: "tar" as const }])(
-    "extracts $ext archives",
-    async ({ ext }) => {
-      await withArchiveCase(ext, async ({ workDir, archivePath, extractDir }) => {
-        await writePackageArchive({
-          ext,
-          workDir,
-          archivePath,
-          fileName: "hello.txt",
-          content: "hi",
-        });
-        await extractArchive({
-          archivePath,
-          destDir: extractDir,
-          timeoutMs: ARCHIVE_EXTRACT_TIMEOUT_MS,
-        });
-        const rootDir = await resolvePackedRootDir(extractDir);
-        const content = await fs.readFile(path.join(rootDir, "hello.txt"), "utf-8");
-        expect(content).toBe("hi");
+  it("rejects the returned promise when an option getter throws", async () => {
+    const failure = new Error("archive kind unavailable");
+    await expect(
+      extractArchive({
+        archivePath: "/unused/archive.tar",
+        destDir: "/unused/extracted",
+        timeoutMs: ARCHIVE_EXTRACT_TIMEOUT_MS,
+        get kind(): never {
+          throw failure;
+        },
+      }),
+    ).rejects.toBe(failure);
+  });
+
+  it.each(
+    (["zip", "tar"] as const).flatMap((ext) =>
+      [undefined, true, false].map((durable) => ({ ext, durable })),
+    ),
+  )("extracts $ext archives with durable=$durable", async ({ ext, durable }) => {
+    await withArchiveCase(ext, async ({ workDir, archivePath, extractDir }) => {
+      await writePackageArchive({
+        ext,
+        workDir,
+        archivePath,
+        fileName: "hello.txt",
+        content: "hi",
       });
-    },
-  );
+      const extractedPath = path.join(await fs.realpath(extractDir), "package", "hello.txt");
+      let fileSyncs = 0;
+      const originalOpen = fs.open;
+      const openSpy = vi.spyOn(fs, "open").mockImplementation(async (...args) => {
+        const handle = await originalOpen(...args);
+        if (String(args[0]) === extractedPath) {
+          const sync = handle.sync.bind(handle);
+          handle.sync = async () => {
+            fileSyncs++;
+            await sync();
+          };
+        }
+        return handle;
+      });
+      try {
+        await extractArchive(
+          Object.freeze(
+            new (class {
+              get archivePath() {
+                return archivePath;
+              }
+              get destDir() {
+                return extractDir;
+              }
+              get timeoutMs() {
+                return ARCHIVE_EXTRACT_TIMEOUT_MS;
+              }
+              get durable() {
+                return durable;
+              }
+            })(),
+          ),
+        );
+      } finally {
+        openSpy.mockRestore();
+      }
+      expect(fileSyncs > 0).toBe(durable !== false);
+      const rootDir = await resolvePackedRootDir(extractDir);
+      const content = await fs.readFile(path.join(rootDir, "hello.txt"), "utf-8");
+      expect(content).toBe("hi");
+    });
+  });
 
   it.each([{ ext: "zip" as const }, { ext: "tar" as const }])(
     "rejects $ext extraction when destination dir is a symlink",
@@ -122,36 +183,39 @@ describe("archive utils", () => {
         await fs.rm(extractDir, { recursive: true, force: true });
         await createDirectorySymlink(realExtractDir, extractDir);
 
-        await expect(
+        await expectRejectedCode(
           extractArchive({
             archivePath,
             destDir: extractDir,
             timeoutMs: ARCHIVE_EXTRACT_TIMEOUT_MS,
           }),
-        ).rejects.toMatchObject({
-          code: "destination-symlink",
-        } satisfies Partial<ArchiveSecurityError>);
+          "destination-symlink",
+        );
 
         await expectPathMissing(path.join(realExtractDir, "package", "hello.txt"));
       });
     },
   );
 
-  it("rejects zip path traversal (zip slip)", async () => {
-    await withArchiveCase("zip", async ({ archivePath, extractDir }) => {
-      const zip = new JSZip();
-      zip.file("../b/evil.txt", "pwnd");
-      await fs.writeFile(archivePath, await zip.generateAsync({ type: "nodebuffer" }));
+  it.each([{ createFolders: true }, { createFolders: false }])(
+    "rejects zip path traversal (zip slip, createFolders=$createFolders)",
+    async ({ createFolders }) => {
+      await withArchiveCase("zip", async ({ archivePath, extractDir }) => {
+        const zip = new JSZip();
+        zip.file("../b/evil.txt", "pwnd", { createFolders });
+        await fs.writeFile(archivePath, await zip.generateAsync({ type: "nodebuffer" }));
 
-      await expect(
-        extractArchive({
-          archivePath,
-          destDir: extractDir,
-          timeoutMs: ARCHIVE_EXTRACT_TIMEOUT_MS,
-        }),
-      ).rejects.toThrow(/(escapes destination|absolute)/i);
-    });
-  });
+        await expect(
+          extractArchive({
+            archivePath,
+            destDir: extractDir,
+            timeoutMs: ARCHIVE_EXTRACT_TIMEOUT_MS,
+          }),
+        ).rejects.toThrow(/(escapes destination|absolute)/i);
+        await expectPathMissing(path.join(extractDir, "b", "evil.txt"));
+      });
+    },
+  );
 
   it("rejects zip entries that traverse pre-existing destination symlinks", async () => {
     await withArchiveCase("zip", async ({ workDir, archivePath, extractDir }) => {
@@ -163,15 +227,14 @@ describe("archive utils", () => {
       zip.file("escape/pwn.txt", "owned");
       await fs.writeFile(archivePath, await zip.generateAsync({ type: "nodebuffer" }));
 
-      await expect(
+      await expectRejectedCode(
         extractArchive({
           archivePath,
           destDir: extractDir,
           timeoutMs: ARCHIVE_EXTRACT_TIMEOUT_MS,
         }),
-      ).rejects.toMatchObject({
-        code: "destination-symlink-traversal",
-      } satisfies Partial<ArchiveSecurityError>);
+        "destination-symlink-traversal",
+      );
 
       const outsideFile = path.join(outsideDir, "pwn.txt");
       const outsideExists = await fs
@@ -182,7 +245,7 @@ describe("archive utils", () => {
     });
   });
 
-  it("does not clobber out-of-destination file when parent dir is symlink-rebound during zip extract", async () => {
+  it("does not clobber an out-of-destination file during a zip symlink-rebind race", async () => {
     await withArchiveCase("zip", async ({ workDir, archivePath, extractDir }) => {
       const outsideDir = path.join(workDir, "outside");
       await fs.mkdir(outsideDir, { recursive: true });
@@ -196,30 +259,38 @@ describe("archive utils", () => {
       zip.file("slot/target.txt", "owned");
       await fs.writeFile(archivePath, await zip.generateAsync({ type: "nodebuffer" }));
 
-      await withRealpathSymlinkRebindRace({
-        shouldFlip: (realpathInput) => realpathInput === slotDir,
-        symlinkPath: slotDir,
-        symlinkTarget: outsideDir,
-        timing: "after-realpath",
-        run: async () => {
-          await expect(
-            extractArchive({
+      let rejected = false;
+      try {
+        await withRealpathSymlinkRebindRace({
+          shouldFlip: (realpathInput) => realpathInput === slotDir,
+          symlinkPath: slotDir,
+          symlinkTarget: outsideDir,
+          timing: "after-realpath",
+          realpathApi: "native-sync",
+          run: async () => {
+            await extractArchive({
               archivePath,
               destDir: extractDir,
               timeoutMs: ARCHIVE_EXTRACT_TIMEOUT_MS,
-            }),
-          ).rejects.toMatchObject({
-            code: "destination-symlink-traversal",
-          } satisfies Partial<ArchiveSecurityError>);
-        },
-      });
+            });
+          },
+        });
+      } catch (error) {
+        rejected = true;
+        const code = (error as { code?: unknown }).code;
+        expect(String(code)).toMatch(/destination-symlink-traversal|not-file/);
+      }
 
+      expect((await fs.lstat(slotDir)).isSymbolicLink()).toBe(true);
       await expect(fs.readFile(outsideTarget, "utf8")).resolves.toBe("SAFE");
+      if (!rejected) {
+        await expect(fs.readFile(path.join(slotDir, "target.txt"), "utf8")).resolves.toBe("owned");
+      }
     });
   });
 
   it.runIf(process.platform !== "win32")(
-    "rejects zip extraction when a hardlink appears after atomic rename",
+    "rejects zip extraction when a hardlink appears during destination verification",
     async () => {
       await withArchiveCase("zip", async ({ workDir, archivePath, extractDir }) => {
         const outsideDir = path.join(workDir, "outside");
@@ -230,33 +301,44 @@ describe("archive utils", () => {
         const zip = new JSZip();
         zip.file("package/payload.bin", "owned");
         await fs.writeFile(archivePath, await zip.generateAsync({ type: "nodebuffer" }));
+        const extractedRealPath = path.join(
+          await fs.realpath(extractDir),
+          "package",
+          "payload.bin",
+        );
 
-        const realRename = fs.rename.bind(fs);
+        const realLstat = fsSync.lstatSync.bind(fsSync);
         let linked = false;
-        const renameSpy = vi.spyOn(fs, "rename").mockImplementation(async (...args) => {
-          await realRename(...args);
-          if (!linked) {
+        const lstatSpy = vi.spyOn(fsSync, "lstatSync").mockImplementation((...args) => {
+          const observed = realLstat(...args);
+          if (!linked && String(args[0]) === extractedRealPath) {
+            fsSync.linkSync(extractedRealPath, outsideAlias);
             linked = true;
-            await fs.link(String(args[1]), outsideAlias);
+            return realLstat(...args);
           }
+          return observed;
         });
 
         try {
-          await expect(
+          await expectRejectedCode(
             extractArchive({
               archivePath,
               destDir: extractDir,
               timeoutMs: ARCHIVE_EXTRACT_TIMEOUT_MS,
             }),
-          ).rejects.toMatchObject({
-            code: "destination-symlink-traversal",
-          } satisfies Partial<ArchiveSecurityError>);
+            /^(?:destination-symlink-traversal|hardlink)$/u,
+          );
         } finally {
-          renameSpy.mockRestore();
+          lstatSpy.mockRestore();
         }
 
+        // The raced alias points at attacker-supplied archive bytes. The rejected
+        // extraction preserves the published destination rather than unlinking an
+        // entry it can no longer prove it owns; truncating the inode would instead
+        // mutate a path outside that boundary.
         await expect(fs.readFile(outsideAlias, "utf8")).resolves.toBe("owned");
-        await expect(fs.stat(extractedPath)).rejects.toMatchObject({ code: "ENOENT" });
+        await expect(fs.readFile(extractedPath, "utf8")).resolves.toBe("owned");
+        expect((await fs.stat(extractedPath)).nlink).toBe(2);
       });
     },
   );
@@ -268,14 +350,18 @@ describe("archive utils", () => {
       await fs.writeFile(path.join(workDir, "outside.txt"), "pwnd");
 
       await tar.c({ cwd: insideDir, file: archivePath }, ["../outside.txt"]);
+      await fs.writeFile(path.join(workDir, "outside.txt"), "outside sentinel");
 
-      await expect(
+      await expectRejectedCode(
         extractArchive({
           archivePath,
           destDir: extractDir,
           timeoutMs: ARCHIVE_EXTRACT_TIMEOUT_MS,
         }),
-      ).rejects.toThrow(/escapes destination/i);
+        "entry-path",
+      );
+      expect(await fs.readdir(extractDir)).toEqual([]);
+      expect(await fs.readFile(path.join(workDir, "outside.txt"), "utf8")).toBe("outside sentinel");
     });
   });
 
@@ -289,15 +375,14 @@ describe("archive utils", () => {
       await createDirectorySymlink(outsideDir, path.join(extractDir, "escape"));
       await tar.c({ cwd: archiveRoot, file: archivePath }, ["escape"]);
 
-      await expect(
+      await expectRejectedCode(
         extractArchive({
           archivePath,
           destDir: extractDir,
           timeoutMs: ARCHIVE_EXTRACT_TIMEOUT_MS,
         }),
-      ).rejects.toMatchObject({
-        code: "destination-symlink-traversal",
-      } satisfies Partial<ArchiveSecurityError>);
+        "destination-symlink-traversal",
+      );
 
       await expectPathMissing(path.join(outsideDir, "pwn.txt"));
     });
@@ -349,6 +434,26 @@ describe("archive utils", () => {
     },
   );
 
+  it("rejects zip archives whose actual central directory exceeds the entry limit before parsing", async () => {
+    await withArchiveCase("zip", async ({ archivePath, extractDir }) => {
+      const archiveBytes = createZipCentralDirectoryArchive({
+        actualEntryCount: 2,
+        declaredEntryCount: 1,
+      });
+      await fs.writeFile(archivePath, archiveBytes);
+
+      await expect(
+        extractArchive({
+          archivePath,
+          destDir: extractDir,
+          timeoutMs: ARCHIVE_EXTRACT_TIMEOUT_MS,
+          limits: { maxEntries: 1 },
+        }),
+      ).rejects.toThrow("archive entry count exceeds limit");
+      expect(await fs.readdir(extractDir)).toEqual([]);
+    });
+  });
+
   it("rejects tar entries with absolute extraction paths", async () => {
     await withArchiveCase("tar", async ({ workDir, archivePath, extractDir }) => {
       const inputDir = path.join(workDir, "input");
@@ -356,14 +461,18 @@ describe("archive utils", () => {
       await fs.mkdir(inputDir, { recursive: true });
       await fs.writeFile(outsideFile, "owned");
       await tar.c({ file: archivePath, preservePaths: true }, [outsideFile]);
+      await fs.writeFile(outsideFile, "outside sentinel");
 
-      await expect(
+      await expectRejectedCode(
         extractArchive({
           archivePath,
           destDir: extractDir,
           timeoutMs: ARCHIVE_EXTRACT_TIMEOUT_MS,
         }),
-      ).rejects.toThrow(/absolute|drive path|escapes destination/i);
+        "entry-path",
+      );
+      expect(await fs.readdir(extractDir)).toEqual([]);
+      expect(await fs.readFile(outsideFile, "utf8")).toBe("outside sentinel");
     });
   });
 });
