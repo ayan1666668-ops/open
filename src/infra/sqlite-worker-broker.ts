@@ -362,21 +362,16 @@ export class SqliteWorkerBroker {
     const available = [...this.slots].filter((slot) => !slot.failed && !slot.retiring);
     // oxlint-disable-next-line no-warning-comments -- remove after the upstream Bun fix ships.
     // TODO(bun): Return Bun to four shared workers after https://github.com/oven-sh/bun/pull/40005.
-    const maxWorkers = process.versions.bun ? MAX_STORES : MAX_WORKERS;
-    if (this.slots.size >= maxWorkers) {
-      if (process.versions.bun) {
-        const retiring = [...this.slots].filter(
-          (slot) => slot.failed !== undefined || slot.retiring !== undefined,
-        );
+    if (this.slots.size >= (process.versions.bun ? MAX_STORES : MAX_WORKERS)) {
+      if (!available.length || process.versions.bun) {
+        const retiring = [...this.slots].filter((slot) => Boolean(slot.failed || slot.retiring));
         if (retiring.length > 0) {
-          await Promise.race(retiring.flatMap(({ exit }) => [exit]));
+          await Promise.race(retiring.map(({ exit }) => exit));
           return this.acquireSlot();
         }
-        throw new SqliteWorkerError("SQLite worker store capacity reached", "overloaded");
-      }
-      if (!available.length) {
-        await Promise.race([...this.slots].map((slot) => slot.exit));
-        return this.acquireSlot();
+        if (process.versions.bun) {
+          throw new SqliteWorkerError("SQLite worker store capacity reached", "overloaded");
+        }
       }
       const selected = available.reduce((left, right) =>
         left.actors.size <= right.actors.size ? left : right,
