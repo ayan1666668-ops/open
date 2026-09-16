@@ -29,6 +29,11 @@ import { isPluginStateWorkerCommand } from "../plugin-state/plugin-state-worker-
 import { executePluginStateCommand } from "../plugin-state/plugin-state.worker.js";
 import { readPluginMetadataStateRowSync } from "../plugins/installed-plugin-index-row.js";
 import {
+  readHostedCatalogSnapshotInDatabase,
+  writeHostedCatalogSnapshotInDatabase,
+} from "../plugins/official-external-plugin-catalog-snapshot-store.kernel.js";
+import { HostedCatalogSignedFeedMonotonicityError } from "../plugins/official-external-plugin-catalog-source.js";
+import {
   ensureProjectRegistrySchema,
   removeProjectRegistryInDatabase,
   resolveRecordedProjectRootInDatabase,
@@ -335,6 +340,9 @@ function createSharedStateWorkerBackend(
         );
       }
       const database = open();
+      if (command.type === "plugins.catalogSnapshot.read") {
+        return readHostedCatalogSnapshotInDatabase(database.db, command.input.url);
+      }
       if (command.type === "nativeHookRelay.listSnapshots") {
         return listNativeHookRelayBridgeSnapshotsInDatabase(database);
       }
@@ -381,6 +389,21 @@ function createSharedStateWorkerBackend(
         path: context.databasePath,
         env: getSqliteWorkerStateContext().environment,
       };
+      if (command.type === "plugins.catalogSnapshot.write") {
+        try {
+          runOpenClawStateWriteTransaction(
+            ({ db }) =>
+              writeHostedCatalogSnapshotInDatabase(db, command.input.snapshot, command.input.now),
+            writeOptions,
+          );
+          return { ok: true };
+        } catch (error) {
+          if (error instanceof HostedCatalogSignedFeedMonotonicityError) {
+            return { ok: false, message: error.message };
+          }
+          throw error;
+        }
+      }
       if (command.type === "backup.recordOutcome") {
         return runOpenClawStateWriteTransaction(
           ({ db }) => recordBackupRunInDatabase(db, command.input),
