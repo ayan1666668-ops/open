@@ -5395,6 +5395,29 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
       },
     );
 
+    // A card cannot draw a blockquoted table, and reasoning is always quoted, so a
+    // native table in reasoning used to lose its rows on the card the answer earned.
+    it("keeps the card and the reasoning rows when only the reasoning carries a table", async () => {
+      const { result, options } = createBlockTableHarness(tableCfg("block"), true);
+
+      await options.onReplyStart?.();
+      result.replyOptions.onReasoningStream?.({ text: `Checking.\n\n${tableMarkdown}` });
+      result.replyOptions.onPartialReply?.({ text: "Inventory complete." });
+      await vi.waitFor(() => expect(streamingInstances).toHaveLength(1));
+      await options.onIdle?.();
+
+      const instance = requireStreamingInstance(0);
+      // The card is kept: the close commits rather than discarding for a post.
+      expect(instance.closeWithResult).toHaveBeenCalled();
+      expect(sendMessageFeishuMock).not.toHaveBeenCalled();
+      const committed = instance.closeWithResult.mock.calls[0]?.[0] ?? "";
+      // The rows are still there, as a list the card can draw.
+      expect(committed).toContain("Ada");
+      expect(committed).toContain("Lead");
+      expect(committed).not.toContain("| --- |");
+      expect(committed).toContain("Inventory complete.");
+    });
+
     // The preview path renders tables too, then hands the result to the shared
     // formatter. Its underscores are stripped again by the prefix builder, so this
     // records that the structure survives rather than assuming either way.
@@ -5511,7 +5534,11 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
     });
 
     // block keeps native tables, and the reasoning half must not diverge from it.
-    it("keeps a native reasoning table on the streaming card in block mode", async () => {
+    // This used to assert the quoted native table reached the card, which is the shape
+    // a card cannot draw, so what it pinned was the rows disappearing. The card now
+    // receives a list instead, which it draws, and the native table is what the post
+    // path still carries.
+    it("lists a native reasoning table on the streaming card in block mode", async () => {
       const { result, options } = createBlockTableHarness(tableCfg("block"), true);
       result.replyOptions.onReasoningStream?.({ text: tableMarkdown });
       result.replyOptions.onPartialReply?.({ text: "Roster ready." });
@@ -5519,8 +5546,11 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
 
       await options.onIdle?.();
 
-      const committed = requireStreamingInstance(0).closeWithResult.mock.calls[0]?.[0];
-      expect(committed).toContain(quoteReasoning(tableMarkdown));
+      const committed = requireStreamingInstance(0).closeWithResult.mock.calls[0]?.[0] ?? "";
+      expect(committed).not.toContain(quoteReasoning(tableMarkdown));
+      expect(committed).toContain("Ada");
+      expect(committed).toContain("Lead");
+      expect(committed).not.toContain("| --- |");
     });
 
     it("routes an off final with a table to the post path instead of a streaming card", async () => {

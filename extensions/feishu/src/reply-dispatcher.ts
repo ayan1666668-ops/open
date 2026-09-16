@@ -431,13 +431,19 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
     return `Thinking\n\n${formatted.join("\n")}`;
   };
 
+  // The reasoning stream stores its text already italicised, so the shape a card
+  // finally sees is this stripped form rather than what is held. Anything asking what
+  // the card will draw has to ask about this.
+  const plainReasoningText = (thinking: string): string =>
+    thinking.replace(/^(?:Reasoning:|Thinking\.{0,3})\s*/u, "").replace(/^_(.*)_$/gm, "$1");
+
   const formatReasoningPrefix = (thinking: string): string => {
     if (!thinking) {
       return "";
     }
-    const withoutLabel = thinking.replace(/^(?:Reasoning:|Thinking\.{0,3})\s*/u, "");
-    const plain = withoutLabel.replace(/^_(.*)_$/gm, "$1");
-    const lines = plain.split("\n").map((line) => `> ${line}`);
+    const lines = plainReasoningText(thinking)
+      .split("\n")
+      .map((line) => `> ${line}`);
     return `> 💭 **Thinking**\n${lines.join("\n")}`;
   };
 
@@ -648,13 +654,29 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
       let finalizationError: unknown;
       if (streamingToClose?.isActive()) {
         statusLine = "";
-        const text = buildCombinedStreamText(finalizedReasoningText, answerText);
+        // `tableNeedsPostPath` only fires in off mode, where the fallback below does not
+        // apply, so the routing decision reads the untouched combination.
+        const rawText = buildCombinedStreamText(finalizedReasoningText, answerText);
         // Committing here would put the table in a card just as surely as delivering a
         // final would, so this close drops the card and reuses a matching block
         // receipt or sends the combined text for a final to inherit.
         const closeNeedsPost =
           disposition === "closed" &&
-          (tableNeedsPostPath(text) || answerTableNeedsPostPath(answerText));
+          (tableNeedsPostPath(rawText) || answerTableNeedsPostPath(answerText));
+        // Reasoning is blockquoted before it reaches the card, and a card does not draw
+        // a blockquoted table, so a native one there loses its rows. Bullets survive the
+        // quote, so reasoning degrades to a list rather than the rows disappearing, and
+        // the card the answer earned is kept. The post path keeps the native table,
+        // which it renders as a fenced block.
+        const plainReasoning = plainReasoningText(finalizedReasoningText);
+        const reasoningForClose =
+          !closeNeedsPost && nativeTables && hasCardMarkdownTable(plainReasoning)
+            ? core.channel.text.convertMarkdownTables(plainReasoning, "bullets")
+            : finalizedReasoningText;
+        const text =
+          reasoningForClose === finalizedReasoningText
+            ? rawText
+            : buildCombinedStreamText(reasoningForClose, answerText);
         let closed;
         try {
           if (disposition === "discarded" || closeNeedsPost) {
