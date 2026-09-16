@@ -253,6 +253,7 @@ export function renderChatModelControls(props: ChatModelControlsProps) {
   }
   const {
     currentOverride,
+    appModelLabel,
     defaultModel,
     defaultLabel,
     modelOverrideSource,
@@ -281,6 +282,7 @@ export function renderChatModelControls(props: ChatModelControlsProps) {
   const activeRunId = localRunMatchesSession ? props.activeRunId : null;
   const stream = localRunMatchesSession ? props.stream : null;
   const resolvedFastMode = resolveChatFastModeSelectState({
+    serverManagedModel: appModelLabel !== undefined,
     activeRunId,
     catalog: props.modelCatalog,
     connected: props.connected,
@@ -330,7 +332,8 @@ export function renderChatModelControls(props: ChatModelControlsProps) {
   // turn's fallback. Keep the choice visible until this run identifies its model.
   const triggerModelValue = activeModelValue || currentOverride;
   const modelStarting =
-    modelPending && Boolean(triggerModelValue || (!props.modelSelectionLocked && defaultModel));
+    modelPending &&
+    Boolean(appModelLabel || triggerModelValue || (!props.modelSelectionLocked && defaultModel));
   const defaultProviderHint = props.sessionsResult?.defaults?.modelProvider ?? "";
   const defaultCatalogEntry = catalog.entry(defaultModel);
   const canonicalDefaultLabel = resolveChatModelPickerLabel(defaultCatalogEntry, defaultLabel);
@@ -417,8 +420,10 @@ export function renderChatModelControls(props: ChatModelControlsProps) {
       provider: catalog.provider(defaultModel, defaultProviderHint),
     });
   }
-  const currentCatalogEntry = catalog.entry(currentOverride);
+  const currentCatalogEntry =
+    appModelLabel === undefined ? catalog.entry(currentOverride) : undefined;
   if (
+    appModelLabel === undefined &&
     currentOverride &&
     currentCatalogEntry?.manualSelectionAllowed !== false &&
     modelOptions.length > 0 &&
@@ -445,27 +450,32 @@ export function renderChatModelControls(props: ChatModelControlsProps) {
   const selectedAgentRuntime =
     props.selectedAgentRuntime ??
     props.selectedSession?.agentRuntime?.id ??
-    catalog.entry(currentOverride || defaultModel)?.agentRuntime?.id;
+    (appModelLabel === undefined
+      ? catalog.entry(currentOverride || defaultModel)?.agentRuntime?.id
+      : undefined);
   const defaultRuntime =
     defaultCatalogEntry?.agentRuntime?.id ?? props.sessionsResult?.defaults?.agentRuntime?.id;
   // A default model can still have a runtime pin; only the configured model/runtime pair inherits Default.
   const pickerValue =
-    modelOverrideSource === null &&
-    (!selectedAgentRuntime || selectedAgentRuntime === defaultRuntime)
-      ? ""
-      : currentOverride || defaultModel;
+    appModelLabel !== undefined
+      ? undefined
+      : modelOverrideSource === null &&
+          (!selectedAgentRuntime || selectedAgentRuntime === defaultRuntime)
+        ? ""
+        : currentOverride || defaultModel;
   const activeModelOption = modelOptions.find((option) =>
     isModelPickerOptionSelected(option, pickerValue, selectedAgentRuntime),
   );
-  const activeSessionModel = activeSession?.model
-    ? catalog.entry(
-        resolvePreferredServerChatModelValue(
-          activeSession.model,
-          activeSession.modelProvider,
-          props.modelCatalog,
-        ),
-      )
-    : undefined;
+  const activeSessionModel =
+    activeSession?.model && activeSession.modelProvider
+      ? catalog.entry(
+          resolvePreferredServerChatModelValue(
+            activeSession.model,
+            activeSession.modelProvider,
+            props.modelCatalog,
+          ),
+        )
+      : undefined;
   const activeOptionModel = activeModelOption ? catalog.entry(activeModelOption.value) : undefined;
   const activeSessionRuntime = activeSession?.agentRuntime?.id.trim().toLowerCase();
   const activeOptionRuntime = (
@@ -492,13 +502,15 @@ export function renderChatModelControls(props: ChatModelControlsProps) {
   // A lock prevents model changes; the concrete selection still owns its label.
   // Without a selection, neither the runtime nor the agent default identifies it.
   const committedModelLabel =
-    props.modelSelectionLocked === true && !triggerModelValue
-      ? t("chat.selectors.lockedSessionModel")
-      : (modelOptions.find((entry) => entry.value === triggerModelValue)?.label ??
-        resolveChatModelPickerLabel(
-          catalog.entry(triggerModelValue),
-          triggerModelValue || pickerDefaultLabel,
-        ));
+    appModelLabel && !activeModelValue
+      ? appModelLabel
+      : props.modelSelectionLocked === true && !triggerModelValue
+        ? t("chat.selectors.lockedSessionModel")
+        : (modelOptions.find((entry) => entry.value === triggerModelValue)?.label ??
+          resolveChatModelPickerLabel(
+            catalog.entry(triggerModelValue),
+            triggerModelValue || pickerDefaultLabel,
+          ));
   const managedCatalog = props.modelCatalogState ?? {
     hasSnapshot: !props.modelsLoading,
     status: props.modelsLoading ? ("loading" as const) : ("ready" as const),
@@ -507,7 +519,9 @@ export function renderChatModelControls(props: ChatModelControlsProps) {
     !managedCatalog.hasSnapshot && ["idle", "loading"].includes(managedCatalog.status);
   // The session owns the selected model; its account-scoped catalog only owns
   // picker availability. Refreshing that catalog must not hide a known selection.
-  const selectionKnown = Boolean(currentOverride || (modelOverrideSource === null && defaultModel));
+  const selectionKnown = Boolean(
+    appModelLabel || currentOverride || (modelOverrideSource === null && defaultModel),
+  );
   const catalogTriggerStatus = resolveCatalogTriggerStatus(
     managedCatalog,
     modelOptions.length,
@@ -553,7 +567,10 @@ export function renderChatModelControls(props: ChatModelControlsProps) {
     <div class="chat-controls__session chat-controls__model chat-controls__model-settings">
       ${renderChatModelPicker({
         providerAuth: props.modelAuthStatusResult ? providerAuth : undefined,
-        accountSection: props.renderAccountSection?.(currentOverride || defaultModel),
+        accountSection:
+          appModelLabel === undefined
+            ? props.renderAccountSection?.(currentOverride || defaultModel)
+            : undefined,
         contextWindow:
           contextWindows.length > 1
             ? {
@@ -581,7 +598,11 @@ export function renderChatModelControls(props: ChatModelControlsProps) {
         sessionModelPinned,
         sessionKey: props.sessionKey,
         triggerModelLabel: formatPickerModelLabel(committedModelLabel),
-        triggerModelValue: modelPending && !modelStarting ? "" : triggerModelValue || undefined,
+        triggerModelValue:
+          (appModelLabel !== undefined && !activeSession?.activeModelProvider) ||
+          (modelPending && !modelStarting)
+            ? ""
+            : triggerModelValue || undefined,
         triggerStarting: modelStarting,
         triggerStatusLabel: modelStarting
           ? undefined

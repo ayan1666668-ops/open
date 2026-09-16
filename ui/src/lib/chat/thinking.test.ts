@@ -10,6 +10,36 @@ import {
 } from "./thinking.ts";
 
 describe("chat thinking helpers", () => {
+  it.each([undefined, "qa-model"])(
+    "does not borrow default thinking for an opaque app model %s",
+    (model) => {
+      const defaults = {
+        model: "qa-model",
+        modelProvider: "qa-provider",
+        contextTokens: null,
+        thinkingLevels: [{ id: "high", label: "High" }],
+        thinkingDefault: "high",
+      };
+      const state = resolveChatThinkingSelectState({
+        session: { model, agentRuntime: { id: "qa-app", source: "session" } },
+        defaults,
+        catalog: [
+          {
+            id: "qa-model",
+            name: "Catalog model",
+            provider: "qa-provider",
+            thinkingLevels: defaults.thinkingLevels,
+            thinkingDefault: "high",
+          },
+        ],
+        sessionKey: "main",
+        sessionsResult: null,
+      });
+      expect(state.options).toEqual([]);
+      expect(state.inherited.value).toBe("");
+    },
+  );
+
   it("keeps an explicitly empty session profile and its saved override", () => {
     const state = resolveChatThinkingSelectState({
       catalog: [

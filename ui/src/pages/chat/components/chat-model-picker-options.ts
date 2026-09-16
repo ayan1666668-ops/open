@@ -15,9 +15,9 @@ registerModelControlsEnglish();
 
 export type ChatModelPickerOption = {
   agentRuntimeId?: string;
-  /** Null is an unknown configured base; undefined is an ordinary model-only row. Both clear a prior pin. */
+  /** Null is an unknown configured base; undefined is an ordinary model-only row. */
   agentRuntime?: string | null;
-  /** Only explicit alternatives pin a runtime; configured base rows follow current routing. */
+  /** Only runtime-specific rows request an executor change. */
   runtimeOverride?: string;
   commitValue: string;
   contextTokens?: number;
@@ -37,7 +37,7 @@ export function modelPickerOptionKey(option: ChatModelPickerOption): string {
 
 export function isModelPickerOptionSelected(
   option: ChatModelPickerOption,
-  value: string,
+  value: string | undefined,
   agentRuntime?: string,
 ): boolean {
   return (
@@ -111,7 +111,7 @@ export function renderChatModelPickerOption(params: {
   disabled: boolean;
   entry: ChatModelPickerOption;
   index: number;
-  selectedModelValue: string;
+  selectedModelValue?: string;
   selectedAgentRuntime?: string;
   sessionModelPinned: boolean;
   onHighlight: (row: HTMLButtonElement) => void;

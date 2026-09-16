@@ -58,7 +58,7 @@ type ChatModelPickerParams = {
   modelOptions: ChatModelPickerOption[];
   open?: boolean;
   targetGroups?: readonly ChatModelPickerTargetGroup[];
-  selectedModelValue: string;
+  selectedModelValue?: string;
   selectedAgentRuntime?: string;
   /** Pin recorded on the session row; only then does an unavailable Default row reset. */
   sessionModelPinned: boolean;
@@ -231,7 +231,7 @@ export function renderChatModelPicker(params: ChatModelPickerParams) {
         } ${params.disabled ? "chat-controls__inline-select-trigger--disabled" : ""}"
         data-chat-model-select="true"
         data-chat-model-locked=${params.modelSelectionLocked ? "true" : "false"}
-        data-chat-select-value=${params.selectedModelValue}
+        data-chat-select-value=${params.selectedModelValue ?? nothing}
         data-chat-model-tools=${modelToolsUnavailable ? "unavailable" : "available"}
         aria-label=${`${t("chat.selectors.model")}: ${triggerTitle}${
           params.selectionScopeDescription ? `. ${params.selectionScopeDescription}` : ""

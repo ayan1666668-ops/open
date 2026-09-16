@@ -7,6 +7,9 @@ export function sessionModelMatchesDefaults(
   session: SessionModelFields | null | undefined,
   defaults: SessionsListResult["defaults"] | undefined,
 ): boolean {
+  if (!session?.modelProvider && (session?.model || session?.agentRuntime?.source === "session")) {
+    return false;
+  }
   const sessionRuntime = session?.agentRuntime?.id?.trim();
   const defaultRuntime = defaults?.agentRuntime?.id?.trim();
   return (

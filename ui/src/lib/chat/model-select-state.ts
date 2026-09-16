@@ -38,6 +38,7 @@ type ChatModelSelectOption = {
 
 type ChatModelSelectState = {
   currentOverride: string;
+  appModelLabel?: string;
   defaultModel: string;
   defaultLabel: string;
   modelOverrideSource: GatewaySessionRow["modelOverrideSource"];
@@ -68,6 +69,7 @@ type ChatFastModeSelectStateInput = {
   catalog: ModelCatalogEntry[];
   connected: boolean;
   currentModelOverride: string;
+  serverManagedModel?: boolean;
   fastModeTarget?: ChatFastModeTarget;
   gatewayAvailable: boolean;
   loading: boolean;
@@ -106,9 +108,8 @@ export function resolveChatModelOverrideValue(state: ChatModelSelectStateInput):
 }
 
 function resolveDefaultModelValue(state: ChatModelSelectStateInput): string {
-  const agentDefault = resolvePreferredServerChatModelValue(
+  const agentDefault = normalizeChatModelOverrideValue(
     state.agentDefaultModel,
-    undefined,
     state.chatModelCatalog ?? [],
   );
   if (agentDefault) {
@@ -192,6 +193,7 @@ export function resolveChatModelUnavailableReason(
   provider: string | null | undefined,
   catalog: ModelCatalogEntry[],
 ): ModelCatalogEntry["unavailableReason"] {
+  if (!provider?.trim()) return undefined;
   const value = resolvePreferredServerChatModelValue(model, provider, catalog);
   const key = normalizeChatModelAvailabilityKey(value);
   const matches = catalog.filter(
@@ -251,15 +253,24 @@ export function resolveChatModelSelectState(
   );
   const displayLookup = buildCatalogDisplayLookup(pickerCatalog);
   const options = buildChatModelOptions(pickerCatalog, displayLookup);
-  const currentOverride = resolveCatalogChatModelValue(
-    resolveChatModelOverrideValue(state),
-    options,
-  );
+  const active = state.activeSession;
+  const serverSelection = !Object.hasOwn(state.modelOverrides, state.sessionKey);
+  const opaqueModel = serverSelection && !active?.modelProvider?.trim() && active?.model?.trim();
+  const appManagedDefault =
+    serverSelection &&
+    active?.agentRuntime?.source === "session" &&
+    !active.model?.trim() &&
+    !active.modelProvider?.trim();
+  const currentOverride =
+    opaqueModel || resolveCatalogChatModelValue(resolveChatModelOverrideValue(state), options);
+  const appModelLabel =
+    opaqueModel || (appManagedDefault ? t("chat.modelControls.appDefaultModel") : undefined);
   const defaultModel = resolveCatalogChatModelValue(resolveDefaultModelValue(state), options);
   const defaultLabel = formatCatalogChatModelDisplayFromLookup(defaultModel, displayLookup);
 
   return {
     currentOverride,
+    ...(appModelLabel ? { appModelLabel } : {}),
     defaultModel,
     defaultLabel: defaultModel ? `Default (${defaultLabel})` : "Default model",
     modelOverrideSource: resolveModelOverrideSource(state),
@@ -358,12 +369,14 @@ export function resolveChatFastModeSelectState(
   const activeProvider = normalizeChatModelProviderId(activeRow?.modelProvider ?? "") || null;
   const defaultProvider =
     normalizeChatModelProviderId(input.sessionsResult?.defaults?.modelProvider ?? "") || null;
-  const effectiveProvider = resolveFastModeProvider(
-    input.currentModelOverride,
-    input.catalog,
-    activeProvider,
-    defaultProvider,
-  );
+  const effectiveProvider = input.serverManagedModel
+    ? null
+    : resolveFastModeProvider(
+        input.currentModelOverride,
+        input.catalog,
+        activeProvider,
+        defaultProvider,
+      );
   const configuredOverride =
     activeRow?.fastMode === "auto"
       ? "auto"
@@ -394,7 +407,7 @@ export function resolveChatFastModeSelectState(
     ),
   );
   const applicability = new Set(
-    input.catalog
+    (input.serverManagedModel ? [] : input.catalog)
       .filter(
         (entry) =>
           normalizeChatModelAvailabilityKey(

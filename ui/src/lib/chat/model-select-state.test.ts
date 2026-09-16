@@ -64,6 +64,95 @@ function resolveFastModeState(params: {
 }
 
 describe("chat-model-select-state", () => {
+  it("does not gate an opaque app model on a colliding catalog route's credentials", () => {
+    const catalog = [
+      {
+        id: "qa-model",
+        name: "Catalog model",
+        provider: "qa-provider",
+        available: false,
+        unavailableReason: "missing-auth" as const,
+      },
+    ];
+    expect(
+      resolveChatModelUnavailableReason("qa-provider/qa-model", undefined, catalog),
+    ).toBeUndefined();
+    expect(resolveChatModelUnavailableReason("qa-model", "qa-provider", catalog)).toBe(
+      "missing-auth",
+    );
+  });
+
+  it.each([true, false])(
+    "uses catalog speed metadata only for local/concrete selection, server-managed=%s",
+    (serverManagedModel) => {
+      const state = resolveChatFastModeSelectState({
+        activeRunId: null,
+        connected: true,
+        gatewayAvailable: true,
+        loading: false,
+        sending: false,
+        stream: null,
+        sessionsResult: null,
+        currentModelOverride: "qa-provider/qa-model",
+        serverManagedModel,
+        fastModeTarget: {
+          model: "qa-provider/qa-model",
+          agentRuntime: { id: "qa-app", source: "session" },
+        },
+        catalog: [
+          {
+            id: "qa-model",
+            name: "Catalog model",
+            provider: "qa-provider",
+            supportsFastMode: true,
+          },
+        ],
+      });
+      expect(state.supported).toBe(!serverManagedModel);
+      expect(state.disabled).toBe(serverManagedModel);
+    },
+  );
+
+  it("keeps opaque server values and labels despite catalog collisions", () => {
+    const state = createChatModelState({
+      activeSession: {
+        key: "main",
+        kind: "direct",
+        updatedAt: null,
+        model: "qa-provider/QA-model",
+        agentRuntime: { id: "qa-app", source: "session" },
+      },
+      chatModelCatalog: [
+        { id: "qa-model", name: "Unrelated catalog model", provider: "qa-provider" },
+      ],
+    });
+    expect(resolveChatModelSelectState(state)).toMatchObject({
+      currentOverride: "qa-provider/QA-model",
+      appModelLabel: "qa-provider/QA-model",
+    });
+  });
+
+  it.each(["session", "implicit", "model", "session-key"] as const)(
+    "identifies app-managed defaults from server runtime source %s",
+    (source) => {
+      const state = createChatModelState({
+        activeSession: {
+          key: "main",
+          kind: "direct",
+          updatedAt: null,
+          agentRuntime: { id: "qa-app", source },
+        },
+        agentDefaultModel: "qa-provider/qa-default",
+      });
+      const resolved = resolveChatModelSelectState(state);
+      expect(resolved.appModelLabel).toBe(source === "session" ? "App default model" : undefined);
+      expect(resolved.defaultLabel).toBe("Default (qa-default · qa-provider)");
+      expect(
+        resolveChatModelSelectState({ ...state, modelOverrides: { main: null } }).appModelLabel,
+      ).toBeUndefined();
+    },
+  );
+
   it.each([
     { reason: "missing-auth", expected: "missing-auth" },
     { reason: "auth-failed", expected: "auth-failed" },

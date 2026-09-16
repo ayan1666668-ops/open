@@ -2,9 +2,9 @@ import type { GatewayAgentRow, ModelCatalogEntry, SessionsListResult } from "../
 import {
   buildQualifiedChatModelValue,
   normalizeChatModelProviderId,
+  normalizeChatModelOverrideValue,
   resolvePreferredServerChatModelValue,
 } from "../../lib/chat/model-ref.ts";
-import { resolveChatModelUnavailableReason } from "../../lib/chat/model-select-state.ts";
 import {
   normalizeThinkingOptionValue,
   resolveThinkingProfileForSession,
@@ -80,7 +80,9 @@ export function resolveDraftModelTarget(
   catalog: ModelCatalogEntry[],
   agentRuntime?: string,
 ): DraftModelTarget | null {
-  const value = resolvePreferredServerChatModelValue(model, provider, catalog);
+  const value = provider?.trim()
+    ? resolvePreferredServerChatModelValue(model, provider, catalog)
+    : normalizeChatModelOverrideValue(model, catalog);
   if (!value) {
     return null;
   }
@@ -114,10 +116,8 @@ export function resolveDraftModelUnavailableReason(params: {
   agentRuntime?: string;
   catalog: ModelCatalogEntry[];
 }): ModelRuntimeEntry["unavailableReason"] {
-  return params.agentRuntime
-    ? resolveDraftModelTarget(params.model, undefined, params.catalog, params.agentRuntime)?.entry
-        ?.unavailableReason
-    : resolveChatModelUnavailableReason(params.model, undefined, params.catalog);
+  return resolveDraftModelTarget(params.model, undefined, params.catalog, params.agentRuntime)
+    ?.entry?.unavailableReason;
 }
 
 export function resolveDraftAgentRuntime(params: {

@@ -7,6 +7,7 @@ const enModelControls = {
       subscription: "Subscription",
       api: "API",
       default: "Default",
+      appDefaultModel: "App default model",
       effort: "Effort",
       faster: "Faster",
       smarter: "Smarter",

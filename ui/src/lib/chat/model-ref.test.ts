@@ -23,6 +23,12 @@ const catalog = createModelCatalog(OPENAI_GPT5_MINI_MODEL, {
 });
 
 describe("chat-model-ref helpers", () => {
+  it("preserves an opaque server id while local input still resolves a unique catalog route", () => {
+    const collision = [{ id: "qa-model", name: "Catalog model", provider: "qa-provider" }];
+    expect(resolvePreferredServerChatModelValue("qa-model", undefined, collision)).toBe("qa-model");
+    expect(normalizeChatModelOverrideValue("qa-model", collision)).toBe("qa-provider/qa-model");
+  });
+
   it("preserves provider-native nested ids and prefers aliases", () => {
     const nested = {
       id: "moonshotai/kimi-k2.5",

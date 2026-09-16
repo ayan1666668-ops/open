@@ -51,7 +51,8 @@ export function resolveThinkingProfileForSession(
   catalog: readonly ModelCatalogEntry[],
 ): ThinkingProfile | undefined {
   // A partial session identity cannot borrow its missing half from defaults.
-  const target = session?.model || session?.modelProvider ? session : defaults;
+  const acceptedAppModel = session?.agentRuntime?.source === "session" && !session.modelProvider;
+  const target = session?.model || session?.modelProvider || acceptedAppModel ? session : defaults;
   const catalogEntry = resolveThinkingCatalogEntry(
     catalog,
     target?.modelProvider ?? null,

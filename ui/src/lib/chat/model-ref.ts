@@ -85,7 +85,7 @@ export function resolvePreferredServerChatModelValue(
   const trimmedProvider = provider?.trim();
 
   if (!trimmedProvider) {
-    return normalizeChatModelOverrideValue(trimmedModel, catalog);
+    return trimmedModel;
   }
 
   if (!trimmedModel.includes("/")) {

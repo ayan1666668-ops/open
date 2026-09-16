@@ -7568,6 +7568,54 @@ describe("chat model controls", () => {
     expect(modelSelect.getAttribute("aria-disabled")).toBe("true");
   });
 
+  it.each([
+    { model: undefined, expected: "App default model" },
+    { model: "qa-model", expected: "qa-model" },
+    { model: "qa-provider/qa-model", expected: "qa-provider/qa-model" },
+  ])(
+    "renders the server-owned model label $expected without catalog inference",
+    ({ model, expected }) => {
+      const { state } = createChatHeaderState({
+        model: "qa-model",
+        modelProvider: "qa-provider",
+        models: [
+          {
+            id: "qa-model",
+            name: "Unrelated catalog model",
+            provider: "qa-provider",
+            supportsTools: false,
+            contextWindow: 4096,
+          },
+        ],
+      });
+      const session = expectDefined(state.sessionsResult?.sessions[0], "selected session");
+      delete session.modelProvider;
+      session.model = model;
+      session.agentRuntime = { id: "qa-app", source: "session" };
+      session.contextTokens = 123;
+      const container = renderModelControls(state);
+      const trigger = getChatModelSelect(container);
+      expect(trigger.textContent).toContain(expected);
+      expect(trigger.textContent).not.toContain("Unrelated catalog model");
+      expect(trigger.getAttribute("aria-label")).toBe(`Chat model: ${expected}`);
+      expect(trigger.dataset.chatSelectValue).toBeUndefined();
+      expect(trigger.dataset.chatModelTools).toBe("available");
+      expect(container.querySelector('[data-chat-model-option][aria-selected="true"]')).toBeNull();
+      expect(
+        container.querySelector('[data-chat-model-option="qa-provider/qa-model"]')?.textContent,
+      ).not.toContain("123 active");
+      const pendingLocal = renderModelControls(state, {
+        modelOverrides: { main: "qa-provider/qa-model" },
+      });
+      expect(
+        pendingLocal
+          .querySelector('[data-chat-model-option="qa-provider/qa-model"]')
+          ?.getAttribute("aria-selected"),
+      ).toBe("true");
+      expect(getChatModelSelect(pendingLocal).dataset.chatModelTools).toBe("unavailable");
+    },
+  );
+
   it("shows the selected model for an idle session with stale running status", () => {
     const { state } = createChatHeaderState({
       model: "primary",
