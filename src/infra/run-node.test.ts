@@ -21,7 +21,6 @@ import {
   resolveRuntimePostBuildRequirement,
 } from "../../scripts/run-node.mts";
 import { createDeferred } from "../../test/helpers/promise.js";
-import { withTestDir } from "../test-helpers/temp-dir.js";
 import {
   it,
   ROOT_SRC,
@@ -102,7 +101,8 @@ import {
   runStatusCommand,
   runQaCommand,
   expectManifestId,
-} from "./run-node.test-support.js";
+} from "../../test/scripts/run-node.test-support.js";
+import { withTestDir } from "../test-helpers/temp-dir.js";
 
 describe("run-node script", () => {
   it.for([

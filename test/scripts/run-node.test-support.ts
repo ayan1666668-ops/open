@@ -25,11 +25,11 @@ import {
   writeUpdateCompatibilityChunks,
 } from "../../scripts/lib/update-compat-chunks.mts";
 import { runNodeMain } from "../../scripts/run-node.mts";
+import { withTestDir } from "../../src/test-helpers/temp-dir.js";
 import {
   previousReleaseInventory,
   writeUpdateCompatibilityBuildFixture,
-} from "../../test/scripts/update-compat-chunks.test-support.js";
-import { withTestDir } from "../test-helpers/temp-dir.js";
+} from "./update-compat-chunks.test-support.js";
 export const it = baseIt.extend<{ tmp: string }>({
   tmp: async ({ task: _task }, use) => {
     await withTestDir({ prefix: "openclaw-run-node-" }, use);
