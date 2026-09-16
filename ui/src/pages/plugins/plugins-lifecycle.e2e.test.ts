@@ -107,7 +107,7 @@ describeControlUiE2e("Control UI plugin lifecycle", () => {
     }
   });
 
-  it("reviews staged capabilities and supports uninstalling and reinstalling on the same connection", async () => {
+  it.each([false, true])("retains uninstall warnings (%s)", async (withWarnings) => {
     const context = await newContext();
     const page = await context.newPage();
     const installedCalendar = { ...calendarPlugin, catalogId: calendarDiscoveryPlugin.id };
@@ -189,9 +189,41 @@ describeControlUiE2e("Control UI plugin lifecycle", () => {
       expect((await gateway.waitForRequest("plugins.uninstall")).params).toEqual({
         pluginId: "calendar-plus",
       });
+      const warnings = [
+        "Claw planner depends on calendar-plus. Update its plugin selection.",
+        "Removed all plugin entries owned by the calendar-plus package.",
+      ] as const;
+      const refreshError = "Configuration reload failed after removal.";
+      await gateway.deferNext("config.get");
       await gateway.setMethodResponse("plugins.list", initialInventory);
-      await gateway.resolveDeferred("plugins.uninstall");
+      await gateway.resolveDeferred("plugins.uninstall", {
+        ok: true,
+        pluginId: "calendar-plus",
+        removed: ["config entry", "install record"],
+        warnings: withWarnings ? warnings : [],
+      });
+      if (withWarnings) {
+        await gateway.rejectDeferred("config.get", {
+          code: "UNAVAILABLE",
+          message: refreshError,
+        });
+      } else {
+        await gateway.resolveDeferred("config.get", configSnapshot(false));
+      }
       await page.getByRole("button", { name: "Install", exact: true }).waitFor();
+      await captureScreenshot(page, `uninstall-${withWarnings ? "warnings" : "quiet"}.png`);
+      const notice = page.locator(".plugins-row-message");
+      if (withWarnings) {
+        await expect
+          .poll(() => notice.allTextContents())
+          .toEqual([expect.stringContaining(warnings[0])]);
+        expect(await notice.textContent()).toContain(warnings[1]);
+        expect(await notice.textContent()).toContain(refreshError);
+        expect(await notice.getAttribute("class")).toContain("plugins-row-message--warning");
+      } else {
+        expect(await notice.count()).toBe(0);
+      }
+      expect(await page.getByText("Removed Calendar Plus.", { exact: true }).count()).toBe(0);
       await expect
         .poll(() => new URL(page.url()).pathname)
         .toBe(`/plugins/${calendarDiscoveryPlugin.id}`);
@@ -202,6 +234,7 @@ describeControlUiE2e("Control UI plugin lifecycle", () => {
         source: "clawhub",
         packageName: "calendar-plus",
       });
+      expect(await notice.count()).toBe(0);
       await gateway.setMethodResponse(
         "plugins.list",
         inventory([...initialInventory.plugins, installedCalendar]),

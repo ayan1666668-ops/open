@@ -796,6 +796,7 @@ suite.define(() => {
         ).toBe(0);
 
         const uninstallCount = (await gateway.getRequests("plugins.uninstall")).length;
+        await gateway.deferNext("plugins.uninstall");
         await page
           .locator(".plugins-settings-breadcrumb")
           .getByRole("link", { name: "Workboard", exact: true })
@@ -807,10 +808,11 @@ suite.define(() => {
           .getByRole("button", { name: "Remove", exact: true })
           .click();
         await gateway.waitForRequest("plugins.uninstall", { after: uninstallCount });
-        await page
-          .getByRole("status")
-          .filter({ hasText: /removed|uninstalled/iu })
-          .waitFor();
+        await gateway.setMethodResponse("plugins.list", { ...inventory, plugins: [calendar] });
+        await gateway.resolveDeferred("plugins.uninstall");
+        await page.locator('[data-plugin-id="calendar"]').waitFor();
+        expect(await page.locator('[data-plugin-id="workboard"]').count()).toBe(0);
+        expect(await page.locator(".plugins-row-message").count()).toBe(0);
         expect(await gateway.getRequests("connect")).toHaveLength(connections);
         expect(await gateway.getRequests("gateway.restart.request")).toHaveLength(0);
       },

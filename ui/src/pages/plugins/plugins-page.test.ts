@@ -585,11 +585,9 @@ describe("PluginsPage", () => {
 
     await page.uninstall("community-thing", "plugin:community-thing");
 
-    await waitForFast(() =>
-      expect(page.querySelector('[role="status"]')?.textContent).toContain(
-        "Removed Community Thing",
-      ),
-    );
+    await page.updateComplete;
+    expect(page.result?.plugins.some((plugin) => plugin.id === "community-thing")).toBe(false);
+    expect(page.querySelector(".plugins-row-message")).toBeNull();
     expect(calls).toContainEqual(["plugins.uninstall", { pluginId: "community-thing" }]);
     expect(calls).toContainEqual(["plugins.list", {}]);
   });
@@ -637,11 +635,14 @@ describe("PluginsPage", () => {
       pluginId: "community-thing",
       restartRequired: true,
       removed: ["config entry", "install record", "directory"],
+      warnings: ["Old uninstall warning must not replace the newer action."],
     });
     await uninstall;
     await page.updateComplete;
 
-    expect(page.textContent).not.toContain("Removed Community Thing");
+    expect(page.textContent).not.toContain(
+      "Old uninstall warning must not replace the newer action.",
+    );
     expect(page.messages["plugin:workboard"]?.text).toContain("Enabled Workboard");
   });
 });

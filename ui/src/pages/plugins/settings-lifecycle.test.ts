@@ -17,7 +17,6 @@ function mount(overrides: Partial<DetailProps>) {
     error: null,
     busy: {},
     messages: {},
-    pageNotice: null,
     iconUrls: {},
     canMutate: true,
     reloadBlockedReason: null,

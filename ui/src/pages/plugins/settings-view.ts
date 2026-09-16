@@ -36,7 +36,11 @@ import {
   renderPluginPublisher,
 } from "./overview.ts";
 import { renderPluginStateStatus } from "./plugin-card.ts";
-import { pluginRowKey, type PluginRowMessage } from "./plugin-row-message.ts";
+import {
+  pluginRowKey,
+  renderPluginRowMessage,
+  type PluginRowMessage,
+} from "./plugin-row-message.ts";
 import { matchesPluginQuery } from "./plugin-state-presentation.ts";
 import { renderPluginLifecycle } from "./settings-lifecycle.ts";
 import { pluginEntryValue } from "./settings-model.ts";
@@ -51,7 +55,6 @@ type SharedProps = {
   error: string | null;
   busy: Readonly<Record<string, boolean>>;
   messages: Readonly<Record<string, PluginRowMessage>>;
-  pageNotice: PluginRowMessage | null;
   iconUrls: Readonly<Record<string, string>>;
   canMutate: boolean;
   reloadBlockedReason: string | null;
@@ -103,24 +106,6 @@ export type DetailProps = SharedProps & {
   onRetryInspection: () => void;
   onTabChange: (tab: InstalledPluginDetailTab) => void;
 };
-
-function renderMessage(message: PluginRowMessage | undefined) {
-  if (!message) {
-    return nothing;
-  }
-  return html`<div
-    class="plugins-row-message plugins-row-message--${message.kind} oc-banner ${
-      message.kind === "error"
-        ? "oc-banner-error"
-        : message.kind === "warning"
-          ? "oc-banner-warning"
-          : "oc-banner-success"
-    }"
-    role=${message.kind === "error" ? "alert" : "status"}
-  >
-    ${message.text}
-  </div>`;
-}
 
 function renderRetryError(error: string, onRetry: () => void): TemplateResult {
   return html`<div
@@ -226,7 +211,7 @@ function renderInstalledInventory(props: InventoryProps): TemplateResult {
             }
             <span class="settings-row__chevron" aria-hidden="true">${icons.chevronRight}</span>
           </div>
-          ${renderMessage(props.messages[key])}
+          ${renderPluginRowMessage(props.messages[key])}
         </article>
       `;
     },
@@ -308,7 +293,6 @@ export function renderPluginSettingsInventory(props: InventoryProps): TemplateRe
         title: html`<h1 class="plugins-settings-title">${t("tabs.plugins")}</h1>`,
         subtitle: t("pluginsPage.settingsDescription"),
       })}
-      ${props.pageNotice ? renderMessage(props.pageNotice) : nothing}
       <div class="plugins-settings-content">
         ${renderSettingsTabs(props)}
         <wa-tab-panel
@@ -464,11 +448,10 @@ export function renderPluginSettingsDetail(props: DetailProps): TemplateResult {
   const catalog = props.inspection?.catalog;
   const components = props.inspection?.components;
   const settings = props.tab === "configuration";
-  const notices = html`${props.pageNotice ? renderMessage(props.pageNotice) : nothing}
-  ${props.error ? renderRetryError(props.error, props.onRefresh) : nothing}
+  const notices = html`${props.error ? renderRetryError(props.error, props.onRefresh) : nothing}
   ${props.inspectionError ? renderRetryError(props.inspectionError, props.onRetryInspection) : nothing}
   ${plugin.error ? html`<div class="callout danger oc-banner oc-banner-error" role="alert">${formatUiExternalText(plugin.error)}</div>` : nothing}
-  ${renderMessage(props.messages[key])}`;
+  ${renderPluginRowMessage(props.messages[key])}`;
   if (settings) {
     return renderSettingsPage(
       html`

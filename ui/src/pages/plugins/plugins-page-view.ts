@@ -26,7 +26,7 @@ import {
 } from "./install-wizard-model.ts";
 import { renderPluginInstallWizard } from "./install-wizard.ts";
 import type { PluginDiscoveryController } from "./plugin-discovery-controller.ts";
-import type { PluginRowMessage } from "./plugin-row-message.ts";
+import { renderPluginRowMessage, type PluginRowMessage } from "./plugin-row-message.ts";
 import type { PluginsConsentController } from "./plugins-consent-controller.ts";
 import { renderPluginsHubHeader } from "./plugins-hub-header.ts";
 import { PLUGINS_HUB_PANEL_ID, type PluginsHubTab } from "./plugins-hub.ts";
@@ -136,7 +136,6 @@ export function renderPluginsPage(model: PluginsPageViewModel) {
     error: model.error,
     busy: model.busy,
     messages: model.messages,
-    pageNotice: model.pageNotice,
     iconUrls: model.iconUrls,
     canMutate: model.canMutate,
     reloadBlockedReason: model.reloadBlockedReason,
@@ -215,6 +214,7 @@ export function renderPluginsPage(model: PluginsPageViewModel) {
     }
     ${renderSettingsWorkspace(html`
       <openclaw-plugin-manager></openclaw-plugin-manager>
+      ${renderPluginRowMessage(model.pageNotice ?? undefined)}
       ${
         model.surface === "discovery"
           ? html`<wa-tab-panel

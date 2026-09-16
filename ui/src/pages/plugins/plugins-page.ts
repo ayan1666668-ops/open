@@ -37,10 +37,7 @@ import type { PluginInstallWizardState } from "./install-wizard-model.ts";
 import { PluginDiscoveryController } from "./plugin-discovery-controller.ts";
 import { confirmPluginUninstall } from "./plugin-lifecycle-confirmation.ts";
 import type { PluginRowMessage } from "./plugin-row-message.ts";
-import {
-  committedMutationMessage,
-  PluginsConsentController,
-} from "./plugins-consent-controller.ts";
+import { pluginMutationWarnings, PluginsConsentController } from "./plugins-consent-controller.ts";
 import { loadInstalledPluginDetail } from "./plugins-detail-loader.ts";
 import type { PluginsHubTab } from "./plugins-hub.ts";
 import { PluginsPageIcons } from "./plugins-page-icons.ts";
@@ -597,7 +594,7 @@ class PluginsPage extends OpenClawLightDomElement {
       async (result, refreshError, client, _isCurrent, isLatest) => {
         // Removal hides its row, so keep the operation outcome on the page.
         if (isLatest()) {
-          this.pageNotice = committedMutationMessage("removed", name, result, refreshError);
+          this.pageNotice = pluginMutationWarnings(result, refreshError);
           const routePluginId = this.activeRoutePluginId;
           if (routePluginId === pluginId) {
             this.detail = null;
