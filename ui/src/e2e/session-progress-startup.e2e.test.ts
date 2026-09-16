@@ -75,82 +75,98 @@ suite.define(() => {
         expect(await composer.inputValue()).toBe(draft);
         expect(await composer.evaluate((node) => document.activeElement === node)).toBe(true);
         await page.screenshot({ path: path.join(artifactDir, "progress-pending.png") });
-        if (outcome === "error") {
-          await gateway.rejectDeferred("progressCard.get", {
-            message: "Progress temporarily unavailable",
+        const geometry = await page.evaluateHandle(() => {
+          const bounds = (selector: string) => {
+            const element = document.querySelector<HTMLElement>(selector)!;
+            const { x, y, width, height } = element.getBoundingClientRect();
+            return { x, y, width, height };
+          };
+          const readEditor = () => ({
+            input: bounds(".agent-chat__input"),
+            textarea: bounds(".agent-chat__composer-combobox textarea"),
           });
-        } else {
-          await gateway.resolveDeferred("progressCard.get", {
-            card: outcome === "card" ? card : null,
-          });
-        }
-        if (outcome === "card") {
-          await page.locator(".session-progress-card--composer").waitFor();
-        }
-        await expect
-          .poll(() => page.locator(".agent-chat__progress-float--loading").count())
-          .toBe(0);
-        expect(await composer.evaluate((node, original) => node === original, textarea)).toBe(true);
-        expect(await composer.inputValue()).toBe(draft);
-        expect(await composer.evaluate((node) => document.activeElement === node)).toBe(true);
-        const geometry = page.evaluate(async () => {
+          const before = readEditor();
+          const editorFrames: Array<typeof before> = [];
           const frames: Array<{ top: number; height: number; card: boolean }> = [];
-          const shifts: number[] = [];
-          const observer = new PerformanceObserver((list) => {
-            for (const entry of list.getEntries()) {
-              const shift = entry as PerformanceEntry & {
-                value: number;
-                sources: Array<{ node?: Node }>;
-              };
-              const composerElement = document.querySelector(".agent-chat__composer-shell");
-              if (
-                composerElement &&
-                shift.sources.some(
-                  ({ node }) =>
-                    node instanceof Element &&
-                    (node.contains(composerElement) || composerElement.contains(node)),
-                )
-              ) {
-                shifts.push(shift.value);
+          let remaining: number | undefined;
+          let frame: number;
+          let complete!: () => void;
+          const finished = new Promise<void>((resolve) => {
+            complete = resolve;
+          });
+          const sample = () => {
+            editorFrames.push(readEditor());
+            if (remaining !== undefined) {
+              const shell = document.querySelector<HTMLElement>(".agent-chat__composer-shell")!;
+              frames.push({
+                top: shell.offsetTop,
+                height: shell.getBoundingClientRect().height,
+                card: shell.querySelector(".session-progress-card--composer") !== null,
+              });
+              if (--remaining === 0) {
+                complete();
+                return;
               }
             }
-          });
-          observer.observe({ type: "layout-shift" });
-          await new Promise<void>((resolve) => {
-            const sample = () => {
-              const shell = document.querySelector<HTMLElement>(".agent-chat__composer-shell");
-              if (shell) {
-                const bounds = shell.getBoundingClientRect();
-                frames.push({
-                  // The containing card's entrance transform does not change layout.
-                  top: shell.offsetTop,
-                  height: bounds.height,
-                  card: shell.querySelector(".session-progress-card--composer") !== null,
-                });
-              }
-              if (frames.length === 20) {
-                resolve();
-              } else {
-                requestAnimationFrame(sample);
-              }
-            };
-            requestAnimationFrame(sample);
-          });
-          observer.disconnect();
-          return { frames, shifts };
+            frame = requestAnimationFrame(sample);
+          };
+          sample();
+          return {
+            async finish() {
+              remaining = 20;
+              await finished;
+              return { frames, before, editorFrames };
+            },
+            cancel: () => cancelAnimationFrame(frame),
+          };
         });
-        const { frames, shifts } = await geometry;
-        await page.screenshot({ path: path.join(artifactDir, "progress-resolved.png") });
-        expect(shifts).toEqual([]);
-        expect(frames.every((frame) => frame.card === (outcome === "card"))).toBe(true);
-        expect(
-          Math.max(...frames.map((frame) => frame.height)) -
-            Math.min(...frames.map((frame) => frame.height)),
-        ).toBeLessThanOrEqual(1);
-        expect(
-          Math.max(...frames.map((frame) => frame.top)) -
-            Math.min(...frames.map((frame) => frame.top)),
-        ).toBeLessThanOrEqual(1);
+        try {
+          if (outcome === "error") {
+            await gateway.rejectDeferred("progressCard.get", {
+              message: "Progress temporarily unavailable",
+            });
+          } else {
+            await gateway.resolveDeferred("progressCard.get", {
+              card: outcome === "card" ? card : null,
+            });
+          }
+          if (outcome === "card") {
+            await page.locator(".session-progress-card--composer").waitFor();
+          }
+          await expect
+            .poll(() => page.locator(".agent-chat__progress-float--loading").count())
+            .toBe(0);
+          expect(await composer.evaluate((node, original) => node === original, textarea)).toBe(
+            true,
+          );
+          expect(await composer.inputValue()).toBe(draft);
+          expect(await composer.evaluate((node) => document.activeElement === node)).toBe(true);
+          const { frames, before, editorFrames } = await geometry.evaluate((capture) =>
+            capture.finish(),
+          );
+          await page.screenshot({ path: path.join(artifactDir, "progress-resolved.png") });
+          for (const sample of editorFrames) {
+            for (const surface of ["input", "textarea"] as const) {
+              for (const dimension of ["x", "y", "width", "height"] as const) {
+                expect(
+                  Math.abs(sample[surface][dimension] - before[surface][dimension]),
+                ).toBeLessThanOrEqual(1);
+              }
+            }
+          }
+          expect(frames.every((frame) => frame.card === (outcome === "card"))).toBe(true);
+          expect(
+            Math.max(...frames.map((frame) => frame.height)) -
+              Math.min(...frames.map((frame) => frame.height)),
+          ).toBeLessThanOrEqual(1);
+          expect(
+            Math.max(...frames.map((frame) => frame.top)) -
+              Math.min(...frames.map((frame) => frame.top)),
+          ).toBeLessThanOrEqual(1);
+        } finally {
+          await geometry.evaluate((capture) => capture.cancel());
+          await geometry.dispose();
+        }
 
         await composer.fill("Keep this draft while progress refreshes");
         await gateway.deferNext("progressCard.get");

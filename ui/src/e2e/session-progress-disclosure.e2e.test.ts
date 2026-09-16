@@ -67,6 +67,7 @@ suite.define(() => {
     const open = () => card.evaluate((element) => (element as HTMLDetailsElement).open);
     const gestureOffsets: Array<{ requested: number; before: number; after: number }> = [];
     const gestures = async (count: number, distance: number) => {
+      await waitForChatScrollIdle(page);
       const point = await thread.evaluate((element) => {
         const rect = element.getBoundingClientRect();
         return { x: rect.left + rect.width / 2, y: rect.top + 80 };
@@ -77,7 +78,26 @@ suite.define(() => {
           await page.waitForTimeout(201); // Distinct user gestures, beyond the 200 ms burst boundary.
         }
         const before = await thread.evaluate((element) => element.scrollTop);
-        await page.mouse.wheel(0, -distance);
+        const wheel = await thread.evaluateHandle((element) => {
+          const controller = new AbortController();
+          return {
+            delivered: new Promise<void>((resolve) => {
+              element.addEventListener("wheel", () => resolve(), {
+                once: true,
+                passive: true,
+                signal: controller.signal,
+              });
+            }),
+            cancel: () => controller.abort(),
+          };
+        });
+        try {
+          await page.mouse.wheel(0, -distance);
+          await wheel.evaluate((state) => state.delivered);
+        } finally {
+          await wheel.evaluate((state) => state.cancel());
+          await wheel.dispose();
+        }
         await expect
           .poll(() => thread.evaluate((element) => element.scrollTop))
           .toBeLessThan(before);
