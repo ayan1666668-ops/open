@@ -43,6 +43,8 @@ export const databaseWorkerExtensionTestFiles = [
   "extensions/matrix/doctor-contract-api.test.ts",
   "extensions/matrix/src/matrix/client/file-sync-store.test.ts",
   "extensions/matrix/src/matrix/client/storage.test.ts",
+  "extensions/matrix/src/matrix/credentials.test.ts",
+  "extensions/matrix/src/matrix/sdk.test.ts",
   "extensions/matrix/src/matrix/monitor/startup-verification.test.ts",
   "extensions/matrix/src/matrix/sdk/idb-persistence.test.ts",
   "extensions/matrix/src/matrix/thread-bindings.test.ts",
