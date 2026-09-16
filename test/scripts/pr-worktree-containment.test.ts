@@ -1084,7 +1084,7 @@ describePosix("scripts/pr worktree containment", () => {
     const tools = join(fixture.root, "tools");
     const commandLog = join(fixture.root, "git-commands.log");
     mkdirSync(tools);
-    const realGit = spawnSync("bash", ["-lc", "command -v git"], {
+    const realGit = spawnSync("bash", ["-c", "command -v git"], {
       encoding: "utf8",
     }).stdout.trim();
     writeFileSync(

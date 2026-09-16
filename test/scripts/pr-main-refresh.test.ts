@@ -605,14 +605,18 @@ ${readFileSync(gitShim, "utf8")}
   it("invalidates the previous snapshot when the same operation provisions a new worktree", () => {
     const f = fixture();
     f.configure({ moveAfterFirstFetch: true });
-    const result = f.shell(`
+    const result = f.shell(
+      `
+acquire_pr_operation_lock 42
 enter_worktree 42 false
 printf 'first=%s\\n' "$PR_MAIN_SHA"
 cd "$(repo_root)"
 git worktree remove --force .worktrees/pr-42
 enter_worktree 42 false
 printf 'replacement=%s\\n' "$PR_MAIN_SHA"
-`);
+`,
+      { supervised: true },
+    );
     expect(result.status, result.stdout + result.stderr).toBe(0);
     expect(result.stdout).toContain(`first=${f.main}\n`);
     expect(result.stdout).toContain(`replacement=${f.movedMain}\n`);
@@ -623,6 +627,9 @@ printf 'replacement=%s\\n' "$PR_MAIN_SHA"
         .map((e) => e.sha),
     ).toEqual([f.main, f.movedMain, f.movedMain]);
     expect(f.git(f.worktree, "rev-parse", "HEAD")).toBe(f.movedMain);
+    expect(
+      f.git(f.canonical, "for-each-ref", "--format=%(refname)", "refs/openclaw/pr-operation-locks"),
+    ).toBe("");
   });
 
   it.each([

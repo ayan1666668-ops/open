@@ -631,16 +631,20 @@ if (process.argv[1]?.endsWith('/watch-pr-ci.mts')) {
         encoding: "utf8",
       });
     },
-    shell(command: string) {
+    shell(command: string, shellOptions: { supervised?: boolean } = {}) {
       // Sourced helpers bypass the entrypoint's Darwin heredoc protection.
+      const bash = process.platform === "darwin" ? "/bin/bash" : "bash";
+      const args = [
+        "-c",
+        `set -euo pipefail\nscript_parent_dir="$1/scripts"\nsource "$script_parent_dir/lib/plain-gh.sh"\nfor library in worktree operation-lock common changelog gates push review prepare-core merge; do source "$script_parent_dir/pr-lib/$library.sh"; done\n${command}`,
+        "fixture",
+        canonical,
+      ];
       return spawnSync(
-        process.platform === "darwin" ? "/bin/bash" : "bash",
-        [
-          "-c",
-          `set -euo pipefail\nscript_parent_dir="$1/scripts"\nsource "$script_parent_dir/lib/plain-gh.sh"\nfor library in worktree operation-lock common changelog gates push review prepare-core merge; do source "$script_parent_dir/pr-lib/$library.sh"; done\n${command}`,
-          "fixture",
-          canonical,
-        ],
+        shellOptions.supervised ? process.execPath : bash,
+        shellOptions.supervised
+          ? [join(canonical, "scripts/pr-lib/process-group-runner.mjs"), canonical, bash, ...args]
+          : args,
         { cwd: canonical, env, encoding: "utf8" },
       );
     },
