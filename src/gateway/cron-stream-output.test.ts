@@ -16,6 +16,13 @@ import {
   settle,
 } from "./cron-stream-watchers.test-helpers.js";
 
+vi.mock("./cron-stream-matcher.js", () => ({
+  matchCronStreamLines: async (pattern: string, lines: string[]) => {
+    const matcher = new RegExp(pattern);
+    return lines.some((line) => matcher.test(line));
+  },
+}));
+
 describe("cron stream output", () => {
   afterEach(() => {
     vi.useRealTimers();
