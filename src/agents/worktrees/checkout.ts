@@ -28,9 +28,7 @@ import {
 const log = createSubsystemLogger("agents/worktrees");
 export const WORKTREE_TEMPLATE_DIRECTORY = ".templates";
 
-export type WorktreeCheckoutBranch =
-  | { mode: "create"; name: string }
-  | { mode: "existing"; name: string };
+type WorktreeCheckoutBranch = { mode: "create"; name: string } | { mode: "existing"; name: string };
 
 export type CheckoutOptions = WorktreeFilesystemOptions & {
   env: NodeJS.ProcessEnv;

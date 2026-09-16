@@ -70,7 +70,7 @@ export function registerWorktreesCli(program: Command): void {
     .option(
       "--source-profile <name>",
       "Repository source profile; repeat to combine (default: full source)",
-      (value: string, previous: string[] = []) => [...previous, value],
+      (value: string, previous: string[] | undefined) => [...(previous ?? []), value],
     )
     .option("--json", "Output JSON", false)
     .action(

@@ -179,7 +179,10 @@ describe("repository source profile creation", () => {
     vi.spyOn(commandExec, "runCommandWithTimeout").mockImplementation(async (argv, options) => {
       if (argv[0] === path.join(repo, ".openclaw/worktree-setup.sh")) {
         setupCalls++;
-        target = options.cwd!;
+        if (typeof options === "number" || !options.cwd) {
+          throw new Error("setup command must name its working directory");
+        }
+        target = options.cwd;
         // Inspect real Git state and real copied bytes at the hook boundary.
         expect(await git(target, "sparse-checkout", "list")).toBe(
           ".openclaw/worktree-profiles\nalpha",
@@ -343,7 +346,13 @@ describe("repository source profile creation", () => {
         sparseCalls++;
       }
       if (argv[0] === "git" && argv.includes("read-tree") && argv.includes("--reset")) {
-        target = options.cwd!;
+        // Git's executor selects its worktree with -C, not the process cwd.
+        const directoryFlag = argv.indexOf("-C");
+        const directory = directoryFlag >= 0 ? argv[directoryFlag + 1] : undefined;
+        if (!directory) {
+          throw new Error("Git materialization must select its worktree with -C");
+        }
+        target = directory;
         await fs.mkdir(path.join(target, "excluded"), { recursive: true });
         await fs.writeFile(path.join(target, "excluded/sentinel"), "partial recovery evidence\n");
         return {
@@ -458,6 +467,7 @@ describe("repository source profile creation", () => {
     await git(
       repo,
       "update-index",
+      "--add",
       "--cacheinfo",
       "120000," + blob + ",.openclaw/worktree-profiles/link",
     );
