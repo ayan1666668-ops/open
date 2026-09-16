@@ -23,7 +23,7 @@ type PersistHandledBeforeAgentReplyTranscriptParams = {
 };
 
 /** Persists a hook-owned assistant turn before the embedded attempt/session manager exists. */
-export async function persistHandledBeforeAgentReplyTranscript(
+async function persistHandledBeforeAgentReplyTranscript(
   params: PersistHandledBeforeAgentReplyTranscriptParams,
 ): Promise<SessionTranscriptAppendResult & { idempotencyKey?: string }> {
   const sessionKey = params.sessionTarget.sessionKey ?? params.sessionKey;
