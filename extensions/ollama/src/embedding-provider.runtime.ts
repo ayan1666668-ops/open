@@ -23,7 +23,7 @@ import { fetchConfiguredLocalOriginWithSsrFGuard } from "openclaw/plugin-sdk/ssr
 import { DEFAULT_OLLAMA_EMBEDDING_MODEL, OLLAMA_CLOUD_BASE_URL } from "./defaults.js";
 import { normalizeOllamaWireModelId } from "./model-id.js";
 import { readProviderBaseUrl } from "./provider-base-url.js";
-import { buildOllamaBaseUrlSsrFPolicy, resolveOllamaApiBase } from "./provider-models.js";
+import { buildOllamaEmbeddingSsrFPolicy, resolveOllamaApiBase } from "./provider-models.js";
 
 export type OllamaEmbeddingProvider = EmbeddingProvider;
 
@@ -384,14 +384,16 @@ async function resolveOllamaEmbeddingClient(
   return {
     baseUrl,
     headers,
-    // Mirror the chat-completion path (stream.runtime.ts, provider-models.ts, etc.), all
-    // of which use buildOllamaBaseUrlSsrFPolicy for any Ollama-targeting fetch. This path
-    // was the one outlier still using the origin-only policy, which allowlists the
-    // hostname but does not exempt it from the separate unconditional private/
-    // special-use-IP block — so a local Ollama server (e.g. Docker's
-    // `host.docker.internal`, which can resolve to a special-use address) is reachable
-    // for chat but was never reachable for embeddings.
-    ssrfPolicy: buildOllamaBaseUrlSsrFPolicy(baseUrl),
+    // The origin-only policy previously used here (ssrfPolicyFromHttpBaseUrlAllowedOrigin)
+    // allowlists the hostname but does not exempt it from the unconditional
+    // "unspecified"/0.0.0.0-8 IPv4 block, so a local Ollama server whose hostname
+    // resolves into that range (e.g. Docker's host.docker.internal under OrbStack) was
+    // reachable for chat completions but not for embeddings. Deliberately narrower than
+    // the chat path's buildOllamaBaseUrlSsrFPolicy (which also sets allowPrivateNetwork):
+    // embeddings only need the unspecified-range exemption, so loopback (for a
+    // non-loopback-literal hostname), link-local, and cloud-metadata DNS-rebinding
+    // protections stay active. See buildOllamaEmbeddingSsrFPolicy's doc comment.
+    ssrfPolicy: buildOllamaEmbeddingSsrFPolicy(baseUrl),
     model,
     outputDimensionality: options.dimensions,
     ...(localService && baseUrlOrigin !== "remote-config"

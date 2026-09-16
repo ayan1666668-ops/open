@@ -191,30 +191,39 @@ describe("ollama embedding provider", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(firstGuardedFetchCall()).toMatchObject({
       url: "http://127.0.0.1:11434/api/embed",
-      policy: { hostnameAllowlist: ["127.0.0.1"], allowPrivateNetwork: true },
+      policy: {
+        hostnameAllowlist: ["127.0.0.1"],
+        allowedOrigins: ["http://127.0.0.1:11434"],
+        allowUnspecifiedIpv4Range: true,
+      },
       configuredLocalOriginBaseUrl: "http://127.0.0.1:11434",
       auditContext: "ollama-memory-embedding",
     });
   });
 
-  it("regression: allows a special-use-address Ollama host (e.g. Docker's host.docker.internal) the same way the chat-completion path already does", async () => {
+  it("regression: allows a special-use-address Ollama host (e.g. Docker's host.docker.internal) without granting the chat path's full private-network exemption", async () => {
     // Prior to this fix, embeddings used ssrfPolicyFromHttpBaseUrlAllowedOrigin, which
-    // allowlists the hostname but does not set allowPrivateNetwork — so a request whose
-    // hostname resolves to a private/special-use address (as host.docker.internal does
-    // inside a container, e.g. an OrbStack synthetic gateway address) was blocked with
-    // "resolves to private/internal/special-use IP address" even though the identical
-    // origin already works for chat completions (buildOllamaBaseUrlSsrFPolicy, used by
-    // stream.runtime.ts/provider-models.ts/node-inference.ts/setup.runtime.ts/
-    // setup-pull.ts/web-search-provider.runtime.ts, always sets allowPrivateNetwork:
-    // true). Embeddings must use the same policy builder so local Ollama setups behind a
-    // Docker-internal hostname work for both.
+    // allowlists the hostname but does not exempt it from the unconditional
+    // "unspecified"/0.0.0.0/8 IPv4 block — so a request whose hostname resolves there (as
+    // host.docker.internal does inside a container, e.g. an OrbStack synthetic gateway
+    // address) was blocked with "resolves to private/internal/special-use IP address".
+    // The fix is deliberately narrower than reusing the chat path's
+    // buildOllamaBaseUrlSsrFPolicy (which sets allowPrivateNetwork: true and would also
+    // waive loopback/link-local/cloud-metadata DNS-rebinding protections for every
+    // embedding endpoint, not just this container case) — see
+    // buildOllamaEmbeddingSsrFPolicy and src/infra/net/ssrf.pinning.test.ts's
+    // "allowUnspecifiedIpv4Range" coverage for the boundary this preserves.
     const { fetchMock } = await embedTestQuery({
       remote: { baseUrl: "http://host.docker.internal:11434" },
     });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(firstGuardedFetchCall()).toMatchObject({
-      policy: { hostnameAllowlist: ["host.docker.internal"], allowPrivateNetwork: true },
+      policy: {
+        hostnameAllowlist: ["host.docker.internal"],
+        allowedOrigins: ["http://host.docker.internal:11434"],
+        allowUnspecifiedIpv4Range: true,
+      },
       configuredLocalOriginBaseUrl: "http://host.docker.internal:11434",
     });
   });
@@ -225,7 +234,11 @@ describe("ollama embedding provider", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(firstGuardedFetchCall()).toMatchObject({
       url: "https://ollama.com/api/embed",
-      policy: { hostnameAllowlist: ["ollama.com"], allowPrivateNetwork: true },
+      policy: {
+        hostnameAllowlist: ["ollama.com"],
+        allowedOrigins: ["https://ollama.com"],
+        allowUnspecifiedIpv4Range: true,
+      },
       configuredLocalOriginBaseUrl: "https://ollama.com",
       auditContext: "ollama-memory-embedding",
     });
@@ -436,7 +449,11 @@ describe("ollama embedding provider", () => {
     expect(inputs).toEqual([["a", "bb", "ccc"]]);
     expect(firstGuardedFetchCall()).toMatchObject({
       url: "http://127.0.0.1:11434/api/embed",
-      policy: { hostnameAllowlist: ["127.0.0.1"], allowPrivateNetwork: true },
+      policy: {
+        hostnameAllowlist: ["127.0.0.1"],
+        allowedOrigins: ["http://127.0.0.1:11434"],
+        allowUnspecifiedIpv4Range: true,
+      },
       configuredLocalOriginBaseUrl: "http://127.0.0.1:11434",
       auditContext: "ollama-memory-embedding",
     });
