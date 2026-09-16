@@ -65,12 +65,33 @@ const FEISHU_CARD_TEXT_MAX_LENGTH = FEISHU_PRESENTATION_CAPABILITIES.limits.text
  * the limit can leave it. Split the projected form back, with the chunker that closes and
  * reopens a fence rather than cutting one in half, and give each piece its own element.
  */
+function escapedLength(text: string): number {
+  return escapeFeishuCardMarkdownText(text).length;
+}
+
 function projectBlockText(text: string, renderText: (text: string) => string): string[] {
   const rendered = renderText(text);
-  if (rendered.length <= FEISHU_CARD_TEXT_MAX_LENGTH) {
+  if (escapedLength(rendered) <= FEISHU_CARD_TEXT_MAX_LENGTH) {
     return [rendered];
   }
-  const parts = chunkFeishuMarkdown(rendered, FEISHU_CARD_TEXT_MAX_LENGTH);
+  // The element carries the escaped text, and escaping turns one `&`, `<` or `>` into four
+  // or five characters after the cut has already been made. Cutting the escaped text
+  // instead would split an entity, so the budget comes down from the limit by whatever
+  // the longest part actually measured, until the escaped parts fit.
+  let budget = FEISHU_CARD_TEXT_MAX_LENGTH;
+  let parts = chunkFeishuMarkdown(rendered, budget);
+  for (let attempt = 0; attempt < 8 && parts.length > 0; attempt += 1) {
+    const longest = Math.max(...parts.map(escapedLength));
+    if (longest <= FEISHU_CARD_TEXT_MAX_LENGTH) {
+      return parts;
+    }
+    const next = Math.floor((budget * FEISHU_CARD_TEXT_MAX_LENGTH) / longest);
+    if (next < 1 || next >= budget) {
+      break;
+    }
+    budget = next;
+    parts = chunkFeishuMarkdown(rendered, budget);
+  }
   return parts.length ? parts : [rendered];
 }
 

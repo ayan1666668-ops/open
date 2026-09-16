@@ -108,6 +108,38 @@ describe("buildFeishuPresentationCard", () => {
     expect(joined).toContain("r79");
   });
 
+  // The element carries the escaped text, and escaping turns one ampersand into five
+  // characters after the cut has been made, so a part sized to the limit can leave it.
+  it("sizes a projected table by the length the element will carry", () => {
+    const ampersands = "&".repeat(60);
+    const tableMarkdown = [
+      "| A | B |",
+      "| --- | --- |",
+      ...Array.from({ length: 120 }, () => `| ${ampersands} | x |`),
+    ].join("\n");
+    const presentation = normalizeMessagePresentation({
+      blocks: [{ type: "text", text: tableMarkdown }],
+    });
+    if (!presentation) {
+      throw new Error("expected valid presentation");
+    }
+    // Guard the fixture: the projection fits the limit only until it is escaped.
+    const projected = convertMarkdownTables(tableMarkdown, "code");
+    expect(projected.length).toBeGreaterThan(4000);
+
+    const elements = buildFeishuPresentationCard({
+      presentation,
+      renderText: (text) => convertMarkdownTables(text, "code"),
+    }).body.elements as { tag: string; content: string }[];
+
+    for (const element of elements) {
+      // The content here is already escaped, which is what the card sends.
+      expect(element.content.length).toBeLessThanOrEqual(4000);
+      expect((element.content.match(/^```/gmu) ?? []).length).toBe(2);
+    }
+    expect(elements.map((element) => element.content).join("")).toContain("&amp;");
+  });
+
   // The fallback text is projected like any block and outgrows the limit the same way,
   // and it reaches the card ahead of the blocks rather than through them.
   it("splits a projected fallback that outgrows the card text limit", () => {

@@ -189,7 +189,11 @@ function aggregateFeishuSendResult<T extends FeishuReplyDeliverySource>(
   };
 }
 
-function partialFeishuSendError(error: unknown, results: readonly FeishuReplyDeliverySource[]) {
+function partialFeishuSendError(
+  error: unknown,
+  results: readonly FeishuReplyDeliverySource[],
+  acceptedContent?: string,
+) {
   if (results.length === 0 && error instanceof Error) {
     return error;
   }
@@ -200,6 +204,7 @@ function partialFeishuSendError(error: unknown, results: readonly FeishuReplyDel
       results: [...results, accepted],
       visibleReplySent: results.length > 0 || accepted !== undefined,
     }),
+    ...(acceptedContent ? { content: acceptedContent } : {}),
   });
 }
 
@@ -283,6 +288,7 @@ async function sendCommentThreadReply(params: {
   try {
     const results: Awaited<ReturnType<typeof deliverCommentThreadText>>[] = [];
     const sources: FeishuReplyDeliverySource[] = [];
+    const acceptedChunks: string[] = [];
     for (const chunk of chunks.length ? chunks : [content]) {
       try {
         const result = await deliverCommentThreadText(client, {
@@ -293,6 +299,7 @@ async function sendCommentThreadReply(params: {
         });
         // Record acceptance before a callback or later chunk can fail.
         results.push(result);
+        acceptedChunks.push(chunk);
         const messageId =
           (result.delivery_mode === "reply_comment" ? result.reply_id : result.comment_id) ?? "";
         sources.push({ messageId });
@@ -303,7 +310,10 @@ async function sendCommentThreadReply(params: {
           params.onDeliveryResult,
         );
       } catch (error) {
-        throw partialFeishuSendError(error, sources);
+        // The accepted comments carry the only text that reached the thread. Without it
+        // the turn records the whole answer as delivered, because the shared lifecycle
+        // falls back to the authored payload when a partial result has no content.
+        throw partialFeishuSendError(error, sources, acceptedChunks.join(""));
       }
     }
     return aggregateFeishuSendResult(
@@ -527,10 +537,16 @@ async function sendFeishuFallbackPayload(params: {
       ...(propagateMediaUploadFailure ? { propagateMediaUploadFailure: true } : {}),
     });
   }
-  for (const chunk of textChunks) {
+  if (text) {
+    // The fanout used to send these fragments one at a time, but the cut here lands on
+    // the authored text, before the target's own table conversion runs. A table longer
+    // than the fragment keeps its header only in the first one and the rest arrive as raw
+    // pipes. `sendText` chunks again for its target anyway, after converting, so the whole
+    // text goes in one call and the fragments above only decide whether media is split
+    // from text at all.
     lastResult = await sendText({
       ...ctx,
-      text: chunk,
+      text,
       replyToId: nextReplyToId(),
     });
   }

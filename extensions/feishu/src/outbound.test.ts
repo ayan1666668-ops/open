@@ -2989,6 +2989,36 @@ describe("feishuOutbound.sendText replyToId forwarding", () => {
     expect(contents.join("")).toContain("Lead");
   });
 
+  // A partial comment failure owns the text that actually reached the thread. Without it
+  // the shared lifecycle falls back to the authored payload and records an answer that
+  // was never delivered.
+  it("reports only the accepted comment text when a later chunk is rejected", async () => {
+    const chunking = await vi.importActual<typeof import("openclaw/plugin-sdk/reply-chunking")>(
+      "openclaw/plugin-sdk/reply-chunking",
+    );
+    const text = Array.from({ length: 12 }, (_entry, i) => `line number ${i}`).join("\n");
+    const expected = chunking.chunkMarkdownTextWithMode(text, 40, "length");
+    // Guard the fixture: the answer is cut into several comments.
+    expect(expected.length).toBeGreaterThan(2);
+    deliverCommentThreadTextMock
+      .mockResolvedValueOnce({ delivery_mode: "reply_comment", reply_id: "om-1" })
+      .mockRejectedValueOnce(new Error("second comment rejected"));
+
+    const error: unknown = await sendText({
+      cfg: {
+        channels: { feishu: { accounts: { main: { textChunkLimit: 40 } } } },
+      },
+      to: "comment:docx:doxcn123:7623358762119646411",
+      text,
+      accountId: "main",
+    }).catch((caught: unknown) => caught);
+
+    const delivered = isChannelPartialDeliveryError(error) ? error.deliveryResult : undefined;
+    expect(delivered?.content).toBe(expected[0]);
+    // The authored answer is longer than what reached the thread.
+    expect(delivered?.content).not.toBe(text);
+  });
+
   // A cell holding a backtick run the parser cannot pair keeps those characters as text,
   // and the conversion then lengthens the marker to clear them. Ten characters cannot
   // carry the pair this table produces, so the table is left as it arrived. The comments
@@ -3827,6 +3857,49 @@ describe("feishuOutbound.sendMedia replyToId forwarding", () => {
         .map(([args]) => (args as { text?: string })?.text ?? "")
         .some((text) => text.includes("Media upload failed")),
     ).toBe(false);
+  });
+
+  // The fanout that separates an attachment from its text used to cut the text into
+  // 4,000-character fragments and send each one on its own. That cut lands on the
+  // authored table, before the target converts it, so only the first fragment kept the
+  // header and the rest arrived as raw pipes. The whole text goes in one call now and the
+  // target chunks it after converting.
+  it("keeps a long fallback table converted when an attachment splits the send", async () => {
+    const table = [
+      "| Name | Role |",
+      "| --- | --- |",
+      ...Array.from(
+        { length: 260 },
+        (_e, i) => `| person-number-${i} | Regional Operations Lead |`,
+      ),
+    ].join("\n");
+    // Guard the fixture: the authored table is longer than one fanout fragment.
+    expect(table.length).toBeGreaterThan(4000);
+
+    await feishuOutbound.sendPayload?.({
+      cfg: {
+        channels: { feishu: { accounts: { main: { markdown: { tables: "block" } } } } },
+      },
+      to: "comment:docx:doxcn123:7623358762119646411",
+      text: table,
+      accountId: "main",
+      payload: { text: table, mediaUrl: "https://example.com/file.png" },
+    });
+
+    const contents = deliverCommentThreadTextMock.mock.calls.map((_call, index) =>
+      String(commentThreadParams(index)?.content ?? ""),
+    );
+    // The attachment is its own comment; the rest carry the answer.
+    const tableContents = contents.filter((content) => content.includes("person-number-"));
+    expect(tableContents.length).toBeGreaterThan(1);
+    // Every comment carrying rows also carries the fence, so no continuation arrives as
+    // raw pipes the way the pre-conversion cut left them.
+    for (const content of tableContents) {
+      expect(content).toContain("```");
+    }
+    const joined = contents.join("");
+    expect(joined).toContain("Name");
+    expect(joined).toContain("person-number-259");
   });
 
   it("still falls back to text on the presentation-fallback path when the marker is absent", async () => {
