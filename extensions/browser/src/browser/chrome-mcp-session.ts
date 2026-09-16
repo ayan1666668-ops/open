@@ -8,13 +8,12 @@ import {
 } from "./chrome-mcp-connect.js";
 import type {
   ChromeMcpCallOptions,
-  ChromeMcpOptionsInput,
   ChromeMcpSession,
   ChromeMcpSessionLease,
   NormalizedChromeMcpProfileOptions,
 } from "./chrome-mcp-contracts.js";
 import { redactChromeMcpProfileLabelForDiagnostic } from "./chrome-mcp-diagnostics.js";
-import { buildChromeMcpSessionCacheKey, normalizeChromeMcpOptions } from "./chrome-mcp-options.js";
+import { buildChromeMcpSessionCacheKey } from "./chrome-mcp-options.js";
 import {
   cleanupTarget,
   closeChromeMcpSessionHandle,
@@ -35,7 +34,7 @@ type PendingAttach = ReturnType<typeof createChromeMcpSession> & {
   session?: ChromeMcpSession;
 };
 
-export class ChromeMcpSessionOwner {
+class ChromeMcpSessionOwner {
   private session?: ChromeMcpSession;
   private pending?: PendingAttach;
   private readonly retired = new Map<ChromeMcpSession, Promise<void> | undefined>();
@@ -350,7 +349,7 @@ export class ChromeMcpSessionOwner {
   }
 }
 
-function getChromeMcpSessionOwner(
+export function getChromeMcpSessionOwner(
   profileName: string,
   options: NormalizedChromeMcpProfileOptions,
 ): ChromeMcpSessionOwner {
@@ -377,16 +376,6 @@ async function stopOwners(profileName?: string, keep?: ChromeMcpSessionOwner): P
     throw toErrorObject(failed.reason, "Chrome MCP session cleanup failed.");
   }
   return results.some((result) => result.status === "fulfilled" && result.value);
-}
-
-export async function leaseSession(
-  profileName: string,
-  profileOptions?: ChromeMcpOptionsInput,
-  options: ChromeMcpCallOptions = {},
-): Promise<ChromeMcpSessionLease> {
-  options.signal?.throwIfAborted();
-  const owner = getChromeMcpSessionOwner(profileName, normalizeChromeMcpOptions(profileOptions));
-  return await owner.lease(options);
 }
 
 export function getChromeMcpPid(profileName: string): number | null {

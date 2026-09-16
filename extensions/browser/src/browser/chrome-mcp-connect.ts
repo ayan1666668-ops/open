@@ -11,6 +11,7 @@ import {
   CHROME_MCP_HANDSHAKE_TIMEOUT_MS,
   type ChromeMcpSession,
   type ChromeMcpSessionFactory,
+  type ChromeMcpSessionOwner,
   type NormalizedChromeMcpProfileOptions,
 } from "./chrome-mcp-contracts.js";
 import {
@@ -20,7 +21,6 @@ import {
   redactChromeMcpProfileLabelForDiagnostic,
 } from "./chrome-mcp-diagnostics.js";
 import { refreshChromeMcpCleanupProcess } from "./chrome-mcp-process.js";
-import type { ChromeMcpSessionOwner } from "./chrome-mcp-session.js";
 import { BrowserProfileUnavailableError } from "./errors.js";
 
 const log = createSubsystemLogger("browser").child("chrome-mcp");

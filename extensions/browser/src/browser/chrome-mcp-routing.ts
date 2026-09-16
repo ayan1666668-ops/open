@@ -31,7 +31,7 @@ import {
   formatChromeMcpToolErrorMessage,
   shouldReconnectForToolError,
 } from "./chrome-mcp-result.js";
-import { leaseSession } from "./chrome-mcp-session.js";
+import { getChromeMcpSessionOwner } from "./chrome-mcp-session.js";
 import type { ChromeMcpSnapshotNode } from "./chrome-mcp.snapshot.js";
 import { BrowserProfileUnavailableError, BrowserTabNotFoundError } from "./errors.js";
 
@@ -324,7 +324,10 @@ export async function withChromeMcpLease<T>(
   ) => Promise<T>,
 ): Promise<T> {
   const normalizedProfileOptions = normalizeChromeMcpOptions(profileOptions);
-  const lease = await leaseSession(profileName, normalizedProfileOptions, options);
+  options.signal?.throwIfAborted();
+  const lease = await getChromeMcpSessionOwner(profileName, normalizedProfileOptions).lease(
+    options,
+  );
   try {
     return await withChromeMcpOperationLock(lease.session, options, async () => {
       if (

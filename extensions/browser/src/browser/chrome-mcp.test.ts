@@ -9,7 +9,7 @@ import { createOpenClawTestState } from "openclaw/plugin-sdk/test-state";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { normalizeChromeMcpOptions } from "./chrome-mcp-options.js";
 import { refreshChromeMcpCleanupProcess } from "./chrome-mcp-process.js";
-import { getChromeMcpPid, leaseSession } from "./chrome-mcp-session.js";
+import { getChromeMcpPid, getChromeMcpSessionOwner } from "./chrome-mcp-session.js";
 import {
   ChromeMcpDocumentUnavailableError,
   clickChromeMcpCoords,
@@ -1383,12 +1383,15 @@ describe("chrome MCP page parsing", () => {
       });
       const factory = vi.fn().mockResolvedValueOnce(first).mockResolvedValue(second);
       setChromeMcpSessionFactoryForTest(factory);
-      const original = await leaseSession("chrome-live");
+      const original = await getChromeMcpSessionOwner(
+        "chrome-live",
+        normalizeChromeMcpOptions(),
+      ).lease({});
       const census = createDeferred<ReturnType<typeof processSnapshot>[]>();
       let scans = 0;
       let alive = true;
       let lateCleanup: Promise<void> | undefined;
-      let replacement: Awaited<ReturnType<typeof leaseSession>> | undefined;
+      let replacement: typeof original | undefined;
       setChromeMcpProcessCleanupDepsForTest({
         platform: "linux",
         listProcesses: async () => {
@@ -1409,7 +1412,10 @@ describe("chrome MCP page parsing", () => {
       try {
         await closeChromeMcpSession("chrome-live");
         expect(first.processCleanup?.status).toBe("closed");
-        replacement = await leaseSession("chrome-live");
+        replacement = await getChromeMcpSessionOwner(
+          "chrome-live",
+          normalizeChromeMcpOptions(),
+        ).lease({});
         expect(getChromeMcpPid("chrome-live")).toBe(456);
         if (outcome === "failure") {
           census.reject(new Error("late process census failed"));

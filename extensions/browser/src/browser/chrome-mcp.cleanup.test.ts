@@ -10,11 +10,9 @@ import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { createChromeMcpSession } from "./chrome-mcp-connect.js";
 import type { ChromeMcpSession } from "./chrome-mcp-contracts.js";
-import { buildChromeMcpSessionCacheKey } from "./chrome-mcp-options.js";
 import { parseChromeMcpUnixProcessListForTest } from "./chrome-mcp-process.js";
 import {
-  ChromeMcpSessionOwner,
-  leaseSession,
+  getChromeMcpSessionOwner,
   setChromeMcpProcessCleanupDepsForTest,
   setChromeMcpSessionFactoryForTest,
 } from "./chrome-mcp-session.js";
@@ -82,11 +80,7 @@ async function createHeldStdioPeer({
   const resources: { creation?: ReturnType<typeof createChromeMcpSession> } = {};
   let disposing: Promise<void> | undefined;
   const options = { command: process.execPath, args: [script] };
-  const owner = new ChromeMcpSessionOwner(
-    "cleanup-fixture",
-    options,
-    buildChromeMcpSessionCacheKey("cleanup-fixture", options),
-  );
+  const owner = getChromeMcpSessionOwner("cleanup-fixture", options);
   const dispose = () =>
     (disposing ??= (async () => {
       releaseCapture?.();
@@ -213,7 +207,9 @@ describe.skipIf(process.platform === "win32")("Chrome MCP SDK-initiated cleanup"
           throw new Error("replacement admitted");
         });
         setChromeMcpSessionFactoryForTest(replacementFactory);
-        const replacement = leaseSession("cleanup-fixture", fixture.options, { ephemeral });
+        const replacement = getChromeMcpSessionOwner("cleanup-fixture", fixture.options).lease({
+          ephemeral,
+        });
         const replacementResult = expect(replacement).rejects.toThrow("replacement admitted");
         await setImmediate();
         expect(
@@ -314,9 +310,9 @@ describe.skipIf(process.platform === "win32")("Chrome MCP SDK-initiated cleanup"
         throw new Error("replacement admitted");
       });
       setChromeMcpSessionFactoryForTest(replacementFactory);
-      await expect(leaseSession("cleanup-fixture", fixture.options)).rejects.toThrow(
-        "subprocess tree cleanup could not be verified",
-      );
+      await expect(
+        getChromeMcpSessionOwner("cleanup-fixture", fixture.options).lease({}),
+      ).rejects.toThrow("subprocess tree cleanup could not be verified");
       expect(replacementFactory).not.toHaveBeenCalled();
     } finally {
       releaseScan.resolve();
@@ -333,11 +329,7 @@ it.each([
     args: [],
   },
 ])("settles cleanup after $name fails without a child", async (options) => {
-  const owner = new ChromeMcpSessionOwner(
-    "failed-spawn",
-    options,
-    buildChromeMcpSessionCacheKey("failed-spawn", options),
-  );
+  const owner = getChromeMcpSessionOwner("failed-spawn", options);
   const creation = createChromeMcpSession(owner, "failed-spawn", options);
   const session = await creation.promise;
   await expect(session.ready).rejects.toThrow();

@@ -5,7 +5,6 @@ import { ErrorCode } from "@modelcontextprotocol/sdk/types.js";
 import { createAsyncLock } from "openclaw/plugin-sdk/async-lock-runtime";
 import type { SsrFPolicy } from "../infra/net/ssrf.js";
 import type { CdpActionTimeouts } from "./cdp.js";
-import type { ChromeMcpSessionOwner } from "./chrome-mcp-session.js";
 
 export type ChromeMcpStructuredPage = {
   id: number;
@@ -104,6 +103,11 @@ export type ChromeMcpOptionsInput =
   | string
   | ChromeMcpProfileOptions
   | NormalizedChromeMcpProfileOptions;
+
+export type ChromeMcpSessionOwner = {
+  isCurrent: (session: ChromeMcpSession) => boolean;
+  close: (session: ChromeMcpSession) => Promise<void>;
+};
 
 export type ChromeMcpSessionLease = {
   session: ChromeMcpSession;
