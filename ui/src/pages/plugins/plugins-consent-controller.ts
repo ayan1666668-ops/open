@@ -85,7 +85,7 @@ export function pluginMutationWarnings(
   return warnings.length ? { kind: "warning", text: warnings.join("\n") } : null;
 }
 
-export function committedMutationMessage(
+function committedMutationMessage(
   action: "installed" | "enabled" | "disabled" | "reloaded",
   name: string,
   result: Pick<PluginMutationResult, "warnings" | "runtime">,
