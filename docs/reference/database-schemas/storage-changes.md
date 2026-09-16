@@ -132,8 +132,17 @@ current ownership and session tombstones after awaited preparation.
 Incognito databases, archive materialization, and caller-owned transcript
 observers retain their existing local execution. Index publication and
 restoration remain with their existing database and lifecycle owners.
-Worker admission and transport failures preserve the published index and its
-retry state. The existing chunking revision triggers a one-time rebuild to repair
+Cold memory exports restore through the host's existing transcript owner only
+after a read reports cold storage; hot exports add no host SQLite reads.
+Unreadable canonical transcripts, worker admission, and transport failures
+preserve the published index and retry state. Startup checks batch transcript
+statistics and use the transcript mutation watermark, so same-size rewrites are
+detected independently of session activity. The memory source hash carries this
+revision alongside its content hash; source modification times retain activity
+for temporal ranking. Legacy source hashes refresh once without rebuilding
+unchanged chunks. Transcript export hashes and provenance stay unchanged.
+The existing chunking revision
+triggers a one-time rebuild to repair
 previously indexed reset boundaries. Rebuilds reuse cached embeddings when
 available and retain the existing atomic publication path.
 
@@ -209,9 +218,16 @@ ordering while awaiting its driver.
 Read-only callbacks made while a cached agent writer holds a transaction use a
 separate read-only companion connection. Each call rereads committed rows and
 checks the current schema, agent owner, and physical file identity. The companion
-retains prepared statements and connection-local canonical-key validation, never
-an authorization result or an open read transaction. Canonical validation checks
-the committed main-key policy before reuse. The companion retires with its writer's
+retains prepared statements, never an authorization result or an open read
+transaction. Canonical validation belongs to the admitted physical database:
+first admission requires full proof, then the schema-21 pending-key projection
+records changes independently of connection lifetime. Startup and initial Gateway
+authorization of an unadmitted reader use the existing mutation worker for pending
+validation and recheck live authority after awaiting it. Native readers preserve
+their existing main-key admission and raw-row parser behavior; each new reader
+checks pending keys without rescanning unrelated certified entries. Synchronous commit guards still read committed
+rows. See [incremental canonical validation](/reference/database-schemas/agent-schema-history#incremental-canonical-session-validation)
+for migration and rollback behavior. The companion retires with its writer's
 native close, disposal, or replacement, including eviction and update cleanup.
 Cold session search retains one read-only connection while synchronously listing
 entries and checking each entry's current visibility. The entry accessor closes

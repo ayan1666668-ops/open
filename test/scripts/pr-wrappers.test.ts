@@ -272,7 +272,7 @@ describe("scripts/pr wrappers", () => {
 
     expect(script).toContain('base_json=$(read_pr_view_json "$pr" "baseRefName")');
     expect(common).toContain('gh pr view "$pr" --json "$fields"');
-    expect(worktree).toContain('metadata=$(read_pr_view_json "$pr"');
+    expect(worktree).toContain('metadata=$(GH_REPO="$repo_nwo" read_pr_view_json "$pr"');
     expect(review).toContain('gh_plain pr edit "$pr" --add-assignee "$reviewer"');
     expect(push).toContain('gh_plain api graphql --input "$payload_file"');
     expect(push).not.toContain("gh_plain api graphql --input -");
@@ -1275,9 +1275,6 @@ exit 99
       );
       fixture.git(fixture.canonical, ["add", "scripts/pr"]);
       fixture.git(fixture.canonical, ["commit", "-m", "test: stale canonical wrapper"]);
-      // Install dependencies before recording Node calls so the fixture reaches
-      // supervisor handoff without entering dependency materialization first.
-      linkPrWrapperDependencies(fixture.linked);
       const recorder = join(fixture.bin, "node");
       writeFileSync(recorder, '#!/bin/sh\nprintf \'%s\\0\' "$PWD" "$@"\nexit 73\n');
       chmodSync(recorder, 0o755);

@@ -24,6 +24,7 @@ export const gatewayDatabaseWorkerTestFiles = [
   "src/gateway/server-methods/server-methods.test.ts",
   "src/gateway/server-methods/worktrees.authorization.test.ts",
   "src/gateway/server-methods/worktrees.test.ts",
+  "src/gateway/server.sessions.create-worktree-spawn.test.ts",
   "src/gateway/session-delivery-clock-jump.integration.test.ts",
   "src/gateway/setup-inference.first-signin.integration.test.ts",
 ];
@@ -44,6 +45,7 @@ export const gatewayMethodsIsolatedTestFiles = [
   "src/gateway/server-methods/agent.test.ts",
   "src/gateway/server-methods/board.runtime-boundaries.test.ts",
   "src/gateway/server-methods/chat.reset-visible-yield.test.ts",
+  "src/gateway/server-methods/environments.pairing-snapshot.test.ts",
   // Status uses the host-owned shared SQLite broker.
   "src/gateway/server-methods/health.owner-routing.test.ts",
   "src/gateway/server-methods/sessions.send-yield-resume.test.ts",

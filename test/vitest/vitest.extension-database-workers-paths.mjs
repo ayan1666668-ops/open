@@ -43,6 +43,8 @@ export const databaseWorkerExtensionTestFiles = [
   "extensions/matrix/doctor-contract-api.test.ts",
   "extensions/matrix/src/matrix/client/file-sync-store.test.ts",
   "extensions/matrix/src/matrix/client/storage.test.ts",
+  "extensions/matrix/src/matrix/credentials.test.ts",
+  "extensions/matrix/src/matrix/sdk.test.ts",
   "extensions/matrix/src/matrix/monitor/startup-verification.test.ts",
   "extensions/matrix/src/matrix/sdk/idb-persistence.test.ts",
   "extensions/matrix/src/matrix/thread-bindings.test.ts",
@@ -104,6 +106,8 @@ export const databaseWorkerExtensionTestFiles = [
   "extensions/zalo/src/monitor.polling-lifecycle.test.ts",
   "extensions/zalo/src/outbound-media.test.ts",
   "extensions/zalouser/doctor-contract-api.test.ts",
+  "extensions/zalouser/src/zalo-js.credentials.test.ts",
+  "extensions/zalouser/src/zalo-quote-metadata.test.ts",
   "extensions/imessage/src/approval-reactions.persistence.test.ts",
   "extensions/imessage/src/send.sqlite.test.ts",
 ];
