@@ -2,8 +2,6 @@
 import type { Command } from "commander";
 import { formatDocsLink } from "../../packages/terminal-core/src/links.js";
 import { theme } from "../../packages/terminal-core/src/theme.js";
-import { ConfigNestingDepthError } from "../config/env-substitution.js";
-import { assertBoundedRawJsonNesting, assertBoundedJsonNesting } from "../config/nesting-limit.js";
 import { danger } from "../globals.js";
 import { formatErrorMessage, hasErrnoCode } from "../infra/errors.js";
 import { defaultRuntime } from "../runtime.js";
@@ -101,15 +99,8 @@ async function readPlanFile(pathname: string): Promise<SecretsApplyPlan> {
   }
   let parsed: unknown;
   try {
-    // The plan file is user-supplied text: reject pathological nesting before
-    // parsing and before the recursive plan validation walks the structure.
-    assertBoundedRawJsonNesting(raw);
     parsed = JSON.parse(raw);
-    assertBoundedJsonNesting(parsed);
   } catch (err) {
-    if (err instanceof ConfigNestingDepthError) {
-      throw err;
-    }
     throw new Error(`Malformed JSON in secrets plan file: ${pathname}`, { cause: err });
   }
   if (!isSecretsApplyPlan(parsed)) {

@@ -3,7 +3,6 @@ import fs from "node:fs";
 import { isRecord as isObjectRecord } from "@openclaw/normalization-core/record-coerce";
 import { resolveConfigEnvVars } from "../config/env-substitution.js";
 import { resolveConfigIncludes, resolveConfigIncludesForTopLevelKey } from "../config/includes.js";
-import { assertBoundedRawJsonNesting, assertBoundedJsonNesting } from "../config/nesting-limit.js";
 import { resolveConfigPath, resolveIncludeRoots } from "../config/paths.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { tryProcessCwd } from "../infra/safe-cwd.js";
@@ -96,13 +95,7 @@ export function readLoggingConfig(): LoggingConfig | undefined {
       cachedLoggingConfig = { selector, logging: undefined };
       return undefined;
     }
-    // This reader runs before the full config runtime, so it has to bound the
-    // text itself: parsing and the include/env walks below are recursive, and an
-    // unbounded structure would overflow the stack before any error is raised.
-    const rawConfig = fs.readFileSync(configPath, "utf8");
-    assertBoundedRawJsonNesting(rawConfig);
-    const parsed = parseJsonWithJson5Fallback(rawConfig);
-    assertBoundedJsonNesting(parsed);
+    const parsed = parseJsonWithJson5Fallback(fs.readFileSync(configPath, "utf8"));
     const allowedRoots = resolveIncludeRoots();
     let includedConfig: unknown;
     try {

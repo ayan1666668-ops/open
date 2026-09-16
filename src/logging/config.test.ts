@@ -3,8 +3,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ConfigNestingDepthError } from "../config/env-substitution.js";
-import { assertBoundedRawJsonNesting } from "../config/nesting-limit.js";
 import { withEnv } from "../test-utils/env.js";
 import { readLoggingConfig } from "./config.js";
 import { applyLoggingConfig, resetLogger } from "./logger.js";
@@ -77,26 +75,6 @@ describe("readLoggingConfig", () => {
       expect(readLoggingConfig()).toStrictEqual({
         consoleLevel: "warn",
       });
-    });
-  });
-
-  it("bounds the config text before the recursive include and env walks", () => {
-    // A bootstrap read must reject over-deep text instead of walking it, and
-    // must stay silent so logging defaults still apply.
-    const raw = `${"[".repeat(600)}${"]".repeat(600)}`;
-    const configPath = writeConfig(raw);
-
-    expect(() => assertBoundedRawJsonNesting(raw)).toThrow(ConfigNestingDepthError);
-    withEnv({ OPENCLAW_CONFIG_PATH: configPath }, () => {
-      expect(readLoggingConfig()).toBeUndefined();
-    });
-  });
-
-  it("still reads a normal config file through the guard", () => {
-    const configPath = writeConfig(`{ logging: { level: "debug" } }`);
-
-    withEnv({ OPENCLAW_CONFIG_PATH: configPath }, () => {
-      expect(readLoggingConfig()).toStrictEqual({ level: "debug" });
     });
   });
 

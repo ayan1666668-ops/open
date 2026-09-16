@@ -11,6 +11,13 @@
 import { MAX_CONFIG_JSON_NESTING_DEPTH, ConfigNestingDepthError } from "./env-substitution.js";
 
 /**
+ * Line terminators that end a JSON5 line comment. JSON5 follows the ECMAScript
+ * line-terminator set, so CR, LINE SEPARATOR (U+2028) and PARAGRAPH SEPARATOR
+ * (U+2029) end a comment just like LF.
+ */
+const LINE_COMMENT_TERMINATORS = new Set(["\n", "\r", "\u2028", "\u2029"]);
+
+/**
  * Scans raw JSON/JSON5 text iteratively to measure maximum nesting depth
  * before parsing, rejecting pathological inputs that would overflow the stack.
  *
@@ -37,11 +44,11 @@ export function assertBoundedRawJsonNesting(
   let inBlockComment = false;
 
   for (let i = 0; i < raw.length; i++) {
-    const char = raw[i];
-    const nextChar = i < raw.length - 1 ? raw[i + 1] : "";
+    const char = raw[i] ?? "";
+    const nextChar = i < raw.length - 1 ? (raw[i + 1] ?? "") : "";
 
     if (inLineComment) {
-      if (char === "\n") {
+      if (LINE_COMMENT_TERMINATORS.has(char)) {
         inLineComment = false;
       }
       continue;
@@ -84,9 +91,10 @@ export function assertBoundedRawJsonNesting(
       currentDepth++;
       maxDepthReached = Math.max(maxDepthReached, currentDepth);
       if (currentDepth > maxDepth) {
+        const line = raw.slice(0, i).split(/[\n\r\u2028\u2029]/).length;
         throw new ConfigNestingDepthError(
           currentDepth,
-          `raw JSON at character ${i} (line ${raw.slice(0, i).split("\n").length})`,
+          `raw JSON at character ${i} (line ${line})`,
         );
       }
       continue;

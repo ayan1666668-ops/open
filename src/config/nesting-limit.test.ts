@@ -82,6 +82,20 @@ describe("nesting-limit", () => {
       expect(assertBoundedRawJsonNesting(`{"a": 1} // ]]]`)).toBe(1);
       expect(assertBoundedRawJsonNesting(`{"a": 1 /* ]]] */ }`)).toBe(1);
     });
+
+    it.each([
+      { label: "LF", terminator: "\n" },
+      { label: "CR", terminator: "\r" },
+      { label: "LINE SEPARATOR", terminator: "\u2028" },
+      { label: "PARAGRAPH SEPARATOR", terminator: "\u2029" },
+    ])("ends a line comment at $label", ({ terminator }) => {
+      // JSON5 ends line comments at the whole ECMAScript line-terminator set. A
+      // scanner that only knows LF stays in comment state past the terminator and
+      // then counts the brackets of the following string as structure.
+      const raw = `// don't${terminator}"${"\\\n"}${"[".repeat(513)}"`;
+
+      expect(assertBoundedRawJsonNesting(raw)).toBe(0);
+    });
   });
 
   describe("assertBoundedJsonNesting", () => {
