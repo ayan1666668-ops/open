@@ -58,7 +58,6 @@ import {
   ACP_SELECTION_REPAIR_MESSAGE,
   requireAcpExecutionSelection,
   acpSessionActorKey,
-  requireReadySessionMeta,
   requireReadySession,
 } from "./manager.utils.js";
 
@@ -125,7 +124,7 @@ export async function runManagerTurn(params: {
     sessionKey,
     agentId,
   });
-  const { meta: initialMeta, selection: initialSelection } = requireReadySession(initialResolution);
+  const { selection: initialSelection } = requireReadySession(initialResolution);
   recordSessionHumanDirectMessage({
     sessionKey,
     entry: initialResolution.kind === "ready" ? initialResolution.entry : undefined,
@@ -230,6 +229,7 @@ export async function runManagerTurn(params: {
         const ready = requireReadySession(resolution);
         const resolvedMeta = ready.meta;
         let acceptedSelection = ready.selection;
+        let acceptedEntry = ready.entry;
         if (turnLocal) {
           const reserved = await params.writeSessionMeta({
             cfg: input.cfg,
@@ -319,21 +319,23 @@ export async function runManagerTurn(params: {
                 };
                 const { model: _model, ...options } = runtimeOptions;
                 if (!turnLocal) {
-                  await commitManagerExecutionSelection({
-                    cfg: input.cfg,
-                    sessionKey,
-                    agentId,
-                    runtimeHandles: params.runtimeHandles,
-                    resolveSession: params.resolveSession,
-                    ensureRuntimeHandle: params.ensureRuntimeHandle,
-                    writeSessionMeta: params.writeSessionMeta,
-                    assertActive: resolveAdmittedRunActiveAssertion(
-                      input.admittedRunContext,
-                      input.signal,
-                    ),
-                    expected: { ...ready, selection: acceptedSelection },
-                    selection: accepted,
-                  });
+                  if (!isDeepStrictEqual(acceptedSelection, accepted)) {
+                    acceptedEntry = await commitManagerExecutionSelection({
+                      cfg: input.cfg,
+                      sessionKey,
+                      agentId,
+                      runtimeHandles: params.runtimeHandles,
+                      resolveSession: params.resolveSession,
+                      ensureRuntimeHandle: params.ensureRuntimeHandle,
+                      writeSessionMeta: params.writeSessionMeta,
+                      assertActive: resolveAdmittedRunActiveAssertion(
+                        input.admittedRunContext,
+                        input.signal,
+                      ),
+                      expected: { ...ready, entry: acceptedEntry, selection: acceptedSelection },
+                      selection: accepted,
+                    });
+                  }
                   await params.writeSessionMeta({
                     cfg: input.cfg,
                     sessionKey,

@@ -16,13 +16,13 @@ import {
   hoisted,
   installAcpSessionManagerTestLifecycle,
   mockParentedAcpSessionEntries,
-  readySessionMeta,
+  installReadyAcpSessionStoreFixture,
 } from "./manager.test-helpers.js";
 
 function fixture(sessionKey = "agent:codex:acp:accepted-ownership") {
   const runtime = createRuntime();
   hoisted.requireAcpRuntimeBackendMock.mockReturnValue({ id: "acpx", runtime: runtime.runtime });
-  hoisted.readAcpSessionEntryMock.mockReturnValue({ sessionKey, acp: readySessionMeta() });
+  installReadyAcpSessionStoreFixture(sessionKey);
   const manager = new AcpSessionManager();
   return { ...runtime, manager, target: { cfg: baseCfg, sessionKey } };
 }

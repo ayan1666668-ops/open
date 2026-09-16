@@ -7,6 +7,7 @@ import {
   normalizeOptionalString as normalizeText,
 } from "@openclaw/normalization-core/string-coerce";
 import type { AcpSessionRuntimeOptions, SessionAcpLifecycle } from "../../config/sessions/types.js";
+import type { AcpExecutionSelection } from "../../model-picker/execution-selection.js";
 import { AcpRuntimeError } from "../runtime/errors.js";
 
 export { normalizeOptionalString as normalizeText } from "@openclaw/normalization-core/string-coerce";
@@ -351,6 +352,17 @@ export function resolveRuntimeOptionsFromMeta(meta: SessionAcpLifecycle): AcpSes
     ...normalized,
     cwd: meta.cwd,
   });
+}
+
+/** Build native control/status options from lifecycle settings and the accepted model. */
+export function resolveRuntimeOptionsForSelection(
+  meta: SessionAcpLifecycle,
+  selection: AcpExecutionSelection,
+): AcpSessionRuntimeOptions {
+  return {
+    ...resolveRuntimeOptionsFromMeta(meta),
+    ...(selection.model === "native-managed" ? {} : { model: selection.model.id }),
+  };
 }
 
 export function runtimeOptionsEqual(

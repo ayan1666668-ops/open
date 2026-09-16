@@ -9,7 +9,7 @@ import {
   disposeAcpSessionManagerInstance,
   hoisted,
   installAcpSessionManagerTestLifecycle,
-  readySessionMeta,
+  installReadyAcpSessionStoreFixture,
 } from "./manager.test-helpers.js";
 
 describe("ACP accepted-turn cancellation", () => {
@@ -25,7 +25,7 @@ describe("ACP accepted-turn cancellation", () => {
       const events: AcpRuntimeEvent[] = [];
       const lifecycle: unknown[] = [];
       hoisted.requireAcpRuntimeBackendMock.mockReturnValue({ id: "acpx", runtime: state.runtime });
-      hoisted.readAcpSessionEntryMock.mockReturnValue({ sessionKey, acp: readySessionMeta() });
+      installReadyAcpSessionStoreFixture(sessionKey);
       const manager = new AcpSessionManager();
       let actor: Promise<unknown> | undefined;
       if (phase === "queued") {
@@ -97,7 +97,7 @@ describe("ACP accepted-turn cancellation", () => {
     const sessionKey = "agent:codex:acp:dispose-setup";
     const events: AcpRuntimeEvent[] = [];
     hoisted.requireAcpRuntimeBackendMock.mockReturnValue({ id: "acpx", runtime: state.runtime });
-    hoisted.readAcpSessionEntryMock.mockReturnValue({ sessionKey, acp: readySessionMeta() });
+    installReadyAcpSessionStoreFixture(sessionKey);
     state.ensureSession.mockImplementationOnce(async () => {
       entered.resolve();
       await release.promise;

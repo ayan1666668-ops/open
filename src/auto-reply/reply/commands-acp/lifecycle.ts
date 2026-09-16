@@ -4,7 +4,10 @@ import { normalizeOptionalString } from "@openclaw/normalization-core/string-coe
 import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import { getAcpSessionManager } from "../../../acp/control-plane/manager.js";
 import type { AcpSessionTarget } from "../../../acp/control-plane/manager.types.js";
-import { resolveAcpSessionResolutionError } from "../../../acp/control-plane/manager.utils.js";
+import {
+  requireAcpExecutionSelection,
+  resolveAcpSessionResolutionError,
+} from "../../../acp/control-plane/manager.utils.js";
 import { cleanupFailedAcpSpawn } from "../../../acp/control-plane/spawn.js";
 import {
   isAcpEnabledByPolicy,
@@ -165,7 +168,9 @@ export async function handleAcpSpawnAction(
     });
     sessionEntry = initialized.sessionEntry;
     closeRuntimeOnFailure = initialized.closeRuntimeOnFailure;
-    initializedBackend = initialized.handle.backend || initialized.meta.backend;
+    initializedBackend =
+      initialized.handle.backend ||
+      requireAcpExecutionSelection(initialized.sessionEntry).executor.backend;
     initializedMeta = initialized.meta;
   } catch (err) {
     return commandReply(

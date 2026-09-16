@@ -1,8 +1,8 @@
+import { expectDefined } from "@openclaw/normalization-core";
 /** Tests ACP manager backend failover across initialization and turn execution. */
 import { describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../../test/helpers/promise.js";
 import type { OpenClawConfig } from "../../config/config.js";
-import type { SessionAcpMeta } from "../../config/sessions/types.js";
 import {
   AcpRuntimeError,
   AcpSessionManager,
@@ -10,7 +10,7 @@ import {
   createRuntime,
   hoisted,
   installAcpSessionManagerTestLifecycle,
-  readySessionMeta,
+  installAcpSessionStoreFixture,
 } from "./manager.test-helpers.js";
 
 describe("AcpSessionManager backend failover", () => {
@@ -27,12 +27,6 @@ describe("AcpSessionManager backend failover", () => {
     const fallbackRuntime = createRuntime();
     const sessionKey = "agent:main:acp:session-1";
     const initialBackend = params.initialBackend ?? "primary-backend";
-    let currentMeta = readySessionMeta({
-      backend: initialBackend,
-      ...(params.model ? { runtimeOptions: { model: params.model } } : {}),
-      runtimeSessionName:
-        initialBackend === "fallback-backend" ? "fallback-runtime" : "primary-runtime",
-    });
     primaryRuntime.ensureSession.mockImplementation(async (input) => ({
       sessionKey: input.sessionKey,
       backend: "primary-backend",
@@ -61,28 +55,6 @@ describe("AcpSessionManager backend failover", () => {
       }
       throw new Error(`unexpected backend ${backendId ?? "<auto>"}`);
     });
-    hoisted.readAcpSessionEntryMock.mockImplementation(() => ({
-      sessionKey,
-      storeSessionKey: sessionKey,
-      acp: currentMeta,
-    }));
-    hoisted.upsertAcpSessionMetaMock.mockImplementation(async (paramsUnknown: unknown) => {
-      const upsertParams = paramsUnknown as {
-        mutate: (
-          current: SessionAcpMeta | undefined,
-          entry: { acp?: SessionAcpMeta } | undefined,
-        ) => SessionAcpMeta | null | undefined;
-      };
-      const next = upsertParams.mutate(currentMeta, { acp: currentMeta });
-      if (next) {
-        currentMeta = next;
-      }
-      return {
-        sessionId: "session-1",
-        updatedAt: Date.now(),
-        acp: currentMeta,
-      };
-    });
     const cfg = {
       acp: {
         ...baseCfg.acp,
@@ -90,11 +62,29 @@ describe("AcpSessionManager backend failover", () => {
         fallbacks: ["fallback-backend"],
       },
     } as OpenClawConfig;
+    const store = installAcpSessionStoreFixture({
+      cfg,
+      sessionKey,
+      selection: {
+        executor: { kind: "acp", backend: initialBackend, agent: "qa-agent" },
+        model: params.model ? { id: params.model } : "native-managed",
+      },
+      meta: {
+        runtimeSessionName:
+          initialBackend === "fallback-backend" ? "fallback-runtime" : "primary-runtime",
+        mode: "persistent",
+        state: "idle",
+        lastActivityAt: 1,
+      },
+    });
     return {
       cfg,
       fallbackRuntime,
       get currentMeta() {
-        return currentMeta;
+        return expectDefined(store.readMeta(), "persisted lifecycle");
+      },
+      get selection() {
+        return store.readSelection();
       },
       primaryRuntime,
       sessionKey,
@@ -117,7 +107,7 @@ describe("AcpSessionManager backend failover", () => {
     expect(hoisted.requireAcpRuntimeBackendMock).toHaveBeenCalledWith("fallback-backend");
     expect(harness.fallbackRuntime.runTurn).toHaveBeenCalledTimes(1);
     expect(harness.primaryRuntime.runTurn).not.toHaveBeenCalled();
-    expect(harness.currentMeta.backend).toBe("fallback-backend");
+    expect(harness.selection.executor.backend).toBe("fallback-backend");
   });
 
   it("closes turn-local fallback handles before returning and retains the primary selection", async () => {
@@ -138,7 +128,7 @@ describe("AcpSessionManager backend failover", () => {
       mode: "prompt",
       requestId: "r-fallback",
     });
-    expect(harness.currentMeta.backend).toBe("primary-backend");
+    expect(harness.selection.executor.backend).toBe("primary-backend");
     expect(harness.fallbackRuntime.runTurn).toHaveBeenCalledTimes(1);
     expect(harness.fallbackRuntime.close).toHaveBeenCalledWith(
       expect.objectContaining({ reason: "turn-local-fallback-complete" }),
@@ -156,7 +146,7 @@ describe("AcpSessionManager backend failover", () => {
 
     expect(harness.fallbackRuntime.close).not.toHaveBeenCalled();
     expect(harness.primaryRuntime.runTurn).toHaveBeenCalledTimes(2);
-    expect(harness.currentMeta.backend).toBe("primary-backend");
+    expect(harness.selection.executor.backend).toBe("primary-backend");
   });
 
   it("pauses a reopened session when fallback cleanup cannot be confirmed", async () => {
@@ -178,7 +168,7 @@ describe("AcpSessionManager backend failover", () => {
     await expect(new AcpSessionManager().runTurn(input)).rejects.toThrow(
       "fallback close result lost",
     );
-    expect(harness.currentMeta.backend).toBe("primary-backend");
+    expect(harness.selection.executor.backend).toBe("primary-backend");
     expect(harness.currentMeta.runtimeSessionName).toBe("primary-runtime");
     await expect(
       new AcpSessionManager().runTurn({ ...input, requestId: "after-restart" }),
@@ -211,7 +201,7 @@ describe("AcpSessionManager backend failover", () => {
       new AcpSessionManager().runTurn({ ...input, requestId: "after-uncertain-control" }),
     ).rejects.toThrow("app did not confirm the last change");
     expect(harness.fallbackRuntime.runTurn).not.toHaveBeenCalled();
-    expect(harness.currentMeta.backend).toBe("primary-backend");
+    expect(harness.selection.executor.backend).toBe("primary-backend");
   });
 
   it("does not overlap unresolved fallback timeout cleanup with another close", async () => {

@@ -11,7 +11,7 @@ import type {
   ResolveManagerSession,
 } from "./manager.types.js";
 import { requireReadySession } from "./manager.utils.js";
-import { resolveRuntimeOptionsFromMeta } from "./runtime-options.js";
+import { resolveRuntimeOptionsForSelection } from "./runtime-options.js";
 
 /** Reads a fresh ACP session status and reconciles runtime identifiers from the status response. */
 export async function runManagerGetSessionStatus(params: {
@@ -81,10 +81,7 @@ export async function runManagerGetSessionStatus(params: {
     ...(identity ? { identity } : {}),
     state: meta.state,
     mode: meta.mode,
-    runtimeOptions: {
-      ...resolveRuntimeOptionsFromMeta(meta),
-      ...(selection.model !== "native-managed" ? { model: selection.model.id } : {}),
-    },
+    runtimeOptions: resolveRuntimeOptionsForSelection(meta, selection),
     capabilities,
     runtimeStatus,
     lastActivityAt: meta.lastActivityAt,

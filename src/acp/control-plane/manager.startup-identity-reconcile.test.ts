@@ -1,12 +1,13 @@
 /** Tests startup reconciliation of pending ACP session identities. */
 import { describe, expect, it } from "vitest";
+import { createAcpSessionStoreEntryFixture } from "../../test-utils/acp-session-store-entry.js";
 import {
-  installMutableAcpSessionMetaUpsert,
   AcpSessionManager,
   baseCfg,
   createRuntime,
   hoisted,
   installAcpSessionManagerTestLifecycle,
+  installPublicAcpSessionFixture,
   readySessionMeta,
   type SessionAcpMeta,
 } from "./manager.test-helpers.js";
@@ -28,41 +29,27 @@ describe("AcpSessionManager startup identity reconcile", () => {
       runtime: runtimeState.runtime,
     });
 
-    const metaState: { currentMeta: SessionAcpMeta } = {
-      currentMeta: {
-        ...readySessionMeta(),
-        identity: {
-          state: "pending",
-          source: "ensure",
-          acpxSessionId: "acpx-stale",
-          lastUpdatedAt: Date.now(),
-        },
+    const initialMeta = {
+      ...readySessionMeta(),
+      identity: {
+        state: "pending",
+        source: "ensure",
+        acpxSessionId: "acpx-stale",
+        lastUpdatedAt: Date.now(),
       },
-    };
+    } satisfies SessionAcpMeta;
     const sessionKey = "agent:codex:acp:session-1";
+    const metaState = installPublicAcpSessionFixture(sessionKey, initialMeta);
     hoisted.listAcpSessionEntriesMock.mockResolvedValue([
       {
         cfg: baseCfg,
         storePath: "/tmp/sessions-acp.json",
         sessionKey,
         storeSessionKey: sessionKey,
-        entry: {
-          sessionId: "session-1",
-          updatedAt: Date.now(),
-          acp: metaState.currentMeta,
-        },
+        entry: metaState.readEntry(),
         acp: metaState.currentMeta,
       },
     ]);
-    hoisted.readAcpSessionEntryMock.mockImplementation((paramsUnknown: unknown) => {
-      const key = (paramsUnknown as { sessionKey?: string }).sessionKey ?? sessionKey;
-      return {
-        sessionKey: key,
-        storeSessionKey: key,
-        acp: metaState.currentMeta,
-      };
-    });
-    installMutableAcpSessionMetaUpsert(metaState);
 
     const manager = new AcpSessionManager();
     const result = await manager.reconcilePendingSessionIdentities({ cfg: baseCfg });
@@ -94,18 +81,7 @@ describe("AcpSessionManager startup identity reconcile", () => {
       },
     };
     hoisted.listAcpSessionEntriesMock.mockResolvedValue([
-      {
-        cfg: baseCfg,
-        storePath: "/tmp/sessions-acp.json",
-        sessionKey,
-        storeSessionKey: sessionKey,
-        entry: {
-          sessionId: "session-1",
-          updatedAt: Date.now(),
-          acp,
-        },
-        acp,
-      },
+      createAcpSessionStoreEntryFixture({ cfg: baseCfg, sessionKey, acp: acp }),
     ]);
 
     const manager = new AcpSessionManager();
@@ -134,18 +110,7 @@ describe("AcpSessionManager startup identity reconcile", () => {
       },
     };
     hoisted.listAcpSessionEntriesMock.mockResolvedValue([
-      {
-        cfg: baseCfg,
-        storePath: "/tmp/sessions-acp.json",
-        sessionKey,
-        storeSessionKey: sessionKey,
-        entry: {
-          sessionId: "session-1",
-          updatedAt: Date.now(),
-          acp: resolvedMeta,
-        },
-        acp: resolvedMeta,
-      },
+      createAcpSessionStoreEntryFixture({ cfg: baseCfg, sessionKey, acp: resolvedMeta }),
     ]);
 
     const manager = new AcpSessionManager();
@@ -174,14 +139,7 @@ describe("AcpSessionManager startup identity reconcile", () => {
       },
     };
     hoisted.listAcpSessionEntriesMock.mockResolvedValue([
-      {
-        cfg: baseCfg,
-        storePath: "/tmp/sessions-acp.json",
-        sessionKey,
-        storeSessionKey: sessionKey,
-        entry: { sessionId: "session-1", updatedAt: Date.now(), acp },
-        acp,
-      },
+      createAcpSessionStoreEntryFixture({ cfg: baseCfg, sessionKey, acp: acp }),
     ]);
 
     const result = await new AcpSessionManager().reconcilePendingSessionIdentities({

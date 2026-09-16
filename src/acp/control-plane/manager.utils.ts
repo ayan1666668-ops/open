@@ -2,7 +2,7 @@ import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/st
 import type { SessionAcpLifecycle, SessionEntry } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { toErrorObject } from "../../infra/errors.js";
-import { getCommittedSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
+import { getCommittedSessionExecutionSelection } from "../../model-picker/execution-selection.js";
 import { isAcpExecutionSelection } from "../../model-picker/execution-selection.js";
 import type { AcpExecutionSelection } from "../../model-picker/execution-selection.js";
 import { normalizeAgentId, parseAgentSessionKey } from "../../routing/session-key.js";

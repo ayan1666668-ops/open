@@ -12,11 +12,9 @@ vi.mock("../../globals.js", () => ({
 import { AcpRuntimeError } from "../runtime/errors.js";
 import type { AcpRuntimeBackend } from "../runtime/registry.js";
 import { tryPrepareFreshManagerRuntimeSession } from "./manager.runtime-resume-state.js";
-import type { SessionAcpMeta } from "./manager.types.js";
+import type { SessionAcpLifecycle } from "./manager.types.js";
 
-const meta: SessionAcpMeta = {
-  backend: "acpx",
-  agent: "codex",
+const meta: SessionAcpLifecycle = {
   runtimeSessionName: "acp:test",
   mode: "persistent",
   state: "idle",
@@ -28,6 +26,10 @@ function callParams(backend: AcpRuntimeBackend | null) {
     deps: { getRuntimeBackend: vi.fn(() => backend) },
     cfg: {},
     meta,
+    selection: {
+      executor: { kind: "acp" as const, backend: "acpx", agent: "codex" },
+      model: "native-managed" as const,
+    },
     sessionKey: "agent:main:acp:test",
     agentId: "main",
     logPrefix: "sessions.session-reset",

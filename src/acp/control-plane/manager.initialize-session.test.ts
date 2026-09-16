@@ -9,7 +9,7 @@ import {
   hoisted,
   installAcpSessionManagerTestLifecycle,
   mockCallArg,
-  readySessionMeta,
+  installAcpSessionStoreFixture,
 } from "./manager.test-helpers.js";
 
 describe("AcpSessionManager initializeSession", () => {
@@ -21,15 +21,9 @@ describe("AcpSessionManager initializeSession", () => {
       id: "acpx",
       runtime: runtimeState.runtime,
     });
-    hoisted.upsertAcpSessionMetaMock.mockResolvedValue({
+    const store = installAcpSessionStoreFixture({
       sessionKey: "agent:codex:acp:session-a",
-      storeSessionKey: "agent:codex:acp:session-a",
-      acp: readySessionMeta({
-        runtimeOptions: {
-          model: "openai/gpt-5.4",
-          thinking: "high",
-        },
-      }),
+      agentId: "codex",
     });
 
     const manager = new AcpSessionManager();
@@ -39,20 +33,16 @@ describe("AcpSessionManager initializeSession", () => {
       agent: "codex",
       mode: "persistent",
       runtimeOptions: {
-        model: "openai/gpt-5.4",
+        model: "fixture/qa-model",
         thinking: "high",
       },
     });
 
-    expect(extractRuntimeOptionsFromUpserts()).toEqual([
-      {
-        model: "openai/gpt-5.4",
-        thinking: "high",
-      },
-    ]);
+    expect(extractRuntimeOptionsFromUpserts()).toEqual([{ thinking: "high" }]);
+    expect(store.readSelection().model).toEqual({ id: "fixture/qa-model" });
     expectRecordFields(mockCallArg(runtimeState.ensureSession), {
       sessionKey: "agent:codex:acp:session-a",
-      model: "openai/gpt-5.4",
+      model: "fixture/qa-model",
       thinking: "high",
     });
   });
@@ -69,10 +59,9 @@ describe("AcpSessionManager initializeSession", () => {
       id: "acpx",
       runtime: runtimeState.runtime,
     });
-    hoisted.upsertAcpSessionMetaMock.mockResolvedValue({
+    installAcpSessionStoreFixture({
       sessionKey: "agent:codex:acp:session-inherited-max",
-      storeSessionKey: "agent:codex:acp:session-inherited-max",
-      acp: readySessionMeta(),
+      agentId: "codex",
     });
 
     const manager = new AcpSessionManager();
@@ -98,15 +87,9 @@ describe("AcpSessionManager initializeSession", () => {
       id: "acpx",
       runtime: runtimeState.runtime,
     });
-    hoisted.upsertAcpSessionMetaMock.mockResolvedValue({
+    installAcpSessionStoreFixture({
       sessionKey: "agent:codex:acp:session-cwd-runtime-options",
-      storeSessionKey: "agent:codex:acp:session-cwd-runtime-options",
-      acp: readySessionMeta({
-        runtimeOptions: {
-          cwd: "/workspace/from-runtime-options",
-        },
-        cwd: "/workspace/from-runtime-options",
-      }),
+      agentId: "codex",
     });
 
     const manager = new AcpSessionManager();

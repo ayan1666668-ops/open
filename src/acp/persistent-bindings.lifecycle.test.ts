@@ -1,10 +1,9 @@
 /** Tests configured ACP binding lifecycle behavior. */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
-import {
-  readAcpExecutionSelection,
-  encodeAcpExecutionSelection,
-} from "../model-picker/execution-selection-codec.js";
+import type { SessionEntry } from "../config/sessions/types.js";
+import { commitSessionExecutionSelection } from "../model-picker/apply-session-model-selection.js";
+import type { AcpExecutionSelection } from "../model-picker/execution-selection.js";
 import type { AcpSessionResolution } from "./control-plane/manager.types.js";
 import {
   buildConfiguredAcpSessionKey,
@@ -71,19 +70,27 @@ function mockReadySession(params: {
   state?: "idle" | "running" | "error";
 }) {
   const sessionKey = buildConfiguredAcpSessionKey(params.spec);
+  const selection: AcpExecutionSelection = {
+    executor: {
+      kind: "acp",
+      backend: "acpx",
+      agent: params.spec.acpAgentId ?? params.spec.agentId,
+    },
+    model: params.model ? { id: params.model } : "native-managed",
+  };
+  const entry: SessionEntry = { sessionId: "bound-session", updatedAt: 1 };
+  commitSessionExecutionSelection(entry, selection);
   managerMocks.resolveSession.mockReturnValue({
     kind: "ready",
     sessionKey,
     agentId: params.spec.agentId,
-    entry: { sessionId: "bound-session", updatedAt: 1 },
+    entry,
+    selection,
     meta: {
-      backend: "acpx",
-      agent: params.spec.acpAgentId ?? params.spec.agentId,
       runtimeSessionName: "existing",
       mode: params.spec.mode,
       runtimeOptions: {
         cwd: params.cwd,
-        ...(params.model ? { model: params.model } : {}),
         ...(params.thinking ? { thinking: params.thinking } : {}),
       },
       state: params.state ?? "idle",
@@ -147,15 +154,13 @@ describe("ensureConfiguredAcpBindingSession", () => {
       });
       const resolution = managerMocks.resolveSession({ sessionKey });
       if (resolution.kind !== "ready") throw new Error("expected a bound ACP session");
-      const accepted = readAcpExecutionSelection(resolution.meta);
+      const accepted = resolution.selection;
       if (!accepted) throw new Error("expected the accepted ACP pair");
       managerMocks.setSessionConfigOption.mockImplementation(
         async ({ key, value }: { key: string; value: string }) => {
           if (key === "model") {
-            resolution.meta = encodeAcpExecutionSelection(resolution.meta, {
-              ...accepted,
-              model: { id: value },
-            });
+            resolution.selection = { ...accepted, model: { id: value } };
+            commitSessionExecutionSelection(resolution.entry, resolution.selection);
           } else if (key === "thinking") {
             resolution.meta = {
               ...resolution.meta,
@@ -184,7 +189,7 @@ describe("ensureConfiguredAcpBindingSession", () => {
               ],
             ],
       );
-      expect(readAcpExecutionSelection(resolution.meta)).toEqual(accepted);
+      expect(resolution.selection).toEqual(accepted);
       expect(resolution.meta.runtimeOptions?.thinking).toBe(runtimeOptions.thinking ?? "high");
       expect(managerMocks.closeSession).not.toHaveBeenCalled();
       expect(managerMocks.initializeSession).not.toHaveBeenCalled();

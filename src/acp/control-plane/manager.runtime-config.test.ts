@@ -1,7 +1,6 @@
 /** Tests ACP runtime mode/config option persistence and backend control calls. */
 import { describe, expect, it, vi } from "vitest";
 import {
-  installMutableAcpSessionMetaUpsert,
   type AcpRuntime,
   AcpRuntimeError,
   AcpSessionManager,
@@ -14,23 +13,11 @@ import {
   expectRejectedRecord,
   hoisted,
   installAcpSessionManagerTestLifecycle,
+  installPublicAcpSessionFixture,
   mockCallArg,
   readySessionMeta,
   type SessionAcpMeta,
 } from "./manager.test-helpers.js";
-
-function installWritableConfigSession(sessionKey: string, meta: SessionAcpMeta) {
-  const state = { currentMeta: meta, entry: { sessionId: "session-1", updatedAt: 1 } };
-  hoisted.readAcpSessionEntryMock.mockImplementation(() => ({
-    cfg: baseCfg,
-    sessionKey,
-    storeSessionKey: sessionKey,
-    entry: state.entry,
-    acp: state.currentMeta,
-  }));
-  installMutableAcpSessionMetaUpsert(state);
-  return state;
-}
 
 describe("AcpSessionManager runtime config", () => {
   installAcpSessionManagerTestLifecycle();
@@ -41,7 +28,10 @@ describe("AcpSessionManager runtime config", () => {
       id: "acpx",
       runtime: runtimeState.runtime,
     });
-    const metaState = installWritableConfigSession("agent:codex:acp:session-1", readySessionMeta());
+    const metaState = installPublicAcpSessionFixture(
+      "agent:codex:acp:session-1",
+      readySessionMeta(),
+    );
 
     const manager = new AcpSessionManager();
     const options = await manager.setSessionRuntimeMode({
@@ -64,24 +54,14 @@ describe("AcpSessionManager runtime config", () => {
       runtime: runtimeState.runtime,
     });
 
-    const metaState: { currentMeta: SessionAcpMeta } = {
-      currentMeta: {
-        ...readySessionMeta(),
-        runtimeOptions: {
-          runtimeMode: "plan",
-        },
+    const initialMeta = {
+      ...readySessionMeta(),
+      runtimeOptions: {
+        runtimeMode: "plan",
       },
-    };
-    hoisted.readAcpSessionEntryMock.mockImplementation((paramsUnknown: unknown) => {
-      const sessionKey =
-        (paramsUnknown as { sessionKey?: string }).sessionKey ?? "agent:codex:acp:session-1";
-      return {
-        sessionKey,
-        storeSessionKey: sessionKey,
-        acp: metaState.currentMeta,
-      };
-    });
-    installMutableAcpSessionMetaUpsert(metaState);
+    } satisfies SessionAcpMeta;
+
+    const metaState = installPublicAcpSessionFixture("agent:codex:acp:session-1", initialMeta);
 
     const manager = new AcpSessionManager();
     await manager.setSessionConfigOption({
@@ -126,28 +106,18 @@ describe("AcpSessionManager runtime config", () => {
       runtime: runtimeState.runtime,
     });
 
-    const metaState: { currentMeta: SessionAcpMeta } = {
-      currentMeta: {
-        ...readySessionMeta(),
-        identity: {
-          state: "resolved",
-          source: "status",
-          acpxSessionId: "acpx-stale",
-          agentSessionId: "agent-stale",
-          lastUpdatedAt: Date.now(),
-        },
+    const initialMeta = {
+      ...readySessionMeta(),
+      identity: {
+        state: "resolved",
+        source: "status",
+        acpxSessionId: "acpx-stale",
+        agentSessionId: "agent-stale",
+        lastUpdatedAt: Date.now(),
       },
-    };
-    hoisted.readAcpSessionEntryMock.mockImplementation((paramsUnknown: unknown) => {
-      const sessionKey =
-        (paramsUnknown as { sessionKey?: string }).sessionKey ?? "agent:codex:acp:session-1";
-      return {
-        sessionKey,
-        storeSessionKey: sessionKey,
-        acp: metaState.currentMeta,
-      };
-    });
-    installMutableAcpSessionMetaUpsert(metaState);
+    } satisfies SessionAcpMeta;
+
+    const metaState = installPublicAcpSessionFixture("agent:codex:acp:session-1", initialMeta);
 
     const manager = new AcpSessionManager();
     await manager.runTurn({
@@ -183,17 +153,9 @@ describe("AcpSessionManager runtime config", () => {
       runtime: runtimeState.runtime,
     });
 
-    const metaState: { currentMeta: SessionAcpMeta | undefined } = { currentMeta: undefined };
-    hoisted.readAcpSessionEntryMock.mockImplementation((paramsUnknown: unknown) => {
-      const sessionKey =
-        (paramsUnknown as { sessionKey?: string }).sessionKey ?? "agent:codex:acp:session-1";
-      return {
-        sessionKey,
-        storeSessionKey: sessionKey,
-        acp: metaState.currentMeta,
-      };
-    });
-    installMutableAcpSessionMetaUpsert(metaState);
+    const initialMeta = undefined;
+
+    const metaState = installPublicAcpSessionFixture("agent:codex:acp:session-1", initialMeta);
 
     const manager = new AcpSessionManager();
     await manager.initializeSession({
@@ -261,28 +223,19 @@ describe("AcpSessionManager runtime config", () => {
       runtime: runtimeState.runtime,
     });
 
-    const metaState: { currentMeta: SessionAcpMeta } = {
-      currentMeta: {
-        ...readySessionMeta(),
-        agent: "gemini",
-        identity: {
-          state: "pending",
-          source: "ensure",
-          acpxSessionId: "acpx-stale",
-          lastUpdatedAt: Date.now(),
-        },
+    const initialMeta = {
+      ...readySessionMeta(),
+      agent: "gemini",
+      identity: {
+        state: "pending",
+        source: "ensure",
+        acpxSessionId: "acpx-stale",
+        lastUpdatedAt: Date.now(),
       },
-    };
+    } satisfies SessionAcpMeta;
     const sessionKey = "agent:gemini:acp:session-1";
-    hoisted.readAcpSessionEntryMock.mockImplementation((paramsUnknown: unknown) => {
-      const key = (paramsUnknown as { sessionKey?: string }).sessionKey ?? sessionKey;
-      return {
-        sessionKey: key,
-        storeSessionKey: key,
-        acp: metaState.currentMeta,
-      };
-    });
-    installMutableAcpSessionMetaUpsert(metaState);
+
+    const metaState = installPublicAcpSessionFixture(sessionKey, initialMeta);
 
     const manager = new AcpSessionManager();
     await manager.runTurn({
@@ -314,18 +267,14 @@ describe("AcpSessionManager runtime config", () => {
       id: "acpx",
       runtime: runtimeState.runtime,
     });
-    hoisted.readAcpSessionEntryMock.mockReturnValue({
-      sessionKey: "agent:codex:acp:session-1",
-      storeSessionKey: "agent:codex:acp:session-1",
-      acp: {
-        ...readySessionMeta(),
-        identity: {
-          state: "resolved",
-          source: "status",
-          acpxSessionId: "acpx-stable",
-          agentSessionId: "agent-stable",
-          lastUpdatedAt: Date.now(),
-        },
+    installPublicAcpSessionFixture("agent:codex:acp:session-1", {
+      ...readySessionMeta(),
+      identity: {
+        state: "resolved",
+        source: "status",
+        acpxSessionId: "acpx-stable",
+        agentSessionId: "agent-stable",
+        lastUpdatedAt: Date.now(),
       },
     });
 
@@ -345,18 +294,14 @@ describe("AcpSessionManager runtime config", () => {
       id: "acpx",
       runtime: runtimeState.runtime,
     });
-    hoisted.readAcpSessionEntryMock.mockReturnValue({
-      sessionKey: "agent:codex:acp:session-1",
-      storeSessionKey: "agent:codex:acp:session-1",
-      acp: {
-        ...readySessionMeta(),
-        runtimeOptions: {
-          runtimeMode: "plan",
-          model: "openai/gpt-5.4",
-          thinking: "high",
-          permissionProfile: "strict",
-          timeoutSeconds: 120,
-        },
+    installPublicAcpSessionFixture("agent:codex:acp:session-1", {
+      ...readySessionMeta(),
+      runtimeOptions: {
+        runtimeMode: "plan",
+        model: "openai/gpt-5.4",
+        thinking: "high",
+        permissionProfile: "strict",
+        timeoutSeconds: 120,
       },
     });
 
@@ -405,14 +350,10 @@ describe("AcpSessionManager runtime config", () => {
       id: "acpx",
       runtime: runtimeState.runtime,
     });
-    hoisted.readAcpSessionEntryMock.mockReturnValue({
-      sessionKey: "agent:opencode:acp:session-1",
-      storeSessionKey: "agent:opencode:acp:session-1",
-      acp: {
-        ...readySessionMeta({ agent: "opencode" }),
-        runtimeOptions: {
-          timeoutSeconds: 120,
-        },
+    installPublicAcpSessionFixture("agent:opencode:acp:session-1", {
+      ...readySessionMeta({ agent: "opencode" }),
+      runtimeOptions: {
+        timeoutSeconds: 120,
       },
     });
 
@@ -444,14 +385,10 @@ describe("AcpSessionManager runtime config", () => {
       id: "acpx",
       runtime: runtimeState.runtime,
     });
-    hoisted.readAcpSessionEntryMock.mockReturnValue({
-      sessionKey: "agent:opencode:acp:session-1",
-      storeSessionKey: "agent:opencode:acp:session-1",
-      acp: {
-        ...readySessionMeta({ agent: "opencode" }),
-        runtimeOptions: {
-          timeoutSeconds: 120,
-        },
+    installPublicAcpSessionFixture("agent:opencode:acp:session-1", {
+      ...readySessionMeta({ agent: "opencode" }),
+      runtimeOptions: {
+        timeoutSeconds: 120,
       },
     });
 
@@ -491,14 +428,10 @@ describe("AcpSessionManager runtime config", () => {
       id: "acpx",
       runtime: runtimeState.runtime,
     });
-    hoisted.readAcpSessionEntryMock.mockReturnValue({
-      sessionKey: "agent:opencode:acp:session-1",
-      storeSessionKey: "agent:opencode:acp:session-1",
-      acp: {
-        ...readySessionMeta({ agent: "opencode" }),
-        runtimeOptions: {
-          model: "opencode/gpt-5.4",
-        },
+    installPublicAcpSessionFixture("agent:opencode:acp:session-1", {
+      ...readySessionMeta({ agent: "opencode" }),
+      runtimeOptions: {
+        model: "opencode/gpt-5.4",
       },
     });
 
@@ -530,14 +463,10 @@ describe("AcpSessionManager runtime config", () => {
       id: "acpx",
       runtime: runtimeState.runtime,
     });
-    hoisted.readAcpSessionEntryMock.mockReturnValue({
-      sessionKey: "agent:claude:acp:session-1",
-      storeSessionKey: "agent:claude:acp:session-1",
-      acp: {
-        ...readySessionMeta({ agent: "claude" }),
-        runtimeOptions: {
-          thinking: "high",
-        },
+    installPublicAcpSessionFixture("agent:claude:acp:session-1", {
+      ...readySessionMeta({ agent: "claude" }),
+      runtimeOptions: {
+        thinking: "high",
       },
     });
 
@@ -570,17 +499,13 @@ describe("AcpSessionManager runtime config", () => {
       id: "acpx",
       runtime: runtimeState.runtime,
     });
-    hoisted.readAcpSessionEntryMock.mockReturnValue({
-      sessionKey: "agent:gemini:acp:session-1",
-      storeSessionKey: "agent:gemini:acp:session-1",
-      acp: {
-        ...readySessionMeta({ agent: "gemini" }),
-        runtimeOptions: {
-          model: "gemini-3-flash-preview",
-          thinking: "high",
-          permissionProfile: "strict",
-          timeoutSeconds: 120,
-        },
+    installPublicAcpSessionFixture("agent:gemini:acp:session-1", {
+      ...readySessionMeta({ agent: "gemini" }),
+      runtimeOptions: {
+        model: "gemini-3-flash-preview",
+        thinking: "high",
+        permissionProfile: "strict",
+        timeoutSeconds: 120,
       },
     });
 
@@ -639,29 +564,7 @@ describe("AcpSessionManager runtime config", () => {
         runtime: runtimeState.runtime,
       });
       const sessionKey = "agent:codex:acp:session-cwd-update";
-      let currentEntry = {
-        sessionKey,
-        storeSessionKey: sessionKey,
-        acp: readySessionMeta(),
-      };
-      hoisted.readAcpSessionEntryMock.mockImplementation(() => currentEntry);
-      hoisted.upsertAcpSessionMetaMock.mockImplementation((paramsUnknown: unknown) => {
-        const params = paramsUnknown as {
-          mutate: (
-            current: SessionAcpMeta | undefined,
-            entry: { acp?: SessionAcpMeta } | undefined,
-          ) => SessionAcpMeta | null | undefined;
-        };
-        const nextMeta = params.mutate(currentEntry.acp, currentEntry);
-        if (nextMeta === null) {
-          return null;
-        }
-        currentEntry = {
-          ...currentEntry,
-          acp: nextMeta ?? currentEntry.acp,
-        };
-        return currentEntry;
-      });
+      installPublicAcpSessionFixture(sessionKey, readySessionMeta());
 
       const manager = new AcpSessionManager();
       await manager.runTurn({
@@ -725,11 +628,7 @@ describe("AcpSessionManager runtime config", () => {
       id: "acpx",
       runtime: unsupportedRuntime,
     });
-    hoisted.readAcpSessionEntryMock.mockReturnValue({
-      sessionKey: "agent:codex:acp:session-1",
-      storeSessionKey: "agent:codex:acp:session-1",
-      acp: readySessionMeta(),
-    });
+    installPublicAcpSessionFixture("agent:codex:acp:session-1", readySessionMeta());
 
     const manager = new AcpSessionManager();
     await expectRejectedRecord(
@@ -753,14 +652,13 @@ describe("AcpSessionManager runtime config", () => {
       id: "acpx",
       runtime: runtimeState.runtime,
     });
-    hoisted.readAcpSessionEntryMock.mockReturnValue({
-      sessionKey: "agent:opencode:acp:session-1",
-      storeSessionKey: "agent:opencode:acp:session-1",
-      acp: readySessionMeta({
+    installPublicAcpSessionFixture(
+      "agent:opencode:acp:session-1",
+      readySessionMeta({
         agent: "opencode",
         runtimeOptions: { thinking: "high" },
       }),
-    });
+    );
 
     const manager = new AcpSessionManager();
     await manager.runTurn({
@@ -786,11 +684,10 @@ describe("AcpSessionManager runtime config", () => {
       id: "acpx",
       runtime: runtimeState.runtime,
     });
-    hoisted.readAcpSessionEntryMock.mockReturnValue({
-      sessionKey: "agent:codex:acp:session-1",
-      storeSessionKey: "agent:codex:acp:session-1",
-      acp: readySessionMeta({ runtimeOptions: { thinking: "high" } }),
-    });
+    installPublicAcpSessionFixture(
+      "agent:codex:acp:session-1",
+      readySessionMeta({ runtimeOptions: { thinking: "high" } }),
+    );
 
     const manager = new AcpSessionManager();
     await manager.runTurn({
@@ -818,11 +715,10 @@ describe("AcpSessionManager runtime config", () => {
       id: "acpx",
       runtime: runtimeState.runtime,
     });
-    hoisted.readAcpSessionEntryMock.mockReturnValue({
-      sessionKey: "agent:opencode:acp:session-1",
-      storeSessionKey: "agent:opencode:acp:session-1",
-      acp: readySessionMeta({ agent: "opencode" }),
-    });
+    installPublicAcpSessionFixture(
+      "agent:opencode:acp:session-1",
+      readySessionMeta({ agent: "opencode" }),
+    );
 
     const manager = new AcpSessionManager();
     await expectRejectedRecord(
@@ -848,7 +744,7 @@ describe("AcpSessionManager runtime config", () => {
       id: "acpx",
       runtime: runtimeState.runtime,
     });
-    const metaState = installWritableConfigSession(
+    const metaState = installPublicAcpSessionFixture(
       "agent:claude:acp:session-1",
       readySessionMeta({ agent: "claude" }),
     );
@@ -884,7 +780,7 @@ describe("AcpSessionManager runtime config", () => {
       id: "acpx",
       runtime: runtimeState.runtime,
     });
-    const metaState = installWritableConfigSession(
+    const metaState = installPublicAcpSessionFixture(
       "agent:claude:acp:session-1",
       readySessionMeta({ agent: "claude" }),
     );
@@ -916,7 +812,7 @@ describe("AcpSessionManager runtime config", () => {
       id: "acpx",
       runtime: runtimeState.runtime,
     });
-    const metaState = installWritableConfigSession(
+    const metaState = installPublicAcpSessionFixture(
       "agent:claude:acp:session-1",
       readySessionMeta({ agent: "claude" }),
     );
@@ -947,7 +843,7 @@ describe("AcpSessionManager runtime config", () => {
       id: "acpx",
       runtime: runtimeState.runtime,
     });
-    const metaState = installWritableConfigSession(
+    const metaState = installPublicAcpSessionFixture(
       "agent:claude:acp:session-1",
       readySessionMeta({ agent: "claude" }),
     );

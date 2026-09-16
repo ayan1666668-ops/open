@@ -6,6 +6,7 @@ import {
   withAcpManagerTaskStateDir,
 } from "../../../test/helpers/acp-manager-task-state.js";
 import { createDeferred } from "../../../test/helpers/promise.js";
+import { createAcpSessionStoreEntryFixture } from "../../test-utils/acp-session-store-entry.js";
 import {
   AcpRuntimeError,
   AcpSessionManager,
@@ -16,6 +17,7 @@ import {
   extractStatesFromUpserts,
   hoisted,
   installAcpSessionManagerTestLifecycle,
+  installPublicAcpSessionFixture,
   mockParentedAcpSessionEntries,
   mockCallArg,
   readySessionMeta,
@@ -33,11 +35,9 @@ describe("AcpSessionManager turn results", () => {
       id: "acpx",
       runtime: runtimeState.runtime,
     });
-    hoisted.readAcpSessionEntryMock.mockReturnValue({
-      sessionKey,
-      storeSessionKey: sessionKey,
-      acp: readySessionMeta(),
-    });
+    hoisted.readAcpSessionEntryMock.mockReturnValue(
+      createAcpSessionStoreEntryFixture({ sessionKey, acp: readySessionMeta() }),
+    );
     return { runtimeState, sessionKey };
   }
 
@@ -1004,11 +1004,7 @@ describe("AcpSessionManager turn results", () => {
       id: "acpx",
       runtime: runtimeState.runtime,
     });
-    hoisted.readAcpSessionEntryMock.mockReturnValue({
-      sessionKey: "agent:codex:acp:session-1",
-      storeSessionKey: "agent:codex:acp:session-1",
-      acp: readySessionMeta(),
-    });
+    installPublicAcpSessionFixture("agent:codex:acp:session-1", readySessionMeta());
 
     const manager = new AcpSessionManager();
     await expect(
@@ -1105,11 +1101,7 @@ describe("AcpSessionManager turn results", () => {
       id: "acpx",
       runtime: runtimeState.runtime,
     });
-    hoisted.readAcpSessionEntryMock.mockReturnValue({
-      sessionKey: "agent:codex:acp:session-1",
-      storeSessionKey: "agent:codex:acp:session-1",
-      acp: readySessionMeta(),
-    });
+    installPublicAcpSessionFixture("agent:codex:acp:session-1", readySessionMeta());
     runtimeState.runTurn.mockImplementation(async function* () {
       yield { type: "text_delta" as const, text: "partial output" };
     });
@@ -1142,13 +1134,9 @@ describe("AcpSessionManager turn results", () => {
       id: "acpx",
       runtime: runtimeState.runtime,
     });
-    hoisted.readAcpSessionEntryMock.mockReturnValue({
-      sessionKey: "agent:codex:acp:session-1",
-      storeSessionKey: "agent:codex:acp:session-1",
-      acp: {
-        ...readySessionMeta(),
-        state: "running",
-      },
+    installPublicAcpSessionFixture("agent:codex:acp:session-1", {
+      ...readySessionMeta(),
+      state: "running",
     });
 
     const manager = new AcpSessionManager();
@@ -1180,11 +1168,7 @@ describe("AcpSessionManager turn results", () => {
         id: "acpx",
         runtime: runtimeState.runtime,
       });
-      hoisted.readAcpSessionEntryMock.mockReturnValue({
-        sessionKey: "agent:codex:acp:session-1",
-        storeSessionKey: "agent:codex:acp:session-1",
-        acp: readySessionMeta(),
-      });
+      installPublicAcpSessionFixture("agent:codex:acp:session-1", readySessionMeta());
       runtimeState.runTurn
         .mockImplementationOnce(async function* () {
           yield {
@@ -1230,7 +1214,7 @@ describe("AcpSessionManager turn results", () => {
       runtime: runtimeState.runtime,
     });
     const sessionKey = "agent:claude:acp:binding:discord:default:retry-no-session";
-    let currentMeta: SessionAcpMeta = {
+    const initialMeta: SessionAcpMeta = {
       ...readySessionMeta({ agent: "claude" }),
       runtimeSessionName: sessionKey,
       identity: {
@@ -1240,23 +1224,7 @@ describe("AcpSessionManager turn results", () => {
         lastUpdatedAt: Date.now(),
       },
     };
-    hoisted.readAcpSessionEntryMock.mockImplementation((paramsUnknown: unknown) => {
-      const key = (paramsUnknown as { sessionKey?: string }).sessionKey ?? sessionKey;
-      return { sessionKey: key, storeSessionKey: key, acp: currentMeta };
-    });
-    hoisted.upsertAcpSessionMetaMock.mockImplementation(async (paramsUnknown: unknown) => {
-      const params = paramsUnknown as {
-        mutate: (
-          current: SessionAcpMeta | undefined,
-          entry: { acp?: SessionAcpMeta } | undefined,
-        ) => SessionAcpMeta | null | undefined;
-      };
-      const next = params.mutate(currentMeta, { acp: currentMeta });
-      if (next) {
-        currentMeta = next;
-      }
-      return { sessionId: "session-1", updatedAt: Date.now(), acp: currentMeta };
-    });
+    const persisted = installPublicAcpSessionFixture(sessionKey, initialMeta);
     runtimeState.ensureSession.mockImplementation(async (inputUnknown: unknown) => {
       const input = inputUnknown as {
         sessionKey: string;
@@ -1290,7 +1258,7 @@ describe("AcpSessionManager turn results", () => {
         mode: "prompt",
         requestId: "run-no-session",
       });
-    return { runtimeState, sessionKey, runTurn, getMeta: () => currentMeta };
+    return { runtimeState, sessionKey, runTurn, getMeta: () => persisted.currentMeta };
   }
 
   function expectFreshRetry(scenario: ReturnType<typeof setupStaleResumeScenario>) {

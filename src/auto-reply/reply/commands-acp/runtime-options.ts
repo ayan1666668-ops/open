@@ -4,7 +4,7 @@ import { timestampMsToIsoString } from "@openclaw/normalization-core/number-coer
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
 import { getAcpSessionManager } from "../../../acp/control-plane/manager.js";
 import type { AcpSessionTarget } from "../../../acp/control-plane/manager.types.js";
-import { requireReadySessionMeta } from "../../../acp/control-plane/manager.utils.js";
+import { requireReadySession } from "../../../acp/control-plane/manager.utils.js";
 import {
   parseRuntimeTimeoutSecondsInput,
   validateRuntimeConfigOptionInput,
@@ -14,7 +14,7 @@ import {
   validateRuntimePermissionProfileInput,
 } from "../../../acp/control-plane/runtime-options.js";
 import type { AcpSessionRuntimeOptions } from "../../../config/sessions/types.js";
-import { prepareSessionExecutionSelection } from "../../../model-picker/apply-session-model-selection.js";
+import { applySessionExecutionSelection } from "../../../model-picker/apply-session-model-selection.js";
 import { findLatestTaskForRelatedSessionKeyForOwner } from "../../../tasks/task-owner-access.js";
 import { sanitizeTaskStatusText } from "../../../tasks/task-status.js";
 import { commandReply } from "../command-gates.js";
@@ -398,14 +398,12 @@ async function selectAcpModel(
 ): Promise<string> {
   const manager = getAcpSessionManager();
   const resolution = manager.resolveSession({ cfg: params.cfg, ...target });
-  const meta = requireReadySessionMeta(resolution);
-  const prepared = await prepareSessionExecutionSelection({
+  const ready = requireReadySession(resolution);
+  const result = await applySessionExecutionSelection({
     cfg: params.cfg,
     ...target,
-    sessionEntry: { ...(resolution.kind === "ready" ? resolution.entry : undefined), acp: meta },
-    request: { kind: "model", model: { provider: params.provider, id: model } },
-    prepareAcp: async (selection) =>
-      await manager.setExecutionSelection({ cfg: params.cfg, ...target, selection }),
+    sessionEntry: ready.entry,
+    request: { kind: "model", model: { id: model } },
   });
-  return prepared.message;
+  return result.message;
 }

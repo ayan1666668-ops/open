@@ -25,7 +25,7 @@ import {
   normalizeText,
   reconcileAcceptedRuntimeOptions,
   resolveRuntimeConfigOptionKey,
-  resolveRuntimeOptionsFromMeta,
+  resolveRuntimeOptionsForSelection,
   runtimeOptionsEqual,
 } from "./runtime-options.js";
 
@@ -179,10 +179,7 @@ export async function applyManagerRuntimeControls(params: {
   getCachedRuntimeState: (sessionKey: string) => CachedRuntimeState | null;
   onOptionsChanged: (options: AcpSessionRuntimeOptions) => Promise<void>;
 }): Promise<void> {
-  let options = {
-    ...resolveRuntimeOptionsFromMeta(params.meta),
-    ...(params.selection.model !== "native-managed" ? { model: params.selection.model.id } : {}),
-  };
+  let options = resolveRuntimeOptionsForSelection(params.meta, params.selection);
   const signature = buildRuntimeControlSignature(options);
   const cached = params.getCachedRuntimeState(params.sessionKey);
   if (cached?.appliedControlSignature === signature) {

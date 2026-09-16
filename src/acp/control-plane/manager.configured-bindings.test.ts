@@ -8,7 +8,7 @@ import {
   createRuntime,
   hoisted,
   installAcpSessionManagerTestLifecycle,
-  type SessionAcpMeta,
+  installAcpSessionStoreFixture,
 } from "./manager.test-helpers.js";
 
 describe("AcpSessionManager configured bindings", () => {
@@ -40,23 +40,7 @@ describe("AcpSessionManager configured bindings", () => {
       thinking: "off",
     };
     const sessionKey = buildConfiguredAcpSessionKey(spec);
-    let currentMeta: SessionAcpMeta | undefined;
-    hoisted.readAcpSessionEntryMock.mockImplementation(() =>
-      currentMeta ? { sessionKey, storeSessionKey: sessionKey, acp: currentMeta } : null,
-    );
-    hoisted.upsertAcpSessionMetaMock.mockImplementation(
-      ({
-        mutate,
-      }: {
-        mutate: (
-          current: SessionAcpMeta | undefined,
-          entry: { acp?: SessionAcpMeta },
-        ) => SessionAcpMeta | null | undefined;
-      }) => {
-        currentMeta = mutate(currentMeta, { acp: currentMeta }) ?? currentMeta;
-        return { sessionId: "configured-session", updatedAt: Date.now(), acp: currentMeta };
-      },
-    );
+    const store = installAcpSessionStoreFixture({ sessionKey, agentId: spec.agentId });
     const manager = new AcpSessionManager();
     const getManager = vi.spyOn(managerModule, "getAcpSessionManager").mockReturnValue(manager);
     const ensure = (thinking?: string) =>
@@ -74,22 +58,22 @@ describe("AcpSessionManager configured bindings", () => {
       expect(await ensure("off")).toEqual({ ok: true, sessionKey });
       await runTurn("first");
       await runTurn("second");
-      expect(currentMeta?.runtimeOptions?.thinking).toBe("off");
+      expect(store.readMeta()?.runtimeOptions?.thinking).toBe("off");
 
       expect(await ensure("high")).toEqual({ ok: true, sessionKey });
       await runTurn("third");
-      const acceptedMeta = currentMeta;
+      const acceptedMeta = store.readMeta();
       for (let attempt = 0; attempt < 2; attempt++) {
         expect(await ensure("off")).toEqual({
           ok: false,
           sessionKey,
           error: "Live off is unsupported",
         });
-        expect(currentMeta).toEqual(acceptedMeta);
+        expect(store.readMeta()).toEqual(acceptedMeta);
       }
       expect(await ensure()).toEqual({ ok: true, sessionKey });
       await runTurn("fourth");
-      expect(currentMeta?.runtimeOptions?.thinking).toBe("high");
+      expect(store.readMeta()?.runtimeOptions?.thinking).toBe("high");
       expect(runtimeState.ensureSession).toHaveBeenCalledOnce();
       expect(runtimeState.close).not.toHaveBeenCalled();
       expect(runtimeState.runTurn).toHaveBeenCalledTimes(4);
@@ -103,7 +87,7 @@ describe("AcpSessionManager configured bindings", () => {
       expect(
         runtimeState.setConfigOption.mock.calls.map(([input]) => [input.key, input.value]),
       ).toEqual([]);
-      expect(currentMeta?.runtimeOptions).toEqual({ thinking: "high" });
+      expect(store.readMeta()?.runtimeOptions).toEqual({ thinking: "high" });
       expect(
         await ensureConfiguredAcpBindingSession({
           cfg: { ...baseCfg, acp: { ...baseCfg.acp, backend: "qa-other-default" } },

@@ -9,8 +9,8 @@ import {
   expectRejectedRecord,
   hoisted,
   installAcpSessionManagerTestLifecycle,
-  readySessionMeta,
-  type SessionAcpMeta,
+  installAcpSessionStoreFixture,
+  installReadyAcpSessionStoreFixture,
 } from "./manager.test-helpers.js";
 
 describe("AcpSessionManager runtime config validation", () => {
@@ -22,11 +22,7 @@ describe("AcpSessionManager runtime config validation", () => {
       id: "acpx",
       runtime: runtimeState.runtime,
     });
-    hoisted.readAcpSessionEntryMock.mockReturnValue({
-      sessionKey: "agent:codex:acp:session-1",
-      storeSessionKey: "agent:codex:acp:session-1",
-      acp: readySessionMeta(),
-    });
+    installReadyAcpSessionStoreFixture("agent:codex:acp:session-1");
 
     const manager = new AcpSessionManager();
     await expectRejectedRecord(
@@ -50,7 +46,7 @@ describe("AcpSessionManager runtime config validation", () => {
     );
   });
 
-  it("never replays an inherited non-openai default that the backend dropped at session init", async () => {
+  it("never replays an inherited foreign default that the backend dropped at session init", async () => {
     const sessionKey = "agent:codex:acp:session-dropped-default";
     const runtimeState = createRuntime();
     runtimeState.ensureSession.mockImplementation(async (input) => ({
@@ -64,17 +60,7 @@ describe("AcpSessionManager runtime config validation", () => {
       runtime: runtimeState.runtime,
     });
 
-    let persistedMeta: SessionAcpMeta | undefined;
-    hoisted.upsertAcpSessionMetaMock.mockImplementation(
-      async (payload: {
-        mutate: (current: SessionAcpMeta | undefined) => SessionAcpMeta | null | undefined;
-      }) => {
-        persistedMeta = payload.mutate(undefined) ?? undefined;
-        return persistedMeta
-          ? { sessionKey, storeSessionKey: sessionKey, acp: persistedMeta }
-          : null;
-      },
-    );
+    const store = installAcpSessionStoreFixture({ sessionKey, agentId: "codex" });
 
     const manager = new AcpSessionManager();
     await manager.initializeSession({
@@ -83,18 +69,12 @@ describe("AcpSessionManager runtime config validation", () => {
       agent: "codex",
       mode: "persistent",
       runtimeOptions: {
-        model: "google/gemini-3.1-flash-lite",
+        model: "foreign/qa-default",
         thinking: "low",
       },
     });
 
-    expect(persistedMeta?.runtimeOptions).toEqual({ thinking: "low" });
-
-    hoisted.readAcpSessionEntryMock.mockReturnValue({
-      sessionKey,
-      storeSessionKey: sessionKey,
-      acp: persistedMeta as SessionAcpMeta,
-    });
+    expect(store.readMeta()?.runtimeOptions).toEqual({ thinking: "low" });
 
     await manager.runTurn({
       cfg: baseCfg,
@@ -110,7 +90,7 @@ describe("AcpSessionManager runtime config validation", () => {
     expect(runtimeState.runTurn).toHaveBeenCalledTimes(1);
   });
 
-  it("persists and replays a supported codex model the backend applied at session init", async () => {
+  it("persists and replays a supported model the backend applied at session init", async () => {
     const sessionKey = "agent:codex:acp:session-applied-model";
     const runtimeState = createRuntime();
     runtimeState.ensureSession.mockImplementation(async (input) => ({
@@ -124,17 +104,7 @@ describe("AcpSessionManager runtime config validation", () => {
       runtime: runtimeState.runtime,
     });
 
-    let persistedMeta: SessionAcpMeta | undefined;
-    hoisted.upsertAcpSessionMetaMock.mockImplementation(
-      async (payload: {
-        mutate: (current: SessionAcpMeta | undefined) => SessionAcpMeta | null | undefined;
-      }) => {
-        persistedMeta = payload.mutate(undefined) ?? undefined;
-        return persistedMeta
-          ? { sessionKey, storeSessionKey: sessionKey, acp: persistedMeta }
-          : null;
-      },
-    );
+    const store = installAcpSessionStoreFixture({ sessionKey, agentId: "codex" });
 
     const manager = new AcpSessionManager();
     await manager.initializeSession({
@@ -143,17 +113,12 @@ describe("AcpSessionManager runtime config validation", () => {
       agent: "codex",
       mode: "persistent",
       runtimeOptions: {
-        model: "openai/gpt-5.5",
+        model: "fixture/qa-model",
       },
     });
 
-    expect(persistedMeta?.runtimeOptions).toEqual({ model: "openai/gpt-5.5" });
-
-    hoisted.readAcpSessionEntryMock.mockReturnValue({
-      sessionKey,
-      storeSessionKey: sessionKey,
-      acp: persistedMeta as SessionAcpMeta,
-    });
+    expect(store.readSelection().model).toEqual({ id: "fixture/qa-model" });
+    expect(store.readMeta()?.runtimeOptions).toBeUndefined();
 
     await manager.runTurn({
       cfg: baseCfg,
@@ -166,7 +131,7 @@ describe("AcpSessionManager runtime config validation", () => {
 
     expectMockCallFields(runtimeState.setConfigOption, {
       key: "model",
-      value: "openai/gpt-5.5",
+      value: "fixture/qa-model",
     });
     expect(runtimeState.runTurn).toHaveBeenCalledTimes(1);
   });
@@ -192,14 +157,19 @@ describe("AcpSessionManager runtime config validation", () => {
         id: "acpx",
         runtime: runtimeState.runtime,
       });
-      hoisted.readAcpSessionEntryMock.mockReturnValue({
+      installAcpSessionStoreFixture({
         sessionKey: "agent:claude:acp:session-1",
-        storeSessionKey: "agent:claude:acp:session-1",
-        acp: {
-          ...readySessionMeta({ agent: "claude" }),
-          runtimeOptions: {
-            thinking: "off",
-          },
+        agentId: "claude",
+        selection: {
+          executor: { kind: "acp", backend: "acpx", agent: "claude" },
+          model: "native-managed",
+        },
+        meta: {
+          runtimeSessionName: "runtime-1",
+          mode: "persistent",
+          state: "idle",
+          lastActivityAt: 1,
+          runtimeOptions: { thinking: "off" },
         },
       });
 
@@ -240,14 +210,19 @@ describe("AcpSessionManager runtime config validation", () => {
       id: "acpx",
       runtime: runtimeState.runtime,
     });
-    hoisted.readAcpSessionEntryMock.mockReturnValue({
+    installAcpSessionStoreFixture({
       sessionKey: "agent:claude:acp:session-1",
-      storeSessionKey: "agent:claude:acp:session-1",
-      acp: {
-        ...readySessionMeta({ agent: "claude" }),
-        runtimeOptions: {
-          thinking: "off",
-        },
+      agentId: "claude",
+      selection: {
+        executor: { kind: "acp", backend: "acpx", agent: "claude" },
+        model: "native-managed",
+      },
+      meta: {
+        runtimeSessionName: "runtime-1",
+        mode: "persistent",
+        state: "idle",
+        lastActivityAt: 1,
+        runtimeOptions: { thinking: "off" },
       },
     });
 

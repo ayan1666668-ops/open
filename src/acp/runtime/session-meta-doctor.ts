@@ -10,7 +10,7 @@ import type { SessionEntry, SessionAcpLifecycle } from "../../config/sessions/ty
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { executeSqliteQuerySync } from "../../infra/kysely-sync.js";
 import type { PluginDoctorRepairAuthority } from "../../infra/state-migrations.types.js";
-import { getCommittedSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
+import { getCommittedSessionExecutionSelection } from "../../model-picker/execution-selection.js";
 import { isAcpExecutionSelection } from "../../model-picker/execution-selection.js";
 import type {
   PluginDoctorAcpSessionClaim,

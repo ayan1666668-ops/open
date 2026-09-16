@@ -41,6 +41,7 @@ export async function ensureManagerRuntimeHandle(params: {
   meta: SessionAcpLifecycle;
   selection: AcpExecutionSelection;
   selectedBackend?: string;
+  preserveActivity?: boolean;
   deps: Pick<AcpSessionManagerDeps, "requireRuntimeBackend">;
   runtimeHandles: ManagerRuntimeHandleCache;
   writeSessionMeta: WriteManagerSessionMeta;
@@ -216,6 +217,7 @@ export async function ensureManagerRuntimeHandle(params: {
     hasLegacyAcpIdentityProjection(previousMeta);
   if (shouldPersistMeta && !turnLocal) {
     await params.writeSessionMeta({
+      preserveActivity: params.preserveActivity,
       cfg: params.cfg,
       sessionKey: params.sessionKey,
       agentId: params.agentId,

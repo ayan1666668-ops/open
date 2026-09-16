@@ -178,6 +178,7 @@ export type AcpSessionManagerDeps = {
 };
 
 export type WriteManagerSessionMeta = (params: {
+  preserveActivity?: boolean;
   executionSelection?: AcpExecutionSelection;
   assertCommitAllowed?: () => void;
   cfg: OpenClawConfig;
@@ -204,6 +205,7 @@ export type EnsureManagerRuntimeHandle = (params: {
   agentId: string;
   meta: SessionAcpLifecycle;
   selectedBackend?: string;
+  preserveActivity?: boolean;
 }) => Promise<{ runtime: AcpRuntime; handle: AcpRuntimeHandle; meta: SessionAcpLifecycle }>;
 
 export type ReconcileManagerRuntimeSessionIdentifiers = (params: {

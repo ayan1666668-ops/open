@@ -86,8 +86,7 @@ function bindAcpSessionMeta(params: {
 }): Insertable<AcpSessionsTable> {
   return {
     session_key: params.sessionKey,
-    // Kept in the existing column for schema neutrality. New rows prefer the
-    // lifecycle revision; pre-revision entries retain the session-id fence.
+    // The physical generation fences delayed lifecycle writes across resets.
     session_id: params.lifecycleRevision ?? params.sessionId ?? null,
     runtime_options_json: params.meta.runtimeOptions
       ? JSON.stringify(params.meta.runtimeOptions)
@@ -356,8 +355,6 @@ function upsertAcpSessionMetaRow(db: DatabaseSync, row: Insertable<AcpSessionsTa
       .onConflict((conflict) =>
         conflict.column("session_key").doUpdateSet({
           session_id: (eb) => eb.ref("excluded.session_id"),
-          backend: (eb) => eb.ref("excluded.backend"),
-          agent: (eb) => eb.ref("excluded.agent"),
           runtime_session_name: (eb) => eb.ref("excluded.runtime_session_name"),
           identity_json: (eb) => eb.ref("excluded.identity_json"),
           mode: (eb) => eb.ref("excluded.mode"),
@@ -476,13 +473,16 @@ function mergeAcpForReturn(
 }
 
 function sessionStoreUpdateOptions(params: {
+  preserveActivity?: boolean;
   sessionKey: string;
   skipMaintenance?: boolean;
   takeCacheOwnership?: boolean;
 }) {
   return {
     activeSessionKey: normalizeLowercaseStringOrEmpty(params.sessionKey),
-    ...(params.skipMaintenance === true ? { skipMaintenance: true } : {}),
+    ...(params.preserveActivity || params.skipMaintenance === true
+      ? { skipMaintenance: true }
+      : {}),
     ...(params.takeCacheOwnership === true ? { takeCacheOwnership: true } : {}),
   };
 }
@@ -517,6 +517,7 @@ function consumeLegacyAcpMigrationSources(params: {
 }
 
 export async function upsertAcpSessionMeta(params: {
+  preserveActivity?: boolean;
   executionSelection?: AcpExecutionSelection;
   assertCommitAllowed?: () => void;
   sessionKey: string;
@@ -565,7 +566,8 @@ export async function upsertAcpSessionMeta(params: {
       );
       currentRowKey = currentRow?.session_key;
       current = currentRow ? rowToAcpSessionMeta(currentRow) : undefined;
-      preparedEntry = mergeSessionEntry(entry, { updatedAt });
+      preparedEntry =
+        params.preserveActivity && entry ? { ...entry } : mergeSessionEntry(entry, { updatedAt });
       nextMeta = params.mutate(
         current,
         current ? mergeAcpForReturn(preparedEntry, current) : entry,
@@ -643,9 +645,9 @@ export async function upsertAcpSessionMeta(params: {
       sessionKey: storageSessionKey,
     },
     (currentEntry) => {
-      const next = mergeSessionEntry(currentEntry, {
-        updatedAt,
-      });
+      const next = params.preserveActivity
+        ? { ...currentEntry }
+        : mergeSessionEntry(currentEntry, { updatedAt });
       delete next.acp;
       if (params.executionSelection)
         commitSessionExecutionSelection(next, params.executionSelection);
@@ -690,7 +692,7 @@ export async function upsertAcpSessionMeta(params: {
           sessionId: persisted.entry.sessionId,
           lifecycleRevision: persisted.entry.lifecycleRevision,
           meta: metaToPersist,
-          updatedAt: persisted.entry.updatedAt,
+          updatedAt,
         }),
       );
       if (persistedDatabaseSessionKey !== databaseSessionKey) {

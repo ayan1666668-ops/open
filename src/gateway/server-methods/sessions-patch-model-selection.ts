@@ -8,14 +8,14 @@ import { resolveSessionAgentId } from "../../agents/agent-scope.js";
 import type { ModelCatalogEntry } from "../../agents/model-catalog.js";
 import { splitTrailingAuthProfile } from "../../agents/model-ref-profile.js";
 import { getModelRefStatus, resolveAllowedModelRef, type ModelRef } from "../../agents/model-selection.js";
-import { resolveSessionModelRef } from "../../agents/session-model-ref.js";
+import { resolveSessionModelRefCore as resolveSessionModelRef } from "../../agents/session-model-ref.js";
 import { persistStickyModelSelectionBestEffort } from "../../agents/sticky-model-selection.js";
 import { refreshQueuedFollowupSession } from "../../auto-reply/reply/queue.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import { resolveCollapsedSessionAuthPinSource } from "../../config/sessions/auth-profile-override-provenance.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { PreparedSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
-import { getSessionExecutionSelection } from "../../model-picker/execution-selection-state.js";
+import { getSessionExecutionSelection } from "../../model-picker/execution-selection.js";
 import { isAcpExecutionSelection } from "../../model-picker/execution-selection.js";
 import type { SessionWorkerPlacementContext } from "../worker-environments/session-placement-lifecycle.js";
 import { resolveGatewayModelSelectionPolicy } from "./session-model-selection-policy.js";
@@ -29,7 +29,7 @@ export function persistSessionPatchModelSelection(params: {
   sessionKey: string;
   targetAgentId: string;
 }): void {
-  const selection = getSessionExecutionSelection(params.entry, params.cfg);
+  const selection = getSessionExecutionSelection(params.entry);
   if (typeof params.patch.model !== "string" || (selection && isAcpExecutionSelection(selection))) {
     return;
   }
@@ -65,22 +65,19 @@ export function refreshSessionPatchQueuedSelection(params: {
   if (!("agentRuntime" in params.patch) && !("model" in params.patch)) {
     return;
   }
-  const { cfg, entry, sessionKey } = params;
-  const selection = getSessionExecutionSelection(entry, cfg);
+  const { entry, sessionKey } = params;
+  const selection = getSessionExecutionSelection(entry);
   if (!selection || isAcpExecutionSelection(selection)) {
     return;
   }
   refreshQueuedFollowupSession({
     key: sessionKey,
-    nextProvider: selection.model.provider,
-    nextModel: selection.model.id,
-    nextRouteResolution: "resolved",
+    nextSelection: selection,
     nextAuthProfileId: entry.authProfileOverride,
     nextAuthProfileIdSource: resolveCollapsedSessionAuthPinSource(entry),
     nextThinking: {
       level: entry.thinkingLevel,
       catalog: params.catalog,
-      agentRuntime: selection.executor.id,
     },
   });
 }

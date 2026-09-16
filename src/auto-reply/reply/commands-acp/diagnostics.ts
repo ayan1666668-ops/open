@@ -9,7 +9,7 @@ import { getAcpRuntimeBackend, requireAcpRuntimeBackend } from "../../../acp/run
 import { listAcpSessionEntries, readAcpSessionEntry } from "../../../acp/runtime/session-meta.js";
 import type { SessionEntry, SessionAcpLifecycle } from "../../../config/sessions/types.js";
 import { getSessionBindingService } from "../../../infra/outbound/session-binding-service.js";
-import { getCommittedSessionExecutionSelection } from "../../../model-picker/apply-session-model-selection.js";
+import { getCommittedSessionExecutionSelection } from "../../../model-picker/execution-selection.js";
 import { isAcpExecutionSelection } from "../../../model-picker/execution-selection.js";
 import { commandReply } from "../command-gates.js";
 import type { CommandHandlerResult, HandleCommandsParams } from "../commands-types.js";

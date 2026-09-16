@@ -1,3 +1,4 @@
+import { expectDefined } from "@openclaw/normalization-core";
 import { describe, expect, it } from "vitest";
 import {
   AcpSessionManager,
@@ -6,8 +7,7 @@ import {
   expectMockCallFields,
   hoisted,
   installAcpSessionManagerTestLifecycle,
-  readySessionMeta,
-  type SessionAcpMeta,
+  installAcpSessionStoreFixture,
 } from "./manager.test-helpers.js";
 
 describe("AcpSessionManager resetSessionRuntimeOptions", () => {
@@ -16,36 +16,32 @@ describe("AcpSessionManager resetSessionRuntimeOptions", () => {
   function setupReset() {
     const runtimeState = createRuntime();
     const sessionKey = "agent:codex:acp:reset-options";
-    let meta = readySessionMeta({
-      cwd: "/workspace/removed",
-      runtimeOptions: { cwd: "/workspace/removed", thinking: "high" },
+    const store = installAcpSessionStoreFixture({
+      sessionKey,
+      agentId: "codex",
+      selection: {
+        executor: { kind: "acp", backend: "acpx", agent: "qa-agent" },
+        model: "native-managed",
+      },
+      meta: {
+        runtimeSessionName: "runtime-1",
+        mode: "persistent",
+        state: "idle",
+        lastActivityAt: 1,
+        cwd: "/workspace/removed",
+        runtimeOptions: { cwd: "/workspace/removed", thinking: "high" },
+      },
     });
     hoisted.requireAcpRuntimeBackendMock.mockReturnValue({
       id: "acpx",
       runtime: runtimeState.runtime,
     });
-    hoisted.readAcpSessionEntryMock.mockImplementation(() => ({
-      sessionKey,
-      storeSessionKey: sessionKey,
-      acp: meta,
-    }));
-    hoisted.upsertAcpSessionMetaMock.mockImplementation(
-      async (params: {
-        mutate: (
-          current: SessionAcpMeta,
-          entry: { acp: SessionAcpMeta },
-        ) => SessionAcpMeta | null | undefined;
-      }) => {
-        meta = params.mutate(meta, { acp: meta }) ?? meta;
-        return { sessionId: "reset-options", updatedAt: Date.now(), acp: meta };
-      },
-    );
     return {
       runtimeState,
       manager: new AcpSessionManager(),
       target: { cfg: baseCfg, sessionKey },
       get meta() {
-        return meta;
+        return expectDefined(store.readMeta(), "persisted lifecycle");
       },
     };
   }

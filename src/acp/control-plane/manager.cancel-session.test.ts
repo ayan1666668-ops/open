@@ -17,7 +17,7 @@ import {
   installAcpSessionManagerTestLifecycle,
   mockParentedAcpSessionEntries,
   mockCallArg,
-  readySessionMeta,
+  installReadyAcpSessionStoreFixture,
 } from "./manager.test-helpers.js";
 
 describe("AcpSessionManager cancelSession", () => {
@@ -39,11 +39,7 @@ describe("AcpSessionManager cancelSession", () => {
         runtime: runtimeState.runtime,
       });
       const sessionKey = "agent:codex:acp:idle-cancel";
-      hoisted.readAcpSessionEntryMock.mockReturnValue({
-        sessionKey,
-        storeSessionKey: sessionKey,
-        acp: readySessionMeta(),
-      });
+      installReadyAcpSessionStoreFixture(sessionKey);
 
       const cancellation = new AcpSessionManager().cancelSession({
         cfg: baseCfg,

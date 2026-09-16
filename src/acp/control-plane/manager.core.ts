@@ -25,7 +25,6 @@ import { registerAcpSessionManagerDisposer } from "./manager.lifecycle.js";
 import { ManagerRuntimeHandleCache } from "./manager.runtime-handle-cache.js";
 import { ensureManagerRuntimeHandle } from "./manager.runtime-handle-ensure.js";
 import {
-  commitManagerExecutionSelection,
   runWithManagerExecutionSelection,
   runResetManagerSessionRuntimeOptions,
   runSetManagerSessionConfigOption,
@@ -62,7 +61,6 @@ import {
   acpSessionActorKey,
   resolveMissingMetaError,
   requireAcpExecutionSelection,
-  requireReadySessionMeta,
 } from "./manager.utils.js";
 import {
   normalizeText,
@@ -265,6 +263,7 @@ export class AcpSessionManager {
     agentId?: string;
     selection: AcpExecutionSelection;
     assertActive?: () => void;
+    assertSelectionCurrent?: () => void;
     commitAccepted: (selection: AcpExecutionSelection) => Promise<T>;
   }): Promise<T> {
     const target = resolveAcpSessionTarget(params);
@@ -277,35 +276,6 @@ export class AcpSessionManager {
           ...this.runtimeOptionCommandServices(),
         }),
     );
-  }
-
-  async setExecutionSelection(params: {
-    cfg: OpenClawConfig;
-    sessionKey: string;
-    agentId?: string;
-    selection: AcpExecutionSelection;
-    assertActive?: () => void;
-  }): Promise<AcpExecutionSelection> {
-    const target = resolveAcpSessionTarget(params);
-    return await this.withExecutionSelection({
-      ...params,
-      commitAccepted: async (selection) => {
-        const expected = this.resolveSession({ ...params, ...target });
-        if (expected.kind !== "ready")
-          throw new AcpRuntimeError(
-            "ACP_SESSION_INIT_FAILED",
-            "The session disappeared before its model selection could be committed.",
-          );
-        await commitManagerExecutionSelection({
-          ...params,
-          ...target,
-          ...this.runtimeOptionCommandServices(),
-          expected,
-          selection,
-        });
-        return selection;
-      },
-    });
   }
 
   async setSessionConfigOption(params: {
@@ -446,6 +416,7 @@ export class AcpSessionManager {
     agentId: string;
     meta: SessionAcpLifecycle;
     selectedBackend?: string;
+    preserveActivity?: boolean;
   }): Promise<{ runtime: AcpRuntime; handle: AcpRuntimeHandle; meta: SessionAcpLifecycle }> {
     return await ensureManagerRuntimeHandle({
       ...params,
@@ -552,6 +523,7 @@ export class AcpSessionManager {
   }
 
   private async writeSessionMeta(params: {
+    preserveActivity?: boolean;
     executionSelection?: AcpExecutionSelection;
     assertCommitAllowed?: () => void;
     cfg: OpenClawConfig;
@@ -572,6 +544,7 @@ export class AcpSessionManager {
         agentId: params.agentId,
         mutate: params.mutate,
         executionSelection: params.executionSelection,
+        preserveActivity: params.preserveActivity,
         assertCommitAllowed: params.assertCommitAllowed,
         ...(params.skipMaintenance === true ? { skipMaintenance: true } : {}),
         ...(params.takeCacheOwnership === true ? { takeCacheOwnership: true } : {}),

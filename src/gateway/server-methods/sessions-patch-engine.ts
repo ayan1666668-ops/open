@@ -2,7 +2,6 @@ import type {
   ErrorShape,
   SessionsPatchParams,
 } from "../../../packages/gateway-protocol/src/index.js";
-import { readAcpSessionMetaForEntry } from "../../acp/runtime/session-meta.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import { isInternalSessionEffectsKey } from "../../config/sessions/internal-session-key.js";
 import {
@@ -14,6 +13,10 @@ import {
   type SessionEntryCanonicalReplacement,
 } from "../../config/sessions/session-accessor.sqlite-replacement-projection.js";
 import { SessionLabelOwnerIndex } from "../../config/sessions/session-entry-selection.js";
+import {
+  getCommittedSessionExecutionSelection,
+  isAcpExecutionSelection,
+} from "../../model-picker/execution-selection.js";
 import { resolveMissingAgentHarnessSessionError } from "../../sessions/agent-harness-session-key.js";
 import { parseSessionLabel } from "../../sessions/session-label.js";
 import { runExclusiveSessionLifecycleMutation } from "../../sessions/session-lifecycle-admission.js";
@@ -33,10 +36,10 @@ import { gatewayClientSessionCreator } from "./gateway-client-identity.js";
 import { resolveOperatorSessionCreation } from "./session-creation-provenance.js";
 import * as sessionUnreadAck from "./session-unread-ack.js";
 import {
-  applyDedicatedAcpSessionPatch,
+  applyAcpSessionPatch,
+  prepareAcpSessionPatch,
   isAcpModelSelectionPatch,
-  hasOtherAcpSessionEdits,
-  ACP_DEDICATED_MODEL_REQUEST_MESSAGE,
+  type PreparedAcpSessionPatch,
 } from "./sessions-patch-acp.js";
 import {
   prepareSessionPatchArchive,
@@ -92,7 +95,6 @@ type MutationOutcome =
 
 type ArchiveTransition = Awaited<ReturnType<typeof prepareSessionPatchArchiveTransition>>;
 type GroupMutationOperation = {
-  replacements?: SessionEntryCanonicalReplacement[];
   result: GroupMutationResult;
 };
 
@@ -146,31 +148,6 @@ export async function executeSessionPatchMutations(params: {
         : undefined,
     };
   });
-  const acpSelectionTargets = new Set<number>();
-  if (isAcpModelSelectionPatch(params.patch)) {
-    for (const [index, target] of preflightTargets.entries()) {
-      if (!target.resolved) continue;
-      const entry = resolveCanonicalSessionEntryFromStoreKeys(target.resolved.store, [
-        ...target.resolved.storeKeys,
-      ]);
-      if (
-        readAcpSessionMetaForEntry({
-          cfg,
-          sessionKey: target.resolved.canonicalKey ?? target.key,
-          agentId: target.resolved.agentId,
-          entry,
-        })
-      ) {
-        acpSelectionTargets.add(index);
-      }
-    }
-    if (
-      acpSelectionTargets.size > 0 &&
-      (params.targets.length !== 1 || hasOtherAcpSessionEdits(params.patch))
-    ) {
-      return invalidSessionPatchOutcome(ACP_DEDICATED_MODEL_REQUEST_MESSAGE);
-    }
-  }
   let personalModelSelection: UserModelAccountSelection | undefined;
   try {
     personalModelSelection = preparePersonalModelSelection(params, params.patch.model);
@@ -194,7 +171,7 @@ export async function executeSessionPatchMutations(params: {
   }
 
   const outcomes = Array.from<MutationOutcome | undefined>({ length: params.targets.length });
-  const permissionErrors = new Map<number, ErrorShape>();
+  const applicationErrors = new Map<number, ErrorShape>();
   const prepared: PreparedPatchTarget[] = [];
   const preparedByIndex = Array.from<PreparedPatchTarget | undefined>({
     length: params.targets.length,
@@ -349,37 +326,6 @@ export async function executeSessionPatchMutations(params: {
         finalize: releaseArchiveDrains,
         run: async () => {
           timing?.mark();
-          const acpTarget =
-            prepared.length === 1 && acpSelectionTargets.has(prepared[0]!.index)
-              ? prepared[0]
-              : undefined;
-          if (acpTarget?.initialEntry) {
-            const fullPatch = acpTarget.fullPatch;
-            const entry = acpTarget.initialEntry;
-            const assertCurrent = () => {
-              const failure = params.targets[acpTarget.index]!.commitGuard();
-              if (failure) throw new SessionMutationAuthorizationChangedError(failure);
-              if (
-                (fullPatch.expectedSessionId !== undefined &&
-                  fullPatch.expectedSessionId !== entry.sessionId) ||
-                (fullPatch.expectedLifecycleRevision !== undefined &&
-                  fullPatch.expectedLifecycleRevision !== entry.lifecycleRevision)
-              ) {
-                throw new SessionMutationAuthorizationChangedError(
-                  sessionChangedError(acpTarget.key),
-                );
-              }
-            };
-            outcomes[acpTarget.index] = await applyDedicatedAcpSessionPatch({
-              cfg,
-              sessionKey: acpTarget.canonicalKey,
-              agentId: acpTarget.targetAgentId,
-              entry,
-              patch: fullPatch,
-              assertCurrent,
-            });
-            return;
-          }
 
           try {
             const groups = new Map<string, PreparedPatchTarget[]>();
@@ -421,237 +367,363 @@ export async function executeSessionPatchMutations(params: {
                     const labelOwners = new SessionLabelOwnerIndex(workingStore);
                     const replacements: SessionEntryCanonicalReplacement[] = [];
                     const projectedOutcomes: MutationOutcome[] = [];
-                    for (const target of group) {
-                      try {
-                        // Preflight facts can stale behind the writer queue; resolve this snapshot
-                        // again so a new legacy alias is rejected rather than promoted or deleted.
-                        const {
-                          entry: existingEntry,
-                          primaryKey,
-                          target: currentTarget,
-                        } = resolveCanonicalGatewaySessionStoreKey({
-                          cfg,
-                          key: target.key,
-                          store: workingStore,
-                          ...(target.requestedAgentId ? { agentId: target.requestedAgentId } : {}),
-                        });
-                        const creationError =
-                          !existingEntry &&
-                          authorizeGatewaySessionCreation({
+                    let committedGroupOutcomes: MutationOutcome[] | undefined;
+                    const projectTargets = async (
+                      startIndex: number,
+                    ): Promise<GroupMutationOperation> => {
+                      for (let groupIndex = startIndex; groupIndex < group.length; groupIndex++) {
+                        const target = group[groupIndex]!;
+                        let continuationStarted = false;
+                        try {
+                          // Preflight facts can stale behind the writer queue; resolve this snapshot
+                          // again so a new legacy alias is rejected rather than promoted or deleted.
+                          const {
+                            entry: existingEntry,
+                            primaryKey,
+                            target: currentTarget,
+                          } = resolveCanonicalGatewaySessionStoreKey({
                             cfg,
-                            client,
-                            agentId: target.targetAgentId,
+                            key: target.key,
+                            store: workingStore,
+                            ...(target.requestedAgentId
+                              ? { agentId: target.requestedAgentId }
+                              : {}),
                           });
-                        if (creationError) {
-                          projectedOutcomes.push({ ok: false, error: creationError });
-                          continue;
-                        }
-                        const candidateKeys = currentTarget.storeKeys;
-                        const ownershipError = resolvePluginSessionOwnershipError({
-                          action: "patch",
-                          entry: existingEntry,
-                          key: primaryKey,
-                          pluginOwnerId,
-                        });
-                        if (ownershipError) {
-                          projectedOutcomes.push({ ok: false, error: ownershipError });
-                          continue;
-                        }
-                        // Compare tool policy against the captured snapshot; the final
-                        // commit rejects a selection changed during preparation.
-                        const expectedSessionChanged =
-                          (target.fullPatch.expectedSessionId !== undefined &&
-                            existingEntry?.sessionId !== target.fullPatch.expectedSessionId) ||
-                          (target.fullPatch.expectedLifecycleRevision !== undefined &&
-                            existingEntry?.lifecycleRevision !==
-                              target.fullPatch.expectedLifecycleRevision) ||
-                          sessionPatchExpectations.sessionPatchExpectationsChanged(
+                          const creationError =
+                            !existingEntry &&
+                            authorizeGatewaySessionCreation({
+                              cfg,
+                              client,
+                              agentId: target.targetAgentId,
+                            });
+                          if (creationError) {
+                            projectedOutcomes.push({ ok: false, error: creationError });
+                            continue;
+                          }
+                          const candidateKeys = currentTarget.storeKeys;
+                          const ownershipError = resolvePluginSessionOwnershipError({
+                            action: "patch",
+                            entry: existingEntry,
+                            key: primaryKey,
+                            pluginOwnerId,
+                          });
+                          if (ownershipError) {
+                            projectedOutcomes.push({ ok: false, error: ownershipError });
+                            continue;
+                          }
+                          // Compare tool policy against the captured snapshot; the final
+                          // commit rejects a selection changed during preparation.
+                          const expectedSessionChanged =
+                            (target.fullPatch.expectedSessionId !== undefined &&
+                              existingEntry?.sessionId !== target.fullPatch.expectedSessionId) ||
+                            (target.fullPatch.expectedLifecycleRevision !== undefined &&
+                              existingEntry?.lifecycleRevision !==
+                                target.fullPatch.expectedLifecycleRevision) ||
+                            sessionPatchExpectations.sessionPatchExpectationsChanged(
+                              existingEntry,
+                              target.fullPatch,
+                            );
+                          const lifecycleEntryRemoved =
+                            target.initialEntry !== undefined && existingEntry === undefined;
+                          const archiveTargetChanged =
+                            target.fullPatch.archived === true &&
+                            (target.initialEntry === undefined
+                              ? existingEntry !== undefined
+                              : existingEntry !== undefined &&
+                                (existingEntry.sessionId !== target.initialEntry.sessionId ||
+                                  existingEntry.lifecycleRevision !==
+                                    target.initialEntry.lifecycleRevision));
+                          if (
+                            expectedSessionChanged ||
+                            lifecycleEntryRemoved ||
+                            archiveTargetChanged
+                          ) {
+                            projectedOutcomes.push({
+                              ok: false,
+                              error: sessionChangedError(target.key),
+                            });
+                            continue;
+                          }
+                          if (target.fullPatch.archived === true) {
+                            const archiveError = validateSessionPatchArchiveProjection({
+                              cfg,
+                              existingEntry,
+                              fullPatch: target.fullPatch,
+                              key: target.key,
+                              ...(pluginOwnerId ? { pluginOwnerId } : {}),
+                              preparation: target.archivePreparation!,
+                              primaryKey,
+                            });
+                            if (archiveError) {
+                              projectedOutcomes.push({ ok: false, error: archiveError });
+                              continue;
+                            }
+                          }
+                          const unreadAck = resolveSessionUnreadAck(
                             existingEntry,
                             target.fullPatch,
                           );
-                        const lifecycleEntryRemoved =
-                          target.initialEntry !== undefined && existingEntry === undefined;
-                        const archiveTargetChanged =
-                          target.fullPatch.archived === true &&
-                          (target.initialEntry === undefined
-                            ? existingEntry !== undefined
-                            : existingEntry !== undefined &&
-                              (existingEntry.sessionId !== target.initialEntry.sessionId ||
-                                existingEntry.lifecycleRevision !==
-                                  target.initialEntry.lifecycleRevision));
-                        if (
-                          expectedSessionChanged ||
-                          lifecycleEntryRemoved ||
-                          archiveTargetChanged
-                        ) {
-                          projectedOutcomes.push({
-                            ok: false,
-                            error: sessionChangedError(target.key),
-                          });
-                          continue;
-                        }
-                        if (target.fullPatch.archived === true) {
-                          const archiveError = validateSessionPatchArchiveProjection({
-                            cfg,
-                            existingEntry,
-                            fullPatch: target.fullPatch,
-                            key: target.key,
-                            ...(pluginOwnerId ? { pluginOwnerId } : {}),
-                            preparation: target.archivePreparation!,
-                            primaryKey,
-                          });
-                          if (archiveError) {
-                            projectedOutcomes.push({ ok: false, error: archiveError });
+                          if (unreadAck.kind === "missing") {
+                            projectedOutcomes.push({
+                              ok: false,
+                              error: sessionChangedError(target.key),
+                            });
                             continue;
                           }
-                        }
-                        const unreadAck = resolveSessionUnreadAck(existingEntry, target.fullPatch);
-                        if (unreadAck.kind === "missing") {
-                          projectedOutcomes.push({
-                            ok: false,
-                            error: sessionChangedError(target.key),
+                          if (unreadAck.kind === "stale") {
+                            const authorizationFailure =
+                              params.targets[target.index]!.commitGuard();
+                            if (authorizationFailure) {
+                              projectedOutcomes.push({ ok: false, error: authorizationFailure });
+                              continue;
+                            }
+                            // A newer explicit marker owns the session until a later activation.
+                            projectedOutcomes.push({
+                              ok: true,
+                              applied: false,
+                              accessChanged: false,
+                              entry: unreadAck.entry,
+                            });
+                            continue;
+                          }
+                          let acpPatch: PreparedAcpSessionPatch | undefined;
+                          const currentSelection =
+                            getCommittedSessionExecutionSelection(existingEntry);
+                          if (
+                            existingEntry &&
+                            currentSelection &&
+                            isAcpExecutionSelection(currentSelection) &&
+                            isAcpModelSelectionPatch(target.fullPatch)
+                          ) {
+                            const preparedAcp = await prepareAcpSessionPatch({
+                              cfg,
+                              sessionKey: primaryKey,
+                              agentId: target.targetAgentId,
+                              entry: existingEntry,
+                              patch: target.fullPatch,
+                              assertCurrent: () => {
+                                const error = params.targets[target.index]!.commitGuard();
+                                if (error)
+                                  throw new SessionMutationAuthorizationChangedError(error);
+                              },
+                            });
+                            if (!preparedAcp.ok) {
+                              projectedOutcomes.push(preparedAcp);
+                              continue;
+                            }
+                            acpPatch = preparedAcp.prepared;
+                          }
+                          const projectionParams = {
+                            agentId: target.targetAgentId,
+                            // Multi-target groups retain ordered effects and label claims.
+                            mode: group.length === 1 ? "prepare" : "ordered",
+                            catalog: catalogPreparation,
+                            projection: {
+                              cfg,
+                              creation,
+                              existingEntry,
+                              isLabelInUse: (label) =>
+                                labelOwners.isLabelInUse(label, candidateKeys),
+                              storeKey: primaryKey,
+                              agentId: target.requestedAgentId,
+                              patch: target.fullPatch,
+                              ...(acpPatch ? { preparedExecution: acpPatch.execution } : {}),
+                              archivedBy: archiveActor,
+                              personalModelSelection,
+                            },
+                          } satisfies Parameters<typeof catalogs.project>[0];
+                          const projection = await catalogs.project(projectionParams);
+                          if (projection.kind === "model-catalog") {
+                            // No replacements or runtime effects exist yet. Release this
+                            // writer snapshot; completed preparation must use fresh rows.
+                            return { result: projection };
+                          }
+                          const projected = projection.result;
+                          if (!projected.ok) {
+                            projectedOutcomes.push(projected);
+                            continue;
+                          }
+                          const runtimeSelection = await prepareSessionPatchRuntimeSelection({
+                            cfg,
+                            agentId: target.targetAgentId,
+                            patch: target.fullPatch,
+                            entry: projected.entry,
+                            execution: projected.execution,
+                            placement: { context: params.context, sessionKey: primaryKey },
                           });
-                          continue;
-                        }
-                        if (unreadAck.kind === "stale") {
+                          if (!runtimeSelection.ok) {
+                            projectedOutcomes.push(runtimeSelection);
+                            continue;
+                          }
                           const authorizationFailure = params.targets[target.index]!.commitGuard();
                           if (authorizationFailure) {
                             projectedOutcomes.push({ ok: false, error: authorizationFailure });
                             continue;
                           }
-                          // A newer explicit marker owns the session until a later activation.
-                          projectedOutcomes.push({
-                            ok: true,
-                            applied: false,
-                            accessChanged: false,
-                            entry: unreadAck.entry,
-                          });
-                          continue;
-                        }
-                        const projection = await catalogs.project({
-                          agentId: target.targetAgentId,
-                          // Multi-target groups retain ordered effects and label claims.
-                          mode: group.length === 1 ? "prepare" : "ordered",
-                          catalog: catalogPreparation,
-                          projection: {
-                            cfg,
-                            creation,
-                            existingEntry,
-                            isLabelInUse: (label) => labelOwners.isLabelInUse(label, candidateKeys),
-                            storeKey: primaryKey,
-                            agentId: target.requestedAgentId,
-                            patch: target.fullPatch,
-                            archivedBy: archiveActor,
-                            personalModelSelection,
-                          },
-                        });
-                        if (projection.kind === "model-catalog") {
-                          // No replacements or runtime effects exist yet. Release this
-                          // writer snapshot; completed preparation must use fresh rows.
-                          return { result: projection };
-                        }
-                        const projected = projection.result;
-                        if (!projected.ok) {
-                          projectedOutcomes.push(projected);
-                          continue;
-                        }
-                        const runtimeSelection = await prepareSessionPatchRuntimeSelection({
-                          cfg,
-                          agentId: target.targetAgentId,
-                          patch: target.fullPatch,
-                          entry: projected.entry,
-                          execution: projected.execution,
-                          placement: { context: params.context, sessionKey: primaryKey },
-                        });
-                        if (!runtimeSelection.ok) {
-                          projectedOutcomes.push(runtimeSelection);
-                          continue;
-                        }
-                        const authorizationFailure = params.targets[target.index]!.commitGuard();
-                        if (authorizationFailure) {
-                          projectedOutcomes.push({ ok: false, error: authorizationFailure });
-                          continue;
-                        }
-                        if (
-                          existingEntry &&
-                          typeof target.fullPatch.archived === "boolean" &&
-                          (existingEntry.worktree ||
-                            existingEntry.archivedAt !== undefined ||
-                            target.fullPatch.archived)
-                        ) {
-                          const worktreeTiming = params.diagnostics?.scope("worktree");
-                          let transition: ArchiveTransition;
-                          try {
-                            transition = await prepareSessionPatchArchiveTransition({
-                              archived: target.fullPatch.archived,
-                              entry: existingEntry,
-                              context: params.context,
-                              scope: {
+                          if (
+                            existingEntry &&
+                            typeof target.fullPatch.archived === "boolean" &&
+                            (existingEntry.worktree ||
+                              existingEntry.archivedAt !== undefined ||
+                              target.fullPatch.archived)
+                          ) {
+                            const worktreeTiming = params.diagnostics?.scope("worktree");
+                            let transition: ArchiveTransition;
+                            try {
+                              transition = await prepareSessionPatchArchiveTransition({
+                                archived: target.fullPatch.archived,
+                                entry: existingEntry,
+                                context: params.context,
+                                scope: {
+                                  agentId: target.targetAgentId,
+                                  sessionKey: primaryKey,
+                                  storePath: target.storePath,
+                                },
+                                authorize: params.targets[target.index]!.commitGuard,
+                                preparation: target.archivePreparation,
+                              });
+                            } finally {
+                              worktreeTiming?.finish();
+                            }
+                            archiveTransitions.set(target.index, transition);
+                          }
+                          if (permissionRuntime && existingEntry?.sessionId) {
+                            const permission =
+                              permissionRuntime.prepareSessionPatchPermissionChange({
+                                context: params.context,
+                                sessionId: existingEntry.sessionId,
+                                sessionKey: target.canonicalKey,
                                 agentId: target.targetAgentId,
-                                sessionKey: primaryKey,
-                                storePath: target.storePath,
-                              },
-                              authorize: params.targets[target.index]!.commitGuard,
-                              preparation: target.archivePreparation,
+                                assertCurrent: params.targets[target.index]!.commitGuard,
+                              });
+                            if (!permission.ok) {
+                              projectedOutcomes.push(permission);
+                              continue;
+                            }
+                            target.permissionChange = permission.change;
+                          }
+                          const previousSessionKeys = candidateKeys.filter(
+                            (sessionKey) => sessionKey !== primaryKey && workingStore[sessionKey],
+                          );
+                          const recordProjection = (
+                            entry: SessionEntry,
+                            validate: (() => ErrorShape | undefined) | undefined,
+                          ) => {
+                            commitGuards.add(params.targets[target.index]!.commitGuard);
+                            if (validate) {
+                              commitGuards.add(validate);
+                            }
+                            replacements.push({
+                              entry,
+                              previousSessionKeys,
+                              sessionKey: primaryKey,
                             });
-                          } finally {
-                            worktreeTiming?.finish();
+                            const cloned = labelOwners.replaceEntry(
+                              candidateKeys,
+                              primaryKey,
+                              entry,
+                            );
+                            projectedOutcomes.push({
+                              ok: true,
+                              applied: true,
+                              // The replacement writer validates this row snapshot at COMMIT.
+                              // Unknown generations and canonical moves still invalidate access.
+                              accessChanged:
+                                primaryKey !== target.canonicalKey ||
+                                previousSessionKeys.length > 0 ||
+                                hasSessionReadAccessChanged(existingEntry, entry),
+                              entry: cloned,
+                            });
+                          };
+                          if (acpPatch) {
+                            const preparedExecution = acpPatch.execution;
+                            const applied = await applyAcpSessionPatch({
+                              prepared: acpPatch,
+                              selectionCommitted: () => {
+                                const outcome = committedGroupOutcomes?.[groupIndex];
+                                return outcome?.ok === true && outcome.applied === true;
+                              },
+                              commitAccepted: async (accepted) => {
+                                const acceptedProjection = await catalogs.project({
+                                  ...projectionParams,
+                                  mode: "ordered",
+                                  projection: {
+                                    ...projectionParams.projection,
+                                    preparedExecution: {
+                                      ...preparedExecution,
+                                      selection: accepted,
+                                    },
+                                  },
+                                });
+                                if (acceptedProjection.kind !== "complete")
+                                  throw new Error("Accepted model projection did not finish");
+                                if (!acceptedProjection.result.ok)
+                                  throw new SessionMutationAuthorizationChangedError(
+                                    acceptedProjection.result.error,
+                                  );
+                                const acceptedEntry = acceptedProjection.result.entry;
+                                const acceptedRuntime = await prepareSessionPatchRuntimeSelection({
+                                  cfg,
+                                  agentId: target.targetAgentId,
+                                  patch: target.fullPatch,
+                                  entry: acceptedEntry,
+                                  execution: acceptedProjection.result.execution,
+                                  placement: { context: params.context, sessionKey: primaryKey },
+                                });
+                                if (!acceptedRuntime.ok)
+                                  throw new SessionMutationAuthorizationChangedError(
+                                    acceptedRuntime.error,
+                                  );
+                                continuationStarted = true;
+                                acceptedEntry.updatedAt = Date.now();
+                                recordProjection(acceptedEntry, acceptedRuntime.validate);
+                                return {
+                                  ok: true,
+                                  operation: await projectTargets(groupIndex + 1),
+                                };
+                              },
+                            });
+                            if (!applied.ok) {
+                              if (continuationStarted) {
+                                if (committedGroupOutcomes) {
+                                  applicationErrors.set(target.index, applied.error);
+                                  return {
+                                    result: { kind: "complete", outcomes: committedGroupOutcomes },
+                                  };
+                                }
+                                throw new SessionMutationAuthorizationChangedError(applied.error);
+                              }
+                              projectedOutcomes.push(applied);
+                              continue;
+                            }
+                            return applied.operation;
                           }
-                          archiveTransitions.set(target.index, transition);
-                        }
-                        if (permissionRuntime && existingEntry?.sessionId) {
-                          const permission = permissionRuntime.prepareSessionPatchPermissionChange({
-                            context: params.context,
-                            sessionId: existingEntry.sessionId,
-                            sessionKey: target.canonicalKey,
-                            agentId: target.targetAgentId,
-                            assertCurrent: params.targets[target.index]!.commitGuard,
+                          recordProjection(projected.entry, runtimeSelection.validate);
+                        } catch (error) {
+                          if (continuationStarted) throw error;
+                          projectedOutcomes.push({
+                            ok: false,
+                            error: unexpectedPatchError(target.key, error),
                           });
-                          if (!permission.ok) {
-                            projectedOutcomes.push(permission);
-                            continue;
-                          }
-                          target.permissionChange = permission.change;
                         }
-                        const previousSessionKeys = candidateKeys.filter(
-                          (sessionKey) => sessionKey !== primaryKey && workingStore[sessionKey],
-                        );
-                        commitGuards.add(params.targets[target.index]!.commitGuard);
-                        if (runtimeSelection.validate) {
-                          commitGuards.add(runtimeSelection.validate);
-                        }
-                        replacements.push({
-                          entry: projected.entry,
-                          previousSessionKeys,
-                          sessionKey: primaryKey,
-                        });
-                        const cloned = labelOwners.replaceEntry(
-                          candidateKeys,
-                          primaryKey,
-                          projected.entry,
-                        );
-                        projectedOutcomes.push({
-                          ok: true,
-                          applied: true,
-                          // The replacement writer validates this row snapshot at COMMIT.
-                          // Unknown generations and canonical moves still invalidate access.
-                          accessChanged:
-                            primaryKey !== target.canonicalKey ||
-                            previousSessionKeys.length > 0 ||
-                            hasSessionReadAccessChanged(existingEntry, projected.entry),
-                          entry: cloned,
-                        });
-                      } catch (error) {
-                        projectedOutcomes.push({
-                          ok: false,
-                          error: unexpectedPatchError(target.key, error),
-                        });
                       }
-                    }
-                    return {
-                      replacements,
-                      result: { kind: "complete", outcomes: projectedOutcomes },
+                      groupTiming?.mark("commit");
+                      committedGroupOutcomes = replacements.length
+                        ? await applySessionEntryCanonicalReplacements({
+                            ...groupStore,
+                            update: (currentEntries) => {
+                              assertLifecycleTargetSnapshotUnchanged(
+                                entries,
+                                currentEntries,
+                                "session patch",
+                              );
+                              return { replacements, result: projectedOutcomes };
+                            },
+                          })
+                        : projectedOutcomes;
+                      return { result: { kind: "complete", outcomes: committedGroupOutcomes } };
                     };
+                    return await projectTargets(0);
                   };
                   const groupStore = {
                     assertCommitAllowed: () => {
@@ -692,30 +764,18 @@ export async function executeSessionPatchMutations(params: {
                     groupTiming?.mark("projection");
                     operation = await projectGroup(snapshot, catalog);
                   }
-                  const { replacements, result } = operation;
-                  if (result.kind !== "complete") {
+                  const { result } = operation;
+                  if (result.kind !== "complete")
                     throw new Error("Session patch catalog preparation did not complete");
-                  }
-                  groupTiming?.mark("commit");
-                  const groupOutcomes = replacements?.length
-                    ? await applySessionEntryCanonicalReplacements({
-                        ...groupStore,
-                        update: (entries) => {
-                          // Async preparation owns detached rows, not permission to overwrite
-                          // a changed target, alias, or requested-label owner.
-                          assertLifecycleTargetSnapshotUnchanged(
-                            snapshot,
-                            entries,
-                            "session patch",
-                          );
-                          return { replacements, result: result.outcomes };
-                        },
-                      })
-                    : result.outcomes;
+                  const groupOutcomes = result.outcomes;
                   for (const [groupIndex, target] of group.entries()) {
                     const outcome = groupOutcomes[groupIndex]!;
                     outcomes[target.index] = outcome;
-                    if (outcome.ok && outcome.applied && "agentRuntime" in target.fullPatch) {
+                    if (
+                      outcome.ok &&
+                      outcome.applied &&
+                      ("agentRuntime" in target.fullPatch || "model" in target.fullPatch)
+                    ) {
                       refreshSessionPatchQueuedSelection({
                         cfg,
                         entry: outcome.entry,
@@ -755,7 +815,7 @@ export async function executeSessionPatchMutations(params: {
                 outcome.entry.permissionMode ?? null,
               );
               if (error) {
-                permissionErrors.set(target.index, error);
+                applicationErrors.set(target.index, error);
               }
             }
           } finally {
@@ -790,7 +850,7 @@ export async function executeSessionPatchMutations(params: {
 
   // Runtime application can fail after commit. Publish every saved field's
   // normal effects before returning the application error to the caller.
-  for (const [index, error] of permissionErrors) {
+  for (const [index, error] of applicationErrors) {
     outcomes[index] = { ok: false, error };
   }
   return {

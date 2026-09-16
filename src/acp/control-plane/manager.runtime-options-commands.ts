@@ -1,13 +1,15 @@
 /** Command handlers for changing ACP runtime mode and config options on live sessions. */
 import { isDeepStrictEqual } from "node:util";
+import type { AcpRuntime, AcpRuntimeHandle } from "@openclaw/acp-core/runtime/types";
+import { expectDefined } from "@openclaw/normalization-core";
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
 import { patchSessionEntryWithKey } from "../../config/sessions/session-accessor.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import {
   commitSessionExecutionSelection,
   prepareSessionExecutionSelection,
-  getSessionExecutionSelection,
 } from "../../model-picker/apply-session-model-selection.js";
+import { getSessionExecutionSelection } from "../../model-picker/execution-selection.js";
 import {
   isAcpExecutionSelection,
   type AcpExecutionSelection,
@@ -31,7 +33,6 @@ import {
   ACP_SELECTION_REPAIR_MESSAGE,
   createUnsupportedControlError,
   requireAcpExecutionSelection,
-  requireReadySessionMeta,
   requireReadySession,
 } from "./manager.utils.js";
 import {
@@ -41,6 +42,7 @@ import {
   reconcileAcceptedRuntimeOptions,
   resolveRuntimeConfigOptionKey,
   resolveRuntimeOptionsFromMeta,
+  resolveRuntimeOptionsForSelection,
 } from "./runtime-options.js";
 
 /** Manager services required by runtime-option command handlers. */
@@ -54,6 +56,7 @@ export type RuntimeOptionCommandServices = {
 type RuntimeOptionCommandContext = RuntimeOptionCommandServices & {
   cfg: OpenClawConfig;
   assertActive?: () => void;
+  assertSelectionCurrent?: () => void;
   sessionKey: string;
   agentId: string;
 };
@@ -67,7 +70,7 @@ export async function runSetManagerSessionRuntimeMode(
     sessionKey: params.sessionKey,
     agentId: params.agentId,
   });
-  const resolvedMeta = requireReadySessionMeta(resolution);
+  const { meta: resolvedMeta, selection } = requireReadySession(resolution);
   const { runtime, handle, meta } = await params.ensureRuntimeHandle({
     cfg: params.cfg,
     sessionKey: params.sessionKey,
@@ -93,7 +96,7 @@ export async function runSetManagerSessionRuntimeMode(
   });
 
   const nextOptions = mergeRuntimeOptions({
-    current: resolveRuntimeOptionsFromMeta(meta),
+    current: resolveRuntimeOptionsForSelection(meta, selection),
     patch: { runtimeMode: params.runtimeMode },
   });
   await persistManagerRuntimeOptions({
@@ -111,6 +114,7 @@ export async function runWithManagerExecutionSelection<T>(
   },
 ): Promise<T> {
   params.assertActive?.();
+  params.assertSelectionCurrent?.();
   const before = requireReadySession(params.resolveSession(params));
   if (!isDeepStrictEqual(before.selection.executor, params.selection.executor)) {
     throw new AcpRuntimeError(
@@ -131,16 +135,16 @@ export async function runWithManagerExecutionSelection<T>(
       "This app cannot restore its default model in the current conversation. Select a model explicitly.",
     );
   }
-  let committed: T | undefined;
+  let committed: { value: T } | undefined;
   await runSetManagerSessionConfigOption({
     ...params,
     key: "model",
     value: params.selection.model.id,
     commitAccepted: async (selection) => {
-      committed = await params.commitAccepted(selection);
+      committed = { value: await params.commitAccepted(selection) };
     },
   });
-  return committed!;
+  return expectDefined(committed, "accepted selection commit result").value;
 }
 
 /** Applies a control; model acceptance and accompanying edits commit before actor release. */
@@ -161,6 +165,7 @@ export async function runSetManagerSessionConfigOption(
   const { runtime, handle, meta } = await params.ensureRuntimeHandle({
     ...params,
     meta: before.meta,
+    preserveActivity: selectingModel,
   });
   const capabilities = await resolveManagerRuntimeCapabilities({
     runtime,
@@ -183,27 +188,60 @@ export async function runSetManagerSessionConfigOption(
       `ACP backend "${handle.backend}" does not accept config key "${wireKey}".`,
     );
   }
+  const expected = { ...before, meta };
+  const assertBeforeControl = () => {
+    params.assertActive?.();
+    params.assertSelectionCurrent?.();
+    if (selectingModel) {
+      const current = params.resolveSession(params);
+      if (
+        current.kind !== "ready" ||
+        current.entry.sessionId !== before.entry.sessionId ||
+        current.entry.lifecycleRevision !== before.entry.lifecycleRevision ||
+        current.meta.runtimeSessionName !== meta.runtimeSessionName ||
+        !isDeepStrictEqual(current.entry.executionSelection, before.entry.executionSelection)
+      ) {
+        throw new AcpRuntimeError(
+          "ACP_SESSION_INIT_FAILED",
+          "The session changed before its model control could be submitted.",
+        );
+      }
+    }
+  };
+  assertBeforeControl();
   const cached = params.runtimeHandles.get(params);
   if (cached) cached.appliedControlSignature = undefined;
-  if (selectingModel)
-    await persistManagerRuntimeOptions({
-      ...params,
-      options: resolveRuntimeOptionsFromMeta(meta),
-      expected: before,
-      selectionState: "unconfirmed",
-    });
+  let reservation: SessionAcpLifecycle | undefined;
+  let controlStarted = false;
   let controlCompleted = false;
   try {
-    params.assertActive?.();
+    if (selectingModel) {
+      await persistManagerRuntimeOptions({
+        ...params,
+        options: resolveRuntimeOptionsFromMeta(meta),
+        expected,
+        selectionState: "unconfirmed",
+        preserveActivity: true,
+        onPrepared: (next) => {
+          reservation = structuredClone(next);
+        },
+      });
+    }
+    assertBeforeControl();
     const result = await withAcpRuntimeErrorBoundary({
-      run: async () =>
-        await runtime.setConfigOption!({ handle, key: wireKey, value: params.value }),
+      run: async () => {
+        controlStarted = true;
+        return await runtime.setConfigOption!({ handle, key: wireKey, value: params.value });
+      },
       fallbackCode: "ACP_TURN_FAILED",
       fallbackMessage: "Could not update ACP runtime config option.",
     });
     controlCompleted = true;
     const nextOptions = reconcileAcceptedRuntimeOptions(
-      mergeRuntimeOptions({ current: resolveRuntimeOptionsFromMeta(meta), patch: inferredPatch }),
+      mergeRuntimeOptions({
+        current: resolveRuntimeOptionsForSelection(meta, before.selection),
+        patch: inferredPatch,
+      }),
       result,
     );
     const accepted: AcpExecutionSelection = {
@@ -219,22 +257,53 @@ export async function runSetManagerSessionConfigOption(
     await persistManagerRuntimeOptions({
       ...params,
       options: nextOptions,
-      expected: { ...before, selection: selectingModel ? accepted : before.selection },
+      expected: { ...expected, selection: selectingModel ? accepted : before.selection },
       selectionState: selectingModel ? "confirmed" : undefined,
+      preserveActivity: selectingModel,
     });
     return nextOptions;
   } catch (error) {
+    if (reservation && !controlStarted) {
+      try {
+        await releaseUnsubmittedModelReservation({
+          ...params,
+          expected,
+          runtime,
+          handle,
+          reservation,
+        });
+      } catch (cleanupError) {
+        throw new AggregateError(
+          [error, cleanupError],
+          "The refused model request could not release its reservation.",
+        );
+      }
+    }
     // Rejection does not prove that an external control has stopped. Fulfillment does.
     if (selectingModel && controlCompleted) {
-      const current = params.resolveSession(params);
-      if (
-        current.kind === "ready" &&
-        current.meta.runtimeSessionName === meta.runtimeSessionName &&
-        isDeepStrictEqual(current.selection.executor, before.selection.executor) &&
-        current.selection.model !== "native-managed"
-      ) {
-        try {
+      try {
+        const requireRecoveryCustody = () => {
           params.assertActive?.();
+          const cached = params.runtimeHandles.get(params);
+          const current = params.resolveSession(params);
+          if (
+            cached?.runtime !== runtime ||
+            cached.handle !== handle ||
+            current.kind !== "ready" ||
+            current.entry.sessionId !== before.entry.sessionId ||
+            current.entry.lifecycleRevision !== before.entry.lifecycleRevision ||
+            current.meta.runtimeSessionName !== meta.runtimeSessionName ||
+            !isDeepStrictEqual(current.selection.executor, before.selection.executor)
+          ) {
+            throw new AcpRuntimeError(
+              "ACP_SESSION_INIT_FAILED",
+              "The model control no longer owns this session.",
+            );
+          }
+          return current;
+        };
+        const current = requireRecoveryCustody();
+        if (current.selection.model !== "native-managed") {
           const restored = await runtime.setConfigOption!({
             handle,
             key: wireKey,
@@ -249,11 +318,15 @@ export async function runSetManagerSessionConfigOption(
               ...params,
               options,
               expected: current,
+              assertActive: () => {
+                requireRecoveryCustody();
+              },
               selectionState: "confirmed",
+              preserveActivity: true,
             });
-        } catch {
-          // Keep the durable pause until both settlement and restoration are confirmed.
         }
+      } catch {
+        // Keep the durable pause and original failure until custody, settlement and restoration are confirmed.
       }
     }
     throw error;
@@ -267,8 +340,11 @@ export async function runUpdateManagerSessionRuntimeOptions(
   if (params.patch.model !== undefined)
     await runSetManagerSessionConfigOption({ ...params, key: "model", value: params.patch.model });
   const { model: _model, ...patch } = params.patch;
-  const meta = requireReadySessionMeta(params.resolveSession(params));
-  const options = mergeRuntimeOptions({ current: resolveRuntimeOptionsFromMeta(meta), patch });
+  const { meta, selection } = requireReadySession(params.resolveSession(params));
+  const options = mergeRuntimeOptions({
+    current: resolveRuntimeOptionsForSelection(meta, selection),
+    patch,
+  });
   await persistManagerRuntimeOptions({ ...params, options });
   return options;
 }
@@ -303,8 +379,10 @@ async function persistManagerRuntimeOptions(
     options: AcpSessionRuntimeOptions;
     expected?: ReadySession;
     selectionState?: "confirmed" | "unconfirmed";
+    preserveActivity?: boolean;
+    onPrepared?: (meta: SessionAcpLifecycle) => void;
   },
-): Promise<void> {
+): Promise<SessionAcpLifecycle> {
   const { model: _model, ...options } = normalizeRuntimeOptions(params.options);
   const persisted = await params.writeSessionMeta({
     ...params,
@@ -321,12 +399,11 @@ async function persistManagerRuntimeOptions(
           "ACP_SESSION_INIT_FAILED",
           "The session changed while its model selection was being applied.",
         );
-      const next: SessionAcpLifecycle = {
-        ...current,
-        runtimeOptions: Object.keys(options).length ? options : undefined,
-        cwd: options.cwd,
-        lastActivityAt: Date.now(),
-      };
+      const next: SessionAcpLifecycle = { ...current, lastActivityAt: Date.now() };
+      if (Object.keys(options).length) next.runtimeOptions = options;
+      else delete next.runtimeOptions;
+      if (options.cwd) next.cwd = options.cwd;
+      else delete next.cwd;
       if (params.selectionState === "unconfirmed") {
         next.state = "error";
         next.lastError = ACP_SELECTION_REPAIR_MESSAGE;
@@ -335,6 +412,7 @@ async function persistManagerRuntimeOptions(
         next.state = "idle";
         delete next.lastError;
       }
+      params.onPrepared?.(next);
       return next;
     },
     failOnError: true,
@@ -347,6 +425,64 @@ async function persistManagerRuntimeOptions(
     );
   const cached = params.runtimeHandles.get(params);
   if (cached) cached.appliedControlSignature = undefined;
+  return persisted.acp;
+}
+
+/** Release only this actor's untouched reservation; this cleanup never selects or controls a model. */
+async function releaseUnsubmittedModelReservation(
+  params: RuntimeOptionCommandContext & {
+    expected: ReadySession;
+    runtime: AcpRuntime;
+    handle: AcpRuntimeHandle;
+    reservation: SessionAcpLifecycle;
+  },
+): Promise<void> {
+  const ownsReservation = () => {
+    const cached = params.runtimeHandles.get(params);
+    const current = params.resolveSession(params);
+    return (
+      cached?.runtime === params.runtime &&
+      cached.handle === params.handle &&
+      current.kind === "ready" &&
+      current.entry.sessionId === params.expected.entry.sessionId &&
+      current.entry.lifecycleRevision === params.expected.entry.lifecycleRevision &&
+      isDeepStrictEqual(current.selection, params.expected.selection) &&
+      isDeepStrictEqual(current.meta, params.reservation)
+    );
+  };
+  if (!ownsReservation()) return;
+  const assertCustody = () => {
+    if (!ownsReservation())
+      throw new AcpRuntimeError(
+        "ACP_SESSION_INIT_FAILED",
+        "The model reservation no longer belongs to this operation.",
+      );
+  };
+  const released = await params.writeSessionMeta({
+    cfg: params.cfg,
+    sessionKey: params.sessionKey,
+    agentId: params.agentId,
+    preserveActivity: true,
+    failOnError: true,
+    assertCommitAllowed: assertCustody,
+    mutate: (current, entry) => {
+      assertCustody();
+      if (!current || !entry || !isDeepStrictEqual(current, params.reservation))
+        throw new AcpRuntimeError(
+          "ACP_SESSION_INIT_FAILED",
+          "The model reservation changed before cleanup.",
+        );
+      const next = { ...current, state: params.expected.meta.state };
+      if (params.expected.meta.lastError === undefined) delete next.lastError;
+      else next.lastError = params.expected.meta.lastError;
+      return next;
+    },
+  });
+  if (!released?.acp)
+    throw new AcpRuntimeError(
+      "ACP_SESSION_INIT_FAILED",
+      "The model reservation could not be released.",
+    );
 }
 
 export async function commitManagerExecutionSelection(
@@ -354,7 +490,7 @@ export async function commitManagerExecutionSelection(
     expected: ReadySession;
     selection: AcpExecutionSelection;
   },
-): Promise<void> {
+): Promise<ReadySession["entry"]> {
   const target = resolveSessionStorePathForAcp(params);
   const committed = await patchSessionEntryWithKey(
     { agentId: target.agentId, storePath: target.storePath, sessionKey: target.storeSessionKey },
@@ -370,7 +506,7 @@ export async function commitManagerExecutionSelection(
           "ACP_SESSION_INIT_FAILED",
           "The session changed while its model selection was being applied.",
         );
-      const next = { ...entry };
+      const next = { ...entry, updatedAt: Date.now() };
       commitSessionExecutionSelection(next, params.selection, {
         cause: { kind: "inherit", entry },
       });
@@ -383,6 +519,7 @@ export async function commitManagerExecutionSelection(
       "ACP_SESSION_INIT_FAILED",
       "The session disappeared before its model selection could be committed.",
     );
+  return committed.entry;
 }
 
 /** Resolve a staged request before a prepared turn, without reentering its held actor. */
@@ -394,6 +531,7 @@ export async function initializeManagerExecutionSelection(
   const prepared = await prepareSessionExecutionSelection({
     cfg: params.cfg,
     agentId: params.agentId,
+    sessionKey: params.sessionKey,
     sessionEntry: before.entry,
     request: { kind: "initialize" },
   });
@@ -406,11 +544,38 @@ export async function initializeManagerExecutionSelection(
     );
   }
   const selection = prepared.selection;
+  const assertActive = () => {
+    params.assertActive?.();
+    const error = prepared.validateCommit();
+    if (error) throw new AcpRuntimeError("ACP_SESSION_INIT_FAILED", error);
+  };
+  const assertSelectionCurrent = () => {
+    params.assertSelectionCurrent?.();
+    const current = params.resolveSession(params);
+    if (
+      current.kind !== "ready" ||
+      current.entry.sessionId !== before.entry.sessionId ||
+      current.entry.lifecycleRevision !== before.entry.lifecycleRevision ||
+      !isDeepStrictEqual(current.entry.executionSelection, before.entry.executionSelection)
+    ) {
+      throw new AcpRuntimeError(
+        "ACP_SESSION_INIT_FAILED",
+        "The session changed during model preparation.",
+      );
+    }
+  };
   await runWithManagerExecutionSelection({
     ...params,
+    assertActive,
+    assertSelectionCurrent,
     selection,
     commitAccepted: async (accepted) =>
-      await commitManagerExecutionSelection({ ...params, expected: before, selection: accepted }),
+      await commitManagerExecutionSelection({
+        ...params,
+        assertActive,
+        expected: before,
+        selection: accepted,
+      }),
   });
   if (!getSessionExecutionSelection(requireReadySession(params.resolveSession(params)).entry))
     throw new AcpRuntimeError(

@@ -7,7 +7,7 @@ import {
   createRuntime,
   hoisted,
   installAcpSessionManagerTestLifecycle,
-  readySessionMeta,
+  installReadyAcpSessionStoreFixture,
 } from "./manager.test-helpers.js";
 
 describe("AcpSessionManager turn delivery", () => {
@@ -20,11 +20,7 @@ describe("AcpSessionManager turn delivery", () => {
       id: "acpx",
       runtime: runtimeState.runtime,
     });
-    hoisted.readAcpSessionEntryMock.mockReturnValue({
-      sessionKey,
-      storeSessionKey: sessionKey,
-      acp: readySessionMeta(),
-    });
+    installReadyAcpSessionStoreFixture(sessionKey);
     return { runtimeState, sessionKey, manager: new AcpSessionManager() };
   }
 

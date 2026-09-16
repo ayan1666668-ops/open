@@ -1,27 +1,47 @@
-/** Shared ACP manager test harness, mocks, fixtures, and assertion helpers. */
+import { isDeepStrictEqual } from "node:util";
 import type { AcpRuntime, AcpRuntimeCapabilities } from "@openclaw/acp-core/runtime/types";
+/** Shared ACP manager test harness, mocks, fixtures, and assertion helpers. */
+import type { SessionAcpMeta } from "@openclaw/acp-core/types";
+import { expectDefined } from "@openclaw/normalization-core";
 import { afterEach, beforeEach, expect, vi } from "vitest";
 import { resetAcpManagerTaskStateForTests } from "../../../test/helpers/acp-manager-task-state.js";
 import { createTestAdmittedRunContext } from "../../agents/admitted-run-context.test-support.js";
 import type { OpenClawConfig } from "../../config/config.js";
+import * as sessionAccessor from "../../config/sessions/session-accessor.js";
 import type {
   AcpSessionRuntimeOptions,
-  SessionAcpMeta,
+  SessionAcpLifecycle,
   SessionEntry,
 } from "../../config/sessions/types.js";
+import { commitSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
+import type { AcpExecutionSelection } from "../../model-picker/execution-selection.js";
 import { deleteTestEnvValue, setTestEnvValue } from "../../test-utils/env.js";
+import type { AcpSessionStoreEntry } from "../runtime/session-meta.js";
 import { resetAcpActiveTurnsForTests } from "./active-turns.test-support.js";
 import type { AcpSessionManagerDeps } from "./manager.types.js";
+import { requireAcpExecutionSelection, resolveAcpAgentFromSessionKey } from "./manager.utils.js";
+import { resolveRuntimeOptionsForSelection } from "./runtime-options.js";
 
-export type { AcpRuntime, OpenClawConfig, SessionAcpMeta };
+export type {
+  AcpRuntime,
+  OpenClawConfig,
+  SessionAcpMeta,
+  SessionAcpLifecycle,
+  AcpExecutionSelection,
+};
 
 const hoistedMocks = vi.hoisted(() => {
   const listAcpSessionEntriesMock = vi.fn();
   const readAcpSessionEntryMock = vi.fn();
-  const upsertAcpSessionMetaMock = vi.fn();
+  const upsertAcpSessionMetaMock = vi.fn<AcpSessionManagerDeps["upsertSessionMeta"]>();
   const getAcpRuntimeBackendMock = vi.fn();
   const requireAcpRuntimeBackendMock = vi.fn();
+  const completedMetaWrites: Array<{
+    entry: SessionEntry;
+    options: Parameters<AcpSessionManagerDeps["upsertSessionMeta"]>[0];
+  }> = [];
   return {
+    completedMetaWrites,
     listAcpSessionEntriesMock,
     readAcpSessionEntryMock,
     upsertAcpSessionMetaMock,
@@ -33,7 +53,14 @@ const hoistedMocks = vi.hoisted(() => {
 vi.mock("../runtime/session-meta.js", () => ({
   listAcpSessionEntries: (params: unknown) => hoistedMocks.listAcpSessionEntriesMock(params),
   readAcpSessionEntry: (params: unknown) => hoistedMocks.readAcpSessionEntryMock(params),
-  upsertAcpSessionMeta: (params: unknown) => hoistedMocks.upsertAcpSessionMetaMock(params),
+  upsertAcpSessionMeta: async (
+    params: Parameters<AcpSessionManagerDeps["upsertSessionMeta"]>[0],
+  ) => {
+    const entry = await hoistedMocks.upsertAcpSessionMetaMock(params);
+    if (entry)
+      hoistedMocks.completedMetaWrites.push({ entry: structuredClone(entry), options: params });
+    return entry;
+  },
 }));
 
 vi.mock("../runtime/registry.js", () => ({
@@ -228,107 +255,55 @@ export function mockParentedAcpSessionEntries(params: {
   parentSessionKey: string;
   label?: string;
 }): void {
-  hoisted.readAcpSessionEntryMock.mockImplementation((input: unknown) => {
-    const sessionKey = (input as { sessionKey?: string }).sessionKey;
-    if (sessionKey === params.childSessionKey) {
-      return {
-        sessionKey,
-        storeSessionKey: sessionKey,
-        entry: {
-          sessionId: "child-1",
-          updatedAt: Date.now(),
-          spawnedBy: params.parentSessionKey,
-          ...(params.label === undefined ? {} : { label: params.label }),
-        },
-        acp: readySessionMeta(),
-      };
-    }
-    if (sessionKey === params.parentSessionKey) {
-      return {
-        sessionKey,
-        storeSessionKey: sessionKey,
-        entry: {
-          sessionId: "parent-1",
-          updatedAt: Date.now(),
-        },
-      };
-    }
-    return null;
+  installReadyAcpSessionStoreFixture(params.childSessionKey, {
+    sessionId: "child-1",
+    updatedAt: Date.now(),
+    spawnedBy: params.parentSessionKey,
+    ...(params.label === undefined ? {} : { label: params.label }),
+  });
+  const readChild = expectDefined(
+    hoisted.readAcpSessionEntryMock.getMockImplementation(),
+    "child fixture reader",
+  );
+  hoisted.readAcpSessionEntryMock.mockImplementation((input: { sessionKey?: string }) => {
+    if (input.sessionKey === params.childSessionKey) return readChild(input);
+    if (input.sessionKey !== params.parentSessionKey) return null;
+    return {
+      cfg: baseCfg,
+      agentId: resolveAcpAgentFromSessionKey(params.parentSessionKey),
+      storePath: "/synthetic/agent.sqlite",
+      sessionKey: params.parentSessionKey,
+      storeSessionKey: params.parentSessionKey,
+      entry: { sessionId: "parent-1", updatedAt: Date.now() },
+    };
   });
 }
 
-export function extractStatesFromUpserts(): SessionAcpMeta["state"][] {
-  const states: SessionAcpMeta["state"][] = [];
-  for (const [firstArg] of hoisted.upsertAcpSessionMetaMock.mock.calls) {
-    const payload = firstArg as {
-      mutate: (
-        current: SessionAcpMeta | undefined,
-        entry: { acp?: SessionAcpMeta } | undefined,
-      ) => SessionAcpMeta | null | undefined;
-    };
-    const current = readySessionMeta();
-    const next = payload.mutate(current, { acp: current });
-    if (next?.state) {
-      states.push(next.state);
-    }
-  }
-  return states;
+export function extractStatesFromUpserts(): SessionAcpLifecycle["state"][] {
+  return hoisted.completedMetaWrites.flatMap(({ entry }) => (entry.acp ? [entry.acp.state] : []));
 }
 
 export function extractStateUpsertPersistenceOptions(): Array<{
-  state: SessionAcpMeta["state"];
+  state: SessionAcpLifecycle["state"];
   skipMaintenance?: boolean;
   takeCacheOwnership?: boolean;
 }> {
-  const options: Array<{
-    state: SessionAcpMeta["state"];
-    skipMaintenance?: boolean;
-    takeCacheOwnership?: boolean;
-  }> = [];
-  for (const [firstArg] of hoisted.upsertAcpSessionMetaMock.mock.calls) {
-    const payload = firstArg as {
-      skipMaintenance?: boolean;
-      takeCacheOwnership?: boolean;
-      mutate: (
-        current: SessionAcpMeta | undefined,
-        entry: { acp?: SessionAcpMeta } | undefined,
-      ) => SessionAcpMeta | null | undefined;
-    };
-    const current = readySessionMeta();
-    const next = payload.mutate(current, { acp: current });
-    if (next?.state && payload.skipMaintenance && payload.takeCacheOwnership) {
-      options.push({
-        state: next.state,
-        skipMaintenance: true,
-        takeCacheOwnership: true,
-      });
-    }
-  }
-  return options;
+  return hoisted.completedMetaWrites.flatMap(({ entry, options }) =>
+    entry.acp && options.skipMaintenance && options.takeCacheOwnership
+      ? [{ state: entry.acp.state, skipMaintenance: true, takeCacheOwnership: true }]
+      : [],
+  );
 }
 
 export function extractRuntimeOptionsFromUpserts(): Array<AcpSessionRuntimeOptions | undefined> {
-  const options: Array<AcpSessionRuntimeOptions | undefined> = [];
-  for (const [firstArg] of hoisted.upsertAcpSessionMetaMock.mock.calls) {
-    const payload = firstArg as {
-      mutate: (
-        current: SessionAcpMeta | undefined,
-        entry: { acp?: SessionAcpMeta } | undefined,
-      ) => SessionAcpMeta | null | undefined;
-    };
-    const current = readySessionMeta();
-    const next = payload.mutate(current, { acp: current });
-    if (next) {
-      options.push(next.runtimeOptions);
-    }
-  }
-  return options;
+  return hoisted.completedMetaWrites.map(({ entry }) => entry.acp?.runtimeOptions);
 }
 
 export function installAcpSessionManagerTestLifecycle(): void {
   beforeEach(() => {
     resetAcpSessionManagerForTests();
     resetAcpActiveTurnsForTests();
+    hoisted.completedMetaWrites.length = 0;
     vi.useRealTimers();
     hoisted.listAcpSessionEntriesMock.mockReset().mockResolvedValue([]);
     hoisted.readAcpSessionEntryMock.mockReset();
@@ -344,6 +319,7 @@ export function installAcpSessionManagerTestLifecycle(): void {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     if (ORIGINAL_STATE_DIR === undefined) {
       deleteTestEnvValue("OPENCLAW_STATE_DIR");
     } else {
@@ -353,21 +329,128 @@ export function installAcpSessionManagerTestLifecycle(): void {
   });
 }
 
-export function installMutableAcpSessionMetaUpsert(state: {
-  currentMeta: SessionAcpMeta | undefined;
+/** Mutable canonical agent and lifecycle rows, with detached reads and guarded patch publication. */
+export function installAcpSessionStoreFixture(params: {
+  sessionKey: string;
+  selection?: AcpExecutionSelection;
+  meta?: SessionAcpLifecycle;
   entry?: SessionEntry;
-}): void {
+  cfg?: OpenClawConfig;
+  agentId?: string;
+}) {
+  const cfg = params.cfg ?? baseCfg;
+  const agentId = params.agentId ?? "main";
+  const sessionKey = params.sessionKey;
+  let entry: SessionEntry = structuredClone(
+    params.entry ?? { sessionId: "session-1", updatedAt: 1 },
+  );
+  let meta = params.meta ? structuredClone(params.meta) : undefined;
+  if (params.selection) commitSessionExecutionSelection(entry, params.selection);
+  hoisted.readAcpSessionEntryMock.mockImplementation((): AcpSessionStoreEntry => ({
+    cfg,
+    storePath: "/synthetic/agent.sqlite",
+    agentId,
+    sessionKey,
+    storeSessionKey: sessionKey,
+    entry: structuredClone(entry),
+    acp: structuredClone(meta),
+  }));
   hoisted.upsertAcpSessionMetaMock.mockImplementation(
-    async (params: Parameters<AcpSessionManagerDeps["upsertSessionMeta"]>[0]) => {
-      const entry = state.entry ?? { sessionId: "session-1", updatedAt: Date.now() };
-      const next = params.mutate(state.currentMeta, { ...entry, acp: state.currentMeta });
-      params.assertCommitAllowed?.();
-      if (next !== undefined) state.currentMeta = next ?? undefined;
-      return {
-        ...entry,
-        updatedAt: Date.now(),
-        ...(state.currentMeta ? { acp: state.currentMeta } : {}),
-      };
+    async (input: Parameters<AcpSessionManagerDeps["upsertSessionMeta"]>[0]) => {
+      const next = input.mutate(structuredClone(meta), {
+        ...structuredClone(entry),
+        acp: structuredClone(meta),
+      });
+      input.assertCommitAllowed?.();
+      if (!input.preserveActivity) entry = { ...entry, updatedAt: Date.now() };
+      if (input.executionSelection)
+        commitSessionExecutionSelection(entry, input.executionSelection);
+      if (next !== undefined) meta = next === null ? undefined : structuredClone(next);
+      return { ...structuredClone(entry), ...(meta ? { acp: structuredClone(meta) } : {}) };
     },
   );
+  const patchEntry = vi
+    .spyOn(sessionAccessor, "patchSessionEntryWithKey")
+    .mockImplementation(async (_scope, update, options) => {
+      const snapshot = structuredClone(entry);
+      const patch = await update(structuredClone(entry), { existingEntry: structuredClone(entry) });
+      options?.assertCommitAllowed?.();
+      if (!isDeepStrictEqual(entry, snapshot)) throw new Error("session snapshot changed");
+      if (patch)
+        entry = options?.replaceEntry
+          ? {
+              ...patch,
+              sessionId: expectDefined(patch.sessionId, "replacement session id"),
+              updatedAt: expectDefined(patch.updatedAt, "replacement update timestamp"),
+            }
+          : { ...entry, ...patch };
+      return { sessionKey, entry: structuredClone(entry) };
+    });
+  return {
+    patchEntry,
+    readEntry: () => structuredClone(entry),
+    readMeta: () => (meta ? structuredClone(meta) : undefined),
+    readSelection: () => requireAcpExecutionSelection(entry),
+    readOptions: () =>
+      resolveRuntimeOptionsForSelection(
+        expectDefined(meta, "persisted lifecycle"),
+        requireAcpExecutionSelection(entry),
+      ),
+  };
+}
+
+export function installReadyAcpSessionStoreFixture(sessionKey: string, entry?: SessionEntry) {
+  return installAcpSessionStoreFixture({
+    sessionKey,
+    agentId: resolveAcpAgentFromSessionKey(sessionKey),
+    ...(entry ? { entry } : {}),
+    selection: {
+      executor: { kind: "acp", backend: "acpx", agent: "codex" },
+      model: "native-managed",
+    },
+    meta: {
+      runtimeSessionName: "runtime-1",
+      mode: "persistent",
+      state: "idle",
+      lastActivityAt: Date.now(),
+    },
+  });
+}
+
+/** Seed canonical rows from a public ACP description; reads never reconstruct selection from metadata. */
+export function installPublicAcpSessionFixture(
+  sessionKey: string,
+  meta: SessionAcpMeta | undefined,
+  entry?: SessionEntry,
+) {
+  const { model, ...runtimeOptions } = meta?.runtimeOptions ?? {};
+  const store = installAcpSessionStoreFixture({
+    sessionKey,
+    agentId: resolveAcpAgentFromSessionKey(sessionKey),
+    ...(entry ? { entry } : {}),
+    ...(meta
+      ? {
+          selection: {
+            executor: { kind: "acp", backend: meta.backend, agent: meta.agent },
+            model: model ? { id: model } : "native-managed",
+          },
+          meta: {
+            runtimeSessionName: meta.runtimeSessionName,
+            identity: meta.identity,
+            mode: meta.mode,
+            state: meta.state,
+            lastActivityAt: meta.lastActivityAt,
+            lastError: meta.lastError,
+            cwd: meta.cwd,
+            ...(Object.keys(runtimeOptions).length ? { runtimeOptions } : {}),
+          },
+        }
+      : {}),
+  });
+  return {
+    ...store,
+    get currentMeta() {
+      return expectDefined(store.readMeta(), "persisted lifecycle");
+    },
+  };
 }

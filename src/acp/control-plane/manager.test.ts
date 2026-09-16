@@ -12,9 +12,9 @@ import {
 import { createDeferred } from "../../../test/helpers/promise.js";
 import { listSessionStateEventsSince } from "../../sessions/session-state-events.js";
 import { closeOpenClawStateDatabaseForTest } from "../../state/openclaw-state-db.js";
+import { createAcpSessionStoreEntryFixture } from "../../test-utils/acp-session-store-entry.js";
 import { isAcpTurnActive } from "./active-turns.js";
 import {
-  installMutableAcpSessionMetaUpsert,
   AcpRuntimeError,
   AcpSessionManager,
   baseCfg,
@@ -26,6 +26,7 @@ import {
   flushMicrotasks,
   hoisted,
   installAcpSessionManagerTestLifecycle,
+  installPublicAcpSessionFixture,
   mockCallArg,
   mockParentedAcpSessionEntries,
   readySessionMeta,
@@ -64,21 +65,13 @@ describe("AcpSessionManager", () => {
       id: "acpx",
       runtime: runtimeState.runtime,
     });
-    hoisted.readAcpSessionEntryMock.mockImplementation((paramsUnknown: unknown) => {
-      const sessionKey = (paramsUnknown as { sessionKey?: string }).sessionKey;
-      if (sessionKey !== "agent:main:main") {
-        return null;
-      }
-      return {
-        sessionKey,
-        storeSessionKey: sessionKey,
-        acp: {
-          ...readySessionMeta(),
-          agent: "main",
-          runtimeSessionName: sessionKey,
-        },
-      };
+    const mainEntry = createAcpSessionStoreEntryFixture({
+      sessionKey: "agent:main:main",
+      acp: readySessionMeta({ agent: "main", runtimeSessionName: "agent:main:main" }),
     });
+    hoisted.readAcpSessionEntryMock.mockImplementation(({ sessionKey }: { sessionKey: string }) =>
+      sessionKey === "agent:main:main" ? structuredClone(mainEntry) : null,
+    );
 
     const manager = new AcpSessionManager();
     const cfg = {
@@ -207,32 +200,10 @@ describe("AcpSessionManager", () => {
         id: "acpx",
         runtime: runtimeState.runtime,
       });
-      hoisted.readAcpSessionEntryMock.mockImplementation((paramsUnknown: unknown) => {
-        const sessionKey = (paramsUnknown as { sessionKey?: string }).sessionKey;
-        if (sessionKey === "agent:codex:acp:child-1") {
-          return {
-            sessionKey,
-            storeSessionKey: sessionKey,
-            entry: {
-              sessionId: "child-1",
-              updatedAt: Date.now(),
-              spawnedBy: "agent:quant:telegram:quant:direct:822430204",
-              label: "Quant patch",
-            },
-            acp: readySessionMeta(),
-          };
-        }
-        if (sessionKey === "agent:quant:telegram:quant:direct:822430204") {
-          return {
-            sessionKey,
-            storeSessionKey: sessionKey,
-            entry: {
-              sessionId: "parent-1",
-              updatedAt: Date.now(),
-            },
-          };
-        }
-        return null;
+      mockParentedAcpSessionEntries({
+        childSessionKey: "agent:codex:acp:child-1",
+        parentSessionKey: "agent:quant:telegram:quant:direct:822430204",
+        label: "Quant patch",
       });
 
       const manager = new AcpSessionManager();
@@ -294,32 +265,10 @@ describe("AcpSessionManager", () => {
         id: "acpx",
         runtime: runtimeState.runtime,
       });
-      hoisted.readAcpSessionEntryMock.mockImplementation((paramsUnknown: unknown) => {
-        const sessionKey = (paramsUnknown as { sessionKey?: string }).sessionKey;
-        if (sessionKey === "agent:codex:acp:child-1") {
-          return {
-            sessionKey,
-            storeSessionKey: sessionKey,
-            entry: {
-              sessionId: "child-1",
-              updatedAt: Date.now(),
-              spawnedBy: "agent:quant:telegram:quant:direct:822430204",
-              label: "Korean path",
-            },
-            acp: readySessionMeta(),
-          };
-        }
-        if (sessionKey === "agent:quant:telegram:quant:direct:822430204") {
-          return {
-            sessionKey,
-            storeSessionKey: sessionKey,
-            entry: {
-              sessionId: "parent-1",
-              updatedAt: Date.now(),
-            },
-          };
-        }
-        return null;
+      mockParentedAcpSessionEntries({
+        childSessionKey: "agent:codex:acp:child-1",
+        parentSessionKey: "agent:quant:telegram:quant:direct:822430204",
+        label: "Korean path",
       });
 
       const manager = new AcpSessionManager();
@@ -352,11 +301,7 @@ describe("AcpSessionManager", () => {
       id: "acpx",
       runtime: runtimeState.runtime,
     });
-    hoisted.readAcpSessionEntryMock.mockReturnValue({
-      sessionKey: "agent:codex:acp:session-1",
-      storeSessionKey: "agent:codex:acp:session-1",
-      acp: readySessionMeta(),
-    });
+    installPublicAcpSessionFixture("agent:codex:acp:session-1", readySessionMeta());
 
     let inFlight = 0;
     let maxInFlight = 0;
@@ -421,29 +366,10 @@ describe("AcpSessionManager", () => {
         id: "acpx",
         runtime: runtimeState.runtime,
       });
-      hoisted.readAcpSessionEntryMock.mockImplementation((paramsUnknown: unknown) => {
-        const sessionKey = (paramsUnknown as { sessionKey?: string }).sessionKey;
-        if (sessionKey === "agent:codex:acp:child-1") {
-          return {
-            sessionKey,
-            storeSessionKey: sessionKey,
-            entry: {
-              sessionId: "child-1",
-              updatedAt: Date.now(),
-              spawnedBy: "agent:quant:telegram:quant:direct:822430204",
-              label: "Live turn",
-            },
-            acp: readySessionMeta(),
-          };
-        }
-        if (sessionKey === "agent:quant:telegram:quant:direct:822430204") {
-          return {
-            sessionKey,
-            storeSessionKey: sessionKey,
-            entry: { sessionId: "parent-1", updatedAt: Date.now() },
-          };
-        }
-        return null;
+      mockParentedAcpSessionEntries({
+        childSessionKey: "agent:codex:acp:child-1",
+        parentSessionKey: "agent:quant:telegram:quant:direct:822430204",
+        label: "Live turn",
       });
 
       const manager = new AcpSessionManager();
@@ -500,29 +426,10 @@ describe("AcpSessionManager", () => {
         id: "acpx",
         runtime: runtimeState.runtime,
       });
-      hoisted.readAcpSessionEntryMock.mockImplementation((paramsUnknown: unknown) => {
-        const sessionKey = (paramsUnknown as { sessionKey?: string }).sessionKey;
-        if (sessionKey === "agent:codex:acp:child-1") {
-          return {
-            sessionKey,
-            storeSessionKey: sessionKey,
-            entry: {
-              sessionId: "child-1",
-              updatedAt: Date.now(),
-              spawnedBy: "agent:quant:telegram:quant:direct:822430204",
-              label: "Init window",
-            },
-            acp: readySessionMeta(),
-          };
-        }
-        if (sessionKey === "agent:quant:telegram:quant:direct:822430204") {
-          return {
-            sessionKey,
-            storeSessionKey: sessionKey,
-            entry: { sessionId: "parent-1", updatedAt: Date.now() },
-          };
-        }
-        return null;
+      mockParentedAcpSessionEntries({
+        childSessionKey: "agent:codex:acp:child-1",
+        parentSessionKey: "agent:quant:telegram:quant:direct:822430204",
+        label: "Init window",
       });
 
       const manager = new AcpSessionManager();
@@ -567,6 +474,16 @@ describe("AcpSessionManager", () => {
         id: "acpx",
         runtime: runtimeState.runtime,
       });
+      const childEntry = createAcpSessionStoreEntryFixture({
+        sessionKey: "agent:codex:acp:child-1",
+        entry: {
+          sessionId: "child-1",
+          updatedAt: Date.now(),
+          spawnedBy: "agent:quant:telegram:quant:direct:822430204",
+          label: "Retry cleanup",
+        },
+        acp: readySessionMeta(),
+      });
       let childReads = 0;
       hoisted.readAcpSessionEntryMock.mockImplementation((paramsUnknown: unknown) => {
         const sessionKey = (paramsUnknown as { sessionKey?: string }).sessionKey;
@@ -575,17 +492,7 @@ describe("AcpSessionManager", () => {
           if (childReads > 2) {
             throw new Error("session store unavailable");
           }
-          return {
-            sessionKey,
-            storeSessionKey: sessionKey,
-            entry: {
-              sessionId: "child-1",
-              updatedAt: Date.now(),
-              spawnedBy: "agent:quant:telegram:quant:direct:822430204",
-              label: "Retry cleanup",
-            },
-            acp: readySessionMeta(),
-          };
+          return structuredClone(childEntry);
         }
         if (sessionKey === "agent:quant:telegram:quant:direct:822430204") {
           return {
@@ -623,11 +530,7 @@ describe("AcpSessionManager", () => {
       id: "acpx",
       runtime: runtimeState.runtime,
     });
-    hoisted.readAcpSessionEntryMock.mockReturnValue({
-      sessionKey: "agent:codex:acp:session-1",
-      storeSessionKey: "agent:codex:acp:session-1",
-      acp: readySessionMeta(),
-    });
+    installPublicAcpSessionFixture("agent:codex:acp:session-1", readySessionMeta());
 
     let firstTurnStarted = false;
     let releaseFirstTurn: (() => void) | undefined;
@@ -704,11 +607,7 @@ describe("AcpSessionManager", () => {
       id: "acpx",
       runtime: runtimeState.runtime,
     });
-    hoisted.readAcpSessionEntryMock.mockReturnValue({
-      sessionKey: "agent:codex:acp:session-1",
-      storeSessionKey: "agent:codex:acp:session-1",
-      acp: readySessionMeta(),
-    });
+    installPublicAcpSessionFixture("agent:codex:acp:session-1", readySessionMeta());
     let captured: AcpRuntimeTurnInput | undefined;
     runtimeState.runTurn.mockImplementationOnce(async function* (input) {
       captured = input;
@@ -845,15 +744,14 @@ describe("AcpSessionManager", () => {
       id: "acpx",
       runtime: runtimeState.runtime,
     });
-    hoisted.readAcpSessionEntryMock.mockReturnValue({
-      sessionKey: "agent:codex:acp:session-1",
-      storeSessionKey: "agent:codex:acp:session-1",
-      acp: readySessionMeta({
+    installPublicAcpSessionFixture(
+      "agent:codex:acp:session-1",
+      readySessionMeta({
         runtimeOptions: {
           timeoutSeconds: Number.MAX_SAFE_INTEGER,
         },
       }),
-    });
+    );
     const timeoutSpy = vi.spyOn(globalThis, "setTimeout");
     try {
       const manager = new AcpSessionManager();
@@ -878,17 +776,18 @@ describe("AcpSessionManager", () => {
       id: "acpx",
       runtime: runtimeState.runtime,
     });
-    hoisted.readAcpSessionEntryMock.mockImplementation((paramsUnknown: unknown) => {
-      const sessionKey = (paramsUnknown as { sessionKey?: string }).sessionKey ?? "";
-      return {
+    const storedEntries = new Map(
+      ["agent:codex:acp:session-a", "agent:codex:acp:session-b"].map((sessionKey) => [
         sessionKey,
-        storeSessionKey: sessionKey,
-        acp: {
-          ...readySessionMeta(),
-          runtimeSessionName: `runtime:${sessionKey}`,
-        },
-      };
-    });
+        createAcpSessionStoreEntryFixture({
+          sessionKey,
+          acp: readySessionMeta({ runtimeSessionName: `runtime:${sessionKey}` }),
+        }),
+      ]),
+    );
+    hoisted.readAcpSessionEntryMock.mockImplementation(({ sessionKey }: { sessionKey: string }) =>
+      structuredClone(storedEntries.get(sessionKey) ?? null),
+    );
 
     let inFlight = 0;
     let maxInFlight = 0;
@@ -952,14 +851,15 @@ describe("AcpSessionManager", () => {
       };
     });
     const sessionKey = "agent:codex:acp:session-1";
-    hoisted.readAcpSessionEntryMock.mockReturnValue({
-      sessionKey,
-      storeSessionKey: sessionKey,
-      acp: readySessionMeta({
-        backend: "metadata-backend",
-        runtimeSessionName: "metadata-runtime",
+    hoisted.readAcpSessionEntryMock.mockReturnValue(
+      createAcpSessionStoreEntryFixture({
+        sessionKey,
+        acp: readySessionMeta({
+          backend: "metadata-backend",
+          runtimeSessionName: "metadata-runtime",
+        }),
       }),
-    });
+    );
     const cfg = {
       acp: {
         enabled: true,
@@ -1005,17 +905,18 @@ describe("AcpSessionManager", () => {
         id: "acpx",
         runtime: runtimeState.runtime,
       });
-      hoisted.readAcpSessionEntryMock.mockImplementation((paramsUnknown: unknown) => {
-        const sessionKey = (paramsUnknown as { sessionKey?: string }).sessionKey ?? "";
-        return {
+      const storedEntries = new Map(
+        ["agent:codex:acp:session-a", "agent:codex:acp:session-b"].map((sessionKey) => [
           sessionKey,
-          storeSessionKey: sessionKey,
-          acp: {
-            ...readySessionMeta(),
-            runtimeSessionName: `runtime:${sessionKey}`,
-          },
-        };
-      });
+          createAcpSessionStoreEntryFixture({
+            sessionKey,
+            acp: readySessionMeta({ runtimeSessionName: `runtime:${sessionKey}` }),
+          }),
+        ]),
+      );
+      hoisted.readAcpSessionEntryMock.mockImplementation(({ sessionKey }: { sessionKey: string }) =>
+        structuredClone(storedEntries.get(sessionKey) ?? null),
+      );
       const manager = new AcpSessionManager();
       await manager.runTurn({
         provenance: "system",
@@ -1059,13 +960,12 @@ describe("AcpSessionManager", () => {
       id: "acpx",
       runtime: runtimeState.runtime,
     });
-    hoisted.readAcpSessionEntryMock.mockReturnValue({
-      sessionKey: "agent:claude:acp:session-1",
-      storeSessionKey: "agent:claude:acp:session-1",
-      acp: readySessionMeta({
+    installPublicAcpSessionFixture(
+      "agent:claude:acp:session-1",
+      readySessionMeta({
         agent: "claude",
       }),
-    });
+    );
 
     const manager = new AcpSessionManager();
     const closeResult = await manager.closeSession({
@@ -1098,13 +998,12 @@ describe("AcpSessionManager", () => {
       id: "acpx",
       runtime: runtimeState.runtime,
     });
-    hoisted.readAcpSessionEntryMock.mockReturnValue({
-      sessionKey: "agent:openclaw:acp:session-1",
-      storeSessionKey: "agent:openclaw:acp:session-1",
-      acp: readySessionMeta({
+    installPublicAcpSessionFixture(
+      "agent:openclaw:acp:session-1",
+      readySessionMeta({
         agent: "openclaw",
       }),
-    });
+    );
 
     const manager = new AcpSessionManager();
     const closeResult = await manager.closeSession({
@@ -1130,10 +1029,9 @@ describe("AcpSessionManager", () => {
   it("clears persisted resume identity when close discards persistent state", async () => {
     const runtimeState = createRuntime();
     const sessionKey = "agent:claude:acp:binding:discord:default:9373ab192b2317f4";
-    const entry = {
+    const persisted = installPublicAcpSessionFixture(
       sessionKey,
-      storeSessionKey: sessionKey,
-      acp: readySessionMeta({
+      readySessionMeta({
         agent: "claude",
         state: "running",
         lastError: "stale failure",
@@ -1146,27 +1044,10 @@ describe("AcpSessionManager", () => {
           lastUpdatedAt: 1,
         },
       }),
-    };
+    );
     hoisted.requireAcpRuntimeBackendMock.mockReturnValue({
       id: "acpx",
       runtime: runtimeState.runtime,
-    });
-    hoisted.readAcpSessionEntryMock.mockImplementation(() => entry);
-    hoisted.upsertAcpSessionMetaMock.mockImplementation(async (paramsUnknown: unknown) => {
-      const params = paramsUnknown as {
-        mutate: (
-          current: SessionAcpMeta | undefined,
-          entry: { acp?: SessionAcpMeta } | undefined,
-        ) => SessionAcpMeta | null | undefined;
-      };
-      const next = params.mutate(entry.acp, entry);
-      if (next === null) {
-        return null;
-      }
-      if (next) {
-        entry.acp = next;
-      }
-      return entry;
     });
 
     const manager = new AcpSessionManager();
@@ -1180,15 +1061,15 @@ describe("AcpSessionManager", () => {
     });
 
     expect(result.runtimeClosed).toBe(true);
-    expect(entry.acp?.state).toBe("idle");
-    expect(entry.acp?.lastError).toBeUndefined();
-    expectRecordFields(entry.acp?.identity, {
+    expect(persisted.readMeta()?.state).toBe("idle");
+    expect(persisted.readMeta()?.lastError).toBeUndefined();
+    expectRecordFields(persisted.readMeta()?.identity, {
       state: "pending",
       acpxRecordId: sessionKey,
       source: "status",
     });
-    expect(entry.acp?.identity).not.toHaveProperty("acpxSessionId");
-    expect(entry.acp?.identity).not.toHaveProperty("agentSessionId");
+    expect(persisted.readMeta()?.identity).not.toHaveProperty("acpxSessionId");
+    expect(persisted.readMeta()?.identity).not.toHaveProperty("agentSessionId");
   });
 
   it("prepares a fresh persistent session before ensure when metadata has no stable session id", async () => {
@@ -1206,26 +1087,17 @@ describe("AcpSessionManager", () => {
       runtime: runtimeState.runtime,
     });
 
-    const metaState: { currentMeta: SessionAcpMeta } = {
-      currentMeta: readySessionMeta({
-        agent: "claude",
-        identity: {
-          state: "pending",
-          acpxRecordId: sessionKey,
-          source: "status",
-          lastUpdatedAt: Date.now(),
-        },
-      }),
-    };
-    hoisted.readAcpSessionEntryMock.mockImplementation((paramsUnknown: unknown) => {
-      const key = (paramsUnknown as { sessionKey?: string }).sessionKey ?? sessionKey;
-      return {
-        sessionKey: key,
-        storeSessionKey: key,
-        acp: metaState.currentMeta,
-      };
-    });
-    installMutableAcpSessionMetaUpsert(metaState);
+    const initialMeta = readySessionMeta({
+      agent: "claude",
+      identity: {
+        state: "pending",
+        acpxRecordId: sessionKey,
+        source: "status",
+        lastUpdatedAt: Date.now(),
+      },
+    }) satisfies SessionAcpMeta;
+
+    const metaState = installPublicAcpSessionFixture(sessionKey, initialMeta);
 
     const manager = new AcpSessionManager();
     await expect(
@@ -1264,10 +1136,9 @@ describe("AcpSessionManager", () => {
       runtime: runtimeState.runtime,
     });
 
-    const entry = {
+    const persisted = installPublicAcpSessionFixture(
       sessionKey,
-      storeSessionKey: sessionKey,
-      acp: readySessionMeta({
+      readySessionMeta({
         agent: "claude",
         identity: {
           state: "pending",
@@ -1276,24 +1147,7 @@ describe("AcpSessionManager", () => {
           lastUpdatedAt: Date.now(),
         },
       }),
-    };
-    hoisted.readAcpSessionEntryMock.mockImplementation(() => entry);
-    hoisted.upsertAcpSessionMetaMock.mockImplementation(async (paramsUnknown: unknown) => {
-      const params = paramsUnknown as {
-        mutate: (
-          current: SessionAcpMeta | undefined,
-          entry: { acp?: SessionAcpMeta } | undefined,
-        ) => SessionAcpMeta | null | undefined;
-      };
-      const next = params.mutate(entry.acp, entry);
-      if (next === null) {
-        return null;
-      }
-      if (next) {
-        entry.acp = next;
-      }
-      return entry;
-    });
+    );
 
     const manager = new AcpSessionManager();
     const result = await manager.closeSession({
@@ -1314,13 +1168,13 @@ describe("AcpSessionManager", () => {
     );
     expect(runtimeState.ensureSession).not.toHaveBeenCalled();
     expect(runtimeState.close).not.toHaveBeenCalled();
-    expectRecordFields(entry.acp?.identity, {
+    expectRecordFields(persisted.readMeta()?.identity, {
       state: "pending",
       acpxRecordId: sessionKey,
       source: "ensure",
     });
-    expect(entry.acp?.identity).not.toHaveProperty("acpxSessionId");
-    expect(entry.acp?.identity).not.toHaveProperty("agentSessionId");
+    expect(persisted.readMeta()?.identity).not.toHaveProperty("acpxSessionId");
+    expect(persisted.readMeta()?.identity).not.toHaveProperty("agentSessionId");
   });
 
   it("tracks ACP turn latency and error-code observability", async () => {
@@ -1335,17 +1189,18 @@ describe("AcpSessionManager", () => {
       id: "acpx",
       runtime: runtimeState.runtime,
     });
-    hoisted.readAcpSessionEntryMock.mockImplementation((paramsUnknown: unknown) => {
-      const sessionKey = (paramsUnknown as { sessionKey?: string }).sessionKey ?? "";
-      return {
+    const storedEntries = new Map(
+      ["agent:codex:acp:session-1"].map((sessionKey) => [
         sessionKey,
-        storeSessionKey: sessionKey,
-        acp: {
-          ...readySessionMeta(),
-          runtimeSessionName: `runtime:${sessionKey}`,
-        },
-      };
-    });
+        createAcpSessionStoreEntryFixture({
+          sessionKey,
+          acp: readySessionMeta({ runtimeSessionName: `runtime:${sessionKey}` }),
+        }),
+      ]),
+    );
+    hoisted.readAcpSessionEntryMock.mockImplementation(({ sessionKey }: { sessionKey: string }) =>
+      structuredClone(storedEntries.get(sessionKey) ?? null),
+    );
 
     const manager = new AcpSessionManager();
     await manager.runTurn({
@@ -1382,11 +1237,7 @@ describe("AcpSessionManager", () => {
       id: "acpx",
       runtime: runtimeState.runtime,
     });
-    hoisted.readAcpSessionEntryMock.mockReturnValue({
-      sessionKey: "agent:codex:acp:session-1",
-      storeSessionKey: "agent:codex:acp:session-1",
-      acp: readySessionMeta(),
-    });
+    installPublicAcpSessionFixture("agent:codex:acp:session-1", readySessionMeta());
     runtimeState.runTurn.mockImplementation(async function* () {
       yield { type: "done" as const };
       throw new Error("acpx exited with code 1");
@@ -1415,11 +1266,7 @@ describe("AcpSessionManager", () => {
   });
 
   it("can close and clear metadata when backend is unavailable", async () => {
-    hoisted.readAcpSessionEntryMock.mockReturnValue({
-      sessionKey: "agent:codex:acp:session-1",
-      storeSessionKey: "agent:codex:acp:session-1",
-      acp: readySessionMeta(),
-    });
+    installPublicAcpSessionFixture("agent:codex:acp:session-1", readySessionMeta());
     hoisted.requireAcpRuntimeBackendMock.mockImplementation(() => {
       throw new AcpRuntimeError(
         "ACP_BACKEND_MISSING",
@@ -1443,11 +1290,7 @@ describe("AcpSessionManager", () => {
   });
 
   it("does not fail reset close recovery when backend lookup also throws", async () => {
-    hoisted.readAcpSessionEntryMock.mockReturnValue({
-      sessionKey: "agent:codex:acp:session-1",
-      storeSessionKey: "agent:codex:acp:session-1",
-      acp: readySessionMeta(),
-    });
+    installPublicAcpSessionFixture("agent:codex:acp:session-1", readySessionMeta());
     hoisted.requireAcpRuntimeBackendMock.mockImplementation(() => {
       throw new AcpRuntimeError(
         "ACP_BACKEND_MISSING",
@@ -1472,13 +1315,12 @@ describe("AcpSessionManager", () => {
 
   it("prepares a fresh session during reset recovery even when the backend is unhealthy", async () => {
     const runtimeState = createRuntime();
-    hoisted.readAcpSessionEntryMock.mockReturnValue({
-      sessionKey: "agent:claude:acp:session-1",
-      storeSessionKey: "agent:claude:acp:session-1",
-      acp: readySessionMeta({
+    installPublicAcpSessionFixture(
+      "agent:claude:acp:session-1",
+      readySessionMeta({
         agent: "claude",
       }),
-    });
+    );
     hoisted.requireAcpRuntimeBackendMock.mockImplementation(() => {
       throw new AcpRuntimeError(
         "ACP_BACKEND_UNAVAILABLE",
@@ -1511,11 +1353,7 @@ describe("AcpSessionManager", () => {
   });
 
   it("surfaces metadata clear errors during closeSession", async () => {
-    hoisted.readAcpSessionEntryMock.mockReturnValue({
-      sessionKey: "agent:codex:acp:session-1",
-      storeSessionKey: "agent:codex:acp:session-1",
-      acp: readySessionMeta(),
-    });
+    installPublicAcpSessionFixture("agent:codex:acp:session-1", readySessionMeta());
     hoisted.requireAcpRuntimeBackendMock.mockImplementation(() => {
       throw new AcpRuntimeError(
         "ACP_BACKEND_MISSING",
