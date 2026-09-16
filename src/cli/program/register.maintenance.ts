@@ -200,7 +200,7 @@ export function registerMaintenanceCommands(program: Command) {
           });
           exitCliAfterOutput(defaultRuntime, jsonImpliesLint ? 0 : exitCode);
         }
-        await runCommandWithRuntime(defaultRuntime, async () => {
+        return await runCommandWithRuntime(defaultRuntime, async () => {
           const { doctorCommand } = await import("../../commands/doctor.js");
           await doctorCommand(defaultRuntime, {
             workspaceSuggestions: opts.workspaceSuggestions,
