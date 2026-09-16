@@ -15,7 +15,6 @@ import {
   clearFastTestEnv,
   getCliSessionBindingMock,
   ensureAgentWorkspaceMock,
-  isCliProviderMock,
   loadRunCronIsolatedAgentTurn,
   makeCronSession,
   makeCronSessionEntry,
@@ -69,23 +68,16 @@ function makeParams(overrides?: Record<string, unknown>) {
   };
 }
 
-function makeSuccessfulRunResult(provider = "google", model = "gemini-2.0-flash") {
+function makeEmbeddedRunResult(provider = "google", model = "gemini-2.0-flash") {
   return {
-    result: {
-      result: {
-        payloads: [{ text: "summary done" }],
-        meta: {
-          agentMeta: {
-            model,
-            provider,
-            usage: { input: 100, output: 50 },
-          },
-        },
+    payloads: [{ text: "summary done" }],
+    meta: {
+      agentMeta: {
+        model,
+        provider,
+        usage: { input: 100, output: 50 },
       },
     },
-    provider,
-    model,
-    attempts: [],
   };
 }
 
@@ -97,17 +89,23 @@ function makeJobWithoutModel(overrides?: Record<string, unknown>) {
 }
 
 function captureModelFallbackRun(provider = "google", model = "gemini-2.0-flash") {
+  runEmbeddedAgentMock.mockResolvedValue(makeEmbeddedRunResult(provider, model));
   const captured: {
     provider?: string;
     model?: string;
     fallbacksOverride?: string[];
   } = {};
   runWithModelFallbackMock.mockImplementation(
-    async (params: { provider: string; model: string; fallbacksOverride?: string[] }) => {
+    async (params: TestModelFallbackRunnerParams & { fallbacksOverride?: string[] }) => {
       captured.provider = params.provider;
       captured.model = params.model;
       captured.fallbacksOverride = params.fallbacksOverride;
-      return makeSuccessfulRunResult(provider, model);
+      return {
+        result: await runInitialModelFallbackAttempt(params),
+        provider: params.provider,
+        model: params.model,
+        attempts: [],
+      };
     },
   );
   return captured;
@@ -185,7 +183,7 @@ describe("runCronIsolatedAgentTurn — cron model override forwarding (#58065)",
       modelCatalog: { entries: ownerCatalog, routeVariants: [] },
     });
     ensureAgentWorkspaceMock.mockImplementationOnce(async ({ dir }: { dir: string }) => ({ dir }));
-    runWithModelFallbackMock.mockResolvedValueOnce(makeSuccessfulRunResult());
+    runEmbeddedAgentMock.mockResolvedValueOnce(makeEmbeddedRunResult());
 
     const result = await runCronIsolatedAgentTurn(makeParams({ cfg: callerConfig }));
 
@@ -285,17 +283,19 @@ describe("runCronIsolatedAgentTurn — cron model override forwarding (#58065)",
   });
 
   it("does not mark CLI cron runs as model-started before CLI session resolution", async () => {
-    isCliProviderMock.mockReturnValue(true);
+    const provider = "claude-cli";
+    const model = "fixture-cli-model";
+    resolveEffectiveAgentRuntimeMock.mockReturnValue("claude-cli");
+    resolveAllowedModelRefMock.mockReturnValue({ ref: { provider, model } });
     mockRunCronFallbackPassthrough();
-    resolveCronSessionMock.mockReturnValue(
-      makeCronSession({
-        sessionEntry: makeCronSessionEntry({
-          model: undefined,
-          modelProvider: undefined,
-        }),
-        isNewSession: false,
+    const cronSession = makeCronSession({
+      sessionEntry: makeCronSessionEntry({
+        model: undefined,
+        modelProvider: undefined,
       }),
-    );
+      isNewSession: false,
+    });
+    resolveCronSessionMock.mockReturnValue(cronSession);
     const getCliSessionStarted = createDeferred();
     const releaseCliSessionLookup = createDeferred<
       | {
@@ -316,8 +316,8 @@ describe("runCronIsolatedAgentTurn — cron model override forwarding (#58065)",
     runCliAgentMock.mockImplementation(async ({ onExecutionPhase }) => {
       onExecutionPhase?.({
         phase: "model_call_started",
-        provider: "google",
-        model: "gemini-2.0-flash",
+        provider,
+        model,
       });
       return {
         payloads: [{ text: "summary done" }],
@@ -328,44 +328,57 @@ describe("runCronIsolatedAgentTurn — cron model override forwarding (#58065)",
 
     const runPromise = runCronIsolatedAgentTurn(
       makeParams({
-        job: makeJob({ sessionTarget: "session:existing-cron-session" }),
+        job: makeJob({
+          sessionTarget: "session:existing-cron-session",
+          payload: { kind: "agentTurn", message: "summarize", model: `${provider}/${model}` },
+        }),
         onExecutionPhase: (info: unknown) => phases.push(info),
       }),
     );
 
-    await getCliSessionStarted.promise;
-    expect(
-      hasPhaseWithFields(phases, {
-        phase: "model_call_started",
-      }),
-    ).toBe(false);
+    try {
+      await Promise.race([
+        getCliSessionStarted.promise,
+        runPromise.then((result) => {
+          throw new Error(`Cron finished before CLI session resolution: ${JSON.stringify(result)}`);
+        }),
+      ]);
+      expect(
+        hasPhaseWithFields(phases, {
+          phase: "model_call_started",
+        }),
+      ).toBe(false);
 
-    const cliSessionBinding = {
-      sessionId: "previous-cli-session",
-      reseedReceipt: {
-        version: 1 as const,
-        promptHash: "a".repeat(64),
-        localSessionId: "openclaw-session",
-        userTurnDisposition: "persisted" as const,
-      },
-    };
-    releaseCliSessionLookup.resolve(cliSessionBinding);
-    const result = await runPromise;
+      const cliSessionBinding = {
+        sessionId: "previous-cli-session",
+        reseedReceipt: {
+          version: 1 as const,
+          promptHash: "a".repeat(64),
+          localSessionId: cronSession.sessionEntry.sessionId,
+          userTurnDisposition: "persisted" as const,
+        },
+      };
+      releaseCliSessionLookup.resolve(cliSessionBinding);
+      const result = await runPromise;
 
-    expect(result.status).toBe("ok");
-    const cliCall = firstMockArg(runCliAgentMock);
-    expect(cliCall.cliSessionId).toBe("previous-cli-session");
-    expect(cliCall.cliSessionBinding).toEqual(cliSessionBinding);
-    expect(typeof cliCall.onExecutionPhase).toBe("function");
-    expect(
-      hasPhaseWithFields(phases, {
-        phase: "model_call_started",
-      }),
-    ).toBe(true);
+      expect(result.status).toBe("ok");
+      const cliCall = firstMockArg(runCliAgentMock);
+      expect(cliCall.cliSessionId).toBe("previous-cli-session");
+      expect(cliCall.cliSessionBinding).toEqual(cliSessionBinding);
+      expect(typeof cliCall.onExecutionPhase).toBe("function");
+      expect(
+        hasPhaseWithFields(phases, {
+          phase: "model_call_started",
+        }),
+      ).toBe(true);
+    } finally {
+      releaseCliSessionLookup.resolve(undefined);
+      await runPromise;
+    }
   });
 
   it("clears stale CLI bindings when cron CLI replacement is unflushed", async () => {
-    isCliProviderMock.mockReturnValue(true);
+    resolveEffectiveAgentRuntimeMock.mockReturnValue("claude-cli");
     resolveAllowedModelRefMock.mockReturnValue({
       ref: { provider: "claude-cli", model: "claude-opus-4-6" },
     });
@@ -416,7 +429,7 @@ describe("runCronIsolatedAgentTurn — cron model override forwarding (#58065)",
     const accepted = outcome.startsWith("accepted");
     const clear = outcome.startsWith("rejected-clear");
     const saveFails = outcome.endsWith("save-fails");
-    isCliProviderMock.mockImplementation((provider: string) => provider === "claude-cli");
+    resolveEffectiveAgentRuntimeMock.mockReturnValue("claude-cli");
     resolveAllowedModelRefMock.mockReturnValue({
       ref: { provider: "claude-cli", model: "claude-opus-4-6" },
     });
@@ -626,10 +639,14 @@ describe("runCronIsolatedAgentTurn — cron model override forwarding (#58065)",
     resolveCronSessionMock.mockReturnValue(
       makeCronSession({
         sessionEntry: makeCronSessionEntry({
-          modelOverride: "gpt-5.6-luna",
-          providerOverride: "openai",
-          modelOverrideSource: "user",
-          agentRuntimeOverride: "openclaw",
+          executionSelection: {
+            state: "accepted",
+            fallbackPermission: "explicit",
+            selection: {
+              model: { provider: "openai", id: "gpt-5.6-luna" },
+              executor: { kind: "harness", id: "openclaw" },
+            },
+          },
           thinkingLevel: "ultra",
         }),
         isNewSession: true,
@@ -734,7 +751,11 @@ describe("runCronIsolatedAgentTurn — cron model override forwarding (#58065)",
     const cronSession = makeCronSession({
       sessionEntry: makeCronSessionEntry({
         thinkingLevel: "ultra",
-        agentRuntimeOverride: "openclaw",
+        executionSelection: {
+          state: "deferred",
+          request: { runtime: "openclaw" },
+          fallbackPermission: "configured",
+        },
       }),
       isNewSession: true,
     });
@@ -767,6 +788,7 @@ describe("runCronIsolatedAgentTurn — cron model override forwarding (#58065)",
             kind: "agentTurn",
             message: "summarize",
             model: "openai/gpt-5.6-sol",
+            fallbacks: ["openai/gpt-5.5"],
           },
         }),
       }),
@@ -809,7 +831,11 @@ describe("runCronIsolatedAgentTurn — cron model override forwarding (#58065)",
     const cronSession = makeCronSession({
       sessionEntry: makeCronSessionEntry({
         thinkingLevel: "ultra",
-        agentRuntimeOverride: "codex",
+        executionSelection: {
+          state: "deferred",
+          request: { runtime: "codex" },
+          fallbackPermission: "configured",
+        },
       }),
       isNewSession: true,
     });
@@ -842,6 +868,7 @@ describe("runCronIsolatedAgentTurn — cron model override forwarding (#58065)",
             kind: "agentTurn",
             message: "summarize",
             model: "openai/gpt-5.6-luna",
+            fallbacks: ["openai/gpt-5.6-sol"],
           },
         }),
       }),
@@ -1038,8 +1065,14 @@ describe("runCronIsolatedAgentTurn — cron model override forwarding (#58065)",
     resolveCronSessionMock.mockReturnValue(
       makeCronSession({
         sessionEntry: makeCronSessionEntry({
-          modelOverride: "gpt-5.4",
-          providerOverride: "openai",
+          executionSelection: {
+            state: "accepted",
+            fallbackPermission: "explicit",
+            selection: {
+              model: { provider: "openai", id: "gpt-5.4" },
+              executor: { kind: "harness", id: "openclaw" },
+            },
+          },
         }),
         isNewSession: false,
       }),

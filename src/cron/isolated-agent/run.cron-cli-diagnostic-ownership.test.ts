@@ -10,7 +10,7 @@ import type { patchSessionEntryCore } from "../../config/sessions/session-access
 import type { RunCronAgentTurnParams } from "./run-prepare-runtime.js";
 import {
   clearFastTestEnv,
-  isCliProviderMock,
+  resolveEffectiveAgentRuntimeMock,
   loadRunCronIsolatedAgentTurn,
   makeCronSession,
   makeCronSessionEntry,
@@ -55,7 +55,7 @@ describe("cron project: runCronIsolatedAgentTurn CLI ownership", () => {
   beforeEach(() => {
     previousFastTestEnv = clearFastTestEnv();
     resetRunCronIsolatedAgentTurnHarness();
-    isCliProviderMock.mockImplementation((provider: string) => provider === "test-cli");
+    resolveEffectiveAgentRuntimeMock.mockReturnValue("test-cli");
     resolveConfiguredModelRefMock.mockReturnValue({ provider: "test-cli", model: "test-model" });
     resolveAllowedModelRefMock.mockReturnValue({
       ref: { provider: "test-cli", model: "test-model" },

@@ -114,10 +114,14 @@ describe("syncCronSessionLiveSelection", () => {
     const entry = makeSessionEntry({
       modelProvider: "fixture",
       model: "first",
-      providerOverride: "fixture",
-      modelOverride: "first",
-      agentRuntimeOverride: "openclaw",
-      modelOverrideRouteResolution: "resolved",
+      executionSelection: {
+        state: "accepted",
+        selection: {
+          model: { provider: "fixture", id: "first" },
+          executor: { kind: "harness", id: "openclaw" },
+        },
+        fallbackPermission: "explicit",
+      },
       agentHarnessId: "openclaw",
       contextTokens: 272_000,
       contextTokensSource: "runtime",
@@ -134,9 +138,14 @@ describe("syncCronSessionLiveSelection", () => {
       },
     });
 
-    expect(entry.agentRuntimeOverride).toBe("openclaw");
-    expect(entry.providerOverride).toBe("fixture");
-    expect(entry.modelOverride).toBe("first");
+    expect(entry.executionSelection).toEqual({
+      state: "accepted",
+      selection: {
+        model: { provider: "fixture", id: "first" },
+        executor: { kind: "harness", id: "openclaw" },
+      },
+      fallbackPermission: "explicit",
+    });
     expect(entry.agentHarnessId).toBe("codex");
     expect(entry.model).toBe("second");
     expect(entry.contextTokens).toBeUndefined();

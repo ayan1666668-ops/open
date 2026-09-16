@@ -6,6 +6,8 @@ import { setupRunCronIsolatedAgentTurnSuite } from "./run.suite-helpers.js";
 import {
   callGatewayMock,
   dispatchCronDeliveryMock,
+  runEmbeddedAgentMock,
+  resolveConfiguredModelRefMock,
   loadRunCronIsolatedAgentTurn,
   resolveCronDeliveryPlanMock,
   resolveCronPayloadOutcomeMock,
@@ -33,17 +35,11 @@ function mockAgentRun({
   meta?: Record<string, unknown>;
   [key: string]: unknown;
 } = {}) {
-  runWithModelFallbackMock.mockResolvedValueOnce({
-    result: {
-      result: {
-        payloads: [],
-        ...result,
-        meta: { agentMeta: { usage }, ...meta },
-      },
-    },
-    provider,
-    model,
-    attempts: [],
+  resolveConfiguredModelRefMock.mockReturnValue({ provider, model });
+  runEmbeddedAgentMock.mockResolvedValueOnce({
+    payloads: [],
+    ...result,
+    meta: { agentMeta: { usage }, ...meta },
   });
 }
 

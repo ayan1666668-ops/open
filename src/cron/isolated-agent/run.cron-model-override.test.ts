@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { SessionEntry } from "../../config/sessions.js";
 import {
   clearFastTestEnv,
+  runEmbeddedAgentMock,
   loadRunCronIsolatedAgentTurn,
   logWarnMock,
   loadSessionEntryMock,
@@ -61,24 +62,16 @@ function makeFreshSessionEntry(overrides?: Record<string, unknown>) {
   };
 }
 
-function makeSuccessfulRunResult(overrides?: Record<string, unknown>) {
+function makeEmbeddedRunResult() {
   return {
-    result: {
-      result: {
-        payloads: [{ text: "digest complete" }],
-        meta: {
-          agentMeta: {
-            model: "claude-sonnet-4-6",
-            provider: "anthropic",
-            usage: { input: 100, output: 50 },
-          },
-        },
+    payloads: [{ text: "digest complete" }],
+    meta: {
+      agentMeta: {
+        model: "claude-sonnet-4-6",
+        provider: "anthropic",
+        usage: { input: 100, output: 50 },
       },
     },
-    provider: "anthropic",
-    model: "claude-sonnet-4-6",
-    attempts: [],
-    ...overrides,
   };
 }
 
@@ -178,7 +171,7 @@ describe("runCronIsolatedAgentTurn — cron model override (#21057)", () => {
       },
     );
 
-    runWithModelFallbackMock.mockResolvedValueOnce(makeSuccessfulRunResult());
+    runEmbeddedAgentMock.mockResolvedValueOnce(makeEmbeddedRunResult());
 
     await runCronIsolatedAgentTurn(makeParams());
 
@@ -200,12 +193,7 @@ describe("runCronIsolatedAgentTurn — cron model override (#21057)", () => {
       provider: "openai",
       model: "gpt-5.6-luna",
     });
-    runWithModelFallbackMock.mockResolvedValueOnce(
-      makeSuccessfulRunResult({
-        provider: "openai",
-        model: "gpt-5.6-luna",
-      }),
-    );
+    runEmbeddedAgentMock.mockResolvedValueOnce(makeEmbeddedRunResult());
 
     await runCronIsolatedAgentTurn(
       makeParams({
@@ -240,12 +228,7 @@ describe("runCronIsolatedAgentTurn — cron model override (#21057)", () => {
     resolveAllowedModelRefMock.mockReturnValueOnce({
       ref: { provider: "openai", model: "gpt-5.6-luna" },
     });
-    runWithModelFallbackMock.mockResolvedValueOnce(
-      makeSuccessfulRunResult({
-        provider: "openai",
-        model: "gpt-5.6-luna",
-      }),
-    );
+    runEmbeddedAgentMock.mockResolvedValueOnce(makeEmbeddedRunResult());
 
     await runCronIsolatedAgentTurn(
       makeParams({
@@ -311,8 +294,14 @@ describe("runCronIsolatedAgentTurn — cron model override (#21057)", () => {
 
     // Session-level /model override set by user (e.g. via /model command)
     cronSession.sessionEntry = makeFreshSessionEntry({
-      modelOverride: "claude-haiku-4-5",
-      providerOverride: "anthropic",
+      executionSelection: {
+        state: "accepted",
+        fallbackPermission: "explicit",
+        selection: {
+          model: { provider: "anthropic", id: "claude-haiku-4-5" },
+          executor: { kind: "harness", id: "openclaw" },
+        },
+      },
     });
     resolveCronSessionMock.mockReturnValue(cronSession);
 
@@ -380,7 +369,7 @@ describe("runCronIsolatedAgentTurn — cron model override (#21057)", () => {
         },
       );
 
-      runWithModelFallbackMock.mockResolvedValueOnce(makeSuccessfulRunResult());
+      runEmbeddedAgentMock.mockResolvedValueOnce(makeEmbeddedRunResult());
 
       const running = runCronIsolatedAgentTurn(makeParams());
       if (required) {

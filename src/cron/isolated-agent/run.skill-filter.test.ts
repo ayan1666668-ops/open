@@ -11,7 +11,6 @@ import {
   buildWorkspaceSkillSnapshotMock,
   dispatchCronDeliveryMock,
   getCliSessionBindingMock,
-  isCliProviderMock,
   lookupModelContextTokensMock,
   loadRunCronIsolatedAgentTurn,
   logWarnMock,
@@ -59,7 +58,7 @@ describe("runCronIsolatedAgentTurn — skill filter", () => {
 
   async function runSkillFilterCase(overrides?: Record<string, unknown>) {
     const result = await runCronIsolatedAgentTurn(makeIsolatedAgentParamsFixture(overrides));
-    expect(result.status).toBe("ok");
+    expect(result.status, JSON.stringify(result)).toBe("ok");
     return result;
   }
 
@@ -76,12 +75,8 @@ describe("runCronIsolatedAgentTurn — skill filter", () => {
   function mockCliFallbackInvocation() {
     runWithModelFallbackMock.mockImplementationOnce(
       async (params: TestModelFallbackRunnerParams) => {
-        const result = await runInitialModelFallbackAttempt(
-          params,
-          "claude-cli",
-          "claude-opus-4-6",
-        );
-        return { result, provider: "claude-cli", model: "claude-opus-4-6", attempts: [] };
+        const result = await runInitialModelFallbackAttempt(params);
+        return { result, provider: params.provider, model: params.model, attempts: [] };
       },
     );
   }
@@ -352,7 +347,7 @@ describe("runCronIsolatedAgentTurn — skill filter", () => {
         markCliStarted = resolve;
       });
 
-      isCliProviderMock.mockReturnValue(true);
+      resolveEffectiveAgentRuntimeMock.mockReturnValue("claude-cli");
       runCliAgentMock.mockImplementationOnce(async (params: { abortSignal?: AbortSignal }) => {
         expect(params.abortSignal).not.toBe(abortController.signal);
         expect(params.abortSignal?.aborted).toBe(false);
@@ -373,20 +368,30 @@ describe("runCronIsolatedAgentTurn — skill filter", () => {
       const runPromise = runCronIsolatedAgentTurn(
         makeIsolatedAgentParamsFixture({ abortSignal: abortController.signal }),
       );
-      await cliStarted;
-      abortController.abort("cron: job execution timed out");
+      try {
+        await Promise.race([
+          cliStarted,
+          runPromise.then((result) => {
+            throw new Error(`Cron finished before CLI execution: ${JSON.stringify(result)}`);
+          }),
+        ]);
+        abortController.abort("cron: job execution timed out");
 
-      const result = await runPromise;
+        const result = await runPromise;
 
-      expect(result.status).toBe("error");
-      expect(result.error).toBe("cron: job execution timed out");
-      expect(dispatchCronDeliveryMock).not.toHaveBeenCalled();
+        expect(result.status).toBe("error");
+        expect(result.error).toBe("cron: job execution timed out");
+        expect(dispatchCronDeliveryMock).not.toHaveBeenCalled();
+      } finally {
+        abortController.abort("test cleanup");
+        await runPromise;
+      }
     });
 
     it("does not pass stored cliSessionId on fresh isolated runs (isNewSession=true)", async () => {
       // Simulate a persisted CLI session ID from a previous run.
       getCliSessionBindingMock.mockReturnValue({ sessionId: "prev-cli-session-abc" });
-      isCliProviderMock.mockReturnValue(true);
+      resolveEffectiveAgentRuntimeMock.mockReturnValue("claude-cli");
       runCliAgentMock.mockResolvedValue({
         payloads: [{ text: "output" }],
         meta: { agentMeta: { sessionId: "new-cli-session-xyz", usage: { input: 5, output: 10 } } },
@@ -417,7 +422,7 @@ describe("runCronIsolatedAgentTurn — skill filter", () => {
 
     it("reuses stored cliSessionId on continuation runs (isNewSession=false)", async () => {
       getCliSessionBindingMock.mockReturnValue({ sessionId: "existing-cli-session-def" });
-      isCliProviderMock.mockReturnValue(true);
+      resolveEffectiveAgentRuntimeMock.mockReturnValue("claude-cli");
       runCliAgentMock.mockResolvedValue({
         payloads: [{ text: "output" }],
         meta: {
@@ -453,21 +458,14 @@ describe("runCronIsolatedAgentTurn — skill filter", () => {
   describe("context token fallback", () => {
     function makeResultWithoutContextWindow() {
       return {
-        result: {
-          result: {
-            payloads: [{ text: "test output" }],
-            meta: {
-              agentMeta: {
-                provider: "openai",
-                model: "gpt-5.4",
-                agentHarnessId: "codex",
-              },
-            },
+        payloads: [{ text: "test output" }],
+        meta: {
+          agentMeta: {
+            provider: "openai",
+            model: "gpt-5.4",
+            agentHarnessId: "codex",
           },
         },
-        provider: "openai",
-        model: "gpt-5.4",
-        attempts: [],
       };
     }
 
@@ -481,24 +479,17 @@ describe("runCronIsolatedAgentTurn — skill filter", () => {
       });
       resolveCronSessionMock.mockReturnValue(session);
       lookupModelContextTokensMock.mockReturnValue(512_000);
-      runWithModelFallbackMock.mockResolvedValueOnce({
-        result: {
-          result: {
-            payloads: [{ text: "test output" }],
-            meta: {
-              agentMeta: {
-                provider: "openai",
-                model: "gpt-5.4",
-                agentHarnessId: "codex",
-                contextTokens: 1_000_000,
-                contextTokensSource: "runtime",
-              },
-            },
+      runEmbeddedAgentMock.mockResolvedValueOnce({
+        payloads: [{ text: "test output" }],
+        meta: {
+          agentMeta: {
+            provider: "openai",
+            model: "gpt-5.4",
+            agentHarnessId: "codex",
+            contextTokens: 1_000_000,
+            contextTokensSource: "runtime",
           },
         },
-        provider: "openai",
-        model: "gpt-5.4",
-        attempts: [],
       });
 
       const result = await runSkillFilterCase();
@@ -512,6 +503,14 @@ describe("runCronIsolatedAgentTurn — skill filter", () => {
     it("preserves existing session contextTokens when no configured or cached model window is loaded", async () => {
       const session = makeCronSession({
         sessionEntry: makeCronSessionEntry({
+          executionSelection: {
+            state: "accepted",
+            fallbackPermission: "configured",
+            selection: {
+              model: { provider: "openai", id: "gpt-5.4" },
+              executor: { kind: "harness", id: "codex" },
+            },
+          },
           modelProvider: "openai",
           model: "gpt-5.4",
           agentHarnessId: "codex",
@@ -521,7 +520,7 @@ describe("runCronIsolatedAgentTurn — skill filter", () => {
       });
       resolveCronSessionMock.mockReturnValue(session);
       lookupModelContextTokensMock.mockReturnValue(undefined);
-      runWithModelFallbackMock.mockResolvedValueOnce(makeResultWithoutContextWindow());
+      runEmbeddedAgentMock.mockResolvedValueOnce(makeResultWithoutContextWindow());
 
       const result = await runSkillFilterCase();
 
@@ -533,6 +532,14 @@ describe("runCronIsolatedAgentTurn — skill filter", () => {
     it("preserves a matching lower runtime window when current model capacity is higher", async () => {
       const session = makeCronSession({
         sessionEntry: makeCronSessionEntry({
+          executionSelection: {
+            state: "accepted",
+            fallbackPermission: "configured",
+            selection: {
+              model: { provider: "openai", id: "gpt-5.4" },
+              executor: { kind: "harness", id: "codex" },
+            },
+          },
           modelProvider: "openai",
           model: "gpt-5.4",
           agentHarnessId: "codex",
@@ -542,7 +549,7 @@ describe("runCronIsolatedAgentTurn — skill filter", () => {
       });
       resolveCronSessionMock.mockReturnValue(session);
       lookupModelContextTokensMock.mockReturnValue(512_000);
-      runWithModelFallbackMock.mockResolvedValueOnce(makeResultWithoutContextWindow());
+      runEmbeddedAgentMock.mockResolvedValueOnce(makeResultWithoutContextWindow());
 
       const result = await runSkillFilterCase();
 
@@ -554,6 +561,14 @@ describe("runCronIsolatedAgentTurn — skill filter", () => {
     it("preserves a locked session window when current model capacity differs", async () => {
       const session = makeCronSession({
         sessionEntry: makeCronSessionEntry({
+          executionSelection: {
+            state: "accepted",
+            fallbackPermission: "configured",
+            selection: {
+              model: { provider: "openai", id: "gpt-5.4" },
+              executor: { kind: "harness", id: "codex" },
+            },
+          },
           modelProvider: "openai",
           model: "gpt-5.4",
           agentHarnessId: "codex",
@@ -563,7 +578,7 @@ describe("runCronIsolatedAgentTurn — skill filter", () => {
       });
       resolveCronSessionMock.mockReturnValue(session);
       lookupModelContextTokensMock.mockReturnValue(512_000);
-      runWithModelFallbackMock.mockResolvedValueOnce(makeResultWithoutContextWindow());
+      runEmbeddedAgentMock.mockResolvedValueOnce(makeResultWithoutContextWindow());
 
       const result = await runSkillFilterCase();
 
@@ -584,7 +599,7 @@ describe("runCronIsolatedAgentTurn — skill filter", () => {
       });
       resolveCronSessionMock.mockReturnValue(session);
       lookupModelContextTokensMock.mockReturnValue(512_000);
-      runWithModelFallbackMock.mockResolvedValueOnce(makeResultWithoutContextWindow());
+      runEmbeddedAgentMock.mockResolvedValueOnce(makeResultWithoutContextWindow());
 
       const result = await runSkillFilterCase({
         cfg: {
@@ -618,7 +633,7 @@ describe("runCronIsolatedAgentTurn — skill filter", () => {
       });
       resolveCronSessionMock.mockReturnValue(session);
       lookupModelContextTokensMock.mockReturnValue(undefined);
-      runWithModelFallbackMock.mockResolvedValueOnce(makeResultWithoutContextWindow());
+      runEmbeddedAgentMock.mockResolvedValueOnce(makeResultWithoutContextWindow());
 
       const result = await runSkillFilterCase();
 
@@ -644,7 +659,7 @@ describe("runCronIsolatedAgentTurn — skill filter", () => {
       });
       resolveCronSessionMock.mockReturnValue(session);
       lookupModelContextTokensMock.mockReturnValue(undefined);
-      runWithModelFallbackMock.mockResolvedValueOnce(makeResultWithoutContextWindow());
+      runEmbeddedAgentMock.mockResolvedValueOnce(makeResultWithoutContextWindow());
 
       const result = await runSkillFilterCase();
 

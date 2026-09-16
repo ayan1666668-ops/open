@@ -1,16 +1,15 @@
 // Live session model switch tests cover model changes during isolated cron runs.
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { FallbackRunnerParams } from "../../agents/embedded-agent-runner/run-entry.test-support.js";
 import { LiveSessionModelSwitchError } from "../../agents/live-model-switch-error.js";
-import {
-  runInitialModelFallbackAttempt,
-  type TestModelFallbackRunnerParams,
-} from "../../agents/test-helpers/model-fallback-runner.test-support.js";
+import { runInitialModelFallbackAttempt } from "../../agents/test-helpers/model-fallback-runner.test-support.js";
 import {
   clearFastTestEnv,
   loadRunCronIsolatedAgentTurn,
   logWarnMock,
   makeCronSession,
   makeCronSessionEntry,
+  mockRunCronFallbackPassthrough,
   resolveAllowedModelRefMock,
   resolveConfiguredModelRefMock,
   resolveCronSessionMock,
@@ -49,26 +48,6 @@ function makeParams(overrides?: Record<string, unknown>) {
     message: "run task",
     sessionKey: "cron:model-switch",
     ...overrides,
-  };
-}
-
-function makeSuccessfulRunResult(modelUsed = "claude-sonnet-4-6") {
-  return {
-    result: {
-      result: {
-        payloads: [{ text: "task complete" }],
-        meta: {
-          agentMeta: {
-            model: modelUsed,
-            provider: "anthropic",
-            usage: { input: 100, output: 50 },
-          },
-        },
-      },
-    },
-    provider: "anthropic",
-    model: modelUsed,
-    attempts: [],
   };
 }
 
@@ -145,8 +124,18 @@ describe("runCronIsolatedAgentTurn — LiveSessionModelSwitchError retry (#57206
       },
     });
 
+    runEmbeddedAgentMock.mockResolvedValueOnce({
+      payloads: [{ text: "task complete" }],
+      meta: {
+        agentMeta: {
+          model: "claude-sonnet-4-6",
+          provider: "anthropic",
+          usage: { input: 100, output: 50 },
+        },
+      },
+    });
     let callCount = 0;
-    runWithModelFallbackMock.mockImplementation(async (params: TestModelFallbackRunnerParams) => {
+    runWithModelFallbackMock.mockImplementation(async (params: FallbackRunnerParams) => {
       callCount++;
       if (callCount === 1) {
         // First attempt: session started with opus, throw to request sonnet
@@ -155,7 +144,12 @@ describe("runCronIsolatedAgentTurn — LiveSessionModelSwitchError retry (#57206
       // Second attempt: should now be called with sonnet
       expect(params.provider).toBe("anthropic");
       expect(params.model).toBe("claude-sonnet-4-6");
-      return makeSuccessfulRunResult("claude-sonnet-4-6");
+      return {
+        result: await runInitialModelFallbackAttempt(params),
+        provider: params.provider,
+        model: params.model,
+        attempts: [],
+      };
     });
 
     const result = await runCronIsolatedAgentTurn(makeParams());
@@ -210,12 +204,7 @@ describe("runCronIsolatedAgentTurn — LiveSessionModelSwitchError retry (#57206
         isNewSession: false,
       }),
     );
-    runWithModelFallbackMock.mockImplementation(async (params: TestModelFallbackRunnerParams) => ({
-      result: await runInitialModelFallbackAttempt(params),
-      provider: params.provider,
-      model: params.model,
-      attempts: [],
-    }));
+    mockRunCronFallbackPassthrough();
 
     const result = await runCronIsolatedAgentTurn(makeParams());
 
@@ -243,12 +232,7 @@ describe("runCronIsolatedAgentTurn — LiveSessionModelSwitchError retry (#57206
         isNewSession: false,
       }),
     );
-    runWithModelFallbackMock.mockImplementation(async (params: TestModelFallbackRunnerParams) => ({
-      result: await runInitialModelFallbackAttempt(params),
-      provider: params.provider,
-      model: params.model,
-      attempts: [],
-    }));
+    mockRunCronFallbackPassthrough();
 
     const result = await runCronIsolatedAgentTurn(makeParams());
 
@@ -279,12 +263,7 @@ describe("runCronIsolatedAgentTurn — LiveSessionModelSwitchError retry (#57206
       isNewSession: true,
     });
     resolveCronSessionMock.mockReturnValue(cronSession);
-    runWithModelFallbackMock.mockImplementation(async (params: TestModelFallbackRunnerParams) => ({
-      result: await runInitialModelFallbackAttempt(params),
-      provider: params.provider,
-      model: params.model,
-      attempts: [],
-    }));
+    mockRunCronFallbackPassthrough();
     runEmbeddedAgentMock
       .mockImplementationOnce(async (request) => {
         request.userTurnTranscriptRecorder?.markRuntimePersisted({
@@ -346,7 +325,14 @@ describe("runCronIsolatedAgentTurn — LiveSessionModelSwitchError retry (#57206
       sessionEntry: makeCronSessionEntry({
         model: "gpt-5.6-luna",
         modelProvider: "openai",
-        agentRuntimeOverride: "openclaw",
+        executionSelection: {
+          state: "accepted",
+          selection: {
+            model: { provider: "openai", id: "gpt-5.6-luna" },
+            executor: { kind: "harness", id: "openclaw" },
+          },
+          fallbackPermission: "explicit",
+        },
         contextTokens: 272_000,
         contextTokensSource: "runtime",
         contextBudgetStatus: {} as NonNullable<
@@ -356,12 +342,7 @@ describe("runCronIsolatedAgentTurn — LiveSessionModelSwitchError retry (#57206
       isNewSession: false,
     });
     resolveCronSessionMock.mockReturnValue(cronSession);
-    runWithModelFallbackMock.mockImplementation(async (params: TestModelFallbackRunnerParams) => ({
-      result: await runInitialModelFallbackAttempt(params),
-      provider: params.provider,
-      model: params.model,
-      attempts: [],
-    }));
+    mockRunCronFallbackPassthrough();
     runEmbeddedAgentMock
       .mockRejectedValueOnce(
         new LiveSessionModelSwitchError({
@@ -397,7 +378,15 @@ describe("runCronIsolatedAgentTurn — LiveSessionModelSwitchError retry (#57206
     expect(result.status).toBe("ok");
     expect(requireEmbeddedAgentCall(0).agentHarnessRuntimeOverride).toBe("openclaw");
     expect(requireEmbeddedAgentCall(1).agentHarnessRuntimeOverride).toBe("codex");
-    expect(cronSession.sessionEntry.agentRuntimeOverride).toBe("codex");
+    expect(cronSession.sessionEntry.executionSelection).toEqual({
+      state: "accepted",
+      selection: {
+        model: { provider: "openai", id: "gpt-5.6-luna" },
+        executor: { kind: "harness", id: "openclaw" },
+      },
+      fallbackPermission: "explicit",
+    });
+    expect(cronSession.sessionEntry.agentHarnessId).toBe("codex");
     expect(cronSession.sessionEntry.contextTokens).toBe(128_000);
     expect(cronSession.sessionEntry.contextTokensSource).toBe("resolved");
     expect(cronSession.sessionEntry.contextBudgetStatus).toBeUndefined();

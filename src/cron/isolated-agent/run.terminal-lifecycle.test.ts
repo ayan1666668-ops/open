@@ -43,7 +43,7 @@ import {
   resolveCronPayloadOutcomeMock,
   runEmbeddedAgentMock,
   runCliAgentMock,
-  isCliProviderMock,
+  resolveEffectiveAgentRuntimeMock,
   runWithModelFallbackMock,
   resolveConfiguredModelRefMock,
   resolveAllowedModelRefMock,
@@ -104,7 +104,9 @@ describe("runCronIsolatedAgentTurn terminal lifecycle", () => {
       cliFallback ? "claude-cli/fallback-model" : "openai/fallback-model",
     ]);
     if (cliFallback) {
-      isCliProviderMock.mockImplementation((provider: string) => provider === "claude-cli");
+      resolveEffectiveAgentRuntimeMock.mockImplementation(({ provider }: { provider: string }) =>
+        provider === "claude-cli" ? "claude-cli" : "openclaw",
+      );
     }
     const retryPreparationFailure =
       outcome === "retry-prepare-failure" || outcome === "retry-preflight-failure";

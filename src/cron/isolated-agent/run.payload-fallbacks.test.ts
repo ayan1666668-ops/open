@@ -183,7 +183,7 @@ describe("runCronIsolatedAgentTurn — payload.fallbacks", () => {
   });
 
   it("plans Anthropic fallbacks canonically while executing compatible attempts through Claude CLI", async () => {
-    isCliProviderMock.mockImplementation((provider: string) => provider === "claude-cli");
+    resolveEffectiveAgentRuntimeMock.mockReturnValue("claude-cli");
     resolveConfiguredModelRefMock.mockReturnValue({
       provider: "anthropic",
       model: "claude-opus-4-6",
@@ -257,7 +257,7 @@ describe("runCronIsolatedAgentTurn — payload.fallbacks", () => {
 
   it.each([
     { name: "a different embedded runtime", runtime: "openclaw", cli: false },
-    { name: "a CLI execution path", runtime: "codex", cli: true },
+    { name: "a CLI execution path", runtime: "test-cli", cli: true },
   ])("fails closed before executing stored Codex authority on $name", async ({ runtime, cli }) => {
     mockRunCronFallbackPassthrough();
     resolveEffectiveAgentRuntimeMock.mockReturnValue(runtime);

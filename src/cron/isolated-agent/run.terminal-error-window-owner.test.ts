@@ -13,7 +13,6 @@ import {
   loadRunCronIsolatedAgentTurn,
   resetRunCronIsolatedAgentTurnHarness,
   mockRunCronFallbackPassthrough,
-  patchSessionEntryMock,
   resolveCronSessionMock,
   loadSessionEntryMock,
   makeCronSession,
@@ -37,7 +36,6 @@ describe("synthetic exact cron terminal error persistence", () => {
         const storePath = path.join(state.agentDir(), "openclaw-agent.sqlite");
         const entry = { sessionId, lifecycleRevision: "synthetic-revision", updatedAt: Date.now() };
         await accessor.replaceSessionEntry({ sessionKey, storePath }, entry);
-        patchSessionEntryMock.mockImplementation(accessor.patchSessionEntryCore);
         const storedEntry = accessor.loadSessionEntry({ sessionKey, storePath })!;
         resolveCronSessionMock.mockReturnValue(
           makeCronSession({

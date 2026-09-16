@@ -13,6 +13,12 @@ import { setReplyPayloadMetadata } from "../../auto-reply/reply-payload.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import type { ContextEngine } from "../../context-engine/types.js";
 import * as diagnostic from "../../logging/diagnostic.js";
+import { createEmptyPluginRegistry } from "../../plugins/registry-empty.js";
+import {
+  captureActivePluginRegistrySnapshot,
+  restoreActivePluginRegistrySnapshot,
+  setActivePluginRegistry,
+} from "../../plugins/runtime.js";
 import {
   interruptSessionWorkAdmissions,
   isSessionWorkAdmissionActive,
@@ -23,7 +29,7 @@ import { closeOpenClawAgentDatabasesForTest } from "../../state/openclaw-agent-d
 import { makeIsolatedAgentJobFixture, makeIsolatedAgentParamsFixture } from "./job-fixtures.js";
 import {
   dispatchCronDeliveryMock,
-  isCliProviderMock,
+  resolveEffectiveAgentRuntimeMock,
   loadRunCronIsolatedAgentTurn,
   loadSessionEntryMock,
   callGatewayMock,
@@ -32,6 +38,7 @@ import {
   mockRunCronFallbackPassthrough,
   patchSessionEntryMock,
   preflightCronModelProviderMock,
+  preparedRunPluginRegistryMock,
   removeCronRunContinuationSessionIfIdleMock,
   resetRunCronIsolatedAgentTurnHarness,
   resolveCronSessionMock,
@@ -101,7 +108,6 @@ describe("runCronIsolatedAgentTurn session lifecycle", () => {
     if (!initialSessionEntry) {
       throw new Error("Expected the persisted cron session before admission");
     }
-    patchSessionEntryMock.mockImplementation(accessor.patchSessionEntryCore);
     resolveCronSessionMock.mockReturnValue(
       makeCronSession({
         storePath: target.storePath,
@@ -150,11 +156,22 @@ describe("runCronIsolatedAgentTurn session lifecycle", () => {
       .mockResolvedValue(lease);
     const candidates: ContextEngineTurnAttemptFacts[] = [];
     const cli = outcome === "CLI completed";
-    isCliProviderMock.mockImplementation((provider: string) => provider === "claude-cli");
+    const registry = createEmptyPluginRegistry();
     if (cli) {
+      registry.cliBackends.push({
+        pluginId: "cron-cli",
+        source: "test",
+        backend: {
+          id: "claude-cli",
+          modelProvider: "anthropic",
+          config: { command: "fixture-cli" },
+        },
+      });
+      preparedRunPluginRegistryMock.mockReturnValue(registry);
+      resolveEffectiveAgentRuntimeMock.mockReturnValue("claude-cli");
       resolveConfiguredModelRefMock.mockReturnValue({
-        provider: "claude-cli",
-        model: "claude-sonnet-4-6",
+        provider: "anthropic",
+        model: "fixture-cli-model",
       });
     }
     (cli ? runCliAgentMock : runEmbeddedAgentMock).mockImplementationOnce(
@@ -199,9 +216,6 @@ describe("runCronIsolatedAgentTurn session lifecycle", () => {
       },
     );
     runWithModelFallbackMock.mockImplementationOnce(async (params) => {
-      if (cli) {
-        await params.prepareCandidateChain([{ provider: params.provider, model: params.model }]);
-      }
       return {
         result: await runInitialModelFallbackAttempt(params),
         provider: params.provider,
@@ -210,8 +224,18 @@ describe("runCronIsolatedAgentTurn session lifecycle", () => {
         outcome: outcome === "exhausted" ? "exhausted" : "completed",
       };
     });
+    const registrySnapshot = captureActivePluginRegistrySnapshot();
     try {
-      const result = await runCronIsolatedAgentTurn(makePersistentCronParams(target.sessionKey));
+      if (cli) setActivePluginRegistry(registry);
+      const params = makePersistentCronParams(target.sessionKey);
+      if (cli) {
+        params.cfg = {
+          agents: {
+            defaults: { model: { primary: "anthropic/fixture-cli-model", fallbacks: [] } },
+          },
+        };
+      }
+      const result = await runCronIsolatedAgentTurn(params);
       expect(candidates, JSON.stringify(result)).toHaveLength(1);
       if (cli) {
         expect(lease.selectForHost).toHaveBeenCalledWith(
@@ -245,6 +269,7 @@ describe("runCronIsolatedAgentTurn session lifecycle", () => {
         isSessionWorkAdmissionActive(target.storePath, [target.sessionKey, target.sessionId]),
       ).toBe(false);
     } finally {
+      if (cli) restoreActivePluginRegistrySnapshot(registrySnapshot);
       createLease.mockRestore();
     }
   });
@@ -289,7 +314,7 @@ describe("runCronIsolatedAgentTurn session lifecycle", () => {
         }),
       );
       loadSessionEntryMock.mockImplementation(() => accessor.loadSessionEntry(target));
-      isCliProviderMock.mockImplementation((provider) => provider === "claude-cli");
+      resolveEffectiveAgentRuntimeMock.mockReturnValue("claude-cli");
       resolveAllowedModelRefMock.mockReturnValue({
         ref: { provider: "claude-cli", model: "claude-sonnet-4-6" },
       });
@@ -314,9 +339,11 @@ describe("runCronIsolatedAgentTurn session lifecycle", () => {
           },
         };
       });
+      const patchSessionEntry = patchSessionEntryMock.getMockImplementation();
+      if (!patchSessionEntry) throw new Error("Expected guarded cron writer");
       const patchWithAbort: typeof accessor.patchSessionEntryCore = (scope, update, options) => {
         const assertCommitAllowed = options?.assertCommitAllowed;
-        return accessor.patchSessionEntryCore(scope, update, {
+        return patchSessionEntry(scope, update, {
           ...options,
           ...(assertCommitAllowed
             ? {
@@ -810,36 +837,26 @@ describe("runCronIsolatedAgentTurn session lifecycle", () => {
       },
     );
 
-    const committedRows = new Map<string, SessionEntry>([
-      [`${inMemoryStorePath}\0${sessionKey}`, structuredClone(initialSessionEntry) as SessionEntry],
-    ]);
+    type PatchSessionEntry =
+      typeof import("../../config/sessions/session-accessor.js").patchSessionEntryCore;
+    const persist: PatchSessionEntry | undefined = patchSessionEntryMock.getMockImplementation();
+    if (!persist) throw new Error("Expected the shared session writer");
     patchSessionEntryMock.mockImplementation(
-      async (
-        scope: { storePath?: string; sessionKey: string },
-        update: (
-          entry: SessionEntry,
-          context: { existingEntry: SessionEntry | undefined },
-        ) => SessionEntry | null,
-        options: { fallbackEntry?: SessionEntry } = {},
-      ) => {
-        const key = `${scope.storePath ?? ""}\0${scope.sessionKey}`;
-        const current = committedRows.get(key);
-        const writeBase = current ?? options.fallbackEntry;
-        if (!writeBase) {
-          return null;
-        }
-        const existingEntry =
-          agentExecutionStarted && scope.sessionKey === sessionKey
-            ? { ...writeBase, lifecycleRevision: "replacement-revision" }
-            : current;
-        const committed = update(structuredClone(writeBase), {
-          existingEntry: existingEntry ? structuredClone(existingEntry) : undefined,
-        });
-        if (committed) {
-          committedRows.set(key, structuredClone(committed));
-        }
-        return committed;
-      },
+      (...[scope, update, options]: Parameters<PatchSessionEntry>) =>
+        persist(
+          scope,
+          (entry, context) =>
+            update(entry, {
+              existingEntry:
+                agentExecutionStarted && scope.sessionKey === sessionKey
+                  ? {
+                      ...(context.existingEntry ?? entry),
+                      lifecycleRevision: "replacement-revision",
+                    }
+                  : context.existingEntry,
+            }),
+          options,
+        ),
     );
 
     await expect(

@@ -1,17 +1,29 @@
 // Isolated run test harness builds cron run inputs, mocks, and assertions.
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { vi, type Mock } from "vitest";
+import { getRuntimeAuthProfileStoreCredentialsRevision } from "../../agents/auth-profiles/runtime-snapshots.js";
 import {
   type ContextTokenResolutionParams,
   resolveAuthoredModelContextTokens,
 } from "../../agents/context-resolution.js";
+import type { FallbackRunnerParams } from "../../agents/embedded-agent-runner/run-entry.test-support.js";
 import { resolveFastModeState as resolveFastModeStateImpl } from "../../agents/fast-mode.js";
 import { LiveSessionModelSwitchError } from "../../agents/live-model-switch-error.js";
+import { resolveModelCandidateChain } from "../../agents/model-fallback-candidates.js";
+import { evaluatePublishedModelRuntimeChoice } from "../../agents/model-runtime-choice.js";
 import { runInitialModelFallbackAttempt } from "../../agents/test-helpers/model-fallback-runner.test-support.js";
 import { resolveAgentModelFallbackValues } from "../../config/model-input.js";
 import type { SessionEntry } from "../../config/sessions.js";
+import { resolveSqliteScope } from "../../config/sessions/session-accessor.sqlite-scope.js";
+import {
+  mergeSessionEntry,
+  mergeSessionEntryPreserveActivity,
+} from "../../config/sessions/types.js";
+import { withPluginMetadataSnapshotScope } from "../../plugins/current-plugin-metadata-snapshot.js";
 import { createPluginMetadataSnapshotFixture } from "../../plugins/plugin-metadata.test-support.js";
 import { createEmptyPluginRegistry } from "../../plugins/registry-empty.js";
+import { getActivePluginRegistry, getActivePluginRegistryVersion } from "../../plugins/runtime.js";
+import { isSameOpenClawAgentDatabasePath } from "../../state/openclaw-agent-db-registry.js";
 
 // Central mock harness for isolated cron agent run orchestration tests.
 type CronSessionEntry = {
@@ -37,9 +49,6 @@ type CronSession = {
 
 type SessionAccessorModule = typeof import("../../config/sessions/session-accessor.js");
 
-let actualReplaceSessionEntry: SessionAccessorModule["replaceSessionEntry"];
-let actualLoadSessionEntry: SessionAccessorModule["loadSessionEntry"];
-
 function createMock(): Mock {
   return vi.fn();
 }
@@ -55,8 +64,28 @@ function normalizeModelSelectionForTest(value: unknown): string | undefined {
   return normalizeOptionalString((value as { primary?: unknown }).primary);
 }
 
-function usesRealAccessorStore(storePath?: string): boolean {
-  return Boolean(storePath && storePath !== "/tmp/store.json");
+const SYNTHETIC_STORE_PATH = "/tmp/store.json";
+
+function resolveSyntheticSessionStoreKey(
+  scope: Parameters<SessionAccessorModule["patchSessionEntryCore"]>[0],
+): string | undefined {
+  const requested = resolveSqliteScope({
+    ...scope,
+    storePath: scope.storePath || SYNTHETIC_STORE_PATH,
+  });
+  const synthetic = resolveSqliteScope({
+    ...scope,
+    agentId: requested.agentId,
+    storePath: SYNTHETIC_STORE_PATH,
+  });
+  if (
+    synthetic.ownerStorePath !== SYNTHETIC_STORE_PATH ||
+    !synthetic.path ||
+    !requested.path ||
+    !isSameOpenClawAgentDatabasePath(synthetic.path, requested.path)
+  )
+    return undefined;
+  return JSON.stringify([synthetic.path, synthetic.sessionKey]);
 }
 
 export const buildWorkspaceSkillSnapshotMock = createMock();
@@ -83,6 +112,7 @@ export const lookupModelContextTokensMock =
   vi.fn<(params: ContextTokenResolutionParams) => number | undefined>();
 export const getCliSessionBindingMock = createMock();
 export const loadSessionEntryMock = createMock();
+const loadSessionEntryReadOnlyMock = createMock();
 const replaceSessionEntryMock = createMock();
 export const patchSessionEntryMock = createMock();
 export const resolveCronSessionMock = createMock();
@@ -132,6 +162,40 @@ export const preparedRunPluginRegistryMock = createMock();
 export const acquirePreparedModelRuntimeMock = createMock();
 export const loadPublishedReplyDispatchRuntimeMock = createMock();
 const getRemoteSkillEligibilityMock = createMock();
+
+vi.mock("../../agents/thinking-runtime.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../agents/thinking-runtime.js")>()),
+  resolveEffectiveAgentRuntime: resolveEffectiveAgentRuntimeMock,
+}));
+
+vi.mock("../../agents/model-runtime-choice.js", () => ({
+  evaluatePublishedModelRuntimeChoice: vi.fn(),
+}));
+
+const selectionMetadata = createPluginMetadataSnapshotFixture({
+  plugins: [
+    { id: "cron-harness", activation: { onAgentHarnesses: ["codex"] } },
+    { id: "cron-cli", cliBackends: ["claude-cli", "test-cli"] },
+  ],
+});
+const selectionRoutes: Record<string, readonly string[]> = {
+  openai: ["openclaw", "codex", "claude-cli", "test-cli"],
+  anthropic: ["openclaw", "codex", "claude-cli"],
+  "claude-cli": ["claude-cli"],
+  "test-cli": ["test-cli"],
+  "rooted-only": ["codex"],
+  google: ["openclaw"],
+  deepseek: ["openclaw"],
+  ollama: ["openclaw"],
+  openrouter: ["openclaw"],
+  vllm: ["openclaw"],
+  custom: ["openclaw"],
+  fixture: ["openclaw"],
+  mock: ["openclaw"],
+  "test-provider": ["openclaw"],
+  "fallback-provider": ["openclaw"],
+};
+let selectionGeneration = 0;
 
 vi.mock("../../agents/prepared-model-runtime.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../agents/prepared-model-runtime.js")>()),
@@ -271,7 +335,16 @@ vi.mock("./run-model-selection.runtime.js", () => ({
 
 vi.mock("../../agents/model-fallback-runner.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../agents/model-fallback-runner.js")>()),
-  runWithModelFallback: runWithModelFallbackMock,
+  runWithModelFallback: async (params: FallbackRunnerParams) => {
+    await params.prepareCandidateChain?.(resolveModelCandidateChain(params));
+    return runWithModelFallbackMock({
+      ...params,
+      run: async (...[provider, model, options]: Parameters<FallbackRunnerParams["run"]>) => {
+        await params.prepareCandidate?.(provider, model);
+        return params.run(provider, model, options);
+      },
+    });
+  },
 }));
 
 vi.mock("./run-execution.runtime.js", () => ({
@@ -373,19 +446,6 @@ vi.mock("../../gateway/session-transcript-readers.js", () => ({
   readSessionMessagesAsync: readSessionMessagesAsyncMock,
 }));
 
-vi.mock("../../config/sessions/session-accessor.js", async () => {
-  const actual = await vi.importActual<SessionAccessorModule>(
-    "../../config/sessions/session-accessor.js",
-  );
-  actualReplaceSessionEntry = actual.replaceSessionEntry;
-  actualLoadSessionEntry = actual.loadSessionEntry;
-  return {
-    ...actual,
-    replaceSessionEntry: replaceSessionEntryMock,
-    patchSessionEntryCore: patchSessionEntryMock,
-  };
-});
-
 vi.mock("../delivery-plan.js", async () => ({
   ...(await vi.importActual<typeof import("../delivery-plan.js")>("../delivery-plan.js")),
   resolveCronDeliveryPlan: resolveCronDeliveryPlanMock,
@@ -435,7 +495,7 @@ export function makeCronSessionEntry(overrides?: Record<string, unknown>): CronS
 
 export function makeCronSession(overrides?: Record<string, unknown>): CronSession {
   const session = {
-    storePath: "/tmp/store.json",
+    storePath: SYNTHETIC_STORE_PATH,
     store: {},
     sessionEntry: makeCronSessionEntry(),
     lifecycleRevision: "test-lifecycle-revision",
@@ -453,20 +513,6 @@ export function makeCronSession(overrides?: Record<string, unknown>): CronSessio
   return session;
 }
 
-function makeDefaultModelFallbackResult() {
-  return {
-    result: {
-      result: {
-        payloads: [{ text: "test output" }],
-        meta: { agentMeta: {} },
-      },
-    },
-    provider: "openai",
-    model: "gpt-5.4",
-    attempts: [],
-  };
-}
-
 function makeDefaultEmbeddedResult() {
   return {
     payloads: [{ text: "test output" }],
@@ -475,12 +521,14 @@ function makeDefaultEmbeddedResult() {
 }
 
 export function mockRunCronFallbackPassthrough(): void {
-  runWithModelFallbackMock.mockImplementation(async (params) => ({
-    result: await runInitialModelFallbackAttempt(params),
-    provider: params.provider,
-    model: params.model,
-    attempts: [],
-  }));
+  runWithModelFallbackMock.mockImplementation(async (params: FallbackRunnerParams) => {
+    return {
+      result: await runInitialModelFallbackAttempt(params),
+      provider: params.provider,
+      model: params.model,
+      attempts: [],
+    };
+  });
 }
 
 function resetRunConfigMocks(): void {
@@ -577,7 +625,7 @@ function resetRunConfigMocks(): void {
     const metadata =
       options?.pluginGeneration?.pluginMetadataSnapshot ??
       options?.pluginMetadataSnapshot ??
-      createPluginMetadataSnapshotFixture();
+      selectionMetadata;
     return {
       snapshot: { ...input, metadataSnapshot: metadata, pluginRegistry: registry },
       pluginGeneration: {
@@ -620,7 +668,7 @@ function resetRunExecutionMocks(): void {
   resolveSessionTranscriptPathMock.mockReturnValue("/tmp/transcript.jsonl");
   registerAgentRunContextMock.mockReturnValue(undefined);
   runWithModelFallbackMock.mockReset();
-  runWithModelFallbackMock.mockResolvedValue(makeDefaultModelFallbackResult());
+  mockRunCronFallbackPassthrough();
   runEmbeddedAgentMock.mockReset();
   runEmbeddedAgentMock.mockResolvedValue(makeDefaultEmbeddedResult());
   runCliAgentMock.mockReset();
@@ -762,19 +810,14 @@ function resetRunOutcomeMocks(): void {
 }
 
 function resetRunSessionMocks(): void {
+  vi.spyOn(sessionAccessor, "replaceSessionEntry").mockImplementation(replaceSessionEntryMock);
+  vi.spyOn(sessionAccessor, "patchSessionEntryCore").mockImplementation(patchSessionEntryMock);
+  vi.spyOn(sessionAccessor, "loadSessionEntryReadOnly").mockImplementation(
+    loadSessionEntryReadOnlyMock,
+  );
   loadSessionEntryMock.mockReset();
   loadSessionEntryMock.mockReturnValue(undefined);
   replaceSessionEntryMock.mockReset();
-  replaceSessionEntryMock.mockImplementation(
-    async (
-      scope: Parameters<SessionAccessorModule["replaceSessionEntry"]>[0],
-      entry: Parameters<SessionAccessorModule["replaceSessionEntry"]>[1],
-    ) => {
-      if (usesRealAccessorStore(scope.storePath)) {
-        await actualReplaceSessionEntry(scope, entry);
-      }
-    },
-  );
   patchSessionEntryMock.mockReset();
   installPatchSessionEntryStore();
   resolveCronSessionMock.mockReset();
@@ -787,54 +830,105 @@ function resetRunSessionMocks(): void {
   retireSessionMcpRuntimeMock.mockResolvedValue(true);
 }
 
-/**
- * In-memory stand-in for the SQLite accessor `patchSessionEntryCore` used by the
- * cron persist path. Prod flips real session storage to per-agent SQLite, but
- * these orchestration tests must stay off disk. The store keys on
- * storePath+sessionKey so successive persists in one run observe the row the
- * previous persist committed, mirroring the accessor's read-modify-write and
- * letting the lifecycle claim guard prove ownership without real SQLite.
- */
+// Only synthetic orchestration stores use this map; real paths use the full accessor.
 function installPatchSessionEntryStore(): void {
-  type PatchRow = Record<string, unknown>;
-  const rows = new Map<string, PatchRow>();
+  const rows = new Map<string, SessionEntry>();
+  replaceSessionEntryMock.mockImplementation(
+    async (...args: Parameters<SessionAccessorModule["replaceSessionEntry"]>) => {
+      const [scope, entry] = args;
+      const key = resolveSyntheticSessionStoreKey(scope);
+      if (key === undefined) return actualReplaceSessionEntry(...args);
+      rows.set(key, structuredClone(entry));
+      return structuredClone(entry);
+    },
+  );
+  loadSessionEntryReadOnlyMock.mockImplementation(
+    (scope: Parameters<SessionAccessorModule["loadSessionEntryReadOnly"]>[0]) => {
+      const key = resolveSyntheticSessionStoreKey(scope);
+      if (key === undefined) return actualLoadSessionEntryReadOnly(scope);
+      const entry: SessionEntry | undefined =
+        rows.get(key) ?? loadSessionEntryMock(SYNTHETIC_STORE_PATH, scope.sessionKey);
+      return entry ? structuredClone(entry) : undefined;
+    },
+  );
   patchSessionEntryMock.mockImplementation(
-    async (
-      scope: { storePath?: string; sessionKey: string },
-      update: (
-        entry: PatchRow,
-        context: { existingEntry: PatchRow | undefined },
-      ) => PatchRow | null,
-      options: { fallbackEntry?: PatchRow } = {},
-    ) => {
-      const key = `${scope.storePath ?? ""}\\0${scope.sessionKey}`;
-      const existingEntry =
-        rows.get(key) ??
-        (usesRealAccessorStore(scope.storePath)
-          ? actualLoadSessionEntry(scope as never)
-          : loadSessionEntryMock(scope.storePath, scope.sessionKey));
+    async (...args: Parameters<SessionAccessorModule["patchSessionEntryCore"]>) => {
+      const [scope, update, options = {}] = args;
+      const key = resolveSyntheticSessionStoreKey(scope);
+      if (key === undefined) return actualPatchSessionEntryCore(...args);
+      const existingEntry: SessionEntry | undefined =
+        rows.get(key) ?? loadSessionEntryMock(SYNTHETIC_STORE_PATH, scope.sessionKey);
       const writeBase = existingEntry ?? options.fallbackEntry;
-      if (!writeBase) {
-        return null;
-      }
-      const next = update(structuredClone(writeBase), {
+      if (!writeBase) return null;
+      const patch = await update(structuredClone(writeBase), {
         existingEntry: existingEntry ? structuredClone(existingEntry) : undefined,
       });
-      if (!next) {
-        return structuredClone(writeBase);
-      }
-      const committed = structuredClone(next);
-      rows.set(key, committed);
-      if (usesRealAccessorStore(scope.storePath)) {
-        await actualReplaceSessionEntry(scope as never, committed as never);
-      }
-      return committed;
+      if (options.shouldCommit?.() === false) return null;
+      options.assertCommitAllowed?.();
+      if (!patch) return structuredClone(writeBase);
+      const creationPatch = existingEntry ? patch : { ...writeBase, ...patch };
+      const mergeBase = existingEntry ? writeBase : undefined;
+      // The accessor's replaceEntry contract supplies a complete session snapshot.
+      const committed = options.replaceEntry
+        ? structuredClone(patch as SessionEntry)
+        : options.preserveActivity
+          ? mergeSessionEntryPreserveActivity(mergeBase, creationPatch)
+          : mergeSessionEntry(mergeBase, creationPatch);
+      rows.set(key, structuredClone(committed));
+      options.onCommitted?.(structuredClone(committed));
+      return structuredClone(committed);
     },
   );
 }
 
 export function resetRunCronIsolatedAgentTurnHarness(): void {
   vi.clearAllMocks();
+  selectionGeneration++;
+  vi.mocked(evaluatePublishedModelRuntimeChoice).mockImplementation(
+    async ({ provider, model, runtimeId }) => {
+      if (!["openclaw", "codex", "claude-cli", "test-cli"].includes(runtimeId)) {
+        return { kind: "unknown", message: "The test runtime is not registered." };
+      }
+      const supportedExecutors = selectionRoutes[provider.toLowerCase()];
+      if (!supportedExecutors) {
+        return { kind: "unknown", message: "The test route is not registered." };
+      }
+      if (!supportedExecutors.includes(runtimeId)) {
+        return {
+          kind: "unsupported",
+          message: "This test executor cannot run the selected route.",
+        };
+      }
+      const generation = selectionGeneration;
+      const registry = getActivePluginRegistry();
+      const registryVersion = getActivePluginRegistryVersion();
+      const authRevision = getRuntimeAuthProfileStoreCredentialsRevision();
+      const catalogResult = loadModelCatalogOwnerMock.mock.results.at(-1);
+      const catalogOwner = catalogResult?.type === "return" ? await catalogResult.value : undefined;
+      const dispatchResult = loadPublishedReplyDispatchRuntimeMock.mock.results.at(-1);
+      const dispatchOwner =
+        dispatchResult?.type === "return" ? await dispatchResult.value : undefined;
+      const loadCatalog = loadModelCatalogMock.getMockImplementation();
+      const catalog = catalogOwner?.modelCatalog;
+      return {
+        kind: "ready",
+        entry: { provider, id: model, name: model },
+        validate: () =>
+          generation === selectionGeneration &&
+          registry === getActivePluginRegistry() &&
+          registryVersion === getActivePluginRegistryVersion() &&
+          authRevision === getRuntimeAuthProfileStoreCredentialsRevision() &&
+          catalogResult === loadModelCatalogOwnerMock.mock.results.at(-1) &&
+          dispatchResult === loadPublishedReplyDispatchRuntimeMock.mock.results.at(-1) &&
+          loadCatalog === loadModelCatalogMock.getMockImplementation() &&
+          catalog === catalogOwner?.modelCatalog &&
+          catalogOwner?.isCurrent?.() !== false &&
+          dispatchOwner?.isCurrent?.() !== false
+            ? undefined
+            : "The model catalog changed. Try again.",
+      };
+    },
+  );
   resetRunConfigMocks();
   resetRunExecutionMocks();
   resetRunOutcomeMocks();
@@ -878,8 +972,19 @@ export function restoreFastTestEnv(previousFastTestEnv: string | undefined): voi
   process.env.OPENCLAW_TEST_FAST = previousFastTestEnv;
 }
 
+// Session metadata loads the mocked channel registry; its mock values must exist first.
+const sessionAccessor = await import("../../config/sessions/session-accessor.js");
+const {
+  replaceSessionEntry: actualReplaceSessionEntry,
+  patchSessionEntryCore: actualPatchSessionEntryCore,
+  loadSessionEntryReadOnly: actualLoadSessionEntryReadOnly,
+} = sessionAccessor;
+
 export async function loadRunCronIsolatedAgentTurn() {
   const { runCronIsolatedAgentTurn } = await import("./run.js");
-  return runCronIsolatedAgentTurn;
+  return (...args: Parameters<typeof runCronIsolatedAgentTurn>) =>
+    withPluginMetadataSnapshotScope(selectionMetadata, () => runCronIsolatedAgentTurn(...args), {
+      trustConfigIdentity: true,
+    });
 }
 /* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

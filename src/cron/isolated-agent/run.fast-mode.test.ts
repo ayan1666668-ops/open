@@ -1,10 +1,6 @@
 // Fast mode tests cover isolated cron run behavior in fast execution mode.
 import { expectDefined } from "@openclaw/normalization-core";
 import { describe, expect, it, vi } from "vitest";
-import {
-  runInitialModelFallbackAttempt,
-  type TestModelFallbackRunnerParams,
-} from "../../agents/test-helpers/model-fallback-runner.test-support.js";
 import { makeIsolatedAgentJobFixture, makeIsolatedAgentParamsFixture } from "./job-fixtures.js";
 import { setupRunCronIsolatedAgentTurnSuite } from "./run.suite-helpers.js";
 import {
@@ -18,31 +14,13 @@ import {
   resolveCronSessionMock,
   runEmbeddedAgentMock,
   runCliAgentMock,
-  isCliProviderMock,
-  runWithModelFallbackMock,
+  resolveEffectiveAgentRuntimeMock,
 } from "./run.test-harness.js";
 
 const runCronIsolatedAgentTurn = await loadRunCronIsolatedAgentTurn();
 
 const OPENAI_GPT4_MODEL = "openai/gpt-4";
 const EXPECTED_OPENAI_MODEL = "gpt-5.4";
-
-function mockSuccessfulModelFallback() {
-  runWithModelFallbackMock.mockImplementation(async (params: TestModelFallbackRunnerParams) => {
-    await runInitialModelFallbackAttempt(params);
-    return {
-      result: {
-        result: {
-          payloads: [{ text: "ok" }],
-          meta: { agentMeta: {} },
-        },
-      },
-      provider: params.provider,
-      model: params.model,
-      attempts: [],
-    };
-  });
-}
 
 async function runFastModeCase(params: {
   configFastMode: boolean | "auto";
@@ -70,9 +48,8 @@ async function runFastModeCase(params: {
       },
     }),
   );
-  mockSuccessfulModelFallback();
   if (params.cli) {
-    isCliProviderMock.mockReturnValue(true);
+    resolveEffectiveAgentRuntimeMock.mockReturnValue("claude-cli");
     runCliAgentMock.mockResolvedValue({ payloads: [{ text: "ok" }], meta: { agentMeta: {} } });
   }
   resolveFastModeStateMock.mockImplementation(({ cfg, sessionEntry }) => {

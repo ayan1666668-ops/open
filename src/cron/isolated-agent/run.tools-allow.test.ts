@@ -519,19 +519,12 @@ describe("runCronIsolatedAgentTurn toolsAllow passthrough", () => {
     "keeps web_search provider diagnostics when the run aborts",
     { timeout: RUN_TOOLS_ALLOW_TIMEOUT_MS },
     async () => {
-      runWithModelFallbackMock.mockResolvedValueOnce({
-        result: {
-          result: {
-            payloads: [],
-            meta: {
-              aborted: true,
-              agentMeta: {},
-            },
-          },
+      runEmbeddedAgentMock.mockResolvedValueOnce({
+        payloads: [],
+        meta: {
+          aborted: true,
+          agentMeta: {},
         },
-        provider: "openai",
-        model: "gpt-5.4",
-        attempts: [],
       });
 
       const result = await runCronIsolatedAgentTurn(makeParamsWithToolsAllow(["web_search"]));

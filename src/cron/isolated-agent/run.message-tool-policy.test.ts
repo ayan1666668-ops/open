@@ -14,7 +14,7 @@ import {
   clearFastTestEnv,
   dispatchCronDeliveryMock,
   getChannelPluginMock,
-  isCliProviderMock,
+  resolveEffectiveAgentRuntimeMock,
   loadRunCronIsolatedAgentTurn,
   loadSessionEntryMock,
   makeCronSession,
@@ -241,7 +241,7 @@ describe("runCronIsolatedAgentTurn message tool policy", () => {
   function mockCliAnnounceRun() {
     mockRunCronFallbackPassthrough();
     resolveCronDeliveryPlanMock.mockReturnValue(makeAnnounceDeliveryPlan());
-    isCliProviderMock.mockReturnValue(true);
+    resolveEffectiveAgentRuntimeMock.mockReturnValue("claude-cli");
     runCliAgentMock.mockResolvedValue({
       payloads: [{ text: "done" }],
       meta: { agentMeta: { usage: { input: 10, output: 20 } } },
@@ -362,6 +362,21 @@ describe("runCronIsolatedAgentTurn message tool policy", () => {
   };
 
   function createMessageToolExecutor(overrides: Record<string, unknown>) {
+    const cronSession = makeCronSession();
+    const selection = {
+      model: { provider: "openai", id: "gpt-5.4" },
+      executor: { kind: "harness", id: "openclaw" },
+    } as const;
+    cronSession.sessionEntry.executionSelection = {
+      state: "accepted",
+      selection,
+      fallbackPermission: "configured",
+    };
+    loadSessionEntryMock.mockImplementation((storePath: string, sessionKey: string) =>
+      storePath === cronSession.storePath && sessionKey === "cron:message-tool-policy"
+        ? cronSession.sessionEntry
+        : undefined,
+    );
     const resolvedDelivery = (overrides.resolvedDelivery ?? {}) as {
       channel?: string;
       to?: string;
@@ -403,11 +418,8 @@ describe("runCronIsolatedAgentTurn message tool policy", () => {
           skillsSnapshot: emptySkillsSnapshot,
           agentPayload: null,
           useSubagentFallbacks: false,
-          liveSelection: {
-            provider: "openai",
-            model: "gpt-5.4",
-          },
-          cronSession: makeCronSession() as unknown as MutableCronSession,
+          liveSelection: { selection },
+          cronSession: cronSession as unknown as MutableCronSession,
           commandBody,
           persistSessionEntry: async () => undefined,
           lifecycle: createAgentLifecycleTerminalBackstop({

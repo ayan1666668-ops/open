@@ -1,9 +1,12 @@
 // Rooted cron reviews preserve their host-selected root and instructions across runtimes.
 import { describe, expect, it, vi } from "vitest";
 import {
+  prepareFallbackRunner,
+  type FallbackRunnerParams,
+} from "../../agents/embedded-agent-runner/run-entry.test-support.js";
+import {
   runFallbackModelAttempt,
   runInitialModelFallbackAttempt,
-  type TestModelFallbackRunnerParams,
 } from "../../agents/test-helpers/model-fallback-runner.test-support.js";
 import {
   SKILL_WORKSHOP_MAINTENANCE_PROMPT,
@@ -50,12 +53,7 @@ describe("runCronIsolatedAgentTurn — rooted runtime fallback", () => {
     { prompt: "", skills: [] },
     { prompt: "Explicit safe instructions", skills: [{ name: "safe" }] },
   ])("preserves the host-selected instruction snapshot: $prompt", async (skillsSnapshot) => {
-    runWithModelFallbackMock.mockImplementation(async (params: TestModelFallbackRunnerParams) => ({
-      result: await runInitialModelFallbackAttempt(params),
-      provider: "openai",
-      model: "gpt-5.4",
-      attempts: [],
-    }));
+    mockRunCronFallbackPassthrough();
     const result = await runCronIsolatedAgentTurn(
       makeIsolatedAgentParamsFixture({ executionRoot, skillsSnapshot }),
     );
@@ -83,12 +81,7 @@ describe("runCronIsolatedAgentTurn — rooted runtime fallback", () => {
         meta: { agentMeta: {} },
       };
     });
-    runWithModelFallbackMock.mockImplementation(async (params: TestModelFallbackRunnerParams) => ({
-      result: await runInitialModelFallbackAttempt(params),
-      provider: params.provider,
-      model: params.model,
-      attempts: [],
-    }));
+    mockRunCronFallbackPassthrough();
     const result = await runCronIsolatedAgentTurn(
       makeIsolatedAgentParamsFixture({
         executionRoot,
@@ -130,7 +123,7 @@ describe("runCronIsolatedAgentTurn — rooted runtime fallback", () => {
 
   it("skips an unsupported rooted runtime and reaches a later embedded candidate", async () => {
     resolveEffectiveAgentRuntimeMock.mockImplementation(({ modelId }: { modelId: string }) =>
-      modelId === "gpt-5.4" || modelId === "gpt-5" ? "openclaw" : "unsupported-harness",
+      modelId === "gpt-5.4" || modelId === "gpt-5" ? "openclaw" : "codex",
     );
     isCliProviderMock.mockReturnValue(false);
     runEmbeddedAgentMock.mockImplementation(
@@ -142,12 +135,16 @@ describe("runCronIsolatedAgentTurn — rooted runtime fallback", () => {
         return { payloads: [{ text: "later embedded succeeded" }], meta: { agentMeta: {} } };
       },
     );
-    runWithModelFallbackMock.mockImplementation(async (params: TestModelFallbackRunnerParams) => {
+    runWithModelFallbackMock.mockImplementation(async (params: FallbackRunnerParams) => {
+      await prepareFallbackRunner(params, [
+        { provider: "rooted-only", model: "rooted-model" },
+        { provider: "openai", model: "gpt-5" },
+      ]);
       await expect(runInitialModelFallbackAttempt(params)).rejects.toThrow(
         "embedded primary failed",
       );
       await expect(
-        runFallbackModelAttempt(params, "claude-cli", "claude-opus-4-6", "unknown"),
+        runFallbackModelAttempt(params, "rooted-only", "rooted-model", "unknown"),
       ).rejects.toThrow("collection review requires a runtime that enforces the Workshop root");
       const result = await runFallbackModelAttempt(params, "openai", "gpt-5", "unknown");
       return { result, provider: "openai", model: "gpt-5", attempts: [] };
