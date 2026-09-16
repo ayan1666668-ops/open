@@ -1,8 +1,5 @@
 /** Final persistence, telemetry, and delivery for an isolated cron run. */
-import {
-  asNonNegativeFiniteNumber,
-  asPositiveFiniteNumber as resolvePositiveContextTokens,
-} from "@openclaw/normalization-core/number-coercion";
+import { asPositiveFiniteNumber as resolvePositiveContextTokens } from "@openclaw/normalization-core/number-coercion";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { hasAcceptedSessionSpawn } from "../../agents/accepted-session-spawn.js";
 import {
@@ -15,18 +12,12 @@ import {
   CODE_MODE_MCP_CATALOG_MISS_MESSAGE,
   isEmbeddedRunTerminalToolFailure,
 } from "../../agents/embedded-agent-runner/terminal-tool-failure.js";
-import { deriveContextPromptTokens, hasBillableUsage } from "../../agents/usage.js";
 import { isSilentReplyPayloadText } from "../../auto-reply/tokens.js";
 import { SESSION_TOTAL_TOKENS_VERSION } from "../../config/sessions.js";
 import {
   resolveProjectedSessionContextTokens,
   resolveTrustedSessionContextTokens,
 } from "../../config/sessions/context-token-provenance.js";
-import { emitTrustedDiagnosticEvent, isDiagnosticsEnabled } from "../../infra/diagnostic-events.js";
-import {
-  createChildDiagnosticTraceContext,
-  freezeDiagnosticTraceContext,
-} from "../../infra/diagnostic-trace-context.js";
 import { resolveSourceDeliveryOutcome } from "../../infra/outbound/source-delivery-plan.js";
 import { createLazyImportLoader } from "../../shared/lazy-promise.js";
 import {
@@ -44,6 +35,7 @@ import {
   setCronSessionAgentHarnessId,
   setCronSessionRuntimeModel,
 } from "./run-session-state.js";
+import { recordCronRunUsage, resolveCronRunUsage } from "./run-usage.js";
 import {
   DEFAULT_CONTEXT_TOKENS,
   deriveSessionTotalTokens,
@@ -104,8 +96,7 @@ export async function finalizeCronRun(params: {
       });
     }
   }
-  const usage = finalRunResult.meta?.agentMeta?.usage;
-  const diagnosticUsage = finalRunResult.meta?.agentMeta?.diagnosticUsage ?? usage;
+  const usage = resolveCronRunUsage(execution);
   const lastCallUsage = finalRunResult.meta?.agentMeta?.lastCallUsage;
   const promptTokens = finalRunResult.meta?.agentMeta?.promptTokens;
   const modelUsed =
@@ -218,75 +209,7 @@ export async function finalizeCronRun(params: {
       usage: telemetryUsage,
     };
   }
-  if (hasBillableUsage(usage) || hasBillableUsage(diagnosticUsage)) {
-    const { estimateAggregateUsageCost, resolveModelCostConfig } =
-      await import("../../utils/usage-format.js");
-    const costConfig = resolveModelCostConfig({
-      provider: providerUsed,
-      model: modelUsed,
-      config: prepared.cfgWithAgentDefaults,
-      agentDir: prepared.agentDir,
-    });
-    if (hasBillableUsage(usage)) {
-      // Monetary facts do not establish token/context counters; unknown cost clears old dollars.
-      prepared.cronSession.sessionEntry.estimatedCostUsd = asNonNegativeFiniteNumber(
-        estimateAggregateUsageCost({ usage, cost: costConfig }),
-      );
-    }
-    if (isDiagnosticsEnabled(prepared.cfgWithAgentDefaults) && hasBillableUsage(diagnosticUsage)) {
-      const diagnosticInput = diagnosticUsage?.input ?? 0;
-      const diagnosticOutput = diagnosticUsage?.output ?? 0;
-      const diagnosticCacheRead = diagnosticUsage?.cacheRead ?? 0;
-      const diagnosticCacheWrite = diagnosticUsage?.cacheWrite ?? 0;
-      const usagePromptTokens = diagnosticInput + diagnosticCacheRead + diagnosticCacheWrite;
-      const diagnosticBucketTotalTokens = usagePromptTokens + diagnosticOutput;
-      const diagnosticTotalTokens =
-        typeof diagnosticUsage?.total === "number" && Number.isFinite(diagnosticUsage.total)
-          ? Math.max(diagnosticBucketTotalTokens, diagnosticUsage.total)
-          : diagnosticBucketTotalTokens;
-      const diagnosticEstimatedCostUsd = asNonNegativeFiniteNumber(
-        estimateAggregateUsageCost({ usage: diagnosticUsage, cost: costConfig }),
-      );
-      const contextUsedTokens = deriveContextPromptTokens({
-        lastCallUsage,
-        promptTokens,
-        usage,
-      });
-      emitTrustedDiagnosticEvent({
-        type: "model.usage",
-        ...(finalRunResult.diagnosticTrace
-          ? {
-              trace: freezeDiagnosticTraceContext(
-                createChildDiagnosticTraceContext(finalRunResult.diagnosticTrace),
-              ),
-            }
-          : {}),
-        sessionKey: prepared.runSessionKey,
-        sessionId: prepared.currentRunSessionId(),
-        channel: "cron",
-        agentId: prepared.agentId,
-        provider: providerUsed,
-        model: modelUsed,
-        usage: {
-          input: diagnosticInput,
-          output: diagnosticOutput,
-          cacheRead: diagnosticCacheRead,
-          cacheWrite: diagnosticCacheWrite,
-          promptTokens: usagePromptTokens,
-          total: diagnosticTotalTokens,
-        },
-        lastCallUsage,
-        context: {
-          limit: contextTokens,
-          ...(contextUsedTokens !== undefined ? { used: contextUsedTokens } : {}),
-        },
-        ...(diagnosticEstimatedCostUsd !== undefined
-          ? { costUsd: diagnosticEstimatedCostUsd }
-          : {}),
-        durationMs: execution.runEndedAt - execution.runStartedAt,
-      });
-    }
-  }
+  await recordCronRunUsage({ prepared, execution, contextTokens });
   await prepared.persistSessionEntry();
   await prepared.runContinuationSession?.seal({ basePersisted: true });
 
