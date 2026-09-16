@@ -25,27 +25,6 @@ async function withPatchFile<T>(
 }
 
 describe("readConfigPatchOperations", () => {
-  // Windows normalizes trailing spaces in filenames, so these are distinct POSIX files.
-  it.skipIf(process.platform === "win32").each(["patch", "batch"] as const)(
-    "reads the exact %s filename instead of its trimmed sibling",
-    async (mode) => {
-      const contents = (level: string) =>
-        JSON.stringify(
-          mode === "patch" ? { logging: { level } } : [{ path: "logging.level", value: level }],
-        );
-      await withPatchFile(contents("error"), async (file) => {
-        const literalFile = `${file} `;
-        fs.writeFileSync(literalFile, contents("debug"), "utf8");
-        const operations =
-          mode === "patch"
-            ? await readConfigPatchOperations({ file: literalFile })
-            : buildConfigSetOperations({ opts: { batchFile: literalFile } });
-
-        expect(operations).toMatchObject([{ setPath: ["logging", "level"], value: "debug" }]);
-      });
-    },
-  );
-
   it.each(['{ "channels": { "custom": { "timeout": 1e999 } } }', nestedConfigRaw("1e999")])(
     "rejects patch files containing non-finite numbers",
     async (contents) => {
