@@ -13,11 +13,15 @@ import type { FileEntry, SessionEntry, SessionHeader } from "../agents/sessions/
 import { resolveStateDir } from "../config/paths.js";
 import { parseSqliteSessionFileMarker } from "../config/sessions/legacy-sqlite-marker.js";
 import {
-  listSessionEntriesCore,
-  loadSessionEntry,
-  loadTranscriptEvents,
+  listSessionEntriesReadOnly,
+  loadSessionEntryReadOnly,
+  readTranscriptExportSnapshotReadOnlySync,
+  type SessionTranscriptReadScope,
   type SessionTranscriptRuntimeTarget,
+  type TranscriptEvent,
 } from "../config/sessions/session-accessor.js";
+import { readRestoredSessionTranscript } from "../config/sessions/session-cold-storage-read.js";
+import { SessionTranscriptColdError } from "../config/sessions/session-cold-storage-state.js";
 import {
   isCanonicalSessionTranscriptEntry,
   scanSessionTranscriptTree,
@@ -196,6 +200,22 @@ function migrateLegacySessionEntries(entries: FileEntry[]): void {
   }
 }
 
+async function loadTranscriptEventsForExport(
+  scope: SessionTranscriptReadScope,
+): Promise<TranscriptEvent[]> {
+  const read = () => readTranscriptExportSnapshotReadOnlySync(scope)?.events ?? [];
+  try {
+    return read();
+  } catch (error) {
+    // Only an archived transcript needs the writable restore owner; hot exports
+    // must not register a writer lease or rewrite database file modes.
+    if (!(error instanceof SessionTranscriptColdError) || error.sessionId !== scope.sessionId) {
+      throw error;
+    }
+    return readRestoredSessionTranscript(scope, read);
+  }
+}
+
 async function readSessionEntries(params: {
   sessionFile?: string;
   sessionTarget?: SessionTranscriptRuntimeTarget;
@@ -209,7 +229,7 @@ async function readSessionEntries(params: {
   const completeTarget = normalizeCompleteSessionTarget(params.sessionTarget);
   if (completeTarget) {
     const targetKeyAgentId = parseAgentSessionKey(completeTarget.sessionKey)?.agentId;
-    const targetKeyEntry = loadSessionEntry({
+    const targetKeyEntry = loadSessionEntryReadOnly({
       agentId: completeTarget.agentId,
       sessionKey: completeTarget.sessionKey,
       storePath: completeTarget.storePath,
@@ -224,7 +244,7 @@ async function readSessionEntries(params: {
     ) {
       throw new Error("Trajectory export transcript target does not match the requested session");
     }
-    const events = await loadTranscriptEvents({
+    const events = await loadTranscriptEventsForExport({
       agentId: completeTarget.agentId,
       sessionId: completeTarget.sessionId,
       sessionKey: completeTarget.sessionKey,
@@ -261,7 +281,7 @@ async function readSessionEntries(params: {
   const targetKeyAgentId = parseAgentSessionKey(incompleteTarget?.sessionKey)?.agentId;
   const targetKeyEntry =
     incompleteTarget?.sessionKey && marker
-      ? loadSessionEntry({
+      ? loadSessionEntryReadOnly({
           agentId: marker.agentId,
           sessionKey: incompleteTarget.sessionKey,
           storePath: marker.storePath,
@@ -279,13 +299,13 @@ async function readSessionEntries(params: {
     throw new Error("Trajectory export transcript target conflicts with the legacy marker");
   }
   const suppliedKeyEntry = params.sessionKey
-    ? loadSessionEntry({
+    ? loadSessionEntryReadOnly({
         agentId: marker.agentId,
         sessionKey: params.sessionKey,
         storePath: marker.storePath,
       })
     : undefined;
-  const markerMatches = listSessionEntriesCore({
+  const markerMatches = listSessionEntriesReadOnly({
     agentId: marker.agentId,
     storePath: marker.storePath,
   }).filter(({ entry }) => entry.sessionId === marker.sessionId);
@@ -306,7 +326,7 @@ async function readSessionEntries(params: {
   }
   return collectSessionEntries(
     (
-      await loadTranscriptEvents({
+      await loadTranscriptEventsForExport({
         agentId: marker.agentId,
         sessionId: marker.sessionId,
         ...(markerSessionKey ? { sessionKey: markerSessionKey } : {}),
