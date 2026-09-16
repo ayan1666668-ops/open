@@ -107,6 +107,42 @@ describe("buildFeishuPresentationCard", () => {
     expect(joined).toContain("r0");
     expect(joined).toContain("r79");
   });
+
+  // The fallback text is projected like any block and outgrows the limit the same way,
+  // and it reaches the card ahead of the blocks rather than through them.
+  it("splits a projected fallback that outgrows the card text limit", () => {
+    const header = "Quarterly revenue attainment by named account owner";
+    const tableMarkdown = [
+      `| ${header} | n |`,
+      "| --- | --- |",
+      ...Array.from({ length: 80 }, (_entry, index) => `| r${index} | ${index % 10} |`),
+    ].join("\n");
+    const presentation = normalizeMessagePresentation({
+      blocks: [{ type: "divider" }],
+    });
+    if (!presentation) {
+      throw new Error("expected valid presentation");
+    }
+    expect(tableMarkdown.length).toBeLessThanOrEqual(4000);
+    expect(convertMarkdownTables(tableMarkdown, "code").length).toBeGreaterThan(4000);
+
+    const elements = buildFeishuPresentationCard({
+      presentation,
+      fallbackText: tableMarkdown,
+      renderText: (text) => convertMarkdownTables(text, "code"),
+    }).body.elements as { tag: string; content?: string }[];
+
+    const markdownElements = elements.filter((element) => element.tag === "markdown");
+    expect(markdownElements.length).toBeGreaterThan(1);
+    for (const element of markdownElements) {
+      expect(element.content?.length ?? 0).toBeLessThanOrEqual(4000);
+      const markers = element.content?.match(/^```/gmu) ?? [];
+      expect(markers.length).toBe(2);
+    }
+    const joined = markdownElements.map((element) => element.content).join("");
+    expect(joined).toContain(header);
+    expect(joined).toContain("r79");
+  });
 });
 
 describe("isFeishuCardWithinEnvelope", () => {

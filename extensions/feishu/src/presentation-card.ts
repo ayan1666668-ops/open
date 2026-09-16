@@ -424,10 +424,10 @@ function buildFeishuPresentationCardElements(params: {
   const renderText = params.renderText ?? ((text: string) => text);
   const fallbackText = params.fallbackText?.trim();
   if (fallbackText) {
-    elements.push({
-      tag: "markdown",
-      content: escapeFeishuCardMarkdownText(renderText(fallbackText)),
-    });
+    // The fallback is projected like any block and outgrows the limit the same way.
+    for (const part of projectBlockText(fallbackText, renderText)) {
+      elements.push({ tag: "markdown", content: escapeFeishuCardMarkdownText(part) });
+    }
   }
   for (const block of params.presentation.blocks) {
     for (const element of buildFeishuCardElementsForBlock(block, renderText)) {

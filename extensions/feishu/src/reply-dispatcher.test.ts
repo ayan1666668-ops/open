@@ -5383,6 +5383,37 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
       },
     );
 
+    // A quoted table keeps its prefix through conversion, so the fence and the list
+    // marker arrive behind one and a pattern anchored at the line start reads them as
+    // prose. Underscoring either stops Feishu recognising the shape the mode produced.
+    it.each([
+      { tables: "code" as const, structural: "> ```", wrapped: "_> ```_" },
+      {
+        tables: "bullets" as const,
+        structural: "> \u2022 Role: Lead",
+        wrapped: "_> \u2022 Role: Lead_",
+      },
+    ])(
+      "keeps a delivered $tables reasoning table readable behind a quote",
+      async ({ tables, structural, wrapped }) => {
+        const { options } = createBlockTableHarness(tableCfg(tables));
+        const quotedTable = tableMarkdown
+          .split("\n")
+          .map((line) => `> ${line}`)
+          .join("\n");
+        await options.deliver(
+          { text: `Checking the roster.\n\n${quotedTable}`, isReasoning: true },
+          { kind: "final" },
+        );
+        await options.onIdle?.();
+
+        const committed = requireStreamingInstance(0).closeWithResult.mock.calls[0]?.[0] ?? "";
+        expect(committed).toContain("_Checking the roster._");
+        expect(committed).toContain(structural);
+        expect(committed).not.toContain(wrapped);
+      },
+    );
+
     // `block` leaves every one of these shapes as it found them, so the formatter is
     // the last thing standing between the delimiter row and the card. A row is a row
     // whether or not it opens with a pipe.

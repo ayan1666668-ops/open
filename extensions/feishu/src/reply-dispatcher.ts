@@ -410,10 +410,14 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
   // and trailing-pipe-only tables, and a blockquoted table carries its prefix first.
   // Erring toward leaving a line plain costs an italic; erring the other way
   // destroys a delimiter row and with it the table.
+  // A quoted table keeps its prefix through conversion, so the fence and the list marker
+  // the mode produces arrive behind one, and a pattern anchored at the line start reads
+  // them as prose and underscores them away.
+  const reasoningFenceLine = /^\s*(?:>\s*)*```/u;
   const isReasoningStructureLine = (line: string): boolean =>
-    /^\s*```/u.test(line) ||
+    reasoningFenceLine.test(line) ||
     line.includes("|") ||
-    /^\s*(?:[-*+\u2022]\s|\d+[.)]\s)/u.test(line) ||
+    /^\s*(?:>\s*)*(?:[-*+\u2022]\s|\d+[.)]\s)/u.test(line) ||
     /^\s*>?\s*:?-{3,}:?\s*$/u.test(line);
 
   // The shared formatter wraps every non-empty line in underscores, which suits prose
@@ -430,7 +434,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
     }
     let insideFence = false;
     const formatted = lines.map((line) => {
-      if (/^\s*```/u.test(line)) {
+      if (reasoningFenceLine.test(line)) {
         insideFence = !insideFence;
         return line;
       }
