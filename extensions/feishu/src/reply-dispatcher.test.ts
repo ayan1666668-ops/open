@@ -5325,6 +5325,78 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
       expect(committed).not.toContain(quoteReasoning(tableMarkdown));
     });
 
+    // Underscores inside a fence are literal text, so wrapping every line of a
+    // converted code table corrupts the rows and stops the fence being a fence.
+    // Prose in the same payload still reads as reasoning.
+    it("keeps a delivered reasoning fence intact and leaves its prose italic", async () => {
+      const { options } = createBlockTableHarness(tableCfg("code"));
+      await options.deliver(
+        { text: `Checking the roster.\n\n${tableMarkdown}`, isReasoning: true },
+        { kind: "final" },
+      );
+      await options.onIdle?.();
+
+      const committed = String(
+        requireStreamingInstance(0).closeWithResult.mock.calls[0]?.[0] ?? "",
+      );
+      expect(committed).toContain("_Checking the roster._");
+      expect(committed).toContain("```");
+      expect(committed).not.toContain("_```_");
+      expect(committed).toContain("| Ada  | Lead |");
+      expect(committed).not.toMatch(/_\| Ada {2}\| Lead \|_/u);
+    });
+
+    // An idle close with no prior block delivery owns nothing in the block receipt map,
+    // so a partly accepted close post used to leave the matching final free to send the
+    // whole answer again, including the prefix the provider had already taken.
+    it.each([
+      { acceptance: "partial", accepted: true },
+      { acceptance: "none", accepted: false },
+    ])(
+      "handles a late final after an idle close post with $acceptance acceptance",
+      async ({ accepted }) => {
+        const { chunkMarkdownTextWithMode } = await vi.importActual<
+          typeof import("openclaw/plugin-sdk/reply-chunking")
+        >("openclaw/plugin-sdk/reply-chunking");
+        getFeishuRuntimeMock().channel.text.chunkMarkdownTextWithMode.mockImplementation(
+          chunkMarkdownTextWithMode,
+        );
+        getFeishuRuntimeMock().channel.text.resolveTextChunkLimit.mockReturnValue(200);
+        const { result, options } = createBlockTableHarness(tableCfg("off"));
+        const text = `${tableMarkdown}\n${"| Grace | Engineer |\n".repeat(30)}`.trim();
+        if (accepted) {
+          sendMessageFeishuMock.mockResolvedValueOnce({ messageId: "om-accepted-prefix" });
+        } else {
+          sendMessageFeishuMock.mockRejectedValueOnce(new Error("first chunk rejected"));
+        }
+        sendMessageFeishuMock
+          .mockRejectedValueOnce(new Error("later chunk rejected"))
+          .mockResolvedValue({ messageId: "om-later-send" });
+        result.replyOptions.onPartialReply?.({ text });
+        await vi.waitFor(() => expect(streamingInstances).toHaveLength(1));
+
+        const idleError: unknown = await Promise.resolve(options.onIdle?.()).catch(
+          (error: unknown) => error,
+        );
+        const callsAfterIdle = sendMessageFeishuMock.mock.calls.length;
+
+        const lateError: unknown = await options
+          .deliver({ text }, { kind: "final" })
+          .catch((error: unknown) => error);
+
+        if (accepted) {
+          // The prefix the provider took stays taken. The final claims that settlement and
+          // reports the original partial failure rather than sending the answer again.
+          expect(isChannelPartialDeliveryError(idleError)).toBe(true);
+          expect(sendMessageFeishuMock.mock.calls.length).toBe(callsAfterIdle);
+          expect(isChannelPartialDeliveryError(lateError)).toBe(true);
+        } else {
+          // Nothing was accepted, so the answer is still owed and the final retries it.
+          expect(sendMessageFeishuMock.mock.calls.length).toBeGreaterThan(callsAfterIdle);
+        }
+      },
+    );
+
     // This post stands in for the final and the final is then skipped as a duplicate,
     // so the mentions the final would have carried have to ride the post. Otherwise a
     // group reply forwarding mentioned users delivers the answer without notifying them.
@@ -5603,11 +5675,20 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
           await reasoningOptions.deliver({ text: tableMarkdown, isReasoning: true }, { kind });
           await reasoningOptions.onIdle?.();
           const instance = requireStreamingInstance(kind === "block" ? 1 : 2);
+          // Underscores inside a fence are literal, so a converted code table keeps
+          // its fence and rows plain while prose around it stays italic.
+          let insideFence = false;
           const expected =
             "Thinking\n\n" +
             converted()
               .split("\n")
-              .map((line) => (line ? `_${line}_` : line))
+              .map((line) => {
+                if (/^\s*```/u.test(line)) {
+                  insideFence = !insideFence;
+                  return line;
+                }
+                return insideFence || !line ? line : `_${line}_`;
+              })
               .join("\n");
           expect(instance.closeWithResult).toHaveBeenCalledWith(expected, expect.anything());
         }

@@ -392,6 +392,27 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
     visibleReplySent = true;
   };
 
+  // The shared formatter wraps every non-empty line in underscores. When the table
+  // mode has already converted a table into a fenced block, those underscores land
+  // inside the fence, where they are literal text, so the rows arrive corrupted and
+  // the fence markers stop being fences. Italicize prose only and leave a fence and
+  // its contents alone. The plain label stays so existing detection keeps working.
+  const formatReasoningWithFences = (text: string): string => {
+    const trimmed = text.trim();
+    if (!trimmed || !trimmed.includes("```")) {
+      return formatReasoningMessage(text);
+    }
+    let insideFence = false;
+    const lines = trimmed.split("\n").map((line) => {
+      if (/^\s*```/u.test(line)) {
+        insideFence = !insideFence;
+        return line;
+      }
+      return insideFence || !line ? line : `_${line}_`;
+    });
+    return `Thinking\n\n${lines.join("\n")}`;
+  };
+
   const formatReasoningPrefix = (thinking: string): string => {
     if (!thinking) {
       return "";
@@ -706,6 +727,19 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
           error,
           disposition,
         );
+      }
+      // A close whose post was partly accepted owns that answer from here on, so a late
+      // matching final claims this settlement and rethrows the partial failure instead of
+      // sending the accepted prefix a second time. This records ownership, not success:
+      // the stored error still reaches the caller. A close that had nothing accepted keeps
+      // no ownership and stays retryable.
+      if (
+        disposition === "closed" &&
+        result.visibleReplySent &&
+        answerText &&
+        isChannelPartialDeliveryError(error)
+      ) {
+        deliveredFinalTexts.add(answerText);
       }
       return {
         ...outcome,
@@ -1490,7 +1524,9 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
       const hasIndependentPresentation = presentationCard !== undefined || hasPresentationFallback;
       const resolvedText = payload.text;
       const payloadText =
-        payload.isReasoning && resolvedText ? formatReasoningMessage(resolvedText) : resolvedText;
+        payload.isReasoning && resolvedText
+          ? formatReasoningWithFences(resolvedText)
+          : resolvedText;
       const reply = resolveSendableOutboundReplyParts({ ...payload, text: payloadText });
       // Reasoning retains its established formatted delivery. Answer snapshots
       // and mirrored blocks instead share unconverted prose.
