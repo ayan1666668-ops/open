@@ -12,7 +12,7 @@ it.each(
     [
       { kind: "unknown key", config: { unknownSetting: true } },
       { kind: "invalid core field", config: { gateway: { port: "invalid" } } },
-    ].map((scenario) => ({ ...scenario, dryRun })),
+    ].map(({ kind, config }) => ({ kind, config, dryRun })),
   ),
 )("identifies $kind as configuration failure (dryRun=$dryRun)", async ({ config, dryRun }) => {
   const configPath = process.env.OPENCLAW_CONFIG_PATH!;
