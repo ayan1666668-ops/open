@@ -92,11 +92,11 @@ export function repairStateSchema(
         };
       }
     }
+    const applied: string[] = [];
     const changes = runStateSchemaMigrationTransaction(
       db,
       pathname,
       () => {
-        const applied = repairAdmittedSchema?.() ?? [];
         if (!repairAdmittedSchema) {
           assertOpenClawStateWriteAllowed({ database: db, databasePath: pathname, env });
         }
@@ -202,6 +202,9 @@ export function repairStateSchema(
         busyTimeoutMs: OPENCLAW_SQLITE_BUSY_TIMEOUT_MS,
         databaseLabel: pathname,
         operationLabel: "state.schema.repair",
+      },
+      () => {
+        applied.push(...(repairAdmittedSchema?.() ?? []));
       },
     );
     const quarantineCleared = clearOpenClawDatabaseQuarantine(pathname, { env });

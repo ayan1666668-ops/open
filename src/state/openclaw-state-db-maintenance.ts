@@ -541,10 +541,13 @@ export function runStateSchemaMigrationTransaction<T>(
   pathname: string,
   migrate: () => T,
   transactionOptions: SqliteTransactionOptions,
+  prepareSchema?: () => void,
 ): T {
   return runSqliteImmediateTransactionSync(
     db,
     () => {
+      // Doctor restores catalog readability before the publication prelude reads it.
+      prepareSchema?.();
       const publishedVersion = readSqliteUserVersion(db);
       const blocker =
         publishedVersion < OPENCLAW_STATE_SCHEMA_VERSION
