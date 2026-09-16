@@ -1567,7 +1567,10 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
               );
             }
           }
-          return mergeFeishuReplyDeliveryResults(deliveredResults, text);
+          // No content override here either. A fallback whose conversion the cut could not
+          // carry sends the authored prose instead, and the merge already reports what the
+          // senders accepted rather than what this branch asked them for.
+          return mergeFeishuReplyDeliveryResults(deliveredResults);
         }
         if (info?.kind === "block") {
           startStreaming();

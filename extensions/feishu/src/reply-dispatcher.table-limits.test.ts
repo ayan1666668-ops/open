@@ -1055,4 +1055,28 @@ describe("createFeishuReplyDispatcher table limits", () => {
     expect(posted).toContain(fallback.quotedRow);
     expect(posted).not.toContain("```");
   });
+
+  // The lifecycle records the reported content as what the reader received. A presentation
+  // fallback is delivered by the same chunker as any other post, so the content it reports
+  // is whatever that chunker accepted, not the converted text the branch asked for.
+  it("reports the presentation prose a forced fallback posted", async () => {
+    const chunking = await vi.importActual<typeof import("openclaw/plugin-sdk/reply-chunking")>(
+      "openclaw/plugin-sdk/reply-chunking",
+    );
+    getFeishuRuntimeMock().channel.text.chunkMarkdownTextWithMode.mockImplementation(
+      chunking.chunkMarkdownTextWithMode,
+    );
+    const fallback = forcedPresentationFallback();
+
+    const delivery = await fallback.deliver();
+
+    expect(sendCardFeishuMock).not.toHaveBeenCalled();
+    const posted = sendMessageFeishuMock.mock.calls
+      .map((call) => String(call[0]?.text ?? ""))
+      .join("");
+    expect(posted).toContain(fallback.quotedRow);
+    expect(delivery?.content).toContain(fallback.quotedRow);
+    expect(delivery?.content).toContain(fallback.lastProseLine);
+    expect(delivery?.content).not.toContain("```");
+  });
 });
