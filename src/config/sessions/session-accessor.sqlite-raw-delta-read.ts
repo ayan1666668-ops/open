@@ -57,7 +57,7 @@ function parseRawTranscriptCursor(value: string): RawTranscriptCursor | undefine
   try {
     const parsed = JSON.parse(
       Buffer.from(value, "base64url").toString("utf8"),
-    ) as Partial<RawTranscriptCursor>;
+    ) as Partial<RawTranscriptCursor>; // SAFETY: Checks and catch reject invalid cursor shapes.
     if (
       parsed.version !== RAW_TRANSCRIPT_CURSOR_VERSION ||
       typeof parsed.agentId !== "string" ||
@@ -68,6 +68,7 @@ function parseRawTranscriptCursor(value: string): RawTranscriptCursor | undefine
     ) {
       return undefined;
     }
+    // SAFETY: All required fields and the sequence range passed validation above.
     return parsed as RawTranscriptCursor;
   } catch {
     return undefined;

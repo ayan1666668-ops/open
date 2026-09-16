@@ -8,16 +8,11 @@ export function attachOpenClawTranscriptMeta(
   message: unknown,
   meta: Record<string, unknown>,
 ): unknown {
-  if (!message || typeof message !== "object" || Array.isArray(message)) {
+  const record = asOptionalRecord(message);
+  if (!record) {
     return message;
   }
-  const record = message as Record<string, unknown>;
-  const existing =
-    record["__openclaw"] &&
-    typeof record["__openclaw"] === "object" &&
-    !Array.isArray(record["__openclaw"])
-      ? (record["__openclaw"] as Record<string, unknown>)
-      : {};
+  const existing = asOptionalRecord(record["__openclaw"]) ?? {};
   return {
     ...record,
     __openclaw: {
@@ -28,10 +23,7 @@ export function attachOpenClawTranscriptMeta(
 }
 
 export function readTranscriptMessageIdempotencyKey(message: unknown): string | undefined {
-  if (!message || typeof message !== "object" || Array.isArray(message)) {
-    return undefined;
-  }
-  const value = (message as Record<string, unknown>).idempotencyKey;
+  const value = asOptionalRecord(message)?.idempotencyKey;
   return typeof value === "string" && value.trim() ? value : undefined;
 }
 
