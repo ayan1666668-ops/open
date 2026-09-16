@@ -964,7 +964,6 @@ class NodeRuntimeAgentSelectionTest {
       sessions.set(newerSessions + chosenSession)
       if (describedState == RememberedSessionState.ArchivedAck) {
         val chat = ReflectionHelpers.getField<ChatController>(runtime, "chat")
-        if (archiveAckOrder == ArchiveAckOrder.AfterDifferentArchivedIdentity) chosenSessionId.set(archiveSessionId)
         val archive =
           async {
             chat.patchSession(
@@ -986,6 +985,8 @@ class NodeRuntimeAgentSelectionTest {
 
             ArchiveAckOrder.AfterNewSessionIdentity, ArchiveAckOrder.AfterDifferentArchivedIdentity -> {
               val selectionGeneration = chat.selectionGeneration.value
+              // Publish the successor only after archiveRequested: a late main-session
+              // adoption refresh must not observe it before the archive captures its owner.
               chosenSessionId.set("replacement-$chosenKey")
               chat.refresh()
               withTimeout(2_000) {
