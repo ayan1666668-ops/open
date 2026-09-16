@@ -27,6 +27,14 @@ and history stay unchanged. OpenClaw verifies that the original app-server clien
 is still current, the thread has no active turn, and Codex has unloaded the
 previous configuration before installing the current policy.
 
+This refresh requires OpenClaw to be the sole lifecycle owner of the native
+conversation. A gateway-owned remote app-server satisfies this deployment contract
+when no independent client can reload the same conversation during the handoff.
+The connection and unload checks do not provide an atomic handoff between
+independent clients: a competing resume can reinstall old native configuration.
+Shared app-servers with competing conversation owners are outside this refresh
+contract.
+
 If a subscriber or failed native unload prevents configuration proof, the turn
 stops before inference. A prewrite ownership refusal keeps the healthy shared
 client and its other conversations available. Policy refusals and uncertain or

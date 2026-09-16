@@ -16,8 +16,12 @@ The full generic developer policy, including a `before_prompt_build.systemPrompt
 replacement, remains native session configuration for compaction and native-child
 inheritance. Ordinary persistent cold or changed-configuration resumes require an
 uninterrupted app-server client and observed native unload before OpenClaw injects
-the full current policy. Local and remote transports use the same conversation ID
-through unsubscribe and resume. Merely sending `developerInstructions` on `thread/resume` does not
+the full current policy. OpenClaw must be the sole lifecycle owner of the native
+conversation, including when its app-server runs remotely. Independent clients
+that can reload the same conversation during the handoff are outside this contract;
+observed unload does not reserve the conversation against a competing resume.
+Local and remote transports use the same conversation ID through unsubscribe and
+resume. Merely sending `developerInstructions` on `thread/resume` does not
 refresh the model-visible policy on stock Codex. Explicit `systemPrompt: ""` sends
 a withdrawal, not a fallback to older instructions.
 
