@@ -1939,8 +1939,7 @@ jobs:
               preflight: 1,
               "ci-gate": 1,
               "pnpm-store-warmup": count(manifest.run_node || manifest.run_check_docs),
-              // The owner-path companion can land in either order; remove the fallback after it lands.
-              "control-ui-performance": count(manifest.run_control_ui_performance ?? (manifest.run_build_artifacts || manifest.run_ui_tests)),
+              "control-ui-performance": count(manifest.run_control_ui_performance),
               "native-i18n": count(manifest.run_native_i18n),
               "control-ui-i18n": count(manifest.run_control_ui_i18n),
               "checks-fast-core": count(manifest.run_checks_fast_core, manifest.checks_fast_core_matrix.include.length),
