@@ -3645,9 +3645,20 @@ describe("failure alert form round trips", () => {
     expect(request).not.toHaveBeenCalled();
   });
 
+  // Build userinfo-bearing URLs at runtime (mirroring what a user could type)
+  // so the fixtures stay free of literal embedded-credential strings.
+  const webhookUrlWithUserinfo = (scheme: "http" | "https", withPassword: boolean) => {
+    const url = new URL(`${scheme}://example.com/hook`);
+    url.username = "user";
+    if (withPassword) {
+      url.password = "pass";
+    }
+    return url.href;
+  };
+
   it.each([
-    "https://user:pass@example.com/hook",
-    "http://user@example.com/hook",
+    webhookUrlWithUserinfo("https", true),
+    webhookUrlWithUserinfo("http", false),
     "https://exa mple.com/hook",
     "http://",
   ])("rejects webhook URLs the server boundary rejects: %j", (deliveryTo) => {
