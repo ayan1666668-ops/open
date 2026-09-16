@@ -802,4 +802,34 @@ describe("processDiscordMessage draft streaming progress", () => {
       complete: true,
     });
   });
+
+  it("clears the queued progress draft when the follow-up settles after dispatch returned", async () => {
+    const elapseProgressDraftStartDelay = useProgressDraftStartDelay();
+    const draftStream = createMockDraftStreamForTest();
+
+    let retainedParams: DispatchInboundParams | undefined;
+    dispatchInboundMessage.mockImplementationOnce(async (params?: DispatchInboundParams) => {
+      // The queue admits this turn only after its dispatch returned, so the
+      // processing finally block cannot settle the progress message the
+      // drained turn publishes.
+      retainedParams = params;
+      return { queuedFinal: true, counts: { final: 1, tool: 0, block: 0 } };
+    });
+
+    const ctx = await createAutomaticDraftContext({
+      discordConfig: {
+        streaming: { mode: "progress", progress: { toolProgress: true, label: "Shelling" } },
+      },
+    });
+
+    await runProcessDiscordMessage(ctx);
+
+    await retainedParams?.replyOptions?.onQueuedFollowupAdmitted?.();
+    await retainedParams?.replyOptions?.onToolStart?.({ name: "read", phase: "start" });
+    await retainedParams?.replyOptions?.onItemEvent?.({ progressText: "queued work" });
+    await elapseProgressDraftStartDelay();
+    await retainedParams?.replyOptions?.onQueuedFollowupSettled?.();
+
+    expect(draftStream.messageId()).toBeUndefined();
+  });
 });
