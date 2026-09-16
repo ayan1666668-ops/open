@@ -61,20 +61,14 @@ type CodexAuthProfileConfig = {
   displayName?: string;
 };
 
-async function loadLocalAuthProfileStore(
+function loadLocalAuthProfileStore(
   targets: CodexMigrationTargets,
-  stateDir: string,
-): Promise<ReturnType<typeof loadAuthProfileStoreWithoutExternalProfiles>> {
-  let localStore: ReturnType<typeof loadAuthProfileStoreWithoutExternalProfiles> | undefined;
-  await updateAuthProfileStoreWithLock({
-    agentDir: targets.agentDir,
-    stateDir,
-    updater: (store) => {
-      localStore = structuredClone(store);
-      return false;
-    },
+): ReturnType<typeof loadAuthProfileStoreWithoutExternalProfiles> {
+  // Bind inheritance to the target owner so planning sees only its local profiles.
+  // The read-only loader leaves a missing target database missing during previews.
+  return loadAuthProfileStoreWithoutExternalProfiles(targets.agentDir, {
+    inheritedAuthDir: targets.agentDir,
   });
-  return localStore ?? { version: 1, profiles: {} };
 }
 
 type CodexAuthConfigApplyResult = "configured" | "conflict" | "unavailable";
@@ -440,7 +434,7 @@ export async function buildCodexAuthItems(params: {
     );
   }
   const store = loadAuthProfileStoreWithoutExternalProfiles(params.targets.agentDir);
-  const localStore = await loadLocalAuthProfileStore(params.targets, params.ctx.stateDir);
+  const localStore = loadLocalAuthProfileStore(params.targets);
   const skipped = !params.ctx.includeSecrets;
   return credentials.map((credential) => {
     const { profileId, matchedExisting } = itemProfileTarget(

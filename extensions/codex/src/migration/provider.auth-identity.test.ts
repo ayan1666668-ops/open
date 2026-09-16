@@ -500,6 +500,39 @@ describe("Codex migration auth identity and inherited profiles", () => {
     expect(await fs.readFile(path.join(fixture.codexHome, "auth.json"), "utf8")).toBe(nativeAuth);
   });
 
+  it("keeps auth preview read-only when the target agent database is missing", async () => {
+    const fixture = await createCodexFixture();
+    await writeFile(
+      path.join(fixture.codexHome, "auth.json"),
+      JSON.stringify({
+        auth_mode: "apikey",
+        OPENAI_API_KEY: "fixture-preview-key",
+      }),
+    );
+    const agentId = "research";
+    const databasePath = path.join(targetAgentDir(fixture, agentId), "openclaw-agent.sqlite");
+    const ctx = makeContext({
+      source: fixture.codexHome,
+      stateDir: fixture.stateDir,
+      workspaceDir: fixture.workspaceDir,
+      targetAgentId: agentId,
+      itemKinds: ["auth"],
+      providerOptions: { credentialKind: "api_key", configPatchMode: "none" },
+      config: {
+        agents: {
+          defaults: { workspace: fixture.workspaceDir },
+          list: [{ id: "main", default: true }, { id: agentId }],
+        },
+      },
+    });
+    const provider = buildCodexMigrationProvider();
+
+    const plan = await provider.plan(ctx);
+
+    expect(findItem(plan.items, "auth:openai:api-key").status).toBe("skipped");
+    await expect(fs.access(databasePath)).rejects.toThrow();
+  });
+
   it("preserves an inherited OAuth refresh owner for a secondary agent import", async () => {
     const fixture = await createCodexFixture();
     credentialStorage.accountType = "chatgpt";
