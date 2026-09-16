@@ -171,11 +171,10 @@ export class ChatPane extends ChatPaneLayoutRender {
       !sessionParticipationBlocked &&
       hasOperatorWriteAccess(gatewaySnapshot.hello?.auth ?? null);
     const onDismissProgressCard = canDismissProgressCard
-      ? (card: ProgressCard) => {
+      ? (card: ProgressCard) =>
           void this.progressCard
             .dismiss(card)
-            .catch(() => showToast({ message: t("sessionProgressCard.dismissFailed") }));
-        }
+            .catch(() => showToast({ message: t("sessionProgressCard.dismissFailed") }))
       : undefined;
     const restartRecoveryTombstoned = selectedSession?.restartRecoveryStatus === "tombstoned";
     const multiIdentity = this.hasMultipleIdentities();
@@ -255,7 +254,7 @@ export class ChatPane extends ChatPaneLayoutRender {
       onFork: (entryId) => this.forkFromMessage(entryId),
       onReset: () => void clearChatHistory(state),
     });
-    const setReply = (target: NonNullable<ChatProps["replyTarget"]> | null) => {
+    const setReply: NonNullable<ChatProps["onSetReply"]> = (target) => {
       state.chatReplyTarget = target;
       state.requestUpdate?.();
     };
@@ -648,7 +647,10 @@ export class ChatPane extends ChatPaneLayoutRender {
           : (draft, submissionAction) => submitChatGoalDraft(state, draft, submissionAction),
       onCompanionPrefill: this.prefillSessionCompanionQuestion,
       replyTarget: state.chatReplyTarget ?? null,
-      onClearReply: () => setReply(null),
+      onClearReply: () => {
+        state.chatReplyTarget = null;
+        state.requestUpdate?.();
+      },
       onSetReply: sessionDisabledBanner ? undefined : setReply,
       replyMessageAccess: catalogKey || selectedSessionArchived ? undefined : replyMessageAccess,
       onRewindMessage: selectedSessionArchived ? undefined : sessionActionCallbacks.onRewindMessage,
@@ -657,9 +659,8 @@ export class ChatPane extends ChatPaneLayoutRender {
       agentsList: state.agentsList,
       currentAgentId,
       ...chatProps,
-      onAgentChange: (agentId) => {
-        this.onPaneSessionChange?.(this.paneId, buildAgentMainSessionKey({ agentId }));
-      },
+      onAgentChange: (agentId) =>
+        void this.onPaneSessionChange?.(this.paneId, buildAgentMainSessionKey({ agentId })),
       onSessionSelect: (next) => this.onPaneSessionChange?.(this.paneId, next),
       canvasPluginSurfaceUrl: state.canvasPluginSurfaceUrl,
       boardProvider: board.provider,
