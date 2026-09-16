@@ -100,6 +100,8 @@ export function resolveSandboxDockerConfig(params: {
 
   const binds = [...(globalDocker?.binds ?? []), ...(agentDocker?.binds ?? [])];
 
+  const capAdd = agentDocker?.capAdd ?? globalDocker?.capAdd ?? [];
+
   return {
     image: agentDocker?.image ?? globalDocker?.image ?? DEFAULT_SANDBOX_IMAGE,
     containerPrefix:
@@ -112,7 +114,11 @@ export function resolveSandboxDockerConfig(params: {
     network: agentDocker?.network ?? globalDocker?.network ?? "none",
     user: agentDocker?.user ?? globalDocker?.user,
     capDrop: agentDocker?.capDrop ?? globalDocker?.capDrop ?? ["ALL"],
-    capAdd: agentDocker?.capAdd ?? globalDocker?.capAdd ?? [],
+    // Canonicalize absent and empty capAdd to undefined so a config that grants
+    // no capability keeps its pre-change hash (an empty array would otherwise
+    // survive hash normalization and force needless container recreation); a
+    // non-empty grant still invalidates reuse.
+    capAdd: capAdd.length ? capAdd : undefined,
     env,
     setupCommand: agentDocker?.setupCommand ?? globalDocker?.setupCommand,
     pidsLimit: agentDocker?.pidsLimit ?? globalDocker?.pidsLimit,

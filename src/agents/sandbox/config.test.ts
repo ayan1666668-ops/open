@@ -21,6 +21,26 @@ describe("sandbox config", () => {
     ).toBe("configured");
   });
 
+  it("resolves capAdd only for a non-empty capability grant", () => {
+    // Absent: the resolved config carries no capAdd, so an unchanged config keeps
+    // its pre-change container hash instead of forcing needless recreation.
+    expect(resolveSandboxConfigForAgent().docker.capAdd).toBeUndefined();
+
+    // Explicit empty array canonicalizes to undefined for the same reason.
+    expect(
+      resolveSandboxConfigForAgent({
+        agents: { defaults: { sandbox: { docker: { capAdd: [] } } } },
+      }).docker.capAdd,
+    ).toBeUndefined();
+
+    // A real grant is preserved so it reaches --cap-add and invalidates reuse.
+    expect(
+      resolveSandboxConfigForAgent({
+        agents: { defaults: { sandbox: { docker: { capAdd: ["NET_RAW"] } } } },
+      }).docker.capAdd,
+    ).toEqual(["NET_RAW"]);
+  });
+
   it("caps browser autostart timeout to a timer-safe delay", () => {
     // Browser startup timeouts flow into Node timers; huge config values must
     // not overflow or become immediate delays.
