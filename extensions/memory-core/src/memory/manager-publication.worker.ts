@@ -224,7 +224,9 @@ export function openExistingSqliteWorkerBackend(
             { withCommit: hooks.withCommit },
           ),
         );
-        if (outcome.ok || outcome.entered) {
+        // Failed publication closes the Worker at its host owner. Preserve the
+        // transaction error instead of replacing it with a staging-cleanup error.
+        if (outcome.ok) {
           try {
             discard();
           } catch (error) {
@@ -232,7 +234,7 @@ export function openExistingSqliteWorkerBackend(
               ok: false,
               error: failure(error),
               entered: true,
-              committed: outcome.ok || outcome.committed,
+              committed: true,
             };
           }
         }

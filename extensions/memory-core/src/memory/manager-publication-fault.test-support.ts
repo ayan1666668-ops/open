@@ -9,6 +9,7 @@ export type PublicationFaultInput = MemoryPublicationConnection & {
   failRollback: boolean;
   failClose: boolean;
   throwResultFailure: boolean;
+  failDiscard?: boolean;
 };
 
 export function openExistingSqliteWorkerBackend(
@@ -32,6 +33,9 @@ export function openExistingSqliteWorkerBackend(
   const originalExec = db.exec.bind(db);
   const originalClose = db.close.bind(db);
   db.exec = (sql) => {
+    if (input.failDiscard && sql === "DELETE FROM temp.memory_publication_input") {
+      throw new Error("injected staging discard failure");
+    }
     if (input.failRollback && sql === "ROLLBACK") {
       throw new Error("injected rollback failure");
     }
