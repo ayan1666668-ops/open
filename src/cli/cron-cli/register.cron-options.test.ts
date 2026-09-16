@@ -57,6 +57,28 @@ describe("shared automation mutation options", () => {
     callGatewayFromCli.mockResolvedValue({ ok: true });
   });
 
+  it.each([
+    { operation: "add", method: "cron.add", args: ["add", "--name", "shell", "--every", "1h"] },
+    { operation: "edit", method: "cron.update", args: ["edit", "job-1"] },
+  ])(
+    "preserves escaped trailing whitespace in --command on $operation",
+    async ({ method, args }) => {
+      const command = "printf %s hello\\ ";
+      await createMutationProgram().parseAsync([...args, "--command", command], { from: "user" });
+
+      const payload = { kind: "command", argv: ["sh", "-lc", command] };
+      expect(callGatewayFromCli).toHaveBeenCalledWith(
+        method,
+        expect.anything(),
+        expect.objectContaining(
+          method === "cron.add"
+            ? { payload: expect.objectContaining(payload) }
+            : { patch: { payload } },
+        ),
+      );
+    },
+  );
+
   it.each(
     ["--at", "--every", "--cron", "--on-exit"].flatMap((flag) =>
       ["", "   "].map((value) => ({ flag, value })),
