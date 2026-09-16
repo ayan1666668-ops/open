@@ -1,31 +1,10 @@
-export const UPGRADE_SURVIVOR_SCENARIOS = Object.freeze([
-  "base",
-  "msteams-polls",
-  "abandoned-update",
-  "legacy-operator-state",
-  "workshop-doctor-recovery",
-  "mobile-pairing-reconnect",
-  "acpx-openclaw-tools-bridge",
-  "feishu-channel",
-  "bootstrap-persona",
-  "channel-post-core-restore",
-  "plugin-deps-cleanup",
-  "configured-plugin-installs",
-  "missing-configured-plugin-migration",
-  "custom-plugin-siblings",
-  "projects-doctor",
-  "projects-startup-migration",
-  "taskflow-restoration",
-  "stale-source-plugin-shadow",
-  "prerelease-plugin-registry",
-  "tilde-log-path",
-  "meeting-transcripts-sqlite",
-  "versioned-runtime-deps",
-  "cron-scheduled-authority",
-  "sqlite-volume",
-  "recovery-cleanup",
-  "auth-profile-v2026-7-2-beta-5",
-  "watchos-direct-node",
+import catalog from "./upgrade-survivor-scenarios.json" with { type: "json" };
+
+const UPGRADE_SURVIVOR_SCENARIOS = Object.freeze(catalog.scenarios);
+// Frozen Codex allowlist recipes retain their assertion-only scenario.
+export const UPGRADE_SURVIVOR_ASSERTION_SCENARIOS = Object.freeze([
+  ...UPGRADE_SURVIVOR_SCENARIOS,
+  ...catalog.assertionOnlyScenarios,
 ]);
 
 // Oldest release line supported by the operator-state upgrade regression gate.

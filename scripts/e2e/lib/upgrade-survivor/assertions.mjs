@@ -5,7 +5,7 @@ import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { UPGRADE_SURVIVOR_SCENARIOS } from "../../../lib/upgrade-survivor-policy.mjs";
+import { UPGRADE_SURVIVOR_ASSERTION_SCENARIOS } from "../../../lib/upgrade-survivor-policy.mjs";
 import { validatePrepublishPluginRegistryArtifact } from "../../../prepublish-plugin-registry-artifact.mjs";
 import { readPluginInstallIndex } from "../plugin-index-sqlite.mjs";
 import { readPostCoreSnapshot } from "./diagnostics.mjs";
@@ -27,12 +27,7 @@ const legacyOperator =
   command?.includes("legacy-operator")
     ? await import("./legacy-operator-state.mjs")
     : undefined;
-const SCENARIOS = new Set([
-  ...UPGRADE_SURVIVOR_SCENARIOS,
-  // Retain the assertion-only recipe used by frozen Codex allowlist fixtures.
-  "codex-allowlist-survival",
-]);
-
+const SCENARIOS = new Set(UPGRADE_SURVIVOR_ASSERTION_SCENARIOS);
 const PERSONA_FILES = new Map([
   ["BOOTSTRAP.md", "# Existing Bootstrap\n\nDo not overwrite me during update.\n"],
   ["SOUL.md", "# Existing Soul\n\nKeep this voice intact.\n"],

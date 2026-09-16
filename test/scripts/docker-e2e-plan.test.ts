@@ -53,12 +53,17 @@ function copyCurrentScenarioMetadata(targetRoot: string) {
   const paths = [
     "scripts/e2e/lib/upgrade-survivor/assertions.mjs",
     "scripts/lib/upgrade-survivor-policy.mjs",
+    "scripts/lib/upgrade-survivor-scenarios.json",
   ];
   for (const relative of paths) {
     mkdirSync(dirname(join(targetRoot, relative)), { recursive: true });
     copyFileSync(relative, join(targetRoot, relative));
   }
-  return { assertionsFile: join(targetRoot, paths[0]!), policyFile: join(targetRoot, paths[1]!) };
+  return {
+    assertionsFile: join(targetRoot, paths[0]!),
+    policyFile: join(targetRoot, paths[1]!),
+    catalogFile: join(targetRoot, paths[2]!),
+  };
 }
 
 function planFor(
@@ -205,10 +210,10 @@ describe("scripts/lib/docker-e2e-plan", () => {
   );
 
   it.each(["committed", "unapproved checkout"])(
-    "reads the imported literal catalog without executing its %s modules",
+    "reads declared JSON capabilities without executing its %s modules",
     (mode) => {
       const root = tempDirs.make("openclaw-imported-inert-catalog-");
-      const { assertionsFile, policyFile } = copyCurrentScenarioMetadata(root);
+      const { assertionsFile, policyFile, catalogFile } = copyCurrentScenarioMetadata(root);
       const marker = join(root, "executed");
       const markerCode = `\nimport { writeFileSync as markExecuted } from "node:fs"; markExecuted(${JSON.stringify(marker)}, "executed");\n`;
       for (const file of [assertionsFile, policyFile]) {
@@ -217,7 +222,7 @@ describe("scripts/lib/docker-e2e-plan", () => {
       const { sha } = commitTarget(root);
       const source = createFrozenTargetSource(root, sha);
       if (mode === "committed") {
-        writeFileSync(policyFile, 'throw new Error("uncommitted policy must not be read");\n');
+        writeFileSync(catalogFile, "uncommitted catalog must not be read\n");
       }
       const plan = planFor({
         selectedLaneNames: ["published-upgrade-survivor"],
@@ -235,68 +240,21 @@ describe("scripts/lib/docker-e2e-plan", () => {
   );
 
   it.each([
-    "missing policy",
-    "dynamic policy",
-    "spread policy",
-    "duplicate entry",
-    "different import",
-    "different legacy member",
-    "dynamic assertion list",
-    "shadowed Object import",
-    "shadowed Set declaration",
-    "destructured Object binding",
-    "rebound Object.freeze",
-    "rebound global Set",
-    "mutated assertion set",
-    "mutated policy list",
-    "computed assertion call",
-    "assigned policy entry",
-  ])("rejects unsupported imported metadata: %s", (shape) => {
+    ["invalid JSON", "not JSON"],
+    ["dynamic expression", "loadCatalog()"],
+    ["wrong root", "[]"],
+    ["missing list", '{"scenarios":["base"]}'],
+    ["empty scenarios", '{"scenarios":[],"assertionOnlyScenarios":[]}'],
+    ["non-array list", '{"scenarios":["base"],"assertionOnlyScenarios":{}}'],
+    ["invalid entry", '{"scenarios":["bad name"],"assertionOnlyScenarios":[]}'],
+    ["non-string entry", '{"scenarios":[42],"assertionOnlyScenarios":[]}'],
+    ["duplicate entry", '{"scenarios":["base","base"],"assertionOnlyScenarios":[]}'],
+    ["overlapping lists", '{"scenarios":["base"],"assertionOnlyScenarios":["base"]}'],
+    ["unknown field", '{"scenarios":["base"],"assertionOnlyScenarios":[],"dynamic":true}'],
+  ])("rejects unsupported catalog data: %s", (_shape, content) => {
     const root = tempDirs.make("openclaw-unsupported-inert-catalog-");
-    const { assertionsFile, policyFile } = copyCurrentScenarioMetadata(root);
-    let assertions = readFileSync(assertionsFile, "utf8");
-    let policy = readFileSync(policyFile, "utf8");
-    if (shape === "mutated assertion set") {
-      assertions += '\nSCENARIOS.add("unexpected");\n';
-    } else if (shape === "mutated policy list") {
-      policy += '\nUPGRADE_SURVIVOR_SCENARIOS.push("unexpected");\n';
-    } else if (shape === "computed assertion call") {
-      assertions += '\nSCENARIOS[operation]("base");\n';
-    } else if (shape === "assigned policy entry") {
-      policy += '\nUPGRADE_SURVIVOR_SCENARIOS[0] = "base";\n';
-    } else if (shape === "shadowed Object import") {
-      policy = 'import Object from "./unread.mjs";\n' + policy;
-    } else if (shape === "shadowed Set declaration") {
-      assertions = "const Set = globalThis.Set;\n" + assertions;
-    } else if (shape === "destructured Object binding") {
-      policy = "const { Object } = globalThis;\n" + policy;
-    } else if (shape === "rebound Object.freeze") {
-      policy += "\nObject.freeze = Object.freeze;\n";
-    } else if (shape === "rebound global Set") {
-      assertions += "\nglobalThis.Set = globalThis.Set;\n";
-    } else if (shape === "dynamic policy") {
-      policy = policy
-        .replace("Object.freeze([", "Object.freeze(loadCatalog([")
-        .replace("]);", "]));");
-    } else if (shape === "spread policy") {
-      policy = policy.replace("Object.freeze([", "Object.freeze([...otherScenarios,");
-    } else if (shape === "duplicate entry") {
-      policy = policy.replace("Object.freeze([", 'Object.freeze(["base",');
-    } else if (shape === "different import") {
-      assertions = assertions.replace(
-        "../../../lib/upgrade-survivor-policy.mjs",
-        "./other-policy.mjs",
-      );
-    } else if (shape === "different legacy member") {
-      assertions = assertions.replace('"codex-allowlist-survival",', '"unreviewed-legacy-member",');
-    } else if (shape === "dynamic assertion list") {
-      assertions = assertions.replace("...UPGRADE_SURVIVOR_SCENARIOS,", "...loadCatalog(),");
-    }
-    writeFileSync(assertionsFile, assertions);
-    writeFileSync(policyFile, policy);
-    if (shape === "missing policy") {
-      rmSync(policyFile);
-    }
+    const { catalogFile } = copyCurrentScenarioMetadata(root);
+    writeFileSync(catalogFile, content);
     const { sha } = commitTarget(root);
     expect(() =>
       planFor({
@@ -1746,6 +1704,18 @@ await import('./scripts/check-docker-e2e-boundaries.mts');`,
       "published-upgrade-survivor-2026.6.11-meeting-transcripts-sqlite",
       "published-upgrade-survivor-2026.6.11-cron-scheduled-authority",
     ]);
+    const catalogFile = join(targetRoot, "scripts/lib/upgrade-survivor-scenarios.json");
+    mkdirSync(dirname(catalogFile), { recursive: true });
+    writeFileSync(catalogFile, "invalid current catalog");
+    expect(() =>
+      planFor({
+        selectedLaneNames: ["published-upgrade-survivor"],
+        upgradeSurvivorBaselines: "2026.6.11",
+        upgradeSurvivorScenarios: "base",
+        upgradeSurvivorTargetRoot: targetRoot,
+        allowFrozenTargetScenarioOmissions: false,
+      }),
+    ).toThrow(/unrecognized scenario contract/);
   });
 
   it("recognizes the frozen combined mobile and watch scenario catalog", () => {

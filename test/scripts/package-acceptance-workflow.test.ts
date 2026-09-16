@@ -200,6 +200,7 @@ const frozenAdmissionClosure = [
   "scripts/lib/docker-e2e-scenarios.mts",
   "scripts/lib/official-external-channel-catalog.json",
   "scripts/lib/upgrade-survivor-policy.mjs",
+  "scripts/lib/upgrade-survivor-scenarios.json",
   "scripts/lib/release-version.mjs",
   "scripts/lib/frozen-target-compat.sh",
   "scripts/resolve-frozen-codex-live-suite.mjs",
@@ -13920,6 +13921,7 @@ printf '%s\\n' "$DEEPSEEK_API_KEY" "$DEEPINFRA_API_KEY"`,
       "scripts/lib/release-version.mjs",
       "scripts/lib/record-shared.mjs",
       "scripts/lib/upgrade-survivor-policy.mjs",
+      "scripts/lib/upgrade-survivor-scenarios.json",
     ]) {
       copyFileSync(source, join(root, source.replace(/^scripts\//u, "")));
     }

@@ -16,7 +16,7 @@ import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import { UPGRADE_SURVIVOR_SCENARIOS } from "../../scripts/lib/upgrade-survivor-policy.mjs";
+import { UPGRADE_SURVIVOR_ASSERTION_SCENARIOS } from "../../scripts/lib/upgrade-survivor-policy.mjs";
 import type { PluginInstallRecord } from "../../src/config/types.plugins.js";
 import type { PluginUpdateOutcome } from "../../src/plugins/update.js";
 import { withEnv } from "../../src/test-utils/env.js";
@@ -1155,7 +1155,11 @@ function assertCompanionPluginRecords(
       const isolatedLib = join(isolatedScripts, "e2e", "lib");
       cpSync("scripts/e2e/lib", isolatedLib, { recursive: true });
       mkdirSync(join(isolatedScripts, "lib"), { recursive: true });
-      for (const file of ["release-version.mjs", "upgrade-survivor-policy.mjs"]) {
+      for (const file of [
+        "release-version.mjs",
+        "upgrade-survivor-policy.mjs",
+        "upgrade-survivor-scenarios.json",
+      ]) {
         cpSync(join("scripts/lib", file), join(isolatedScripts, "lib", file));
       }
       cpSync(
@@ -1633,11 +1637,12 @@ process.stdout.write(sessionDir + "\\n");
     ) as string[];
 
     expect(scenarios).toContain("base");
+    expect(scenarios).toContain("codex-allowlist-survival");
     expect(scenarios).toContain("mobile-pairing-reconnect");
     expect(scenarios).toContain("acpx-openclaw-tools-bridge");
     expect(scenarios).toContain("prerelease-plugin-registry");
     expect(scenarios).toContain("sqlite-volume");
-    expect(scenarios).toEqual([...UPGRADE_SURVIVOR_SCENARIOS, "codex-allowlist-survival"]);
+    expect(scenarios).toEqual(UPGRADE_SURVIVOR_ASSERTION_SCENARIOS);
     expect(new Set(scenarios).size).toBe(scenarios.length);
   });
 
