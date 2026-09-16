@@ -278,7 +278,6 @@ export async function runConfigOperations(params: {
   successMode: "set" | "patch";
   currentExpectation?: ConfigSetCurrentExpectation;
   beforePersistentApply?: () => void;
-  preCommitRuntimePreflight?: (sourceConfig: OpenClawConfig) => Promise<void>;
 }) {
   const { runtime, operations, options } = params;
   if (
@@ -445,9 +444,6 @@ export async function runConfigOperations(params: {
     writeOptions: {
       ...mutationStart.writeOptions,
       auditOrigin: "cli",
-      ...(params.preCommitRuntimePreflight
-        ? { preCommitRuntimePreflight: params.preCommitRuntimePreflight }
-        : {}),
       ...(assertCurrentExpectation || params.beforePersistentApply
         ? {
             assertConfigPathForWrite: () => {

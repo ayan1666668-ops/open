@@ -5,7 +5,6 @@ import { theme } from "../../packages/terminal-core/src/theme.js";
 import { formatConfigIssueLines, normalizeConfigIssues } from "../config/issue-format.js";
 import { renderConfigValidationIssueLines } from "../config/issue-location.js";
 import { CONFIG_PATH, resolveConfigPath } from "../config/paths.js";
-import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { danger, success, warn } from "../globals.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import {
@@ -56,7 +55,6 @@ export async function runConfigSet(opts: {
   cliOptions: ConfigSetOptions;
   runtime?: RuntimeEnv;
   beforePersistentApply?: () => void;
-  preCommitRuntimePreflight?: (sourceConfig: OpenClawConfig) => Promise<void>;
 }) {
   const runtime = opts.runtime ?? defaultRuntime;
   const { handleConfigMutationError, runConfigOperations } = await import("./config-cli-runner.js");
@@ -80,9 +78,6 @@ export async function runConfigSet(opts: {
       options: opts.cliOptions,
       successMode: "set",
       ...(currentExpectation ? { currentExpectation } : {}),
-      ...(opts.preCommitRuntimePreflight
-        ? { preCommitRuntimePreflight: opts.preCommitRuntimePreflight }
-        : {}),
       ...(opts.beforePersistentApply ? { beforePersistentApply: opts.beforePersistentApply } : {}),
     });
   } catch (err) {

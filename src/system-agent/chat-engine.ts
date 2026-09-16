@@ -98,7 +98,7 @@ export class SystemAgentChatEngine {
         requireVerifiedInference: async () => await this.requireVerifiedInference(),
         requirePersistentApplyInference: async (runtime) =>
           await this.requirePersistentApplyInference(runtime),
-        rebindVerifiedInference: (next, operation) => this.rebindVerifiedInference(next, operation),
+        rebindVerifiedInference: (next) => this.rebindVerifiedInference(next),
         getVerifiedInference: () => this.verifiedInference,
         loadOverview: async () => await this.loadOverview(),
         verifyConfigAfterWrite: async () => await this.verifyConfigAfterWrite(),
@@ -287,15 +287,8 @@ export class SystemAgentChatEngine {
     return this.throwInferenceUnavailable([], false);
   }
 
-  private rebindVerifiedInference(
-    binding: SystemAgentVerifiedInferenceBinding,
-    operation: SystemAgentOperation,
-  ): void {
-    if (
-      binding.execution.agentId !== this.verifiedInference.execution.agentId &&
-      operation.kind !== "config-set" &&
-      operation.kind !== "config-set-ref"
-    ) {
+  private rebindVerifiedInference(binding: SystemAgentVerifiedInferenceBinding): void {
+    if (binding.execution.agentId !== this.verifiedInference.execution.agentId) {
       return;
     }
     delete this.agentSession.cliSession;

@@ -122,10 +122,7 @@ export class ChatTurnRouter {
     private readonly callbacks: {
       requireVerifiedInference: () => Promise<unknown>;
       requirePersistentApplyInference: (runtime: RuntimeEnv) => Promise<unknown>;
-      rebindVerifiedInference: (
-        binding: SystemAgentVerifiedInferenceBinding,
-        operation: SystemAgentOperation,
-      ) => void;
+      rebindVerifiedInference: (binding: SystemAgentVerifiedInferenceBinding) => void;
       getVerifiedInference: () => SystemAgentVerifiedInferenceBinding;
       loadOverview: () => Promise<SystemAgentOverview>;
       verifyConfigAfterWrite: () => Promise<string | null>;
@@ -300,24 +297,15 @@ export class ChatTurnRouter {
     const result = await this.executeOperation(operation, capture, true, beforePersistentApply);
     const configWrite = operation.kind === "config-set" || operation.kind === "config-set-ref";
     if (configWrite && result === undefined) {
-      // The writer's report says whether anything reached disk. A fault after
-      // publication can leave an invalid file, so the after-write check runs
-      // first; otherwise the report goes to the model for one repair proposal.
-      const verify = await this.callbacks.verifyConfigAfterWrite();
       return {
-        text: verify
-          ? [capture.read(), verify].filter(Boolean).join("\n\n")
-          : await resolveConfigWriteRepair(capture.read(), (message) =>
-              this.resolveAssistantTurn(message, false),
-            ),
+        text: await resolveConfigWriteRepair(capture.read(), (message) =>
+          this.resolveAssistantTurn(message, false),
+        ),
         action: "none",
         applied: false,
       };
     }
-    // Config writes validate before commit, so only other operations need the
-    // after-write check.
-    const verify =
-      result?.applied && !configWrite ? await this.callbacks.verifyConfigAfterWrite() : null;
+    const verify = result?.applied ? await this.callbacks.verifyConfigAfterWrite() : null;
     const followUp = this.armFollowUp(result?.followUp);
     const baseText = [capture.read() || "Applied. Audit entry written.", verify, followUp]
       .filter(Boolean)
@@ -543,8 +531,7 @@ export class ChatTurnRouter {
           : {}),
         deps: this.commandDeps(),
         beforePersistentApply,
-        onVerifiedInferenceChanged: (binding) =>
-          this.callbacks.rebindVerifiedInference(binding, operation),
+        onVerifiedInferenceChanged: this.callbacks.rebindVerifiedInference,
       });
     } catch (error) {
       if (isSystemAgentInferenceUnavailableError(error)) {

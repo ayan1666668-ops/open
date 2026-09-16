@@ -123,7 +123,6 @@ describe("SystemAgentChatEngine approval", () => {
       if (decision === "allow-once") {
         expect(runConfigSet).toHaveBeenCalledOnce();
         expect(runConfigSet).toHaveBeenCalledWith({
-          preCommitRuntimePreflight: expect.any(Function),
           path: "gateway.port",
           value: "19001",
           cliOptions: {},

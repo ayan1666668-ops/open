@@ -2,6 +2,7 @@ import "./chat-engine.mocks.test-support.js";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { extractToolResultText } from "../agents/embedded-agent-tool-results.js";
 import { createSystemAgentTool } from "../agents/tools/system-agent-tool.js";
+import { ConfigWritePostCommitError } from "../config/io.write-errors.js";
 import type { SystemAgentTurnRunner } from "./agent-turn.js";
 import {
   fakeOverviewLoader,
@@ -25,6 +26,7 @@ import {
 import { ChatTurnRouter } from "./chat-turn-router.js";
 import { ChatWizardHost } from "./chat-wizard-host.js";
 import type { SystemAgentOperation } from "./operation-types.js";
+import { createNoExitRuntime } from "./operations-execution-helpers.js";
 import { describeSystemAgentPersistentOperation } from "./operations.js";
 import { installSystemAgentClaudeCliBackendTestFixture } from "./system-agent.test-helpers.js";
 
@@ -543,112 +545,87 @@ describe("SystemAgentChatEngine operations", () => {
     );
   });
 
-  it("SystemAgentChatEngine.handle adopts a config write's verified default agent after saving", async () => {
-    useTempStateDir();
-    const source = structuredClone(sharedVerifiedInferenceConfig);
-    const baseConfig = {
-      ...source,
-      agents: {
-        ...source.agents,
-        ownership: "explicit",
-        defaults: { systemAgent: { agentId: "main" } },
-        list: source.agents.list.flatMap((agent) => [
-          agent,
-          { ...agent, id: "alternate", default: false },
-        ]),
-      },
-    } satisfies OpenClawConfig;
-    const changedConfig = {
-      ...baseConfig,
-      agents: { ...baseConfig.agents, defaults: { systemAgent: { agentId: "alternate" } } },
-    } satisfies OpenClawConfig;
-    const verifiedInference = await createAmbientVerifiedBinding(baseConfig);
-    const reboundInference = await createAmbientVerifiedBinding(changedConfig);
-    let currentConfig: OpenClawConfig = baseConfig;
-    mocks.readConfigFileSnapshot.mockImplementation(async () => ({
-      ...configSnapshot(currentConfig),
-      hash: "h",
-      issues: [],
-    }));
-    const runAgentTurn = vi.fn<SystemAgentTurnRunner>(async ({ session }) => ({
-      text: session.verifiedInference.execution.agentId,
-    }));
-    const engine = new SystemAgentChatEngine({
-      verifiedInference,
-      classifyApproval: async () => "approve",
-      runAgentTurn,
-      deps: {
-        readConfigFileSnapshot: async () => configSnapshot(currentConfig),
-        loadOverview: fakeOverviewLoader(),
-        verifyInferenceConfig: async ({ config, onVerifiedExecution }) => {
-          const binding =
-            config.agents?.defaults?.systemAgent?.agentId === "alternate"
-              ? reboundInference
-              : verifiedInference;
-          onVerifiedExecution?.(binding);
-          return { ok: true, modelRef: binding.execution.modelLabel, latencyMs: 1 };
-        },
-        runConfigSet: async ({ preCommitRuntimePreflight }) => {
-          await preCommitRuntimePreflight?.(changedConfig);
-          currentConfig = changedConfig;
-        },
-      },
-    });
-    engine.propose({
-      kind: "config-set",
-      path: "agents.defaults.systemAgent.agentId",
-      value: "alternate",
-    });
-    expect((await engine.handle("yes")).applied).toBe(true);
-    expect((await engine.handle("which agent now?")).text).toBe("alternate");
-    expect(runAgentTurn).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        session: expect.objectContaining({ verifiedInference: reboundInference }),
-      }),
-    );
-  });
+  it.each(["preapproved", "operator"] as const)(
+    "returns a failed %s config write to one repair turn",
+    async (approval) => {
+      useTempStateDir();
+      const runAgentTurn = vi.fn<SystemAgentTurnRunner>(async () => ({
+        text: "Proposed correction.",
+      }));
+      const runConfigSet = vi.fn(async () => {
+        throw new Error("fixture schema error");
+      });
+      const engine = new SystemAgentChatEngine({
+        yes: approval === "preapproved",
+        operatorApprovalOnly: approval === "operator",
+        runAgentTurn,
+        deps: { runConfigSet, loadOverview: fakeOverviewLoader() },
+      });
+      const proposal = await engine.handle("config set gateway.port banana");
+      const reply =
+        approval === "preapproved"
+          ? proposal
+          : expectDefined(
+              await engine.resolveOperatorApproval(
+                "allow-once",
+                expectDefined(engine.getPendingOperatorProposal(), "config proposal").hash,
+              ),
+              "operator reply",
+            );
+      expect(reply.applied).toBe(false);
+      expect(reply.text).toContain("The config write failed");
+      expect(runConfigSet).toHaveBeenCalledOnce();
+      expect(runAgentTurn).toHaveBeenCalledOnce();
+      expect(runAgentTurn.mock.calls[0]?.[0]?.input).toContain("fixture schema error");
+      expect(runAgentTurn.mock.calls[0]?.[0]?.approvalArmed).toBe(false);
+    },
+  );
 
-  it("SystemAgentChatEngine.handle returns a failed preapproved config write to one repair turn", async () => {
+  it.each([false, true])(
+    "preserves the captured CLI error when repair is unavailable=%s",
+    async (unavailable) => {
+      const validationError =
+        "Config validation failed: gateway.port: Invalid input: expected number, received string";
+      const runAgentTurn = vi.fn<SystemAgentTurnRunner>(async () => {
+        if (unavailable) {
+          throw new SystemAgentInferenceUnavailableError("agent-turn");
+        }
+        return { text: "Proposed correction." };
+      });
+      const router = createRouterHarness(
+        { yes: true, runAgentTurn },
+        {
+          executeOperation: async (_operation, runtime) => {
+            runtime.error(validationError);
+            return createNoExitRuntime(runtime).exit(1);
+          },
+        },
+      );
+      const reply = await router.resolveTurn("config set gateway.port banana");
+      expect(reply.text).toContain(validationError);
+      expect(reply.text).not.toContain("operation exited");
+      expect(runAgentTurn).toHaveBeenCalledOnce();
+      expect(runAgentTurn.mock.calls[0]?.[0]?.input).toContain(validationError);
+      expect(runAgentTurn.mock.calls[0]?.[0]?.approvalArmed).toBe(false);
+      if (unavailable) {
+        expect(reply.text).toContain("Inference could not propose a repair");
+      }
+    },
+  );
+
+  it("reports a config write's post-publication failure without claiming no write occurred", async () => {
     useTempStateDir();
     const runAgentTurn = vi.fn<SystemAgentTurnRunner>(async () => ({
       text: "Proposed correction.",
     }));
-    const runConfigSet = vi.fn(async () => {
-      throw new Error("fixture schema error");
+    const writerError = new ConfigWritePostCommitError({
+      configPath: "/tmp/fixture-openclaw.json",
+      rollbackStatus: "not-restored",
+      cause: new Error("fixture refresh failed"),
     });
-    const engine = new SystemAgentChatEngine({
-      yes: true,
-      runAgentTurn,
-      deps: { runConfigSet, loadOverview: fakeOverviewLoader() },
-    });
-    const reply = await engine.handle("config set gateway.port banana");
-    expect(reply.applied).toBe(false);
-    expect(reply.text).toContain("The config write failed");
-    expect(runConfigSet).toHaveBeenCalledOnce();
-    expect(runAgentTurn).toHaveBeenCalledOnce();
-    expect(runAgentTurn.mock.calls[0]?.[0]?.input).toContain("fixture schema error");
-    expect(runAgentTurn.mock.calls[0]?.[0]?.approvalArmed).toBe(false);
-  });
-
-  it("SystemAgentChatEngine.handle verifies the file when a config write fails after publishing", async () => {
-    useTempStateDir();
-    const runAgentTurn = vi.fn<SystemAgentTurnRunner>(async () => ({
-      text: "Proposed correction.",
-    }));
-    // The writer published a value that fails validation, then failed. The
-    // after-write check owns that state; the model sees the writer's report.
-    let published = false;
-    mocks.readConfigFileSnapshot.mockImplementation(
-      async () =>
-        ({
-          ...configSnapshot({}),
-          valid: !published,
-          issues: published ? [{ path: "gateway.port", message: "Expected number" }] : [],
-        }) as never,
-    );
     const runConfigSet = vi.fn(async () => {
-      published = true;
-      throw new Error("Config was written, but post-write processing failed: refresh");
+      mocks.readConfigFileSnapshot.mockResolvedValue(configSnapshot({ gateway: { port: 18789 } }));
+      throw writerError;
     });
     const engine = new SystemAgentChatEngine({
       yes: true,
@@ -657,11 +634,12 @@ describe("SystemAgentChatEngine operations", () => {
     });
     const reply = await engine.handle("config set gateway.port 18789");
     expect(reply.applied).toBe(false);
-    expect(reply.text).toContain("post-write processing failed");
-    expect(reply.text).toContain("failed validation after that write");
-    expect(reply.text).not.toContain("The config write failed;");
+    expect(reply.text).toContain(writerError.message);
+    expect(reply.text).not.toContain("not applied");
+    expect(reply.text).not.toContain("No change");
     expect(runAgentTurn).toHaveBeenCalledOnce();
-    expect(runAgentTurn.mock.calls[0]?.[0]?.input).toContain("gateway.port: Expected number");
+    expect(runAgentTurn.mock.calls[0]?.[0]?.input).toContain(writerError.message);
+    expect(runAgentTurn.mock.calls[0]?.[0]?.approvalArmed).toBe(false);
   });
 
   it("SystemAgentChatEngine.handle returns a rejected config write to the model for a repair proposal", async () => {
@@ -709,7 +687,8 @@ describe("SystemAgentChatEngine operations", () => {
 
   it("SystemAgentChatEngine.handle feeds an approved-operation validation error into the next model turn", async () => {
     useTempStateDir();
-    const validationError = "Config write not applied: fixture route rejected";
+    const validationError =
+      "Config validation failed: gateway.port: Invalid input: expected number, received string";
     const runConfigSet = vi.fn(async () => {
       throw new Error(validationError);
     });
@@ -724,10 +703,10 @@ describe("SystemAgentChatEngine operations", () => {
         proposalRef: params.session.proposalRef,
         directiveRef,
       });
-      const result = await tool.execute("route-write", {
+      const result = await tool.execute("config-write", {
         action: "config_set",
-        path: "agents.defaults.params.temperature",
-        value: turns === 3 ? "0.2" : "0.5",
+        path: "gateway.port",
+        value: turns === 3 ? "18789" : "banana",
         ...(params.approvalArmed ? { approved: true } : {}),
       });
       return {
@@ -739,7 +718,7 @@ describe("SystemAgentChatEngine operations", () => {
       runAgentTurn,
       deps: { runConfigSet, loadOverview: fakeOverviewLoader() },
     });
-    await engine.handle("change the temperature");
+    await engine.handle("change the port");
     const reply = await engine.handle("yes");
     expect(runConfigSet).toHaveBeenCalledOnce();
     expect(runAgentTurn).toHaveBeenCalledTimes(3);
@@ -749,8 +728,8 @@ describe("SystemAgentChatEngine operations", () => {
     expect(reply.text).toContain("The config write failed");
     expect(engine.getPendingOperatorProposal()?.operation).toEqual({
       kind: "config-set",
-      path: "agents.defaults.params.temperature",
-      value: "0.2",
+      path: "gateway.port",
+      value: "18789",
     });
   });
 

@@ -218,7 +218,6 @@ type PersistentApplyContext = {
   deps?: SystemAgentCommandDeps;
   /** Synchronous authority guard for the owner immediately before mutation. */
   assertPersistentApply?: () => void;
-  onVerifiedInferenceChanged?: ExecuteOptions["onVerifiedInferenceChanged"];
   /** Re-check authority, then enter one persistent side-effect boundary. */
   commit<T>(effect: () => Promise<T> | T): Promise<T>;
 };
@@ -257,7 +256,6 @@ export async function applyPersistentOperation(params: {
     runtime,
     deps: opts.deps,
     ...(assertPersistentApply ? { assertPersistentApply } : {}),
-    onVerifiedInferenceChanged: opts.onVerifiedInferenceChanged,
     commit,
   });
   const after = await readConfigFileSnapshot();
@@ -292,9 +290,6 @@ export async function runConfigSetOperation(params: {
   ctx: PersistentApplyContext;
 }): Promise<void> {
   const { operation, ctx } = params;
-  const snapshot = await readConfigFileSnapshotLazy();
-  const beforeRoute = await projectDefaultInferenceRoute(snapshot.sourceConfig);
-  let verifiedBinding: SystemAgentVerifiedInferenceBinding | undefined;
   const runConfigSet =
     ctx.deps?.runConfigSet ??
     (async (setOpts: Parameters<NonNullable<SystemAgentCommandDeps["runConfigSet"]>>[0]) => {
@@ -313,39 +308,9 @@ export async function runConfigSetOperation(params: {
               refId: operation.id,
             },
           }),
-      preCommitRuntimePreflight: async (sourceConfig) => {
-        const afterRoute = await projectDefaultInferenceRoute(sourceConfig);
-        if (sameDefaultInferenceRoute(beforeRoute, afterRoute)) {
-          return;
-        }
-        const verifyInferenceConfig =
-          ctx.deps?.verifyInferenceConfig ??
-          (await import("./setup-inference.js")).verifySetupInferenceConfig;
-        const verification = await verifyInferenceConfig({
-          config: sourceConfig,
-          runtime: ctx.runtime,
-          requireExecutionOwner: true,
-          ...(ctx.assertPersistentApply ? { assertAuthority: ctx.assertPersistentApply } : {}),
-          ...(ctx.onVerifiedInferenceChanged
-            ? {
-                onVerifiedExecution: (binding: SystemAgentVerifiedInferenceBinding) => {
-                  verifiedBinding = binding;
-                },
-              }
-            : {}),
-        });
-        if (!verification.ok) {
-          throw new Error(
-            `Config write not applied: the default inference route would stop working (${verification.error}). Fix the value and propose the write again.`,
-          );
-        }
-      },
       ...(ctx.assertPersistentApply ? { beforePersistentApply: ctx.assertPersistentApply } : {}),
     }),
   );
-  if (verifiedBinding) {
-    ctx.onVerifiedInferenceChanged?.(verifiedBinding);
-  }
 }
 
 async function verifyCurrentSetupInference(
@@ -528,7 +493,6 @@ export async function executeSetDefaultModel(
         config: stagedConfig,
         runtime: ctx.runtime,
         requireExecutionOwner: true,
-        ...(ctx.assertPersistentApply ? { assertAuthority: ctx.assertPersistentApply } : {}),
         ...(targetAgentId ? { agentId: targetAgentId } : {}),
       });
       if (!initialVerification.ok) {
@@ -569,7 +533,6 @@ export async function executeSetDefaultModel(
               config: sourceConfig,
               runtime: ctx.runtime,
               requireExecutionOwner: true,
-              ...(ctx.assertPersistentApply ? { assertAuthority: ctx.assertPersistentApply } : {}),
               ...(targetAgentId ? { agentId: targetAgentId } : {}),
               ...(opts.onVerifiedInferenceChanged
                 ? {

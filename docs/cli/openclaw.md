@@ -153,11 +153,12 @@ Doctor repairs are unavailable inside OpenClaw because they can rewrite the prov
 New agents inherit the live-verified default inference route. The agent ids `openclaw` and `crestodian` are reserved for the system agent and cannot be created as normal agents. The retired id remains blocked so an old config cannot claim it.
 
 `config set` and `config set-ref` propose config changes for approval. Approved
-writes are validated against the schema before saving. A write that changes the
-default inference route also runs a live inference test on the config to be saved.
-If validation fails, the write is not applied and the assistant receives the errors
-to propose a fix. Secrets use `config set-ref`, never plaintext.
-`set default model <provider/model>` remains the shortcut for switching models.
+writes use the existing config validator and writer. Validation or write errors
+return to the assistant for one corrective proposal, which needs fresh approval.
+A failure after saving is reported as such. Config writes do not test whether a
+model route or API key works. Follow your secret storage preference; for environment
+storage, use `config set-ref`. Secret values are not echoed in chat.
+`set default model <provider/model>` still live-tests the route before saving it.
 
 Plugin installation keeps its source restrictions. Plugin uninstall refuses a
 plugin that backs the active inference route; exit OpenClaw and run

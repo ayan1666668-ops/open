@@ -629,7 +629,6 @@ describe("system agent operations", () => {
     expect(result.applied).toBe(true);
 
     expect(runConfigSet).toHaveBeenCalledWith({
-      preCommitRuntimePreflight: expect.any(Function),
       path: "gateway.port",
       value: "19001",
       cliOptions: {},
@@ -689,7 +688,6 @@ describe("system agent operations", () => {
     expect(result.applied).toBe(true);
 
     expect(runConfigSet).toHaveBeenCalledWith({
-      preCommitRuntimePreflight: expect.any(Function),
       path: "gateway.auth.token",
       cliOptions: {
         refProvider: "default",
@@ -732,7 +730,6 @@ describe("system agent operations", () => {
 
     expect(result.applied).toBe(true);
     expect(runConfigSet).toHaveBeenCalledWith({
-      preCommitRuntimePreflight: expect.any(Function),
       path: "channels.telegram.botToken",
       cliOptions: {
         refProvider: "default",

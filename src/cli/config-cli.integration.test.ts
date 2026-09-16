@@ -36,32 +36,6 @@ function installRuntimeSchemaReadHook(hook: () => void | Promise<void>): void {
 }
 
 describe("config cli integration", () => {
-  it("runConfigSet preflight receives the staged payload and rejects without changing the file", async () => {
-    const raw = JSON.stringify({ gateway: { port: 18789 } });
-    await withConfigFileHarness("openclaw-config-preflight-", raw, async ({ configPath }) => {
-      const { runtime, errors } = createTestRuntime();
-      const preCommitRuntimePreflight = vi.fn(
-        async (config: import("../config/types.openclaw.js").OpenClawConfig) => {
-          expect(config.gateway?.port).toBe(19001);
-          expect(fs.readFileSync(configPath, "utf8")).toBe(raw);
-          throw new Error("candidate rejected");
-        },
-      );
-      await expect(
-        runConfigSet({
-          path: "gateway.port",
-          value: "19001",
-          cliOptions: {},
-          runtime,
-          preCommitRuntimePreflight,
-        }),
-      ).rejects.toThrow();
-      expect(preCommitRuntimePreflight).toHaveBeenCalledOnce();
-      expect(errors.join("\n")).toContain("candidate rejected");
-      expect(fs.readFileSync(configPath, "utf8")).toBe(raw);
-    });
-  });
-
   it("rejects explicit edits to pending plugin inputs without acknowledging discarded changes", async () => {
     const pluginPath = "plugins.entries.sample.config";
     const raw = JSON.stringify({
