@@ -22,7 +22,7 @@ import {
   validReview,
   writeReviewArtifacts,
 } from "./pr-review-artifact-fixture.js";
-import { copyPrWrapperSources, linkPrWrapperDependencies } from "./pr-wrapper.test-support.js";
+import { copyPrWrapperSources } from "./pr-wrapper.test-support.js";
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 
@@ -126,7 +126,15 @@ function makeMismatchedWrapperRepo({
   git(linked, ["commit", "-m", "test: local wrapper"]);
   const localRevision = git(linked, ["rev-parse", "HEAD"]).stdout.trim();
 
-  linkPrWrapperDependencies(canonical);
+  mkdirSync(join(canonical, "node_modules"));
+  // Use installed third-party packages only, never workspace source or loader mocks.
+  for (const dependency of ["tsx", "zod", "minimatch", "yaml"]) {
+    symlinkSync(
+      realpathSync(join("node_modules", dependency)),
+      join(canonical, "node_modules", dependency),
+      process.platform === "win32" ? "junction" : "dir",
+    );
+  }
 
   return {
     bin,
@@ -1174,7 +1182,6 @@ exit 99
       );
       fixture.git(fixture.canonical, ["add", "scripts/pr"]);
       fixture.git(fixture.canonical, ["commit", "-m", "test: stale canonical wrapper"]);
-      linkPrWrapperDependencies(fixture.linked);
       // Stop at the real supervisor handoff, before locks or native PR actions.
       const recorder = join(fixture.bin, "node");
       writeFileSync(recorder, '#!/bin/sh\nprintf \'%s\\0\' "$PWD" "$@"\nexit 73\n');
