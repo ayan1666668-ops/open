@@ -5418,10 +5418,10 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
       expect(committed).toContain("Inventory complete.");
     });
 
-    // The preview path renders tables too, then hands the result to the shared
-    // formatter. Its underscores are stripped again by the prefix builder, so this
-    // records that the structure survives rather than assuming either way.
-    it("keeps a streamed block reasoning table readable in the preview", async () => {
+    // Reasoning is blockquoted before it reaches the card, and a card drops the rows of a
+    // quoted table, so the preview used to lose them for as long as it ran. This asserts
+    // the drawable form the close path already commits, not the pipes behind it.
+    it("shows a streamed block reasoning table as rows the preview can draw", async () => {
       const { result, options } = createBlockTableHarness(tableCfg("block"), true);
 
       await options.onReplyStart?.();
@@ -5432,8 +5432,10 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
       await vi.waitFor(() => expect(instance.update).toHaveBeenCalled());
 
       const shown = String(instance.update.mock.calls.at(-1)?.[0] ?? "");
-      expect(shown).toContain("| Ada | Lead |");
-      expect(shown).not.toContain("_| Ada | Lead |_");
+      expect(shown).toContain("Ada");
+      expect(shown).toContain("Lead");
+      expect(shown).not.toContain("| Ada | Lead |");
+      expect(shown).not.toContain("| --- |");
     });
 
     // A matching block that already failed partially rethrows instead of replaying its

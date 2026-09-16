@@ -309,6 +309,14 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
   // only looks like one does not.
   const tableNeedsPostPath = (value: string): boolean =>
     tableMode === "off" && hasCardMarkdownTable(value);
+  // A card draws a native table, but reasoning is blockquoted before it reaches one and a
+  // card does not draw a quoted table, so those rows vanish from the preview. A quoted
+  // bullet list is not a table at all, so nothing about it is undrawable and the rows
+  // survive. The close path takes the same fallback for the same reason.
+  const previewReasoningText = (value: string): string =>
+    nativeTables && hasCardMarkdownTable(value)
+      ? core.channel.text.convertMarkdownTables(value, "bullets")
+      : renderTables(value);
   // block keeps its tables raw for a card to draw, so answer text carrying a shape
   // the card renderer is not expected to draw takes the post path instead. A card
   // that cannot draw a table drops those rows from the message rather than
@@ -1937,7 +1945,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
             startStreaming();
             // Convert before the italic line wrapping, the same order the delivered
             // reasoning path uses, so the table is still parseable when the mode runs.
-            queueReasoningUpdate(formatReasoningMessage(renderTables(payload.text)));
+            queueReasoningUpdate(formatReasoningMessage(previewReasoningText(payload.text)));
             return false;
           }
         : undefined,
