@@ -27,6 +27,7 @@ import { parseAgentSessionKey, scopedSessionArtifactKey } from "../../lib/sessio
 import { releaseChatAttachmentPayloads } from "./attachment-payload-store.ts";
 import { catalogMessageId } from "./catalog-message-id.ts";
 import { loadChatBranches } from "./chat-history-branches.ts";
+import { getAcceptedChatHistorySession } from "./chat-history-state.ts";
 import {
   CATALOG_TOOL_RESULT_PREVIEW_MAX_CHARS,
   catalogRawResult,
@@ -47,6 +48,20 @@ import { scheduleChatScroll } from "./scroll.ts";
 export abstract class ChatPaneSession extends ChatPaneTaskSuggestions {
   private deferredSessionHydrationActive = false;
   private pendingDeferredSessionHydration: (() => void) | null = null;
+
+  protected secondarySessionReadsReady(explicit = false): boolean {
+    const state = this.state;
+    return Boolean(
+      state?.connected &&
+      this.presented &&
+      document.visibilityState !== "hidden" &&
+      (explicit ||
+        (!this.deferredSessionHydrationActive &&
+          (parseCatalogSessionKey(state.sessionKey) ||
+            this.transcriptReady ||
+            getAcceptedChatHistorySession(state)))),
+    );
+  }
 
   protected get visibleSessionPullRequests(): ControlUiSessionPullRequest[] {
     return this.sessionPullRequests.filter(
@@ -208,7 +223,7 @@ export abstract class ChatPaneSession extends ChatPaneTaskSuggestions {
         retireIfCurrent();
         return;
       }
-      if (!this.presented) {
+      if (!this.presented || document.visibilityState === "hidden") {
         this.pendingDeferredSessionHydration = () => scheduleHydration(historyCommitted);
         return;
       }
@@ -216,8 +231,10 @@ export abstract class ChatPaneSession extends ChatPaneTaskSuggestions {
       // These affordances do not shape the transcript. Start them together only
       // after the transcript paints; a DOM commit still runs before the browser can paint.
       scheduleControlUiAfterPaint(state, () => {
-        if (isCurrent() && this.presented) {
+        if (isCurrent() && this.presented && document.visibilityState !== "hidden") {
           this.deferredSessionHydrationActive = false;
+          state.requestUpdate?.();
+          void this.refreshTaskSuggestions({ automatic: true });
           if (historyCommitted) {
             this.markSessionRead(selectedChatSessionRow(state));
           }
@@ -275,6 +292,8 @@ export abstract class ChatPaneSession extends ChatPaneTaskSuggestions {
     // not an operation failure and should not latch the unread retry guard.
     if (
       !access.allowed ||
+      // Shared visibility can still be capped to viewing by the caller's role.
+      row.sharingRole === "viewer" ||
       this.sessionParticipationTracker.resolve({
         catalog: parseCatalogSessionKey(state.sessionKey) !== null,
         listLoading: state.sessionsLoading,
@@ -300,10 +319,10 @@ export abstract class ChatPaneSession extends ChatPaneTaskSuggestions {
             this.unreadPatchGuard.patchFailed(guardKey);
           }
         },
-        () => {
-          // Unlatch so later unread snapshots retry; the session capability
-          // publishes the actionable error for the owning page.
-          this.unreadPatchGuard.patchFailed(guardKey);
+        (error: unknown) => {
+          // The capability publishes the error once; only transient failures
+          // may send another acknowledgement on the next snapshot.
+          this.unreadPatchGuard.patchFailed(guardKey, error);
         },
       );
   }
@@ -469,11 +488,11 @@ export abstract class ChatPaneSession extends ChatPaneTaskSuggestions {
   }
 
   protected async loadCatalogSession(key: CatalogSessionKey, older: boolean): Promise<boolean> {
-    const state = this.state;
-    const client = state?.client;
-    if (!state || !client || !state.connected) {
+    const scope = this.captureConnectionScope();
+    if (!scope) {
       return false;
     }
+    const { state, client } = scope;
     if (older && !this.catalogCursor) {
       return false;
     }
@@ -481,6 +500,7 @@ export abstract class ChatPaneSession extends ChatPaneTaskSuggestions {
     const generation = older ? this.catalogLoadGeneration : ++this.catalogLoadGeneration;
     const requestedSessionKey = this.sessionKey;
     const isCurrent = () =>
+      this.isConnectionScopeCurrent(scope) &&
       generation === this.catalogLoadGeneration &&
       this.sessionKey === requestedSessionKey &&
       resolveChatAgentId(state) === agentId;
@@ -496,7 +516,7 @@ export abstract class ChatPaneSession extends ChatPaneTaskSuggestions {
     try {
       if (!older) {
         const lookup = await lookupCatalogSession({ agentId, client, key, isCurrent });
-        if (!lookup) {
+        if (!lookup || !isCurrent()) {
           return false;
         }
         this.catalogHost = lookup.host;
@@ -538,24 +558,22 @@ export abstract class ChatPaneSession extends ChatPaneTaskSuggestions {
           this.olderCursorsSeen.has(page.nextCursor));
       this.catalogMessages = nextMessages;
       this.catalogCursor = olderExhausted ? undefined : page.nextCursor;
-      const currentState = this.state ?? state;
-      currentState.lastError = null;
-      scheduleChatScroll(currentState, !older);
+      state.lastError = null;
+      scheduleChatScroll(state, !older);
       return !older || addedMessages || !olderExhausted;
     } catch (error) {
       if (isCurrent()) {
-        (this.state ?? state).lastError = formatUiError(error);
+        state.lastError = formatUiError(error);
       }
       return false;
     } finally {
       if (isCurrent()) {
-        const currentState = this.state ?? state;
         if (!older) {
           this.catalogLoading = false;
-          currentState.chatLoading = false;
+          state.chatLoading = false;
         }
         if (!older) {
-          currentState.requestUpdate();
+          state.requestUpdate();
         }
       }
     }

@@ -6,12 +6,12 @@ import { directive } from "lit/directive.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { t } from "../i18n/index.ts";
 import { formatRelativeTimestamp } from "../lib/format.ts";
+import { icons } from "./icons.ts";
+import { toSanitizedMarkdownHtml } from "./markdown.ts";
 import {
   composerDisclosure,
   type ComposerProgressRunLifecycle,
-} from "./composer-progress-disclosure.ts";
-import { icons } from "./icons.ts";
-import { toSanitizedMarkdownHtml } from "./markdown.ts";
+} from "./session-progress-disclosure-controller.ts";
 
 type SessionProgressCardPlacement = "board" | "composer";
 type PresentedProgressStepStatus = ProgressCardStep["status"] | "paused";
@@ -387,7 +387,7 @@ export function renderSessionProgressCard(
       data-progress-card-placement="composer"
       data-complete=${String(complete)}
       ${composerDisclosure(
-        card.sessionKey,
+        composerRunLifecycle?.sessionIdentity ?? card.sessionKey,
         !complete && !collapseComposerByDefault,
         collapseComposerByDefault,
         composerRunLifecycle,

@@ -51,6 +51,7 @@ export const en: TranslationMap & {
   login: TranslationMap;
   newSession: TranslationMap;
   skillWorkshop: TranslationMap;
+  systems: TranslationMap;
 } = {
   pluginUi: {
     sessionRecentMessages: "Recent messages",
@@ -279,25 +280,7 @@ export const en: TranslationMap & {
       invalidSandboxUrl: "MCP App sandbox URL is invalid",
     },
   },
-  githubPreview: {
-    coAuthors: "Co-authored by {logins}",
-    loading: "Loading GitHub details…",
-    unavailable: "GitHub preview unavailable",
-    states: {
-      merged: "Merged",
-      draft: "Draft",
-      open: "Open",
-      closed: "Closed",
-      notPlanned: "Not planned",
-    },
-    file: "{count} file",
-    files: "{count} files",
-    comment: "{count} comment",
-    comments: "{count} comments",
-    pullRequest: "pull request",
-    issue: "issue",
-    ariaLabel: "{state} {kind} {repo} #{number}: {title}, by {author}",
-  },
+  githubPreview: {},
   sessionHovercard: {
     ariaLabel: "Session information",
     agentNotepad: "Agent Notepad",
@@ -571,8 +554,9 @@ export const en: TranslationMap & {
   lazyView: {
     errorTitle: "Panel failed to load",
     genericSubtitle: "Something went wrong while loading this panel.",
-    staleTitle: "A new version is available",
-    staleSubtitle: "OpenClaw was updated in the background. Reload to get the latest panel.",
+    staleTitle: "This view could not load",
+    staleSubtitle:
+      "Some interface files could not be downloaded. Check your connection, then reload.",
     reloading: "Reloading…",
     retry: "Retry",
     stylesFailed: "Styles failed to load, so the page may look broken.",
@@ -669,6 +653,7 @@ export const en: TranslationMap & {
     coalescedRestart:
       "Update installed. A gateway restart is already in progress; status will refresh after it reconnects.",
     error: "Update error: {error}",
+    checkError: "Could not check for updates: {error}",
     status: "Update {status}: {reason}. {guidance}",
     verificationFailedWithIdentity:
       "Update finished, but the running install does not match the expected revision. Expected {expected}, running {actual}. Run `openclaw triage` on the Gateway host before retrying.",
@@ -1190,7 +1175,11 @@ export const en: TranslationMap & {
     statusTimeout: "Timed out",
     waitingForAnswer: "Waiting for your answer",
     waitingForApproval: "Waiting for approval",
+    questionsNeedAnswer: "{count} questions need your answer",
+    approvalsNeedApproval: "{count} requests need approval",
+    attentionMore: "+{count} more",
     runFailedReason: "Run failed: {reason}",
+    childRunFailedReason: "Child session {label} failed: {reason}",
     runErrorTimedOut: "Timed out",
     runErrorUnknown: "Unknown error",
     attentionRequired: "Session needs attention",
@@ -2341,6 +2330,7 @@ export const en: TranslationMap & {
     reconnect: "Reconnect",
     connecting: "Connecting to desktop…",
   },
+  systems: {},
   routeTitles: {
     modelProviders: "Models",
     notifications: "Notifications",
@@ -2361,6 +2351,7 @@ export const en: TranslationMap & {
     channels: "Channels",
     connection: "Gateway",
     sessions: "Sessions",
+    systems: "Systems",
     usage: "Usage",
     cron: "Automations",
     tasks: "Tasks",
@@ -2408,6 +2399,7 @@ export const en: TranslationMap & {
     channels: "Channels and settings.",
     connection: "Gateway endpoint, credentials, and handshake status.",
     sessions: "Active sessions and defaults.",
+    systems: "Machines and desktops.",
     usage: "API usage and costs.",
     cron: "Scheduled tasks and recurring agent runs.",
     tasks: "Background tasks: subagents, automation runs, CLI.",
@@ -2530,15 +2522,16 @@ export const en: TranslationMap & {
     },
     unavailable: {
       title: "Found, but needs attention",
-      signIn: "Sign in with {provider}",
+      signIn: "Set up & verify {provider}",
       useApiKey: "Use API key",
     },
     signIn: {
-      title: "Connect an AI provider",
+      title: "Set up and verify a model",
+      description:
+        "Setup requests a model reply. To save an account first, choose Connect provider.",
+      verify: "Set up & verify",
       install: "Review & install",
       custom: "Set up endpoint",
-      signIn: "Sign in",
-      pair: "Pair",
       more: "More sign-in options",
     },
     prepare: {
@@ -2600,6 +2593,9 @@ export const en: TranslationMap & {
       dialogLabel: "Provider sign-in",
       prepareDialogLabel: "Local model setup",
       title: "Sign in with a provider",
+      connected: "Account connected. Choose a model when you want to test a reply.",
+      failed: "Could not finish. Open Details to see what to do next.",
+      details: "Details",
       prepareTitle: "Set up a local model",
       starting: "Starting provider sign-in…",
       prepareStarting: "Starting local model setup…",
@@ -2607,8 +2603,15 @@ export const en: TranslationMap & {
       working: "Working…",
       continue: "Continue",
       submit: "Submit",
-      openSignIn: "Open sign-in page",
+      openSignIn: "Open sign-in",
       copy: "Copy",
+      copyCode: "Copy code",
+      copyLink: "Copy link",
+      manualEntry: "Use manual entry",
+      browserInstructions: "Complete sign-in in your browser, then return here.",
+      waiting: "Waiting for sign-in…",
+      deviceCodeWarning:
+        "Continue only if you started this sign-in yourself. If a website or another person gave you this code, cancel.",
       expires: "Expires in {count} minutes",
       cancelled: "Provider sign-in was cancelled.",
       finishingStep: "Setup is finishing the current step. You can cancel when it finishes.",
@@ -2834,10 +2837,11 @@ export const en: TranslationMap & {
       groupTitle: "Parallel tasks",
       defaultPhase: "Unphased",
       progress: "{complete} of {total}",
-      active: "{running} running · {queued} queued · {failed} failed",
-      finished: "{done} completed · {failed} failed",
+      active: "{running} running · {queued} queued · {failed} failed or stopped",
+      finished: "{done} completed · {failed} failed or stopped",
       completed: "{done} completed",
       childOutcome: "Child runs finished. Check the conversation for the final response.",
+      childOutcomeProcessing: "Child runs finished. The parent is processing their results.",
       details: "Child details",
       detailsUnavailable: "Child details are unavailable. Counts include all accepted workers.",
       otherGroups: "{count} more active groups",
@@ -2957,6 +2961,7 @@ export const en: TranslationMap & {
     recapUpdating: "Updating recap…",
     recapStale: "New activity since this recap",
     recapUnavailable: "Recap unavailable",
+    recapRefreshFailed: "Couldn’t refresh recap",
     recapRetry: "Retry recap",
     recapUpdated: "Recap updated {time}",
     backToSessions: "Back to sessions",
@@ -3114,6 +3119,8 @@ export const en: TranslationMap & {
     taskCountOne: "1 task",
     agent: "Agent: {agent}",
     openSession: "Open session",
+    viewTranscript: "View transcript",
+    transcript: "Task transcript",
     cancelTask: "Cancel {title}",
     cancelling: "Cancelling…",
     retryDelivery: "Retry delivery",
@@ -3284,6 +3291,19 @@ export const en: TranslationMap & {
     },
   },
   connection: {
+    browserSignIn: {
+      title: "Sign in to continue loading content",
+      description:
+        "Your website sign-in has expired. Images and files cannot load until you sign in again. Your conversation and draft will stay open.",
+      action: "Sign in",
+      dismiss: "Not now",
+      returnHint:
+        "Finish signing in in the new tab, then return here. Visible attachments will retry automatically.",
+      checkAgain: "Check again",
+      checking: "Checking access…",
+      stillRequired: "Sign-in is still required. Finish signing in, then check again.",
+      unavailable: "Could not verify access. Check your connection and try again.",
+    },
     disconnectedTitle: "Disconnected",
     connecting: "Connecting…",
     queuedCount: "{count} queued",
@@ -4390,6 +4410,8 @@ export const en: TranslationMap & {
       sendMessage: "Send message",
     },
     queue: {
+      reviewEdit: "Review edit",
+      reloadBlocked: "Save or cancel your queued message edit before reloading.",
       connectionPending: "Finishing connection recovery. Try sending again when it is ready.",
       editSourceChanged:
         "This queued message changed while you were editing. Your edit is still here. Copy it, cancel the edit, and review the queue before trying again.",
@@ -4679,7 +4701,7 @@ export const en: TranslationMap & {
       closeSearch: "Close search",
       loading: "Loading chat",
       showEarlier: "Show earlier",
-      loadingEarlier: "Loading earlier history…",
+      loadingEarlier: "Loading earlier…",
       noMatches: "No matching messages",
       positionRail: "Conversation position",
       positionMarker: "{label}, marker {position} of {count}",
@@ -4707,6 +4729,7 @@ export const en: TranslationMap & {
     },
     composer: {
       composerInput: "Chat composer",
+      emojiSuggestions: "Emoji suggestions",
       placeholder: "Message {name}",
       emptyHint: "Write a message to send.",
       placeholderWithAttachments: "Add a message or paste more images...",
@@ -4909,6 +4932,9 @@ export const en: TranslationMap & {
       preparing: "Preparing voice session...",
       connecting: "Connecting voice input...",
       listening: "Listening...",
+      selectionFailed: "Could not change voices. Restart the call.",
+      selectionTimedOut: "Voice change timed out. Restart the call.",
+      selectionConfirmationFailed: "Voice change unconfirmed.",
     },
     selectors: {
       loadMoreSessions: "Show more",
@@ -5098,6 +5124,7 @@ export const en: TranslationMap & {
       searchResults: "Search results",
       parentFolder: "Parent folder",
       noBrowserFiles: "No files in this folder.",
+      folderUnavailable: "This folder is unavailable. Open its parent folder to continue browsing.",
       noSearchResults: "No matching files.",
       truncated: "Showing the first matching files. Refine the search to narrow results.",
       session: "Session",
@@ -5481,7 +5508,9 @@ export const en: TranslationMap & {
       noSummary: "No summary.",
       deliverySuppression: "Delivery suppression: {reason}",
       runAt: "Run at",
-      openRunChat: "Open run chat",
+      transcriptMissingMetadata: "This run is missing the identity needed to open its transcript.",
+      transcriptUnavailable:
+        "The exact run transcript is unavailable or ambiguous. Refresh run history and try again.",
       next: "Next {rel}",
       due: "Due {rel}",
     },

@@ -116,7 +116,10 @@ suite.define(() => {
         }
         await shot("01-expanded");
         await thread.hover();
-        await page.mouse.wheel(0, -600);
+        await page.mouse.wheel(0, -320);
+        await waitForChatScrollIdle(page);
+        await page.waitForTimeout(201);
+        await page.mouse.wheel(0, -320);
         await expect.poll(() => card.getAttribute("open")).toBeNull();
         await waitForChatScrollIdle(page);
         const closed = await height(card);
