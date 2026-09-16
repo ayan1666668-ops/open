@@ -19,15 +19,13 @@ import {
   type PersistedUserTurnMessage,
 } from "../../sessions/user-turn-transcript.js";
 import { createTestUserTurnTranscriptTarget } from "../../sessions/user-turn-transcript.test-support.js";
-import {
-  activateTestChannelRegistry,
-  createChannelTestPluginBase,
-  createTestRegistry,
-} from "../../test-utils/channel-plugins.js";
 import type { TemplateContext } from "../templating.js";
 import type { GetReplyOptions, ReplyPayload } from "../types.js";
 import type { AgentTurnParams } from "./agent-runner-execution.types.js";
-import type { buildEmbeddedRunExecutionParams } from "./agent-runner-utils.js";
+import type {
+  buildEmbeddedRunExecutionParams,
+  mintReplyMessageActionTurnCapability,
+} from "./agent-runner-utils.js";
 import type { FollowupRun } from "./queue.js";
 import type { ReplyOperation } from "./reply-run-registry.js";
 import type { TypingSignaler } from "./typing-mode.js";
@@ -78,6 +76,7 @@ const state = vi.hoisted(() => ({
   resolveCurrentTurnImagesMock: vi.fn(),
   peekSessionMcpRuntimeMock: vi.fn(),
   recordMessageToolRunOutcomeMock: vi.fn(),
+  mintReplyMessageActionTurnCapabilityMock: vi.fn<typeof mintReplyMessageActionTurnCapability>(),
   productionBuildEmbeddedRunExecutionParams: undefined as
     | typeof buildEmbeddedRunExecutionParams
     | undefined,
@@ -273,6 +272,7 @@ vi.mock("./current-turn-images.js", () => ({
 
 vi.mock("./agent-runner-utils.js", async () => ({
   ...(await vi.importActual<typeof import("./agent-runner-utils.js")>("./agent-runner-utils.js")),
+  mintReplyMessageActionTurnCapability: state.mintReplyMessageActionTurnCapabilityMock,
   buildEmbeddedRunExecutionParams: (
     params: Parameters<typeof buildEmbeddedRunExecutionParams>[0],
   ) =>
@@ -703,7 +703,7 @@ export async function setupAgentRunnerExecutionTestState() {
   // Hook timeouts cannot cancel imports; cleanup must not overtake module readiness.
   await getExecuteAgentTurnForTest();
 
-  beforeEach(async () => {
+  beforeEach(() => {
     vi.useRealTimers();
     state.runEmbeddedAgentMock.mockReset();
     state.runEmbeddedAgentEntryMock
@@ -727,6 +727,7 @@ export async function setupAgentRunnerExecutionTestState() {
     state.resolveCurrentTurnImagesMock.mockReset();
     state.peekSessionMcpRuntimeMock.mockReset();
     state.recordMessageToolRunOutcomeMock.mockReset();
+    state.mintReplyMessageActionTurnCapabilityMock.mockReset();
     state.productionBuildEmbeddedRunExecutionParams = undefined;
     state.peekSessionMcpRuntimeMock.mockReturnValue(undefined);
     state.resolveCurrentTurnImagesMock.mockImplementation(
@@ -741,14 +742,6 @@ export async function setupAgentRunnerExecutionTestState() {
       model: "claude",
       attempts: [],
     }));
-    // The failure table includes Teams; its channel runtime is outside these execution tests.
-    const teams = createChannelTestPluginBase({
-      id: "msteams",
-      capabilities: { chatTypes: ["channel"] },
-    });
-    await activateTestChannelRegistry(
-      createTestRegistry([{ pluginId: "msteams", plugin: teams, source: "test" }]),
-    );
   });
 
   afterEach(() => {

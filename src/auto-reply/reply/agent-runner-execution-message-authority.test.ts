@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { testing as externalAuthTesting } from "../../agents/auth-profiles/external-auth.test-support.js";
 import { testing as cliBackendsTesting } from "../../agents/cli-backends.test-support.js";
 import type { RunCliAgentParams } from "../../agents/cli-runner/types.js";
@@ -15,12 +15,17 @@ import {
 } from "./agent-runner-execution.test-support.js";
 
 const state = await setupAgentRunnerExecutionTestState();
+const { mintReplyMessageActionTurnCapability } =
+  await vi.importActual<typeof import("./agent-runner-utils.js")>("./agent-runner-utils.js");
 const sessionKey = "agent:main:discord:channel:100000000000000003";
 const policySessionKey = "agent:main:discord:policy:100000000000000003";
 const runId = "channel-message-authority";
 const currentChannelId = "100000000000000003";
 
 beforeEach(() => {
+  state.mintReplyMessageActionTurnCapabilityMock.mockImplementation(
+    mintReplyMessageActionTurnCapability,
+  );
   externalAuthTesting.setResolveExternalAuthProfilesForTest(() => []);
   cliBackendsTesting.setDepsForTest({
     resolveRuntimeCliBackends: () => [
