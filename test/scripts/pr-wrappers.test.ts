@@ -259,7 +259,7 @@ describe("scripts/pr wrappers", () => {
 
     expect(script).toContain('base_json=$(read_pr_view_json "$pr" "baseRefName")');
     expect(common).toContain('gh pr view "$pr" --json "$fields"');
-    expect(worktree).toContain('metadata=$(read_pr_view_json "$pr"');
+    expect(worktree).toContain('metadata=$(GH_REPO="$repo_nwo" read_pr_view_json "$pr"');
     expect(review).toContain('gh_plain pr edit "$pr" --add-assignee "$reviewer"');
     expect(push).toContain('gh_plain api graphql --input "$payload_file"');
     expect(push).not.toContain("gh_plain api graphql --input -");

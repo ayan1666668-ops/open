@@ -1033,7 +1033,7 @@ describePosix("scripts/pr per-PR operation lock", () => {
             .soft(ghEvents, output)
             .toEqual(
               command === "review-init"
-                ? ["metadata:0", "head:0", "token:1", "viewer:1"]
+                ? ["token:1", "metadata:0", "head:0", "token:1", "viewer:1"]
                 : ["token:1", "viewer:1"],
             );
           expect.soft(controller.exitCode, output).toBe(1);
