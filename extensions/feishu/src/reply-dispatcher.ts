@@ -1352,7 +1352,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
       // A presentation's prose reaches this payload converted, and the top-level text is only
       // part of it, so a cut that cannot carry the conversion falls back to the whole of what
       // the presentation contributed rather than to the fragment the payload came with.
-      const authoredFallbackText = rendered.presentationFallback?.authoredText ?? sourceText;
+      const authoredPayloadText = rendered.presentationFallback?.authoredText ?? sourceText;
       const hasIndependentPresentation = presentationCard !== undefined || hasPresentationFallback;
       const resolvedText = payload.text;
       const payloadText =
@@ -1374,6 +1374,17 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
               payload.isError === true && hasStreamingFinalText,
             )
           : reply.text;
+      // The body a final settles with can be the streamed answer merged with this payload, and
+      // the fallback has to be the same body unconverted, or a cut that cannot carry the
+      // conversion posts the final alone and the answer it completed is lost.
+      const authoredFallbackText =
+        info?.kind === "final" && !hasIndependentPresentation
+          ? mergeStreamingFinalText(
+              streamText,
+              authoredPayloadText,
+              payload.isError === true && hasStreamingFinalText,
+            )
+          : authoredPayloadText;
       const hasText = reply.hasText;
       const hasMedia = reply.hasMedia;
       const ttsSupplement = getReplyPayloadTtsSupplement(payload);

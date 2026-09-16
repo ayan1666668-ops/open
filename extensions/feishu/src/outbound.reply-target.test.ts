@@ -866,6 +866,27 @@ describe("feishuOutbound.sendText replyToId forwarding", () => {
     }
   });
 
+  // A tab advances to the next stop of four, so a tab-indented marker is indented code and
+  // not a fence. Counting it as one character opened a block nothing closed, and a table that
+  // was safe to convert arrived as raw rows instead.
+  it("converts a comment table beside a tab-indented sample", async () => {
+    const sample = ["\t```", "", "| Name | Role |", "| --- | --- |", "| Ada | Lead |"].join("\n");
+    await sendText({
+      cfg: {
+        channels: { feishu: { accounts: { main: { markdown: { tables: "code" } } } } },
+      } as ClawdbotConfig,
+      to: "comment:docx:doxcn123:7623358762119646411",
+      text: sample,
+      accountId: "main",
+    });
+
+    const delivered = String(commentThreadParams(0)?.content ?? "");
+    // The case only means anything while the sample still indents its marker with a tab.
+    expect(sample).toContain("\t```");
+    expect(delivered).toBe(convertMarkdownTables(sample, "code"));
+    expect(delivered).toContain("| ---- | ---- |");
+  });
+
   // Four spaces before anything else is indented code, and a quote marker after them does not
   // change that. Reading such a line as a fence opened a block nothing closed, and a table
   // that was safe to convert arrived as raw rows instead.

@@ -22,6 +22,7 @@ type FeishuFenceLine = {
   info: string;
 };
 
+const FEISHU_TAB_STOP = 4;
 const FEISHU_LIST_MARKER = /^(?:[-*+]|\d{1,9}[.)])(?=[ \t])/u;
 // `.` skips a carriage return, so the info string is matched as everything but the feed.
 const FEISHU_FENCE_MARKER = /^(`{3,}|~{3,})([^\n]*)$/u;
@@ -34,20 +35,26 @@ const FEISHU_FENCE_MARKER = /^(`{3,}|~{3,})([^\n]*)$/u;
  */
 function readFenceLine(line: string): FeishuFenceLine | undefined {
   let index = 0;
+  // A tab advances to the next stop of four, so indentation is counted in columns rather
+  // than characters: one tab is the four that make a line indented code.
+  let column = 0;
   let container = "";
   let indent = -1;
   for (;;) {
-    const spaceStart = index;
+    const columnStart = column;
     while (line[index] === " " || line[index] === "\t") {
+      column =
+        line[index] === "\t" ? column + FEISHU_TAB_STOP - (column % FEISHU_TAB_STOP) : column + 1;
       index += 1;
     }
     if (indent < 0) {
-      indent = index - spaceStart;
+      indent = column - columnStart;
     }
     const rest = line.slice(index);
     if (rest.startsWith(">")) {
       container += ">";
       index += 1;
+      column += 1;
       continue;
     }
     const list = FEISHU_LIST_MARKER.exec(rest);
@@ -56,6 +63,7 @@ function readFenceLine(line: string): FeishuFenceLine | undefined {
     }
     container += "-";
     index += list[0].length;
+    column += list[0].length;
   }
   const marker = FEISHU_FENCE_MARKER.exec(line.slice(index));
   if (!marker?.[1]) {
@@ -68,7 +76,7 @@ function readFenceLine(line: string): FeishuFenceLine | undefined {
   if (marker[1].startsWith("`") && info.includes("`")) {
     return undefined;
   }
-  return { container, column: index, indent: Math.max(indent, 0), marker: marker[1], info };
+  return { container, column, indent: Math.max(indent, 0), marker: marker[1], info };
 }
 
 /**
