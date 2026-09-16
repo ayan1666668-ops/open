@@ -26,6 +26,7 @@ import {
   ensureSessionPendingInputsSchema,
 } from "../state/openclaw-agent-pending-inputs-schema.js";
 import { setAbortedAgentDedupeEntries } from "./agent-turn/agent-dedupe.js";
+import * as agentJobs from "./agent-turn/agent-job.js";
 import { abortChatRunById } from "./chat-abort.js";
 import { dispatchGatewayMethodInProcess } from "./server-plugin-in-process-dispatch.js";
 import { startGatewayServerHarness, type GatewayServerHarness } from "./server.e2e-ws-harness.js";
@@ -113,6 +114,9 @@ describe("private subagent completion processing receipts", () => {
   async function restart() {
     const previousDedupe = kernel.gatewayRequestContext.dedupe;
     await harness.close();
+    // Synthetic registry children have no producer terminal event. Gateway close
+    // retires their wait observers; verify release before a new lifecycle starts.
+    await settleSubagentRegistryPersistenceWork();
     closeOpenClawAgentDatabasesForTest();
     await start();
     await prepareGatewayReplyRuntimeForTest({ force: true });
@@ -417,28 +421,36 @@ describe("private subagent completion processing receipts", () => {
       sessionKey: childSessionKey,
       defaultSessionId: `${descendantRunId}-session`,
     });
-    registerSubagentRun({
-      runId: descendantRunId,
-      childSessionKey,
-      requesterSessionKey: sessionKey,
-      requesterAgentId: "main",
-      requesterTurnRunId: runId,
-      requesterDisplayKey: sessionKey,
-      task: "synthetic continuation child",
-      cleanup: "keep",
-      expectsCompletionMessage: false,
-      taskRowOwnership: "required",
+    const waitEntered = createDeferred();
+    const originalWait = agentJobs.waitForAgentJob;
+    const observeWait = vi.spyOn(agentJobs, "waitForAgentJob").mockImplementation((params) => {
+      const wait = originalWait(params);
+      if (params.runId === descendantRunId) {
+        waitEntered.resolve();
+      }
+      return wait;
     });
     try {
-      // The parent and child are intentionally live. Wait only for this child's
-      // persisted launch, not for all Gateway roots to finish before Stop.
-      await expect
-        .poll(() =>
-          loadSubagentRunsForControllerFromSqlite(sessionKey).some(
-            (run) => run.runId === descendantRunId,
-          ),
-        )
-        .toBe(true);
+      registerSubagentRun({
+        runId: descendantRunId,
+        childSessionKey,
+        requesterSessionKey: sessionKey,
+        requesterAgentId: "main",
+        requesterTurnRunId: runId,
+        requesterDisplayKey: sessionKey,
+        task: "synthetic continuation child",
+        cleanup: "keep",
+        expectsCompletionMessage: false,
+        taskRowOwnership: "required",
+      });
+      // Persistence is synchronous; observe real wait admission so Stop cannot
+      // race ahead of the child's completion observer and hide a retained root.
+      await waitEntered.promise;
+      expect(
+        loadSubagentRunsForControllerFromSqlite(sessionKey).some(
+          (run) => run.runId === descendantRunId,
+        ),
+      ).toBe(true);
       expect(
         await kernel.gatewayInstanceRuntime.recovery.dispatchSessionMethod("chat.abort", {
           sessionKey,
@@ -446,6 +458,7 @@ describe("private subagent completion processing receipts", () => {
         }),
       ).toMatchObject({ aborted: true });
     } finally {
+      observeWait.mockRestore();
       if (kernel.gatewayRequestContext.chatAbortControllers.has(runId)) {
         await kernel.gatewayInstanceRuntime.recovery.dispatchSessionMethod("chat.abort", {
           sessionKey,
@@ -455,7 +468,6 @@ describe("private subagent completion processing receipts", () => {
       release.resolve();
       await observed;
     }
-    await settleSubagentRegistryPersistenceWork();
     expect(
       loadSubagentRunsForControllerFromSqlite(sessionKey).find(
         (run) => run.runId === descendantRunId,
