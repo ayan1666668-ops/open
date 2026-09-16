@@ -565,7 +565,7 @@ extensions/kilocode/provider-models.ts	4
 extensions/kilocode/stream.ts	1
 extensions/kimi-coding/index.ts	2
 extensions/kimi-coding/provider-policy-api.ts	2
-extensions/kimi-coding/stream.ts	11
+extensions/kimi-coding/stream.ts	7
 extensions/line/src/accounts.ts	3
 extensions/line/src/actions.ts	4
 extensions/line/src/auto-reply-delivery.ts	1
