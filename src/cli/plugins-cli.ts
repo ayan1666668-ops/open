@@ -131,12 +131,14 @@ export function registerPluginsCli(program: Command) {
 
   plugins
     .command("enable")
-    .description("Enable a plugin in config")
-    .argument("<id>", "Plugin id")
-    .option("--accept-capabilities", "Accept the plugin's declared capabilities", false)
-    .action(async (id: string, opts: { acceptCapabilities?: boolean }) => {
+    .description("Enable one or more plugins in config")
+    .argument("<ids...>", "Plugin ids")
+    .option("--accept-capabilities", "Accept each plugin's declared capabilities", false)
+    .action(async (ids: string[], opts: { acceptCapabilities?: boolean }) => {
       const { runPluginsEnableCommand } = await loadPluginsRuntime();
-      await runPluginsEnableCommand(id, opts);
+      for (const id of ids) {
+        await runPluginsEnableCommand(id, opts);
+      }
     });
 
   plugins
@@ -146,6 +148,17 @@ export function registerPluginsCli(program: Command) {
     .action(async (id: string) => {
       const { runPluginsDisableCommand } = await loadPluginsRuntime();
       await runPluginsDisableCommand(id);
+    });
+
+  plugins
+    .command("reload")
+    .description("Reload a plugin in the running Gateway")
+    .argument("<id>", "Plugin id")
+    .option("--accept-capabilities", "Accept changed declared capabilities", false)
+    .option("--json", "Print the applied runtime generation", false)
+    .action(async (id: string, opts: { json?: boolean; acceptCapabilities?: boolean }) => {
+      const { runPluginsReloadCommand } = await loadPluginsRuntime();
+      await runPluginsReloadCommand(id, opts);
     });
 
   plugins

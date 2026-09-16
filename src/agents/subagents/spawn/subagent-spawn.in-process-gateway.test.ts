@@ -539,7 +539,11 @@ describe("spawnSubagentDirect in-process Gateway collector launch", () => {
     });
     const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
     let launchCount = 0;
+    const transport = vi.fn(async () => {
+      throw new Error("Hosted collector cleanup must not open a Gateway transport");
+    });
     subagentSpawnTesting.setDepsForTest({
+      callGateway: transport,
       dispatchGatewayMethodInProcess: async <T>(
         method: string,
         params: Record<string, unknown>,
@@ -615,6 +619,7 @@ describe("spawnSubagentDirect in-process Gateway collector launch", () => {
         swarmLaunchPending: false,
       });
     });
+    expect(transport).not.toHaveBeenCalled();
   });
 
   it("hands a registered collector launch to Gateway as the host", async () => {
@@ -878,7 +883,7 @@ describe("spawnSubagentDirect in-process Gateway collector launch", () => {
 
   it("keeps the queued registry row when a collector starts out of process", async () => {
     const gatewayContext = makeGatewayContext();
-    const trackingModes: string[] = [];
+    const trackingModes: ReturnType<typeof resolveGatewayAgentTaskTrackingMode>[] = [];
     subagentSpawnTesting.setDepsForTest({
       hasInProcessGatewayContext: () => false,
       callGateway: async <T>(request: { method: string; params?: unknown }) => {

@@ -642,6 +642,11 @@ describe("installOpenClawPluginSdkNativeResolver", () => {
       "ai",
       path.join("internal", "openai-responses-payload-policy.ts"),
     );
+    const aiGoogleModelFamilySource = writeInternalCorePackageSource(
+      root,
+      "ai",
+      path.join("internal", "google-model-family.ts"),
+    );
     const aiRetryAfterSource = writeInternalCorePackageSource(
       root,
       "ai",
@@ -654,6 +659,11 @@ describe("installOpenClawPluginSdkNativeResolver", () => {
     );
     writeInternalCorePackageExports(root, "acp-core", ["runtime/types"]);
     const llmCoreSource = writeInternalCorePackageSource(root, "llm-core", "index.ts");
+    const llmCoreModelContractSource = writeInternalCorePackageSource(
+      root,
+      "llm-core",
+      path.join("model-contracts", "anthropic.ts"),
+    );
     const externalPluginEntry = writeExternalPluginEntry(path.join(root, "external-plugin"));
     const coreSourceParent = path.join(root, "src", "config", "plugin-web-search-config.ts");
     fs.mkdirSync(path.dirname(coreSourceParent), { recursive: true });
@@ -699,6 +709,9 @@ describe("installOpenClawPluginSdkNativeResolver", () => {
       ),
     ).toBe(fs.realpathSync(aiResponsesPayloadPolicySource));
     expect(
+      fs.realpathSync(requireFromCoreSource.resolve("@openclaw/ai/internal/google-model-family")),
+    ).toBe(fs.realpathSync(aiGoogleModelFamilySource));
+    expect(
       fs.realpathSync(requireFromCoreSource.resolve("@openclaw/ai/internal/retry-after")),
     ).toBe(fs.realpathSync(aiRetryAfterSource));
     expect(fs.realpathSync(requireFromCoreSource.resolve("@openclaw/ai/internal/runtime"))).toBe(
@@ -713,6 +726,11 @@ describe("installOpenClawPluginSdkNativeResolver", () => {
     expect(fs.realpathSync(requireFromCoreSource.resolve("@openclaw/llm-core"))).toBe(
       fs.realpathSync(llmCoreSource),
     );
+    expect(
+      fs.realpathSync(
+        requireFromCoreSource.resolve("@openclaw/llm-core/model-contracts/anthropic"),
+      ),
+    ).toBe(fs.realpathSync(llmCoreModelContractSource));
     expect(() => requireFromPlugin.resolve("@openclaw/normalization-core/string-coerce")).toThrow();
     expect(() =>
       requireFromPlugin.resolve("@openclaw/normalization-core/boolean-coercion"),
@@ -725,11 +743,15 @@ describe("installOpenClawPluginSdkNativeResolver", () => {
     expect(() =>
       requireFromPlugin.resolve("@openclaw/ai/internal/openai-responses-payload-policy"),
     ).toThrow();
+    expect(() => requireFromPlugin.resolve("@openclaw/ai/internal/google-model-family")).toThrow();
     expect(() => requireFromPlugin.resolve("@openclaw/ai/internal/retry-after")).toThrow();
     expect(() => requireFromPlugin.resolve("@openclaw/ai/internal/runtime")).toThrow();
     expect(() => requireFromPlugin.resolve("@openclaw/ai/internal/tool-schema")).toThrow();
     expect(() => requireFromPlugin.resolve("@openclaw/acp-core/runtime/types")).toThrow();
     expect(() => requireFromPlugin.resolve("@openclaw/llm-core")).toThrow();
+    expect(() =>
+      requireFromPlugin.resolve("@openclaw/llm-core/model-contracts/anthropic"),
+    ).toThrow();
   });
 
   it("does not register source-only SDK subpaths for native resolution", () => {

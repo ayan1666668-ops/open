@@ -17,7 +17,10 @@ import {
 import { isStartupTraceDuration } from "../../scripts/lib/gateway-startup-trace-ranking.js";
 import type { OpenClawConfig } from "../../src/config/types.openclaw.js";
 import { validateConfigObject } from "../../src/config/validation.js";
-import { useAutoCleanupTempDirTracker } from "../helpers/temp-dir.js";
+import { isPidAlive } from "../../src/shared/pid-alive.js";
+import { waitForPidToExit } from "../../src/test-utils/process-tree.js";
+import { runNodeScript } from "../helpers/run-node-script.js";
+import { createTempDirTracker, useAutoCleanupTempDirTracker } from "../helpers/temp-dir.js";
 import { registerStopChildBehaviorTests } from "./bench-gateway-child-test-support.js";
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
@@ -64,6 +67,148 @@ describe("gateway startup benchmark script", () => {
     expect(helpResult.stdout).not.toContain("[gateway-startup-bench]");
     expect(helpResult.stderr).toBe("");
   });
+
+  // Strict managed process-group verification is not supported on Windows.
+  it.skipIf(process.platform === "win32")(
+    "reports fractional counts without time units through the benchmark CLI",
+    async ({ signal }) => {
+      const fixtures = createTempDirTracker();
+      const root = fixtures.make("openclaw-bench-count-report-");
+      const entry = path.join(root, "entry.mjs");
+      const counter = path.join(root, "counter.json");
+      const eventsPath = path.join(root, "events.jsonl");
+      const reportPath = path.join(root, "report.json");
+      type FixtureEvent = {
+        phase: string;
+        pid: number;
+        home?: string;
+        method?: string;
+        status?: number;
+        path?: string;
+      };
+      const readEvents = (): FixtureEvent[] =>
+        fs.existsSync(eventsPath)
+          ? fs
+              .readFileSync(eventsPath, "utf8")
+              .trim()
+              .split("\n")
+              .map((line) => JSON.parse(line))
+          : [];
+      try {
+        fs.writeFileSync(
+          entry,
+          `import { createServer } from "node:http";
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+const counter = ${JSON.stringify(counter)};
+const record = (phase, extra = {}) => appendFileSync(${JSON.stringify(eventsPath)}, JSON.stringify({ phase, pid: process.pid, ...extra }) + "\\n");
+const sample = (existsSync(counter) ? JSON.parse(readFileSync(counter, "utf8")) : 0) + 1;
+writeFileSync(counter, JSON.stringify(sample));
+record("started", { home: process.env.OPENCLAW_HOME });
+const port = Number(process.argv[process.argv.indexOf("--port") + 1]);
+const server = createServer((req, res) => {
+  const status = req.method === "HEAD" && ["/healthz", "/readyz"].includes(req.url) ? 200 : 404;
+  record("probe", { method: req.method, status, path: req.url });
+  res.writeHead(status, { connection: "close" });
+  res.end();
+});
+let stopping = false;
+const stop = (reason) => {
+  if (stopping) return;
+  stopping = true;
+  server.close(() => { record("closed", { reason }); process.exit(0); });
+};
+process.on("SIGTERM", () => stop("signal"));
+// The CLI owns stdin; EOF retires this detached fixture when the CLI is cancelled.
+process.stdin.on("end", () => stop("stdin-eof"));
+process.stdin.resume();
+server.listen(port, "127.0.0.1", () => {
+  console.log("[gateway] http server listening (0 plugins, 0.0s)");
+  console.log("[gateway] ready (0 plugins, 0.0s)");
+  console.log("startup trace: sidecars.model-runtime-build agentCount=" + (10 + sample) + " workspaceGroupCount=" + sample + " workspaceFactsMs=2.5");
+  console.log("startup trace: memory.ready rssMb=32.5 heapUsedMb=16.25 externalMb=2");
+});
+`,
+        );
+        const result = await runNodeScript(
+          [
+            "--import",
+            "tsx",
+            "scripts/bench-gateway-startup.ts",
+            "--entry",
+            entry,
+            "--case",
+            "default",
+            "--runs",
+            "2",
+            "--warmup",
+            "0",
+            "--output",
+            reportPath,
+          ],
+          { ...process.env, TMPDIR: root },
+          undefined,
+          { cwd: process.cwd(), signal, maxBuffer: 1024 * 1024, requireProcessTreeExit: true },
+        );
+        expect(result.error).toBeUndefined();
+        expect(result.status, result.stderr).toBe(0);
+        const events = readEvents();
+        const started = events.filter((event) => event.phase === "started");
+        expect(started).toHaveLength(2);
+        expect(events.filter((event) => event.phase === "closed")).toHaveLength(2);
+        const probes = events.filter((event) => event.phase === "probe");
+        for (const probe of probes) {
+          expect(probe).toMatchObject({ method: "HEAD", status: 200 });
+        }
+        for (const event of started) {
+          expect(
+            probes.filter((probe) => probe.pid === event.pid).map((probe) => probe.path),
+          ).toEqual(expect.arrayContaining(["/healthz", "/readyz"]));
+          expect(isPidAlive(event.pid)).toBe(false);
+          expect(event.home).toBeDefined();
+          expect(fs.existsSync(event.home!)).toBe(false);
+        }
+        const report = JSON.parse(fs.readFileSync(reportPath, "utf8"));
+        expect(report.results).toHaveLength(1);
+        expect(report.results[0].samples).toHaveLength(2);
+        expect(report.results[0].summary.startupTrace).toMatchObject({
+          "sidecars.model-runtime-build.agentCount": { p50: 11.5, avg: 11.5, min: 11, max: 12 },
+          "sidecars.model-runtime-build.workspaceGroupCount": {
+            p50: 1.5,
+            avg: 1.5,
+            min: 1,
+            max: 2,
+          },
+          "sidecars.model-runtime-build.workspaceFactsMs": { p50: 2.5, avg: 2.5 },
+        });
+        expect(result.stdout).toContain("workspaceFacts=p50=2.5ms");
+        expect(result.stdout).toContain("ready memory: rss=p50=32.5MB");
+        expect(result.stdout).toContain("runtimePlugins=n/a");
+        expect(result.stdout).toMatch(
+          / {2}CPU core:\s+p50=\d+\.\d{3} avg=\d+\.\d{3} min=\d+\.\d{3} max=\d+\.\d{3}/u,
+        );
+        const counts = result.stdout
+          .split("\n")
+          .find((line) => line.startsWith("  prepared runtime:"));
+        expect(counts).toContain("agents=p50=11.5 avg=11.5 min=11 max=12");
+        expect(counts).toContain("workspaces=p50=1.5 avg=1.5 min=1 max=2");
+      } finally {
+        // Never signal retired PIDs; retain fixture evidence if an unclosed child remains alive.
+        const events = readEvents();
+        const closed = new Set(
+          events.filter((event) => event.phase === "closed").map((event) => event.pid),
+        );
+        for (const startedEvent of events.filter((event) => event.phase === "started")) {
+          if (!closed.has(startedEvent.pid)) {
+            expect(
+              await waitForPidToExit(startedEvent.pid),
+              `Unclosed fixture retained at ${root}`,
+            ).toBe(true);
+          }
+        }
+        fixtures.cleanup();
+      }
+    },
+  );
 
   it("rejects ambiguous benchmark CLI values before spawning Node", () => {
     expect(() => testing.parseOptions(["--wat"])).toThrow("Unknown argument: --wat");
@@ -224,42 +369,66 @@ describe("gateway startup benchmark script", () => {
   });
 
   it("summarizes split ready log timings without the ambiguous readyLogMs field", () => {
-    const result = testing.summarizeCase({ config: {}, id: "demo", name: "demo" }, [
-      {
-        completionMs: 50,
-        cpuCoreRatio: null,
-        cpuMs: null,
-        exitCode: null,
-        firstOutputMs: 1,
-        gatewayReadyLogLine: "[gateway] ready",
-        gatewayReadyLogMs: 40,
-        healthz: {
-          firstErrorKind: "econnrefused",
-          firstRecoveryMs: 20,
-          ms: 20,
-          status: 200,
-          transitions: [],
-        },
-        httpListenLogLine: "[gateway] http server listening (0 plugins)",
-        httpListenLogMs: 10,
-        maxRssMb: null,
-        outputTail: "",
-        readyz: {
-          firstErrorKind: "http-503",
-          firstRecoveryMs: 30,
-          ms: 30,
-          status: 200,
-          transitions: [],
-        },
-        signal: null,
-        startupTrace: {},
+    const sample = {
+      completionMs: 50,
+      cpuCoreRatio: null,
+      cpuMs: null,
+      exitCode: null,
+      firstOutputMs: 1,
+      gatewayReadyLogLine: "[gateway] ready",
+      gatewayReadyLogMs: 40,
+      healthz: {
+        firstErrorKind: "econnrefused",
+        firstRecoveryMs: 20,
+        ms: 20,
+        status: 200,
+        transitions: [],
       },
-    ]);
+      httpListenLogLine: "[gateway] http server listening (0 plugins)",
+      httpListenLogMs: 10,
+      maxRssMb: null,
+      outputTail: "",
+      readyz: {
+        firstErrorKind: "http-503",
+        firstRecoveryMs: 30,
+        ms: 30,
+        status: 200,
+        transitions: [],
+      },
+      signal: null,
+      startupTrace: {
+        "sidecars.ready.total": 50,
+        "sidecars.ready": 5,
+        "plugins.load": 0,
+      },
+    };
+    const samples: Parameters<typeof testing.summarizeCase>[1] = [
+      sample,
+      {
+        ...sample,
+        startupTrace: {
+          "sidecars.ready": 15,
+          "sidecars.ready.total": 70,
+        },
+      },
+    ];
+    const result = testing.summarizeCase({ config: {}, id: "demo", name: "demo" }, samples);
 
+    expect(result.samples).toBe(samples);
     expect(result.summary.completionMs?.p50).toBe(50);
     expect(result.summary.httpListenLogMs?.p50).toBe(10);
     expect(result.summary.gatewayReadyLogMs?.p50).toBe(40);
     expect("readyLogMs" in result.summary).toBe(false);
+    expect(Object.keys(result.summary.startupTrace)).toEqual([
+      "plugins.load",
+      "sidecars.ready",
+      "sidecars.ready.total",
+    ]);
+    expect(result.summary.startupTrace).toEqual({
+      "plugins.load": { avg: 0, max: 0, min: 0, p50: 0, p95: 0 },
+      "sidecars.ready": { avg: 10, max: 15, min: 5, p50: 10, p95: 15 },
+      "sidecars.ready.total": { avg: 60, max: 70, min: 50, p50: 60, p95: 70 },
+    });
   });
 
   it("flags samples that never produced readiness or process metrics", () => {
@@ -295,7 +464,8 @@ describe("gateway startup benchmark script", () => {
       },
     ]);
 
-    expect(testing.collectResultFailures([result], { processMetricsRequired: true })).toEqual([
+    expect(result.summary.startupTrace).toEqual({});
+    expect(testing.collectResultFailures([result])).toEqual([
       {
         id: "demo",
         reason: "missing /healthz, /readyz, completion, cpu, rss",
@@ -338,7 +508,7 @@ describe("gateway startup benchmark script", () => {
       },
     ]);
 
-    expect(testing.collectResultFailures([result], { processMetricsRequired: true })).toEqual([
+    expect(testing.collectResultFailures([result])).toEqual([
       {
         id: "demo",
         reason: "child exited 1",
@@ -381,7 +551,7 @@ describe("gateway startup benchmark script", () => {
       },
     ]);
 
-    expect(testing.collectResultFailures([result], { processMetricsRequired: true })).toEqual([]);
+    expect(testing.collectResultFailures([result])).toEqual([]);
   });
 
   it("enforces the combined incident readiness budgets", () => {
@@ -417,7 +587,7 @@ describe("gateway startup benchmark script", () => {
       },
     ]);
 
-    expect(testing.collectResultFailures([result], { processMetricsRequired: true })).toEqual([
+    expect(testing.collectResultFailures([result])).toEqual([
       {
         id: "incidentCombined",
         reason: "/healthz p95 30000.0ms must be under 30000.0ms",
@@ -465,7 +635,7 @@ describe("gateway startup benchmark script", () => {
       },
     ]);
 
-    expect(testing.collectResultFailures([result], { processMetricsRequired: true })).toEqual([
+    expect(testing.collectResultFailures([result])).toEqual([
       {
         id: "demo",
         reason: "child exited by SIGSEGV",
