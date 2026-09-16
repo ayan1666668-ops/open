@@ -420,23 +420,24 @@ export async function listSessionsFromStoreAsync(
       const list = step.value;
       const sessions: GatewaySessionRow[] = [];
       const includeTranscriptFields = list.includeDerivedTitles || list.includeLastMessage;
-      const transcriptScopes = list.entries
-        .slice(0, list.transcriptFieldRows)
-        .flatMap(([key, entry]) => {
-          if (!entry.sessionId || !includeTranscriptFields) {
-            return [];
-          }
-          const target = expectDefined(targetsBySessionKey.get(key), "transcript row target");
-          return [
-            {
-              ...target.storeTarget,
-              sessionEntry: entry,
-              sessionId: entry.sessionId,
-              sessionKey: target.storeKey ?? key,
-            },
-          ];
-        });
-      const transcriptFields = readScopedSessionTitleFieldsFromTranscriptBatch(transcriptScopes);
+      const transcriptFields = includeTranscriptFields
+        ? readScopedSessionTitleFieldsFromTranscriptBatch(
+            list.entries.slice(0, list.transcriptFieldRows).flatMap(([key, entry]) => {
+              if (!entry.sessionId) {
+                return [];
+              }
+              const target = expectDefined(targetsBySessionKey.get(key), "transcript row target");
+              return [
+                {
+                  ...target.storeTarget,
+                  sessionEntry: entry,
+                  sessionId: entry.sessionId,
+                  sessionKey: target.storeKey ?? key,
+                },
+              ];
+            }),
+          )
+        : [];
       // Optional transcript reads can spend the remaining budget even for an empty page.
       const checkpoint = performance.now();
       if (timing) {
