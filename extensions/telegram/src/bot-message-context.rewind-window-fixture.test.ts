@@ -25,6 +25,21 @@ import {
   resetTelegramMessageCacheForTest,
 } from "./runtime.test-support.js";
 
+// recordOutboundMessageForPromptContext reports persistence failures only as a
+// false return plus a verbose log. Capture that log so a CI failure carries the
+// underlying error instead of a bare false.
+const verboseLog = vi.hoisted(() => ({ lines: [] as string[] }));
+vi.mock("openclaw/plugin-sdk/runtime-env", async (importOriginal) => {
+  const original = await importOriginal<typeof import("openclaw/plugin-sdk/runtime-env")>();
+  return {
+    ...original,
+    logVerbose: (message: string) => {
+      verboseLog.lines.push(message);
+      original.logVerbose(message);
+    },
+  };
+});
+
 const chatId = 1001;
 const botUserId = 900;
 let storeCounter = 0;
@@ -46,6 +61,7 @@ function loadFixture(): unknown {
 
 describe("telegram rewind chat-window fixture", () => {
   beforeEach(() => {
+    verboseLog.lines.length = 0;
     resetPluginStateStoreForTests();
     resetTelegramMessageCacheForTest();
     setTelegramPluginStateRuntimeForTests();
@@ -105,7 +121,7 @@ describe("telegram rewind chat-window fixture", () => {
       promptContextProjection: projection,
       ownerAgentId: "main",
     });
-    expect(recordedReply).toBe(true);
+    expect(recordedReply, verboseLog.lines.join("\n")).toBe(true);
     const currentMessage = inboundTextMessage(104, "fresh follow-up", 4);
     const telegramCtx = {
       message: currentMessage,
