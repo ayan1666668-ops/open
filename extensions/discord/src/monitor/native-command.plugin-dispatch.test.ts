@@ -11,8 +11,11 @@ import {
 } from "openclaw/plugin-sdk/plugin-command-runtime";
 import { clearPluginCommands, registerPluginCommand } from "openclaw/plugin-sdk/plugin-runtime";
 import {
+  addTestHook,
   createTestRegistry,
   getActivePluginRegistry,
+  initializeGlobalHookRunner,
+  resetGlobalHookRunner,
   setActivePluginRegistry,
 } from "openclaw/plugin-sdk/plugin-test-runtime";
 import { setReplyPayloadMetadata } from "openclaw/plugin-sdk/reply-payload-testing";
@@ -515,6 +518,7 @@ describe("Discord native plugin command dispatch", () => {
     vi.clearAllMocks();
     clearPluginCommands();
     setActivePluginRegistry(createTestRegistry());
+    resetGlobalHookRunner();
     runtimeModuleMocks.pluginCommandHandler.mockReset();
     runtimeModuleMocks.pluginCommandHandler.mockImplementation(
       async (params: { run?: () => Promise<unknown> }) => await params.run?.(),
@@ -555,6 +559,7 @@ describe("Discord native plugin command dispatch", () => {
 
   afterEach(() => {
     clearRuntimeConfigSnapshot();
+    resetGlobalHookRunner();
   });
 
   it("keeps the owning Gateway dispatcher on a native slash turn", async () => {
@@ -1689,6 +1694,199 @@ describe("Discord native plugin command dispatch", () => {
     expect(firstEditOrder!).toBeLessThan(finalFollowUpOrder!);
     expect(interaction.reply).not.toHaveBeenCalled();
     expect(interaction.deleteReply).not.toHaveBeenCalled();
+  });
+
+  it.each(["reply_payload_sending", "message_sending"] as const)(
+    "does not edit native progress when %s hooks can mutate outbound delivery",
+    async (hookName) => {
+      const cfg = {
+        ...createConfig(),
+        channels: {
+          discord: {
+            ...createConfig().channels?.discord,
+            streaming: { mode: "progress", progress: { toolProgress: true, label: "Working" } },
+          },
+        },
+      } as OpenClawConfig;
+      const registry = getActivePluginRegistry();
+      if (!registry) {
+        throw new Error("expected active plugin registry");
+      }
+      addTestHook({
+        registry,
+        pluginId: "hook-plugin",
+        hookName,
+        handler: vi.fn(),
+      });
+      initializeGlobalHookRunner(registry);
+      const interaction = createInteraction();
+      interaction.responseState = "deferred";
+      nativeCommandRuntime.dispatchChannelInboundTurn = async (plan) => {
+        expect(plan.replyOptions?.suppressDefaultToolProgressMessages).toBeUndefined();
+        expect(plan.replyOptions?.progressPreambleEnabled).toBeUndefined();
+        expect(plan.replyOptions?.onToolStart).toBeUndefined();
+        return {
+          admission: { kind: "dispatch" },
+          dispatched: true,
+          ctxPayload: plan.ctxPayload,
+          routeSessionKey: plan.route.sessionKey,
+          dispatchResult: {
+            counts: { final: 0, block: 0, tool: 0 },
+            queuedFinal: true,
+            settledReceipt: visibleFinalReceipt,
+          },
+        };
+      };
+
+      const result = await dispatchDiscordNativeAgentReply({
+        cfg,
+        discordConfig: cfg.channels?.discord ?? {},
+        accountId: "default",
+        interaction: interaction as never,
+        ctxPayload: { SessionKey: "agent:main:discord:dm:owner" } as never,
+        effectiveRoute: {
+          accountId: "default",
+          agentId: "main",
+          sessionKey: "agent:main:discord:dm:owner",
+        },
+        channelConfig: null,
+        mediaLocalRoots: [],
+        preferFollowUp: true,
+        pluginCommandDispatch: { kind: "non-plugin" },
+        log: { error: vi.fn() } as never,
+      });
+
+      expect(result).toEqual({ dispatched: true });
+      expect(interaction.editReply).not.toHaveBeenCalled();
+      expect(interaction.followUp).not.toHaveBeenCalled();
+      expect(interaction.reply).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["tool", "block"] as const)(
+    "keeps native progress editable after a durable %s delivery",
+    async (kind) => {
+      const cfg = {
+        ...createConfig(),
+        channels: {
+          discord: {
+            ...createConfig().channels?.discord,
+            streaming: { mode: "progress", progress: { toolProgress: true, label: "Working" } },
+          },
+        },
+      } as OpenClawConfig;
+      const interaction = createInteraction();
+      interaction.responseState = "deferred";
+      nativeCommandRuntime.dispatchChannelInboundTurn = async (plan) => {
+        const firstAccepted = await plan.replyOptions?.onToolStart?.({
+          name: "exec",
+          phase: "start",
+        });
+        expect(firstAccepted).toBe(true);
+        if (!("deliver" in plan.delivery) || !plan.delivery.deliver) {
+          throw new Error("expected direct delivery adapter");
+        }
+        const payload = { text: `${kind} delivery before final` };
+        const info = { kind };
+        const deliveryResult = await plan.delivery.deliver(payload, info);
+        await plan.delivery.onDelivered?.(payload, info, deliveryResult);
+        const laterAccepted = await plan.replyOptions?.onItemEvent?.({
+          progressText: "still working after durable delivery",
+        });
+        expect(laterAccepted).toBe(true);
+        return {
+          admission: { kind: "dispatch" },
+          dispatched: true,
+          ctxPayload: plan.ctxPayload,
+          routeSessionKey: plan.route.sessionKey,
+          dispatchResult: {
+            counts: { final: 0, block: kind === "block" ? 1 : 0, tool: kind === "tool" ? 1 : 0 },
+            queuedFinal: false,
+          },
+        };
+      };
+
+      const result = await dispatchDiscordNativeAgentReply({
+        cfg,
+        discordConfig: cfg.channels?.discord ?? {},
+        accountId: "default",
+        interaction: interaction as never,
+        ctxPayload: { SessionKey: "agent:main:discord:dm:owner" } as never,
+        effectiveRoute: {
+          accountId: "default",
+          agentId: "main",
+          sessionKey: "agent:main:discord:dm:owner",
+        },
+        channelConfig: null,
+        mediaLocalRoots: [],
+        preferFollowUp: true,
+        pluginCommandDispatch: { kind: "non-plugin" },
+        log: { error: vi.fn() } as never,
+      });
+
+      expect(result).toEqual({ dispatched: true });
+      expect(interaction.editReply).toHaveBeenCalledTimes(2);
+      const editPayload = requireRecord(
+        (interaction.editReply as unknown as MockCalls).mock.calls.at(-1)?.[0],
+        "editReply",
+      );
+      expect(editPayload.content).toContain("still working after durable delivery");
+      expectFollowUpFields(interaction, { content: `${kind} delivery before final` });
+      expect(interaction.reply).not.toHaveBeenCalled();
+    },
+  );
+
+  it("stops oversized native progress before sending an invalid Discord edit", async () => {
+    const cfg = {
+      ...createConfig(),
+      channels: {
+        discord: {
+          ...createConfig().channels?.discord,
+          streaming: { mode: "progress", progress: { toolProgress: true, label: false } },
+        },
+      },
+    } as OpenClawConfig;
+    const interaction = createInteraction();
+    interaction.responseState = "deferred";
+    const oversizedProgress = "x".repeat(2500);
+    nativeCommandRuntime.dispatchChannelInboundTurn = async (plan) => {
+      const accepted = await plan.replyOptions?.onItemEvent?.({ progressText: oversizedProgress });
+      expect(accepted).toBe(false);
+      return {
+        admission: { kind: "dispatch" },
+        dispatched: true,
+        ctxPayload: plan.ctxPayload,
+        routeSessionKey: plan.route.sessionKey,
+        dispatchResult: {
+          counts: { final: 0, block: 0, tool: 0 },
+          queuedFinal: true,
+          settledReceipt: visibleFinalReceipt,
+        },
+      };
+    };
+
+    const result = await dispatchDiscordNativeAgentReply({
+      cfg,
+      discordConfig: cfg.channels?.discord ?? {},
+      accountId: "default",
+      interaction: interaction as never,
+      ctxPayload: { SessionKey: "agent:main:discord:dm:owner" } as never,
+      effectiveRoute: {
+        accountId: "default",
+        agentId: "main",
+        sessionKey: "agent:main:discord:dm:owner",
+      },
+      channelConfig: null,
+      mediaLocalRoots: [],
+      preferFollowUp: true,
+      pluginCommandDispatch: { kind: "non-plugin" },
+      log: { error: vi.fn() } as never,
+    });
+
+    expect(result).toEqual({ dispatched: true });
+    expect(interaction.editReply).not.toHaveBeenCalled();
+    expect(interaction.followUp).not.toHaveBeenCalled();
+    expect(interaction.reply).not.toHaveBeenCalled();
   });
 
   it("does not edit native progress with opt-in-only reasoning unless reasoning stream is enabled", async () => {

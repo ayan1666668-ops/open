@@ -15,10 +15,12 @@ import {
   PLUGIN_COMMAND_DISPATCH,
   type PluginCommandCatalogDecision,
 } from "openclaw/plugin-sdk/plugin-command-runtime";
+import { getGlobalHookRunner } from "openclaw/plugin-sdk/plugin-runtime";
 import { resolveChunkMode, resolveTextChunkLimit } from "openclaw/plugin-sdk/reply-chunking";
 import type { ReplyPayload } from "openclaw/plugin-sdk/reply-dispatch-runtime";
 import type { createSubsystemLogger } from "openclaw/plugin-sdk/runtime-env";
 import { logVerbose } from "openclaw/plugin-sdk/runtime-env";
+import { truncateUtf16Safe } from "openclaw/plugin-sdk/text-utility-runtime";
 import { resolveDiscordMaxLinesPerMessage } from "../accounts.js";
 import type {
   ButtonInteraction,
@@ -47,6 +49,8 @@ type DispatchDiscordNativeAgentReplyResult = {
   dispatched: boolean;
   hiddenFinalReply?: ReplyPayload;
 };
+
+const DISCORD_INTERACTION_PROGRESS_CONTENT_LIMIT = 2000;
 
 function resolveNativeCommandReasoningWindowEnabled(params: {
   cfg: OpenClawConfig;
@@ -102,8 +106,13 @@ export async function dispatchDiscordNativeAgentReply(params: {
   let didReply = false;
   let finalReplyOutcome: "accepted" | "failed" | "suppressed" | undefined;
   let hiddenFinalReply: ReplyPayload | undefined;
+  const hookRunner = getGlobalHookRunner();
+  const allowNativeProgressDraft = !(
+    (hookRunner?.hasHooks("reply_payload_sending") ?? false) ||
+    (hookRunner?.hasHooks("message_sending") ?? false)
+  );
   const progressDraft =
-    streamMode === "progress" && !params.suppressReplies
+    streamMode === "progress" && !params.suppressReplies && allowNativeProgressDraft
       ? createChannelProgressDraftCompositor({
           entry: params.discordConfig,
           mode: streamMode,
@@ -113,8 +122,12 @@ export async function dispatchDiscordNativeAgentReply(params: {
           commentaryLinePrefix: "💬 ",
           commentaryItalics: false,
           update: async (text) => {
+            const safeText = truncateUtf16Safe(text, DISCORD_INTERACTION_PROGRESS_CONTENT_LIMIT);
+            if (!safeText) {
+              return false;
+            }
             const result = await safeDiscordInteractionCall("interaction progress edit", () =>
-              params.interaction.editReply({ content: text }),
+              params.interaction.editReply({ content: safeText }),
             );
             if (result === null) {
               return false;
@@ -136,14 +149,16 @@ export async function dispatchDiscordNativeAgentReply(params: {
     ctxPayload: params.ctxPayload,
     dispatchReplyFromConfig: params.dispatchReplyFromConfig,
     delivery: {
-      deliver: async (payload) => {
+      deliver: async (payload, info) => {
         if (params.suppressReplies) {
           return {
             visibleReplySent: false,
             suppression: { reason: "channel_transform" as const },
           };
         }
-        progressDraft?.markFinalReplyStarted();
+        if (info.kind === "final") {
+          progressDraft?.markFinalReplyStarted();
+        }
         const payloadDelivered = await deliverDiscordInteractionReply({
           interaction: params.interaction,
           payload,
@@ -167,7 +182,7 @@ export async function dispatchDiscordNativeAgentReply(params: {
           chunkMode: resolveChunkMode(params.cfg, "discord", params.accountId),
         });
         didReply ||= payloadDelivered;
-        if (payloadDelivered) {
+        if (payloadDelivered && info.kind === "final") {
           progressDraft?.markFinalReplyDelivered();
         }
         return payloadDelivered
