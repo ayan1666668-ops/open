@@ -168,6 +168,22 @@ describe("parseMessageContent media captions", () => {
         "- [2023-11-14T22:13:21.000Z] ou_bbb222: world",
     );
   });
+
+  it("retains sender and body when a sub-message timestamp exceeds Date's range", () => {
+    const items = [
+      { message_id: "om_forward", msg_type: "merge_forward" },
+      {
+        upper_message_id: "om_forward",
+        msg_type: "text",
+        create_time: "8640000000000001",
+        sender: { id: "ou_ccc333" },
+        body: { content: JSON.stringify({ text: "out of range" }) },
+      },
+    ];
+    expect(parseMergeForwardContent(items)).toBe(
+      "[Merged and Forwarded Messages]\n- ou_ccc333: out of range",
+    );
+  });
 });
 
 describe("resolveBroadcastAgents", () => {

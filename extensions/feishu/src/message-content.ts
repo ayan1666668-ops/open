@@ -1,4 +1,7 @@
-import { parseStrictNonNegativeInteger } from "openclaw/plugin-sdk/number-runtime";
+import {
+  parseStrictNonNegativeInteger,
+  timestampMsToIsoString,
+} from "openclaw/plugin-sdk/number-runtime";
 import { escapeHtml, truncateUtf16Safe } from "openclaw/plugin-sdk/text-utility-runtime";
 import { normalizeFeishuExternalKey } from "./external-keys.js";
 import { parseInteractiveCardContent } from "./interactive-message-content.js";
@@ -54,7 +57,7 @@ function formatSubMessageContent(content: string, contentType: string): string {
 
 function formatMergeForwardTimestamp(createTime: string | undefined): string | undefined {
   const ms = parseStrictNonNegativeInteger(createTime);
-  return ms === undefined ? undefined : new Date(ms).toISOString();
+  return ms === undefined ? undefined : timestampMsToIsoString(ms);
 }
 
 function formatMergeForwardLine(item: {
