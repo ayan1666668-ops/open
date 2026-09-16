@@ -22,6 +22,7 @@ import {
   requireWorktreeDiskSpace,
   WORKTREE_SETUP_HEADROOM_BYTES,
 } from "./capacity.js";
+import { resolveWorktreeSourceProfile } from "./checkout-profiles.js";
 import {
   addManagedWorktree,
   collectWorktreeTemplates,
@@ -431,7 +432,10 @@ export class ManagedWorktreeService {
   }
 
   async createEmpty(
-    params: Omit<CreateManagedWorktreeParams, "repoRoot" | "baseRef" | "checkoutCommit"> & {
+    params: Omit<
+      CreateManagedWorktreeParams,
+      "repoRoot" | "baseRef" | "checkoutCommit" | "profiles"
+    > & {
       ownerKind: "session";
       ownerId: string;
     },
@@ -488,6 +492,9 @@ export class ManagedWorktreeService {
         params.ownerKind ?? "manual",
         params.ownerId,
       );
+      if (existing && params.profiles?.length) {
+        throw new Error("Source profiles require a new worktree; use a new owner and name.");
+      }
       if (existing && (await worktreePathExists(existing.path))) {
         const validated = await this.rebindLiveRepository(existing, params);
         if (validated.repoRoot !== repository.repoRoot) {
@@ -542,6 +549,9 @@ export class ManagedWorktreeService {
     const existing = suppliedName
       ? findWorktreeByName(this.env, repository.fingerprint, suppliedName)
       : undefined;
+    if (existing && params.profiles?.length) {
+      throw new Error("Source profiles require a new worktree; choose an unused --name.");
+    }
     // Name reuse only ever adopts the caller's own record. Without this guard a
     // caller-chosen name could bind a new owner to another session's or a
     // manual checkout and run inside it.
@@ -603,6 +613,7 @@ export class ManagedWorktreeService {
     }
     const base = params.checkoutCommit
       ? {
+          commit: params.checkoutCommit,
           gitOperand: params.checkoutCommit,
           recordRef: params.baseRef ?? params.checkoutCommit,
           remote: false,
@@ -613,7 +624,7 @@ export class ManagedWorktreeService {
           params.signal,
           params.commitGuard,
         );
-    const gitBytes = Math.max(
+    let gitBytes = Math.max(
       await estimateWorktreeGitBytes(repository.repoRoot, base.gitOperand, {
         signal: params.signal,
         assertCurrent: params.commitGuard,
@@ -649,13 +660,32 @@ export class ManagedWorktreeService {
       : 0;
     params.signal?.throwIfAborted();
     params.commitGuard?.();
-    await fs.mkdir(root, { recursive: true });
-    params.signal?.throwIfAborted();
-    params.commitGuard?.();
-    let gitBase = base.gitOperand;
+    let gitBase = params.profiles?.length ? base.commit : base.gitOperand;
     let recordBase = base.recordRef;
-    const addCheckout = () =>
-      addManagedWorktree({
+    const addCheckout = async () => {
+      // Resolve on every attempt, including the remote-base fallback to local HEAD.
+      // Never pair one commit's source selection with another commit's checkout.
+      const sourceProfile = params.profiles?.length
+        ? await resolveWorktreeSourceProfile(repository.repoRoot, gitBase, params.profiles, {
+            signal: params.signal,
+            commitGuard: () => params.commitGuard?.(),
+          })
+        : undefined;
+      if (sourceProfile) {
+        // A fallback HEAD can advance after its first size inventory.
+        // Admission must cover the exact commit selected for this attempt.
+        gitBytes = Math.max(
+          gitBytes,
+          await estimateWorktreeGitBytes(repository.repoRoot, sourceProfile.commit, {
+            signal: params.signal,
+            assertCurrent: params.commitGuard,
+          }),
+        );
+      }
+      params.signal?.throwIfAborted();
+      params.commitGuard?.();
+      await fs.mkdir(root, { recursive: true });
+      return await addManagedWorktree({
         env: this.env,
         now: this.now,
         enabled: this.getConfig?.().worktreeAcceleration !== false,
@@ -664,7 +694,8 @@ export class ManagedWorktreeService {
         worktreeRoot: path.dirname(root),
         destination: worktreePath,
         branch: { mode: "create", name: branch },
-        base: gitBase,
+        base: sourceProfile?.commit ?? gitBase,
+        sourceProfile,
         requireSpace: (cloneBytes) =>
           this.requireAllocationSpace(
             worktreePath,
@@ -674,6 +705,7 @@ export class ManagedWorktreeService {
         signal: params.signal,
         commitGuard: () => params.commitGuard?.(),
       });
+    };
     let added = await addCheckout();
     if (added.code !== 0 && base.remote) {
       if (!(await canResetFailedWorktreeAdd(repository.repoRoot, worktreePath, branch, added))) {

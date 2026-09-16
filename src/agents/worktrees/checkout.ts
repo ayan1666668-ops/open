@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { normalizeGitPathForFilesystem } from "../../infra/git-exec.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
+import type { WorktreeSourceProfile } from "./checkout-profiles.js";
 import { detectWorktreeFilesystemBackend } from "./filesystem-backend.js";
 import type { WorktreeFilesystemOptions } from "./filesystem-backend.types.js";
 import {
@@ -41,6 +42,7 @@ export type CheckoutOptions = WorktreeFilesystemOptions & {
   destination: string;
   base: string;
   branch?: WorktreeCheckoutBranch;
+  sourceProfile?: WorktreeSourceProfile;
   /** Restore reuses a warm template, or materializes its snapshot after registration. */
   deferGitCheckout?: boolean;
   requireSpace: (cloneBytes?: number) => void;
@@ -364,9 +366,26 @@ export async function addManagedWorktree(options: CheckoutOptions): Promise<Chec
     // Pin acceleration and all materialization to the same verified seed.
     options = { ...options, base: existingCommit! };
   }
+  const profile = options.sourceProfile;
+  if (profile) {
+    if (options.deferGitCheckout || (await worktreePathExists(options.destination))) {
+      throw new Error(
+        "Source profiles require a fresh destination; preserve existing work and choose a new path.",
+      );
+    }
+    const commit = await requireGit(
+      options.repoRoot,
+      ["rev-parse", "--verify", `${options.base}^{commit}`],
+      gitOptions(options),
+    );
+    if (commit !== profile.commit) {
+      throw new Error("Worktree source profile does not match the checkout commit.");
+    }
+  }
   let template: Awaited<ReturnType<typeof prepareTemplate>>;
   let cloneBytes: number | undefined;
-  if (options.enabled) {
+  // Sparse templates are unsupported; retain the full-checkout cache guards.
+  if (options.enabled && !profile) {
     try {
       template = await prepareTemplate(options);
       cloneBytes = template ? await estimateTemplateCloneBytes(template) : undefined;
@@ -395,7 +414,7 @@ export async function addManagedWorktree(options: CheckoutOptions): Promise<Chec
     [
       "worktree",
       "add",
-      ...(template || options.deferGitCheckout ? ["--no-checkout"] : []),
+      ...(template || profile || options.deferGitCheckout ? ["--no-checkout"] : []),
       ...(branch?.mode === "create" ? ["-b", branch.name] : branch ? [] : ["--detach"]),
       "--",
       options.destination,
@@ -415,6 +434,50 @@ export async function addManagedWorktree(options: CheckoutOptions): Promise<Chec
   }
   // A raced seed is retained, never reset or deleted to repair the postcondition.
   await assertExistingSeed("registered");
+  if (profile) {
+    // Only this attempt's fresh, unprovisioned registration can be narrowed.
+    // Reuse, restoration and partial preparation never enter this path.
+    assertOwned(options);
+    const entries = await fs.readdir(options.destination);
+    if (entries.length !== 1 || entries[0] !== ".git") {
+      throw new Error(
+        "Source profile target is no longer unprepared; preserve it and choose a new path.",
+      );
+    }
+    const head = await requireGit(options.destination, ["rev-parse", "HEAD"], gitOptions(options));
+    if (head !== profile.commit) {
+      throw new Error(
+        "Worktree source commit changed before sparse materialization; preserve it for recovery.",
+      );
+    }
+    // Do not roll back a failed sparse materialization: it may already contain
+    // partial state. A retry must not mistake that target for a fresh checkout.
+    await requireGit(
+      options.destination,
+      ["sparse-checkout", "set", "--cone", "--no-sparse-index", "--stdin"],
+      {
+        ...gitOptions(options),
+        input: `${profile.directories.join("\n")}\n`,
+        beforeRun: () => {
+          assertOwned(options);
+          options.requireSpace();
+        },
+        timeoutMs: WORKTREE_CHECKOUT_TIMEOUT_MS,
+      },
+    );
+    // --no-checkout starts without an index. Git materializes the pinned source
+    // without moving HEAD, before any provisioning or repository setup.
+    await requireGit(options.destination, ["read-tree", "--reset", "-u", profile.commit], {
+      ...gitOptions(options),
+      beforeRun: () => {
+        assertOwned(options);
+        options.requireSpace();
+      },
+      timeoutMs: WORKTREE_CHECKOUT_TIMEOUT_MS,
+    });
+    await assertExistingSeed("registered");
+    return added;
+  }
   if (!template) {
     return added;
   }
