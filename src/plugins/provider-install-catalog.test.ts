@@ -628,6 +628,7 @@ describe("provider install catalog", () => {
             },
           ],
           install: {
+            clawhubSpec: "clawhub:@telnyx/openclaw-provider@0.2.0",
             npmSpec: "@telnyx/openclaw-provider@0.2.0",
             defaultChoice: "npm",
             expectedIntegrity:
@@ -656,6 +657,7 @@ describe("provider install catalog", () => {
       label: "Telnyx",
       origin: "bundled",
       install: {
+        clawhubSpec: "clawhub:@telnyx/openclaw-provider@0.2.0",
         npmSpec: "@telnyx/openclaw-provider@0.2.0",
         defaultChoice: "npm",
         expectedIntegrity:
@@ -664,6 +666,12 @@ describe("provider install catalog", () => {
       },
       installSource: {
         defaultChoice: "npm",
+        clawhub: {
+          spec: "clawhub:@telnyx/openclaw-provider@0.2.0",
+          packageName: "@telnyx/openclaw-provider",
+          version: "0.2.0",
+          exactVersion: true,
+        },
         npm: {
           spec: "@telnyx/openclaw-provider@0.2.0",
           packageName: "@telnyx/openclaw-provider",
