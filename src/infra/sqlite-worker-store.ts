@@ -68,21 +68,9 @@ function resolveSqliteWorkerBroker() {
   );
 }
 
-/** Separate admission + worker pool for foreign/plugin DBs (e.g. iMessage chat.db). */
-function resolveIsolatedSqliteWorkerBroker() {
-  return resolveGlobalSingleton(
-    Symbol.for("openclaw.sqliteWorkerBroker.isolated"),
-    () => new SqliteWorkerBroker(),
-    (broker) => withCallerErrors(broker.close()),
-  );
-}
-
 /** Read the broker's recorded lifecycle state without probing native storage. */
 export function isSqliteWorkerStoreAvailable(store: object): boolean {
-  return (
-    resolveSqliteWorkerBroker().isAvailable(store) ||
-    resolveIsolatedSqliteWorkerBroker().isAvailable(store)
-  );
+  return resolveSqliteWorkerBroker().isAvailable(store);
 }
 
 /** Recorded orphan custody at its original shared-state opening path. */
@@ -119,23 +107,16 @@ export function openSqliteWorkerStore<Operations extends SqliteWorkerOperations>
 }
 
 /**
- * Open a foreign/plugin database on an isolated broker admission lane.
+ * Open a foreign/plugin database on an isolated *scheduling* admission lane.
  *
- * Use for existing-only reads against paths outside OpenClaw state (e.g. macOS
- * Messages chat.db). A wedged native open then pins only this lane's worker pool
- * and admissionTail — shared OpenClaw SQLite admission stays responsive (#148750).
+ * Narrow contract: existing-only reads against paths outside OpenClaw state
+ * (e.g. macOS Messages chat.db). Physical DB ownership stays on the single
+ * shared registry so same-file / hardlink / backend-mismatch / replaced-path
+ * checks still apply across lanes. Only the isolated admissionTail is separate
+ * so a wedged foreign open cannot stall shared OpenClaw SQLite opens (#148750).
  */
 export function openIsolatedSqliteWorkerStore<Operations extends SqliteWorkerOperations>(
   options: SqliteWorkerStoreOptions & { existingOnly: true },
-): Promise<SqliteWorkerStore<Operations> | undefined>;
-export function openIsolatedSqliteWorkerStore<Operations extends SqliteWorkerOperations>(
-  options: SqliteWorkerStoreOptions & { existingOnly?: false },
-): Promise<SqliteWorkerStore<Operations>>;
-export function openIsolatedSqliteWorkerStore<Operations extends SqliteWorkerOperations>(
-  options: SqliteWorkerStoreOptions,
-): Promise<SqliteWorkerStore<Operations> | undefined>;
-export function openIsolatedSqliteWorkerStore<Operations extends SqliteWorkerOperations>(
-  options: SqliteWorkerStoreOptions,
 ): Promise<SqliteWorkerStore<Operations> | undefined> {
   if (!isMainThread) {
     return Promise.reject(
@@ -145,7 +126,21 @@ export function openIsolatedSqliteWorkerStore<Operations extends SqliteWorkerOpe
       ),
     );
   }
-  return resolveIsolatedSqliteWorkerBroker().open<Operations>(options);
+  if (options.existingOnly !== true) {
+    return Promise.reject(
+      new SqliteWorkerError(
+        "Isolated SQLite admission is existing/foreign read-only; use openSqliteWorkerStore to create",
+        "unavailable",
+      ),
+    );
+  }
+  return resolveSqliteWorkerBroker().open<Operations>(
+    options,
+    undefined,
+    undefined,
+    undefined,
+    "isolated",
+  );
 }
 
 /** Host-internal admission for the canonical shared-state actor. */

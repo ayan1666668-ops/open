@@ -66,7 +66,11 @@ export class SqliteWorkerBroker {
   private requests = 0;
   private bytes = 0;
   private admissionBytes = 0;
-  private admissionTail: Promise<void> = Promise.resolve();
+  /** Separate scheduling lanes; actors/path ownership stay shared. */
+  private readonly admissionTail = {
+    shared: Promise.resolve() as Promise<void>,
+    isolated: Promise.resolve() as Promise<void>,
+  };
   private draining?: Promise<void>;
 
   open<Operations extends SqliteWorkerOperations>(
@@ -74,6 +78,7 @@ export class SqliteWorkerBroker {
     stateContext?: SqliteWorkerStateContext,
     assertCurrent?: () => void,
     lifecycle?: Pick<PreparedSqliteWorkerOpen, "maintenanceScope" | "retainCleanup">,
+    admissionLane: "shared" | "isolated" = "shared",
   ): Promise<SqliteWorkerStore<Operations> | undefined> {
     try {
       validateSqliteWorkerDatabaseLocator(options.databasePath);
@@ -109,9 +114,9 @@ export class SqliteWorkerBroker {
         new SqliteWorkerError("SQLite worker open input capacity reached", "overloaded"),
       );
     }
-    const previous = this.admissionTail;
+    const previous = this.admissionTail[admissionLane];
     const released = createDeferredCore();
-    this.admissionTail = released.promise;
+    this.admissionTail[admissionLane] = released.promise;
     this.admissionBytes += input.byteLength;
     // Opening can create the physical file. Publish its identity before admitting any alias.
     return previous
@@ -332,7 +337,7 @@ export class SqliteWorkerBroker {
   }
 
   async closeUnclaimedSharedState(databasePath: string): Promise<void> {
-    await this.admissionTail;
+    await Promise.all([this.admissionTail.shared, this.admissionTail.isolated]);
     const results = await Promise.allSettled(
       findUnclaimedSharedStateActors(this.actors.values(), databasePath).map((actor) =>
         this.closeActor(actor),
@@ -704,7 +709,7 @@ export class SqliteWorkerBroker {
       for (const client of this.stores.values()) {
         client.sealed = true;
       }
-      await this.admissionTail;
+      await Promise.all([this.admissionTail.shared, this.admissionTail.isolated]);
       await Promise.allSettled(this.operations);
       const results = await Promise.allSettled(
         [...this.actors.values()].map((actor) => this.closeActor(actor)),
