@@ -10,7 +10,6 @@ import { hasCardMarkdownTable, hasUndrawableCardTable } from "./presentation-car
 export function createFeishuTableRouting(params: {
   convertMarkdownTables: (text: string, mode: MarkdownTableMode) => string;
   tableMode: MarkdownTableMode;
-  textChunkLimit: number;
 }) {
   // answer previews stream raw text, so the preview dedupe compares payload text, while
   // streamed content enters the ownership state (closing record, settlement, delivered
@@ -33,16 +32,13 @@ export function createFeishuTableRouting(params: {
   // card does not draw a quoted table, so those rows vanish from the preview. A quoted
   // bullet list is not a table at all, so nothing about it is undrawable and the rows
   // survive. The close path takes the same fallback for the same reason.
-  const previewReasoningText = (value: string): string => {
-    const converted =
-      nativeTables && hasCardMarkdownTable(value)
-        ? params.convertMarkdownTables(value, "bullets")
-        : renderTables(value);
-    // The answer preview answers to this limit and the reasoning shares the card, so a
-    // conversion that outgrows it gives way to the text as authored rather than making a
-    // card carry more than the message it settles into.
-    return converted !== value && converted.length > params.textChunkLimit ? value : converted;
-  };
+  // What the card carries is this text wrapped and set beside the answer, so the limit is
+  // asked of the message that is actually sent rather than of the conversion alone, which
+  // the dispatcher does where both halves are known.
+  const previewReasoningText = (value: string): string =>
+    nativeTables && hasCardMarkdownTable(value)
+      ? params.convertMarkdownTables(value, "bullets")
+      : renderTables(value);
   // block keeps its tables raw for a card to draw, so answer text carrying a shape
   // the card renderer is not expected to draw takes the post path instead. A card
   // that cannot draw a table drops those rows from the message rather than

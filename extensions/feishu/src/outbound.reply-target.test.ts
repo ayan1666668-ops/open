@@ -866,6 +866,29 @@ describe("feishuOutbound.sendText replyToId forwarding", () => {
     }
   });
 
+  // Four spaces before anything else is indented code, and a quote marker after them does not
+  // change that. Reading such a line as a fence opened a block nothing closed, and a table
+  // that was safe to convert arrived as raw rows instead.
+  it("converts a comment table beside an indented quote sample", async () => {
+    const sample = ["    > ```", "", "| Name | Role |", "| --- | --- |", "| Ada | Lead |"].join(
+      "\n",
+    );
+    await sendText({
+      cfg: {
+        channels: { feishu: { accounts: { main: { markdown: { tables: "code" } } } } },
+      } as ClawdbotConfig,
+      to: "comment:docx:doxcn123:7623358762119646411",
+      text: sample,
+      accountId: "main",
+    });
+
+    const delivered = String(commentThreadParams(0)?.content ?? "");
+    // The case only means anything while the sample still indents its quote marker past three.
+    expect(sample).toContain("    > ");
+    expect(delivered).toBe(convertMarkdownTables(sample, "code"));
+    expect(delivered).toContain("| ---- | ---- |");
+  });
+
   // A tilde block can hold a sample of backticks, and reading those as a marker of their own
   // left the generated table opener closing a block that was never open, so a safe conversion
   // was refused and the comment arrived as the raw rows a comment cannot draw.

@@ -14,7 +14,13 @@ import type { MentionTarget } from "./mention-target.types.js";
  * reading as a marker and suppressing a table that would have converted safely. A closer
  * keeps the carriage return of a CRLF source, since the line split is on the feed alone.
  */
-type FeishuFenceLine = { container: string; column: number; marker: string; info: string };
+type FeishuFenceLine = {
+  container: string;
+  column: number;
+  indent: number;
+  marker: string;
+  info: string;
+};
 
 const FEISHU_LIST_MARKER = /^(?:[-*+]|\d{1,9}[.)])(?=[ \t])/u;
 // `.` skips a carriage return, so the info string is matched as everything but the feed.
@@ -29,9 +35,14 @@ const FEISHU_FENCE_MARKER = /^(`{3,}|~{3,})([^\n]*)$/u;
 function readFenceLine(line: string): FeishuFenceLine | undefined {
   let index = 0;
   let container = "";
+  let indent = -1;
   for (;;) {
+    const spaceStart = index;
     while (line[index] === " " || line[index] === "\t") {
       index += 1;
+    }
+    if (indent < 0) {
+      indent = index - spaceStart;
     }
     const rest = line.slice(index);
     if (rest.startsWith(">")) {
@@ -57,16 +68,20 @@ function readFenceLine(line: string): FeishuFenceLine | undefined {
   if (marker[1].startsWith("`") && info.includes("`")) {
     return undefined;
   }
-  return { container, column: index, marker: marker[1], info };
+  return { container, column: index, indent: Math.max(indent, 0), marker: marker[1], info };
 }
 
 /**
- * Four spaces with no container above them is indented code, not a fence, which is where
- * the shared scanner draws the line too. Inside a list item the same four spaces are where
- * the item's content starts, so a fence opened by the item's own marker line is closed by a
- * marker at that column.
+ * Four spaces before anything else is indented code, not a fence, which is where the shared
+ * scanner draws the line too, and a quote or list marker after them does not change that.
+ * Inside a list item the same four spaces are where the item's content starts, so a fence
+ * opened by the item's own marker line is closed by a marker at that column, which is why a
+ * line that cannot open one can still close it.
  */
 function opensFence(line: FeishuFenceLine): boolean {
+  if (line.indent > 3) {
+    return false;
+  }
   return line.container !== "" || line.column <= 3;
 }
 

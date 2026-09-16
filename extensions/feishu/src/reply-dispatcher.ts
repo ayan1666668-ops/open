@@ -292,7 +292,6 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
   const tableRouting = createFeishuTableRouting({
     convertMarkdownTables: core.channel.text.convertMarkdownTables,
     tableMode,
-    textChunkLimit,
   });
   const { nativeTables, postTableMode, renderTables, previewReasoningText } = tableRouting;
   const { tableNeedsPostPath, answerTableNeedsPostPath } = tableRouting;
@@ -475,14 +474,31 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
   // the text keeps accumulating for the post that settles it. Standing down is not the
   // same as having nothing to show: an answer that has not started yet still lets a
   // reasoning or status update through.
+  // The card carries the reasoning wrapped and set beside the answer, so a conversion is kept
+  // only while the message that carries it stays inside the limit the settled answer is held
+  // to. Otherwise the reasoning goes as authored, which is what it would have been anyway.
+  const previewReasoningMessage = (authored: string): string => {
+    const converted = previewReasoningText(authored);
+    const wrapped = formatReasoningMessage(converted);
+    if (converted === authored) {
+      return wrapped;
+    }
+    const sent = buildCombinedStreamText(wrapped, streamDisplayText());
+    return sent.length > textChunkLimit ? formatReasoningMessage(authored) : wrapped;
+  };
+
   const previewAnswerText = (): string | undefined => {
     if (answerTableNeedsPostPath(streamText)) {
       return undefined;
     }
     const display = streamDisplayText();
-    // Only the converted form answers to this limit. Text the author wrote long is not this
-    // branch's doing and streams the way it always has.
-    return display !== streamText && display.length > textChunkLimit ? undefined : display;
+    // Only the converted form answers to this limit, and it answers for the message the card
+    // actually carries: the reasoning wrapped beside it, not the answer alone. Text the author
+    // wrote long is not this branch's doing and streams the way it always has.
+    return display !== streamText &&
+      buildCombinedStreamText(reasoningText, display).length > textChunkLimit
+      ? undefined
+      : display;
   };
 
   const queueStreamingUpdate = (
@@ -1735,7 +1751,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
             startStreaming();
             // Convert before the italic line wrapping, the same order the delivered
             // reasoning path uses, so the table is still parseable when the mode runs.
-            queueReasoningUpdate(formatReasoningMessage(previewReasoningText(payload.text)));
+            queueReasoningUpdate(previewReasoningMessage(payload.text));
             return false;
           }
         : undefined,
