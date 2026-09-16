@@ -2,14 +2,11 @@ import fs from "node:fs/promises";
 import { createServer } from "node:http";
 import path from "node:path";
 import { afterEach, expect, it } from "vitest";
-import { clearConfigCache, clearRuntimeConfigSnapshot } from "../src/config/config.js";
-import { clearSessionStoreCacheForTest } from "../src/config/sessions/store-writer-state.js";
-import {
-  disconnectGatewayClient,
-  startGatewayWithClient,
-} from "../src/gateway/test-helpers.e2e.js";
-import { captureEnv, setTestEnvValue } from "../src/test-utils/env.js";
-import { useAutoCleanupTempDirTracker } from "./helpers/temp-dir.js";
+import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
+import { clearConfigCache, clearRuntimeConfigSnapshot } from "../config/config.js";
+import { clearSessionStoreCacheForTest } from "../config/sessions/store-writer-state.js";
+import { captureEnv, setTestEnvValue } from "../test-utils/env.js";
+import { disconnectGatewayClient, startGatewayWithClient } from "./test-helpers.e2e.js";
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 const cases = [
