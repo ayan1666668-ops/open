@@ -24,7 +24,8 @@ import {
   systemOwnedDeclarationKeyNamespace,
 } from "../system-owned-declaration.js";
 import { normalizeCronTaskRunJobId } from "../task-run-history.js";
-import type { CronJob, CronJobCreate, CronJobPatch, CronStoredJob } from "../types.js";
+import type { CronJob, CronJobCreate, CronJobPatch } from "../types.js";
+import { declarativeFields } from "./jobs-declarative.js";
 import {
   computeJobNextRunAtMs,
   findJobOrThrow,
@@ -273,29 +274,6 @@ async function persistUpdatedJob(params: {
     job: nextJob,
     nextRunAtMs: nextJob.state.nextRunAtMs,
   });
-}
-
-function declarativeFields(job: CronStoredJob, includeEnabled: boolean) {
-  return {
-    schedule: job.schedule,
-    pacing: job.pacing,
-    trigger: job.trigger,
-    payload: job.payload,
-    scheduledToolPolicy: job.scheduledToolPolicy,
-    toolsAllowProvenance: job.toolsAllowProvenance,
-    toolsAllowExecTarget: job.toolsAllowExecTarget,
-    runtimeAuthority: job.runtimeAuthority,
-    runtimeAuthorityRecoveryRequired: job.runtimeAuthorityRecoveryRequired,
-    delivery: job.delivery,
-    displayName: job.displayName,
-    ...(includeEnabled
-      ? {
-          enabled: job.enabled,
-          autoDisabled: job.state.autoDisabled,
-          streamRestartExhausted: job.state.streamRestartExhausted,
-        }
-      : {}),
-  };
 }
 
 /** Adds or converges a declaration-keyed cron job inside one store lock and write transaction. */

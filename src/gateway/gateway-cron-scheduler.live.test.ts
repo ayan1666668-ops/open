@@ -371,10 +371,9 @@ describeLive("cron scheduling through an isolated Gateway", () => {
             await delay(100);
           } while (Date.now() < completionDeadline);
           expect(completedRuns).toHaveLength(2);
-          expect(completedRuns.map((run) => run.summary).toSorted()).toEqual([
-            "on-exit payload 1",
-            "on-exit payload 2",
-          ]);
+          expect(new Set(completedRuns.map((run) => run.summary))).toEqual(
+            new Set(["on-exit payload 1", "on-exit payload 2"]),
+          );
           for (const run of completedRuns) {
             expect(run).toMatchObject({ status: "ok", completionStatus: "succeeded" });
           }

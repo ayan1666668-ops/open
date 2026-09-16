@@ -27,6 +27,7 @@ import type {
   CronToolsAllowProvenance,
 } from "../types.js";
 import { resolveInitialCronDelivery } from "./initial-delivery.js";
+import { normalizeDeclarativeLabel } from "./jobs-declarative.js";
 import {
   computeJobNextRunAtMs,
   normalizeStreamScheduleBounds,
@@ -49,7 +50,6 @@ import { normalizeOptionalAgentId, normalizeRequiredName } from "./normalize.js"
 import { mergeCronPayload } from "./payload-merge.js";
 import type { CronServiceState } from "./state.js";
 
-const CRON_DECLARATIVE_LABEL_MAX_LENGTH = 200;
 type DeliveryValidationOptions = { configuredChannels?: readonly string[] };
 
 function resetJobFailureState(job: CronStoredJob): void {
@@ -117,23 +117,6 @@ function normalizeJobSchedule(
   }
   const input = context.kind === "declarative" ? structuredClone(schedule) : schedule;
   return normalizeStreamScheduleBounds(input);
-}
-
-function normalizeDeclarativeLabel(
-  value: unknown,
-  field: "declarationKey" | "displayName",
-  nullable = false,
-): string | undefined {
-  const normalized = normalizeOptionalString(value);
-  if (!(nullable && value == null) && value !== undefined && !normalized) {
-    throw new Error(`cron ${field} must not be blank`);
-  }
-  if (normalized && normalized.length > CRON_DECLARATIVE_LABEL_MAX_LENGTH) {
-    throw new Error(
-      `cron ${field} must be at most ${CRON_DECLARATIVE_LABEL_MAX_LENGTH} characters`,
-    );
-  }
-  return normalized;
 }
 
 type JobValidationContext =
