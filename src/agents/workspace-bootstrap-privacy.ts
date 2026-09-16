@@ -8,7 +8,16 @@ import { CANONICAL_ROOT_MEMORY_FILENAME } from "../memory/root-memory-files.js";
 import { isCronSessionKey, isSubagentSessionKey } from "../routing/session-key.js";
 import { deriveSessionChatTypeFromKey } from "../sessions/session-chat-type-shared.js";
 import { resolveUserPath } from "../utils.js";
-import type { WorkspaceBootstrapFile } from "./workspace.js";
+
+// Leaf contract (structural copy of WorkspaceBootstrapFile) to avoid a
+// workspace.ts <-> workspace-bootstrap-privacy.ts import cycle.
+// Keep fields in sync with WorkspaceBootstrapFile in ./workspace.ts.
+export type WorkspaceBootstrapPrivacyFile = {
+  name: string;
+  path: string;
+  content?: string;
+  missing: boolean;
+};
 
 const ROOT_MEMORY_ONLY = new Set([CANONICAL_ROOT_MEMORY_FILENAME]);
 const SUBAGENT_BOOTSTRAP_ALLOWLIST = new Set(["AGENTS.md"]);
@@ -26,10 +35,10 @@ function resolveBootstrapSessionContext(
   return typeof session === "string" ? { sessionKey: session } : (session ?? {});
 }
 
-function filterRootMemoryBootstrapFiles(
-  files: WorkspaceBootstrapFile[],
+function filterRootMemoryBootstrapFiles<T extends WorkspaceBootstrapPrivacyFile>(
+  files: T[],
   workspaceRoot?: string,
-): WorkspaceBootstrapFile[] {
+): T[] {
   if (!workspaceRoot) {
     return files.filter((file) => !ROOT_MEMORY_ONLY.has(file.name));
   }
@@ -54,10 +63,10 @@ function filterRootMemoryBootstrapFiles(
   });
 }
 
-export function filterBootstrapFilesForSession(
-  files: WorkspaceBootstrapFile[],
+export function filterBootstrapFilesForSession<T extends WorkspaceBootstrapPrivacyFile>(
+  files: T[],
   session?: string | BootstrapSessionContext,
-): WorkspaceBootstrapFile[] {
+): T[] {
   const { sessionKey, chatType, workspaceDir } = resolveBootstrapSessionContext(session);
   const isSubagent = isSubagentSessionKey(sessionKey);
   const isCron = isCronSessionKey(sessionKey);
