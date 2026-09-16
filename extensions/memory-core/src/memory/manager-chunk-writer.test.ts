@@ -11,12 +11,12 @@ const CHUNK_WRITE_TABLES = [
   "memory_index_chunk_provenance",
 ];
 
-const PREPARED_WRITE_TABLES = [...CHUNK_WRITE_TABLES, "memory_index_chunks_fts"];
+const PREPARED_WRITE_TABLES = new Set([...CHUNK_WRITE_TABLES, "memory_index_chunks_fts"]);
 
 function chunkWriteTables(sqls: string[]): string[] {
   return sqls.flatMap((sql) => {
     const table = /^\s*INSERT INTO "?(\w+)"?\s*\(/i.exec(sql)?.[1];
-    return table && PREPARED_WRITE_TABLES.includes(table) ? [table] : [];
+    return table && PREPARED_WRITE_TABLES.has(table) ? [table] : [];
   });
 }
 
