@@ -44,6 +44,7 @@ import {
   replaceRuntimeAuthProfileStoreSnapshots,
 } from "./runtime-snapshots.js";
 import {
+  closeAuthProfileReadPool,
   resolveAuthProfileDatabasePath,
   runAuthProfileWriteTransaction,
   writePersistedAuthProfileStoreRaw,
@@ -120,6 +121,7 @@ async function withAuthProfileTestState<T>(
         }),
     );
   } finally {
+    closeAuthProfileReadPool({ kind: "root", rootPath: stateDir });
     closeOpenClawAgentDatabasesForTest();
     closeOpenClawStateDatabaseForTest();
     fs.rmSync(stateDir, { recursive: true, force: true });

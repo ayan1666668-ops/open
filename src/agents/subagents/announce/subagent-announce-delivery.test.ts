@@ -27,6 +27,7 @@ import {
 import { sendMessage as runtimeSendMessage } from "../../../infra/outbound/message.js";
 import { setActivePluginRegistry } from "../../../plugins/runtime.js";
 import { createDeferredCore } from "../../../shared/deferred.js";
+import { closeOpenClawAgentDatabasesAsync } from "../../../state/openclaw-agent-db.js";
 import { captureOpenClawStateWorkerContext } from "../../../state/openclaw-state-worker-context.js";
 import type { OpenClawStateWorkerContext } from "../../../state/openclaw-state-worker-context.types.js";
 import {
@@ -70,7 +71,14 @@ const sessionDeliveryQueueMocks = vi.hoisted(() => ({
   scheduleSessionDelivery: vi.fn(async () => true),
 }));
 
-const tempDirs = useAutoCleanupTempDirTracker(afterEach);
+const tempDirs = useAutoCleanupTempDirTracker((cleanup) =>
+  afterEach(async () => {
+    for (const dir of tempDirs.dirs) {
+      await closeOpenClawAgentDatabasesAsync(dir);
+    }
+    cleanup();
+  }),
+);
 let fixtureQueueContext: OpenClawStateWorkerContext;
 
 beforeEach(() => {

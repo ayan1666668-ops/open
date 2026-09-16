@@ -32,6 +32,7 @@ import { registerGeneratedMediaTaskActivity } from "../../tasks/generated-media-
 import { resetGeneratedMediaTaskActivityForTests } from "../../tasks/task-runtime.test-helpers.js";
 import { createSuiteTempRootTracker } from "../../test-helpers/temp-dir.js";
 import { captureEnv, setTestEnvValue } from "../../test-utils/env.js";
+import { cleanupSessionStateForTest } from "../../test-utils/session-state-cleanup.js";
 import { createTestPreparedRunAdmission } from "../admitted-run-context.test-support.js";
 import { buildAgentRunTerminalOutcomeFromLifecycleEvent } from "../agent-run-terminal-outcome.js";
 import {
@@ -39,6 +40,7 @@ import {
   createAuthProfileStoreFixture,
 } from "../auth-profiles/credential-fixtures.test-support.js";
 import { clearRuntimeAuthProfileStoreSnapshots } from "../auth-profiles/runtime-snapshots.js";
+import { closeAuthProfileReadPool } from "../auth-profiles/sqlite.js";
 import { saveAuthProfileStore } from "../auth-profiles/store-runtime.js";
 import { testing as cliBackendsTesting } from "../cli-backends.test-support.js";
 import { buildPreparedCliRunContext } from "../cli-runner.test-helpers.js";
@@ -789,6 +791,7 @@ describe("CLI attempt execution", () => {
         });
       }
     }
+    await cleanupSessionStateForTest({ stateDir: suiteRoot });
     await fixtureRoot.cleanup();
   });
 
@@ -4595,6 +4598,8 @@ describe("embedded attempt harness pinning", () => {
   });
 
   afterEach(async () => {
+    closeAuthProfileReadPool({ kind: "root", rootPath: tmpDir });
+    await cleanupSessionStateForTest({ stateDir: tmpDir });
     await fs.rm(tmpDir, { recursive: true, force: true });
   });
 

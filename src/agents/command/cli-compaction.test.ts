@@ -20,6 +20,7 @@ import { PluginRegistryInspectionResources } from "../../plugins/registry-inspec
 import { retireInspectionInstances } from "../../plugins/registry-inspection.test-support.js";
 import { withPluginRuntimeRegistryScope } from "../../plugins/runtime/gateway-request-scope.js";
 import { getAsyncWorkSignal } from "../../shared/async-work-scope.js";
+import { closeOpenClawAgentDatabasesAsync } from "../../state/openclaw-agent-db.js";
 import { withEnv } from "../../test-utils/env.js";
 import { resolveCliBackendConfig } from "../cli-backends.js";
 import { createModelGenerationFixture } from "../embedded-agent-runner/model.generation-scope.test-support.js";
@@ -281,6 +282,7 @@ describe("runCliTurnCompactionLifecycle", () => {
     resetCliCompactionTestDeps();
     vi.clearAllTimers();
     vi.useRealTimers();
+    await closeOpenClawAgentDatabasesAsync(tmpDir);
     await fs.rm(tmpDir, { recursive: true, force: true });
   });
 

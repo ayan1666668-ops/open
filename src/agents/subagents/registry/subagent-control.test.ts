@@ -24,6 +24,7 @@ import {
   getActiveSessionLifecycleMutationCount,
   SESSION_WORK_ADMISSION_DRAIN_TIMEOUT_MS,
 } from "../../../sessions/session-lifecycle-admission.js";
+import { closeOpenClawAgentDatabasesAsync } from "../../../state/openclaw-agent-db.js";
 import { SUBAGENT_KILL_TASK_ERROR } from "../../../tasks/detached-task-runtime-contract.js";
 import { createSubagentRunRecord } from "../../subagent-test-fixtures.test-helpers.js";
 import {
@@ -138,7 +139,8 @@ beforeAll(() => {
   tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-subagent-control-"));
 });
 
-afterAll(() => {
+afterAll(async () => {
+  await closeOpenClawAgentDatabasesAsync(tempRoot);
   fs.rmSync(tempRoot, { recursive: true, force: true });
 });
 
