@@ -29,6 +29,7 @@ import {
 import { UPDATE_RUNNER_TIMEOUT_MS } from "../../infra/update-run-timeouts.js";
 import { CLI_NAME } from "../cli-name.js";
 import { resolveNodeRunner } from "./shared.js";
+import type { PreManagedServiceStop } from "./update-command-service-context-types.js";
 
 export type ManagedServiceRootRedirect = {
   root: string;
@@ -144,9 +145,16 @@ export async function resolvePackageRuntimePreflight(params: {
   installedRoot?: string;
   timeoutMs?: number;
   nodeRunner?: string;
-  fallbackNodeRunner?: string;
+  root?: string;
+  shouldRestart?: boolean;
+  alreadyCurrent?: boolean;
+  service?: PreManagedServiceStop;
 }): Promise<Result<PackageRuntimePreflight, string> & { failureFacts?: UpdateFailureFact[] }> {
-  const nodeRunner = normalizeOptionalString(params.nodeRunner);
+  const nodeRunner = normalizeOptionalString(
+    params.alreadyCurrent
+      ? (params.service?.serviceNodeRunner ?? params.nodeRunner)
+      : params.nodeRunner,
+  );
   const unchanged = (): PackageRuntimePreflight => (nodeRunner ? { nodeRunner } : {});
   let target = params.target;
   if (!target && params.installedRoot) {
@@ -181,7 +189,16 @@ export async function resolvePackageRuntimePreflight(params: {
   if (satisfies === true) {
     return ok(unchangedRuntime);
   }
-  const fallbackNodeRunner = normalizeOptionalString(params.fallbackNodeRunner);
+  const fallbackNodeRunner =
+    params.shouldRestart &&
+    nodeRunner &&
+    (params.alreadyCurrent
+      ? params.service?.running &&
+        params.service.serviceUpdateVerdict?.kind === "owned" &&
+        params.service.serviceUpdateVerdict.refreshDefinition
+      : await gatewayServiceCommandUsesRoot({ root: params.root }))
+      ? resolveNodeRunner()
+      : undefined;
   if (nodeRunner && fallbackNodeRunner && fallbackNodeRunner !== nodeRunner) {
     const fallbackRuntime = await resolvePackageRuntimeForPreflight({
       nodeRunner: fallbackNodeRunner,
