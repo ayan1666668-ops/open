@@ -2,6 +2,7 @@
 import crypto from "node:crypto";
 import { expectDefined } from "@openclaw/normalization-core";
 import { asDateTimestampMs } from "@openclaw/normalization-core/number-coercion";
+import { resolveCronTriggerMinIntervalMs } from "../../config/cron-limits.js";
 import { formatErrorMessageWithCode } from "../../infra/errors.js";
 import { pruneMapToMaxSize } from "../../infra/map-size.js";
 import { isCronJobActive } from "../active-jobs.js";
@@ -213,6 +214,18 @@ function isPendingErrorBackoffSlot(params: {
   return backoffUntilMs !== undefined && nowMs < backoffUntilMs && nextRunAtMs <= backoffUntilMs;
 }
 
+export function hasPendingCronTriggerInterval(job: CronJob, nowMs: number): boolean {
+  const nextRunAtMs = job.state.nextRunAtMs;
+  // Busy evaluations update the job timestamp without changing trigger history.
+  const lastActivityAtMs = Math.max(job.updatedAtMs, job.state.lastTriggerEvalAtMs ?? 0);
+  return (
+    job.trigger !== undefined &&
+    hasScheduledNextRunAtMs(nextRunAtMs) &&
+    nowMs < nextRunAtMs &&
+    nextRunAtMs <= lastActivityAtMs + resolveCronTriggerMinIntervalMs()
+  );
+}
+
 export function isStaleFutureCronSlot(job: CronJob, nowMs: number): boolean {
   const nextRun = job.state.nextRunAtMs;
   if (
@@ -225,8 +238,11 @@ export function isStaleFutureCronSlot(job: CronJob, nowMs: number): boolean {
     return false;
   }
 
-  // Preserve non-cron retry timestamps only while their error backoff is pending.
-  if (isPendingErrorBackoffSlot({ job, nextRunAtMs: nextRun, nowMs })) {
+  // Retry and trigger floors can fall between expression slots.
+  if (
+    isPendingErrorBackoffSlot({ job, nextRunAtMs: nextRun, nowMs }) ||
+    hasPendingCronTriggerInterval(job, nowMs)
+  ) {
     return false;
   }
   let naturalNext: number | undefined;
