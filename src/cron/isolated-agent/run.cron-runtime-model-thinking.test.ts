@@ -6,6 +6,13 @@ import {
   type TestModelFallbackRunnerParams,
 } from "../../agents/test-helpers/model-fallback-runner.test-support.js";
 import type { AgentDefaultsConfig } from "../../config/types.agent-defaults.js";
+import { createEmptyPluginRegistry } from "../../plugins/registry-empty.js";
+import {
+  captureActivePluginRegistrySnapshot,
+  restoreActivePluginRegistrySnapshot,
+  setActivePluginRegistry,
+} from "../../plugins/runtime.js";
+import { makeIsolatedAgentParamsFixture } from "./job-fixtures.js";
 import {
   clearFastTestEnv,
   isThinkingLevelSupportedMock,
@@ -22,6 +29,9 @@ import {
   resetRunCronIsolatedAgentTurnHarness,
   restoreFastTestEnv,
   runEmbeddedAgentMock,
+  runCliAgentMock,
+  preparedRunPluginRegistryMock,
+  resolveEffectiveAgentRuntimeMock,
   runWithModelFallbackMock,
 } from "./run.test-harness.js";
 
@@ -91,21 +101,25 @@ describe("runCronIsolatedAgentTurn runtime model thinking", () => {
     resolveAllowedModelRefMock.mockReturnValue({
       ref: { provider: "ollama", model: "minimax-m3:cloud" },
     });
-    loadModelCatalogMock.mockResolvedValueOnce([]).mockResolvedValueOnce([
-      {
-        provider: "OLLAMA",
-        id: "minimax-m3:cloud",
-        name: "minimax-m3:cloud",
-        reasoning: true,
-      },
-    ]);
+    loadModelCatalogMock.mockImplementation(async (scope) =>
+      scope.model
+        ? [
+            {
+              provider: "OLLAMA",
+              id: "minimax-m3:cloud",
+              name: "minimax-m3:cloud",
+              reasoning: true,
+            },
+          ]
+        : [],
+    );
     isThinkingLevelSupportedMock.mockImplementation(
       ({ catalog, level }: { catalog?: Array<{ reasoning?: boolean }>; level?: string }) =>
         level === "off" || catalog?.some((entry) => entry.reasoning === true) === true,
     );
     resolveSupportedThinkingLevelMock.mockReturnValue("off");
 
-    await runCronIsolatedAgentTurn({
+    const result = await runCronIsolatedAgentTurn({
       cfg: {
         agents: {
           defaults: {
@@ -132,6 +146,7 @@ describe("runCronIsolatedAgentTurn runtime model thinking", () => {
       sessionKey: "cron:runtime-thinking",
     });
 
+    expect(result, JSON.stringify(result)).toMatchObject({ status: "ok" });
     expect(loadModelCatalogMock).toHaveBeenCalledTimes(2);
     const embeddedCall = firstMockArg(runEmbeddedAgentMock);
     expect(embeddedCall.provider).toBe("ollama");
@@ -145,6 +160,67 @@ describe("runCronIsolatedAgentTurn runtime model thinking", () => {
         reasoning: true,
       }),
     ]);
+  });
+
+  it("retains admitted thinking metadata when a CLI refresh is empty", async () => {
+    const snapshot = captureActivePluginRegistrySnapshot();
+    const registry = createEmptyPluginRegistry();
+    registry.cliBackends.push({
+      pluginId: "thinking-cli",
+      source: "test",
+      backend: { id: "test-cli", modelProvider: "test-cli", config: { command: "fixture-cli" } },
+    });
+    const entry = {
+      provider: "test-cli",
+      id: "selected",
+      name: "Selected",
+      nativeRuntime: "test-cli",
+      reasoning: true,
+    };
+    loadModelCatalogMock.mockImplementation(async (scope: { model?: string }) =>
+      scope.model ? [] : [entry],
+    );
+    resolveAllowedModelRefMock.mockReturnValue({
+      ref: { provider: "test-cli", model: "selected" },
+    });
+    preparedRunPluginRegistryMock.mockReturnValue(registry);
+    resolveEffectiveAgentRuntimeMock.mockReturnValue("test-cli");
+    isThinkingLevelSupportedMock.mockImplementation(({ catalog }: { catalog: unknown[] }) =>
+      catalog.includes(entry),
+    );
+    resolveSupportedThinkingLevelMock.mockReturnValue("off");
+    runCliAgentMock.mockResolvedValue({ payloads: [{ text: "ok" }], meta: { agentMeta: {} } });
+    setActivePluginRegistry(registry);
+    try {
+      const result = await runCronIsolatedAgentTurn(
+        makeIsolatedAgentParamsFixture({
+          cfg: { agents: { defaults: { models: { "test-cli/selected": {} } } } },
+          job: {
+            payload: {
+              kind: "agentTurn",
+              message: "summarize",
+              model: "test-cli/selected",
+              thinking: "high",
+            },
+          },
+          message: "summarize",
+          sessionKey: "cron:thinking-refresh",
+        }),
+      );
+      expect(result, JSON.stringify(result)).toMatchObject({ status: "ok" });
+      expect(loadModelCatalogMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          provider: "test-cli",
+          model: "selected",
+          agentRuntime: "test-cli",
+        }),
+      );
+      expect(runCliAgentMock).toHaveBeenCalledWith(
+        expect.objectContaining({ provider: "test-cli", model: "selected", thinkLevel: "high" }),
+      );
+    } finally {
+      restoreActivePluginRegistrySnapshot(snapshot);
+    }
   });
 
   it("does not hydrate live catalog metadata when thinking is explicitly off", async () => {
@@ -286,6 +362,7 @@ describe("runCronIsolatedAgentTurn runtime model thinking", () => {
             kind: "agentTurn",
             message: "summarize",
             model: "openai/gpt-5.6-sol",
+            fallbacks: ["ollama/minimax-m3:cloud"],
           },
         } as never,
         message: "summarize",
@@ -357,6 +434,7 @@ describe("runCronIsolatedAgentTurn runtime model thinking", () => {
           kind: "agentTurn",
           message: "summarize",
           model: "openai/gpt-5.6-sol",
+          fallbacks: ["ollama/minimax-m3:cloud"],
         },
       } as never,
       message: "summarize",

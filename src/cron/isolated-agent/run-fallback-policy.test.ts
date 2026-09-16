@@ -36,6 +36,8 @@ describe("resolveCronFallbacksOverride", () => {
   it("keeps configured fallbacks for cron payload model overrides", () => {
     expect(
       resolveCronFallbacksOverride({
+        provider: "google",
+        model: "gemini-2.0-flash",
         cfg: makeConfig(["openai/gpt-5.4", "google/gemini-3-pro"]),
         agentId: "main",
         inheritDefaultFallbacksForAgentStringModel: true,
@@ -51,6 +53,8 @@ describe("resolveCronFallbacksOverride", () => {
   it("returns an empty override for payload model overrides without configured fallbacks", () => {
     expect(
       resolveCronFallbacksOverride({
+        provider: "google",
+        model: "gemini-2.0-flash",
         cfg: makeConfig(),
         agentId: "main",
         job: makeJob({
@@ -65,6 +69,8 @@ describe("resolveCronFallbacksOverride", () => {
   it("lets payload fallbacks override the configured fallback policy", () => {
     expect(
       resolveCronFallbacksOverride({
+        provider: "google",
+        model: "gemini-2.0-flash",
         cfg: makeConfig(["openai/gpt-5.4"]),
         agentId: "main",
         job: makeJob({
@@ -80,6 +86,8 @@ describe("resolveCronFallbacksOverride", () => {
   it("uses subagent model fallbacks when cron selects the configured subagent model", () => {
     expect(
       resolveCronFallbacksOverride({
+        provider: "kimi",
+        model: "kimi-code",
         cfg: {
           agents: {
             defaults: {
@@ -109,6 +117,8 @@ describe("resolveCronFallbacksOverride", () => {
   it("uses default subagent fallbacks ahead of the agent primary", () => {
     expect(
       resolveCronFallbacksOverride({
+        provider: "kimi",
+        model: "kimi-code",
         cfg: {
           agents: {
             defaults: {
@@ -142,6 +152,8 @@ describe("resolveCronFallbacksOverride", () => {
   it("keeps the agent primary strict when the default subagent model has no primary", () => {
     expect(
       resolveCronFallbacksOverride({
+        provider: "anthropic",
+        model: "claude-opus-4-6",
         cfg: {
           agents: {
             defaults: {
@@ -174,6 +186,8 @@ describe("resolveCronFallbacksOverride", () => {
   it("keeps explicit empty subagent fallbacks as a fallback override", () => {
     expect(
       resolveCronFallbacksOverride({
+        provider: "kimi",
+        model: "kimi-code",
         cfg: {
           agents: {
             defaults: {
@@ -203,6 +217,8 @@ describe("resolveCronFallbacksOverride", () => {
   it("ignores subagent fallbacks when cron did not select the subagent model", () => {
     expect(
       resolveCronFallbacksOverride({
+        provider: "anthropic",
+        model: "claude-opus-4-6",
         cfg: {
           agents: {
             defaults: {
@@ -231,6 +247,8 @@ describe("resolveCronFallbacksOverride", () => {
   it("inherits default fallbacks for cron runs when the agent model is a string", () => {
     expect(
       resolveCronFallbacksOverride({
+        provider: "deepseek",
+        model: "deepseek-v4-pro",
         cfg: {
           agents: {
             defaults: {
@@ -260,6 +278,8 @@ describe("resolveCronFallbacksOverride", () => {
   it("does not infer inheritance from rewritten cron agent defaults", () => {
     expect(
       resolveCronFallbacksOverride({
+        provider: "anthropic",
+        model: "claude-sonnet-4-6",
         cfg: {
           agents: {
             defaults: {
@@ -288,6 +308,8 @@ describe("resolveCronFallbacksOverride", () => {
   it("keeps object-style agent primaries strict for cron runs", () => {
     expect(
       resolveCronFallbacksOverride({
+        provider: "deepseek",
+        model: "deepseek-v4-pro",
         cfg: {
           agents: {
             defaults: {
@@ -318,6 +340,8 @@ describe("resolveCronFallbacksOverride", () => {
   it("keeps string agent primaries strict when they differ from the default primary", () => {
     expect(
       resolveCronFallbacksOverride({
+        provider: "anthropic",
+        model: "claude-sonnet-4-6",
         cfg: {
           agents: {
             defaults: {
@@ -346,6 +370,8 @@ describe("resolveCronFallbacksOverride", () => {
   it("treats string subagent model selection as strict when no fallbacks are configured", () => {
     expect(
       resolveCronFallbacksOverride({
+        provider: "kimi",
+        model: "kimi-code",
         cfg: {
           agents: {
             defaults: {
@@ -372,6 +398,8 @@ describe("resolveCronFallbacksOverride", () => {
   it("keeps payload model overrides on the configured model fallback policy", () => {
     expect(
       resolveCronFallbacksOverride({
+        provider: "google",
+        model: "gemini-3-pro",
         cfg: {
           agents: {
             defaults: {
@@ -401,6 +429,8 @@ describe("resolveCronFallbacksOverride", () => {
   it("leaves the default model path to the fallback runner when no payload model is set", () => {
     expect(
       resolveCronFallbacksOverride({
+        provider: "anthropic",
+        model: "claude-opus-4-6",
         cfg: makeConfig(["openai/gpt-5.4"]),
         agentId: "main",
         job: makeJob({

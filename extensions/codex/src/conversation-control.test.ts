@@ -29,7 +29,7 @@ import {
   resolveStorePath,
   upsertSessionEntry,
 } from "openclaw/plugin-sdk/session-store-runtime";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createCodexAppServerAgentHarness } from "../harness.js";
 import {
   buildCodexSupervisionTestConnectionFingerprint,
@@ -94,6 +94,7 @@ function setCodexConversationModel(
 }
 
 let tempDir: string;
+const tempDirs: string[] = [];
 
 async function withDirectModelCatalog(
   run: (params: { config: OpenClawConfig; agentDir: string }) => Promise<void>,
@@ -104,7 +105,10 @@ async function withDirectModelCatalog(
       list: [{ id: "main", agentDir, workspace: tempDir }],
       defaults: { model: "openai/gpt-5.4", agentRuntime: { id: "codex" } },
     },
-    plugins: { allow: ["openai", "codex"], entries: { codex: { enabled: true } } },
+    plugins: {
+      allow: ["openai", "codex"],
+      entries: { codex: { enabled: true, config: { discovery: { enabled: false } } } },
+    },
     models: {
       mode: "replace",
       providers: {
@@ -167,9 +171,12 @@ async function withDirectModelCatalog(
       await run({ config, agentDir });
     });
   } finally {
-    await owner.close();
-    if (previousConfig) setRuntimeConfigSnapshot(previousConfig);
-    else clearRuntimeConfigSnapshot();
+    try {
+      expect(await owner.close()).toEqual({ memoryErrors: [], pluginFailures: [] });
+    } finally {
+      if (previousConfig) setRuntimeConfigSnapshot(previousConfig);
+      else clearRuntimeConfigSnapshot();
+    }
   }
 }
 
@@ -204,6 +211,7 @@ describe("codex conversation controls", () => {
   beforeEach(async () => {
     resetCodexTestBindingStore();
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-codex-control-"));
+    tempDirs.push(tempDir);
     vi.stubEnv("OPENCLAW_STATE_DIR", tempDir);
     sharedClientMocks.getSharedCodexAppServerClient.mockReset();
     sharedClientMocks.releaseLeasedSharedCodexAppServerClient.mockReset();
@@ -212,7 +220,13 @@ describe("codex conversation controls", () => {
   afterEach(async () => {
     vi.unstubAllEnvs();
     clearRuntimeAuthProfileStoreSnapshots();
-    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  afterAll(async () => {
+    // The outer afterEach drains prepared catalog owners before their fixture storage is removed.
+    await Promise.all(
+      tempDirs.map((directory) => fs.rm(directory, { recursive: true, force: true })),
+    );
   });
 
   it("persists fast mode on the binding and permissions on the session", async () => {

@@ -1,14 +1,14 @@
+import { modelFallbackOverrideFromAvailability } from "../../agents/agent-scope.js";
 /** Resolves model fallback chains for isolated cron runs and preflight. */
 import { resolveModelCandidateChain } from "../../agents/model-fallback-candidates.js";
 import type { ModelCandidate } from "../../agents/model-fallback.types.js";
 import { resolveAgentModelFallbackValues } from "../../config/model-input.js";
+import type { InternalSessionEntry as SessionEntry } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { resolveSessionModelFallbacks } from "../../model-picker/apply-session-model-selection.js";
 import { createLazyImportLoader } from "../../shared/lazy-promise.js";
 import type { CronJob } from "../types.js";
-import {
-  resolveEffectiveModelFallbacks,
-  resolveSubagentModelFallbacksOverride,
-} from "./run-execution.runtime.js";
+import { resolveSubagentModelFallbacksOverride } from "./run-execution.runtime.js";
 import { logWarn } from "./run.runtime.js";
 
 const cronModelPreflightRuntimeLoader = createLazyImportLoader(
@@ -20,6 +20,9 @@ export function resolveCronFallbacksOverride(params: {
   cfg: OpenClawConfig;
   job: CronJob;
   agentId: string;
+  provider: string;
+  model: string;
+  sessionEntry?: Partial<SessionEntry>;
   useSubagentFallbacks?: boolean;
   inheritDefaultFallbacksForAgentStringModel?: boolean;
 }): string[] | undefined {
@@ -27,49 +30,40 @@ export function resolveCronFallbacksOverride(params: {
   const payloadFallbacks = Array.isArray(payload?.fallbacks) ? payload.fallbacks : undefined;
   const hasCronPayloadModelOverride =
     typeof payload?.model === "string" && payload.model.trim().length > 0;
-  if (payloadFallbacks !== undefined) {
-    return payloadFallbacks;
-  }
+  let configuredFallbacksOverride: string[] | undefined;
   if (params.useSubagentFallbacks === true && !hasCronPayloadModelOverride) {
     // A payload model override owns its full candidate chain; otherwise the
     // selected subagent can contribute its configured fallback policy.
-    const subagentFallbacksOverride = resolveSubagentModelFallbacksOverride(
-      params.cfg,
-      params.agentId,
-    );
-    if (subagentFallbacksOverride !== undefined) {
-      return subagentFallbacksOverride;
-    }
+    configuredFallbacksOverride = resolveSubagentModelFallbacksOverride(params.cfg, params.agentId);
   }
-  if (!hasCronPayloadModelOverride && params.inheritDefaultFallbacksForAgentStringModel === true) {
+  if (
+    configuredFallbacksOverride === undefined &&
+    !hasCronPayloadModelOverride &&
+    params.inheritDefaultFallbacksForAgentStringModel === true
+  ) {
     const defaultFallbacks = resolveAgentModelFallbackValues(params.cfg.agents?.defaults?.model);
     if (defaultFallbacks.length > 0) {
-      return defaultFallbacks;
+      configuredFallbacksOverride = defaultFallbacks;
     }
   }
-  return resolveEffectiveModelFallbacks({
-    cfg: params.cfg,
-    agentId: params.agentId,
-  });
+  return modelFallbackOverrideFromAvailability(
+    resolveSessionModelFallbacks({
+      cfg: params.cfg,
+      agentId: params.agentId,
+      sessionEntry: params.sessionEntry,
+      model: { provider: params.provider, id: params.model },
+      modelFallbacksOverride: payloadFallbacks,
+      configuredFallbacksOverride,
+      ownsCandidateChain: hasCronPayloadModelOverride,
+    }),
+  );
 }
 
 /** Builds the ordered model candidates used by cron preflight checks. */
-export function resolveCronPreflightCandidates(params: {
-  cfg: OpenClawConfig;
-  job: CronJob;
-  agentId: string;
-  provider: string;
-  model: string;
-  useSubagentFallbacks?: boolean;
-  inheritDefaultFallbacksForAgentStringModel?: boolean;
-}): ModelCandidate[] {
-  const fallbacksOverride = resolveCronFallbacksOverride({
-    cfg: params.cfg,
-    job: params.job,
-    agentId: params.agentId,
-    useSubagentFallbacks: params.useSubagentFallbacks,
-    inheritDefaultFallbacksForAgentStringModel: params.inheritDefaultFallbacksForAgentStringModel,
-  });
+export function resolveCronPreflightCandidates(
+  params: Parameters<typeof resolveCronFallbacksOverride>[0],
+): ModelCandidate[] {
+  const fallbacksOverride = resolveCronFallbacksOverride(params);
   return resolveModelCandidateChain({
     cfg: params.cfg,
     agentId: params.agentId,

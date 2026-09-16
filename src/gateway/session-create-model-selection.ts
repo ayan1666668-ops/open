@@ -21,7 +21,7 @@ export async function resolveSessionCreateModelSelection(
   cfg: OpenClawConfig,
   agentId: string,
   input: string | { model: string; agentRuntime?: string } | undefined,
-  parentEntry?: SessionEntry,
+  parent?: { entry: SessionEntry; agentId: string; sessionKey: string; storePath: string },
   preparedModelSelection?: ModelRef,
 ): Promise<GatewaySessionTitleModelSelection | null> {
   const model = normalizeOptionalString(typeof input === "string" ? input : input?.model);
@@ -50,7 +50,10 @@ export async function resolveSessionCreateModelSelection(
   const prepared = await prepareSessionExecutionSelection({
     cfg,
     agentId,
-    sessionEntry: parentEntry,
+    sessionEntry: parent?.entry,
+    sessionAgentId: parent?.agentId,
+    sessionKey: parent?.sessionKey,
+    storePath: parent?.storePath,
     request: resolved
       ? {
           kind: "model",
@@ -63,7 +66,7 @@ export async function resolveSessionCreateModelSelection(
   return {
     executionSelection: prepared.selection,
     validate: prepared.validateCommit,
-    authProfileOverride: resolved?.profile ?? parentEntry?.authProfileOverride,
+    authProfileOverride: resolved?.profile ?? parent?.entry.authProfileOverride,
   };
 }
 

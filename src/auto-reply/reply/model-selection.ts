@@ -20,7 +20,10 @@ import {
   type ModelVisibilityPolicy,
 } from "../../agents/model-visibility-policy.js";
 import { listOpenAIAuthProfileProvidersForAgentRuntime } from "../../agents/openai-routing.js";
-import { needsThinkHydration, resolveEffectiveAgentRuntime } from "../../agents/thinking-runtime.js";
+import {
+  needsThinkHydration,
+  resolveEffectiveAgentRuntime,
+} from "../../agents/thinking-runtime.js";
 import { resolveCollapsedSessionAuthPinSource } from "../../config/sessions/auth-profile-override-provenance.js";
 import { SessionWorkStartInvalidatedError } from "../../config/sessions/lifecycle.js";
 import { adoptPersistedSessionSnapshot } from "../../config/sessions/session-snapshot-merge.js";
@@ -247,6 +250,8 @@ export async function createModelSelectionState(params: {
       cfg,
       agentId: resolveSessionAgentId({ config: cfg, agentId: params.agentId, sessionKey }),
       sessionKey,
+      storePath: params.storePath,
+      parentSessionKey: params.parentSessionKey,
       sessionEntry,
       modelCatalog: modelCatalog ?? allowedModelCatalog,
       manifestPlugins: runtimeModelNormalization.manifestPlugins,
@@ -269,7 +274,7 @@ export async function createModelSelectionState(params: {
       const initialEntry = { ...sessionEntry };
       const nextEntry = { ...sessionEntry };
       commitSessionExecutionSelection(nextEntry, executionSelection, {
-        cause: { kind: "initialize" },
+        cause: { kind: "initialize", fallbackPermission: prepared.fallbackPermission },
       });
       if (storePath) {
         const { persistReplySessionEntry } = await loadSessionPersistenceRuntime();

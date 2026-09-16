@@ -49,9 +49,14 @@ describe("executeAgentTurn: session state", () => {
     });
     state.runEmbeddedAgentMock
       .mockImplementationOnce(async () => {
-        throw session.publish(new LiveSessionModelSwitchError({
-          selection: { model: { provider: "openai", id: "gpt-5.6-luna" }, executor: { kind: "harness", id: "codex" } },
-        }));
+        throw session.publish(
+          new LiveSessionModelSwitchError({
+            selection: {
+              model: { provider: "openai", id: "gpt-5.6-luna" },
+              executor: { kind: "harness", id: "codex" },
+            },
+          }),
+        );
       })
       .mockImplementationOnce(async () => {
         return {
@@ -82,9 +87,14 @@ describe("executeAgentTurn: session state", () => {
 
     expect(result.kind).toBe("success");
     expect(state.runEmbeddedAgentMock).toHaveBeenCalledTimes(2);
-    expect(followupRun.run.executionSelection).toMatchObject({ model: { provider: "openai", id: "gpt-5.6-luna" } });
+    expect(followupRun.run.executionSelection).toMatchObject({
+      model: { provider: "openai", id: "gpt-5.6-luna" },
+    });
     expect(state.runEmbeddedAgentMock.mock.calls[1]?.[0]).toEqual(
-      expect.objectContaining({ executionSelection: expect.objectContaining({ executor: { kind: "harness", id: "codex" } }), thinkLevel: "max" }),
+      expect.objectContaining({
+        executionSelection: expect.objectContaining({ executor: { kind: "harness", id: "codex" } }),
+        thinkLevel: "max",
+      }),
     );
   });
 

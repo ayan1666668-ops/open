@@ -331,6 +331,7 @@ export async function runEmbeddedAgentAttempt(params: RunEmbeddedAgentAttemptPar
               immutableThinkLevel ??
               resolveConfiguredThinkingDefault({
                 cfg,
+                agentId: sessionAgentId,
                 provider: providerOverride,
                 model: modelOverride,
               });
@@ -367,13 +368,7 @@ export async function runEmbeddedAgentAttempt(params: RunEmbeddedAgentAttemptPar
                 allowPluginNormalization: true,
                 ...modelManifestContext,
               }).catalog;
-              if (
-                hasResolvedThinkingCatalogEntry({
-                  catalog: runtimeCatalog,
-                  provider: providerOverride,
-                  model: modelOverride,
-                })
-              ) {
+              if (findModelInCatalog(runtimeCatalog, providerOverride, modelOverride)) {
                 candidateThinkingCatalog = runtimeThinkingCatalog;
               }
             }
@@ -381,6 +376,7 @@ export async function runEmbeddedAgentAttempt(params: RunEmbeddedAgentAttemptPar
               candidateConfiguredThinkLevel ??
               resolveThinkingDefault({
                 cfg,
+                agentId: sessionAgentId,
                 provider: providerOverride,
                 model: modelOverride,
                 catalog: candidateThinkingCatalog,

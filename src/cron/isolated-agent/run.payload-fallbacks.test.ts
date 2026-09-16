@@ -15,7 +15,6 @@ import {
   resolveAgentConfigMock,
   resolveConfiguredModelRefMock,
   resolveEffectiveAgentRuntimeMock,
-  resolveAgentModelFallbacksOverrideMock,
   runCliAgentMock,
   runEmbeddedAgentMock,
   runWithModelFallbackMock,
@@ -91,12 +90,12 @@ describe("runCronIsolatedAgentTurn — payload.fallbacks", () => {
       expectedFallbacks: [],
     },
   ])("$name", async ({ payload, agentFallbacks, expectedFallbacks }) => {
-    if (agentFallbacks) {
-      resolveAgentModelFallbacksOverrideMock.mockReturnValue(agentFallbacks);
-    }
-
     const result = await runCronIsolatedAgentTurn(
       makeIsolatedAgentParamsFixture({
+        agentId: "main",
+        cfg: agentFallbacks
+          ? { agents: { list: [{ id: "main", model: { fallbacks: agentFallbacks } }] } }
+          : {},
         job: makeIsolatedAgentJobFixture({ payload }),
       }),
     );
@@ -167,7 +166,13 @@ describe("runCronIsolatedAgentTurn — payload.fallbacks", () => {
     });
 
     const result = await runCronIsolatedAgentTurn(
-      makeIsolatedAgentParamsFixture({ onExecutionStarted, onExecutionPhase }),
+      makeIsolatedAgentParamsFixture({
+        onExecutionStarted,
+        onExecutionPhase,
+        job: makeIsolatedAgentJobFixture({
+          payload: { kind: "agentTurn", message: "test", fallbacks: ["openai/gpt-5"] },
+        }),
+      }),
     );
 
     expect(result.status).toBe("ok");
@@ -289,12 +294,17 @@ describe("runCronIsolatedAgentTurn — payload.fallbacks", () => {
     runEmbeddedAgentMock.mockRejectedValueOnce(new Error("primary failed"));
     runWithModelFallbackMock.mockImplementation(async (params: TestModelFallbackRunnerParams) => {
       await expect(runInitialModelFallbackAttempt(params)).rejects.toThrow("primary failed");
-      return await runFallbackModelAttempt(params, "anthropic", "claude-sonnet-4-6", "unknown");
+      return await runFallbackModelAttempt(params, "fixture", "authority-fallback", "unknown");
     });
 
     const result = await runCronIsolatedAgentTurn(
       makeIsolatedAgentParamsFixture({
         job: makeIsolatedAgentJobFixture({
+          payload: {
+            kind: "agentTurn",
+            message: "test",
+            fallbacks: ["fixture/authority-fallback"],
+          },
           runtimeAuthority: {
             version: 1,
             runtimeId: "codex",

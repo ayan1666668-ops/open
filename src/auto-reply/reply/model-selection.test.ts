@@ -13,6 +13,7 @@ import type { ModelCatalogSnapshot } from "../../agents/model-catalog.types.js";
 import { evaluatePublishedModelRuntimeChoice } from "../../agents/model-runtime-choice.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import type { SessionEntry } from "../../config/sessions.js";
+import { prepareSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
 import { createPluginMetadataSnapshotFixture } from "../../plugins/plugin-metadata.test-support.js";
 import * as activeThinkingPolicy from "../../plugins/provider-thinking-active.js";
 import { prepareModelCatalogThinkingPolicies } from "../../plugins/provider-thinking.js";
@@ -506,39 +507,77 @@ describe("createModelSelectionState catalog loading", () => {
     },
   );
 
-  it("reloads embedded thinking metadata when clearing a native runtime pin", async () => {
+  it("reloads thinking metadata for the executor prepared by a reset", async () => {
     const embedded = {
-      provider: "openai",
-      id: "gpt-5.4",
-      name: "GPT-5.4",
-      api: "openai-responses" as const,
-      baseUrl: "https://api.openai.com/v1",
+      provider: "fixture",
+      id: "reset-model",
+      name: "Reset model",
       reasoning: false,
     };
-    const sessionEntry = { agentRuntimeOverride: "codex" };
-    vi.mocked(loadProviderScopedThinkingCatalog).mockResolvedValueOnce([embedded]);
-
-    const prepared = await prepareModelSelectionRuntime({
-      cfg: {
-        agents: {
-          defaults: { models: { "openai/gpt-5.4": { agentRuntime: { id: "openclaw" } } } },
+    const cfg: OpenClawConfig = {
+      agents: {
+        defaults: {
+          model: "fixture/reset-model",
+          models: { "fixture/reset-model": { agentRuntime: { id: "openclaw" } } },
         },
       },
-      agentId: "main",
-      provider: "openai",
-      model: "gpt-5.4",
-      rawRuntime: "default",
+    };
+    const sessionEntry: SessionEntry = {
+      sessionId: "thinking-reset",
+      updatedAt: 1,
+      executionSelection: {
+        state: "accepted",
+        selection: {
+          executor: { kind: "harness", id: "fixture-app" },
+          model: { provider: "fixture", id: "reset-model" },
+        },
+        fallbackPermission: "explicit",
+      },
+    };
+    const original = structuredClone(sessionEntry);
+    const nativeCatalog = [{ ...embedded, nativeRuntime: "fixture-app", reasoning: true }];
+    const state = await createInitialState(cfg, "fixture", "reset-model", {
+      hasModelDirective: true,
       sessionEntry,
-      catalog: [{ ...embedded, nativeRuntime: "codex", reasoning: true }],
+      preparedModelCatalog: { entries: nativeCatalog, routeVariants: nativeCatalog },
+      agentId: "main",
     });
-
-    expect(prepared).toMatchObject({ status: "ready", runtime: { kind: "clear" } });
-    if (prepared.status !== "ready") {
-      throw new Error(prepared.message);
+    vi.mocked(loadProviderScopedThinkingCatalog)
+      .mockResolvedValueOnce(nativeCatalog)
+      .mockResolvedValueOnce([embedded]);
+    const native = await state.resolveThinkingCatalog({
+      provider: "fixture",
+      model: "reset-model",
+      agentRuntime: "fixture-app",
+    });
+    expect(native).toEqual(nativeCatalog);
+    const prepared = await prepareSessionExecutionSelection({
+      cfg,
+      agentId: "main",
+      sessionEntry,
+      modelCatalog: nativeCatalog,
+      request: { kind: "reset" },
+    });
+    expect(prepared.status).toBe("ready");
+    if (prepared.status !== "ready") throw new Error(prepared.message);
+    expect(prepared.selection.executor).toEqual({ kind: "harness", id: "openclaw" });
+    if (prepared.selection.executor.kind !== "harness") {
+      throw new Error("Expected the reset harness");
     }
-    expect(prepared.catalog).toEqual([embedded]);
-    expect(sessionEntry.agentRuntimeOverride).toBe("codex");
-    expect(loadProviderScopedThinkingCatalog).toHaveBeenCalledExactlyOnceWith(
+    const catalog = await state.resolveThinkingCatalog({
+      provider: "fixture",
+      model: "reset-model",
+      agentRuntime: prepared.selection.executor.id,
+    });
+    expect(catalog).toEqual([embedded]);
+    expect(sessionEntry).toEqual(original);
+    expect(loadProviderScopedThinkingCatalog).toHaveBeenCalledTimes(2);
+    expect(loadProviderScopedThinkingCatalog).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ agentId: "main", agentRuntime: "fixture-app" }),
+    );
+    expect(loadProviderScopedThinkingCatalog).toHaveBeenNthCalledWith(
+      2,
       expect.objectContaining({ agentId: "main", agentRuntime: "openclaw" }),
     );
   });

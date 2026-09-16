@@ -1,9 +1,16 @@
 // Fast mode tests cover isolated cron run behavior in fast execution mode.
 import { expectDefined } from "@openclaw/normalization-core";
 import { describe, expect, it, vi } from "vitest";
+import { createEmptyPluginRegistry } from "../../plugins/registry-empty.js";
+import {
+  captureActivePluginRegistrySnapshot,
+  restoreActivePluginRegistrySnapshot,
+  setActivePluginRegistry,
+} from "../../plugins/runtime.js";
 import { makeIsolatedAgentJobFixture, makeIsolatedAgentParamsFixture } from "./job-fixtures.js";
 import { setupRunCronIsolatedAgentTurnSuite } from "./run.suite-helpers.js";
 import {
+  preparedRunPluginRegistryMock,
   loadRunCronIsolatedAgentTurn,
   makeCronSession,
   callGatewayMock,
@@ -19,8 +26,8 @@ import {
 
 const runCronIsolatedAgentTurn = await loadRunCronIsolatedAgentTurn();
 
-const OPENAI_GPT4_MODEL = "openai/gpt-4";
 const EXPECTED_OPENAI_MODEL = "gpt-5.4";
+const FAST_MODEL_REF = `openai/${EXPECTED_OPENAI_MODEL}`;
 
 async function runFastModeCase(params: {
   configFastMode: boolean | "auto";
@@ -48,8 +55,17 @@ async function runFastModeCase(params: {
       },
     }),
   );
+  const registrySnapshot = captureActivePluginRegistrySnapshot();
   if (params.cli) {
-    resolveEffectiveAgentRuntimeMock.mockReturnValue("claude-cli");
+    const registry = createEmptyPluginRegistry();
+    registry.cliBackends.push({
+      pluginId: "fast-mode-cli",
+      source: "test",
+      backend: { id: "test-cli", modelProvider: "openai", config: { command: "fixture-cli" } },
+    });
+    preparedRunPluginRegistryMock.mockReturnValue(registry);
+    setActivePluginRegistry(registry);
+    resolveEffectiveAgentRuntimeMock.mockReturnValue("test-cli");
     runCliAgentMock.mockResolvedValue({ payloads: [{ text: "ok" }], meta: { agentMeta: {} } });
   }
   resolveFastModeStateMock.mockImplementation(({ cfg, sessionEntry }) => {
@@ -62,7 +78,7 @@ async function runFastModeCase(params: {
         fastAutoOnSeconds: params.configFastAutoOnSeconds ?? 60,
       };
     }
-    const mode = cfg.agents?.defaults?.models?.[OPENAI_GPT4_MODEL]?.params?.fastMode;
+    const mode = cfg.agents?.defaults?.models?.[FAST_MODEL_REF]?.params?.fastMode;
     return {
       mode,
       enabled: mode === "auto" ? true : Boolean(mode),
@@ -71,70 +87,77 @@ async function runFastModeCase(params: {
     };
   });
 
-  const result = await runCronIsolatedAgentTurn(
-    makeIsolatedAgentParamsFixture({
-      cfg: {
-        agents: {
-          defaults: {
-            models: {
-              [OPENAI_GPT4_MODEL]: {
-                params: {
-                  fastMode: params.configFastMode,
-                  ...(params.configFastAutoOnSeconds === undefined
-                    ? {}
-                    : { fastAutoOnSeconds: params.configFastAutoOnSeconds }),
+  try {
+    const result = await runCronIsolatedAgentTurn(
+      makeIsolatedAgentParamsFixture({
+        cfg: {
+          agents: {
+            defaults: {
+              model: { primary: FAST_MODEL_REF, fallbacks: [] },
+              models: {
+                [FAST_MODEL_REF]: {
+                  params: {
+                    fastMode: params.configFastMode,
+                    ...(params.configFastAutoOnSeconds === undefined
+                      ? {}
+                      : { fastAutoOnSeconds: params.configFastAutoOnSeconds }),
+                  },
                 },
               },
             },
           },
         },
-      },
-      job: makeIsolatedAgentJobFixture({
-        sessionTarget: params.sessionTarget ?? "isolated",
-        payload: {
-          kind: "agentTurn",
-          message: params.message,
-          model: OPENAI_GPT4_MODEL,
-        },
+        job: makeIsolatedAgentJobFixture({
+          sessionTarget: params.sessionTarget ?? "isolated",
+          payload: {
+            kind: "agentTurn",
+            message: params.message,
+            model: FAST_MODEL_REF,
+          },
+        }),
       }),
-    }),
-  );
+    );
 
-  expect(result.status).toBe("ok");
-  const selectedRunner = params.cli ? runCliAgentMock : runEmbeddedAgentMock;
-  expect(selectedRunner).toHaveBeenCalledOnce();
-  const [embeddedRunParams] = expectDefined(selectedRunner.mock.calls[0], "embedded run call");
-  expect(embeddedRunParams.provider).toBe("openai");
-  expect(embeddedRunParams.model).toBe(EXPECTED_OPENAI_MODEL);
-  expect(embeddedRunParams.fastMode).toBe(params.expectedFastMode);
-  expect(embeddedRunParams.fastModeAutoOnSeconds).toBe(params.expectedFastModeAutoOnSeconds ?? 60);
-  if (!params.cli) {
-    expect(embeddedRunParams.cleanupBundleMcpOnRunEnd).toBe(
-      params.expectedCleanupBundleMcpOnRunEnd ?? true,
+    expect(result.status).toBe("ok");
+    const selectedRunner = params.cli ? runCliAgentMock : runEmbeddedAgentMock;
+    expect(selectedRunner).toHaveBeenCalledOnce();
+    const [embeddedRunParams] = expectDefined(selectedRunner.mock.calls[0], "embedded run call");
+    expect(embeddedRunParams.provider).toBe(params.cli ? "test-cli" : "openai");
+    expect(embeddedRunParams.model).toBe(EXPECTED_OPENAI_MODEL);
+    expect(embeddedRunParams.fastMode).toBe(params.expectedFastMode);
+    expect(embeddedRunParams.fastModeAutoOnSeconds).toBe(
+      params.expectedFastModeAutoOnSeconds ?? 60,
     );
-    expect(embeddedRunParams.allowGatewaySubagentBinding).toBe(true);
-  }
-  const isIsolated = (params.sessionTarget ?? "isolated") === "isolated";
-  if (params.expectedRetiredSessionId) {
-    expect(retireSessionMcpRuntimeMock).toHaveBeenCalledOnce();
-    const [retireParams] = expectDefined(
-      retireSessionMcpRuntimeMock.mock.calls[0],
-      "MCP retirement call",
-    );
-    expect(retireParams.sessionId).toBe(params.expectedRetiredSessionId);
-    expect(retireParams.reason).toBe("cron-session-rollover");
-    return;
-  }
-  if (isIsolated) {
-    // disposeCronRunContext now retires MCP for isolated sessions
-    expect(retireSessionMcpRuntimeMock).toHaveBeenCalledOnce();
-    const [disposeRetireParams] = expectDefined(
-      retireSessionMcpRuntimeMock.mock.calls[0],
-      "MCP disposal call",
-    );
-    expect(disposeRetireParams.reason).toBe("isolated-cron-dispose");
-  } else {
-    expect(retireSessionMcpRuntimeMock).not.toHaveBeenCalled();
+    if (!params.cli) {
+      expect(embeddedRunParams.cleanupBundleMcpOnRunEnd).toBe(
+        params.expectedCleanupBundleMcpOnRunEnd ?? true,
+      );
+      expect(embeddedRunParams.allowGatewaySubagentBinding).toBe(true);
+    }
+    const isIsolated = (params.sessionTarget ?? "isolated") === "isolated";
+    if (params.expectedRetiredSessionId) {
+      expect(retireSessionMcpRuntimeMock).toHaveBeenCalledOnce();
+      const [retireParams] = expectDefined(
+        retireSessionMcpRuntimeMock.mock.calls[0],
+        "MCP retirement call",
+      );
+      expect(retireParams.sessionId).toBe(params.expectedRetiredSessionId);
+      expect(retireParams.reason).toBe("cron-session-rollover");
+      return;
+    }
+    if (isIsolated) {
+      // disposeCronRunContext now retires MCP for isolated sessions
+      expect(retireSessionMcpRuntimeMock).toHaveBeenCalledOnce();
+      const [disposeRetireParams] = expectDefined(
+        retireSessionMcpRuntimeMock.mock.calls[0],
+        "MCP disposal call",
+      );
+      expect(disposeRetireParams.reason).toBe("isolated-cron-dispose");
+    } else {
+      expect(retireSessionMcpRuntimeMock).not.toHaveBeenCalled();
+    }
+  } finally {
+    if (params.cli) restoreActivePluginRegistrySnapshot(registrySnapshot);
   }
 }
 
@@ -151,7 +174,7 @@ describe("runCronIsolatedAgentTurn — fast mode", () => {
         job: makeIsolatedAgentJobFixture({
           deleteAfterRun: true,
           delivery: { mode: "none" },
-          payload: { kind: "agentTurn", message: "cleanup me", model: OPENAI_GPT4_MODEL },
+          payload: { kind: "agentTurn", message: "cleanup me", model: FAST_MODEL_REF },
         }),
       }),
     );
@@ -201,7 +224,7 @@ describe("runCronIsolatedAgentTurn — fast mode", () => {
           job: makeIsolatedAgentJobFixture({
             deleteAfterRun: true,
             delivery: { mode: "announce", channel: "messagechat", to: "test-target" },
-            payload: { kind: "agentTurn", message: "cleanup once", model: OPENAI_GPT4_MODEL },
+            payload: { kind: "agentTurn", message: "cleanup once", model: FAST_MODEL_REF },
           }),
         }),
       );

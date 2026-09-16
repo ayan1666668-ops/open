@@ -47,7 +47,10 @@ describe("runCronIsolatedAgentTurn plugin generation carry", () => {
 
   it("admits the published generation and keeps it active through embedded execution", async () => {
     const config = {
-      agents: { entries: { default: { thinkingDefault: "high" as const } } },
+      agents: {
+        defaults: { model: { primary: "openai/generation-primary" } },
+        entries: { default: { thinkingDefault: "high" as const } },
+      },
     };
     const metadataSnapshot = createPluginMetadataSnapshot({
       config,
@@ -115,7 +118,7 @@ describe("runCronIsolatedAgentTurn plugin generation carry", () => {
         config: {
           agents: {
             entries: config.agents.entries,
-            defaults: { thinkingDefault: "high" },
+            defaults: { model: { primary: "openai/generation-primary" }, thinkingDefault: "high" },
           },
         },
         agentId: "default",
@@ -123,8 +126,13 @@ describe("runCronIsolatedAgentTurn plugin generation carry", () => {
         allowGatewaySubagentBinding: true,
         workspaceDir: "/tmp/workspace",
         runtimePluginSelections: [
-          { provider: "openai", modelId: "gpt-5.4", agentId: "default" },
-          { provider: "openai", modelId: "gpt-6-astra", agentId: "default" },
+          { provider: "openai", modelId: "gpt-5.4", runtime: "openclaw", agentId: "default" },
+          {
+            provider: "openai",
+            modelId: "generation-primary",
+            runtime: "openclaw",
+            agentId: "default",
+          },
         ],
       },
       { catalogMode: "static", pluginGeneration, abortSignal: dispatchAdmission.abortSignal },

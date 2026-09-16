@@ -356,6 +356,7 @@ describe("runCronIsolatedAgentTurn — LiveSessionModelSwitchError retry (#57206
         payloads: [{ text: "task complete" }],
         meta: {
           agentMeta: {
+            agentHarnessId: "codex",
             provider: "openai",
             model: "gpt-5.6-luna",
             usage: { input: 100, output: 50 },

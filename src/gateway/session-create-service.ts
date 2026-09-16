@@ -1092,7 +1092,14 @@ export async function createGatewaySession(params: {
           target.agentId,
           params.catalogTarget ??
             (params.model ? { model: params.model, agentRuntime: params.agentRuntime } : undefined),
-          currentParentSessionEntry,
+          currentParentSessionEntry && parentSessionTarget
+            ? {
+                entry: currentParentSessionEntry,
+                agentId: parentSessionTarget.agentId,
+                sessionKey: parentSessionTarget.canonicalKey,
+                storePath: parentSessionTarget.storePath,
+              }
+            : undefined,
           params.preparedModelSelection?.ref,
         );
     commitGuard?.();

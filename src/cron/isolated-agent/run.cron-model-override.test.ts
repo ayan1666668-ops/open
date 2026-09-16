@@ -6,6 +6,7 @@ import type { SessionEntry } from "../../config/sessions.js";
 import {
   clearFastTestEnv,
   runEmbeddedAgentMock,
+  getModelRefStatusMock,
   loadRunCronIsolatedAgentTurn,
   logWarnMock,
   loadSessionEntryMock,
@@ -142,31 +143,17 @@ describe("runCronIsolatedAgentTurn — cron model override (#21057)", () => {
     // the committed row is the updater's return, so snapshot that. Thread the
     // previously committed row forward as existingEntry so the lifecycle claim
     // guard proves ownership across the run's successive persists.
-    const committedRows = new Map<string, SessionEntry>();
+    const persist = patchSessionEntryMock.getMockImplementation();
+    if (!persist) throw new Error("Expected the guarded session writer");
     patchSessionEntryMock.mockImplementation(
       async (
-        scope: { storePath?: string; sessionKey: string },
-        update: (
-          entry: SessionEntry,
-          context: { existingEntry: SessionEntry | undefined },
-        ) => SessionEntry | null,
-        options: { fallbackEntry?: SessionEntry } = {},
+        ...args: Parameters<
+          typeof import("../../config/sessions/session-accessor.js").patchSessionEntryCore
+        >
       ) => {
-        const key = `${scope.storePath ?? ""}\0${scope.sessionKey}`;
-        const committedRow = committedRows.get(key);
-        const writeBase = committedRow ?? options.fallbackEntry;
-        if (!writeBase) {
-          return null;
-        }
-        const committed = update(structuredClone(writeBase), {
-          existingEntry: committedRow ? structuredClone(committedRow) : undefined,
-        });
-        if (committed) {
-          committedRows.set(key, structuredClone(committed));
-          if (!scope.sessionKey.includes(":run:")) {
-            persistedSnapshots.push(structuredClone(committed));
-          }
-        }
+        const committed = await persist(...args);
+        if (committed && !args[0].sessionKey.includes(":run:"))
+          persistedSnapshots.push(structuredClone(committed));
         return committed;
       },
     );
@@ -303,6 +290,7 @@ describe("runCronIsolatedAgentTurn — cron model override (#21057)", () => {
         },
       },
     });
+    getModelRefStatusMock.mockReturnValue({ allowed: true });
     resolveCronSessionMock.mockReturnValue(cronSession);
 
     // resolveAllowedModelRef is called for the session override path too
@@ -338,34 +326,17 @@ describe("runCronIsolatedAgentTurn — cron model override (#21057)", () => {
       // Only the pre-run persist (call 2) should fail — the skills snapshot
       // persist is pre-existing code without a try-catch guard.
       let basePersistCount = 0;
-      const committedRows = new Map<string, SessionEntry>();
+      const persist = patchSessionEntryMock.getMockImplementation();
+      if (!persist) throw new Error("Expected the guarded session writer");
       patchSessionEntryMock.mockImplementation(
         async (
-          scope: { storePath?: string; sessionKey: string },
-          update: (
-            entry: SessionEntry,
-            context: { existingEntry: SessionEntry | undefined },
-          ) => SessionEntry | null,
-          options: { fallbackEntry?: SessionEntry } = {},
+          ...args: Parameters<
+            typeof import("../../config/sessions/session-accessor.js").patchSessionEntryCore
+          >
         ) => {
-          if (!scope.sessionKey.includes(":run:") && ++basePersistCount === 2) {
+          if (!args[0].sessionKey.includes(":run:") && ++basePersistCount === 2)
             throw new Error("ENOSPC: no space left on device");
-          }
-          const key = `${scope.storePath ?? ""}\0${scope.sessionKey}`;
-          const current =
-            committedRows.get(key) ??
-            (scope.sessionKey.includes(":run:") ? undefined : initialEntry);
-          const writeBase = current ?? options.fallbackEntry;
-          if (!writeBase) {
-            return null;
-          }
-          const committed = update(structuredClone(writeBase), {
-            existingEntry: current ? structuredClone(current) : undefined,
-          });
-          if (committed) {
-            committedRows.set(key, structuredClone(committed));
-          }
-          return committed;
+          return persist(...args);
         },
       );
 

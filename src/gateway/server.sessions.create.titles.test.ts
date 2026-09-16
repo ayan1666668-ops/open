@@ -1,10 +1,19 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { expectDefined } from "@openclaw/normalization-core";
 import { afterEach, expect, test, vi } from "vitest";
 import { waitForFile } from "../../test/helpers/process-wait.js";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
+import * as runtimeChoice from "../agents/model-runtime-choice.js";
 import { managedWorktrees } from "../agents/worktrees/service.js";
-import { loadSessionEntry } from "../config/sessions/session-accessor.js";
+import { loadSessionEntry, replaceSessionEntry } from "../config/sessions/session-accessor.js";
+import type { SessionEntry } from "../config/sessions/types.js";
+import { commitSessionExecutionSelection } from "../model-picker/apply-session-model-selection.js";
+import { applyModelOverrideToSessionEntry } from "../plugin-sdk/model-session-runtime.js";
+import {
+  getSessionEntry as getSdkSessionEntry,
+  upsertSessionEntry as upsertSdkSessionEntry,
+} from "../plugin-sdk/session-store-runtime.js";
 import { getActiveGatewayRootWorkCount } from "../process/gateway-work-admission.js";
 import {
   interruptSessionWorkAdmissions,
@@ -18,9 +27,11 @@ import {
   initializeRepository,
   settleWorkspaceRuns,
 } from "./server.sessions.create.projects.test-support.js";
+import { loadGatewayTestConfig } from "./test-helpers.config-runtime.js";
 import { dispatchInboundMessageMock, testState } from "./test-helpers.js";
 import {
   directSessionReq,
+  getGatewayConfigModule,
   setupGatewaySessionsHandlerTestHarness,
 } from "./test/server-sessions.test-helpers.js";
 
@@ -35,7 +46,8 @@ vi.mock("../plugins/session-discussion-registry.js", () => ({
   },
 }));
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
-const { createSessionStoreDir } = setupGatewaySessionsHandlerTestHarness();
+const { createSessionStoreDir, createSelectedGlobalSessionStore } =
+  setupGatewaySessionsHandlerTestHarness();
 afterEach(() => {
   titleMocks.generate.mockReset();
   titleMocks.open.mockReset();
@@ -43,6 +55,64 @@ afterEach(() => {
   dispatchInboundMessageMock.mockReset();
   closeOpenClawStateDatabaseForTest();
   testState.agentConfig = undefined;
+});
+
+test("creates across agents using the source owner's inherited selection and target policy", async () => {
+  const { mainStorePath, workStorePath } = await createSelectedGlobalSessionStore();
+  testState.agentsConfig = { ownership: "explicit", entries: { main: {}, work: {} } };
+  testState.agentConfig = { model: "fixture/default" };
+  const cfg = loadGatewayTestConfig();
+  (await getGatewayConfigModule()).setRuntimeConfigSnapshot(cfg);
+  const rootKey = "agent:main:dashboard:selection-root";
+  const sourceKey = `${rootKey}:thread:source`;
+  const targetKey = "agent:work:dashboard:selection-child";
+  const rootScope = { agentId: "main", sessionKey: rootKey, storePath: mainStorePath };
+  const sourceScope = { agentId: "main", sessionKey: sourceKey, storePath: mainStorePath };
+  const root: SessionEntry = {
+    sessionId: "selection-root",
+    lifecycleRevision: "selection-root-revision",
+    updatedAt: 1,
+  };
+  commitSessionExecutionSelection(
+    root,
+    {
+      model: { provider: "fixture", id: "inherited" },
+      executor: { kind: "harness", id: "openclaw" },
+    },
+    { cause: { kind: "user" } },
+  );
+  await replaceSessionEntry(rootScope, root);
+  await upsertSdkSessionEntry({
+    ...sourceScope,
+    entry: { sessionId: "selection-source", updatedAt: 1 },
+  });
+  const view = expectDefined(getSdkSessionEntry(sourceScope), "source session view");
+  applyModelOverrideToSessionEntry({
+    entry: view,
+    selection: { provider: "fixture", model: "default", isDefault: true },
+  });
+  await upsertSdkSessionEntry({ ...sourceScope, entry: view });
+  const sourceBefore = expectDefined(loadSessionEntry(sourceScope), "source session");
+  expect(sourceBefore.parentSessionKey).toBeUndefined();
+  const evaluate = vi.spyOn(runtimeChoice, "evaluatePublishedModelRuntimeChoice");
+  try {
+    const result = await directSessionReq<{ key: string }>(
+      "sessions.create",
+      { key: targetKey, agentId: "work", parentSessionKey: sourceKey },
+      { context: { getRuntimeConfig: () => cfg } },
+    );
+    expect(result.ok, JSON.stringify(result.error)).toBe(true);
+    expect(evaluate).toHaveBeenCalledWith(
+      expect.objectContaining({ agentId: "work", provider: "fixture", model: "inherited" }),
+    );
+    expect(
+      loadSessionEntry({ agentId: "work", sessionKey: targetKey, storePath: workStorePath }),
+    ).toMatchObject({ sessionId: expect.any(String), parentSessionKey: sourceKey });
+    expect(loadSessionEntry(sourceScope)).toEqual(sourceBefore);
+    expect(loadSessionEntry(rootScope)?.executionSelection).toEqual(root.executionSelection);
+  } finally {
+    evaluate.mockRestore();
+  }
 });
 
 test.each(["keep", "delete"] as const)(

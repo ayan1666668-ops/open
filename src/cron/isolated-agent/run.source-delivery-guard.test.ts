@@ -8,6 +8,8 @@ import type { MutableCronSession } from "./run-session-state.js";
 import {
   clearFastTestEnv,
   makeCronSession,
+  makeCronSessionEntry,
+  loadSessionEntryMock,
   mockRunCronFallbackPassthrough,
   resetRunCronIsolatedAgentTurnHarness,
   restoreFastTestEnv,
@@ -47,12 +49,31 @@ function makeJob(
 
 function makeExecutor(overrides: Record<string, unknown>) {
   const resolvedDelivery = overrides.resolvedDelivery ?? {};
+  const cronSession =
+    (overrides.cronSession as MutableCronSession | undefined) ??
+    makeCronSession({
+      sessionEntry: makeCronSessionEntry({
+        executionSelection: {
+          state: "accepted",
+          selection: {
+            model: { provider: "openai", id: "gpt-5.4" },
+            executor: { kind: "harness", id: "openclaw" },
+          },
+          fallbackPermission: "configured",
+        },
+      }),
+    });
+  const storedEntry = structuredClone(cronSession.sessionEntry);
+  loadSessionEntryMock.mockImplementation((_storePath, sessionKey) =>
+    sessionKey === "cron:source-delivery-guard" ? storedEntry : undefined,
+  );
   return {
     runPrompt: async (commandBody: string) =>
       await executeCronRun(
         makeExecuteCronRunParams({
           resolvedDeliveryOk: true,
           ...overrides,
+          cronSession,
           resolvedDelivery,
           commandBody,
         }),
@@ -346,7 +367,14 @@ describe("executeCronRun sourceDelivery mapping", () => {
   it("forwards an explicit OpenClaw runtime override to cron execution", async () => {
     mockRunCronFallbackPassthrough();
     const cronSession = makeCronSession() as unknown as MutableCronSession;
-    cronSession.sessionEntry.agentRuntimeOverride = "openclaw";
+    cronSession.sessionEntry.executionSelection = {
+      state: "accepted",
+      selection: {
+        model: { provider: "openai", id: "gpt-5.6-luna" },
+        executor: { kind: "harness", id: "openclaw" },
+      },
+      fallbackPermission: "explicit",
+    };
     cronSession.sessionEntry.agentHarnessId = "codex";
     const executor = makeExecutor({
       cfgWithAgentDefaults: {
@@ -358,7 +386,12 @@ describe("executeCronRun sourceDelivery mapping", () => {
           },
         },
       },
-      liveSelection: { provider: "openai", model: "gpt-5.6-luna" },
+      liveSelection: {
+        selection: {
+          model: { provider: "openai", id: "gpt-5.6-luna" },
+          executor: { kind: "harness", id: "openclaw" },
+        },
+      },
       cronSession,
       immutableThinkLevel: "ultra",
     });
@@ -401,8 +434,10 @@ function makeExecuteCronRunParams(overrides: Record<string, unknown> = {}) {
     useSubagentFallbacks: false,
     agentVerboseDefault: undefined,
     liveSelection: {
-      provider: "openai",
-      model: "gpt-5.4",
+      selection: {
+        model: { provider: "openai", id: "gpt-5.4" },
+        executor: { kind: "harness", id: "openclaw" },
+      },
     },
     cronSession: makeCronSession() as unknown as MutableCronSession,
     commandBody: "run a task",

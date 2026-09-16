@@ -15,6 +15,7 @@ import {
   clearFastTestEnv,
   getCliSessionBindingMock,
   ensureAgentWorkspaceMock,
+  getModelRefStatusMock,
   loadRunCronIsolatedAgentTurn,
   makeCronSession,
   makeCronSessionEntry,
@@ -23,7 +24,6 @@ import {
   loadModelCatalogOwnerMock,
   mockRunCronFallbackPassthrough,
   resolveAgentConfigMock,
-  resolveAgentModelFallbacksOverrideMock,
   resolveAllowedModelRefMock,
   resolveConfiguredModelRefMock,
   resolveCronSessionMock,
@@ -429,7 +429,9 @@ describe("runCronIsolatedAgentTurn — cron model override forwarding (#58065)",
     const accepted = outcome.startsWith("accepted");
     const clear = outcome.startsWith("rejected-clear");
     const saveFails = outcome.endsWith("save-fails");
-    resolveEffectiveAgentRuntimeMock.mockReturnValue("claude-cli");
+    resolveEffectiveAgentRuntimeMock.mockImplementation(({ provider }: { provider: string }) =>
+      provider === "claude-cli" ? "claude-cli" : "openclaw",
+    );
     resolveAllowedModelRefMock.mockReturnValue({
       ref: { provider: "claude-cli", model: "claude-opus-4-6" },
     });
@@ -513,7 +515,15 @@ describe("runCronIsolatedAgentTurn — cron model override forwarding (#58065)",
 
     const result = await runCronIsolatedAgentTurn(
       makeParams({
-        job: makeJob({ sessionTarget: "session:existing-cron-session" }),
+        job: makeJob({
+          sessionTarget: "session:existing-cron-session",
+          payload: {
+            kind: "agentTurn",
+            message: "summarize",
+            model: "claude-cli/claude-opus-4-6",
+            fallbacks: ["google/gemini-2.0-flash"],
+          },
+        }),
       }),
     );
 
@@ -883,23 +893,15 @@ describe("runCronIsolatedAgentTurn — cron model override forwarding (#58065)",
   });
 
   it("does not add agent primary model as fallback when cron payload model is set", async () => {
-    // No per-agent fallbacks configured — resolveAgentModelFallbacksOverride
-    // returns undefined in that case. Before the fix, this caused
-    // runWithModelFallback to receive fallbacksOverride=undefined, which
-    // made it append the agent primary model as a last-resort candidate.
-    resolveAgentModelFallbacksOverrideMock.mockReturnValue(undefined);
     const captured = captureModelFallbackRun();
 
     await runCronIsolatedAgentTurn(makeParams());
 
-    // With the fix, the shared override helper resolves an explicit empty
-    // list here: no configured fallback chain, and no silent agent-primary
-    // append on retry.
+    // Undefined would let fallback resolution append the configured primary.
     expect(captured.fallbacksOverride).toStrictEqual([]);
   });
 
   it("preserves default fallback chain for cron payload model overrides", async () => {
-    resolveAgentModelFallbacksOverrideMock.mockReturnValue(undefined);
     const captured = captureModelFallbackRun();
 
     await runCronIsolatedAgentTurn(
@@ -925,7 +927,6 @@ describe("runCronIsolatedAgentTurn — cron model override forwarding (#58065)",
     // Job without model override
     const jobWithoutModel = makeJobWithoutModel();
 
-    resolveAgentModelFallbacksOverrideMock.mockReturnValue(undefined);
     const captured = captureModelFallbackRun("anthropic", "claude-opus-4-6");
 
     await runCronIsolatedAgentTurn(makeParams({ job: jobWithoutModel }));
@@ -1012,7 +1013,6 @@ describe("runCronIsolatedAgentTurn — cron model override forwarding (#58065)",
     resolveAgentConfigMock.mockReturnValue({
       model: "anthropic/claude-sonnet-4-6",
     });
-    resolveAgentModelFallbacksOverrideMock.mockReturnValue([]);
     resolveConfiguredModelRefMock.mockReturnValue({
       provider: "anthropic",
       model: "claude-sonnet-4-6",
@@ -1048,7 +1048,6 @@ describe("runCronIsolatedAgentTurn — cron model override forwarding (#58065)",
     resolveAgentConfigMock.mockReturnValue({
       model: "deepseek/deepseek-v4-pro",
     });
-    resolveAgentModelFallbacksOverrideMock.mockReturnValue([]);
     resolveConfiguredModelRefMock.mockReturnValue({
       provider: "deepseek",
       model: "deepseek-v4-pro",
@@ -1062,6 +1061,7 @@ describe("runCronIsolatedAgentTurn — cron model override forwarding (#58065)",
       }
       return { ref: { provider: "anthropic", model: "claude-opus-4-6" } };
     });
+    getModelRefStatusMock.mockReturnValue({ allowed: true });
     resolveCronSessionMock.mockReturnValue(
       makeCronSession({
         sessionEntry: makeCronSessionEntry({

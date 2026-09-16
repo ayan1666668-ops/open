@@ -131,6 +131,7 @@ export const runPluginEmbeddedAgent: PluginRuntime["agent"]["runEmbeddedAgent"] 
       cfg: config,
       agentId,
       sessionKey,
+      storePath: params.sessionTarget?.storePath,
       sessionEntry,
       request:
         params.provider || params.model || explicitRuntime

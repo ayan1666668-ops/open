@@ -29,9 +29,16 @@ import {
 } from "../../infra/agent-run-registry.js";
 import { createDiagnosticEmbeddedRunOwner } from "../../logging/diagnostic-run-activity.js";
 import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
+import { createEmptyPluginRegistry } from "../../plugins/registry-empty.js";
+import {
+  captureActivePluginRegistrySnapshot,
+  restoreActivePluginRegistrySnapshot,
+  setActivePluginRegistry,
+} from "../../plugins/runtime.js";
 import { makeIsolatedAgentJobFixture, makeIsolatedAgentParamsFixture } from "./job-fixtures.js";
 import {
   dispatchCronDeliveryMock,
+  preparedRunPluginRegistryMock,
   loadRunCronIsolatedAgentTurn,
   loadSessionEntryMock,
   makeCronSession,
@@ -47,7 +54,6 @@ import {
   runWithModelFallbackMock,
   resolveConfiguredModelRefMock,
   resolveAllowedModelRefMock,
-  resolveAgentModelFallbacksOverrideMock,
 } from "./run.test-harness.js";
 
 const runCronIsolatedAgentTurn = await loadRunCronIsolatedAgentTurn();
@@ -100,12 +106,21 @@ describe("runCronIsolatedAgentTurn terminal lifecycle", () => {
     const exhausted = outcome.includes("exhausted");
     const cliFallback = outcome.startsWith("cli-");
     const cancelled = outcome === "cancelled" || outcome === "cli-cancelled";
-    resolveAgentModelFallbacksOverrideMock.mockReturnValue([
-      cliFallback ? "claude-cli/fallback-model" : "openai/fallback-model",
-    ]);
+    const registrySnapshot = captureActivePluginRegistrySnapshot();
+    const registry = createEmptyPluginRegistry();
     if (cliFallback) {
+      registry.cliBackends.push({
+        pluginId: "terminal-cli",
+        source: "test",
+        backend: {
+          id: "test-cli",
+          modelProvider: "test-cli",
+          config: { command: "fixture-cli" },
+        },
+      });
+      preparedRunPluginRegistryMock.mockReturnValue(registry);
       resolveEffectiveAgentRuntimeMock.mockImplementation(({ provider }: { provider: string }) =>
-        provider === "claude-cli" ? "claude-cli" : "openclaw",
+        provider === "test-cli" ? "test-cli" : "openclaw",
       );
     }
     const retryPreparationFailure =
@@ -377,10 +392,24 @@ describe("runCronIsolatedAgentTurn terminal lifecycle", () => {
         clearActiveEmbeddedRun(sessionId, stream.queueHandle, sessionKey);
       }
     });
+    if (cliFallback) setActivePluginRegistry(registry);
     const run = runCronIsolatedAgentTurn({
       ...makeIsolatedAgentParamsFixture({
         agentId: "main",
         sessionKey,
+        cfg: {
+          agents: {
+            defaults: { model: { primary: "openai/gpt-5.6-luna" } },
+            list: [
+              {
+                id: "main",
+                model: {
+                  fallbacks: [cliFallback ? "test-cli/fallback-model" : "openai/fallback-model"],
+                },
+              },
+            ],
+          },
+        },
         job: makeIsolatedAgentJobFixture({
           sessionTarget: usesContinuation ? "isolated" : `session:${sessionKey}`,
           delivery: { mode: "none" },
@@ -489,6 +518,7 @@ describe("runCronIsolatedAgentTurn terminal lifecycle", () => {
       unsubscribe();
       handler.dispose();
       vi.useRealTimers();
+      if (cliFallback) restoreActivePluginRegistrySnapshot(registrySnapshot);
     }
   });
 });

@@ -4,6 +4,11 @@ import { testing as cliBackendsTesting } from "../../agents/cli-backends.test-su
 import type { RunCliAgentParams } from "../../agents/cli-runner/types.js";
 import type { RunEmbeddedAgentInternalParams } from "../../agents/embedded-agent-runner/run/internal-params.js";
 import { resolveMessageActionTurnCapability } from "../../gateway/message-action-turn-capability.js";
+import { setActivePluginRegistry } from "../../plugins/runtime.js";
+import {
+  createChannelTestPluginBase,
+  createTestRegistry,
+} from "../../test-utils/channel-plugins.js";
 import {
   createFollowupRun,
   configureTestCliModel,
@@ -24,6 +29,18 @@ const runId = "channel-message-authority";
 const currentChannelId = "100000000000000003";
 
 beforeEach(() => {
+  setActivePluginRegistry(
+    createTestRegistry([
+      {
+        pluginId: "discord",
+        plugin: createChannelTestPluginBase({
+          id: "discord",
+          capabilities: { chatTypes: ["channel"] },
+        }),
+        source: "test",
+      },
+    ]),
+  );
   state.mintReplyMessageActionTurnCapabilityMock.mockImplementation(
     mintReplyMessageActionTurnCapability,
   );

@@ -375,7 +375,8 @@ export async function prepareCronRunContext(params: {
       const initialSelection = await prepareSessionExecutionSelection({
         cfg: runtimeCfg,
         agentId,
-        sessionKey: agentSessionKey,
+        sessionKey: sourceEntry ? sourceSessionKey : agentSessionKey,
+        storePath: cronSession.storePath,
         sessionEntry: selectionSource,
         modelCatalog: modelOwner.modelCatalog.entries,
         request: { kind: "initialize" },
@@ -384,7 +385,7 @@ export async function prepareCronRunContext(params: {
         throw new Error(initialSelection.message);
       }
       commitSessionExecutionSelection(cronSession.sessionEntry, initialSelection.selection, {
-        cause: { kind: "initialize" },
+        cause: { kind: "initialize", fallbackPermission: initialSelection.fallbackPermission },
       });
       validateInitialSelection = initialSelection.validateCommit;
     }
@@ -437,6 +438,7 @@ export async function prepareCronRunContext(params: {
           agentId: modelOwner.agentId,
           provider: resolvedModelSelection.provider,
           model: resolvedModelSelection.model,
+          sessionEntry: cronSession.sessionEntry,
           useSubagentFallbacks,
           inheritDefaultFallbacksForAgentStringModel,
         });
@@ -463,6 +465,8 @@ export async function prepareCronRunContext(params: {
     const preparedSelection = await prepareSessionExecutionSelection({
       cfg: cfgWithAgentDefaults,
       agentId: modelOwner.agentId,
+      sessionKey: agentSessionKey,
+      storePath: cronSession.storePath,
       sessionEntry: cronSession.sessionEntry,
       modelCatalog: modelOwner.modelCatalog.entries,
       request: nativeManaged
@@ -478,7 +482,7 @@ export async function prepareCronRunContext(params: {
     const executionSelection = preparedSelection.selection;
     if (!getSessionExecutionSelection(cronSession.sessionEntry)) {
       commitSessionExecutionSelection(cronSession.sessionEntry, executionSelection, {
-        cause: { kind: "initialize" },
+        cause: { kind: "initialize", fallbackPermission: preparedSelection.fallbackPermission },
       });
       validateInitialSelection = preparedSelection.validateCommit;
     }
@@ -486,6 +490,7 @@ export async function prepareCronRunContext(params: {
     const thinkingSelection = await resolveCronThinkingSelection({
       cfg: cfgWithAgentDefaults,
       owner: modelOwner,
+      agentRuntime: effectiveAgentRuntime,
       provider: nativeManaged ? undefined : provider,
       model: nativeManaged ? undefined : model,
       jobThinking: input.job.payload.kind === "agentTurn" ? input.job.payload.thinking : undefined,

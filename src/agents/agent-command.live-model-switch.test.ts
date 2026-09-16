@@ -33,6 +33,10 @@ import {
   type AcpExecutionSelection,
   type ModelExecutionSelection,
 } from "../model-picker/execution-selection.js";
+import {
+  getSessionEntry as getSdkSessionEntry,
+  upsertSessionEntry as upsertSdkSessionEntry,
+} from "../plugin-sdk/session-store-runtime.js";
 import { createPluginMetadataSnapshotFixture } from "../plugins/plugin-metadata.test-support.js";
 import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
 import {
@@ -50,6 +54,7 @@ import { closeOpenClawAgentDatabasesAsync } from "../state/openclaw-agent-db.js"
 import { closeOpenClawStateDatabaseByPathAsync } from "../state/openclaw-state-db.js";
 import { resolveOpenClawStateSqlitePath } from "../state/openclaw-state-db.paths.js";
 import { withEnvAsync } from "../test-utils/env.js";
+import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import {
   deliveryContextFromSession,
   normalizeSessionDeliveryState,
@@ -2609,6 +2614,90 @@ describe("agentCommand – LiveSessionModelSwitchError retry", () => {
     expect(fallbackParams.provider).toBe("openai");
     expect(fallbackParams.model).toBe("channel-model");
   });
+
+  it.each(["explicit", "configured"] as const)(
+    "inherits the threaded parent's model and %s fallback permission after an implicit SDK default",
+    async (fallbackPermission) => {
+      const { applyModelOverrideToSessionEntry } = await vi.importActual<
+        typeof import("../sessions/model-overrides.js")
+      >("../sessions/model-overrides.js");
+      await withOpenClawTestState({ label: "command-sdk-thread-default" }, async (testState) => {
+        const parentKey = "agent:default:webchat:channel:parent";
+        const sessionKey = parentKey + ":thread:child";
+        const storePath = testState.path("alternate", "sessions.json");
+        const parentScope = { agentId: "default", sessionKey: parentKey, storePath };
+        const scope = { agentId: "default", sessionKey, storePath };
+        const parent = createCommandSessionEntry({ sessionId: "parent-session" });
+        commitSessionExecutionSelection(
+          parent,
+          {
+            model: { provider: "fixture", id: "parent" },
+            executor: { kind: "harness", id: "openclaw" },
+          },
+          { cause: { kind: "initialize", fallbackPermission } },
+        );
+        await sessionAccessor.replaceSessionEntry(parentScope, parent);
+        await upsertSdkSessionEntry({
+          ...scope,
+          entry: {
+            sessionId: "session-1",
+            updatedAt: 1,
+            skillsSnapshot: { prompt: "", skills: [], version: 0 },
+          },
+        });
+        const view = expectDefined(getSdkSessionEntry(scope), "released child view");
+        applyModelOverrideToSessionEntry({
+          entry: view,
+          selection: { provider: "fixture", model: "default", isDefault: true },
+        });
+        await upsertSdkSessionEntry({ ...scope, entry: view });
+        const child = expectDefined(
+          sessionAccessor.loadSessionEntryReadOnly(scope),
+          "staged child",
+        );
+        expect(child.parentSessionKey).toBeUndefined();
+        expect(child.executionSelection).toMatchObject({
+          state: "deferred",
+          request: { defaultSelection: "inherit" },
+        });
+        state.runtimeConfigMock = {
+          agents: {
+            defaults: {
+              model: "fixture/default",
+              models: { "fixture/default": {}, "fixture/parent": {} },
+            },
+          },
+        };
+        state.resolvedSessionKeyMock = sessionKey;
+        state.storePathMock = storePath;
+        state.sessionEntryMock = child;
+        state.sessionStoreMock = { [sessionKey]: child, [parentKey]: parent };
+        setupSuccessfulAttempt("fixture", "parent");
+
+        await agentCommand({ message: "Continue the thread", sessionKey });
+
+        expect(state.runAgentAttemptMock).toHaveBeenCalledWith(
+          expect.objectContaining({
+            executionSelection: {
+              model: { provider: "fixture", id: "parent" },
+              executor: { kind: "harness", id: "openclaw" },
+            },
+          }),
+        );
+        expect(sessionAccessor.loadSessionEntryReadOnly(scope)?.executionSelection).toEqual({
+          state: "accepted",
+          selection: {
+            model: { provider: "fixture", id: "parent" },
+            executor: { kind: "harness", id: "openclaw" },
+          },
+          fallbackPermission,
+        });
+        expect(sessionAccessor.loadSessionEntryReadOnly(parentScope)?.executionSelection).toEqual(
+          parent.executionSelection,
+        );
+      });
+    },
+  );
 
   it("uses current threaded session key for parent channel model overrides", async () => {
     setupSingleAttemptFallback();

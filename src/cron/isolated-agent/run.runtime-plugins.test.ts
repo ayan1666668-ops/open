@@ -1,5 +1,6 @@
 // Runtime plugin tests cover run-owned registry handles for isolated cron turns.
 import { describe, expect, it } from "vitest";
+import { createPluginMetadataSnapshotFixture } from "../../plugins/plugin-metadata.test-support.js";
 import { makeIsolatedAgentParamsFixture } from "./job-fixtures.js";
 import { setupRunCronIsolatedAgentTurnSuite } from "./run.suite-helpers.js";
 import {
@@ -41,11 +42,13 @@ describe("runCronIsolatedAgentTurn runtime plugin owner", () => {
           {
             provider: "openai",
             modelId: "gpt-5.4",
+            runtime: "openclaw",
             agentId: "default",
           },
           {
             provider: "anthropic",
             modelId: "claude-sonnet-4-6",
+            runtime: "openclaw",
             agentId: "default",
           },
         ],
@@ -59,7 +62,7 @@ describe("runCronIsolatedAgentTurn runtime plugin owner", () => {
   });
 
   it("reuses the published owner metadata snapshot for the run registry load", async () => {
-    const metadataSnapshot = { plugins: [], index: { plugins: [] } };
+    const metadataSnapshot = createPluginMetadataSnapshotFixture();
     loadModelCatalogOwnerMock.mockImplementation(
       async (params: { agentId?: string; config: object }) => ({
         agentId: params.agentId ?? "default",

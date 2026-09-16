@@ -12,7 +12,6 @@ import { LiveSessionModelSwitchError } from "../../agents/live-model-switch-erro
 import { resolveModelCandidateChain } from "../../agents/model-fallback-candidates.js";
 import { evaluatePublishedModelRuntimeChoice } from "../../agents/model-runtime-choice.js";
 import { runInitialModelFallbackAttempt } from "../../agents/test-helpers/model-fallback-runner.test-support.js";
-import { resolveAgentModelFallbackValues } from "../../config/model-input.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import { resolveSqliteScope } from "../../config/sessions/session-accessor.sqlite-scope.js";
 import {
@@ -94,11 +93,9 @@ const resolveAgentWorkspaceDirMock = vi.fn(
   (cfg: { agents?: { list?: Array<{ id?: string; workspace?: string }> } }, agentId: string) =>
     cfg.agents?.list?.find((entry) => entry.id === agentId)?.workspace ?? "/tmp/workspace",
 );
-const resolveEffectiveModelFallbacksMock = createMock();
 const resolveSubagentModelFallbacksOverrideMock = createMock();
-export const resolveAgentModelFallbacksOverrideMock = createMock();
 export const resolveAgentSkillsFilterMock = createMock();
-const getModelRefStatusMock = createMock();
+export const getModelRefStatusMock = createMock();
 export const isCliProviderMock = createMock();
 export const resolveAllowedModelRefMock = createMock();
 export const resolveConfiguredModelRefMock = createMock();
@@ -185,6 +182,7 @@ const selectionRoutes: Record<string, readonly string[]> = {
   "test-cli": ["test-cli"],
   "rooted-only": ["codex"],
   google: ["openclaw"],
+  gateway: ["openclaw"],
   deepseek: ["openclaw"],
   ollama: ["openclaw"],
   openrouter: ["openclaw"],
@@ -206,7 +204,6 @@ vi.mock("../../agents/prepared-model-runtime.js", async (importOriginal) => ({
 vi.mock("./run.runtime.js", async () => ({
   resolveAgentConfig: resolveAgentConfigMock,
   resolveAgentDir: vi.fn().mockReturnValue("/tmp/agent-dir"),
-  resolveAgentModelFallbacksOverride: resolveAgentModelFallbacksOverrideMock,
   resolveAgentWorkspaceDir: resolveAgentWorkspaceDirMock,
   resolveCronStyleNow: resolveCronStyleNowMock,
   DEFAULT_CONTEXT_TOKENS: 128000,
@@ -348,7 +345,6 @@ vi.mock("../../agents/model-fallback-runner.js", async (importOriginal) => ({
 }));
 
 vi.mock("./run-execution.runtime.js", () => ({
-  resolveEffectiveModelFallbacks: resolveEffectiveModelFallbacksMock,
   resolveSubagentModelFallbacksOverride: resolveSubagentModelFallbacksOverrideMock,
   resolveBootstrapWarningSignaturesSeen: resolveBootstrapWarningSignaturesSeenMock,
   getCliSessionBinding: getCliSessionBindingMock,
@@ -538,22 +534,6 @@ function resetRunConfigMocks(): void {
     version: 42,
   });
   resolveAgentConfigMock.mockReturnValue(undefined);
-  resolveEffectiveModelFallbacksMock.mockReset();
-  resolveEffectiveModelFallbacksMock.mockImplementation(
-    ({ cfg, agentId, hasSessionModelOverride, modelOverrideSource }) => {
-      const agentFallbacksOverride = resolveAgentModelFallbacksOverrideMock(cfg, agentId) as
-        | string[]
-        | undefined;
-      if (!hasSessionModelOverride) {
-        return agentFallbacksOverride;
-      }
-      if (modelOverrideSource !== "auto") {
-        return [];
-      }
-      const defaultFallbacks = resolveAgentModelFallbackValues(cfg?.agents?.defaults?.model);
-      return agentFallbacksOverride ?? defaultFallbacks;
-    },
-  );
   resolveSubagentModelFallbacksOverrideMock.mockReset();
   resolveSubagentModelFallbacksOverrideMock.mockImplementation((cfg, agentId) => {
     const agentConfig = resolveAgentConfigMock(cfg, agentId) as
@@ -590,7 +570,6 @@ function resetRunConfigMocks(): void {
     ].find((raw) => normalizeModelSelectionForTest(raw));
     return resolveOverride(selectedConfig);
   });
-  resolveAgentModelFallbacksOverrideMock.mockReturnValue(undefined);
   resolveAgentSkillsFilterMock.mockReturnValue(undefined);
   resolveConfiguredModelRefMock.mockReturnValue({ provider: "openai", model: "gpt-5.4" });
   resolveAllowedModelRefMock.mockReturnValue({ ref: { provider: "openai", model: "gpt-5.4" } });

@@ -256,6 +256,8 @@ export async function resolveEmbeddedModelSelection(params: {
   const preparedSelection = await prepareSessionExecutionSelection({
     cfg: params.cfg,
     agentId: params.sessionAgentId,
+    sessionKey: params.sessionKey,
+    storePath: params.storePath,
     sessionEntry,
     modelCatalog: modelCatalog ?? allowedModelCatalog,
     request:
@@ -290,7 +292,7 @@ export async function resolveEmbeddedModelSelection(params: {
   ) {
     const next = { ...sessionEntry };
     commitSessionExecutionSelection(next, executionSelection, {
-      cause: { kind: "initialize" },
+      cause: { kind: "initialize", fallbackPermission: preparedSelection.fallbackPermission },
     });
     sessionEntry = await persistAgentSession({
       sessionStore: params.sessionStore,

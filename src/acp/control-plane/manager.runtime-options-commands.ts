@@ -528,10 +528,12 @@ export async function initializeManagerExecutionSelection(
 ): Promise<void> {
   const before = requireReadySession(params.resolveSession(params));
   if (getSessionExecutionSelection(before.entry)) return;
+  const target = resolveSessionStorePathForAcp(params);
   const prepared = await prepareSessionExecutionSelection({
-    cfg: params.cfg,
-    agentId: params.agentId,
-    sessionKey: params.sessionKey,
+    cfg: target.cfg,
+    agentId: target.agentId,
+    sessionKey: target.storeSessionKey,
+    storePath: target.storePath,
     sessionEntry: before.entry,
     request: { kind: "initialize" },
   });

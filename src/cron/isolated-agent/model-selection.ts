@@ -1,3 +1,4 @@
+import { findModelInCatalog } from "../../agents/model-catalog-lookup.js";
 import type { ModelCatalogEntry } from "../../agents/model-catalog.types.js";
 import { splitTrailingAuthProfile } from "../../agents/model-ref-profile.js";
 import { resolveConfiguredModelPolicyAllow } from "../../agents/model-selection-shared.js";
@@ -137,7 +138,7 @@ async function resolveCronThinkingCatalog(params: {
     return catalog;
   }
   // Thinking capability is a per-model fact; never materialize the full live catalog on cron turns.
-  return normalizeThinkingCatalogProviders(
+  const refreshed = normalizeThinkingCatalogProviders(
     await loadProviderScopedThinkingCatalog({
       config: params.owner.config,
       provider: params.provider,
@@ -148,6 +149,7 @@ async function resolveCronThinkingCatalog(params: {
       workspaceDir: params.owner.workspaceDir,
     }),
   );
+  return findModelInCatalog(refreshed, params.provider, params.model) ? refreshed : catalog;
 }
 
 export async function resolveCronThinkingSelection(params: {
@@ -187,7 +189,9 @@ export async function resolveCronThinkingSelection(params: {
             params.cfg.agents?.defaults?.thinkingDefault,
         ));
   const catalog =
-    !params.provider || !params.model || (requestedThinkLevel === "off" && params.agentRuntime === "openclaw")
+    !params.provider ||
+    !params.model ||
+    (requestedThinkLevel === "off" && params.agentRuntime === "openclaw")
       ? params.owner.modelCatalog.entries
       : await resolveCronThinkingCatalog({
           owner: params.owner,
