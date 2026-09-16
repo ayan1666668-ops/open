@@ -171,6 +171,20 @@ describe("getCachedPluginModuleLoader", () => {
             aliasMap: { "openclaw/plugin-sdk/fixture": path.join(peerRoot, "sdk.mts") },
           });
           assert.equal(peerLoader(path.join(peerRoot, "entry.ts")).value, "javascript");
+          const sourcePeerRoot = path.join(root, "source-peers");
+          fs.mkdirSync(sourcePeerRoot);
+          fs.writeFileSync(path.join(sourcePeerRoot, "sdk.mts"), 'export { value } from "./peer.mjs";');
+          fs.writeFileSync(path.join(sourcePeerRoot, "peer.mts"), 'export const value = "typescript";');
+          fs.writeFileSync(path.join(sourcePeerRoot, "entry.ts"), 'export * from "openclaw/plugin-sdk/fixture";');
+          const sourcePeerLoader = getCachedPluginModuleLoader({
+            modulePath: path.join(sourcePeerRoot, "entry.ts"), importerUrl: import.meta.url, tryNative: false,
+            aliasMap: { "openclaw/plugin-sdk/fixture": path.join(sourcePeerRoot, "sdk.mts") },
+          });
+          assert.equal(sourcePeerLoader(path.join(sourcePeerRoot, "entry.ts")).value, "typescript");
+          const unrelated = path.join(root, "unrelated.ts");
+          fs.writeFileSync(unrelated, 'export { value } from "./unrelated-peer.mjs";');
+          fs.writeFileSync(path.join(root, "unrelated-peer.mts"), 'export const value = "unrelated";');
+          await assert.rejects(import(pathToFileURL(unrelated).href), /ERR_MODULE_NOT_FOUND|Cannot find module/);
           const broken = loadSdkFixture("broken", 'globalThis.sdkEvaluations = (globalThis.sdkEvaluations ?? 0) + 1; throw new Error("SDK evaluation failed");');
           assert.throws(broken, /SDK evaluation failed/);
           assert.equal(globalThis.sdkEvaluations, 1, "terminal native failures must not evaluate SDK source twice");

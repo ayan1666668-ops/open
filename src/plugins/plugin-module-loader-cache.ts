@@ -10,7 +10,6 @@ import { toSafeImportPath } from "../shared/import-specifier.js";
 import { createJiti } from "./jiti-factory.js";
 import {
   clearPluginModuleRequireCache,
-  isPluginSourceModulePath,
   tryNativeRequireJavaScriptModule,
   tryNativeRequireModule,
 } from "./native-module-require.js";
@@ -24,7 +23,10 @@ import {
 } from "./plugin-cache.js";
 import { getPluginInstance } from "./plugin-instance-scope.js";
 import type { PluginOrigin } from "./plugin-origin.types.js";
-import { installOpenClawInternalCorePackageNativeResolver } from "./plugin-sdk-native-resolver.js";
+import {
+  installOpenClawInternalCorePackageNativeResolver,
+  registerPluginSdkSourceGraphRoot,
+} from "./plugin-sdk-native-resolver.js";
 import { resolvePluginRuntimeRecord } from "./runtime-context.js";
 import { getPluginRuntimeGatewayRequestScope } from "./runtime/gateway-request-scope.js";
 import {
@@ -284,12 +286,16 @@ function createPluginModuleLoader(
                 if (!target) {
                   return undefined;
                 }
-                if (isPluginSourceModulePath(target)) {
-                  return jitiLoader(target);
-                }
+                registerPluginSdkSourceGraphRoot(target);
                 const native = tryNativeRequireModule(target, {
                   allowWindows: true,
-                  aliasMap: params.resolveAlias,
+                  aliasMap: (specifier) => {
+                    const aliasTarget = params.resolveAlias(specifier);
+                    if (aliasTarget) {
+                      registerPluginSdkSourceGraphRoot(aliasTarget);
+                    }
+                    return aliasTarget;
+                  },
                   fallbackOnMissingDependency: true,
                 });
                 return native.ok ? native.moduleExport : jitiLoader(target);

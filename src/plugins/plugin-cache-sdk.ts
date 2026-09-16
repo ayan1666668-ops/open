@@ -71,6 +71,7 @@ export function createPluginCacheSdk() {
       nextSdkProviderOrder: 0,
       aliases: new Map<string, Array<{ parentRoot: string; target: string }>>(),
       registeredHosts: new Set<string>(),
+      sourceGraphFiles: new Set<string>(),
       hostRoots: new Map<string, string>(),
       nearestPackageRoots: new Map<string, string>(),
       loaderPackageRoots: new Map<string, string>(),

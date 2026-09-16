@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { isPathInside, isPathStrictlyInside } from "../infra/path-guards.js";
+import { escapeRegExp } from "../shared/regexp.js";
 import {
   isPluginSourceModulePath,
   supportsNativeModuleAliasHooks,
@@ -100,6 +101,22 @@ const INTERNAL_CORE_PACKAGE_ALIASES = [
     ],
   },
 ] as const;
+const INTERNAL_CORE_EXPORTED_PACKAGE_DIRS = [
+  "media-core",
+  "normalization-core",
+  "acp-core",
+] as const;
+const BUN_NATIVE_ALIAS_FILTER = new RegExp(
+  `^(?:${[
+    "openclaw/plugin-sdk",
+    "@openclaw/plugin-sdk",
+    ...INTERNAL_CORE_PACKAGE_ALIASES.map((entry) => entry.packageName),
+    ...INTERNAL_CORE_EXPORTED_PACKAGE_DIRS.map((packageDir) => `@openclaw/${packageDir}`),
+  ]
+    .map(escapeRegExp)
+    .join("|")})(?:/|$)`,
+  "u",
+);
 let installed = false;
 
 function resolveLoaderModulePath(options: InstallOpenClawPluginSdkNativeResolverOptions): string {
@@ -266,7 +283,12 @@ function resolveAliasTargetForParentPath(
   parentFilename: string | undefined,
 ): string | undefined {
   const native = getPluginCache().sdk.native;
-  if (parentFilename && request.startsWith(".") && isPluginSourceModulePath(parentFilename)) {
+  if (
+    parentFilename &&
+    request.startsWith(".") &&
+    isPluginSourceModulePath(parentFilename) &&
+    native.sourceGraphFiles.has(normalizePathForBoundary(parentFilename))
+  ) {
     const extension = path.extname(request).toLowerCase();
     const sourceExtension =
       extension === ".js"
@@ -282,6 +304,7 @@ function resolveAliasTargetForParentPath(
       const requested = path.resolve(path.dirname(parentFilename), request);
       const sourcePeer = `${requested.slice(0, -extension.length)}${sourceExtension}`;
       if (!pluginCacheExistsSync(requested) && pluginCacheExistsSync(sourcePeer)) {
+        native.sourceGraphFiles.add(normalizePathForBoundary(sourcePeer));
         return sourcePeer;
       }
     }
@@ -331,7 +354,7 @@ function listInternalCorePackageNativeAliases(packageRoot: string): Array<{
   }> = [];
   const internalCorePackageAliases = [
     ...INTERNAL_CORE_PACKAGE_ALIASES,
-    ...["media-core", "normalization-core", "acp-core"].map((packageDir) => ({
+    ...INTERNAL_CORE_EXPORTED_PACKAGE_DIRS.map((packageDir) => ({
       packageName: `@openclaw/${packageDir}`,
       packageDir,
       subpaths: listWorkspacePackageExportAliasEntries({
@@ -365,7 +388,7 @@ function installResolver(): void {
       name: "openclaw-plugin-sdk-alias",
       setup(builder) {
         builder.onResolve(
-          { filter: /^(?:openclaw|@openclaw)\/plugin-sdk\//u, namespace: "file" },
+          { filter: BUN_NATIVE_ALIAS_FILTER, namespace: "file" },
           ({ path: request, importer }) => {
             const target = resolveAliasTargetForParentPath(request, importer);
             return target ? { path: target, namespace: "file" } : undefined;
@@ -411,6 +434,13 @@ function installResolver(): void {
     },
   });
   installed = true;
+}
+
+/** Admit one SDK source entry and its relative TypeScript peers to native resolution. */
+export function registerPluginSdkSourceGraphRoot(modulePath: string): void {
+  if (isPluginSourceModulePath(modulePath)) {
+    getPluginCache().sdk.native.sourceGraphFiles.add(normalizePathForBoundary(modulePath));
+  }
 }
 
 function registerNativeAlias(params: {
