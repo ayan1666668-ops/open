@@ -1,4 +1,7 @@
-import { readSessionMessageIdentity } from "@openclaw/gateway-client/browser";
+import {
+  readAssistantStreamSegmentIdentity,
+  readSessionMessageIdentity,
+} from "@openclaw/gateway-client/browser";
 import { asNullableRecord } from "@openclaw/normalization-core/record-coerce";
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
 import { areUiSessionKeysEquivalent } from "../../lib/sessions/session-key.ts";
@@ -13,7 +16,10 @@ const liveTerminalIdentities = new WeakMap<object, LiveTerminalIdentity>();
 const authoritativeTerminals = new WeakMap<object, AuthoritativeTerminal>();
 // Terminals whose run still read active at persistence time; the run-clear
 // reconcile promotes them so the live copy retires once history applies (#149153).
-const pendingAuthoritativeTerminals = new WeakMap<object, PendingAuthoritativeTerminal>();
+const pendingAuthoritativeTerminals = new WeakMap<
+  object,
+  Map<string, PendingAuthoritativeTerminal>
+>();
 
 type AuthoritativeTerminal = {
   historyApplied: boolean;
@@ -21,6 +27,26 @@ type AuthoritativeTerminal = {
   runId: string;
   sessionKey: string;
 };
+
+/** A saved row owns the run's final reply only when it carries non-commentary text. */
+function ownsFinalReply(message: unknown): boolean {
+  if (readAssistantStreamSegmentIdentity(message) !== undefined) {
+    return false;
+  }
+  const record = asNullableRecord(message);
+  const content = Array.isArray(record?.content) ? record.content : [];
+  return content.some((block) => {
+    const candidate = asNullableRecord(block);
+    if (!candidate || candidate.type !== "text" || typeof candidate.text !== "string") {
+      return false;
+    }
+    if (!candidate.text.trim()) {
+      return false;
+    }
+    const signature = asNullableRecord(candidate.textSignature);
+    return signature?.phase !== "commentary";
+  });
+}
 
 type PendingAuthoritativeTerminal = {
   messageId: string;
@@ -91,16 +117,19 @@ export function rememberAuthoritativeTerminal(options: {
   if (!options.runIdBeforeApply || !options.matchesChat || !messageId) {
     return;
   }
+  if (!ownsFinalReply(payload?.message)) {
+    return;
+  }
   const runId = options.event.clientRunId ?? options.event.runId ?? options.runIdBeforeApply;
   if (options.event.hasActiveRun === true) {
     // The persisted final landed while its run still reads active. Keep it pending:
     // the run-clear reconcile arms it before history applies, otherwise the live
     // terminal copy is never retired and the reply renders twice (#149153).
-    pendingAuthoritativeTerminals.set(options.host, {
-      messageId,
-      runId,
-      sessionKey: options.event.key,
-    });
+    const pendingByRun =
+      pendingAuthoritativeTerminals.get(options.host) ??
+      new Map<string, PendingAuthoritativeTerminal>();
+    pendingByRun.set(runId, { messageId, runId, sessionKey: options.event.key });
+    pendingAuthoritativeTerminals.set(options.host, pendingByRun);
     return;
   }
   authoritativeTerminals.set(options.host, {
@@ -121,30 +150,38 @@ export function armPendingAuthoritativeTerminalForHistory(options: {
   sessionKey: string;
   visibleMessages: readonly unknown[];
 }): void {
-  const pending = pendingAuthoritativeTerminals.get(options.host);
-  if (!pending || !areUiSessionKeysEquivalent(pending.sessionKey, options.sessionKey)) {
+  const pendingByRun = pendingAuthoritativeTerminals.get(options.host);
+  if (!pendingByRun) {
     return;
   }
-  const historyHasTerminal = options.visibleMessages.some((message) => {
-    const identity = readSessionMessageIdentity(message);
-    return (
-      identity?.role === "assistant" && !identity.isImported && identity.id === pending.messageId
-    );
-  });
-  if (!historyHasTerminal) {
-    return;
+  for (const [runId, pending] of pendingByRun) {
+    if (!areUiSessionKeysEquivalent(pending.sessionKey, options.sessionKey)) {
+      continue;
+    }
+    const historyHasTerminal = options.visibleMessages.some((message) => {
+      const identity = readSessionMessageIdentity(message);
+      return (
+        identity?.role === "assistant" && !identity.isImported && identity.id === pending.messageId
+      );
+    });
+    if (!historyHasTerminal) {
+      continue;
+    }
+    pendingByRun.delete(runId);
+    const armed = authoritativeTerminals.get(options.host);
+    if (armed?.historyApplied && armed.runId === pending.runId) {
+      continue;
+    }
+    authoritativeTerminals.set(options.host, {
+      historyApplied: false,
+      messageId: pending.messageId,
+      runId: pending.runId,
+      sessionKey: pending.sessionKey,
+    });
   }
-  pendingAuthoritativeTerminals.delete(options.host);
-  const armed = authoritativeTerminals.get(options.host);
-  if (armed?.historyApplied && armed.runId === pending.runId) {
-    return;
+  if (pendingByRun.size === 0) {
+    pendingAuthoritativeTerminals.delete(options.host);
   }
-  authoritativeTerminals.set(options.host, {
-    historyApplied: false,
-    messageId: pending.messageId,
-    runId: pending.runId,
-    sessionKey: pending.sessionKey,
-  });
 }
 
 export function reconcileAuthoritativeTerminalHistory<T>(options: {
