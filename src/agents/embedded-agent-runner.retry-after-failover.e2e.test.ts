@@ -26,11 +26,14 @@ import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { prepareSystemAgentRunAdmission } from "../../dist/agents/admitted-run-context.js";
+import { runEmbeddedAgent } from "../../dist/agents/embedded-agent-runner.js";
+import { runWithModelFallback } from "../../dist/agents/model-fallback-runner.js";
+// Deliberately loaded from the built runtime. The plugin artifact preference is
+// derived from the extension of OpenClaw's own executing module, so a
+// source-loaded graph transpiles every bundled plugin through Jiti at runtime.
+import { disposeOpenClawAgentDatabaseByPath } from "../../dist/state/openclaw-agent-db.js";
 import type { OpenClawConfig } from "../config/config.js";
-import { disposeOpenClawAgentDatabaseByPath } from "../state/openclaw-agent-db.js";
-import { prepareSystemAgentRunAdmission } from "./admitted-run-context.js";
-import { runEmbeddedAgent } from "./embedded-agent-runner.js";
-import { runWithModelFallback } from "./model-fallback-runner.js";
 
 type RunResult = Awaited<ReturnType<typeof runEmbeddedAgent>>;
 

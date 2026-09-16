@@ -458,6 +458,13 @@ function buildCoreDistEntries(): Record<string, string> {
     "agents/models-config.runtime": "src/agents/models-config.runtime.ts",
     "agents/tool-images.runtime": "src/agents/tool-images.runtime.ts",
     "agents/compaction-planning.worker": "src/agents/compaction-planning.worker.ts",
+    // The retry-after failover e2e drives these internals directly. Stable entries
+    // let that suite load the built runtime, so plugin artifacts resolve as built
+    // instead of being transpiled from source by Jiti on every worker.
+    "agents/embedded-agent-runner": "src/agents/embedded-agent-runner.ts",
+    "agents/model-fallback-runner": "src/agents/model-fallback-runner.ts",
+    "agents/admitted-run-context": "src/agents/admitted-run-context.ts",
+    "state/openclaw-agent-db": "src/state/openclaw-agent-db.ts",
     "config/sessions/disk-budget.worker": "src/config/sessions/disk-budget.worker.ts",
     "config/sessions/session-transcript-reconcile":
       "src/config/sessions/session-transcript-reconcile.ts",
@@ -754,6 +761,18 @@ function normalizeDeclarationEntrySource(source: string): string {
   return relativeSource.replaceAll(path.sep, "/");
 }
 
+// A first-party e2e (embedded-agent-runner.retry-after-failover) imports these
+// built runtime entries so it exercises the compiled plugin runtime rather than
+// transpiling every bundled plugin through Jiti per worker. They are runtime
+// entrypoints and so fall outside the default declaration set; emit declarations
+// for them so the suite typechecks against real types instead of allowJs inference.
+const E2E_TYPED_RUNTIME_ENTRY_NAMES = new Set([
+  "agents/embedded-agent-runner",
+  "agents/model-fallback-runner",
+  "agents/admitted-run-context",
+  "state/openclaw-agent-db",
+]);
+
 function buildUnifiedDeclarationPartitions(
   entries: Record<string, string>,
 ): Array<{ name: string; sources: string[] }> {
@@ -775,10 +794,14 @@ function buildUnifiedDeclarationPartitions(
     .filter(([name]) =>
       name.startsWith("plugin-sdk/")
         ? shouldBuildPrivateQaEntries || publicPluginSdkEntryNames.has(name)
-        : name === "index" || Object.hasOwn(pluginContracts, name),
+        : name === "index" ||
+          E2E_TYPED_RUNTIME_ENTRY_NAMES.has(name) ||
+          Object.hasOwn(pluginContracts, name),
     )
     .toSorted(([left], [right]) => left.localeCompare(right));
-  const baseEntries = sortedEntries.filter(([name]) => name === "index");
+  const baseEntries = sortedEntries.filter(
+    ([name]) => name === "index" || E2E_TYPED_RUNTIME_ENTRY_NAMES.has(name),
+  );
   const pluginSdkEntries = sortedEntries.filter(([name]) => name.startsWith("plugin-sdk/"));
   const extensionEntriesById = new Map<string, UnifiedEntry[]>();
   for (const entry of sortedEntries) {
