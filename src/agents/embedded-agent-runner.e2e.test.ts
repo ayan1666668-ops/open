@@ -863,8 +863,12 @@ describe("runEmbeddedAgent", () => {
         typeof import("./embedded-agent-runner/model.js")
       >("./embedded-agent-runner/model.js");
       const stores = createEmptyAgentDiscoveryStores();
-      resolveModelAsyncMock.mockImplementation((provider, modelId, agentDir, config, options) =>
-        resolveModelAsyncActual(provider, modelId, agentDir, config, { ...options, ...stores }),
+      resolveModelAsyncMock.mockImplementation(
+        (lookupProvider, lookupModelId, lookupAgentDir, lookupConfig, options) =>
+          resolveModelAsyncActual(lookupProvider, lookupModelId, lookupAgentDir, lookupConfig, {
+            ...options,
+            ...stores,
+          }),
       );
       runEmbeddedAttemptMock.mockResolvedValueOnce(
         makeEmbeddedRunnerAttempt({
