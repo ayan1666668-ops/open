@@ -1,8 +1,11 @@
 import { existsSync } from "node:fs";
 import * as fs from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { Worker } from "node:worker_threads";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
+import { createDeferredCore } from "../shared/deferred.js";
 import type { SqliteWorkerStore } from "./sqlite-worker-contract.js";
 import type { FixtureOperations } from "./sqlite-worker-store.test-support.js";
 
@@ -211,7 +214,7 @@ describe("Bun SQLite process selection and worker inheritance", () => {
     },
   );
 
-  it("prepares bounded workers and keeps multiplexed databases independent", async () => {
+  it("prepares dedicated workers beyond four databases and retains ownership until termination joins", async () => {
     const directory = tempDirs.make("bun-sqlite-worker-selection-");
     const paths = Array.from({ length: 5 }, (_, index) => path.join(directory, `${index}.sqlite`));
     const active: SqliteWorkerStore<FixtureOperations>[] = [];
@@ -220,7 +223,7 @@ describe("Bun SQLite process selection and worker inheritance", () => {
       active.push(store);
       await store.execute({ type: "append", input: { value: `database ${index}` } });
     }
-    expect(runtime.launches).toBe(4);
+    expect(runtime.launches).toBe(5);
     for (const [index, store] of active.entries()) {
       expect(await store.execute({ type: "read", input: undefined })).toEqual([
         `database ${index}`,
@@ -230,21 +233,71 @@ describe("Bun SQLite process selection and worker inheritance", () => {
     await fs.link(paths[0]!, aliasPath);
     const alias = await openStore(aliasPath);
     await alias.execute({ type: "append", input: { value: "shared alias" } });
-    expect(runtime.launches).toBe(4);
+    expect(runtime.launches).toBe(5);
     await active[0]!.close();
     expect(await alias.execute({ type: "read", input: undefined })).toEqual([
       "database 0",
       "shared alias",
     ]);
 
-    await alias.close();
-    expect(await active[4]!.execute({ type: "read", input: undefined })).toEqual(["database 4"]);
-    const reopened = await openStore(paths[0]!);
-    expect(await reopened.execute({ type: "read", input: undefined })).toEqual([
-      "database 0",
-      "shared alias",
-    ]);
-    expect(runtime.launches).toBe(4);
+    const terminating = createDeferredCore();
+    const release = createDeferredCore();
+    const termination = vi
+      .spyOn(Worker.prototype, "terminate")
+      .mockImplementationOnce(async function (this: Worker) {
+        terminating.resolve();
+        await release.promise;
+        termination.mockRestore();
+        return this.terminate();
+      });
+    const closing = alias.close();
+    let reopening: Promise<SqliteWorkerStore<FixtureOperations>> | undefined;
+    try {
+      await terminating.promise;
+      const actualFs = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+      const backendPath = await fs.realpath(
+        fileURLToPath(new URL("./sqlite-worker-store.test-support.ts", import.meta.url)),
+      );
+      const inspected = createDeferredCore();
+      vi.mocked(fs.stat).mockImplementation(async (pathname, options) => {
+        const result = await actualFs.stat(pathname, options);
+        if (pathname === backendPath) {
+          inspected.resolve();
+        }
+        return result;
+      });
+      let reopenSettled = false;
+      reopening = openStore(paths[0]!);
+      void reopening.then(
+        () => {
+          reopenSettled = true;
+        },
+        () => {
+          reopenSettled = true;
+        },
+      );
+      await inspected.promise;
+      await Promise.resolve();
+      expect(runtime.launches).toBe(5);
+      expect(reopenSettled).toBe(false);
+      vi.mocked(fs.stat).mockImplementation(actualFs.stat);
+      release.resolve();
+      await closing;
+      const reopened = await reopening;
+      expect(await reopened.execute({ type: "read", input: undefined })).toEqual([
+        "database 0",
+        "shared alias",
+      ]);
+      expect(runtime.launches).toBe(6);
+      expect(await active[1]!.execute({ type: "read", input: undefined })).toEqual(["database 1"]);
+      expect(await active[4]!.execute({ type: "read", input: undefined })).toEqual(["database 4"]);
+    } finally {
+      release.resolve();
+      termination.mockRestore();
+      const actualFs = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+      vi.mocked(fs.stat).mockImplementation(actualFs.stat);
+      await Promise.allSettled([closing, ...(reopening ? [reopening] : [])]);
+    }
     expect(runtime.select).toHaveBeenCalledExactlyOnceWith("/fixture/sqlite.dylib");
     expect(runtime.setEnvironmentData).toHaveBeenCalledTimes(1);
   });

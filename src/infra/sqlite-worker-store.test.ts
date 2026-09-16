@@ -113,6 +113,8 @@ async function openWithGateway(file: string) {
   }
 }
 
+const nodeIt = process.versions.bun ? it.skip : it;
+
 describe("SQLite worker store", () => {
   it.each(["read", "client close", "global close", "abort", "failed frame"] as const)(
     "preserves a complete large result through %s",
@@ -601,7 +603,7 @@ describe("SQLite worker store", () => {
     expect(await read(await open(file))).toEqual(["before close", "still open"]);
   });
 
-  it("keeps a new database usable while another worker retires at capacity", async () => {
+  nodeIt("keeps a new database usable while another worker retires at capacity", async () => {
     const first = await open(databasePath());
     // Fill the documented four-worker budget before retiring an otherwise idle worker.
     for (let index = 0; index < 3; index += 1) {
@@ -721,7 +723,7 @@ describe("SQLite worker store", () => {
     expect(await read(survivor)).toEqual(["write before close", "after failed admission"]);
   });
 
-  it("rejects an overloaded admission without retiring healthy workers or writes", async () => {
+  nodeIt("rejects an overloaded admission without retiring healthy workers or writes", async () => {
     const active: SqliteWorkerStore<FixtureOperations>[] = [];
     for (let index = 0; index < 4; index += 1) {
       active.push(await open(databasePath()));
