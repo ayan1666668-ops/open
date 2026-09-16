@@ -3862,11 +3862,8 @@ openclaw_e2e_wait_gateway_ready() {
 }
 ${lane === "published" ? "prepare_update_restart_probe" : 'prepare_update_restart_probe_current_install 18789 "$OPENCLAW_UPGRADE_SURVIVOR_SYSTEMCTL_SHIM_DAEMON_LOG"'}
 `;
-      const systemctlPath = join(
-        lane === "published" ? join(artifacts, "npm-prefix") : workDir,
-        "bin",
-        "systemctl",
-      );
+      const prefix = lane === "published" ? join(workDir, "runtime", "npm-prefix") : workDir;
+      const systemctlPath = join(prefix, "bin", "systemctl");
       const systemctl = (...args: string[]) =>
         spawnSync(systemctlPath, ["--user", ...args], {
           env,
@@ -5171,8 +5168,8 @@ last_update_observation_root=${shellQuote(recoveryRoot)}`;
 CURRENT_PHASE=update-candidate
 run_completed=${completed ? 1 : 0}
 ${observationSetup}
-printf "original startup error\\n" >"$npm_config_prefix/../update.err"
-cleanup() { printf "cleanup replacement\\n" >"$npm_config_prefix/../update.err"; }
+printf "original startup error\\n" >"$OPENCLAW_UPGRADE_SURVIVOR_ARTIFACT_ROOT/update.err"
+cleanup() { printf "cleanup replacement\\n" >"$OPENCLAW_UPGRADE_SURVIVOR_ARTIFACT_ROOT/update.err"; }
 exit ${exitCode}
 `,
           {
