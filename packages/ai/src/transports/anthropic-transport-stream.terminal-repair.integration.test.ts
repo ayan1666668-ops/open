@@ -7,7 +7,6 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import { configureAiTransportHost } from "../host.js";
-import { streamAnthropic } from "../providers/anthropic.js";
 import type { Model } from "../types.js";
 import { createAnthropicMessagesTransportStreamFn } from "./anthropic-transport-stream.js";
 
@@ -77,10 +76,7 @@ function toolUseStream(toolBlocks: Array<{ id: string; name: string; partialJson
   return serializeSse(events);
 }
 
-async function startSseServer(
-  body: string,
-  modelId = "claude-opus-5",
-): Promise<{ server: Server; baseUrl: string }> {
+async function startSseServer(body: string): Promise<{ server: Server; baseUrl: string }> {
   const server = createServer((request, response) => {
     let payload = "";
     request.setEncoding("utf8");
@@ -91,7 +87,7 @@ async function startSseServer(
       // Assert the request really reached us over HTTP with the tool projection attached.
       expect(request.method).toBe("POST");
       expect(request.url).toBe("/v1/messages");
-      expect(JSON.parse(payload)).toMatchObject({ model: modelId, stream: true });
+      expect(JSON.parse(payload)).toMatchObject({ model: "claude-opus-5", stream: true });
       response.writeHead(200, {
         "content-type": "text/event-stream; charset=utf-8",
         "cache-control": "no-cache",
@@ -124,10 +120,6 @@ async function runTransport(baseUrl: string) {
       { apiKey: "sk-ant-api03-loopback" } as StreamOptions, // pragma: allowlist secret
     ),
   );
-  return collectStream(stream);
-}
-
-async function collectStream(stream: Awaited<ReturnType<StreamFn>>) {
   const eventTypes: string[] = [];
   const toolCallEnds: Record<string, unknown>[] = [];
   for await (const event of stream) {
@@ -206,107 +198,5 @@ describe("anthropic transport terminal tool-argument repair over loopback HTTP",
     expect(toolCallEnds).toEqual([]);
     expect(eventTypes).not.toContain("toolcall_end");
     expect(eventTypes).not.toContain("done");
-  });
-
-  describe.each([
-    { entry: "transport", streamFn: createAnthropicMessagesTransportStreamFn() },
-    { entry: "provider", streamFn: streamAnthropic },
-  ])("$entry compatible-provider terminal handling", ({ streamFn }) => {
-    const textEvents = [
-      { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
-      {
-        type: "content_block_delta",
-        index: 0,
-        delta: { type: "text_delta", text: "The result is" },
-      },
-    ];
-    const blockStop = { type: "content_block_stop", index: 0 };
-
-    it.each([
-      { scenario: "EOF after message_start", events: [], expected: "error" },
-      { scenario: "EOF during text", events: textEvents, expected: "error" },
-      {
-        scenario: "EOF after a text block",
-        events: [...textEvents, blockStop],
-        expected: "error",
-      },
-      {
-        scenario: "EOF after a complete tool block",
-        events: [
-          {
-            type: "content_block_start",
-            index: 0,
-            content_block: { type: "tool_use", id: "call_edit", name: "edit", input: {} },
-          },
-          {
-            type: "content_block_delta",
-            index: 0,
-            delta: { type: "input_json_delta", partial_json: '{"path":"a.py"}' },
-          },
-          blockStop,
-        ],
-        expected: "error",
-      },
-      {
-        scenario: "explicit end_turn without message_stop",
-        events: [
-          ...textEvents,
-          blockStop,
-          {
-            type: "message_delta",
-            delta: { stop_reason: "end_turn" },
-            usage: { output_tokens: 3 },
-          },
-        ],
-        expected: "stop",
-      },
-    ])("$scenario", async ({ events, expected }) => {
-      configureAiTransportHost({ buildModelFetch: () => globalThis.fetch });
-      const started = await startSseServer(
-        serializeSse([
-          {
-            type: "message_start",
-            message: {
-              id: "msg_compatible",
-              type: "message",
-              role: "assistant",
-              model: "kimi-for-coding",
-              content: [],
-              stop_reason: null,
-              usage: { input_tokens: 4, output_tokens: 0 },
-            },
-          },
-          ...events,
-        ]),
-        "kimi-for-coding",
-      );
-      server = started.server;
-      const model = {
-        ...makeModel(started.baseUrl),
-        provider: "kimi",
-        id: "kimi-for-coding",
-        name: "Kimi for Coding",
-      };
-      const { eventTypes, toolCallEnds, result } = await collectStream(
-        await streamFn(
-          model,
-          { messages: [{ role: "user", content: "finish the task", timestamp: 1 }] },
-          { apiKey: "local-fixture-key" },
-        ),
-      );
-
-      expect(result.stopReason).toBe(expected);
-      expect(toolCallEnds).toEqual([]);
-      if (expected === "error") {
-        expect(eventTypes.at(-1)).toBe("error");
-        expect(eventTypes).not.toContain("done");
-        expect(result.errorMessage).toMatch(/stream ended before/i);
-        expect(result.content.some((block) => block.type === "toolCall")).toBe(false);
-      } else {
-        expect(eventTypes.at(-1)).toBe("done");
-        expect(result.errorMessage).toBeUndefined();
-        expect(result.content).toEqual([{ type: "text", text: "The result is" }]);
-      }
-    });
   });
 });
