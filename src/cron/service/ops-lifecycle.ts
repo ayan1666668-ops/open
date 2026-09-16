@@ -1,5 +1,4 @@
 import { materializeLegacyDefaultCronJobOwners } from "../legacy-default-agent-owner-migration.js";
-import { failureNotificationDeliveryFromJobState } from "./failure-alerts.js";
 import {
   configureForeignReceiptMonitor,
   enrollForeignReceipt,
@@ -10,8 +9,8 @@ import {
 } from "./foreign-receipt-monitor.js";
 import { nextWakeAtMs } from "./jobs-scheduling.js";
 import { locked } from "./locked.js";
-import { emitCronRunFinished } from "./ops-run-preparation.js";
 import { cancelCronRunAdmissionWaiters } from "./run-admission.js";
+import { emitInterruptedCronRun } from "./run-recovery-events.js";
 import {
   proposeCronRunRecovery,
   recomputeUnownedCronSchedules,
@@ -20,33 +19,10 @@ import {
   type CronRunRecoveryResult,
 } from "./run-recovery.js";
 import { applyCronRuntimeRowsToState } from "./runtime-store.js";
-import { STARTUP_INTERRUPTED_ERROR, type InterruptedStartupRun } from "./startup-run-repair.js";
+import type { InterruptedStartupRun } from "./startup-run-repair.js";
 import type { CronServiceState } from "./state.js";
 import { ensureLoaded, runPostPersistCronNotifications } from "./store.js";
 import { armTimer, runMissedJobs, stopTimer } from "./timer.js";
-
-function emitInterruptedRun(state: CronServiceState, interrupted: InterruptedStartupRun): void {
-  const job = state.store?.jobs.find((entry) => entry.id === interrupted.jobId);
-  emitCronRunFinished(
-    state,
-    {
-      jobId: interrupted.jobId,
-      action: "finished",
-      job,
-      status: "error",
-      error: STARTUP_INTERRUPTED_ERROR,
-      delivered: false,
-      deliveryStatus: "unknown",
-      deliveryError: STARTUP_INTERRUPTED_ERROR,
-      failureNotificationDelivery: job ? failureNotificationDeliveryFromJobState(job) : undefined,
-      runAtMs: interrupted.runAtMs,
-      durationMs: interrupted.durationMs,
-      nextRunAtMs: job?.state.nextRunAtMs,
-    },
-    undefined,
-    interrupted.taskRunId,
-  );
-}
 
 function applyRecoveryResult(params: {
   state: CronServiceState;
@@ -108,7 +84,7 @@ async function reconcileForeignRunReceipts(state: CronServiceState): Promise<voi
     if (schedulingChanged) {
       await ensureLoaded(state, { forceReload: true, skipRecompute: true });
       for (const interrupted of interruptedRuns) {
-        emitInterruptedRun(state, interrupted);
+        emitInterruptedCronRun(state, interrupted);
       }
     }
   });
@@ -183,7 +159,7 @@ export async function start(state: CronServiceState): Promise<void> {
   }
   // Publish the interrupted attempt before catch-up can finish its successor.
   for (const interrupted of interruptedRuns) {
-    emitInterruptedRun(state, interrupted);
+    emitInterruptedCronRun(state, interrupted);
   }
   await runMissedJobs(state, {
     skipJobIds: skipJobIds.size > 0 ? skipJobIds : undefined,
