@@ -3026,6 +3026,7 @@ dependencies = [
  "objc2-foundation",
  "objc2-web-kit",
  "openclaw-gateway-client",
+ "rustls",
  "security-framework",
  "serde",
  "serde_json",
