@@ -652,8 +652,25 @@ suite.define(() => {
           .locator(".plugin-editor .cfg-object__summary")
           .filter({ hasText: "Hooks" })
           .click();
-        await page.getByRole("checkbox", { name: "Allow prompt changes", exact: true }).check();
+        const permission = page.getByRole("checkbox", {
+          name: "Allow prompt changes",
+          exact: true,
+        });
+        const inspections = (await gateway.getRequests("plugins.inspect")).length;
+        await gateway.deferNext("plugins.inspect");
+        await permission.check();
         const permissionSave = await gateway.waitForRequest("config.set", { after: 3 });
+        await gateway.waitForRequest("plugins.inspect", { after: inspections });
+        // A saved edit refreshes inspection without retiring the active editor.
+        if (captureUiProof) {
+          await page.screenshot({ path: path.join(proofDir, "permission-inspection-refresh.png") });
+        }
+        expect(await permission.isVisible()).toBe(true);
+        expect(await permission.isChecked()).toBe(true);
+        expect(await search.inputValue()).toBe("Allow prompt changes");
+        await gateway.resolveDeferred("plugins.inspect");
+        await expect.poll(() => permission.isVisible()).toBe(true);
+        expect(await permission.isChecked()).toBe(true);
         expect(JSON.parse(String(asRecord(permissionSave.params).raw))).toEqual({
           ...config,
           plugins: {

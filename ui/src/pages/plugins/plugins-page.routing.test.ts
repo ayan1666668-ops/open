@@ -338,10 +338,13 @@ describe("PluginsPage routing", () => {
   it("refreshes the selected inspection after configuration autosave", async () => {
     const result = createResult();
     let inspectionCount = 0;
+    const nextInspection = deferred<ReturnType<typeof createInspectResult>>();
     const { client, request } = createClient(async (method) => {
       if (method === "plugins.inspect") {
         inspectionCount += 1;
-        return createInspectResult({ reviewToken: `review-token-${inspectionCount}` });
+        return inspectionCount === 1
+          ? createInspectResult({ reviewToken: "review-token-1" })
+          : nextInspection.promise;
       }
       return result;
     });
@@ -371,6 +374,9 @@ describe("PluginsPage routing", () => {
     ).configAutoSaveStatus = "saved";
     runtimeConfig.notify();
 
+    await vi.waitFor(() => expect(inspectionCount).toBe(2));
+    expect(page.detail?.inspection?.reviewToken).toBe("review-token-1");
+    nextInspection.resolve(createInspectResult({ reviewToken: "review-token-2" }));
     await vi.waitFor(() => expect(page.detail?.inspection?.reviewToken).toBe("review-token-2"));
     expect(request.mock.calls.filter(([method]) => method === "plugins.inspect")).toHaveLength(2);
   });

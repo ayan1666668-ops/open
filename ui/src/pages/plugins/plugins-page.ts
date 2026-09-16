@@ -493,8 +493,12 @@ class PluginsPage extends OpenClawLightDomElement {
   }
 
   private async showDetails(pluginId: string | null) {
+    // Refresh the same plugin without retiring focused controls or open groups.
+    // Connection changes and navigation clear detail before reaching this owner.
     let detail: PluginsPageDetail | null = pluginId
-      ? { pluginId, inspection: null, error: null }
+      ? this.detail?.pluginId === pluginId
+        ? { ...this.detail, error: null }
+        : { pluginId, inspection: null, error: null }
       : null;
     this.detail = detail;
     const plugin = this.result?.plugins.find((entry) => entry.id === pluginId);
@@ -504,6 +508,7 @@ class PluginsPage extends OpenClawLightDomElement {
     }
     await loadInstalledPluginDetail({
       plugin,
+      detail,
       client: scope.client,
       catalog: this.catalogDetail?.result ?? undefined,
       includeTools:
@@ -518,10 +523,10 @@ class PluginsPage extends OpenClawLightDomElement {
 
   private async showCatalogDetail(id: string | null) {
     const detail = id ? { id, result: null, error: null } : null;
-    this.catalogDetail = detail;
-    if (this.surface === "discovery") {
+    if (this.surface === "discovery" && this.catalogDetail?.id !== id) {
       this.detail = null;
     }
+    this.catalogDetail = detail;
     const scope = this.gateway.capture();
     if (!detail || !scope) {
       return;

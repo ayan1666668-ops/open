@@ -122,9 +122,16 @@ describeControlUiE2e("Plugin overview", () => {
         });
         expect(await permission.isEnabled()).toBe(true);
         expect(await gateway.getRequests("config.set")).toEqual([]);
+        const inspections = (await gateway.getRequests("plugins.inspect")).length;
+        await gateway.deferNext("plugins.inspect");
         await permission.press("Space");
         await expect.poll(() => permission.isChecked()).toBe(true);
         await expect.poll(async () => (await gateway.getRequests("config.set")).length).toBe(1);
+        await gateway.waitForRequest("plugins.inspect", { after: inspections });
+        expect(await permission.isVisible()).toBe(true);
+        await captureScreenshot(page, `direct-settings-${entry}-refresh.png`, "viewport");
+        await gateway.resolveDeferred("plugins.inspect");
+        expect(await permission.isChecked()).toBe(true);
         // The request recorder observes dispatch; wait for the owning writer's
         // acknowledgement before reloading the saved permission.
         await expect
