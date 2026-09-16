@@ -568,7 +568,11 @@ describe("CodexAppServerEventProjector verbose output and hook projection", () =
     expect(projector.isCompacting()).toBe(false);
     const result = projector.buildResult(buildEmptyToolTelemetry());
     const terminal = readAttemptTerminal(result);
-    expect(terminal.promptError).toMatch(/compaction exhausted/i);
+    const errorMessage =
+      typeof terminal.promptError === "string"
+        ? terminal.promptError
+        : (terminal.promptError as any)?.message;
+    expect(errorMessage).toMatch(/compaction exhausted/i);
     expect(terminal.promptErrorSource).toBe("compaction");
   });
 

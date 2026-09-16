@@ -483,6 +483,18 @@ describe("projectContextEngineAssemblyForCodex", () => {
       ];
       const originalGroups = structuredClone(imageGroups);
       const maxChars = mode === "unchanged" ? promptText.length : 220;
+      if (mode === "preserved") {
+        expect(() => {
+          fitCodexProjectedContextForTurnStart({
+            promptText,
+            imageGroups,
+            preservedRange: { start: before.length, end: promptText.length },
+            maxChars,
+          });
+        }).toThrow(/context projection budget/i);
+        return;
+      }
+
       const fitted = fitCodexProjectedContextForTurnStart({
         promptText,
         imageGroups,
@@ -521,27 +533,26 @@ describe("projectContextEngineAssemblyForCodex", () => {
     },
   );
 
-  it("drops historical images when a large current request displaces their context", () => {
+  it("throws an error when a large current request exceeds the projection cap", () => {
     const context = "[user]\nhistorical screenshot";
     const request = `\nCurrent user request:\n${"x".repeat(500)}`;
     const hook = "\nnew hook context";
-    const fitted = fitCodexProjectedContextForTurnStart({
-      promptText: `${context}${request}${hook}`,
-      contextRange: { start: 0, end: context.length },
-      requestRange: { start: context.length, end: context.length + request.length },
-      imageGroups: [
-        {
-          start: 0,
-          end: context.length,
-          images: [{ type: "image", mimeType: "image/png", data: "historical-image" }],
-        },
-      ],
-      maxChars: 200,
-    });
 
-    expect(fitted.promptText).not.toContain("historical screenshot");
-    expect(fitted.promptText.endsWith("x".repeat(100))).toBe(true);
-    expect(fitted.imageGroups).toBeUndefined();
+    expect(() => {
+      fitCodexProjectedContextForTurnStart({
+        promptText: `${context}${request}${hook}`,
+        contextRange: { start: 0, end: context.length },
+        requestRange: { start: context.length, end: context.length + request.length },
+        imageGroups: [
+          {
+            start: 0,
+            end: context.length,
+            images: [{ type: "image", mimeType: "image/png", data: "historical-image" }],
+          },
+        ],
+        maxChars: 200,
+      });
+    }).toThrow(/The current user request.*exceeds the context projection budget/i);
   });
 
   it.each(["assistant", "compaction", "branch_summary"] as const)(

@@ -312,7 +312,9 @@ export function fitCodexProjectedContextForTurnStart(params: {
       return finish(slice(0, params.promptText.length, maxChars));
     }
     if (preservedText.length >= maxChars) {
-      return finish(slice(preservedRange.start, preservedRange.end, maxChars));
+      throw new CodexContextAttachmentError(
+        `The current user request (${preservedText.length} characters) exceeds the context projection budget (${maxChars} characters). Please reduce the size of the request or its attachments.`,
+      );
     }
     return finish(
       slice(0, preservedRange.start, maxChars - preservedText.length),
@@ -333,7 +335,9 @@ export function fitCodexProjectedContextForTurnStart(params: {
   ) {
     const request = params.promptText.slice(requestRange.start, requestRange.end);
     if (request.length >= maxChars) {
-      return finish(slice(requestRange.start, requestRange.end, maxChars));
+      throw new CodexContextAttachmentError(
+        `The current user request (${request.length} characters) exceeds the context projection budget (${maxChars} characters). Please reduce the size of the request or its attachments.`,
+      );
     }
     // Hook-appended context is newer than the projected history. Retain it
     // before trimming the projection, while the full current request remains

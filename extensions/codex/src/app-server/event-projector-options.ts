@@ -32,4 +32,5 @@ export type CodexAppServerEventProjectorOptions = {
   onContextCompacted?: () => void | Promise<void>;
   resolveDynamicToolResultContentSource?: (toolName: string) => "network" | undefined;
   upstreamUserText?: string;
+  onNativeTurnInterruptRequired?: () => void;
 };

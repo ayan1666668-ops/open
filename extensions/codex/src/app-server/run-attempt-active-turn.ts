@@ -153,6 +153,9 @@ export function activateCodexAttemptTurn(
       },
       readRecentRateLimits: () => readRecentCodexRateLimits(resourceState.client),
       runAbortSignal: runAbortController.signal,
+      onNativeTurnInterruptRequired: () => {
+        runAbortController.abort("native-turn-interrupt");
+      },
       remoteWorkspaceRoot: connection.appServer.remoteWorkspaceRoot,
       remoteWorkspaceRequestTimeoutMs: connection.appServer.requestTimeoutMs,
       readRemoteWorkspaceFile: ({ path, maxBytes, signal, timeoutMs }) =>
