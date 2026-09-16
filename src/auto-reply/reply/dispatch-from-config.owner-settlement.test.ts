@@ -447,6 +447,11 @@ describe("dispatchReplyFromConfig owner settlement", () => {
 
           expect(await cleanup).toBe(deliveryFails ? deliveryFailure : cleanupFailure);
           expect(onQueuedFollowupSettled).toHaveBeenCalledOnce();
+          // A rejected retained delivery wait leaves the final outcome
+          // unconfirmed; the forwarded settlement must not report success.
+          expect(onQueuedFollowupSettled).toHaveBeenCalledWith({
+            finalDeliveryFailed: deliveryFails,
+          });
           if (deliveryFails) {
             expect(onError).toHaveBeenCalledExactlyOnceWith(deliveryFailure, { kind: "block" });
             await expect(dispatcher.waitForIdle()).rejects.toBe(deliveryFailure);

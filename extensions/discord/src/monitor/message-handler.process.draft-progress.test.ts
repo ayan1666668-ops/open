@@ -881,4 +881,37 @@ describe("processDiscordMessage draft streaming progress", () => {
     });
     expect(draftStream.messageId()).toBeUndefined();
   });
+
+  it("keeps the queued progress draft when a pre-settlement host invokes the hook without a settlement", async () => {
+    const elapseProgressDraftStartDelay = useProgressDraftStartDelay();
+    const draftStream = createMockDraftStreamForTest();
+
+    let retainedParams: DispatchInboundParams | undefined;
+    dispatchInboundMessage.mockImplementationOnce(async (params?: DispatchInboundParams) => {
+      // Released hosts without the settlement contract call this hook with no
+      // arguments; the handler must survive the legacy invocation shape.
+      retainedParams = params;
+      return { queuedFinal: true, counts: { final: 1, tool: 0, block: 0 } };
+    });
+
+    const ctx = await createAutomaticDraftContext({
+      discordConfig: {
+        streaming: { mode: "progress", progress: { toolProgress: true, label: "Shelling" } },
+      },
+    });
+
+    await runProcessDiscordMessage(ctx);
+
+    await retainedParams?.replyOptions?.onQueuedFollowupAdmitted?.();
+    await retainedParams?.replyOptions?.onToolStart?.({ name: "read", phase: "start" });
+    await retainedParams?.replyOptions?.onItemEvent?.({ progressText: "queued work" });
+    await elapseProgressDraftStartDelay();
+    const clearsBeforeSettlement = draftStream.clear.mock.calls.length;
+    await retainedParams?.replyOptions?.onQueuedFollowupSettled?.();
+
+    // An unknown settlement outcome is not a confirmed delivery, so the draft
+    // stays as the visible record instead of being cleared.
+    expect(draftStream.messageId()).toBeDefined();
+    expect(draftStream.clear.mock.calls.length).toBe(clearsBeforeSettlement);
+  });
 });

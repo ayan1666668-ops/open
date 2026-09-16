@@ -392,8 +392,13 @@ export type GetReplyOptions = {
   queuedDeliveryCorrelations?: QueuedReplyDeliveryCorrelation[];
   /** Called after a queued followup owns the reply lane, before its model run starts. */
   onQueuedFollowupAdmitted?: () => Promise<void> | void;
-  /** Called after an admitted queued followup finishes, including failed attempts. */
-  onQueuedFollowupSettled?: (settlement: QueuedFollowupSettlement) => Promise<void> | void;
+  /**
+   * Called after an admitted queued followup finishes, including failed attempts.
+   * Releases older than the settlement contract invoke this hook without
+   * arguments, so handlers must treat a missing settlement as an unconfirmed
+   * outcome, not a successful delivery.
+   */
+  onQueuedFollowupSettled?: (settlement?: QueuedFollowupSettlement) => Promise<void> | void;
   /** Allow channel-owned progress UI while final/source reply delivery remains message-tool-only. */
   allowProgressCallbacksWhenSourceDeliverySuppressed?: boolean;
   /** Called when a suppressed source reply mode observes visible delivery through another path. */

@@ -151,8 +151,14 @@ export async function executeDispatch(state: PrepareDispatchExecutionReadyState)
                       await dispatcher.waitForIdle();
                     }
                   } catch (error) {
+                    // The retained delivery wait rejected, so the queued turn's
+                    // final outcome is unconfirmed; cleanup owners must retain
+                    // the progress draft instead of trusting the caller's flag.
                     try {
-                      await params.replyOptions?.onQueuedFollowupSettled?.(settlement);
+                      await params.replyOptions?.onQueuedFollowupSettled?.({
+                        ...settlement,
+                        finalDeliveryFailed: true,
+                      });
                     } catch (cleanupError) {
                       logVerbose(
                         `dispatch-from-config: queued cleanup failed; preserving delivery error: ${formatErrorMessage(cleanupError)}`,

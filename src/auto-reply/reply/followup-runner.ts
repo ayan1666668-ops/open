@@ -243,7 +243,8 @@ export function createFollowupRunner(
         });
         // Source recovery has its own queued callback; this execution still closes once.
         terminalPayloads = delivery.kind === "completed" ? delivery.payloads : [];
-        terminalDeliveryFailed = delivery.kind !== "completed";
+        terminalDeliveryFailed =
+          delivery.kind !== "completed" || delivery.finalDeliveryFailed === true;
       } catch (error) {
         terminalDeliveryFailed = true;
         throw error;
