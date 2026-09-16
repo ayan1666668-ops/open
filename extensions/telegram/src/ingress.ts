@@ -4,8 +4,10 @@ import {
   defineStableChannelIngressIdentity,
   type ChannelIngressEventInput,
 } from "openclaw/plugin-sdk/channel-ingress-runtime";
+import { resolveCommandAuthorization } from "openclaw/plugin-sdk/command-auth-native";
 import type { DmPolicy, OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { normalizeAllowFrom, type NormalizedAllowFrom } from "./bot-access.js";
+import { isTelegramCommandsAllowFromConfigured } from "./bot/helpers.js";
 
 const TELEGRAM_CHANNEL_ID = "telegram";
 
@@ -69,6 +71,28 @@ export async function resolveTelegramCommandIngressAuthorization(params: {
   modeWhenAccessGroupsOff?: "allow" | "deny" | "configured";
   includeDmAllowForGroupCommands?: boolean;
 }) {
+  if (isTelegramCommandsAllowFromConfigured(params.cfg)) {
+    const authorized = resolveCommandAuthorization({
+      cfg: params.cfg,
+      ctx: {
+        Provider: "telegram",
+        AccountId: params.accountId,
+        ChatType: params.isGroup ? "group" : "direct",
+        SenderId: params.senderId,
+      },
+      commandAuthorized: false,
+    }).isAuthorizedSender;
+    const shouldBlockControlCommand =
+      params.allowTextCommands === true && params.hasControlCommand === true && !authorized;
+    return {
+      requested: true,
+      authorized,
+      shouldBlockControlCommand,
+      reasonCode: shouldBlockControlCommand
+        ? ("control_command_unauthorized" as const)
+        : ("command_authorized" as const),
+    };
+  }
   const commandOwner = [
     ...(params.isGroup && params.includeDmAllowForGroupCommands === false
       ? []

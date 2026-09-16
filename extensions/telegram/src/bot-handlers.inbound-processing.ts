@@ -26,7 +26,6 @@ import type { TelegramMessagePipeline } from "./bot-handlers.message-pipeline.js
 import type {
   RegisterTelegramHandlerParams,
   TelegramInboundDisposition,
-  TelegramPendingInboundTarget,
 } from "./bot-handlers.types.js";
 import type {
   TelegramAmbientTranscriptWatermark,
@@ -49,7 +48,6 @@ import { resolveTelegramCommandIngressAuthorization } from "./ingress.js";
 import type { TelegramMessageDispatchReplayClaim } from "./message-dispatch-dedupe.js";
 
 export interface TelegramInboundProcessing {
-  cancelPending: (target: TelegramPendingInboundTarget) => void;
   processInboundMessage: (params: TelegramInboundMessage) => Promise<TelegramInboundDisposition>;
 }
 
@@ -376,5 +374,5 @@ export function createTelegramInboundProcessing({
     return shouldBufferDebounce ? { kind: "buffered", buffer: "debounce" } : { kind: "processed" };
   };
 
-  return { processInboundMessage, cancelPending };
+  return { processInboundMessage };
 }

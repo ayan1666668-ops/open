@@ -113,7 +113,6 @@ export type TelegramInboundDisposition =
   | { kind: "processed" };
 
 export interface TelegramInboundPipeline {
-  cancelPending: (target: TelegramPendingInboundTarget) => void;
   handle: (ctx: Context) => Promise<TelegramInboundDisposition>;
 }
 

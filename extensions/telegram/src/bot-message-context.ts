@@ -121,6 +121,7 @@ export type TelegramMessageContext = {
 };
 
 export const buildTelegramMessageContext = async ({
+  nativeCommandNames,
   primaryCtx,
   allMedia,
   replyMedia = [],
@@ -461,6 +462,7 @@ export const buildTelegramMessageContext = async ({
 
   const originatingTo = buildTelegramInboundOriginTarget(chatId, threadSpec);
   const bodyResult = await resolveTelegramInboundBody({
+    nativeCommandNames,
     cfg,
     primaryCtx,
     msg,
@@ -535,7 +537,7 @@ export const buildTelegramMessageContext = async ({
     groupRequireMention: Boolean(groupRequireMention),
     mentionFacts: bodyResult.mentionFacts,
     groupThread: bodyResult.groupThread,
-    hasControlCommand: bodyResult.hasControlCommand,
+    commandSource: bodyResult.commandSource,
     stickerCacheHit: bodyResult.stickerCacheHit,
     ...(bodyResult.audioTranscribedMediaIndex !== undefined
       ? { audioTranscribedMediaIndex: bodyResult.audioTranscribedMediaIndex }

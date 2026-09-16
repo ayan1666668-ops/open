@@ -248,7 +248,7 @@ export async function buildTelegramInboundContextPayload(params: {
   groupRequireMention: boolean;
   mentionFacts: TelegramMentionFacts;
   groupThread?: GroupThreadMentionFacts;
-  hasControlCommand: boolean;
+  commandSource?: "native" | "text";
   stickerCacheHit?: boolean;
   audioTranscribedMediaIndex?: number;
   commandAuthorized: boolean;
@@ -301,7 +301,7 @@ export async function buildTelegramInboundContextPayload(params: {
     inboundEventKind,
     groupRequireMention,
     mentionFacts,
-    hasControlCommand,
+    commandSource,
     stickerCacheHit,
     audioTranscribedMediaIndex,
     commandAuthorized,
@@ -574,9 +574,7 @@ export async function buildTelegramInboundContextPayload(params: {
     // native strictness is re-derived core-side from the same text.
     preserveArguments: true,
   });
-  const commandSource =
-    options?.commandSource ??
-    (commandAuthorized && hasControlCommand ? ("text" as const) : undefined);
+
   const conversationKind = isGroup ? "group" : "direct";
   let watermarkedGroupHistoryEntries: HistoryEntry[] | undefined;
   let groupHistoryPromptEntries: HistoryEntry[] = [];

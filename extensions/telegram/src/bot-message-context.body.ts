@@ -89,7 +89,7 @@ type TelegramInboundBodyResult = {
   inboundEventKind: InboundEventKind;
   canDetectMention: boolean;
   shouldBypassMention: boolean;
-  hasControlCommand: boolean;
+  commandSource: "native" | "text" | undefined;
   audioTranscribedMediaIndex?: number;
   stickerCacheHit: boolean;
   locationData?: NormalizedLocation;
@@ -139,6 +139,7 @@ async function resolveStickerVisionSupport(params: {
 }
 
 export async function resolveTelegramInboundBody(params: {
+  nativeCommandNames?: ReadonlySet<string>;
   cfg: OpenClawConfig;
   primaryCtx: TelegramContext;
   msg: TelegramContext["message"];
@@ -232,6 +233,21 @@ export async function resolveTelegramInboundBody(params: {
     includeDmAllowForGroupCommands: false,
   });
   const commandAuthorized = commandGate.authorized;
+  const commandEntity = msg.entities?.find(
+    (entity) => entity.type === "bot_command" && entity.offset === 0,
+  );
+  const [nativeCommandName, commandBotUsername] = commandEntity
+    ? (msg.text ?? "").slice(1, commandEntity.length).toLowerCase().split("@")
+    : [];
+  const commandSource =
+    options?.commandSource ??
+    (nativeCommandName &&
+    params.nativeCommandNames?.has(nativeCommandName) &&
+    (!commandBotUsername || commandBotUsername === botUsername?.toLowerCase())
+      ? "native"
+      : commandAuthorized && hasControlCommandInMessage
+        ? "text"
+        : undefined);
   const historyKey = isGroup ? buildTelegramGroupPeerId(chatId, threadSpec) : undefined;
   const originatingTo =
     providedOriginatingTo ?? buildTelegramInboundOriginTarget(chatId, threadSpec);
@@ -352,9 +368,15 @@ export async function resolveTelegramInboundBody(params: {
       },
       transcript: preflightTranscript,
     });
-  const wasMentioned = options?.forceWasMentioned === true ? true : computedWasMentioned;
+  const wasMentioned =
+    options?.forceWasMentioned === true ||
+    (commandSource === "native" && commandAuthorized) ||
+    computedWasMentioned;
 
-  if (isGroup && commandGate.shouldBlockControlCommand) {
+  if (
+    isGroup &&
+    (commandGate.shouldBlockControlCommand || (commandSource === "native" && !commandAuthorized))
+  ) {
     logInboundDrop({
       log: logVerbose,
       channel: "telegram",
@@ -391,9 +413,6 @@ export async function resolveTelegramInboundBody(params: {
     },
   });
   const effectiveWasMentioned = mentionDecision.effectiveWasMentioned;
-  const commandSource =
-    options?.commandSource ??
-    (commandAuthorized && hasControlCommandInMessage ? "text" : undefined);
   const inboundEventKind = classifyChannelInboundEvent({
     conversation: { kind: isGroup ? "group" : "direct" },
     unmentionedGroupPolicy: resolveUnmentionedGroupInboundPolicy({
@@ -478,7 +497,7 @@ export async function resolveTelegramInboundBody(params: {
     }),
     canDetectMention,
     shouldBypassMention: mentionDecision.shouldBypassMention,
-    hasControlCommand: hasControlCommandInMessage,
+    commandSource,
     ...(audioTranscribedMediaIndex !== undefined && audioTranscribedMediaIndex >= 0
       ? { audioTranscribedMediaIndex }
       : {}),

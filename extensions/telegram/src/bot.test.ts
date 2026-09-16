@@ -29,10 +29,7 @@ import {
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildTelegramApprovalCallbackData } from "./approval-callback-data.js";
 import type { TelegramBotDeps } from "./bot-deps.js";
-import {
-  createTelegramNativeCommandTestDeps,
-  telegramBotInfoForTest,
-} from "./bot.create-telegram-bot.test-support.js";
+import { telegramBotInfoForTest } from "./bot.create-telegram-bot.test-support.js";
 import {
   createTelegramCallbackContext,
   createTelegramReactionContext,
@@ -937,7 +934,6 @@ describe("createTelegramBot", () => {
     createTelegramBot = (opts) => {
       const telegramDeps = {
         ...telegramBotDepsForTest,
-        ...createTelegramNativeCommandTestDeps(dispatchReplyWithBufferedBlockDispatcher),
       };
       return createTelegramBotBase({
         botInfo: telegramBotInfoForTest,
@@ -6095,6 +6091,7 @@ describe("createTelegramBot", () => {
   it.each([
     {
       name: "keeps unconfigured dm topic commands on the flat dm session",
+      messageId: 7101,
       messageThreadId: 99,
       me: { id: 999, has_topics_enabled: false },
       expectedSessionKey: "agent:main:main",
@@ -6102,6 +6099,7 @@ describe("createTelegramBot", () => {
     },
     {
       name: "uses bot topic capability for native dm topic command target sessions",
+      messageId: 7102,
       messageThreadId: 99,
       me: { id: 999, has_topics_enabled: true },
       expectedSessionKey: "agent:main:main:thread:12345:99",
@@ -6109,15 +6107,23 @@ describe("createTelegramBot", () => {
     },
     {
       name: "allows native DM commands for paired users",
+      messageId: 7103,
       messageThreadId: undefined,
       me: { id: 999, has_topics_enabled: false },
       expectedSessionKey: undefined,
       assertAuthorized: true,
     },
-  ])("$name", async ({ messageThreadId, me, expectedSessionKey, assertAuthorized }) => {
+  ])("$name", async ({ messageId, messageThreadId, me, expectedSessionKey, assertAuthorized }) => {
     replySpy.mockResolvedValue({ text: "response" });
+    sendMessageSpy.mockResolvedValue({
+      message_id: 77,
+      ...(messageThreadId === undefined ? {} : { message_thread_id: messageThreadId }),
+    });
 
-    mockTelegramConfig({ dmPolicy: "pairing" }, { commands: { native: true } });
+    mockTelegramConfig(
+      { dmPolicy: "pairing", autoTopicLabel: false },
+      { commands: { native: true } },
+    );
     readChannelAllowFromStore.mockResolvedValueOnce(["12345"]);
 
     createTelegramBot({ token: "tok" });
@@ -6133,8 +6139,9 @@ describe("createTelegramBot", () => {
         chat: { id: 12345, type: "private" },
         from: { id: 12345, username: "testuser" },
         text: "/status",
+        entities: [{ type: "bot_command", offset: 0, length: 7 }],
         date: 1736380800,
-        message_id: 42,
+        message_id: messageId,
         ...(messageThreadId === undefined ? {} : { message_thread_id: messageThreadId }),
       },
       ...(me === undefined ? {} : { me }),
@@ -6144,7 +6151,7 @@ describe("createTelegramBot", () => {
     expect(replySpy).toHaveBeenCalledTimes(1);
     if (expectedSessionKey) {
       const payload = mockMsgContextArg(replySpy, 0, 0, "replySpy call");
-      expect(payload.CommandTargetSessionKey).toBe(expectedSessionKey);
+      expect(payload.SessionKey).toBe(expectedSessionKey);
     }
     if (assertAuthorized) {
       expect(
@@ -6228,11 +6235,9 @@ describe("createTelegramBot", () => {
     });
 
     expect(replySpy).not.toHaveBeenCalled();
-    expect(sendMessageSpy).toHaveBeenCalledWith(
-      12345,
-      "You are not authorized to use this command.",
-      {},
-    );
+    expect(sendMessageSpy).toHaveBeenCalledWith(12345, expect.stringContaining("Pairing code:"), {
+      parse_mode: "HTML",
+    });
   });
 
   it("registers message_reaction handler", () => {

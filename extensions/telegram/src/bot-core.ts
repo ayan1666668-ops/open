@@ -396,7 +396,27 @@ export function createTelegramBotCore(
     return resolveTelegramScopedGroupConfig(turnTelegramCfg, chatId, messageThreadId);
   };
 
+  const { nativeCommandNames, nativeCommandCallbackDispatcher } = registerTelegramNativeCommands({
+    bot,
+    cfg,
+    runtime,
+    accountId: account.accountId,
+    telegramCfg,
+    mediaMaxBytes,
+    nativeEnabled,
+    nativeSkillsEnabled,
+    resolveGroupPolicy,
+    resolveTelegramGroupConfig,
+    shouldSkipUpdate,
+    opts: runtimeOpts,
+    telegramDeps: {
+      ...telegramDeps,
+      sendMessageTelegram: defaultTelegramNativeCommandDeps.sendMessageTelegram,
+    },
+  });
+
   const processMessage = createTelegramMessageProcessor({
+    nativeCommandNames,
     bot,
     account,
     groupHistories,
@@ -448,26 +468,6 @@ export function createTelegramBotCore(
       ),
     logger,
     telegramDeps,
-  });
-
-  const nativeCommandCallbackDispatcher = registerTelegramNativeCommands({
-    cancelPendingInbound: handlers.cancelPending,
-    bot,
-    cfg,
-    runtime,
-    accountId: account.accountId,
-    telegramCfg,
-    mediaMaxBytes,
-    nativeEnabled,
-    nativeSkillsEnabled,
-    resolveGroupPolicy,
-    resolveTelegramGroupConfig,
-    shouldSkipUpdate,
-    opts: runtimeOpts,
-    telegramDeps: {
-      ...telegramDeps,
-      sendMessageTelegram: defaultTelegramNativeCommandDeps.sendMessageTelegram,
-    },
   });
 
   handlers.register(nativeCommandCallbackDispatcher);

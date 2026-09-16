@@ -203,6 +203,7 @@ export const createTelegramMessageProcessor = (deps: TelegramMessageProcessorDep
       recordTelegramMessageProcessingResult(result);
     };
     const context = await buildTelegramMessageContext({
+      nativeCommandNames: deps.nativeCommandNames,
       primaryCtx,
       allMedia,
       replyMedia,
