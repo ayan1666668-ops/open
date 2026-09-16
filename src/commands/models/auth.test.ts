@@ -410,7 +410,7 @@ describe("modelsAuthLoginCommand", () => {
   let restoreStdin: (() => void) | null = null;
   let currentConfig: OpenClawConfig;
   let lastUpdatedConfig: OpenClawConfig | null;
-  let runProviderAuth: ReturnType<typeof vi.fn>;
+  let runProviderAuth: ReturnType<typeof vi.fn<NonNullable<ProviderPlugin["auth"]>[number]["run"]>>;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -492,22 +492,24 @@ describe("modelsAuthLoginCommand", () => {
       note: vi.fn(async () => {}),
       select: vi.fn().mockResolvedValue("keep"),
     });
-    runProviderAuth = vi.fn().mockResolvedValue({
-      profiles: [
-        {
-          profileId: "openai:user@example.com",
-          credential: {
-            type: "oauth",
-            provider: "openai",
-            access: "access-token",
-            refresh: "refresh-token",
-            expires: Date.now() + 60_000,
-            email: "user@example.com",
+    runProviderAuth = vi
+      .fn<NonNullable<ProviderPlugin["auth"]>[number]["run"]>()
+      .mockResolvedValue({
+        profiles: [
+          {
+            profileId: "openai:user@example.com",
+            credential: {
+              type: "oauth",
+              provider: "openai",
+              access: "access-token",
+              refresh: "refresh-token",
+              expires: Date.now() + 60_000,
+              email: "user@example.com",
+            },
           },
-        },
-      ],
-      defaultModel: "openai/gpt-5.5",
-    });
+        ],
+        defaultModel: "openai/gpt-5.5",
+      });
     mocks.resolvePluginProvidersCore.mockReturnValue([
       createProvider({
         id: "openai",
@@ -734,15 +736,36 @@ describe("modelsAuthLoginCommand", () => {
     mocks.authProfileStore = {
       version: 1,
       profiles: {
-        "openai:matching": { type: "oauth", provider: "openai", accountId: "acct-same" },
-        "openai:unknown": { type: "oauth", provider: "openai", accountId: "acct-unknown" },
+        "openai:matching": {
+          type: "oauth",
+          provider: "openai",
+          access: "matching-access",
+          refresh: "matching-refresh",
+          expires: Date.now() + 60_000,
+          accountId: "acct-same",
+        },
+        "openai:unknown": {
+          type: "oauth",
+          provider: "openai",
+          access: "unknown-access",
+          refresh: "unknown-refresh",
+          expires: Date.now() + 60_000,
+          accountId: "acct-unknown",
+        },
       },
     };
     runProviderAuth.mockResolvedValueOnce({
       profiles: [
         {
           profileId: "openai:new",
-          credential: { type: "oauth", provider: "openai", accountId: "acct-same" },
+          credential: {
+            type: "oauth",
+            provider: "openai",
+            access: "new-access",
+            refresh: "new-refresh",
+            expires: Date.now() + 60_000,
+            accountId: "acct-same",
+          },
         },
       ],
     });
@@ -755,6 +778,7 @@ describe("modelsAuthLoginCommand", () => {
     mocks.resolvePluginProvidersCore.mockReturnValue([
       createProvider({
         id: "openai",
+        run: runProviderAuth,
         auth: [
           {
             id: "oauth",
@@ -783,20 +807,37 @@ describe("modelsAuthLoginCommand", () => {
     mocks.authProfileStore = {
       version: 1,
       profiles: {
-        "openai:old": { type: "oauth", provider: "openai", accountId: "acct-same" },
+        "openai:old": {
+          type: "oauth",
+          provider: "openai",
+          access: "old-access",
+          refresh: "old-refresh",
+          expires: Date.now() + 60_000,
+          accountId: "acct-same",
+        },
       },
     };
     runProviderAuth.mockImplementationOnce(async () => {
       mocks.authProfileStore.profiles["openai:old"] = {
         type: "oauth",
         provider: "openai",
+        access: "reassigned-access",
+        refresh: "reassigned-refresh",
+        expires: Date.now() + 60_000,
         accountId: "acct-reassigned",
       };
       return {
         profiles: [
           {
             profileId: "openai:new",
-            credential: { type: "oauth" as const, provider: "openai", accountId: "acct-same" },
+            credential: {
+              type: "oauth" as const,
+              provider: "openai",
+              access: "new-access",
+              refresh: "new-refresh",
+              expires: Date.now() + 60_000,
+              accountId: "acct-same",
+            },
           },
         ],
       };
@@ -810,6 +851,7 @@ describe("modelsAuthLoginCommand", () => {
     mocks.resolvePluginProvidersCore.mockReturnValue([
       createProvider({
         id: "openai",
+        run: runProviderAuth,
         auth: [
           {
             id: "oauth",
@@ -1364,7 +1406,7 @@ describe("modelsAuthLoginCommand", () => {
     const runtime = createRuntime();
     const abortController = new AbortController();
     const cancellation = new Error("Login was replaced");
-    runProviderAuth.mockImplementationOnce(() => {
+    runProviderAuth.mockImplementationOnce(async () => {
       abortController.abort(cancellation);
       return {
         profiles: [
