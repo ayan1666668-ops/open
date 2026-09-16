@@ -9,13 +9,16 @@ import { formatCliCommand } from "../cli/command-format.js";
 import { getRetainedLegacyDefaultAgentId } from "../config/legacy.default-agent-owner-state.js";
 import { hasExplicitModelPolicyAllow } from "../config/model-policy-allowlist-migration.js";
 import { resolveStateDir } from "../config/paths.js";
+import {
+  getRuntimeConfigCapture,
+  type RuntimeConfigCapture,
+} from "../config/runtime-config-capture-state.js";
 import type {
   AgentContextLimitsConfig,
   AgentDefaultsConfig,
 } from "../config/types.agent-defaults.js";
 import type { OpenClawConfig } from "../config/types.js";
 import { LEGACY_IMPLICIT_AGENT_ID, normalizeAgentId } from "../routing/session-key.js";
-import { isDeeplyFrozenPlainData } from "../shared/immutable-data.js";
 import { resolveUserPath } from "../utils.js";
 import { registerResolvedAgentDir } from "./agent-dir-registry.js";
 import {
@@ -121,7 +124,7 @@ type AgentRosterFactsBatch = {
 
 let activeAgentRosterFactsBatch: AgentRosterFactsBatch | undefined;
 const immutableAgentRosterFacts = new WeakMap<
-  OpenClawConfig,
+  RuntimeConfigCapture,
   { legacyOwner: string | undefined; facts: AgentRosterFacts }
 >();
 
@@ -129,7 +132,7 @@ const immutableAgentRosterFacts = new WeakMap<
  * Runs a read-only callback with batch-scoped roster memoization.
  *
  * Runtime discovery calls the owner helpers for every configured model. Keep
- * their derived facts on this exact config. Mutable callers discard the batch
+ * their derived facts on this exact config. Uncaptured callers discard the batch
  * before returning; immutable captures retain facts for their own lifetime.
  */
 export function withAgentRosterFactsBatch<T>(config: OpenClawConfig, callback: () => T): T {
@@ -147,15 +150,16 @@ function readAgentRosterFacts(cfg: OpenClawConfig): AgentRosterFacts | undefined
   if (activeAgentRosterFactsBatch?.config === cfg) {
     return activeAgentRosterFactsBatch.facts;
   }
-  if (!isDeeplyFrozenPlainData(cfg)) {
+  const capture = getRuntimeConfigCapture(cfg);
+  if (!capture) {
     return undefined;
   }
   // Migration provenance lives outside the immutable config and can still change.
   const legacyOwner = getRetainedLegacyDefaultAgentId(cfg);
-  let cached = immutableAgentRosterFacts.get(cfg);
+  let cached = immutableAgentRosterFacts.get(capture);
   if (!cached || cached.legacyOwner !== legacyOwner) {
     cached = { legacyOwner, facts: {} };
-    immutableAgentRosterFacts.set(cfg, cached);
+    immutableAgentRosterFacts.set(capture, cached);
   }
   return cached.facts;
 }

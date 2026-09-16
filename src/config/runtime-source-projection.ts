@@ -6,7 +6,11 @@ import {
   bindRuntimeConfigCapture,
   getRuntimeConfigCapture,
 } from "./runtime-config-capture-state.js";
-import { getRuntimeConfigSnapshot, getRuntimeConfigSourceSnapshot } from "./runtime-snapshot.js";
+import {
+  getRuntimeConfigSnapshot,
+  getRuntimeConfigSourceSnapshot,
+  hashRuntimeConfigValue,
+} from "./runtime-snapshot.js";
 import { projectRuntimeChangesOntoSource } from "./source-value-projection.js";
 import type { OpenClawConfig } from "./types.js";
 
@@ -25,9 +29,17 @@ export function captureRuntimeConfig(config: OpenClawConfig): OpenClawConfig {
       : freezeJsonSnapshot(
           inheritLegacyDefaultAgentId(source, cloneConfigWithResolutionFacts(source)),
         );
-  bindRuntimeConfigCapture(captured, { source: capturedSource, origin: config });
+  bindRuntimeConfigCapture(captured, {
+    source: capturedSource,
+    origin: config,
+    fingerprint: hashRuntimeConfigValue(captured),
+  });
   if (capturedSource !== captured) {
-    bindRuntimeConfigCapture(capturedSource, { source: capturedSource, origin: source });
+    bindRuntimeConfigCapture(capturedSource, {
+      source: capturedSource,
+      origin: source,
+      fingerprint: hashRuntimeConfigValue(capturedSource),
+    });
   }
   return captured;
 }

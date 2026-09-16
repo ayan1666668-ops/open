@@ -2,8 +2,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { retainLegacyDefaultAgentId } from "../config/legacy.default-agent-owner.js";
 import { migratePersistedImplicitMainRoster } from "../config/legacy.roster.js";
+import { captureRuntimeConfig } from "../config/runtime-source-projection.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { freezeJsonSnapshot } from "../shared/immutable-data.js";
 import {
   AgentSelectionRequiredError,
   listAgentEntriesWithSource,
@@ -329,7 +329,7 @@ describe("agent roster resolution", () => {
   });
 
   it("prepares one immutable fleet roster across separate agent batches", () => {
-    const config = freezeJsonSnapshot({
+    const config = captureRuntimeConfig({
       agents: {
         ownership: "explicit" as const,
         defaults: { systemAgent: { agentId: "agent-0" } },
@@ -347,7 +347,7 @@ describe("agent roster resolution", () => {
         });
       }
       // One point-lookup index and one configured-owner membership projection.
-      expect(entries.mock.calls.filter(([value]) => value === config.agents.entries)).toHaveLength(
+      expect(entries.mock.calls.filter(([value]) => value === config.agents?.entries)).toHaveLength(
         2,
       );
     } finally {
@@ -356,7 +356,7 @@ describe("agent roster resolution", () => {
   });
 
   it("retains first-match and keyed clone semantics on immutable rosters", () => {
-    const config = freezeJsonSnapshot({
+    const config = captureRuntimeConfig({
       agents: { entries: { " OPS ": { name: "first" }, ops: { name: "second" } } },
     });
     const first = resolveAgentEntry(config, "ops");
@@ -368,7 +368,7 @@ describe("agent roster resolution", () => {
   });
 
   it("refreshes immutable roster facts when retained migration ownership changes", () => {
-    const config = freezeJsonSnapshot({ agents: { entries: { ops: {}, research: {} } } });
+    const config = captureRuntimeConfig({ agents: { entries: { ops: {}, research: {} } } });
     retainLegacyDefaultAgentId(config, "ops");
     expect(tryResolveLegacyDataOwnerAgentId(config)).toBe("ops");
     retainLegacyDefaultAgentId(config, "research");

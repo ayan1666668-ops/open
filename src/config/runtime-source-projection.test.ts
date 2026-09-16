@@ -11,6 +11,7 @@ import {
 } from "./resolution-facts.js";
 import {
   createRuntimeConfigReader,
+  hashRuntimeConfigValue,
   resetConfigRuntimeState,
   setRuntimeConfigSnapshot,
 } from "./runtime-snapshot.js";
@@ -50,6 +51,8 @@ describe("captured runtime config source", () => {
     expect(captured).not.toBe(runtime);
     expect(authored).toEqual(source);
     expect(authored).not.toBe(source);
+    expect(hashRuntimeConfigValue(captured)).toBe(hashRuntimeConfigValue(runtime));
+    expect(hashRuntimeConfigValue(authored)).toBe(hashRuntimeConfigValue(source));
     expect(Object.isFrozen(captured.agents?.entries)).toBe(true);
     expect(Object.isFrozen(authored.gateway?.auth)).toBe(true);
     expect(tryGetLegacyDefaultAgentId(captured)).toBe("ops");

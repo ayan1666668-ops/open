@@ -1,6 +1,5 @@
 // Verifies runtime config snapshots preserve normalized public settings.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { freezeJsonSnapshot } from "../shared/immutable-data.js";
 import {
   cloneConfigWithResolutionFacts,
   createConfigResolutionFacts,
@@ -31,6 +30,7 @@ import {
   setRuntimeConfigSnapshotRefreshHandler,
 } from "./runtime-snapshot.js";
 import { createProviderConfigFixture } from "./runtime-snapshot.test-fixtures.js";
+import { captureRuntimeConfig } from "./runtime-source-projection.js";
 import type { OpenClawConfig } from "./types.js";
 
 function resetRuntimeConfigState(): void {
@@ -142,21 +142,22 @@ describe("runtime snapshot state", () => {
     expect(hashRuntimeConfigValue({ logging: { level: "info" } })).toBe(first);
   });
 
-  it("hashes one immutable fleet only once across repeated agent reads", () => {
-    const config = freezeJsonSnapshot({
+  it("hashes one captured fleet only once across repeated agent reads", () => {
+    const source = {
       agents: {
         entries: Object.fromEntries(
           Array.from({ length: 200 }, (_, index) => [`agent-${index}`, { name: `${index}` }]),
         ),
       },
-    });
+    };
     const keys = vi.spyOn(Object, "keys");
     try {
+      const config = captureRuntimeConfig(source);
       const first = hashRuntimeConfigValue(config);
       for (let index = 0; index < 200; index += 1) {
         expect(hashRuntimeConfigValue(config)).toBe(first);
       }
-      expect(keys.mock.calls.filter(([value]) => value === config.agents.entries)).toHaveLength(1);
+      expect(keys.mock.calls.filter(([value]) => value === config.agents?.entries)).toHaveLength(1);
     } finally {
       keys.mockRestore();
     }
