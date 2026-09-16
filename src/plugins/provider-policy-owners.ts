@@ -1,5 +1,6 @@
 import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
-import type { PluginManifestRecord } from "./manifest-registry.js";
+import type { PluginManifestRecord } from "./manifest-registry.types.js";
+import type { ProviderPolicyOwnerIndex } from "./plugin-cache-metadata.js";
 import {
   bindPluginMetadataSnapshotCache,
   getPluginMetadataSnapshotCache,
@@ -8,11 +9,6 @@ import {
 import type { PluginMetadataSnapshot } from "./plugin-metadata-snapshot.types.js";
 
 type ProviderPolicyRegistry = { plugins: readonly PluginManifestRecord[] };
-
-export type ProviderPolicyOwnerIndex = {
-  bundled: Map<string, PluginManifestRecord>;
-  trusted: Map<string, PluginManifestRecord[]>;
-};
 
 function pluginDeclaresProviderPolicyRef(
   plugin: PluginManifestRecord,
