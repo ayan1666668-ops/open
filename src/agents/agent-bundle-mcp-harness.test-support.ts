@@ -77,6 +77,11 @@ export async function makeConnectRuntime(params: {
   publicOrigin?: string;
 }): Promise<SessionMcpRuntime> {
   const runtime = makeRuntime(params);
+  runtime.requesterScope = {
+    requesterSenderId: params.requesterSenderId,
+    messageChannel: "telegram",
+    agentAccountId: "bot",
+  };
   const catalog = { version: 1, generatedAt: 0, servers: {}, tools: [] };
   runtime.peekCatalog = () => catalog;
   runtime.getCatalog = async () => catalog;
@@ -90,11 +95,7 @@ export async function makeConnectRuntime(params: {
       },
     },
     safeServerNamesByServer: new Map([["calendar", "calendar"]]),
-    requesterScope: {
-      requesterSenderId: params.requesterSenderId,
-      messageChannel: "telegram",
-      agentAccountId: "bot",
-    },
+    requesterScope: runtime.requesterScope,
     cfg: params.publicOrigin ? { gateway: { publicOrigin: params.publicOrigin } } : undefined,
     configFingerprint: "connect-fingerprint",
   });

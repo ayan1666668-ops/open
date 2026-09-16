@@ -14,8 +14,13 @@ import {
   buildBundleMcpToolsFromCatalog,
   materializeBundleMcpToolsForRun,
 } from "./agent-bundle-mcp-materialize.js";
+import { createRequesterMcpConnectDelivery } from "./agent-bundle-mcp-private-delivery.js";
 import { mergeMcpConnectCatalog } from "./agent-bundle-mcp-requester-connect.js";
-import type { McpToolCatalog, RequesterMcpConnect } from "./agent-bundle-mcp-types.js";
+import type {
+  McpToolCatalog,
+  RequesterMcpConnect,
+  RequesterMcpConnectDelivery,
+} from "./agent-bundle-mcp-types.js";
 import type { CodexMcpServersConfig } from "./codex-mcp-config.types.js";
 import {
   resolveConversationCapabilityProfile,
@@ -165,6 +170,9 @@ type MaterializeRequesterScopedMcpToolsForHarnessRunParams = {
   requesterSenderId?: string | null;
   agentAccountId?: string | null;
   messageChannel?: string | null;
+  /** Exact host-run authority; never stored on the cached requester runtime. */
+  assertActive?: () => void;
+  abortSignal?: AbortSignal;
   reservedToolNames?: Iterable<string>;
   toolsAllow?: string[];
   /** When set, applies the same final effective tool policy as the embedded runner. */
@@ -229,13 +237,14 @@ function buildCatalogTools(
   catalog: McpToolCatalog,
   params: MaterializeRequesterScopedMcpToolsForHarnessRunParams,
   requesterConnect?: RequesterMcpConnect,
+  requesterConnectDelivery?: RequesterMcpConnectDelivery,
 ): AnyAgentTool[] {
   return buildBundleMcpToolsFromCatalog({
     catalog,
     reservedToolNames: params.reservedToolNames ? Array.from(params.reservedToolNames) : undefined,
     createExecute: (tool) => {
       return (
-        requesterConnect?.createExecute(tool.serverName) ??
+        requesterConnect?.createExecute(tool.serverName, requesterConnectDelivery) ??
         (async () => notConnectedToolResult(tool.serverName, tool.toolName))
       );
     },
@@ -383,6 +392,22 @@ export async function materializeRequesterScopedMcpToolsForHarnessRunCore(
   });
   const scopedRuntime = scopedRuntimeHandle?.runtime;
 
+  let disposed = false;
+  const assertHostActive = params.assertActive;
+  const requesterConnectDelivery = createRequesterMcpConnectDelivery({
+    cfg: params.cfg,
+    requesterScope: scopedRuntime?.requesterScope,
+    assertActive: assertHostActive
+      ? () => {
+          if (disposed) {
+            throw new Error("requester MCP tool view is disposed");
+          }
+          params.abortSignal?.throwIfAborted();
+          assertHostActive();
+        }
+      : undefined,
+  });
+
   let liveRuntime: Awaited<ReturnType<typeof materializeBundleMcpToolsForRun>> | undefined;
   let liveCatalog: McpToolCatalog | undefined;
   try {
@@ -392,6 +417,7 @@ export async function materializeRequesterScopedMcpToolsForHarnessRunCore(
         releaseLease: scopedRuntimeHandle?.releaseLease,
         agentId: params.agentId,
         reservedToolNames: params.reservedToolNames,
+        requesterConnectDelivery,
       });
       liveCatalog = scopedRuntime.peekCatalog() ?? (await scopedRuntime.getCatalog());
       if (liveCatalog.tools.length > 0 && scopedRuntimeHandle) {
@@ -416,6 +442,7 @@ export async function materializeRequesterScopedMcpToolsForHarnessRunCore(
       advertisedCatalog,
       { ...params, reservedToolNames },
       scopedRuntime?.requesterConnect,
+      requesterConnectDelivery,
     );
     const liveByName = new Map((liveRuntime?.tools ?? []).map((tool) => [tool.name, tool]));
     // Live tools supply execution; advertised catalog supplies the stable name/schema surface.
@@ -437,7 +464,6 @@ export async function materializeRequesterScopedMcpToolsForHarnessRunCore(
         })
       : filteredTools;
 
-    let disposed = false;
     return {
       tools: executableTools,
       advertisedTools: filteredAdvertised,
@@ -450,6 +476,7 @@ export async function materializeRequesterScopedMcpToolsForHarnessRunCore(
       },
     };
   } catch (error) {
+    disposed = true;
     await liveRuntime?.dispose();
     throw error;
   }

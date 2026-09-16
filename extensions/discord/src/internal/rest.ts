@@ -66,6 +66,7 @@ export type RequestData = {
   multipartStyle?: "message" | "form";
   rawBody?: boolean;
   headers?: Record<string, string>;
+  assertRequestAuthorized?: () => void;
 };
 
 type QueuedRequest = {
@@ -235,15 +236,19 @@ export class RequestClient {
   ): Promise<unknown> {
     const routeKey = createRouteKey(method, path);
     // A shared scheduler can drain under another caller's async context. Capture
-    // both host action and read authority before queueing or rate-limit retries.
+    // host action, read, and private-delivery authority before queueing or retries.
+    // The same assertion reaches endpoint fetches after their asynchronous checks.
     const assertActionAuthority = captureDiscordRequestAuthority();
     const assertReadAuthority = captureChannelReadAuthority();
-    const assertCurrent = assertActionAuthority
-      ? () => {
-          assertActionAuthority();
-          assertReadAuthority?.();
-        }
-      : assertReadAuthority;
+    const assertRequestAuthorized = params.data?.assertRequestAuthorized;
+    const assertCurrent =
+      assertActionAuthority || assertReadAuthority || assertRequestAuthorized
+        ? () => {
+            assertActionAuthority?.();
+            assertReadAuthority?.();
+            assertRequestAuthorized?.();
+          }
+        : undefined;
     assertCurrent?.();
     if (!this.options.queueRequests) {
       return await this.executeRequest(method, path, params, routeKey, assertCurrent);

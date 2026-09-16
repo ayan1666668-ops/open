@@ -33,6 +33,22 @@ describe("slackOutbound", () => {
     sendMessageSlackMock.mockReset();
   });
 
+  it.each(["channel:C123", "#general", "team:TWORK:channel:C123"])(
+    "rejects public destination %s for private delivery",
+    async (senderId) => {
+      await expect(
+        slackOutbound.sendPrivateText!({
+          cfg,
+          accountId: "default",
+          senderId,
+          text: "private",
+          assertActive: () => {},
+        }),
+      ).rejects.toThrow("requires a user ID");
+      expect(sendMessageSlackMock).not.toHaveBeenCalled();
+    },
+  );
+
   it.each([
     "none",
     "raw",

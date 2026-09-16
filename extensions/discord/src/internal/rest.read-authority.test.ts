@@ -17,7 +17,7 @@ afterEach(() => {
 
 type AuthorityKind = "read" | "action";
 
-function authority(kind: AuthorityKind = "read") {
+function authority(kind: AuthorityKind | "private" = "read") {
   let active = true;
   return {
     assert: () => {
@@ -96,7 +96,7 @@ describe("Discord request authority", () => {
     },
   );
 
-  it.each(["read", "action"] as const)(
+  it.each(["read", "action", "private"] as const)(
     "passes queued %s authority through asynchronous transport preparation",
     async (source) => {
       const firstResponse = createDeferred<Response>();
@@ -122,7 +122,13 @@ describe("Discord request authority", () => {
         scheduler: { maxConcurrency: 1 },
       });
       const first = client.get("/channels/100/messages");
-      const queued = withAuthority(source, caller.assert, () => submitRequest(client, source));
+      const queued =
+        source === "private"
+          ? client.post("/channels/100/messages", {
+              body: { content: "private sign-in" },
+              assertRequestAuthorized: caller.assert,
+            })
+          : withAuthority(source, caller.assert, () => submitRequest(client, source));
       const rejected = expect(queued).rejects.toThrow(`${source} authority revoked`);
       try {
         scope.current = authority().assert;
