@@ -3,7 +3,13 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { root } from "openclaw/plugin-sdk/security-runtime";
 import { isRecord as isPlainObject } from "openclaw/plugin-sdk/string-coerce-runtime";
-import { QA_EVIDENCE_FILENAME, validateQaEvidenceSummaryJson } from "../evidence-summary.js";
+import { resolveQaArtifactPath } from "../cli-paths.js";
+import {
+  getEffectiveQaEvidenceEntries,
+  projectQaEvidenceScenarioOutcomes,
+  QA_EVIDENCE_FILENAME,
+  validateQaEvidenceSummaryJson,
+} from "../evidence-summary.js";
 
 type NormalizedScenarioSummary = {
   details?: string;
@@ -248,6 +254,25 @@ function remapPublishedArtifactPath(params: {
   return path.join(params.publishedLaneDir, relativePath);
 }
 
+function resolvePublishedArtifactPath(params: {
+  artifactPath: string | undefined;
+  laneOutputDir: string;
+  laneRepoRoot: string;
+  publishedLaneDir: string;
+}): string | undefined {
+  if (!params.artifactPath) {
+    return undefined;
+  }
+  return remapPublishedArtifactPath({
+    ...params,
+    artifactPath: resolveQaArtifactPath(
+      params.laneRepoRoot,
+      params.laneOutputDir,
+      params.artifactPath,
+    ),
+  });
+}
+
 export function remapMantisLaneResult(params: {
   publishedLaneDir: string;
   result: LaneResult;
@@ -284,14 +309,32 @@ async function readNormalizedLaneResult(params: {
   }
 
   const summary = validateQaEvidenceSummaryJson(JSON.parse(rawSummary));
+  const outcome =
+    summary.schemaVersion === 3 ? projectQaEvidenceScenarioOutcomes(summary)[0] : undefined;
+  const selected =
+    summary.schemaVersion === 3
+      ? getEffectiveQaEvidenceEntries(summary).filter(
+          (candidate) =>
+            outcome?.scenarioId === params.scenario &&
+            "binding" in candidate &&
+            candidate.binding.occurrenceId === outcome.occurrenceId,
+        )
+      : [];
   const entry =
-    summary.entries.find((candidate) => candidate.test.id === params.scenario) ??
-    summary.entries[0];
+    summary.schemaVersion === 3
+      ? (selected.find((candidate) => candidate.result.status === outcome?.status) ?? selected[0])
+      : (summary.entries.find((candidate) => candidate.test.id === params.scenario) ??
+        summary.entries[0]);
   const artifacts = entry?.execution?.artifacts ?? [];
   return {
     details: entry?.result.failure?.reason,
     screenshotPath: artifacts.find((artifact) => artifact.kind === "screenshot")?.path,
-    status: entry?.result.status ?? "fail",
+    status:
+      summary.schemaVersion === 3
+        ? outcome?.scenarioId === params.scenario
+          ? (outcome.status ?? "unknown")
+          : "unknown"
+        : (entry?.result.status ?? "fail"),
     summaryPath,
     videoPath: artifacts.find((artifact) => artifact.kind === "video")?.path,
   };
@@ -299,6 +342,7 @@ async function readNormalizedLaneResult(params: {
 
 export async function readMantisLaneResult(params: {
   laneOutputDir: string;
+  laneRepoRoot: string;
   publishedLaneDir: string;
   scenario: string;
 }): Promise<LaneResult> {
@@ -307,16 +351,18 @@ export async function readMantisLaneResult(params: {
     return {
       outputDir: params.publishedLaneDir,
       scenarioDetails: normalized.details,
-      screenshotPath: remapPublishedArtifactPath({
+      screenshotPath: resolvePublishedArtifactPath({
         artifactPath: normalized.screenshotPath,
         laneOutputDir: params.laneOutputDir,
+        laneRepoRoot: params.laneRepoRoot,
         publishedLaneDir: params.publishedLaneDir,
       }),
       status: normalized.status,
       summaryPath: normalized.summaryPath,
-      videoPath: remapPublishedArtifactPath({
+      videoPath: resolvePublishedArtifactPath({
         artifactPath: normalized.videoPath,
         laneOutputDir: params.laneOutputDir,
+        laneRepoRoot: params.laneRepoRoot,
         publishedLaneDir: params.publishedLaneDir,
       }),
     };
@@ -336,17 +382,19 @@ export async function readMantisLaneResult(params: {
     outputDir: params.publishedLaneDir,
     scenarioDetails:
       typeof scenarioSummary?.details === "string" ? scenarioSummary.details : undefined,
-    screenshotPath: remapPublishedArtifactPath({
+    screenshotPath: resolvePublishedArtifactPath({
       artifactPath:
         typeof artifactPaths?.screenshot === "string" ? artifactPaths.screenshot : undefined,
       laneOutputDir: params.laneOutputDir,
+      laneRepoRoot: params.laneRepoRoot,
       publishedLaneDir: params.publishedLaneDir,
     }),
     status: typeof scenarioSummary?.status === "string" ? scenarioSummary.status : "fail",
     summaryPath,
-    videoPath: remapPublishedArtifactPath({
+    videoPath: resolvePublishedArtifactPath({
       artifactPath: typeof artifactPaths?.video === "string" ? artifactPaths.video : undefined,
       laneOutputDir: params.laneOutputDir,
+      laneRepoRoot: params.laneRepoRoot,
       publishedLaneDir: params.publishedLaneDir,
     }),
   };

@@ -206,6 +206,7 @@ async function runLane(params: {
   let workloadError: unknown;
   let cleanupFailed = false;
   let cleanupError: unknown;
+  let stagedResult: LaneResult | undefined;
 
   assertMantisCommandNotAborted({
     command: "git",
@@ -309,6 +310,28 @@ async function runLane(params: {
     });
     // Git owns worktree removal, so preserve the lane artifacts before cleanup.
     await stageMantisLaneOutput(path.join(worktreeDir, worktreeOutputDir), stagedLaneDir);
+    // Resolve producer coordinates and preserve referenced media before Git removes the worktree.
+    const result = await readMantisLaneResult({
+      laneOutputDir: path.join(worktreeDir, worktreeOutputDir),
+      laneRepoRoot: worktreeDir,
+      publishedLaneDir: stagedLaneDir,
+      scenario: params.scenario,
+    });
+    const copiedScreenshot = await copyMantisLaneArtifact({
+      kind: "screenshot",
+      lane: params.lane,
+      result,
+    });
+    const copiedVideo = await copyMantisLaneArtifact({
+      kind: "video",
+      lane: params.lane,
+      result,
+    });
+    stagedResult = {
+      ...result,
+      screenshotPath: copiedScreenshot ?? result.screenshotPath,
+      videoPath: copiedVideo ?? result.videoPath,
+    };
   } catch (error) {
     workloadFailed = true;
     workloadError = error;
@@ -368,30 +391,14 @@ async function runLane(params: {
       cause: params.signal.reason,
     });
   }
-  const result = await readMantisLaneResult({
-    laneOutputDir: path.join(worktreeDir, worktreeOutputDir),
-    publishedLaneDir: stagedLaneDir,
-    scenario: params.scenario,
-  });
-  const copiedScreenshot = await copyMantisLaneArtifact({
-    kind: "screenshot",
-    lane: params.lane,
-    result,
-  });
-  const copiedVideo = await copyMantisLaneArtifact({
-    kind: "video",
-    lane: params.lane,
-    result,
-  });
+  if (!stagedResult) {
+    throw new Error("Mantis lane artifacts were not staged");
+  }
   // Reports are rendered before publication, so expose final stable paths while
   // the bytes remain in this run's private staging directory.
   return remapMantisLaneResult({
     publishedLaneDir,
-    result: {
-      ...result,
-      screenshotPath: copiedScreenshot ?? result.screenshotPath,
-      videoPath: copiedVideo ?? result.videoPath,
-    },
+    result: stagedResult,
     stagedLaneDir,
   }) satisfies LaneResult;
 }

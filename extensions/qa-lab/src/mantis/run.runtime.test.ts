@@ -4,6 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import { root } from "openclaw/plugin-sdk/security-runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { toRepoArtifactPath } from "../cli-paths.js";
+import { createQaEvidenceInvocation } from "../evidence-invocation.js";
 import { QA_EVIDENCE_FILENAME, buildQaSuiteEvidenceSummary } from "../evidence-summary.js";
 import { publishMantisRunOutput } from "./run-artifacts.runtime.js";
 import { runMantisBeforeAfter } from "./run.runtime.js";
@@ -27,175 +29,194 @@ describe("mantis before/after runtime", () => {
     await fs.rm(repoRoot, { force: true, recursive: true });
   });
 
-  it("runs baseline and candidate worktrees and writes stable comparison artifacts", async () => {
-    const outputDir = path.join(repoRoot, ".artifacts", "qa-e2e", "mantis", "test-run");
-    await fs.mkdir(outputDir, { recursive: true });
-    await fs.writeFile(path.join(outputDir, "error.txt"), "stale failure", "utf8");
-    await fs.writeFile(path.join(outputDir, "unrelated.txt"), "preserve me", "utf8");
-    const commands: { args: readonly string[]; command: string; stage: string }[] = [];
-    const runner = vi.fn(async (command: string, args: readonly string[], execution) => {
-      commands.push({ command, args, stage: execution.stage });
-      if (command === "git" && execution.stage === "worktree-add") {
-        await fs.mkdir(String(args[4]), { recursive: true });
-        return successfulCommandResult();
-      }
-      if (command === "git" && execution.stage === "worktree-cleanup") {
-        if (args[1] === "remove") {
-          await fs.rm(execution.cwd, { force: true, recursive: true });
+  it.each([
+    "absolute",
+    "lane-relative",
+    "repo-root-token",
+    "repo-root-token-outside-lane",
+  ] as const)(
+    "runs baseline and candidate worktrees and writes stable comparison artifacts (%s)",
+    async (artifactBase) => {
+      const outputDir = path.join(repoRoot, ".artifacts", "qa-e2e", "mantis", "test-run");
+      await fs.mkdir(outputDir, { recursive: true });
+      await fs.writeFile(path.join(outputDir, "error.txt"), "stale failure", "utf8");
+      await fs.writeFile(path.join(outputDir, "unrelated.txt"), "preserve me", "utf8");
+      const commands: { args: readonly string[]; command: string; stage: string }[] = [];
+      const runner = vi.fn(async (command: string, args: readonly string[], execution) => {
+        commands.push({ command, args, stage: execution.stage });
+        if (command === "git" && execution.stage === "worktree-add") {
+          await fs.mkdir(String(args[4]), { recursive: true });
+          return successfulCommandResult();
         }
+        if (command === "git" && execution.stage === "worktree-cleanup") {
+          if (args[1] === "remove") {
+            await fs.rm(execution.cwd, { force: true, recursive: true });
+          }
+          return successfulCommandResult();
+        }
+        if (command !== "pnpm" || !args.includes("openclaw")) {
+          return successfulCommandResult();
+        }
+        const repoRootArg = requireArgAfter(args, "--repo-root");
+        const outputDirArg = requireArgAfter(args, "--output-dir");
+        const lane = outputDirArg.endsWith("baseline") ? "baseline" : "candidate";
+        const laneOutputDir = path.join(repoRootArg, outputDirArg);
+        await fs.mkdir(laneOutputDir, { recursive: true });
+        const artifactDir =
+          artifactBase === "repo-root-token-outside-lane"
+            ? path.join(repoRootArg, ".artifacts", "capture")
+            : laneOutputDir;
+        await fs.mkdir(artifactDir, { recursive: true });
+        const screenshotPath = path.join(artifactDir, `${lane}-timeline.png`);
+        const videoPath = path.join(artifactDir, `${lane}-timeline.mp4`);
+        const evidencePath = (artifactPath: string) =>
+          artifactBase.startsWith("repo-root-token")
+            ? toRepoArtifactPath(repoRootArg, artifactPath)
+            : artifactBase === "lane-relative"
+              ? path.relative(laneOutputDir, artifactPath)
+              : artifactPath;
+        await fs.writeFile(screenshotPath, `${lane} screenshot`);
+        await fs.writeFile(videoPath, `${lane} video`);
+        const title = "Discord explicit status reactions run in tool-only reply mode";
+        const summary = buildQaSuiteEvidenceSummary({
+          artifactPaths: [
+            { kind: "summary", path: QA_EVIDENCE_FILENAME },
+            { kind: "report", path: "discord-qa-report.md" },
+            { kind: "screenshot", path: evidencePath(screenshotPath) },
+            { kind: "video", path: evidencePath(videoPath) },
+          ],
+          channelDriver: "live",
+          channelId: "discord",
+          scenarioDefinitions: [
+            {
+              id: "discord-status-reactions-tool-only",
+              title,
+            },
+          ],
+          generatedAt: "2026-05-03T12:00:00.000Z",
+          primaryModel: "openai/gpt-5.4",
+          providerMode: "live-frontier",
+          scenarioResults: [
+            {
+              details:
+                lane === "baseline"
+                  ? "reaction timeline missing thinking/done"
+                  : "reaction timeline matched queued -> thinking -> done",
+              name: title,
+              status: lane === "baseline" ? "fail" : "pass",
+            },
+          ],
+        });
+        await fs.writeFile(
+          path.join(laneOutputDir, QA_EVIDENCE_FILENAME),
+          `${JSON.stringify(summary, null, 2)}\n`,
+        );
         return successfulCommandResult();
-      }
-      if (command !== "pnpm" || !args.includes("openclaw")) {
-        return successfulCommandResult();
-      }
-      const repoRootArg = requireArgAfter(args, "--repo-root");
-      const outputDirArg = requireArgAfter(args, "--output-dir");
-      const lane = outputDirArg.endsWith("baseline") ? "baseline" : "candidate";
-      const laneOutputDir = path.join(repoRootArg, outputDirArg);
-      await fs.mkdir(laneOutputDir, { recursive: true });
-      const screenshotPath = path.join(laneOutputDir, `${lane}-timeline.png`);
-      const videoPath = path.join(laneOutputDir, `${lane}-timeline.mp4`);
-      await fs.writeFile(screenshotPath, `${lane} screenshot`);
-      await fs.writeFile(videoPath, `${lane} video`);
-      const title = "Discord explicit status reactions run in tool-only reply mode";
-      const summary = buildQaSuiteEvidenceSummary({
-        artifactPaths: [
-          { kind: "summary", path: QA_EVIDENCE_FILENAME },
-          { kind: "report", path: "discord-qa-report.md" },
-          { kind: "screenshot", path: screenshotPath },
-          { kind: "video", path: videoPath },
-        ],
-        channelDriver: "live",
-        channelId: "discord",
-        scenarioDefinitions: [
-          {
-            id: "discord-status-reactions-tool-only",
-            title,
-          },
-        ],
-        generatedAt: "2026-05-03T12:00:00.000Z",
-        primaryModel: "openai/gpt-5.4",
-        providerMode: "live-frontier",
-        scenarioResults: [
-          {
-            details:
-              lane === "baseline"
-                ? "reaction timeline missing thinking/done"
-                : "reaction timeline matched queued -> thinking -> done",
-            name: title,
-            status: lane === "baseline" ? "fail" : "pass",
-          },
-        ],
       });
-      await fs.writeFile(
-        path.join(laneOutputDir, QA_EVIDENCE_FILENAME),
-        `${JSON.stringify(summary, null, 2)}\n`,
+
+      const result = await runMantisBeforeAfter({
+        baseline: "--lock",
+        candidate: "--force",
+        commandRunner: runner,
+        now: () => new Date("2026-05-03T12:00:00.000Z"),
+        outputDir: ".artifacts/qa-e2e/mantis/test-run",
+        repoRoot,
+        skipBuild: true,
+        skipInstall: true,
+      });
+
+      expect(result.status).toBe("pass");
+      expect(commands).toHaveLength(8);
+      expect(commands.map((entry) => entry.stage)).toEqual([
+        "worktree-add",
+        "qa",
+        "worktree-cleanup",
+        "worktree-cleanup",
+        "worktree-add",
+        "qa",
+        "worktree-cleanup",
+        "worktree-cleanup",
+      ]);
+      const baselineWorktreeDir = String(commands[0]?.args[4]);
+      const candidateWorktreeDir = String(commands[4]?.args[4]);
+      expect(path.dirname(baselineWorktreeDir)).toBe(`${outputDir}.worktrees`);
+      expect(path.basename(baselineWorktreeDir)).toMatch(/^baseline-/u);
+      expect(path.dirname(candidateWorktreeDir)).toBe(`${outputDir}.worktrees`);
+      expect(path.basename(candidateWorktreeDir)).toMatch(/^candidate-/u);
+      expect(commands[0]?.command).toBe("git");
+      expect(commands[0]?.args).toEqual([
+        "worktree",
+        "add",
+        "--detach",
+        "--",
+        baselineWorktreeDir,
+        "--lock",
+      ]);
+      expect(commands[1]?.command).toBe("pnpm");
+      expect(commands[1]?.args[0]).toBe("--dir");
+      expect(commands[1]?.args[1]).toBe(baselineWorktreeDir);
+      expect(commands[1]?.args.slice(2, 4)).toEqual(["openclaw", "qa"]);
+      expect(commands[2]?.command).toBe("git");
+      expect(commands[2]?.args).toEqual(["worktree", "remove", "--force", "--", "."]);
+      expect(commands[3]?.args).toEqual(["worktree", "list", "--porcelain", "-z"]);
+      expect(commands[4]?.command).toBe("git");
+      expect(commands[4]?.args).toEqual([
+        "worktree",
+        "add",
+        "--detach",
+        "--",
+        candidateWorktreeDir,
+        "--force",
+      ]);
+      expect(commands[5]?.command).toBe("pnpm");
+      expect(commands[5]?.args[0]).toBe("--dir");
+      expect(commands[5]?.args[1]).toBe(candidateWorktreeDir);
+      expect(commands[5]?.args.slice(2, 4)).toEqual(["openclaw", "qa"]);
+      expect(commands[6]?.command).toBe("git");
+      expect(commands[6]?.args).toEqual(["worktree", "remove", "--force", "--", "."]);
+      expect(commands[7]?.args).toEqual(["worktree", "list", "--porcelain", "-z"]);
+
+      const comparison = JSON.parse(await fs.readFile(result.comparisonPath, "utf8")) as {
+        baseline: { reproduced: boolean; status: string };
+        candidate: { fixed: boolean; status: string };
+        pass: boolean;
+      };
+      expect(comparison.baseline.reproduced).toBe(true);
+      expect(comparison.baseline.status).toBe("fail");
+      expect(comparison.candidate.fixed).toBe(true);
+      expect(comparison.candidate.status).toBe("pass");
+      expect(comparison.pass).toBe(true);
+      await expect(
+        fs.readFile(path.join(result.outputDir, "baseline", "baseline.png"), "utf8"),
+      ).resolves.toBe("baseline screenshot");
+      await expect(
+        fs.readFile(path.join(result.outputDir, "candidate", "candidate.png"), "utf8"),
+      ).resolves.toBe("candidate screenshot");
+      await expect(
+        fs.readFile(path.join(result.outputDir, "baseline", "baseline.mp4"), "utf8"),
+      ).resolves.toBe("baseline video");
+      await expect(
+        fs.readFile(path.join(result.outputDir, "candidate", "candidate.mp4"), "utf8"),
+      ).resolves.toBe("candidate video");
+      await expect(fs.stat(path.join(result.outputDir, "error.txt"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      await expect(fs.readFile(path.join(result.outputDir, "unrelated.txt"), "utf8")).resolves.toBe(
+        "preserve me",
       );
-      return successfulCommandResult();
-    });
-
-    const result = await runMantisBeforeAfter({
-      baseline: "--lock",
-      candidate: "--force",
-      commandRunner: runner,
-      now: () => new Date("2026-05-03T12:00:00.000Z"),
-      outputDir: ".artifacts/qa-e2e/mantis/test-run",
-      repoRoot,
-      skipBuild: true,
-      skipInstall: true,
-    });
-
-    expect(result.status).toBe("pass");
-    expect(commands).toHaveLength(8);
-    expect(commands.map((entry) => entry.stage)).toEqual([
-      "worktree-add",
-      "qa",
-      "worktree-cleanup",
-      "worktree-cleanup",
-      "worktree-add",
-      "qa",
-      "worktree-cleanup",
-      "worktree-cleanup",
-    ]);
-    const baselineWorktreeDir = String(commands[0]?.args[4]);
-    const candidateWorktreeDir = String(commands[4]?.args[4]);
-    expect(path.dirname(baselineWorktreeDir)).toBe(`${outputDir}.worktrees`);
-    expect(path.basename(baselineWorktreeDir)).toMatch(/^baseline-/u);
-    expect(path.dirname(candidateWorktreeDir)).toBe(`${outputDir}.worktrees`);
-    expect(path.basename(candidateWorktreeDir)).toMatch(/^candidate-/u);
-    expect(commands[0]?.command).toBe("git");
-    expect(commands[0]?.args).toEqual([
-      "worktree",
-      "add",
-      "--detach",
-      "--",
-      baselineWorktreeDir,
-      "--lock",
-    ]);
-    expect(commands[1]?.command).toBe("pnpm");
-    expect(commands[1]?.args[0]).toBe("--dir");
-    expect(commands[1]?.args[1]).toBe(baselineWorktreeDir);
-    expect(commands[1]?.args.slice(2, 4)).toEqual(["openclaw", "qa"]);
-    expect(commands[2]?.command).toBe("git");
-    expect(commands[2]?.args).toEqual(["worktree", "remove", "--force", "--", "."]);
-    expect(commands[3]?.args).toEqual(["worktree", "list", "--porcelain", "-z"]);
-    expect(commands[4]?.command).toBe("git");
-    expect(commands[4]?.args).toEqual([
-      "worktree",
-      "add",
-      "--detach",
-      "--",
-      candidateWorktreeDir,
-      "--force",
-    ]);
-    expect(commands[5]?.command).toBe("pnpm");
-    expect(commands[5]?.args[0]).toBe("--dir");
-    expect(commands[5]?.args[1]).toBe(candidateWorktreeDir);
-    expect(commands[5]?.args.slice(2, 4)).toEqual(["openclaw", "qa"]);
-    expect(commands[6]?.command).toBe("git");
-    expect(commands[6]?.args).toEqual(["worktree", "remove", "--force", "--", "."]);
-    expect(commands[7]?.args).toEqual(["worktree", "list", "--porcelain", "-z"]);
-
-    const comparison = JSON.parse(await fs.readFile(result.comparisonPath, "utf8")) as {
-      baseline: { reproduced: boolean; status: string };
-      candidate: { fixed: boolean; status: string };
-      pass: boolean;
-    };
-    expect(comparison.baseline.reproduced).toBe(true);
-    expect(comparison.baseline.status).toBe("fail");
-    expect(comparison.candidate.fixed).toBe(true);
-    expect(comparison.candidate.status).toBe("pass");
-    expect(comparison.pass).toBe(true);
-    await expect(
-      fs.readFile(path.join(result.outputDir, "baseline", "baseline.png"), "utf8"),
-    ).resolves.toBe("baseline screenshot");
-    await expect(
-      fs.readFile(path.join(result.outputDir, "candidate", "candidate.png"), "utf8"),
-    ).resolves.toBe("candidate screenshot");
-    await expect(
-      fs.readFile(path.join(result.outputDir, "baseline", "baseline.mp4"), "utf8"),
-    ).resolves.toBe("baseline video");
-    await expect(
-      fs.readFile(path.join(result.outputDir, "candidate", "candidate.mp4"), "utf8"),
-    ).resolves.toBe("candidate video");
-    await expect(fs.stat(path.join(result.outputDir, "error.txt"))).rejects.toMatchObject({
-      code: "ENOENT",
-    });
-    await expect(fs.readFile(path.join(result.outputDir, "unrelated.txt"), "utf8")).resolves.toBe(
-      "preserve me",
-    );
-    expect(
-      (await fs.readdir(result.outputDir)).filter(
-        (entry) => entry.startsWith(".mantis-staged-") || entry.startsWith(".mantis-previous-"),
-      ),
-    ).toEqual([]);
-    await expect(fs.stat(baselineWorktreeDir)).rejects.toMatchObject({
-      code: "ENOENT",
-    });
-    await expect(fs.stat(candidateWorktreeDir)).rejects.toMatchObject({
-      code: "ENOENT",
-    });
-  });
+      expect(
+        (await fs.readdir(result.outputDir)).filter(
+          (entry) => entry.startsWith(".mantis-staged-") || entry.startsWith(".mantis-previous-"),
+        ),
+      ).toEqual([]);
+      await expect(fs.stat(baselineWorktreeDir)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      await expect(fs.stat(candidateWorktreeDir)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    },
+  );
 
   it("rejects the repo root as an output container before preparing worktrees", async () => {
     const runner = vi.fn();
@@ -887,4 +908,107 @@ describe("mantis before/after runtime", () => {
       expect(events.indexOf(copyEvent)).toBeLessThan(events.indexOf(`remove:${worktreeDir}`));
     }
   });
+
+  it.each(["unresolved first", "different first owner", "malformed existing file"])(
+    "does not promote a later pass or legacy fallback for %s",
+    async (caseName) => {
+      const scenarioId = "discord-status-reactions-tool-only";
+      const runner = vi.fn(async (command: string, args: readonly string[], execution) => {
+        if (command === "git" && execution.stage === "worktree-add") {
+          await fs.mkdir(String(args[4]), { recursive: true });
+          return successfulCommandResult();
+        }
+        if (command === "git" && execution.stage === "worktree-cleanup") {
+          if (args[1] === "remove") {
+            await fs.rm(execution.cwd, { force: true, recursive: true });
+          }
+          return successfulCommandResult();
+        }
+        if (command !== "pnpm" || !args.includes("openclaw")) {
+          return successfulCommandResult();
+        }
+        const laneRoot = requireArgAfter(args, "--repo-root");
+        const outputArg = requireArgAfter(args, "--output-dir");
+        const outputDir = path.join(laneRoot, outputArg);
+        await fs.mkdir(outputDir, { recursive: true });
+        const invocation = createQaEvidenceInvocation({
+          scenarios: [
+            {
+              id: caseName === "different first owner" ? "another-scenario" : scenarioId,
+              execution: { kind: "script" },
+            },
+            { id: scenarioId, execution: { kind: "script" } },
+          ],
+          channel: "discord",
+          launch: {
+            source: { ref: null, integrity: null },
+            runtime: { id: null, version: null },
+            package: null,
+            protocol: null,
+            accountRef: null,
+            proofClass: null,
+          },
+        });
+        const first = invocation.begin(0);
+        const status = outputArg.endsWith("baseline") ? "fail" : "pass";
+        if (caseName !== "unresolved first" || status === "fail") {
+          invocation.complete(first, {
+            status,
+            entries: [
+              {
+                test: { kind: "script", id: scenarioId, title: "First" },
+                coverage: [],
+                result: { status },
+              },
+            ],
+          });
+          invocation.select(0, first);
+        }
+        const later = invocation.begin(1);
+        invocation.complete(later, {
+          status: "pass",
+          entries: [
+            {
+              test: { kind: "script", id: scenarioId, title: "Later" },
+              coverage: [],
+              result: { status: "pass" },
+            },
+          ],
+        });
+        invocation.select(1, later);
+        const evidence = invocation.snapshot({ generatedAt: "2026-09-13T00:00:00.000Z" });
+        if (caseName === "malformed existing file") {
+          const entry = evidence.entries[0];
+          if (!entry) {
+            throw new Error("Expected an evidence entry for malformed-file fixture");
+          }
+          entry.binding.occurrenceId = "absent";
+        }
+        await fs.writeFile(path.join(outputDir, QA_EVIDENCE_FILENAME), JSON.stringify(evidence));
+        await fs.writeFile(
+          path.join(outputDir, "discord-qa-summary.json"),
+          JSON.stringify({
+            scenarios: [{ id: scenarioId, status: "pass" }],
+          }),
+        );
+        return successfulCommandResult();
+      });
+      const run = runMantisBeforeAfter({
+        commandRunner: runner,
+        repoRoot,
+        outputDir: ".artifacts/mantis-occurrences",
+        skipBuild: true,
+        skipInstall: true,
+      });
+      if (caseName === "malformed existing file") {
+        await expect(run).rejects.toThrow();
+      } else {
+        const result = await run;
+        expect(result.status).toBe("fail");
+        const comparison = JSON.parse(await fs.readFile(result.comparisonPath, "utf8"));
+        expect(comparison.candidate.status).toBe("unknown");
+        expect(comparison.candidate.fixed).toBe(false);
+      }
+    },
+  );
 });
