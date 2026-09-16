@@ -585,23 +585,21 @@ describe("cron CLI with the real Gateway pagination contract", () => {
     );
   });
 
-  it.each(
-    [
-      { label: "identical names", first: "Backup", last: "Backup", query: "Backup" },
-      { label: "mixed case", first: "Backup", last: "BACKUP", query: "bAcKuP", json: true },
-      { label: "reversed case", first: "BACKUP", last: "Backup", query: "bAcKuP" },
-      { label: "protocol v4", first: "Backup", last: "BACKUP", query: "Backup", legacy: true },
-      ...[false, true].map((json) => ({
-        label: `terminal controls with json=${json}`,
-        first: "backup\u001B]0;name\u0007\r\njob",
-        last: "backup\u001B]0;name\u0007\r\njob",
-        query: "backup\u001B]0;name\u0007\r\njob",
-        json,
-      })),
-    ].map((scenario) => Object.assign({ json: false, legacy: false }, scenario)),
-  )(
+  it.each([
+    { label: "identical names", first: "Backup", last: "Backup", query: "Backup" },
+    { label: "mixed case", first: "Backup", last: "BACKUP", query: "bAcKuP", json: true },
+    { label: "reversed case", first: "BACKUP", last: "Backup", query: "bAcKuP" },
+    { label: "protocol v4", first: "Backup", last: "BACKUP", query: "Backup", legacy: true },
+    ...[false, true].map((json) => ({
+      label: `terminal controls with json=${json}`,
+      first: "backup\u001B]0;name\u0007\r\njob",
+      last: "backup\u001B]0;name\u0007\r\njob",
+      query: "backup\u001B]0;name\u0007\r\njob",
+      json,
+    })),
+  ])(
     "rejects ambiguous $label across Gateway pages",
-    async ({ first, last, query, json, legacy }) => {
+    async ({ first, last, query, json = false, legacy = false }) => {
       const jobs = Array.from({ length: 201 }, (_, index) => createJob(index));
       jobs[0] = createJob(0, { name: first });
       jobs[200] = createJob(200, { name: last, enabled: false });
