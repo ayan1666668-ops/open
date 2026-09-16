@@ -119,4 +119,76 @@ describeWithGatewayServer("node pairing retirement over the live transport", (ge
       controlWs.close();
     }
   });
+
+  test("retires an obsolete socket without closing its same-device replacement", async () => {
+    const started = getStarted();
+    const controlWs = await openTrackedWs(started.port);
+    await connectOk(controlWs, { token: "secret" });
+    const control = controlWs;
+    const paired = await pairDeviceIdentity({
+      name: "retire-replaced-node",
+      role: "node",
+      scopes: [],
+      clientId: GATEWAY_CLIENT_NAMES.NODE_HOST,
+      clientMode: GATEWAY_CLIENT_MODES.NODE,
+      platform: "macos",
+      deviceFamily: "Mac",
+    });
+    const pairingRequest = await requestNodePairing({
+      nodeId: paired.identity.deviceId,
+      platform: "macos",
+      deviceFamily: "Mac",
+      commands: ["system.which"],
+    });
+    await approveNodePairing(pairingRequest.request.requestId, {
+      callerScopes: ["operator.pairing", "operator.write"],
+    });
+    const connectSameDevice = (displayName: string) =>
+      connectGatewayClient({
+        url: `ws://127.0.0.1:${started.port}`,
+        token: "secret",
+        role: "node",
+        clientName: GATEWAY_CLIENT_NAMES.NODE_HOST,
+        clientDisplayName: displayName,
+        clientVersion: "1.0.0",
+        platform: "macos",
+        deviceFamily: "Mac",
+        mode: GATEWAY_CLIENT_MODES.NODE,
+        scopes: [],
+        commands: ["system.which"],
+        deviceIdentity: paired.identity,
+        timeoutMessage: `timeout waiting for ${displayName}`,
+      });
+    const obsolete = await connectSameDevice("obsolete-socket");
+    const replacement = await connectSameDevice("replacement-socket");
+    try {
+      // Registering the replacement drops the first connection from the registry while
+      // its socket stays open, so that socket's next request resolves stale.
+      await expect(obsolete.request("node.event", { event: "test" })).rejects.toThrow();
+      await vi.waitFor(() => {
+        expect(obsolete.connected).toBe(false);
+      });
+      // The authorized replacement keeps its transport; the retirement must not reach it.
+      expect(replacement.connected).toBe(true);
+      await vi.waitFor(async () => {
+        const list = await rpcReq<{ nodes?: { nodeId: string; connected?: boolean }[] }>(
+          control,
+          "node.list",
+          {},
+        );
+        const connectedIds = (list.payload?.nodes ?? [])
+          .filter((entry) => entry.connected)
+          .map((entry) => entry.nodeId);
+        if (!connectedIds.includes(paired.identity.deviceId)) {
+          throw new Error(`replacement lost its connection: ${JSON.stringify(connectedIds)}`);
+        }
+      });
+    } finally {
+      await Promise.allSettled([
+        obsolete.stopAndWait({ timeoutMs: 1_000 }),
+        replacement.stopAndWait({ timeoutMs: 1_000 }),
+      ]);
+      controlWs.close();
+    }
+  });
 });

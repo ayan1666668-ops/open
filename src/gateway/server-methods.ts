@@ -331,20 +331,16 @@ export async function authorizeGatewayRequestPreDispatch(params: {
       ? await params.context.nodeRegistry.resolveConnectionPairingState(connId)
       : "stale";
     if (pairingState !== "current") {
-      // A definitively stale pairing must not linger as a connected node: retire the
-      // node's projections and mark the transport invalidated so every buffered request
-      // fails, then close the socket after this rejection frame is written so the
-      // client's reconnect lifecycle takes over (#148693). A pairing store that could
-      // not be read stays retryable without retiring a possibly valid connection.
+      // A definitively stale pairing must not linger as a connected node, but only that
+      // exact physical connection may be retired. A same-device replacement and a session
+      // promoted while this lookup awaited persistence keep their authority, so the
+      // captured lease is settled by resolveConnectionPairingState (never a conn-wide
+      // invalidation) and only this connection's transport is closed after the rejection
+      // frame is written (#148693). An unreadable pairing store stays retryable.
       if (connId && pairingState === "stale") {
-        params.context.nodeRegistry.invalidateConnectionForPairingChange(
-          connId,
-          "node pairing changed before request dispatch",
-        );
-        const deviceId = params.client.connect.device?.id;
-        if (deviceId && params.context.disconnectClientsForDevice) {
-          const disconnect = params.context.disconnectClientsForDevice.bind(params.context);
-          setTimeout(() => disconnect(deviceId, { role: "node" }), 0);
+        const disconnect = params.context.disconnectClientForConnection?.bind(params.context);
+        if (disconnect) {
+          setTimeout(() => disconnect(connId, "node pairing changed before request dispatch"), 0);
         }
       }
       return {

@@ -92,4 +92,61 @@ describe("gateway node pairing fence guards", () => {
       }),
     );
   });
+  it("rejects every node RPC when its connection no longer owns the pairing generation", async () => {
+    const handler = vi.fn<GatewayRequestHandler>(({ respond }) => respond(true, { ok: true }));
+    const respond = vi.fn();
+    const resolveConnectionPairingState = vi.fn().mockResolvedValue("stale");
+    const disconnectClientForConnection = vi.fn();
+    const invalidateConnectionForPairingChange = vi.fn().mockReturnValue(false);
+
+    await handleGatewayRequest({
+      req: { type: "req", id: "req-node-stale", method: "node.event", params: { event: "test" } },
+      respond,
+      client: {
+        connId: "conn-node-stale",
+        connect: {
+          role: "node",
+          scopes: [],
+          device: {
+            id: "node-stale",
+            publicKey: "public-key",
+            signature: "signature",
+            signedAt: 1,
+            nonce: "nonce",
+          },
+          client: { id: "node-host", version: "1", platform: "test", mode: "node" },
+          minProtocol: 1,
+          maxProtocol: 1,
+        },
+      } as Parameters<typeof handleGatewayRequest>[0]["client"],
+      isWebchatConnect: () => false,
+      context: {
+        logGateway: { warn: vi.fn() },
+        nodeRegistry: { resolveConnectionPairingState, invalidateConnectionForPairingChange },
+        disconnectClientForConnection,
+      } as unknown as Parameters<typeof handleGatewayRequest>[0]["context"],
+      extraHandlers: { "node.event": handler },
+    });
+
+    expect(resolveConnectionPairingState).toHaveBeenCalledWith("conn-node-stale");
+    // Retirement stays scoped to the rejected connection and lands only after the
+    // rejection frame, so a same-device replacement keeps its transport.
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0);
+    });
+    expect(disconnectClientForConnection).toHaveBeenCalledWith(
+      "conn-node-stale",
+      "node pairing changed before request dispatch",
+    );
+    expect(invalidateConnectionForPairingChange).not.toHaveBeenCalled();
+    expect(handler).not.toHaveBeenCalled();
+    expect(respond).toHaveBeenCalledWith(
+      false,
+      undefined,
+      expect.objectContaining({
+        code: "UNAVAILABLE",
+        details: { code: "PAIRING_CHANGED" },
+      }),
+    );
+  });
 });
