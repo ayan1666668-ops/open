@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createInterface } from "node:readline";
+import { stripVTControlCharacters } from "node:util";
 import { isDirectRunUrl } from "./lib/direct-run.mjs";
 import {
   distArtifactEntryArgs,
@@ -17,7 +18,6 @@ import {
   resolveRepoToolBinPath,
 } from "./lib/local-check-runtime.mts";
 import { createManagedCommandInvocation, runManagedCommand } from "./lib/managed-child-process.mts";
-import { readOxlintConfig } from "./lib/oxlint-config.mts";
 import { resolvePathEnvKey } from "./windows-cmd-helpers.mjs";
 
 const PREPARE_EXTENSION_BOUNDARY_ARGS = distArtifactEntryArgs(
@@ -245,7 +245,7 @@ async function prepareExtensionPackageBoundaryArtifacts(env: NodeJS.ProcessEnv) 
   }
 }
 
-function cumulativeWarningConfig(args: string[]) {
+async function cumulativeWarningConfig(args: string[]) {
   let configPath = ".oxlintrc.json";
   let format: string | undefined;
   const remainingArgs: string[] = [];
@@ -279,6 +279,7 @@ function cumulativeWarningConfig(args: string[]) {
       "OPENCLAW_LINT_CUMULATIVE_SEVERITY=warn requires --format stylish for its warning summary",
     );
   }
+  const { readOxlintConfig } = await import("./lib/oxlint-config.mts");
   const config = readOxlintConfig(process.cwd(), configPath);
   for (const scope of [config, ...(config.overrides ?? [])]) {
     const rule = scope.rules?.["max-lines"];
@@ -352,7 +353,7 @@ async function runOxlint(
   const warningConfig =
     env.OPENCLAW_LINT_CUMULATIVE_SEVERITY === "warn" &&
     !finalArgs.some((arg) => OXLINT_PREPARE_SKIP_FLAGS.has(arg))
-      ? cumulativeWarningConfig(finalArgs)
+      ? await cumulativeWarningConfig(finalArgs)
       : undefined;
   let warningCount = 0;
   try {
@@ -366,7 +367,11 @@ async function runOxlint(
         if (warningConfig && child.stdout) {
           child.stdout.pipe(process.stdout, { end: false });
           createInterface({ input: child.stdout, crlfDelay: Infinity }).on("line", (line) => {
-            if (/^\s+\d+:\d+\s+warning\s+.*\s+eslint\(max-lines\)\s*$/u.test(line)) {
+            if (
+              /^\s+\d+:\d+\s+warning\s+.*\s+eslint\(max-lines\)\s*$/u.test(
+                stripVTControlCharacters(line),
+              )
+            ) {
               warningCount += 1;
             }
           });

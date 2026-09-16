@@ -44,6 +44,8 @@ function runCumulativeFixture(severity: string | undefined, otherError = false) 
       encoding: "utf8",
       env: {
         ...process.env,
+        FORCE_COLOR: "1",
+        NO_COLOR: undefined,
         GITHUB_ACTIONS: "true",
         OPENCLAW_LINT_CUMULATIVE_SEVERITY: severity,
       },
