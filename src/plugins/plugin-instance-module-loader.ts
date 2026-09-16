@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import Module, { createRequire, isBuiltin } from "node:module";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -27,6 +28,7 @@ import {
   type PluginSourceFile,
   type PluginSourceLoadMode,
 } from "./plugin-source-build.js";
+import { inspectPluginTypeScriptExecutionFacts } from "./plugin-source-references.js";
 import { preparePluginLoaderAliases, isPluginSdkAliasSpecifier } from "./sdk-alias.js";
 
 // Compiled recovery shares process code identity without closing over the
@@ -132,9 +134,6 @@ export function bindPluginInstanceModuleLoader(params: PluginInstanceModuleLoade
   if (nativeAliases?.packageRoot) {
     artifact.linkHost(nativeAliases.packageRoot);
   }
-  if (nativeAliases) {
-    artifact.prepareNativeScopes();
-  }
   installOpenClawPluginSdkNativeResolver({
     moduleUrl: import.meta.url,
     pluginModulePath: params.source,
@@ -142,11 +141,37 @@ export function bindPluginInstanceModuleLoader(params: PluginInstanceModuleLoade
     allowedParentRoots: [artifact.boundaryRoot],
   });
   if (nativeAliases) {
+    const capturedSource = artifact.resolve(params.source);
+    artifact.prepareModule(capturedSource);
+    const bunSourceFacts =
+      process.versions.bun && isPluginSourceModulePath(params.source)
+        ? inspectPluginTypeScriptExecutionFacts(
+            params.source,
+            fs.readFileSync(params.source, "utf8"),
+            createJiti(params.source, { fsCache: false, moduleCache: false, tryNative: false }),
+          )
+        : undefined;
+    for (const { specifier } of bunSourceFacts?.staticImports ?? []) {
+      if (path.isAbsolute(specifier) || specifier.startsWith("file:")) {
+        artifact.captureModule(capturedSource, specifier, ["node", "import"]);
+      }
+    }
+    const bunNeedsNativeSource =
+      bunSourceFacts?.hasComputedImport === true ||
+      bunSourceFacts?.staticImports.some(
+        ({ specifier, sideEffect }) => sideEffect && /\.cjs(?:[?#].*)?$/u.test(specifier),
+      ) === true;
     const loader = getCachedPluginModuleLoader({
       modulePath: params.source,
       importerUrl: import.meta.url,
       devSourceRoot: params.devSourceRoot,
       pluginSdkResolution: params.pluginSdkResolution,
+      tryNative:
+        process.env.JITI_JSX === "1" || process.env.JITI_JSX === "true"
+          ? false
+          : (process.versions.bun && artifact.boundaryRoot.includes("\\")) || bunNeedsNativeSource
+            ? true
+            : undefined,
       aliasMap: {
         ...nativeAliases.getAliasMap(),
         ...artifact.sourceAliases,

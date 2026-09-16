@@ -1,5 +1,6 @@
 /** Tests plugin module loader cache keys and lifecycle reset behavior. */
 import fs from "node:fs";
+import Module from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -788,7 +789,9 @@ describe("getCachedPluginModuleLoader", () => {
         tryNative: false,
       },
     );
-    expect(options.nativeModules).toEqual([]);
+    expect(options.nativeModules).toEqual(
+      typeof Module.registerHooks === "function" ? [] : ["openclaw"],
+    );
     expect(fromSourceTransformer).toHaveBeenCalledWith("/repo/dist/extensions/demo/api.js");
     const stats = expectStats(getPluginModuleLoaderStats(), {
       calls: 1,
@@ -863,7 +866,9 @@ describe("getCachedPluginModuleLoader", () => {
       "file:///C:/Users/alice/openclaw/dist/extensions/feishu/api.js",
       { tryNative: false },
     );
-    expect(options.nativeModules).toEqual([]);
+    expect(options.nativeModules).toEqual(
+      typeof Module.registerHooks === "function" ? [] : ["openclaw"],
+    );
     expect(fromSourceTransformer).toHaveBeenCalledWith(
       "file:///C:/Users/alice/openclaw/dist/extensions/feishu/api.js",
     );

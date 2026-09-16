@@ -90,6 +90,118 @@ function toSourceTransformImportPath(specifier: string): string {
   return toSafeImportPath(specifier);
 }
 
+function resolveAutomaticJitiTsconfig(loaderFilename: string): string | undefined {
+  const enabled = process.env.JITI_TSCONFIG_PATHS;
+  if (enabled !== "1" && enabled !== "true") {
+    return undefined;
+  }
+  let directory = path.dirname(loaderFilename);
+  while (true) {
+    const config = path.join(directory, "tsconfig.json");
+    if (fs.existsSync(config)) {
+      return config;
+    }
+    const parent = path.dirname(directory);
+    if (parent === directory) {
+      return undefined;
+    }
+    directory = parent;
+  }
+}
+
+type BabelImportCallPath = {
+  node: {
+    callee: { type: string; name?: string };
+    arguments: unknown[];
+  };
+  scope: { getBinding(name: string): unknown };
+  replaceWith(node: unknown): void;
+};
+
+type BabelProgramPath = {
+  scope: { generateUidIdentifier(name: string): { name: string } };
+  traverse(visitor: { CallExpression(call: BabelImportCallPath): void }): void;
+  unshiftContainer(name: "body", nodes: unknown): void;
+};
+
+function createBunJitiImportCachePlugin(babel: {
+  types: {
+    callExpression(callee: unknown, args: unknown[]): unknown;
+    identifier(name: string): unknown;
+  };
+  template: { statements: { ast(source: string): unknown } };
+}) {
+  return {
+    visitor: {
+      Program: {
+        exit(program: BabelProgramPath) {
+          const calls: BabelImportCallPath[] = [];
+          program.traverse({
+            CallExpression(call) {
+              if (
+                call.node.callee.type === "Identifier" &&
+                call.node.callee.name === "jitiImport" &&
+                !call.scope.getBinding("jitiImport")
+              ) {
+                calls.push(call);
+              }
+            },
+          });
+          if (calls.length === 0) {
+            return;
+          }
+          const cache = program.scope.generateUidIdentifier("openclawJitiImports");
+          const load = program.scope.generateUidIdentifier("openclawJitiImport");
+          for (const call of calls) {
+            call.replaceWith(
+              babel.types.callExpression(babel.types.identifier(load.name), call.node.arguments),
+            );
+          }
+          program.unshiftContainer(
+            "body",
+            babel.template.statements.ast(`
+              var ${cache.name};
+              function ${load.name}(specifier) {
+                let entry = ${cache.name};
+                while (entry) {
+                  if (entry.specifier === specifier) {
+                    return entry.pending;
+                  }
+                  entry = entry.next;
+                }
+                const pending = (async () => {
+                  await 0;
+                  return jitiImport(specifier);
+                })();
+                ${cache.name} = { specifier, pending, next: ${cache.name} };
+                return pending;
+              }
+            `),
+          );
+        },
+      },
+    },
+  };
+}
+
+function preserveBunJitiDynamicImportResults(loader: ReturnType<typeof createJiti>): void {
+  if (!process.versions.bun || typeof loader.options?.transform !== "function") {
+    return;
+  }
+  const transform = loader.options.transform;
+  loader.options.transform = (options) =>
+    transform({
+      ...options,
+      babel: {
+        ...options.babel,
+        plugins: [
+          ...(Array.isArray(options.babel?.plugins) ? options.babel.plugins : []),
+          createBunJitiImportCachePlugin,
+        ],
+      },
+    });
+}
+
 function resolvePluginModuleLoaderCacheEntry(params: ResolvePluginModuleLoaderCacheEntryParams) {
   const loaderFilename = toSafeImportPath(params.loaderFilename ?? params.modulePath);
   const tryNative = params.tryNative ?? resolvePluginLoaderTryNative(params.modulePath, params);
@@ -147,8 +259,10 @@ function createPluginModuleLoader(
         modulePath: params.loaderFilename,
       },
     );
+    const automaticTsconfig = resolveAutomaticJitiTsconfig(params.loaderFilename);
     const jitiLoader = (params.createLoader ?? createJiti)(params.loaderFilename, {
       ...jitiOptions,
+      ...(automaticTsconfig ? { tsconfigPaths: automaticTsconfig } : {}),
       // Source SDK aliases resolve outside node_modules, so Jiti's nativeModules
       // matcher misses them. Keep host state native while plugin source remains
       // transformable and reloadable within its cache generation.
@@ -182,6 +296,7 @@ function createPluginModuleLoader(
         : jitiOptions.nativeModules,
       tryNative: false,
     });
+    preserveBunJitiDynamicImportResults(jitiLoader);
     loadWithSourceTransform = (target) => jitiLoader(toSourceTransformImportPath(target));
     return loadWithSourceTransform;
   };

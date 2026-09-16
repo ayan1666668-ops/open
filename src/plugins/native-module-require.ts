@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import Module, { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -60,9 +61,30 @@ export function supportsNativeModuleAliasHooks(): boolean {
 
 type CapturedModuleBinding = {
   resolve: (request: string, parent: string, resolve: () => string) => string | undefined;
-  prepare: (request: string, parent: string) => string | undefined;
+  prepare: (request: string, parent: string, kind?: BunPluginImportKind) => string | undefined;
+  load?: (request: string) => { contents: string; loader: "js" } | undefined;
 };
+type BunPluginImportKind =
+  | "import-statement"
+  | "require-call"
+  | "require-resolve"
+  | "dynamic-import"
+  | "import-rule"
+  | "url-token"
+  | "internal"
+  | "entry-point-run"
+  | "entry-point-build";
 export type BunPluginRuntime = {
+  Transpiler: new (options: {
+    loader: "jsx" | "tsx";
+    tsconfig: {
+      compilerOptions: {
+        jsx: "react";
+        jsxFactory: string;
+        jsxFragmentFactory: string;
+      };
+    };
+  }) => { transformSync(source: string): string };
   plugin(options: {
     name: string;
     setup(builder: {
@@ -71,7 +93,12 @@ export type BunPluginRuntime = {
         callback: (args: {
           path: string;
           importer: string;
+          kind?: BunPluginImportKind;
         }) => { path: string; namespace: "file" } | undefined,
+      ): void;
+      onLoad(
+        options: { filter: RegExp; namespace: "file" },
+        callback: (args: { path: string }) => { contents: string; loader: "js" | "jsx" | "tsx" },
       ): void;
     }): void;
   }): void;
@@ -86,9 +113,9 @@ const capturedModuleResolvers = resolveGlobalSingleton(
   }),
 );
 
-function resolveCapturedPluginModule(
-  resolve: (owner: CapturedModuleBinding) => string | undefined,
-): string | undefined {
+function resolveCapturedPluginModule<T>(
+  resolve: (owner: CapturedModuleBinding) => T | undefined,
+): T | undefined {
   if (capturedModuleResolvers.resolving) {
     return undefined;
   }
@@ -114,11 +141,27 @@ export function registerCapturedPluginModuleResolver(binding: CapturedModuleBind
     bun?.plugin({
       name: "openclaw-plugin-source-capture",
       setup(builder) {
-        builder.onResolve({ filter: /.*/, namespace: "file" }, ({ path: request, importer }) => {
-          const target = resolveCapturedPluginModule((owner) => owner.prepare(request, importer));
-          // Package selection stays native; owners redirect only captured physical source paths.
-          return target ? { path: target, namespace: "file" } : undefined;
-        });
+        builder.onResolve(
+          { filter: /.*/, namespace: "file" },
+          ({ path: request, importer, kind }) => {
+            const target = resolveCapturedPluginModule((owner) =>
+              owner.prepare(request, importer, kind),
+            );
+            // Package selection stays native; owners redirect only captured physical source paths.
+            return target ? { path: target, namespace: "file" } : undefined;
+          },
+        );
+        builder.onLoad(
+          {
+            filter: /openclaw-plugin-build-[^/\\]+[/\\].*\.[cm]?[jt]sx$/u,
+            namespace: "file",
+          },
+          ({ path: modulePath }) =>
+            resolveCapturedPluginModule((owner) => owner.load?.(modulePath)) ?? {
+              contents: fs.readFileSync(modulePath, "utf8"),
+              loader: modulePath.toLowerCase().endsWith(".jsx") ? "jsx" : "tsx",
+            },
+        );
       },
     });
     // Older Bun drops createRequire's ESM parent when this private hook is replaced.
@@ -181,7 +224,9 @@ export function tryNativeRequireJavaScriptModule(
   moduleSpecifier: string,
   options: Parameters<typeof tryNativeRequireModule>[1] = {},
 ): { ok: true; moduleExport: unknown } | { ok: false } {
-  if (!isJavaScriptModulePath(toNativeRequirePath(moduleSpecifier))) {
+  const modulePath = toNativeRequirePath(moduleSpecifier);
+  const bunNativeSource = Boolean(process.versions.bun) && isPluginSourceModulePath(modulePath);
+  if (!isJavaScriptModulePath(modulePath) && !bunNativeSource) {
     return { ok: false };
   }
   return tryNativeRequireModule(moduleSpecifier, options);
@@ -211,30 +256,34 @@ export function tryNativeRequireModule(
   ) {
     return { ok: false };
   }
-  let resolvedPath = modulePath;
+  let resolvedPath: string;
   try {
-    const moduleExport = withNativeRequireAliases(options.aliasMap, () => {
-      resolvedPath = require.resolve(modulePath);
-      // Requiring the resolved target could apply a second alias to the same request.
-      return require(modulePath);
-    });
+    resolvedPath = withNativeRequireAliases(options.aliasMap, () => require.resolve(modulePath));
+  } catch (error) {
+    const code = error && typeof error === "object" ? Reflect.get(error, "code") : undefined;
+    if (
+      isSourceTransformFallbackError(error, modulePath) ||
+      (options.fallbackOnMissingDependency === true &&
+        (code === "MODULE_NOT_FOUND" || code === "ERR_MODULE_NOT_FOUND"))
+    ) {
+      return { ok: false };
+    }
+    throw error;
+  }
+  try {
+    // Requiring the resolved target could apply a second alias to the same request.
+    const moduleExport = withNativeRequireAliases(options.aliasMap, () => require(modulePath));
     nativeModuleLoadFailures.delete(resolvedPath);
     return { ok: true, moduleExport };
   } catch (error) {
-    const code =
-      error && typeof error === "object" ? (error as { code?: unknown }).code : undefined;
+    const code = error && typeof error === "object" ? Reflect.get(error, "code") : undefined;
     if (
       nativeModuleLoadFailures.has(resolvedPath) &&
       (code === "ERR_REQUIRE_ESM_RACE_CONDITION" || code === "ERR_INTERNAL_ASSERTION")
     ) {
       throw nativeModuleLoadFailures.get(resolvedPath);
     }
-    if (
-      isSourceTransformFallbackError(error, modulePath) ||
-      options.fallbackOnNativeError ||
-      (options.fallbackOnMissingDependency === true &&
-        (code === "MODULE_NOT_FOUND" || code === "ERR_MODULE_NOT_FOUND"))
-    ) {
+    if (isSourceTransformFallbackError(error, modulePath) || options.fallbackOnNativeError) {
       return { ok: false };
     }
     nativeModuleLoadFailures.set(resolvedPath, error);
