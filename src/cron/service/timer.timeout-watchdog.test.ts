@@ -262,6 +262,65 @@ describe("cron service timer regressions", () => {
     }
   });
 
+  it("keeps a timed one-shot retrying after a watchdog timeout instead of quiet-parking it (#131490)", async () => {
+    vi.useFakeTimers();
+    try {
+      const store = timerRegressionFixtures.makeStorePath();
+      const scheduledAt = Date.parse("2026-02-15T13:00:00.000Z");
+      const cronJob = createIsolatedRegressionJob({
+        id: "timeout-retry-131490",
+        name: "timeout retry regression",
+        scheduledAt,
+        schedule: { kind: "at", at: new Date(scheduledAt).toISOString() },
+        payload: { kind: "agentTurn", message: "work", timeoutSeconds: 1 },
+        state: { nextRunAtMs: scheduledAt },
+      });
+      await saveCronStore(store.storePath, { version: 1, jobs: [cronJob] });
+
+      vi.setSystemTime(scheduledAt);
+      let now = scheduledAt;
+      const started = createDeferred();
+      const state = createCronRegressionState({
+        storePath: store.storePath,
+        nowMs: () => now,
+        runIsolatedAgentJob: vi.fn(
+          async ({
+            abortSignal,
+            onExecutionStarted,
+          }: {
+            abortSignal?: AbortSignal;
+            onExecutionStarted?: () => void;
+          }) => {
+            onExecutionStarted?.();
+            started.resolve();
+            await new Promise<void>((resolve) => {
+              abortSignal?.addEventListener("abort", () => resolve(), { once: true });
+            });
+            now += 5;
+            return { status: "ok" as const, summary: "done" };
+          },
+        ),
+      });
+
+      const timerPromise = onTimer(state);
+      await started.promise;
+      await vi.advanceTimersByTimeAsync(1_200);
+      await timerPromise;
+
+      // A watchdog timeout is not an operator abort: the one-shot must keep
+      // its retry schedule rather than disabling silently with no durable
+      // auto-disable fact or terminal notification (#131490).
+      const job = state.store?.jobs.find((entry) => entry.id === "timeout-retry-131490");
+      expect(job?.state.lastStatus).toBe("error");
+      expect(job?.state.lastError).toContain("timed out");
+      expect(job?.state.autoDisabled).toBeUndefined();
+      expect(job?.enabled).toBe(true);
+      expect(job?.state.nextRunAtMs).toBeGreaterThan(scheduledAt);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("cleans up timed-out isolated runs even when the runner ignores abort", async () => {
     vi.useFakeTimers();
     try {
