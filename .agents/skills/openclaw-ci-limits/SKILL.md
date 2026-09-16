@@ -190,13 +190,19 @@ These are intentionally guarded by `test/scripts/ci-workflow-guards.test.ts`:
 - `ci-gate` always uses `ubuntu-24.04` for its Bash-only result aggregation,
   without checkout or dependency setup. This removes one Blacksmith registration
   from previously eligible runs; hosted assignment can still delay completion.
-  `preflight` uses GitHub-hosted Ubuntu in hybrid mode; its logical planner
-  profile and cache trust stay unchanged. Default Blacksmith preflight routing
-  remains intact. `security-fast` stays hosted outside eligible hybrid first
-  attempts and when the bounded optional hosted plan is admitted. Security hooks use pinned installed packages
+  Trusted automatic hybrid first-attempt `preflight` requests the existing
+  16-class after hosted assignment stalled across three nearby runs while
+  Blacksmith security jobs succeeded. Its logical planner profile, cache trust,
+  and 20-minute deadline stay unchanged. Default Blacksmith preflight keeps the
+  4-class; hybrid retries, manual dispatches, untrusted/noncanonical contexts,
+  and the `github` override retain hosted routing. `security-fast` stays hosted
+  outside eligible hybrid first attempts and when the bounded hosted plan is admitted. Security hooks use pinned installed packages
   and local hook definitions, without remote Git initialization. The `github`
-  outage override remains intact. Budget one control-job registration per eligible
-  Blacksmith run or eligible hybrid first attempt with optional hosted admission closed.
+  outage override remains intact. Budget two control-job registrations per eligible
+  hybrid first attempt when optional hosted admission is closed, one when admitted,
+  and one per normal Blacksmith run. Both jobs already occur
+  in the retained conservative non-Node inventory; this adds one actual admission
+  per eligible hybrid run without increasing the 4,776-registration cap model.
   The aggregate uses `!cancelled()` to report failed prerequisites without
   holding a superseded run open after workflow cancellation.
 - Automatic canonical hybrid first attempts count every selected hosted row in
