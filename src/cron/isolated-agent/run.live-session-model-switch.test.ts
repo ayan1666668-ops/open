@@ -139,8 +139,10 @@ describe("runCronIsolatedAgentTurn — LiveSessionModelSwitchError retry (#57206
 
   it("retries with the requested model when runWithModelFallback throws LiveSessionModelSwitchError on the first attempt", async () => {
     const switchError = new LiveSessionModelSwitchError({
-      provider: "anthropic",
-      model: "claude-sonnet-4-6",
+      selection: {
+        model: { provider: "anthropic", id: "claude-sonnet-4-6" },
+        executor: { kind: "harness", id: "openclaw" },
+      },
     });
 
     let callCount = 0;
@@ -172,8 +174,10 @@ describe("runCronIsolatedAgentTurn — LiveSessionModelSwitchError retry (#57206
     });
     resolveCronSessionMock.mockReturnValue(cronSession);
     const switchError = new LiveSessionModelSwitchError({
-      provider: "anthropic",
-      model: "claude-sonnet-4-6",
+      selection: {
+        model: { provider: "anthropic", id: "claude-sonnet-4-6" },
+        executor: { kind: "harness", id: "openclaw" },
+      },
     });
 
     runWithModelFallbackMock.mockImplementation(async () => {
@@ -288,8 +292,10 @@ describe("runCronIsolatedAgentTurn — LiveSessionModelSwitchError retry (#57206
           content: "run task",
         });
         throw new LiveSessionModelSwitchError({
-          provider: "anthropic",
-          model: "claude-sonnet-4-6",
+          selection: {
+            model: { provider: "anthropic", id: "claude-sonnet-4-6" },
+            executor: { kind: "harness", id: "openclaw" },
+          },
           authProfileId: "profile-b",
           authProfileIdSource: "user",
         });
@@ -359,9 +365,10 @@ describe("runCronIsolatedAgentTurn — LiveSessionModelSwitchError retry (#57206
     runEmbeddedAgentMock
       .mockRejectedValueOnce(
         new LiveSessionModelSwitchError({
-          provider: "openai",
-          model: "gpt-5.6-luna",
-          agentRuntimeOverride: "codex",
+          selection: {
+            model: { provider: "openai", id: "gpt-5.6-luna" },
+            executor: { kind: "harness", id: "codex" },
+          },
         }),
       )
       .mockResolvedValueOnce({
@@ -402,8 +409,10 @@ describe("runCronIsolatedAgentTurn — LiveSessionModelSwitchError retry (#57206
     // surface an error from within the model fallback path, but we simulate
     // a different error on the second attempt to ensure the outer catch still works.
     const switchError = new LiveSessionModelSwitchError({
-      provider: "anthropic",
-      model: "claude-sonnet-4-6",
+      selection: {
+        model: { provider: "anthropic", id: "claude-sonnet-4-6" },
+        executor: { kind: "harness", id: "openclaw" },
+      },
     });
 
     let callCount = 0;
@@ -426,8 +435,10 @@ describe("runCronIsolatedAgentTurn — LiveSessionModelSwitchError retry (#57206
 
   it("aborts after exceeding LiveSessionModelSwitchError retry limit (#58466)", async () => {
     const switchError = new LiveSessionModelSwitchError({
-      provider: "anthropic",
-      model: "claude-sonnet-4-6",
+      selection: {
+        model: { provider: "anthropic", id: "claude-sonnet-4-6" },
+        executor: { kind: "harness", id: "openclaw" },
+      },
     });
 
     let callCount = 0;

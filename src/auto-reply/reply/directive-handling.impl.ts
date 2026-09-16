@@ -50,7 +50,7 @@ import {
   formatInternalExecPersistenceDeniedText,
   formatInternalVerboseCurrentReplyOnlyText,
   formatInternalVerbosePersistenceDeniedText,
-  formatModelSelectionScopeAck,
+  formatConfiguredDefaultSelectionAck,
   enqueueModeSwitchEvents,
   persistSessionDirectiveSnapshot,
   rejectSessionDirectiveTransaction,
@@ -205,7 +205,7 @@ export async function handleDirectiveOnly(
         profileProvider: profileOverride ? resolvedProvider : undefined,
         modelCatalog: thinkingCatalog ?? [],
         request:
-          runtimeRequest.kind === "clear"
+          modelSelection.resetToDefault || runtimeRequest.kind === "clear"
             ? { kind: "reset" }
             : {
                 kind: "model",
@@ -706,6 +706,11 @@ export async function handleDirectiveOnly(
     const labelWithAlias = modelSelection.alias ? `${modelSelection.alias} (${label})` : label;
     if (preparedModel) {
       parts.push(preparedModel.message);
+      const defaultAck = formatConfiguredDefaultSelectionAck({
+        configuredDefaultUpdate,
+        stickyModelSelectionTarget: params.stickyModelSelectionTarget,
+      });
+      if (defaultAck) parts.push(defaultAck);
     }
     if (profileOverride) {
       parts.push("Selected account updated.");

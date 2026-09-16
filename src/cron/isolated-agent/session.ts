@@ -77,7 +77,7 @@ function preserveExecutionSelection(
 ): void {
   const selection = getSessionExecutionSelection(entry, cfg);
   if (selection) {
-    commitSessionExecutionSelection(target, selection);
+    commitSessionExecutionSelection(target, selection, { cfg, cause: { kind: "inherit", entry } });
   }
 }
 

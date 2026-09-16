@@ -1,15 +1,13 @@
 /** Builds embedded-agent run parameters from queued follow-up run state. */
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
-import {
-  modelFallbackOverrideFromAvailability,
-  resolveModelFallbackAvailability,
-} from "../../agents/agent-scope.js";
+import { modelFallbackOverrideFromAvailability } from "../../agents/agent-scope.js";
 import { findModelInCatalog, modelSupportsInput } from "../../agents/model-catalog-lookup.js";
 import { modelTransportRoutesMatch } from "../../agents/model-compat-catalog.js";
 import {
   findConfiguredProviderModel,
   resolveMergedModelProviderConfig,
 } from "../../config/model-provider-config.js";
+import { resolveSessionExecutionFallbacks } from "../../model-picker/apply-session-model-selection.js";
 import type { resolveProviderScopedAuthProfile } from "./agent-runner-auth-profile.js";
 import type { FollowupRun } from "./queue.js";
 
@@ -29,21 +27,18 @@ export function resolveModelFallbackOptions(
   configOverride: FollowupRun["run"]["config"] = run.config,
 ) {
   const config = configOverride;
-  const modelFallbackAvailability = resolveModelFallbackAvailability({
+  const modelFallbackAvailability = resolveSessionExecutionFallbacks({
     cfg: config,
     agentId: run.agentId,
     sessionKey: run.sessionKey,
-    hasSessionModelOverride: run.hasSessionModelOverride === true,
-    modelOverrideSource: run.modelOverrideSource,
-    hasAutoFallbackProvenance: run.hasAutoFallbackProvenance === true,
-    modelSelectionLocked: run.modelSelectionLocked,
+    selection: run.executionSelection,
     subagentSpawnLineage: run.subagentSpawnLineage,
   });
   return {
     cfg: config,
-    provider: run.provider,
-    model: run.model,
-    requestedRouteResolution: run.requestedRouteResolution,
+    provider: run.executionSelection.model.provider,
+    model: run.executionSelection.model.id,
+    requestedRouteResolution: "resolved",
     agentDir: run.agentDir,
     agentId: run.agentId,
     sessionKey: run.runtimePolicySessionKey ?? run.sessionKey,
@@ -122,14 +117,11 @@ export async function buildEmbeddedRunBaseParams(params: {
   isReasoningTagProvider?: ReasoningTagProviderResolver;
 }) {
   const config = params.run.config;
-  const modelFallbackAvailability = resolveModelFallbackAvailability({
+  const modelFallbackAvailability = resolveSessionExecutionFallbacks({
     cfg: config,
     agentId: params.run.agentId,
     sessionKey: params.run.sessionKey,
-    hasSessionModelOverride: params.run.hasSessionModelOverride === true,
-    modelOverrideSource: params.run.modelOverrideSource,
-    hasAutoFallbackProvenance: params.run.hasAutoFallbackProvenance === true,
-    modelSelectionLocked: params.run.modelSelectionLocked,
+    selection: params.run.executionSelection,
     subagentSpawnLineage: params.run.subagentSpawnLineage,
   });
   const modelFallbacksOverride = modelFallbackOverrideFromAvailability(modelFallbackAvailability);

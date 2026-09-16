@@ -16,7 +16,7 @@ export function resolveResetPreservedSelection(params: {
   const preserved: Partial<SessionEntry> = {};
   const selection = getSessionExecutionSelection(entry);
   if (selection && selection.executor.kind !== "acp") {
-    commitSessionExecutionSelection(preserved, selection);
+    commitSessionExecutionSelection(preserved, selection, { cause: { kind: "inherit", entry } });
   }
 
   const authProfileOverrideSource = resolveSessionAuthProfileOverrideSource(entry);

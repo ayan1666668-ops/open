@@ -269,7 +269,10 @@ export async function createModelSelectionState(params: {
     if (!acceptedSelection && !turnLocalSelection && sessionEntry && sessionStore && sessionKey) {
       const initialEntry = { ...sessionEntry };
       const nextEntry = { ...sessionEntry };
-      commitSessionExecutionSelection(nextEntry, executionSelection, { cfg });
+      commitSessionExecutionSelection(nextEntry, executionSelection, {
+        cfg,
+        cause: { kind: "initialize" },
+      });
       if (storePath) {
         const { persistReplySessionEntry } = await loadSessionPersistenceRuntime();
         const persistence = await persistReplySessionEntry({

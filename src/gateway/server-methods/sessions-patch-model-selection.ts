@@ -29,7 +29,8 @@ export function persistSessionPatchModelSelection(params: {
   sessionKey: string;
   targetAgentId: string;
 }): void {
-  if (typeof params.patch.model !== "string") {
+  const selection = getSessionExecutionSelection(params.entry, params.cfg);
+  if (typeof params.patch.model !== "string" || (selection && isAcpExecutionSelection(selection))) {
     return;
   }
   const policy = resolveGatewayModelSelectionPolicy({

@@ -2783,8 +2783,10 @@ describe("runWithModelFallback", () => {
   it("treats LiveSessionModelSwitchError as failover on last candidate (#58496 family)", async () => {
     const cfg = makeCfg();
     const switchError = new LiveSessionModelSwitchError({
-      provider: "anthropic",
-      model: "claude-sonnet-4-6",
+      selection: {
+        model: { provider: "anthropic", id: "claude-sonnet-4-6" },
+        executor: { kind: "harness", id: "openclaw" },
+      },
     });
     const run = vi.fn().mockRejectedValue(switchError);
 
@@ -2809,8 +2811,10 @@ describe("runWithModelFallback", () => {
 
   it("returns an unconfigured live switch target to the retry owner (#101676)", async () => {
     const switchError = new LiveSessionModelSwitchError({
-      provider: "anthropic",
-      model: "claude-sonnet-4-6",
+      selection: {
+        model: { provider: "anthropic", id: "claude-sonnet-4-6" },
+        executor: { kind: "harness", id: "openclaw" },
+      },
     });
     const run = vi.fn().mockRejectedValue(switchError);
 
@@ -2832,8 +2836,10 @@ describe("runWithModelFallback", () => {
       "deepseek/deepseek-chat",
     ]);
     const switchError = new LiveSessionModelSwitchError({
-      provider: "openai",
-      model: "gpt-4.1-mini",
+      selection: {
+        model: { provider: "openai", id: "gpt-4.1-mini" },
+        executor: { kind: "harness", id: "openclaw" },
+      },
     });
     const run = vi
       .fn()
@@ -2866,8 +2872,10 @@ describe("runWithModelFallback", () => {
       "openrouter/deepseek-chat",
     ]);
     const switchError = new LiveSessionModelSwitchError({
-      provider: "anthropic",
-      model: "claude-sonnet-4-6",
+      selection: {
+        model: { provider: "anthropic", id: "claude-sonnet-4-6" },
+        executor: { kind: "harness", id: "openclaw" },
+      },
     });
     const run = vi.fn(async (provider: string, model: string) => {
       if (provider === "openai" && model === "gpt-4.1-mini") {
@@ -2902,9 +2910,10 @@ describe("runWithModelFallback", () => {
   it("returns runtime-changing live switches to the retry owner before redirecting", async () => {
     const cfg = createModelFallbackConfig("anthropic/claude-haiku-3-5", ["openai/gpt-5.6-luna"]);
     const switchError = new LiveSessionModelSwitchError({
-      provider: "openai",
-      model: "gpt-5.6-luna",
-      agentRuntimeOverride: "codex",
+      selection: {
+        model: { provider: "openai", id: "gpt-5.6-luna" },
+        executor: { kind: "harness", id: "codex" },
+      },
     });
     const run = vi.fn().mockRejectedValue(switchError);
 
@@ -2923,9 +2932,10 @@ describe("runWithModelFallback", () => {
 
   it("returns same-model runtime switches to the retry owner", async () => {
     const switchError = new LiveSessionModelSwitchError({
-      provider: "openai",
-      model: "gpt-4.1-mini",
-      agentRuntimeOverride: "codex",
+      selection: {
+        model: { provider: "openai", id: "gpt-4.1-mini" },
+        executor: { kind: "harness", id: "codex" },
+      },
     });
     const run = vi.fn().mockRejectedValue(switchError);
 
@@ -2945,8 +2955,10 @@ describe("runWithModelFallback", () => {
   it("does not redirect stale live-session switch errors back to the current candidate (#58496 family)", async () => {
     const cfg = makeCfg();
     const switchError = new LiveSessionModelSwitchError({
-      provider: "openai",
-      model: "gpt-4.1-mini",
+      selection: {
+        model: { provider: "openai", id: "gpt-4.1-mini" },
+        executor: { kind: "harness", id: "openclaw" },
+      },
     });
     const run = vi.fn().mockRejectedValueOnce(switchError).mockResolvedValueOnce("ok");
 

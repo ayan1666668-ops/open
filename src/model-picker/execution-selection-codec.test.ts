@@ -8,6 +8,8 @@ import {
 import type { SessionAcpMeta, SessionEntry } from "../config/sessions/types.js";
 import {
   decodeSessionExecutionSelection,
+  admitSessionExecutionFallback,
+  admitSessionExecutionFallbacks,
   encodeAcpExecutionSelection,
   encodeSessionExecutionSelection,
   readAcpExecutionSelection,
@@ -40,7 +42,7 @@ function acpMeta(): SessionAcpMeta {
 }
 
 describe("session-store execution selection codec", () => {
-  it("round-trips an exact accepted pair through the session store without provenance or account loss", async () => {
+  it("round-trips an exact accepted pair through the session store without fallback provenance or account loss", async () => {
     const scope = {
       storePath: path.join(tempDirs.make("execution-codec-"), "sessions.json"),
       sessionKey: "agent:main:codec",
@@ -54,7 +56,7 @@ describe("session-store execution selection codec", () => {
       agentHarnessId: "qa-observed-executor",
       model: "qa-observed-model",
     });
-    encodeSessionExecutionSelection(selected, pair);
+    encodeSessionExecutionSelection(selected, pair, { kind: "user" });
     await replaceSessionEntry(scope, selected);
     const loaded = loadSessionEntryReadOnly(scope);
     expect(decodeSessionExecutionSelection(loaded, metadata)).toEqual({
@@ -68,7 +70,7 @@ describe("session-store execution selection codec", () => {
       model: "qa-observed-model",
       modelOverrideRouteResolution: "resolved",
     });
-    expect(loaded).not.toHaveProperty("modelOverrideSource");
+    expect(loaded?.modelOverrideSource).toBe("user");
     expect(loaded).not.toHaveProperty("modelOverrideFallbackOriginModel");
     expect(loaded).not.toHaveProperty("modelOverrideFallbackOriginProvider");
   });
@@ -120,7 +122,7 @@ describe("session-store execution selection codec", () => {
     ).toEqual({ kind: "uninitialized" });
     const selected = entry();
     const cliPair: ModelExecutionSelection = { ...pair, executor: { kind: "cli", id: "qa-cli" } };
-    encodeSessionExecutionSelection(selected, cliPair);
+    encodeSessionExecutionSelection(selected, cliPair, { kind: "user" });
     expect(decodeSessionExecutionSelection(selected, metadata)).toEqual({
       kind: "initialized",
       selection: cliPair,
@@ -150,9 +152,91 @@ describe("session-store execution selection codec", () => {
   it("requires ACP lifecycle settlement before an ordinary pair can replace it", () => {
     const original = entry({ acp: acpMeta() });
     const snapshot = structuredClone(original);
-    expect(() => encodeSessionExecutionSelection(original, pair)).toThrow(
+    expect(() => encodeSessionExecutionSelection(original, pair, { kind: "user" })).toThrow(
       "ACP lifecycle must settle",
     );
     expect(original).toEqual(snapshot);
+  });
+  it.each(["initialize", "reset"] as const)(
+    "keeps configured fallback permission after %s and inheritance",
+    (kind) => {
+      const selected = entry();
+      encodeSessionExecutionSelection(selected, pair, { kind });
+      expect(decodeSessionExecutionSelection(selected, metadata)).toEqual({
+        kind: "initialized",
+        selection: pair,
+      });
+      const inherited = entry();
+      encodeSessionExecutionSelection(inherited, pair, { kind: "inherit", entry: selected });
+      const candidate: ModelExecutionSelection = {
+        ...pair,
+        model: { provider: "qa-other", id: "qa-fallback" },
+      };
+      expect(admitSessionExecutionFallback({ entry: inherited, candidate, metadata })).toEqual({
+        status: "admitted",
+        selection: candidate,
+      });
+    },
+  );
+
+  it.each(["user", "legacy"] as const)(
+    "retains %s pin fallback protection through initialization and inheritance",
+    (source) => {
+      const selected = entry({
+        providerOverride: pair.model.provider,
+        modelOverride: pair.model.id,
+        modelOverrideRouteResolution: "resolved",
+        ...(source === "user" ? { modelOverrideSource: "user" } : {}),
+      });
+      encodeSessionExecutionSelection(selected, pair, { kind: "initialize" });
+      const inherited = entry();
+      encodeSessionExecutionSelection(inherited, pair, { kind: "inherit", entry: selected });
+      const candidate: ModelExecutionSelection = {
+        ...pair,
+        model: { provider: "qa-other", id: "qa-fallback" },
+      };
+      expect(admitSessionExecutionFallback({ entry: inherited, candidate, metadata })).toEqual({
+        status: "rejected",
+        reason: "user-model-selection",
+      });
+      expect(
+        admitSessionExecutionFallback({
+          entry: inherited,
+          candidate,
+          metadata,
+          explicitModels: [candidate.model],
+        }),
+      ).toEqual({ status: "admitted", selection: candidate });
+      expect(
+        admitSessionExecutionFallback({
+          entry: { ...inherited, modelSelectionLocked: true },
+          candidate,
+          metadata,
+          explicitModels: [candidate.model],
+        }),
+      ).toEqual({ status: "rejected", reason: "model-selection-locked" });
+    },
+  );
+  it("keeps a strict primary runnable without authorizing an empty or same-primary fallback plan", () => {
+    const selected = entry();
+    encodeSessionExecutionSelection(selected, pair, { kind: "user" });
+    expect(admitSessionExecutionFallback({ entry: selected, candidate: pair, metadata })).toEqual({
+      status: "admitted",
+      selection: pair,
+    });
+    for (const candidates of [[], [pair]]) {
+      expect(admitSessionExecutionFallbacks({ entry: selected, candidates, metadata })).toEqual({
+        status: "rejected",
+        reason: "user-model-selection",
+      });
+    }
+    expect(
+      admitSessionExecutionFallbacks({
+        entry: selected,
+        candidates: [],
+        metadata,
+        explicitModels: [],
+      }),
+    ).toEqual({ status: "admitted", selections: [] });
   });
 });

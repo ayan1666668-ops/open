@@ -18,7 +18,6 @@ import {
 
 // Binding lifecycle keeps configured channel conversations attached to matching ACP sessions.
 function sessionStructurallyMatchesConfiguredBinding(params: {
-  cfg: OpenClawConfig;
   spec: ConfiguredAcpBindingSpec;
   meta: SessionAcpMeta;
 }): boolean {
@@ -40,8 +39,7 @@ function sessionStructurallyMatchesConfiguredBinding(params: {
     return false;
   }
 
-  const desiredBackend =
-    normalizeText(params.spec.backend) ?? normalizeText(params.cfg.acp?.backend) ?? "";
+  const desiredBackend = normalizeText(params.spec.backend);
   if (desiredBackend) {
     const currentBackend = requireAcpExecutionSelection(params.meta).executor.backend;
     if (!currentBackend || currentBackend !== desiredBackend) {
@@ -82,7 +80,6 @@ export async function ensureConfiguredAcpBindingSession(params: {
     if (
       resolution.kind === "ready" &&
       sessionStructurallyMatchesConfiguredBinding({
-        cfg: params.cfg,
         spec: params.spec,
         meta: resolution.meta,
       })

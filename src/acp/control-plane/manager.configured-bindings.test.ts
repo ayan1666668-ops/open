@@ -104,6 +104,14 @@ describe("AcpSessionManager configured bindings", () => {
         runtimeState.setConfigOption.mock.calls.map(([input]) => [input.key, input.value]),
       ).toEqual([]);
       expect(currentMeta?.runtimeOptions).toEqual({ thinking: "high" });
+      expect(
+        await ensureConfiguredAcpBindingSession({
+          cfg: { ...baseCfg, acp: { ...baseCfg.acp, backend: "qa-other-default" } },
+          spec: { ...spec, thinking: "high" },
+        }),
+      ).toEqual({ ok: true, sessionKey });
+      expect(runtimeState.ensureSession).toHaveBeenCalledOnce();
+      expect(runtimeState.close).not.toHaveBeenCalled();
     } finally {
       getManager.mockRestore();
     }

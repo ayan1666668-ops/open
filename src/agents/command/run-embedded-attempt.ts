@@ -5,6 +5,7 @@ import { createSubsystemLogger } from "../../logging/subsystem.js";
 import {
   commitSessionExecutionSelection,
   prepareSessionExecutionSelection,
+  resolveSessionExecutionFallbacks,
 } from "../../model-picker/apply-session-model-selection.js";
 import { isAcpExecutionSelection } from "../../model-picker/execution-selection.js";
 import {
@@ -19,7 +20,6 @@ import {
 } from "../../tasks/task-status-access.js";
 import { createTrajectoryRuntimeRecorder } from "../../trajectory/runtime.js";
 import { resolveMessageChannel } from "../../utils/message-channel.js";
-import { resolveEffectiveModelFallbacks } from "../agent-scope.js";
 import { isHeartbeatLifecycleRunKind } from "../bootstrap-mode.js";
 import {
   runEmbeddedAgentEntry,
@@ -238,16 +238,17 @@ export async function runEmbeddedAgentAttempt(params: RunEmbeddedAgentAttemptPar
         ? getGeneratedMediaTaskIdsForSessionKey(sessionKey)
         : new Set<string>();
       const spawnedBy = normalizedSpawned.spawnedBy ?? sessionEntry?.spawnedBy;
-      const effectiveFallbacksOverride = isModelSelectionLocked(sessionEntry)
-        ? []
-        : (params.opts.modelFallbacksOverride ??
-          resolveEffectiveModelFallbacks({
-            cfg,
-            agentId: sessionAgentId,
-            sessionKey,
-            selection: executionSelection,
-            subagentSpawnLineage: (sessionEntry?.spawnDepth ?? 0) > 0,
-          }));
+      const fallbackAvailability = resolveSessionExecutionFallbacks({
+        cfg,
+        agentId: sessionAgentId,
+        sessionKey,
+        sessionEntry,
+        selection: executionSelection,
+        modelFallbacksOverride: params.opts.modelFallbacksOverride,
+        subagentSpawnLineage: (sessionEntry?.spawnDepth ?? 0) > 0,
+      });
+      const effectiveFallbacksOverride =
+        fallbackAvailability.kind === "active" ? fallbackAvailability.models : [];
 
       const fallbackRuntimeState: { originRuntime?: "cli" | "embedded" } = {};
       attemptLifecycleState.currentTurnUserMessagePersisted = false;
@@ -281,17 +282,18 @@ export async function runEmbeddedAgentAttempt(params: RunEmbeddedAgentAttemptPar
           sessionKey,
           preparation: { kind: "direct" },
           prepareExecutionSelection: async (candidateProvider, candidateModel) => {
-            const turnEntry = {
-              ...(sessionEntryForAttempt ?? { sessionId, updatedAt: Date.now() }),
-            };
-            commitSessionExecutionSelection(turnEntry, executionSelection, { cfg });
             const prepared = await prepareSessionExecutionSelection({
               cfg,
               agentId: sessionAgentId,
-              sessionEntry: turnEntry,
+              sessionKey,
+              sessionEntry: sessionEntryForAttempt,
               request: {
-                kind: "model",
-                model: { provider: candidateProvider, id: candidateModel },
+                kind: "fallback",
+                selection: {
+                  model: { provider: candidateProvider, id: candidateModel },
+                  executor: executionSelection.executor,
+                },
+                explicitModels: params.opts.modelFallbacksOverride,
               },
             });
             if (prepared.status !== "ready") {

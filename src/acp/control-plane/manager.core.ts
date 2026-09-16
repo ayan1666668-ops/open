@@ -261,10 +261,11 @@ export class AcpSessionManager {
     sessionKey: string;
     agentId?: string;
     selection: AcpExecutionSelection;
-    commit?: (accepted: AcpExecutionSelection) => Promise<void>;
+    assertActive?: () => void;
   }): Promise<AcpExecutionSelection> {
     const target = resolveAcpSessionTarget(params);
     return await this.withSessionActor(target, async () => {
+      params.assertActive?.();
       const current = requireAcpExecutionSelection(
         requireReadySessionMeta(this.resolveSession({ ...params, ...target })),
       );
@@ -278,7 +279,7 @@ export class AcpSessionManager {
         );
       }
       if (current.model?.id === params.selection.model?.id) {
-        await params.commit?.(current);
+        params.assertActive?.();
         return current;
       }
       if (!params.selection.model) {
@@ -292,7 +293,7 @@ export class AcpSessionManager {
         ...target,
         key: "model",
         value: params.selection.model.id,
-        commitSelection: params.commit,
+        assertActive: params.assertActive,
         ...this.runtimeOptionCommandServices(),
       });
       return requireAcpExecutionSelection(

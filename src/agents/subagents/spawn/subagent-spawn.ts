@@ -186,6 +186,7 @@ export async function spawnSubagentDirect(
       inheritedToolAllowlist: ctx.inheritedToolAllowlist,
       inheritedToolDenylist: ctx.inheritedToolDenylist,
       modelPatch: plan.initialSessionPatch,
+      executionRequest: plan.executionRequest,
       swarmGroupId,
       collect: params.collect === true,
       outputSchema: params.outputSchema,

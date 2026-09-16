@@ -72,7 +72,9 @@ export function inheritSessionSelection(
   const selection = getSessionExecutionSelection(parentEntry);
   const inherited: Partial<InternalSessionEntry> = {};
   if (selection && selection.executor.kind !== "acp") {
-    commitSessionExecutionSelection(inherited, selection);
+    commitSessionExecutionSelection(inherited, selection, {
+      cause: { kind: "inherit", entry: parentEntry },
+    });
   }
   const inheritAuthProfile =
     !(decoded.kind === "uninitialized" && decoded.discardAutomaticAuth) ||

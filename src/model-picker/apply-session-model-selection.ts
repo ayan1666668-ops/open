@@ -31,8 +31,9 @@ import type { InternalSessionEntry as SessionEntry } from "../config/sessions/ty
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { triggerSessionPatchHook } from "../gateway/session-patch-hooks.js";
 import { resolveSessionWorkerPlacementContext } from "../gateway/session-worker-placement-context.js";
-import { resolveWorkerPlacementSessionRuntimeCapabilities } from "../gateway/worker-environments/placement-session-runtime.js";
+import { resolveWorkerPlacementCapabilities } from "../gateway/worker-environments/placement-capabilities.js";
 import { enqueueSystemEvent } from "../infra/system-events.js";
+import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
 import { getPluginRegistryForContext } from "../plugins/runtime/gateway-request-scope.js";
 import { shouldPreserveSessionAuthProfileOverride } from "../sessions/auth-profile-preservation.js";
 import {
@@ -43,6 +44,7 @@ import { emitSessionLifecycleEvent } from "../sessions/session-lifecycle-events.
 import {
   encodeAcpExecutionSelection,
   encodeSessionExecutionSelection,
+  type ExecutionSelectionCommitCause,
 } from "./execution-selection-codec.js";
 import { decodeSessionExecutionSelection } from "./execution-selection-codec.js";
 import { getSessionExecutionSelection } from "./execution-selection-state.js";
@@ -58,11 +60,15 @@ import {
 export function commitSessionExecutionSelection(
   entry: Partial<SessionEntry>,
   selection: ExecutionSelection,
-  options: { cfg?: OpenClawConfig; markLiveSwitchPending?: boolean } = {},
+  options: {
+    cfg?: OpenClawConfig;
+    markLiveSwitchPending?: boolean;
+    cause?: ExecutionSelectionCommitCause;
+  } = {},
 ): { changed: boolean } {
   const before = getSessionExecutionSelection(entry, options.cfg);
   const changed = !isDeepStrictEqual(before, selection);
-  encodeSessionExecutionSelection(entry, selection);
+  encodeSessionExecutionSelection(entry, selection, options.cause ?? { kind: "user" });
   if (changed) {
     delete entry.contextTokens;
     delete entry.contextTokensSource;
@@ -90,6 +96,8 @@ export function commitSessionModelSelectionWithAuth(params: {
   selection: ModelExecutionSelection;
   profileOverride?: string;
   markLiveSwitchPending?: boolean;
+  metadataSnapshot?: Pick<PluginMetadataSnapshot, "plugins">;
+  cause?: ExecutionSelectionCommitCause;
 }): { changed: boolean } {
   const preserve =
     !params.profileOverride &&
@@ -98,11 +106,13 @@ export function commitSessionModelSelectionWithAuth(params: {
         config: params.cfg,
         provider: params.selection.model.provider,
         modelId: params.selection.model.id,
+        metadataSnapshot: params.metadataSnapshot,
       }),
       agentDir: resolveAgentDir(params.cfg, params.agentId),
       entry: params.entry,
       currentProvider: params.currentProvider,
       provider: params.selection.model.provider,
+      metadataSnapshot: params.metadataSnapshot,
     });
   const profile =
     params.profileOverride ?? (preserve ? params.entry.authProfileOverride : undefined);
@@ -129,6 +139,9 @@ export function commitSessionModelSelectionWithAuth(params: {
   if (authChanged && params.markLiveSwitchPending) {
     params.entry.liveModelSwitchPending = true;
   }
+  if (applied.changed || authChanged) {
+    delete params.entry.fallbackNotice;
+  }
   return { changed: applied.changed || authChanged };
 }
 
@@ -139,7 +152,7 @@ export type ExecutionSelectionRequest =
       executor?: ModelExecutionSelection["executor"];
     }
   | { kind: "selection"; selection: ExecutionSelection }
-  | { kind: "initialize" }
+  | { kind: "initialize"; model?: ModelExecutionSelection["model"] }
   | { kind: "reset" };
 
 export type PreparedSessionExecutionSelection =
@@ -221,7 +234,9 @@ export async function prepareSessionExecutionSelection(params: {
     chooseConfigured(
       decoded.kind === "uninitialized" && decoded.model
         ? { provider: decoded.model.provider ?? configured.provider, id: decoded.model.id }
-        : { provider: configured.provider, id: configured.model },
+        : params.request.kind === "initialize" && params.request.model
+          ? params.request.model
+          : { provider: configured.provider, id: configured.model },
     );
   let selection: ExecutionSelection | undefined;
   let reason: Extract<PreparedSessionExecutionSelection, { status: "ready" }>["reason"];
@@ -258,6 +273,15 @@ export async function prepareSessionExecutionSelection(params: {
   }
   if (params.sessionEntry?.modelSelectionLocked && !isDeepStrictEqual(before, selection)) {
     return { status: "rejected", reason: "locked", message: MODEL_SELECTION_LOCKED_MESSAGE };
+  }
+  const validatePlacement = (candidate: ExecutionSelection) =>
+    resolveActivePlacementModelSelectionError({
+      sessionId: params.sessionEntry?.sessionId,
+      selection: candidate,
+    });
+  const placementError = validatePlacement(selection);
+  if (placementError) {
+    return { status: "rejected", reason: "not-allowed", message: placementError };
   }
   if (isAcpExecutionSelection(selection)) {
     if (!params.prepareAcp) {
@@ -328,7 +352,7 @@ export async function prepareSessionExecutionSelection(params: {
         message: `Could not change models. Sign in to ${labels.app}, then try again.`,
       };
     }
-    const message =
+    let message =
       reason === "reset"
         ? `Using the configured default: ${labels.model} in ${labels.app}.`
         : reason === "unsupported" && initial
@@ -336,21 +360,34 @@ export async function prepareSessionExecutionSelection(params: {
           : reason === "model" || reason === "initialized"
             ? `Model changed to ${labels.model}. Still using ${labels.app}.`
             : `Now using ${labels.model} in ${labels.app}.`;
+    if (evaluation.kind === "unavailable") {
+      message += ` Sign in to ${labels.app}, then try again.`;
+    }
+    const accepted = selection;
+    const validateCommit = () =>
+      (evaluation.kind === "ready" ? evaluation.validate() : undefined) ??
+      validatePlacement(accepted);
+    const commitError = validateCommit();
+    if (commitError) {
+      return { status: "rejected", reason: "not-allowed", message: commitError };
+    }
     return {
       status: "ready",
       selection,
       before,
       reason,
       message,
-      validateCommit: evaluation.kind === "ready" ? evaluation.validate : undefined,
+      validateCommit,
     };
   }
+  const accepted = selection;
   const labels = selectionDisplayNames(selection, catalog);
   return {
     status: "ready",
     selection,
     before,
     reason,
+    validateCommit: () => validatePlacement(accepted),
     message:
       reason === "reset"
         ? `Using the configured default: ${labels.model} in ${labels.app}.`
@@ -440,12 +477,10 @@ function rejectNotAllowed(provider: string, model: string): ApplySessionModelSel
  * model changes are validated before they persist.
  */
 function resolveActivePlacementModelSelectionError(params: {
-  cfg: OpenClawConfig;
-  agentId: string;
-  sessionKey: string;
-  entry: SessionEntry;
+  sessionId?: string;
+  selection: ExecutionSelection;
 }): string | undefined {
-  const sessionId = params.entry.sessionId;
+  const sessionId = params.sessionId;
   if (!sessionId) {
     return undefined;
   }
@@ -454,12 +489,10 @@ function resolveActivePlacementModelSelectionError(params: {
   if (!placement || placement.state === "local") {
     return undefined;
   }
-  const { executionMode } = resolveWorkerPlacementSessionRuntimeCapabilities({
-    cfg: params.cfg,
-    entry: params.entry,
-    agentId: params.agentId,
-    sessionKey: params.sessionKey,
-  });
+  const executor = params.selection.executor;
+  const { executionMode } = resolveWorkerPlacementCapabilities(
+    executor.kind === "acp" ? executor.backend : executor.id,
+  );
   if (executionMode === placement.executionMode) {
     return undefined;
   }
@@ -625,29 +658,13 @@ export async function applySessionModelSelection(
       };
     }
   }
-  const placementError = resolveActivePlacementModelSelectionError({
-    cfg: params.cfg,
-    agentId: params.agentId,
-    sessionKey: params.sessionKey,
-    entry: nextEntry,
-  });
-  if (placementError) {
-    return { status: "rejected", reason: "invalid-runtime", message: placementError };
-  }
   // An explicit selection retains the existing persistence and conflict semantics even when idempotent.
   nextEntry.updatedAt = Date.now();
   let persistedEntry: SessionEntry;
   // The pre-persistence read above can be overtaken by placement activation before the
   // durable write commits. Revalidate placement inside the synchronous commit boundary so an
   // override that became incompatible during that window is rejected without mutating state.
-  const validateCommit = () =>
-    validateSelection() ??
-    resolveActivePlacementModelSelectionError({
-      cfg: params.cfg,
-      agentId: params.agentId,
-      sessionKey: params.sessionKey,
-      entry: nextEntry,
-    });
+  const validateCommit = validateSelection;
   if (params.storePath) {
     const persistence = await persistReplySessionEntry({
       storePath: params.storePath,

@@ -5,6 +5,7 @@ import type { SessionEntry } from "../../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import {
   commitSessionExecutionSelection,
+  type ExecutionSelectionRequest,
   prepareSessionExecutionSelection,
 } from "../../../model-picker/apply-session-model-selection.js";
 import { resolveIncognitoOpenClawAgentSqlitePath } from "../../../state/openclaw-agent-db.js";
@@ -17,7 +18,6 @@ import {
 } from "../../inherited-tool-deny.js";
 import type { PreparedSessionPermissionPolicy } from "../../tool-fs-policy.types.js";
 import { getSubagentSpawnDeps } from "./subagent-spawn-deps.js";
-import { splitModelRef } from "./subagent-spawn-plan.js";
 import {
   loadSessionEntry,
   resolveGatewaySessionStoreTarget,
@@ -112,6 +112,7 @@ export async function createInitialSubagentSession(params: {
   inheritedToolAllowlist?: string[];
   inheritedToolDenylist?: string[];
   modelPatch: Record<string, unknown>;
+  executionRequest: ExecutionSelectionRequest;
   swarmGroupId?: string;
   collect: boolean;
   outputSchema?: Record<string, unknown>;
@@ -161,22 +162,19 @@ export async function createInitialSubagentSession(params: {
           key: params.childSessionKey,
         });
     const childPatch = buildDirectChildSessionPatch(initialChildSessionPatch);
-    const requestedModel =
-      typeof params.modelPatch.model === "string" ? params.modelPatch.model.trim() : undefined;
-    const requestedRef = requestedModel ? splitModelRef(requestedModel) : undefined;
     const preparedSelection = await prepareSessionExecutionSelection({
       cfg: params.cfg,
       agentId: params.targetAgentId,
       sessionEntry: undefined,
-      request:
-        requestedRef?.provider && requestedRef.model
-          ? { kind: "model", model: { provider: requestedRef.provider, id: requestedRef.model } }
-          : { kind: "reset" },
+      request: params.executionRequest,
     });
     if (preparedSelection.status !== "ready") {
       return { status: "error", error: preparedSelection.message };
     }
-    commitSessionExecutionSelection(childPatch, preparedSelection.selection);
+    commitSessionExecutionSelection(childPatch, preparedSelection.selection, {
+      cfg: params.cfg,
+      cause: { kind: params.executionRequest.kind === "initialize" ? "initialize" : "user" },
+    });
     const entry = await upsertSessionEntryCore(
       {
         storePath: target.storePath,

@@ -5,6 +5,8 @@ import { consolidateLiveModelSwitchAfterRun } from "../../agents/live-model-swit
 import { resolveCollapsedSessionAuthPinSource } from "../../config/sessions/auth-profile-override-provenance.js";
 import { updateSessionEntry } from "../../config/sessions/session-accessor.js";
 import { logVerbose } from "../../globals.js";
+import { getSessionExecutionSelection } from "../../model-picker/execution-selection-state.js";
+import { isAcpExecutionSelection } from "../../model-picker/execution-selection.js";
 import { shouldPreserveUserFacingSessionStateForInputProvenance } from "../../sessions/input-provenance.js";
 import { resolveFallbackTransition } from "../fallback-state.js";
 import { normalizeVerboseLevel } from "../thinking.js";
@@ -159,7 +161,9 @@ export async function accountAgentTurn(context: AgentTurnAccountingContext) {
   const promptTokens = runResult.meta?.agentMeta?.promptTokens;
   const modelUsed = runResult.meta?.agentMeta?.model ?? fallbackModel ?? defaultModel;
   const providerUsed =
-    runResult.meta?.agentMeta?.provider ?? fallbackProvider ?? followupRun.run.provider;
+    runResult.meta?.agentMeta?.provider ??
+    fallbackProvider ??
+    followupRun.run.executionSelection.model.provider;
   const runtimeModelSelection = runResult.meta?.agentMeta?.runtimeModelSelection;
   // A tool-free finalizer owns its response usage, not the session's next model.
   const sessionModel = runtimeModelSelection ?? { provider: providerUsed, model: modelUsed };
@@ -196,8 +200,8 @@ export async function accountAgentTurn(context: AgentTurnAccountingContext) {
     chatType: typeof sessionCtx.ChatType === "string" ? sessionCtx.ChatType : undefined,
     authMode: runResult.meta?.requestShaping?.authMode ?? undefined,
     overrideSource: activeSessionEntry?.modelOverrideSource ?? undefined,
-    requestedProvider: followupRun.run.provider,
-    requestedModel: followupRun.run.model,
+    requestedProvider: followupRun.run.executionSelection.model.provider,
+    requestedModel: followupRun.run.executionSelection.model.id,
     durationMs: Date.now() - runStartedAt,
     compactionCount: typeof compactions === "number" ? compactions : undefined,
     contextTokenBudget:
@@ -421,15 +425,16 @@ export async function accountFollowupTurn(params: {
     !accounting.preserveUserFacingSessionState
   ) {
     const entry = turn.session.current();
+    const accepted = getSessionExecutionSelection(entry, turn.queued.run.config);
     refreshQueuedFollowupSession({
       key: queueKey,
       previousSessionId: turn.queued.run.sessionId,
       nextSessionId: entry?.sessionId ?? turn.queued.run.sessionId,
       nextSessionFile: queueKey,
-      nextProvider: accounting.sessionModel.provider,
-      nextModel: accounting.sessionModel.model,
-      nextModelOverrideSource:
-        entry?.modelOverrideSource === "default" ? undefined : entry?.modelOverrideSource,
+      nextSelection:
+        accepted && !isAcpExecutionSelection(accepted)
+          ? accepted
+          : turn.queued.run.executionSelection,
       nextAuthProfileId: entry?.authProfileOverride,
       nextAuthProfileIdSource: resolveCollapsedSessionAuthPinSource(entry),
     });

@@ -846,7 +846,13 @@ function runSubsequentFallbackAttempt(
   });
 }
 
-type ModelSwitchOptions = ConstructorParameters<typeof LiveSessionModelSwitchError>[0];
+type ModelSwitchOptions = {
+  provider: string;
+  model: string;
+  agentRuntimeOverride?: string;
+  authProfileId?: string;
+  authProfileIdSource?: "auto" | "user";
+};
 
 function makeSuccessResult(provider: string, model: string) {
   return {
@@ -878,7 +884,14 @@ function setupModelSwitchRetry(switchOptions: ModelSwitchOptions) {
   state.runWithModelFallbackMock.mockImplementation(async (params: FallbackRunnerParams) => {
     invocation += 1;
     if (invocation === 1) {
-      throw new LiveSessionModelSwitchError(switchOptions);
+      throw new LiveSessionModelSwitchError({
+        selection: {
+          model: { provider: switchOptions.provider, id: switchOptions.model },
+          executor: { kind: "harness", id: switchOptions.agentRuntimeOverride ?? "openclaw" },
+        },
+        authProfileId: switchOptions.authProfileId,
+        authProfileIdSource: switchOptions.authProfileIdSource,
+      });
     }
     const result = await runInitialFallbackAttempt(params);
     return {
@@ -1656,8 +1669,10 @@ describe("agentCommand – LiveSessionModelSwitchError retry", () => {
       const result = await runInitialFallbackAttempt(params);
       if (invocation === 1) {
         throw new LiveSessionModelSwitchError({
-          provider: "openai",
-          model: "gpt-5.4",
+          selection: {
+            model: { provider: "openai", id: "gpt-5.4" },
+            executor: { kind: "harness", id: "openclaw" },
+          },
         });
       }
       return {
@@ -1687,8 +1702,10 @@ describe("agentCommand – LiveSessionModelSwitchError retry", () => {
       const result = await runInitialFallbackAttempt(params);
       if (fallbackInvocation === 1) {
         throw new LiveSessionModelSwitchError({
-          provider: "openai",
-          model: "gpt-5.4",
+          selection: {
+            model: { provider: "openai", id: "gpt-5.4" },
+            executor: { kind: "harness", id: "openclaw" },
+          },
         });
       }
       return {

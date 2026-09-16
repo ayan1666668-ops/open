@@ -2,6 +2,7 @@ import type {
   ErrorShape,
   SessionsPatchParams,
 } from "../../../packages/gateway-protocol/src/index.js";
+import { readAcpSessionMetaForEntry } from "../../acp/runtime/session-meta.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import { isInternalSessionEffectsKey } from "../../config/sessions/internal-session-key.js";
 import {
@@ -31,6 +32,12 @@ import {
 import { gatewayClientSessionCreator } from "./gateway-client-identity.js";
 import { resolveOperatorSessionCreation } from "./session-creation-provenance.js";
 import * as sessionUnreadAck from "./session-unread-ack.js";
+import {
+  applyDedicatedAcpSessionPatch,
+  isAcpModelSelectionPatch,
+  hasOtherAcpSessionEdits,
+  ACP_DEDICATED_MODEL_REQUEST_MESSAGE,
+} from "./sessions-patch-acp.js";
 import {
   prepareSessionPatchArchive,
   prepareSessionPatchArchiveTransition,
@@ -112,12 +119,6 @@ export async function executeSessionPatchMutations(params: {
 }): Promise<MutationCoreResult> {
   const { client } = params;
   const timing = params.diagnostics?.scope("preflight");
-  let personalModelSelection: UserModelAccountSelection | undefined;
-  try {
-    personalModelSelection = preparePersonalModelSelection(params, params.patch.model);
-  } catch (error) {
-    return { ok: false, error: unexpectedPatchError(params.targets[0]?.key ?? "", error) };
-  }
   const cfg = params.context.getRuntimeConfig();
   const operatorCreation = resolveOperatorSessionCreation(client);
   const sandbox = resolveCreatorSandbox(cfg, operatorCreation);
@@ -126,10 +127,6 @@ export async function executeSessionPatchMutations(params: {
   const callerScopes = Array.isArray(client?.connect?.scopes) ? client.connect.scopes : [];
   const callerCanManageCron = client === null || callerScopes.includes(ADMIN_SCOPE);
   const pluginOwnerId = client?.internal?.pluginRuntimeOwnerId;
-  const permissionRuntime =
-    "permissionMode" in params.patch
-      ? await import("./sessions-patch-permissions.runtime.js")
-      : undefined;
   const targetDiscoveryCache = new Map();
   const preflightTargets = params.targets.map((input) => {
     const key = input.key.trim();
@@ -149,6 +146,41 @@ export async function executeSessionPatchMutations(params: {
         : undefined,
     };
   });
+  const acpSelectionTargets = new Set<number>();
+  if (isAcpModelSelectionPatch(params.patch)) {
+    for (const [index, target] of preflightTargets.entries()) {
+      if (!target.resolved) continue;
+      const entry = resolveCanonicalSessionEntryFromStoreKeys(target.resolved.store, [
+        ...target.resolved.storeKeys,
+      ]);
+      if (
+        readAcpSessionMetaForEntry({
+          cfg,
+          sessionKey: target.resolved.canonicalKey ?? target.key,
+          agentId: target.resolved.agentId,
+          entry,
+        })
+      ) {
+        acpSelectionTargets.add(index);
+      }
+    }
+    if (
+      acpSelectionTargets.size > 0 &&
+      (params.targets.length !== 1 || hasOtherAcpSessionEdits(params.patch))
+    ) {
+      return invalidSessionPatchOutcome(ACP_DEDICATED_MODEL_REQUEST_MESSAGE);
+    }
+  }
+  let personalModelSelection: UserModelAccountSelection | undefined;
+  try {
+    personalModelSelection = preparePersonalModelSelection(params, params.patch.model);
+  } catch (error) {
+    return { ok: false, error: unexpectedPatchError(params.targets[0]?.key ?? "", error) };
+  }
+  const permissionRuntime =
+    "permissionMode" in params.patch
+      ? await import("./sessions-patch-permissions.runtime.js")
+      : undefined;
   const logicalTargets = new Set<string>();
   for (const { key, resolved } of preflightTargets) {
     if (!resolved) {
@@ -317,6 +349,38 @@ export async function executeSessionPatchMutations(params: {
         finalize: releaseArchiveDrains,
         run: async () => {
           timing?.mark();
+          const acpTarget =
+            prepared.length === 1 && acpSelectionTargets.has(prepared[0]!.index)
+              ? prepared[0]
+              : undefined;
+          if (acpTarget?.initialEntry) {
+            const fullPatch = acpTarget.fullPatch;
+            const entry = acpTarget.initialEntry;
+            const assertCurrent = () => {
+              const failure = params.targets[acpTarget.index]!.commitGuard();
+              if (failure) throw new SessionMutationAuthorizationChangedError(failure);
+              if (
+                (fullPatch.expectedSessionId !== undefined &&
+                  fullPatch.expectedSessionId !== entry.sessionId) ||
+                (fullPatch.expectedLifecycleRevision !== undefined &&
+                  fullPatch.expectedLifecycleRevision !== entry.lifecycleRevision)
+              ) {
+                throw new SessionMutationAuthorizationChangedError(
+                  sessionChangedError(acpTarget.key),
+                );
+              }
+            };
+            outcomes[acpTarget.index] = await applyDedicatedAcpSessionPatch({
+              cfg,
+              sessionKey: acpTarget.canonicalKey,
+              agentId: acpTarget.targetAgentId,
+              entry,
+              patch: fullPatch,
+              assertCurrent,
+            });
+            return;
+          }
+
           try {
             const groups = new Map<string, PreparedPatchTarget[]>();
             for (const target of prepared) {

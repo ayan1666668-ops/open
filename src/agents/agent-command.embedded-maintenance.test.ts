@@ -512,8 +512,10 @@ describe("agentCommand embedded maintenance", () => {
           },
         });
         throw new LiveSessionModelSwitchError({
-          provider: params.providerOverride,
-          model: params.modelOverride,
+          selection: {
+            model: { provider: params.providerOverride, id: params.modelOverride },
+            executor: { kind: "harness", id: "openclaw" },
+          },
           authProfileId: "switched-profile",
           authProfileIdSource: "user",
         });

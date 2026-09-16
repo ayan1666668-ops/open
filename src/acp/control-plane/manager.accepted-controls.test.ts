@@ -56,12 +56,15 @@ function setupSession(thinking?: string, initialModel: string | null = model) {
   }));
   hoisted.upsertAcpSessionMetaMock.mockImplementation(
     async (params: {
+      assertCommitAllowed?: () => void;
       mutate: (
         current: SessionAcpMeta,
         entry: { acp: SessionAcpMeta },
       ) => SessionAcpMeta | null | undefined;
     }) => {
-      meta = params.mutate(meta, { acp: meta }) ?? meta;
+      const next = params.mutate(meta, { acp: meta });
+      params.assertCommitAllowed?.();
+      meta = next ?? meta;
       return { sessionId: "accepted-controls", updatedAt: Date.now(), acp: meta };
     },
   );
@@ -199,10 +202,11 @@ describe("AcpSessionManager accepted controls", () => {
     expect(state.ensureSession.mock.lastCall?.[0].model).toBe(model);
   });
 
-  it("restores the last committed pair when the caller transaction rejects", async () => {
+  it("does not publish or restore with caller authority lost during a remote control", async () => {
     const state = setupSession();
-    const commit = vi.fn(async () => {
-      throw new Error("caller transaction rejected");
+    let active = true;
+    state.setConfigOption.mockImplementationOnce(async () => {
+      active = false;
     });
     await expect(
       state.manager.setExecutionSelection({
@@ -212,20 +216,16 @@ describe("AcpSessionManager accepted controls", () => {
           executor: { kind: "acp", backend: "acpx", agent: state.readMeta().agent },
           model: { id: "qa-next" },
         },
-        commit,
+        assertActive: () => {
+          if (!active) throw new Error("selection authority ended");
+        },
       }),
-    ).rejects.toThrow("caller transaction rejected");
-    expect(commit).toHaveBeenCalledWith({
-      executor: { kind: "acp", backend: "acpx", agent: state.readMeta().agent },
-      model: { id: "qa-next" },
-    });
-    expect(state.setConfigOption.mock.calls.map(([input]) => input.value)).toEqual([
-      "qa-next",
-      model,
-    ]);
+    ).rejects.toThrow("selection authority ended");
     expect(state.readMeta().runtimeOptions?.model).toBe(model);
-    await runTurn(new AcpSessionManager(), "caller-rollback-reopen");
-    expect(state.ensureSession.mock.lastCall?.[0].model).toBe(model);
+    expect(state.setConfigOption).toHaveBeenCalledOnce();
+    await expect(runTurn(new AcpSessionManager(), "lost-selection-authority")).rejects.toThrow(
+      "app did not confirm the last change",
+    );
   });
 
   it("keeps the default selection paused when failed persistence cannot be restored", async () => {

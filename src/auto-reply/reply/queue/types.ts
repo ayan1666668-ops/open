@@ -7,7 +7,6 @@ import type {
   CurrentInboundPromptContext,
   RunEmbeddedAgentParams,
 } from "../../../agents/embedded-agent-runner/run/params.js";
-import type { ModelFallbackRouteResolution } from "../../../agents/model-fallback.types.js";
 import type { ScheduledToolPolicyContext } from "../../../agents/scheduled-tool-policy.js";
 import type { TrustedSubagentCompletionHandoff } from "../../../agents/subagents/announce/subagent-announce-handoff.js";
 import type { SilentReplyPromptMode } from "../../../agents/system-prompt.types.js";
@@ -21,6 +20,7 @@ import type { GroupToolPolicyConfig } from "../../../config/types.tools.js";
 import type { GatewayUiCommandTarget } from "../../../gateway/ui-command-target.types.js";
 import type { MediaFact } from "../../../media/media-facts.js";
 import type { PromptImageOrderEntry } from "../../../media/prompt-image-order.js";
+import type { ModelExecutionSelection } from "../../../model-picker/execution-selection.js";
 import type { PluginHookChannelContext } from "../../../plugins/hook-types.js";
 import type { RuntimePluginToolGrant } from "../../../plugins/runtime/tool-grant.js";
 import type { InputProvenance } from "../../../sessions/input-provenance.js";
@@ -226,14 +226,9 @@ export type FollowupRun = {
     config: OpenClawConfig;
     toolOverrides?: SessionToolOverrides;
     skillsSnapshot?: SkillSnapshot;
-    provider: string;
-    model: string;
-    requestedRouteResolution?: ModelFallbackRouteResolution;
+    executionSelection: ModelExecutionSelection;
     /** Prevents the queued run from selecting configured fallback models. */
     modelSelectionLocked?: boolean;
-    hasSessionModelOverride?: boolean;
-    modelOverrideSource?: "auto" | "user";
-    hasAutoFallbackProvenance?: boolean;
     /** Session belongs to a spawn-owned child; applies the subagent fallback ladder. */
     subagentSpawnLineage?: boolean;
     authProfileId?: string;

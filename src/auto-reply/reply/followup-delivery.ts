@@ -333,8 +333,8 @@ async function sendFollowupPayloads(params: {
   const { originatingChannel, originatingTo } = turn.queued;
   const originRoutable = Boolean(isRoutableChannel(originatingChannel) && originatingTo);
   const deliveryPlan = buildAgentRuntimeDeliveryPlan({
-    provider: params.resolved?.provider ?? turn.queued.run.provider,
-    modelId: params.resolved?.model ?? turn.queued.run.model,
+    provider: params.resolved?.provider ?? turn.queued.run.executionSelection.model.provider,
+    modelId: params.resolved?.model ?? turn.queued.run.executionSelection.model.id,
     config: turn.config,
     workspaceDir: turn.queued.run.workspaceDir,
     agentDir: turn.queued.run.agentDir,

@@ -1,19 +1,19 @@
-import { markAutoFallbackPrimaryProbe } from "../../agents/agent-scope.js";
 import { resolveCliBackendConfig } from "../../agents/cli-backends.js";
 import { runEmbeddedAgentEntry } from "../../agents/embedded-agent-runner/run-entry.js";
 import type { FastModeAutoProgressState } from "../../agents/fast-mode.js";
-import { resolveCliRuntimeExecutionProvider } from "../../agents/model-runtime-aliases.js";
-import { isCliProvider } from "../../agents/model-selection.js";
-import { resolveSessionRuntimeOverrideForProvider } from "../../agents/session-runtime-compat.js";
 import { buildGenericCliContextEngineHostSupport } from "../../context-engine/host-compat.js";
 import { prepareGitHubPublicationAvailability } from "../../gateway/github-publication-availability.js";
 import { revokeMessageActionTurnCapability } from "../../gateway/message-action-turn-capability.js";
 import { clearAgentRunTerminalWriteContext } from "../../infra/agent-run-terminal-writes.js";
 import { RUN_STALE_TAKEOVER_MS } from "../../logging/diagnostic-run-activity.js";
+import { prepareSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
+import {
+  isAcpExecutionSelection,
+  type ModelExecutionSelection,
+} from "../../model-picker/execution-selection.js";
 import { CommandLane } from "../../process/lanes.js";
-import { resolveSessionPinnedHarnessId } from "../../sessions/agent-harness-session-key.js";
 import type { AgentLifecycleTerminalBackstop } from "./agent-lifecycle-terminal.js";
-import { resolveFallbackCandidateRun, resolveRunAuthProfile } from "./agent-runner-auth-profile.js";
+import { resolveRunAuthProfile } from "./agent-runner-auth-profile.js";
 import { runCliFallbackCandidate } from "./agent-runner-cli-candidate.js";
 import {
   invalidateTurnCompactionContext,
@@ -90,47 +90,19 @@ export async function runAgentFallbackCandidates(params: AgentFallbackCycleParam
     milestone: "before_model_fallback",
   });
   const selection = resolveModelFallbackOptions(params.effectiveRun, params.runtimeConfig);
-  const resolveCandidateRuntime = (provider: string, model: string) => {
-    const candidateRun = resolveFallbackCandidateRun(params.effectiveRun, provider, model);
-    const activeEntry = params.liveModelSwitchRuntimeEntry ?? turn.getActiveSessionEntry();
-    const sessionRuntimeOverride = resolveSessionRuntimeOverrideForProvider({
-      provider,
-      entry: activeEntry,
-      cfg: params.runtimeConfig,
-    });
-    const pinnedHarnessId = resolveSessionPinnedHarnessId(activeEntry);
-    const locksPersistedHarness =
-      pinnedHarnessId !== undefined && pinnedHarnessId === sessionRuntimeOverride;
-    const selectedAuthProfile = resolveRunAuthProfile(candidateRun, provider, {
-      config: params.runtimeConfig,
-    });
-    const pinnedCliRuntime =
-      !locksPersistedHarness &&
-      sessionRuntimeOverride &&
-      isCliProvider(sessionRuntimeOverride, params.runtimeConfig)
-        ? sessionRuntimeOverride
-        : undefined;
-    const cliExecutionProvider =
-      pinnedCliRuntime ??
-      (sessionRuntimeOverride
-        ? provider
-        : (resolveCliRuntimeExecutionProvider({
-            provider,
-            cfg: params.runtimeConfig,
-            agentId: turn.followupRun.run.agentId,
-            modelId: model,
-            authProfileId: selectedAuthProfile.authProfileId,
-          }) ?? provider));
-    const useCliExecution =
-      pinnedCliRuntime !== undefined ||
-      (!sessionRuntimeOverride && isCliProvider(cliExecutionProvider, params.runtimeConfig));
-    return {
-      candidateRun,
-      sessionRuntimeOverride,
-      cliExecutionProvider,
-      useCliExecution,
-    };
-  };
+  const resolveCandidateRuntime = (candidate: ModelExecutionSelection) => ({
+    candidateRun: {
+      ...params.effectiveRun,
+      executionSelection: candidate,
+      ...resolveRunAuthProfile(params.effectiveRun, candidate.model.provider, {
+        config: params.runtimeConfig,
+      }),
+    },
+    sessionRuntimeOverride: candidate.executor.id,
+    cliExecutionProvider:
+      candidate.executor.kind === "cli" ? candidate.executor.id : candidate.model.provider,
+    useCliExecution: candidate.executor.kind === "cli",
+  });
   return params.timing.measure("model_fallback", () =>
     runEmbeddedAgentEntry<EmbeddedAgentRunResult>({
       selection: {
@@ -159,14 +131,30 @@ export async function runAgentFallbackCandidates(params: AgentFallbackCycleParam
           kind: "measured",
           run: (prepare) => params.timing.measure("fallback_prepare_harness", prepare),
         },
-        resolveRuntimeOverride: (provider) =>
-          resolveSessionRuntimeOverrideForProvider({
-            provider,
-            entry: params.liveModelSwitchRuntimeEntry ?? turn.getActiveSessionEntry(),
+        prepareExecutionSelection: async (provider, model) => {
+          const prepared = await prepareSessionExecutionSelection({
             cfg: params.runtimeConfig,
-          }),
-        resolveContextEngineHost: (provider, model) => {
-          const runtime = resolveCandidateRuntime(provider, model);
+            agentId: turn.followupRun.run.agentId,
+            sessionKey: turn.sessionKey,
+            sessionEntry: params.liveModelSwitchRuntimeEntry ?? turn.getActiveSessionEntry(),
+            request: {
+              kind: "fallback",
+              selection: {
+                model: { provider, id: model },
+                executor: params.effectiveRun.executionSelection.executor,
+              },
+            },
+          });
+          if (prepared.status !== "ready") {
+            throw new Error(prepared.message);
+          }
+          if (isAcpExecutionSelection(prepared.selection)) {
+            throw new Error("This reply requires a direct execution selection.");
+          }
+          return prepared.selection;
+        },
+        resolveContextEngineHost: (candidate) => {
+          const runtime = resolveCandidateRuntime(candidate);
           if (!runtime.useCliExecution) {
             return undefined;
           }
@@ -195,10 +183,7 @@ export async function runAgentFallbackCandidates(params: AgentFallbackCycleParam
           ),
         }),
       },
-      sessionOverride: {
-        kind: "reconcile-completed",
-        reconcile: params.clearRecoveredAutoFallbackPrimaryProbe,
-      },
+      sessionOverride: { kind: "preserve" },
       onAcceptedTerminal: () => {
         params.commitTerminalOutcome();
         return turn.replyOperation
@@ -209,7 +194,8 @@ export async function runAgentFallbackCandidates(params: AgentFallbackCycleParam
       onFallbackStep: (step) => {
         emitModelFallbackStepLifecycle({ runId: params.runId, sessionKey: turn.sessionKey, step });
       },
-      runCandidate: async (provider, model, runOptions) => {
+      runCandidate: async (candidate, runOptions) => {
+        const { provider, id: model } = candidate.model;
         clearAgentRunTerminalWriteContext(params.preparedRunAdmission.operationalRunInstance);
         params.state.maintenanceAuthProfile = undefined;
         params.state.compactionRequestBudget = undefined;
@@ -217,7 +203,7 @@ export async function runAgentFallbackCandidates(params: AgentFallbackCycleParam
         params.state.attemptedRuntimeProvider = provider;
         params.state.attemptedRuntimeModel = model;
         const runtime = params.timing.measureSync("fallback_resolve_runtime", () =>
-          resolveCandidateRuntime(provider, model),
+          resolveCandidateRuntime(candidate),
         );
         const candidateRun = runtime.candidateRun;
         bindSourceReplyDeliveryRuntime(candidateRun, sourceReplyDeliveryRuntime);
@@ -240,7 +226,8 @@ export async function runAgentFallbackCandidates(params: AgentFallbackCycleParam
           catalog: turn.followupRun.run.thinkingCatalog,
           agentId: turn.followupRun.run.agentId,
           sessionKey: turn.followupRun.run.runtimePolicySessionKey ?? turn.sessionKey,
-          sessionEntry: params.liveModelSwitchRuntimeEntry ?? turn.getActiveSessionEntry(),
+          sessionEntry: turn.getActiveSessionEntry(),
+          agentRuntime: candidate.executor.id,
         });
         const candidateFastMode = resolveRunFastModeForFallbackCandidate({
           run: candidateRun,
@@ -249,10 +236,6 @@ export async function runAgentFallbackCandidates(params: AgentFallbackCycleParam
           model,
           sessionEntry: turn.getActiveSessionEntry(),
         });
-        const activeProbe = params.effectiveRun.autoFallbackPrimaryProbe;
-        if (activeProbe && provider === activeProbe.provider && model === activeProbe.model) {
-          markAutoFallbackPrimaryProbe({ probe: activeProbe, sessionKey: turn.sessionKey });
-        }
         turn.opts?.onModelSelected?.({ provider, model, thinkLevel: candidateThinkLevel });
         const signalExecutionPhaseForCandidate: AgentFallbackCandidateCommonParams["signalExecutionPhaseForTyping"] =
           (info) => {

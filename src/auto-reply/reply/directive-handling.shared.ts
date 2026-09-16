@@ -63,28 +63,23 @@ export const formatInternalVerbosePersistenceDeniedText = () =>
 export const formatInternalVerboseCurrentReplyOnlyText = () =>
   "Verbose logging set for the current reply only.";
 
-export function formatModelSelectionScopeAck(params: {
-  isDefault: boolean;
-  label: string;
+export function formatConfiguredDefaultSelectionAck(params: {
   configuredDefaultUpdate?: StickyModelSelectionDispatchOutcome;
   stickyModelSelectionTarget?: AgentModelPrimaryWriteTarget;
-}): string {
-  if (params.isDefault && !params.stickyModelSelectionTarget) {
-    return `Session model reset to configured default (${params.label}).`;
-  }
-  const targetLabel =
+}): string | undefined {
+  const target =
     params.stickyModelSelectionTarget === "agent"
       ? "Agent default"
       : params.stickyModelSelectionTarget === "defaults"
         ? "Global default"
         : "Configured default";
   if (params.configuredDefaultUpdate === "requested") {
-    return `Model set to ${params.label} for this session. ${targetLabel} update requested.`;
+    return target + " update requested.";
   }
   if (params.configuredDefaultUpdate === "skipped-immutable") {
-    return `Model set to ${params.label} for this session. ${targetLabel} unchanged because configuration is immutable.`;
+    return target + " unchanged because configuration is immutable.";
   }
-  return `Model set to ${params.label} for this session only; configured default unchanged.`;
+  return undefined;
 }
 
 export function canPersistSessionDirectiveDefaults(params: {

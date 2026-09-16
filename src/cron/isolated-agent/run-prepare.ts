@@ -382,6 +382,7 @@ export async function prepareCronRunContext(params: {
       }
       commitSessionExecutionSelection(cronSession.sessionEntry, initialSelection.selection, {
         cfg: runtimeCfg,
+        cause: { kind: "initialize" },
       });
       validateInitialSelection = initialSelection.validateCommit;
     }
@@ -474,6 +475,7 @@ export async function prepareCronRunContext(params: {
     if (!getSessionExecutionSelection(cronSession.sessionEntry, cfgWithAgentDefaults)) {
       commitSessionExecutionSelection(cronSession.sessionEntry, executionSelection, {
         cfg: cfgWithAgentDefaults,
+        cause: { kind: "initialize" },
       });
       validateInitialSelection = preparedSelection.validateCommit;
     }

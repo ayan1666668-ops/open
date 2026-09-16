@@ -105,10 +105,7 @@ export type AgentFallbackCycleParams = {
   turn: AgentTurnParams;
   effectiveRun: FollowupRun["run"];
   runtimeConfig: OpenClawConfig;
-  liveModelSwitchRuntimeEntry?: Pick<
-    SessionEntry,
-    "agentHarnessId" | "agentRuntimeOverride" | "modelSelectionLocked" | "pluginOwnerId"
-  >;
+  liveModelSwitchRuntimeEntry?: SessionEntry;
   runId: string;
   runAbortSignal?: AbortSignal;
   currentTurnImages: Awaited<

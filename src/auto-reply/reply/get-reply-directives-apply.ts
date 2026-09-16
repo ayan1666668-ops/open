@@ -22,7 +22,7 @@ import { resolveModelRuntimeDirective } from "./directive-handling.model-runtime
 import { resolveModelSelectionFromDirective } from "./directive-handling.model-selection.js";
 import type { HandleDirectiveOnlyParams } from "./directive-handling.params.js";
 import type { InlineDirectives } from "./directive-handling.parse.js";
-import { formatModelSelectionScopeAck } from "./directive-handling.shared.js";
+import { formatConfiguredDefaultSelectionAck } from "./directive-handling.shared.js";
 import { clearInlineDirectives } from "./get-reply-directives-utils.js";
 import { resolveContextTokens } from "./model-selection-context.js";
 import type { createModelSelectionState } from "./model-selection.js";
@@ -482,6 +482,10 @@ export async function applyInlineDirectiveOverrides(params: {
         // consequence of the model switch, so the cause is announced before the effect.
         const parts = [
           applied.message,
+          formatConfiguredDefaultSelectionAck({
+            configuredDefaultUpdate: applied.configuredDefaultUpdate,
+            stickyModelSelectionTarget,
+          }),
           applied.thinkingRemap ? `Thinking level set to ${applied.thinkingRemap.to}.` : undefined,
           modelResolution.profileOverride ? "Selected account updated." : undefined,
         ].filter(Boolean);

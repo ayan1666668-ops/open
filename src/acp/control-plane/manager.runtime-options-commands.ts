@@ -39,6 +39,7 @@ export type RuntimeOptionCommandServices = {
 
 type RuntimeOptionCommandContext = RuntimeOptionCommandServices & {
   cfg: OpenClawConfig;
+  assertActive?: () => void;
   sessionKey: string;
   agentId: string;
 };
@@ -93,9 +94,10 @@ export async function runSetManagerSessionConfigOption(
   params: RuntimeOptionCommandContext & {
     key: string;
     value: string;
-    commitSelection?: (accepted: AcpExecutionSelection) => Promise<void>;
+    assertActive?: () => void;
   },
 ): Promise<AcpSessionRuntimeOptions> {
+  params.assertActive?.();
   const resolution = params.resolveSession({
     cfg: params.cfg,
     sessionKey: params.sessionKey,
@@ -134,6 +136,7 @@ export async function runSetManagerSessionConfigOption(
     );
   }
 
+  params.assertActive?.();
   const selectingModel = inferredPatch.model !== undefined;
   const cached = params.runtimeHandles.get(params);
   if (cached) {
@@ -145,6 +148,7 @@ export async function runSetManagerSessionConfigOption(
   }
   let controlCompleted = false;
   try {
+    params.assertActive?.();
     const result = await withAcpRuntimeErrorBoundary({
       run: async () =>
         await runtime.setConfigOption!({ handle, key: wireKey, value: params.value }),
@@ -156,10 +160,6 @@ export async function runSetManagerSessionConfigOption(
       mergeRuntimeOptions({ current: resolveRuntimeOptionsFromMeta(meta), patch: inferredPatch }),
       result,
     );
-    await params.commitSelection?.({
-      ...requireAcpExecutionSelection(meta),
-      model: nextOptions.model ? { id: nextOptions.model } : null,
-    });
     await persistManagerRuntimeOptions({
       ...params,
       options: nextOptions,
@@ -180,6 +180,7 @@ export async function runSetManagerSessionConfigOption(
           isDeepStrictEqual(committed.executor, requireAcpExecutionSelection(meta).executor)
         ) {
           try {
+            params.assertActive?.();
             const restored = await runtime.setConfigOption!({
               handle,
               key: wireKey,
@@ -272,7 +273,7 @@ export async function runResetManagerSessionRuntimeOptions(
 async function persistManagerRuntimeOptions(
   params: Pick<
     RuntimeOptionCommandContext,
-    "cfg" | "sessionKey" | "agentId" | "runtimeHandles" | "writeSessionMeta"
+    "cfg" | "sessionKey" | "agentId" | "runtimeHandles" | "writeSessionMeta" | "assertActive"
   > & {
     options: AcpSessionRuntimeOptions;
     selectionConfirmed?: boolean;
@@ -317,6 +318,7 @@ async function persistManagerRuntimeOptions(
       return next;
     },
     failOnError: true,
+    assertCommitAllowed: params.assertActive,
   });
 
   if (!persisted?.acp) {
@@ -365,6 +367,7 @@ async function markSelectionUnconfirmed(
       };
     },
     failOnError: true,
+    assertCommitAllowed: params.assertActive,
   });
   if (!persisted?.acp) {
     throw new AcpRuntimeError(

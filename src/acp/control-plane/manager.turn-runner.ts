@@ -239,6 +239,7 @@ export async function runManagerTurn(params: {
         let promptStarted = false;
         let sawTurnOutput = false;
         let retryFreshHandle = false;
+        let controlsConfirmed = false;
         let skipPostTurnCleanup = false;
         let completionEvidenceText = "";
         let completionEvidenceBytes = 0;
@@ -295,6 +296,7 @@ export async function runManagerTurn(params: {
             });
           }
 
+          controlsConfirmed = true;
           if (!input.signal?.aborted) {
             await params.setSessionState({
               cfg: input.cfg,
@@ -530,6 +532,7 @@ export async function runManagerTurn(params: {
               mutate: (current, entry) => {
                 if (!current || !entry) return null;
                 if (
+                  !controlsConfirmed ||
                   current.lastError !== ACP_SELECTION_REPAIR_MESSAGE ||
                   current.runtimeSessionName !== resolvedMeta.runtimeSessionName ||
                   !isDeepStrictEqual(

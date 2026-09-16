@@ -19,7 +19,6 @@ import {
   resolveProjectedSessionContextBudgetStatus,
   SESSION_TOTAL_TOKENS_VERSION,
 } from "../config/sessions.js";
-import { resolveSessionModelOverrideSource } from "../config/sessions/model-override-provenance.js";
 import { sessionEntryForkedFromParent } from "../config/sessions/session-entry-lineage.js";
 import {
   sessionCreatorProfileId,
@@ -32,6 +31,7 @@ import {
   resolveProjectedAgentRunModel,
   type ProjectedAgentRunIndex,
 } from "../infra/agent-run-registry.js";
+import { executionSelectionWireSourceProjection } from "../model-picker/execution-selection-codec.js";
 import { projectPluginSessionExtensionsSync } from "../plugins/host-hook-state.js";
 import { resolveActiveSessionAgentStatus } from "../sessions/session-agent-status.js";
 import { deriveSessionUnread } from "../shared/session-unread.js";
@@ -242,7 +242,125 @@ export function readSessionRowInputs(params: {
   return {
     inputs: {
       cfg,
+<<<<<<< HEAD
       key,
+=======
+      Boolean(sessionCreatorProfileId(entry?.createdActor)),
+    ),
+    owner,
+    // Keep the released v4 summary stable; expanded identities are additive for newer clients.
+    participants: participants.size
+      ? [...participants.values()].slice(0, SESSION_PARTICIPANT_LIMIT)
+      : undefined,
+    expandedParticipants: participants.size
+      ? [...participants.values()].slice(0, MAX_SESSION_PARTICIPANTS)
+      : undefined,
+    participantCount: participants.size || undefined,
+    createdAt: entry?.createdAt,
+    forkSource: entry?.forkSource,
+    previousSessionId: entry?.previousSessionId,
+    kind: gatewayKind,
+    label: entry?.label,
+    autoLabel: entry?.autoLabel,
+    icon: entry?.icon,
+    color: entry?.color,
+    channelAvatarUrl,
+    category: entry?.category,
+    boardFace: entry?.boardFace,
+    boardPresentation: entry?.boardPresentation,
+    ...sessionClassificationForRow(cfg, key, sessionAgentId, entry),
+    displayName,
+    derivedTitle,
+    lastMessagePreview,
+    channel,
+    subject,
+    groupChannel,
+    space,
+    chatType: entry?.chatType,
+    origin,
+    updatedAt,
+    archived: entry?.archivedAt !== undefined,
+    archivedAt: entry?.archivedAt,
+    archivedBy: projectSessionActor(entry?.archivedBy, rowContext.userProfileIdentityById, cfg),
+    archiveReason: entry?.archiveReason,
+    pinned: pinnedAt !== undefined,
+    pinnedAt,
+    unread: deriveSessionUnread(entry),
+    lastReadAt: entry?.lastReadAt,
+    markedUnreadAt: entry?.markedUnreadAt,
+    agentStatus,
+    observerDigest: observerDigest
+      ? {
+          ...(observerDigest.agentId ? { agentId: observerDigest.agentId } : {}),
+          runId: observerDigest.runId,
+          headline: observerDigest.headline,
+          health: observerDigest.health,
+          updatedAt: observerDigest.updatedAt,
+          revision: observerDigest.revision,
+        }
+      : undefined,
+    lastInteractionAt: entry?.lastInteractionAt,
+    lastActivityAt: entry?.lastActivityAt,
+    sessionId: entry?.sessionId,
+    systemSent: entry?.systemSent,
+    abortedLastRun: entry?.abortedLastRun,
+    restartRecoveryStatus: (entry as InternalSessionEntry | undefined)?.mainRestartRecovery
+      ?.tombstone
+      ? "tombstoned"
+      : undefined,
+    thinkingLevel: thinkingProjection.thinkingLevel,
+    contextWindow: contextWindowProfile.contextWindow,
+    contextWindows: contextWindowProfile.contextWindows,
+    contextWindowDefault: contextWindowProfile.contextWindowDefault,
+    thinkingLevels: thinkingProjection.thinkingLevels,
+    thinkingOptions: thinkingProjection.thinkingOptions,
+    thinkingDefault: thinkingProjection.thinkingDefault,
+    fastMode: entry?.fastMode,
+    toolOverrides: entry?.toolOverrides,
+    effectiveFastMode: fastModeState.mode,
+    effectiveFastModeSource: fastModeState.source,
+    fastAutoOnSeconds: fastModeState.fastAutoOnSeconds,
+    verboseLevel: entry?.verboseLevel,
+    traceLevel: entry?.traceLevel,
+    reasoningLevel: entry?.reasoningLevel,
+    elevatedLevel: entry?.elevatedLevel,
+    sendPolicy: entry?.sendPolicy,
+    inputTokens: entry?.inputTokens,
+    outputTokens: entry?.outputTokens,
+    totalTokens,
+    totalTokensFresh,
+    goal,
+    estimatedCostUsd,
+    ...runFields,
+    lastRunError: entry?.lastRunError,
+    lastRunId: entry?.lastRunId,
+    hasAutomation: sessionHasAutomation(key, cfg, sessionAgentId) ? true : undefined,
+    // Navigation lineage is persisted; runtime control is exposed separately above.
+    parentSessionKey: entry?.parentSessionKey,
+    childSessions,
+    responseUsage: entry?.responseUsage,
+    effectiveResponseUsage: resolveEffectiveResponseUsage(
+      entry?.responseUsage,
+      cfg.messages?.responseUsage,
+      channel,
+    ),
+    queueMode: entry?.queueMode,
+    effectiveQueueMode: resolveQueueSettingsCore({
+      cfg,
+      channel: INTERNAL_MESSAGE_CHANNEL,
+      sessionEntry: entry,
+    }).mode,
+    modelProvider: rowModelIdentity.provider,
+    model: rowModelIdentity.model,
+    activeModelProvider: activeModel?.provider,
+    activeModel: activeModel?.model,
+    ...executionSelectionWireSourceProjection(entry),
+    modelSelectionLocked: entry?.modelSelectionLocked,
+    runtimeSelectionLocked: thinkingProjection.runtimeSelectionLocked,
+    agentRuntime: projectWorkerPlacementAgentRuntime(thinkingProjection.agentRuntime),
+    contextTokens,
+    contextBudgetStatus: resolveProjectedSessionContextBudgetStatus({
+>>>>>>> 12fd09545b2 (refactor(model-picker): preserve codec and ACP request cutover progress)
       entry,
       lightweight,
       swarm: buildSessionSwarmSummary(

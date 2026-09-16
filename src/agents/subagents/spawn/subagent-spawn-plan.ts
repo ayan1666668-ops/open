@@ -5,9 +5,10 @@
  */
 import { formatThinkingLevels } from "../../../auto-reply/thinking.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
+import type { ExecutionSelectionRequest } from "../../../model-picker/apply-session-model-selection.js";
 import type { FastMode } from "../../../shared/fast-mode.js";
 import { splitTrailingAuthProfile } from "../../model-ref-profile.js";
-import { type ModelRef, resolveSubagentSpawnModelSelection } from "../../model-selection.js";
+import { type ModelRef, resolveDefaultModelForAgent, resolveSubagentSpawnModelSelection } from "../../model-selection.js";
 import { resolveSubagentThinkingOverride } from "./subagent-spawn-thinking.js";
 
 /** Splits a provider/model ref while preserving model-only refs. */
@@ -88,10 +89,24 @@ export function resolveSubagentModelAndThinkingPlan(params: {
     };
   }
 
+  const ref = splitModelRef(resolvedModel);
+  const selectedModel = ref.model
+    ? {
+        provider:
+          ref.provider ??
+          resolveDefaultModelForAgent({ cfg: params.cfg, agentId: params.targetAgentId }).provider,
+        id: ref.model,
+      }
+    : undefined;
+  const executionRequest: ExecutionSelectionRequest =
+    params.modelOverride?.trim() && selectedModel
+      ? { kind: "model", model: selectedModel }
+      : { kind: "initialize", ...(selectedModel ? { model: selectedModel } : {}) };
   return {
     status: "ok" as const,
     resolvedModel,
     ...(inheritedModel ? { inheritedModel } : {}),
+    executionRequest,
     modelApplied: Boolean(resolvedModel),
     thinkingOverride: thinkingPlan.thinkingOverride,
     initialSessionPatch: {

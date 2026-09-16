@@ -1,9 +1,9 @@
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
-import { resolveModelFallbackAvailability } from "../../agents/agent-scope.js";
 import type { EmbeddedAgentRunResult } from "../../agents/embedded-agent-runner/types.js";
 import { resolveModelAuthMode } from "../../agents/model-auth.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { resolveSessionExecutionFallbacks } from "../../model-picker/apply-session-model-selection.js";
 import { normalizeVerboseLevel, type VerboseLevel } from "../thinking.js";
 import type { ReplyPayload } from "../types.js";
 import { buildInlinePluginStatusPayload } from "./agent-runner-core.js";
@@ -96,14 +96,11 @@ export async function buildReplyDiagnosticsPayload(params: {
         normalizeOptionalString(activeSessionEntry?.traceLevel),
       fallbackEligible:
         runResult.meta?.requestShaping?.fallbackEligible ??
-        resolveModelFallbackAvailability({
+        resolveSessionExecutionFallbacks({
           cfg: cfg ?? {},
           agentId: followupRun.run.agentId,
           sessionKey: followupRun.run.sessionKey,
-          hasSessionModelOverride: followupRun.run.hasSessionModelOverride === true,
-          modelOverrideSource: followupRun.run.modelOverrideSource,
-          hasAutoFallbackProvenance: followupRun.run.hasAutoFallbackProvenance === true,
-          modelSelectionLocked: followupRun.run.modelSelectionLocked,
+          selection: followupRun.run.executionSelection,
           subagentSpawnLineage: followupRun.run.subagentSpawnLineage,
         }).kind === "active",
       blockStreaming:

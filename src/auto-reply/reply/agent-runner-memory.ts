@@ -26,10 +26,7 @@ import { resolveContextConfigProviderForRuntime } from "../../agents/openai-rout
 import type { AgentMessage } from "../../agents/runtime/index.js";
 import { resolveSandboxConfigForAgent, resolveSandboxRuntimeStatus } from "../../agents/sandbox.js";
 import { createSessionMaintenanceFollowup } from "../../agents/session-maintenance/run.js";
-import {
-  resolvePersistedSessionRuntimeId,
-  resolveSessionRuntimeOverrideForProvider,
-} from "../../agents/session-runtime-compat.js";
+import { resolvePersistedSessionRuntimeId } from "../../agents/session-runtime-compat.js";
 import type { CompactionRequestBudget } from "../../agents/sessions/compaction/request-budget.js";
 import { resolveEffectiveAgentRuntime } from "../../agents/thinking-runtime.js";
 import {
@@ -64,6 +61,8 @@ import { clearAgentRunContext, registerAgentRunContext } from "../../infra/agent
 import { emitAgentRunStatusEvent } from "../../infra/agent-run-status-events.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
+import { prepareSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
+import { isAcpExecutionSelection } from "../../model-picker/execution-selection.js";
 import { resolveMemoryFlushPlan, type MemoryFlushPlan } from "../../plugins/memory-state.js";
 import { CommandLane } from "../../process/lanes.js";
 import { isIncognitoSessionKey, isUnscopedSessionKeySentinel } from "../../routing/session-key.js";
@@ -233,7 +232,7 @@ type FollowupRuntimeParams = {
 };
 
 function followupUsesCliRuntime(params: FollowupRuntimeParams, runtimeId: string): boolean {
-  const provider = params.followupRun.run.provider;
+  const provider = params.followupRun.run.executionSelection.model.provider;
   if (params.agentHarnessId) {
     return isCliRuntimeAliasForProvider({
       provider,
@@ -259,8 +258,8 @@ function resolveFollowupAgentRuntimeId(params: FollowupRuntimeParams): string {
       : undefined;
   return resolveEffectiveAgentRuntime({
     cfg: params.cfg,
-    provider: params.followupRun.run.provider,
-    modelId: params.followupRun.run.model,
+    provider: params.followupRun.run.executionSelection.model.provider,
+    modelId: params.followupRun.run.executionSelection.model.id,
     agentId: params.followupRun.run.agentId ?? resolveDefaultAgentId(params.cfg),
     // Model/runtime selection belongs to execution; sandbox policy has its own classification key.
     sessionKey: params.sessionKey ?? params.followupRun.run.sessionKey,
@@ -782,17 +781,17 @@ export async function runSessionCompactionIfNeeded(params: {
 
   const catalogModel = findModelInCatalog(
     params.followupRun.run.thinkingCatalog ?? [],
-    params.followupRun.run.provider,
-    params.followupRun.run.model ?? params.defaultModel,
+    params.followupRun.run.executionSelection.model.provider,
+    params.followupRun.run.executionSelection.model.id ?? params.defaultModel,
   );
   const contextWindowTokens = resolveContextTokens({
     cfg: params.cfg,
     provider: resolveContextConfigProviderForRuntime({
-      provider: params.followupRun.run.provider,
+      provider: params.followupRun.run.executionSelection.model.provider,
       runtimeId,
       config: params.cfg,
     }),
-    model: params.followupRun.run.model ?? params.defaultModel,
+    model: params.followupRun.run.executionSelection.model.id ?? params.defaultModel,
     modelContextWindow: catalogModel?.contextWindow,
     modelContextTokens: catalogModel?.contextTokens,
   });
@@ -810,8 +809,8 @@ export async function runSessionCompactionIfNeeded(params: {
   const responsesServerCompactionThreshold = resolveResponsesServerCompactionThreshold({
     contextWindowTokens,
     cfg: params.cfg,
-    provider: params.followupRun.run.provider,
-    modelId: params.followupRun.run.model ?? params.defaultModel,
+    provider: params.followupRun.run.executionSelection.model.provider,
+    modelId: params.followupRun.run.executionSelection.model.id ?? params.defaultModel,
   });
   const threshold = resolveCompactionThreshold({
     contextWindowTokens,
@@ -1086,8 +1085,8 @@ export async function runSessionCompactionIfNeeded(params: {
         conversationRoutePeerId: params.followupRun.run.conversationRoutePeerId,
         chatType: params.followupRun.run.chatType,
         skillsSnapshot: entry.skillsSnapshot ?? params.followupRun.run.skillsSnapshot,
-        provider: params.followupRun.run.provider,
-        model: params.followupRun.run.model,
+        provider: params.followupRun.run.executionSelection.model.provider,
+        model: params.followupRun.run.executionSelection.model.id,
         authProfileId: params.followupRun.run.authProfileId,
         authProfileIdSource: params.followupRun.run.authProfileIdSource,
         sessionEntry: entry,
@@ -1330,17 +1329,17 @@ export async function runMemoryFlushIfNeeded(params: {
     recordMemoryFlushFailure(error, params, activeSessionEntry);
   const catalogModel = findModelInCatalog(
     params.followupRun.run.thinkingCatalog ?? [],
-    params.followupRun.run.provider,
-    params.followupRun.run.model ?? params.defaultModel,
+    params.followupRun.run.executionSelection.model.provider,
+    params.followupRun.run.executionSelection.model.id ?? params.defaultModel,
   );
   const contextWindowTokens = resolveContextTokens({
     cfg: params.cfg,
     provider: resolveContextConfigProviderForRuntime({
-      provider: params.followupRun.run.provider,
+      provider: params.followupRun.run.executionSelection.model.provider,
       runtimeId,
       config: params.cfg,
     }),
-    model: params.followupRun.run.model ?? params.defaultModel,
+    model: params.followupRun.run.executionSelection.model.id ?? params.defaultModel,
     modelContextWindow: catalogModel?.contextWindow,
     modelContextTokens: catalogModel?.contextTokens,
   });
@@ -1680,22 +1679,39 @@ export async function runMemoryFlushIfNeeded(params: {
           params.followupRun.run.runtimePolicySessionKey ??
           params.sessionKey,
         preparation: { kind: "direct" },
-        resolveRuntimeOverride: (provider) =>
-          resolveSessionRuntimeOverrideForProvider({
-            provider,
-            entry: activeSessionEntry,
+        prepareExecutionSelection: async (provider, model) => {
+          const prepared = await prepareSessionExecutionSelection({
             cfg: params.cfg,
-          }),
+            agentId: params.followupRun.run.agentId,
+            sessionKey: params.sessionKey,
+            sessionEntry: activeSessionEntry,
+            request: {
+              kind: "fallback",
+              selection: {
+                model: { provider, id: model },
+                executor: params.followupRun.run.executionSelection.executor,
+              },
+              explicitModels: [
+                `${selection.provider}/${selection.model}`,
+                ...(selection.fallbacksOverride ?? []),
+              ],
+            },
+          });
+          if (prepared.status !== "ready") {
+            throw new Error(prepared.message);
+          }
+          if (isAcpExecutionSelection(prepared.selection)) {
+            throw new Error("This maintenance turn requires a direct execution selection.");
+          }
+          return prepared.selection;
+        },
       },
       behavior: { kind: "maintenance" },
       sessionOverride: { kind: "preserve" },
       abortSignal: deferredLifecycle.signal,
-      runCandidate: async (provider, model, runOptions) => {
-        const sessionRuntimeOverride = resolveSessionRuntimeOverrideForProvider({
-          provider,
-          entry: activeSessionEntry,
-          cfg: params.cfg,
-        });
+      runCandidate: async (candidate, runOptions) => {
+        const { provider, id: model } = candidate.model;
+        const sessionRuntimeOverride = candidate.executor.id;
         const candidateThinkLevel = resolveRunThinkingLevelForFallbackCandidate({
           cfg: params.cfg,
           provider,
@@ -1714,6 +1730,7 @@ export async function runMemoryFlushIfNeeded(params: {
           await buildEmbeddedRunExecutionParams({
             run: {
               ...maintenanceRun,
+              executionSelection: candidate,
               thinkLevel: candidateThinkLevel,
             },
             sessionCtx: {},

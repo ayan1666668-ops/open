@@ -280,7 +280,10 @@ export async function resolveEmbeddedModelSelection(params: {
     !params.suppressVisibleSessionEffects
   ) {
     const next = { ...sessionEntry };
-    commitSessionExecutionSelection(next, executionSelection);
+    commitSessionExecutionSelection(next, executionSelection, {
+      cfg: params.cfg,
+      cause: { kind: "initialize" },
+    });
     sessionEntry = await persistAgentSession({
       sessionStore: params.sessionStore,
       sessionKey: params.sessionKey,

@@ -6,6 +6,7 @@ import {
   isAcpExecutionSelection,
   type AcpExecutionSelection,
   type ExecutionSelection,
+  type ModelExecutionSelection,
 } from "./execution-selection.js";
 
 export type ExecutionSelectionCodecMetadata = {
@@ -95,7 +96,11 @@ export function decodeSessionExecutionSelection(
   const fallbackOriginProvider = entry.modelOverrideFallbackOriginProvider?.trim();
   const fallbackOriginModel = entry.modelOverrideFallbackOriginModel?.trim();
   const hasFallbackOrigin = Boolean(fallbackOriginProvider && fallbackOriginModel);
-  const restoreFallbackOrigin = hasFallbackOrigin && entry.modelOverrideSource !== "user";
+  const restoreFallbackOrigin =
+    hasFallbackOrigin &&
+    entry.modelOverrideSource !== "user" &&
+    (fallbackOriginProvider !== entry.providerOverride?.trim() ||
+      fallbackOriginModel !== entry.modelOverride?.trim());
   const provider = restoreFallbackOrigin ? fallbackOriginProvider : entry.providerOverride?.trim();
   const id = restoreFallbackOrigin ? fallbackOriginModel : entry.modelOverride?.trim();
   if (!id || entry.modelOverrideSource === "default") {
@@ -138,11 +143,83 @@ export function readSessionExecutionSelection(
   return decoded.kind === "initialized" ? decoded.selection : undefined;
 }
 
+export type ExecutionSelectionCommitCause =
+  | { kind: "initialize" | "reset" | "user" }
+  | { kind: "inherit"; entry: Partial<SessionEntry> };
+
+function hasStrictModelSelection(entry: Partial<SessionEntry> | undefined): boolean {
+  if (!entry?.modelOverride?.trim()) {
+    return false;
+  }
+  if (entry.modelOverrideSource === "user") {
+    return true;
+  }
+  if (entry.modelOverrideSource === "auto" || entry.modelOverrideSource === "default") {
+    return false;
+  }
+  return !(
+    entry.modelOverrideFallbackOriginProvider?.trim() &&
+    entry.modelOverrideFallbackOriginModel?.trim()
+  );
+}
+
+type FallbackAdmissionRejection = {
+  status: "rejected";
+  reason: "model-selection-locked" | "user-model-selection" | "not-authorized";
+};
+
+type FallbackAdmissionParams = {
+  entry: Partial<SessionEntry> | undefined;
+  metadata: ExecutionSelectionCodecMetadata;
+  explicitModels?: readonly ModelExecutionSelection["model"][];
+};
+
+/** Ladder admission preserves the difference between configured and explicit selections. */
+export function admitSessionExecutionFallbacks(
+  params: FallbackAdmissionParams & { candidates: readonly ModelExecutionSelection[] },
+):
+  | { status: "admitted"; selections: readonly ModelExecutionSelection[] }
+  | FallbackAdmissionRejection {
+  const accepted = readSessionExecutionSelection(params.entry, params.metadata);
+  if (params.entry?.modelSelectionLocked || (accepted && isAcpExecutionSelection(accepted))) {
+    return { status: "rejected", reason: "model-selection-locked" };
+  }
+  if (params.explicitModels !== undefined) {
+    return params.candidates.every((candidate) =>
+      params.explicitModels?.some((model) => isDeepStrictEqual(model, candidate.model)),
+    )
+      ? { status: "admitted", selections: params.candidates }
+      : { status: "rejected", reason: "not-authorized" };
+  }
+  return hasStrictModelSelection(params.entry)
+    ? { status: "rejected", reason: "user-model-selection" }
+    : { status: "admitted", selections: params.candidates };
+}
+
+/** The primary attempt remains runnable even when its session forbids a fallback ladder. */
+export function admitSessionExecutionFallback(
+  params: FallbackAdmissionParams & { candidate: ModelExecutionSelection },
+): { status: "admitted"; selection: ModelExecutionSelection } | FallbackAdmissionRejection {
+  const accepted = readSessionExecutionSelection(params.entry, params.metadata);
+  if (isDeepStrictEqual(accepted, params.candidate)) {
+    return { status: "admitted", selection: params.candidate };
+  }
+  const admission = admitSessionExecutionFallbacks({ ...params, candidates: [params.candidate] });
+  return admission.status === "rejected"
+    ? admission
+    : { status: "admitted", selection: params.candidate };
+}
+
 /** Only the selection owner commits this encoding inside the session transaction. */
 export function encodeSessionExecutionSelection(
   entry: Partial<SessionEntry>,
   selection: ExecutionSelection,
+  cause: ExecutionSelectionCommitCause,
 ): void {
+  const strict =
+    cause.kind === "user" ||
+    (cause.kind === "initialize" && hasStrictModelSelection(entry)) ||
+    (cause.kind === "inherit" && hasStrictModelSelection(cause.entry));
   if (isAcpExecutionSelection(selection)) {
     if (!entry.acp) {
       throw new Error("ACP lifecycle metadata must exist before committing its selection");
@@ -162,9 +239,19 @@ export function encodeSessionExecutionSelection(
     // Older readers otherwise normalize an already accepted canonical model again.
     entry.modelOverrideRouteResolution = "resolved";
   }
-  delete entry.modelOverrideSource;
-  delete entry.modelOverrideFallbackOriginProvider;
-  delete entry.modelOverrideFallbackOriginModel;
+  if (isAcpExecutionSelection(selection)) {
+    delete entry.modelOverrideSource;
+    delete entry.modelOverrideFallbackOriginProvider;
+    delete entry.modelOverrideFallbackOriginModel;
+  } else if (strict) {
+    entry.modelOverrideSource = "user";
+    delete entry.modelOverrideFallbackOriginProvider;
+    delete entry.modelOverrideFallbackOriginModel;
+  } else {
+    entry.modelOverrideSource = "auto";
+    entry.modelOverrideFallbackOriginProvider = selection.model.provider;
+    entry.modelOverrideFallbackOriginModel = selection.model.id;
+  }
 }
 
 export const SESSION_MODEL_OVERRIDE_TRANSACTION_FIELDS = [
@@ -226,4 +313,18 @@ export function executionSelectionTransactionChanged(
   return SESSION_MODEL_OVERRIDE_TRANSACTION_FIELDS.some(
     (field) => !isDeepStrictEqual(before[field], after[field]),
   );
+}
+
+/** Existing Gateway wire metadata; this projection does not grant execution authority. */
+export function executionSelectionWireSourceProjection(entry: Partial<SessionEntry> | undefined): {
+  modelOverrideSource: "auto" | "user" | null;
+} {
+  return {
+    modelOverrideSource:
+      !entry?.modelOverride?.trim() || entry.modelOverrideSource === "default"
+        ? null
+        : hasStrictModelSelection(entry)
+          ? "user"
+          : "auto",
+  };
 }

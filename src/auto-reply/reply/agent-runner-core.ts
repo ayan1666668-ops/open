@@ -1,5 +1,3 @@
-import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
-import { hasSessionAutoModelFallbackProvenance } from "../../agents/agent-scope.js";
 import { hasVisibleCommittedMessagingToolDeliveryEvidence } from "../../agents/embedded-agent-runner/delivery-evidence.js";
 import { MODEL_FALLBACK_SKIPPED_CODE } from "../../agents/model-fallback.types.js";
 import type { ModelRef } from "../../agents/model-ref-shared.js";
@@ -233,8 +231,8 @@ export function resolveFallbackOriginModel(params: {
     return { ...params.runtimeModelSelection, persistedAutoFallback: false };
   }
   return {
-    provider: params.run.provider,
-    model: params.run.model,
+    provider: params.run.executionSelection.model.provider,
+    model: params.run.executionSelection.model.id,
     persistedAutoFallback: false,
   };
 }

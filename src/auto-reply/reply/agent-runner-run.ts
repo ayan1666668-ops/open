@@ -136,7 +136,7 @@ export async function runReplyAgent(
     ? [replyOperationRunState]
     : undefined;
   const traceAttributes = {
-    provider: followupRun.run.provider,
+    provider: followupRun.run.executionSelection.model.provider,
     hasSessionKey: Boolean(sessionKey ?? followupRun.run.sessionKey),
     isHeartbeat,
     queueMode: resolvedQueue.mode,

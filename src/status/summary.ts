@@ -325,11 +325,7 @@ async function prepareSessionStatusDetails(cfg: OpenClawConfig, now: number) {
           model,
           configuredModel: configuredSessionModelLabel,
           selectedModel: selectedModelLabel,
-          modelSelectionReason: modelSelectionDiffers
-            ? hasUserPinnedModelSelection(entry)
-              ? "session override"
-              : "fallback selected"
-            : null,
+          modelSelectionReason: modelSelectionDiffers ? "session override" : null,
           runtime: runtime.label,
           contextTokens,
           flags: buildFlags(entry),

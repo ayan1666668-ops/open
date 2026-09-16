@@ -43,10 +43,7 @@ import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { buildGenericCliContextEngineHostSupport } from "../../context-engine/host-compat.js";
 import { registerCronRunExecSource } from "../../infra/cron-run-exec-source.js";
 import type { SourceDeliveryPlan } from "../../infra/outbound/source-delivery-plan.js";
-import {
-  prepareSessionExecutionSelection,
-  commitSessionExecutionSelection,
-} from "../../model-picker/apply-session-model-selection.js";
+import { prepareSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
 import {
   isAcpExecutionSelection,
   type ModelExecutionSelection,
@@ -502,15 +499,22 @@ function createCronPromptExecutor(
         sessionKey: params.runSessionKey,
         preparation: { kind: "direct" },
         prepareExecutionSelection: async (provider, model) => {
-          const turnEntry = { ...params.cronSession.sessionEntry };
-          commitSessionExecutionSelection(turnEntry, params.liveSelection.selection, {
-            cfg: params.cfgWithAgentDefaults,
-          });
           const prepared = await prepareSessionExecutionSelection({
             cfg: params.cfgWithAgentDefaults,
             agentId: params.agentId,
-            sessionEntry: turnEntry,
-            request: { kind: "model", model: { provider, id: model } },
+            sessionKey: params.runSessionKey,
+            sessionEntry: params.cronSession.sessionEntry,
+            request: {
+              kind: "fallback",
+              selection: {
+                model: { provider, id: model },
+                executor: params.liveSelection.selection.executor,
+              },
+              explicitModels: [
+                `${params.liveSelection.selection.model.provider}/${params.liveSelection.selection.model.id}`,
+                ...(cronFallbacksOverride ?? []),
+              ],
+            },
           });
           if (prepared.status !== "ready") {
             throw new Error(prepared.message);

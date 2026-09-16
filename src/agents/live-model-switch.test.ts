@@ -79,7 +79,7 @@ function storeSelection(pair = selection, fields: Partial<SessionEntry> = {}) {
     liveModelSwitchPending: true,
     ...fields,
   };
-  encodeSessionExecutionSelection(entry, pair);
+  encodeSessionExecutionSelection(entry, pair, { kind: "user" });
   state.entry = entry;
   return entry;
 }

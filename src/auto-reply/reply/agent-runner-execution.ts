@@ -41,6 +41,7 @@ import { drainAgentRunTerminalWrites } from "../../infra/agent-run-terminal-writ
 import { isDiagnosticsEnabled } from "../../infra/diagnostic-events.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { logSessionTurnCreated } from "../../logging/diagnostic.js";
+import { commitSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
 import {
   bindGatewayContextResolver,
   getPluginRuntimeGatewayRequestScope,
@@ -135,24 +136,24 @@ async function executeAgentTurnInternalLoop(
           ...runnableRun,
           config: runtimeConfig,
         };
-  let liveModelSwitchRuntimeEntry:
-    | Pick<
-        SessionEntry,
-        "agentHarnessId" | "agentRuntimeOverride" | "modelSelectionLocked" | "pluginOwnerId"
-      >
-    | undefined;
+  let liveModelSwitchRuntimeEntry: SessionEntry | undefined;
   const applyLiveModelSwitchToRun = (
     run: FollowupRun["run"],
     err: LiveSessionModelSwitchError,
   ): void => {
-    run.provider = err.provider;
-    run.model = err.model;
+    run.executionSelection = err.selection;
     run.authProfileId = err.authProfileId;
     run.authProfileIdSource = err.authProfileId ? err.authProfileIdSource : undefined;
-    run.autoFallbackPrimaryProbe = undefined;
     // Keep runtime paired with the error's model/auth winner even if the
     // active in-memory session snapshot lags the persisted directive write.
-    liveModelSwitchRuntimeEntry = { agentRuntimeOverride: err.agentRuntimeOverride };
+    const currentEntry = params.getActiveSessionEntry();
+    if (currentEntry) {
+      liveModelSwitchRuntimeEntry = { ...currentEntry };
+      commitSessionExecutionSelection(liveModelSwitchRuntimeEntry, err.selection, {
+        cfg: runtimeConfig,
+        cause: { kind: "user" },
+      });
+    }
   };
 
   const runId = params.opts?.runId ?? crypto.randomUUID();
@@ -285,8 +286,8 @@ async function executeAgentTurnInternalLoop(
   };
   const notifyUserAboutCompaction = shouldNotifyUserAboutCompaction(runtimeConfig);
   let runResult: Awaited<ReturnType<typeof runEmbeddedAgent>>;
-  let fallbackProvider = params.followupRun.run.provider;
-  let fallbackModel = params.followupRun.run.model;
+  let fallbackProvider = params.followupRun.run.executionSelection.model.provider;
+  let fallbackModel = params.followupRun.run.executionSelection.model.id;
   let fallbackAttempts: RuntimeFallbackAttempt[] = [];
   let fallbackExhausted = false;
   let terminalRunFailed = false;
@@ -641,11 +642,11 @@ async function executeAgentTurnOutcome(params: AgentTurnParams): Promise<AgentTu
     const provider =
       internal.fallbackProvider ??
       internal.result.meta?.agentMeta?.provider ??
-      executionParams.followupRun.run.provider;
+      executionParams.followupRun.run.executionSelection.model.provider;
     const model =
       internal.fallbackModel ??
       internal.result.meta?.agentMeta?.model ??
-      executionParams.followupRun.run.model;
+      executionParams.followupRun.run.executionSelection.model.id;
     const terminalStatus = internal.terminalFailurePayload
       ? {
           status: "failed" as const,

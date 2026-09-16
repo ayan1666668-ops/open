@@ -2,8 +2,8 @@
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import type { QueueMode } from "../../../../packages/gateway-protocol/src/schema/logs-chat.js";
 import type { ModelCatalogEntry } from "../../../agents/model-catalog.types.js";
-import type { ModelFallbackRouteResolution } from "../../../agents/model-fallback.types.js";
 import { resolveThinkingDefault } from "../../../agents/model-thinking-default.js";
+import type { ModelExecutionSelection } from "../../../model-picker/execution-selection.js";
 import { resolveGlobalMap } from "../../../shared/global-singleton.js";
 import { applyQueueRuntimeSettings } from "../../../utils/queue-helpers.js";
 import { normalizeThinkLevel, resolveSupportedThinkingLevel } from "../../thinking.js";
@@ -200,10 +200,7 @@ export function refreshQueuedFollowupSession(params: {
   previousSessionId?: string;
   nextSessionId?: string;
   nextSessionFile?: string;
-  nextProvider?: string;
-  nextModel?: string;
-  nextRouteResolution?: ModelFallbackRouteResolution;
-  nextModelOverrideSource?: "auto" | "user";
+  nextSelection?: ModelExecutionSelection;
   nextAuthProfileId?: string;
   nextAuthProfileIdSource?: "auto" | "user";
   nextThinking?: {
@@ -224,10 +221,7 @@ export function refreshQueuedFollowupSession(params: {
     Boolean(params.previousSessionId) &&
     Boolean(params.nextSessionId) &&
     params.previousSessionId !== params.nextSessionId;
-  const hasNextModelRoute =
-    typeof params.nextProvider === "string" || typeof params.nextModel === "string";
-  const shouldRewriteModelSelection =
-    hasNextModelRoute || Object.hasOwn(params, "nextModelOverrideSource");
+  const shouldRewriteModelSelection = params.nextSelection !== undefined;
   const shouldRewriteSelection =
     shouldRewriteModelSelection ||
     Object.hasOwn(params, "nextAuthProfileId") ||
@@ -249,22 +243,8 @@ export function refreshQueuedFollowupSession(params: {
       }
     }
     if (shouldRewriteSelection) {
-      if (typeof params.nextProvider === "string") {
-        run.provider = params.nextProvider;
-      }
-      if (typeof params.nextModel === "string") {
-        run.model = params.nextModel;
-      }
-      if (hasNextModelRoute) {
-        run.requestedRouteResolution = params.nextRouteResolution ?? "raw";
-      }
-      if (shouldRewriteModelSelection) {
-        delete run.hasAutoFallbackProvenance;
-      }
-      if (Object.hasOwn(params, "nextModelOverrideSource")) {
-        run.hasSessionModelOverride =
-          params.nextModelOverrideSource !== undefined && Boolean(run.provider || run.model);
-        run.modelOverrideSource = params.nextModelOverrideSource;
+      if (params.nextSelection) {
+        run.executionSelection = params.nextSelection;
       }
       if (Object.hasOwn(params, "nextAuthProfileId")) {
         run.authProfileId = normalizeOptionalString(params.nextAuthProfileId);
@@ -275,8 +255,8 @@ export function refreshQueuedFollowupSession(params: {
       if (params.nextThinking) {
         run.thinkingCatalog = params.nextThinking.catalog;
         const thinkingPolicy = {
-          provider: run.provider,
-          model: run.model,
+          provider: run.executionSelection.model.provider,
+          model: run.executionSelection.model.id,
           catalog: params.nextThinking.catalog,
           agentRuntime: params.nextThinking.agentRuntime,
         };

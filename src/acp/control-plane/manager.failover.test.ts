@@ -19,6 +19,7 @@ describe("AcpSessionManager backend failover", () => {
     params: {
       initialBackend?: "primary-backend" | "fallback-backend";
       primaryUnavailableError?: Error;
+      model?: string;
     } = {},
   ) {
     const primaryRuntime = createRuntime();
@@ -27,6 +28,7 @@ describe("AcpSessionManager backend failover", () => {
     const initialBackend = params.initialBackend ?? "primary-backend";
     let currentMeta = readySessionMeta({
       backend: initialBackend,
+      ...(params.model ? { runtimeOptions: { model: params.model } } : {}),
       runtimeSessionName:
         initialBackend === "fallback-backend" ? "fallback-runtime" : "primary-runtime",
     });
@@ -181,6 +183,34 @@ describe("AcpSessionManager backend failover", () => {
       new AcpSessionManager().runTurn({ ...input, requestId: "after-restart" }),
     ).rejects.toThrow("app did not confirm the last change");
     expect(harness.fallbackRuntime.runTurn).toHaveBeenCalledOnce();
+  });
+
+  it("does not treat successful close as settlement of a rejected fallback model control", async () => {
+    const harness = setupFailoverBackends({
+      model: "qa-model",
+      primaryUnavailableError: new AcpRuntimeError(
+        "ACP_BACKEND_UNAVAILABLE",
+        "primary backend unavailable",
+      ),
+    });
+    harness.fallbackRuntime.setConfigOption.mockRejectedValueOnce(new Error("control result lost"));
+    const input = {
+      cfg: harness.cfg,
+      sessionKey: harness.sessionKey,
+      provenance: "system" as const,
+      text: "continue",
+      mode: "prompt" as const,
+      requestId: "uncertain-fallback-control",
+    };
+    await expect(new AcpSessionManager().runTurn(input)).rejects.toThrow("control result lost");
+    expect(harness.fallbackRuntime.close).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: "turn-local-fallback-complete" }),
+    );
+    await expect(
+      new AcpSessionManager().runTurn({ ...input, requestId: "after-uncertain-control" }),
+    ).rejects.toThrow("app did not confirm the last change");
+    expect(harness.fallbackRuntime.runTurn).not.toHaveBeenCalled();
+    expect(harness.currentMeta.backend).toBe("primary-backend");
   });
 
   it("closes the previous persistent handle before switching fallback backends", async () => {
