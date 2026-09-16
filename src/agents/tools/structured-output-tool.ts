@@ -1,3 +1,4 @@
+import { parseJsonPreservingUnsafeIntegers } from "@openclaw/ai/transports";
 import { Type } from "typebox";
 import { validateJsonSchemaValue } from "../../plugins/schema-validator.js";
 import type { JsonSchemaObject } from "../../shared/json-schema.types.js";
@@ -94,7 +95,7 @@ export function createStructuredOutputTool(params: {
         // Retry once against the parsed value before treating it as a rejection.
         if (!validation.ok && typeof resultArg === "string") {
           try {
-            const parsedResult: unknown = JSON.parse(resultArg);
+            const parsedResult: unknown = parseJsonPreservingUnsafeIntegers(resultArg);
             const reparsed = validateJsonSchemaValue({
               schema: params.schema as JsonSchemaObject,
               cacheKey: `swarm-structured-output:${params.runId}`,
