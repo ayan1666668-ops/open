@@ -8,7 +8,10 @@ import {
   createOverflowRunParams,
   resetSharedRunIntegrationHarnessMocks,
 } from "./run.overflow-compaction.harness.js";
-import { loadSharedRunIntegrationHarness } from "./run.shared-integration-harness.test-support.js";
+import {
+  createSharedRunIntegrationSession,
+  loadSharedRunIntegrationHarness,
+} from "./run.shared-integration-harness.test-support.js";
 
 let state: OpenClawTestState;
 let runEmbeddedAgent: Awaited<ReturnType<typeof loadSharedRunIntegrationHarness>>;
@@ -58,6 +61,100 @@ describe("runEmbeddedAgent before_agent_reply seam", () => {
 
   afterEach(async () => {
     await state?.cleanup();
+  });
+
+  it.each([
+    {
+      name: "persistent user turn",
+      sessionPersistence: undefined,
+      currentInboundEventKind: undefined,
+      persists: true,
+    },
+    {
+      name: "detached user turn",
+      sessionPersistence: "detached" as const,
+      currentInboundEventKind: undefined,
+      persists: false,
+    },
+    {
+      name: "room event",
+      sessionPersistence: undefined,
+      currentInboundEventKind: "room_event" as const,
+      persists: false,
+    },
+  ])("preserves transcript persistence for a hook-claimed $name", async (testCase) => {
+    const session = await createSharedRunIntegrationSession();
+    const { loadTranscriptEvents } = await import("../../config/sessions/session-accessor.js");
+    const { getReplyPayloadMetadata, setReplyPayloadMetadata } =
+      await import("../../auto-reply/reply-payload.js");
+    try {
+      mockedGlobalHookRunner.hasHooks.mockImplementation(
+        (hookName: string) => hookName === "before_agent_reply",
+      );
+      mockedGlobalHookRunner.runBeforeAgentReply.mockResolvedValue({
+        handled: true,
+        reply: setReplyPayloadMetadata(
+          { text: "user turn claimed" },
+          { blockSourceText: "plugin-owned source" },
+        ),
+      });
+
+      const result = await runEmbeddedAgent({
+        ...session.runParams,
+        trigger: "user",
+        sessionPersistence: testCase.sessionPersistence,
+        currentInboundEventKind: testCase.currentInboundEventKind,
+      });
+
+      expect(result.payloads?.[0]?.text).toBe("user turn claimed");
+      expect(mockedRunEmbeddedAttempt).not.toHaveBeenCalled();
+      const transcript = await loadTranscriptEvents(session.runParams.sessionTarget);
+      if (testCase.persists) {
+        expect(transcript).toContainEqual(
+          expect.objectContaining({
+            message: expect.objectContaining({
+              role: "assistant",
+              content: expect.arrayContaining([{ type: "text", text: "user turn claimed" }]),
+            }),
+          }),
+        );
+        expect(getReplyPayloadMetadata(result.payloads?.[0] ?? {})).toMatchObject({
+          assistantTranscriptOwned: true,
+          assistantTranscriptIdempotencyKey: `before-agent-reply:${session.runParams.runId}`,
+          blockSourceText: "plugin-owned source",
+        });
+      } else {
+        expect(transcript).toEqual([]);
+      }
+    } finally {
+      await session.cleanup();
+    }
+  });
+
+  it("does not persist a hook reply after its session writer is replaced", async () => {
+    const session = await createSharedRunIntegrationSession();
+    const { loadTranscriptEvents } = await import("../../config/sessions/session-accessor.js");
+    const { claimAgentSessionWriter } = await import("./run/session-bootstrap.js");
+    try {
+      mockedGlobalHookRunner.hasHooks.mockImplementation(
+        (hookName: string) => hookName === "before_agent_reply",
+      );
+      mockedGlobalHookRunner.runBeforeAgentReply.mockImplementationOnce(async () => {
+        await claimAgentSessionWriter({
+          ...session.runParams,
+          runId: "replacement-writer",
+        });
+        return { handled: true, reply: { text: "stale writer reply" } };
+      });
+
+      await runEmbeddedAgent({ ...session.runParams, trigger: "user" });
+
+      expect(mockedGlobalHookRunner.runBeforeAgentReply).toHaveBeenCalledTimes(1);
+      expect(mockedRunEmbeddedAttempt).not.toHaveBeenCalled();
+      expect(await loadTranscriptEvents(session.runParams.sessionTarget)).toEqual([]);
+    } finally {
+      await session.cleanup();
+    }
   });
 
   it("lets before_agent_reply claim cron runs before the embedded attempt starts", async () => {

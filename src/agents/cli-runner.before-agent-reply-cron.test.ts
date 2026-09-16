@@ -1,7 +1,11 @@
+import path from "node:path";
 import { expectDefined } from "@openclaw/normalization-core";
 /** Tests cron before_agent_reply gating at the CLI runner entrypoint. */
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
+import { getReplyPayloadMetadata, setReplyPayloadMetadata } from "../auto-reply/reply-payload.js";
 import { SILENT_REPLY_TOKEN } from "../auto-reply/tokens.js";
+import { loadTranscriptEvents } from "../config/sessions/session-accessor.js";
 import {
   getAgentEventLifecycleGeneration,
   withAgentRunLifecycleGeneration,
@@ -11,7 +15,9 @@ import {
   resetDiagnosticEventsForTest,
   type DiagnosticEventPayload,
 } from "../infra/diagnostic-events.js";
+import { upsertSessionEntry } from "../plugin-sdk/session-store-runtime.js";
 import type { HookRunner } from "../plugins/hooks.js";
+import { closeOpenClawAgentDatabasesForTest } from "../state/openclaw-agent-db.js";
 import { wrapRunWithTestPreparedAdmission } from "./admitted-run-context.test-support.js";
 import { getOrCreateSessionMcpRuntime } from "./agent-bundle-mcp-manager.test-support.js";
 import { testing as cliBackendsTesting } from "./cli-backends.test-support.js";
@@ -110,6 +116,8 @@ const baseRunParams = {
   runId: "test-run-id",
 } as const;
 
+const tempDirs = useAutoCleanupTempDirTracker(afterEach);
+
 type ProductionRunCliAgent = typeof import("./cli-runner.js").runCliAgent;
 type TestRunCliAgent = (
   params: Omit<Parameters<ProductionRunCliAgent>[0], "admittedRunContext">,
@@ -198,6 +206,7 @@ afterEach(() => {
   cliBackendsTesting.resetDepsForTest();
   vi.clearAllMocks();
   resetDiagnosticEventsForTest();
+  return closeOpenClawAgentDatabasesForTest();
 });
 
 describe("runCliAgent before_agent_reply seam", () => {
@@ -723,14 +732,33 @@ describe("runCliAgent before_agent_reply seam", () => {
     expect(result.payloads?.[0]?.text).toBe(SILENT_REPLY_TOKEN);
   });
 
-  it("lets before_agent_reply claim user runs before CLI preparation", async () => {
+  it("persists a before_agent_reply claim for a user run before CLI preparation", async () => {
+    const root = tempDirs.make("openclaw-cli-before-agent-reply-");
+    const sessionTarget = {
+      agentId: baseRunParams.agentId,
+      sessionId: baseRunParams.sessionId,
+      sessionKey: baseRunParams.sessionKey,
+      storePath: path.join(root, "agents", "main", "agent", "openclaw-agent.sqlite"),
+    };
+    await upsertSessionEntry({
+      ...sessionTarget,
+      entry: { sessionId: sessionTarget.sessionId, updatedAt: Date.now() },
+    });
     hasHooksMock.mockImplementation((hookName) => hookName === "before_agent_reply");
     runBeforeAgentReplyMock.mockResolvedValue({
       handled: true,
-      reply: { text: "user turn claimed" },
+      reply: setReplyPayloadMetadata(
+        { text: "user turn claimed" },
+        { heartbeatScratchProposal: "preserved plugin metadata" },
+      ),
     });
 
-    const result = await runCliAgent({ ...baseRunParams, trigger: "user" });
+    const result = await runCliAgent({
+      ...baseRunParams,
+      ...sessionTarget,
+      trigger: "user",
+      persistAssistantTranscript: true,
+    });
 
     expect(runBeforeAgentReplyMock).toHaveBeenCalledTimes(1);
     const [, hookContext] = runBeforeAgentReplyMock.mock.calls.at(0) ?? [];
@@ -738,6 +766,25 @@ describe("runCliAgent before_agent_reply seam", () => {
     expect(prepareCliRunContextMock).not.toHaveBeenCalled();
     expect(executePreparedCliRunMock).not.toHaveBeenCalled();
     expect(result.payloads?.[0]?.text).toBe("user turn claimed");
+    expect(await loadTranscriptEvents(sessionTarget)).toContainEqual(
+      expect.objectContaining({
+        message: expect.objectContaining({
+          role: "assistant",
+          content: expect.arrayContaining([
+            expect.objectContaining({ type: "text", text: "user turn claimed" }),
+          ]),
+        }),
+      }),
+    );
+    expect(
+      getReplyPayloadMetadata(
+        expectDefined(result.payloads?.[0], "expected claimed reply payload"),
+      ),
+    ).toMatchObject({
+      assistantTranscriptOwned: true,
+      assistantTranscriptIdempotencyKey: `cli-assistant:${baseRunParams.runId}`,
+      heartbeatScratchProposal: "preserved plugin metadata",
+    });
   });
 
   it("lets before_agent_reply claim heartbeat runs before CLI preparation", async () => {
