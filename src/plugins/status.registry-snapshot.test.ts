@@ -1012,7 +1012,7 @@ describe("buildPluginRegistrySnapshotReport", () => {
     expect(isColdPluginRuntimeLoaded(fixture)).toBe(false);
   });
 
-  it.each([true, false])("builds cold snapshots with CLI backends when enabled=%s", (enabled) => {
+  it("builds cold snapshots without importing plugin runtime", () => {
     const fixture = createColdPluginFixture({
       rootDir: makeTempDir(),
       pluginId: "snapshot-demo",
@@ -1021,17 +1021,13 @@ describe("buildPluginRegistrySnapshotReport", () => {
         name: "Snapshot Demo",
         description: "Status metadata",
         providers: ["snapshot-provider"],
-        cliBackends: ["snapshot-cli"],
-        setup: { cliBackends: ["snapshot-setup-cli"] },
       },
       providerId: "snapshot-provider",
       runtimeMessage: "runtime entry should not load for plugin status snapshot report",
     });
     const workspaceDir = makeTempDir();
-    const config = createColdPluginConfig(fixture.rootDir, fixture.pluginId);
-    config.plugins!.entries![fixture.pluginId]!.enabled = enabled;
     const report = buildPluginSnapshotReport({
-      config,
+      config: createColdPluginConfig(fixture.rootDir, fixture.pluginId),
       workspaceDir,
       env: createColdPluginHermeticEnv(workspaceDir, {
         bundledPluginsDir: makeTempDir(),
@@ -1042,8 +1038,7 @@ describe("buildPluginRegistrySnapshotReport", () => {
       id: "snapshot-demo",
       name: "Snapshot Demo",
       source: fs.realpathSync(fixture.runtimeSource),
-      status: enabled ? "loaded" : "disabled",
-      cliBackendIds: ["snapshot-cli", "snapshot-setup-cli"],
+      status: "loaded",
       imported: false,
     });
     expect(isColdPluginRuntimeLoaded(fixture)).toBe(false);

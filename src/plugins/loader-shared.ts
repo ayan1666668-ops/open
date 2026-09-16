@@ -318,7 +318,11 @@ function createManifestPluginRecord(params: {
     mcpServers: manifestRecord.mcpServers,
   });
   if (!params.shouldLoadModules) {
-    applyManifestSnapshotMetadata(record, manifestRecord);
+    record.cliBackendIds = [
+      ...(manifestRecord.cliBackends ?? []),
+      ...(manifestRecord.setup?.cliBackends ?? []),
+    ];
+    record.commands = (manifestRecord.commandAliases ?? []).map((alias) => alias.name);
   }
   return record;
 }
@@ -412,19 +416,6 @@ export function preparePluginLoadRecord(params: {
   // Manifest ownership survives rollback of executable registrations.
   record.commandAliases = manifestRecord.commandAliases;
   return { pluginId, policyId, isDreamingSidecar, activationState, enableState, entry, record };
-}
-
-function applyManifestSnapshotMetadata(
-  record: PluginRecord,
-  manifestRecord: PluginManifestRecord,
-): void {
-  record.channelIds = [...(manifestRecord.channels ?? [])];
-  record.providerIds = [...(manifestRecord.providers ?? [])];
-  record.cliBackendIds = [
-    ...(manifestRecord.cliBackends ?? []),
-    ...(manifestRecord.setup?.cliBackends ?? []),
-  ];
-  record.commands = (manifestRecord.commandAliases ?? []).map((alias) => alias.name);
 }
 
 export function maybeThrowOnPluginLoadError(
