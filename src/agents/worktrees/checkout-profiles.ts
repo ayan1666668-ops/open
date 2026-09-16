@@ -74,9 +74,14 @@ export async function resolveWorktreeSourceProfile(
             part.toLowerCase() === ".git",
         );
       // These are literal cone directories, not patterns, commands or C-quoted paths.
-      const hasControlCharacter = [...directory].some(
-        (character) => character.charCodeAt(0) < 0x20 || character.charCodeAt(0) === 0x7f,
-      );
+      let hasControlCharacter = false;
+      for (let index = 0; index < directory.length; index += 1) {
+        const code = directory.charCodeAt(index);
+        if (code < 0x20 || code === 0x7f) {
+          hasControlCharacter = true;
+          break;
+        }
+      }
       if (invalidComponent || hasControlCharacter || /[\\:*?[\]!"<>|]/u.test(directory)) {
         throw new Error(
           `Worktree profile ${definition} contains an invalid cone directory: ${JSON.stringify(directory)}.`,
