@@ -2,7 +2,6 @@
  * Top-level CLI-backed agent runner orchestration.
  */
 import { SILENT_REPLY_TOKEN } from "../auto-reply/tokens.js";
-import { runWithCliHistoryWriter } from "../config/sessions/cli-history-boundary.js";
 import { buildGenericCliContextEngineHostSupport } from "../context-engine/host-compat.js";
 import {
   assertAgentRunLifecycleGenerationCurrent,
@@ -69,6 +68,7 @@ import {
   runClaudeCliAgentTurnWithDiagnostics,
   type ClaudeCliRunDiagnosticLifecycle,
 } from "./cli-runner/run-diagnostics.js";
+import { runPreparedCliAgentWithTranscriptCustody } from "./cli-runner/run-prepared-custody.js";
 import {
   loadCliSessionContextEngineMessages,
   loadCliSessionHistoryMessages,
@@ -248,7 +248,7 @@ export async function runPreparedCliAgent(
   diagnosticLifecycle?: ClaudeCliRunDiagnosticLifecycle,
 ): Promise<EmbeddedAgentRunResult> {
   const run = () => runPreparedCliAgentOwned(context, diagnosticLifecycle);
-  return await runWithCliHistoryWriter(context.cliHistoryWriter, run);
+  return await runPreparedCliAgentWithTranscriptCustody(context, run);
 }
 
 async function runPreparedCliAgentOwned(

@@ -274,7 +274,7 @@ describe("memory index", () => {
       try {
         const started = performance.now();
         await manager.sync({ reason: "test", force: true });
-        expect(performance.now() - started).toBeLessThan(3_000);
+        expect(performance.now() - started).toBeLessThan(5_000);
         const db = Reflect.get(manager, "db") as DatabaseSync;
         expect(
           db

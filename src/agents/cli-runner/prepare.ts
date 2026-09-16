@@ -122,7 +122,6 @@ import {
 } from "../embedded-agent-runner/sandbox-skills.js";
 import { selectContextEngineForTranscriptHost } from "../harness/context-engine-logical-turn.js";
 import { drainPendingContextEngineTurnsBeforeRun } from "../harness/context-engine-turn-attempt.js";
-import { createAgentQuestionAnswerAuthority } from "../harness/host-private-capabilities.js";
 import type { ResolvedProviderAuth } from "../model-auth-runtime-shared.js";
 import { findModelCatalogEntry, loadManifestModelCatalog } from "../model-catalog.js";
 import type { ModelCatalogEntry } from "../model-catalog.types.js";
@@ -156,6 +155,7 @@ import {
   type BundledCliBackendAuthPolicy,
 } from "./cli-backend-auth-policy.js";
 import { getCliLiveSessionGeneration } from "./cli-live-session-registry.js";
+import { createCliQuestionAnswerAuthority } from "./cli-question-answer-authority.js";
 import {
   createCliRunCurrentAssertion,
   resolveCliExecutionTarget,
@@ -999,7 +999,7 @@ async function prepareCliRunContextWithinReadFence(
     params = { ...params, toolAuthorityFingerprint: questionFingerprint };
   }
   const bindQuestionAnswerAuthorityForSession = (sessionKey: string, assertActive: () => void) =>
-    createAgentQuestionAnswerAuthority({
+    createCliQuestionAnswerAuthority({
       sessionKey,
       fingerprint: questionFingerprint,
       project: (caller) =>
