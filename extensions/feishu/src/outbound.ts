@@ -646,22 +646,28 @@ export const feishuOutbound: ChannelOutboundAdapter = {
     });
     if (!card) {
       const { presentation } = resolveFeishuRichReply(payload);
+      // The senders below convert for their own target and stand that conversion down when
+      // the cut cannot carry the markers it generated, so what they need is the authored
+      // prose. Converting here first, or forwarding prose the renderer already converted,
+      // hands them a conversion they cannot undo, and a quoted table's opening and closing
+      // markers then reach separate messages. The renderer records the authored form beside
+      // the converted one for exactly this reason.
       const fallbackPayload = presentation
         ? {
             ...payload,
-            text: (renderText ?? ((text: string) => text))(
-              renderFeishuPresentationFallbackText(
-                {
-                  text: readNativeFeishuCardJson(payload.text) ? undefined : payload.text,
-                  presentation,
-                },
-                "markdown",
-              ),
+            text: renderFeishuPresentationFallbackText(
+              {
+                text: readNativeFeishuCardJson(payload.text) ? undefined : payload.text,
+                presentation,
+              },
+              "markdown",
             ),
             presentation: undefined,
             interactive: undefined,
           }
-        : payload;
+        : presentationFallback?.authoredText === undefined
+          ? payload
+          : { ...payload, text: presentationFallback.authoredText };
       if (ttsSupplement) {
         return await sendFeishuTtsSupplementPayload({
           ctx,

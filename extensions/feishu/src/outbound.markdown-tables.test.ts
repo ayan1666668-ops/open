@@ -433,6 +433,56 @@ describe("feishuOutbound.sendText markdown table modes in auto mode", () => {
     });
   });
 
+  // A presentation the card envelope refuses leaves through the post senders, and those
+  // senders stand their conversion down when the cut cannot carry the markers it makes.
+  // They can only do that when the prose they receive is the authored one, so the renderer
+  // records it beside the converted form and this entry hands that form on.
+  it("posts a refused presentation as authored when the cut cannot carry its fences", async () => {
+    const cfg = {
+      channels: { feishu: { markdown: { tables: "code" }, textChunkLimit: 100 } },
+    } as ClawdbotConfig;
+    const prose = Array.from(
+      { length: 1000 },
+      (_entry, index) => `Line ${index} of the release report.`,
+    ).join("\n");
+    const quotedTable = [
+      "> | name | detail |",
+      "> | --- | --- |",
+      "> | Ada | Lead |",
+      `> | wide | ${"w".repeat(220)} |`,
+    ].join("\n");
+    // The case only means anything while the conversion carries quoted markers.
+    expect(convertMarkdownTables(quotedTable, "code")).toContain("> ```");
+    const presentation: MessagePresentation = {
+      blocks: [
+        { type: "text", text: prose },
+        { type: "text", text: quotedTable },
+      ],
+    };
+    let payload: ReplyPayload = { text: "Release summary.", presentation };
+    const ctx = { cfg, to: "chat_1", text: payload.text ?? "", accountId: undefined, payload };
+
+    const rendered = await feishuOutbound.renderPresentation?.({ payload, presentation, ctx });
+    if (!rendered) {
+      throw new Error("expected a rendered presentation");
+    }
+    const { presentation: _presentation, ...consumed } = rendered;
+    payload = consumed;
+    await feishuOutbound.sendPayload?.({ ...ctx, text: payload.text ?? "", payload });
+
+    // Guard the fixture: the envelope refused the card, so the posts own the message.
+    expect(sendCardFeishuMock).not.toHaveBeenCalled();
+    const posts = sendMessageFeishuMock.mock.calls.map((call) => String(call[0]?.text ?? ""));
+    expect(posts.length).toBeGreaterThan(1);
+    for (const post of posts) {
+      // A message opens and closes its own markers or carries none at all.
+      expect((post.match(/^> ```/gmu) ?? []).length % 2).toBe(0);
+    }
+    const joined = posts.join("");
+    expect(joined).toContain("> | Ada | Lead |");
+    expect(joined).toContain("Line 999 of the release report.");
+  });
+
   it("follows defaultAccount when the account id is omitted", async () => {
     const cfg: ClawdbotConfig = {
       channels: {
