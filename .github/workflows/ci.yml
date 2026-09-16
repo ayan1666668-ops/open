@@ -1932,8 +1932,8 @@ jobs:
             ).length;
             // Include control jobs, every emitted matrix row and native hosted jobs.
             // The guard independently expands the workflow to catch inventory drift.
+            // Eligible hybrid preflight already runs on Blacksmith.
             hybridHostedBaseRows = Object.values({
-              preflight: 1,
               "ci-gate": 1,
               "pnpm-store-warmup": count(manifest.run_node || manifest.run_check_docs),
               "control-ui-performance": count(manifest.run_control_ui_performance),

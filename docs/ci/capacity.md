@@ -26,8 +26,9 @@ concurrent repositories, retries, and burst overlap.
 
 Trusted automatic hybrid first-attempt preflight jobs request the existing
 16-class after three nearby hosted preflights remained unassigned while their
-Blacksmith security jobs completed. Each eligible hybrid run now admits two
-control jobs instead of one; default Blacksmith retains one. Both jobs already
+Blacksmith security jobs completed. Each eligible hybrid run admits one
+Blacksmith preflight plus security when optional hosted admission is closed,
+for at most two control registrations; default Blacksmith retains one. Both jobs already
 belong to the conservative 80 non-Node allowance, so the retained
 `4 × 144 + 21 × 200 = 4,776` ceiling is unchanged. The exposed live bucket still
 reported 10,000 on 2026-09-16; its pooled reader's unused quota does not establish
@@ -111,7 +112,7 @@ Canonical-repo CI keeps Blacksmith as the default runner path for pushes and fir
 ## Owner-path and release coverage
 
 Docker seed and QA Smoke use the same owner-path gates on canonical PRs and
-`main`. Unrelated main changes can omit one 32-class Docker job and four 16-class
+`main`. Unrelated main changes can omit one 16-class Docker job and four 16-class
 QA profile jobs on a normal hybrid first attempt. Control UI performance uses
 its own UI/build/dependency/import scope; in hybrid it already runs hosted, so
 narrowing its scope removes a hosted row and candidate/base UI builds.
@@ -297,7 +298,7 @@ not enable auto-merge. See
 
 ## Bounded hybrid hosted offload
 
-Automatic canonical hybrid first attempts count the complete selected hosted inventory before adding short jobs: control and cache jobs, every selected check or Node matrix row, docs and i18n, performance, and hosted native jobs. Preflight records `hybrid_hosted_base_rows`, `hybrid_hosted_total_rows`, and `hybrid_hosted_offload`; the workflow guard independently expands the actual job gates, matrices, and runner expressions to verify the count. The concurrently prepared owner-path gate change supplies `run_control_ui_performance`; the counter uses that field when present and the existing build/UI gate otherwise, so either change can land first. Remove that fallback after the owner-path change lands.
+Automatic canonical hybrid first attempts count the complete selected hosted inventory before adding short jobs: control and cache jobs, every selected check or Node matrix row, docs and i18n, performance, and hosted native jobs. Preflight records `hybrid_hosted_base_rows`, `hybrid_hosted_total_rows`, and `hybrid_hosted_offload`; the workflow guard independently expands the actual job gates, matrices, and runner expressions to verify the count. Eligible preflight runs on Blacksmith and is excluded from hosted rows; the performance row uses its canonical `run_control_ui_performance` owner.
 
 `HYBRID_HOSTED_BASE_ROW_LIMIT` is 40 and `HYBRID_HOSTED_ROW_LIMIT` is 45. At or below 40 base hosted rows, preflight may move `security-fast`, the three `checks-ui` rows, and the browser-extension E2E row to hosted Ubuntu, adding at most five rows and never exceeding 45 through this admission. Above 40 base hosted rows, all five retain their existing Blacksmith routes. An eligible base above 45 emits a warning with the row count and retains the complete base manifest. The 45-row budget bounds optional offload admission; it does not reject existing coverage or reshape noneligible fallback manifests: retries, manual and frozen targets, untrusted authors, other repositories, and the `github` outage override retain their existing routing, including wholly hosted runs that can already exceed 45 rows.
 

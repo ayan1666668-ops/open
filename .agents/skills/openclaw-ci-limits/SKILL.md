@@ -200,9 +200,8 @@ These are intentionally guarded by `test/scripts/ci-workflow-guards.test.ts`:
   and local hook definitions, without remote Git initialization. The `github`
   outage override remains intact. Budget two control-job registrations per eligible
   hybrid first attempt when optional hosted admission is closed, one when admitted,
-  and one per normal Blacksmith run. Both jobs already occur
-  in the retained conservative non-Node inventory; this adds one actual admission
-  per eligible hybrid run without increasing the 4,776-registration cap model.
+  and one per normal Blacksmith run. Both jobs already occur in the retained
+  conservative non-Node inventory, preserving the 4,776-registration cap model.
   The aggregate uses `!cancelled()` to report failed prerequisites without
   holding a superseded run open after workflow cancellation.
 - Automatic canonical hybrid first attempts count every selected hosted row in
