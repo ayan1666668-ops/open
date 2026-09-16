@@ -54,7 +54,7 @@ import {
   postWebhookJson,
   postWebhookPayloadWithChunkPlan,
   yieldWebhookTask,
-} from "./webhook-http.test-support.js";
+} from "./test-support/webhook-http.js";
 
 const telegramSpooledRetryDeadLetterMinAgeMs = 24 * 60 * 60 * 1000;
 
