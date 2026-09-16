@@ -446,15 +446,7 @@ describe("createImageGenerateTool", () => {
     requireImageGenerateTool(
       createImageGenerateTool({
         config: {
-          agents: {
-            defaults: {
-              mediaModels: {
-                image: {
-                  primary: "openai/gpt-image-1",
-                },
-              },
-            },
-          },
+          agents: { defaults: { mediaModels: { image: { primary: "openai/gpt-image-1" } } } },
         },
       }),
     );
