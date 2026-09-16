@@ -1,10 +1,36 @@
-const REMOTE_QUIESCENCE_PS_JS = String.raw`function processes() {
-  const output = childProcess.execFileSync("ps", ["-axo", "pid=,ppid=,uid=,stat=,lstart="], {
-    encoding: "utf8",
-    maxBuffer: 4 * 1024 * 1024,
-    timeout: 2000,
-    killSignal: "SIGKILL",
-  });
+const REMOTE_QUIESCENCE_PS_JS = String.raw`function createProcessProbe() {
+  // Share 30s across probes: tolerate multi-second stalls on slow hosts while leaving
+  // the node transport's 60s command deadline room to deliver the failure and cleanup.
+  const deadline = performance.now() + 30000;
+  let warned = false;
+  return (args, maxBuffer) => {
+    let timeout = 2000;
+    for (;;) {
+      const remaining = Math.ceil(deadline - performance.now());
+      if (remaining <= 0) {
+        const message = "workspace quiescence process probe budget exhausted after 30000 ms; check host load and ps availability";
+        process.stderr.write(message + "\n");
+        throw new Error(message);
+      }
+      try {
+        // SIGTERM can be ignored; SIGKILL keeps even a stuck probe bounded.
+        return require("node:child_process").execFileSync("ps", args, {
+          encoding: "utf8", maxBuffer, timeout: Math.min(timeout, remaining), killSignal: "SIGKILL",
+        });
+      } catch (error) {
+        if (!error || error.code !== "ETIMEDOUT") throw error;
+        if (!warned) {
+          process.stderr.write("workspace quiescence: slow ps probe; retrying within the shared 30000 ms budget\n");
+          warned = true;
+        }
+        timeout *= 2;
+      }
+    }
+  };
+}
+let processProbe = createProcessProbe();
+function processes() {
+  const output = processProbe(["-axo", "pid=,ppid=,uid=,stat=,lstart="], 4 * 1024 * 1024);
   const rows = new Map();
   for (const line of output.split("\n")) {
     const match = line.trim().match(/^(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(.+)$/);
@@ -29,15 +55,7 @@ function ancestors(rows) {
 }
 function processIdentity(pid) {
   try {
-    // Identity gates every thaw, and execFileSync's timeout only signals before waiting for
-    // the child: under the default SIGTERM a ps that ignores it still blocks forever, so every
-    // probe here must be killable to stay bounded.
-    const start = require("node:child_process").execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], {
-      encoding: "utf8",
-      maxBuffer: 4096,
-      timeout: 2000,
-      killSignal: "SIGKILL",
-    }).trim();
+    const start = processProbe(["-o", "lstart=", "-p", String(pid)], 4096).trim();
     return start || null;
   } catch (error) {
     if (error && error.status === 1) return null;
@@ -46,7 +64,7 @@ function processIdentity(pid) {
 }
 function processStatus(pid) {
   try {
-    const output = childProcess.execFileSync("ps", ["-o", "stat=,lstart=", "-p", String(pid)], { encoding: "utf8", maxBuffer: 4096, timeout: 2000, killSignal: "SIGKILL" }).trim();
+    const output = processProbe(["-o", "stat=,lstart=", "-p", String(pid)], 4096).trim();
     const match = /^(\S+)\s+(.+)$/u.exec(output);
     return match ? { state: match[1], start: match[2] } : null;
   } catch (error) {
@@ -254,7 +272,7 @@ if (!sharedHost && sawUnverifiedEmptyLeaseWatchdog) {
 writeLease();
 const watchdog = childProcess.spawn(
   process.execPath,
-  ["-e", processIdentity.toString() + "\n(" + watchdogMain.toString() + ")(process.argv[1], process.argv[2])", leasePath, nonce],
+  ["-e", createProcessProbe.toString() + "\nlet processProbe;\n" + processIdentity.toString() + "\n(" + watchdogMain.toString() + ")(process.argv[1], process.argv[2])", leasePath, nonce],
   { detached: true, stdio: "ignore" },
 );
 watchdog.unref();
@@ -355,30 +373,31 @@ function watchdogMain(watchedLeasePath, watchedNonce) {
         setTimeout(check, Math.min(remainingMs, 60 * 1000));
         return;
       }
-      // Re-read at expiry so a renewal that raced this wake-up wins before SIGCONT.
-      const latest = JSON.parse(watchdogFs.readFileSync(watchedLeasePath, "utf8"));
-      if (
-        latest &&
-        latest.version === 1 &&
-        latest.nonce === watchedNonce &&
-        Array.isArray(latest.processes) &&
-        Number.isSafeInteger(latest.expiresAtMs) &&
-        latest.expiresAtMs > Date.now()
-      ) {
-        setTimeout(check, Math.min(latest.expiresAtMs - Date.now(), 60 * 1000));
-        return;
-      }
+      // A renewal during a slow probe must win before either thaw or lease removal.
+      const canResume = () => {
+        const current = JSON.parse(watchdogFs.readFileSync(watchedLeasePath, "utf8"));
+        if (!current || current.version !== 1 || current.nonce !== watchedNonce || !Array.isArray(current.processes) || !Number.isSafeInteger(current.expiresAtMs)) return false;
+        const remaining = current.expiresAtMs - Date.now();
+        if (remaining <= 0) return true;
+        setTimeout(check, Math.min(remaining, 60 * 1000));
+        return false;
+      };
+      if (!canResume()) return;
+      // Each recovery sweep gets a fresh budget; the watchdog can outlive its first deadline.
+      processProbe = createProcessProbe();
       for (const entry of lease.processes) {
         if (
           !entry ||
           !Number.isSafeInteger(entry.pid) ||
           entry.pid < 1 ||
-          typeof entry.start !== "string" ||
-          processIdentity(entry.pid) !== entry.start
+          typeof entry.start !== "string"
         ) continue;
+        const start = processIdentity(entry.pid);
+        if (!canResume()) return;
+        if (start !== entry.start) continue;
         try { process.kill(entry.pid, "SIGCONT"); } catch (error) { if (!error || (error.code !== "ESRCH" && error.code !== "EPERM")) throw error; }
       }
-      watchdogFs.unlinkSync(watchedLeasePath);
+      if (canResume()) watchdogFs.unlinkSync(watchedLeasePath);
     } catch (error) {
       // Only the lease disappearing or being unusable retires this watchdog. A missing ps also throws
       // ENOENT, and treating that as "someone else finished" would exit with the workers
@@ -450,6 +469,7 @@ function writeLease(processes, expiresAtMs) {
     if (current.nonce !== nonce || current.watchdog?.pid !== input.watchdog.pid || current.watchdog?.start !== input.watchdog.start) {
       throw new Error("workspace quiescence lease changed during renewal");
     }
+    if (current.expiresAtMs <= Date.now()) throw new Error("workspace quiescence lease expired during process probing");
   });
 }
 function assertWatchdogActive() {
