@@ -1948,7 +1948,8 @@ describePosix("scripts/pr per-PR operation lock", () => {
         {
           cwd: worktreeDir,
           encoding: "utf8",
-          timeout: 15_000,
+          // Linked landing verifies the full transitive anchor before starting cleanup.
+          timeout: wrapper === "linked" ? 120_000 : 15_000,
           env: {
             ...process.env,
             canonical_repo_root: join(repoDir, "untrusted-root"),
