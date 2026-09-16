@@ -30,7 +30,7 @@ export function configValidationWarningsToHealthFindings(
       target: PLUGIN_AVAILABILITY_POLICY.state,
       requirement: warning.code,
       source: warning.source,
-      ...(warning.errorCode ? { errorCode: warning.errorCode } : {}),
+      errorCode: warning.errorCode,
       message: warning.message,
       path: warning.path,
       fixHint: warning.fixHint ?? PLUGIN_AVAILABILITY_POLICY.repairCommand,
