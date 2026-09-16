@@ -10,7 +10,7 @@ import type { HeartbeatToolResponse } from "../auto-reply/heartbeat-tool-respons
 import type { ReplyMediaAttachment } from "../auto-reply/reply-payload.js";
 import type { ReplyDirectiveParseResult } from "../auto-reply/reply/reply-directives.js";
 import type { ReasoningLevel } from "../auto-reply/thinking.js";
-import type { ThinkingContent } from "../llm/types.js";
+import type { AssistantMessage, ThinkingContent } from "../llm/types.js";
 import type { HookRunner } from "../plugins/hooks.js";
 import type { AssistantPhase } from "../shared/chat-message-content.js";
 import type { AcceptedSessionSpawn } from "./accepted-session-spawn.js";
@@ -58,6 +58,13 @@ export type ToolCallSummary = {
   ownerKey?: string;
 };
 
+export type ExecLiveItemMetadata = {
+  name: string;
+  meta?: string;
+  commandBearing?: boolean;
+  hideFromChannelProgress: boolean;
+};
+
 /** User-visible assistant stream payload emitted to subscribers. */
 export type AssistantStreamData = {
   text: string;
@@ -89,6 +96,12 @@ export type StreamBlockState = {
 /** Mutable subscription state shared by embedded-agent event handlers. */
 export type EmbeddedAgentSubscribeState = {
   assistantTexts: string[];
+  answerSegments: Array<{
+    textEnd: number;
+    messageEnd: number;
+    finalMessageStart: number;
+    lastAssistant: AssistantMessage;
+  }>;
   toolMetas: Array<{
     toolName?: string;
     toolCallId?: string;
@@ -104,7 +117,10 @@ export type EmbeddedAgentSubscribeState = {
   acceptedSessionSpawns: AcceptedSessionSpawn[];
   toolMetaById: Map<string, ToolCallSummary>;
   toolSummaryById: Set<string>;
-  execLiveUpdateStateById?: Map<string, { lastEmittedAtMs: number }>;
+  execLiveUpdateStateById?: Map<
+    string,
+    { lastEmittedAtMs: number; itemMetadata: ExecLiveItemMetadata }
+  >;
   liveEditDiffStateById: Map<
     string,
     {
@@ -208,10 +224,7 @@ export type EmbeddedAgentSubscribeState = {
   messagingToolSourceReplyPayloads: MessagingToolSourceReplyPayload[];
   messageToolOnlySourceReplyDelivered: boolean;
   sourceReplyDelivered?: true;
-  pendingMessagingTexts: Map<string, string>;
-  pendingMessagingTargets: Map<string, MessagingToolSend>;
   successfulCronAdds: number;
-  pendingMessagingMediaUrls: Map<string, string[]>;
   pendingToolMediaUrls: string[];
   pendingToolMediaAttachments?: ReplyMediaAttachment[];
   /** Per-URL local-media trust; keys are normalized pending media URLs. */
@@ -229,7 +242,7 @@ export type EmbeddedAgentSubscribeState = {
   >;
   deterministicApprovalPromptPending: boolean;
   deterministicApprovalPromptSent: boolean;
-  lastAssistant?: AgentMessage;
+  lastAssistant?: AssistantMessage;
 };
 
 /** Handler context bundling params, mutable state, emitters, and helper hooks. */
@@ -256,6 +269,7 @@ export type EmbeddedAgentSubscribeContext = {
   emitBlockChunk: (
     text: string,
     options?: {
+      sourceText?: string;
       assistantMessageIndex?: number;
       final?: boolean;
       finalReply?: ReplyDirectiveParseResult;
@@ -299,10 +313,14 @@ export type EmbeddedAgentSubscribeContext = {
   ) => void;
   emitBlockReply: (
     payload: BlockReplyPayload,
-    options?: { assistantMessageIndex?: number; consumePendingToolMedia?: boolean },
+    options?: {
+      assistantMessageIndex?: number;
+      consumePendingToolMedia?: boolean;
+      blockSourceText?: string;
+    },
   ) => void;
   flushAssistantStream: () => void;
-  flushDeferredBlockReplies: () => void;
+  releaseDeferredReplies: () => void;
   clearAssistantStream: () => void;
   clearDeferredBlockReplies: () => void;
 };
@@ -359,9 +377,6 @@ type ToolHandlerState = Pick<
   | "lastToolError"
   | "latestMcpAppChannelView"
   | "latestMcpConnectAction"
-  | "pendingMessagingTargets"
-  | "pendingMessagingTexts"
-  | "pendingMessagingMediaUrls"
   | "pendingToolMediaUrls"
   | "pendingToolMediaAttachments"
   | "pendingToolMediaTrustByUrl"

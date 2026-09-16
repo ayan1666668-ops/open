@@ -14,13 +14,16 @@ import {
   stopTranscriptCapture,
 } from "../../transcripts/capture-operations.js";
 import {
+  persistTranscriptSummary,
+  readTranscriptSummary,
+} from "../../transcripts/capture-summary.js";
+import {
   activeSessions,
   authorizeTranscriptSource,
   createTranscriptSessionId,
   isTranscriptSelectionCurrent,
-  persistTranscriptSummary,
+  isTranscriptSelectionOwned,
   readTranscriptStringParam,
-  readTranscriptSummary,
   resolveTranscriptSourceOwnership,
   resolveSourceProvider,
   sourceFromParams,
@@ -36,11 +39,8 @@ import type {
   TranscriptToolCaller,
 } from "../../transcripts/provider-types.js";
 import { sanitizeTranscriptSourceLocator } from "../../transcripts/source-locator.js";
-import {
-  transcriptSessionSelector,
-  TranscriptsSummaryChangedError,
-  type TranscriptsStore,
-} from "../../transcripts/store.js";
+import { TranscriptsSummaryChangedError } from "../../transcripts/store-errors.js";
+import { transcriptSessionSelector, type TranscriptsStore } from "../../transcripts/store.js";
 import { truncateUtf16Safe } from "../../utils.js";
 import type { AnyAgentTool } from "./common.js";
 import { listPastTranscripts, showPastTranscript } from "./transcripts-tool-read.js";
@@ -116,15 +116,19 @@ async function importTranscripts(params: {
     provider,
     source: providerSource,
   });
+  const requestedSessionId = readTranscriptStringParam(params.rawParams, "sessionId", {
+    trim: true,
+  });
   const session: TranscriptSessionDescriptor = {
-    sessionId:
-      readTranscriptStringParam(params.rawParams, "sessionId", { trim: true }) ??
-      createTranscriptSessionId(),
+    sessionId: requestedSessionId ?? createTranscriptSessionId(),
     title: readTranscriptStringParam(params.rawParams, "title", { trim: true }),
     source: sanitizeTranscriptSourceLocator(providerSource),
     startedAt: new Date().toISOString(),
     stoppedAt: new Date().toISOString(),
-    metadata: params.ctx.agentId ? { agentId: params.ctx.agentId } : {},
+    metadata: {
+      ...(params.ctx.agentId ? { agentId: params.ctx.agentId } : {}),
+      sessionIdOrigin: requestedSessionId ? "supplied" : "generated",
+    },
   };
   const transcript = readTranscriptStringParam(params.rawParams, "transcript", {
     required: true,
@@ -133,7 +137,7 @@ async function importTranscripts(params: {
   await params.store.writeSession(session);
   const utterances = await provider.importTranscript({
     cfg: params.ctx.config,
-    session: { ...session, source: providerSource },
+    session: { ...session, source: providerSource, metadata: { ...session.metadata } },
     text: transcript,
     speakerLabel: readTranscriptStringParam(params.rawParams, "speakerLabel", { trim: true }),
   });
@@ -145,6 +149,7 @@ async function importTranscripts(params: {
     cfg: params.ctx.config,
     store: params.store,
     session,
+    assertCurrent: params.ctx.assertCallerActive,
   });
   const { summaryPath, intendedSummaryPath, summary, summaryExportError } =
     await exportTranscriptSummary(params.store, session, persisted);
@@ -172,12 +177,17 @@ async function summarizeExisting(params: {
   params.ctx.assertCallerActive?.();
   // Finalization owns notes through export. Older model results must not
   // overwrite it, even while the same capture reservation is still held.
-  const canWriteSummary = () =>
-    isTranscriptSelectionCurrent(selection, params.store) &&
+  const ownsSummary = () =>
+    isTranscriptSelectionOwned(selection) &&
     (!selection.selectedActive || selection.selectedActive.session === selection.session) &&
     !selection.selectedActive?.stopping &&
     !selection.selectedActive?.finalization;
-  if (!canWriteSummary()) {
+  const canWriteSummary = async () => {
+    const current = await isTranscriptSelectionCurrent(selection, params.store);
+    params.ctx.assertCallerActive?.();
+    return current && ownsSummary();
+  };
+  if (!(await canWriteSummary())) {
     return transcriptSelectionNoLongerActive(selection);
   }
   const { session, selector } = selection;
@@ -185,12 +195,22 @@ async function summarizeExisting(params: {
   const summary = await readTranscriptSummary({ ...params, cfg: params.ctx.config, session });
   // Reading yields; a retired capture cannot write into its same-tuple replacement.
   params.ctx.assertCallerActive?.();
-  if (!canWriteSummary()) {
+  if (!(await canWriteSummary())) {
     return transcriptSelectionNoLongerActive(selection);
   }
   let intendedPath: string;
   try {
-    intendedPath = await params.store.writeSummary(summary, session, selection.historicalRevision);
+    intendedPath = await params.store.writeSummary(
+      summary,
+      session,
+      selection.historicalRevision,
+      () => {
+        params.ctx.assertCallerActive?.();
+        if (!ownsSummary()) {
+          throw new TranscriptsSummaryChangedError();
+        }
+      },
+    );
   } catch (error) {
     if (error instanceof TranscriptsSummaryChangedError) {
       return transcriptSelectionNoLongerActive(selection);
@@ -198,7 +218,7 @@ async function summarizeExisting(params: {
     throw error;
   }
   params.ctx.assertCallerActive?.();
-  if (!canWriteSummary()) {
+  if (!(await canWriteSummary())) {
     return transcriptSelectionNoLongerActive(selection);
   }
   const { summaryPath, intendedSummaryPath, summaryExportError } = await exportTranscriptSummary(

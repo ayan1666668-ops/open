@@ -2,7 +2,13 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { resetPluginStateStoreForTests } from "openclaw/plugin-sdk/plugin-state-test-runtime";
+import type { OpenKeyedStoreOptions } from "openclaw/plugin-sdk/plugin-state-runtime";
+import {
+  createPluginStateKeyedStoreForTests,
+  openOpenClawStateDatabase,
+  resetPluginStateStoreForTests,
+} from "openclaw/plugin-sdk/plugin-state-test-runtime";
+import { closeOpenClawStateDatabaseAsync } from "openclaw/plugin-sdk/sqlite-runtime-testing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { prepareFileConsentActivityFs } from "./file-consent-helpers.js";
 import {
@@ -36,6 +42,7 @@ async function requirePendingUpload(id: string, env: NodeJS.ProcessEnv) {
 }
 
 async function cleanupTempDirs(): Promise<void> {
+  await closeOpenClawStateDatabaseAsync();
   while (createdTempDirs.length > 0) {
     const dir = createdTempDirs.pop();
     if (!dir) {
@@ -117,7 +124,22 @@ describe("msteams pending uploads (fs-backed)", () => {
     expect(reader?.filename).toBe("secret.bin");
   });
 
-  it("stores multi-megabyte uploads by chunking payload bytes", async () => {
+  it.each(["bulk", "legacy"])("stores multi-megabyte uploads with %s host reads", async (mode) => {
+    if (mode === "legacy") {
+      setMSTeamsRuntime({
+        ...msteamsRuntimeStub,
+        state: {
+          ...msteamsRuntimeStub.state,
+          openKeyedStore: <T>(options: OpenKeyedStoreOptions) => {
+            const { lookupMany: _lookupMany, ...store } = createPluginStateKeyedStoreForTests<T>(
+              "msteams",
+              options,
+            );
+            return store;
+          },
+        },
+      });
+    }
     const stateDir = await makeTempStateDir();
     const env = makeEnv(stateDir);
     const payload = Buffer.alloc(6 * 1024 * 1024, 7);
@@ -135,6 +157,30 @@ describe("msteams pending uploads (fs-backed)", () => {
     const reader = await getPendingUploadFs("upload-large", { env });
     expect(reader?.buffer.equals(payload)).toBe(true);
     expect(reader?.filename).toBe("large.bin");
+    const chunks = createPluginStateKeyedStoreForTests<{
+      id: string;
+      index: number;
+      dataBase64: string;
+    }>("msteams", { namespace: "pending-upload-chunks", maxEntries: 45_000, env });
+    const rows = await chunks.entries();
+    const first = rows.find((row) => row.value.index === 0);
+    const later = rows.find((row) => row.value.index === 1);
+    if (!first || !later) {
+      throw new Error("expected upload chunks");
+    }
+    const { db } = openOpenClawStateDatabase({ env });
+    db.prepare("UPDATE plugin_state_entries SET value_json = ? WHERE entry_key = ?").run(
+      "invalid JSON",
+      later.key,
+    );
+    await chunks.register(first.key, { ...first.value, id: "wrong-upload" });
+    await expect(getPendingUploadFs("upload-large", { env })).resolves.toBeUndefined();
+    await chunks.delete(first.key);
+    await expect(getPendingUploadFs("upload-large", { env })).resolves.toBeUndefined();
+    await chunks.register(first.key, first.value);
+    await expect(getPendingUploadFs("upload-large", { env })).rejects.toMatchObject({
+      code: "PLUGIN_STATE_CORRUPT",
+    });
   });
 
   it("removes persisted entries", async () => {
@@ -241,10 +287,6 @@ describe("prepareFileConsentActivityFs end-to-end", () => {
     setMSTeamsRuntime(msteamsRuntimeStub);
   });
 
-  afterEach(async () => {
-    await cleanupTempDirs();
-  });
-
   it("writes the pending upload to the fs store with the same id as the card", async () => {
     const stateDir = await makeTempStateDir();
     const env = makeEnv(stateDir);
@@ -276,10 +318,14 @@ describe("prepareFileConsentActivityFs end-to-end", () => {
       expect(loaded.conversationId).toBe("19:victim@thread.v2");
       expect(loaded.buffer.toString("utf8")).toBe("cli file");
     } finally {
-      if (originalEnv === undefined) {
-        delete process.env.OPENCLAW_STATE_DIR;
-      } else {
-        process.env.OPENCLAW_STATE_DIR = originalEnv;
+      try {
+        await cleanupTempDirs();
+      } finally {
+        if (originalEnv === undefined) {
+          delete process.env.OPENCLAW_STATE_DIR;
+        } else {
+          process.env.OPENCLAW_STATE_DIR = originalEnv;
+        }
       }
     }
   });

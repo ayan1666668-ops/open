@@ -42,6 +42,7 @@ const AI_RUNTIME_PACKAGE_JSON = JSON.stringify({
     "./providers": { import: "./dist/providers.mjs" },
     "./transports": { import: "./dist/transports.mjs" },
     "./internal/*": { import: "./dist/internal/*.mjs" },
+    "./internal/tool-schema": { import: "./dist/internal/tool-schema.mjs" },
   },
 });
 const LEGACY_AI_RUNTIME_PACKAGE_JSON = JSON.stringify({
@@ -1051,6 +1052,28 @@ syncBuiltinESMExports();
 
   const packageContractCases: NamedTarballCheck[] = [
     {
+      name: "accepts the handoff native URL staged before helper launch",
+      inventory: ["dist/managed-handoff-runtime.mjs"],
+      files: {
+        "dist/managed-handoff-runtime.mjs":
+          'new URL("./node_modules/koffi/indirect.cjs", import.meta.url);\n',
+      },
+      options: { pnpmPack: true, postinstall: true },
+      status: 0,
+      successText: true,
+    },
+    {
+      name: "rejects a handoff static import of the unpackaged native runtime",
+      inventory: ["dist/managed-handoff-runtime.mjs"],
+      files: {
+        "dist/managed-handoff-runtime.mjs": 'import "./node_modules/koffi/indirect.cjs";\n',
+      },
+      status: "nonzero",
+      stderr: [
+        "dist/managed-handoff-runtime.mjs imports missing dist/node_modules/koffi/indirect.cjs",
+      ],
+    },
+    {
       name: "accepts historical packages published before the Code Mode worker existed",
       version: "2026.5.14-beta.1",
       status: 0,
@@ -1369,6 +1392,7 @@ syncBuiltinESMExports();
         "node_modules/@openclaw/ai/dist/internal/openai-responses-payload-policy.mjs":
           "export {};\n",
         "node_modules/@openclaw/ai/dist/internal/runtime.mjs": "export {};\n",
+        "node_modules/@openclaw/ai/dist/internal/tool-schema.mjs": "export {};\n",
       },
       version: "2026.6.11",
       options: {
@@ -1401,8 +1425,8 @@ syncBuiltinESMExports();
       status: 0,
       successText: true,
     },
-    {
-      name: "rejects a missing required bundled AI runtime entry",
+    ...["providers", "internal/tool-schema"].map((missingEntry): NamedTarballCheck => ({
+      name: `rejects a missing required bundled AI runtime entry (${missingEntry})`,
       files: {
         "dist/index.js": "export {};\n",
         "node_modules/@openclaw/ai/package.json": AI_RUNTIME_PACKAGE_JSON,
@@ -1411,6 +1435,11 @@ syncBuiltinESMExports();
         "node_modules/@openclaw/ai/dist/internal/openai-responses-payload-policy.mjs":
           "export {};\n",
         "node_modules/@openclaw/ai/dist/internal/runtime.mjs": "export {};\n",
+        ...Object.fromEntries(
+          ["providers", "internal/tool-schema"]
+            .filter((entry) => entry !== missingEntry)
+            .map((entry) => [`node_modules/@openclaw/ai/dist/${entry}.mjs`, "export {};\n"]),
+        ),
       },
       version: "2026.6.11",
       options: {
@@ -1421,8 +1450,8 @@ syncBuiltinESMExports();
       },
       strict: true,
       status: "nonzero",
-      stderr: ["bundled @openclaw/ai is missing required runtime entry dist/providers.mjs"],
-    },
+      stderr: [`bundled @openclaw/ai is missing required runtime entry dist/${missingEntry}.mjs`],
+    })),
     {
       name: "rejects bundled AI entries that its manifest does not export",
       files: {
@@ -1442,6 +1471,7 @@ syncBuiltinESMExports();
         "node_modules/@openclaw/ai/dist/internal/openai-responses-payload-policy.mjs":
           "export {};\n",
         "node_modules/@openclaw/ai/dist/internal/runtime.mjs": "export {};\n",
+        "node_modules/@openclaw/ai/dist/internal/tool-schema.mjs": "export {};\n",
       },
       version: "2026.6.11",
       options: {
@@ -1465,6 +1495,7 @@ syncBuiltinESMExports();
         "node_modules/@openclaw/ai/dist/internal/openai-responses-payload-policy.mjs":
           "export {};\n",
         "node_modules/@openclaw/ai/dist/internal/runtime.mjs": 'export * from "./missing.mjs";\n',
+        "node_modules/@openclaw/ai/dist/internal/tool-schema.mjs": "export {};\n",
       },
       version: "2026.6.11",
       options: {

@@ -2,7 +2,11 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { resolveVitestCliEntry } from "../../scripts/lib/vitest-build-prerequisites.mts";
+import type { VitestBatchRunParams } from "../../scripts/lib/vitest-batch-runner.mts";
+import {
+  listVitestRuntimeConsumerFiles,
+  resolveVitestCliEntry,
+} from "../../scripts/lib/vitest-build-prerequisites.mts";
 import { createPatternFileHelper } from "../helpers/pattern-file.js";
 import { waitForChildClose, waitForDead, waitForPidFile } from "../helpers/process-wait.js";
 import { createDeferred, withTestTimeout } from "../helpers/promise.js";
@@ -52,7 +56,7 @@ beforeEach(() => {
   }));
   originalArgv = process.argv;
   originalExitCode = process.exitCode;
-  process.exitCode = undefined;
+  process.exitCode = 0;
   vi.stubEnv("OPENCLAW_TEST_PROJECTS_PARALLEL", "");
   vi.stubEnv("OPENCLAW_BUILD_PRIVATE_QA", "");
   vi.stubEnv("OPENCLAW_E2E_SKIP_BUILD", "");
@@ -70,25 +74,28 @@ beforeEach(() => {
 afterEach(() => {
   patternFiles.cleanup();
   process.argv = originalArgv;
-  process.exitCode = originalExitCode;
+  process.exitCode = originalExitCode ?? 0;
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
 });
 
 describe("CLI runtime admission", () => {
   const posixIt = process.platform === "win32" ? it.skip : it;
-  posixIt.each([
+  posixIt.each<[name: string, args: string[]]>([
     ["ordinary target", [ordinaryQa]],
     ["ordinary CLI config", ["--config", "test/vitest/vitest.cli.config.ts"]],
     [
-      "CLI process exclusion",
+      "ordinary CLI selection",
+      ["--config", "test/vitest/vitest.cli.config.ts", "command-path-policy.test.ts"],
+    ],
+    [
+      "CLI process runtime exclusions",
       [
         "--config",
         "test/vitest/vitest.cli-process.config.ts",
-        "--exclude",
-        "src/cli/update-dry-run-state.process.test.ts",
-        "--exclude",
-        "src/cli/acp-cli-exit.process.test.ts",
+        ...listVitestRuntimeConsumerFiles(["test/vitest/vitest.cli-process.config.ts"]).flatMap(
+          (file) => ["--exclude", file],
+        ),
       ],
     ],
     [
@@ -137,11 +144,11 @@ describe("CLI runtime admission", () => {
     fs.writeFileSync(
       preload,
       `import cp from 'node:child_process';
-import { syncBuiltinESMExports } from 'node:module';
+import { syncFixtureBuiltinExports } from ${JSON.stringify(new URL("./fixtures/ci-fixture-runtime.cjs", import.meta.url).href)};
 const spawn = cp.spawn;
 cp.spawn = (bin, args, options) => spawn(process.execPath, ['-e',
   args.includes('scripts/run-node.mjs') ? 'process.exit(91)' : ''], options);
-syncBuiltinESMExports();\n`,
+syncFixtureBuiltinExports();\n`,
     );
     const configArgs = args.includes("--config")
       ? []
@@ -205,6 +212,17 @@ syncBuiltinESMExports();\n`,
         "src/cli/update-dry-run-state.process.test.ts",
       ],
       "runtime",
+    ],
+    [
+      "Codex delivery QA runtime",
+      "scripts/run-vitest.mts",
+      [
+        "run",
+        "--config",
+        "test/vitest/vitest.tooling.config.ts",
+        "test/e2e/qa-lab/runtime/gateway-codex-delivery-cache.test.ts",
+      ],
+      "private-qa",
     ],
     [
       "Gateway core",
@@ -309,7 +327,7 @@ process.stdin.resume();\n`,
               preload,
               `import cp from 'node:child_process';
 import fs from 'node:fs';
-import { syncBuiltinESMExports } from 'node:module';
+import { syncFixtureBuiltinExports } from ${JSON.stringify(new URL("./fixtures/ci-fixture-runtime.cjs", import.meta.url).href)};
 const spawn = cp.spawn;
 cp.spawn = (bin, args, options) => {
   if (args.includes('scripts/run-node.mjs')) return spawn(process.execPath, [${JSON.stringify(builder)}], options);
@@ -319,7 +337,7 @@ cp.spawn = (bin, args, options) => {
   }
   return spawn(bin, args, options);
 };
-syncBuiltinESMExports();\n`,
+syncFixtureBuiltinExports();\n`,
             );
             const child = spawn(
               process.execPath,
@@ -407,6 +425,132 @@ async function start(args: string[]) {
   startCount += 1;
   await import(entryUrl);
 }
+
+describe("full-suite timing metadata", () => {
+  it("records inherited include selections without replacing whole-config history", async () => {
+    vi.stubEnv("OPENCLAW_TEST_PROJECTS_TIMINGS", "1");
+    const timings = await import("../../scripts/lib/vitest-shard-timings.mts");
+    const actual = await vi.importActual<
+      typeof import("../../scripts/lib/vitest-shard-timings.mts")
+    >("../../scripts/lib/vitest-shard-timings.mts");
+    const { runTestProjects } = await import("../../scripts/test-projects-run.mts");
+    const root = tempDirs.make("inherited-timing-");
+    const timingFile = path.join(root, "timings.json");
+    vi.stubEnv("OPENCLAW_TEST_PROJECTS_TIMINGS_PATH", timingFile);
+    vi.stubEnv("OPENCLAW_VITEST_SHARD_NAME", "same-parent");
+    const config = "test/vitest/vitest.tooling.config.ts";
+    actual.writeShardTimings([actual.createShardTimingSample({ config }, 999_999)], root);
+    const writeTimings = vi
+      .spyOn(timings, "writeShardTimings")
+      .mockImplementation(actual.writeShardTimings);
+    commands.prepare.mockResolvedValue(0);
+    commands.reader.mockImplementation(() => ({
+      completion: Promise.resolve({ code: 0, signal: null, groupJoined: true }),
+      getForwardedSignal: () => undefined,
+    }));
+    const files = ["test/scripts/run-with-env.test.ts", "test/scripts/run-node.test.ts"];
+    for (const file of files) {
+      const includeFile = patternFiles.writePatternFile("timing-include.json", [file]);
+      vi.stubEnv("OPENCLAW_VITEST_INCLUDE_FILE", includeFile);
+      await runTestProjects(async () => {}, [config]);
+      expect(fs.existsSync(includeFile)).toBe(true);
+      expect(commands.reader.mock.lastCall?.[0].env.OPENCLAW_VITEST_INCLUDE_FILE).toBe(includeFile);
+    }
+    const inheritedFile = process.env.OPENCLAW_VITEST_INCLUDE_FILE;
+    fs.writeFileSync(inheritedFile!, "{}");
+    await runTestProjects(async () => {}, [files[0]!]);
+    const inlineFile = commands.reader.mock.lastCall?.[0].env.OPENCLAW_VITEST_INCLUDE_FILE;
+    expect(inlineFile).not.toBe(inheritedFile);
+    expect(fs.existsSync(inheritedFile!)).toBe(true);
+    expect(fs.existsSync(inlineFile)).toBe(false);
+    const planner = await import("../../scripts/test-projects.test-support.mts");
+    const empty = vi.spyOn(planner, "buildFullSuiteVitestRunPlans").mockReturnValue([]);
+    await runTestProjects(async () => {}, []);
+    empty.mockRestore();
+    expect(commands.reader).toHaveBeenCalledTimes(3);
+    const samples = writeTimings.mock.calls.flatMap(([entries]) => entries);
+    expect(samples).toHaveLength(3);
+    expect(new Set(samples.map((sample) => sample?.config)).size).toBe(3);
+    expect(samples.every((sample) => sample?.includePatternCount === 1)).toBe(true);
+    const stored = JSON.parse(fs.readFileSync(timingFile, "utf8")).configs;
+    expect(stored[config].averageMs).toBe(999_999);
+    expect(Object.keys(stored)).toHaveLength(4);
+    vi.stubEnv("OPENCLAW_VITEST_INCLUDE_FILE", "");
+    const cliConfig = "test/vitest/vitest.cli.config.ts";
+    await runTestProjects(async () => {}, [cliConfig]);
+    expect(writeTimings.mock.lastCall?.[0]).toEqual([
+      expect.objectContaining({ config: cliConfig, includePatternCount: 0 }),
+    ]);
+  });
+
+  it.each([false, true])(
+    "carries chunk targets without changing launch selection (inherited=%s)",
+    async (inherited) => {
+      vi.stubEnv("OPENCLAW_TEST_PROJECTS_PARALLEL", "2");
+      vi.stubEnv("OPENCLAW_VITEST_MAX_WORKERS", "1");
+      vi.stubEnv("OPENCLAW_VITEST_SHARD_NAME", "same-parent");
+      vi.stubEnv("OPENCLAW_VITEST_ENABLE_MAGLEV", "0");
+      const planner = await import("../../scripts/test-projects.test-support.mts");
+      const timings = await import("../../scripts/lib/vitest-shard-timings.mts");
+      const { runTestProjects } = await import("../../scripts/test-projects-run.mts");
+      const files = ["test/scripts/run-with-env.test.ts", "test/scripts/run-node.test.ts"];
+      const includeFile = inherited
+        ? patternFiles.writePatternFile("chunk-include.json", [files[0]!])
+        : undefined;
+      if (includeFile) {
+        vi.stubEnv("OPENCLAW_VITEST_INCLUDE_FILE", includeFile);
+      }
+      const config = "test/vitest/vitest.tooling.config.ts";
+      vi.spyOn(planner, "buildFullSuiteVitestRunPlans").mockReturnValue(
+        files.map((file) => ({
+          config,
+          forwardedArgs: [file],
+          timingTargets: [file],
+          includePatterns: null,
+          watchMode: false,
+        })),
+      );
+      const writeTimings = vi.spyOn(timings, "writeShardTimings");
+      commands.prepare.mockResolvedValue(0);
+      commands.reader.mockImplementation(() => ({
+        completion: Promise.resolve({ code: 0, signal: null, groupJoined: true }),
+        getForwardedSignal: () => undefined,
+      }));
+
+      await runTestProjects(async () => {}, []);
+
+      expect(commands.reader).toHaveBeenCalledTimes(2);
+      const launches = commands.reader.mock.calls.map(([input]) => input);
+      expect(launches.map((input) => input.pnpmArgs)).toEqual(
+        files.map((file) => [
+          "exec",
+          "node",
+          "--no-maglev",
+          resolveVitestCliEntry(),
+          "run",
+          "--config",
+          config,
+          file,
+        ]),
+      );
+      for (const input of launches) {
+        if (includeFile) {
+          expect(input.env.OPENCLAW_VITEST_INCLUDE_FILE).toBe(includeFile);
+        } else {
+          expect(input.env.OPENCLAW_VITEST_INCLUDE_FILE).toBeFalsy();
+        }
+        expect(input.env.OPENCLAW_VITEST_MAX_WORKERS).toBe("1");
+      }
+      expect(writeTimings).toHaveBeenCalledTimes(1);
+      const samples = writeTimings.mock.calls[0]?.[0] ?? [];
+      expect(samples).toHaveLength(2);
+      expect(new Set(samples.map((sample) => sample?.config)).size).toBe(2);
+      for (const sample of samples) {
+        expect(sample).toMatchObject({ baseConfig: config, includePatternCount: 1 });
+      }
+    },
+  );
+});
 
 describe("parallel cache lease completion", () => {
   it.each([
@@ -540,7 +684,7 @@ describe("parallel cache lease completion", () => {
       expect(uiPaths).toHaveLength(4);
       expect(new Set(uiPaths).size).toBe(1);
       expect(attempts).toBe(2);
-      expect(process.exitCode).toBeUndefined();
+      expect(process.exitCode).toBe(0);
     },
   );
 
@@ -549,6 +693,7 @@ describe("parallel cache lease completion", () => {
     async (outcome) => {
       const groupJoined = process.platform !== "win32";
       vi.stubEnv("OPENCLAW_TEST_PROJECTS_PARALLEL", "2");
+      commands.prepare.mockResolvedValue(0);
       const { runTestProjects } = await import("../../scripts/test-projects-run.mts");
       const first = createDeferred<{
         code: number;
@@ -629,6 +774,7 @@ describe("test-projects build admission", () => {
   const toolingConfig = "test/vitest/vitest.tooling.config.ts";
   const ordinaryTooling = "test/scripts/run-vitest-state-cleanup.test.ts";
   const runtimeTooling = "test/e2e/qa-lab/runtime/gateway-support-export-runtime.test.ts";
+  const privateQaTooling = "test/e2e/qa-lab/runtime/gateway-codex-delivery-cache.test.ts";
 
   it.each([
     {
@@ -641,6 +787,12 @@ describe("test-projects build admission", () => {
       name: "borrowed runtime tooling",
       args: [toolingConfig],
       include: [runtimeTooling],
+      build: true,
+    },
+    {
+      name: "borrowed private-QA tooling",
+      args: [toolingConfig],
+      include: [privateQaTooling],
       build: true,
     },
     { name: "borrowed empty selection", args: [toolingConfig], include: [], build: false },
@@ -778,7 +930,7 @@ describe("test-projects build admission", () => {
       }
       expect(await terminal.promise).toMatch(/^\[test\] passed 2 Vitest shards/u);
       expect(commands.reader).toHaveBeenCalledTimes(2);
-      expect(process.exitCode).toBeUndefined();
+      expect(process.exitCode).toBe(0);
     },
   );
 
@@ -795,16 +947,18 @@ describe("test-projects build admission", () => {
     expect(process.exitCode).toBe(failure === "throw" ? 1 : 7);
   });
 
-  it.each([modelTarget, "extensions/browser/src/browser/extension-install.test.ts"])(
-    "starts %s without runtime preparation",
-    async (target) => {
-      await start([target]);
-      expect(await terminal.promise).toMatch(/^\[test\] passed 1 Vitest shard/u);
-      expect(commands.prepare).not.toHaveBeenCalled();
-      expect(commands.prepareE2e).not.toHaveBeenCalled();
-      expect(commands.reader).toHaveBeenCalledOnce();
-    },
-  );
+  it.each([
+    modelTarget,
+    "extensions/browser/src/browser/extension-install.test.ts",
+    "test/e2e/qa-lab/runtime/package-openclaw-for-docker.e2e.test.ts",
+    "packages/sdk/src/app-sdk-external-boundary.e2e.test.ts",
+  ])("starts %s without runtime preparation", async (target) => {
+    await start([target]);
+    expect(await terminal.promise).toMatch(/^\[test\] passed 1 Vitest shard/u);
+    expect(commands.prepare).not.toHaveBeenCalled();
+    expect(commands.prepareE2e).not.toHaveBeenCalled();
+    expect(commands.reader).toHaveBeenCalledOnce();
+  });
 
   it.each(["build", "failed build", "prebuilt"])(
     "admits the built native-host integration after %s",
@@ -866,10 +1020,10 @@ describe("test-projects build admission", () => {
     },
   );
 
-  it("coalesces mixed E2E and private QA preparation before marking only E2E prebuilt", async () => {
+  it("coalesces mixed package, E2E and private QA preparation before marking only E2E prebuilt", async () => {
     vi.stubEnv("OPENCLAW_TEST_PROJECTS_PARALLEL", "2");
     const preparation = createPreparationGate<NodeJS.ProcessEnv>(commands.prepareE2e);
-    await start([...targets, e2eTarget]);
+    await start([...targets, e2eTarget, "packages/sdk/src/app-sdk-external-boundary.e2e.test.ts"]);
     try {
       await Promise.race([preparation.started, terminal.promise]);
       expect(commands.prepareE2e).toHaveBeenCalledOnce();
@@ -918,6 +1072,10 @@ describe("test-projects build admission", () => {
 });
 
 describe("plugin batch build admission", () => {
+  const qaConfig = "test/vitest/vitest.extension-qa.config.ts";
+  const databaseConfig = "test/vitest/vitest.extension-database-workers.config.ts";
+  const combinedConfig = "test/vitest/vitest.database-worker-watch.config.ts";
+
   it.each(["1", "2"])(
     "holds all groups and chunks behind one build (parallel=%s)",
     async (parallel) => {
@@ -983,46 +1141,96 @@ describe("plugin batch build admission", () => {
   });
 
   it.each([
-    { name: "full QA", ids: ["qa-lab"], build: true },
-    { name: "shared config, channel only", ids: ["qa-channel"], build: false },
-    { name: "unrelated plugin", ids: ["firecrawl"], build: false },
-    { name: "ordinary QA file", args: [ordinaryQa], build: false },
-    { name: "lifecycle file", args: [lifecycle], build: true },
-    { name: "absolute lifecycle", args: [path.resolve(lifecycle)], build: true },
-    { name: "exact exclusion", args: ["--exclude", lifecycle], build: false },
-    { name: "equals exclusion", args: [`--exclude=${lifecycle}`], build: false },
+    { name: "full QA", ids: ["qa-lab"], build: true, configs: [databaseConfig, qaConfig] },
+    { name: "shared config, channel only", ids: ["qa-channel"], build: false, configs: [qaConfig] },
+    {
+      name: "unrelated plugin",
+      ids: ["firecrawl"],
+      build: false,
+      configs: ["test/vitest/vitest.extension-misc.config.ts"],
+    },
+    { name: "ordinary QA file", args: [ordinaryQa], build: false, configs: [combinedConfig] },
+    { name: "lifecycle file", args: [lifecycle], build: true, configs: [combinedConfig] },
+    {
+      name: "absolute lifecycle",
+      args: [path.resolve(lifecycle)],
+      build: true,
+      configs: [combinedConfig],
+    },
+    {
+      name: "exact exclusion",
+      args: ["--exclude", lifecycle],
+      build: false,
+      configs: [databaseConfig, qaConfig],
+    },
+    {
+      name: "equals exclusion",
+      args: [`--exclude=${lifecycle}`],
+      build: false,
+      configs: [databaseConfig, qaConfig],
+    },
     {
       name: "scoped exclusion",
       args: ["--exclude", lifecycle.replace("extensions/", "")],
       build: false,
+      configs: [databaseConfig, qaConfig],
     },
-    { name: "absolute exclusion", args: ["--exclude", path.resolve(lifecycle)], build: false },
+    {
+      name: "absolute exclusion",
+      args: ["--exclude", path.resolve(lifecycle)],
+      build: false,
+      configs: [databaseConfig, qaConfig],
+    },
     {
       name: "glob exclusion",
       args: ["--exclude", "extensions/qa-lab/**/suite-process-*.test.ts"],
       build: false,
+      configs: [combinedConfig],
     },
-    { name: "all QA excluded", args: ["--exclude=extensions/qa-lab/**"], build: false },
-    { name: "empty include", include: [], build: false },
-    { name: "unrelated include", include: [ordinaryQa], build: false },
-    { name: "lifecycle include", include: [lifecycle], build: true },
-    { name: "absolute lifecycle include", include: [path.resolve(lifecycle)], build: true },
+    {
+      name: "all QA excluded",
+      args: ["--exclude=extensions/qa-lab/**"],
+      build: false,
+      configs: [combinedConfig],
+    },
+    { name: "empty include", include: [], build: false, configs: [databaseConfig, qaConfig] },
+    {
+      name: "unrelated include",
+      include: [ordinaryQa],
+      build: false,
+      configs: [databaseConfig, qaConfig],
+    },
+    {
+      name: "lifecycle include",
+      include: [lifecycle],
+      build: true,
+      configs: [databaseConfig, qaConfig],
+    },
+    {
+      name: "absolute lifecycle include",
+      include: [path.resolve(lifecycle)],
+      build: true,
+      configs: [databaseConfig, qaConfig],
+    },
     {
       name: "scoped lifecycle include",
       include: [lifecycle.replace("extensions/", "")],
       build: true,
+      configs: [databaseConfig, qaConfig],
     },
     {
       name: "runtime include outside config directory",
       include: ["test/e2e/qa-lab/runtime/gateway-support-export-runtime.test.ts"],
       args: ["test/e2e/qa-lab/runtime/gateway-support-export-runtime.test.ts"],
       build: false,
+      configs: [combinedConfig],
     },
     {
       name: "include outside emitted roots",
       ids: ["qa-channel"],
       include: [lifecycle],
       build: false,
+      configs: [qaConfig],
     },
     {
       name: "cross-root CLI with include",
@@ -1030,22 +1238,25 @@ describe("plugin batch build admission", () => {
       args: [lifecycle],
       include: [lifecycle],
       build: true,
+      configs: [qaConfig],
     },
     {
       name: "include outside explicit target",
       args: [ordinaryQa],
       include: [lifecycle],
       build: true,
+      configs: [combinedConfig],
     },
     {
       name: "existing exact-exclude expansion",
       args: [ordinaryQa, "--exclude", "extensions/codex/src/app-server/run-attempt.test.ts"],
       build: true,
+      configs: [combinedConfig],
     },
-    { name: "no groups", ids: [], build: false },
+    { name: "no groups", ids: [], build: false, configs: [] },
   ])(
     "prepares the actual invocation selection: $name",
-    async ({ ids = ["qa-lab"], args = [], include, build }) => {
+    async ({ ids = ["qa-lab"], args = [], include, build, configs }) => {
       const { resolveExtensionBatchPlan } =
         await import("../../scripts/lib/extension-test-plan.mts");
       const { runExtensionBatchPlan } = await import("../../scripts/test-extension-batch.mts");
@@ -1053,7 +1264,9 @@ describe("plugin batch build admission", () => {
         ? { OPENCLAW_VITEST_INCLUDE_FILE: patternFiles.writePatternFile("include.json", include) }
         : {};
       commands.prepare.mockResolvedValue(0);
-      const reader = vi.fn().mockResolvedValue(0);
+      const reader = vi
+        .fn<(params: VitestBatchRunParams) => Promise<number>>()
+        .mockResolvedValue(0);
       await expect(
         runExtensionBatchPlan(resolveExtensionBatchPlan({ extensionIds: ids }), {
           runGroup: reader,
@@ -1062,7 +1275,7 @@ describe("plugin batch build admission", () => {
         }),
       ).resolves.toBe(0);
       expect(commands.prepare).toHaveBeenCalledTimes(build ? 1 : 0);
-      expect(reader).toHaveBeenCalledTimes(ids.length ? 1 : 0);
+      expect(reader.mock.calls.map(([invocation]) => invocation.config)).toEqual(configs);
     },
   );
 });

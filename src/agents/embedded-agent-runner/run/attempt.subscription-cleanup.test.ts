@@ -50,7 +50,7 @@ describe("waitForEmbeddedAbortSettle timeout policy", () => {
 
       expect(settled).toBe(true);
       expect(mocks.warn).toHaveBeenCalledExactlyOnceWith(
-        `embedded abort settle timed out: runId=run-1 sessionId=session-1 timeoutMs=${timeoutMs}`,
+        `agent cleanup timed out: runId=run-1 sessionId=session-1 step=embedded-abort-settle timeoutMs=${timeoutMs}`,
       );
       expect(vi.getTimerCount()).toBe(0);
     },
@@ -70,7 +70,7 @@ describe("waitForSessionsYieldAbortSettle", () => {
     await wait;
 
     expect(mocks.warn).toHaveBeenCalledExactlyOnceWith(
-      "sessions_yield abort settle timed out: runId=run-1 sessionId=session-1 timeoutMs=1250",
+      "agent cleanup timed out: runId=run-1 sessionId=session-1 step=sessions_yield-abort-settle timeoutMs=1250",
     );
     expect(vi.getTimerCount()).toBe(0);
   });
@@ -84,7 +84,7 @@ describe("waitForSessionsYieldAbortSettle", () => {
     });
 
     expect(mocks.warn).toHaveBeenCalledExactlyOnceWith(
-      "sessions_yield abort settle failed: runId=run-1 sessionId=session-1 err=Error: settle failed",
+      "agent cleanup failed: runId=run-1 sessionId=session-1 step=sessions_yield-abort-settle error=settle failed",
     );
     expect(vi.getTimerCount()).toBe(0);
   });
@@ -122,7 +122,7 @@ describe("cleanupEmbeddedAttemptResources", () => {
           order.push("dispose");
         },
       },
-      sessionManager: {},
+      sessionManager: undefined,
       aborted: true,
       abortSettlePromise: settle.promise,
       runId: "run-1",
@@ -153,7 +153,7 @@ describe("cleanupEmbeddedAttemptResources", () => {
           order.push("dispose");
         },
       },
-      sessionManager: {},
+      sessionManager: undefined,
       aborted: true,
       abortSettlePromise: new Promise(() => {}),
       runId: "run-1",
@@ -169,7 +169,7 @@ describe("cleanupEmbeddedAttemptResources", () => {
 
     expect(order).toEqual(["flush", "dispose"]);
     expect(mocks.warn).toHaveBeenCalledWith(
-      `embedded abort settle timed out: runId=run-1 sessionId=session-1 timeoutMs=${abortSettleTimeoutMs}`,
+      `agent cleanup timed out: runId=run-1 sessionId=session-1 step=embedded-abort-settle timeoutMs=${abortSettleTimeoutMs}`,
     );
   });
 
@@ -191,7 +191,7 @@ describe("cleanupEmbeddedAttemptResources", () => {
           order.push("dispose");
         },
       },
-      sessionManager: {},
+      sessionManager: undefined,
       bundleMcpRuntime: {
         dispose: async () => {
           order.push("runtime-dispose-start");
@@ -216,7 +216,7 @@ describe("cleanupEmbeddedAttemptResources", () => {
         agent: {},
         dispose,
       },
-      sessionManager: {},
+      sessionManager: undefined,
       aborted: false,
       abortSettlePromise: new Promise(() => {}),
       runId: "run-1",

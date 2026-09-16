@@ -149,7 +149,6 @@ export async function loadSubagentSpawnModuleForTest(params: {
   hookRunner?: HookRunner;
   resolveAgentConfig?: (cfg: Record<string, unknown>, agentId: string) => unknown;
   resolveAgentWorkspaceDir?: (cfg: Record<string, unknown>, agentId: string) => string;
-  resolveSubagentSpawnModelSelection?: () => string | undefined;
   getSubagentDepthFromSessionStore?: (sessionKey: string, opts?: unknown) => number;
   countActiveRunsForSession?: (sessionKey: string) => number;
   listSwarmRunsForGroup?: (groupId: string) => unknown[];
@@ -265,7 +264,7 @@ export async function loadSubagentSpawnModuleForTest(params: {
     getRuntimeConfig: () =>
       params.getRuntimeConfig?.() ??
       createSubagentSpawnTestConfig(params.workspaceDir ?? os.tmpdir()),
-    loadPreparedModelCatalog: (...args: unknown[]) =>
+    readPreparedModelCatalog: (...args: unknown[]) =>
       params.loadPreparedModelCatalogMock?.(...args) ?? [],
     resolveProviderRefOwnership: (...args: unknown[]) =>
       params.resolveProviderRefOwnershipMock?.(...args) ?? {
@@ -376,12 +375,6 @@ export async function loadSubagentSpawnModuleForTest(params: {
     resolveAgentConfig: params.resolveAgentConfig ?? (() => undefined),
     resolveAgentWorkspaceDir:
       params.resolveAgentWorkspaceDir ?? (() => params.workspaceDir ?? os.tmpdir()),
-    resolveSubagentSpawnModelSelection:
-      params.resolveSubagentSpawnModelSelection ??
-      ((spawnParams: { modelOverride?: unknown }) =>
-        typeof spawnParams.modelOverride === "string" && spawnParams.modelOverride.trim()
-          ? spawnParams.modelOverride.trim()
-          : "openai/gpt-4"),
     resolveSandboxRuntimeStatus:
       params.resolveSandboxRuntimeStatus ?? (() => ({ sandboxed: false })),
     ...createDefaultSessionHelperMocks(),

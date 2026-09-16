@@ -70,7 +70,7 @@ export function createDiscordMessageProgressRuntime(params: {
       : undefined,
     onReasoningEnd: draftPreview.draftStream
       ? () => {
-          handleAssistantMessageBoundary();
+          draftPreview.resetReasoningProgress();
           return false;
         }
       : undefined,
@@ -151,6 +151,7 @@ export function createDiscordMessageProgressRuntime(params: {
       if (payload.phase === "update") {
         return await draftPreview.pushPlanProgress(payload.steps, {
           explanation: payload.explanation,
+          explanationFormat: payload.explanationFormat,
         });
       }
       return false;

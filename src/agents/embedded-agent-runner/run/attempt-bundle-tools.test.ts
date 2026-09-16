@@ -4,6 +4,7 @@ import {
   makeRegistry,
 } from "../../../config/plugin-auto-enable.test-helpers.js";
 import { setPluginToolMeta } from "../../../plugins/tool-metadata.js";
+import { createAgentCleanupScope } from "../../run-cleanup-timeout.js";
 import { createStubTool } from "../../test-helpers/agent-tool-stubs.js";
 import { attachToolAllowlistIntersection } from "../../tool-policy.js";
 
@@ -87,7 +88,11 @@ describe("prepareEmbeddedAttemptBundleTools", () => {
     { allow: ["chrome*"], expected: ["chrome__click"] },
     { allow: ["ch*me*"], expected: ["chrome__click"] },
     { allow: [" CHROME* "], expected: ["chrome__click"] },
-    { allow: ["*click"], expected: ["chrome__click", "other__click"] },
+    { allow: ["*click"], expected: ["chrome__click", "other__click"], discoverLsp: true },
+    {
+      allow: attachToolAllowlistIntersection([], [["chrome*"], ["*click"]]),
+      expected: ["chrome__click"],
+    },
     { allow: ["chrome__*"], expected: ["chrome__click"] },
     { allow: ["chrome*."], expected: [] },
     { allow: ["exec*"], expected: [], discover: false },
@@ -112,7 +117,37 @@ describe("prepareEmbeddedAttemptBundleTools", () => {
       testCase.discover === false ? 0 : 1,
     );
     expect(result.uncompactedEffectiveTools.map((tool) => tool.name)).toEqual(testCase.expected);
-    expect(mocks.createBundleLspToolRuntime).not.toHaveBeenCalled();
+    expect(mocks.createBundleLspToolRuntime).toHaveBeenCalledTimes(testCase.discoverLsp ? 1 : 0);
+  });
+
+  it.each([
+    { allow: ["bundle-lsp"], expected: ["lsp_hover_typescript", "lsp_definition_typescript"] },
+    { allow: ["group:plugins"], expected: ["lsp_hover_typescript", "lsp_definition_typescript"] },
+    { allow: ["*hover*"], expected: ["lsp_hover_typescript"] },
+    { allow: [" LSP* "], expected: ["lsp_hover_typescript", "lsp_definition_typescript"] },
+    {
+      allow: attachToolAllowlistIntersection([], [["lsp_*"], ["*hover*"]]),
+      expected: ["lsp_hover_typescript"],
+    },
+    { allow: ["read*"], expected: [], discover: false },
+    { allow: [], expected: [], discover: false },
+  ])("discovers LSP for $allow without widening final tools", async (testCase) => {
+    const input = createInput([], []);
+    input.attempt.toolsAllow = testCase.allow;
+    input.preparedToolBase.effectiveToolsAllow = testCase.allow;
+    const lspTools = ["lsp_hover_typescript", "lsp_definition_typescript"].map((name) => {
+      const tool = createStubTool(name);
+      setPluginToolMeta(tool, { pluginId: "bundle-lsp", optional: false });
+      return tool;
+    });
+    mocks.createBundleLspToolRuntime.mockResolvedValue({ tools: lspTools, dispose: vi.fn() });
+
+    const result = await prepareEmbeddedAttemptBundleTools(input);
+
+    expect(mocks.createBundleLspToolRuntime).toHaveBeenCalledTimes(
+      testCase.discover === false ? 0 : 1,
+    );
+    expect(result.uncompactedEffectiveTools.map((tool) => tool.name)).toEqual(testCase.expected);
   });
 
   it.each([
@@ -419,50 +454,44 @@ describe("prepareEmbeddedAttemptBundleTools", () => {
     ]);
   });
 
-  it("disposes prepared bundle runtimes when later policy setup fails", async () => {
-    const disposeMcp = vi.fn(async () => {});
-    const disposeLsp = vi.fn(async () => {});
-    mocks.acquireSessionMcpRuntime.mockResolvedValue({ runtime: {}, releaseLease: () => {} });
-    mocks.materializeBundleMcpToolsForRun.mockResolvedValue({
-      tools: [],
-      dispose: disposeMcp,
-    });
-    mocks.createBundleLspToolRuntime.mockResolvedValue({
-      tools: [],
-      dispose: disposeLsp,
-    });
-    mocks.applyFinalEffectiveToolPolicy.mockImplementation(() => {
-      throw new Error("bundle policy failed");
-    });
+  it.each([undefined, "MCP", "LSP"])(
+    "disposes prepared runtimes after policy failure and retains %s cleanup failure",
+    async (failedCleanup) => {
+      const disposeMcp = vi.fn(async () => {
+        if (failedCleanup === "MCP") {
+          throw new Error("MCP disposal failed");
+        }
+      });
+      const disposeLsp = vi.fn(async () => {
+        if (failedCleanup === "LSP") {
+          throw new Error("LSP disposal failed");
+        }
+      });
+      mocks.acquireSessionMcpRuntime.mockResolvedValue({ runtime: {}, releaseLease: () => {} });
+      mocks.materializeBundleMcpToolsForRun.mockResolvedValue({
+        tools: [],
+        dispose: disposeMcp,
+      });
+      mocks.createBundleLspToolRuntime.mockResolvedValue({
+        tools: [],
+        dispose: disposeLsp,
+      });
+      mocks.applyFinalEffectiveToolPolicy.mockImplementation(() => {
+        throw new Error("bundle policy failed");
+      });
 
-    const input = {
-      agentDir: "/tmp/agent",
-      attempt: {
-        config: {},
-        model: {},
-        modelId: "model",
-        provider: "provider",
-        runId: "run",
-        runtimePlan: {},
-        sessionId: "session",
-      },
-      setup: createAttemptSetupFixture(),
-      isRawModelRun: false,
-      preparedToolBase: {
-        cronCreatorToolAllowlist: [],
-        effectiveToolsAllow: undefined,
-        localModelLeanPreserveToolNames: [],
-        runtimeCapabilityProfile: undefined,
-        toolsEnabled: true,
-        toolsRaw: [],
-      },
-    } as unknown as Parameters<typeof prepareEmbeddedAttemptBundleTools>[0];
+      const input = createInput([], []);
 
-    await expect(prepareEmbeddedAttemptBundleTools(input)).rejects.toThrow("bundle policy failed");
-    expect(mocks.applyFinalEffectiveToolPolicy).toHaveBeenCalledWith(
-      expect.objectContaining({ workspaceDir: "/tmp/workspace" }),
-    );
-    expect(disposeMcp).toHaveBeenCalledOnce();
-    expect(disposeLsp).toHaveBeenCalledOnce();
-  });
+      const cleanupScope = createAgentCleanupScope();
+      await expect(
+        cleanupScope.run(() => prepareEmbeddedAttemptBundleTools(input)),
+      ).rejects.toThrow("bundle policy failed");
+      expect(cleanupScope.outcome).toBe(failedCleanup ? "uncertain" : "closed");
+      expect(mocks.applyFinalEffectiveToolPolicy).toHaveBeenCalledWith(
+        expect.objectContaining({ workspaceDir: "/tmp/workspace" }),
+      );
+      expect(disposeMcp).toHaveBeenCalledOnce();
+      expect(disposeLsp).toHaveBeenCalledOnce();
+    },
+  );
 });

@@ -5,13 +5,13 @@ import fs from "node:fs";
 import { performance } from "node:perf_hooks";
 import pMap from "p-map";
 import { assertTestHomeSelection, combineTestHomeSelections } from "../test/test-home-policy.mts";
+import { loadPatternListFromEnv } from "../test/vitest/vitest.pattern-file.ts";
 import { formatMs } from "./lib/check-timing-summary.mts";
 import { signalExitCode } from "./lib/managed-child-process.mts";
 import {
   prepareE2eVitestRuntime,
   prepareVitestRuntime,
   resolveVitestCliEntry,
-  resolveVitestRuntimeCliSelections,
 } from "./lib/vitest-build-prerequisites.mts";
 import { createVitestCacheSlots } from "./lib/vitest-cache-slots.mts";
 import { hasNonRunVitestSubcommand } from "./lib/vitest-cli-mode.mts";
@@ -21,11 +21,13 @@ import { isCiLikeEnv, resolveLocalFullSuiteProfile } from "./lib/vitest-local-sc
 import { resolveVitestNodeArgs, resolveVitestProcessEnv } from "./lib/vitest-process-env.mts";
 import type { exitVitestBySignal } from "./lib/vitest-process.mts";
 import { createVitestReportOwner, type VitestReportOwner } from "./lib/vitest-report-owner.mts";
+import { resolveVitestRuntimeCliSelections } from "./lib/vitest-runtime-selection.mts";
 import {
   createShardTimingSample,
   readShardTimings,
   writeShardTimings,
 } from "./lib/vitest-shard-timings.mts";
+import { getVitestWorkerDescriptor } from "./lib/vitest-worker-bootstrap.mts";
 import { createVitestWorkerRun, type VitestWorkerRun } from "./lib/vitest-worker-run.mts";
 import { resolveVitestSpawnParams, spawnWatchedVitestProcess } from "./run-vitest.mts";
 import {
@@ -55,6 +57,7 @@ import {
 } from "./test-projects.test-support.mts";
 
 type VitestRunSpec = BaseVitestRunSpec & {
+  timingIncludePatterns?: string[];
   continueOnFailure?: boolean;
   reportIndex?: number;
   workerRun?: VitestWorkerRun;
@@ -324,6 +327,7 @@ export async function runTestProjects(
     targetArgs.length === 0 && changedTargetArgs === null
       ? buildFullSuiteVitestRunPlans(args, process.cwd()).map((plan) => ({
           config: plan.config,
+          timingTargets: plan.timingTargets,
           continueOnFailure: true,
           env: baseEnv,
           includeFilePath: null,
@@ -345,6 +349,16 @@ export async function runTestProjects(
           baseEnv,
           cwd: process.cwd(),
         });
+  const inheritedIncludePatterns = rawRunSpecs.some((spec) => !spec.includeFilePath)
+    ? loadPatternListFromEnv("OPENCLAW_VITEST_INCLUDE_FILE", baseEnv)
+    : null;
+  for (const spec of rawRunSpecs) {
+    // An owned include file replaces the inherited filter. Otherwise retain its
+    // identity beside CLI chunk targets without changing execution or cleanup.
+    if (!spec.includeFilePath && inheritedIncludePatterns !== null) {
+      spec.timingIncludePatterns = inheritedIncludePatterns;
+    }
+  }
   const runSpecs: VitestRunSpec[] = applyDefaultMultiSpecVitestCachePaths(
     applyDefaultVitestNoOutputTimeout(
       applyFullExtensionsHeapBudget(rawRunSpecs, { env: baseEnv }),
@@ -458,7 +472,7 @@ export async function runTestProjects(
       ({ spec, execution }) => !spec.watchMode && !execution?.options.watch,
     );
     if (compiled.length) {
-      workers = createVitestWorkerRun(baseEnv);
+      workers = createVitestWorkerRun(baseEnv, getVitestWorkerDescriptor());
       for (const { spec } of compiled) {
         spec.workerRun = workers;
       }

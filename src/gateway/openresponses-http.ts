@@ -46,6 +46,7 @@ import {
   resolveAssistantResultText,
   resolveAssistantTextCompletion,
   resolveAssistantTextInput,
+  resolveAssistantTextStreamDelta,
   type AssistantTextSnapshot,
 } from "./agent-event-assistant-text.js";
 import type { AuthRateLimiter } from "./auth-rate-limit.js";
@@ -88,9 +89,9 @@ import {
 import { resolveAgentRunUsage } from "./openai-agent-run-usage.js";
 import { resolveOpenAiCompatError } from "./openai-compat-errors.js";
 import {
+  applyToolChoice,
   isToolChoiceConstraintSatisfied,
   resolveUnsatisfiedToolChoiceMessage,
-  toolChoiceConstraintPrompt,
   type ToolChoiceConstraint,
 } from "./openai-tool-choice.js";
 import { wrapUntrustedFileContent } from "./openresponses-file-content.js";
@@ -255,8 +256,7 @@ export const testing = {
 };
 
 function writeSseEvent(res: ServerResponse, event: StreamingEvent) {
-  res.write(`event: ${event.type}\n`);
-  res.write(`data: ${JSON.stringify(event)}\n\n`);
+  res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
 }
 
 type ResolvedResponsesLimits = {
@@ -303,29 +303,19 @@ function extractClientTools(body: CreateResponseBody): ClientToolDefinition[] {
   }));
 }
 
-function applyToolChoice(params: {
-  tools: ClientToolDefinition[];
-  toolChoice: CreateResponseBody["tool_choice"];
-}): {
-  tools: ClientToolDefinition[];
-  extraSystemPrompt?: string;
-  constraint?: ToolChoiceConstraint;
-} {
-  const { tools, toolChoice } = params;
+function resolveToolChoice(
+  toolChoice: CreateResponseBody["tool_choice"],
+): ToolChoiceConstraint | "none" | undefined {
   if (!toolChoice) {
-    return { tools };
+    return undefined;
   }
 
   if (toolChoice === "none") {
-    return { tools: [] };
+    return "none";
   }
 
   if (toolChoice === "required") {
-    if (tools.length === 0) {
-      throw new Error("tool_choice=required but no tools were provided");
-    }
-    const constraint: ToolChoiceConstraint = { type: "required" };
-    return { tools, extraSystemPrompt: toolChoiceConstraintPrompt(constraint), constraint };
+    return { type: "required" };
   }
 
   if (typeof toolChoice === "object" && toolChoice.type === "function") {
@@ -333,19 +323,10 @@ function applyToolChoice(params: {
     if (!targetName) {
       throw new Error("tool_choice.name is required");
     }
-    const matched = tools.filter((tool) => tool.function?.name === targetName);
-    if (matched.length === 0) {
-      throw new Error(`tool_choice requested unknown tool: ${targetName}`);
-    }
-    const constraint: ToolChoiceConstraint = { type: "function", name: targetName };
-    return {
-      tools: matched,
-      extraSystemPrompt: toolChoiceConstraintPrompt(constraint),
-      constraint,
-    };
+    return { type: "function", name: targetName };
   }
 
-  return { tools };
+  return undefined;
 }
 
 export { buildAgentPrompt } from "./openresponses-prompt.js";
@@ -389,6 +370,9 @@ function createResponseResource(params: {
     output: params.output,
     usage: params.usage ?? createEmptyUsage(),
     error: params.error,
+    ...(params.status === "incomplete"
+      ? { incomplete_details: { reason: "max_output_tokens" as const } }
+      : {}),
   };
 }
 
@@ -463,6 +447,10 @@ export async function handleOpenResponsesHttpRequest(
   if (!handled) {
     return true;
   }
+  const abortController = new AbortController();
+  // The signal owns preparation; SSE installs presentation cleanup below.
+  let onDisconnect = () => {};
+  watchClientDisconnect(req, res, abortController, () => onDisconnect());
   const modelOverrideAuth = authorizeOpenAiCompatibleHttpModelOverride(req, handled.requestAuth);
   if (!modelOverrideAuth.allowed) {
     sendMissingScopeForbidden(res, modelOverrideAuth.missingScope);
@@ -528,6 +516,7 @@ export async function handleOpenResponsesHttpRequest(
     }
   };
   try {
+    abortController.signal.throwIfAborted();
     if (Array.isArray(payload.input)) {
       for (const item of payload.input) {
         if (item.type === "message" && typeof item.content !== "string") {
@@ -551,7 +540,11 @@ export async function handleOpenResponsesHttpRequest(
                       data: source.data,
                       mediaType: source.media_type,
                     };
-              const image = await extractImageContentFromSource(imageSource, limits.images);
+              const image = await extractImageContentFromSource(
+                imageSource,
+                limits.images,
+                abortController.signal,
+              );
               images.push(image);
               continue;
             }
@@ -568,6 +561,7 @@ export async function handleOpenResponsesHttpRequest(
                       filename: source.filename,
                     },
               limits: limits.files,
+              signal: abortController.signal,
             });
             const rawText = file.text;
             if (rawText?.trim()) {
@@ -602,6 +596,9 @@ export async function handleOpenResponsesHttpRequest(
       }
     }
   } catch (err) {
+    if (abortController.signal.aborted) {
+      return true;
+    }
     logWarn(`openresponses: request parsing failed: ${String(err)}`);
     sendInvalidRequest(res, "invalid request");
     return true;
@@ -612,10 +609,7 @@ export async function handleOpenResponsesHttpRequest(
   let toolChoiceConstraint: ToolChoiceConstraint | undefined;
   let resolvedClientTools = clientTools;
   try {
-    const toolChoiceResult = applyToolChoice({
-      tools: clientTools,
-      toolChoice: payload.tool_choice,
-    });
+    const toolChoiceResult = applyToolChoice(clientTools, resolveToolChoice(payload.tool_choice));
     resolvedClientTools = toolChoiceResult.tools;
     toolChoicePrompt = toolChoiceResult.extraSystemPrompt;
     toolChoiceConstraint = toolChoiceResult.constraint;
@@ -707,7 +701,6 @@ export async function handleOpenResponsesHttpRequest(
     storeResponseSession(responseId, sessionKey, responseSessionScope);
   const outputItemId = `msg_${randomUUID()}`;
   const deps = createDefaultDeps();
-  const abortController = new AbortController();
   const streamMaxTokens =
     typeof payload.max_output_tokens === "number" ? payload.max_output_tokens : undefined;
   const streamTemperature =
@@ -723,7 +716,6 @@ export async function handleOpenResponsesHttpRequest(
       : undefined;
 
   if (!stream) {
-    const stopWatchingDisconnect = watchClientDisconnect(req, res, abortController);
     try {
       const result = await runResponsesAgentCommand({
         message: prompt.message,
@@ -812,16 +804,17 @@ export async function handleOpenResponsesHttpRequest(
         return true;
       }
 
+      const status = stopReason === "length" ? "incomplete" : "completed";
       const response = createResponseResource({
         ...responseIdentity,
         model,
-        status: "completed",
+        status,
         output: [
           createAssistantOutputItem({
             id: outputItemId,
             text: assistantText || "No response from OpenClaw.",
             phase: "final_answer",
-            status: "completed",
+            status,
           }),
         ],
         usage,
@@ -854,8 +847,6 @@ export async function handleOpenResponsesHttpRequest(
       }
       rememberResponseSession();
       sendJson(res, 500, createFailedResponse({ code: "api_error", message: "internal error" }));
-    } finally {
-      stopWatchingDisconnect();
     }
     return true;
   }
@@ -867,17 +858,16 @@ export async function handleOpenResponsesHttpRequest(
   setSseHeaders(res);
 
   let assistantText: AssistantTextSnapshot = { text: "" };
-  let streamedAssistantText = "";
+  let streamedAssistantText = assistantText;
   let pendingAssistantText: AssistantTextSnapshot | undefined;
   let finalResultText: string | undefined;
   let finalToolCalls: PendingToolCall[] | undefined;
   let unrepresentableAssistantReplacement = false;
   let closed = false;
   let unsubscribe = () => {};
-  let stopWatchingDisconnect = () => {};
   let finalUsage: Usage | undefined;
-  let finalizeRequested: { status: ResponseResource["status"]; errorMessage?: string } | null =
-    null;
+  let finalOutputStatus: "completed" | "incomplete" = "completed";
+  let finalizeRequested: { status: "completed" | "failed"; errorMessage?: string } | null = null;
   let finalizeScheduled = false;
   let terminalLifecyclePhase: "end" | "error" = "end";
 
@@ -903,18 +893,19 @@ export async function handleOpenResponsesHttpRequest(
         return;
       }
       const usage = finalUsage;
+      const status = finalizeRequested.status === "failed" ? "failed" : finalOutputStatus;
       const finalText = resolveAssistantTextCompletion({
         assistantText,
         pending: pendingAssistantText,
         resultText: finalResultText,
-        streamedText: streamedAssistantText,
+        streamedText: streamedAssistantText.text,
         fallbackText: finalToolCalls ? "" : "No response from OpenClaw.",
       });
-      if (!finalText.startsWith(streamedAssistantText)) {
+      if (!finalText.startsWith(streamedAssistantText.text)) {
         finalizeUnrepresentableAssistantReplacement();
         return;
       }
-      const delta = finalText.slice(streamedAssistantText.length);
+      const delta = finalText.slice(streamedAssistantText.text.length);
       if (delta) {
         writeSseEvent(res, {
           type: "response.output_text.delta",
@@ -924,9 +915,7 @@ export async function handleOpenResponsesHttpRequest(
           delta,
         });
       }
-      streamedAssistantText = finalText;
       closed = true;
-      stopWatchingDisconnect();
       unsubscribe();
 
       writeSseEvent(res, {
@@ -952,7 +941,7 @@ export async function handleOpenResponsesHttpRequest(
           finalizeRequested.status === "completed" && !finalToolCalls
             ? "final_answer"
             : "commentary",
-        status: "completed",
+        status: status === "incomplete" ? "incomplete" : "completed",
       });
 
       writeSseEvent(res, {
@@ -986,7 +975,7 @@ export async function handleOpenResponsesHttpRequest(
       const finalResponse = createResponseResource({
         ...responseIdentity,
         model,
-        status: finalizeRequested.status,
+        status,
         output,
         usage,
         ...(finalizeRequested.status === "failed"
@@ -1001,7 +990,7 @@ export async function handleOpenResponsesHttpRequest(
 
       rememberResponseSession();
       writeSseEvent(res, {
-        type: finalizeRequested.status === "failed" ? "response.failed" : "response.completed",
+        type: `response.${status}`,
         response: finalResponse,
       });
       writeDone(res);
@@ -1009,7 +998,7 @@ export async function handleOpenResponsesHttpRequest(
     });
   };
 
-  const requestFinalize = (status: ResponseResource["status"], errorMessage?: string) => {
+  const requestFinalize = (status: "completed" | "failed", errorMessage?: string) => {
     if (finalizeRequested) {
       return;
     }
@@ -1023,7 +1012,6 @@ export async function handleOpenResponsesHttpRequest(
     }
     // Failure is terminal even when an earlier lifecycle event is waiting for usage.
     closed = true;
-    stopWatchingDisconnect();
     unsubscribe();
     writeSseEvent(res, { type: "response.failed", response });
     writeDone(res);
@@ -1104,31 +1092,33 @@ export async function handleOpenResponsesHttpRequest(
           !input.replaceable &&
           input.replace &&
           input.text !== undefined &&
-          pendingAssistantText.text.startsWith(streamedAssistantText)
+          pendingAssistantText.text.startsWith(streamedAssistantText.text)
         ) {
           unrepresentableAssistantReplacement = false;
         }
         return;
       }
 
-      assistantText = mergeAssistantText(assistantText, input, "append-only");
+      const previous = assistantText;
+      const merged = mergeAssistantText(previous, input, "append-only");
+      assistantText = merged;
       // Unconfirmed tool-choice prose may still be corrected before it is sent.
       if (toolChoiceConstraint) {
         return;
       }
       // Keep physical wire progress separate from a corrected item snapshot.
-      if (!assistantText.text.startsWith(streamedAssistantText)) {
+      const content = resolveAssistantTextStreamDelta(previous, merged, streamedAssistantText);
+      if (content === undefined) {
         unrepresentableAssistantReplacement = true;
         return;
       }
       if (input.replace && input.text !== undefined) {
         unrepresentableAssistantReplacement = false;
       }
-      const content = assistantText.text.slice(streamedAssistantText.length);
+      streamedAssistantText = assistantText;
       if (!content) {
         return;
       }
-      streamedAssistantText = assistantText.text;
       writeSseEvent(res, {
         type: "response.output_text.delta",
         item_id: outputItemId,
@@ -1164,11 +1154,11 @@ export async function handleOpenResponsesHttpRequest(
   res.once("finish", releaseStreamRootWork);
   res.once("close", releaseStreamRootWork);
 
-  stopWatchingDisconnect = watchClientDisconnect(req, res, abortController, () => {
+  onDisconnect = () => {
     closed = true;
     unsubscribe();
     releaseStreamRootWork();
-  });
+  };
 
   void (async () => {
     try {
@@ -1234,6 +1224,7 @@ export async function handleOpenResponsesHttpRequest(
       }
 
       finalResultText = resultPayloadText;
+      finalOutputStatus = stopReason === "length" ? "incomplete" : "completed";
       finalToolCalls =
         stopReason === "tool_calls" && pendingToolCalls?.length ? pendingToolCalls : undefined;
       maybeFinalize();

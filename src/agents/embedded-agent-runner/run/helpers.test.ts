@@ -2,7 +2,8 @@
 // metadata assembly shared by normal exits and failure paths.
 import type { AssistantMessage } from "openclaw/plugin-sdk/llm";
 import { describe, expect, it, vi } from "vitest";
-import { resolveRetryAfterMs } from "../../failover/retry-evidence.js";
+import { classifyRateLimitWindow, resolveRetryAfterMs } from "../../failover/retry-evidence.js";
+import { createZeroUsageFixture } from "../../test-helpers/usage-fixtures.js";
 import type { NormalizedUsage } from "../../usage.js";
 import { createUsageAccumulator, mergeUsageIntoAccumulator } from "../usage-accumulator.js";
 import {
@@ -15,6 +16,14 @@ import {
   MAX_TRANSIENT_RETRIES,
   resolveTransientRetryDelayMs,
 } from "./helpers.js";
+
+describe("classifyRateLimitWindow - OpenRouter per-day cap", () => {
+  it("classifies a hyphenated free-models-per-day 429 as a long window", () => {
+    expect(
+      classifyRateLimitWindow("429 Rate limit exceeded: free-models-per-day-high-balance."),
+    ).toEqual({ kind: "long" });
+  });
+});
 
 describe("resolveEmbeddedAttemptBasePrompt", () => {
   const refusalTrigger = "ANTHROPIC_MAGIC_STRING_TRIGGER_REFUSAL";
@@ -52,14 +61,7 @@ function makeAssistantMessage(
     api: "responses",
     provider: "openai",
     model: "gpt-5.4",
-    usage: {
-      input: 0,
-      output: 0,
-      cacheRead: 0,
-      cacheWrite: 0,
-      totalTokens: 0,
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-    },
+    usage: createZeroUsageFixture(),
     role: "assistant",
     content,
     timestamp: Date.now(),

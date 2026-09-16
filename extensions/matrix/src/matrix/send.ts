@@ -1,8 +1,4 @@
-// Matrix plugin module implements send behavior.
-import {
-  createMessageReceiptFromOutboundResults,
-  type MessageReceiptPartKind,
-} from "openclaw/plugin-sdk/channel-outbound";
+import type { MessageReceiptPartKind } from "openclaw/plugin-sdk/channel-outbound";
 import { requireRuntimeConfig } from "openclaw/plugin-sdk/plugin-config-runtime";
 import type { PollInput } from "openclaw/plugin-sdk/poll-runtime";
 import type { CoreConfig } from "../types.js";
@@ -17,13 +13,14 @@ import { loadOutboundMediaFromUrl } from "./outbound-media-runtime.js";
 import { buildPollStartContent, M_POLL_START } from "./poll-types.js";
 import { buildMatrixReactionContent } from "./reaction-common.js";
 import { buildMatrixMessageRelation, resolveMatrixReplyToEventId } from "./relations.js";
-import type { MatrixClient } from "./sdk.js";
+import type { MatrixClient, MatrixRawEvent } from "./sdk.js";
 import { chunkMatrixText, prepareMatrixSingleText } from "./send/chunking.js";
 import {
   resolveMediaMaxBytes,
   withResolvedMatrixControlClient,
   withResolvedMatrixSendClient,
 } from "./send/client.js";
+import { resolveMatrixEditContent } from "./send/edit-content.js";
 import {
   buildTextContent,
   diffMatrixMentions,
@@ -39,6 +36,7 @@ import {
   resolveMediaDurationMs,
   uploadMediaWithEncryption,
 } from "./send/media.js";
+import { createMatrixSendReceipt, type MatrixReceiptEvent } from "./send/receipt.js";
 import { normalizeThreadId, resolveMatrixRoomId } from "./send/targets.js";
 import {
   EventType,
@@ -63,42 +61,6 @@ type MatrixClientResolveOpts = {
   accountId?: string | null;
 };
 
-type MatrixReceiptEvent = {
-  messageId: string;
-  kind: MessageReceiptPartKind;
-  replyToId?: string;
-};
-
-function createMatrixSendReceipt(params: {
-  roomId: string;
-  events: readonly MatrixReceiptEvent[];
-  threadId?: string | null;
-}) {
-  const firstEvent = params.events[0];
-  const receipt = createMessageReceiptFromOutboundResults({
-    kind: firstEvent?.kind ?? "text",
-    ...(firstEvent?.replyToId ? { replyToId: firstEvent.replyToId } : {}),
-    ...(params.threadId ? { threadId: params.threadId } : {}),
-    results: params.events.map(({ messageId }) => ({
-      channel: "matrix",
-      messageId,
-      roomId: params.roomId,
-    })),
-  });
-  // Caption overflow is not a native reply; never copy the first event's relation onto later parts.
-  receipt.parts = receipt.parts.map((part, index) => {
-    const event = params.events[index]!;
-    const actualPart = { ...part, kind: event.kind };
-    if (event.replyToId) {
-      actualPart.replyToId = event.replyToId;
-    } else {
-      delete actualPart.replyToId;
-    }
-    return actualPart;
-  });
-  return receipt;
-}
-
 function isMatrixClient(value: MatrixClient | MatrixClientResolveOpts): value is MatrixClient {
   return typeof (value as { sendEvent?: unknown }).sendEvent === "function";
 }
@@ -118,21 +80,6 @@ function normalizeMatrixClientResolveOpts(
     timeoutMs: opts.timeoutMs,
     accountId: opts.accountId,
   };
-}
-
-function resolvePreviousEditContent(previousEvent: unknown): Record<string, unknown> | undefined {
-  if (!previousEvent || typeof previousEvent !== "object") {
-    return undefined;
-  }
-  const eventRecord = previousEvent as { content?: unknown };
-  if (!eventRecord.content || typeof eventRecord.content !== "object") {
-    return undefined;
-  }
-  const content = eventRecord.content as Record<string, unknown>;
-  const newContent = content["m.new_content"];
-  return newContent && typeof newContent === "object"
-    ? (newContent as Record<string, unknown>)
-    : content;
 }
 
 function resolvePreviousThreadId(previousEvent: unknown): string | undefined {
@@ -157,10 +104,6 @@ function resolvePreviousThreadId(previousEvent: unknown): string | undefined {
   return normalizeThreadId(relationRecord.event_id) ?? undefined;
 }
 
-function hasMatrixMentionsMetadata(content: Record<string, unknown> | undefined): boolean {
-  return Boolean(content && Object.hasOwn(content, "m.mentions"));
-}
-
 function withMatrixExtraContentFields<T extends Record<string, unknown>>(
   content: T,
   extraContent?: MatrixExtraContentFields,
@@ -173,12 +116,14 @@ function withMatrixExtraContentFields<T extends Record<string, unknown>>(
 
 async function resolvePreviousEditMentions(params: {
   client: MatrixClient;
-  content: Record<string, unknown> | undefined;
+  roomId: string;
+  event: MatrixRawEvent | null;
 }) {
-  if (hasMatrixMentionsMetadata(params.content)) {
-    return extractMatrixMentions(params.content);
+  const content = await resolveMatrixEditContent(params);
+  if (content && Object.hasOwn(content, "m.mentions")) {
+    return extractMatrixMentions(content);
   }
-  const body = typeof params.content?.body === "string" ? params.content.body : "";
+  const body = typeof content?.body === "string" ? content.body : "";
   if (!body) {
     return {};
   }
@@ -590,22 +535,6 @@ export async function sendSingleTextMessageMatrix(
   );
 }
 
-async function getPreviousMatrixEvent(
-  client: MatrixClient,
-  roomId: string,
-  eventId: string,
-): Promise<Record<string, unknown> | null> {
-  const getEvent = (
-    client as {
-      getEvent?: (roomId: string, eventId: string) => Promise<Record<string, unknown>>;
-    }
-  ).getEvent;
-  if (typeof getEvent !== "function") {
-    return null;
-  }
-  return await Promise.resolve(getEvent.call(client, roomId, eventId)).catch(() => null);
-}
-
 export async function editMessageMatrix(
   roomId: string,
   originalEventId: string,
@@ -652,7 +581,11 @@ export async function editMessageMatrix(
         includeMentions: opts.includeMentions,
         tableMode,
       });
-      const previousEvent = await getPreviousMatrixEvent(client, resolvedRoom, originalEventId);
+      const threadId = normalizeThreadId(opts.threadId);
+      const previousEvent =
+        opts.includeMentions !== false || threadId
+          ? ((await client.getEvent(resolvedRoom, originalEventId)) as MatrixRawEvent)
+          : null;
       const replaceMentions =
         opts.includeMentions === false
           ? undefined
@@ -660,7 +593,8 @@ export async function editMessageMatrix(
               extractMatrixMentions(newContent),
               await resolvePreviousEditMentions({
                 client,
-                content: resolvePreviousEditContent(previousEvent),
+                roomId: resolvedRoom,
+                event: previousEvent,
               }),
             );
 
@@ -668,7 +602,6 @@ export async function editMessageMatrix(
         rel_type: RelationType.Replace,
         event_id: originalEventId,
       };
-      const threadId = normalizeThreadId(opts.threadId);
       if (threadId) {
         // Matrix applies m.new_content while preserving the original relation.
         // Edits can update threaded events, but cannot add or move thread membership.

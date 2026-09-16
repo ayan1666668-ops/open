@@ -1,7 +1,9 @@
 import type { ModelPricingProvider } from "@openclaw/model-catalog-core/model-catalog-pricing";
 import type { ModelCatalog } from "@openclaw/model-catalog-core/model-catalog-types";
+import type { PluginCategorySlug } from "../../packages/plugin-package-contract/src/index.js";
 import type { ChannelConfigRuntimeSchema } from "../channels/plugins/types.config.js";
-import type { ConfigUiPresentation } from "../shared/config-ui-hints-types.js";
+import type { ChannelAccountKeyPolicy } from "../routing/account-lookup.js";
+import type { ConfigUiPresentation, ConfigUiGroup } from "../shared/config-ui-hints-types.js";
 import type { JsonSchemaObject } from "../shared/json-schema.types.js";
 import type { DoctorSessionRouteStateOwner } from "./doctor-session-route-state-owner-types.js";
 import type { PluginManifestCommandAlias } from "./manifest-command-aliases.js";
@@ -215,6 +217,17 @@ export type PluginManifestSetupProviderAuthEvidence = {
   source?: string;
 };
 
+export type PluginManifestNativeSessionCatalogSetup = {
+  /** Provider/product name shown in fresh-install consent. */
+  label: string;
+  /** Optional explanation of the native catalog source. */
+  description?: string;
+  /** Node commands that read or resume this native catalog. */
+  nodeCommands?: string[];
+  /** Host-generated upgrade exception for a previously shipped implicit-on catalog. */
+  legacyDefaultEnabled?: boolean;
+};
+
 export type PluginManifestSetup = {
   /** Cheap provider setup metadata exposed before runtime loads. */
   providers?: PluginManifestSetupProvider[];
@@ -222,6 +235,8 @@ export type PluginManifestSetup = {
   cliBackends?: string[];
   /** Config migration ids owned by this plugin's setup surface. */
   configMigrations?: string[];
+  /** Native conversation catalog controlled by config.sessionCatalog.enabled. */
+  nativeSessionCatalog?: PluginManifestNativeSessionCatalogSetup;
   /**
    * Whether setup still needs plugin runtime execution after descriptor lookup.
    * Explicit false disables setup runtime; omission preserves the legacy fallback.
@@ -237,7 +252,18 @@ export type PluginManifestDoctorContract = {
    * Removal plan: remove the module fallback in OpenClaw 2027.1 after external plugins migrate.
    */
   sessionRouteStateOwners?: boolean;
-  stateMigrations?: boolean;
+  /**
+   * Ordered migration identities that a candidate-bundled manifest exposes to read-only
+   * planning without importing the Doctor contract. External installed artifacts remain
+   * deferred until candidate staging binds their content identity.
+   */
+  stateMigrations?:
+    | boolean
+    | Array<{
+        id: string;
+        doctorOnly?: true;
+        phase?: "after-session-repair";
+      }>;
 };
 
 export type PluginManifestQaRunner = {
@@ -338,6 +364,14 @@ export type PluginManifestCatalog = {
   order?: number;
 };
 
+/** Static transcript setup metadata; runtime registration does not gate configuration. */
+export type PluginManifestTranscriptSource = {
+  name?: string;
+  autoStart?: Partial<
+    Record<"accountId" | "guildId" | "channelId" | "meetingUrl", "optional" | "required">
+  >;
+};
+
 /** Declarative backup ownership rooted at host-managed state or each configured agent. */
 export type PluginManifestBackupResource = {
   disposition: "include" | "regenerable";
@@ -348,6 +382,8 @@ export type PluginManifestBackupResource = {
 export type PluginManifest = {
   id: string;
   configSchema: JsonSchemaObject;
+  /** Ordered browse categories; the first category is the plugin's primary category. */
+  categories?: PluginCategorySlug[];
   /** Static backup inclusion/exclusion declarations; resolved without loading plugin runtime. */
   backupResources?: PluginManifestBackupResource[];
   /** Plugin ids that must also be installed for this plugin to have effect. */
@@ -360,6 +396,8 @@ export type PluginManifest = {
   autoEnableWhenConfiguredProviders?: string[];
   kind?: PluginKind | PluginKind[];
   channels?: string[];
+  /** Account-key selection rules available before channel runtime loads. */
+  channelAccountKeyPolicies?: Record<string, ChannelAccountKeyPolicy>;
   providers?: string[];
   /**
    * Optional lightweight module that exports provider plugin metadata for
@@ -410,7 +448,7 @@ export type PluginManifest = {
   /** Usage/billing credentials excluded from inference auth but included in secret scrubbing. */
   providerUsageAuthEnvVars?: Record<string, string[]>;
   /** Provider ids that should reuse another provider id for auth lookup. */
-  providerAuthAliases?: Record<string, string>;
+  providerAuthAliases?: Record<string, string | { provider: string; baseUrls: string[] }>;
   /**
    * Cheap onboarding/auth-choice metadata used by config validation, CLI help,
    * and non-runtime auth-choice routing before provider runtime loads.
@@ -440,11 +478,14 @@ export type PluginManifest = {
   catalog?: PluginManifestCatalog;
   version?: string;
   uiHints?: Record<string, PluginConfigUiHint>;
+  configGroups?: ConfigUiGroup[];
   /**
    * Static capability ownership snapshot used for manifest-driven discovery,
    * compat wiring, and contract coverage without importing plugin runtime.
    */
   contracts?: PluginManifestContracts;
+  /** Setup descriptors keyed by ids owned in contracts.transcriptSourceProviders. */
+  transcriptSources?: Record<string, PluginManifestTranscriptSource>;
   /** Cheap media-understanding provider defaults without importing plugin runtime. */
   mediaUnderstandingProviderMetadata?: Record<
     string,
@@ -601,6 +642,10 @@ export type PluginManifestProviderAuthChoice = {
   appGuidedActionLabel?: string;
   /** Provider-owned interactive login that native setup clients can render generically. */
   appGuidedAuth?: "oauth" | "device-code";
+  /** Auth can return credentials without discovering or selecting a starter model. */
+  credentialOnly?: boolean;
+  /** Fixed-input sign-in offered in private owner-only chat. */
+  channelLogin?: { aliases?: string[] };
   /**
    * Interactive onboarding surfaces where this auth choice should appear.
    * Defaults to `["text-inference"]` when omitted.

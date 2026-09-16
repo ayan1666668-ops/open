@@ -263,8 +263,8 @@ export function createLazyGatewayCronState(params: LazyGatewayCronParams): Gatew
     async list(opts) {
       return await (await load()).state.cron.list(opts);
     },
-    async listPage(opts) {
-      return await (await load()).state.cron.listPage(opts);
+    async listPage(opts, matchesJob) {
+      return await (await load()).state.cron.listPage(opts, matchesJob);
     },
     async add(input, opts) {
       return await (await load()).state.cron.add(input, opts);
@@ -283,6 +283,9 @@ export function createLazyGatewayCronState(params: LazyGatewayCronParams): Gatew
     },
     async removeAgentJobsTransactional(agentId, commit) {
       return await (await load()).state.cron.removeAgentJobsTransactional(agentId, commit);
+    },
+    async quiesceJobs(jobs, commitGuard) {
+      await (await load()).state.cron.quiesceJobs(jobs, commitGuard);
     },
     async run(id, mode, opts) {
       return await (await load()).state.cron.run(id, mode, opts);
