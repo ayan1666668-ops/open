@@ -1,3 +1,4 @@
+import { isAbortError, racePromiseWithAbortSignal } from "../../infra/abort-signal.js";
 import { materializeLegacyDefaultCronJobOwners } from "../legacy-default-agent-owner-migration.js";
 import {
   configureForeignReceiptMonitor,
@@ -6,6 +7,7 @@ import {
   removeForeignReceipt,
   resumeForeignReceiptMonitor,
   stopForeignReceiptMonitor,
+  waitForForeignReceipt,
 } from "./foreign-receipt-monitor.js";
 import { nextWakeAtMs } from "./jobs-scheduling.js";
 import { locked } from "./locked.js";
@@ -88,8 +90,69 @@ async function reconcileForeignRunReceipts(state: CronServiceState): Promise<voi
       }
     }
   });
-  if (schedulingChanged) {
+  if (schedulingChanged && state.schedulerStarted) {
     armTimer(state);
+  }
+}
+
+/** Waits for receipt retirement without reserving a run or extending its timeout response. */
+export async function waitForRunSettlement(
+  state: CronServiceState,
+  jobId: string,
+  signal: AbortSignal,
+): Promise<boolean> {
+  const generation = state.lifecycleGeneration;
+  while (true) {
+    const result = await racePromiseWithAbortSignal(
+      locked(state, async (): Promise<{ settled: boolean } | { waiting: Promise<boolean> }> => {
+        if (signal.aborted || state.stopped || state.lifecycleGeneration !== generation) {
+          return { settled: false };
+        }
+        await ensureLoaded(state, { skipRecompute: true });
+        if (signal.aborted || state.stopped || state.lifecycleGeneration !== generation) {
+          return { settled: false };
+        }
+        const job = state.store?.jobs.find((entry) => entry.id === jobId);
+        const proposal = proposeCronRunRecovery(
+          state,
+          jobId,
+          job?.state.queuedAtMs,
+          job?.state.runningAtMs,
+        );
+        const recovery = recoverCronRunProposal(state, proposal);
+        const interruptedRuns: InterruptedStartupRun[] = [];
+        const changed = applyRecoveryResult({ state, proposal, result: recovery, interruptedRuns });
+        if (changed) {
+          await ensureLoaded(state, { forceReload: true, skipRecompute: true });
+          for (const interrupted of interruptedRuns) {
+            emitInterruptedRun(state, interrupted);
+          }
+          if (state.schedulerStarted) {
+            armTimer(state);
+          }
+        }
+        if (signal.aborted || state.stopped || state.lifecycleGeneration !== generation) {
+          return { settled: false };
+        }
+        if (recovery.kind === "repaired" || !recovery.receipt) {
+          return { settled: true };
+        }
+        configureForeignReceiptMonitor(state, async () => await reconcileForeignRunReceipts(state));
+        return { waiting: waitForForeignReceipt(state, jobId, signal) };
+      }),
+      signal,
+    ).catch((error: unknown) => {
+      if (signal.aborted && isAbortError(error)) {
+        return { settled: false };
+      }
+      throw error;
+    });
+    if ("settled" in result) {
+      return result.settled;
+    }
+    if (!(await result.waiting)) {
+      return false;
+    }
   }
 }
 

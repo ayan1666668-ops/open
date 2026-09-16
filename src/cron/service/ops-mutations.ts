@@ -225,11 +225,23 @@ async function persistUpdatedJob(params: {
   persistStore: typeof persistOrRestore;
 }) {
   const { state, snapshot, previousJob, nextJob, persistStore } = params;
+  const reservation = state.queuedRunReservationsByJobId.get(nextJob.id);
+  const preservesOnExitRearm =
+    reservation?.onExit === true &&
+    reservation.lifecycleGeneration === state.lifecycleGeneration &&
+    reservation.markerAtMs === previousJob.state.queuedAtMs &&
+    previousJob.schedule.kind === "on-exit" &&
+    previousJob.enabled === false &&
+    nextJob.enabled === true &&
+    resolveCronJobConfigRevision(previousJob) ===
+      resolveCronJobConfigRevision({ ...nextJob, enabled: false });
   if (
     nextJob.state.queuedAtMs !== undefined &&
+    !preservesOnExitRearm &&
     resolveCronJobConfigRevision(previousJob) !== resolveCronJobConfigRevision(nextJob)
   ) {
-    // Retire the occurrence with its owning edit; A→B→A cannot revive a queued snapshot.
+    // A consumed on-exit arm keeps its reservation when enabling its successor.
+    // Other edits retire the queued occurrence; A→B→A cannot revive it.
     delete nextJob.state.queuedAtMs;
   }
   if (state.store) {

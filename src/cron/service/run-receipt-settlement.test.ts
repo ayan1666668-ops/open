@@ -1,11 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../../test/helpers/promise.js";
+import { DEFAULT_CRON_MAX_CONCURRENT_RUNS } from "../../config/cron-limits.js";
 import { openOpenClawStateDatabase } from "../../state/openclaw-state-db.js";
+import { resolveCronJobConfigRevision } from "../config-revision.js";
 import { CronService } from "../service.js";
 import { setupCronServiceSuite } from "../service.test-harness.js";
 import { saveCronStore } from "../store.js";
 import { cronStoreKey } from "../store/key.js";
+import { loadedCronStoreFromRows, loadCronRows } from "../store/row-codec.js";
 import type { CronJob } from "../types.js";
+
+const onExitSchedule = { kind: "on-exit", command: "true" } as const;
 
 const { logger, makeStorePath } = setupCronServiceSuite({
   prefix: "cron-run-receipt-settlement-",
@@ -52,7 +57,47 @@ function latestReceiptStatus(storePath: string, jobId: string): string | undefin
 }
 
 describe("cron run receipt settlement", () => {
-  it.each(["manual", "startup"] as const)(
+  it("cancels a settlement wait while another operation holds the store lock", async () => {
+    vi.useRealTimers();
+    const { storePath } = await makeStorePath();
+    const job = makeTimedJob("cancel-queued-settlement", Date.now() + 60_000);
+    await saveCronStore(storePath, { version: 1, jobs: [job] });
+    const service = makeService(
+      storePath,
+      vi.fn(async () => ({ status: "ok" as const })),
+    );
+    const entered = createDeferred();
+    const release = createDeferred();
+    const update = service.updateWithPrecondition(job.id, { name: "updated" }, async () => {
+      entered.resolve();
+      await release.promise;
+    });
+    const controller = new AbortController();
+    try {
+      await entered.promise;
+      let result: boolean | undefined;
+      const waiting = service
+        .runOnExit(job.id, {
+          schedule: onExitSchedule,
+          signal: controller.signal,
+          commitGuard: () => {},
+          onReserved: () => {},
+        })
+        .then((outcome) => {
+          result = outcome.ok && "ran" in outcome && outcome.ran;
+        });
+      controller.abort();
+      await vi.waitFor(() => expect(result).toBe(false));
+      await waiting;
+    } finally {
+      controller.abort();
+      release.resolve();
+      await update;
+      service.stop();
+    }
+  });
+
+  it.each(["manual", "startup", "manual-finish-retry"] as const)(
     "keeps a timed-out %s runner fenced until its underlying work settles",
     async (trigger) => {
       vi.useRealTimers();
@@ -60,7 +105,7 @@ describe("cron run receipt settlement", () => {
       const now = Date.now();
       const job = makeTimedJob(
         `late-${trigger}-settlement`,
-        trigger === "manual" ? now + 60_000 : now - 1,
+        trigger === "startup" ? now - 1 : now + 60_000,
       );
       await saveCronStore(storePath, { version: 1, jobs: [job] });
 
@@ -72,12 +117,39 @@ describe("cron run receipt settlement", () => {
       });
       const successorRunner = vi.fn(async () => ({ status: "ok" as const }));
       const successor = makeService(storePath, successorRunner);
+      const stoppedObserver = makeService(storePath, successorRunner);
+      const settlementAbort = new AbortController();
       const first =
-        trigger === "manual" ? owner.run(job.id, "force").then(() => undefined) : owner.start();
+        trigger === "startup" ? owner.start() : owner.run(job.id, "force").then(() => undefined);
 
       try {
         await runnerStarted.promise;
         await first;
+        expect(latestReceiptStatus(storePath, job.id)).toBe("running");
+        await successor.update(job.id, { schedule: onExitSchedule, enabled: true });
+        let settled = false;
+        const onReserved = vi.fn();
+        const options = {
+          schedule: onExitSchedule,
+          signal: settlementAbort.signal,
+          commitGuard: () => {},
+          onReserved,
+        };
+        const settlement = successor.runOnExit(job.id, options).then((result) => {
+          settled = true;
+          return result;
+        });
+        const cancelled = new AbortController();
+        const cancelledWait = successor.runOnExit(job.id, { ...options, signal: cancelled.signal });
+        const stoppedWait = stoppedObserver.runOnExit(job.id, options);
+        // These reads also prove that a pending receipt wait releases the service lock.
+        await Promise.all([successor.readJob(job.id), stoppedObserver.readJob(job.id)]);
+        expect(settled).toBe(false);
+        cancelled.abort();
+        await expect(cancelledWait).resolves.toEqual({ ok: true, ran: false, reason: "stopped" });
+        stoppedObserver.stop();
+        await expect(stoppedWait).resolves.toEqual({ ok: true, ran: false, reason: "stopped" });
+        expect(settled).toBe(false);
         expect(latestReceiptStatus(storePath, job.id)).toBe("running");
         await expect(successor.run(job.id, "force")).resolves.toEqual({
           ok: true,
@@ -86,17 +158,189 @@ describe("cron run receipt settlement", () => {
         });
         expect(successorRunner).not.toHaveBeenCalled();
 
+        const database = openOpenClawStateDatabase().db;
+        if (trigger === "manual-finish-retry") {
+          database.exec(`
+            CREATE TEMP TRIGGER reject_on_exit_receipt_finish
+            BEFORE UPDATE ON cron_run_receipts
+            WHEN OLD.job_id = '${job.id}' AND NEW.status != 'running'
+            BEGIN SELECT RAISE(ABORT, 'receipt finish temporarily unavailable'); END;
+          `);
+        }
         releaseRunner.resolve({ status: "ok", summary: "late runner settled" });
-        await vi.waitFor(() => expect(latestReceiptStatus(storePath, job.id)).toBe("error"));
-        owner.stop();
-
-        await expect(successor.run(job.id, "force")).resolves.toEqual({ ok: true, ran: true });
+        if (trigger === "manual-finish-retry") {
+          await vi.waitFor(() =>
+            expect(logger.warn).toHaveBeenCalledWith(
+              expect.objectContaining({
+                err: expect.stringContaining("receipt finish temporarily unavailable"),
+              }),
+              "cron: failed to finalize run receipt after execution settlement",
+            ),
+          );
+          expect(latestReceiptStatus(storePath, job.id)).toBe("running");
+          expect(settled).toBe(false);
+          expect(onReserved).not.toHaveBeenCalled();
+          await expect(successor.run(job.id, "force")).resolves.toEqual({
+            ok: true,
+            ran: false,
+            reason: "already-running",
+          });
+          database.exec("DROP TRIGGER reject_on_exit_receipt_finish");
+        }
+        await expect(settlement).resolves.toEqual({ ok: true, ran: true });
+        expect(onReserved).toHaveBeenCalledOnce();
+        expect((await successor.readJob(job.id))?.enabled).toBe(false);
         expect(successorRunner).toHaveBeenCalledOnce();
       } finally {
+        openOpenClawStateDatabase().db.exec("DROP TRIGGER IF EXISTS reject_on_exit_receipt_finish");
+        settlementAbort.abort();
         releaseRunner.resolve({ status: "ok", summary: "late runner settled" });
         await first.catch(() => undefined);
         owner.stop();
         successor.stop();
+        stoppedObserver.stop();
+      }
+    },
+  );
+
+  it("reserves an observed exit atomically after a competing manual run", async () => {
+    vi.useRealTimers();
+    const { storePath } = await makeStorePath();
+    const job = { ...makeTimedJob("on-exit-manual-race", Date.now()), schedule: onExitSchedule };
+    await saveCronStore(storePath, { version: 1, jobs: [job] });
+    const manualStarted = createDeferred();
+    const releaseManual = createDeferred<{ status: "ok" }>();
+    const runCommandJob = vi.fn(async () => {
+      if (runCommandJob.mock.calls.length === 1) {
+        manualStarted.resolve();
+        return await releaseManual.promise;
+      }
+      return { status: "ok" as const };
+    });
+    const service = makeService(storePath, runCommandJob);
+    const controller = new AbortController();
+    let manual: ReturnType<CronService["run"]> | undefined;
+    const onReserved = vi.fn(() => {
+      const database = openOpenClawStateDatabase().db;
+      const persisted = loadedCronStoreFromRows(loadCronRows(database, cronStoreKey(storePath)))
+        .store.jobs[0];
+      expect(persisted?.enabled).toBe(false);
+      expect(persisted?.state.queuedAtMs).toBeTypeOf("number");
+      const receipt = database
+        .prepare(
+          "SELECT config_revision, status FROM cron_run_receipts WHERE store_key = ? AND job_id = ? AND status = 'running'",
+        )
+        .get(cronStoreKey(storePath), job.id) as { config_revision: string; status: string };
+      expect(receipt).toEqual({
+        config_revision: resolveCronJobConfigRevision(persisted!),
+        status: "running",
+      });
+    });
+    const observedExit = service.runOnExit(job.id, {
+      schedule: onExitSchedule,
+      signal: controller.signal,
+      commitGuard: () => {
+        manual ??= service.run(job.id, "force");
+      },
+      onReserved,
+      payload: (current) =>
+        current.payload.kind === "command"
+          ? { ...current.payload, argv: [...current.payload.argv, "exit-observed"] }
+          : undefined,
+    });
+    try {
+      await manualStarted.promise;
+      expect((await service.readJob(job.id))?.enabled).toBe(true);
+      expect(onReserved).not.toHaveBeenCalled();
+      await service.update(job.id, { payload: { kind: "command", argv: ["updated"] } });
+      releaseManual.resolve({ status: "ok" });
+      await expect(observedExit).resolves.toEqual({ ok: true, ran: true });
+      await manual;
+      expect(onReserved).toHaveBeenCalledOnce();
+      expect(runCommandJob).toHaveBeenCalledTimes(2);
+      expect(runCommandJob).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          job: expect.objectContaining({
+            payload: expect.objectContaining({ argv: ["updated", "exit-observed"] }),
+          }),
+        }),
+      );
+    } finally {
+      controller.abort();
+      releaseManual.resolve({ status: "ok" });
+      await manual;
+      await observedExit;
+      service.stop();
+    }
+  });
+
+  it.each(["rearm", "cancel"] as const)(
+    "preserves on-exit ownership during a queued %s",
+    async (action) => {
+      vi.useRealTimers();
+      const { storePath } = await makeStorePath();
+      const job = {
+        ...makeTimedJob(`on-exit-queued-${action}`, Date.now()),
+        schedule: onExitSchedule,
+        deleteAfterRun: true,
+        delivery: { mode: "none" as const },
+        payload: { kind: "command" as const, argv: ["original"], timeoutSeconds: 30 },
+      };
+      const blockers = Array.from({ length: DEFAULT_CRON_MAX_CONCURRENT_RUNS }, (_, index) => ({
+        ...makeTimedJob(`capacity-${action}-${index}`, Date.now()),
+        payload: { kind: "command" as const, argv: ["blocker"], timeoutSeconds: 30 },
+      }));
+      await saveCronStore(storePath, { version: 1, jobs: [...blockers, job] });
+      const releaseBlockers = createDeferred<{ status: "ok" }>();
+      const runCommandJob = vi.fn(async ({ job: running }: { job: CronJob }) => {
+        if (running.id !== job.id) {
+          return await releaseBlockers.promise;
+        }
+        return { status: "ok" as const };
+      });
+      const service = makeService(storePath, runCommandJob);
+      const controller = new AbortController();
+      const runningBlockers = blockers.map((blocker) => service.run(blocker.id, "force"));
+      let observedExit: ReturnType<CronService["runOnExit"]> | undefined;
+      try {
+        await vi.waitFor(() => expect(runCommandJob).toHaveBeenCalledTimes(blockers.length));
+        const reserved = createDeferred();
+        observedExit = service.runOnExit(job.id, {
+          schedule: onExitSchedule,
+          signal: controller.signal,
+          commitGuard: () => {},
+          onReserved: () => reserved.resolve(),
+          payload: (current) =>
+            current.payload.kind === "command"
+              ? { ...current.payload, argv: [...current.payload.argv, "exit-observed"] }
+              : undefined,
+        });
+        await reserved.promise;
+        if (action === "cancel") {
+          controller.abort();
+          await expect(observedExit).resolves.toEqual({ ok: true, ran: false, reason: "stopped" });
+          expect(latestReceiptStatus(storePath, job.id)).toBe("skipped");
+          expect((await service.readJob(job.id))?.state.queuedAtMs).toBeUndefined();
+          expect(runCommandJob).toHaveBeenCalledTimes(blockers.length);
+        } else {
+          await service.update(job.id, { enabled: true });
+          releaseBlockers.resolve({ status: "ok" });
+          await expect(observedExit).resolves.toEqual({ ok: true, ran: true });
+          expect(runCommandJob).toHaveBeenLastCalledWith(
+            expect.objectContaining({
+              job: expect.objectContaining({
+                payload: expect.objectContaining({ argv: ["original", "exit-observed"] }),
+              }),
+            }),
+          );
+          expect((await service.readJob(job.id))?.enabled).toBe(true);
+        }
+      } finally {
+        controller.abort();
+        releaseBlockers.resolve({ status: "ok" });
+        await Promise.all(runningBlockers);
+        await observedExit;
+        service.stop();
       }
     },
   );
