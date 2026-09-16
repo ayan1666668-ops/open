@@ -111,7 +111,9 @@ async function waitFor(predicate) {
     if (predicate()) {
       return true;
     }
-    await new Promise((resolve) => setTimeout(resolve, 25));
+    await new Promise((resolve) => {
+      setTimeout(resolve, 25);
+    });
   } while (performance.now() < deadline);
   return false;
 }
