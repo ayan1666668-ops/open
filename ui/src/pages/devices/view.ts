@@ -49,7 +49,11 @@ function resolveBindingsState(props: DevicesProps) {
     ...props,
     ...resolveAgentBindings(props.configForm),
     ready: Boolean(props.configForm),
-    disabled: !props.canAdmin || props.configSaving || props.configFormMode === "raw",
+    disabled:
+      !props.canAdmin ||
+      props.configLoading ||
+      props.configSaving ||
+      props.configFormMode === "raw",
     nodes: resolveNodeTargets(props.nodes, ["system.run"]),
     inventory: parseNodeList({ nodes: props.nodes }),
   };
