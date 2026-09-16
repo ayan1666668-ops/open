@@ -10,11 +10,11 @@ title: "Installer internals"
 
 OpenClaw ships three installer scripts, served from `openclaw.ai`.
 
-| Script                             | Platform                      | What it does                                                                                   |
-| ---------------------------------- | ----------------------------- | ---------------------------------------------------------------------------------------------- |
-| [`install.sh`](#installsh)         | macOS / Linux / WSL           | Installs Node if needed, installs OpenClaw via npm (default) or git, can run onboarding.       |
+| Script                             | Platform                      | What it does                                                                                                                   |
+| ---------------------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| [`install.sh`](#installsh)         | macOS / Linux / WSL           | Installs Node if needed, installs OpenClaw via npm (default) or git, can run onboarding.                                       |
 | [`install-cli.sh`](#install-clish) | macOS / Linux / WSL / FreeBSD | Installs Node + OpenClaw into a local prefix (`~/.openclaw`) via npm (FreeBSD) or npm/git (macOS/Linux/WSL). No root required. |
-| [`install.ps1`](#installps1)       | Windows (PowerShell)          | Installs Node if needed, installs OpenClaw via npm (default) or git, can run onboarding.       |
+| [`install.ps1`](#installps1)       | Windows (PowerShell)          | Installs Node if needed, installs OpenClaw via npm (default) or git, can run onboarding.                                       |
 
 All three support Node **24.16+ or 26.1+** with a WAL-reset-safe linked SQLite library. When Node is missing and nvm is not detected, `install.sh` provisions Node 26 through Homebrew on macOS and the supported Node 24 LTS line through NodeSource on Linux. When a supported RPM-owned Node links unsafe SQLite, `install.sh` preserves the distro package and provisions a user-space Node runtime through `install-cli.sh`. The rootless `install-cli.sh` downloads Node 24.19.0 on macOS and glibc Linux. FreeBSD uses an installed system runtime. Linux ARMv7 is unsupported. On Windows, winget/Chocolatey/Scoop install the supported Node LTS line, and the portable fallback downloads Node 26.
 
