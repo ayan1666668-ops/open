@@ -281,11 +281,9 @@ function transportFailureAlert(
     // No transport means no send whose outcome could be recorded: the alert
     // goes straight to the in-app fallback queue and the intent stays
     // "unknown", matching the pre-existing contract for transport-less setups.
+    // The run-history row keeps the same pending snapshot published at terminal
+    // time; settling here would race finalization and get overwritten by it.
     enqueueCronNotification(state, params.job, params.payload.text ?? "", "failure-alert");
-    settleCronTaskRunFailureAlertOutcome(state, {
-      taskRunId: params.taskRunId,
-      delivered: false,
-    });
     return;
   }
   void state.deps
@@ -308,10 +306,13 @@ function transportFailureAlert(
         if (recordResult !== "stale" && outcome.status === "not-delivered") {
           enqueueCronNotification(state, params.job, params.payload.text ?? "", "failure-alert");
         }
+        // Store the transport's settled tri-state as-is so an uncertain send
+        // (possible duplicate, not a confirmed delivery) stays uncertain on
+        // the history row too; errors cross the same redaction boundary as
+        // the job row inside the settlement writer.
         settleCronTaskRunFailureAlertOutcome(state, {
           taskRunId: params.taskRunId,
-          delivered: outcome.delivered === true,
-          ...(outcome.delivered === true ? {} : { error: outcome.error }),
+          outcome,
         });
       },
     })
