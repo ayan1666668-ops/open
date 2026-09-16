@@ -29,24 +29,15 @@ import {
 import { UPDATE_RUNNER_TIMEOUT_MS } from "../../infra/update-run-timeouts.js";
 import { CLI_NAME } from "../cli-name.js";
 import { resolveNodeRunner } from "./shared.js";
-import type { PreManagedServiceStop } from "./update-command-service-context-types.js";
+import type {
+  ManagedGatewayUpdateVerdict,
+  PreManagedServiceStop,
+} from "./update-command-service-context-types.js";
 
 export type ManagedServiceRootRedirect = {
   root: string;
   previousRoot: string;
 };
-
-export type ManagedGatewayUpdateVerdict =
-  | { kind: "absent" | "foreign" }
-  | {
-      kind: "owned";
-      root: string;
-      fingerprint: string;
-      refreshDefinition: boolean;
-      requiresInstallRootRefresh?: boolean;
-    }
-  | { kind: "unresolved"; root: string; fingerprint: string }
-  | { kind: "unavailable"; message: string; inspectionReason?: ServiceInspectionReason };
 
 export function collectServiceInspectionFailureFacts(
   verdict: ManagedGatewayUpdateVerdict | undefined,
