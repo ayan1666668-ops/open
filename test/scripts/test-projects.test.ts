@@ -3759,6 +3759,27 @@ describe("scripts/test-projects changed-target routing", () => {
     ]);
   });
 
+  it.each([
+    {
+      file: "src/cli/native-hook-relay-cli.locator-worker.test.ts",
+      config: "test/vitest/vitest.infra.config.ts",
+    },
+    {
+      file: "src/gateway/server-methods/native-hook-relay.test.ts",
+      config: "test/vitest/vitest.gateway-database-workers.config.ts",
+    },
+    {
+      file: "extensions/codex/src/app-server/run-attempt-one-shot-cleanup.test.ts",
+      config: "test/vitest/vitest.extension-database-workers.config.ts",
+    },
+    {
+      file: "extensions/codex/src/app-server/run-attempt.context-engine.test.ts",
+      config: "test/vitest/vitest.extension-database-workers.config.ts",
+    },
+  ])("routes native hook relay fixture $file to its host broker", ({ file, config }) => {
+    expectSingleVitestRunPlan(buildVitestRunPlans([file]), { config, includePatterns: [file] });
+  });
+
   it("routes explicit active-memory and Codex extension tests to their shards", () => {
     expect(
       buildVitestRunPlans([
