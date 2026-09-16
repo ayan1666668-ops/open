@@ -10,6 +10,7 @@ import {
 import type { ChannelHeartbeatDeps } from "../channels/plugins/types.public.js";
 import { createReplyPrefixContext } from "../channels/reply-prefix.js";
 import { getRuntimeConfig } from "../config/config.js";
+import { isInternalSessionEffectsKey } from "../config/sessions/internal-session-key.js";
 import {
   applySessionEntryLifecycleMutation,
   loadExactSessionEntry,
@@ -33,6 +34,7 @@ import { formatErrorMessage } from "./errors.js";
 import { isWithinActiveHours } from "./heartbeat-active-hours.js";
 import { tryResolveAmbientHeartbeatAgentId } from "./heartbeat-agent-resolution.js";
 import { resolveHeartbeatForWake, type HeartbeatConfig } from "./heartbeat-config.js";
+import { isExecCompletionEvent } from "./heartbeat-events-filter.js";
 import { emitHeartbeatEvent } from "./heartbeat-events.js";
 import { heartbeatLog as log } from "./heartbeat-log.js";
 import { shouldUseHeartbeatResponseToolPrompt } from "./heartbeat-runner-config.js";
@@ -332,6 +334,27 @@ export async function prepareHeartbeatRunStage(wake: ReadyHeartbeatWake) {
   const { listActiveEmbeddedRuns, isReplyRunActive } = wake;
   const { entry, sessionKey, run, conversationEntry } = preflight.session;
   const previousUpdatedAt = entry?.updatedAt;
+  const projectionSessionKey = run.kind === "isolated" ? run.baseSessionKey : sessionKey;
+  // Capture the client-owned generation before routing can await. The inspected
+  // completion queue owns publication eligibility, not the coalesced wake source.
+  const internalProjection =
+    scheduledTasks.length === 0 &&
+    preflight.shouldInspectPendingEvents &&
+    preflight.pendingEventEntries.some((event) => isExecCompletionEvent(event.text)) &&
+    !preflight.session.suppressOriginatingContext &&
+    !isInternalSessionEffectsKey(projectionSessionKey) &&
+    conversationEntry?.delivery?.kind === "internal" &&
+    conversationEntry.createdVia !== "internal" &&
+    (conversationEntry.createdVia === "operator" ||
+      conversationEntry.lastReadAt !== undefined ||
+      (conversationEntry.createdVia === "spawn" &&
+        parseAgentSessionKey(projectionSessionKey)?.rest.startsWith("dashboard:")))
+      ? {
+          sessionKey: projectionSessionKey,
+          sessionId: conversationEntry.sessionId,
+          lifecycleRevision: conversationEntry.lifecycleRevision,
+        }
+      : undefined;
 
   // When isolatedSession is enabled, create a fresh session via the same
   // pattern as cron sessionTarget: "isolated". This gives the heartbeat
@@ -391,23 +414,9 @@ export async function prepareHeartbeatRunStage(wake: ReadyHeartbeatWake) {
     channel: delivery.channel !== "none" ? delivery.channel : undefined,
     accountId: delivery.accountId,
   });
-  // Exec-completion wakes on a WebChat-internal session have no external
-  // channel/route (delivery.channel stays "none"), but the originating
-  // session still has its own live transcript that WebChat/Companion reads
-  // directly. Without this, the model is told delivery is disabled and the
-  // completion is silently dropped (#147387).
-  // `delivery.kind === "internal"` alone is not a WebChat/Companion-specific
-  // signal: hidden internal-effects sessions (internal-session-effects.ts,
-  // voice bare rows) share the exact same delivery state. Exclude sessions
-  // explicitly created via that hidden path (`createdVia === "internal"`) so
-  // the bypass cannot relay into a session no client ever reads.
-  const isWebChatExecCompletion =
-    wake.wakeSource === "exec-event" &&
-    conversationEntry?.delivery?.kind === "internal" &&
-    conversationEntry?.createdVia !== "internal";
   const canRelayToUser =
-    (delivery.channel !== "none" && delivery.to && visibility.showAlerts) ||
-    isWebChatExecCompletion;
+    visibility.showAlerts &&
+    ((delivery.channel !== "none" && Boolean(delivery.to)) || internalProjection !== undefined);
   let useHeartbeatResponseToolPrompt = shouldUseHeartbeatResponseToolPrompt({
     cfg,
     agentId,
@@ -551,7 +560,7 @@ export async function prepareHeartbeatRunStage(wake: ReadyHeartbeatWake) {
     replyPrefix,
     runSessionKey,
     outboundPolicySessionKey,
-    isWebChatExecCompletion,
+    internalProjection,
     ...heartbeatRunPrompt,
   } as const;
 }

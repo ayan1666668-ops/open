@@ -50,6 +50,7 @@ import type {
 } from "./heartbeat-runner-execution.js";
 import { truncateHeartbeatPreview } from "./heartbeat-runner-prompt.js";
 import { restoreHeartbeatUpdatedAt } from "./heartbeat-runner-session.js";
+import { publishHeartbeatSessionReply } from "./heartbeat-session-publication.js";
 import {
   HEARTBEAT_IDLE_RETRY_GRACE_MS,
   HEARTBEAT_SKIP_CHANNEL_NOT_READY,
@@ -75,6 +76,7 @@ type HeartbeatDispatch = {
   deliveryReason?: string;
   deliverySilent?: boolean;
   projectTarget?: boolean;
+  publicationSourceText?: string;
   prepareReply: NonNullable<ReplyOperationRunState["heartbeat"]>["prepareReply"];
 };
 
@@ -428,6 +430,7 @@ async function prepareHeartbeatDispatchReply(
   } else {
     const previousAt = stateEntry?.lastHeartbeatSentAt;
     if (
+      !prepared.internalProjection &&
       !outcome.mediaUrls.length &&
       !outcome.hasStructuredReplyContent &&
       stateEntry?.lastHeartbeatText?.trim() &&
@@ -442,11 +445,7 @@ async function prepareHeartbeatDispatchReply(
       return {};
     }
   }
-  // Exec-completion wakes on a WebChat-internal session have no external
-  // channel/route by design (delivery.channel stays "none"), but the reply
-  // still belongs on the originating session's own transcript, so the
-  // no-channel/no-target gate below does not apply to this case (#147387).
-  const noChannelTarget = !prepared.isWebChatExecCompletion && (!channel || !delivery.to);
+  const noChannelTarget = !prepared.internalProjection && (!channel || !delivery.to);
   if (noChannelTarget || !visibility.showAlerts || (failed && outcome.shouldSkipMain)) {
     if (!failed) {
       await unconfirmed(noChannelTarget ? (delivery.reason ?? "no-target") : "alerts-disabled");
@@ -471,8 +470,6 @@ async function prepareHeartbeatDispatchReply(
     );
     return {};
   }
-  // A WebChat exec-completion reply has no channel plugin to ready-check;
-  // it delivers straight to the originating session's own transcript.
   const readiness = channel
     ? await resolveHeartbeatChannelPlugin(channel)
         ?.heartbeat?.checkReady?.({ cfg, accountId: delivery.accountId, deps: opts.deps })
@@ -501,6 +498,8 @@ async function prepareHeartbeatDispatchReply(
   }
   policy.deliverySilent = normalized.silent;
   policy.projectTarget = !failed;
+  // Receipt identity uses the producer answer, not transport prefix decoration.
+  policy.publicationSourceText = outcome.replyPayload?.text;
   const deliveryText =
     !failed && delivery.implicitDefaultRoute && stateEntry?.lastHeartbeatSentAt === undefined
       ? `${FIRST_HEARTBEAT_ALERT_PREAMBLE}\n${text}`
@@ -568,17 +567,8 @@ export async function deliverHeartbeatDispatch(
   signal?: AbortSignal,
 ) {
   const { cfg, agentId, startedAt } = policy.wake;
-  const { delivery, runSessionKey, storePath, outboundPolicySessionKey, isWebChatExecCompletion } =
+  const { delivery, runSessionKey, storePath, outboundPolicySessionKey, internalProjection } =
     policy.prepared;
-  if (delivery.channel === "none" || !delivery.to) {
-    // A WebChat-internal exec-completion reply has no external channel to
-    // send to, but it was already projected onto the session's own
-    // transcript by the ordinary turn-completion path (#147387). Report it
-    // as visibly sent so the triggering system event is consumed here too;
-    // otherwise a later wake would see the same event as still pending and
-    // relay the same completion a second time.
-    return { visibleReplySent: isWebChatExecCompletion === true };
-  }
   const onDeliveredPayload = policy.projectTarget
     ? prepareHeartbeatTargetAwareness({
         agentId,
@@ -589,6 +579,34 @@ export async function deliverHeartbeatDispatch(
       })
     : undefined;
   try {
+    if (delivery.channel === "none" || !delivery.to) {
+      // A failed attempt does not own the successful completion's receipt identity.
+      if (!internalProjection || policy.projectTarget === false) {
+        return { visibleReplySent: false };
+      }
+      const occurrenceIds = policy.prepared.inspectedSystemEventsToConsume.map((event) => event.id);
+      if (!occurrenceIds.every((id): id is string => typeof id === "string" && id.length > 0)) {
+        policy.deliveryReason = "exec completion occurrence identity unavailable";
+        return { visibleReplySent: false };
+      }
+      const committed = await publishHeartbeatSessionReply({
+        cfg,
+        agentId,
+        storePath,
+        sessionKey: internalProjection.sessionKey,
+        expectedGeneration: internalProjection,
+        occurrenceIds,
+        payload,
+        sourceText: policy.publicationSourceText,
+        signal,
+      });
+      if (!committed.ok) {
+        policy.deliveryReason = committed.reason;
+      }
+      // Settlement consumes only captured occurrences, and only after the
+      // canonical transcript owner accepts this generation's write or replay.
+      return { visibleReplySent: committed.ok };
+    }
     const send = await sendDurableMessageBatchCore({
       cfg,
       channel: delivery.channel,

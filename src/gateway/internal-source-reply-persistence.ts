@@ -14,6 +14,7 @@ import {
   readTranscriptEventMessage,
 } from "../config/sessions/session-accessor.sqlite-read.js";
 import { sessionMatchesExpectedTranscriptTurn } from "../config/sessions/session-transcript-turn-state.js";
+import { recordAssistantManagedMediaUrls } from "../config/sessions/transcript-assistant-delivery.js";
 import { getOwnedSessionTranscriptWriterFence } from "../config/sessions/transcript-write-context.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { getAgentScopedMediaLocalRootsForSources } from "../media/local-roots.js";
@@ -187,6 +188,11 @@ export async function persistInternalSourceReply(params: {
         ...(writerFence ? { expectedWriterRunId: writerFence.expectedWriterRunId } : {}),
         content: retainAssistantModelContent(content),
         displayContent: content,
+        beforeMessageWrite: ({ message }) =>
+          recordAssistantManagedMediaUrls(
+            message,
+            media.map((item) => item.url),
+          ),
         idempotencyKey: params.idempotencyKey,
         runId: params.runId,
         ...(params.sourceReplyFinal !== undefined
