@@ -1,4 +1,5 @@
 import { isChannelPartialDeliveryError } from "openclaw/plugin-sdk/channel-inbound";
+import { toStringifiedError as toFeishuError } from "openclaw/plugin-sdk/error-runtime";
 import type { MarkdownTableMode } from "openclaw/plugin-sdk/markdown-table-runtime";
 import type { ChunkMode } from "openclaw/plugin-sdk/reply-chunking";
 import {
@@ -61,7 +62,6 @@ type FeishuReplySenderContext = {
   readIdleSideEffects: () => Promise<void>;
   readVisibleReplySent: () => boolean;
   readReplyOutcome: () => { kind: string; reason?: string } | undefined;
-  toFeishuError: (error: unknown) => Error;
   log?: (message: string) => void;
   error?: (message: string) => void;
   noVisibleReplyFallbackText: string;
@@ -325,7 +325,7 @@ export function createFeishuReplySenders(ctx: FeishuReplySenderContext) {
                 if (isChannelPartialDeliveryError(error)) {
                   // The attachment is already visible; text recovery would duplicate delivery.
                   markVisibleReplySent();
-                  throw ctx.toFeishuError(error);
+                  throw toFeishuError(error);
                 }
                 const fallbackText = await buildFeishuMediaFallbackText({
                   text: sentFallbackText ? undefined : options.fallbackText,

@@ -925,10 +925,9 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
     readIdleSideEffects: () => idleSideEffectsPromise,
     readVisibleReplySent: () => visibleReplySent,
     readReplyOutcome: () => replyOutcome,
-    toFeishuError,
     noVisibleReplyFallbackText: NO_VISIBLE_REPLY_FALLBACK_TEXT,
-    ...(params.runtime.log ? { log: params.runtime.log } : {}),
-    ...(params.runtime.error ? { error: params.runtime.error } : {}),
+    log: (message: string) => params.runtime.log?.(message),
+    error: (message: string) => params.runtime.error?.(message),
   });
 
   const markClosedStreamingContentClaimed = (generation: number | undefined): void => {
