@@ -52,12 +52,31 @@ function formatSubMessageContent(content: string, contentType: string): string {
   }
 }
 
+function formatMergeForwardTimestamp(createTime: string | undefined): string | undefined {
+  const ms = parseStrictNonNegativeInteger(createTime);
+  return ms === undefined ? undefined : new Date(ms).toISOString();
+}
+
+function formatMergeForwardLine(item: {
+  msg_type?: string;
+  body?: { content?: string };
+  create_time?: string;
+  sender?: { id?: string };
+}): string {
+  const body = formatSubMessageContent(item.body?.content || "", item.msg_type || "text");
+  const timestamp = formatMergeForwardTimestamp(item.create_time);
+  const senderId = item.sender?.id;
+  const timePrefix = timestamp ? `[${timestamp}] ` : "";
+  return senderId ? `${timePrefix}${senderId}: ${body}` : `${timePrefix}${body}`;
+}
+
 export function parseMergeForwardContent(
   items: ReadonlyArray<{
     msg_type?: string;
     body?: { content?: string };
     upper_message_id?: string;
     create_time?: string;
+    sender?: { id?: string };
   }>,
 ): string {
   const maxMessages = 50;
@@ -81,7 +100,7 @@ export function parseMergeForwardContent(
 
   const lines = ["[Merged and Forwarded Messages]"];
   for (const item of subMessages.slice(0, maxMessages)) {
-    lines.push(`- ${formatSubMessageContent(item.body?.content || "", item.msg_type || "text")}`);
+    lines.push(`- ${formatMergeForwardLine(item)}`);
   }
   if (subMessages.length > maxMessages) {
     lines.push(`... and ${subMessages.length - maxMessages} more messages`);

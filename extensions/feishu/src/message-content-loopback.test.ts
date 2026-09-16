@@ -268,7 +268,7 @@ describe("Feishu message content over the real Lark SDK", () => {
       ).resolves.toMatchObject({
         messageId: "om_loopback_merge_forward",
         contentType: "merge_forward",
-        content: "[Merged and Forwarded Messages]\n- forwarded context",
+        content: "[Merged and Forwarded Messages]\n- [2024-03-09T16:00:00.000Z] forwarded context",
       });
 
       await expect(
