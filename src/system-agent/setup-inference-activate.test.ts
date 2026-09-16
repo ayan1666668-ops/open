@@ -83,7 +83,7 @@ describe("setup activation credentials and configuration", () => {
         setup.run.mockRejectedValueOnce(new Error("Utility inference unavailable"));
       }
       const result = await setup.activate();
-      expect(result, await setup.diagnostics(result)).toMatchObject({ ok: !fail });
+      expect(result).toMatchObject({ ok: !fail });
       const saved = await readConfigFileSnapshot();
       expect(saved.sourceConfig.agents?.defaults?.model).toEqual(
         setup.config.agents?.defaults?.model,

@@ -25,7 +25,7 @@ describe("configured utility detection and activation", () => {
     async (authoredModel) => {
       const setup = await fixture({ modelTarget: "utility" });
       const activated = await setup.activate();
-      expect(activated, await setup.diagnostics(activated)).toMatchObject({ ok: true });
+      expect(activated).toMatchObject({ ok: true });
       const profile = setup.readProfile();
       assert(profile);
       const config = (await readConfigFileSnapshot()).sourceConfig;
@@ -54,7 +54,7 @@ describe("configured utility detection and activation", () => {
         modelRef: candidate.modelRef,
         modelTarget: candidate.modelTarget,
       });
-      expect(verified, await setup.diagnostics(verified)).toMatchObject({
+      expect(verified).toMatchObject({
         ok: true,
         modelRef,
         modelTarget: "utility",
