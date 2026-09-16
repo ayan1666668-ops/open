@@ -13,6 +13,7 @@ import {
   setMaxPluginStateEntriesPerPluginForTests,
 } from "openclaw/plugin-sdk/plugin-state-test-runtime";
 import { createPluginRuntimeMock } from "openclaw/plugin-sdk/plugin-test-runtime";
+import { closeOpenClawStateDatabaseAsync } from "openclaw/plugin-sdk/sqlite-runtime-testing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   base64url,
@@ -87,9 +88,11 @@ describe("Reef SQLite state", () => {
     stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-reef-state-"));
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     vi.useRealTimers();
     vi.restoreAllMocks();
+    // Drain worker admissions before deleting files whose physical identity can be reused.
+    await closeOpenClawStateDatabaseAsync();
     resetPluginStateStoreForTests();
     fs.rmSync(stateDir, { recursive: true, force: true });
   });
@@ -738,8 +741,9 @@ describe("Reef delivered markers", () => {
     stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-reef-state-"));
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     vi.useRealTimers();
+    await closeOpenClawStateDatabaseAsync();
     resetPluginStateStoreForTests();
     fs.rmSync(stateDir, { recursive: true, force: true });
   });
