@@ -41,16 +41,14 @@ import {
   buildDirectCronDeliveryIdempotencyKey,
   DIRECT_CRON_DELIVERY_COMPLETION_RETENTION,
   isCompletedDirectCronDelivery,
-  isStaleCronDelivery,
   logCronDeliveryError,
   logCronDeliveryErrorDeferred,
   logCronDeliveryWarn,
   maybeApplyTtsToCronPayloads,
   normalizeSilentReplyText,
   resolveCronDeliveryBestEffort,
-  resolveCronDeliveryScheduledAtMs,
   resolveDescendantSubagentFollowup,
-  resolveCronDeliveryStartDelayMs,
+  resolveStaleCronDeliveryError,
   retryTransientDirectCronDelivery,
   waitForCompletedDirectCronDelivery,
 } from "./delivery-dispatch-policy.js";
@@ -243,24 +241,11 @@ export async function dispatchCronDelivery(
           ...params.telemetry,
         });
       }
-      if (
-        params.deliveryRequested &&
-        isStaleCronDelivery({
-          job: params.job,
-          runStartedAt: params.runStartedAt,
-        })
-      ) {
+      const deliveryError = params.deliveryRequested
+        ? resolveStaleCronDeliveryError(params)
+        : undefined;
+      if (deliveryError) {
         deliveryAttempted = true;
-        const nowMs = Date.now();
-        const scheduledAtMs = resolveCronDeliveryScheduledAtMs({
-          job: params.job,
-          runStartedAt: params.runStartedAt,
-        });
-        const startDelayMs = resolveCronDeliveryStartDelayMs({
-          job: params.job,
-          runStartedAt: params.runStartedAt,
-        });
-        const deliveryError = `skipping stale delivery scheduled at ${new Date(scheduledAtMs).toISOString()}, started ${Math.round(startDelayMs / 60_000)}m late, current age ${Math.round((nowMs - scheduledAtMs) / 60_000)}m`;
         recordDelivery("not-delivered", deliveryError);
         await logCronDeliveryWarn(`[cron:${params.job.id}] ${deliveryError}`);
         return params.withRunSession({
