@@ -1,4 +1,3 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { createServer } from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -26,7 +25,6 @@ import {
   PlatformMessageNotDispatchedError,
 } from "../infra/outbound/deliver-types.js";
 import { resolveSystemEventOwnerAgentId } from "../infra/system-event-ownership.js";
-import { flushLogger, resetLogger, setLoggerOverride } from "../logging/logger.js";
 import {
   beginGatewayRestartSignalAdmission,
   getActiveGatewayRootWorkCount,

@@ -248,7 +248,7 @@ describe("createCronExitWatchers", () => {
     const oldFire = vi.fn(async () => {});
     const oldWait = vi.fn(
       async (_jobId: string, signal: AbortSignal) =>
-        await new Promise<boolean>((resolve) =>
+        await new Promise<boolean>((resolve) => {
           signal.addEventListener(
             "abort",
             () => {
@@ -256,8 +256,8 @@ describe("createCronExitWatchers", () => {
               resolve(false);
             },
             { once: true },
-          ),
-        ),
+          );
+        }),
     );
     const watchers = createWatcherFixture({
       getProcessSupervisor: () => supervisor as never,

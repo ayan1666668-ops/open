@@ -231,8 +231,8 @@ async function persistUpdatedJob(params: {
     reservation.lifecycleGeneration === state.lifecycleGeneration &&
     reservation.markerAtMs === previousJob.state.queuedAtMs &&
     previousJob.schedule.kind === "on-exit" &&
-    previousJob.enabled === false &&
-    nextJob.enabled === true &&
+    !previousJob.enabled &&
+    nextJob.enabled &&
     resolveCronJobConfigRevision(previousJob) ===
       resolveCronJobConfigRevision({ ...nextJob, enabled: false });
   if (

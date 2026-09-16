@@ -49,20 +49,17 @@ describe("cron stream matcher", () => {
     vi.useFakeTimers();
     const release = createDeferredCore();
     const entered = createDeferredCore();
-    const run = WorkerTaskPool.prototype.run;
-    const delayed = vi
-      .spyOn(WorkerTaskPool.prototype, "run")
-      .mockImplementationOnce(function (this: WorkerTaskPool<unknown, unknown>, input, options) {
-        return run.call(
-          this,
-          async () => {
-            entered.resolve();
-            await release.promise;
-            return input;
-          },
-          options,
-        );
-      });
+    const delayed = vi.spyOn(WorkerTaskPool.prototype, "run");
+    delayed.mockImplementationOnce(
+      function (this: WorkerTaskPool<unknown, unknown>, input, options) {
+        delayed.mockRestore();
+        return this.run(async () => {
+          entered.resolve();
+          await release.promise;
+          return input;
+        }, options);
+      },
+    );
     try {
       const result = expect(matchCronStreamLines("^ready$", ["ready"])).rejects.toMatchObject({
         code: "timeout",

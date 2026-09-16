@@ -125,7 +125,7 @@ export async function waitForRunSettlement(
         if (changed) {
           await ensureLoaded(state, { forceReload: true, skipRecompute: true });
           for (const interrupted of interruptedRuns) {
-            emitInterruptedRun(state, interrupted);
+            emitInterruptedCronRun(state, interrupted);
           }
           if (state.schedulerStarted) {
             armTimer(state);

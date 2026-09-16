@@ -1,13 +1,22 @@
 import { describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../../test/helpers/promise.js";
 import { DEFAULT_CRON_MAX_CONCURRENT_RUNS } from "../../config/cron-limits.js";
-import { openOpenClawStateDatabase } from "../../state/openclaw-state-db.js";
+import {
+  openOpenClawStateDatabase,
+  runOpenClawStateWriteTransaction,
+} from "../../state/openclaw-state-db.js";
 import { resolveCronJobConfigRevision } from "../config-revision.js";
-import { CronService } from "../service.js";
+import { CronService, type CronEvent } from "../service.js";
 import { setupCronServiceSuite } from "../service.test-harness.js";
 import { saveCronStore } from "../store.js";
 import { cronStoreKey } from "../store/key.js";
 import { loadedCronStoreFromRows, loadCronRows } from "../store/row-codec.js";
+import {
+  claimCronRunReceiptInDatabase,
+  prepareCronRunReceiptClaim,
+  releaseLocalCronRunReceiptOwnership,
+} from "../store/run-receipt-store.js";
+import { readCronTaskRunHistoryPage } from "../task-run-history.js";
 import type { CronJob } from "../types.js";
 
 const onExitSchedule = { kind: "on-exit", command: "true" } as const;
@@ -35,6 +44,7 @@ function makeTimedJob(id: string, nextRunAtMs: number): CronJob {
 function makeService(
   storePath: string,
   runCommandJob: NonNullable<ConstructorParameters<typeof CronService>[0]["runCommandJob"]>,
+  onEvent?: ConstructorParameters<typeof CronService>[0]["onEvent"],
 ) {
   return new CronService({
     storePath,
@@ -44,6 +54,7 @@ function makeService(
     requestHeartbeat: vi.fn(),
     runIsolatedAgentJob: vi.fn(async () => ({ status: "ok" as const })),
     runCommandJob,
+    onEvent,
   });
 }
 
@@ -93,6 +104,83 @@ describe("cron run receipt settlement", () => {
       controller.abort();
       release.resolve();
       await update;
+      service.stop();
+    }
+  });
+
+  it("records a dead receipt before admitting the next observed exit", async () => {
+    vi.useRealTimers();
+    const { storePath } = await makeStorePath();
+    const startedAtMs = Date.now() - 1_000;
+    const job: CronJob = {
+      ...makeTimedJob("on-exit-dead-receipt", startedAtMs),
+      schedule: onExitSchedule,
+      delivery: { mode: "none" },
+      state: { runningAtMs: startedAtMs },
+    };
+    await saveCronStore(storePath, { version: 1, jobs: [job] });
+    const prepared = prepareCronRunReceiptClaim({
+      storePath,
+      job,
+      agentId: "alpha",
+      startedAtMs,
+    });
+    const receipt = runOpenClawStateWriteTransaction(({ db }) =>
+      claimCronRunReceiptInDatabase({ database: db, prepared, resolveAgentId: () => "alpha" }),
+    );
+    // Process exit drops the local liveness claim but leaves the durable receipt.
+    releaseLocalCronRunReceiptOwnership(receipt);
+    const interrupted = {
+      jobId: job.id,
+      status: "error",
+      completionStatus: "failed",
+      error: "cron: job interrupted by gateway restart",
+      runAtMs: startedAtMs,
+    };
+    const history = () =>
+      readCronTaskRunHistoryPage({ storeKey: cronStoreKey(storePath), jobId: job.id }).entries;
+    const onEvent = vi.fn<(event: CronEvent) => void>();
+    const onReserved = vi.fn(() => {
+      expect(history()).toMatchObject([interrupted]);
+      expect(
+        onEvent.mock.calls.map(([event]) => event).filter((event) => event.action === "finished"),
+      ).toMatchObject([interrupted]);
+    });
+    const runner = vi.fn(async () => {
+      expect(onReserved).toHaveBeenCalledOnce();
+      return { status: "ok" as const, summary: "successor completed" };
+    });
+    const service = makeService(storePath, runner, onEvent);
+    const controller = new AbortController();
+    try {
+      await expect(
+        service.runOnExit(job.id, {
+          schedule: onExitSchedule,
+          signal: controller.signal,
+          commitGuard: () => {},
+          onReserved,
+        }),
+      ).resolves.toEqual({ ok: true, ran: true });
+      expect(runner).toHaveBeenCalledOnce();
+      expect(history()).toHaveLength(2);
+      expect(history()).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining(interrupted),
+          expect.objectContaining({
+            status: "ok",
+            completionStatus: "succeeded",
+            summary: "successor completed",
+          }),
+        ]),
+      );
+      const statuses = openOpenClawStateDatabase()
+        .db.prepare(
+          "SELECT status FROM cron_run_receipts WHERE store_key = ? AND job_id = ? ORDER BY started_at_ms",
+        )
+        .all(cronStoreKey(storePath), job.id) as Array<{ status: string }>;
+      expect(statuses.map((row) => row.status)).toEqual(["interrupted", "ok"]);
+    } finally {
+      controller.abort();
       service.stop();
     }
   });
