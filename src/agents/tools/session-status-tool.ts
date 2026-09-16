@@ -64,8 +64,8 @@ import {
   modelKey,
   resolveDefaultModelForAgent,
   resolveModelRefFromString,
-  resolveThinkingDefaultWithRuntimeCatalogCore,
 } from "../model-selection.js";
+import { resolveThinkingDefault } from "../model-thinking-default.js";
 import { createModelVisibilityPolicy } from "../model-visibility-policy.js";
 import { loadPublishedPreparedModelCatalog } from "../prepared-model-catalog.js";
 import { resolveSessionModelIdentityRef } from "../session-model-ref.js";
@@ -553,7 +553,7 @@ async function resolveModelOverride(params: {
     throw new Error(`Unrecognized model "${raw}".`);
   }
   const key = modelKey(resolved.ref.provider, resolved.ref.model);
-  if (!policy.allowsKey(key)) {
+  if (!policy.allows(resolved.ref)) {
     throw new Error(`Model "${key}" is not allowed.`);
   }
   const isDefault =
@@ -1155,18 +1155,14 @@ export function createSessionStatusTool(opts?: {
             resolvedVerboseLevel: (statusSessionEntry.verboseLevel ?? "off") as VerboseLevel,
             resolvedReasoningLevel: (statusSessionEntry.reasoningLevel ?? "off") as ReasoningLevel,
             resolvedElevatedLevel: statusSessionEntry.elevatedLevel as ElevatedLevel | undefined,
-            resolveDefaultThinkingLevel: () =>
-              resolveThinkingDefaultWithRuntimeCatalogCore({
+            resolveDefaultThinkingLevel: async (selection) =>
+              resolveThinkingDefault({
                 cfg,
-                provider: providerForCard,
-                model: defaultModelForCard,
-                loadRuntimeCatalog: () =>
-                  loadPublishedPreparedModelCatalog({
-                    config: cfg,
-                    agentId,
-                    agentDir: selectedAgentDir,
-                    readOnly: true,
-                  }),
+                agentId,
+                provider: selection?.provider ?? providerForCard,
+                model: selection?.model ?? defaultModelForCard,
+                agentRuntime: selection?.agentRuntime,
+                catalog: thinkingCatalog,
               }),
             isGroup,
             defaultGroupActivation: () => "mention",
