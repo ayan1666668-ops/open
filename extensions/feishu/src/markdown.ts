@@ -6,15 +6,16 @@ import { chunkMarkdownTextWithMode, type ChunkMode } from "openclaw/plugin-sdk/r
 import type { MentionTarget } from "./mention-target.types.js";
 
 /**
- * A fence opener may carry an info string, a closer may not, and both sit behind the
- * table's source prefix, which the IR restricts to spaces, tabs and quote markers.
- * Matching only those prefixes keeps an inline backtick run in ordinary prose from
- * reading as a marker and suppressing a table that would have converted safely. A
- * closer keeps the carriage return of a CRLF source, since the line split is on the
- * feed alone.
+ * A fence opener may carry an info string and a closer may not, and both sit behind the
+ * table's source prefix. Quote markers pass, and so do the three spaces of indentation a
+ * fence is allowed: a fourth makes the line indented code rather than a fence, which is
+ * where the shared scanner draws the line too. Matching nothing else keeps an inline
+ * backtick run in ordinary prose, and a backtick line inside an indented code block, from
+ * reading as a marker and suppressing a table that would have converted safely. A closer
+ * keeps the carriage return of a CRLF source, since the line split is on the feed alone.
  */
-const FEISHU_FENCE_OPENER = /^[ \t>]*(`{3,})[^`]*$/u;
-const FEISHU_FENCE_CLOSER = /^[ \t>]*(`{3,})[ \t]*\r?$/u;
+const FEISHU_FENCE_OPENER = /^(?:>[ \t]?)* {0,3}(`{3,})[^`]*$/u;
+const FEISHU_FENCE_CLOSER = /^(?:>[ \t]?)* {0,3}(`{3,})[ \t]*\r?$/u;
 
 /**
  * A chunk that opens a fence nothing closes renders worse than the table it replaced, so
