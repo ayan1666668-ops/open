@@ -39,23 +39,6 @@ export class MissingEnvVarError extends Error {
   }
 }
 
-/** Maximum nesting depth for config JSON structures to prevent stack overflow. */
-export const MAX_CONFIG_JSON_NESTING_DEPTH = 512;
-
-/** Error thrown when config JSON nesting depth exceeds the maximum allowed. */
-export class ConfigNestingDepthError extends Error {
-  constructor(
-    public readonly measuredDepth: number,
-    public readonly path: string,
-  ) {
-    super(
-      `Config JSON nesting depth exceeds maximum of ${MAX_CONFIG_JSON_NESTING_DEPTH} ` +
-        `(measured ${measuredDepth} levels)${path ? ` at: ${path}` : ""}.`,
-    );
-    this.name = "ConfigNestingDepthError";
-  }
-}
-
 type EnvToken =
   | { kind: "escaped"; name: string; end: number }
   | { kind: "substitution"; name: string; end: number };
@@ -196,51 +179,85 @@ export function containsEnvVarReference(value: string): boolean {
 }
 
 /**
- * Recursively substitutes environment variables in a value with depth limiting.
- * @param depth - Current nesting depth (internal use only)
- * @throws {ConfigNestingDepthError} If nesting depth exceeds MAX_CONFIG_JSON_NESTING_DEPTH
+ * Substitutes environment variables in a value.
+ *
+ * Uses an explicit work stack instead of recursion so a deeply nested config
+ * value cannot exhaust the call stack, and rebuilds containers so the input is
+ * never mutated.
+ *
+ * @throws {MissingEnvVarError} If a referenced env var is not set or empty (unless `onMissing` is set)
  */
 function substituteAny(
   value: unknown,
   env: NodeJS.ProcessEnv,
   path: string,
   opts?: SubstituteOptions,
-  depth = 0,
 ): unknown {
-  // Depth limit check to prevent stack overflow from deeply nested structures
-  if (depth > MAX_CONFIG_JSON_NESTING_DEPTH) {
-    throw new ConfigNestingDepthError(depth, path);
-  }
+  type Frame =
+    | { kind: "visit"; value: unknown; path: string }
+    | { kind: "buildArray"; length: number }
+    | { kind: "buildObject"; keys: readonly string[] };
+  const isPluginConfigPath = (candidatePath: string): boolean =>
+    candidatePath === "plugins.entries" ||
+    candidatePath.startsWith("plugins.entries.") ||
+    candidatePath.startsWith("plugins.entries[");
 
-  if (typeof value === "string") {
-    return substituteString(value, env, path, opts);
-  }
+  const frames: Frame[] = [{ kind: "visit", value, path }];
+  const values: unknown[] = [];
 
-  if (Array.isArray(value)) {
-    return value.map((item, index) =>
-      substituteAny(item, env, `${path}[${index}]`, opts, depth + 1),
-    );
-  }
+  while (frames.length > 0) {
+    const frame = frames.pop()!;
 
-  if (isPlainObject(value)) {
-    const result: Record<string, unknown> = {};
-    for (const [key, val] of Object.entries(value)) {
-      const isPluginConfigPath =
-        path === "plugins.entries" ||
-        path.startsWith("plugins.entries.") ||
-        path.startsWith("plugins.entries[");
-      const childPath = isPluginConfigPath
-        ? appendConfigPathSegment(path, key)
-        : path
-          ? `${path}.${key}`
-          : key;
-      result[key] = substituteAny(val, env, childPath, opts, depth + 1);
+    if (frame.kind === "buildArray") {
+      values.push(values.splice(values.length - frame.length, frame.length));
+      continue;
     }
-    return result;
+
+    if (frame.kind === "buildObject") {
+      const built = values.splice(values.length - frame.keys.length, frame.keys.length);
+      const result: Record<string, unknown> = {};
+      frame.keys.forEach((key, index) => {
+        result[key] = built[index];
+      });
+      values.push(result);
+      continue;
+    }
+
+    const candidate = frame.value;
+    if (typeof candidate === "string") {
+      values.push(substituteString(candidate, env, frame.path, opts));
+      continue;
+    }
+
+    if (Array.isArray(candidate)) {
+      frames.push({ kind: "buildArray", length: candidate.length });
+      for (let index = candidate.length - 1; index >= 0; index -= 1) {
+        frames.push({ kind: "visit", value: candidate[index], path: `${frame.path}[${index}]` });
+      }
+      continue;
+    }
+
+    if (isPlainObject(candidate)) {
+      const keys = Object.keys(candidate);
+      frames.push({ kind: "buildObject", keys });
+      const usePluginPath = isPluginConfigPath(frame.path);
+      for (let index = keys.length - 1; index >= 0; index -= 1) {
+        const key = keys[index]!;
+        const childPath = usePluginPath
+          ? appendConfigPathSegment(frame.path, key)
+          : frame.path
+            ? `${frame.path}.${key}`
+            : key;
+        frames.push({ kind: "visit", value: candidate[key], path: childPath });
+      }
+      continue;
+    }
+
+    // Primitives (number, boolean, null) pass through unchanged
+    values.push(candidate);
   }
 
-  // Primitives (number, boolean, null) pass through unchanged
-  return value;
+  return values[0];
 }
 
 /**
@@ -251,12 +268,11 @@ function substituteAny(
  * @param opts - Options: `onMissing` callback to collect warnings instead of throwing.
  * @returns The config object with env vars substituted
  * @throws {MissingEnvVarError} If a referenced env var is not set or empty (unless `onMissing` is set)
- * @throws {ConfigNestingDepthError} If the config nesting depth exceeds MAX_CONFIG_JSON_NESTING_DEPTH
  */
 export function resolveConfigEnvVars(
   obj: unknown,
   env: NodeJS.ProcessEnv = process.env,
   opts?: SubstituteOptions,
 ): unknown {
-  return substituteAny(obj, env, "", opts, 0);
+  return substituteAny(obj, env, "", opts);
 }

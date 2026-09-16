@@ -46,4 +46,23 @@ describe("resolveConfigIncludesForTopLevelKey", () => {
       ),
     ).toEqual({ logging: { consoleStyle: "json", level: "info" } });
   });
+
+  it("projects the requested key through a document deeper than the call stack allows", () => {
+    // The projection is how the pre-runtime logging reader selects its block, so
+    // an unrelated deeply nested subtree must not stop it (or exhaust the stack).
+    const depth = 20_000;
+    let deep: unknown = 1;
+    for (let index = 0; index < depth; index += 1) {
+      deep = { nested: deep };
+    }
+
+    expect(
+      resolveConfigIncludesForTopLevelKey(
+        { logging: { level: "debug" }, agents: { defaults: { params: deep } } },
+        DEFAULT_BASE_PATH,
+        "logging",
+        createMockResolver({}),
+      ),
+    ).toEqual({ logging: { level: "debug" } });
+  });
 });

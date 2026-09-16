@@ -525,22 +525,27 @@ describe("resolveConfigEnvVars", () => {
 
       expectResolvedScenarios(scenarios);
     });
+  });
 
-    describe("nesting depth limit", () => {
-      it("rejects deeply nested arrays beyond MAX_CONFIG_JSON_NESTING_DEPTH", () => {
-        const deepArray = JSON.parse("[".repeat(600) + "]".repeat(600));
-        expect(() => resolveConfigEnvVars(deepArray, {})).toThrow(/nesting depth exceeds maximum/);
-      });
+  it("substitutes through a value deeper than the call stack allows", () => {
+    // The walk is iterative, so document depth cannot exhaust the stack.
+    const depth = 20_000;
+    let deep: unknown = "${DEEP_LEAF}";
+    for (let index = 0; index < depth; index += 1) {
+      deep = { nested: deep };
+    }
 
-      it("rejects deeply nested objects beyond MAX_CONFIG_JSON_NESTING_DEPTH", () => {
-        const deepObject = JSON.parse('{"a":'.repeat(600) + "1" + "}".repeat(600));
-        expect(() => resolveConfigEnvVars(deepObject, {})).toThrow(/nesting depth exceeds maximum/);
-      });
+    const resolved = resolveConfigEnvVars(
+      { gateway: { mode: "local" }, params: deep },
+      {
+        DEEP_LEAF: "resolved",
+      },
+    );
 
-      it("allows nesting within the limit", () => {
-        const shallowArray = JSON.parse("[".repeat(100) + "]".repeat(100));
-        expect(() => resolveConfigEnvVars(shallowArray, {})).not.toThrow();
-      });
-    });
+    let cursor = (resolved as { params: unknown }).params;
+    for (let index = 0; index < depth; index += 1) {
+      cursor = (cursor as { nested: unknown }).nested;
+    }
+    expect(cursor).toBe("resolved");
   });
 });

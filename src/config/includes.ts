@@ -21,7 +21,6 @@ import { isMissingPathError } from "../infra/errno.js";
 import { isPathInside } from "../security/scan-paths.js";
 import { isPlainObject } from "../utils.js";
 import { parseJsonWithJson5Fallback } from "../utils/parse-json-compat.js";
-import { assertBoundedRawJsonNesting, assertBoundedJsonNesting } from "./nesting-limit.js";
 
 export const INCLUDE_KEY = "$include";
 export const MAX_INCLUDE_DEPTH = 10;
@@ -199,39 +198,88 @@ class IncludeProcessor {
     return this.boundary.configRoot.rootDir;
   }
 
+  /**
+   * Resolves includes and root projections throughout a value.
+   *
+   * The walk over plain objects and arrays uses an explicit work stack so a
+   * deeply nested document cannot exhaust the call stack. Only `$include`
+   * handling recurses, and include nesting is bounded by `MAX_INCLUDE_DEPTH`.
+   */
   process(obj: unknown, logicalPath: readonly string[] = [], hasArrayAncestor = false): unknown {
-    if (Array.isArray(obj)) {
-      return obj.map((item, index) => this.process(item, [...logicalPath, String(index)], true));
-    }
+    type Frame =
+      | { kind: "visit"; value: unknown; path: readonly string[]; hasArrayAncestor: boolean }
+      | { kind: "buildArray"; length: number }
+      | { kind: "buildObject"; keys: readonly string[] };
 
-    if (!isPlainObject(obj)) {
-      return obj;
-    }
+    const frames: Frame[] = [{ kind: "visit", value: obj, path: logicalPath, hasArrayAncestor }];
+    const values: unknown[] = [];
 
-    if (!(INCLUDE_KEY in obj)) {
-      return this.processObject(obj, logicalPath, hasArrayAncestor);
-    }
+    while (frames.length > 0) {
+      const frame = frames.pop()!;
 
-    return this.processInclude(obj, logicalPath, hasArrayAncestor);
-  }
-
-  private processObject(
-    obj: Record<string, unknown>,
-    logicalPath: readonly string[],
-    hasArrayAncestor: boolean,
-  ): Record<string, unknown> {
-    const result: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(obj)) {
-      if (
-        logicalPath.length === 0 &&
-        this.rootProjectionKeys &&
-        !this.rootProjectionKeys.has(key)
-      ) {
+      if (frame.kind === "buildArray") {
+        values.push(values.splice(values.length - frame.length, frame.length));
         continue;
       }
-      result[key] = this.process(value, [...logicalPath, key], hasArrayAncestor);
+
+      if (frame.kind === "buildObject") {
+        const built = values.splice(values.length - frame.keys.length, frame.keys.length);
+        const result: Record<string, unknown> = {};
+        frame.keys.forEach((key, index) => {
+          result[key] = built[index];
+        });
+        values.push(result);
+        continue;
+      }
+
+      if (Array.isArray(frame.value)) {
+        frames.push({ kind: "buildArray", length: frame.value.length });
+        for (let index = frame.value.length - 1; index >= 0; index -= 1) {
+          frames.push({
+            kind: "visit",
+            value: frame.value[index],
+            path: [...frame.path, String(index)],
+            hasArrayAncestor: true,
+          });
+        }
+        continue;
+      }
+
+      if (!isPlainObject(frame.value)) {
+        values.push(frame.value);
+        continue;
+      }
+
+      if (INCLUDE_KEY in frame.value) {
+        values.push(this.processInclude(frame.value, frame.path, frame.hasArrayAncestor));
+        continue;
+      }
+
+      const keys = this.projectKeys(frame.value, frame.path);
+      frames.push({ kind: "buildObject", keys });
+      for (let index = keys.length - 1; index >= 0; index -= 1) {
+        const key = keys[index]!;
+        frames.push({
+          kind: "visit",
+          value: frame.value[key],
+          path: [...frame.path, key],
+          hasArrayAncestor: frame.hasArrayAncestor,
+        });
+      }
     }
-    return result;
+
+    return values[0];
+  }
+
+  private projectKeys(
+    obj: Record<string, unknown>,
+    logicalPath: readonly string[],
+  ): readonly string[] {
+    const keys = Object.keys(obj);
+    if (logicalPath.length !== 0 || !this.rootProjectionKeys) {
+      return keys;
+    }
+    return keys.filter((key) => this.rootProjectionKeys!.has(key));
   }
 
   private processInclude(
@@ -453,12 +501,7 @@ class IncludeProcessor {
 
   private parseFile(includePath: string, resolvedPath: string, raw: string): unknown {
     try {
-      // Check raw text nesting depth before parsing
-      assertBoundedRawJsonNesting(raw);
-      const parsed = this.resolver.parseJson(raw);
-      // Check parsed structure depth
-      assertBoundedJsonNesting(parsed);
-      return parsed;
+      return this.resolver.parseJson(raw);
     } catch (err) {
       throw new ConfigIncludeError(
         `Failed to parse include file: ${includePath} (resolved: ${resolvedPath})`,
