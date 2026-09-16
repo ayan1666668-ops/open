@@ -52,6 +52,17 @@ import type { CronServiceState } from "./state.js";
 const CRON_DECLARATIVE_LABEL_MAX_LENGTH = 200;
 type DeliveryValidationOptions = { configuredChannels?: readonly string[] };
 
+function resetJobFailureState(job: CronStoredJob): void {
+  delete job.state.autoDisabled;
+  job.state.consecutiveErrors = 0;
+  job.state.scheduleErrorCount = 0;
+  if (job.schedule.kind === "stream") {
+    job.state.streamRestartExhausted = undefined;
+    job.state.streamConsecutiveFailures = 0;
+    job.state.streamError = undefined;
+  }
+}
+
 type ScheduleNormalizationContext =
   | { kind: "create"; nowMs: number }
   | { kind: "patch"; previous: CronSchedule }
@@ -431,20 +442,13 @@ export function applyJobPatch(
     job.state = { ...job.state, ...statePatch };
   }
   if (patch.enabled === true) {
-    delete job.state.autoDisabled;
-    job.state.consecutiveErrors = 0;
-    job.state.scheduleErrorCount = 0;
+    resetJobFailureState(job);
   }
   if ("agentId" in patch) {
     job.agentId = normalizeOptionalAgentId((patch as { agentId?: unknown }).agentId);
   }
   if ("sessionKey" in patch) {
     job.sessionKey = normalizeOptionalString((patch as { sessionKey?: unknown }).sessionKey);
-  }
-  if (job.schedule.kind === "stream" && patch.enabled === true) {
-    job.state.streamRestartExhausted = undefined;
-    job.state.streamConsecutiveFailures = 0;
-    job.state.streamError = undefined;
   }
   if (previousScheduleKind === "stream" && job.schedule.kind !== "stream") {
     job.state.streamStatus = undefined;
@@ -545,6 +549,14 @@ export function applyDeclarativeJobSpec(
     delete job.delivery;
   }
   if (opts.enabledExplicit) {
+    // Reconciliation preserves a running job's failure streak; explicit recovery
+    // of a stopped job uses the same reset as the enable command.
+    if (
+      input.enabled &&
+      (!job.enabled || job.state.autoDisabled || job.state.streamRestartExhausted)
+    ) {
+      resetJobFailureState(job);
+    }
     job.enabled = input.enabled;
   }
   assertCronJobStateTimestamps(input.state ?? {});

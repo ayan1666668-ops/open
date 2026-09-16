@@ -288,7 +288,13 @@ function declarativeFields(job: CronStoredJob, includeEnabled: boolean) {
     runtimeAuthorityRecoveryRequired: job.runtimeAuthorityRecoveryRequired,
     delivery: job.delivery,
     displayName: job.displayName,
-    ...(includeEnabled ? { enabled: job.enabled } : {}),
+    ...(includeEnabled
+      ? {
+          enabled: job.enabled,
+          autoDisabled: job.state.autoDisabled,
+          streamRestartExhausted: job.state.streamRestartExhausted,
+        }
+      : {}),
   };
 }
 
