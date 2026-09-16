@@ -12,8 +12,9 @@ const { createPluginStateSyncKeyedStore } = await import(
 );
 const stores = new Map();
 const openKeyedStore = (options) => {
-  if (!stores.has(options.namespace))
+  if (!stores.has(options.namespace)) {
     stores.set(options.namespace, createPluginStateSyncKeyedStore("imap", options));
+  }
   return stores.get(options.namespace);
 };
 const cursors = openKeyedStore({
@@ -66,20 +67,29 @@ const server = createServer((socket) => {
       const [tag, command, ...args] = line.split(" ");
       commands.push(command);
       const done = () => socket.write(`${tag} OK completed\r\n`);
-      if (command === "CAPABILITY") socket.write("* CAPABILITY IMAP4rev1\r\n");
-      else if (command === "LOGIN" || command === "NOOP") {
-      } else if (command === "LIST") socket.write('* LIST () "/" "INBOX"\r\n');
-      else if (command === "LSUB") socket.write('* LSUB () "/" "INBOX"\r\n');
-      else if (command === "SELECT" || command === "EXAMINE")
+      if (command === "CAPABILITY") {
+        socket.write("* CAPABILITY IMAP4rev1\r\n");
+      } else if (command === "LOGIN" || command === "NOOP") {
+        done();
+        continue;
+      } else if (command === "LIST") {
+        socket.write('* LIST () "/" "INBOX"\r\n');
+      } else if (command === "LSUB") {
+        socket.write('* LSUB () "/" "INBOX"\r\n');
+      } else if (command === "SELECT" || command === "EXAMINE") {
         socket.write(
           `* FLAGS (\\Seen)\r\n* ${messages.length} EXISTS\r\n* OK [UIDVALIDITY 7] stable\r\n* OK [UIDNEXT 6] next\r\n`,
         );
-      else if (command === "UID" && args[0] === "FETCH") {
+      } else if (command === "UID" && args[0] === "FETCH") {
         const start = Number(args[1].split(":")[0]);
         for (let index = messages.length - 1; index >= 0; index--) {
           const uid = index + 1;
-          if (uid < start && start <= messages.length) continue;
-          if (start > messages.length && uid !== messages.length) continue;
+          if (uid < start && start <= messages.length) {
+            continue;
+          }
+          if (start > messages.length && uid !== messages.length) {
+            continue;
+          }
           const source = messages[index];
           socket.write(
             `* ${uid} FETCH (UID ${uid} INTERNALDATE "17-Sep-2026 00:00:00 +0000" RFC822.SIZE ${source.length} BODY[] {${source.length}}\r\n`,
@@ -100,7 +110,9 @@ const server = createServer((socket) => {
     }
   });
 });
-await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+await new Promise((resolve) => {
+  server.listen(0, "127.0.0.1", resolve);
+});
 const dispatched = [];
 const logs = [];
 let completed = Promise.withResolvers();
@@ -109,7 +121,9 @@ const logger = Object.fromEntries(
     level,
     (text) => {
       logs.push(text);
-      if (text.includes("sweep failed=") || text.includes("lastSweep=")) completed.resolve();
+      if (text.includes("sweep failed=") || text.includes("lastSweep=")) {
+        completed.resolve();
+      }
     },
   ]),
 );
@@ -176,8 +190,9 @@ try {
   assert.equal(stores.get("skip-count").lookup("fixture:sender-not-allowed").count, 1);
   assert(dispatched[0].message.includes("Plain control."));
   assert(dispatched[1].message.includes("Multipart control."));
-  if (expected === "red") assert(logs.some((text) => text.includes("Failed to parse HTML")));
-  else {
+  if (expected === "red") {
+    assert(logs.some((text) => text.includes("Failed to parse HTML")));
+  } else {
     assert(dispatched[2].message.includes("Sheena's expert advice."));
     assert(dispatched[3].message.includes("Later mail."));
     assert(!logs.some((text) => text.includes("sweep failed=")));
@@ -196,6 +211,10 @@ try {
 } finally {
   clearTimeout(timer);
   await service.stop();
-  for (const socket of sockets) socket.destroy();
-  await new Promise((resolve) => server.close(resolve));
+  for (const socket of sockets) {
+    socket.destroy();
+  }
+  await new Promise((resolve) => {
+    server.close(resolve);
+  });
 }

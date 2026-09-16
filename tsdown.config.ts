@@ -853,13 +853,11 @@ const configs: UserConfig[] = [
       name: TSDOWN_UNIFIED_CONFIG_GROUP,
       // Build core entrypoints, plugin-sdk subpaths, bundled plugin entrypoints,
       // and bundled hooks in one graph so runtime singletons are emitted once.
-      entry: {
-        ...Object.fromEntries(
-          Object.entries(sharedRuntimeProcessBuildEntries(unifiedDistEntries)).filter(
-            ([name]) => !bundledInventoryEntryNames.has(name),
-          ),
+      entry: Object.fromEntries(
+        Object.entries(sharedRuntimeProcessBuildEntries(unifiedDistEntries)).filter(
+          ([name]) => !bundledInventoryEntryNames.has(name),
         ),
-      },
+      ),
       deps: {
         ...unifiedDeps,
         alwaysBundle: (id) =>
