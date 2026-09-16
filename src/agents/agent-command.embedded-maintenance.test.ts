@@ -4,6 +4,8 @@ import { MAX_TIMER_TIMEOUT_MS } from "@openclaw/normalization-core/number-coerci
 import { describe, expect, it, vi } from "vitest";
 import type { SessionEntry } from "../config/sessions.js";
 import { createAbortError } from "../infra/abort-signal.js";
+import { commitSessionExecutionSelection } from "../model-picker/apply-session-model-selection.js";
+import { isModelExecutionSelection } from "../model-picker/execution-selection.js";
 import {
   agentCommand,
   agentCommandFromGatewayIngress,
@@ -430,8 +432,10 @@ describe("agentCommand embedded maintenance", () => {
       followupRun: {
         run: {
           sessionId,
-          provider: "openai",
-          model,
+          executionSelection: {
+            model: { provider: "openai", id: model },
+            executor: { kind: "harness", id: "openclaw" },
+          },
           senderIsOwner: false,
           authProfileId: "openai:completed",
           authProfileIdSource: "user",
@@ -471,25 +475,28 @@ describe("agentCommand embedded maintenance", () => {
   it.each([
     {
       retry: "model context",
+      reset: false,
       replaceWriter: false,
       initialTokens: 42,
       currentContextSnapshot: { tokens: 95_000 },
     },
     {
       retry: "model context",
+      reset: false,
       replaceWriter: true,
       initialTokens: 42,
       currentContextSnapshot: { tokens: 95_000 },
     },
     {
       retry: "custody only after unknown compaction",
+      reset: true,
       replaceWriter: false,
       initialTokens: undefined,
       currentContextSnapshot: undefined,
     },
   ])(
-    "keeps count-zero retry $retry on its retained writer (replacement=$replaceWriter)",
-    async ({ replaceWriter, initialTokens, currentContextSnapshot }) => {
+    "keeps count-zero retry $retry on its retained writer (replacement=$replaceWriter, reset=$reset)",
+    async ({ replaceWriter, initialTokens, currentContextSnapshot, reset }) => {
       const sessionId = "retry-context-owner";
       const sessionKey = `agent:main:explicit:${sessionId}`;
       const storePath = requireStorePath();
@@ -511,11 +518,21 @@ describe("agentCommand embedded maintenance", () => {
             activeWriterRunId: entry.activeWriterRunId,
           },
         });
+        const selection = params.executionSelection;
+        if (!isModelExecutionSelection(selection)) {
+          throw new Error("expected the concrete candidate selection");
+        }
+        await patchSessionEntryCore(target, (current) => {
+          commitSessionExecutionSelection(current, selection, {
+            cause: { kind: reset ? "reset" : "user" },
+          });
+          current.authProfileOverride = "switched-profile";
+          current.authProfileOverrideSource = "user";
+          delete current.authProfileOverrideCompactionCount;
+          return current;
+        });
         throw new LiveSessionModelSwitchError({
-          selection: {
-            model: { provider: params.providerOverride, id: params.modelOverride },
-            executor: { kind: "harness", id: "openclaw" },
-          },
+          selection,
           authProfileId: "switched-profile",
           authProfileIdSource: "user",
         });
@@ -568,6 +585,9 @@ describe("agentCommand embedded maintenance", () => {
       expect(stored).toMatchObject({
         sessionId,
         compactionCount: replaceWriter ? 7 : 1,
+        executionSelection: { fallbackPermission: reset ? "configured" : "explicit" },
+        authProfileOverride: "switched-profile",
+        authProfileOverrideSource: "user",
         totalTokensFresh: replaceWriter || currentContextSnapshot !== undefined,
       });
       expect(stored?.totalTokens).toBe(replaceWriter ? 777 : currentContextSnapshot?.tokens);
@@ -579,6 +599,42 @@ describe("agentCommand embedded maintenance", () => {
       );
     },
   );
+
+  it("refuses a live retry when a newer account selection replaced the reported one", async () => {
+    const sessionId = "retry-newer-selection";
+    const sessionKey = `agent:main:explicit:${sessionId}`;
+    state.runAgentAttemptMock.mockImplementationOnce(async (params) => {
+      const target = params.sessionTarget;
+      const selection = params.executionSelection;
+      if (!target || !isModelExecutionSelection(selection)) {
+        throw new Error("expected the admitted candidate selection");
+      }
+      await patchSessionEntryCore(target, (current) => {
+        commitSessionExecutionSelection(current, selection, { cause: { kind: "reset" } });
+        current.authProfileOverride = "newer-profile";
+        current.authProfileOverrideSource = "user";
+        delete current.authProfileOverrideCompactionCount;
+        return current;
+      });
+      throw new LiveSessionModelSwitchError({
+        selection,
+        authProfileId: "reported-profile",
+        authProfileIdSource: "user",
+      });
+    });
+
+    await expect(agentCommand({ message: "continue", sessionId, sessionKey })).rejects.toThrow(
+      "The session selection changed. Retry the turn.",
+    );
+
+    expect(state.runAgentAttemptMock).toHaveBeenCalledOnce();
+    expect(findStoredSessionEntry(sessionKey)).toMatchObject({
+      sessionId,
+      executionSelection: { fallbackPermission: "configured" },
+      authProfileOverride: "newer-profile",
+      authProfileOverrideSource: "user",
+    });
+  });
 
   const excludedEmbeddedRuns: Array<{
     name: string;

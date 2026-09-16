@@ -230,7 +230,7 @@ describe("model chat and native model ownership", () => {
     }
   });
 
-  it("preserves authored Responses controls through the declared prepared-route fallback", async () => {
+  it("preserves authored Responses controls while preparing an uninitialized executor", async () => {
     const fixture = await createFixture({
       agents: {
         defaults: {
@@ -242,6 +242,13 @@ describe("model chat and native model ownership", () => {
         },
       },
     });
+    await patchSessionEntryCore(fixture.target, () => ({
+      executionSelection: {
+        state: "deferred",
+        request: { model: { provider: "openai", id: "fixture-model" } },
+        fallbackPermission: "configured",
+      },
+    }));
     fixture.generation.resolveDynamicModel.mockReturnValue({
       ...fixture.generation.resolveDynamicModel(),
       contextWindow: 65_536,
@@ -252,6 +259,8 @@ describe("model chat and native model ownership", () => {
     });
     await fixture.withRuntime(
       {
+        agentHarnessId: undefined,
+        agentHarnessRuntimeOverride: undefined,
         authProfileId: "openai:fixture",
         authProfileIdSource: "user",
       },

@@ -1,7 +1,4 @@
 import { isDeepStrictEqual } from "node:util";
-/**
- * Resolves and persists live-session model switch requests.
- */
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { resolveCollapsedSessionAuthPinSource } from "../config/sessions/auth-profile-override-provenance.js";
 import { resolveSessionStorePathCore } from "../config/sessions/paths.js";
@@ -11,8 +8,8 @@ import {
 } from "../config/sessions/session-accessor.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { getSessionExecutionSelection } from "../model-picker/execution-selection.js";
 import {
+  getSessionExecutionSelection,
   isModelExecutionSelection,
   type ExecutionSelection,
   type ModelExecutionSelection,
@@ -25,25 +22,18 @@ export type LiveSessionModelSelection = {
   authProfileIdSource?: "auto" | "user";
 };
 
-/**
- * Entry-snapshot variant of the selection resolver, so atomic patch callbacks
- * can evaluate the persisted selection against the exact row they may rewrite.
- */
-function resolveSelectionFromSessionEntry(params: {
-  cfg: OpenClawConfig;
-  entry: SessionEntry | undefined;
-}): LiveSessionModelSelection | undefined {
-  const selection = getSessionExecutionSelection(params.entry);
+function resolveSelectionFromSessionEntry(
+  entry: SessionEntry | undefined,
+): LiveSessionModelSelection | undefined {
+  const selection = getSessionExecutionSelection(entry);
   if (!selection || !isModelExecutionSelection(selection)) {
     return undefined;
   }
-  const authProfileId = normalizeOptionalString(params.entry?.authProfileOverride);
+  const authProfileId = normalizeOptionalString(entry?.authProfileOverride);
   return {
     selection,
     authProfileId,
-    authProfileIdSource: authProfileId
-      ? resolveCollapsedSessionAuthPinSource(params.entry)
-      : undefined,
+    authProfileIdSource: authProfileId ? resolveCollapsedSessionAuthPinSource(entry) : undefined,
   };
 }
 
@@ -112,10 +102,7 @@ export function shouldSwitchToLiveModel(params: {
   if (!entry?.liveModelSwitchPending) {
     return undefined;
   }
-  const persisted = resolveSelectionFromSessionEntry({
-    cfg,
-    entry,
-  });
+  const persisted = resolveSelectionFromSessionEntry(entry);
   if (!persisted) {
     return undefined;
   }
@@ -169,10 +156,7 @@ export async function consolidateLiveModelSwitchAfterRun(params: {
   if (!cfg || !sessionKey || !providerUsed || !modelUsed) {
     return;
   }
-  // Store selection and default-model resolution both need the owning agent;
-  // derive it from the session key when the caller has none, so agent-scoped
-  // stores are targeted correctly and a completed /model default still
-  // consolidates when config overrides the library-wide defaults.
+  // Resolve the owning store even when the completion caller only has the session key.
   const agentId = resolveSessionAgentId({
     sessionKey,
     config: cfg,
@@ -188,10 +172,7 @@ export async function consolidateLiveModelSwitchAfterRun(params: {
       if (!entry.liveModelSwitchPending) {
         return null;
       }
-      const persisted = resolveSelectionFromSessionEntry({
-        cfg,
-        entry,
-      });
+      const persisted = resolveSelectionFromSessionEntry(entry);
       const selectionApplied =
         persisted &&
         providerUsed === persisted.selection.model.provider &&

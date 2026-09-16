@@ -18,13 +18,13 @@ import {
 import { createSessionDiffBaselineCaptureClaim } from "../config/sessions/session-diff-baseline-capture.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { rotateAgentEventLifecycleGeneration } from "../infra/agent-events.js";
+import { getActivePluginRegistryVersion } from "../plugins/runtime.js";
 import { defaultRuntime } from "../runtime.js";
 import { cleanupSessionStateForTest } from "../test-utils/session-state-cleanup.js";
 import type { runAgentAttempt } from "./command/attempt-execution.runtime.js";
 import { acceptCompactionSuccessor } from "./embedded-agent-runner/compaction-successor.js";
 import type { EmbeddedAgentRunResult } from "./embedded-agent.js";
 import type { loadManifestModelCatalog } from "./model-catalog.js";
-import type { ModelFallbackRunOptions } from "./model-fallback-attempt.js";
 import { createAgentRunRestartAbortError } from "./run-termination.js";
 import { waitForSessionMaintenance } from "./session-maintenance/coordinator.js";
 
@@ -132,6 +132,23 @@ vi.mock("./provider-model-normalization.runtime.js", () => ({
   }) => compactionTestState.normalizeProviderModelIdWithRuntimeMock(params),
 }));
 
+vi.mock("./model-runtime-choice.js", () => ({
+  evaluatePublishedModelRuntimeChoice: vi.fn(
+    async ({ provider, model }: { provider: string; model: string }) => {
+      const config = compactionTestState.cfg;
+      const generation = getActivePluginRegistryVersion();
+      return {
+        kind: "ready",
+        entry: { provider, id: model, name: model },
+        validate: () =>
+          config === compactionTestState.cfg && generation === getActivePluginRegistryVersion()
+            ? undefined
+            : "Prepared model selection is no longer current.",
+      };
+    },
+  ),
+}));
+
 vi.mock("./harness/runtime-plugin.js", () => ({
   ensureSelectedAgentHarnessPlugin: vi.fn(async () => undefined),
 }));
@@ -183,22 +200,32 @@ vi.mock("./exec-defaults.js", () => ({
 }));
 
 vi.mock("./model-fallback-runner.js", () => ({
-  runWithModelFallback: async (params: {
-    provider: string;
-    model: string;
-    run: (provider: string, model: string, options: ModelFallbackRunOptions) => Promise<unknown>;
-  }) => ({
-    result: await params.run(params.provider, params.model, {
-      modelRoutingProvenance: {
-        requestedProvider: params.provider,
-        requestedModel: params.model,
-        stage: "initial",
+  runWithModelFallback: async (
+    params: Parameters<typeof import("./model-fallback-runner.js").runWithModelFallback>[0],
+  ) => {
+    await params.prepareCandidateChain?.([
+      {
+        provider: params.provider,
+        model: params.model,
+        routeOrigin: "requested",
+        routeResolution: "resolved",
       },
-    }),
-    provider: params.provider,
-    model: params.model,
-    attempts: [],
-  }),
+    ]);
+    await params.prepareCandidate?.(params.provider, params.model);
+    return {
+      outcome: "completed",
+      result: await params.run(params.provider, params.model, {
+        modelRoutingProvenance: {
+          requestedProvider: params.provider,
+          requestedModel: params.model,
+          stage: "initial",
+        },
+      }),
+      provider: params.provider,
+      model: params.model,
+      attempts: [],
+    };
+  },
 }));
 
 vi.mock("./command/attempt-execution.runtime.js", async () => {
@@ -293,12 +320,13 @@ export function registerAgentCommandCompactionTestHooks(): void {
       },
       agents: {
         defaults: {
+          model: { primary: "openai/gpt-5.5" },
           models: {
-            "openai/gpt-5.5": {},
+            "openai/gpt-5.5": { agentRuntime: { id: "openclaw" } },
           },
         },
       },
-    } as OpenClawConfig;
+    };
   });
 
   afterEach(async () => {

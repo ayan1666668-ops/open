@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SessionEntry } from "../config/sessions/types.js";
-import { encodeSessionExecutionSelection } from "../model-picker/execution-selection-codec.js";
 import type { ModelExecutionSelection } from "../model-picker/execution-selection.js";
 import {
   clearLiveModelSwitchPending,
@@ -14,24 +13,6 @@ const state = vi.hoisted(() => ({
   read: vi.fn(),
   patch: vi.fn(),
 }));
-
-vi.mock("../model-picker/execution-selection-state.js", async () => {
-  const { decodeSessionExecutionSelection } =
-    await import("../model-picker/execution-selection-codec.js");
-  return {
-    getSessionExecutionSelection: (entry: SessionEntry | undefined) => {
-      const decoded = decodeSessionExecutionSelection(entry, {
-        classifyExecutor: (id) =>
-          id === "openclaw" || id === "fixture-app"
-            ? "harness"
-            : id === "fixture-cli"
-              ? "cli"
-              : undefined,
-      });
-      return decoded.kind === "initialized" ? decoded.selection : undefined;
-    },
-  };
-});
 
 vi.mock("../config/sessions/session-accessor.js", () => ({
   loadSessionEntryReadOnly: (...args: unknown[]) => {
@@ -73,9 +54,9 @@ function storeSelection(pair = selection, fields: Partial<SessionEntry> = {}) {
     sessionId: "session",
     updatedAt: 1,
     liveModelSwitchPending: true,
+    executionSelection: { state: "accepted", selection: pair, fallbackPermission: "explicit" },
     ...fields,
   };
-  encodeSessionExecutionSelection(entry, pair, { kind: "user" });
   state.entry = entry;
   return entry;
 }
@@ -101,6 +82,15 @@ describe("pending live selection", () => {
     });
   });
 
+  it("restarts when the provider changes with the same model id", () => {
+    const selected: ModelExecutionSelection = {
+      ...selection,
+      model: { provider: "alternate", id: selection.model.id },
+    };
+    storeSelection(selected);
+    expect(shouldSwitchToLiveModel(current)?.selection).toEqual(selected);
+  });
+
   it("restarts when only the accepted executor changes", () => {
     const selected: ModelExecutionSelection = {
       ...selection,
@@ -124,6 +114,26 @@ describe("pending live selection", () => {
     ).toMatchObject({ selection, authProfileId: "account-a", authProfileIdSource: "user" });
   });
 
+  it.each([
+    { compactionCount: undefined, expectedSource: "user" },
+    { compactionCount: 0, expectedSource: "auto" },
+  ] as const)(
+    "preserves source-less account authority: $expectedSource",
+    ({ compactionCount, expectedSource }) => {
+      storeSelection(selection, {
+        authProfileOverride: "account-a",
+        authProfileOverrideCompactionCount: compactionCount,
+      });
+      expect(
+        shouldSwitchToLiveModel({ ...current, currentAuthProfileId: "account-b" }),
+      ).toMatchObject({
+        selection,
+        authProfileId: "account-a",
+        authProfileIdSource: expectedSource,
+      });
+    },
+  );
+
   it("consumes the pending flag when the accepted pair and account already run", async () => {
     storeSelection();
     expect(
@@ -138,8 +148,11 @@ describe("pending live selection", () => {
       sessionId: "session",
       updatedAt: 1,
       liveModelSwitchPending: true,
-      providerOverride: "fixture",
-      modelOverride: "second",
+      executionSelection: {
+        state: "deferred",
+        request: { model: { provider: "fixture", id: "second" } },
+        fallbackPermission: "explicit",
+      },
       agentHarnessId: "fixture-app",
     };
     expect(shouldSwitchToLiveModel(current)).toBeUndefined();
@@ -215,7 +228,9 @@ describe("completed live selection", () => {
       modelUsed: "first",
     });
     expect(state.entry?.liveModelSwitchPending).toBe(true);
-    expect(state.entry?.modelOverride).toBe("newer");
+    expect(state.entry?.executionSelection).toMatchObject({
+      selection: { model: { provider: "fixture", id: "newer" } },
+    });
   });
 
   it("clears a default reset using its committed pair even after config changes", async () => {
@@ -239,11 +254,23 @@ describe("completed live selection", () => {
     expect(state.entry).toBe(entry);
   });
 
+  it("does not clear a flag without a session key", async () => {
+    const entry = storeSelection();
+    await clearLiveModelSwitchPending({ cfg });
+    expect(state.entry).toBe(entry);
+    expect(state.entry?.liveModelSwitchPending).toBe(true);
+    expect(state.read).not.toHaveBeenCalled();
+    expect(state.patch).not.toHaveBeenCalled();
+  });
+
   it("clears a requested flag without changing the accepted pair", async () => {
     storeSelection();
     await clearLiveModelSwitchPending(scope);
     expect(state.entry?.liveModelSwitchPending).toBeUndefined();
-    expect(state.entry?.modelOverride).toBe("first");
-    expect(state.entry?.agentRuntimeOverride).toBe("openclaw");
+    expect(state.entry?.executionSelection).toEqual({
+      state: "accepted",
+      selection,
+      fallbackPermission: "explicit",
+    });
   });
 });

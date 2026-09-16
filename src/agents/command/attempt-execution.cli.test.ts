@@ -20,6 +20,7 @@ import { clearSessionStoreCacheForTest } from "../../config/sessions/store-write
 import { applyAssistantDeliveryDirectives } from "../../config/sessions/transcript-assistant-delivery.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { getAgentEventLifecycleGeneration } from "../../infra/agent-events.js";
+import { getActivePluginRegistryVersion } from "../../plugins/runtime.js";
 import { createUserTurnTranscriptRecorder } from "../../sessions/user-turn-transcript.js";
 import { createTestUserTurnTranscriptTarget } from "../../sessions/user-turn-transcript.test-support.js";
 import { createDeferredCore } from "../../shared/deferred.js";
@@ -311,7 +312,7 @@ type RunAgentAttemptOverrides = Omit<
 > & {
   providerOverride?: string;
   modelOverride?: string;
-  agentHarnessRuntimeOverride?: string;
+  executor?: Exclude<RunAgentAttemptParams["executionSelection"]["executor"], { kind: "acp" }>;
   agentDir: RunAgentAttemptParams["agentDir"];
   modelRoutingProvenance?: ModelFallbackAttemptProvenance;
   sessionEntry: NonNullable<RunAgentAttemptParams["sessionEntry"]>;
@@ -336,14 +337,15 @@ function makeRunAgentAttemptParams(overrides: RunAgentAttemptOverrides): RunAgen
     executionSelection: overrides.executionSelection ?? {
       model: { provider, id: model },
       executor:
-        overrides.opts?.modelRun || overrides.opts?.promptMode === "none"
+        overrides.executor ??
+        (overrides.opts?.modelRun || overrides.opts?.promptMode === "none"
           ? { kind: "harness", id: "openclaw" }
           : provider === "claude-cli" || provider === "codex-cli"
             ? { kind: "cli", id: provider }
-            : { kind: "harness", id: overrides.agentHarnessRuntimeOverride ?? "openclaw" },
+            : { kind: "harness", id: "openclaw" }),
     },
     originalProvider: provider,
-    cfg: {} as OpenClawConfig,
+    cfg: {},
     sessionId: overrides.sessionEntry.sessionId,
     sessionAgentId: "main",
     sessionFile: path.join(overrides.workspaceDir, "session.jsonl"),
@@ -364,8 +366,8 @@ function makeRunAgentAttemptParams(overrides: RunAgentAttemptOverrides): RunAgen
     pluginGeneration: overrides.pluginGeneration,
     preparedRunAdmission: overrides.preparedRunAdmission ?? createTestPreparedRunAdmission(runId),
     lifecycleGeneration: overrides.lifecycleGeneration ?? getAgentEventLifecycleGeneration(),
-    opts: { ...overrides.opts } as RunAgentAttemptParams["opts"],
-    runContext: { ...overrides.runContext } as RunAgentAttemptParams["runContext"],
+    opts: { message: "continue", ...overrides.opts },
+    runContext: { ...overrides.runContext },
   };
 }
 
@@ -421,34 +423,35 @@ vi.mock("../provider-auth-aliases.js", () => ({
   resolveProviderIdForAuth: providerAuthAliasMocks.resolveProviderIdForAuth,
 }));
 
-vi.mock("../model-runtime-aliases.js", async () => {
-  const actual = await vi.importActual<typeof import("../model-runtime-aliases.js")>(
-    "../model-runtime-aliases.js",
-  );
-  return {
-    ...actual,
-    resolveCliRuntimeExecutionProvider: ({
-      provider,
-      cfg,
-      modelId,
-    }: {
-      provider?: string;
-      cfg?: OpenClawConfig;
-      modelId?: string;
-    }) => {
-      const key = provider && modelId ? `${provider}/${modelId}` : undefined;
-      // Runtime alias tests only need the model-level runtime override path;
-      // keeping the mock narrow avoids loading provider catalogs here.
-      const runtime = key
-        ? cfg?.agents?.defaults?.models?.[key]?.agentRuntime?.id?.trim()
-        : undefined;
-      return runtime || provider;
-    },
-  };
-});
-
 vi.mock("../embedded-agent.js", () => ({
   runEmbeddedAgent: runEmbeddedAgentMock,
+}));
+
+vi.mock("../model-runtime-choice.js", () => ({
+  evaluatePublishedModelRuntimeChoice: async ({
+    provider,
+    model,
+    runtimeId,
+  }: {
+    provider: string;
+    model: string;
+    runtimeId: string;
+  }) => {
+    if (
+      provider !== "anthropic" ||
+      runtimeId !== "claude-cli" ||
+      !["fixture-primary", "fixture-fallback"].includes(model)
+    ) {
+      return { kind: "unknown", message: "Undeclared outer-fallback fixture selection." };
+    }
+    const generation = getActivePluginRegistryVersion();
+    return {
+      kind: "ready",
+      entry: { provider, id: model, name: model },
+      validate: () =>
+        generation === getActivePluginRegistryVersion() ? undefined : "Fixture catalog changed.",
+    };
+  },
 }));
 
 function makeCliResult(text: string, sessionId = "session-cli"): EmbeddedAgentRunResult {
@@ -1099,12 +1102,17 @@ describe("CLI attempt execution", () => {
     ]);
     const cfg: OpenClawConfig = {
       agents: {
-        defaults: { model: { primary: "claude-cli/sonnet", fallbacks: ["claude-cli/opus"] } },
+        defaults: {
+          model: {
+            primary: "anthropic/fixture-primary",
+            fallbacks: ["anthropic/fixture-fallback"],
+          },
+        },
       },
     };
     const opts = {
       message: "outer fallback",
-      modelFallbacksOverride: ["claude-cli/opus"],
+      modelFallbacksOverride: ["anthropic/fixture-fallback"],
       bootstrapContextRunKind: params.suppression === "heartbeat" ? "heartbeat" : undefined,
     } satisfies RunAgentAttemptParams["opts"];
     const lifecycleGeneration = getAgentEventLifecycleGeneration();
@@ -1167,19 +1175,18 @@ describe("CLI attempt execution", () => {
         },
         modelSelection: {
           sessionEntry: params.sessionEntry,
-          provider: "claude-cli",
-          model: "sonnet",
+          provider: "anthropic",
+          model: "fixture-primary",
           requestedRouteResolution: "resolved",
-          defaultProvider: "claude-cli",
-          defaultModel: "sonnet",
+          defaultProvider: "anthropic",
+          defaultModel: "fixture-primary",
           configuredDefaultAuthProfileId: undefined,
-          providerForAuthProfileValidation: "claude-cli",
+          providerForAuthProfileValidation: "anthropic",
           hasExplicitRunOverride: false,
-          storedProviderOverride: undefined,
-          storedModelOverride: undefined,
-          storedModelOverrideSource: undefined,
-          hasStoredAutoFallbackProvenance: false,
-          autoFallbackPrimaryProbe: undefined,
+          executionSelection: {
+            model: { provider: "anthropic", id: "fixture-primary" },
+            executor: { kind: "cli", id: "claude-cli" },
+          },
           sessionEntryForAttempt: params.sessionEntry,
           thinkingCatalog: [],
           immutableThinkLevel: "off",
@@ -1236,8 +1243,8 @@ describe("CLI attempt execution", () => {
       runCliAgentMock.mockRejectedValueOnce(
         new FailoverError("primary capacity", {
           reason: "rate_limit",
-          provider: "claude-cli",
-          model: "sonnet",
+          provider: "anthropic",
+          model: "fixture-primary",
         }),
       );
     }
@@ -1295,8 +1302,8 @@ describe("CLI attempt execution", () => {
     await Promise.all([first, second]);
 
     if (outerFallback) {
-      expect(firstRunCliAgentArg(0).model).toBe("sonnet");
-      expect(firstRunCliAgentArg(1).model).toBe("opus");
+      expect(firstRunCliAgentArg(0).model).toBe("fixture-primary");
+      expect(firstRunCliAgentArg(1).model).toBe("fixture-fallback");
     }
     const expectedBinding = suppression ? previousBinding : accepted ? binding : undefined;
     expect(firstRunCliAgentArg(outerFallback ? 2 : 1)).toMatchObject({
@@ -2424,6 +2431,7 @@ describe("CLI attempt execution", () => {
       } as OpenClawConfig,
       sessionEntry,
       sessionKey,
+      executor: { kind: "cli", id: "google-gemini-cli" },
       runId: "run-gemini-cli-auth-bridge",
       sessionStore,
     });
@@ -2466,6 +2474,7 @@ describe("CLI attempt execution", () => {
       } as OpenClawConfig,
       sessionEntry,
       sessionKey,
+      executor: { kind: "cli", id: "google-gemini-cli" },
       runId: "run-gemini-cli-google-api-key",
       sessionStore,
     });
@@ -2506,6 +2515,7 @@ describe("CLI attempt execution", () => {
         } as OpenClawConfig,
         sessionEntry,
         sessionKey,
+        executor: { kind: "cli", id: "google-gemini-cli" },
         runId: "run-gemini-cli-incompatible-auth",
         sessionStore,
       }),
@@ -2559,6 +2569,7 @@ describe("CLI attempt execution", () => {
       } as OpenClawConfig,
       sessionEntry,
       sessionKey,
+      executor: { kind: "cli", id: "google-gemini-cli" },
       runId: "run-gemini-cli-stale-auto-auth",
       sessionStore,
     });
@@ -2603,6 +2614,7 @@ describe("CLI attempt execution", () => {
       } as OpenClawConfig,
       sessionEntry,
       sessionKey,
+      executor: { kind: "cli", id: "google-gemini-cli" },
       runId: "run-gemini-cli-google-api-key-order",
       sessionStore,
     });
@@ -3212,6 +3224,7 @@ describe("CLI attempt execution", () => {
       sessionEntry,
       sessionKey,
       body: "use ambient cli auth",
+      executor: { kind: "cli", id: "claude-cli" },
       runId: "run-configured-claude-auth-order",
       opts: {
         messageProvider: "discord",
@@ -3643,6 +3656,7 @@ describe("CLI attempt execution", () => {
 
       await runAgentAttempt({
         providerOverride: "anthropic",
+        executor: { kind: "cli", id: "claude-cli" },
         originalProvider: "anthropic",
         modelOverride: "claude-opus-4-7",
         cfg,
@@ -3695,7 +3709,6 @@ describe("CLI attempt execution", () => {
     const sessionEntry = makeSessionEntry("plugin-cli-session", {
       pluginOwnerId: "cli-owner",
       modelSelectionLocked: true,
-      agentRuntimeOverride: "claude-cli",
       agentHarnessId: "claude-cli",
     });
     runCliAgentMock.mockResolvedValueOnce(makeCliResult("continued"));
@@ -3707,7 +3720,7 @@ describe("CLI attempt execution", () => {
       providerOverride: "anthropic",
       modelOverride: "claude-sonnet-4-6",
       sessionEntry,
-      agentHarnessRuntimeOverride: "claude-cli",
+      executor: { kind: "cli", id: "claude-cli" },
       runId: "plugin-cli-continuation",
     });
 
@@ -3745,6 +3758,7 @@ describe("CLI attempt execution", () => {
       sessionKey,
       body: "route this",
       isFallbackRetry: true,
+      executor: { kind: "cli", id: "claude-cli" },
       runId: "run-canonical-claude-cli",
       opts: { images, imageOrder },
       messageChannel: "telegram",
@@ -3804,6 +3818,7 @@ describe("CLI attempt execution", () => {
       sessionKey,
       body: "continue after overload",
       isFallbackRetry: true,
+      executor: { kind: "cli", id: "claude-cli" },
       runId: "run-cli-lifecycle-handoff",
       messageChannel: "telegram",
       sessionStore,
@@ -3839,6 +3854,7 @@ describe("CLI attempt execution", () => {
       sessionEntry,
       sessionKey,
       body: "route this",
+      executor: { kind: "cli", id: "claude-cli" },
       runId: "run-shorthand-claude-cli",
       messageChannel: "telegram",
       sessionStore,
@@ -3881,6 +3897,7 @@ describe("CLI attempt execution", () => {
       sessionEntry,
       sessionKey,
       body: "route this",
+      executor: { kind: "harness", id: "codex" },
       runId: "run-canonical-codex-cli",
       runContext: {
         chatId: "chat-embedded",
@@ -4659,7 +4676,7 @@ describe("embedded attempt harness pinning", () => {
         },
       } as OpenClawConfig,
       sessionEntry,
-      agentHarnessRuntimeOverride: "codex",
+      executor: { kind: "harness", id: "codex" },
       body: "switch to minimax",
       runId: "run-mixed-provider-auto-runtime",
       sessionHasHistory: true,
@@ -4714,7 +4731,7 @@ describe("embedded attempt harness pinning", () => {
       provider: "openai",
       model: "gpt-5.4",
       agentHarnessId: undefined,
-      agentHarnessRuntimeOverride: undefined,
+      agentHarnessRuntimeOverride: "openclaw",
     });
   });
 
@@ -4737,7 +4754,7 @@ describe("embedded attempt harness pinning", () => {
     });
   });
 
-  it("lets provider/model runtime policy choose Codex without storing a session harness pin", async () => {
+  it("forwards the prepared harness without selecting from the model policy", async () => {
     const sessionEntry = makeSessionEntry("codex-history-session");
     runEmbeddedAgentMock.mockResolvedValueOnce({
       meta: { durationMs: 1 },
@@ -4757,13 +4774,14 @@ describe("embedded attempt harness pinning", () => {
         },
       } as OpenClawConfig,
       sessionEntry,
+      executor: { kind: "harness", id: "codex" },
       runId: "run-codex-no-runtime-pin",
       sessionHasHistory: true,
     });
 
     expectMockArgFields(runEmbeddedAgentMock, {
       agentHarnessId: undefined,
-      agentHarnessRuntimeOverride: undefined,
+      agentHarnessRuntimeOverride: "codex",
       agentHarnessRuntimePreparationHint: "codex",
     });
   });
@@ -4798,6 +4816,7 @@ describe("embedded attempt harness pinning", () => {
     try {
       await runHarnessAttempt({
         sessionEntry,
+        executor: { kind: "harness", id: "codex" },
         runId: "run-codex-auto-auth-profile",
         sessionHasHistory: true,
       });
@@ -4812,7 +4831,7 @@ describe("embedded attempt harness pinning", () => {
     });
   });
 
-  it("pins a fresh OpenAI session to the Codex harness by default", async () => {
+  it("does not create observed harness history before the first attempt completes", async () => {
     const sessionEntry = makeSessionEntry("fresh-session");
     runEmbeddedAgentMock.mockResolvedValueOnce({
       meta: { durationMs: 1 },
@@ -4827,7 +4846,7 @@ describe("embedded attempt harness pinning", () => {
     expectMockArgFields(runEmbeddedAgentMock, { agentHarnessId: undefined });
   });
 
-  it("honors a resolved persisted OpenClaw harness", async () => {
+  it("honors the prepared executor independently of observed harness history", async () => {
     const sessionEntry = makeSessionEntry("stale-agent-session", {
       agentHarnessId: "openclaw",
     });
@@ -4837,7 +4856,7 @@ describe("embedded attempt harness pinning", () => {
 
     await runHarnessAttempt({
       sessionEntry,
-      agentHarnessRuntimeOverride: "openclaw",
+      executor: { kind: "harness", id: "openclaw" },
       runId: "run-stale-openai-runtime-pin",
       sessionHasHistory: true,
     });
@@ -4853,7 +4872,6 @@ describe("embedded attempt harness pinning", () => {
     "honors a runtime request without promoting observations to a pin (owner %s)",
     async (pluginOwnerId) => {
       const sessionEntry = makeSessionEntry("explicit-openclaw-session", {
-        agentRuntimeOverride: "openclaw",
         agentHarnessId: "codex",
         modelSelectionLocked: pluginOwnerId !== undefined,
         pluginOwnerId,
@@ -4879,7 +4897,7 @@ describe("embedded attempt harness pinning", () => {
         modelOverride: "gpt-5.6-sol",
         modelThinkingCapability,
         sessionEntry,
-        agentHarnessRuntimeOverride: "openclaw",
+        executor: { kind: "harness", id: "openclaw" },
         resolvedThinkLevel: "max",
         runId: "run-explicit-openclaw-runtime",
         sessionHasHistory: true,

@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
 import type { SessionEntry } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { getActivePluginRegistryVersion } from "../../plugins/runtime.js";
 import {
   TURN_MODEL_DEFAULT_REF,
   TURN_MODEL_DIFFERENTIAL_FIXTURES,
@@ -14,10 +15,6 @@ import {
 import type { AgentCommandOpts, AgentRunContext } from "./types.js";
 
 vi.mock("../agent-scope.js", () => ({
-  clearAutoFallbackPrimaryProbeSelection: vi.fn(),
-  hasLegacyAutoFallbackWithoutOrigin: () => false,
-  hasSessionAutoModelFallbackProvenance: () => false,
-  resolveAutoFallbackPrimaryProbe: () => undefined,
   resolveAgentConfig: () => undefined,
   resolveAgentEffectiveModelPrimary: () => undefined,
 }));
@@ -63,9 +60,6 @@ vi.mock("../auth-profiles/order.js", () => ({
 vi.mock("../auth-profiles/session-override.js", () => ({
   clearSessionAuthProfileOverride: vi.fn(async () => undefined),
 }));
-vi.mock("../auth-profiles/store-runtime.js", () => ({
-  ensureAuthProfileStore: () => ({ profiles: {} }),
-}));
 vi.mock("../harness/runtime-plugin.js", () => ({
   ensureSelectedAgentHarnessPlugin: vi.fn(async () => undefined),
 }));
@@ -73,6 +67,32 @@ vi.mock("../harness/selection.js", () => ({
   resolveAvailableAgentHarnessPolicy: () => ({ runtime: "openclaw" }),
 }));
 vi.mock("../model-catalog.js", () => ({ loadManifestModelCatalog: () => [] }));
+vi.mock("../model-runtime-choice.js", () => ({
+  evaluatePublishedModelRuntimeChoice: async ({
+    provider,
+    model,
+    runtimeId,
+  }: {
+    provider: string;
+    model: string;
+    runtimeId: string;
+  }) => {
+    const declared = TURN_MODEL_DIFFERENTIAL_FIXTURES.some((fixture) =>
+      Object.values(fixture.expected).some(
+        (ref) => ref.provider === provider && ref.model === model,
+      ),
+    );
+    if (!declared || runtimeId !== "openclaw")
+      return { kind: "unknown", message: "Undeclared fixture selection." };
+    const generation = getActivePluginRegistryVersion();
+    return {
+      kind: "ready",
+      entry: { provider, id: model, name: model },
+      validate: () =>
+        generation === getActivePluginRegistryVersion() ? undefined : "Fixture catalog changed.",
+    };
+  },
+}));
 vi.mock("../model-selection.js", () => ({
   modelKey: (provider: string, model: string) => `${provider}/${model}`,
   resolveDefaultModelForAgent: ({ cfg }: { cfg: OpenClawConfig }) => {
@@ -108,23 +128,17 @@ vi.mock("../openai-routing.js", () => ({
 vi.mock("../provider-auth-aliases.js", () => ({
   resolveProviderIdForAuth: (provider: string) => provider,
 }));
-vi.mock("../session-runtime-compat.js", () => ({
-  resolvePersistedSessionRuntimeId: () => undefined,
-}));
 vi.mock("../thinking-runtime.js", () => ({
   needsThinkHydration: () => false,
   normalizeThinkingCatalogProviders: (catalog: unknown) => catalog,
-  resolveEffectiveAgentRuntime: () => undefined,
+  resolveEffectiveAgentRuntime: () => "openclaw",
 }));
-vi.mock("../../plugins/runtime.js", () => ({ requireActivePluginRegistry: () => ({}) }));
 vi.mock("../../sessions/agent-harness-session-key.js", () => ({
   isValidAgentHarnessSessionStoreEntry: () => false,
 }));
 vi.mock("../../sessions/model-overrides.js", () => ({
-  applyModelOverrideToSessionEntry: () => ({ updated: false }),
   isModelSelectionLocked: (entry?: SessionEntry) => entry?.modelSelectionLocked === true,
   ModelSelectionLockedError: class ModelSelectionLockedError extends Error {},
-  repairProviderWrappedModelOverride: () => ({ updated: false }),
 }));
 vi.mock("./attempt-execution.shared.js", () => ({
   persistAgentSession: async ({ entry }: { entry?: SessionEntry }) => entry,

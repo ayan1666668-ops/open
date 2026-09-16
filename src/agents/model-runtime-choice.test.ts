@@ -64,7 +64,7 @@ describe("published runtime choice", () => {
     publish();
     expect(
       await evaluatePublishedModelRuntimeChoice({ ...request, model: "unobserved" }),
-    ).toMatchObject({ kind: "unavailable" });
+    ).toMatchObject({ kind: "unknown" });
   });
 
   it("validates an off-catalog model through its configured route", async () => {

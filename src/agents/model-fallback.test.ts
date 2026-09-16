@@ -2798,6 +2798,7 @@ describe("runWithModelFallback", () => {
       cfg,
       provider: "anthropic",
       model: "claude-sonnet-4-6",
+      resolveAgentHarnessRuntimeOverride: () => "openclaw",
       run,
       fallbacksOverride: [],
     }).catch((e: unknown) => e);
@@ -2857,6 +2858,7 @@ describe("runWithModelFallback", () => {
       cfg,
       provider: "openai",
       model: "gpt-4.1-mini",
+      resolveAgentHarnessRuntimeOverride: () => "openclaw",
       run,
     });
     expect(result.result).toBe("ok");
@@ -2892,6 +2894,7 @@ describe("runWithModelFallback", () => {
       cfg,
       provider: "openai",
       model: "gpt-4.1-mini",
+      resolveAgentHarnessRuntimeOverride: () => "openclaw",
       run,
       onError,
     });
@@ -2924,6 +2927,7 @@ describe("runWithModelFallback", () => {
         model: "claude-haiku-3-5",
         resolveAgentHarnessRuntimeOverride: (provider) =>
           provider === "openai" ? "openclaw" : undefined,
+        resolveAgentHarnessRuntimeOverride: () => "openclaw",
         run,
       }),
     ).rejects.toBe(switchError);
@@ -2946,6 +2950,7 @@ describe("runWithModelFallback", () => {
         model: "gpt-4.1-mini",
         fallbacksOverride: [],
         resolveAgentHarnessRuntimeOverride: () => "openclaw",
+        resolveAgentHarnessRuntimeOverride: () => "openclaw",
         run,
       }),
     ).rejects.toBe(switchError);
@@ -2966,6 +2971,7 @@ describe("runWithModelFallback", () => {
       cfg,
       provider: "openai",
       model: "gpt-4.1-mini",
+      resolveAgentHarnessRuntimeOverride: () => "openclaw",
       run,
     });
 

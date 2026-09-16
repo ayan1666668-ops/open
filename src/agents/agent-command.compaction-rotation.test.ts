@@ -182,12 +182,12 @@ describe("agentCommand compaction transcript rotation", () => {
       cwd: state.workspaceDir,
     });
 
-    const attempt = state.runAgentAttemptMock.mock.calls[0]?.[0] as
-      | { providerOverride?: string; modelOverride?: string; pluginsEnabled?: boolean }
-      | undefined;
+    const attempt = state.runAgentAttemptMock.mock.calls[0]?.[0];
     expect(attempt).toMatchObject({
-      providerOverride: "tui-pty-mock",
-      modelOverride: "gpt-5.5",
+      executionSelection: {
+        model: { provider: "tui-pty-mock", id: "gpt-5.5" },
+        executor: { kind: "harness", id: "openclaw" },
+      },
       pluginsEnabled: false,
       userTurnTranscriptRecorder: { message: { __openclaw: { senderIsOwner: true } } },
     });
