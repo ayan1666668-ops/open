@@ -173,7 +173,7 @@ function renderBindingSelect(agent: BindingAgent | null, state: BindingState) {
       class="settings-select"
       aria-label=${t(isDefault ? "devices.binding.node" : "devices.binding.binding")}
       .value=${live(selected)}
-      ?disabled=${state.disabled || state.nodes.length === 0}
+      ?disabled=${state.disabled || (state.nodes.length === 0 && selected === sentinel)}
       @change=${onChange}
     >
       <option value=${sentinel} ?selected=${selected === sentinel}>
