@@ -59,6 +59,11 @@ const mocks = vi.hoisted(() => ({
   upsertAuthProfileWithLock: vi.fn(),
   persistProviderAuthProfilesAfterLogin: vi.fn(),
   removeProviderAuthProfilesWithLock: vi.fn(),
+  authProfileStore: { version: 1, profiles: {} } as {
+    version: number;
+    profiles: Record<string, unknown>;
+  },
+  loadAuthProfileStoreWithoutExternalProfiles: vi.fn(),
   resolvePluginProvidersCore: vi.fn(),
   createClackPrompter: vi.fn(),
   loadValidConfigSnapshotOrThrow: vi.fn(),
@@ -93,6 +98,11 @@ vi.mock("../../agents/auth-profiles/profiles.js", () => ({
   upsertAuthProfile: mocks.upsertAuthProfile,
   upsertAuthProfileWithLock: mocks.upsertAuthProfileWithLock,
   upsertAuthProfileWithLockOrThrow: mocks.upsertAuthProfileWithLock,
+}));
+
+vi.mock("../../agents/auth-profiles/store-runtime.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../agents/auth-profiles/store-runtime.js")>()),
+  loadAuthProfileStoreWithoutExternalProfiles: mocks.loadAuthProfileStoreWithoutExternalProfiles,
 }));
 
 vi.mock("../../plugins/provider-auth-persistence.js", () => ({
@@ -428,6 +438,11 @@ describe("modelsAuthLoginCommand", () => {
     mocks.tryImportProviderCredential.mockResolvedValue(undefined);
     mocks.removeProviderAuthProfilesWithLock.mockReset();
     mocks.removeProviderAuthProfilesWithLock.mockResolvedValue({ version: 1, profiles: {} });
+    mocks.authProfileStore = { version: 1, profiles: {} };
+    mocks.loadAuthProfileStoreWithoutExternalProfiles.mockReset();
+    mocks.loadAuthProfileStoreWithoutExternalProfiles.mockImplementation(
+      () => mocks.authProfileStore,
+    );
 
     mocks.resolveDefaultAgentId.mockReturnValue("main");
     mocks.resolveAgentDir.mockReturnValue("/tmp/openclaw/agents/main");
@@ -555,6 +570,153 @@ describe("modelsAuthLoginCommand", () => {
         params: { operation: "login", agentId: "main" },
       }),
     );
+  });
+
+  it.each([
+    {
+      name: "same account",
+      incomingAccountId: "acct-old",
+      expectedProfileId: "openai:setup-old",
+    },
+    {
+      name: "different account",
+      incomingAccountId: "acct-new",
+      expectedProfileId: "openai:setup-new",
+    },
+  ])(
+    "keeps provider-owned profile identity boundaries for a $name re-login",
+    async ({ incomingAccountId, expectedProfileId }) => {
+      mocks.authProfileStore = {
+        version: 1,
+        profiles: {
+          "openai:setup-old": {
+            type: "oauth",
+            provider: "openai",
+            access: "old-access",
+            refresh: "old-refresh",
+            expires: Date.now() - 60_000,
+            accountId: "acct-old",
+          },
+        },
+      };
+      runProviderAuth.mockResolvedValueOnce({
+        profiles: [
+          {
+            profileId: "openai:setup-new",
+            credential: {
+              type: "oauth",
+              provider: "openai",
+              access: "new-access",
+              refresh: "new-refresh",
+              expires: Date.now() + 60_000,
+              accountId: incomingAccountId,
+            },
+          },
+        ],
+      });
+      const matchesPersonalAccount: NonNullable<
+        ProviderPlugin["auth"][number]["matchesPersonalAccount"]
+      > = (credential, existing) =>
+        credential.type === "oauth" &&
+        existing.type === "oauth" &&
+        credential.provider === existing.provider &&
+        credential.accountId === existing.accountId;
+      mocks.resolvePluginProvidersCore.mockReturnValue([
+        createProvider({
+          id: "openai",
+          label: "OpenAI Codex",
+          run: runProviderAuth as ProviderPlugin["auth"][number]["run"],
+          auth: [
+            {
+              id: "oauth",
+              label: "OAuth",
+              kind: "oauth",
+              run: runProviderAuth as ProviderPlugin["auth"][number]["run"],
+              matchesPersonalAccount,
+            },
+          ],
+        }),
+      ]);
+
+      await runModelsAuthLoginFlowCore({
+        provider: "openai",
+        force: true,
+        runtime: createRuntime(),
+        prompter: mocks.createClackPrompter(),
+      });
+
+      const persistCall = readMockCallArg(
+        mocks.persistProviderAuthProfilesAfterLogin,
+      ) as PersistProviderAuthCall;
+      expect(persistCall.profiles?.[0]?.profileId).toBe(expectedProfileId);
+      expect(mocks.removeProviderAuthProfilesWithLock).toHaveBeenCalledOnce();
+      expect(
+        mocks.loadAuthProfileStoreWithoutExternalProfiles.mock.invocationCallOrder[0],
+      ).toBeLessThan(mocks.removeProviderAuthProfilesWithLock.mock.invocationCallOrder[0]!);
+    },
+  );
+
+  it("does not collapse multiple returned profiles onto one existing account id", async () => {
+    mocks.authProfileStore = {
+      version: 1,
+      profiles: {
+        "openai:old": {
+          type: "oauth",
+          provider: "openai",
+          access: "old-access",
+          refresh: "old-refresh",
+          expires: Date.now() - 60_000,
+          accountId: "acct-same",
+        },
+      },
+    };
+    runProviderAuth.mockResolvedValueOnce({
+      profiles: ["one", "two"].map((suffix) => ({
+        profileId: `openai:${suffix}`,
+        credential: {
+          type: "oauth" as const,
+          provider: "openai",
+          access: `${suffix}-access`,
+          refresh: `${suffix}-refresh`,
+          expires: Date.now() + 60_000,
+          accountId: "acct-same",
+        },
+      })),
+    });
+    const matchesPersonalAccount: NonNullable<
+      ProviderPlugin["auth"][number]["matchesPersonalAccount"]
+    > = (credential, existing) =>
+      credential.type === "oauth" &&
+      existing.type === "oauth" &&
+      credential.provider === existing.provider &&
+      credential.accountId === existing.accountId;
+    mocks.resolvePluginProvidersCore.mockReturnValue([
+      createProvider({
+        id: "openai",
+        run: runProviderAuth as ProviderPlugin["auth"][number]["run"],
+        auth: [
+          {
+            id: "oauth",
+            label: "OAuth",
+            kind: "oauth",
+            run: runProviderAuth as ProviderPlugin["auth"][number]["run"],
+            matchesPersonalAccount,
+          },
+        ],
+      }),
+    ]);
+
+    await runModelsAuthLoginFlowCore({
+      provider: "openai",
+      runtime: createRuntime(),
+      prompter: mocks.createClackPrompter(),
+    });
+
+    expect(
+      mocks.persistProviderAuthProfilesAfterLogin.mock.calls.map(
+        ([call]) => (call as PersistProviderAuthCall).profiles?.[0]?.profileId,
+      ),
+    ).toEqual(["openai:one", "openai:two"]);
   });
 
   it("persists a named login profile and promotes that same profile", async () => {

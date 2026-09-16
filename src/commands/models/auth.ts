@@ -22,6 +22,8 @@ import {
   promoteAuthProfileInOrder,
   upsertAuthProfileWithLockOrThrow,
 } from "../../agents/auth-profiles/profiles.js";
+import { listRuntimeLocalProfileIds } from "../../agents/auth-profiles/runtime-snapshot-owner.js";
+import { loadAuthProfileStoreWithoutExternalProfiles } from "../../agents/auth-profiles/store-runtime.js";
 import type { AuthProfileCredential } from "../../agents/auth-profiles/types.js";
 import { normalizeProviderId } from "../../agents/model-ref-shared.js";
 import { isCliProvider } from "../../agents/model-selection-cli.js";
@@ -620,6 +622,7 @@ async function runProviderAuthMethod(params: {
   beforePersistentEffect?: () => void | Promise<void>;
   refreshAfterLogin?: ModelsAuthLoginFlowOptions["refreshAfterLogin"];
   onModelAccessRequested?: (request: PreparedProviderModelAccess) => void;
+  existingProfiles?: Readonly<Record<string, AuthProfileCredential>>;
 }): Promise<{
   result: ProviderAuthResult;
   profiles: ProviderAuthResult["profiles"];
@@ -669,6 +672,8 @@ async function runProviderAuthMethod(params: {
   const profiles = resolveLoginProfiles({
     result: connectionResult,
     requestedProfileId: params.profileId,
+    existingProfiles: params.existingProfiles,
+    matchesPersonalAccount: params.method.matchesPersonalAccount,
   });
 
   const { profiles: persistedProfiles, authRefresh } = await persistProviderAuthResult({
@@ -1061,10 +1066,31 @@ function credentialMode(credential: AuthProfileCredential): "api_key" | "oauth" 
 function resolveLoginProfiles(params: {
   result: ProviderAuthResult;
   requestedProfileId?: string;
+  existingProfiles?: Readonly<Record<string, AuthProfileCredential>>;
+  matchesPersonalAccount?: ProviderAuthMethod["matchesPersonalAccount"];
 }): ProviderAuthResult["profiles"] {
   const requestedProfileId = params.requestedProfileId?.trim();
   if (!requestedProfileId) {
-    return params.result.profiles;
+    if (
+      !params.matchesPersonalAccount ||
+      !params.existingProfiles ||
+      params.result.profiles.length !== 1
+    ) {
+      return params.result.profiles;
+    }
+    const profile = expectDefined(params.result.profiles[0], "auth profile");
+    const matchingProfileIds = Object.entries(params.existingProfiles)
+      .filter(([, credential]) => {
+        try {
+          return params.matchesPersonalAccount?.(profile.credential, credential) === true;
+        } catch {
+          return false;
+        }
+      })
+      .map(([profileId]) => profileId);
+    return matchingProfileIds.length === 1
+      ? [{ ...profile, profileId: matchingProfileIds[0]! }]
+      : params.result.profiles;
   }
 
   if (params.result.profiles.length !== 1) {
@@ -1195,6 +1221,20 @@ async function runModelsAuthLoginFlow(
     provider: selectedProvider.id,
     providerLabel: selectedProvider.label,
   });
+  // Snapshot before --force removes cached credentials. Provider-owned identity
+  // matching may safely keep the old profile id for the same authenticated account.
+  const existingProfiles = (() => {
+    if (!chosenMethod.matchesPersonalAccount) {
+      return undefined;
+    }
+    const store = loadAuthProfileStoreWithoutExternalProfiles(context.agentDir);
+    return Object.fromEntries(
+      listRuntimeLocalProfileIds(store).flatMap((profileId) => {
+        const credential = store.profiles[profileId];
+        return credential ? [[profileId, credential] as const] : [];
+      }),
+    );
+  })();
   const imported =
     !opts.credentialOnly && !opts.force && !opts.profileId && !opts.setDefault
       ? await tryImportProviderCredential({
@@ -1302,6 +1342,7 @@ async function runModelsAuthLoginFlow(
     beforePersistentEffect: opts.beforePersistentEffect,
     refreshAfterLogin: opts.refreshAfterLogin,
     onModelAccessRequested: opts.onModelAccessRequested,
+    existingProfiles,
   });
   maybeLogOpenAICodexNativeSearchTip(opts.runtime, selectedProvider.id);
   return {
