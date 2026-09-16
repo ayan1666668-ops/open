@@ -12,6 +12,10 @@ import type { SessionEntry } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { prepareSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
 import {
+  isAcpExecutionSelection,
+  type AcpExecutionSelection,
+} from "../../model-picker/execution-selection.js";
+import {
   isModelSelectionLocked,
   MODEL_SELECTION_LOCKED_MESSAGE,
 } from "../../sessions/model-overrides.js";
@@ -22,45 +26,22 @@ import {
   unexpectedPatchError,
 } from "./sessions-patch-errors.js";
 
-export const ACP_DEDICATED_MODEL_REQUEST_MESSAGE =
-  "Change the model in its own request for this session";
-
 export function isAcpModelSelectionPatch(
   patch: Pick<SessionsPatchParams, "model" | "agentRuntime">,
 ): boolean {
   return patch.model !== undefined || patch.agentRuntime === null;
 }
 
-const ACP_MODEL_REQUEST_KEYS = new Set([
-  "key",
-  "agentId",
-  "expectedSessionId",
-  "expectedLifecycleRevision",
-  "expectedPermissionMode",
-  "expectedToolOverrides",
-  "expectedMarkedUnreadAt",
-  "model",
-  "agentRuntime",
-]);
-
-export function hasOtherAcpSessionEdits(patch: Partial<SessionsPatchParams>): boolean {
-  return Object.entries(patch).some(
-    ([key, value]) => value !== undefined && !ACP_MODEL_REQUEST_KEYS.has(key),
-  );
-}
-
-/** ACP selection has one shared-state commit; compound agent-store edits are refused before writes. */
-export async function applyDedicatedAcpSessionPatch(params: {
+/** Apply backend selection and the caller's complete agent-row commit under one session actor. */
+export async function applyAcpSessionPatch<T extends { ok: true }>(params: {
   cfg: OpenClawConfig;
   sessionKey: string;
   agentId: string;
   entry: SessionEntry;
   patch: SessionsPatchParams;
   assertCurrent: () => void;
-}): Promise<
-  | { ok: true; applied: true; accessChanged: false; entry: SessionEntry }
-  | { ok: false; error: ErrorShape }
-> {
+  commitAccepted: (selection: AcpExecutionSelection) => Promise<T>;
+}): Promise<T | { ok: false; error: ErrorShape }> {
   if (typeof params.patch.agentRuntime === "string") {
     return invalidSessionPatchOutcome("Runtime selection is owned by this ACP session.");
   }
@@ -118,23 +99,19 @@ export async function applyDedicatedAcpSessionPatch(params: {
         : typeof raw === "string"
           ? { kind: "model", model: { provider: defaults.provider, id: raw.trim() } }
           : { kind: "reset" },
-      prepareAcp: async (selection) =>
-        await manager.setExecutionSelection({ ...target, selection, assertActive }),
     });
     if (prepared.status !== "ready") {
       return invalidSessionPatchOutcome(prepared.message);
     }
-    assertActive();
-    const committed = manager.resolveSession(target);
-    if (committed.kind !== "ready" || !committed.entry) {
-      return { ok: false, error: sessionChangedError(params.sessionKey) };
+    if (!isAcpExecutionSelection(prepared.selection)) {
+      return invalidSessionPatchOutcome("Changing apps requires a new conversation.");
     }
-    return {
-      ok: true,
-      applied: true,
-      accessChanged: false,
-      entry: { ...committed.entry, acp: committed.meta },
-    };
+    return await manager.withExecutionSelection({
+      ...target,
+      selection: prepared.selection,
+      assertActive,
+      commitAccepted: params.commitAccepted,
+    });
   } catch (error) {
     return {
       ok: false,

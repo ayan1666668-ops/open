@@ -19,7 +19,7 @@ import type {
   ResolveManagerSession,
   WriteManagerSessionMeta,
 } from "./manager.types.js";
-import { requireReadySessionMeta, resolveAcpSessionResolutionError } from "./manager.utils.js";
+import { requireReadySession, resolveAcpSessionResolutionError } from "./manager.utils.js";
 
 /** Closes an ACP session runtime handle and optionally discards persistent state/meta. */
 export async function runManagerCloseSession(params: {
@@ -48,7 +48,7 @@ export async function runManagerCloseSession(params: {
       metaCleared: false,
     };
   }
-  const meta = requireReadySessionMeta(resolution);
+  const { meta, selection } = requireReadySession(resolution);
   const currentIdentity = resolveSessionIdentityFromMeta(meta);
   const shouldSkipRuntimeClose =
     input.discardPersistentState &&
@@ -62,6 +62,7 @@ export async function runManagerCloseSession(params: {
       deps: params.deps,
       cfg: input.cfg,
       meta,
+      selection,
       sessionKey,
       agentId,
       logPrefix: "acp close fast-reset",
@@ -102,6 +103,7 @@ export async function runManagerCloseSession(params: {
             deps: params.deps,
             cfg: input.cfg,
             meta,
+            selection,
             sessionKey,
             agentId,
             logPrefix: "acp close recovery",

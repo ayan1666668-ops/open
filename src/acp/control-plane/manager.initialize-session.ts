@@ -7,8 +7,11 @@ import type { AcpRuntime, AcpRuntimeHandle } from "@openclaw/acp-core/runtime/ty
 import { resolveRuntimeConfigCacheKey } from "../../config/runtime-snapshot.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { logVerbose } from "../../globals.js";
-import { commitAcpExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
-import { readAcpExecutionSelection } from "../../model-picker/execution-selection-codec.js";
+import { getCommittedSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
+import {
+  isAcpExecutionSelection,
+  type AcpExecutionSelection,
+} from "../../model-picker/execution-selection.js";
 import { normalizeAgentId } from "../../routing/session-key.js";
 import { AcpRuntimeError, withAcpRuntimeErrorBoundary } from "../runtime/errors.js";
 import type { ManagerRuntimeHandleCache } from "./manager.runtime-handle-cache.js";
@@ -19,7 +22,7 @@ import {
 import type {
   AcpInitializeSessionInput,
   AcpSessionManagerDeps,
-  SessionAcpMeta,
+  SessionAcpLifecycle,
   SessionEntry,
   WriteManagerSessionMeta,
 } from "./manager.types.js";
@@ -41,7 +44,7 @@ export async function runManagerInitializeSession(params: {
 }): Promise<{
   runtime: AcpRuntime;
   handle: AcpRuntimeHandle;
-  meta: SessionAcpMeta;
+  meta: SessionAcpLifecycle;
   sessionEntry: SessionEntry;
 }> {
   const { input, sessionKey, agentId } = params;
@@ -58,8 +61,18 @@ export async function runManagerInitializeSession(params: {
   const requestedThinking = initialRuntimeOptions.thinking;
   const previous = params.deps.loadSessionEntry({ cfg: input.cfg, sessionKey, agentId });
   const previousMeta = previous?.acp;
-  if (previousMeta) {
-    requireReadySessionMeta({ kind: "ready", sessionKey, agentId, meta: previousMeta });
+  const previousSelection = getCommittedSessionExecutionSelection(previous?.entry);
+  const previousAcpSelection =
+    previousSelection && isAcpExecutionSelection(previousSelection) ? previousSelection : undefined;
+  if (previousMeta && previous?.entry && previousAcpSelection) {
+    requireReadySessionMeta({
+      kind: "ready",
+      sessionKey,
+      agentId,
+      meta: previousMeta,
+      entry: previous.entry,
+      selection: previousAcpSelection,
+    });
   }
   input.assertActive?.();
   const ensured = await withAcpRuntimeErrorBoundary({
@@ -68,8 +81,8 @@ export async function runManagerInitializeSession(params: {
         sessionKey,
         agentId,
         persistedHandle:
-          previousMeta && readAcpExecutionSelection(previousMeta)?.executor.backend === backend.id
-            ? persistedAcpRuntimeHandle(params, previousMeta)
+          previousMeta && previousAcpSelection?.executor.backend === backend.id
+            ? persistedAcpRuntimeHandle(params, previousMeta, previousAcpSelection)
             : undefined,
         agent,
         mode: input.mode,
@@ -117,30 +130,27 @@ export async function runManagerInitializeSession(params: {
       source: "ensure",
       lastUpdatedAt: identityNow,
     } as const);
-  const meta = commitAcpExecutionSelection(
-    {
-      runtimeSessionName: handle.runtimeSessionName,
-      identity: initializedIdentity,
-      mode: input.mode,
-      ...(Object.keys(effectiveRuntimeOptions).length > 0
-        ? { runtimeOptions: effectiveRuntimeOptions }
-        : {}),
-      cwd: effectiveCwd,
-      state: "idle",
-      lastActivityAt: Date.now(),
-    },
-    {
-      executor: { kind: "acp", backend: handle.backend || backend.id, agent },
-      model: effectiveRuntimeOptions.model ? { id: effectiveRuntimeOptions.model } : null,
-    },
-  );
+  const { model: acceptedModel, ...runtimeOptions } = effectiveRuntimeOptions;
+  const selection: AcpExecutionSelection = {
+    executor: { kind: "acp", backend: handle.backend || backend.id, agent },
+    model: acceptedModel ? { id: acceptedModel } : "native-managed",
+  };
+  const meta: SessionAcpLifecycle = {
+    runtimeSessionName: handle.runtimeSessionName,
+    identity: initializedIdentity,
+    mode: input.mode,
+    ...(Object.keys(runtimeOptions).length ? { runtimeOptions } : {}),
+    cwd: effectiveCwd,
+    state: "idle",
+    lastActivityAt: Date.now(),
+  };
 
   const persisted = await persistInitializedSessionMeta({
     cfg: input.cfg,
     sessionKey,
     agentId,
     meta,
-    executionSelectionSeed: previous?.entry ? { ...previous.entry } : undefined,
+    selection,
     runtime,
     handle,
     writeSessionMeta: params.writeSessionMeta,
@@ -174,8 +184,8 @@ async function persistInitializedSessionMeta(params: {
   cfg: OpenClawConfig;
   sessionKey: string;
   agentId: string;
-  meta: SessionAcpMeta;
-  executionSelectionSeed?: SessionEntry;
+  meta: SessionAcpLifecycle;
+  selection: AcpExecutionSelection;
   runtime: AcpRuntime;
   handle: AcpRuntimeHandle;
   writeSessionMeta: WriteManagerSessionMeta;
@@ -186,8 +196,7 @@ async function persistInitializedSessionMeta(params: {
       sessionKey: params.sessionKey,
       agentId: params.agentId,
       mutate: () => params.meta,
-      executionSelection: readAcpExecutionSelection(params.meta),
-      expectedExecutionSelectionSeed: params.executionSelectionSeed,
+      executionSelection: params.selection,
       failOnError: true,
       assertCommitAllowed: params.assertCommitAllowed,
     });

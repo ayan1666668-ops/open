@@ -13,7 +13,7 @@ import type {
 import type {
   SessionAcpIdentity,
   AcpSessionRuntimeOptions,
-  SessionAcpMeta,
+  SessionAcpLifecycle,
   SessionEntry,
 } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
@@ -45,8 +45,9 @@ export type AcpSessionResolution =
       kind: "ready";
       sessionKey: string;
       agentId: string;
-      meta: SessionAcpMeta;
-      entry?: SessionEntry;
+      meta: SessionAcpLifecycle;
+      entry: SessionEntry;
+      selection: AcpExecutionSelection;
     };
 
 /** Input required to create or resume an ACP runtime session. */
@@ -118,7 +119,7 @@ export type AcpSessionStatus = {
   backend: string;
   agent: string;
   identity?: SessionAcpIdentity;
-  state: SessionAcpMeta["state"];
+  state: SessionAcpLifecycle["state"];
   mode: AcpRuntimeSessionMode;
   runtimeOptions: AcpSessionRuntimeOptions;
   capabilities: AcpRuntimeCapabilities;
@@ -178,15 +179,14 @@ export type AcpSessionManagerDeps = {
 
 export type WriteManagerSessionMeta = (params: {
   executionSelection?: AcpExecutionSelection;
-  expectedExecutionSelectionSeed?: SessionEntry;
   assertCommitAllowed?: () => void;
   cfg: OpenClawConfig;
   sessionKey: string;
   agentId: string;
   mutate: (
-    current: SessionAcpMeta | undefined,
+    current: SessionAcpLifecycle | undefined,
     entry: SessionEntry | undefined,
-  ) => SessionAcpMeta | null | undefined;
+  ) => SessionAcpLifecycle | null | undefined;
   failOnError?: boolean;
   skipMaintenance?: boolean;
   takeCacheOwnership?: boolean;
@@ -202,9 +202,9 @@ export type EnsureManagerRuntimeHandle = (params: {
   cfg: OpenClawConfig;
   sessionKey: string;
   agentId: string;
-  meta: SessionAcpMeta;
+  meta: SessionAcpLifecycle;
   selectedBackend?: string;
-}) => Promise<{ runtime: AcpRuntime; handle: AcpRuntimeHandle; meta: SessionAcpMeta }>;
+}) => Promise<{ runtime: AcpRuntime; handle: AcpRuntimeHandle; meta: SessionAcpLifecycle }>;
 
 export type ReconcileManagerRuntimeSessionIdentifiers = (params: {
   cfg: OpenClawConfig;
@@ -212,12 +212,12 @@ export type ReconcileManagerRuntimeSessionIdentifiers = (params: {
   agentId: string;
   runtime: AcpRuntime;
   handle: AcpRuntimeHandle;
-  meta: SessionAcpMeta;
+  meta: SessionAcpLifecycle;
   runtimeStatus?: AcpRuntimeStatus;
   failOnStatusError: boolean;
 }) => Promise<{
   handle: AcpRuntimeHandle;
-  meta: SessionAcpMeta;
+  meta: SessionAcpLifecycle;
   runtimeStatus?: AcpRuntimeStatus;
 }>;
 
@@ -225,7 +225,7 @@ export type SetManagerSessionState = (params: {
   cfg: OpenClawConfig;
   sessionKey: string;
   agentId: string;
-  state: SessionAcpMeta["state"];
+  state: SessionAcpLifecycle["state"];
   lastError?: string;
   clearLastError?: boolean;
 }) => Promise<void>;
@@ -244,4 +244,4 @@ export const DEFAULT_DEPS: AcpSessionManagerDeps = {
   requireRuntimeBackend: requireAcpRuntimeBackend,
 };
 
-export type { AcpSessionRuntimeOptions, SessionAcpMeta, SessionEntry };
+export type { AcpSessionRuntimeOptions, SessionAcpLifecycle, SessionEntry };

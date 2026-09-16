@@ -3,11 +3,12 @@ import {
   resolveSessionIdentityFromMeta,
 } from "@openclaw/acp-core/runtime/session-identity";
 import type { AcpRuntime, AcpRuntimeHandle } from "@openclaw/acp-core/runtime/types";
-import type { SessionAcpMeta } from "../../config/sessions/types.js";
+import type { SessionAcpLifecycle } from "../../config/sessions/types.js";
+import type { AcpExecutionSelection } from "../../model-picker/execution-selection.js";
 import { parseAgentSessionKey } from "../../routing/session-key.js";
 import { AcpRuntimeError } from "../runtime/errors.js";
 import type { AcpSessionTarget } from "./manager.types.js";
-import { ACP_SELECTION_REPAIR_MESSAGE, requireAcpExecutionSelection } from "./manager.utils.js";
+import { ACP_SELECTION_REPAIR_MESSAGE } from "./manager.utils.js";
 
 /** Old backends can isolate qualified keys, but silently ignore an added owner field. */
 export function assertAcpRuntimeOwnerSupport(runtime: AcpRuntime, target: AcpSessionTarget): void {
@@ -39,13 +40,14 @@ export function isAcpOwnerRepairRequired(error: unknown): boolean {
 
 export function persistedAcpRuntimeHandle(
   target: AcpSessionTarget,
-  meta: SessionAcpMeta,
+  meta: SessionAcpLifecycle,
+  selection: AcpExecutionSelection,
 ): AcpRuntimeHandle {
   const identity = resolveSessionIdentityFromMeta(meta);
   return {
     sessionKey: target.sessionKey,
     agentId: target.agentId,
-    backend: requireAcpExecutionSelection(meta).executor.backend,
+    backend: selection.executor.backend,
     runtimeSessionName: meta.runtimeSessionName,
     cwd: meta.cwd,
     acpxRecordId: identity?.acpxRecordId,

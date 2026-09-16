@@ -6,8 +6,7 @@ import {
   normalizeLowercaseStringOrEmpty,
   normalizeOptionalString as normalizeText,
 } from "@openclaw/normalization-core/string-coerce";
-import type { AcpSessionRuntimeOptions, SessionAcpMeta } from "../../config/sessions/types.js";
-import { readAcpRuntimeOptions } from "../../model-picker/execution-selection-codec.js";
+import type { AcpSessionRuntimeOptions, SessionAcpLifecycle } from "../../config/sessions/types.js";
 import { AcpRuntimeError } from "../runtime/errors.js";
 
 export { normalizeOptionalString as normalizeText } from "@openclaw/normalization-core/string-coerce";
@@ -343,8 +342,8 @@ export function reconcileAcceptedRuntimeOptions(
   });
 }
 
-export function resolveRuntimeOptionsFromMeta(meta: SessionAcpMeta): AcpSessionRuntimeOptions {
-  const normalized = normalizeRuntimeOptions(readAcpRuntimeOptions(meta));
+export function resolveRuntimeOptionsFromMeta(meta: SessionAcpLifecycle): AcpSessionRuntimeOptions {
+  const normalized = normalizeRuntimeOptions(meta.runtimeOptions);
   if (normalized.cwd || !meta.cwd) {
     return normalized;
   }

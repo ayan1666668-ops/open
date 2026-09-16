@@ -31,7 +31,7 @@ import {
   updateSessionEntry,
 } from "../../config/sessions/session-accessor.js";
 import { normalizeResolvedMaintenanceConfigInput } from "../../config/sessions/store-maintenance.js";
-import type { SessionAcpMeta, SessionEntry } from "../../config/sessions/types.js";
+import type { SessionAcpLifecycle, SessionEntry } from "../../config/sessions/types.js";
 import {
   captureSessionInitializationOwner,
   createSessionInitialization,
@@ -158,9 +158,7 @@ async function createSessionEntry(
     { resolveGatewaySessionStoreTarget },
     { readAcpSessionMetaForEntry, upsertAcpSessionMeta },
     { resolveSandboxedSessionCreation },
-    { commitAcpExecutionSelection, consumeSessionExecutionSelectionSeed },
-    { readAcpExecutionSelection },
-    { getSessionExecutionSelection },
+    { commitSessionExecutionSelection, getSessionExecutionSelection },
   ] = await Promise.all([
     import("../../gateway/session-create-service.js"),
     import("../../gateway/session-utils.js"),
@@ -169,8 +167,6 @@ async function createSessionEntry(
     import("../../acp/runtime/session-meta.js"),
     import("../../gateway/operator-role-policy.js"),
     import("../../model-picker/apply-session-model-selection.js"),
-    import("../../model-picker/execution-selection-codec.js"),
-    import("../../model-picker/execution-selection-state.js"),
   ]);
   assertCreationOwner();
   const requiredCreation = resolveSandboxedSessionCreation(
@@ -195,33 +191,31 @@ async function createSessionEntry(
   if (acpInitial && (!acpBackendId || !acpAgentId || !agentSessionId)) {
     throw new Error("initial ACP session binding fields must be non-empty");
   }
-  const initialAcpMeta = (now: number): SessionAcpMeta | undefined =>
-    acpInitial
-      ? commitAcpExecutionSelection(
-          {
-            runtimeSessionName: target.canonicalKey,
-            identity: {
-              state: "resolved",
-              agentSessionId: agentSessionId!,
-              source: "ensure",
-              lastUpdatedAt: now,
-            },
-            mode: "persistent",
-            ...(params.spawnedCwd?.trim() ? { cwd: params.spawnedCwd.trim() } : {}),
-            state: "idle",
-            lastActivityAt: now,
-          },
-          { executor: { kind: "acp", backend: acpBackendId!, agent: acpAgentId! }, model: null },
-        )
-      : undefined;
-  const persistedAcpBinding = acpInitial
-    ? { acpBackendId: acpBackendId!, acpAgentId: acpAgentId!, agentSessionId: agentSessionId! }
+  const acpSelection = acpInitial
+    ? {
+        executor: { kind: "acp" as const, backend: acpBackendId!, agent: acpAgentId! },
+        model: "native-managed" as const,
+      }
     : undefined;
-  const acpMetaMatches = (meta: SessionAcpMeta | undefined): boolean =>
+  const initialAcpMeta = (now: number): SessionAcpLifecycle | undefined =>
+    acpInitial
+      ? {
+          runtimeSessionName: target.canonicalKey,
+          identity: {
+            state: "resolved",
+            agentSessionId: agentSessionId!,
+            source: "ensure",
+            lastUpdatedAt: now,
+          },
+          mode: "persistent",
+          ...(params.spawnedCwd?.trim() ? { cwd: params.spawnedCwd.trim() } : {}),
+          state: "idle",
+          lastActivityAt: now,
+        }
+      : undefined;
+  const acpMetaMatches = (meta: SessionAcpLifecycle | undefined): boolean =>
     Boolean(
       meta &&
-      readAcpExecutionSelection(meta)?.executor.backend === acpBackendId &&
-      readAcpExecutionSelection(meta)?.executor.agent === acpAgentId &&
       meta.runtimeSessionName === target.canonicalKey &&
       meta.identity?.state === "resolved" &&
       meta.identity.agentSessionId === agentSessionId &&
@@ -261,8 +255,7 @@ async function createSessionEntry(
             sessionKey: context.key,
             agentId: context.agentId,
             mutate: () => meta,
-            executionSelection: readAcpExecutionSelection(meta),
-            expectedExecutionSelectionSeed: { ...context.entry },
+            executionSelection: acpSelection,
           });
           if (!persisted?.acp) {
             throw new Error(`could not persist initial ACP binding for ${context.key}`);
@@ -273,7 +266,7 @@ async function createSessionEntry(
             readConsistency: "latest",
           });
           const expectedEntry = { ...context.entry };
-          consumeSessionExecutionSelectionSeed(expectedEntry, context.entry);
+          if (acpSelection) commitSessionExecutionSelection(expectedEntry, acpSelection);
           if (!persistedEntry || !matchesExceptUpdatedAt(persistedEntry, expectedEntry)) {
             throw new Error(`created ACP session ${context.key} changed during initialization`);
           }
@@ -364,7 +357,7 @@ async function createSessionEntry(
                   cliInitial.cliSessionBinding,
                 ))) &&
             (!acpInitial ||
-              (isDeepStrictEqual(matchingEntry.acpSessionBinding, persistedAcpBinding) &&
+              (isDeepStrictEqual(getSessionExecutionSelection(matchingEntry), acpSelection) &&
                 (matchingAcpMeta === undefined || acpMetaMatches(matchingAcpMeta)))) &&
             matchingEntry.spawnedCwd === expectedSpawnedCwd &&
             matchingEntry.sessionRoot === expectedSessionRoot &&
@@ -410,8 +403,30 @@ async function createSessionEntry(
             ...(cliInitial
               ? {
                   executionSelection: {
-                    model: { provider: cliInitial.cliBackendId, id: cliInitial.model },
-                    executor: { kind: "cli" as const, id: cliInitial.cliBackendId },
+                    state: "accepted",
+                    fallbackPermission: "explicit",
+                    selection: {
+                      model: { provider: cliInitial.cliBackendId, id: cliInitial.model },
+                      executor: { kind: "cli" as const, id: cliInitial.cliBackendId },
+                    },
+                  },
+                }
+              : {}),
+            ...(acpSelection
+              ? {
+                  executionSelection: {
+                    state: "accepted" as const,
+                    fallbackPermission: "explicit" as const,
+                    selection: acpSelection,
+                  },
+                }
+              : {}),
+            ...(harnessInitial
+              ? {
+                  executionSelection: {
+                    state: "deferred" as const,
+                    request: { runtime: harnessInitial.agentHarnessId },
+                    fallbackPermission: "explicit" as const,
                   },
                 }
               : {}),
@@ -429,7 +444,6 @@ async function createSessionEntry(
               ...(acpInitial
                 ? {
                     pluginOwnerId: acpInitial.pluginOwnerId,
-                    acpSessionBinding: persistedAcpBinding,
                   }
                 : {}),
               ...(params.initialEntry.modelSelectionLocked === true
@@ -472,7 +486,6 @@ async function createSessionEntry(
           const patch: Partial<SessionEntry> = {
             ...finalEntryPatch,
             initializationPending: undefined,
-            ...(acpInitial ? { acpSessionBinding: undefined } : {}),
           };
           const expectedEntry = rollbackExpectedEntry;
           if (!callbackContext || !expectedEntry) {

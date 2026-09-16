@@ -1,14 +1,12 @@
 /** Ensures configured channel-to-ACP bindings have live sessions and matching runtime options. */
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
-import type { SessionAcpMeta } from "../config/sessions/types.js";
+import type { SessionAcpLifecycle } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { logVerbose } from "../globals.js";
 import { formatErrorMessage } from "../infra/errors.js";
+import type { AcpExecutionSelection } from "../model-picker/execution-selection.js";
 import { getAcpSessionManager } from "./control-plane/manager.js";
-import {
-  requireAcpExecutionSelection,
-  requireReadySessionMeta,
-} from "./control-plane/manager.utils.js";
+import { requireReadySessionMeta } from "./control-plane/manager.utils.js";
 import {
   buildConfiguredAcpSessionKey,
   normalizeText,
@@ -19,7 +17,8 @@ import {
 // Binding lifecycle keeps configured channel conversations attached to matching ACP sessions.
 function sessionStructurallyMatchesConfiguredBinding(params: {
   spec: ConfiguredAcpBindingSpec;
-  meta: SessionAcpMeta;
+  meta: SessionAcpLifecycle;
+  selection: AcpExecutionSelection;
 }): boolean {
   if (params.meta.state === "error") {
     return false;
@@ -28,9 +27,7 @@ function sessionStructurallyMatchesConfiguredBinding(params: {
   const desiredAgent = normalizeLowercaseStringOrEmpty(
     params.spec.acpAgentId ?? params.spec.agentId,
   );
-  const currentAgent = normalizeLowercaseStringOrEmpty(
-    requireAcpExecutionSelection(params.meta).executor.agent,
-  );
+  const currentAgent = normalizeLowercaseStringOrEmpty(params.selection.executor.agent);
   if (!currentAgent || currentAgent !== desiredAgent) {
     return false;
   }
@@ -41,7 +38,7 @@ function sessionStructurallyMatchesConfiguredBinding(params: {
 
   const desiredBackend = normalizeText(params.spec.backend);
   if (desiredBackend) {
-    const currentBackend = requireAcpExecutionSelection(params.meta).executor.backend;
+    const currentBackend = params.selection.executor.backend;
     if (!currentBackend || currentBackend !== desiredBackend) {
       return false;
     }
@@ -82,6 +79,7 @@ export async function ensureConfiguredAcpBindingSession(params: {
       sessionStructurallyMatchesConfiguredBinding({
         spec: params.spec,
         meta: resolution.meta,
+        selection: resolution.selection,
       })
     ) {
       // Configured model preferences initialize once; the accepted model survives later ensures.

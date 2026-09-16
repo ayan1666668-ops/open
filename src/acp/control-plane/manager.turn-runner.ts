@@ -4,7 +4,7 @@ import type { AcpRuntime, AcpRuntimeHandle } from "@openclaw/acp-core/runtime/ty
 import { expectDefined } from "@openclaw/normalization-core";
 import { resolveAdmittedRunActiveAssertion } from "../../agents/admitted-run-context.js";
 import { logVerbose } from "../../globals.js";
-import { commitAcpExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
+import type { AcpExecutionSelection } from "../../model-picker/execution-selection.js";
 import {
   recordSessionHumanDirectMessage,
   recordSubagentTerminalState,
@@ -31,7 +31,10 @@ import {
 import { cancelManagerActiveTurn } from "./manager.cancel-session.js";
 import { applyManagerRuntimeControls } from "./manager.runtime-controls.js";
 import type { ManagerRuntimeHandleCache } from "./manager.runtime-handle-cache.js";
-import { initializeManagerExecutionSelection } from "./manager.runtime-options-commands.js";
+import {
+  initializeManagerExecutionSelection,
+  commitManagerExecutionSelection,
+} from "./manager.runtime-options-commands.js";
 import { isAcpOwnerRepairRequired } from "./manager.runtime-owner.js";
 import { prepareFreshManagerRuntimeHandleRetry } from "./manager.runtime-resume-state.js";
 import { consumeAcpTurnStream } from "./manager.turn-stream.js";
@@ -48,7 +51,7 @@ import type {
   ReconcileManagerRuntimeSessionIdentifiers,
   ResolveManagerSession,
   SetManagerSessionState,
-  SessionAcpMeta,
+  SessionAcpLifecycle,
   WriteManagerSessionMeta,
 } from "./manager.types.js";
 import {
@@ -56,6 +59,7 @@ import {
   requireAcpExecutionSelection,
   acpSessionActorKey,
   requireReadySessionMeta,
+  requireReadySession,
 } from "./manager.utils.js";
 
 const ACP_TURN_TIMEOUT_GRACE_MS = 1_000;
@@ -121,7 +125,7 @@ export async function runManagerTurn(params: {
     sessionKey,
     agentId,
   });
-  const initialMeta = requireReadySessionMeta(initialResolution);
+  const { meta: initialMeta, selection: initialSelection } = requireReadySession(initialResolution);
   recordSessionHumanDirectMessage({
     sessionKey,
     entry: initialResolution.kind === "ready" ? initialResolution.entry : undefined,
@@ -136,7 +140,7 @@ export async function runManagerTurn(params: {
       ? (initialResolution.entry?.spawnedBy ?? initialResolution.entry?.parentSessionKey)
       : undefined;
   const { candidateBackends, describeBackendCandidate } = resolveBackendCandidatePlan({
-    resolvedPrimaryBackend: requireAcpExecutionSelection(initialMeta).executor.backend,
+    resolvedPrimaryBackend: initialSelection.executor.backend,
     fallbackBackends: input.cfg.acp?.fallbacks,
   });
   const backendAttempts: BackendAttempt[] = [];
@@ -197,8 +201,7 @@ export async function runManagerTurn(params: {
 
   try {
     for (const [backendIdx, currentBackend] of candidateBackends.entries()) {
-      const turnLocal =
-        currentBackend !== requireAcpExecutionSelection(initialMeta).executor.backend;
+      const turnLocal = currentBackend !== initialSelection.executor.backend;
       if (backendIdx > 0) {
         await params.runtimeHandles.close({
           sessionKey,
@@ -224,7 +227,9 @@ export async function runManagerTurn(params: {
                 sessionKey,
                 agentId,
               });
-        const resolvedMeta = requireReadySessionMeta(resolution);
+        const ready = requireReadySession(resolution);
+        const resolvedMeta = ready.meta;
+        let acceptedSelection = ready.selection;
         if (turnLocal) {
           const reserved = await params.writeSessionMeta({
             cfg: input.cfg,
@@ -245,7 +250,7 @@ export async function runManagerTurn(params: {
         }
         let runtime: AcpRuntime | undefined;
         let handle: AcpRuntimeHandle | undefined;
-        let meta: SessionAcpMeta | undefined;
+        let meta: SessionAcpLifecycle | undefined;
         let activeTurn: ActiveTurnState | undefined;
         let activeTurnStarted = false;
         let promptStarted = false;
@@ -284,26 +289,75 @@ export async function runManagerTurn(params: {
               runtime,
               handle,
               meta,
+              selection: acceptedSelection,
+              onBeforeModelControl: async () => {
+                const paused = await params.writeSessionMeta({
+                  cfg: input.cfg,
+                  sessionKey,
+                  agentId,
+                  assertCommitAllowed: resolveAdmittedRunActiveAssertion(
+                    input.admittedRunContext,
+                    input.signal,
+                  ),
+                  mutate: (current, entry) =>
+                    current && entry
+                      ? { ...current, state: "error", lastError: ACP_SELECTION_REPAIR_MESSAGE }
+                      : null,
+                  failOnError: true,
+                });
+                if (!paused?.acp)
+                  throw new AcpRuntimeError(
+                    "ACP_SESSION_INIT_FAILED",
+                    "The session disappeared before model preparation.",
+                  );
+              },
               getCachedRuntimeState: () => params.runtimeHandles.get(params),
               onOptionsChanged: async (runtimeOptions) => {
-                const selection = requireAcpExecutionSelection(ensured.meta);
-                const accepted = {
-                  ...selection,
-                  model: runtimeOptions.model ? { id: runtimeOptions.model } : null,
+                const accepted: AcpExecutionSelection = {
+                  ...acceptedSelection,
+                  model: runtimeOptions.model ? { id: runtimeOptions.model } : "native-managed",
                 };
+                const { model: _model, ...options } = runtimeOptions;
                 if (!turnLocal) {
+                  await commitManagerExecutionSelection({
+                    cfg: input.cfg,
+                    sessionKey,
+                    agentId,
+                    runtimeHandles: params.runtimeHandles,
+                    resolveSession: params.resolveSession,
+                    ensureRuntimeHandle: params.ensureRuntimeHandle,
+                    writeSessionMeta: params.writeSessionMeta,
+                    assertActive: resolveAdmittedRunActiveAssertion(
+                      input.admittedRunContext,
+                      input.signal,
+                    ),
+                    expected: { ...ready, selection: acceptedSelection },
+                    selection: accepted,
+                  });
                   await params.writeSessionMeta({
                     cfg: input.cfg,
                     sessionKey,
                     agentId,
-                    mutate: (current) =>
-                      current
-                        ? commitAcpExecutionSelection({ ...current, runtimeOptions }, accepted)
-                        : null,
+                    assertCommitAllowed: resolveAdmittedRunActiveAssertion(
+                      input.admittedRunContext,
+                      input.signal,
+                    ),
+                    mutate: (current, entry) => {
+                      if (!current || !entry) return null;
+                      if (!isDeepStrictEqual(requireAcpExecutionSelection(entry), accepted))
+                        throw new AcpRuntimeError(
+                          "ACP_SESSION_INIT_FAILED",
+                          "The session changed during model preparation.",
+                        );
+                      const next = { ...current, runtimeOptions: options, state: "idle" as const };
+                      delete next.lastError;
+                      return next;
+                    },
                     failOnError: true,
                   });
                 }
-                meta = commitAcpExecutionSelection({ ...ensured.meta, runtimeOptions }, accepted);
+                acceptedSelection = accepted;
+                meta = { ...ensured.meta, runtimeOptions: options };
               },
             });
           }
@@ -473,6 +527,7 @@ export async function runManagerTurn(params: {
           retryFreshHandle =
             !turnLocal &&
             (await prepareFreshManagerRuntimeHandleRetry({
+              selection: acceptedSelection,
               attempt,
               cfg: input.cfg,
               sessionKey,
@@ -547,10 +602,7 @@ export async function runManagerTurn(params: {
                   !controlsConfirmed ||
                   current.lastError !== ACP_SELECTION_REPAIR_MESSAGE ||
                   current.runtimeSessionName !== resolvedMeta.runtimeSessionName ||
-                  !isDeepStrictEqual(
-                    requireAcpExecutionSelection(current),
-                    requireAcpExecutionSelection(resolvedMeta),
-                  )
+                  !isDeepStrictEqual(requireAcpExecutionSelection(entry), ready.selection)
                 ) {
                   return current;
                 }

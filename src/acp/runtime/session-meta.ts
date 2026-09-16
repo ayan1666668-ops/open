@@ -9,7 +9,7 @@ import {
   mergeSessionEntry,
   type AcpSessionRuntimeOptions,
   type SessionAcpIdentity,
-  type SessionAcpMeta,
+  type SessionAcpLifecycle,
   type SessionEntry,
 } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
@@ -18,12 +18,9 @@ import {
   legacyAcpMigrationBindingMatches,
   recordLegacyAcpMigrationCompletion,
 } from "../../infra/legacy-acp-migration-source.js";
-import {
-  decodeAcpExecutionSelectionStorage,
-  encodeAcpExecutionSelectionStorage,
-} from "../../model-picker/execution-selection-codec.js";
-/** SQLite-backed ACP session metadata storage keyed through session-store entries. */
+import { commitSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
 import type { AcpExecutionSelection } from "../../model-picker/execution-selection.js";
+/** SQLite-backed ACP session metadata storage keyed through session-store entries. */
 import { withExistingOpenClawStateDatabaseReadOnly } from "../../state/openclaw-state-db-readonly.js";
 import {
   type OpenClawStateDatabaseOptions,
@@ -59,17 +56,17 @@ export type AcpSessionStoreEntry = {
   sessionKey: string;
   storeSessionKey: string;
   entry?: SessionEntry;
-  acp?: SessionAcpMeta;
+  acp?: SessionAcpLifecycle;
   storeReadFailed?: boolean;
 };
 
-export function rowToAcpSessionMeta(row: AcpSessionRow): SessionAcpMeta {
+export function rowToAcpSessionMeta(row: AcpSessionRow): SessionAcpLifecycle {
   const identity = safeParseJsonRecord(row.identity_json ?? "") as SessionAcpIdentity | undefined;
   const runtimeOptions = safeParseJsonRecord(row.runtime_options_json ?? "") as
     | AcpSessionRuntimeOptions
     | undefined;
   return {
-    ...decodeAcpExecutionSelectionStorage(row, runtimeOptions),
+    ...(runtimeOptions ? { runtimeOptions } : {}),
     runtimeSessionName: row.runtime_session_name,
     ...(identity ? { identity } : {}),
     mode: row.mode === "oneshot" ? "oneshot" : "persistent",
@@ -84,7 +81,7 @@ function bindAcpSessionMeta(params: {
   sessionKey: string;
   sessionId?: string;
   lifecycleRevision?: string;
-  meta: SessionAcpMeta;
+  meta: SessionAcpLifecycle;
   updatedAt: number;
 }): Insertable<AcpSessionsTable> {
   return {
@@ -92,7 +89,9 @@ function bindAcpSessionMeta(params: {
     // Kept in the existing column for schema neutrality. New rows prefer the
     // lifecycle revision; pre-revision entries retain the session-id fence.
     session_id: params.lifecycleRevision ?? params.sessionId ?? null,
-    ...encodeAcpExecutionSelectionStorage(params.meta),
+    runtime_options_json: params.meta.runtimeOptions
+      ? JSON.stringify(params.meta.runtimeOptions)
+      : null,
     runtime_session_name: params.meta.runtimeSessionName,
     identity_json: params.meta.identity ? JSON.stringify(params.meta.identity) : null,
     mode: params.meta.mode,
@@ -110,7 +109,7 @@ export function readAcpSessionMeta(params: {
   cfg?: OpenClawConfig;
   env?: NodeJS.ProcessEnv;
   databasePath?: string;
-}): SessionAcpMeta | undefined {
+}): SessionAcpLifecycle | undefined {
   return readAcpSessionEntry({
     ...params,
     sessionKey: params.sessionKey.trim(),
@@ -125,7 +124,7 @@ export function readAcpSessionMetaForEntry(params: {
   entry: AcpSessionEntryBinding | undefined;
   env?: NodeJS.ProcessEnv;
   databasePath?: string;
-}): SessionAcpMeta | undefined {
+}): SessionAcpLifecycle | undefined {
   const sessionKey = params.sessionKey.trim();
   if (!sessionKey) {
     return undefined;
@@ -159,8 +158,8 @@ export function readAcpSessionMetaBatch(params: {
   env?: NodeJS.ProcessEnv;
   databasePath?: string;
   cfg?: OpenClawConfig;
-}): Map<SessionEntry, SessionAcpMeta | undefined> {
-  const result = new Map<SessionEntry, SessionAcpMeta | undefined>();
+}): Map<SessionEntry, SessionAcpLifecycle | undefined> {
+  const result = new Map<SessionEntry, SessionAcpLifecycle | undefined>();
   const entriesByKey = new Map<
     string,
     Array<{ entry: SessionEntry; rawSessionKey: string; legacyKeys: string[] }>
@@ -246,7 +245,7 @@ export function writeAcpSessionMetaForMigration(params: {
   sessionKey: string;
   sessionId?: string;
   lifecycleRevision?: string;
-  meta: SessionAcpMeta;
+  meta: SessionAcpLifecycle;
   env?: NodeJS.ProcessEnv;
   database?: OpenClawStateDatabaseOptions["database"];
   databasePath?: string;
@@ -469,7 +468,10 @@ export async function listAcpSessionEntries(params: {
   return entries;
 }
 
-function mergeAcpForReturn(entry: SessionEntry | undefined, acp: SessionAcpMeta): SessionEntry {
+function mergeAcpForReturn(
+  entry: SessionEntry | undefined,
+  acp: SessionAcpLifecycle,
+): SessionEntry {
   return mergeSessionEntry(entry, { acp });
 }
 
@@ -516,7 +518,6 @@ function consumeLegacyAcpMigrationSources(params: {
 
 export async function upsertAcpSessionMeta(params: {
   executionSelection?: AcpExecutionSelection;
-  expectedExecutionSelectionSeed?: SessionEntry;
   assertCommitAllowed?: () => void;
   sessionKey: string;
   agentId?: string;
@@ -527,9 +528,9 @@ export async function upsertAcpSessionMeta(params: {
   skipMaintenance?: boolean;
   takeCacheOwnership?: boolean;
   mutate: (
-    current: SessionAcpMeta | undefined,
+    current: SessionAcpLifecycle | undefined,
     entry: SessionEntry | undefined,
-  ) => SessionAcpMeta | null | undefined;
+  ) => SessionAcpLifecycle | null | undefined;
 }): Promise<SessionEntry | null> {
   const sessionKey = params.sessionKey.trim();
   if (!sessionKey) {
@@ -548,9 +549,9 @@ export async function upsertAcpSessionMeta(params: {
   const { entry, storePath } = storeEntry;
   const storageSessionKey = storeEntry.storeSessionKey;
   const databaseSessionKey = buildAcpDatabaseSessionKey(storageSessionKey, storeEntry.agentId);
-  let current: SessionAcpMeta | undefined;
+  let current: SessionAcpLifecycle | undefined;
   let currentRowKey: string | undefined;
-  let nextMeta: SessionAcpMeta | null | undefined;
+  let nextMeta: SessionAcpLifecycle | null | undefined;
   let preparedEntry: SessionEntry | undefined;
   const updatedAt = params.now?.() ?? Date.now();
   runOpenClawStateWriteTransaction(
@@ -572,12 +573,7 @@ export async function upsertAcpSessionMeta(params: {
     },
     { env: params.env, path: params.databasePath },
   );
-  const metaToPersist =
-    nextMeta && params.executionSelection
-      ? (
-          await import("../../model-picker/apply-session-model-selection.js")
-        ).commitAcpExecutionSelection(nextMeta, params.executionSelection)
-      : nextMeta;
+  const metaToPersist = nextMeta;
   if (metaToPersist === undefined) {
     return current ? mergeAcpForReturn(entry, current) : (entry ?? null);
   }
@@ -651,6 +647,8 @@ export async function upsertAcpSessionMeta(params: {
         updatedAt,
       });
       delete next.acp;
+      if (params.executionSelection)
+        commitSessionExecutionSelection(next, params.executionSelection);
       return next;
     },
     {
@@ -725,32 +723,5 @@ export async function upsertAcpSessionMeta(params: {
     },
     { env: params.env, path: params.databasePath },
   );
-  if (params.executionSelection && params.expectedExecutionSelectionSeed) {
-    const { consumeSessionExecutionSelectionSeed } =
-      await import("../../model-picker/apply-session-model-selection.js");
-    const expected = params.expectedExecutionSelectionSeed;
-    const consumed = await patchSessionEntryWithKey(
-      {
-        ...(storeEntry.agentId ? { agentId: storeEntry.agentId } : {}),
-        storePath,
-        sessionKey: persisted.sessionKey,
-      },
-      (currentEntry) => {
-        const next = { ...currentEntry };
-        return consumeSessionExecutionSelectionSeed(next, expected) ? next : null;
-      },
-      {
-        ...sessionStoreUpdateOptions({ ...params, sessionKey: persisted.sessionKey }),
-        replaceEntry: true,
-        assertCommitAllowed: params.assertCommitAllowed,
-      },
-    );
-    if (!consumed) {
-      throw new Error(
-        "ACP selection committed but its staged model request could not be reconciled.",
-      );
-    }
-    return mergeAcpForReturn(consumed.entry, metaToPersist);
-  }
   return mergeAcpForReturn(persisted.entry, metaToPersist);
 }

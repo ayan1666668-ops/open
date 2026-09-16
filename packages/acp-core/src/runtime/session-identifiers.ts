@@ -2,7 +2,7 @@ import {
   normalizeLowercaseStringOrEmpty,
   normalizeOptionalString as normalizeText,
 } from "@openclaw/normalization-core/string-coerce";
-import type { SessionAcpIdentity, SessionAcpMeta } from "../types.js";
+import type { SessionAcpIdentity, SessionAcpLifecycle, SessionAcpMeta } from "../types.js";
 import { isSessionIdentityPending, resolveSessionIdentityFromMeta } from "./session-identity.js";
 
 export const ACP_SESSION_IDENTITY_RENDERER_VERSION = "v1";
@@ -94,7 +94,7 @@ export function resolveAcpSessionIdentifierLinesFromIdentity(params: {
 }
 
 /** Resolves the runtime cwd, preferring modern runtimeOptions over legacy metadata. */
-export function resolveAcpSessionCwd(meta?: SessionAcpMeta): string | undefined {
+export function resolveAcpSessionCwd(meta?: SessionAcpLifecycle): string | undefined {
   const runtimeCwd = normalizeText(meta?.runtimeOptions?.cwd);
   if (runtimeCwd) {
     return runtimeCwd;
@@ -107,9 +107,22 @@ export function resolveAcpThreadSessionDetailLines(params: {
   sessionKey: string;
   meta?: SessionAcpMeta;
 }): string[] {
+  return resolveAcpLifecycleDetailLines({
+    meta: params.meta,
+    backend: params.meta?.backend,
+    agent: params.meta?.agent,
+  });
+}
+
+/** Renders lifecycle identifiers using the accepted executor supplied by the session owner. */
+export function resolveAcpLifecycleDetailLines(params: {
+  meta?: SessionAcpLifecycle;
+  backend?: string;
+  agent?: string;
+}): string[] {
   const meta = params.meta;
   const identity = resolveSessionIdentityFromMeta(meta);
-  const backend = normalizeText(meta?.backend) ?? "backend";
+  const backend = normalizeText(params.backend) ?? "backend";
   const lines = resolveAcpSessionIdentifierLinesFromIdentity({
     backend,
     identity,
@@ -119,7 +132,7 @@ export function resolveAcpThreadSessionDetailLines(params: {
     return lines;
   }
   const hint = resolveAcpAgentResumeHintLine({
-    agentId: meta?.agent,
+    agentId: params.agent,
     agentSessionId: identity?.agentSessionId,
   });
   if (hint) {

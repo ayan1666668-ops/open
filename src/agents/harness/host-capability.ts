@@ -63,6 +63,7 @@ import {
   resolveAgentQuestionAnswerAuthority,
   withAgentQuestionAnswerAuthority,
 } from "./host-private-capabilities.js";
+import { bindNativeExecutionSelection } from "./native-execution-selection.js";
 import { createSessionNodeAuthorities } from "./node-execution-authority.js";
 
 type AgentHarnessHostAttempt = Partial<EmbeddedRunAttemptParams> &
@@ -174,6 +175,7 @@ function gateBoundTool(
 export function createAgentHarnessHostCapabilities(params: {
   attempt: AgentHarnessHostAttempt;
   pluginId: string;
+  harnessId?: string;
   requiredNodeCommands?: readonly string[];
 }): {
   capabilities: AgentHarnessHostCapabilities;
@@ -458,6 +460,11 @@ export function createAgentHarnessHostCapabilities(params: {
     kind: "agent-harness-host-capability" as const,
     version: 1 as const,
     assertActive,
+    commitNativeSelection: bindNativeExecutionSelection({
+      attempt,
+      harnessId: params.harnessId,
+      assertActive,
+    }),
     reportOutputTokens: (outputTokens) => {
       assertActive();
       const data = emitAgentRunOutputTokens({

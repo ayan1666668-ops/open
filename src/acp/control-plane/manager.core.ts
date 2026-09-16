@@ -8,8 +8,6 @@ import { AgentSelectionRequiredError } from "../../agents/agent-scope-config.js"
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { logVerbose } from "../../globals.js";
 import { toErrorObject } from "../../infra/errors.js";
-import { decodeSessionExecutionSelection } from "../../model-picker/execution-selection-codec.js";
-import { executionSelectionCodecMetadata } from "../../model-picker/execution-selection-state.js";
 import type { AcpExecutionSelection } from "../../model-picker/execution-selection.js";
 import { isAcpSessionKey } from "../../sessions/session-key-utils.js";
 import { AcpRuntimeError } from "../runtime/errors.js";
@@ -27,7 +25,8 @@ import { registerAcpSessionManagerDisposer } from "./manager.lifecycle.js";
 import { ManagerRuntimeHandleCache } from "./manager.runtime-handle-cache.js";
 import { ensureManagerRuntimeHandle } from "./manager.runtime-handle-ensure.js";
 import {
-  consumeManagerExecutionSelectionSeed,
+  commitManagerExecutionSelection,
+  runWithManagerExecutionSelection,
   runResetManagerSessionRuntimeOptions,
   runSetManagerSessionConfigOption,
   runSetManagerSessionRuntimeMode,
@@ -52,7 +51,7 @@ import {
   type AcpStartupIdentityReconcileResult,
   type ActiveTurnState,
   DEFAULT_DEPS,
-  type SessionAcpMeta,
+  type SessionAcpLifecycle,
   type SessionEntry,
   type TurnLatencyStats,
 } from "./manager.types.js";
@@ -131,12 +130,13 @@ export class AcpSessionManager {
       clone: false,
     });
     const acp = stored?.acp;
-    if (acp) {
+    if (acp && stored.entry) {
       return {
         kind: "ready",
         ...target,
         meta: acp,
         entry: stored.entry,
+        selection: requireAcpExecutionSelection(stored.entry),
       };
     }
     if (isAcpSessionKey(sessionKey)) {
@@ -188,7 +188,7 @@ export class AcpSessionManager {
   async initializeSession(input: AcpInitializeSessionInput): Promise<{
     runtime: AcpRuntime;
     handle: AcpRuntimeHandle;
-    meta: SessionAcpMeta;
+    meta: SessionAcpLifecycle;
     sessionEntry: SessionEntry;
     closeRuntimeOnFailure: () => Promise<void>;
   }> {
@@ -259,6 +259,26 @@ export class AcpSessionManager {
     });
   }
 
+  async withExecutionSelection<T>(params: {
+    cfg: OpenClawConfig;
+    sessionKey: string;
+    agentId?: string;
+    selection: AcpExecutionSelection;
+    assertActive?: () => void;
+    commitAccepted: (selection: AcpExecutionSelection) => Promise<T>;
+  }): Promise<T> {
+    const target = resolveAcpSessionTarget(params);
+    return await this.withSessionActor(
+      target,
+      async () =>
+        await runWithManagerExecutionSelection({
+          ...params,
+          ...target,
+          ...this.runtimeOptionCommandServices(),
+        }),
+    );
+  }
+
   async setExecutionSelection(params: {
     cfg: OpenClawConfig;
     sessionKey: string;
@@ -267,57 +287,24 @@ export class AcpSessionManager {
     assertActive?: () => void;
   }): Promise<AcpExecutionSelection> {
     const target = resolveAcpSessionTarget(params);
-    return await this.withSessionActor(target, async () => {
-      params.assertActive?.();
-      const resolution = this.resolveSession({ ...params, ...target });
-      const meta = requireReadySessionMeta(resolution);
-      const current = requireAcpExecutionSelection(meta);
-      if (
-        current.executor.backend !== params.selection.executor.backend ||
-        current.executor.agent !== params.selection.executor.agent
-      ) {
-        throw new AcpRuntimeError(
-          "ACP_BACKEND_UNSUPPORTED_CONTROL",
-          "Changing apps requires a new conversation.",
-        );
-      }
-      if (current.model?.id === params.selection.model?.id) {
-        params.assertActive?.();
-        if (
-          resolution.kind === "ready" &&
-          resolution.entry &&
-          decodeSessionExecutionSelection(
-            { ...resolution.entry, acp: meta },
-            executionSelectionCodecMetadata(params.cfg),
-          ).kind === "uninitialized"
-        ) {
-          await consumeManagerExecutionSelectionSeed({
-            cfg: params.cfg,
-            ...target,
-            seed: { ...resolution.entry },
-            assertActive: params.assertActive,
-            ...this.runtimeOptionCommandServices(),
-          });
-        }
-        return current;
-      }
-      if (!params.selection.model) {
-        throw new AcpRuntimeError(
-          "ACP_BACKEND_UNSUPPORTED_CONTROL",
-          "This app cannot restore its default model in the current conversation. Select a model explicitly.",
-        );
-      }
-      await runSetManagerSessionConfigOption({
-        cfg: params.cfg,
-        ...target,
-        key: "model",
-        value: params.selection.model.id,
-        assertActive: params.assertActive,
-        ...this.runtimeOptionCommandServices(),
-      });
-      return requireAcpExecutionSelection(
-        requireReadySessionMeta(this.resolveSession({ ...params, ...target })),
-      );
+    return await this.withExecutionSelection({
+      ...params,
+      commitAccepted: async (selection) => {
+        const expected = this.resolveSession({ ...params, ...target });
+        if (expected.kind !== "ready")
+          throw new AcpRuntimeError(
+            "ACP_SESSION_INIT_FAILED",
+            "The session disappeared before its model selection could be committed.",
+          );
+        await commitManagerExecutionSelection({
+          ...params,
+          ...target,
+          ...this.runtimeOptionCommandServices(),
+          expected,
+          selection,
+        });
+        return selection;
+      },
     });
   }
 
@@ -457,11 +444,14 @@ export class AcpSessionManager {
     cfg: OpenClawConfig;
     sessionKey: string;
     agentId: string;
-    meta: SessionAcpMeta;
+    meta: SessionAcpLifecycle;
     selectedBackend?: string;
-  }): Promise<{ runtime: AcpRuntime; handle: AcpRuntimeHandle; meta: SessionAcpMeta }> {
+  }): Promise<{ runtime: AcpRuntime; handle: AcpRuntimeHandle; meta: SessionAcpLifecycle }> {
     return await ensureManagerRuntimeHandle({
       ...params,
+      selection: requireAcpExecutionSelection(
+        this.deps.loadSessionEntry({ ...params, clone: false })?.entry,
+      ),
       deps: this.deps,
       runtimeHandles: this.runtimeHandles,
       writeSessionMeta: async (writeParams) => await this.writeSessionMeta(writeParams),
@@ -498,7 +488,7 @@ export class AcpSessionManager {
     cfg: OpenClawConfig;
     sessionKey: string;
     agentId: string;
-    state: SessionAcpMeta["state"];
+    state: SessionAcpLifecycle["state"];
     lastError?: string;
     clearLastError?: boolean;
   }): Promise<void> {
@@ -519,7 +509,7 @@ export class AcpSessionManager {
         if (base.state === "error" && base.lastError === ACP_SELECTION_REPAIR_MESSAGE) {
           return base;
         }
-        const next: SessionAcpMeta = {
+        const next: SessionAcpLifecycle = {
           ...base,
           state: params.state,
           lastActivityAt: Date.now(),
@@ -541,12 +531,12 @@ export class AcpSessionManager {
     agentId: string;
     runtime: AcpRuntime;
     handle: AcpRuntimeHandle;
-    meta: SessionAcpMeta;
+    meta: SessionAcpLifecycle;
     runtimeStatus?: AcpRuntimeStatus;
     failOnStatusError: boolean;
   }): Promise<{
     handle: AcpRuntimeHandle;
-    meta: SessionAcpMeta;
+    meta: SessionAcpLifecycle;
     runtimeStatus?: AcpRuntimeStatus;
   }> {
     return await reconcileManagerRuntimeSessionIdentifiers({
@@ -563,15 +553,14 @@ export class AcpSessionManager {
 
   private async writeSessionMeta(params: {
     executionSelection?: AcpExecutionSelection;
-    expectedExecutionSelectionSeed?: SessionEntry;
     assertCommitAllowed?: () => void;
     cfg: OpenClawConfig;
     sessionKey: string;
     agentId: string;
     mutate: (
-      current: SessionAcpMeta | undefined,
+      current: SessionAcpLifecycle | undefined,
       entry: SessionEntry | undefined,
-    ) => SessionAcpMeta | null | undefined;
+    ) => SessionAcpLifecycle | null | undefined;
     failOnError?: boolean;
     skipMaintenance?: boolean;
     takeCacheOwnership?: boolean;
@@ -583,7 +572,6 @@ export class AcpSessionManager {
         agentId: params.agentId,
         mutate: params.mutate,
         executionSelection: params.executionSelection,
-        expectedExecutionSelectionSeed: params.expectedExecutionSelectionSeed,
         assertCommitAllowed: params.assertCommitAllowed,
         ...(params.skipMaintenance === true ? { skipMaintenance: true } : {}),
         ...(params.takeCacheOwnership === true ? { takeCacheOwnership: true } : {}),

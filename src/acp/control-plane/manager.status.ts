@@ -10,7 +10,7 @@ import type {
   ReconcileManagerRuntimeSessionIdentifiers,
   ResolveManagerSession,
 } from "./manager.types.js";
-import { requireAcpExecutionSelection, requireReadySessionMeta } from "./manager.utils.js";
+import { requireReadySession } from "./manager.utils.js";
 import { resolveRuntimeOptionsFromMeta } from "./runtime-options.js";
 
 /** Reads a fresh ACP session status and reconciles runtime identifiers from the status response. */
@@ -30,7 +30,7 @@ export async function runManagerGetSessionStatus(params: {
     sessionKey: params.sessionKey,
     agentId: params.agentId,
   });
-  const resolvedMeta = requireReadySessionMeta(resolution);
+  const { meta: resolvedMeta, selection } = requireReadySession(resolution);
   const {
     runtime,
     handle: ensuredHandle,
@@ -76,12 +76,15 @@ export async function runManagerGetSessionStatus(params: {
   return {
     sessionKey: params.sessionKey,
     agentId: params.agentId,
-    backend: handle.backend || requireAcpExecutionSelection(meta).executor.backend,
-    agent: requireAcpExecutionSelection(meta).executor.agent,
+    backend: handle.backend,
+    agent: selection.executor.agent,
     ...(identity ? { identity } : {}),
     state: meta.state,
     mode: meta.mode,
-    runtimeOptions: resolveRuntimeOptionsFromMeta(meta),
+    runtimeOptions: {
+      ...resolveRuntimeOptionsFromMeta(meta),
+      ...(selection.model !== "native-managed" ? { model: selection.model.id } : {}),
+    },
     capabilities,
     runtimeStatus,
     lastActivityAt: meta.lastActivityAt,

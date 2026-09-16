@@ -1,8 +1,9 @@
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
-import type { SessionAcpMeta } from "../../config/sessions/types.js";
+import type { SessionAcpLifecycle, SessionEntry } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { toErrorObject } from "../../infra/errors.js";
-import { readAcpExecutionSelection } from "../../model-picker/execution-selection-codec.js";
+import { getCommittedSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
+import { isAcpExecutionSelection } from "../../model-picker/execution-selection.js";
 import type { AcpExecutionSelection } from "../../model-picker/execution-selection.js";
 import { normalizeAgentId, parseAgentSessionKey } from "../../routing/session-key.js";
 /** Shared ACP manager normalization, resolution, and error helpers. */
@@ -44,9 +45,11 @@ export function resolveAcpSessionResolutionError(
 export const ACP_SELECTION_REPAIR_MESSAGE =
   "The app did not confirm the last change. Start a new session, or repair this session before sending another message.";
 
-export function requireAcpExecutionSelection(meta: SessionAcpMeta): AcpExecutionSelection {
-  const selection = readAcpExecutionSelection(meta);
-  if (!selection) {
+export function requireAcpExecutionSelection(
+  entry: SessionEntry | undefined,
+): AcpExecutionSelection {
+  const selection = getCommittedSessionExecutionSelection(entry);
+  if (!selection || !isAcpExecutionSelection(selection)) {
     throw new AcpRuntimeError(
       "ACP_SESSION_INIT_FAILED",
       "The session execution selection is incomplete. Reinitialize this session.",
@@ -56,7 +59,9 @@ export function requireAcpExecutionSelection(meta: SessionAcpMeta): AcpExecution
 }
 
 /** Returns ready metadata; an uncertain external write must remain paused after restart. */
-export function requireReadySessionMeta(resolution: AcpSessionResolution): SessionAcpMeta {
+export function requireReadySession(
+  resolution: AcpSessionResolution,
+): Extract<AcpSessionResolution, { kind: "ready" }> {
   if (resolution.kind === "ready") {
     if (
       resolution.meta.state === "error" &&
@@ -64,9 +69,13 @@ export function requireReadySessionMeta(resolution: AcpSessionResolution): Sessi
     ) {
       throw new AcpRuntimeError("ACP_SESSION_INIT_FAILED", ACP_SELECTION_REPAIR_MESSAGE);
     }
-    return resolution.meta;
+    return resolution;
   }
   throw toErrorObject(resolveAcpSessionResolutionError(resolution), "Non-Error thrown");
+}
+
+export function requireReadySessionMeta(resolution: AcpSessionResolution): SessionAcpLifecycle {
+  return requireReadySession(resolution).meta;
 }
 
 /** Resolve ownership before main aliases can erase the encoded agent namespace. */
@@ -118,7 +127,7 @@ export function createUnsupportedControlError(params: {
   );
 }
 
-export function hasLegacyAcpIdentityProjection(meta: SessionAcpMeta): boolean {
+export function hasLegacyAcpIdentityProjection(meta: SessionAcpLifecycle): boolean {
   const raw = meta as Record<string, unknown>;
   return (
     Object.hasOwn(raw, "backendSessionId") ||

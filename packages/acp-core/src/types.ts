@@ -81,16 +81,21 @@ export type AcpSessionRuntimeOptions = {
   backendExtras?: Record<string, string>;
 };
 
-export type SessionAcpMeta = {
-  backend: string;
-  agent: string;
+export type SessionAcpLifecycle = {
   runtimeSessionName: string;
   /** Canonical backend/agent ids used for resume hints and thread/status details. */
   identity?: SessionAcpIdentity;
   mode: "persistent" | "oneshot";
-  runtimeOptions?: AcpSessionRuntimeOptions;
+  runtimeOptions?: Omit<AcpSessionRuntimeOptions, "model">;
   cwd?: string;
   state: "idle" | "running" | "error";
   lastActivityAt: number;
   lastError?: string;
+};
+
+/** Public metadata projection retained for existing plugin callers. */
+export type SessionAcpMeta = Omit<SessionAcpLifecycle, "runtimeOptions"> & {
+  backend: string;
+  agent: string;
+  runtimeOptions?: AcpSessionRuntimeOptions;
 };

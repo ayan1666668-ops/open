@@ -5,7 +5,7 @@ import { resolveAgentTimeoutMs } from "../../agents/timeout.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { logVerbose } from "../../globals.js";
 import { AcpRuntimeError } from "../runtime/errors.js";
-import type { ActiveTurnState, SessionAcpMeta } from "./manager.types.js";
+import type { ActiveTurnState, SessionAcpLifecycle } from "./manager.types.js";
 import { resolveRuntimeOptionsFromMeta } from "./runtime-options.js";
 
 const ACP_TURN_TIMEOUT_CLEANUP_GRACE_MS = 2_000;
@@ -15,7 +15,7 @@ export const ACP_TURN_TIMEOUT_DETAIL_CODE = "TURN_TIMEOUT";
 /** Resolves the effective ACP turn timeout from session runtime options or agent defaults. */
 export function resolveTurnTimeoutMs(params: {
   cfg: OpenClawConfig;
-  meta: SessionAcpMeta;
+  meta: SessionAcpLifecycle;
 }): number {
   const runtimeTimeoutSeconds = resolveRuntimeOptionsFromMeta(params.meta).timeoutSeconds;
   if (

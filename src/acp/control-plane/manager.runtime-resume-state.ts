@@ -4,6 +4,7 @@ import type { AcpRuntime } from "@openclaw/acp-core/runtime/types";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { logVerbose } from "../../globals.js";
 import { formatErrorMessage, toErrorObject } from "../../infra/errors.js";
+import type { AcpExecutionSelection } from "../../model-picker/execution-selection.js";
 import type { AcpRuntimeError } from "../runtime/errors.js";
 import type { ManagerRuntimeHandleCache } from "./manager.runtime-handle-cache.js";
 import {
@@ -13,10 +14,9 @@ import {
 } from "./manager.runtime-owner.js";
 import type {
   AcpSessionManagerDeps,
-  SessionAcpMeta,
+  SessionAcpLifecycle,
   WriteManagerSessionMeta,
 } from "./manager.types.js";
-import { requireAcpExecutionSelection } from "./manager.utils.js";
 
 /** Detects acpx exits that are safe to retry with a fresh runtime handle. */
 export function isRecoverableManagerAcpxExitError(message: string): boolean {
@@ -57,7 +57,8 @@ export async function prepareFreshManagerRuntimeHandleRetry(params: {
   promptStarted: boolean;
   sawTurnOutput: boolean;
   runtime?: AcpRuntime;
-  meta?: SessionAcpMeta;
+  meta?: SessionAcpLifecycle;
+  selection: AcpExecutionSelection;
   runtimeHandles: ManagerRuntimeHandleCache;
   writeSessionMeta: WriteManagerSessionMeta;
 }): Promise<boolean> {
@@ -87,7 +88,7 @@ export async function prepareFreshManagerRuntimeHandleRetry(params: {
   if (params.runtime.prepareFreshSession) {
     try {
       await params.runtime.prepareFreshSession({
-        persistedHandle: persistedAcpRuntimeHandle(params, params.meta),
+        persistedHandle: persistedAcpRuntimeHandle(params, params.meta, params.selection),
         sessionKey: params.sessionKey,
         agentId: params.agentId,
       });
@@ -221,13 +222,14 @@ export async function discardPersistedManagerRuntimeState(params: {
 export async function tryPrepareFreshManagerRuntimeSession(params: {
   deps: Pick<AcpSessionManagerDeps, "getRuntimeBackend">;
   cfg: OpenClawConfig;
-  meta: SessionAcpMeta;
+  meta: SessionAcpLifecycle;
+  selection: AcpExecutionSelection;
   sessionKey: string;
   agentId: string;
   logPrefix: string;
   missingBackendError?: unknown;
 }): Promise<void> {
-  const configuredBackend = requireAcpExecutionSelection(params.meta).executor.backend;
+  const configuredBackend = params.selection.executor.backend;
   try {
     const backend = params.deps.getRuntimeBackend(configuredBackend || undefined);
     if (!backend) {
@@ -247,7 +249,7 @@ export async function tryPrepareFreshManagerRuntimeSession(params: {
       return;
     }
     await backend.runtime.prepareFreshSession({
-      persistedHandle: persistedAcpRuntimeHandle(params, params.meta),
+      persistedHandle: persistedAcpRuntimeHandle(params, params.meta, params.selection),
       sessionKey: params.sessionKey,
       agentId: params.agentId,
     });

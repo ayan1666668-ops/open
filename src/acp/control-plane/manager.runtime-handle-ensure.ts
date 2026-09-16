@@ -12,7 +12,7 @@ import type { AcpRuntime, AcpRuntimeHandle } from "@openclaw/acp-core/runtime/ty
 import { resolveRuntimeConfigCacheKey } from "../../config/runtime-snapshot.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { logVerbose } from "../../globals.js";
-import { commitAcpExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
+import type { AcpExecutionSelection } from "../../model-picker/execution-selection.js";
 import { toAcpRuntimeError, withAcpRuntimeErrorBoundary } from "../runtime/errors.js";
 import type { ManagerRuntimeHandleCache } from "./manager.runtime-handle-cache.js";
 import {
@@ -22,10 +22,10 @@ import {
 } from "./manager.runtime-owner.js";
 import type {
   AcpSessionManagerDeps,
-  SessionAcpMeta,
+  SessionAcpLifecycle,
   WriteManagerSessionMeta,
 } from "./manager.types.js";
-import { hasLegacyAcpIdentityProjection, requireAcpExecutionSelection } from "./manager.utils.js";
+import { hasLegacyAcpIdentityProjection } from "./manager.utils.js";
 import {
   normalizeRuntimeOptions,
   normalizeText,
@@ -38,18 +38,19 @@ export async function ensureManagerRuntimeHandle(params: {
   cfg: OpenClawConfig;
   sessionKey: string;
   agentId: string;
-  meta: SessionAcpMeta;
+  meta: SessionAcpLifecycle;
+  selection: AcpExecutionSelection;
   selectedBackend?: string;
   deps: Pick<AcpSessionManagerDeps, "requireRuntimeBackend">;
   runtimeHandles: ManagerRuntimeHandleCache;
   writeSessionMeta: WriteManagerSessionMeta;
-}): Promise<{ runtime: AcpRuntime; handle: AcpRuntimeHandle; meta: SessionAcpMeta }> {
-  const selection = requireAcpExecutionSelection(params.meta);
+}): Promise<{ runtime: AcpRuntime; handle: AcpRuntimeHandle; meta: SessionAcpLifecycle }> {
+  const { selection } = params;
   const agent = selection.executor.agent;
   const mode = params.meta.mode;
   const runtimeOptions = resolveRuntimeOptionsFromMeta(params.meta);
   const cwd = runtimeOptions.cwd ?? normalizeText(params.meta.cwd);
-  const model = normalizeText(runtimeOptions.model);
+  const model = selection.model === "native-managed" ? undefined : selection.model.id;
   const thinking = normalizeText(runtimeOptions.thinking);
   const configuredBackend = params.selectedBackend || selection.executor.backend;
   const turnLocal = configuredBackend !== selection.executor.backend;
@@ -100,7 +101,7 @@ export async function ensureManagerRuntimeHandle(params: {
   const backendOwnsPreviousIdentity = selection.executor.backend === backend.id;
   const previousIdentity = backendOwnsPreviousIdentity ? persistedIdentity : undefined;
   const persistedHandle = backendOwnsPreviousIdentity
-    ? persistedAcpRuntimeHandle(params, previousMeta)
+    ? persistedAcpRuntimeHandle(params, previousMeta, selection)
     : undefined;
   let identityForEnsure = previousIdentity;
   const persistedResumeSessionId =
@@ -197,19 +198,16 @@ export async function ensureManagerRuntimeHandle(params: {
       ? { agentSessionId: nextHandleIdentifiers.agentSessionId }
       : {}),
   };
-  const nextMeta = commitAcpExecutionSelection(
-    {
-      runtimeSessionName: ensured.runtimeSessionName,
-      ...(nextIdentity ? { identity: nextIdentity } : {}),
-      mode: params.meta.mode,
-      ...(Object.keys(nextRuntimeOptions).length > 0 ? { runtimeOptions: nextRuntimeOptions } : {}),
-      ...(effectiveCwd ? { cwd: effectiveCwd } : {}),
-      state: previousMeta.state,
-      lastActivityAt: now,
-      ...(previousMeta.lastError ? { lastError: previousMeta.lastError } : {}),
-    },
-    { ...selection, executor: { ...selection.executor, backend: ensured.backend || backend.id } },
-  );
+  const nextMeta: SessionAcpLifecycle = {
+    runtimeSessionName: ensured.runtimeSessionName,
+    ...(nextIdentity ? { identity: nextIdentity } : {}),
+    mode: params.meta.mode,
+    ...(Object.keys(nextRuntimeOptions).length > 0 ? { runtimeOptions: nextRuntimeOptions } : {}),
+    ...(effectiveCwd ? { cwd: effectiveCwd } : {}),
+    state: previousMeta.state,
+    lastActivityAt: now,
+    ...(previousMeta.lastError ? { lastError: previousMeta.lastError } : {}),
+  };
   const shouldPersistMeta =
     previousMeta.runtimeSessionName !== nextMeta.runtimeSessionName ||
     !identityEquals(persistedIdentity, nextIdentity) ||

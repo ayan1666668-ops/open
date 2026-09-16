@@ -12,7 +12,7 @@ import type {
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
 import { logVerbose } from "../../globals.js";
 import { isAcpOwnerRepairRequired } from "./manager.runtime-owner.js";
-import type { AcpSessionTarget, SessionAcpMeta } from "./manager.types.js";
+import type { AcpSessionTarget, SessionAcpLifecycle } from "./manager.types.js";
 import { acpSessionActorKey } from "./manager.utils.js";
 import { normalizeText } from "./runtime-options.js";
 import type { SessionActorQueue } from "./session-actor-queue.js";
@@ -142,7 +142,7 @@ export class ManagerRuntimeHandleCache {
     }
   }
 
-  handleMatchesMeta(params: { handle: AcpRuntimeHandle; meta: SessionAcpMeta }): boolean {
+  handleMatchesMeta(params: { handle: AcpRuntimeHandle; meta: SessionAcpLifecycle }): boolean {
     const identity = resolveSessionIdentityFromMeta(params.meta);
     const expectedHandleIds = resolveRuntimeHandleIdentifiersFromIdentity(identity);
     if ((params.handle.backendSessionId ?? "") !== (expectedHandleIds.backendSessionId ?? "")) {

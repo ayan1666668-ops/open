@@ -512,6 +512,7 @@ function withoutInternalHarnessAuthority(
   const pluginParams = withoutPluginHarnessPrivateState(params);
   const host = createAgentHarnessHostCapabilities({
     attempt: params,
+    harnessId: harness.id,
     requiredNodeCommands: harness.cloudPlacement?.devicePlacement?.requiredNodeCommands,
     pluginId:
       ownerPluginId ??

@@ -6,10 +6,12 @@ import {
   resolveSqliteScope,
   toDatabaseOptions,
 } from "../../config/sessions/session-accessor.sqlite-scope.js";
+import type { SessionEntry, SessionAcpLifecycle } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { executeSqliteQuerySync } from "../../infra/kysely-sync.js";
 import type { PluginDoctorRepairAuthority } from "../../infra/state-migrations.types.js";
-import { readAcpExecutionSelection } from "../../model-picker/execution-selection-codec.js";
+import { getCommittedSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
+import { isAcpExecutionSelection } from "../../model-picker/execution-selection.js";
 import type {
   PluginDoctorAcpSessionClaim,
   PluginDoctorStateMigrationContext,
@@ -43,10 +45,10 @@ function isRetiredClaimOwner(
   return !listAgentIds(config).includes(target.agentId) && !freeAcp;
 }
 
-function readClaimBinding(
+function readClaimEntry(
   scope: DoctorAcpScope,
   target: { agentId: string; sessionKey: string },
-): PluginDoctorAcpSessionClaim["binding"] {
+): SessionEntry {
   const owner = resolveSessionStorePathForAcp({ cfg: scope.config, env: scope.env, ...target });
   if (isRetiredClaimOwner(scope.config, target)) {
     throw new Error(`retired ACP owner ${owner.agentId}`);
@@ -61,8 +63,7 @@ function readClaimBinding(
   if (!result.found || !result.value) {
     throw new Error(`ACP session binding is ${result.found ? "absent" : result.reason}`);
   }
-  const { sessionId, lifecycleRevision, sessionStartedAt } = result.value.entry;
-  return { sessionId, lifecycleRevision, sessionStartedAt };
+  return result.value.entry;
 }
 
 export async function inspectAcpSessionClaimsForDoctor(
@@ -80,10 +81,7 @@ export async function inspectAcpSessionClaimsForDoctor(
     try {
       const rows = executeSqliteQuerySync(
         database.db,
-        getAcpSessionKysely(database.db)
-          .selectFrom("acp_sessions")
-          .selectAll()
-          .where("backend", "=", scope.pluginId),
+        getAcpSessionKysely(database.db).selectFrom("acp_sessions").selectAll(),
       ).rows;
       for (const row of rows) {
         try {
@@ -95,7 +93,16 @@ export async function inspectAcpSessionClaimsForDoctor(
             throw new Error("ACP metadata key is not canonical");
           }
           const claimTarget = { agentId: target.agentId, sessionKey: target.storeSessionKey };
-          const binding = readClaimBinding(scope, claimTarget);
+          const entry = readClaimEntry(scope, claimTarget);
+          const selection = getCommittedSessionExecutionSelection(entry);
+          if (
+            !selection ||
+            !isAcpExecutionSelection(selection) ||
+            selection.executor.backend !== scope.pluginId
+          )
+            continue;
+          const { sessionId, lifecycleRevision, sessionStartedAt } = entry;
+          const binding = { sessionId, lifecycleRevision, sessionStartedAt };
           if (row.session_id == null || !acpSessionRowMatchesEntry(row, binding)) {
             throw new Error("ACP metadata binding is absent or stale");
           }
@@ -106,7 +113,7 @@ export async function inspectAcpSessionClaimsForDoctor(
           ) {
             throw new Error("ACP metadata JSON is unreadable");
           }
-          claims.push({ ...claimTarget, binding, meta });
+          claims.push({ ...claimTarget, binding, meta: projectDoctorAcpMeta(entry, meta) });
         } catch (error) {
           incomplete.push(`${row.session_key}: ${String(error)}`);
         }
@@ -127,10 +134,7 @@ export function updateAcpSessionIdentityForDoctor(
 ): void {
   authority.assertCurrent();
   const { claim } = input;
-  if (
-    readAcpExecutionSelection(claim.meta)?.executor.backend !== scope.pluginId ||
-    !claim.meta.identity
-  ) {
+  if (claim.meta.backend !== scope.pluginId || !claim.meta.identity) {
     throw new Error("ACP identity repair requires a matching backend claim and existing identity");
   }
   const key = buildAcpDatabaseSessionKey(claim.sessionKey, claim.agentId);
@@ -153,7 +157,8 @@ export function updateAcpSessionIdentityForDoctor(
         if (
           isRetiredClaimOwner(scope.config, claim) ||
           !row ||
-          !isDeepStrictEqual(rowToAcpSessionMeta(row), claim.meta) ||
+          !entry ||
+          !isDeepStrictEqual(projectDoctorAcpMeta(entry, rowToAcpSessionMeta(row)), claim.meta) ||
           !isDeepStrictEqual(binding, claim.binding) ||
           !acpSessionRowMatchesEntry(row, claim.binding)
         ) {
@@ -181,4 +186,22 @@ export function updateAcpSessionIdentityForDoctor(
   if (!updated.found) {
     throw new Error(`ACP owner database became unavailable: ${updated.reason}`);
   }
+}
+
+function projectDoctorAcpMeta(
+  entry: SessionEntry,
+  meta: SessionAcpLifecycle,
+): PluginDoctorAcpSessionClaim["meta"] {
+  const selection = getCommittedSessionExecutionSelection(entry);
+  if (!selection || !isAcpExecutionSelection(selection))
+    throw new Error("ACP identity repair requires a committed execution selection.");
+  return {
+    ...meta,
+    backend: selection.executor.backend,
+    agent: selection.executor.agent,
+    runtimeOptions: {
+      ...meta.runtimeOptions,
+      ...(selection.model === "native-managed" ? {} : { model: selection.model.id }),
+    },
+  };
 }

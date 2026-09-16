@@ -338,6 +338,14 @@ export async function materializePendingSupervisionBranch(
       params.attempt.authProfileId,
       nativeModelProvider,
     );
+    const commitNativeSelection = params.attempt.hostCapabilities?.commitNativeSelection;
+    if (!commitNativeSelection)
+      throw new Error(
+        "The host cannot accept the native model for this session. Update the host before continuing.",
+      );
+    params.throwIfAborted();
+    await commitNativeSelection({ provider: nativeModelProvider, model: nativeModel });
+    params.throwIfAborted();
     let committed = false;
     try {
       committed = await params.bindingStore.mutate(

@@ -1,5 +1,9 @@
 import { normalizeOptionalString as normalizeText } from "@openclaw/normalization-core/string-coerce";
-import type { SessionAcpIdentity, SessionAcpIdentitySource, SessionAcpMeta } from "../types.js";
+import type {
+  SessionAcpIdentity,
+  SessionAcpIdentitySource,
+  SessionAcpLifecycle,
+} from "../types.js";
 import type { AcpRuntimeHandle, AcpRuntimeStatus } from "./types.js";
 
 // ACP session identity merge and extraction helpers for resume-safe runtime state.
@@ -86,7 +90,7 @@ function buildSessionIdentity(params: {
 
 /** Resolve normalized ACP identity from persisted session metadata. */
 export function resolveSessionIdentityFromMeta(
-  meta: SessionAcpMeta | undefined,
+  meta: SessionAcpLifecycle | undefined,
 ): SessionAcpIdentity | undefined {
   if (!meta) {
     return undefined;

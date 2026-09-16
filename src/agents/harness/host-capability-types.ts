@@ -35,6 +35,8 @@ export type AgentHarnessHostCapabilities = Readonly<{
   version: 1;
   /** Fails closed unless this exact admitted run capability remains active. */
   assertActive: () => void;
+  /** Commits the admitted native model before inference, without granting executor selection. */
+  commitNativeSelection?: (selection: { provider: string; model: string }) => Promise<void>;
   /** Reports one completed model call's output tokens to this admitted run's live total. */
   reportOutputTokens?: (outputTokens: number) => void;
   /** Adds native provenance only to this host's exact current admitted prompt. */

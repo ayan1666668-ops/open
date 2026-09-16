@@ -7,6 +7,7 @@ import type {
 } from "@openclaw/acp-core/runtime/types";
 import { asNullableRecord } from "@openclaw/normalization-core/record-coerce";
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
+import type { AcpExecutionSelection } from "../../model-picker/execution-selection.js";
 import {
   AcpRuntimeError,
   formatAcpErrorChain,
@@ -15,8 +16,8 @@ import {
 } from "../runtime/errors.js";
 import type { CachedRuntimeState } from "./manager.runtime-handle-cache.js";
 import { isAcpOwnerRepairRequired } from "./manager.runtime-owner.js";
-import type { AcpSessionRuntimeOptions, SessionAcpMeta } from "./manager.types.js";
-import { requireAcpExecutionSelection, createUnsupportedControlError } from "./manager.utils.js";
+import type { AcpSessionRuntimeOptions, SessionAcpLifecycle } from "./manager.types.js";
+import { createUnsupportedControlError } from "./manager.utils.js";
 import {
   buildRuntimeConfigOptionPairs,
   buildRuntimeControlSignature,
@@ -172,11 +173,16 @@ export async function applyManagerRuntimeControls(params: {
   sessionKey: string;
   runtime: AcpRuntime;
   handle: AcpRuntimeHandle;
-  meta: SessionAcpMeta;
+  meta: SessionAcpLifecycle;
+  selection: AcpExecutionSelection;
+  onBeforeModelControl: () => Promise<void>;
   getCachedRuntimeState: (sessionKey: string) => CachedRuntimeState | null;
   onOptionsChanged: (options: AcpSessionRuntimeOptions) => Promise<void>;
 }): Promise<void> {
-  let options = resolveRuntimeOptionsFromMeta(params.meta);
+  let options = {
+    ...resolveRuntimeOptionsFromMeta(params.meta),
+    ...(params.selection.model !== "native-managed" ? { model: params.selection.model.id } : {}),
+  };
   const signature = buildRuntimeControlSignature(options);
   const cached = params.getCachedRuntimeState(params.sessionKey);
   if (cached?.appliedControlSignature === signature) {
@@ -189,8 +195,7 @@ export async function applyManagerRuntimeControls(params: {
     handle: params.handle,
     includeStatusConfigOptionKeys: needsConfigOptionKeys,
   });
-  const backend =
-    params.handle.backend || requireAcpExecutionSelection(params.meta).executor.backend;
+  const backend = params.handle.backend;
   const runtimeMode = normalizeText(options.runtimeMode);
   const configOptions = buildRuntimeConfigOptionPairs(options, capabilities.configOptionKeys);
   const thinkingConfigKey = options.thinking
@@ -243,6 +248,8 @@ export async function applyManagerRuntimeControls(params: {
             );
           }
           try {
+            if (normalizeLowercaseStringOrEmpty(key) === "model")
+              await params.onBeforeModelControl();
             const result = await params.runtime.setConfigOption({
               handle: params.handle,
               key,
@@ -253,7 +260,10 @@ export async function applyManagerRuntimeControls(params: {
               result,
               normalizeLowercaseStringOrEmpty(key) === "model" ? options.thinking : undefined,
             );
-            if (!runtimeOptionsEqual(options, accepted)) {
+            if (
+              normalizeLowercaseStringOrEmpty(key) === "model" ||
+              !runtimeOptionsEqual(options, accepted)
+            ) {
               // Persist each accepted change even if a later control fails.
               await params.onOptionsChanged(accepted);
               options = accepted;
