@@ -2,6 +2,7 @@ import { createConfiguredGatewayLocalProbe } from "../../gateway/local-http-prob
 import type { GatewayLockIdentity } from "../../infra/gateway-lock.js";
 import { sleep } from "../../utils.js";
 import {
+  hasTerminalPluginHealthFailure,
   inspectGatewayPortHealth,
   resolveGatewayRestartProbeContext,
 } from "./restart-health-probe.js";
@@ -17,6 +18,7 @@ export async function waitForGatewayHealthyListener(params: {
   env?: NodeJS.ProcessEnv;
   attempts?: number;
   delayMs?: number;
+  includePluginHealth?: boolean;
   previousLockIdentity?: GatewayLockIdentity;
   waitIndefinitelyForPreviousOwner?: boolean;
 }): Promise<GatewayPortHealthSnapshot> {
@@ -47,6 +49,7 @@ export async function waitForGatewayHealthyListener(params: {
         auth: probeContext.auth,
         config: probeContext.config,
         configuredProbe,
+        includePluginHealth: params.includePluginHealth === true,
       });
 
   let attempt = 0;
@@ -70,10 +73,14 @@ export async function waitForGatewayHealthyListener(params: {
       config: probeContext.config,
       configuredProbe,
       expectedListenerPid,
+      includePluginHealth: params.includePluginHealth === true,
     });
   }
 
   if (snapshot.healthy) {
+    return snapshot;
+  }
+  if (hasTerminalPluginHealthFailure(snapshot)) {
     return snapshot;
   }
   while (attempt < attempts) {
@@ -85,8 +92,12 @@ export async function waitForGatewayHealthyListener(params: {
       config: probeContext.config,
       configuredProbe,
       expectedListenerPid,
+      includePluginHealth: params.includePluginHealth === true,
     });
     if (snapshot.healthy) {
+      return snapshot;
+    }
+    if (hasTerminalPluginHealthFailure(snapshot)) {
       return snapshot;
     }
   }

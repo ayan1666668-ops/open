@@ -30,6 +30,17 @@ import type {
 } from "./restart-health.types.js";
 import { allListenersOwnedByRuntimePid } from "./restart-port-ownership.js";
 
+/** Load/quarantine failures are boot-stable; service owners may clear their live failures. */
+export function hasTerminalPluginHealthFailure(
+  snapshot: Pick<GatewayPortHealthSnapshot, "activatedPluginErrors" | "unavailablePlugins">,
+  includeUnavailable = true,
+): boolean {
+  return Boolean(
+    (includeUnavailable && snapshot.unavailablePlugins?.length) ||
+    snapshot.activatedPluginErrors?.some((error) => error.failurePhase !== "service"),
+  );
+}
+
 export type GatewayRestartProbeAuth = {
   token?: string;
   password?: string;
@@ -332,6 +343,7 @@ export async function inspectGatewayPortHealth(params: {
   config?: OpenClawConfig;
   configuredProbe?: ConfiguredGatewayLocalProbe;
   expectedListenerPid?: number;
+  includePluginHealth?: boolean;
 }): Promise<GatewayPortHealthSnapshot> {
   let portUsage: PortUsage;
   try {
@@ -352,16 +364,35 @@ export async function inspectGatewayPortHealth(params: {
     return { portUsage, healthy: false };
   }
   const expectedListenerPid = params.expectedListenerPid;
-  const listenerOwnershipVerified =
-    expectedListenerPid !== undefined &&
+  const listenerOwnershipAccepted =
+    expectedListenerPid === undefined ||
     allListenersOwnedByRuntimePid(portUsage.listeners, expectedListenerPid);
-  const { reachable, probeError } = await confirmGatewayReachable({
+  const reachability = await confirmGatewayReachable({
     port: params.port,
     auth: params.auth,
     ...(params.config ? { config: params.config } : {}),
     ...(params.configuredProbe ? { configuredProbe: params.configuredProbe } : {}),
     env: process.env,
-    allowDeviceIdentityRequired: listenerOwnershipVerified,
+    allowDeviceIdentityRequired: expectedListenerPid !== undefined && listenerOwnershipAccepted,
   });
-  return { portUsage, healthy: reachable, ...(probeError ? { probeError } : {}) };
+  // Unverified plugin failures must keep polling, but cannot identify the replacement.
+  const pluginOwnershipAccepted = expectedListenerPid !== undefined && listenerOwnershipAccepted;
+  const pluginUnavailable =
+    params.includePluginHealth === true &&
+    (reachability.activatedPluginErrors.length > 0 || reachability.unavailablePlugins.length > 0);
+  return {
+    portUsage,
+    healthy: listenerOwnershipAccepted && reachability.reachable && !pluginUnavailable,
+    ...(reachability.probeError ? { probeError: reachability.probeError } : {}),
+    ...(pluginOwnershipAccepted &&
+    params.includePluginHealth === true &&
+    reachability.activatedPluginErrors.length > 0
+      ? { activatedPluginErrors: reachability.activatedPluginErrors }
+      : {}),
+    ...(pluginOwnershipAccepted &&
+    params.includePluginHealth === true &&
+    reachability.unavailablePlugins.length > 0
+      ? { unavailablePlugins: reachability.unavailablePlugins }
+      : {}),
+  };
 }
