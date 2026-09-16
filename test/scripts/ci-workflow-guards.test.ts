@@ -13972,7 +13972,7 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
           checkName: `node-admission-${index}`,
           shardName: `node-admission-${index}`,
           configs: ["test/vitest/vitest.infra.config.ts"],
-          runner: "ubuntu-24.04",
+          runner: "blacksmith-8vcpu-ubuntu-2404",
           requiresDist: false,
         }));
         const result = runCiManifestFixture({
@@ -13990,7 +13990,7 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
               checkName: "node-admission-dist",
               shardName: "node-admission-dist",
               configs: ["test/vitest/vitest.infra.config.ts"],
-              runner: "ubuntu-24.04",
+              runner: "blacksmith-8vcpu-ubuntu-2404",
               requiresDist: true,
             },
           ],
