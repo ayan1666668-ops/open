@@ -1,7 +1,7 @@
 // Interim retry tests cover retry behavior for incomplete isolated cron runs.
 import { describe, expect, it, vi } from "vitest";
 import { onInternalDiagnosticEvent } from "../../infra/diagnostic-events.js";
-import { makeIsolatedAgentParamsFixture } from "./job-fixtures.js";
+import { makeIsolatedAgentJobFixture, makeIsolatedAgentParamsFixture } from "./job-fixtures.js";
 import { setupRunCronIsolatedAgentTurnSuite } from "./run.suite-helpers.js";
 import {
   countActiveDescendantRunsMock,
@@ -184,10 +184,17 @@ describe("runCronIsolatedAgentTurn — interim ack retry", () => {
   });
 
   it.each([true, false])(
-    "replaces stale context after a context-only retry with final context available=%s",
+    "refreshes a persistent session after a context-only retry with final context available=%s",
     async (available) => {
       usePayloadTextExtraction();
       const cronSession = makeCronSession();
+      Object.assign(cronSession.sessionEntry, {
+        inputTokens: 50,
+        outputTokens: 20,
+        cacheRead: 10,
+        cacheWrite: 5,
+        estimatedCostUsd: 0.01,
+      });
       cronSession.sessionEntry.totalTokens = 99;
       cronSession.sessionEntry.totalTokensFresh = true;
       resolveCronSessionMock.mockReturnValue(cronSession);
@@ -210,9 +217,23 @@ describe("runCronIsolatedAgentTurn — interim ack retry", () => {
         });
       mockRunCronFallbackPassthrough();
 
-      const result = await runTurnAndExpectOk(2, 2);
+      const result = await runCronIsolatedAgentTurn(
+        makeIsolatedAgentParamsFixture({
+          job: makeIsolatedAgentJobFixture({ sessionTarget: "session:cron-proof" }),
+          sessionKey: "agent:default:cron-proof",
+        }),
+      );
 
-      expect(result.usage).toBeUndefined();
+      expect(result.status).toBe("ok");
+      expect(runEmbeddedAgentMock).toHaveBeenCalledTimes(2);
+      expect(cronSession.sessionEntry).toMatchObject({
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+      });
+      expect(result.usage).toEqual({ input_tokens: 0, output_tokens: 0 });
+      expect(cronSession.sessionEntry.estimatedCostUsd).toBeUndefined();
       expect(cronSession.sessionEntry.totalTokens).toBe(available ? 37 : undefined);
       expect(cronSession.sessionEntry.totalTokensFresh).toBe(available);
     },

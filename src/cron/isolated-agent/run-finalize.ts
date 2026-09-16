@@ -162,18 +162,18 @@ export async function finalizeCronRun(params: {
     prepared.cronSession.sessionEntry.contextTokensSource = contextTokensSource;
   }
   let telemetry: CronRunTelemetry = { model: modelUsed, provider: providerUsed };
-  if (hasNonzeroUsage(usage)) {
-    const input = usage.input ?? 0;
-    const output = usage.output ?? 0;
-    const cacheRead = usage.cacheRead ?? 0;
-    const cacheWrite = usage.cacheWrite ?? 0;
+  if (hasNonzeroUsage(usage) || hasNonzeroUsage(finalRunResult.meta?.agentMeta?.usage)) {
+    const input = usage?.input ?? 0;
+    const output = usage?.output ?? 0;
+    const cacheRead = usage?.cacheRead ?? 0;
+    const cacheWrite = usage?.cacheWrite ?? 0;
     prepared.cronSession.sessionEntry.inputTokens = input;
     prepared.cronSession.sessionEntry.outputTokens = output;
     const bucketTotalTokens = input + output + cacheRead + cacheWrite;
     // Keep telemetry totals consistent when a provider reports only a partial
     // aggregate alongside the normalized billing buckets.
     const aggregateTotalTokens =
-      typeof usage.total === "number" && Number.isFinite(usage.total)
+      typeof usage?.total === "number" && Number.isFinite(usage.total)
         ? Math.max(bucketTotalTokens, usage.total)
         : bucketTotalTokens;
     const telemetryUsage: NonNullable<CronRunTelemetry["usage"]> = {
@@ -190,8 +190,6 @@ export async function finalizeCronRun(params: {
       provider: providerUsed,
       usage: telemetryUsage,
     };
-  }
-  if (hasNonzeroUsage(usage) || hasNonzeroUsage(finalRunResult.meta?.agentMeta?.usage)) {
     const totalTokens = deriveSessionTotalTokens({
       usage: lastCallUsage,
       contextTokens,
