@@ -10,7 +10,7 @@ import { captureSidebarUiProof } from "../e2e/sidebar-customization.test-support
 import { createControlUiE2eArtifactDir } from "./control-ui-e2e-artifacts.ts";
 import {
   captureControlUiE2eFailureDiagnostics,
-  installAgentFileRpcDiagnostics,
+  installControlUiRpcDiagnostics,
   resolvePlaywrightChromiumExecutablePath,
   systemChromiumExecutableCandidates,
   waitForControlUiRoute,
@@ -127,7 +127,23 @@ describe("shared proof capture", () => {
       if (failure !== "screenshot") {
         agentPage.append(fileEditor);
       }
-      document.body.append(app, composer, send, providerHead, agentPage);
+      const canvasWidgets = ["loading", "error", "frame"].map((stage) => {
+        const widget = document.createElement("openclaw-canvas-widget-view");
+        widget.setAttribute("doc-id", "private-document");
+        const content = document.createElement(stage === "frame" ? "iframe" : "div");
+        content.textContent = "private-widget-content";
+        if (stage === "loading") {
+          content.className = "skeleton";
+        } else if (stage === "error") {
+          content.setAttribute("role", "alert");
+        } else {
+          content.className = "chat-tool-card__preview-frame";
+          content.setAttribute("title", "private-widget-title");
+        }
+        widget.append(content);
+        return widget;
+      });
+      document.body.append(app, composer, send, providerHead, agentPage, ...canvasWidgets);
       const modelResponses =
         failure === "none"
           ? {}
@@ -188,8 +204,12 @@ describe("shared proof capture", () => {
       writeFileSync(path.join(parent, "prior.png"), "prior-proof");
       // SAFETY: this fixture implements the Page boundary used by failure diagnostics.
       const pageEvents = new EventEmitter();
+      const rootFrame = { parentFrame: () => null };
+      const outerFrame = { parentFrame: () => rootFrame };
+      const innerFrame = { parentFrame: () => outerFrame };
       const page = {
         on: pageEvents.on.bind(pageEvents),
+        frames: () => [rootFrame, outerFrame, innerFrame],
         evaluate: async (read: () => unknown) => {
           if (failure === "evaluation") {
             throw new Error("private-evaluation-error");
@@ -212,7 +232,7 @@ describe("shared proof capture", () => {
           return Buffer.from("failure-proof");
         },
       } as unknown as Page;
-      installAgentFileRpcDiagnostics(page);
+      installControlUiRpcDiagnostics(page);
       const socket = new EventEmitter();
       pageEvents.emit("websocket", socket);
       const sendFrame = (direction: string, frame: unknown) =>
@@ -241,6 +261,21 @@ describe("shared proof capture", () => {
         ok: false,
         error: { message: "private-error" },
       });
+      for (const ok of [true, false]) {
+        sendFrame("framesent", {
+          type: "req",
+          id: "private-canvas-id",
+          method: "canvas.document.view",
+          params: { docId: "private-document" },
+        });
+        sendFrame("framereceived", {
+          type: "res",
+          id: "private-canvas-id",
+          ok,
+          payload: { html: "private-html", sandboxUrl: "https://private-host/?private-token" },
+          error: { message: "private-canvas-error" },
+        });
+      }
       const frameEvent = {
         at: "2026-09-01T00:00:00.000Z",
         source: "framenavigated" as const,
@@ -278,10 +313,15 @@ describe("shared proof capture", () => {
         const summary = JSON.parse(rendered.slice("[control-ui-e2e] failure state ".length));
         publicSummaries.push(summary);
         expect(summary).toMatchObject({
-          agentFileRpc: [
+          gatewayRpc: [
             { method: "agents.files.get", outcome: "sent" },
             { method: "agents.files.get", outcome: "error" },
+            { method: "canvas.document.view", outcome: "sent" },
+            { method: "canvas.document.view", outcome: "ok" },
+            { method: "canvas.document.view", outcome: "sent" },
+            { method: "canvas.document.view", outcome: "error" },
           ],
+          frameDepthCounts: [1, 1, 1],
           schemaVersion: 1,
           failureKind: attempt === 0 ? "timeout" : "unknown",
           route: {
@@ -298,6 +338,11 @@ describe("shared proof capture", () => {
               : {
                   gatewayPhase: failure === "storage" ? "unknown" : "connected",
                   connected: true,
+                  canvasWidgets: [
+                    { loading: true, errorPresent: false, framePresent: false },
+                    { loading: false, errorPresent: true, framePresent: false },
+                    { loading: false, errorPresent: false, framePresent: true },
+                  ],
                   roster: {
                     loading: failure === "storage" ? null : true,
                     count: 2,

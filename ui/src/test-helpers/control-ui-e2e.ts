@@ -3563,12 +3563,12 @@ function createMockGatewayControls(
   };
 }
 
-const agentFileRpcDiagnostics = new WeakMap<Page, Array<{ method: string; outcome: string }>>();
+const controlUiRpcDiagnostics = new WeakMap<Page, Array<{ method: string; outcome: string }>>();
 
 /** Observe only method/outcome facts; never retain Gateway payloads or authority. */
-export function installAgentFileRpcDiagnostics(page: Page): void {
+export function installControlUiRpcDiagnostics(page: Page): void {
   const events: Array<{ method: string; outcome: string }> = [];
-  agentFileRpcDiagnostics.set(page, events);
+  controlUiRpcDiagnostics.set(page, events);
   const record = (method: string, outcome: string) => {
     events.push({ method, outcome });
     if (events.length > 32) {
@@ -3584,9 +3584,13 @@ export function installAgentFileRpcDiagnostics(page: Page): void {
           frame?.type === "req" &&
           typeof frame.id === "string" &&
           typeof frame.method === "string" &&
-          ["agents.list", "agents.files.list", "agents.files.get", "agents.files.set"].includes(
-            frame.method,
-          )
+          [
+            "agents.list",
+            "agents.files.list",
+            "agents.files.get",
+            "agents.files.set",
+            "canvas.document.view",
+          ].includes(frame.method)
         ) {
           if (pending.size >= 32) {
             pending.delete(pending.keys().next().value!);
@@ -3796,6 +3800,13 @@ async function captureControlUiE2eFailureDiagnosticsUnsafe(
       );
       return {
         failureSummary: {
+          canvasWidgets: [...document.querySelectorAll("openclaw-canvas-widget-view")]
+            .slice(0, 8)
+            .map((widget) => ({
+              loading: Boolean(widget.querySelector(".skeleton")),
+              errorPresent: Boolean(widget.querySelector('[role="alert"]')),
+              framePresent: Boolean(widget.querySelector(".chat-tool-card__preview-frame")),
+            })),
           agentFiles: {
             pathname: agentPath ? `/settings/agents/:agent/${agentPath[2]}` : "other",
             pagePresent: Boolean(agentPage),
@@ -3951,6 +3962,17 @@ async function captureControlUiE2eFailureDiagnosticsUnsafe(
   const routeId = asOptionalRecord(matches?.[0])?.routeId;
   const knownRoute = typeof routeId === "string" && isRouteId(routeId) ? routeId : null;
   const pathname = asOptionalRecord(router?.resolvedLocation)?.pathname;
+  const frameDepthCounts: number[] = [];
+  for (const frame of page.frames()) {
+    let depth = 0;
+    let parent = frame.parentFrame();
+    // Bucket deeper descendants together without retaining frame URLs or content.
+    while (parent && depth < 8) {
+      depth += 1;
+      parent = parent.parentFrame();
+    }
+    frameDepthCounts[depth] = (frameDepthCounts[depth] ?? 0) + 1;
+  }
   const publicSummary = {
     schemaVersion: 1,
     failureKind:
@@ -3965,7 +3987,8 @@ async function captureControlUiE2eFailureDiagnosticsUnsafe(
               : "unknown",
     browser: summary,
     models,
-    agentFileRpc: agentFileRpcDiagnostics.get(page) ?? [],
+    gatewayRpc: controlUiRpcDiagnostics.get(page) ?? [],
+    frameDepthCounts,
     route: {
       pathname: knownRoute ? pathForRoute(knownRoute) : null,
       agentPanel:
