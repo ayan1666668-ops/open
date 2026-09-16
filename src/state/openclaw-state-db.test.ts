@@ -49,10 +49,7 @@ import {
   FIRST_USE_STATE_TABLES,
   OPENCLAW_STATE_SCHEMA_VERSION,
 } from "./openclaw-state-db-contract.js";
-import {
-  repairOpenClawStateDatabaseSchema,
-  repairOpenClawStateDatabaseSchemaIfNeeded,
-} from "./openclaw-state-db-doctor.js";
+import { hasDanglingSkillWorkshopCollectionReviewIndex } from "./openclaw-state-db-doctor-schema.js";
 import { prepareStateDatabaseSchemaRepair } from "./openclaw-state-db-maintenance.js";
 import { ensureGitHubPublicationSchema } from "./openclaw-state-db-schema-additive.js";
 import { OpenClawStateDatabaseSchemaMigrationRequiredError } from "./openclaw-state-db-schema-migration-required.js";
@@ -67,6 +64,9 @@ import {
   OPENCLAW_SQLITE_BUSY_TIMEOUT_MS,
   openExistingOpenClawStateDatabaseReadOnly,
   openOpenClawStateDatabase,
+  repairOpenClawStateDatabaseReadabilityForDoctor,
+  repairOpenClawStateDatabaseSchema,
+  repairOpenClawStateDatabaseSchemaIfNeeded,
   runWithOpenClawStateBusyTimeout,
   runOpenClawStateWriteTransaction,
   withOpenClawStateStartupMigrationCheckpointDatabase,
@@ -1762,9 +1762,9 @@ describe("openclaw state database", () => {
     ).toEqual({ review_id: "review-v15", backup_id: "backup-v15" });
   });
 
-  it.each(["schema", "catalog"] as const)(
-    "requires Doctor %s repair for the dangling v15 Workshop review index",
-    (scope) => {
+  it.each([16, OPENCLAW_STATE_SCHEMA_VERSION])(
+    "requires Doctor to repair the dangling Workshop review index in schema v%i",
+    (version) => {
       const stateDir = createTempStateDir();
       const options = { env: { OPENCLAW_STATE_DIR: stateDir } };
       const databasePath = materializeCurrentStateDatabase(stateDir);
@@ -1778,14 +1778,39 @@ describe("openclaw state database", () => {
          ) VALUES ('review-preserved', 'main', 'backup-preserved', 1, '[]', '[]', '[]')`,
         )
         .run();
+      if (version === 16) {
+        removePreparedWorkerOwnershipColumns(database);
+        database.exec(`
+        PRAGMA user_version = 16;
+        UPDATE schema_meta SET schema_version = 16 WHERE meta_key = 'primary';
+      `);
+      }
       database.close();
       const rootpage = createDanglingSkillWorkshopReviewIndex(databasePath);
 
-      expect(() => openOpenClawStateDatabase(options)).toThrow(/malformed database schema/u);
+      const defensiveProbe = new DatabaseSync(databasePath);
+      expect(hasDanglingSkillWorkshopCollectionReviewIndex(defensiveProbe)).toBe(true);
+      const schemaVersion = readSqliteNumberPragma(defensiveProbe, "schema_version");
+      defensiveProbe.exec(`PRAGMA schema_version = ${schemaVersion + 1};`);
+      expect(readSqliteNumberPragma(defensiveProbe, "schema_version")).toBe(schemaVersion);
+      defensiveProbe.close();
+
+      expect(() => openOpenClawStateDatabase(options)).toThrow(
+        /legacy-workshop-review-index.*openclaw doctor --fix/u,
+      );
+      expect(() => repairOpenClawStateDatabaseSchemaIfNeeded(options)).toThrow(
+        /legacy-workshop-review-index.*openclaw doctor --fix/u,
+      );
       expect(readDanglingSkillWorkshopReviewIndex(databasePath)).toMatchObject({ rootpage });
 
-      expect(repairOpenClawStateDatabaseSchema(options, scope)).toEqual({
-        changes: ["Removed dangling legacy Skill Workshop review index"],
+      expect(repairOpenClawStateDatabaseSchema(options)).toEqual({
+        changes:
+          version === 16
+            ? expect.arrayContaining([
+                "Removed dangling legacy Skill Workshop review index",
+                "Recorded prepared worker ownership and one-use lifecycle (v17)",
+              ])
+            : ["Removed dangling legacy Skill Workshop review index"],
         warnings: [],
       });
 
@@ -1801,6 +1826,9 @@ describe("openclaw state database", () => {
         expect(repaired.prepare("PRAGMA integrity_check").all()).toEqual([
           { integrity_check: "ok" },
         ]);
+        expect(readSqliteNumberPragma(repaired, "user_version")).toBe(
+          OPENCLAW_STATE_SCHEMA_VERSION,
+        );
         expect(readDanglingSkillWorkshopReviewIndex(databasePath)).toBeUndefined();
       } finally {
         repaired.close();
@@ -1809,27 +1837,24 @@ describe("openclaw state database", () => {
     },
   );
 
-  it.each(["schema", "catalog"] as const)(
-    "does not run %s repair for a dangling Workshop index in a newer unsupported schema",
-    (scope) => {
-      const stateDir = createTempStateDir();
-      const options = { env: { OPENCLAW_STATE_DIR: stateDir } };
-      const databasePath = materializeCurrentStateDatabase(stateDir);
-      const rootpage = createDanglingSkillWorkshopReviewIndex(databasePath);
-      const { DatabaseSync } = requireNodeSqlite();
-      const database = new DatabaseSync(databasePath);
-      database.exec("PRAGMA writable_schema = ON;");
-      database.exec(`PRAGMA user_version = ${OPENCLAW_STATE_SCHEMA_VERSION + 1};`);
-      database.exec("PRAGMA writable_schema = OFF;");
-      database.close();
+  it("does not repair a dangling Workshop index in a newer unsupported schema", () => {
+    const stateDir = createTempStateDir();
+    const options = { env: { OPENCLAW_STATE_DIR: stateDir } };
+    const databasePath = materializeCurrentStateDatabase(stateDir);
+    const rootpage = createDanglingSkillWorkshopReviewIndex(databasePath);
+    const { DatabaseSync } = requireNodeSqlite();
+    const database = new DatabaseSync(databasePath);
+    database.exec("PRAGMA writable_schema = ON;");
+    database.exec(`PRAGMA user_version = ${OPENCLAW_STATE_SCHEMA_VERSION + 1};`);
+    database.exec("PRAGMA writable_schema = OFF;");
+    database.close();
 
-      expect(repairOpenClawStateDatabaseSchema(options, scope)).toEqual({
-        changes: [],
-        warnings: [expect.stringContaining("uses newer schema version")],
-      });
-      expect(readDanglingSkillWorkshopReviewIndex(databasePath)).toMatchObject({ rootpage });
-    },
-  );
+    expect(repairOpenClawStateDatabaseSchema(options)).toEqual({
+      changes: [],
+      warnings: [expect.stringContaining("uses newer schema version")],
+    });
+    expect(readDanglingSkillWorkshopReviewIndex(databasePath)).toMatchObject({ rootpage });
+  });
 
   it.each([
     { refusal: "persisted", generationBound: false },
@@ -1837,7 +1862,7 @@ describe("openclaw state database", () => {
     { refusal: "persisted", generationBound: true },
     { refusal: "process", generationBound: true },
   ] as const)(
-    "preserves $refusal corruption refusal during catalog repair (generation-bound: $generationBound)",
+    "preserves $refusal corruption refusal during Doctor readability repair (generation-bound: $generationBound)",
     ({ refusal, generationBound }) => {
       const stateDir = createTempStateDir();
       const options = { env: { OPENCLAW_STATE_DIR: stateDir } };
@@ -1891,7 +1916,7 @@ describe("openclaw state database", () => {
         expect(recordOpenClawStateDatabaseOpenFailure(databasePath, error, generation)).toBe(true);
       }
 
-      expect(() => repairOpenClawStateDatabaseSchema(options, "catalog")).toThrow(reason);
+      expect(() => repairOpenClawStateDatabaseReadabilityForDoctor(options)).toThrow(reason);
       expect(readStableSqliteFileGeneration(databasePath)).toEqual(before);
       expect(fs.readFileSync(databasePath)).toEqual(beforeDatabase);
       if (beforeWal) {
@@ -1902,44 +1927,57 @@ describe("openclaw state database", () => {
     },
   );
 
-  it("prepares a dangling Workshop catalog without migrating its schema version", () => {
-    const stateDir = createTempStateDir();
-    const options = { env: { OPENCLAW_STATE_DIR: stateDir } };
-    const databasePath = materializeCurrentStateDatabase(stateDir);
-    const { DatabaseSync } = requireNodeSqlite();
-    const legacy = new DatabaseSync(databasePath);
-    removePreparedWorkerOwnershipColumns(legacy);
-    legacy.exec(`
-      PRAGMA user_version = 16;
-      UPDATE schema_meta SET schema_version = 16 WHERE meta_key = 'primary';
-    `);
-    const beforeMetadata = legacy.prepare("SELECT * FROM schema_meta").all();
-    const beforeSchema = legacy
-      .prepare("SELECT type, name, tbl_name, sql FROM sqlite_schema ORDER BY name")
-      .all();
-    legacy.close();
-    createDanglingSkillWorkshopReviewIndex(databasePath);
+  it.each(["foreign-role", "damaged-table-index"] as const)(
+    "rolls back Doctor readability repair for %s",
+    (damage) => {
+      const stateDir = createTempStateDir();
+      const options = { env: { OPENCLAW_STATE_DIR: stateDir } };
+      const databasePath = materializeCurrentStateDatabase(stateDir);
+      const { DatabaseSync } = requireNodeSqlite();
+      const database = new DatabaseSync(databasePath);
+      try {
+        if (damage === "foreign-role") {
+          database.exec("UPDATE schema_meta SET role = 'agent' WHERE meta_key = 'primary';");
+        } else {
+          database.exec(`
+            INSERT INTO skill_workshop_collection_reviews (
+              review_id, owner_agent_id, backup_id, create_time,
+              kept_names_json, written_names_json, dropped_json
+            ) VALUES ('review-preserved', 'main', 'backup-preserved', 1, '[]', '[]', '[]');
+          `);
+          database.enableDefensive?.(false);
+          database.exec("PRAGMA writable_schema = ON;");
+          database
+            .prepare(`UPDATE sqlite_schema SET sql =
+            'CREATE INDEX idx_skill_workshop_collection_reviews_owner_time
+              ON skill_workshop_collection_reviews(backup_id, create_time DESC, review_id)'
+            WHERE name = 'idx_skill_workshop_collection_reviews_owner_time'`)
+            .run();
+          const schemaVersion = readSqliteNumberPragma(database, "schema_version");
+          database.exec(
+            `PRAGMA writable_schema = OFF; PRAGMA schema_version = ${schemaVersion + 1};`,
+          );
+        }
+      } finally {
+        database.close();
+      }
+      const rootpage = createDanglingSkillWorkshopReviewIndex(databasePath);
+      const before = fs.readFileSync(databasePath);
 
-    expect(repairOpenClawStateDatabaseSchema(options, "catalog")).toEqual({
-      changes: ["Removed dangling legacy Skill Workshop review index"],
-      warnings: [],
-    });
-    const repaired = new DatabaseSync(databasePath, { readOnly: true });
-    try {
-      expect(readSqliteNumberPragma(repaired, "user_version")).toBe(16);
-      expect(repaired.prepare("SELECT * FROM schema_meta").all()).toEqual(beforeMetadata);
-      expect(
-        repaired.prepare("SELECT type, name, tbl_name, sql FROM sqlite_schema ORDER BY name").all(),
-      ).toEqual(beforeSchema);
-      expect(repaired.prepare("PRAGMA integrity_check").all()).toEqual([{ integrity_check: "ok" }]);
-    } finally {
-      repaired.close();
-    }
-    expect(repairOpenClawStateDatabaseSchema(options, "catalog")).toEqual({
-      changes: [],
-      warnings: [],
-    });
-  });
+      expect(repairOpenClawStateDatabaseReadabilityForDoctor(options)).toEqual({
+        changes: [],
+        warnings: [
+          expect.stringMatching(
+            damage === "foreign-role"
+              ? /schema role agent; expected global/
+              : /integrity_check failed/,
+          ),
+        ],
+      });
+      expect(fs.readFileSync(databasePath)).toEqual(before);
+      expect(readDanglingSkillWorkshopReviewIndex(databasePath)).toMatchObject({ rootpage });
+    },
+  );
 
   it("rolls back dangling Workshop index reclamation and converges on retry", () => {
     const stateDir = createTempStateDir();
@@ -1955,7 +1993,7 @@ describe("openclaw state database", () => {
     );
     expect(() =>
       runSqliteImmediateTransactionSync(database, () => {
-        expect(repairAdmittedSchema.repair()).toEqual([
+        expect(repairAdmittedSchema()).toEqual([
           "Removed dangling legacy Skill Workshop review index",
         ]);
         throw new Error("injected post-reclamation failure");

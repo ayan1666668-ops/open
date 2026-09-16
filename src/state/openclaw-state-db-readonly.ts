@@ -14,8 +14,8 @@ import { observeOpenClawDatabaseMaintenanceResource } from "./openclaw-state-db-
 import { openClawStateDatabaseCache } from "./openclaw-state-db-cache.js";
 import type {
   OpenClawStateDatabaseOptions,
-  OpenClawStateSchemaReadAdmission,
   OpenClawStateDatabase,
+  OpenClawStateSchemaReadAdmission,
 } from "./openclaw-state-db-contract.js";
 import { openOpenClawStateReadConnection } from "./openclaw-state-db-read-connection.js";
 import { assertSupportedStateSchemaVersion } from "./openclaw-state-db-schema-version.js";
@@ -114,10 +114,6 @@ export function isArtifactPreservingStateRead(): boolean {
 type OpenClawStateReadOnlyDatabase = {
   db: DatabaseSync;
   path: string;
-};
-
-type OpenClawStateReadOnlyOptions = OpenClawStateDatabaseOptions & {
-  schemaReadAdmission?: OpenClawStateSchemaReadAdmission;
 };
 
 type ScopedRead = ReturnType<typeof openOpenClawStateReadOnlyLocation>;
@@ -234,7 +230,7 @@ function withOpenClawStateDatabaseReadOnlyIfOpen<T>(
 
 function withFreshOpenClawStateDatabaseReadOnly<T>(
   operation: (database: OpenClawStateReadOnlyDatabase) => T,
-  options: OpenClawStateReadOnlyOptions,
+  options: OpenClawStateDatabaseOptions,
   pathname: string,
 ): T {
   const env = options.env ?? process.env;
@@ -244,7 +240,7 @@ function withFreshOpenClawStateDatabaseReadOnly<T>(
   // One consistent snapshot per synchronous scope avoids mixed reads and duplicate copies.
   // Concurrent commits become visible in the next scope; this reader closes at scope end.
   const readers = synchronousReadSnapshots.current;
-  if (!options.schemaReadAdmission && readers && requiresArtifactPreservingSnapshot(pathname)) {
+  if (readers && requiresArtifactPreservingSnapshot(pathname)) {
     let opened = readers.get(pathname);
     if (!opened) {
       opened = openOpenClawStateReadOnlyLocation(
@@ -263,12 +259,7 @@ function withFreshOpenClawStateDatabaseReadOnly<T>(
   const prepared = requiresArtifactPreservingSnapshot(pathname)
     ? prepareSqliteReadOnlyLocationSync(pathname)
     : undefined;
-  return withOpenClawStateReadOnlyLocation(
-    operation,
-    pathname,
-    prepared ?? pathname,
-    options.schemaReadAdmission,
-  );
+  return withOpenClawStateReadOnlyLocation(operation, pathname, prepared ?? pathname);
 }
 
 function openOpenClawStateReadOnlyLocation(
@@ -289,12 +280,12 @@ function withOpenClawStateReadOnlyLocation<T>(
   operation: (database: OpenClawStateReadOnlyDatabase) => T,
   pathname: string,
   source: string | PreparedSqliteReadOnlyLocation,
-  schemaReadAdmission?: OpenClawStateSchemaReadAdmission,
+  openStateSchemaReadAdmission?: OpenClawStateSchemaReadAdmission,
 ): T {
   const opened = openOpenClawStateReadConnection(pathname, source);
-  let closeSchemaReadAdmission: (() => void) | undefined;
+  let closeAdmission: (() => void) | undefined;
   try {
-    closeSchemaReadAdmission = schemaReadAdmission?.(opened.database.db);
+    closeAdmission = openStateSchemaReadAdmission?.(opened.database.db);
     assertSupportedStateSchemaVersion(opened.database.db, pathname);
     const result = operation(opened.database);
     const location = typeof source === "string" ? source : source.location;
@@ -304,7 +295,7 @@ function withOpenClawStateReadOnlyLocation<T>(
     return result;
   } finally {
     try {
-      closeSchemaReadAdmission?.();
+      closeAdmission?.();
     } finally {
       opened.close();
     }
@@ -365,15 +356,13 @@ export function withOpenClawStateDatabaseReadOnly<T>(
 /** Read existing shared state while preserving non-missing filesystem failures. */
 export function withExistingOpenClawStateDatabaseReadOnly<T>(
   operation: (database: OpenClawStateReadOnlyDatabase) => T,
-  options: OpenClawStateReadOnlyOptions = {},
+  options: OpenClawStateDatabaseOptions = {},
 ): T | undefined {
   const pathname = resolveReadOnlyPath(options);
   if (synchronousReadSnapshots.current?.has(pathname)) {
     return withFreshOpenClawStateDatabaseReadOnly(operation, options, pathname);
   }
-  const reused = options.schemaReadAdmission
-    ? { reused: false as const }
-    : withOpenClawStateDatabaseReadOnlyIfOpen(operation, pathname);
+  const reused = withOpenClawStateDatabaseReadOnlyIfOpen(operation, pathname);
   if (reused.reused) {
     return reused.value;
   }
@@ -386,8 +375,16 @@ export function withExistingOpenClawStateDatabaseReadOnly<T>(
 /** Read existing shared state without creating or updating its SQLite sidecars. */
 export function withExistingOpenClawStateDatabaseArtifactPreservingReadOnly<T>(
   operation: (database: OpenClawStateReadOnlyDatabase) => T,
-  options: OpenClawStateReadOnlyOptions = {},
+  options: OpenClawStateDatabaseOptions = {},
+  openStateSchemaReadAdmission?: OpenClawStateSchemaReadAdmission,
 ): T | undefined {
+  if (openStateSchemaReadAdmission) {
+    return withExistingOpenClawStateDatabaseCurrentReadOnly(
+      operation,
+      options,
+      openStateSchemaReadAdmission,
+    );
+  }
   return withArtifactPreservingStateReads(() =>
     withExistingOpenClawStateDatabaseReadOnly(operation, options),
   );
@@ -397,12 +394,16 @@ export function withExistingOpenClawStateDatabaseArtifactPreservingReadOnly<T>(
 export function withExistingOpenClawStateDatabaseCurrentReadOnly<T>(
   operation: (database: OpenClawStateReadOnlyDatabase) => T,
   options: OpenClawStateDatabaseOptions = {},
+  openStateSchemaReadAdmission?: OpenClawStateSchemaReadAdmission,
 ): T | undefined {
   return stateSnapshotReads.exit(() => {
     const pathname = resolveReadOnlyPath(options);
-    const reused = withOpenClawStateDatabaseReadOnlyIfOpen(operation, pathname);
-    if (reused.reused) {
-      return reused.value;
+    // Maintenance admission belongs to a fresh private reader, never a cached writer.
+    if (!openStateSchemaReadAdmission) {
+      const reused = withOpenClawStateDatabaseReadOnlyIfOpen(operation, pathname);
+      if (reused.reused) {
+        return reused.value;
+      }
     }
     if (existingPathOrUndefined(pathname) === undefined) {
       return undefined;
@@ -415,6 +416,7 @@ export function withExistingOpenClawStateDatabaseCurrentReadOnly<T>(
       operation,
       pathname,
       prepareSqliteReadOnlyLocationSync(pathname),
+      openStateSchemaReadAdmission,
     );
   });
 }

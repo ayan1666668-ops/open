@@ -62,13 +62,14 @@ import type { OpenClawSchemaVersions } from "./openclaw-schema-versions.js";
 import {
   OPENCLAW_SQLITE_BUSY_TIMEOUT_MS,
   OPENCLAW_STATE_SCHEMA_VERSION,
-  type OpenClawStateSchemaReadAdmission,
 } from "./openclaw-state-db-contract.js";
+import type { OpenClawStateSchemaReadAdmission } from "./openclaw-state-db-contract.js";
 import {
   assertOpenClawStateDatabaseOwner,
   assertOpenClawStateDatabaseForMaintenance,
   openClawStateMigrationAssertions,
 } from "./openclaw-state-db-maintenance.js";
+import { normalizeOpenClawStateSchemaReadError } from "./openclaw-state-db-schema-migration-required.js";
 import { assertCanonicalStateSchemaShape } from "./openclaw-state-db-schema-repair.js";
 import {
   readStateSchemaContentVersion,
@@ -343,7 +344,6 @@ export async function preflightOpenClawStateDatabasePath(
 export async function preflightOpenClawDatabaseSchemas(options: {
   env: NodeJS.ProcessEnv;
   scope?: "state";
-  schemaReadAdmission?: OpenClawStateSchemaReadAdmission;
   signal?: AbortSignal;
   /** Omit for current-runtime checks; updates pass their complete target pair. */
   supportedVersions?: OpenClawSchemaVersions;
@@ -356,6 +356,7 @@ export async function preflightOpenClawDatabaseSchemas(options: {
       ) => readonly { agentId: string; path: string }[]);
   configuredAgentDatabaseCandidatePaths?: readonly string[];
   agentAdmissionConfig?: OpenClawConfig;
+  openStateSchemaReadAdmission?: OpenClawStateSchemaReadAdmission;
 }): Promise<OpenClawDatabaseSchemaPreflight> {
   options.signal?.throwIfAborted();
   const {
@@ -399,7 +400,7 @@ export async function preflightOpenClawDatabaseSchemas(options: {
       stateDatabase = openNodeSqliteDatabase(stateSnapshot.location, {
         readOnly: true,
       });
-      closeStateSchemaReadAdmission = options.schemaReadAdmission?.(stateDatabase);
+      closeStateSchemaReadAdmission = options.openStateSchemaReadAdmission?.(stateDatabase);
       stateDatabase.exec(`PRAGMA busy_timeout = ${OPENCLAW_SQLITE_BUSY_TIMEOUT_MS};`);
       const stateVersion = readSqliteUserVersion(stateDatabase);
       const contentVersion =
@@ -492,13 +493,14 @@ export async function preflightOpenClawDatabaseSchemas(options: {
   } catch (error) {
     // Accepted stop must not turn cancellation or failed cleanup into a
     // warn-and-continue result that launches the remaining startup runtime.
+    const failure = normalizeOpenClawStateSchemaReadError(error, statePath);
     if (options.signal?.aborted || options.requireStartupMigrationReadiness) {
-      throw error;
+      throw failure;
     }
     result.indeterminate.push({
       kind: "state",
       path: statePath,
-      reason: formatErrorMessage(error),
+      reason: formatErrorMessage(failure),
     });
     return result;
   } finally {

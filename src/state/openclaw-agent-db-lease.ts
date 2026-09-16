@@ -351,9 +351,8 @@ function isAgentDatabaseLeaseStale(row: {
 
 /** Doctor holds both lifecycle coordinators before checking writers, without schema repair. */
 export function assertNoOpenClawAgentDatabaseLeasesReadOnly(
-  options: OpenClawStateDatabaseOptions & {
-    schemaReadAdmission?: OpenClawStateSchemaReadAdmission;
-  } = {},
+  options: OpenClawStateDatabaseOptions = {},
+  openStateSchemaReadAdmission?: OpenClawStateSchemaReadAdmission,
 ): void {
   const pathname = path.resolve(options.path ?? resolveOpenClawStateSqlitePath(options.env));
   try {
@@ -372,7 +371,7 @@ export function assertNoOpenClawAgentDatabaseLeasesReadOnly(
   const db = cached?.db ?? openNodeSqliteDatabase(pathname, { readOnly: true });
   let closeSchemaReadAdmission: (() => void) | undefined;
   try {
-    closeSchemaReadAdmission = options.schemaReadAdmission?.(db);
+    closeSchemaReadAdmission = openStateSchemaReadAdmission?.(db);
     runWithSqliteBusyTimeout(db, 250, () => {
       if (!tableExists(db, "agent_database_leases")) {
         return;

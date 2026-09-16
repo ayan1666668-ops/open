@@ -33,11 +33,10 @@ const loadConfigModule = createLazyRuntimeModule(() => import("../config/config.
 
 async function assertDoctorDatabaseSchemasCompatible(scope?: "state") {
   const databasePreflight = await import("../state/openclaw-database-preflight.js");
-  const { openStateDatabaseDoctorReadAdmission } =
-    await import("../state/openclaw-state-db-maintenance.js");
-  const [{ createConfigIO }, targets] = await Promise.all([
+  const [{ createConfigIO }, targets, { openDoctorStateSchemaReadAdmission }] = await Promise.all([
     import("../config/io.js"),
     import("../config/sessions/targets.js"),
+    import("../state/openclaw-state-db-doctor-schema.js"),
   ]);
   const snapshot = await createConfigIO({
     env: { ...process.env },
@@ -48,7 +47,7 @@ async function assertDoctorDatabaseSchemasCompatible(scope?: "state") {
   const databaseSchemas = await databasePreflight.preflightOpenClawDatabaseSchemas({
     env: process.env,
     scope,
-    schemaReadAdmission: openStateDatabaseDoctorReadAdmission,
+    openStateSchemaReadAdmission: openDoctorStateSchemaReadAdmission,
     configuredAgentDatabaseTargets: (registeredDatabases) =>
       targets.resolveConfiguredAgentDatabaseTargets(cfg, { env: process.env, registeredDatabases }),
     configuredAgentDatabaseCandidatePaths: targets.resolveConfiguredAgentDatabaseCandidatePaths(
@@ -163,21 +162,16 @@ async function runDoctorHealthFlowWithResult(
         json: options.json,
       });
 
-      if (maintenance) {
-        // Config and plugin preparation read state before the general migration graph runs.
-        const { repairOpenClawStateDatabaseSchema } =
-          await import("../state/openclaw-state-db-doctor.js");
-        const catalog = repairOpenClawStateDatabaseSchema({ env: process.env }, "catalog");
-        for (const change of catalog.changes) {
-          effectiveRuntime.log(change);
+      if (maintenance && (options.repair === true || options.yes === true)) {
+        const { repairOpenClawStateDatabaseReadabilityForDoctor } =
+          await import("../state/openclaw-state-db.js");
+        // Restore catalog reads before config discovery; versioned migrations remain in its graph.
+        const readability = repairOpenClawStateDatabaseReadabilityForDoctor({ env: process.env });
+        if (readability.warnings.length > 0) {
+          throw new Error(readability.warnings.join("\n"));
         }
-        if (catalog.warnings.length > 0) {
-          const { resolveOpenClawStateSqlitePath } =
-            await import("../state/openclaw-state-db.paths.js");
-          throw new DoctorUnreadableStateDatabaseError(
-            resolveOpenClawStateSqlitePath(),
-            catalog.warnings.join("\n"),
-          );
+        for (const change of readability.changes) {
+          effectiveRuntime.log(change);
         }
       }
 

@@ -18,6 +18,11 @@ import {
   OPENCLAW_STATE_SCHEMA_VERSION,
   type OpenClawStateDatabaseOptions,
 } from "./openclaw-state-db-contract.js";
+import {
+  hasDanglingSkillWorkshopCollectionReviewIndex,
+  LEGACY_SKILL_WORKSHOP_COLLECTION_REVIEWS_INDEX,
+  withSqliteWritableSchema,
+} from "./openclaw-state-db-doctor-schema.js";
 import { ensureColumn, tableExists, tableHasColumn } from "./openclaw-state-db-schema-helpers.js";
 import { migrateJsonCanonicalWideRowsV13 } from "./openclaw-state-db-schema-v13-widerow.js";
 import {
@@ -41,88 +46,6 @@ import {
 } from "./openclaw-state-schema-publication.js";
 import { OPENCLAW_STATE_SCHEMA_SQL } from "./openclaw-state-schema.js";
 import { UpdateSchemaRefusalError } from "./openclaw-update-schema-refusal.js";
-
-const LEGACY_SKILL_WORKSHOP_COLLECTION_REVIEWS_INDEX =
-  "idx_skill_workshop_collection_reviews_workspace_time";
-const LEGACY_SKILL_WORKSHOP_COLLECTION_REVIEWS_INDEX_SQL =
-  "CREATE INDEX idx_skill_workshop_collection_reviews_workspace_time ON skill_workshop_collection_reviews(workspace_dir, create_time DESC, review_id DESC)";
-
-function normalizeSqliteCatalogSql(sql: string): string {
-  return sql
-    .replace(/\s+/gu, " ")
-    .replace(/\s*([(),])\s*/gu, "$1")
-    .trim();
-}
-
-/** Doctor must inspect current ownership even when another catalog row is malformed. */
-export function openStateDatabaseDoctorOwnershipReadAdmission(database: DatabaseSync): () => void {
-  database.enableDefensive?.(false);
-  try {
-    // sqlite-allow-raw -- Doctor reads ownership before deciding whether schema repair is allowed.
-    database.exec("PRAGMA writable_schema = ON;");
-  } catch (error) {
-    database.enableDefensive?.(true);
-    throw error;
-  }
-  return () => {
-    try {
-      // sqlite-allow-raw -- Restore ordinary catalog parsing after Doctor's inspection.
-      database.exec("PRAGMA writable_schema = OFF;");
-    } finally {
-      database.enableDefensive?.(true);
-    }
-  };
-}
-
-function withSqliteWritableSchema<T>(database: DatabaseSync, operation: () => T): T {
-  const closeAdmission = openStateDatabaseDoctorOwnershipReadAdmission(database);
-  try {
-    return operation();
-  } finally {
-    closeAdmission();
-  }
-}
-
-/** Detect only the known v15 review index left behind after its column was retired. */
-function hasDanglingSkillWorkshopCollectionReviewIndex(database: DatabaseSync): boolean {
-  return withSqliteWritableSchema(database, () => {
-    const rawIndex = database // sqlite-allow-raw -- Inspect the exact malformed catalog row before ordinary schema parsing.
-      .prepare(
-        "SELECT tbl_name, rootpage, sql FROM sqlite_schema WHERE type = 'index' AND name = ?",
-      )
-      .get(LEGACY_SKILL_WORKSHOP_COLLECTION_REVIEWS_INDEX);
-    // SAFETY: the narrow catalog projection is validated field-by-field below.
-    const index = rawIndex as { tbl_name?: unknown; rootpage?: unknown; sql?: unknown } | undefined;
-    if (
-      index?.tbl_name !== "skill_workshop_collection_reviews" ||
-      typeof index.rootpage !== "number" ||
-      index.rootpage <= 0 ||
-      typeof index.sql !== "string" ||
-      normalizeSqliteCatalogSql(index.sql) !==
-        normalizeSqliteCatalogSql(LEGACY_SKILL_WORKSHOP_COLLECTION_REVIEWS_INDEX_SQL)
-    ) {
-      return false;
-    }
-    const rawColumns = database // sqlite-allow-raw -- Validate physical columns without parsing the malformed index.
-      .prepare("PRAGMA table_info(skill_workshop_collection_reviews)")
-      .all();
-    // SAFETY: PRAGMA table_info rows expose optional names compared as unknown values.
-    const columns = rawColumns as Array<{ name?: unknown }>;
-    return (
-      columns.some((column) => column.name === "owner_agent_id") &&
-      !columns.some((column) => column.name === "workspace_dir")
-    );
-  });
-}
-
-/** Doctor tolerates only the shipped malformed Workshop index during pre-repair reads. */
-export function openStateDatabaseDoctorReadAdmission(
-  database: DatabaseSync,
-): (() => void) | undefined {
-  return hasDanglingSkillWorkshopCollectionReviewIndex(database)
-    ? openStateDatabaseDoctorOwnershipReadAdmission(database)
-    : undefined;
-}
 
 /**
  * Make the known malformed index parseable, then let SQLite drop and reclaim it
@@ -150,6 +73,20 @@ function repairDanglingSkillWorkshopCollectionReviewIndex(database: DatabaseSync
   });
 }
 
+function repairDanglingSkillWorkshopCollectionReviewIndexChanges(database: DatabaseSync): string[] {
+  return repairDanglingSkillWorkshopCollectionReviewIndex(database)
+    ? ["Removed dangling legacy Skill Workshop review index"]
+    : [];
+}
+
+/** Run read-only schema admission while SQLite ignores malformed catalog rows. */
+function admitStateDatabaseWithDanglingWorkshopIndex<T>(
+  database: DatabaseSync,
+  operation: () => T,
+): T {
+  return withSqliteWritableSchema(database, operation);
+}
+
 /** Admit the schema before Doctor begins its write transaction. */
 function admitStateDatabaseForSchemaRepair(
   database: DatabaseSync,
@@ -164,7 +101,7 @@ function admitStateDatabaseForSchemaRepair(
     }
   };
   if (danglingWorkshopIndex) {
-    withSqliteWritableSchema(database, admit);
+    admitStateDatabaseWithDanglingWorkshopIndex(database, admit);
   } else {
     admit();
   }
@@ -181,27 +118,22 @@ function assertStateDatabaseSchemaRepairWriteAllowed(
   const assertAllowed = () =>
     assertOpenClawStateWriteAllowed({ database, databasePath: pathname, env });
   if (danglingWorkshopIndex) {
-    withSqliteWritableSchema(database, assertAllowed);
+    admitStateDatabaseWithDanglingWorkshopIndex(database, assertAllowed);
   } else {
     assertAllowed();
   }
 }
 
-/** Prepare Doctor's catalog repair and retain a fresh ownership check for its transaction. */
+/** Admit Doctor repair, then return the ownership-rechecked catalog repair operation. */
 export function prepareStateDatabaseSchemaRepair(
   database: DatabaseSync,
   pathname: string,
   env: NodeJS.ProcessEnv,
-): { needsCatalogRepair: boolean; repair: () => string[] } {
+): () => string[] {
   const danglingWorkshopIndex = admitStateDatabaseForSchemaRepair(database, pathname, env);
-  return {
-    needsCatalogRepair: danglingWorkshopIndex,
-    repair: () => {
-      assertStateDatabaseSchemaRepairWriteAllowed(database, pathname, env, danglingWorkshopIndex);
-      return repairDanglingSkillWorkshopCollectionReviewIndex(database)
-        ? ["Removed dangling legacy Skill Workshop review index"]
-        : [];
-    },
+  return () => {
+    assertStateDatabaseSchemaRepairWriteAllowed(database, pathname, env, danglingWorkshopIndex);
+    return repairDanglingSkillWorkshopCollectionReviewIndexChanges(database);
   };
 }
 
@@ -609,10 +541,13 @@ export function runStateSchemaMigrationTransaction<T>(
   pathname: string,
   migrate: () => T,
   transactionOptions: SqliteTransactionOptions,
+  prepareSchema?: () => void,
 ): T {
   return runSqliteImmediateTransactionSync(
     db,
     () => {
+      // Doctor restores catalog readability before the publication prelude reads it.
+      prepareSchema?.();
       const publishedVersion = readSqliteUserVersion(db);
       const blocker =
         publishedVersion < OPENCLAW_STATE_SCHEMA_VERSION

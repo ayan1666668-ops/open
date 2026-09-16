@@ -1,4 +1,3 @@
-// OpenClaw state database manages shared persisted state and migrations.
 import { existsSync } from "node:fs";
 import type { DatabaseSync } from "node:sqlite";
 import {
@@ -40,9 +39,11 @@ import {
   type OpenClawStateDatabase,
   type OpenClawStateDatabaseOptions,
 } from "./openclaw-state-db-contract.js";
+import { openDoctorStateSchemaReadAdmission } from "./openclaw-state-db-doctor-schema.js";
 import {
   assertCurrentStateRuntimeSchema,
   isOpenClawStateSchemaFastPathEligible,
+  needsOpenClawStateDatabaseSchemaRepair,
 } from "./openclaw-state-db-fast-path.js";
 import {
   assertOpenClawStateDatabaseForMaintenance,
@@ -58,6 +59,7 @@ import { openUnpublishedStateDatabase } from "./openclaw-state-db-open.js";
 import { ensureOpenClawStatePermissions } from "./openclaw-state-db-permissions.js";
 import { openOpenClawStateReadConnection } from "./openclaw-state-db-read-connection.js";
 import { withExistingOpenClawStateDatabaseReadOnly } from "./openclaw-state-db-readonly.js";
+import { repairStateSchema } from "./openclaw-state-db-repair.js";
 import {
   ensureAdditiveStateColumns,
   ensureFirstUseAdditiveStateColumnsForStrictMigration,
@@ -99,6 +101,7 @@ import {
   type StateSchemaPublicationBlocker,
 } from "./openclaw-state-schema-publication.js";
 import { OPENCLAW_STATE_SCHEMA_SQL } from "./openclaw-state-schema.js";
+
 export { registerOpenClawStateDatabaseLifecycleListener } from "./openclaw-state-db-cache.js";
 
 export { OPENCLAW_DATABASE_SCHEMA_DOCS_URL, OPENCLAW_SQLITE_BUSY_TIMEOUT_MS };
@@ -121,6 +124,79 @@ function assertOpenClawStateDatabaseFreshOpenAllowed(
 
 const stateDbLog = createSubsystemLogger("state/db");
 const deferredStateDatabases = new WeakSet<DatabaseSync>();
+
+export function repairOpenClawStateDatabaseSchema(options: OpenClawStateDatabaseOptions = {}): {
+  changes: string[];
+  warnings: string[];
+} {
+  const env = options.env ?? process.env;
+  const pathname = resolveDatabasePath(options);
+  if (!existsSync(pathname)) {
+    return { changes: [], warnings: [] };
+  }
+  return runWithOpenClawStateWriteAccess(
+    {
+      databasePath: pathname,
+      env,
+      openStateSchemaReadAdmission: openDoctorStateSchemaReadAdmission,
+    },
+    "state schema repair",
+    () =>
+      withStateSchemaFence({ databasePath: pathname }, () =>
+        repairStateSchema(pathname, env, "doctor"),
+      ),
+  );
+}
+
+/** Make exact legacy catalog damage readable before Doctor loads config-dependent state. */
+export function repairOpenClawStateDatabaseReadabilityForDoctor(
+  options: OpenClawStateDatabaseOptions = {},
+): { changes: string[]; warnings: string[] } {
+  const env = options.env ?? process.env;
+  const pathname = resolveDatabasePath(options);
+  if (!existsSync(pathname)) {
+    return { changes: [], warnings: [] };
+  }
+  // A writer close can checkpoint WAL and invalidate a generation-bound corruption refusal.
+  assertOpenClawStateDatabaseFreshOpenAllowed(options);
+  return runWithOpenClawStateWriteAccess(
+    {
+      databasePath: pathname,
+      env,
+      openStateSchemaReadAdmission: openDoctorStateSchemaReadAdmission,
+    },
+    "Doctor state readability repair",
+    () =>
+      withStateSchemaFence({ databasePath: pathname }, () =>
+        repairStateSchema(pathname, env, "readability"),
+      ),
+  );
+}
+
+/** Skip the exclusive doctor repair when automatic migration sees a canonical current schema. */
+export function repairOpenClawStateDatabaseSchemaIfNeeded(
+  options: OpenClawStateDatabaseOptions = {},
+): {
+  changes: string[];
+  warnings: string[];
+} {
+  const env = options.env ?? process.env;
+  const pathname = resolveDatabasePath(options);
+  if (!existsSync(pathname)) {
+    return { changes: [], warnings: [] };
+  }
+
+  return runWithOpenClawStateWriteAccess(
+    { databasePath: pathname, env },
+    "state schema repair preflight/repair",
+    () =>
+      needsOpenClawStateDatabaseSchemaRepair(pathname)
+        ? withStateSchemaFence({ databasePath: pathname }, () =>
+            repairStateSchema(pathname, env, "automatic"),
+          )
+        : { changes: [], warnings: [] },
+  );
+}
 
 function ensureSchema(
   db: DatabaseSync,
