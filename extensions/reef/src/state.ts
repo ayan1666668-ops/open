@@ -525,10 +525,10 @@ export class ReviewApprovalStore {
 }
 
 export class ReefDeliveredStore {
-  readonly #delivered: PluginStateSyncKeyedStore<{ id: string }>;
+  readonly #delivered: PluginStateKeyedStore<{ id: string }>;
 
   constructor(runtime: PluginRuntime, maxEntries = REEF_DELIVERED_MAX_ENTRIES) {
-    this.#delivered = runtime.state.openSyncKeyedStore<{ id: string }>({
+    this.#delivered = runtime.state.openKeyedStore<{ id: string }>({
       namespace: REEF_DELIVERED_NAMESPACE,
       maxEntries,
       overflowPolicy: "reject-new",
@@ -539,16 +539,16 @@ export class ReefDeliveredStore {
   }
 
   async has(id: string): Promise<boolean> {
-    return this.#delivered.lookup(id)?.id === id;
+    return (await this.#delivered.lookup(id))?.id === id;
   }
 
   async status(id: string): Promise<"delivered" | undefined> {
-    return this.#delivered.lookup(id)?.id === id ? "delivered" : undefined;
+    return (await this.#delivered.lookup(id))?.id === id ? "delivered" : undefined;
   }
 
   async confirm(id: string): Promise<void> {
-    const inserted = this.#delivered.registerIfAbsent(id, { id });
-    if (!inserted && this.#delivered.lookup(id)?.id !== id) {
+    const inserted = await this.#delivered.registerIfAbsent(id, { id });
+    if (!inserted && (await this.#delivered.lookup(id))?.id !== id) {
       throw new Error("Failed persisting Reef delivered marker");
     }
   }
