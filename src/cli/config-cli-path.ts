@@ -1,5 +1,6 @@
 import { isRecord as isPlainRecord } from "@openclaw/normalization-core/record-coerce";
 import JSON5 from "json5";
+import { ConfigNestingDepthError } from "../config/env-substitution.js";
 import { rejectConfigNonFiniteNumbers } from "../config/io.read-helpers.js";
 import { assertBoundedRawJsonNesting, assertBoundedJsonNesting } from "../config/nesting-limit.js";
 import { isBlockedObjectKey } from "../infra/prototype-keys.js";
@@ -72,7 +73,14 @@ export function parseConfigSetValue(raw: string, strictJson: boolean): unknown {
     parsed = JSON5.parse(trimmed);
     // Check parsed structure depth
     assertBoundedJsonNesting(parsed);
-  } catch {
+  } catch (err) {
+    // Non-strict values fall back to the raw string for non-JSON text, but a
+    // nesting-depth rejection is a decision about the input, not a parse
+    // failure: returning `raw` here would persist the rejected structure as a
+    // string value (for example a 600-level array assigned to responsePrefix).
+    if (err instanceof ConfigNestingDepthError) {
+      throw err;
+    }
     return raw;
   }
   rejectConfigNonFiniteNumbers(parsed);

@@ -967,17 +967,26 @@ describe("config cli integration", () => {
   });
 
   describe("nesting depth limit", () => {
-    it("rejects a deeply-nested config file with a clean validation error instead of overflowing the stack", async () => {
-      // Test the parseConfigJson5 function directly with deeply nested JSON
-      const deepJson = "[".repeat(1000) + "]".repeat(1000);
+    it("rejects a deeply-nested config file through the loader instead of overflowing the stack", async () => {
+      const deepJson = `${"[".repeat(1000)}${"]".repeat(1000)}`;
+      await withConfigFileHarness("openclaw-config-cli-nesting-", deepJson, async () => {
+        // Real file load plus validation, not a direct parser call: this is the
+        // path operators hit when a deeply nested config lands on disk.
+        const snapshot = await configRuntime.readConfigFileSnapshot({ observe: false });
+        expect(snapshot.valid).toBe(false);
+        expect(snapshot.issues.map((issue) => issue.message).join("\n")).toContain(
+          "nesting depth exceeds maximum",
+        );
+      });
+    });
 
-      const { parseConfigJson5 } = await import("../config/io.read-helpers.js");
-      const result = parseConfigJson5(deepJson);
-
-      if (result.ok) {
-        throw new Error("expected deeply nested JSON to be rejected");
-      }
-      expect(result.error).toContain("nesting depth exceeds maximum");
+    it("keeps a normal config file loadable", async () => {
+      const raw = '{"gateway":{"mode":"local"},"logging":{"level":"info"}}\n';
+      await withConfigFileHarness("openclaw-config-cli-nesting-shallow-", raw, async () => {
+        const snapshot = await configRuntime.readConfigFileSnapshot({ observe: false });
+        expect(snapshot.valid).toBe(true);
+        expect(snapshot.issues).toStrictEqual([]);
+      });
     });
   });
 });

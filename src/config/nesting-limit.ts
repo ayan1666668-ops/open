@@ -15,7 +15,10 @@ import { MAX_CONFIG_JSON_NESTING_DEPTH, ConfigNestingDepthError } from "./env-su
  * before parsing, rejecting pathological inputs that would overflow the stack.
  *
  * Uses an iterative counter-based approach (not recursion) to safely handle
- * arbitrarily deep structures. Tracks depth through JSON5 comments and strings.
+ * arbitrarily deep structures. Lexical state is consumed in a single pass:
+ * comments are only recognized outside strings (so quotes inside comments can
+ * never open a string) and string escapes are consumed as pairs (so `\\` and
+ * `\"` keep the string state correct).
  *
  * @param raw - Raw JSON/JSON5 text to scan
  * @param maxDepth - Maximum allowed depth (default: MAX_CONFIG_JSON_NESTING_DEPTH)
@@ -29,78 +32,67 @@ export function assertBoundedRawJsonNesting(
   let currentDepth = 0;
   let maxDepthReached = 0;
   let inString = false;
-  let stringChar: string | null = null;
+  let stringChar = "";
   let inLineComment = false;
   let inBlockComment = false;
 
   for (let i = 0; i < raw.length; i++) {
     const char = raw[i];
-    const prevChar = i > 0 ? raw[i - 1] : null;
-    const nextChar = i < raw.length - 1 ? raw[i + 1] : null;
+    const nextChar = i < raw.length - 1 ? raw[i + 1] : "";
 
-    // Handle escape sequences in strings
-    if (inString && char === "\\" && prevChar !== "\\") {
-      i++; // Skip escaped character
-      continue;
-    }
-
-    // Handle string boundaries
-    if ((char === '"' || char === "'" || char === "`") && prevChar !== "\\") {
-      if (!inString) {
-        inString = true;
-        stringChar = char;
-      } else if (char === stringChar) {
-        inString = false;
-        stringChar = null;
-      }
-      continue;
-    }
-
-    // Skip comments (JSON5 feature)
-    if (!inString) {
-      // Line comment: //
-      if (char === "/" && nextChar === "/" && !inLineComment && !inBlockComment) {
-        inLineComment = true;
-        i++; // Skip second /
-        continue;
-      }
-      // Block comment: /*
-      if (char === "/" && nextChar === "*" && !inLineComment && !inBlockComment) {
-        inBlockComment = true;
-        i++; // Skip *
-        continue;
-      }
-      // End line comment
-      if (inLineComment && char === "\n") {
+    if (inLineComment) {
+      if (char === "\n") {
         inLineComment = false;
-        continue;
       }
-      // End block comment: */
-      if (inBlockComment && char === "*" && nextChar === "/") {
+      continue;
+    }
+    if (inBlockComment) {
+      if (char === "*" && nextChar === "/") {
         inBlockComment = false;
-        i++; // Skip /
+        i++;
+      }
+      continue;
+    }
+    if (inString) {
+      if (char === "\\") {
+        // Consume the escaped character so `\\` and `\"` keep parity.
+        i++;
         continue;
       }
-      // Skip remaining characters inside comments
-      if (inLineComment || inBlockComment) {
-        continue;
+      if (char === stringChar) {
+        inString = false;
       }
+      continue;
     }
 
-    // Track depth through structural characters
-    if (!inString && !inLineComment && !inBlockComment) {
-      if (char === "[" || char === "{") {
-        currentDepth++;
-        maxDepthReached = Math.max(maxDepthReached, currentDepth);
-        if (currentDepth > maxDepth) {
-          throw new ConfigNestingDepthError(
-            currentDepth,
-            `raw JSON at character ${i} (line ${raw.slice(0, i).split("\n").length})`,
-          );
-        }
-      } else if (char === "]" || char === "}") {
-        currentDepth = Math.max(0, currentDepth - 1);
+    if (char === "/" && nextChar === "/") {
+      inLineComment = true;
+      i++;
+      continue;
+    }
+    if (char === "/" && nextChar === "*") {
+      inBlockComment = true;
+      i++;
+      continue;
+    }
+    if (char === '"' || char === "'" || char === "`") {
+      inString = true;
+      stringChar = char;
+      continue;
+    }
+    if (char === "[" || char === "{") {
+      currentDepth++;
+      maxDepthReached = Math.max(maxDepthReached, currentDepth);
+      if (currentDepth > maxDepth) {
+        throw new ConfigNestingDepthError(
+          currentDepth,
+          `raw JSON at character ${i} (line ${raw.slice(0, i).split("\n").length})`,
+        );
       }
+      continue;
+    }
+    if (char === "]" || char === "}") {
+      currentDepth = Math.max(0, currentDepth - 1);
     }
   }
 

@@ -4,7 +4,9 @@ import { isRecord as isPlainRecord } from "@openclaw/normalization-core/record-c
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { normalizeStringEntries } from "@openclaw/normalization-core/string-normalization";
 import JSON5 from "json5";
+import { ConfigNestingDepthError } from "../config/env-substitution.js";
 import { rejectConfigNonFiniteNumbers, visitConfigValueTree } from "../config/io.read-helpers.js";
+import { assertBoundedRawJsonNesting, assertBoundedJsonNesting } from "../config/nesting-limit.js";
 import {
   coerceSecretRef,
   isValidEnvSecretRefId,
@@ -492,8 +494,15 @@ async function readConfigPatchInput(opts: ConfigPatchOptions): Promise<unknown> 
   }
   let parsed: unknown;
   try {
+    // Patch input is user-supplied text like every other config JSON entry
+    // point, so it goes through the same pre-parse nesting guard.
+    assertBoundedRawJsonNesting(raw);
     parsed = JSON5.parse(raw);
+    assertBoundedJsonNesting(parsed);
   } catch (err) {
+    if (err instanceof ConfigNestingDepthError) {
+      throw err;
+    }
     throw new Error(`Failed to parse ${sourceLabel} as JSON5: ${String(err)}`, { cause: err });
   }
   rejectConfigNonFiniteNumbers(parsed);

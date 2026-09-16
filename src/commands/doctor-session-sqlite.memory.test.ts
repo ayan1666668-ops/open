@@ -63,12 +63,12 @@ it.each(["batch", "public"])(
           env: state.env,
           encoding: "utf8",
           maxBuffer: 1024 * 1024,
-          timeout: 240_000,
+          timeout: 180_000,
         },
       );
       expect(JSON.parse(stdout)).toMatchObject({ scenario });
       console.info(stdout.trim());
     });
   },
-  240_000,
+  180_000,
 );

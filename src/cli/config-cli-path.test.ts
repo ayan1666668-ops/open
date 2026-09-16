@@ -1,5 +1,6 @@
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { describe, expect, it } from "vitest";
+import { ConfigNestingDepthError } from "../config/env-substitution.js";
 import { mergeAtPath, parseConfigSetValue } from "./config-cli-path.js";
 
 function nestedRecord(depth: number, leaf: Record<string, unknown>): Record<string, unknown> {
@@ -26,6 +27,15 @@ describe("parseConfigSetValue", () => {
 
   it("falls back to the raw string when JSON5 parsing fails", () => {
     expect(parseConfigSetValue("hello", false)).toBe("hello");
+  });
+
+  it("propagates the nesting-depth rejection instead of falling back to the raw string", () => {
+    // A valid but over-deep value must not be silently stored as its own text
+    // (for example a 600-level array assigned to a string setting).
+    const deep = `${"[".repeat(600)}${"]".repeat(600)}`;
+    expect(() => parseConfigSetValue(deep, false)).toThrow(ConfigNestingDepthError);
+    expect(() => parseConfigSetValue(deep, false)).toThrow(/nesting depth exceeds maximum/);
+    expect(() => parseConfigSetValue(`${"[".repeat(100)}${"]".repeat(100)}`, false)).not.toThrow();
   });
 
   it.each([

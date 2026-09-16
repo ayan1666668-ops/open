@@ -53,6 +53,35 @@ describe("nesting-limit", () => {
       const withEscapes = `["\\\\", "\\"", "\\"]`;
       expect(() => assertBoundedRawJsonNesting(withEscapes)).not.toThrow();
     });
+
+    it("keeps string state across escaped backslashes", () => {
+      // `JSON.stringify({a: "\\", b: "[".repeat(513)})` is valid shallow JSON.
+      // A scanner that ignores escape parity inverts string state and counts the
+      // brackets inside `b`, rejecting configuration that previously parsed.
+      const raw = JSON.stringify({ a: "\\", b: "[".repeat(513) });
+      expect(assertBoundedRawJsonNesting(raw)).toBe(1);
+      expect(() => JSON.parse(raw)).not.toThrow();
+    });
+
+    it("keeps string state across escaped quotes", () => {
+      const raw = JSON.stringify({ a: 'quote " and \\', b: "[".repeat(513) });
+      expect(assertBoundedRawJsonNesting(raw)).toBe(1);
+    });
+
+    it("ignores quotes inside line and block comments", () => {
+      expect(assertBoundedRawJsonNesting(`// don't\n{"a": 1}`)).toBe(1);
+      expect(assertBoundedRawJsonNesting(`/* don't "[ */ {"a": 1}`)).toBe(1);
+    });
+
+    it("still measures nesting that follows a comment containing a quote", () => {
+      const raw = `// don't\n${"[".repeat(600)}`;
+      expect(() => assertBoundedRawJsonNesting(raw)).toThrow(ConfigNestingDepthError);
+    });
+
+    it("ignores brackets inside comments", () => {
+      expect(assertBoundedRawJsonNesting(`{"a": 1} // ]]]`)).toBe(1);
+      expect(assertBoundedRawJsonNesting(`{"a": 1 /* ]]] */ }`)).toBe(1);
+    });
   });
 
   describe("assertBoundedJsonNesting", () => {
