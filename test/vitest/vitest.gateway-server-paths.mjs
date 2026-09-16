@@ -30,6 +30,7 @@ export const gatewayDatabaseWorkerTestFiles = [
   "src/gateway/session-swarm-summary.test.ts",
   "src/gateway/session-utils.subagent.test.ts",
   "src/gateway/setup-inference.first-signin.integration.test.ts",
+  "src/gateway/worker-environments/provider-crabbox-runtime-preflight.test.ts",
 ];
 
 // Canonical file ownership for the non-isolated Gateway server Vitest project.
