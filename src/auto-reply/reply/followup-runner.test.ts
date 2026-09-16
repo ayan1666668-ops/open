@@ -4,6 +4,7 @@ import {
   getPluginRuntimeGatewayRequestScope,
   withPluginRuntimeGatewayRequestScope,
 } from "../../plugins/runtime/gateway-request-scope.js";
+import type { QueuedFollowupSettlement } from "../get-reply-options.types.js";
 import type { ReplyPayload } from "../types.js";
 import type { AdmittedFollowupTurn } from "./followup-turn-admission.js";
 import type { FollowupExecutionResult } from "./followup-turn-execution.js";
@@ -34,11 +35,16 @@ vi.mock("./agent-runner-result-accounting.js", () => ({
 
 vi.mock("./followup-turn-admission.js", () => ({
   admitFollowupTurn: (...args: unknown[]) => state.admit(...args),
-  settleQueuedFollowupPresentation: async (defaults: {
-    opts?: { onQueuedFollowupSettled?: () => Promise<void> | void };
-  }) => {
+  settleQueuedFollowupPresentation: async (
+    defaults: {
+      opts?: {
+        onQueuedFollowupSettled?: (settlement: QueuedFollowupSettlement) => Promise<void> | void;
+      };
+    },
+    settlement: QueuedFollowupSettlement,
+  ) => {
     try {
-      await defaults.opts?.onQueuedFollowupSettled?.();
+      await defaults.opts?.onQueuedFollowupSettled?.(settlement);
     } catch {}
   },
 }));

@@ -339,7 +339,7 @@ describe("dispatchReplyFromConfig owner settlement", () => {
           if (phase === "subsequent block") {
             await retained?.onBlockReply?.({ text: "second queued reply" });
           }
-          const cleanup = retained?.onQueuedFollowupSettled?.();
+          const cleanup = retained?.onQueuedFollowupSettled?.({ finalDeliveryFailed: false });
           await new Promise<void>((resolve) => {
             setImmediate(resolve);
           });
@@ -436,9 +436,9 @@ describe("dispatchReplyFromConfig owner settlement", () => {
           await dispatcher.waitForIdle();
           await retained?.onBlockReply?.({ text: "queued reply" });
           await entered.promise;
-          const cleanup = Promise.resolve(retained?.onQueuedFollowupSettled?.()).catch(
-            (error: unknown) => error,
-          );
+          const cleanup = Promise.resolve(
+            retained?.onQueuedFollowupSettled?.({ finalDeliveryFailed: false }),
+          ).catch((error: unknown) => error);
           await new Promise<void>((resolve) => {
             setImmediate(resolve);
           });
