@@ -908,7 +908,7 @@ docker_e2e_resolve_image() { printf '%s' fixture-image; }
 docker_e2e_cleanup_package_tgz() { :; }
 docker_e2e_prepare_package_tgz() { printf '%s' fixture-package.tgz; }
 docker_e2e_test_state_shell_b64() { printf '%s' fixture-state; }
-docker_e2e_package_mount_args() { DOCKER_E2E_PACKAGE_ARGS=(); }
+docker_e2e_package_mount_args() { DOCKER_E2E_PACKAGE_ARGS=(-v fixture-package.tgz:/tmp/openclaw.tgz:ro); }
 docker_e2e_build_or_reuse() { :; }
 run_logged_print() { shift; "$@"; }
 docker_e2e_run_with_harness() { printf '%s\\n' "$@"; }
