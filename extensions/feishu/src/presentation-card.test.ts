@@ -109,6 +109,40 @@ describe("buildFeishuPresentationCard", () => {
     expect(joined).toContain("r79");
   });
 
+  // A table block carries as many rows as the producer had, and its linear form is one
+  // element unless it is cut.
+  it("splits a table block whose linear form outgrows the card text limit", () => {
+    const presentation = normalizeMessagePresentation({
+      blocks: [
+        {
+          type: "table",
+          caption: "Roster",
+          headers: ["name", "detail"],
+          rows: Array.from({ length: 120 }, (_entry, index) => [
+            `row${index}`,
+            `detail ${index} ${"d".repeat(20)}`,
+          ]),
+        },
+      ],
+    });
+    if (!presentation) {
+      throw new Error("expected valid presentation");
+    }
+
+    const elements = buildFeishuPresentationCard({
+      presentation,
+      renderText: (text) => convertMarkdownTables(text, "code"),
+    }).body.elements as { tag: string; content: string }[];
+
+    expect(elements.length).toBeGreaterThan(1);
+    for (const element of elements) {
+      expect(element.content.length).toBeLessThanOrEqual(4000);
+    }
+    const joined = elements.map((element) => element.content).join("");
+    expect(joined).toContain("row0");
+    expect(joined).toContain("row119");
+  });
+
   // A quote prefix hides a fence marker from the chunker's scanner, so the cut it makes
   // leaves an opener in one element and a closer in another. Neither draws a block, and
   // no limit repairs it, so the projection gives way to the text as authored.

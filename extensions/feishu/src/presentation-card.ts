@@ -455,14 +455,14 @@ function buildFeishuCardElementsForBlock(
     ];
   }
   if (block.type === "table") {
-    return [
-      {
+    // A table block carries as many rows as the producer had, and its linear form is one
+    // element unless it is cut, so it takes the same projection a text block does.
+    return projectBlockText(renderMessagePresentationTableFallbackText(block), renderText).map(
+      (part) => ({
         tag: "markdown",
-        content: escapeFeishuCardMarkdownText(
-          renderText(renderMessagePresentationTableFallbackText(block)),
-        ),
-      },
-    ];
+        content: escapeFeishuCardMarkdownText(part),
+      }),
+    );
   }
   return [
     {
