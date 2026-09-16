@@ -486,6 +486,89 @@ describe("task-registry store runtime", () => {
     expect(preserved.cleanupAfter).toBe(explicitCleanupAfter + 60_000);
   });
 
+  it("persists the corrected deadline across reloads and keeps the recovered record through the next sweep", async () => {
+    await withOpenClawTestState(
+      { layout: "state-only", prefix: "openclaw-task-recovery-proof-" },
+      async () => {
+        resetTaskRegistryForTests({ persist: false });
+        // Recovery happens more than 24h after the lost-mark (Gateway down
+        // overnight): the stale lost-window deadline (lostAt + 24h) has already
+        // expired by the time maintenance runs, so only the corrected 7-day
+        // terminal deadline from the recovered endedAt keeps the record alive.
+        const now = Date.now();
+        const lostAt = now - 30 * 60 * 60_000;
+        const recoveredEndedAt = now - 20 * 60 * 60_000;
+        const lostTask: TaskRecord = {
+          ...createStoredTask(),
+          taskId: "task-recovery-persisted",
+          runtime: "cron",
+          status: "lost",
+          endedAt: lostAt,
+          lastEventAt: lostAt,
+          cleanupAfter: lostAt + 24 * 60 * 60_000, // short lost-window retention (now expired)
+        };
+        upsertTaskWithDeliveryStateToSqlite({ task: lostTask });
+
+        // A fresh process (reload from SQLite) must still see the lost record
+        // with its short lost-window deadline before recovery.
+        reloadTaskRegistryFromStore();
+        const reloadedLost = expectDefined(
+          getTaskById(lostTask.taskId),
+          "expected lost record to survive a reload",
+        );
+        expect(reloadedLost.status).toBe("lost");
+        expect(reloadedLost.cleanupAfter).toBe(lostAt + 24 * 60 * 60_000);
+        // The stale lost-window deadline is already in the past at sweep time.
+        expect(reloadedLost.cleanupAfter).toBeLessThan(now);
+
+        // Recovery restores the standard terminal retention from the recovered
+        // endedAt, then that corrected deadline must survive another reload.
+        const recovered = expectDefined(
+          markTaskTerminalById({
+            taskId: lostTask.taskId,
+            status: "succeeded",
+            endedAt: recoveredEndedAt,
+            lastEventAt: recoveredEndedAt,
+          }),
+          "expected lost task recovery to succeed",
+        );
+        expect(recovered.status).toBe("succeeded");
+        expect(recovered.cleanupAfter).toBeGreaterThan(now);
+        expect(recovered.cleanupAfter).toBeGreaterThan(lostAt + 24 * 60 * 60_000);
+
+        reloadTaskRegistryFromStore();
+        const reloadedRecovered = expectDefined(
+          getTaskById(lostTask.taskId),
+          "expected recovered record to survive a reload",
+        );
+        expect(reloadedRecovered.status).toBe("succeeded");
+        expect(reloadedRecovered.cleanupAfter).toBe(
+          resolveTaskCleanupAfter({
+            status: "succeeded",
+            endedAt: recoveredEndedAt,
+            lastEventAt: recoveredEndedAt,
+            createdAt: reloadedRecovered.createdAt,
+          }),
+        );
+
+        // The next maintenance sweep must not prune the recovered record: its
+        // corrected 7-day deadline is still in the future, whereas the stale
+        // lost-window deadline (lostAt + 24h) had already expired.
+        const maintenance = await runTaskRegistryMaintenance();
+        expect(maintenance).toEqual({
+          reconciled: 0,
+          recovered: 0,
+          cleanupStamped: 0,
+          pruned: 0,
+        });
+        expectDefined(
+          getTaskById(lostTask.taskId),
+          "expected recovered record to survive the next sweep",
+        );
+      },
+    );
+  });
+
   it("uses scoped owner lookups for fresh owner task reads", async () => {
     const storedTask = createStoredTask();
     const loadSnapshot = vi.fn(() => ({
