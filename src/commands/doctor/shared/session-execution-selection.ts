@@ -4,7 +4,10 @@ import {
   isDefaultAgentRuntimeId,
   normalizeOptionalAgentRuntimeId,
 } from "../../../agents/agent-runtime-id.js";
-import { resolvePersistedOverrideModelRef } from "../../../agents/model-selection-persisted.js";
+import {
+  normalizeStoredOverrideModel,
+  resolvePersistedOverrideModelRef,
+} from "../../../agents/model-selection-persisted.js";
 import type { SessionEntry } from "../../../config/sessions/types.js";
 import { commitStoredSessionExecutionSelection } from "../../../model-picker/apply-session-model-selection.js";
 import type {
@@ -81,17 +84,23 @@ export function migrateSessionExecutionSelection(params: {
       : model && entry.modelOverrideSource !== "default"
         ? { ...(provider ? { provider } : {}), id: model }
         : undefined;
+  const routeResolution =
+    (automatic && originProvider && originModel) ||
+    entry.modelOverrideRouteResolution === "resolved"
+      ? "resolved"
+      : "raw";
+  const normalized = normalizeStoredOverrideModel({
+    providerOverride: request?.provider,
+    modelOverride: request?.id,
+    routeResolution,
+  });
   const ref =
     request && (request.provider || params.defaultProvider)
       ? resolvePersistedOverrideModelRef({
           defaultProvider: params.defaultProvider,
-          overrideProvider: request.provider,
-          overrideModel: request.id,
-          routeResolution:
-            (automatic && originProvider && originModel) ||
-            entry.modelOverrideRouteResolution === "resolved"
-              ? "resolved"
-              : "raw",
+          overrideProvider: normalized.providerOverride,
+          overrideModel: normalized.modelOverride,
+          routeResolution,
         })
       : undefined;
   const requestedModel = ref ? { provider: ref.provider, id: ref.model } : request;

@@ -45,6 +45,25 @@ describe("Doctor execution selection conversion", () => {
     });
   });
 
+  it.each([
+    { provider: undefined, model: "provider-a/model-a", expected: "model-a" },
+    { provider: "provider-a", model: "provider-a/model-a", expected: "model-a" },
+    { provider: "provider-a", model: "nested/model-a", expected: "nested/model-a" },
+  ])("migrates raw model input $model under $provider", ({ provider, model, expected }) => {
+    const result = migrateSessionExecutionSelection({
+      entry: { modelOverride: model, providerOverride: provider },
+      defaultProvider: "provider-default",
+      classifyExecutor,
+    });
+    expect(result.entry.executionSelection).toEqual({
+      state: "deferred",
+      request: { model: { provider: "provider-a", id: expected } },
+      fallbackPermission: "explicit",
+    });
+    expect(result.entry).not.toHaveProperty("modelOverride");
+    expect(result.entry).not.toHaveProperty("providerOverride");
+  });
+
   it("restores pre-fallback intent and drops only an automatic account pin", () => {
     for (const source of ["auto", "user-link"] as const) {
       const result = migrateSessionExecutionSelection({
