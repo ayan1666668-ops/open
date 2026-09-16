@@ -3644,48 +3644,6 @@ describe("failure alert form round trips", () => {
     expect(state.cronFieldErrors.failureAlertCooldownSeconds).toBeTruthy();
     expect(request).not.toHaveBeenCalled();
   });
-
-  // Build userinfo-bearing URLs at runtime (mirroring what a user could type)
-  // so the fixtures stay free of literal embedded-credential strings.
-  const webhookUrlWithUserinfo = (scheme: "http" | "https", withPassword: boolean) => {
-    const url = new URL(`${scheme}://example.com/hook`);
-    url.username = "user";
-    if (withPassword) {
-      url.password = "pass";
-    }
-    return url.href;
-  };
-
-  it.each([
-    webhookUrlWithUserinfo("https", true),
-    webhookUrlWithUserinfo("http", false),
-    "https://exa mple.com/hook",
-    "http://",
-  ])("rejects webhook URLs the server boundary rejects: %j", (deliveryTo) => {
-    const errors = validateCronForm({
-      ...DEFAULT_CRON_FORM,
-      name: "Webhook job",
-      payloadKind: "agentTurn",
-      payloadText: "Run",
-      deliveryMode: "webhook",
-      deliveryTo,
-    });
-
-    expect(errors.deliveryTo).toBe("cron.errors.webhookUrlInvalid");
-  });
-
-  it("accepts a well-formed webhook URL without userinfo", () => {
-    const errors = validateCronForm({
-      ...DEFAULT_CRON_FORM,
-      name: "Webhook job",
-      payloadKind: "agentTurn",
-      payloadText: "Run",
-      deliveryMode: "webhook",
-      deliveryTo: "https://example.com/hook",
-    });
-
-    expect(errors.deliveryTo).toBeUndefined();
-  });
 });
 
 describe("selected automation runtime refresh", () => {

@@ -32,6 +32,7 @@ import {
 } from "./form-schedule.ts";
 import { clearCronRunsPage, loadCronRuns, retireCronRunsRequest } from "./runs.ts";
 import type { CronFieldErrors, CronFormState, CronState } from "./types.ts";
+import { resolveCronWebhookDeliveryError } from "./webhook-url.ts";
 
 export { loadCronScopeStats } from "./scope.ts";
 
@@ -206,21 +207,6 @@ export function normalizeCronFormState(
   };
 }
 
-// Mirrors the server-side cron webhook boundary (normalizeHttpWebhookUrl): the
-// form must reject the same values the gateway refuses at save time, instead
-// of only checking the scheme prefix (issue #146448).
-function isValidCronWebhookUrl(value: string): boolean {
-  try {
-    const parsed = new URL(value);
-    if ((parsed.protocol !== "http:" && parsed.protocol !== "https:") || parsed.username) {
-      return false;
-    }
-    return !parsed.password;
-  } catch {
-    return false;
-  }
-}
-
 export function validateCronForm(form: CronFormState): CronFieldErrors {
   const errors: CronFieldErrors = {};
   if (!form.name.trim()) {
@@ -278,11 +264,9 @@ export function validateCronForm(form: CronFormState): CronFieldErrors {
     }
   }
   if (form.deliveryMode === "webhook") {
-    const target = form.deliveryTo.trim();
-    if (!target) {
-      errors.deliveryTo = "cron.errors.webhookUrlRequired";
-    } else if (!isValidCronWebhookUrl(target)) {
-      errors.deliveryTo = "cron.errors.webhookUrlInvalid";
+    const deliveryError = resolveCronWebhookDeliveryError(form.deliveryTo);
+    if (deliveryError) {
+      errors.deliveryTo = deliveryError;
     }
   }
   if (form.failureAlertMode === "custom") {
