@@ -1634,6 +1634,15 @@ async function archiveLegacyArtifacts(
       }
     }
   }
+  // A physical move must remain resolvable through every receipt that captured its source.
+  for (const owner of owners) {
+    for (const { path: source } of owner.verifiedSources ?? []) {
+      const shared = planned.get(source);
+      if (shared && !shared.owners.has(owner)) {
+        shared.owners.set(owner, undefined);
+      }
+    }
+  }
   const movesForOwner = (owner: LegacyArchiveTarget) =>
     [...planned.values()]
       .filter((item) => item.owners.has(owner))
@@ -1663,11 +1672,12 @@ async function archiveLegacyArtifacts(
       );
       assertCurrent?.();
       completed.add(move.sourcePath);
-      const report = [...referencingOwners.keys()][0]!.report;
-      (move.kind === "unreferenced-jsonl"
-        ? report.archivedUnreferencedJsonlFiles
-        : report.archivedTranscriptFiles
-      ).push(move.archivePath);
+      for (const { report } of referencingOwners.keys()) {
+        (move.kind === "unreferenced-jsonl"
+          ? report.archivedUnreferencedJsonlFiles
+          : report.archivedTranscriptFiles
+        ).push(move.archivePath);
+      }
     } catch (error) {
       if (error instanceof DeferredPluginMigrationConflictError && error.pending.length > 0) {
         break;
@@ -1766,10 +1776,10 @@ async function archiveImportedLegacySessionStores(
         publishSourceRemoval,
       );
       assertCurrent?.();
-      for (const { target } of entries) {
+      for (const { target, report } of entries) {
         recordCompletedMigrationMoves(activeRun, target, [move]);
+        report.archivedLegacyStoreFiles!.push(move.archivePath);
       }
-      first.report.archivedLegacyStoreFiles!.push(move.archivePath);
     } catch (error) {
       if (error instanceof DeferredPluginMigrationConflictError && error.pending.length > 0) {
         break;
