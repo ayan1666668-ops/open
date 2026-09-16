@@ -816,6 +816,95 @@ describe("feishuOutbound.sendText local-image auto-convert", () => {
     }
   });
 
+  // A comment carries no card, and the comment sender converts for its own chunker and
+  // keeps the authored form when the markers would not survive the cut. Converting the
+  // fallback before it gets there handed it a conversion it could not undo.
+  it("keeps a presentation comment readable when its fences cannot survive the cut", async () => {
+    const rows = Array.from({ length: 40 }, (_entry, index) => `> | row${index} | d |`);
+    const table = [
+      "> | name | detail |",
+      "> | --- | --- |",
+      ...rows,
+      `> | wide | ${"w".repeat(220)} |`,
+    ].join("\n");
+    const cfg = {
+      channels: { feishu: { accounts: { main: { markdown: { tables: "code" } } } } },
+    } as ClawdbotConfig;
+    const to = "comment:docx:doxcn123:7623358762119646411";
+    // The case only means anything while the conversion carries quoted markers and needs
+    // more than one comment to arrive.
+    expect(convertMarkdownTables(table, "code")).toContain("> ```");
+    expect(convertMarkdownTables(table, "code").length).toBeGreaterThan(4000);
+
+    const payload = { presentation: { blocks: [{ type: "text", text: table }] } };
+    const rendered = await renderPresentationForDelivery(
+      {
+        presentationCapabilities: feishuOutbound.presentationCapabilities,
+        renderPresentation: async (adapted, sourcePresentation) =>
+          await feishuOutbound.renderPresentation!({
+            payload: adapted,
+            presentation: adapted.presentation,
+            sourcePresentation,
+            ctx: { cfg, to, text: "", accountId: "main", payload: adapted } as never,
+          }),
+      },
+      payload as never,
+    );
+    await sendText({ cfg, to, text: rendered.text ?? "", accountId: "main" });
+
+    const contents = deliverCommentThreadTextMock.mock.calls.map((_call, index) =>
+      String(commentThreadParams(index)?.content ?? ""),
+    );
+    expect(contents.length).toBeGreaterThan(0);
+    for (const content of contents) {
+      // A comment opens and closes its own fences or carries none at all.
+      expect((content.match(/^> ```/gmu) ?? []).length % 2).toBe(0);
+    }
+    expect(contents.join("")).toContain("row39");
+  });
+
+  // A conversion hides its table inside a fence before the card question is asked, so
+  // asking only whether a table fits one card answered nothing for a quoted one, and the
+  // card chunker cannot close and reopen a quoted marker.
+  it("keeps a quoted table off the card path when its fences cannot survive the cut", async () => {
+    const rows = Array.from({ length: 40 }, (_entry, index) => `> | row${index} | d |`);
+    const table = [
+      "> | name | detail |",
+      "> | --- | --- |",
+      ...rows,
+      `> | wide | ${"w".repeat(220)} |`,
+    ].join("\n");
+    // The case only means anything while the conversion carries quoted markers and needs
+    // more room than one card has.
+    expect(convertMarkdownTables(table, "code")).toContain("> ```");
+    expect(convertMarkdownTables(table, "code").length).toBeGreaterThan(4000);
+
+    await sendText({
+      cfg: {
+        channels: {
+          feishu: {
+            renderMode: "card",
+            accounts: { main: { markdown: { tables: "code" } } },
+          },
+        },
+      } as ClawdbotConfig,
+      to: "chat_1",
+      text: table,
+      accountId: "main",
+    });
+
+    const delivered = [
+      ...sendStructuredCardFeishuMock.mock.calls,
+      ...sendMessageFeishuMock.mock.calls,
+    ].map((call) => String(call[0]?.text ?? ""));
+    expect(delivered.length).toBeGreaterThan(0);
+    for (const message of delivered) {
+      // A message opens and closes its own fences or carries none at all.
+      expect((message.match(/^> ```/gmu) ?? []).length % 2).toBe(0);
+    }
+    expect(delivered.join("")).toContain("row39");
+  });
+
   it("uses markdown cards when renderMode=card", async () => {
     const result = await sendText({
       cfg: cardRenderConfig,

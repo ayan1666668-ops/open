@@ -293,7 +293,14 @@ export function cardCarriesWholeTable(
   text: string,
   chunk: (text: string) => readonly string[],
 ): boolean {
-  return !hasCardMarkdownTable(text) || chunk(text).length <= 1;
+  const chunks = chunk(text);
+  if (hasCardMarkdownTable(text) && chunks.length > 1) {
+    return false;
+  }
+  // A conversion has already hidden its table inside a fence by the time this asks, so the
+  // question the cards still have to answer is the fence one: the card chunker cannot close
+  // and reopen a quoted marker any more than the post chunker can.
+  return fencesSurvive(text, [...chunks]);
 }
 
 export function feishuCardWithinTableLimit(card: Record<string, unknown>): boolean {
@@ -671,7 +678,11 @@ export function renderFeishuPresentationPayload({
   });
   // Card elements and the fallback are separate projections of authored prose.
   // Neither projection consumes text already formatted for the other.
-  const fallbackText = ctx.renderText ? ctx.renderText(rawFallbackText) : rawFallbackText;
+  // A comment carries no card, and the comment sender converts for its own chunker and
+  // keeps the authored form when the markers would not survive the cut. Converting here
+  // first would hand it a conversion it cannot undo, so the authored prose goes through.
+  const fallbackText =
+    ctx.renderText && !isComment ? ctx.renderText(rawFallbackText) : rawFallbackText;
   const existingFeishuData = isRecord(payload.channelData?.feishu)
     ? payload.channelData.feishu
     : undefined;

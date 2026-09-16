@@ -711,7 +711,9 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
 
   it("keeps oversized auto mode markdown final text on the chunked card path", async () => {
     const runtime = getFeishuRuntimeMock();
-    runtime.channel.text.resolveTextChunkLimit.mockReturnValue(10);
+    // A budget this small cannot carry a fence at all, and the card decision asks the real
+    // chunker whether its markers survive, so the limit has to be one a fence fits in.
+    runtime.channel.text.resolveTextChunkLimit.mockReturnValue(24);
     runtime.channel.text.chunkMarkdownTextWithMode.mockReturnValue(["```ts\nx\n```", "tail"]);
 
     const { options } = createDispatcherHarness({ runtime: createRuntimeLogger() });
@@ -2525,7 +2527,20 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
   ])(
     "retains accepted $kind chunk content after receipt loss with $acceptedBeforeReceiptLoss prior receipts",
     async ({ kind, provider, acceptedBeforeReceiptLoss }) => {
-      useNonStreamingAutoAccount();
+      if (kind === "card") {
+        // A card carries a table as one component and its chunker cannot reopen a fence a
+        // cut strands, so both shapes now take the post path. Configuration is what puts
+        // plain prose on a card, which is the promotion this case is built on.
+        resolveFeishuAccountMock.mockReturnValue({
+          accountId: "main",
+          appId: "app_id",
+          appSecret: "app_secret",
+          domain: "feishu",
+          config: { renderMode: "card", streaming: { mode: "off" } },
+        });
+      } else {
+        useNonStreamingAutoAccount();
+      }
       const runtime = getFeishuRuntimeMock();
       runtime.channel.text.resolveTextChunkLimit.mockReturnValue(6);
       runtime.channel.text.chunkMarkdownTextWithMode.mockReturnValue(["first", "second", "third"]);
@@ -2543,11 +2558,7 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
         ),
       );
       const { options } = createDispatcherHarness();
-      // The card fixture is a fenced block rather than a table. A card carries a table as
-      // one component and the chunker does not repeat its header, so a table needing more
-      // than one card takes the post path now; a fence promotes to a card without being a
-      // table, which is what this case is actually about.
-      const text = kind === "card" ? "```\nfirst second third\n```" : "firstsecondthird";
+      const text = "firstsecondthird";
 
       const error = await options
         .deliver({ text }, { kind: "final" })
