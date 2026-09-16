@@ -12,6 +12,49 @@ const VLLM_BINARY_THINKING_PROFILE = {
   defaultLevel: "off",
 } satisfies ProviderThinkingProfile;
 
+type VllmThinkingLevelId = ProviderThinkingProfile["levels"][number]["id"];
+
+/** Effort ladder a Qwen endpoint can accept as `reasoning_effort`, weakest first. */
+const VLLM_QWEN_EFFORT_LADDER: readonly VllmThinkingLevelId[] = [
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+];
+
+function normalizeVllmEffortLevel(value: unknown): VllmThinkingLevelId | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const collapsed = value
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]+/g, "");
+  const level = collapsed === "extrahigh" ? "xhigh" : collapsed;
+  return VLLM_QWEN_EFFORT_LADDER.find((candidate) => candidate === level);
+}
+
+/**
+ * Qwen chat-template thinking is an on/off flag, but a vLLM reasoning parser
+ * can also honor `reasoning_effort`. A model row that lists the efforts its
+ * server accepts opts into a graded ladder instead of the binary profile.
+ */
+export function resolveVllmQwenEffortLevels(
+  compat?: ProviderDefaultThinkingPolicyContext["compat"],
+): VllmThinkingLevelId[] | undefined {
+  const efforts = compat?.supportedReasoningEfforts;
+  if (!Array.isArray(efforts) || efforts.length === 0) {
+    return undefined;
+  }
+  const declared = new Set(
+    efforts.map(normalizeVllmEffortLevel).filter((level) => level !== undefined),
+  );
+  const levels = VLLM_QWEN_EFFORT_LADDER.filter((level) => declared.has(level));
+  return levels.length > 0 ? levels : undefined;
+}
+
 function normalizeVllmQwenThinkingFormat(value: unknown): VllmQwenThinkingFormat | undefined {
   if (typeof value !== "string") {
     return undefined;
@@ -57,7 +100,17 @@ export function resolveThinkingProfile(
     return null;
   }
   const qwenFormat = resolveVllmQwenThinkingFormatFromCompat(ctx.compat);
-  if (qwenFormat || (ctx.reasoning === true && isVllmNemotronThinkingModel(ctx.modelId))) {
+  if (qwenFormat) {
+    const effortLevels = resolveVllmQwenEffortLevels(ctx.compat);
+    if (effortLevels) {
+      return {
+        levels: [{ id: "off" }, ...effortLevels.map((id) => ({ id }))],
+        defaultLevel: "off",
+      };
+    }
+    return VLLM_BINARY_THINKING_PROFILE;
+  }
+  if (ctx.reasoning === true && isVllmNemotronThinkingModel(ctx.modelId)) {
     return VLLM_BINARY_THINKING_PROFILE;
   }
   return null;

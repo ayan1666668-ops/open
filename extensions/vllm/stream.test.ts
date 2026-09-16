@@ -40,6 +40,65 @@ function capturePayload(params: {
 }
 
 describe("createVllmQwenThinkingWrapper", () => {
+  it("keeps the transport's reasoning_effort when the model declares an effort ladder", () => {
+    let captured: Record<string, unknown> = {};
+    const baseStreamFn: StreamFn = (_model, _context, options) => {
+      const payload = { reasoning_effort: "xhigh", reasoning: { effort: "xhigh" } };
+      options?.onPayload?.(payload, _model);
+      captured = payload;
+      return {} as ReturnType<StreamFn>;
+    };
+    const wrapped = createVllmQwenThinkingWrapper({
+      baseStreamFn,
+      format: "chat-template",
+      thinkingLevel: "high",
+      effortLadder: true,
+    });
+    void wrapped(
+      {
+        api: "openai-completions",
+        provider: "vllm",
+        id: "qwen38-flash-next",
+        reasoning: true,
+      } as Model<"openai-completions">,
+      { messages: [] } as Context,
+      { reasoning: "high" } as never,
+    );
+    expect(captured).toEqual({
+      chat_template_kwargs: { enable_thinking: true, preserve_thinking: true },
+      reasoning_effort: "xhigh",
+    });
+  });
+
+  it("drops reasoning_effort for a declared ladder once thinking is off", () => {
+    let captured: Record<string, unknown> = {};
+    const baseStreamFn: StreamFn = (_model, _context, options) => {
+      const payload = { reasoning_effort: "low" };
+      options?.onPayload?.(payload, _model);
+      captured = payload;
+      return {} as ReturnType<StreamFn>;
+    };
+    const wrapped = createVllmQwenThinkingWrapper({
+      baseStreamFn,
+      format: "chat-template",
+      thinkingLevel: "off",
+      effortLadder: true,
+    });
+    void wrapped(
+      {
+        api: "openai-completions",
+        provider: "vllm",
+        id: "qwen38-flash-next",
+        reasoning: true,
+      } as Model<"openai-completions">,
+      { messages: [] } as Context,
+      { reasoning: "none" } as never,
+    );
+    expect(captured).toEqual({
+      chat_template_kwargs: { enable_thinking: false, preserve_thinking: true },
+    });
+  });
+
   it("maps Qwen chat-template thinking off to chat_template_kwargs", () => {
     const payload = capturePayload({
       format: "chat-template",
