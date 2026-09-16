@@ -5526,6 +5526,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup Android toolchain
+        id: android-toolchain
         # Frozen targets keep their Gradle task contract, but CI toolchain pins remain
         # workflow-owned as before. Load them from the workflow revision so old targets work.
         uses: ./.ci-harness/.github/actions/setup-android-toolchain
@@ -5633,9 +5634,15 @@ jobs:
           init_script="$RUNNER_TEMP/openclaw-robolectric-init.gradle"
           mkdir -p "$maven_repo"
           cat >"$init_script" <<'GROOVY'
+          println "Gradle JVM: runtime=${System.getProperty('java.runtime.version')} vendor=${System.getProperty('java.vendor')} home=${System.getProperty('java.home')}"
           allprojects {
             tasks.withType(org.gradle.api.tasks.testing.Test).configureEach {
               systemProperty "maven.repo.local", System.getenv("OPENCLAW_ROBOLECTRIC_M2")
+              // Record the executing launcher; cached results do not prove this JVM ran tests.
+              doFirst {
+                def metadata = javaLauncher.get().metadata
+                logger.lifecycle("Test JVM ${path}: runtime=${metadata.javaRuntimeVersion} vendor=${metadata.vendor} home=${metadata.installationPath.asFile}")
+              }
             }
           }
           GROOVY
@@ -5645,6 +5652,7 @@ jobs:
       - name: Run Android ${{ matrix.task }}
         working-directory: apps/android
         env:
+          JAVA_HOME: ${{ steps.android-toolchain.outputs.gradle-java-home }}
           CI_RUNNER_BACKEND: ${{ (vars.OPENCLAW_CI_RUNNER_BACKEND == 'github' || (vars.OPENCLAW_CI_RUNNER_BACKEND == 'hybrid' && github.run_attempt > 1) || github.event_name == 'workflow_dispatch' || github.repository != 'openclaw/openclaw' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != 'openclaw/openclaw')) && 'github' || 'blacksmith' }}
           TASK: ${{ matrix.task }}
           RUN_LINT: ${{ matrix.lint && 'true' || 'false' }}
@@ -5748,6 +5756,8 @@ jobs:
             apps/android/app/build/test-results/test*UnitTest/TEST-*.xml
             apps/android/wear/build/test-results/test*UnitTest/TEST-*.xml
             apps/android/wear-shared/build/test-results/test*UnitTest/TEST-*.xml
+            apps/android/**/hs_err_pid*.log
+            apps/android/**/replay_pid*.log
           if-no-files-found: warn
           retention-days: 14
 
