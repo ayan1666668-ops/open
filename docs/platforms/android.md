@@ -357,15 +357,18 @@ Camera commands (foreground only; permission-gated): `camera.snap` (jpg), `camer
 - Navigate through the sidebar's **Pages** menu. Voice input belongs to the Chat
   composer; there is no separate Voice tab.
 - Tap the composer microphone for on-device speech recognition that inserts a
-  transcript into the draft. Long-press the microphone to record a voice-note
-  attachment. The UI reports unavailable recognition, missing permission,
+  transcript into the draft. While listening, a waveform replaces the microphone;
+  tap it to stop dictation. Long-press the microphone to open **Voice options**,
+  then choose **Record voice note** to create an attachment. The UI reports
+  unavailable recognition, missing permission,
   busy/network failures, and no-speech outcomes instead of silently dropping
   the attempt. If dictation is unavailable and a gateway is selected,
   **Record voice note** offers a new recording while keeping the draft. It does
   not recover speech from the failed dictation attempt or send anything
   automatically.
-- Start continuous **Talk** from the Chat waveform. Dictation, voice-note
-  recording, and Talk are mutually exclusive microphone paths.
+- To start continuous **Talk**, long-press the microphone and choose **Start Talk**.
+  If dictation is unavailable, tapping the microphone also opens **Voice options**.
+  Dictation, voice-note recording, and Talk are mutually exclusive microphone paths.
 - Talk Mode promotes the existing foreground service from `connectedDevice` to `connectedDevice|microphone` before capture starts, then demotes it when Talk Mode stops. The node service declares `FOREGROUND_SERVICE_CONNECTED_DEVICE` with `CHANGE_NETWORK_STATE`; Android 14+ also requires the `FOREGROUND_SERVICE_MICROPHONE` declaration, the `RECORD_AUDIO` runtime grant, and the microphone service type at runtime.
 - By default, Android Talk uses native speech recognition, Gateway chat, and `talk.speak` through the configured gateway Talk provider. It inherits the session's thinking setting. Local system TTS is used only when `talk.speak` is unavailable.
 - Gateway config changes refresh Android's cached Talk settings on the next use, without reconnecting or interrupting an active capture.
