@@ -25,48 +25,49 @@ type LegacyAcpMetadataInput = Omit<
 };
 
 /** Retained JSON is input history, not authority to reopen a completed ACP import. */
-export function importLegacyAcpSessionMetadata(params: LegacyAcpMetadataInput): boolean {
+export function importLegacyAcpSessionMetadata(
+  params: LegacyAcpMetadataInput,
+): "imported" | "current" | "deferred" {
   const sessionKey = params.sessionKey.trim();
   if (!sessionKey) {
-    return false;
+    return "deferred";
   }
   const source = prepareLegacyAcpMigrationSource(params);
   const now = params.now?.() ?? Date.now();
   return runOpenClawStateWriteTransaction(
     (database) => {
       if (hasLegacyAcpMigrationCompletion(database.db, source)) {
-        return false;
+        return "current";
       }
       const coreTarget = params.readVerifiedCoreImport(database.db, params.agentId);
-      let imported = true;
-      if (coreTarget) {
-        const { entry: canonical, sources } = readLegacyAcpMigrationContext({
-          agentId: params.agentId,
-          storePath: coreTarget.sqlitePath,
+      if (!coreTarget) return "deferred";
+      const { entry: canonical, sources } = readLegacyAcpMigrationContext({
+        agentId: params.agentId,
+        storePath: coreTarget.sqlitePath,
+        sessionKey,
+        env: params.env,
+      });
+      if (!canonical) return "deferred";
+      const imported =
+        legacyAcpMigrationBindingMatches(source, canonical) &&
+        !selectAcpSessionRowForStoreEntry(
+          database.db,
           sessionKey,
-          env: params.env,
-        });
-        imported =
-          legacyAcpMigrationBindingMatches(source, canonical) &&
-          !selectAcpSessionRowForStoreEntry(
-            database.db,
-            sessionKey,
-            params.agentId,
-            params.cfg,
-            canonical,
-          );
-        if (
-          imported &&
-          !sources.some(
-            (recorded) =>
-              legacyAcpMigrationSourceKey(recorded) === legacyAcpMigrationSourceKey(source) &&
-              recorded.sourceSha256 === source.sourceSha256,
-          )
-        ) {
-          throw new Error(
-            "Retained ACP import has no matching recorded source provenance; metadata was not replayed.",
-          );
-        }
+          params.agentId,
+          params.cfg,
+          canonical,
+        );
+      if (
+        imported &&
+        !sources.some(
+          (recorded) =>
+            legacyAcpMigrationSourceKey(recorded) === legacyAcpMigrationSourceKey(source) &&
+            recorded.sourceSha256 === source.sourceSha256,
+        )
+      ) {
+        throw new Error(
+          "Retained ACP import has no matching recorded source provenance; metadata was not replayed.",
+        );
       }
       if (imported) {
         writeAcpSessionMetaForMigration({ ...params, sessionKey, database, now: () => now });
@@ -74,7 +75,7 @@ export function importLegacyAcpSessionMetadata(params: LegacyAcpMetadataInput): 
       if (params.preserveSource) {
         recordLegacyAcpMigrationCompletion(database.db, source, now);
       }
-      return imported;
+      return imported ? "imported" : "current";
     },
     { env: params.env },
     { operationLabel: "state.import-legacy-acp-metadata" },

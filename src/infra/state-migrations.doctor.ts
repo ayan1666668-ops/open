@@ -49,7 +49,6 @@ import { listAgentDatabaseAdmissionRefusals } from "../state/agent-database-admi
 import { inspectOpenClawRegisteredAgentDatabases } from "../state/openclaw-agent-db-registry.js";
 import {
   detectOpenClawStateDatabaseSchemaMigrations,
-  repairOpenClawStateDatabaseSchema,
   repairOpenClawStateDatabaseSchemaIfNeeded,
   type OpenClawStateDatabaseSchemaMigration,
 } from "../state/openclaw-state-db.js";
@@ -251,6 +250,8 @@ function describeStateSchemaMigration(migration: OpenClawStateDatabaseSchemaMigr
       return "Skill Workshop ownership → per-agent directory containment";
     case "prepared-worker-ownership-v17":
       return "prepared workers → one-use capacity and fixed workspace ownership";
+    case "acp-execution-selection-v18":
+      return "ACP selectors → accepted session execution selection";
     case "operator-approvals-system-agent":
       return "operator approvals → OpenClaw system changes";
     case "session-watch-cursor-provenance-v4":
@@ -1205,20 +1206,11 @@ function createStateSchemaMigrationStep(params: {
     requiredness: params.requiredness,
     reversibility: "checkpoint-required",
     run: async () => {
-      const selections =
-        params.mode === "doctor"
-          ? await (
-              await import("./state-migrations.execution-selection.js")
-            ).migrateLegacyExecutionSelections({ cfg: params.config, env: stateEnv })
-          : { changes: [], warnings: [] };
-      const schema =
-        params.mode === "doctor"
-          ? repairOpenClawStateDatabaseSchema({ env: stateEnv })
-          : repairOpenClawStateDatabaseSchemaIfNeeded({ env: stateEnv });
-      return {
-        changes: [...selections.changes, ...schema.changes],
-        warnings: [...selections.warnings, ...schema.warnings],
-      };
+      return params.mode === "doctor"
+        ? (
+            await import("./state-migrations.execution-selection.js")
+          ).migrateLegacyExecutionSelections({ cfg: params.config, env: stateEnv })
+        : repairOpenClawStateDatabaseSchemaIfNeeded({ env: stateEnv });
     },
   };
 }

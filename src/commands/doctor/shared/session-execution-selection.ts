@@ -12,6 +12,7 @@ import type {
   SessionExecutionSelection,
 } from "../../../model-picker/execution-selection.js";
 import { parseSessionExecutionSelection } from "../../../model-picker/execution-selection.schema.js";
+import { resolveSessionPinnedHarnessId } from "../../../sessions/agent-harness-session-key.js";
 
 const RETIRED_SELECTION_FIELDS = [
   "providerOverride",
@@ -21,6 +22,16 @@ const RETIRED_SELECTION_FIELDS = [
   "modelOverrideRouteResolution",
   "modelOverrideFallbackOriginProvider",
   "modelOverrideFallbackOriginModel",
+] as const;
+const RETIRED_FALLBACK_FIELDS = [
+  "prevModel",
+  "prevProvider",
+  "prevModelOverride",
+  "prevProviderOverride",
+  "prevModelOverrideSource",
+  "prevModelOverrideRouteResolution",
+  "prevModelOverrideFallbackOriginProvider",
+  "prevModelOverrideFallbackOriginModel",
 ] as const;
 
 export type LegacyAcpExecutionSelection = {
@@ -52,7 +63,10 @@ export function migrateSessionExecutionSelection(params: {
   const model = normalizeOptionalString(entry.modelOverride);
   const provider = normalizeOptionalString(entry.providerOverride);
   const normalizedRuntime = normalizeOptionalAgentRuntimeId(entry.agentRuntimeOverride);
-  const runtime = isDefaultAgentRuntimeId(normalizedRuntime) ? undefined : normalizedRuntime;
+  const nativeBindingOwner = resolveSessionPinnedHarnessId(entry);
+  const runtime = isDefaultAgentRuntimeId(normalizedRuntime)
+    ? nativeBindingOwner
+    : normalizedRuntime;
   const originProvider = normalizeOptionalString(entry.modelOverrideFallbackOriginProvider);
   const originModel = normalizeOptionalString(entry.modelOverrideFallbackOriginModel);
   const automatic =
@@ -102,7 +116,7 @@ export function migrateSessionExecutionSelection(params: {
     } else {
       const kind = runtime ? params.classifyExecutor(runtime) : undefined;
       selection =
-        runtime && kind && requestedModel?.provider
+        runtime && kind && requestedModel?.provider && !nativeBindingOwner
           ? {
               state: "accepted",
               selection: {
@@ -121,7 +135,36 @@ export function migrateSessionExecutionSelection(params: {
             };
     }
   }
+  let fallbackChanged = false;
+  if (isRecord(entry.modelFallback)) {
+    const fallback = { ...entry.modelFallback };
+    if (fallback.previous === undefined) {
+      const hadOverride = normalizeOptionalString(fallback.prevModelOverride) !== undefined;
+      const previous = migrateSessionExecutionSelection({
+        entry: {
+          modelOverride: hadOverride ? fallback.prevModelOverride : fallback.prevModel,
+          providerOverride: hadOverride ? fallback.prevProviderOverride : fallback.prevProvider,
+          modelOverrideSource: hadOverride ? fallback.prevModelOverrideSource : "auto",
+          modelOverrideRouteResolution: fallback.prevModelOverrideRouteResolution,
+          modelOverrideFallbackOriginProvider: fallback.prevModelOverrideFallbackOriginProvider,
+          modelOverrideFallbackOriginModel: fallback.prevModelOverrideFallbackOriginModel,
+        },
+        classifyExecutor: params.classifyExecutor,
+        defaultProvider: params.defaultProvider,
+      });
+      fallback.previous = previous.entry.executionSelection;
+      fallbackChanged = true;
+    } else {
+      parseSessionExecutionSelection(fallback.previous);
+    }
+    for (const field of RETIRED_FALLBACK_FIELDS) {
+      fallbackChanged ||= Object.hasOwn(fallback, field);
+      delete fallback[field];
+    }
+    entry.modelFallback = fallback;
+  }
   const changed =
+    fallbackChanged ||
     params.entry.executionSelection === undefined ||
     RETIRED_SELECTION_FIELDS.some((field) => Object.hasOwn(entry, field)) ||
     Boolean(

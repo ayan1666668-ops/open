@@ -1,3 +1,4 @@
+import type { SessionEntry } from "../config/sessions/types.js";
 /** Shared type contracts for doctor-owned session SQLite migration reports. */
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 
@@ -86,6 +87,11 @@ export type DoctorSessionSqliteMode =
   | "recover";
 
 export type DoctorSessionSqliteOptions = {
+  importDatabase?: NonNullable<
+    Parameters<typeof import("../state/openclaw-agent-db.js").runOpenClawAgentWriteTransaction>[3]
+  > & {
+    transformEntry?: (entry: SessionEntry, sessionKey: string) => SessionEntry;
+  };
   allAgents?: boolean;
   agent?: string;
   cfg?: OpenClawConfig;

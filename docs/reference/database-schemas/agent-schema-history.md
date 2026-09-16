@@ -39,7 +39,9 @@ Agent schema **22** stores the model and its executor together in
 `session_nodes.entry_json.executionSelection`. An accepted choice includes its
 fallback permission. A deferred request preserves imported model and runtime
 intent without claiming that execution is ready. Native-managed selections
-retain the connected app's model ownership until it supplies a concrete model.
+leave model choice with the connected app. Its concrete model remains observed
+runtime output and does not rewrite the stored selection. Existing native
+bindings and their observed model fields remain compatible with released plugins.
 
 Doctor removes `providerOverride`, `modelOverride`, `agentRuntimeOverride`,
 `modelOverrideSource`, `modelOverrideRouteResolution`,

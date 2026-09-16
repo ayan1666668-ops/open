@@ -25,10 +25,12 @@ import {
 } from "../config/sessions/legacy-store-inspection.js";
 import { resolveSqliteTargetFromSessionStorePath } from "../config/sessions/session-sqlite-target.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { runExistingOpenClawStateWriteTransaction } from "../state/openclaw-state-db-existing-write.js";
 import { withExistingOpenClawStateDatabaseReadOnly } from "../state/openclaw-state-db-readonly.js";
 import { tableExists } from "../state/openclaw-state-db-schema-helpers.js";
-import { runOpenClawStateWriteTransaction } from "../state/openclaw-state-db.js";
+import { OPENCLAW_STATE_SCHEMA_SQL } from "../state/openclaw-state-schema.js";
 import type { DeferredPluginMigration } from "./deferred-plugin-migrations.js";
+import { extractSqliteTableSchema } from "./sqlite-schema-sql.js";
 import {
   readLegacyMigrationReceiptFromDatabase,
   recordLegacyMigrationReceipt,
@@ -44,6 +46,9 @@ type SessionImportSource = {
   env: NodeJS.ProcessEnv;
 };
 const RECEIPT_KIND = "deferred-plugin-session-import";
+const receiptStorageSchema = ["schema_meta", "migration_runs", "migration_sources"]
+  .map((table) => extractSqliteTableSchema(OPENCLAW_STATE_SCHEMA_SQL, table))
+  .join("\n");
 const receiptSchema = z.object({
   databaseIdentity: z.string(),
   pluginIds: z.array(z.string()),
@@ -288,7 +293,7 @@ export function recordDeferredPluginSessionImport(
   if (!index) {
     throw new Error("A deferred session import requires its verified original index.");
   }
-  runOpenClawStateWriteTransaction(
+  runExistingOpenClawStateWriteTransaction(
     ({ db }) => {
       assertVerifiedSessionSources(params, report);
       if (report.databaseIdentity !== databaseIdentity(params.sqlitePath)) {
@@ -309,6 +314,6 @@ export function recordDeferredPluginSessionImport(
       });
     },
     { env: params.env },
-    { operationLabel: "state.retain-plugin-session-source" },
+    { operationLabel: "state.retain-plugin-session-source", schemaSql: receiptStorageSchema },
   );
 }

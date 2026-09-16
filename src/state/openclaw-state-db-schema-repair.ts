@@ -451,6 +451,9 @@ export function detectOpenClawStateDatabaseSchemaMigrationsFromDatabase(
   ) {
     migrations.push({ kind: "prepared-worker-ownership-v17", path: pathname });
   }
+  if (userVersion < 18 && tableHasColumn(db, "acp_sessions", "backend")) {
+    migrations.push({ kind: "acp-execution-selection-v18", path: pathname });
+  }
   if (!hasCanonicalAgentDatabasesPrimaryKey(db)) {
     migrations.push({ kind: "agent-databases-composite-primary-key", path: pathname });
   }

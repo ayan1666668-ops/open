@@ -53,6 +53,7 @@ import type {
 import { registerOpenClawAgentDatabaseIdentity } from "./openclaw-agent-db-identity.js";
 import {
   assertAgentDatabaseMaintenanceAccess,
+  assertAgentDatabaseMaintenanceAuthority,
   registerAgentDatabaseMaintenanceAccess,
   assertOpenClawAgentDatabaseLease,
   claimOpenClawAgentDatabaseLease,
@@ -521,19 +522,38 @@ export function runOpenClawAgentWriteTransaction<T>(
     SqliteTransactionOptions,
     "busyTimeoutMs" | "operationLabel" | "slowTransactionHoldMs"
   > = {},
+  supplied?: { database: OpenClawAgentDatabase; assertCurrent: () => void },
 ): T {
-  const database = openOpenClawAgentDatabase(options);
+  const database = supplied?.database ?? openOpenClawAgentDatabase(options);
+  if (supplied) {
+    assertAgentDatabaseMaintenanceAuthority();
+    supplied.assertCurrent();
+    if (
+      database.agentId !== normalizeAgentId(options.agentId) ||
+      path.resolve(database.path) !== path.resolve(resolveOpenClawAgentSqlitePath(options))
+    ) {
+      throw new Error("Supplied maintenance database does not own the requested agent store.");
+    }
+  }
   const enteredNestedTransaction = database.db.isTransaction;
   return withSqlitePostCommitPublications(database.db, () =>
     runSqliteImmediateTransactionSync(
       database.db,
       () => {
+        if (supplied) {
+          assertAgentDatabaseMaintenanceAuthority();
+          supplied.assertCurrent();
+        }
         assertAgentDeletionDatabaseCleanupAccess(database, options);
         const operationResult = operation(database);
         if (!enteredNestedTransaction && !cache.incognito.has(database)) {
           // Permission failure must roll back with the write. Repairing after
           // COMMIT could make callers retry a transaction already durable in SQLite.
           ensureOpenClawAgentDatabasePermissions(database.path, options);
+        }
+        if (supplied) {
+          assertAgentDatabaseMaintenanceAuthority();
+          supplied.assertCurrent();
         }
         return operationResult;
       },

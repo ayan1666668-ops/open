@@ -1035,9 +1035,14 @@ export async function migrateLegacyAcpSessionMetadata(params: {
           env,
           now,
         });
+        if (imported === "deferred") {
+          preserved++;
+          normalized[sessionKey] = normalizedEntry;
+          continue;
+        }
         delete normalizedEntry.acp;
         consumed++;
-        if (imported) {
+        if (imported === "imported") {
           migrated++;
         }
       }
@@ -1045,7 +1050,7 @@ export async function migrateLegacyAcpSessionMetadata(params: {
     }
     if (preserved > 0) {
       warnings.push(
-        `Preserved ACP metadata for ${preserved} ambiguous session key(s) in potentially shared store ${storePath}`,
+        `Preserved ACP metadata for ${preserved} session key(s) pending verified ownership or core import in ${storePath}`,
       );
     }
     if (consumed === 0 || (preserveSource && migrated === 0)) {

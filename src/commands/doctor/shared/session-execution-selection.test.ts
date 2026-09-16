@@ -122,4 +122,56 @@ describe("Doctor execution selection conversion", () => {
       }),
     ).toThrow();
   });
+
+  it("defers a locked native binding to its existing ownership reader", () => {
+    const result = migrateSessionExecutionSelection({
+      entry: {
+        modelSelectionLocked: true,
+        agentHarnessId: "app-a",
+        modelOverride: "observed-model",
+        providerOverride: "provider-a",
+      },
+      classifyExecutor,
+    });
+    expect(result.entry.executionSelection).toEqual({
+      state: "deferred",
+      request: { model: { provider: "provider-a", id: "observed-model" }, runtime: "app-a" },
+      fallbackPermission: "explicit",
+    });
+    expect(result.entry.agentHarnessId).toBe("app-a");
+  });
+
+  it("converts rollback intent without borrowing the current executor", () => {
+    const result = migrateSessionExecutionSelection({
+      entry: {
+        providerOverride: "provider-b",
+        modelOverride: "temporary",
+        agentRuntimeOverride: "app-a",
+        modelFallback: {
+          source: "agent-patch",
+          ts: 1,
+          prevModel: "previous",
+          prevProvider: "provider-a",
+          prevAuthProfileOverride: "account-a",
+          prevAuthProfileOverrideSource: "user",
+          prevContextWindow: "64k",
+          prevThinkingLevel: "high",
+        },
+      },
+      classifyExecutor,
+    });
+    expect(result.entry.modelFallback).toEqual({
+      source: "agent-patch",
+      ts: 1,
+      prevAuthProfileOverride: "account-a",
+      prevAuthProfileOverrideSource: "user",
+      prevContextWindow: "64k",
+      prevThinkingLevel: "high",
+      previous: {
+        state: "deferred",
+        request: { model: { provider: "provider-a", id: "previous" } },
+        fallbackPermission: "configured",
+      },
+    });
+  });
 });

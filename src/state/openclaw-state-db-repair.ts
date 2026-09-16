@@ -35,7 +35,7 @@ import {
   ensureAdditiveStateColumns,
   ensureFirstUseAdditiveStateColumnsForStrictMigration,
 } from "./openclaw-state-db-schema-additive.js";
-import { tableExists } from "./openclaw-state-db-schema-helpers.js";
+import { tableExists, tableHasColumn } from "./openclaw-state-db-schema-helpers.js";
 import {
   assertCanonicalStateSchemaShape,
   dropLegacyStateTables,
@@ -113,6 +113,15 @@ export function repairStateSchema(
         }
         applied.push(...recoverOrphanTaskDeliveryRows(db, pathname));
         const previousVersion = readStateSchemaMigrationVersion(db);
+        if (
+          previousVersion < 18 &&
+          tableHasColumn(db, "acp_sessions", "backend") &&
+          !beforeSchemaMigration
+        ) {
+          throw new Error(
+            "Execution selection requires the coordinated Doctor migration before shared schema retirement.",
+          );
+        }
         const preAuditSchema = previousVersion === 1 && !tableExists(db, "audit_events");
         if (preAuditSchema) {
           assertOpenClawStateDatabaseOwner(db, { pathname });

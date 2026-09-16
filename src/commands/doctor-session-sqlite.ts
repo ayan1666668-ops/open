@@ -40,6 +40,7 @@ import { prepareLegacyAcpMigrationSource } from "../infra/legacy-acp-migration-s
 import { isPathInside } from "../infra/path-guards.js";
 import { resolveSqliteDatabaseFilePaths } from "../infra/sqlite-files.js";
 import { normalizeLegacySessionEntryDelivery as normalizeSessionEntryDelivery } from "../infra/state-migrations.legacy-session-store.js";
+import { resolveExecutionSelectionExecutorKind } from "../model-picker/apply-session-model-selection.js";
 import { LEGACY_IMPLICIT_AGENT_ID, normalizeAgentId } from "../routing/session-key.js";
 import { migrateLegacySessionCreator } from "../state/creator-namespace-migration.js";
 import {
@@ -102,6 +103,7 @@ import {
   isDestructiveDoctorSessionSqliteMode,
   type DoctorSqliteMaintenanceAuthority,
 } from "./doctor-sqlite-maintenance-lock.js";
+import { migrateSessionExecutionSelection } from "./doctor/shared/session-execution-selection.js";
 export type {
   DoctorSessionSqliteOptions,
   DoctorSessionSqliteReport,
@@ -196,6 +198,7 @@ export async function runDoctorSessionSqlite(
         cfg,
         env,
         mode: options.mode,
+        importDatabase: options.importDatabase,
         target,
         historicalArchives,
         referencedPaths: coverage?.referencedPaths,
@@ -644,6 +647,7 @@ function filterLegacySessionStoreTargets(
 }
 
 async function inspectOrMigrateTarget(params: {
+  importDatabase?: DoctorSessionSqliteOptions["importDatabase"];
   historicalArchives?: HistoricalArchiveSources;
   referencedPaths?: ReadonlySet<string>;
   activeRun?: ActiveSessionSqliteMigrationRun;
@@ -835,7 +839,7 @@ async function inspectOrMigrateTarget(params: {
       }
     }
   } else if (params.mode === "import") {
-    await importLegacySessionRecords(params.target, records, report);
+    await importLegacySessionRecords(params.target, records, report, params.importDatabase);
   } else if (params.mode === "dry-run") {
     for (const record of records) {
       countLegacyTranscript(record, report);
@@ -1184,6 +1188,7 @@ async function importLegacySessionRecords(
   target: SessionStoreTarget,
   records: readonly LegacySessionRecord[],
   report: DoctorSessionSqliteTargetReport,
+  supplied?: DoctorSessionSqliteOptions["importDatabase"],
 ): Promise<void> {
   if (records.length === 0) {
     return;
@@ -1198,10 +1203,14 @@ async function importLegacySessionRecords(
         report,
         importedTranscriptSources,
         existingSnapshot.ok ? existingSnapshot.snapshot : undefined,
+        supplied?.transformEntry,
       );
       return prepared ? [{ ...prepared, record }] : [];
     });
-    const imported = await importSqliteSessionRowsBatch(pending.map((entry) => entry.params));
+    const imported = await importSqliteSessionRowsBatch(
+      pending.map((entry) => entry.params),
+      supplied,
+    );
     for (const [index, result] of imported.entries()) {
       const record = pending[index]?.record;
       if (record && result.recovery) {
@@ -1224,6 +1233,7 @@ function prepareLegacySessionImport(
   report: DoctorSessionSqliteTargetReport,
   importedTranscriptSources: Set<string>,
   existingSnapshot: ReadOnlySqliteValidationSnapshot | undefined,
+  transformEntry?: NonNullable<DoctorSessionSqliteOptions["importDatabase"]>["transformEntry"],
 ) {
   if (
     record.historical &&
@@ -1256,12 +1266,25 @@ function prepareLegacySessionImport(
   const acpEntry = !record.historical
     ? normalizePersistedSessionEntryShape(record.entry, { sessionKey: record.sessionKey })
     : undefined;
+  const entry = transformEntry
+    ? transformEntry(record.entry, record.sessionKey)
+    : normalizePersistedSessionEntryShape(
+        migrateSessionExecutionSelection({
+          entry: record.entry,
+          classifyExecutor: (id) => resolveExecutionSelectionExecutorKind(undefined, id),
+        }).entry,
+        { sessionKey: record.sessionKey },
+      );
+  if (!entry)
+    throw new Error(
+      "Legacy session selection conversion produced an invalid session; source retained.",
+    );
   const params = {
     historicalOnly: Boolean(record.historical),
     allowMalformedRowRepair: true,
     repairLegacyTranscript: true,
     agentId: target.agentId,
-    entry: record.entry,
+    entry,
     ...(acpEntry?.acp
       ? {
           legacyAcpMigrationSource: prepareLegacyAcpMigrationSource({
