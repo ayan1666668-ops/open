@@ -1651,7 +1651,7 @@ describe("sendMessageIMessage receipts", () => {
 
   it("allows a delegated reply with a current same-account cache binding", async () => {
     const client = createClient({ guid: "p:0/imsg-bound" });
-    rememberIMessageReplyCache({
+    await rememberIMessageReplyCache({
       accountId: "default",
       messageId: "bound-reply-guid",
       chatId: 42,
@@ -1683,7 +1683,7 @@ describe("sendMessageIMessage receipts", () => {
 
   it("uses the effective SMS service for a delegated raw-handle reply", async () => {
     const client = createClient({ guid: "p:0/imsg-sms-bound" });
-    rememberIMessageReplyCache({
+    await rememberIMessageReplyCache({
       accountId: "default",
       messageId: "sms-reply-guid",
       chatGuid: "SMS;-;+15550004567",
@@ -1721,7 +1721,7 @@ describe("sendMessageIMessage receipts", () => {
 
   it("rejects a delegated reply when an auto handle has no concrete service", async () => {
     const client = createClient({ guid: "should-not-send" });
-    rememberIMessageReplyCache({
+    await rememberIMessageReplyCache({
       accountId: "default",
       messageId: "ambiguous-service-guid",
       chatGuid: "SMS;-;+15550004567",
