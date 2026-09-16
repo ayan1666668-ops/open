@@ -469,7 +469,7 @@ export class CodexAppServerClient {
         );
       }
       return (async () => {
-        const guardStartedAt = Date.now();
+        const guardStartedAt = performance.now();
         const timeoutMessage = `${method} timed out`;
         const abortMessage = `${method} aborted`;
         let releaseGuard: () => void;
@@ -508,7 +508,7 @@ export class CodexAppServerClient {
         let requestMayHaveWritten = false;
         let nativeResponded = false;
         try {
-          const elapsedMs = Date.now() - guardStartedAt;
+          const elapsedMs = performance.now() - guardStartedAt;
           const remainingTimeoutMs =
             options.timeoutMs === undefined ? undefined : options.timeoutMs - elapsedMs;
           if (remainingTimeoutMs !== undefined && remainingTimeoutMs <= 0) {
@@ -569,7 +569,7 @@ export class CodexAppServerClient {
   ): Promise<T> {
     const deadline =
       options.timeoutMs !== undefined && Number.isFinite(options.timeoutMs)
-        ? Date.now() + options.timeoutMs
+        ? performance.now() + options.timeoutMs
         : undefined;
     for (let retry = 0; ; retry += 1) {
       if (options.signal?.aborted) {
@@ -580,7 +580,7 @@ export class CodexAppServerClient {
           options.signal?.reason,
         );
       }
-      const remainingTimeoutMs = deadline === undefined ? undefined : deadline - Date.now();
+      const remainingTimeoutMs = deadline === undefined ? undefined : deadline - performance.now();
       if (remainingTimeoutMs !== undefined && remainingTimeoutMs <= 0) {
         throw new CodexAppServerLocalRequestCancellationError(method, "timed out", false);
       }
@@ -630,7 +630,7 @@ export class CodexAppServerClient {
         signal?.reason,
       );
     }
-    const remainingMs = deadline === undefined ? undefined : deadline - Date.now();
+    const remainingMs = deadline === undefined ? undefined : deadline - performance.now();
     if (remainingMs !== undefined && remainingMs <= 0) {
       throw new CodexAppServerLocalRequestCancellationError(method, "timed out", false);
     }
