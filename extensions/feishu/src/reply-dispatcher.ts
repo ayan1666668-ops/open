@@ -493,6 +493,11 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
   // exactly as much as for a settled answer: a card that shows a native table
   // while generating and the configured form at close has told two stories.
   const streamDisplayText = () => renderTables(streamText);
+  // Once the answer carries a shape a card drops rows from, the close routes the whole
+  // message to a post and the preview is discarded. Updating it in the meantime would
+  // spend the generation showing rows the card has already dropped, so the preview stands
+  // down and the text keeps accumulating for the post that settles it.
+  const previewShowsAnswer = () => !answerTableNeedsPostPath(streamText);
 
   const queueStreamingUpdate = (
     nextText: string,
@@ -531,7 +536,9 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
       }
       lastSnapshotTextLength = nextText.length;
     }
-    flushStreamingCardUpdate(buildCombinedStreamText(reasoningText, streamDisplayText()));
+    if (previewShowsAnswer()) {
+      flushStreamingCardUpdate(buildCombinedStreamText(reasoningText, streamDisplayText()));
+    }
   };
 
   const queueReasoningUpdate = (nextThinking: string) => {
@@ -539,7 +546,9 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
       return;
     }
     reasoningText = nextThinking;
-    flushStreamingCardUpdate(buildCombinedStreamText(reasoningText, streamDisplayText()));
+    if (previewShowsAnswer()) {
+      flushStreamingCardUpdate(buildCombinedStreamText(reasoningText, streamDisplayText()));
+    }
   };
 
   const startStreaming = () => {
@@ -1929,7 +1938,9 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
             if (!cleaned) {
               return false;
             }
-            startStreaming();
+            if (!answerTableNeedsPostPath(cleaned)) {
+              startStreaming();
+            }
             queueStreamingUpdate(cleaned, {
               dedupeWithLastPartial: true,
               mode: "snapshot",

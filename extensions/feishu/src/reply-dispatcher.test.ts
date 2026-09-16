@@ -5180,23 +5180,33 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
       "$tables posts a $shape table when an open preview closes on idle",
       async ({ tables, text, posted }) => {
         // The close decision is reached only by an actual preview closing, which
-        // a final-with-streaming-enabled case never exercises.
+        // a final-with-streaming-enabled case never exercises. The preview opens on
+        // text a card can draw, because a card drops the rows of these shapes and the
+        // partial carrying one is not allowed to reach it.
         resolveFeishuAccountMock.mockReturnValue(createReplyAccount("auto", "partial", "feishu"));
         const { result, options } = createDispatcherHarness({
           accountId: "main",
           cfg: tableCfg(tables),
         });
-        result.replyOptions.onPartialReply?.({ text });
+        result.replyOptions.onPartialReply?.({ text: "Reading the roster." });
         await vi.waitFor(() => expect(streamingInstances).toHaveLength(1));
+        // Partials are snapshots of the whole answer, so the table arrives with the line
+        // that opened the preview in front of it.
+        result.replyOptions.onPartialReply?.({ text: `Reading the roster.\n\n${text}` });
 
         await options.onIdle?.();
 
         const instance = requireStreamingInstance(0);
+        // Nothing the card would have dropped rows from was ever shown.
+        for (const [shown] of instance.update.mock.calls) {
+          expect(String(shown)).not.toContain("Ada");
+        }
         expect(instance.closeWithResult).not.toHaveBeenCalled();
         expect(instance.discard).toHaveBeenCalledTimes(1);
         expect(sendMessageFeishuMock).toHaveBeenCalledTimes(1);
+        // The post carries the whole answer, the line the preview showed included.
         expect(sendMessageFeishuMock).toHaveBeenCalledWith(
-          expect.objectContaining({ text: posted }),
+          expect.objectContaining({ text: `Reading the roster.\n\n${posted}` }),
         );
         expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
       },
