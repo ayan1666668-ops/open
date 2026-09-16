@@ -15,7 +15,7 @@ import { resolveSystemdServiceName } from "./systemd-service-files.js";
 
 const pinSchema = z.object({ runtime: z.enum(["node", "bun"]), path: z.string().min(1) });
 const recordSchema = z.object({ version: z.literal(1), pin: pinSchema, definition: z.string() });
-export type DaemonRuntimePin = z.infer<typeof pinSchema>;
+type DaemonRuntimePin = z.infer<typeof pinSchema>;
 export type DaemonRuntimePinSnapshot = {
   revision: string;
   stored: boolean;
