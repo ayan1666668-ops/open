@@ -1,5 +1,5 @@
 // Covers provider auth choice rendering and fallback behavior.
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const pluginRegistryMocks = vi.hoisted(() => ({
   loadPluginManifestRegistryForInstalledIndex: vi.fn(),
@@ -106,6 +106,8 @@ function setSingleManifestProviderAuthChoices(
 }
 
 describe("provider auth choice manifest helpers", () => {
+  afterEach(() => vi.restoreAllMocks());
+
   beforeEach(() => {
     pluginRegistryMocks.loadPluginManifestRegistryForInstalledIndex.mockReset();
     pluginRegistryMocks.loadPluginManifestRegistryForInstalledIndex.mockReturnValue({
@@ -181,6 +183,54 @@ describe("provider auth choice manifest helpers", () => {
 
     expect(resolveManifestProviderAuthChoice("shared-login")).toBeUndefined();
   });
+
+  it.each(["darwin", "linux", "win32"] as const)(
+    "keeps platform-limited setup choices and flags eligible only on %s",
+    (platform) => {
+      vi.spyOn(process, "platform", "get").mockReturnValue(platform);
+      const config = { plugins: { entries: { native: { enabled: true } } } };
+      setManifestPlugins([
+        {
+          id: "native",
+          origin: "bundled",
+          providerAuthChoices: [
+            {
+              provider: "native",
+              method: "local",
+              choiceId: "native-local",
+              platforms: ["darwin"],
+              deprecatedChoiceIds: ["old-native"],
+              optionKey: "nativeLocal",
+              cliFlag: "--native-local",
+              cliOption: "--native-local",
+            },
+            { provider: "native", method: "remote", choiceId: "native-remote" },
+            { provider: "native", method: "unavailable", choiceId: "unavailable", platforms: [] },
+          ],
+          setup: { providers: [{ id: "native", authMethods: ["local"] }] },
+        },
+      ]);
+
+      const expectedIds =
+        platform === "darwin" ? ["native-local", "native-remote"] : ["native-remote"];
+      expect(
+        resolveManifestProviderAuthChoices({ config }).map((choice) => choice.choiceId),
+      ).toEqual(expectedIds);
+      expect(
+        resolveManifestDeclaredProviderAuthChoices({ config }).map((choice) => choice.choiceId),
+      ).toEqual(expectedIds);
+      expect(Boolean(resolveManifestProviderAuthChoice("native-local", { config }))).toBe(
+        platform === "darwin",
+      );
+      expect(Boolean(resolveManifestDeprecatedProviderAuthChoice("old-native", { config }))).toBe(
+        platform === "darwin",
+      );
+      expect(resolveProviderOnboardAuthFlags({ config }).map((flag) => flag.authChoice)).toEqual(
+        platform === "darwin" ? ["native-local"] : [],
+      );
+      expect(config.plugins.entries.native.enabled).toBe(true);
+    },
+  );
 
   it("carries the declared credential-only and chat login contracts", () => {
     setSingleManifestProviderAuthChoices("demo", [
@@ -280,6 +330,14 @@ describe("provider auth choice manifest helpers", () => {
                   cliFlag: "--groq-api-key",
                   cliOption: "--groq-api-key <key>",
                   cliDescription: "Groq API key",
+                },
+                {
+                  method: "local",
+                  choiceId: "unavailable-local",
+                  platforms: [],
+                  optionKey: "unavailableLocal",
+                  cliFlag: "--unavailable-local",
+                  cliOption: "--unavailable-local",
                 },
               ],
             },

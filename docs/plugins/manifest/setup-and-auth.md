@@ -60,6 +60,7 @@ When a manifest choice is selected, setup resolves its `provider` and `method` i
 | `provider`             | Yes      | `string`                                                              | Provider id this choice belongs to.                                                                                                                      |
 | `method`               | Yes      | `string`                                                              | Auth method id to dispatch to.                                                                                                                           |
 | `choiceId`             | Yes      | `string`                                                              | Stable auth-choice id used by onboarding and CLI flows.                                                                                                  |
+| `platforms`            | No       | `string[]`                                                            | Supported Gateway host platforms, such as `["darwin"]`. Omission allows every platform; an empty or invalid restriction offers the choice on none.       |
 | `choiceLabel`          | No       | `string`                                                              | User-facing label. If omitted, OpenClaw falls back to `choiceId`.                                                                                        |
 | `choiceHint`           | No       | `string`                                                              | Short helper text for the picker.                                                                                                                        |
 | `icon`                 | No       | HTTPS URL                                                             | Artwork shown beside this choice in supported onboarding clients.                                                                                        |
@@ -83,6 +84,12 @@ When a manifest choice is selected, setup resolves its `provider` and `method` i
 | `credentialOnly`       | No       | `boolean`                                                             | The method supports saving credentials without starter-model discovery or activation. Omitted means setup only.                                          |
 | `channelLogin`         | No       | `{ aliases?: string[] }`                                              | A fixed-input OAuth or device-code method that private chat can run. Requires `credentialOnly`; aliases enable explicit commands such as `/login codex`. |
 | `onboardingScopes`     | No       | `Array<"text-inference" \| "image-generation" \| "music-generation">` | Which onboarding surfaces this choice should appear in. If omitted, it defaults to `["text-inference"]`.                                                 |
+
+`platforms` uses Node.js platform names; unknown names are removed. The restriction
+applies before setup, login, CLI flag, and install-catalog choices are offered. It describes the host running OpenClaw,
+not the connected app or browser. It does not change saved plugin enablement or
+provider configuration. The provider still checks model and operating-system
+availability when the selected setup method runs.
 
 When `appGuidedDiscovery` is true, the matching provider auth method must expose
 `appGuidedSetup.detect` and `appGuidedSetup.prepare`. Detection must be

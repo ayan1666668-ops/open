@@ -17,6 +17,7 @@ import {
 import { normalizePluginInstallDefaultChoice } from "./plugin-install-default-choice.js";
 import type { PluginOrigin } from "./plugin-origin.types.js";
 import { loadPluginRegistrySnapshot, type PluginRegistryRecord } from "./plugin-registry.js";
+import { isProviderAuthChoicePlatformSupported } from "./provider-auth-choice-platform.js";
 import {
   resolveManifestProviderAuthChoices,
   type ProviderAuthChoiceMetadata,
@@ -262,6 +263,9 @@ function resolveOfficialExternalProviderInstallCatalogEntries(params: {
         ),
       ];
       for (const choice of provider.authChoices ?? []) {
+        if (!isProviderAuthChoicePlatformSupported(choice.platforms)) {
+          continue;
+        }
         const methodId = choice.method?.trim();
         const choiceId = choice.choiceId?.trim();
         const choiceLabel = choice.choiceLabel?.trim();

@@ -1552,6 +1552,7 @@ describe("loadPluginManifestRegistry", () => {
           choiceId: "openai-api-key",
           choiceLabel: "OpenAI API key",
           icon: "HTTPS://CDN.SIMPLEICONS.ORG/openai",
+          platforms: ["darwin", "not-a-platform"],
           website: "https://platform.openai.com/api-keys",
           assistantPriority: 10,
           assistantVisibility: "visible",
@@ -1622,6 +1623,7 @@ describe("loadPluginManifestRegistry", () => {
         choiceId: "openai-api-key",
         choiceLabel: "OpenAI API key",
         icon: "https://cdn.simpleicons.org/openai",
+        platforms: ["darwin"],
         website: "https://platform.openai.com/api-keys",
         assistantPriority: 10,
         assistantVisibility: "visible",
@@ -1632,6 +1634,32 @@ describe("loadPluginManifestRegistry", () => {
       },
     ]);
   });
+
+  it.each([
+    { platforms: [] },
+    { platforms: ["not-a-platform"] },
+    { platforms: "darwin" },
+    { platforms: null },
+  ])(
+    "preserves an unavailable auth choice when its platform restriction is $platforms",
+    ({ platforms }) => {
+      const dir = makeTempDir();
+      writeManifest(dir, {
+        id: "native-provider",
+        providerAuthChoices: [
+          { provider: "native", method: "local", choiceId: "native-local", platforms },
+        ],
+        configSchema: { type: "object" },
+      });
+
+      const registry = loadSingleCandidateRegistry({
+        idHint: "native-provider",
+        rootDir: dir,
+        origin: "bundled",
+      });
+      expect(registry.plugins[0]?.providerAuthChoices?.[0]?.platforms).toEqual([]);
+    },
+  );
 
   it("drops non-HTTPS provider auth presentation URLs", () => {
     const dir = makeTempDir();

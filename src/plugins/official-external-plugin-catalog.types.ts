@@ -17,6 +17,7 @@ type ManifestKey = typeof MANIFEST_KEY;
 export type OfficialExternalProviderAuthChoice = {
   method?: string;
   choiceId?: string;
+  platforms?: readonly NodeJS.Platform[];
   deprecatedChoiceIds?: readonly string[];
   choiceLabel?: string;
   choiceHint?: string;

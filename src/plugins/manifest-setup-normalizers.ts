@@ -118,7 +118,7 @@ export function normalizeManifestCliCommands(
   return commands;
 }
 
-const MANIFEST_DEFAULT_ENABLEMENT_PLATFORMS = new Set<PluginManifestDefaultPlatform>([
+const MANIFEST_PLATFORMS = new Set<PluginManifestDefaultPlatform>([
   "aix",
   "android",
   "darwin",
@@ -132,10 +132,10 @@ const MANIFEST_DEFAULT_ENABLEMENT_PLATFORMS = new Set<PluginManifestDefaultPlatf
   "netbsd",
 ]);
 
-export function normalizeManifestDefaultPlatforms(value: unknown): PluginManifestDefaultPlatform[] {
+export function normalizeManifestPlatforms(value: unknown): PluginManifestDefaultPlatform[] {
   return normalizeTrimmedStringList(value).filter(
     (platform): platform is PluginManifestDefaultPlatform =>
-      MANIFEST_DEFAULT_ENABLEMENT_PLATFORMS.has(platform as PluginManifestDefaultPlatform),
+      MANIFEST_PLATFORMS.has(platform as PluginManifestDefaultPlatform),
   );
 }
 
@@ -453,6 +453,9 @@ export function normalizeProviderAuthChoices(
       provider,
       method,
       choiceId,
+      ...(entry.platforms !== undefined
+        ? { platforms: normalizeManifestPlatforms(entry.platforms) }
+        : {}),
       ...(choiceLabel ? { choiceLabel } : {}),
       ...(choiceHint ? { choiceHint } : {}),
       ...(icon ? { icon } : {}),

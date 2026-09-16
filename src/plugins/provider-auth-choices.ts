@@ -12,6 +12,7 @@ import {
 } from "./official-external-plugin-catalog.js";
 import type { PluginMetadataSnapshot } from "./plugin-metadata-snapshot.types.js";
 import type { PluginOrigin } from "./plugin-origin.types.js";
+import { isProviderAuthChoicePlatformSupported } from "./provider-auth-choice-platform.js";
 
 export type ProviderAuthChoiceMetadata = Omit<
   PluginManifestProviderAuthChoice,
@@ -190,6 +191,9 @@ function resolveManifestProviderAuthChoiceCandidates(
     }
     const choices: ProviderAuthChoiceCandidate[] = [];
     for (const choice of plugin.providerAuthChoices ?? []) {
+      if (!isProviderAuthChoicePlatformSupported(choice.platforms)) {
+        continue;
+      }
       choices.push(
         toProviderAuthChoiceCandidate({
           pluginId: plugin.id,
@@ -348,6 +352,9 @@ function resolveOfficialExternalProviderOnboardAuthFlags(): ProviderOnboardAuthF
     const manifest = getOfficialExternalPluginCatalogManifest(entry);
     for (const provider of manifest?.providers ?? []) {
       for (const choice of provider.authChoices ?? []) {
+        if (!isProviderAuthChoicePlatformSupported(choice.platforms)) {
+          continue;
+        }
         const optionKey = choice.optionKey?.trim();
         const authChoice = choice.choiceId?.trim();
         const cliFlag = choice.cliFlag?.trim();
