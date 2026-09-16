@@ -1,10 +1,14 @@
 import { html, render } from "lit";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { page, userEvent } from "vitest/browser";
 import type { SessionParticipant } from "../../../packages/gateway-protocol/src/schema/session-participant.js";
 import "../test-helpers/load-styles.ts";
 import { resolveTheme, syncThemePaletteStylesheet, type ThemeName } from "../app/theme.ts";
 import { THEME_TYPEFACES, TYPEFACES, syncTypefaceStylesheets } from "../app/typography.ts";
+import {
+  readAvatarGatewayContext,
+  setAvatarGatewayOrigin,
+} from "../lib/identity-avatar-context.ts";
 import { renderSessionLeadingState } from "./session-leading-indicator.ts";
 import "./session-owner-chip.ts";
 
@@ -53,6 +57,23 @@ function contrastRatio(first: number, second: number): number {
 
 const originalTheme = document.documentElement.getAttribute("data-theme-mode");
 const originalPalette = document.documentElement.getAttribute("data-theme");
+const originalAvatarGatewayContext = readAvatarGatewayContext();
+
+beforeEach(() => {
+  const nativeFetch = globalThis.fetch.bind(globalThis);
+  // These profiles have no saved image; resolve their fallback through the Gateway loader.
+  setAvatarGatewayOrigin(location.origin);
+  vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (
+      url === `${location.origin}/api/users/profile-ada/avatar` ||
+      url === `${location.origin}/api/users/profile-bob/avatar`
+    ) {
+      return Promise.resolve(new Response(null, { status: 404 }));
+    }
+    return nativeFetch(input, init);
+  });
+});
 
 async function applyTheme(theme: ThemeName, mode: "light" | "dark") {
   await new Promise<void>((resolve) => {
@@ -125,6 +146,12 @@ const hasBrowserLayout = !navigator.userAgent.toLowerCase().includes("jsdom");
 
 afterEach(() => {
   document.body.replaceChildren();
+  setAvatarGatewayOrigin(
+    originalAvatarGatewayContext.origin,
+    originalAvatarGatewayContext.authTokens,
+    originalAvatarGatewayContext.resourceBasePath,
+  );
+  vi.restoreAllMocks();
   if (originalPalette === null) {
     document.documentElement.removeAttribute("data-theme");
   } else {
