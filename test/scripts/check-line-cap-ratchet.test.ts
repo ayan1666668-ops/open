@@ -28,7 +28,7 @@ function source(lines: number) {
   );
 }
 
-function fixture(lines = 5) {
+function fixture(lines = 5, severity = "warn") {
   const root = tempDirs.make("openclaw-line-cap-test-");
   fs.mkdirSync(path.join(root, "src"));
   fs.writeFileSync(
@@ -39,7 +39,7 @@ function fixture(lines = 5) {
           files: ["src/**/*.ts"],
           excludeFiles: ["**/generated/**"],
           rules: {
-            "max-lines": ["error", { max: 3, skipBlankLines: true, skipComments: true }],
+            "max-lines": [severity, { max: 3, skipBlankLines: true, skipComments: true }],
           },
         },
       ],
@@ -75,30 +75,36 @@ describe("line-cap growth ratchet", () => {
     ).toEqual([]);
   });
 
-  it("uses oxlint counts and Git renames, including staged and untracked sources", () => {
-    const root = fixture();
-    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
-    vi.spyOn(console, "log").mockImplementation(() => {});
-    git(root, "mv", "src/file.ts", "src/renamed.ts");
-    fs.writeFileSync(path.join(root, "src/renamed.ts"), source(4) + "\n/* comment\n comment */\n");
-    expect(main(root, ["--base", "HEAD"])).toBe(0);
-    fs.writeFileSync(path.join(root, "src/renamed.ts"), source(6));
-    git(root, "add", ".");
-    fs.writeFileSync(path.join(root, "src/renamed.ts"), source(4));
-    expect(main(root, ["--base", "HEAD", "--staged"])).toBe(1);
-    expect(errors).toHaveBeenCalledWith(
-      expect.stringContaining("src/renamed.ts: 5 -> 6 counted lines (cap 3)"),
-    );
-    expect(main(root, ["--base", "HEAD"])).toBe(0);
-    fs.mkdirSync(path.join(root, "src/generated"));
-    fs.writeFileSync(path.join(root, "src/generated/ignored.ts"), source(10));
-    expect(main(root, ["--base", "HEAD"])).toBe(0);
-    fs.writeFileSync(path.join(root, "src/new.ts"), source(4));
-    expect(main(root, ["--base", "HEAD"])).toBe(1);
-    expect(errors).toHaveBeenCalledWith(
-      expect.stringContaining("src/new.ts: 3 -> 4 counted lines (cap 3)"),
-    );
-  });
+  it.each(["warn", "error"])(
+    "ratchets %s diagnostics across renames, staged and untracked sources",
+    (severity) => {
+      const root = fixture(5, severity);
+      const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+      vi.spyOn(console, "log").mockImplementation(() => {});
+      git(root, "mv", "src/file.ts", "src/renamed.ts");
+      fs.writeFileSync(
+        path.join(root, "src/renamed.ts"),
+        source(4) + "\n/* comment\n comment */\n",
+      );
+      expect(main(root, ["--base", "HEAD"])).toBe(0);
+      fs.writeFileSync(path.join(root, "src/renamed.ts"), source(6));
+      git(root, "add", ".");
+      fs.writeFileSync(path.join(root, "src/renamed.ts"), source(4));
+      expect(main(root, ["--base", "HEAD", "--staged"])).toBe(1);
+      expect(errors).toHaveBeenCalledWith(
+        expect.stringContaining("src/renamed.ts: 5 -> 6 counted lines (cap 3)"),
+      );
+      expect(main(root, ["--base", "HEAD"])).toBe(0);
+      fs.mkdirSync(path.join(root, "src/generated"));
+      fs.writeFileSync(path.join(root, "src/generated/ignored.ts"), source(10));
+      expect(main(root, ["--base", "HEAD"])).toBe(0);
+      fs.writeFileSync(path.join(root, "src/new.ts"), source(4));
+      expect(main(root, ["--base", "HEAD"])).toBe(1);
+      expect(errors).toHaveBeenCalledWith(
+        expect.stringContaining("src/new.ts: 3 -> 4 counted lines (cap 3)"),
+      );
+    },
+  );
 
   it("compares a PR merge tree with its prepared base without blaming unrelated debt", () => {
     const root = fixture(2);

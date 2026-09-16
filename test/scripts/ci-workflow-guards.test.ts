@@ -12619,10 +12619,6 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
     const checkShardRun = checkShardStep.run;
     const hostedCoreLint = workflow.jobs["check-lint-hosted-core-shard"];
     const hostedCoreTypes = workflow.jobs["check-test-types-hosted-core-shard"];
-    expect(hostedCoreLint.env.OPENCLAW_LINT_CUMULATIVE_SEVERITY).toBe("warn");
-    expect(workflow.jobs["checks-fast-core"].env).not.toHaveProperty(
-      "OPENCLAW_LINT_CUMULATIVE_SEVERITY",
-    );
     expect(manifestStep.env.OPENCLAW_CI_RUNNER_PROFILE).toBe(
       "${{ steps.runner_profile.outputs.runner_profile }}",
     );

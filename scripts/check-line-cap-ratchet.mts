@@ -3,10 +3,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import JSON5 from "json5";
+import type { OxlintConfig } from "oxlint";
 import { isDirectRunUrl } from "./lib/direct-run.mjs";
 import { resolveRepoToolBinPath } from "./lib/local-check-runtime.mts";
 import { createManagedCommandInvocation } from "./lib/managed-child-process.mts";
-import { readOxlintConfig } from "./lib/oxlint-config.mts";
 import {
   compareRatchetCounts,
   listRatchetRenames,
@@ -53,7 +53,7 @@ function gitPaths(root: string, args: string[]) {
 function collectViolations(
   snapshot: string,
   sources: ReadonlyMap<string, string>,
-  config: ReturnType<typeof readOxlintConfig>,
+  config: OxlintConfig,
 ) {
   const violations = new Map<string, LineCapViolation>();
   if (sources.size === 0) {
@@ -150,12 +150,9 @@ export function main(root = process.cwd(), argv = process.argv.slice(2)) {
     const headSources = args.staged
       ? loadRatchetSources(root, paths)
       : new Map(paths.map((file) => [file, fs.readFileSync(path.join(root, file), "utf8")]));
-    const sourceConfig = args.staged
-      ? loadRatchetSnapshot(root, ".oxlintrc.json", true, (source) => {
-          // Read the index through the same JSON-with-comments parser as the lint runner.
-          return JSON5.parse<ReturnType<typeof readOxlintConfig>>(source);
-        })
-      : readOxlintConfig(root);
+    const sourceConfig = loadRatchetSnapshot(root, ".oxlintrc.json", args.staged, (source) =>
+      JSON5.parse<OxlintConfig>(source),
+    );
     const config = {
       categories: { correctness: "off" as const },
       ignorePatterns: sourceConfig.ignorePatterns,

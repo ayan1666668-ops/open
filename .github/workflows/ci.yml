@@ -4123,8 +4123,6 @@ jobs:
     if: ${{ needs.preflight.outputs.run_check == 'true' && (needs.preflight.outputs.runner_profile == 'github' || needs.preflight.outputs.runner_profile == 'hybrid') && (needs.preflight.outputs.frozen_target != 'true' || needs.preflight.outputs.hosted_runner_profile_contract == 'true') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-    env:
-      OPENCLAW_LINT_CUMULATIVE_SEVERITY: warn
     strategy:
       fail-fast: false
       max-parallel: 5

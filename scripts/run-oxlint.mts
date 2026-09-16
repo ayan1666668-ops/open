@@ -1,12 +1,9 @@
 // Runs oxlint with local resource policy, sparse-checkout filtering, and
 // plugin package-boundary artifact preparation when needed.
 import { spawnSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createInterface } from "node:readline";
-import { stripVTControlCharacters } from "node:util";
 import { isDirectRunUrl } from "./lib/direct-run.mjs";
 import {
   distArtifactEntryArgs,
@@ -245,66 +242,6 @@ async function prepareExtensionPackageBoundaryArtifacts(env: NodeJS.ProcessEnv) 
   }
 }
 
-async function cumulativeWarningConfig(args: string[]) {
-  let configPath = ".oxlintrc.json";
-  let format: string | undefined;
-  const remainingArgs: string[] = [];
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index];
-    if (arg === undefined) {
-      continue;
-    }
-    if (arg === "--") {
-      remainingArgs.push(...args.slice(index));
-      break;
-    }
-    if (arg === "--config" || arg === "-c") {
-      configPath = args[++index] ?? "";
-    } else if (arg.startsWith("--config=") || arg.startsWith("-c=")) {
-      configPath = arg.slice(arg.indexOf("=") + 1);
-    } else if (arg.startsWith("-c")) {
-      configPath = arg.slice(2);
-    } else if (arg === "--format" || arg === "-f") {
-      format = args[++index] ?? "";
-    } else if (arg.startsWith("--format=") || arg.startsWith("-f=")) {
-      format = arg.slice(arg.indexOf("=") + 1);
-    } else if (arg.startsWith("-f")) {
-      format = arg.slice(2);
-    } else {
-      remainingArgs.push(arg);
-    }
-  }
-  if (format !== undefined && format !== "stylish") {
-    throw new Error(
-      "OPENCLAW_LINT_CUMULATIVE_SEVERITY=warn requires --format stylish for its warning summary",
-    );
-  }
-  const { readOxlintConfig } = await import("./lib/oxlint-config.mts");
-  const config = readOxlintConfig(process.cwd(), configPath);
-  for (const scope of [config, ...(config.overrides ?? [])]) {
-    const rule = scope.rules?.["max-lines"];
-    const severity = Array.isArray(rule) ? rule[0] : rule;
-    if (severity === "error" || severity === "deny" || severity === 2) {
-      if (Array.isArray(rule)) {
-        rule[0] = "warn";
-      } else if (scope.rules) {
-        scope.rules["max-lines"] = "warn";
-      }
-    }
-  }
-  // Oxlint override blocks outrank CLI -W. Keep this projection beside its
-  // owner so every relative glob, extension, and plugin path keeps its meaning.
-  const temporaryConfig = path.join(
-    path.dirname(path.resolve(configPath)),
-    `.oxlintrc.cumulative-${randomUUID()}.json`,
-  );
-  fs.writeFileSync(temporaryConfig, JSON.stringify(config), { flag: "wx" });
-  return {
-    args: ["--config", temporaryConfig, "--format", "stylish", ...remainingArgs],
-    cleanup: () => fs.rmSync(temporaryConfig),
-  };
-}
-
 /**
  * Applies wrapper policy and runs oxlint with the final argument list.
  */
@@ -350,41 +287,12 @@ async function runOxlint(
     // Declaration compilation owns its Go policy; lint limits belong to the oxlint child.
     await prepareExtensionPackageBoundaryArtifacts(localEnv);
   }
-  const warningConfig =
-    env.OPENCLAW_LINT_CUMULATIVE_SEVERITY === "warn" &&
-    !finalArgs.some((arg) => OXLINT_PREPARE_SKIP_FLAGS.has(arg))
-      ? await cumulativeWarningConfig(finalArgs)
-      : undefined;
-  let warningCount = 0;
-  try {
-    const status = await runManagedCommand({
-      bin: oxlintPath,
-      args: warningConfig?.args ?? finalArgs,
-      env: resolveOxlintToolchainEnv(oxlintPath, env),
-      requireProcessTreeExit: process.platform !== "win32",
-      stdio: warningConfig ? ["inherit", "pipe", "inherit"] : "inherit",
-      onReady: (child) => {
-        if (warningConfig && child.stdout) {
-          child.stdout.pipe(process.stdout, { end: false });
-          createInterface({ input: child.stdout, crlfDelay: Infinity }).on("line", (line) => {
-            if (
-              /^\s+\d+:\d+\s+warning\s+.*\s+eslint\(max-lines\)\s*$/u.test(
-                stripVTControlCharacters(line),
-              )
-            ) {
-              warningCount += 1;
-            }
-          });
-        }
-      },
-    });
-    if (warningConfig) {
-      console.error(`[oxlint] max-lines warnings: ${warningCount}`);
-    }
-    return status;
-  } finally {
-    warningConfig?.cleanup();
-  }
+  return await runManagedCommand({
+    bin: oxlintPath,
+    args: finalArgs,
+    env: resolveOxlintToolchainEnv(oxlintPath, env),
+    requireProcessTreeExit: process.platform !== "win32",
+  });
 }
 
 if (isDirectRunUrl(process.argv[1], import.meta.url)) {
