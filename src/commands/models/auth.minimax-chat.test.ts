@@ -1,6 +1,5 @@
 import { setImmediate as nextEventLoopTurn } from "node:timers/promises";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import minimaxPlugin from "../../../extensions/minimax/index.js";
 import { loadAuthProfileStore } from "../../agents/auth-profiles/store-runtime.js";
 import { resolveCommandAuthorization } from "../../auto-reply/command-auth.js";
 import { handleCommands } from "../../auto-reply/reply/commands-core.js";
@@ -11,6 +10,7 @@ import { createEmptyPluginRegistry } from "../../plugins/registry-empty.js";
 import { createPluginRegistryOwner, setActivePluginRegistry } from "../../plugins/runtime.js";
 import type { ProviderPlugin } from "../../plugins/types.js";
 import { createDeferredCore } from "../../shared/deferred.js";
+import { loadBundledPluginFacade } from "../../test-utils/bundled-plugin-public-surface.js";
 import { withOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
 import { registerProviderPlugin } from "../../test-utils/plugin-registration.js";
 
@@ -29,6 +29,9 @@ vi.mock("../../plugins/setup-registry.js", async (importOriginal) => ({
 }));
 
 beforeAll(async () => {
+  const { default: minimaxPlugin } = await loadBundledPluginFacade<{
+    default: Parameters<typeof registerProviderPlugin>[0]["plugin"];
+  }>({ pluginId: "minimax", artifactBasename: "index.js" });
   discovery.providers = (
     await registerProviderPlugin({ plugin: minimaxPlugin, id: "minimax", name: "MiniMax" })
   ).providers;
