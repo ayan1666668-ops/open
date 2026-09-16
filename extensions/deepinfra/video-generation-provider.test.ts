@@ -9,6 +9,7 @@ import { expectExplicitVideoGenerationCapabilities } from "openclaw/plugin-sdk/p
 import type { VideoGenerationRequest } from "openclaw/plugin-sdk/video-generation";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { DEEPINFRA_VIDEO_FALLBACK_MODELS } from "./media-models.js";
+import { MP4_VIDEO, WEBM_VIDEO } from "./video-generation.test-support.js";
 
 const {
   postJsonRequestMock,
@@ -374,11 +375,11 @@ describe("deepinfra video generation provider", () => {
     expect(Reflect.get(Reflect.get(postRequest ?? {}, "body") ?? {}, "seed")).toBeUndefined();
   });
 
-  it("decodes base64 data URL video outputs from the MIME type", async () => {
+  it("detects the container of base64 data URL video outputs", async () => {
     mockSubmit({
       id: "videos_webm",
       status: "succeeded",
-      data: [{ url: `data:video/webm;base64,${Buffer.from("webm-data").toString("base64")}` }],
+      data: [{ url: `data:video/webm;base64,${WEBM_VIDEO.toString("base64")}` }],
     });
 
     const provider = buildDeepInfraVideoGenerationProvider();
@@ -395,7 +396,7 @@ describe("deepinfra video generation provider", () => {
       throw new Error("Expected generated DeepInfra video");
     }
     expect(video).toEqual({
-      buffer: Buffer.from("webm-data"),
+      buffer: WEBM_VIDEO,
       mimeType: "video/webm",
       fileName: "video-1.webm",
     });
@@ -441,67 +442,85 @@ describe("deepinfra video generation provider", () => {
           cfg: { agents: { defaults: { mediaMaxMb: 1 / (1024 * 1024) } } },
         }),
       ).rejects.toThrow("DeepInfra generated video exceeds 1 bytes");
-      expect(decodeSpy.mock.calls.some((call) => call[1] === "base64")).toBe(false);
+      const decodeCalls: ReadonlyArray<ReadonlyArray<unknown>> = decodeSpy.mock.calls;
+      expect(decodeCalls.some((call) => call[1] === "base64")).toBe(false);
     } finally {
       decodeSpy.mockRestore();
     }
   });
 
-  it("accepts inline videos exactly at the configured media limit", async () => {
-    mockSubmit({
-      id: "videos_at_limit",
-      status: "succeeded",
-      data: [{ url: "data:video/mp4;base64,YQ==" }],
-    });
-
+  it.each([
+    { label: "video", mime: "video/mp4" },
+    { label: "generic binary", mime: "application/octet-stream" },
+    { label: "incorrect video container", mime: "video/webm" },
+  ])("detects an exact-limit MP4 with a $label label after polling", async ({ mime }) => {
+    const release = mockSubmit({ id: "videos_at_limit", status: "processing" });
+    fetchWithTimeoutMock.mockResolvedValueOnce(
+      Response.json({
+        id: "videos_at_limit",
+        status: "succeeded",
+        data: [{ url: `data:${mime};base64,${MP4_VIDEO.toString("base64")}` }],
+      }),
+    );
     const result = await buildDeepInfraVideoGenerationProvider().generateVideo({
       ...deepInfraVideoRequest,
-      prompt: "A video exactly at the configured media limit",
-      cfg: { agents: { defaults: { mediaMaxMb: 1 / (1024 * 1024) } } },
+      cfg: { agents: { defaults: { mediaMaxMb: MP4_VIDEO.length / (1024 * 1024) } } },
     });
-
     expect(result.videos[0]).toEqual({
-      buffer: Buffer.from("a"),
+      buffer: MP4_VIDEO,
       mimeType: "video/mp4",
       fileName: "video-1.mp4",
     });
+    expect(result.metadata).toEqual({ jobId: "videos_at_limit", status: "succeeded" });
+    expect(release).toHaveBeenCalledOnce();
   });
 
   it.each([
-    { label: "whitespace and newline", value: "Y\nW I=" },
-    { label: "unpadded", value: "YWI" },
+    {
+      label: "whitespace and newline",
+      value: MP4_VIDEO.toString("base64").replace(/(.{40})/g, "$1\n "),
+    },
+    { label: "unpadded", value: MP4_VIDEO.toString("base64").replace(/=+$/, "") },
   ])("accepts valid $label base64 video outputs", async ({ value }) => {
     mockSubmit({
       id: "videos_normalized_base64",
       status: "succeeded",
       data: [{ url: `data:video/mp4;base64,${value}` }],
     });
-
-    const result = await buildDeepInfraVideoGenerationProvider().generateVideo({
-      ...deepInfraVideoRequest,
-      prompt: "A video with noncanonical base64 formatting",
-    });
-
-    expect(result.videos[0]?.buffer).toEqual(Buffer.from("ab"));
+    const result =
+      await buildDeepInfraVideoGenerationProvider().generateVideo(deepInfraVideoRequest);
+    expect(result.videos[0]?.buffer).toEqual(MP4_VIDEO);
   });
 
-  it("preserves binary application/octet-stream inline videos", async () => {
-    mockSubmit({
-      id: "videos_octet_stream",
-      status: "succeeded",
-      data: [{ url: "data:application/octet-stream;base64,YmluYXJ5" }],
-    });
-
-    const result = await buildDeepInfraVideoGenerationProvider().generateVideo({
-      ...deepInfraVideoRequest,
-      prompt: "A video with a generic binary MIME type",
-    });
-
-    expect(result.videos[0]).toEqual({
-      buffer: Buffer.from("binary"),
-      mimeType: "application/octet-stream",
-      fileName: "video-1.mp4",
-    });
+  it.each([
+    { label: "unknown bytes", bytes: Buffer.from("binary"), mime: "application/octet-stream" },
+    { label: "unknown bytes labeled video", bytes: Buffer.from("binary"), mime: "video/mp4" },
+    {
+      label: "image bytes labeled video",
+      bytes: Buffer.from(
+        "47494638396101000100800000000000ffffff21f90401000000002c00000000010001000002024401003b",
+        "hex",
+      ),
+      mime: "video/mp4",
+    },
+    {
+      label: "audio container labeled video",
+      bytes: Buffer.from("00000018667479704d344220000000004d34422000000000", "hex"),
+      mime: "video/mp4",
+    },
+  ])("rejects $label after polling", async ({ bytes, mime }) => {
+    const release = mockSubmit({ id: "videos_bad_bytes", status: "queued" });
+    fetchWithTimeoutMock.mockResolvedValueOnce(
+      Response.json({
+        id: "videos_bad_bytes",
+        status: "succeeded",
+        data: [{ url: `data:${mime};base64,${bytes.toString("base64")}` }],
+      }),
+    );
+    await expect(
+      buildDeepInfraVideoGenerationProvider().generateVideo(deepInfraVideoRequest),
+    ).rejects.toThrow("DeepInfra video response: malformed video response");
+    expect(release).toHaveBeenCalledOnce();
   });
 
   it("throws the job error when the video generation fails", async () => {
