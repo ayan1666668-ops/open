@@ -98,6 +98,11 @@ Missing configured `plugins.load.paths` are availability warnings.
 The update continues and the Gateway can become ready with the available plugins.
 The update report and Doctor lint identify the unavailable path with
 `configured-plugin-path-unavailable`.
+Permission, I/O, and other filesystem inspection failures use the distinct
+`configured-plugin-path-inspection-failed` warning with the original error code
+and message. For permission errors, fix permissions on the reported path, then
+run `openclaw doctor --fix`; for other failures, resolve the reported filesystem
+problem first. Both warnings preserve uninspected configuration and let the update continue.
 
 A load path can contain several plugins or override a bundled plugin, so discovery
 cannot infer which settings belong to its missing payload. Doctor preserves

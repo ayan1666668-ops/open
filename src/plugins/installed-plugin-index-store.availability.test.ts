@@ -5,6 +5,7 @@ import {
   closeOpenClawStateDatabaseAsync,
   closeOpenClawStateDatabaseForTest,
 } from "../state/openclaw-state-db.js";
+import { pluginPathFailureDiagnostic } from "./discovery-availability.js";
 import { discoverConfiguredPluginLoadPaths } from "./discovery.js";
 import { writePersistedInstalledPluginIndex } from "./installed-plugin-index-store-write.js";
 import { readPersistedInstalledPluginIndexSync } from "./installed-plugin-index-store.js";
@@ -46,6 +47,11 @@ it("retains discovery's preserve disposition when the installed index is reopene
     plugins: [],
     diagnostics: [
       ...discovery.diagnostics,
+      pluginPathFailureDiagnostic(
+        path.join(stateDir, "unreadable-plugin"),
+        "config",
+        Object.assign(new Error("Filesystem device error"), { code: "EIO" }),
+      ),
       { level: "warn", message: "Existing diagnostics retain an absent disposition." },
     ],
   };

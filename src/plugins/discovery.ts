@@ -25,7 +25,7 @@ import {
   recordPluginCandidateInstallOwner,
   resolvePluginCandidateInstallOwner,
 } from "./candidate-install-owner.js";
-import { unavailablePluginPathDiagnostic } from "./discovery-availability.js";
+import { inspectPluginLoadPath, pluginPathFailureDiagnostic } from "./discovery-availability.js";
 import type { PluginCandidate, PluginDiscoveryResult } from "./discovery.types.js";
 import { shouldRejectHardlinkedPluginFiles } from "./hardlink-policy.js";
 import { hashStableJson } from "./installed-plugin-index-hash.js";
@@ -1093,7 +1093,7 @@ function createPluginScanner(env: NodeJS.ProcessEnv, ownershipUid?: number | nul
     } catch (err) {
       diagnostics.push(
         params.origin === "config"
-          ? unavailablePluginPathDiagnostic(params.dir, params.origin)
+          ? pluginPathFailureDiagnostic(params.dir, params.origin, err)
           : {
               level: "warn",
               message: `failed to read extensions dir: ${params.dir} (${String(err)})`,
@@ -1171,11 +1171,8 @@ function createPluginScanner(env: NodeJS.ProcessEnv, ownershipUid?: number | nul
     scanFiles?: boolean;
   }) {
     const resolved = resolveUserPath(params.rawPath, env);
-    const stat = pluginCacheStatSync(resolved);
+    const stat = inspectPluginLoadPath(resolved, params.origin, diagnostics);
     if (!stat) {
-      if (params.origin === "config" || !pluginCacheExistsSync(resolved)) {
-        diagnostics.push(unavailablePluginPathDiagnostic(resolved, params.origin));
-      }
       return;
     }
     // Origin gates entry resolution and bundled runtime privileges. Configured

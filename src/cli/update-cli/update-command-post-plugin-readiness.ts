@@ -5,7 +5,7 @@ import {
   parseUpdateDoctorLintReport,
   type UpdateDoctorLintFinding,
 } from "../../infra/update-doctor-lint.js";
-import { CONFIGURED_PLUGIN_PATH_UNAVAILABLE } from "../../plugins/discovery-availability.js";
+import { isConfiguredPluginPathDiagnosticCode } from "../../plugins/discovery-availability.js";
 import { runExec } from "../../process/exec.js";
 import { resolveNodeRunner } from "./shared.js";
 import type { PostCorePluginUpdateResult } from "./update-command-plugins.js";
@@ -18,15 +18,22 @@ function readinessWarning(
   finding: UpdateDoctorLintFinding,
   reason = finding.checkId,
 ): NonNullable<PostCorePluginUpdateResult["warnings"]>[number] {
-  const unavailablePath = finding.requirement === CONFIGURED_PLUGIN_PATH_UNAVAILABLE;
+  const pathReason = isConfiguredPluginPathDiagnosticCode(finding.requirement)
+    ? finding.requirement
+    : undefined;
   return {
-    reason: unavailablePath ? CONFIGURED_PLUGIN_PATH_UNAVAILABLE : reason,
+    reason: pathReason ?? reason,
     message: finding.message,
+    ...(finding.errorCode ? { errorCode: finding.errorCode } : {}),
     guidance: [
       finding.fixHint ??
         `Resolve this finding, then rerun \`openclaw doctor --lint --only ${finding.checkId}\`.`,
     ],
-    ...(finding.source && !unavailablePath ? { pluginId: finding.source } : {}),
+    ...(finding.source
+      ? pathReason
+        ? { source: finding.source }
+        : { pluginId: finding.source }
+      : {}),
   };
 }
 

@@ -1,5 +1,5 @@
 import type { ConfigValidationIssue } from "../config/types.openclaw.js";
-import { CONFIGURED_PLUGIN_PATH_UNAVAILABLE } from "../plugins/discovery-availability.js";
+import { isConfiguredPluginPathDiagnosticCode } from "../plugins/discovery-availability.js";
 import { PLUGIN_AVAILABILITY_POLICY } from "../plugins/runtime-degraded-state.js";
 import type { HealthFinding } from "./health-checks.js";
 
@@ -22,8 +22,7 @@ export function configValidationWarningsToHealthFindings(
   return warnings
     .filter(
       (warning) =>
-        warning.code === CONFIGURED_PLUGIN_PATH_UNAVAILABLE &&
-        warning.path === "plugins.load.paths",
+        isConfiguredPluginPathDiagnosticCode(warning.code) && warning.path === "plugins.load.paths",
     )
     .map((warning) => ({
       checkId: FINAL_CONFIG_VALIDATION_CHECK_ID,
@@ -31,8 +30,9 @@ export function configValidationWarningsToHealthFindings(
       target: PLUGIN_AVAILABILITY_POLICY.state,
       requirement: warning.code,
       source: warning.source,
+      ...(warning.errorCode ? { errorCode: warning.errorCode } : {}),
       message: warning.message,
       path: warning.path,
-      fixHint: PLUGIN_AVAILABILITY_POLICY.repairCommand,
+      fixHint: warning.fixHint ?? PLUGIN_AVAILABILITY_POLICY.repairCommand,
     }));
 }

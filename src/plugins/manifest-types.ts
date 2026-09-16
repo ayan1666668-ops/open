@@ -33,6 +33,7 @@ export type PluginBundleFormat = "agent" | "codex" | "claude" | "cursor";
 export type PluginDiagnosticCode =
   | "backup-resource-declaration-invalid"
   | "channel-setup-failure"
+  | "configured-plugin-path-inspection-failed"
   | "configured-plugin-path-unavailable"
   | "dashboard-declaration-invalid"
   | "plugin-verification"
@@ -47,6 +48,8 @@ export type PluginDiagnostic = {
   source?: string;
   code?: PluginDiagnosticCode;
   configDisposition?: "preserve";
+  errorCode?: string;
+  fixHint?: string;
   sdkCompatibility?: {
     seam: string;
     coreVersion: string;

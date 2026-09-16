@@ -82,6 +82,9 @@ inspection, and errors reported by an actual health check retain their failures.
 Missing configured `plugins.load.paths` produce a warning under
 `core/doctor/final-config-validation`, with requirement
 `configured-plugin-path-unavailable` and the unavailable path in `source`.
+Permission, I/O, and other inspection failures instead use
+`configured-plugin-path-inspection-failed`, retain the filesystem `errorCode`
+and error message, and provide a recovery hint for the affected path.
 The updater retains the warning and continues. Doctor preserves settings whose
 plugin owner could not be inspected; see [Plugin repair warnings](/install/update-troubleshooting#plugin-repair-warnings).
 
