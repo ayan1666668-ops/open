@@ -7,6 +7,7 @@ import { resolveDockerE2ePlan } from "../../scripts/lib/docker-e2e-plan.mts";
 import { parseUpgradeSurvivorScenarios } from "../../scripts/lib/upgrade-survivor-policy.mjs";
 import { resolveTestNodeExecPath } from "../../src/test-utils/node-process.js";
 import { useAutoCleanupTempDirTracker } from "../helpers/temp-dir.js";
+import { readUpgradeSurvivorPaths } from "./upgrade-survivor-paths.test-support.js";
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 const assertionsPath = "scripts/e2e/lib/upgrade-survivor/assertions.mjs";
@@ -38,15 +39,18 @@ it("plans the named missing-load-path row without adding aggregate coverage", ()
 it("dispatches missing-load-path fixture stages through the assertion entrypoint", () => {
   const root = tempDirs.make("openclaw-missing-load-path-dispatch-");
   const configPath = path.join(root, "openclaw.json");
-  const artifactRoot = path.join(root, "artifacts");
+  const paths = readUpgradeSurvivorPaths(root, {
+    OPENCLAW_UPGRADE_SURVIVOR_RUNTIME_ROOT: root,
+    OPENCLAW_UPGRADE_SURVIVOR_SCENARIO: "missing-load-path",
+  });
+  const artifactRoot = paths.artifactRoot;
   const pluginRoot = path.join(root, "custom-plugins", "survivor-unavailable-path");
   writeFileSync(configPath, JSON.stringify({ plugins: { allow: [], entries: {} } }));
   const env = {
     ...process.env,
     OPENCLAW_CONFIG_PATH: configPath,
-    OPENCLAW_UPGRADE_SURVIVOR_RUNTIME_ROOT: root,
+    ...paths.env,
     OPENCLAW_UPGRADE_SURVIVOR_ARTIFACT_ROOT: artifactRoot,
-    OPENCLAW_UPGRADE_SURVIVOR_SCENARIO: "missing-load-path",
   };
   const run = (stage: string) =>
     execFileSync(resolveTestNodeExecPath(), [assertionsPath, "missing-load-path", stage], {

@@ -13,6 +13,7 @@ source scripts/e2e/lib/prepublish-plugin-registry.sh
 source scripts/e2e/lib/upgrade-survivor/plugin-dependency-fixtures.sh
 source scripts/e2e/lib/upgrade-survivor/backup-rollback.sh
 source scripts/e2e/lib/upgrade-survivor/missing-load-path.sh
+source scripts/e2e/lib/upgrade-survivor/paths.sh
 
 SCENARIO="${OPENCLAW_UPGRADE_SURVIVOR_SCENARIO:-base}"
 WORKER_CELL=0
@@ -67,10 +68,7 @@ if [ "$SCENARIO" = "configured-plugin-installs" ] || [ "$SCENARIO" = "sqlite-vol
   export BRAVE_API_KEY="BSA_upgrade_survivor_brave_key"
 fi
 
-ARTIFACT_ROOT="$(dirname "${OPENCLAW_UPGRADE_SURVIVOR_SUMMARY_JSON:-/tmp/openclaw-upgrade-survivor-artifacts/summary.json}")"
-export OPENCLAW_UPGRADE_SURVIVOR_ARTIFACT_ROOT="$ARTIFACT_ROOT"
-export OPENCLAW_UPGRADE_SURVIVOR_RUNTIME_ROOT="${OPENCLAW_UPGRADE_SURVIVOR_RUNTIME_ROOT:-/tmp/openclaw-upgrade-survivor-runtime}"
-RUNTIME_ROOT="$OPENCLAW_UPGRADE_SURVIVOR_RUNTIME_ROOT"
+resolve_upgrade_survivor_paths
 STATE_HOME_ROOT="${OPENCLAW_UPGRADE_SURVIVOR_STATE_HOME_ROOT:-$RUNTIME_ROOT/state-home}"
 mkdir -p "$ARTIFACT_ROOT"
 mkdir -p "$RUNTIME_ROOT"
@@ -84,20 +82,13 @@ if [ "$WORKER_CELL" = "1" ]; then
   export OPENCLAW_SKIP_STARTUP_MODEL_PREWARM=1
   mkdir -p "$XDG_CACHE_HOME"
 fi
-if [ "$SCENARIO" = "legacy-operator-state" ] || [ "$SCENARIO" = "base" ] || [ "$SCENARIO" = "missing-load-path" ]; then
-  export npm_config_prefix="$RUNTIME_ROOT/npm-prefix"
-else
-  export npm_config_prefix="$ARTIFACT_ROOT/npm-prefix"
-fi
-export NPM_CONFIG_PREFIX="$npm_config_prefix"
 export npm_config_cache="${OPENCLAW_UPGRADE_SURVIVOR_NPM_CACHE:-$OPENCLAW_UPGRADE_SURVIVOR_RUNTIME_ROOT/npm-cache}"
 export NPM_CONFIG_CACHE="$npm_config_cache"
 export npm_config_tmp="$TMPDIR"
 mkdir -p "$npm_config_prefix" "$npm_config_cache"
 chmod 700 "$npm_config_cache" || true
-export PATH="$npm_config_prefix/bin:$PATH"
+export PATH="$BASELINE_BIN_DIR:$PATH"
 
-SUMMARY_JSON="${OPENCLAW_UPGRADE_SURVIVOR_SUMMARY_JSON:-$ARTIFACT_ROOT/summary.json}"
 PHASE_LOG="$ARTIFACT_ROOT/phases.jsonl"
 BASELINE_RAW="${OPENCLAW_UPGRADE_SURVIVOR_BASELINE:?missing OPENCLAW_UPGRADE_SURVIVOR_BASELINE}"
 CANDIDATE_KIND="${OPENCLAW_UPGRADE_SURVIVOR_CANDIDATE_KIND:-tarball}"
@@ -155,9 +146,6 @@ idempotence_seconds=""
 run_completed="0"
 update_exit_code=""
 
-BASELINE_INSTALL_LOG="$ARTIFACT_ROOT/baseline-install.log"
-UPDATE_JSON="$ARTIFACT_ROOT/update.json"
-UPDATE_ERR="$ARTIFACT_ROOT/update.err"
 POST_UPDATE_VALIDATE_JSON="$ARTIFACT_ROOT/post-update-validate.json"
 POST_UPDATE_VALIDATE_ERR="$ARTIFACT_ROOT/post-update-validate.err"
 DOCTOR_LOG="$ARTIFACT_ROOT/doctor.log"
@@ -600,7 +588,7 @@ run_plugin_fixture_phase() {
 }
 
 package_root() {
-  printf '%s/lib/node_modules/openclaw\n' "$npm_config_prefix"
+  printf '%s\n' "$BASELINE_PACKAGE_ROOT"
 }
 
 legacy_runtime_deps_symlink_plugin() {
