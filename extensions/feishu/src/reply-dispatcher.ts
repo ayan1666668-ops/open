@@ -681,30 +681,40 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
         // Committing here would put the table in a card just as surely as delivering a
         // final would, so this close drops the card and reuses a matching block
         // receipt or sends the combined text for a final to inherit.
-        // A close writes the whole projection in one go and cannot cut it into several, so a
-        // conversion past the limit the settled answer is held to takes the post path here
-        // for the same reason the preview stands down for it.
-        const closeProjectionExceedsLimit =
-          answerText !== finalizedAnswerText && answerText.length > textChunkLimit;
-        const closeNeedsPost =
-          disposition === "closed" &&
-          (tableNeedsPostPath(rawText) ||
-            answerTableNeedsPostPath(answerText) ||
-            closeProjectionExceedsLimit);
         // Reasoning is blockquoted before it reaches the card, and a card does not draw
         // a blockquoted table, so a native one there loses its rows. Bullets survive the
         // quote, so reasoning degrades to a list rather than the rows disappearing, and
         // the card the answer earned is kept. The post path keeps the native table,
         // which it renders as a fenced block.
         const plainReasoning = plainReasoningText(finalizedReasoningText);
-        const reasoningForClose =
-          !closeNeedsPost && nativeTables && hasCardMarkdownTable(plainReasoning)
+        const reasoningForCard =
+          nativeTables && hasCardMarkdownTable(plainReasoning)
             ? core.channel.text.convertMarkdownTables(plainReasoning, "bullets")
             : finalizedReasoningText;
-        const text =
-          reasoningForClose === finalizedReasoningText
+        // The body a card close would write, which is what the limit has to be asked about.
+        const cardText =
+          reasoningForCard === finalizedReasoningText
             ? rawText
-            : buildCombinedStreamText(reasoningForClose, answerText);
+            : buildCombinedStreamText(reasoningForCard, answerText);
+        const authoredCloseText = buildCombinedStreamText(
+          finalizedReasoningText,
+          finalizedAnswerText,
+        );
+        // A close writes the whole projection in one go and cannot cut it into several, so a
+        // conversion past the limit the settled answer is held to takes the post path here
+        // for the same reason the preview stands down for it. The card carries the reasoning
+        // wrapped and set beside the answer, so the limit answers for that whole body rather
+        // than for either half: two conversions that each fit it still write a card past it.
+        // Text the author wrote long is no conversion's doing and closes the way it always
+        // has, which is why the projection has to differ from the authored combination.
+        const closeProjectionExceedsLimit =
+          cardText !== authoredCloseText && cardText.length > textChunkLimit;
+        const closeNeedsPost =
+          disposition === "closed" &&
+          (tableNeedsPostPath(rawText) ||
+            answerTableNeedsPostPath(answerText) ||
+            closeProjectionExceedsLimit);
+        const text = closeNeedsPost ? rawText : cardText;
         let closed;
         try {
           if (disposition === "discarded" || closeNeedsPost) {
@@ -739,7 +749,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
             mentionTargets?.length ? mentionTargets : undefined,
             {
               blockAnswerText: answerText,
-              authoredText: buildCombinedStreamText(finalizedReasoningText, finalizedAnswerText),
+              authoredText: authoredCloseText,
             },
           );
         }

@@ -926,6 +926,54 @@ describe("createFeishuReplyDispatcher table limits", () => {
     expect(sendMessageFeishuMock).toHaveBeenCalled();
   });
 
+  // The card carries the reasoning wrapped and set beside the answer, so the limit belongs
+  // to that whole body and not to the answer alone. Two conversions that each fit it can
+  // still write a card past it, which is the message the preview was already refusing.
+  // Only the projection answers to this, so the authored half below still closes on the
+  // card: text the author wrote long streams the way it always has.
+  it("closes the whole projected body through a post, not the answer half alone", async () => {
+    const convert = getFeishuRuntimeMock().channel.text.convertMarkdownTables;
+    const half = [
+      "| name | detail |",
+      "| --- | --- |",
+      ...Array.from({ length: 20 }, (_entry, index) => `| row${index} | d |`),
+      `| wide | ${"w".repeat(100)} |`,
+    ].join("\n");
+    // Guard the fixture: each half projects inside the limit and the two together do not,
+    // so the close decides on the body it writes rather than on either half.
+    expect(convert(half, "code").length).toBeLessThanOrEqual(4000);
+    expect(convert(half, "code").length * 2).toBeGreaterThan(4000);
+
+    const projected = createBlockTableHarness(tableCfg("code"), true);
+    projected.result.replyOptions.onReasoningStream?.({ text: half });
+    await vi.waitFor(() => expect(streamingInstances).toHaveLength(1));
+    projected.result.replyOptions.onPartialReply?.({ text: half });
+    await projected.options.onIdle?.();
+
+    expect(requireStreamingInstance(0).closeWithResult).not.toHaveBeenCalled();
+    expect(requireStreamingInstance(0).discard).toHaveBeenCalledTimes(1);
+    expect(sendMessageFeishuMock).toHaveBeenCalled();
+
+    sendMessageFeishuMock.mockClear();
+    const authoredReasoning = "r".repeat(2_000);
+    const authoredAnswer = "a".repeat(2_500);
+    // Guard the fixture: nothing here converts, and the combined body is past the limit
+    // for reasons the table mode had no hand in.
+    expect(convert(authoredReasoning, "code")).toBe(authoredReasoning);
+    expect(convert(authoredAnswer, "code")).toBe(authoredAnswer);
+    expect(authoredReasoning.length + authoredAnswer.length).toBeGreaterThan(4000);
+
+    const authored = createBlockTableHarness(tableCfg("code"), true);
+    authored.result.replyOptions.onReasoningStream?.({ text: authoredReasoning });
+    await vi.waitFor(() => expect(streamingInstances).toHaveLength(2));
+    authored.result.replyOptions.onPartialReply?.({ text: authoredAnswer });
+    await authored.options.onIdle?.();
+
+    expect(requireStreamingInstance(1).closeWithResult).toHaveBeenCalledTimes(1);
+    expect(requireStreamingInstance(1).discard).not.toHaveBeenCalled();
+    expect(sendMessageFeishuMock).not.toHaveBeenCalled();
+  });
+
   // Reasoning shares the card with the answer, and its own conversion can outgrow the
   // limit the answer preview answers to. It gives way to the text as authored there.
   it("shows reasoning as authored when its conversion outgrows the chunk limit", async () => {
