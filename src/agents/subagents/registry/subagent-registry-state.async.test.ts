@@ -333,24 +333,25 @@ it.each(["read failure", "absent database"])(
       new Map([...runs("written", "written"), ...runs("deleted", "deleted")]),
       ["written", "deleted"],
     );
-    persistSubagentRunsToDisk(new Map(), ["deleted"]);
     holdReaders = true;
     settled.resolve();
     await paused.promise;
+    persistSubagentRunsToDisk(runs("resumed-written", "written"), ["written"]);
+    persistSubagentRunsToDisk(new Map(), ["deleted"]);
     for (const [id, entry] of runs("resumed-memory", "memory")) {
       memory.set(id, entry);
     }
     holdReaders = false;
     resumed.resolve();
     expect(await Promise.all(readers)).toEqual(
-      Array.from({ length: 8 }, () => ["written", "resumed-memory"]),
+      Array.from({ length: 8 }, () => ["resumed-written", "resumed-memory"]),
     );
     expect(operation).toHaveBeenCalledTimes(1);
     operation.mockRestore();
 
     const retry = read();
     (await started(0)).resolve(runs("persisted", "persisted"));
-    expect(await retry).toEqual(["persisted", "written", "resumed-memory"]);
+    expect(await retry).toEqual(["persisted", "resumed-written", "resumed-memory"]);
   },
 );
 
@@ -364,6 +365,7 @@ it.each(["reset", "ownership rebind"])("supersedes a settled fallback after %s",
       } else {
         invalidateSubagentSessionListReadCache();
       }
+      persistSubagentRunsToDisk(runs("published", "published"), ["published"]);
     },
   );
   await started(0);
@@ -371,7 +373,7 @@ it.each(["reset", "ownership rebind"])("supersedes a settled fallback after %s",
   replies[0]!.reject(new Error("read failed"));
   await first;
   (await started(1)).resolve(runs("current"));
-  expect(await second).toEqual(["current"]);
+  expect(await second).toEqual(["current", "published"]);
 });
 
 it("rejects a reply after its captured maintenance scope has retired", async () => {

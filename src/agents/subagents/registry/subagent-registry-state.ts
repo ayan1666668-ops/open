@@ -226,7 +226,10 @@ function rememberSubagentRunsSnapshot<T extends SubagentRunReadRecord>(
       const entry = runs.get(runId);
       changes.set(runId, entry ? cache.copy(entry) : undefined);
     }
-    cache.state = { changes, context, pending: previous.pending };
+    // Named deltas keep pending and failed-fill waiters in the same cache cohort.
+    previous.changes = changes;
+    previous.context = context;
+    cache.state = previous;
     return;
   }
   for (const runId of new Set(changedRunIds)) {
