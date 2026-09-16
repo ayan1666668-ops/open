@@ -867,10 +867,9 @@ export class NodeRegistry {
     if (node.client.invalidated === true) {
       return "retire";
     }
-    if (
-      params.observedGeneration !== undefined &&
-      node.pairingGeneration !== params.observedGeneration
-    ) {
+    // Strict equality: a lease captured without a generation still loses to a session
+    // that gained one while the caller's lookup awaited persistence.
+    if (node.pairingGeneration !== params.observedGeneration) {
       return "preserve";
     }
     const invalidatedPresence = this.invalidateSessionForPairingChange(node, params.reason);

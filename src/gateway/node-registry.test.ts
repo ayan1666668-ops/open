@@ -1230,6 +1230,16 @@ describe("gateway/node-registry", () => {
     ).toBe("preserve");
     expect(client.invalidated).not.toBe(true);
 
+    // A lease captured without a generation still defers to a session that gained one.
+    expect(
+      registry.retireRejectedConnection({
+        connId: "conn-retire",
+        observedGeneration: undefined,
+        reason: "test",
+      }),
+    ).toBe("preserve");
+    expect(client.invalidated).not.toBe(true);
+
     // The captured generation still being live retires that session.
     expect(
       registry.retireRejectedConnection({
