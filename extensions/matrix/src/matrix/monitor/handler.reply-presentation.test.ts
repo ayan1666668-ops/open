@@ -217,7 +217,7 @@ describe("matrix monitor handler reply presentation", () => {
     vi.useFakeTimers();
     try {
       expect(options.reasoningPayloadsEnabled).toBe(true);
-      options.onPartialReply?.({ text: "Answer prefix" });
+      await options.onPartialReply?.({ text: "Answer prefix" });
       await vi.advanceTimersByTimeAsync(1000);
       expect(sendSingleTextMessageMatrixMock).toHaveBeenCalledTimes(1);
 
@@ -231,7 +231,7 @@ describe("matrix monitor handler reply presentation", () => {
       expect(sendSingleTextMessageMatrixMock).toHaveBeenCalledTimes(1);
 
       const answer = "Answer prefix with the complete result";
-      options.onPartialReply?.({ text: answer });
+      await options.onPartialReply?.({ text: answer });
       await vi.advanceTimersByTimeAsync(1000);
       expect(editMessageMatrixMock).toHaveBeenLastCalledWith(
         "!room:example.org",
