@@ -152,7 +152,9 @@ describe("fresh compiled subprocess invocation", { concurrent: false }, () => {
           expect(new Set(compilers.map(({ pid }) => pid)).size).toBe(2);
           expect(new Set(compilers.map(({ directory }) => path.resolve(directory)))).toEqual(
             new Set(
-              [...generations].map((generation) => fileURLToPath(new URL("../../", generation))),
+              [...generations].map((generation) =>
+                path.resolve(fileURLToPath(new URL("../../", generation))),
+              ),
             ),
           );
           for (const compiler of compilers) {
