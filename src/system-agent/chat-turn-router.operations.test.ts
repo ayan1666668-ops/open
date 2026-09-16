@@ -26,7 +26,7 @@ import {
 import { ChatTurnRouter } from "./chat-turn-router.js";
 import { ChatWizardHost } from "./chat-wizard-host.js";
 import type { SystemAgentOperation } from "./operation-types.js";
-import { createNoExitRuntime } from "./operations-execution-helpers.js";
+import { SystemAgentOperationExitError } from "./operations-execution-helpers.js";
 import { describeSystemAgentPersistentOperation } from "./operations.js";
 import { installSystemAgentClaudeCliBackendTestFixture } from "./system-agent.test-helpers.js";
 
@@ -597,7 +597,7 @@ describe("SystemAgentChatEngine operations", () => {
         {
           executeOperation: async (_operation, runtime) => {
             runtime.error(validationError);
-            return createNoExitRuntime(runtime).exit(1);
+            throw new SystemAgentOperationExitError(1);
           },
         },
       );
@@ -624,7 +624,15 @@ describe("SystemAgentChatEngine operations", () => {
       cause: new Error("fixture refresh failed"),
     });
     const runConfigSet = vi.fn(async () => {
-      mocks.readConfigFileSnapshot.mockResolvedValue(configSnapshot({ gateway: { port: 18789 } }));
+      mocks.readConfigFileSnapshot.mockResolvedValue({
+        exists: true,
+        valid: true,
+        path: "/tmp/fixture-openclaw.json",
+        hash: "published",
+        config: { gateway: { port: 18789 } },
+        sourceConfig: { gateway: { port: 18789 } },
+        issues: [],
+      });
       throw writerError;
     });
     const engine = new SystemAgentChatEngine({

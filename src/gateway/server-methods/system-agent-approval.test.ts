@@ -282,7 +282,9 @@ describe("Full Access delegated chat", () => {
       const original = expectDefined(manager.listPendingRecords()[0], "original approval");
       const correctionRequested = createDeferred();
       broadcast.mockImplementation((event) => {
-        if (event === "openclaw.approval.requested") correctionRequested.resolve();
+        if (event === "openclaw.approval.requested") {
+          correctionRequested.resolve();
+        }
       });
       expect(runConfigSet).not.toHaveBeenCalled();
       expect(manager.resolve(original.id, "allow-once", "operator")).toBe(true);
@@ -351,8 +353,9 @@ describe("Full Access delegated chat", () => {
       });
       expect(engine.getPendingOperatorProposal()).toBeNull();
     } finally {
-      for (const record of manager.listPendingRecords())
+      for (const record of manager.listPendingRecords()) {
         manager.resolve(record.id, "deny", "cleanup");
+      }
       await pending;
     }
   });
