@@ -52,7 +52,6 @@ import { formatUiError } from "../../lib/format-error.ts";
 import { isMissingOperatorReadScopeError } from "../../lib/gateway-errors.ts";
 import { canCallGatewayMethod } from "../../lib/gateway-methods.ts";
 import { loadModelCatalog } from "../../lib/model-catalog-store.ts";
-import { resolveScrollBehavior } from "../../lib/scroll-behavior.ts";
 import {
   GatewayPageController,
   type GatewayPageChange,
@@ -71,6 +70,7 @@ import {
 import { switchActiveRealtimeTalkCameras } from "../chat/talk/session.ts";
 import { isUnknownSystemInfoMethodError, supportsSystemInfo } from "../connection/system-info.ts";
 import { renderBrowserLinkPreferencesRow } from "./browser-link-preferences.ts";
+import { ConfigRouteScrollController } from "./config-route-scroll-controller.ts";
 import {
   configSectionKeysForPage,
   SCOPED_CONFIG_SECTION_KEYS,
@@ -454,8 +454,7 @@ export class ConfigPage extends OpenClawLightDomElement {
       }
     },
   });
-  private pendingRouteTargetId: string | null = null;
-  private routeTargetScrollFrame: number | null = null;
+  private readonly routeTargetScroll = new ConfigRouteScrollController(this);
   private readonly gateway = new GatewayPageController(this, {
     getGateway: () => this.context?.gateway,
     invalidateRequests: () => this.invalidateSystemInfoRequest(),
@@ -534,7 +533,6 @@ export class ConfigPage extends OpenClawLightDomElement {
   }
 
   override disconnectedCallback() {
-    this.cancelRouteTargetScroll();
     window.removeEventListener(
       SIDEBAR_HIDDEN_SESSION_CATALOGS_CHANGED_EVENT,
       this.hiddenSessionCatalogsChanged,
@@ -570,7 +568,6 @@ export class ConfigPage extends OpenClawLightDomElement {
     this.syncSystemInfoPolling();
     this.syncUpdateStatusRefresh();
     this.syncUpdateCountdownPolling();
-    this.scrollToPendingRouteTarget();
     // Device labels stay hidden until the user grants media permission; each
     // picker requests its permission explicitly when opened.
     if (this.pageId === "appearance" && !this.microphoneLoaded) {
@@ -634,7 +631,7 @@ export class ConfigPage extends OpenClawLightDomElement {
   }
 
   private syncRouteData() {
-    this.cancelRouteTargetScroll();
+    this.routeTargetScroll.setTarget(null);
     // Pre-restructure deep links: sections that moved to their own page must
     // redirect before normalization discards them from the old page's list.
     const rawSection = this.routeData
@@ -660,38 +657,7 @@ export class ConfigPage extends OpenClawLightDomElement {
     this.selections = { ...this.selections, [this.pageId]: selection };
     const targetBlockId =
       this.routeData?.targetBlockId ?? configTargetIdFromHash(globalThis.location?.hash ?? "");
-    this.pendingRouteTargetId = targetBlockId;
-  }
-
-  private cancelRouteTargetScroll() {
-    if (this.routeTargetScrollFrame !== null) {
-      cancelAnimationFrame(this.routeTargetScrollFrame);
-      this.routeTargetScrollFrame = null;
-    }
-    this.pendingRouteTargetId = null;
-  }
-
-  private scrollToPendingRouteTarget() {
-    if (!this.pendingRouteTargetId || this.routeTargetScrollFrame !== null) {
-      return;
-    }
-    // Starting smooth scroll during the navigation render can leave Chromium
-    // at the old offset. Resolve the latest target after that render settles.
-    this.routeTargetScrollFrame = requestAnimationFrame(() => {
-      this.routeTargetScrollFrame = null;
-      const targetId = this.pendingRouteTargetId;
-      if (!this.isConnected || !targetId) {
-        return;
-      }
-      const target = [...this.renderRoot.querySelectorAll<HTMLElement>("[id]")].find(
-        (element) => element.id === targetId,
-      );
-      if (!target) {
-        return;
-      }
-      target.scrollIntoView?.({ behavior: resolveScrollBehavior(), block: "start" });
-      this.pendingRouteTargetId = null;
-    });
+    this.routeTargetScroll.setTarget(targetBlockId);
   }
 
   private isSystemInfoVisible(): boolean {
