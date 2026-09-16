@@ -1,9 +1,6 @@
 import { resolveTimerTimeoutMs } from "@openclaw/normalization-core/number-coercion";
 import { danger, shouldLogVerbose } from "../globals.js";
-import {
-  decodeWindowsOutputBuffer,
-  resolveWindowsConsoleEncoding,
-} from "../infra/windows-encoding.js";
+import { decodeWindowsOutputBuffer } from "../infra/windows-encoding.js";
 import { logDebug, logError } from "../logger.js";
 import { releaseChildProcessOutputAfterExit } from "./child-process.js";
 import { resolveMaxOutputBytes, type CommandOutputStream } from "./exec-output.js";
@@ -27,12 +24,13 @@ export type RunExecOptions = {
   input?: string | Uint8Array;
   stdinFileDescriptor?: number;
   signal?: AbortSignal;
+  /** Observe received bytes without changing buffering, completion or cancellation. */
+  onOutputChunk?: (chunk: Buffer, stream: CommandOutputStream) => void;
 };
 
-function decodeExecOutput(buffer: Uint8Array, windowsEncoding: string | null): string {
+function decodeExecOutput(buffer: Uint8Array): string {
   return decodeWindowsOutputBuffer({
     buffer: Buffer.from(buffer.buffer, buffer.byteOffset, buffer.byteLength),
-    windowsEncoding,
   });
 }
 
@@ -76,10 +74,28 @@ export async function runExec(
       timeout,
     });
     const releaseOutput = releaseChildProcessOutputAfterExit(subprocess.nodeChildProcess);
-    const { stdout, stderr } = await subprocess.finally(releaseOutput);
-    const windowsEncoding = resolveWindowsConsoleEncoding();
-    const decodedStdout = decodeExecOutput(stdout, windowsEncoding);
-    const decodedStderr = decodeExecOutput(stderr, windowsEncoding);
+    let observer = resolvedOptions?.onOutputChunk;
+    const observe = (chunk: Buffer, stream: CommandOutputStream) => {
+      try {
+        observer?.(chunk, stream);
+      } catch {
+        // Diagnostic observers cannot replace the command's outcome.
+        observer = undefined;
+      }
+    };
+    const onStdout = (chunk: Buffer) => observe(chunk, "stdout");
+    const onStderr = (chunk: Buffer) => observe(chunk, "stderr");
+    if (observer) {
+      subprocess.nodeChildProcess.stdout?.on("data", onStdout);
+      subprocess.nodeChildProcess.stderr?.on("data", onStderr);
+    }
+    const { stdout, stderr } = await subprocess.finally(() => {
+      releaseOutput();
+      subprocess.nodeChildProcess.stdout?.off("data", onStdout);
+      subprocess.nodeChildProcess.stderr?.off("data", onStderr);
+    });
+    const decodedStdout = decodeExecOutput(stdout);
+    const decodedStderr = decodeExecOutput(stderr);
     if (resolvedOptions?.logOutput !== false && shouldLogVerbose()) {
       if (decodedStdout.trim()) {
         logDebug(decodedStdout.trim());
@@ -90,7 +106,6 @@ export async function runExec(
     }
     return { stdout: decodedStdout, stderr: decodedStderr };
   } catch (err) {
-    const windowsEncoding = resolveWindowsConsoleEncoding();
     if (err && typeof err === "object") {
       const errorWithOutput = err as {
         code?: string | number;
@@ -102,10 +117,10 @@ export async function runExec(
         errorWithOutput.code = errorWithOutput.exitCode;
       }
       if (errorWithOutput.stdout instanceof Uint8Array) {
-        errorWithOutput.stdout = decodeExecOutput(errorWithOutput.stdout, windowsEncoding);
+        errorWithOutput.stdout = decodeExecOutput(errorWithOutput.stdout);
       }
       if (errorWithOutput.stderr instanceof Uint8Array) {
-        errorWithOutput.stderr = decodeExecOutput(errorWithOutput.stderr, windowsEncoding);
+        errorWithOutput.stderr = decodeExecOutput(errorWithOutput.stderr);
       }
     }
     if (resolvedOptions?.logOutput !== false && shouldLogVerbose()) {
@@ -115,7 +130,7 @@ export async function runExec(
   }
 }
 
-type BufferedCommandOptions = {
+export type BufferedCommandOptions = {
   timeoutMs?: number;
   cwd?: string;
   input?: string | Uint8Array;
@@ -131,7 +146,7 @@ type BufferedCommandOptions = {
   killGraceMs?: number;
 };
 
-type BufferedCommandResult = {
+export type BufferedCommandResult = {
   stdout: Buffer;
   stderr: Buffer;
   code: number | null;

@@ -33,7 +33,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -82,7 +81,6 @@ import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
@@ -235,11 +233,25 @@ internal fun sidebarSessionPresentation(
 internal fun sessionPresentationTitle(
   session: ChatSessionEntry,
   unnamedTitle: () -> String,
-): String =
-  session.label?.trim()?.takeIf(String::isNotEmpty)
-    ?: session.displayName?.trim()?.takeIf(String::isNotEmpty)
-    ?: nativeString("New chat").takeIf { session.isDashboardSession() }
-    ?: unnamedTitle()
+): String {
+  val label = session.label?.trim()?.takeIf(String::isNotEmpty)
+  val displayName = session.displayName?.trim()?.takeIf(String::isNotEmpty)
+  val autoLabel = session.autoLabel?.trim()?.takeIf(String::isNotEmpty)
+  val localFallbackTitle = session.localFallbackTitle?.trim()?.takeIf(String::isNotEmpty)
+  if (label != null) {
+    return label
+  }
+  if (displayName != null) {
+    return displayName
+  }
+  if (autoLabel != null) {
+    return autoLabel
+  }
+  if (localFallbackTitle != null) {
+    return localFallbackTitle
+  }
+  return nativeString("New chat").takeIf { session.isDashboardSession() } ?: unnamedTitle()
+}
 
 private fun ChatSessionEntry.isDashboardSession(): Boolean {
   if (classification == "dashboard") return true
@@ -489,7 +501,6 @@ internal fun OpenClawSidebar(
   val recentSections = recentPresentation.recentSections
   val orderedPages = orderedSidebarDestinations(pageOrder)
   val visiblePageIdSet = visiblePageIds.toSet()
-  val connectionLabel = gatewayStatusLabel(connection)
   val setSessionPinned: (String, String?, Boolean) -> Unit = { key, ownerAgentId, pinned ->
     scope.launch {
       viewModel.patchChatSession(key = key, ownerAgentId = ownerAgentId, pinned = pinned)
@@ -927,31 +938,9 @@ internal fun OpenClawSidebar(
       }
     }
     HorizontalDivider(color = palette.hairline)
-    Row(
-      modifier =
-        Modifier
-          .fillMaxWidth()
-          .heightIn(min = 48.dp)
-          .semantics(mergeDescendants = true) {
-            stateDescription = connectionLabel
-          }.padding(horizontal = 12.dp),
-      verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.spacedBy(9.dp),
-    ) {
-      Box(
-        modifier =
-          Modifier
-            .size(8.dp)
-            .clip(CircleShape)
-            .background(if (connection.isConnected) ClawTheme.colors.success else palette.muted)
-            .clearAndSetSemantics {},
-      )
-      Text(
-        text = connectionLabel,
-        style = ClawTheme.type.caption,
-        color = palette.muted,
-        maxLines = 1,
-      )
+    SidebarGatewayControl(viewModel, connection, palette) {
+      viewModel.openGatewaySettings()
+      onClose()
     }
   }
 }
@@ -1331,10 +1320,20 @@ private fun SidebarCatalogSessionRow(
   val draggableSession = liveSession?.takeIf { canMutateSessions }
   val activity =
     sidebarSessionActivity(
-      status = liveSession?.status ?: session.status,
+      // Adopted rows use Gateway state; unadopted catalogs also call their running state "active".
+      status =
+        if (liveSession != null) {
+          liveSession.status
+        } else {
+          session.status
+            .trim()
+            .lowercase()
+            .let { if (it == "active") "running" else it }
+        },
       lastRunError = liveSession?.lastRunError,
-      hasActiveRun = continuing || liveSession?.hasActiveRun == true,
+      hasActiveRun = liveSession?.hasActiveRun,
       unread = liveSession?.unread == true,
+      continuing = continuing,
     )
   SidebarRowSurface(
     selected = selected,

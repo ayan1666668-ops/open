@@ -72,15 +72,28 @@ Day-to-day operation of stored jobs: copy-ready CLI examples, the management com
 
 ## Managing jobs
 
+In the Control UI, an open automation refreshes its next-run time and condition activity when scheduler events arrive. These runtime updates preserve unsaved settings and the saved definition used for conflict detection, including when the selected automation is outside the current list page or filter.
+
 ### Conversational management
 
-In the authenticated Control UI, an administrator with `operator.admin` can ask the agent to list, inspect, update, run, or remove any existing automation on that Gateway, regardless of its creator or channel. For example, ask it to disable a reminder created in Telegram. This matches the administrator's authority on the **Automations** page. Create command payloads through the operator CLI or Gateway API.
+An authenticated channel sender explicitly listed in `commands.ownerAllowFrom`, or a Control UI administrator with `operator.admin`, can ask the agent to list, inspect, update, run, or remove any existing automation on that Gateway, regardless of its creator or channel. For example, ask it to disable a reminder created in Telegram. This matches the administrator's authority on the **Automations** page. Create command payloads through the operator CLI or Gateway API.
 
-The Gateway grants this authority from the authenticated Control UI turn's admission facts. Each operation uses a one-use grant that expires after 60 seconds and remains bound to that exact active run. Channel turns and Control UI turns without `operator.admin` receive no such grant; matching sender IDs, account IDs, or session routes never establish it. If access is denied or a grant expires, retry from a fresh authenticated Control UI administrator turn, or use the **Automations** page.
+The Gateway grants this authority from the authenticated turn's admission facts. Each operation uses a one-use grant that expires after 60 seconds and remains bound to that exact active run. Channel owner membership is rechecked against the current global owner list when the capability is used and immediately before a mutation commits. Channel allowlists, wildcard entries, display names, account IDs, and session routes do not establish ownership. Other channel turns and Control UI turns without `operator.admin` receive no management grant. If access is denied or a grant expires, retry from a fresh authenticated configured channel owner or Control UI administrator turn, or use the **Automations** page.
+
+When an admitted owner or administrator turn uses `sessions_yield` to wait for its subagents, the verified requester continuation retains automation management for that task. It receives fresh grants for its new run; the original run's grants expire normally. The continuation remains management-only; it cannot capture new creator execution authority. Removing the channel sender from the global owner list, cancellation, session reset or archive, a new direct user turn, and Gateway restart invalidate the handoff. Ordinary inter-session messages and child results do not grant management access.
 
 Each admin management request records its method, run, operational instance, and success or failure in the Gateway's `cron: admin management` log, alongside the ordinary tool audit record. Management authority does not transfer creator attribution or replace the job's scheduled execution policy.
 
 ### CLI management
+
+For older automations missing creator account metadata, run `openclaw doctor --fix`.
+Doctor reconciles the account only when the stored creator identity proves it,
+and reports the repair. The matching creator session can then update an agent
+prompt without supplying a new tool cap. Existing tool permissions and creator
+attribution stay intact; capless jobs retain their legacy execution policy.
+An explicit permission edit still requires matching owner authority. Jobs whose
+stored identity cannot prove an account need authenticated administrator recovery;
+Doctor does not infer ownership from delivery settings or the current caller.
 
 ```bash
 # List enabled jobs
@@ -143,6 +156,8 @@ The agent `automations` tool returns compact job summaries (`id`, `name`, `enabl
 
 The webhook URL remains subject to the [strict outbound policy](/automation/cron-jobs/delivery#delivery-and-output); configure `cron.webhookSsrfPolicy` for an intentional local or private receiver.
 
+Clearing **Timeout (seconds)** in the Control UI and saving removes the saved override, restoring the [default runtime budget](/automation/cron-jobs/how-it-works). For API clients, a `cron.update` payload patch sets a timeout with a number, clears it with `timeoutSeconds: null`, and preserves the saved value when `timeoutSeconds` is omitted. New jobs omit the field to use the default; `null` is only an update instruction.
+
 <Note>
 Model override note:
 
@@ -199,6 +214,6 @@ Disable automations: `cron.enabled: false` or `OPENCLAW_SKIP_CRON=1`.
     `cron.sessionRetention` (default `24h`, `false` or `"0h"` disables) prunes isolated run-session entries. Terminal run history is retained for 7 days (`lost` rows for 24 hours), with the newest 2000 rows per job and history class enforced as an additional ceiling.
   </Accordion>
   <Accordion title="Legacy store migration">
-    On upgrade, run `openclaw doctor --fix` to import historical `~/.openclaw/cron/jobs.json`, `jobs-state.json`, `jobs-quarantine.json`, and `runs/*.jsonl` files into SQLite and archive the originals with a `.migrated` suffix. Malformed job rows remain recoverable in SQLite while valid jobs keep running.
+    `openclaw doctor --fix` imports any `~/.openclaw/cron/jobs.json`, `jobs-state.json`, `jobs-quarantine.json`, and `runs/*.jsonl` files into SQLite and archives the originals with a `.migrated` suffix. Malformed job rows remain recoverable in SQLite while valid jobs keep running.
   </Accordion>
 </AccordionGroup>

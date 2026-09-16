@@ -55,8 +55,8 @@ import type {
   GatewaySessionStoreCache,
   GatewaySessionStoreDiscoveryCache,
 } from "./session-utils-store-lookup.js";
-import { prepareTalkSessionTarget, assertTalkSessionStorageTarget } from "./talk-session-target.js";
-import type { PreparedTalkSessionTarget } from "./talk-session-target.types.js";
+import { prepareTalkSessionTarget, assertTalkSessionStorageTarget } from "./talk/session-target.js";
+import type { PreparedTalkSessionTarget } from "./talk/session-target.types.js";
 
 type AuthorizedSessionMutationTarget = SessionMutationTarget & {
   resolved: Omit<SessionSharingTarget, "entry" | "storeKeys"> | null;
@@ -508,6 +508,7 @@ export function canReceiveSessionEvent(params: {
   const lookup: Omit<Parameters<typeof resolveSessionSharingTarget>[0], "sessionKey"> = {
     cfg,
     agentId: params.agentId,
+    exactRead: sessionKeys.length === 1,
     storeCache: new Map(),
     targetDiscoveryCache: new Map(),
   };

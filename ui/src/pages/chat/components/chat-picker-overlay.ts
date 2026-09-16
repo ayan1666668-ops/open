@@ -46,6 +46,13 @@ function pickerTrigger(picker: HTMLElement): HTMLElement | null {
     : picker.querySelector<HTMLElement>("[slot=trigger]");
 }
 
+function clearPointerFocus(this: HTMLElement): void {
+  // Blur and keyboard takeover complete the same pointer-focus lifetime.
+  this.removeEventListener("blur", clearPointerFocus);
+  this.removeEventListener("keydown", clearPointerFocus);
+  this.removeAttribute(POINTER_RESTORED_FOCUS_ATTRIBUTE);
+}
+
 function dismissChatComposerPickersOutside(event: PointerEvent): void {
   const path = event.composedPath();
   for (const picker of openChatComposerPickers()) {
@@ -54,7 +61,7 @@ function dismissChatComposerPickersOutside(event: PointerEvent): void {
     }
   }
   for (const menu of document.querySelectorAll<HTMLElement>(
-    ".agent-chat__input > :is(.slash-menu, .skill-menu)",
+    ".agent-chat__input > :is(.slash-menu, .skill-menu, .emoji-menu-popup)",
   )) {
     if (!path.includes(menu)) {
       menu
@@ -78,7 +85,9 @@ function dismissChatComposerPickersOnEscape(event: KeyboardEvent): void {
   }
   const pickers = openChatComposerPickers();
   const invocationComposer = document
-    .querySelector<HTMLElement>(".agent-chat__input > :is(.slash-menu, .skill-menu)")
+    .querySelector<HTMLElement>(
+      ".agent-chat__input > :is(.slash-menu, .skill-menu, .emoji-menu-popup)",
+    )
     ?.closest<HTMLElement>(".agent-chat__input");
   if (pickers.length === 0 && !invocationComposer) {
     return;
@@ -186,7 +195,6 @@ export function restorePointerOpenedChatComposerTrigger(event: Event): void {
       return;
     }
     trigger.setAttribute(POINTER_RESTORED_FOCUS_ATTRIBUTE, "");
-    const clearPointerFocus = () => trigger.removeAttribute(POINTER_RESTORED_FOCUS_ATTRIBUTE);
     trigger.addEventListener("blur", clearPointerFocus, { once: true });
     trigger.addEventListener("keydown", clearPointerFocus, { once: true });
     trigger.focus({ preventScroll: true });

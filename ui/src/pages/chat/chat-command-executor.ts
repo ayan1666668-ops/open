@@ -32,6 +32,7 @@ import {
 } from "../../lib/chat/thinking.ts";
 import { formatUiError, formatUiExternalText } from "../../lib/format-error.ts";
 import { formatCompactTokenCount } from "../../lib/format.ts";
+import { loadModelCatalog } from "../../lib/model-catalog-store.ts";
 import { readSessionMethodAccess } from "../../lib/session-method-access.ts";
 import { resolveSessionContextLimit } from "../../lib/sessions/context-budget.ts";
 import type { SessionCapability } from "../../lib/sessions/index.ts";
@@ -255,12 +256,17 @@ async function executeModel(
     try {
       const [sessions, models] = await Promise.all([
         listSessions(context, selectedAgentListScope(sessionKey, context)),
-        modelCatalog ? Promise.resolve(modelCatalog) : loadModelCatalog(client, agentId),
+        modelCatalog
+          ? Promise.resolve(modelCatalog)
+          : loadModelCatalog(client, { agentId, sessionKey }).then((result) => result.models),
       ]);
       const { session, defaults } = resolveCommandSessionState(context, sessionKey, sessions);
       const model = session?.model || defaults?.model || "default";
       const available = models
-        .filter((entry: ModelCatalogEntry) => entry.available !== false)
+        .filter(
+          (entry: ModelCatalogEntry) =>
+            entry.available !== false && entry.manualSelectionAllowed !== false,
+        )
         .map((entry: ModelCatalogEntry) => entry.id);
       const lines = [t("chat.commandResults.model.current", { model: `\`${model}\`` })];
       if (available.length > 0) {
@@ -371,7 +377,7 @@ async function executeThink(
         }),
       };
     }
-    if (!isThinkingLevelOptionForSession(session, defaults, level, modelCatalog)) {
+    if (isThinkingLevelOptionForSession(session, defaults, level, modelCatalog) === false) {
       return {
         content: t("chat.commandResults.thinking.unsupported", {
           level: rawLevel,
@@ -742,27 +748,15 @@ async function loadThinkingCommandState(
   const agentId = resolveSelectedAgentId(sessionKey, context);
   const [sessions, models] = await Promise.all([
     listSessions(context, selectedAgentListScope(sessionKey, context)),
-    modelCatalog ? Promise.resolve(modelCatalog) : loadModelCatalog(client, agentId),
+    modelCatalog
+      ? Promise.resolve(modelCatalog)
+      : loadModelCatalog(client, { agentId, sessionKey }).then((result) => result.models),
   ]);
   const state = resolveCommandSessionState(context, sessionKey, sessions);
   return {
     ...state,
     models,
   };
-}
-
-async function loadModelCatalog(
-  client: GatewayBrowserClient,
-  agentId: string | undefined,
-): Promise<ModelCatalogEntry[]> {
-  if (!agentId) {
-    return [];
-  }
-  const result = await client.request<{ models: ModelCatalogEntry[] }>("models.list", {
-    agentId,
-    view: "configured",
-  });
-  return result?.models ?? [];
 }
 
 function resolveCommandMessage(

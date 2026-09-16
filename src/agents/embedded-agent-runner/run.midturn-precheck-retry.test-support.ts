@@ -1,5 +1,6 @@
 // Full-entry coverage for retrying an already-capped mid-turn transcript.
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { makeTextToolResult } from "../../../test/helpers/text-tool-result.js";
 import { buildEmbeddedRunnerAssistant } from "../test-helpers/embedded-agent-runner-e2e-fixtures.js";
 import {
   makeAttemptResult,
@@ -21,14 +22,7 @@ const settledExecAssistant = buildEmbeddedRunnerAssistant({
   stopReason: "toolUse" as const,
   timestamp: 1,
 });
-const settledExecResult = {
-  role: "toolResult" as const,
-  toolCallId: "call-exec",
-  toolName: "exec",
-  content: [{ type: "text" as const, text: "command completed" }],
-  isError: false,
-  timestamp: 2,
-};
+const settledExecResult = makeTextToolResult("call-exec", "exec", "command completed", false, 2);
 
 let session: Awaited<ReturnType<typeof createSharedRunIntegrationSession>>;
 let runEmbeddedAgent: Awaited<ReturnType<typeof loadSharedRunIntegrationHarness>>;
@@ -296,7 +290,7 @@ describe("runEmbeddedAgent mid-turn precheck retry", () => {
     }
   });
 
-  it("preserves overflow recovery guidance when compaction fails after settled tools", async () => {
+  it("preserves compaction failure guidance after settled tools", async () => {
     mockedRunEmbeddedAttempt.mockResolvedValueOnce(makeReplayUnsafeMidTurnOverflow());
     mockedCompactDirect.mockResolvedValueOnce({
       ok: false,
@@ -311,7 +305,11 @@ describe("runEmbeddedAgent mid-turn precheck retry", () => {
 
     expect(mockedCompactDirect).toHaveBeenCalledOnce();
     expect(mockedRunEmbeddedAttempt).toHaveBeenCalledOnce();
-    expect(result.payloads?.[0]?.text).toContain("Try /reset (or /new)");
+    expect(result.payloads?.[0]?.text).toContain("Try again or run /compact");
     expect(result.payloads?.[0]?.text).toContain("Completed tool actions were not replayed");
+    expect(result.meta.error).toMatchObject({
+      kind: "compaction_failure",
+      message: expect.stringContaining("compaction unavailable"),
+    });
   });
 });
