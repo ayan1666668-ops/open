@@ -687,4 +687,41 @@ describe("feishuOutbound.sendText markdown table modes in auto mode", () => {
       },
     );
   });
+
+  // Core cuts a reply to its own budget before this channel converts it, and that cut lands on
+  // the table. The formatted sender takes the whole text so the conversion runs first and the
+  // send chunks for its own target afterwards.
+  it("converts a whole table through the formatted text sender", async () => {
+    const rows = Array.from(
+      { length: 400 },
+      (_entry, index) => `| row${index} | detail ${index} |`,
+    );
+    const table = ["| name | detail |", "| --- | --- |", ...rows].join("\n");
+    // The case only means anything while the authored table needs more than one message.
+    expect(table.length).toBeGreaterThan(4000);
+
+    const results = await feishuOutbound.sendFormattedText?.({
+      cfg: {
+        channels: { feishu: { accounts: { main: { markdown: { tables: "code" } } } } },
+      } as ClawdbotConfig,
+      to: "chat_1",
+      text: table,
+      accountId: "main",
+    } as never);
+
+    expect(results?.length).toBeGreaterThan(0);
+    const delivered = [
+      ...sendMessageFeishuMock.mock.calls,
+      ...sendStructuredCardFeishuMock.mock.calls,
+    ].map((call) => String(call[0]?.text ?? ""));
+    expect(delivered.length).toBeGreaterThan(1);
+    // Every message carrying rows carries the fence that makes them readable.
+    for (const message of delivered) {
+      if (!message.includes("|")) {
+        continue;
+      }
+      expect(message).toContain("```");
+    }
+    expect(delivered.join("")).toContain("row399");
+  });
 });

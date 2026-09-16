@@ -438,12 +438,127 @@ export function presentationTextRenderer(ctx: Pick<FeishuSendPayloadContext, "cf
 // optional `sendMedia` to `FeishuOutboundSendMedia` at the use site
 // (channel.ts direct-send branch, sendFeishuFallbackPayload) instead of
 // forcing a required property here (ClawSweeper P1).
+async function deliverFeishuOutboundText({
+  cfg,
+  to,
+  text,
+  accountId,
+  replyToId,
+  replyToIdSource,
+  replyToMode,
+  threadId,
+  mediaAccess,
+  mediaLocalRoots,
+  mediaReadFile,
+  identity,
+  onDeliveryResult,
+}: FeishuSendTextContext) {
+  const { replyToMessageId, replyInThread } = resolveFeishuReplyMode({
+    replyToId,
+    threadId,
+  });
+  const deliveryOptions = { replyToIdSource, replyToMode, onDeliveryResult };
+  // Scheme A compatibility shim:
+  // when upstream accidentally returns a local image path as plain text,
+  // auto-upload and send as Feishu image message instead of leaking path text.
+  const localImagePath = normalizePossibleLocalImagePath(text);
+  if (localImagePath) {
+    let mediaResult: Awaited<ReturnType<typeof sendMediaFeishu>>;
+    try {
+      mediaResult = await sendMediaFeishu({
+        cfg,
+        to,
+        mediaUrl: localImagePath,
+        accountId: accountId ?? undefined,
+        replyToMessageId,
+        replyInThread,
+        mediaAccess,
+        mediaLocalRoots,
+        mediaReadFile,
+      });
+    } catch (err) {
+      if (isChannelPartialDeliveryError(err)) {
+        // The image already reached Feishu; fallback text would duplicate a visible send.
+        throw err;
+      }
+      console.error(`[feishu] local image path auto-send failed:`, err);
+      return toFeishuOutboundResult(
+        await sendOutboundText({
+          cfg,
+          to,
+          text: await buildFeishuMediaFallbackText({}),
+          accountId: accountId ?? undefined,
+          replyToMessageId,
+          replyInThread,
+          ...deliveryOptions,
+        }),
+      );
+    }
+    return toFeishuOutboundResult(
+      await reportFeishuOutboundDelivery(mediaResult, onDeliveryResult),
+    );
+  }
+
+  if (parseFeishuCommentTarget(to)) {
+    return toFeishuOutboundResult(
+      await sendOutboundText({
+        cfg,
+        to,
+        text,
+        accountId: accountId ?? undefined,
+        replyToMessageId,
+        replyInThread,
+        ...deliveryOptions,
+      }),
+    );
+  }
+
+  const card = readNativeFeishuCardJson(text);
+  if (card) {
+    assertFeishuCardWithinEnvelope(card, "Feishu native card");
+    return toFeishuOutboundResult(
+      await reportFeishuOutboundDelivery(
+        await sendCardFeishu({
+          cfg,
+          to,
+          card: markRenderedFeishuCard(card),
+          accountId: accountId ?? undefined,
+          replyToMessageId,
+          replyInThread,
+        }),
+        onDeliveryResult,
+      ),
+    );
+  }
+
+  const title = identity ? resolveFeishuIdentityHeaderTitle(identity) : undefined;
+  return toFeishuOutboundResult(
+    await sendOutboundText({
+      cfg,
+      to,
+      text,
+      accountId: accountId ?? undefined,
+      replyToMessageId,
+      replyInThread,
+      header: title ? { title, template: "blue" } : undefined,
+      ...deliveryOptions,
+    }),
+  );
+}
+
 export const feishuOutbound: ChannelOutboundAdapter = {
   deliveryMode: "direct",
   chunker: chunkFeishuMarkdown,
   chunkerMode: "markdown",
   textChunkLimit: FEISHU_TEXT_CHUNK_LIMIT,
   presentationCapabilities: FEISHU_PRESENTATION_CAPABILITIES,
+  // Core cuts a reply to its own budget before this channel converts it, and that cut lands on
+  // a table, so the branch that would do it hands the whole text here instead and the send
+  // chunks after converting. One result stands for the messages it made, the way the payload
+  // path already reports them.
+  sendFormattedText: async (ctx) => [
+    attachChannelToResult("feishu", await deliverFeishuOutboundText(ctx)),
+  ],
   renderPresentation: (params) => {
     const renderText = presentationTextRenderer(params.ctx);
     const presentation = projectPresentationForDelivery({ ...params, renderText });
@@ -632,113 +747,7 @@ export const feishuOutbound: ChannelOutboundAdapter = {
   },
   ...createAttachedChannelResultAdapter({
     channel: "feishu",
-    sendText: async ({
-      cfg,
-      to,
-      text,
-      accountId,
-      replyToId,
-      replyToIdSource,
-      replyToMode,
-      threadId,
-      mediaAccess,
-      mediaLocalRoots,
-      mediaReadFile,
-      identity,
-      onDeliveryResult,
-    }) => {
-      const { replyToMessageId, replyInThread } = resolveFeishuReplyMode({
-        replyToId,
-        threadId,
-      });
-      const deliveryOptions = { replyToIdSource, replyToMode, onDeliveryResult };
-      // Scheme A compatibility shim:
-      // when upstream accidentally returns a local image path as plain text,
-      // auto-upload and send as Feishu image message instead of leaking path text.
-      const localImagePath = normalizePossibleLocalImagePath(text);
-      if (localImagePath) {
-        let mediaResult: Awaited<ReturnType<typeof sendMediaFeishu>>;
-        try {
-          mediaResult = await sendMediaFeishu({
-            cfg,
-            to,
-            mediaUrl: localImagePath,
-            accountId: accountId ?? undefined,
-            replyToMessageId,
-            replyInThread,
-            mediaAccess,
-            mediaLocalRoots,
-            mediaReadFile,
-          });
-        } catch (err) {
-          if (isChannelPartialDeliveryError(err)) {
-            // The image already reached Feishu; fallback text would duplicate a visible send.
-            throw err;
-          }
-          console.error(`[feishu] local image path auto-send failed:`, err);
-          return toFeishuOutboundResult(
-            await sendOutboundText({
-              cfg,
-              to,
-              text: await buildFeishuMediaFallbackText({}),
-              accountId: accountId ?? undefined,
-              replyToMessageId,
-              replyInThread,
-              ...deliveryOptions,
-            }),
-          );
-        }
-        return toFeishuOutboundResult(
-          await reportFeishuOutboundDelivery(mediaResult, onDeliveryResult),
-        );
-      }
-
-      if (parseFeishuCommentTarget(to)) {
-        return toFeishuOutboundResult(
-          await sendOutboundText({
-            cfg,
-            to,
-            text,
-            accountId: accountId ?? undefined,
-            replyToMessageId,
-            replyInThread,
-            ...deliveryOptions,
-          }),
-        );
-      }
-
-      const card = readNativeFeishuCardJson(text);
-      if (card) {
-        assertFeishuCardWithinEnvelope(card, "Feishu native card");
-        return toFeishuOutboundResult(
-          await reportFeishuOutboundDelivery(
-            await sendCardFeishu({
-              cfg,
-              to,
-              card: markRenderedFeishuCard(card),
-              accountId: accountId ?? undefined,
-              replyToMessageId,
-              replyInThread,
-            }),
-            onDeliveryResult,
-          ),
-        );
-      }
-
-      const title = identity ? resolveFeishuIdentityHeaderTitle(identity) : undefined;
-      return toFeishuOutboundResult(
-        await sendOutboundText({
-          cfg,
-          to,
-          text,
-          accountId: accountId ?? undefined,
-          replyToMessageId,
-          replyInThread,
-          header: title ? { title, template: "blue" } : undefined,
-          ...deliveryOptions,
-        }),
-      );
-    },
+    sendText: async (ctx) => await deliverFeishuOutboundText(ctx),
     sendMedia: async ({
       cfg,
       to,
