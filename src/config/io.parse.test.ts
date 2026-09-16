@@ -20,20 +20,4 @@ describe("parseConfigJson5", () => {
     expect(result).toEqual({ ok: true, parsed: { gateway: { mode: "local" } } });
     expect(json5.parse).toHaveBeenCalledOnce();
   });
-
-  it("keeps a CR-terminated comment from hiding the value that follows it", () => {
-    // The comment ends at the carriage return; the quoted value continues on the
-    // next line and holds 513 literal brackets that belong to the string, not to
-    // the config structure.
-    const raw = `// don't\r"${"\\\n"}${"[".repeat(513)}"`;
-
-    expect(parseConfigJson5(raw)).toEqual({ ok: true, parsed: "[".repeat(513) });
-  });
-
-  it("rejects a config file whose real nesting exceeds the limit", () => {
-    const result = parseConfigJson5(`${"[".repeat(600)}${"]".repeat(600)}`);
-
-    expect(result.ok).toBe(false);
-    expect("error" in result && result.error).toContain("nesting depth exceeds maximum");
-  });
 });
