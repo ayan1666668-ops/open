@@ -146,6 +146,43 @@ export function openSqliteWorkerStore<Operations extends SqliteWorkerOperations>
   return resolveSqliteWorkerBroker().open<Operations>(options);
 }
 
+/**
+ * Open a foreign/plugin database on an isolated *scheduling* admission lane.
+ *
+ * Narrow contract: existing-only reads against paths outside OpenClaw state
+ * (e.g. macOS Messages chat.db). Physical DB ownership stays on the single
+ * shared registry so same-file / hardlink / backend-mismatch / replaced-path
+ * checks still apply across lanes. Only the isolated admissionTail is separate
+ * so a wedged foreign open cannot stall shared OpenClaw SQLite opens (#148750).
+ */
+export function openIsolatedSqliteWorkerStore<Operations extends SqliteWorkerOperations>(
+  options: SqliteWorkerStoreOptions & { existingOnly: true },
+): Promise<SqliteWorkerStore<Operations> | undefined> {
+  if (!isMainThread) {
+    return Promise.reject(
+      new SqliteWorkerError(
+        "SQLite stores in application workers require the host broker connection",
+        "unavailable",
+      ),
+    );
+  }
+  if (options.existingOnly !== true) {
+    return Promise.reject(
+      new SqliteWorkerError(
+        "Isolated SQLite admission is existing/foreign read-only; use openSqliteWorkerStore to create",
+        "unavailable",
+      ),
+    );
+  }
+  return resolveSqliteWorkerBroker().open<Operations>(
+    options,
+    undefined,
+    undefined,
+    undefined,
+    "isolated",
+  );
+}
+
 /** Host-internal admission for the canonical shared-state actor. */
 export function openSharedStateSqliteWorkerStore<Operations extends SqliteWorkerOperations>(
   options: Omit<SqliteWorkerStoreOptions, "input">,
