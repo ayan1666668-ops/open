@@ -118,13 +118,13 @@ describe("bundled plugin load path repair", () => {
     mockBundledSource("feishu", currentBundledPath);
 
     const result = maybeRepairBundledPluginLoadPaths(
-      createPluginLoadPathConfig([staleBundledPath, "/custom/path"]),
+      createPluginLoadPathConfig([staleBundledPath, "/custom/path", "/custom/path"]),
     );
 
     expect(result.changes).toEqual([
       `- plugins.load.paths: removed bundled feishu path alias ${staleBundledPath}`,
     ]);
-    expect(result.config.plugins?.load?.paths).toStrictEqual(["/custom/path"]);
+    expect(result.config.plugins?.load?.paths).toStrictEqual(["/custom/path", "/custom/path"]);
   });
 
   it("removes stale legacy bundled paths from old versioned OpenClaw package roots", () => {

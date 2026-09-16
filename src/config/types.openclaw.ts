@@ -271,6 +271,8 @@ export type ResolvedSourceConfig = BrandedConfigState<"resolved-source">;
 export type RuntimeConfig = BrandedConfigState<"runtime">;
 
 export type ConfigValidationIssue = {
+  code?: import("../plugins/manifest-types.js").PluginDiagnosticCode;
+  source?: string;
   /** Dot-path to the invalid or legacy config value. */
   path: string;
   /** Structured validator path used internally for lossless source diagnostics. */

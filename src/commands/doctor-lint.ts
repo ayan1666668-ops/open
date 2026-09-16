@@ -10,7 +10,7 @@ import {
   registerBundledHealthChecks,
   resolveBundledHealthCheckPluginStateMode,
 } from "../flows/bundled-health-checks.js";
-import { configValidationIssuesToHealthFindings } from "../flows/doctor-core-checks.js";
+import { configValidationIssuesToHealthFindings } from "../flows/doctor-config-validation-findings.js";
 import { scrubDoctorErrorMessage } from "../flows/doctor-error-message.js";
 import { resolveDoctorContributionHealthChecks } from "../flows/doctor-health-contributions.js";
 import {

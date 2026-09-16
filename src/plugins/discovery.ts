@@ -25,6 +25,7 @@ import {
   recordPluginCandidateInstallOwner,
   resolvePluginCandidateInstallOwner,
 } from "./candidate-install-owner.js";
+import { unavailablePluginPathDiagnostic } from "./discovery-availability.js";
 import type { PluginCandidate, PluginDiscoveryResult } from "./discovery.types.js";
 import { shouldRejectHardlinkedPluginFiles } from "./hardlink-policy.js";
 import { hashStableJson } from "./installed-plugin-index-hash.js";
@@ -1090,11 +1091,15 @@ function createPluginScanner(env: NodeJS.ProcessEnv, ownershipUid?: number | nul
         left.name < right.name ? -1 : left.name > right.name ? 1 : 0,
       );
     } catch (err) {
-      diagnostics.push({
-        level: "warn",
-        message: `failed to read extensions dir: ${params.dir} (${String(err)})`,
-        source: params.dir,
-      });
+      diagnostics.push(
+        params.origin === "config"
+          ? unavailablePluginPathDiagnostic(params.dir, params.origin)
+          : {
+              level: "warn",
+              message: `failed to read extensions dir: ${params.dir} (${String(err)})`,
+              source: params.dir,
+            },
+      );
       return;
     }
 
@@ -1166,17 +1171,11 @@ function createPluginScanner(env: NodeJS.ProcessEnv, ownershipUid?: number | nul
     scanFiles?: boolean;
   }) {
     const resolved = resolveUserPath(params.rawPath, env);
-    if (!pluginCacheExistsSync(resolved)) {
-      diagnostics.push({
-        level: "error",
-        message: `plugin path not found: ${resolved}`,
-        source: resolved,
-      });
-      return;
-    }
-
     const stat = pluginCacheStatSync(resolved);
     if (!stat) {
+      if (params.origin === "config" || !pluginCacheExistsSync(resolved)) {
+        diagnostics.push(unavailablePluginPathDiagnostic(resolved, params.origin));
+      }
       return;
     }
     // Origin gates entry resolution and bundled runtime privileges. Configured

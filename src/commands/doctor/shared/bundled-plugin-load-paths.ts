@@ -147,7 +147,6 @@ export function maybeRepairBundledPluginLoadPaths(
   const removable = new Set(
     hits.map((hit) => normalizeBundledLookupPath(resolveUserPath(hit.fromPath, env))),
   );
-  const seen = new Set<string>();
   const rewritten: Array<(typeof paths)[number]> = [];
   for (const entry of paths) {
     if (typeof entry !== "string") {
@@ -158,10 +157,6 @@ export function maybeRepairBundledPluginLoadPaths(
     if (removable.has(resolved)) {
       continue;
     }
-    if (seen.has(resolved)) {
-      continue;
-    }
-    seen.add(resolved);
     rewritten.push(entry);
   }
 

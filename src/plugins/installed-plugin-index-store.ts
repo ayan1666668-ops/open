@@ -100,6 +100,7 @@ const PluginDiagnosticSchema = z.object({
   pluginId: z.string().optional(),
   source: z.string().optional(),
   code: z.string().optional(),
+  configDisposition: z.literal("preserve").optional(),
 });
 
 const InstalledPluginIndexSchema = z.object({
