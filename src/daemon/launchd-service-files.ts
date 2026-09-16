@@ -132,10 +132,38 @@ export async function repairLaunchAgentEnvFileJsonQuotes(
   if (keys.length === 0) {
     return null;
   }
-  await fs.writeFile(file.envFilePath, healedContent, {
-    encoding: "utf8",
-    mode: LAUNCH_AGENT_ENV_FILE_MODE,
-  });
+  // This file carries live service credentials: keep a recovery copy and
+  // publish atomically so an interrupted write can never leave the next
+  // service start without its complete environment (temp + rename, matching
+  // the plist publication above). The recovery copy survives on failure.
+  const recoveryPath = `${file.envFilePath}.openclaw-repair-backup`;
+  try {
+    await fs.writeFile(recoveryPath, file.content, {
+      encoding: "utf8",
+      mode: LAUNCH_AGENT_ENV_FILE_MODE,
+    });
+  } catch (error) {
+    throw new Error(
+      `service env repair aborted before any change (recovery copy failed): ${String(error)}`,
+      { cause: error },
+    );
+  }
+  const temporaryPath = `${file.envFilePath}.openclaw-${randomUUID()}.tmp`;
+  try {
+    await fs.writeFile(temporaryPath, healedContent, {
+      encoding: "utf8",
+      flag: "wx",
+      mode: LAUNCH_AGENT_ENV_FILE_MODE,
+    });
+    await fs.rename(temporaryPath, file.envFilePath);
+  } catch (error) {
+    await fs.rm(temporaryPath, { force: true }).catch(() => {});
+    throw new Error(
+      `service env repair failed before publishing; original preserved at ${recoveryPath}: ${String(error)}`,
+      { cause: error },
+    );
+  }
+  await fs.rm(recoveryPath, { force: true }).catch(() => {});
   return { envFilePath: file.envFilePath, healedKeys: keys };
 }
 

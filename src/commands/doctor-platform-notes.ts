@@ -213,7 +213,8 @@ export async function maybeRepairMacGatewayServiceEnvQuotes(params: {
     noteFn(
       [
         `- ${shortenHomePath(detected.envFilePath)} has ${detected.keys.length} value(s) wrapped in literal double quotes (${keyList}).`,
-        "- This is the #103804 serialization corruption; the quotes reach consumers as data and break them (e.g. AWS region validation).",
+        "- This is likely the #103804 serialization corruption: the quotes reach consumers as data and break them (e.g. AWS region validation).",
+        "- The repair strips one wrapping quote pair per value by shape. If any of these values intentionally begin and end with double quotes, decline and edit the file manually.",
         // Not "doctor --fix": repair mode runs under gateway maintenance,
         // which skips this section; only the interactive doctor pass reaches
         // this shape-gated prompt (requiresInteractiveConfirmation below).
@@ -223,7 +224,7 @@ export async function maybeRepairMacGatewayServiceEnvQuotes(params: {
     );
     if (
       !(await confirmDoctorServiceRepair(params.prompter, {
-        message: `Rewrite ${detected.keys.length} quote-corrupted value(s) in ${shortenHomePath(detected.envFilePath)} now?`,
+        message: `Strip the wrapping quotes from ${detected.keys.length} possibly corrupted value(s) in ${shortenHomePath(detected.envFilePath)} now?`,
         initialValue: true,
         // The strip is shape-based and could alter a deliberately quoted
         // value; a noninteractive doctor --fix must never auto-approve it.
@@ -232,7 +233,18 @@ export async function maybeRepairMacGatewayServiceEnvQuotes(params: {
     ) {
       continue;
     }
-    const repaired = await repairLaunchAgentEnvFileJsonQuotes(env, label).catch(() => null);
+    let repaired: Awaited<ReturnType<typeof repairLaunchAgentEnvFileJsonQuotes>>;
+    try {
+      repaired = await repairLaunchAgentEnvFileJsonQuotes(env, label);
+    } catch (error) {
+      // A failed publish must never read as a no-op: the repair keeps the
+      // original content in a recovery copy and names it in the error.
+      noteFn(
+        `Generated service env repair FAILED; the original file was preserved. ${String(error)}`,
+        "Gateway service env",
+      );
+      continue;
+    }
     if (!repaired) {
       noteFn("Generated service env repair made no changes.", "Gateway service env");
       continue;
