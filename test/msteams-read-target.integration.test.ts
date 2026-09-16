@@ -439,17 +439,36 @@ describe("Teams message CLI", () => {
     expectGraphRequests(fixture.requests, "member-info", other);
   });
 
-  it("searches a selected channel with the requested limit and no guild", async () => {
-    const fixture = await createFixture("none", "bundled", 30);
-    const payload = await runCli(
-      registerMessageSearchCommand,
-      ["search", "--channel-id", otherTarget, "--query", "planning", "--limit", "30"],
-      "search",
-    );
-    expect(payload).toMatchObject({ ok: true, channel: "msteams", action: "search" });
-    expect(payload.messages).toHaveLength(30);
-    expect(payload.truncated).toBe(false);
-    expectGraphRequests(fixture.requests, "search", other);
+  it.each([
+    { limit: 30, count: 30, truncated: false },
+    { limit: 60, count: 50, truncated: true },
+  ])(
+    "searches a selected channel with limit $limit and no guild",
+    async ({ limit, count, truncated }) => {
+      const fixture = await createFixture("none", "bundled", limit);
+      const payload = await runCli(
+        registerMessageSearchCommand,
+        ["search", "--channel-id", otherTarget, "--query", "planning", "--limit", String(limit)],
+        "search",
+      );
+      expect(payload).toMatchObject({ ok: true, channel: "msteams", action: "search" });
+      expect(payload.messages).toHaveLength(count);
+      expect(payload.truncated).toBe(truncated);
+      expectGraphRequests(fixture.requests, "search", other);
+    },
+  );
+
+  it("rejects a malformed limit in the registered CLI search adapter", async () => {
+    const fixture = await createFixture("none");
+    await expect(
+      runCli(
+        registerMessageSearchCommand,
+        ["search", "--channel-id", otherTarget, "--query", "planning", "--limit", "abc"],
+        "search",
+      ),
+    ).rejects.toThrow("limit must be a positive integer");
+    expect(fixture.requests).toEqual([]);
+    expect(graph.acquireToken).not.toHaveBeenCalled();
   });
 });
 
