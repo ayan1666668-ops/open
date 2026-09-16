@@ -17,13 +17,13 @@ import {
  */
 import { normalizeNativePathSeparators } from "../../../shared/ignore-rules.js";
 import { levenshteinDistance } from "../../../shared/levenshtein-distance.js";
-import { getReadmePath } from "../../config.js";
 import { keyHint, keyText } from "../../modes/interactive/components/keybinding-hints.js";
 import {
   getLanguageFromPath,
   highlightCode,
   type Theme,
 } from "../../modes/interactive/theme/theme.js";
+import { getReadmePath } from "../../package-metadata.js";
 import type { AgentTool } from "../../runtime/index.js";
 import type { ToolResultBudget } from "../../tool-result-limits.js";
 import { processImage } from "../../utils/image-resize.js";
@@ -482,7 +482,7 @@ export function createReadToolDefinition(
             }
             const mimeType = await detectReadImageMimeType(ops, buffer, absolutePath);
             let content: (TextContent | ImageContent)[];
-            let truncated: Parameters<typeof createReadToolDetails>[1];
+            let textDetails: Parameters<typeof createReadToolDetails>[1];
             const modelHasVision = options?.modelHasVision ?? ctx?.model?.input.includes("image");
             const nonVisionImageNote =
               modelHasVision === false
@@ -570,43 +570,44 @@ export function createReadToolDefinition(
                   );
                 }
                 const endLine = startLine + selectedLineCount;
-                const userLimitedLines = limit === undefined ? undefined : selectedLineCount;
+                const userLimitedLines = limit === undefined ? undefined : endLine - startLine;
+                const selectedContent = textContent.slice(
+                  selectedStart + cursor,
+                  endLine === totalFileLines ? textContent.length : selectedEnd,
+                );
+                const noteBytes = note ? Buffer.byteLength(`${note}\n`, "utf8") : 0;
+                const page = createBoundedReadTextPage({
+                  content: selectedContent,
+                  startLine: startLineDisplay,
+                  endLine,
+                  totalLines: totalFileLines,
+                  cursor,
+                  limit: userLimitedLines,
+                  maxBytes,
+                  modelBudget: options?.modelBudget,
+                  prefix: note ? `${note}\n` : undefined,
+                  pageMaxBytes: Math.min(DEFAULT_MAX_BYTES, maxBytes) - noteBytes,
+                  adaptive: options?.maxBytes !== undefined,
+                });
+                outputText = page.text;
+                textDetails = page.details;
                 if (!selectedHasText) {
                   const subject =
                     startLine === 0 && endLine === totalFileLines ? "File" : "Selected range";
                   outputText = `${subject} contains ${selectedLineCount} blank line${selectedLineCount === 1 ? "" : "s"}.`;
-                  if (userLimitedLines !== undefined && endLine < totalFileLines) {
-                    const remaining = totalFileLines - endLine;
-                    outputText += `\n\n[${remaining} more line${remaining === 1 ? "" : "s"} in file. Use offset=${endLine + 1} to continue.]`;
-                  }
-                } else {
-                  const selectedContent = textContent.slice(
-                    selectedStart + cursor,
-                    endLine === totalFileLines ? textContent.length : selectedEnd,
-                  );
-                  const noteBytes = note ? Buffer.byteLength(`${note}\n`, "utf8") : 0;
-                  const page = createBoundedReadTextPage({
-                    content: selectedContent,
-                    startLine: startLineDisplay,
-                    endLine,
-                    totalLines: totalFileLines,
-                    cursor,
-                    limit: userLimitedLines,
-                    maxBytes,
-                    modelBudget: options?.modelBudget,
-                    prefix: note ? `${note}\n` : undefined,
-                    pageMaxBytes: Math.min(DEFAULT_MAX_BYTES, maxBytes) - noteBytes,
-                    adaptive: options?.maxBytes !== undefined,
-                  });
-                  if (page.kind === "truncated") {
-                    truncated = page;
-                    outputText = page.content;
-                  } else {
-                    // Even full-fit custom decoder text can borrow a larger source. Copy only
-                    // the bounded result, preserving UTF-16 units including lone surrogates.
-                    outputText = Buffer.from(page.content, "utf16le").toString("utf16le");
+                  if (textDetails.kind === "truncated") {
+                    outputText += page.text.slice(textDetails.content.length);
                   }
                 }
+              }
+              if (textDetails) {
+                // A full-fit selection can still have a continuation and borrow the decoded file.
+                // Detach both bounded channels regardless of EOF, preserving exact UTF-16 units.
+                const sameContent = outputText === textDetails.content;
+                outputText = Buffer.from(outputText, "utf16le").toString("utf16le");
+                textDetails.content = sameContent
+                  ? outputText
+                  : Buffer.from(textDetails.content, "utf16le").toString("utf16le");
               }
               content = [{ type: "text", text: outputText }];
             }
@@ -622,7 +623,7 @@ export function createReadToolDefinition(
               return;
             }
             signal?.removeEventListener("abort", onAbort);
-            resolve({ content, details: createReadToolDetails(content, truncated) });
+            resolve({ content, details: createReadToolDetails(content, textDetails) });
           } catch (error: unknown) {
             signal?.removeEventListener("abort", onAbort);
             if (!aborted) {

@@ -1,14 +1,13 @@
 /* @vitest-environment jsdom */
 
+import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { MentionInboxItem } from "../../../packages/gateway-protocol/src/index.js";
+import { createDeferred as deferred } from "../../../test/helpers/promise.js";
 import type { CronJobsListResult, CronStatus, ModelAuthStatusResult } from "../api/types.ts";
+import { createConnectionBootstrapCoordinator } from "../app/connection-bootstrap.ts";
 import type { ApplicationContext } from "../app/context.ts";
-import {
-  client as mockClient,
-  createGatewayHarness,
-  deferred,
-} from "../app/overlays-access.test-support.ts";
+import { client as mockClient, createGatewayHarness } from "../app/overlays-access.test-support.ts";
 import {
   createSidebarAttentionStore,
   type SidebarAttentionStore,
@@ -57,7 +56,10 @@ describe("sidebar attention source publication", () => {
     vi.unstubAllGlobals();
   });
 
-  function createStore(gateway: ApplicationContext["gateway"]) {
+  function createStore(
+    gateway: ApplicationContext["gateway"],
+    connectionBootstrap?: ApplicationContext["connectionBootstrap"],
+  ) {
     const agentSelection = {
       state: { selectedId: "main", scopeId: null },
       subscribe: () => () => undefined,
@@ -74,8 +76,151 @@ describe("sidebar attention source publication", () => {
         subscribe: () => () => undefined,
       } as unknown as ApplicationContext["overlays"],
       scopeUpgrade: hiddenScopeUpgradeCapability,
+      connectionBootstrap,
     });
   }
+
+  it.each(["ready", "hidden", "disposed"] as const)(
+    "holds automatic cron inventory until chat is ready and respects a %s owner",
+    async (boundary) => {
+      let visibility: DocumentVisibilityState = "visible";
+      vi.spyOn(document, "visibilityState", "get").mockImplementation(() => visibility);
+      const bootstrap = createConnectionBootstrapCoordinator();
+      const offsets: number[] = [];
+      const request = vi.fn(async (method: string, params?: unknown) => {
+        if (method === "cron.list") {
+          const offset = isRecord(params) ? Number(params.offset ?? 0) : 0;
+          offsets.push(offset);
+          return offset === 0
+            ? {
+                ...cronPage("first"),
+                snapshotRevision: "inventory",
+                total: 2,
+                hasMore: true,
+                nextOffset: 1,
+              }
+            : { ...cronPage("later"), snapshotRevision: "inventory", total: 2, offset: 1 };
+        }
+        return method === "cron.status"
+          ? { enabled: true, triggersEnabled: true, jobs: 2 }
+          : { ts: 1, providers: [] };
+      });
+      const client = mockClient(request);
+      const harness = createGatewayHarness(client);
+      bootstrap.setForegroundRoute("agent:main:current");
+      bootstrap.synchronize({ client, connected: true });
+      store = createStore(harness.gateway, bootstrap);
+      try {
+        store.activate(SidebarAttentionStoreController);
+        expect(request.mock.calls.filter(([method]) => method.startsWith("cron."))).toEqual([]);
+        if (boundary === "hidden") {
+          visibility = "hidden";
+        } else if (boundary === "disposed") {
+          store.dispose();
+        }
+        bootstrap.setForegroundPane({}, { sessionKey: "agent:main:current", client, ready: true });
+        if (boundary === "ready") {
+          await waitForFast(() => expect(offsets).toEqual([0, 1]));
+          await waitForFast(() => expect(store?.entries).toHaveLength(2));
+        } else {
+          await Promise.resolve();
+          expect(offsets).toEqual([]);
+          expect(request.mock.calls.filter(([method]) => method === "cron.status")).toEqual([]);
+        }
+      } finally {
+        bootstrap.reset();
+      }
+    },
+  );
+
+  it("includes failed automations beyond the first inventory page", async () => {
+    const healthy = cronPage("healthy").jobs[0]!;
+    const jobs = [
+      ...Array.from({ length: 50 }, (_, index) => ({
+        ...healthy,
+        id: `healthy-${index}`,
+        state: { lastRunStatus: "ok" as const },
+      })),
+      ...cronPage("later-failure").jobs,
+    ];
+    const request = vi.fn(async (method: string, params?: unknown) => {
+      if (method === "cron.list") {
+        const pagination = isRecord(params) ? params : {};
+        const offset = Number(pagination.offset ?? 0);
+        const limit = Number(pagination.limit ?? 50);
+        const nextOffset = Math.min(offset + limit, jobs.length);
+        return {
+          jobs: jobs.slice(offset, nextOffset),
+          snapshotRevision: "all-jobs",
+          total: jobs.length,
+          offset,
+          limit,
+          hasMore: nextOffset < jobs.length,
+          nextOffset: nextOffset < jobs.length ? nextOffset : null,
+        };
+      }
+      return method === "cron.status"
+        ? { enabled: true, triggersEnabled: true, jobs: jobs.length }
+        : { ts: 1, providers: [] };
+    });
+    const harness = createGatewayHarness(mockClient(request));
+    store = createStore(harness.gateway);
+    store.activate(SidebarAttentionStoreController);
+
+    await waitForFast(() =>
+      expect(store?.entries).toMatchObject([
+        { type: "attention", kind: "cronFailed", label: "later-failure" },
+      ]),
+    );
+  });
+
+  it.each(["hidden", "disposed"] as const)(
+    "does not restart a changed inventory snapshot after becoming %s during append",
+    async (boundary) => {
+      let visibility: DocumentVisibilityState = "visible";
+      vi.spyOn(document, "visibilityState", "get").mockImplementation(() => visibility);
+      const pendingAppend = deferred<CronJobsListResult>();
+      const offsets: number[] = [];
+      const request = vi.fn(async (method: string, params?: unknown) => {
+        if (method === "cron.list") {
+          const offset = isRecord(params) ? Number(params.offset ?? 0) : 0;
+          offsets.push(offset);
+          if (offset === 1) {
+            return pendingAppend.promise;
+          }
+          return offsets.length === 1
+            ? { ...cronPage("previous"), total: 2, hasMore: true, nextOffset: 1 }
+            : cronPage("current");
+        }
+        return method === "cron.status"
+          ? { enabled: true, triggersEnabled: true, jobs: 2 }
+          : { ts: 1, providers: [] };
+      });
+      const harness = createGatewayHarness(mockClient(request));
+      store = createStore(harness.gateway);
+      store.activate(SidebarAttentionStoreController);
+      await waitForFast(() => expect(offsets).toEqual([0, 1]));
+
+      if (boundary === "hidden") {
+        visibility = "hidden";
+        document.dispatchEvent(new Event("visibilitychange"));
+      } else {
+        store.dispose();
+      }
+      pendingAppend.resolve({ ...cronPage("changed"), total: 2, offset: 1 });
+      await new Promise<void>((resolve) => {
+        globalThis.setTimeout(resolve, 0);
+      });
+      expect(offsets).toEqual([0, 1]);
+
+      if (boundary === "hidden") {
+        visibility = "visible";
+        document.dispatchEvent(new Event("visibilitychange"));
+        await waitForFast(() => expect(store?.entries).toMatchObject([{ label: "current" }]));
+        expect(offsets).toEqual([0, 1, 0]);
+      }
+    },
+  );
 
   it.each(["list", "status"] as const)(
     "coalesces cron bursts until the whole inventory pair settles (%s first)",
@@ -270,13 +415,20 @@ describe("sidebar attention source publication", () => {
         });
       }
       pages[3]!.resolve({ ...cronPage("partial"), hasMore: true, total: 2, nextOffset: 1 });
-      await waitForFast(() => expect(store?.entries).toMatchObject([{ label: "partial" }]));
+      await waitForFast(() => expect(listCalls).toBe(5));
+      expect(store?.entries).toMatchObject([{ label: "current-2" }]);
       expect(loadDismissals(harness.gateway.connection.gatewayUrl)).toEqual({
         cronFailed: ["dismissed"],
       });
-      harness.emitEvent("cron", {});
-      pages[4]!.resolve(cronPage("fresh"));
-      await waitForFast(() => expect(store?.entries).toMatchObject([{ label: "fresh" }]));
+      pages[4]!.resolve({
+        ...cronPage("fresh"),
+        snapshotRevision: "partial",
+        total: 2,
+        offset: 1,
+      });
+      await waitForFast(() =>
+        expect(store?.entries).toMatchObject([{ label: "partial" }, { label: "fresh" }]),
+      );
       expect(loadDismissals(harness.gateway.connection.gatewayUrl)).toEqual({});
     } finally {
       store.dispose();
