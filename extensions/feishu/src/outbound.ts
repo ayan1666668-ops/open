@@ -50,6 +50,7 @@ import {
   consumeFeishuPresentationFallbackMarker,
   FEISHU_PRESENTATION_CAPABILITIES,
   hasCardMarkdownTable,
+  hasUndrawableCardTable,
   markRenderedFeishuCard,
   readNativeFeishuCard,
   renderFeishuPresentationPayload,
@@ -322,8 +323,15 @@ async function sendOutboundText(params: {
   // off has no card representation, since a card renderer parses the pipes, so a
   // table that stays raw takes the post path even when cards were requested. The
   // card renderer's own parser answers what counts as a table here.
+  // `shouldUseCard` answers true for a fenced block before it looks at tables, so an
+  // auto send carrying both a fence and a shape the card renderer cannot draw would
+  // reach a card and lose those rows. Ask about drawability here too. An explicit
+  // `card` render mode still wins, which is the direct-send behaviour this change keeps.
   const useCard =
-    (renderMode === "card" || (renderMode === "auto" && shouldUseCard(tableText, nativeTables))) &&
+    (renderMode === "card" ||
+      (renderMode === "auto" &&
+        shouldUseCard(tableText, nativeTables) &&
+        !hasUndrawableCardTable(tableText))) &&
     !(tableMode === "off" && hasCardMarkdownTable(tableText)) &&
     withinCardTableLimit(tableText);
 

@@ -230,6 +230,7 @@ const nonTableShapes = [
   },
 ] as const;
 const fencedTableSample = "```\n| Name | Role |\n| --- | --- |\n| Ada | Lead |\n```";
+const fencedCodeSample = "```js\nconst value = 1;\n```";
 // Root credentials make the implicit default account configured, so a send
 // without an account id resolves to it and reads the channel value.
 const tableModeConfig: ClawdbotConfig = {
@@ -4109,6 +4110,29 @@ describe("feishuOutbound.sendText markdown table modes in auto mode", () => {
       expect(sendMessageFeishuMock).toHaveBeenCalledTimes(1);
       expect(sendMessageCall()?.text).toBe(posted);
       expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
+    });
+
+    // `shouldUseCard` returns true for a fenced block before it reaches the table
+    // count, so without a drawability check here the fence would carry an undrawable
+    // table onto a card and the rows would leave the message.
+    it.each(
+      undrawableTableShapes.flatMap(({ shape, text }) =>
+        (["block", undefined] as const).map((tables) => ({ shape, text, tables })),
+      ),
+    )("$tables posts a $shape table even beside a fence", async ({ tables, text }) => {
+      await sendText({
+        cfg: tableCfg(scope, tables),
+        to: "chat_1",
+        text: `${fencedCodeSample}\n\n${text}`,
+        accountId,
+      });
+
+      expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
+      expect(sendMessageFeishuMock).toHaveBeenCalledTimes(1);
+      const posted = sendMessageCall()?.text ?? "";
+      expect(posted).toContain("const value = 1;");
+      expect(posted).toContain("Ada");
+      expect(posted).toContain("Lead");
     });
 
     it.each(
