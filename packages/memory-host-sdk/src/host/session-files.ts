@@ -1,10 +1,16 @@
+import { createHash } from "node:crypto";
 import fsSync from "node:fs";
 import path from "node:path";
 import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
 import { normalizeAgentId } from "./config-utils.js";
 import { readRegularFile, statRegularFile } from "./fs-utils.js";
 import { hashText } from "./hash.js";
-import { createSubsystemLogger, redactSensitiveText } from "./openclaw-runtime-io.js";
+import {
+  captureSensitiveTextRedactionSnapshot,
+  createSubsystemLogger,
+  getSecretRedactionRegistryRevision,
+  redactSensitiveText,
+} from "./openclaw-runtime-io.js";
 import {
   DREAMING_NARRATIVE_RUN_PREFIX,
   isDreamingNarrativeSessionStoreKey,
@@ -17,15 +23,17 @@ import {
   isCronRunSessionKey,
   isExecCompletionEvent,
   isHeartbeatUserMessage,
+  isIncognitoOpenClawAgentSqlitePath,
+  isIncognitoSessionKey,
   isSessionArchiveArtifactName,
   isSilentReplyPayloadText,
   isUsageCountedSessionTranscriptFileName,
-  loadTranscriptEventsSync,
   materializeSessionArchiveForRead,
   parseUsageCountedSessionIdFromFileName,
   parseSqliteSessionFileMarker,
+  prepareSessionEntryInWorker,
   readTranscriptStatsSync,
-  resolveTranscriptSessionKeyBySessionId,
+  readTranscriptExportSnapshotReadOnlySync,
   resolveSessionTranscriptsDirForAgent,
   stripInboundMetadata,
   stripInternalRuntimeContext,
@@ -59,6 +67,8 @@ const SESSION_EXPORT_CONTENT_WRAP_CHARS = 800;
 const SESSION_ENTRY_PARSE_YIELD_LINES = 250;
 const MAX_DATE_TIMESTAMP_MS = 8_640_000_000_000_000;
 const DIRECT_CRON_PROMPT_RE = /^\[cron:[^\]]+\]\s*/;
+const SESSION_RESET_RECALL_CUTOFF = Symbol.for("openclaw.memory.sessionResetRecallCutoff");
+type SessionResetRecallCutoff = ReturnType<typeof resolveSessionResetRecallCutoff>;
 
 export type SessionFileEntry = {
   path: string;
@@ -106,6 +116,76 @@ type SessionTranscriptClassification = {
   dreamingNarrativeTranscriptPaths: ReadonlySet<string>;
   cronRunTranscriptPaths: ReadonlySet<string>;
 };
+
+function hashSessionEntrySnapshot(params: {
+  content: string;
+  lineMap: readonly number[];
+  messageTimestampsMs: readonly number[];
+  lineProvenance: readonly MemoryEntryProvenance[];
+  resetRecallCutoff: SessionResetRecallCutoff;
+}): string {
+  // Preserve persisted hash bytes without flattening another full export string.
+  return createHash("sha256")
+    .update(params.content)
+    .update("\n")
+    .update(params.lineMap.join(","))
+    .update("\n")
+    .update(params.messageTimestampsMs.join(","))
+    .update("\n")
+    .update(JSON.stringify(params.lineProvenance))
+    .update("\n")
+    .update(JSON.stringify(params.resetRecallCutoff))
+    .digest("hex");
+}
+
+export function readSessionEntryResetRecallCutoff(
+  entry: SessionFileEntry,
+): SessionResetRecallCutoff {
+  const value: unknown = Object.getOwnPropertyDescriptor(entry, SESSION_RESET_RECALL_CUTOFF)?.value;
+  if (!value || typeof value !== "object" || !("state" in value)) {
+    return { state: "invalid" };
+  }
+  if (value.state === "absent" || value.state === "invalid") {
+    return { state: value.state };
+  }
+  if (value.state === "valid" && "cutoffLine" in value && typeof value.cutoffLine === "number") {
+    return { state: "valid", cutoffLine: value.cutoffLine };
+  }
+  return { state: "invalid" };
+}
+
+function attachSessionEntryResetRecallCutoff(
+  entry: SessionFileEntry,
+  cutoff: SessionResetRecallCutoff,
+): SessionFileEntry {
+  Object.defineProperty(entry, SESSION_RESET_RECALL_CUTOFF, {
+    configurable: false,
+    enumerable: false,
+    value: cutoff,
+    writable: false,
+  });
+  return entry;
+}
+
+export function matchesSessionEntryPrefixHash(
+  entry: SessionFileEntry,
+  lineCount: number,
+  expectedHash: string,
+): boolean {
+  const lines = entry.content ? entry.content.split("\n") : [];
+  if (!Number.isInteger(lineCount) || lineCount < 0 || lineCount > lines.length) {
+    return false;
+  }
+  const resetRecallCutoff = readSessionEntryResetRecallCutoff(entry);
+  const prefix = {
+    content: lines.slice(0, lineCount).join("\n"),
+    lineMap: entry.lineMap.slice(0, lineCount),
+    messageTimestampsMs: entry.messageTimestampsMs.slice(0, lineCount),
+    lineProvenance: entry.lineProvenance.slice(0, lineCount),
+  };
+  // Content alone is insufficient: rewrites and resets can retain the same rendered text.
+  return hashSessionEntrySnapshot({ ...prefix, resetRecallCutoff }) === expectedHash;
+}
 
 type SessionTranscriptStoreEntry = {
   sessionFile?: unknown;
@@ -224,7 +304,7 @@ function loadSessionTranscriptClassificationForSessionsDir(
   const agentId = extractAgentIdFromSessionsDir(sessionsDir);
   if (agentId && isCanonicalSessionsDirForAgent(sessionsDir, agentId)) {
     return classifySessionTranscriptCorpusEntries(
-      listSessionTranscriptCorpusEntriesForAgentSync(agentId),
+      listSessionTranscriptCorpusEntriesForAgentSync(agentId, { includeContentRevision: false }),
     );
   }
   const storePath = path.join(sessionsDir, "sessions.json");
@@ -573,22 +653,69 @@ export async function buildSessionEntry(
   absPath: string,
   opts: BuildSessionEntryOptions = {},
 ): Promise<SessionFileEntry | null> {
+  const identity = resolveBuildSessionSqliteIdentity(absPath, opts);
+  // Archives may materialize files, observers own their callbacks, and incognito
+  // transcripts exist only in this process. Their existing local contracts stay intact.
+  if (
+    identity &&
+    !opts.onTranscriptMessage &&
+    opts.parseYieldEveryLines === undefined &&
+    !isIncognitoSessionKey(opts.sessionKey) &&
+    !isIncognitoOpenClawAgentSqlitePath(identity.storePath, { agentId: identity.agentId })
+  ) {
+    const options = { ...opts, ...identity };
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const redaction = captureSensitiveTextRedactionSnapshot();
+      const prepared = await prepareSessionEntryInWorker(absPath, options, redaction);
+      if (prepared.readError !== undefined) {
+        void logSessionFileReadFailure(absPath, prepared.readError);
+        return null;
+      }
+      if (redaction.registryRevision === getSecretRedactionRegistryRevision()) {
+        return prepared.entry
+          ? attachSessionEntryResetRecallCutoff(prepared.entry, prepared.resetRecallCutoff)
+          : null;
+      }
+    }
+    throw new Error(
+      "Session transcript redaction changed during preparation; retry the operation.",
+    );
+  }
+  return buildSessionEntryInProcess(absPath, opts);
+}
+
+/** The shared transcript worker runs the same projection with task-local redaction. */
+export async function buildSessionEntryInProcess(
+  absPath: string,
+  opts: BuildSessionEntryOptions = {},
+  redactText: (text: string) => string = (text) => redactSensitiveText(text, { mode: "tools" }),
+  reportReadError: (error: unknown) => void = (error) => {
+    void logSessionFileReadFailure(absPath, error);
+  },
+): Promise<SessionFileEntry | null> {
   try {
     const sqliteIdentity = resolveBuildSessionSqliteIdentity(absPath, opts);
     const sqliteSource = sqliteIdentity
       ? (() => {
-          const stats = readTranscriptStatsSync(sqliteIdentity);
-          const records = loadTranscriptEventsSync(sqliteIdentity);
+          const snapshot = readTranscriptExportSnapshotReadOnlySync(sqliteIdentity);
+          if (!snapshot) {
+            return null;
+          }
+          const { stats, events: records, sessionKey } = snapshot;
           const resetRecallCutoff = resolveSessionResetRecallCutoff(records);
           return {
             mtimeMs: opts.updatedAtMs ?? stats.maxSeq,
             path: sessionPathForSessionIdentity(sqliteIdentity.agentId, sqliteIdentity.sessionId),
             records,
             resetRecallCutoff,
+            sessionKey,
             size: stats.sizeBytes,
           };
         })()
       : null;
+    if (sqliteIdentity && !sqliteSource) {
+      return null;
+    }
     let raw = "";
     let mtimeMs: number;
     let size: number;
@@ -637,14 +764,7 @@ export async function buildSessionEntry(
     const messageTimestampsMs: number[] = [];
     const lineProvenance: MemoryEntryProvenance[] = [];
     const parseYieldEveryLines = resolveSessionEntryParseYieldLines(opts);
-    const sqliteSessionKey =
-      sqliteIdentity && !opts.sessionKey
-        ? resolveTranscriptSessionKeyBySessionId({
-            agentId: sqliteIdentity.agentId,
-            sessionId: sqliteIdentity.sessionId,
-            storePath: sqliteIdentity.storePath,
-          })
-        : undefined;
+    const sqliteSessionKey = !opts.sessionKey ? sqliteSource?.sessionKey : undefined;
     const sessionStoreClassification =
       !sqliteIdentity &&
       (opts.generatedByDreamingNarrative === undefined || opts.generatedByCronRun === undefined)
@@ -763,7 +883,7 @@ export async function buildSessionEntry(
       if (!text) {
         continue;
       }
-      const safe = redactSensitiveText(text, { mode: "tools" });
+      const safe = redactText(text);
       const label = message.role === "user" ? "User" : "Assistant";
       const renderedLines = renderSessionExportLines(label, safe);
       const memoryProvenance: MemoryEntryProvenance = {
@@ -782,17 +902,13 @@ export async function buildSessionEntry(
       absPath,
       mtimeMs,
       size,
-      hash: hashText(
-        content +
-          "\n" +
-          lineMap.join(",") +
-          "\n" +
-          messageTimestampsMs.join(",") +
-          "\n" +
-          JSON.stringify(lineProvenance) +
-          "\n" +
-          JSON.stringify(sqliteSource?.resetRecallCutoff ?? { state: "absent" }),
-      ),
+      hash: hashSessionEntrySnapshot({
+        content,
+        lineMap,
+        messageTimestampsMs,
+        lineProvenance,
+        resetRecallCutoff: sqliteSource?.resetRecallCutoff ?? { state: "absent" },
+      }),
       content,
       lineMap,
       messageTimestampsMs,
@@ -801,15 +917,12 @@ export async function buildSessionEntry(
       ...(generatedByDreamingNarrative ? { generatedByDreamingNarrative: true } : {}),
       ...(generatedByCronRun ? { generatedByCronRun: true } : {}),
     };
-    Object.defineProperty(entry, Symbol.for("openclaw.memory.sessionResetRecallCutoff"), {
-      configurable: false,
-      enumerable: false,
-      value: sqliteSource?.resetRecallCutoff ?? { state: "absent" },
-      writable: false,
-    });
-    return entry;
+    return attachSessionEntryResetRecallCutoff(
+      entry,
+      sqliteSource?.resetRecallCutoff ?? { state: "absent" },
+    );
   } catch (err) {
-    void logSessionFileReadFailure(absPath, err);
+    reportReadError(err);
     return null;
   }
 }

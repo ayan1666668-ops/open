@@ -1,3 +1,4 @@
+import { matchesContextOverflowMessage } from "@openclaw/ai/internal/runtime";
 import { inspectTlsCertificateError } from "@openclaw/ai/internal/shared";
 import {
   normalizeLowercaseStringOrEmpty,
@@ -30,7 +31,10 @@ import {
   toPluginClassification,
   toReasonClassification,
 } from "./classification-rules.js";
-import { isContextOverflowErrorFromTables } from "./context-overflow.js";
+import {
+  isContextOverflowErrorFromTables,
+  looksLikeProviderContextOverflowCandidate,
+} from "./context-overflow-tables.js";
 import {
   isAuthErrorMessage,
   isAuthPermanentErrorMessage,
@@ -46,16 +50,11 @@ import {
 import {
   classifyLegacyProviderSpecificError,
   classifyProviderPluginError,
-  looksLikeProviderContextOverflowCandidate,
   type PreparedProviderFailoverOwner,
 } from "./provider-patterns.js";
 import type { FailoverClassification, FailoverReason, FailoverSignal } from "./signal.js";
 export { isUnclassifiedNoBodyHttpSignal } from "./classification-rules.js";
-export {
-  isContextOverflowError,
-  isLikelyContextOverflowError,
-  isReasoningConstraintErrorMessage,
-} from "./context-overflow.js";
+export { isContextOverflowError, isLikelyContextOverflowError } from "./context-overflow.js";
 export {
   isAuthErrorMessage,
   isBillingErrorMessage,
@@ -98,6 +97,7 @@ function isTransportHtmlErrorStatus(status: number | undefined): boolean {
 function classifyFailoverClassificationFromMessage(
   raw: string,
   provider?: string,
+  errorType?: string,
 ): FailoverClassification | null {
   if (isImageDimensionErrorMessage(raw)) {
     return null;
@@ -196,10 +196,14 @@ function classifyFailoverClassificationFromMessage(
   if (isTimeoutErrorMessage(raw)) {
     return toReasonClassification("timeout");
   }
-  // Some adapters preserve only the raw JSON response body. Reuse the same
-  // structured type mapping as typed SDK errors after all more-specific text
-  // and provider rules have had a chance to classify the failure.
-  const apiErrorReason = classifyCoreFailoverReasonFromErrorType(parseApiErrorInfo(raw)?.type);
+  if (matchesContextOverflowMessage(raw, "assistant-error")) {
+    return { kind: "context_overflow" };
+  }
+  // Inspect raw and SDK-preserved types before the generic HTTP fallback, but
+  // after more-specific text so invalid-request wrappers cannot hide an outage.
+  const apiErrorReason = classifyCoreFailoverReasonFromErrorType(
+    parseApiErrorInfo(raw)?.type ?? errorType,
+  );
   if (apiErrorReason) {
     return toReasonClassification(apiErrorReason);
   }
@@ -263,7 +267,7 @@ export function classifyFailoverSignal(
   const explicitStatus =
     typeof signal.status === "number" && Number.isFinite(signal.status) ? signal.status : undefined;
   const messageClassification = signal.message
-    ? classifyFailoverClassificationFromMessage(signal.message, signal.provider)
+    ? classifyFailoverClassificationFromMessage(signal.message, signal.provider, signal.errorType)
     : null;
   const detailClassification = classifyFailoverDetailCandidates(signal.details, signal.provider);
   const messageOrDetailClassification = mergeMessageAndDetailClassification(
@@ -317,13 +321,19 @@ export function classifyFailoverSignal(
   }
   // Message/detail semantics stay ahead of generic structured types so an
   // invalid-request wrapper cannot hide billing, context, or provider policy.
-  const codeReason = classifyFailoverReasonFromCode(signal.code);
+  const codeReason =
+    classifyFailoverReasonFromCode(signal.code) ??
+    classifyFailoverReasonFromCode(parseApiErrorInfo(signal.message)?.code);
+  // A validation code identifies the rejected operation; arbitrary parameter
+  // text must not turn it into an unrelated failure through message matching.
   const effectiveMessageClassification = providerPluginReason
     ? toPluginClassification(providerPluginReason)
-    : mergeMessageAndDetailClassification(
-        messageOrDetailClassification ?? errorTypeClassification,
-        codeReason ? toReasonClassification(codeReason) : null,
-      );
+    : codeReason === "format"
+      ? toReasonClassification("format")
+      : mergeMessageAndDetailClassification(
+          messageOrDetailClassification ?? errorTypeClassification,
+          codeReason ? toReasonClassification(codeReason) : null,
+        );
   if (codeReason === "auth_permanent") {
     return toReasonClassification(codeReason);
   }

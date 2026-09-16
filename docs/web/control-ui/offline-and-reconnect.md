@@ -9,6 +9,31 @@ sidebarTitle: "Offline and reconnect"
 
 What survives a dropped connection, and how the Control UI recovers when it returns.
 
+## Warm reload
+
+Warm reload applies only after token or device-token authentication. The browser
+must still hold the Gateway token that authenticated the previous connection, or
+the paired device token retained from that connection, and present that same
+credential again. After that connection, OpenClaw keeps a small agent roster, the
+session list without live run state, and custom groups in browser storage. Recent
+transcripts use the existing chat cache. On reload, the shell, sidebar, and cached
+conversation can appear while the Gateway is still connecting. Live state replaces
+the cached roster on connect, and chat requests changes from its saved transcript cursor.
+The first chat request waits up to 300 ms after connecting for the stored transcript,
+then falls back to live history if it is not ready.
+
+Trusted-proxy and Tailscale identities always show the initial connection screen
+and save no warm boot or roster records. Password and one-time bootstrap-token
+connections follow the same rule. Cached transcript content stays hidden until
+the Gateway connects; the normal transcript cache keeps its existing behavior.
+
+Warm reload records belong to the Gateway credential scope and signed-in profile.
+Changing or removing the browser credential, or clearing site data, clears the cached
+boot state. Agent and session roster records expire after 30 days. A different profile reported on connect
+clears the cached boot state and transcripts before loading live data. Recent transcripts
+keep their existing cache limits. If browser storage is unavailable or no usable record exists, the
+initial connection screen appears as usual.
+
 ## Gateway updates and suspended tabs
 
 An open tab checks the active UI build when it returns to the foreground, comes back online,
@@ -31,6 +56,24 @@ current tab's gateway/session-scoped browser storage, shown as waiting for recon
 automatically when the Gateway returns. Live controls and slash commands remain unavailable while
 offline, except that **Stop** can queue an exact local run ID for replay. A session-only stop
 is not replayed because newer work may start in that session before the connection returns.
+
+Editing an unsent queued message remains safe if the connection drops mid-edit.
+If another pane changes or removes that message, the edit stays open: copy your
+correction, cancel the edit, and review the queue before trying again. A full queue
+asks you to wait or remove a message. If browser storage prevents saving an edit,
+keep the tab open and copy the correction before freeing storage. A successful
+save clears the previous error.
+
+Page and sidebar refreshes that fail because the Gateway is suspending, restarting, starting,
+or unreachable show no inline error: the footer connection indicator owns that state. Each panel
+keeps its last data and refreshes automatically once the Gateway accepts work again. Other refresh
+failures remain visible inline with their message and are retried automatically when the Gateway
+becomes available again. These refresh callouts have no manual **Retry** button.
+
+If chat history times out, its **Retry** action reloads the saved conversation and restores
+its live session subscription, including approval updates.
+
+Once the Gateway confirms that a message is in the transcript, reconnecting retires its temporary browser copy even when the original message is outside the latest history page. Loading older history shows the saved message in its original position without adding a second copy.
 
 Queued attachments use binary Blobs in the browser's IndexedDB; the outbox keeps only delivery
 metadata and payload references in session storage. Attachment bytes stay with the queued input;
@@ -61,6 +104,9 @@ After connecting, chat waits for account-scoped recovery before accepting or sen
 messages. During this brief check, submitted text and attachments stay in the composer. Offline
 queues resume once recovery is ready, unless the session still owns an unresolved initial turn;
 resolve that turn with its **Retry** or **Check delivery** action first.
+If the initial message is waiting for recovery, its chat shows a loading placeholder
+until the message can be restored, rather than the empty new-chat welcome screen.
+Recovery notices appear below the composer and clear when the blocking condition resolves.
 
 If the connection drops before a send is acknowledged, reconnect checks the transcript and
 the session's active or last run ID for delivery proof. A matching run confirms receipt even
@@ -102,7 +148,13 @@ If the destination changes, a newer draft appears, or storage fails, recovery ke
 available rather than overwriting newer input. Do not clear browser site data
 while you still have saved messages or attachment drafts to recover.
 
-First opens and reloads show a small animated OpenClaw mark while the Gateway resolves the initial
+If the browser closes its draft database connection, the next storage operation
+opens a fresh connection automatically. A recovery error without any loaded entries
+appears as **Saved messages could not be loaded**; it does not mean that messages
+have lost their destinations or that browser storage is full. Reload to retry if
+the error persists, keeping site data intact.
+
+First opens and reloads without usable warm state show a small animated OpenClaw mark while the Gateway resolves the initial
 connection, including when authentication comes from a trusted proxy or Tailscale instead of a
 browser-stored credential. The login gate appears only after the initial connection fails or the
 Gateway actively rejects authentication (bad token/password, missing trusted identity, revoked

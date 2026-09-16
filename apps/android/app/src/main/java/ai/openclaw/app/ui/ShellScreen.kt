@@ -6,7 +6,7 @@ import ai.openclaw.app.GatewayChannelsSummary
 import ai.openclaw.app.GatewayConnectionDisplay
 import ai.openclaw.app.GatewayConnectionProblem
 import ai.openclaw.app.GatewayDreamingSummary
-import ai.openclaw.app.GatewayNodeApprovalState
+import ai.openclaw.app.GatewayNodeCapabilityApproval
 import ai.openclaw.app.GatewayNodesDevicesSummary
 import ai.openclaw.app.GatewaySkillSummary
 import ai.openclaw.app.GatewaySkillWorkshopSummary
@@ -152,7 +152,9 @@ fun ShellScreen(
       features = features,
       modifier = modifier.background(ClawTheme.colors.canvas),
       bookPanesEnabled = !commandOpen && pendingTrust == null,
-    ) { bookPanes ->
+      tabletopEnabled = nav.activeTab == Tab.Chat && !commandOpen && pendingTrust == null,
+    ) { foldBounds ->
+      val bookPanes = foldBounds.book
       val permanentSidebar = bookPanes != null
       // Mode changes discard modal operations and their drag state, not the two content slots.
       val sidebarDrawerState = key(permanentSidebar) { rememberDrawerState(initialValue = DrawerValue.Closed) }
@@ -248,10 +250,12 @@ fun ShellScreen(
         SidebarNavigationShell(
           drawerState = sidebarDrawerState,
           bookPanes = bookPanes,
+          sidebarBand = foldBounds.sidebarBand,
           gesturesEnabled = !sidebarRowDragging,
           drawerContent = {
             OpenClawSidebar(
               viewModel = viewModel,
+              rowHostBand = foldBounds.sidebarBand,
               agents = gatewayAgents,
               selectedAgentId = chatSessionOwnerAgentId ?: gatewayDefaultAgentId,
               sessions = chatSessions,
@@ -311,6 +315,8 @@ fun ShellScreen(
             Tab.Chat -> {
               UnifiedChatShellScreen(
                 viewModel = viewModel,
+                tabletopPanes = foldBounds.tabletop,
+                features = features,
                 showSidebarButton = !permanentSidebar,
                 onOpenSidebar = openSidebar,
                 onOpenDashboard = nav::openSessionDashboard,
@@ -407,9 +413,9 @@ fun ShellScreen(
             prompt = prompt,
             confirmLabel = stringResource(R.string.trust_and_continue),
             cancelLabel = stringResource(R.string.cancel),
-            onAccept = viewModel::acceptGatewayTrustPrompt,
-            onUseSystemTrust = viewModel::useSystemGatewayTrustPrompt,
-            onDecline = viewModel::declineGatewayTrustPrompt,
+            onAccept = { viewModel.acceptGatewayTrustPrompt(prompt, it) },
+            onUseSystemTrust = { viewModel.useSystemGatewayTrustPrompt(prompt) },
+            onDecline = { viewModel.declineGatewayTrustPrompt(prompt) },
           )
         }
       }
@@ -1028,17 +1034,12 @@ internal fun overviewMetricCardSpecs(
   return listOf(
     OverviewMetricCardSpec(
       title = nativeString("Gateway"),
-      value =
-        when {
-          !isConnected -> nativeString("Offline")
-          hasAttention -> nativeString("Online")
-          else -> nativeString("Healthy")
-        },
+      value = if (isConnected) nativeString("Online") else nativeString("Offline"),
       subtitle =
         when {
           !isConnected -> nativeString("Reconnect to continue")
           hasAttention -> nativeString("Review highlighted items")
-          else -> nativeString("All systems nominal")
+          else -> nativeString("No highlighted items")
         },
       icon = Icons.Default.Favorite,
       status =
@@ -1661,21 +1662,13 @@ private fun SettingsShellScreen(
       }
 
       item {
-        Column(
+        Text(
           modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
-          horizontalAlignment = Alignment.CenterHorizontally,
-          verticalArrangement = Arrangement.spacedBy(3.dp),
-        ) {
-          Text(text = nativeString("OpenClaw \${BuildConfig.VERSION_NAME} (\${BuildConfig.VERSION_CODE})", BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE), style = ClawTheme.type.caption.copy(fontSize = 12.5.sp, lineHeight = 16.sp), color = ClawTheme.colors.textMuted)
-          Row(horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(
-              text = if (isConnected) nativeString("All systems operational") else nativeString("Gateway not connected"),
-              style = ClawTheme.type.caption.copy(fontSize = 12.5.sp, lineHeight = 16.sp),
-              color = ClawTheme.colors.textSubtle,
-            )
-            Box(modifier = Modifier.size(4.5.dp).clip(CircleShape).background(if (isConnected) ClawTheme.colors.success else ClawTheme.colors.textSubtle))
-          }
-        }
+          text = nativeString("OpenClaw \${BuildConfig.VERSION_NAME} (\${BuildConfig.VERSION_CODE})", BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE),
+          style = ClawTheme.type.caption.copy(fontSize = 12.5.sp, lineHeight = 16.sp),
+          color = ClawTheme.colors.textMuted,
+          textAlign = TextAlign.Center,
+        )
       }
     }
   }
@@ -1783,9 +1776,9 @@ private fun nodesDevicesStatus(summary: GatewayNodesDevicesSummary): Boolean? =
 
 private fun GatewayNodesDevicesSummary.hasNodeCapabilityApprovalPending(): Boolean =
   nodes.any { node ->
-    node.approvalState == GatewayNodeApprovalState.PendingApproval ||
-      node.approvalState == GatewayNodeApprovalState.PendingReapproval ||
-      node.approvalState == GatewayNodeApprovalState.Unapproved
+    node.approvalState is GatewayNodeCapabilityApproval.PendingApproval ||
+      node.approvalState is GatewayNodeCapabilityApproval.PendingReapproval ||
+      node.approvalState == GatewayNodeCapabilityApproval.Unapproved
   }
 
 /** Summarizes channel connection state, surfacing errors before connected counts. */

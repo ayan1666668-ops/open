@@ -1,18 +1,21 @@
 import { getDeliveryQueueEntryStatus } from "../../../infra/delivery-queue-sqlite.js";
+import type { DeliveryQueueStoredStatus } from "../../../infra/delivery-queue-sqlite.kernel.js";
 import { scheduleSessionDelivery } from "../../../infra/session-delivery-queue-runtime.js";
+import { releaseSessionDeliveryClaim } from "../../../infra/session-delivery-queue-storage.js";
 import {
   prepareClaimedSessionDelivery,
-  releaseSessionDeliveryClaim,
   SESSION_DELIVERY_QUEUE_NAME,
   type QueuedSessionDelivery,
   type QueuedSessionDeliveryPayload,
   type SessionDeliverySettledOutcome,
   SessionDeliveryDeadLetteredError,
   SessionDeliveryDeferredError,
-} from "../../../infra/session-delivery-queue-storage.js";
+} from "../../../infra/session-delivery-queue.records.js";
 import type { OpenClawStateDatabaseOptions } from "../../../state/openclaw-state-db.js";
+import { captureOpenClawStateWorkerContext } from "../../../state/openclaw-state-worker-context.js";
 import { findTaskByRunId, getTaskById } from "../../../tasks/runtime-internal.js";
 import type { TaskRecord } from "../../../tasks/task-registry.types.js";
+import type { RuntimeContextFragment } from "../../internal-runtime-context.js";
 import { ensureDeliveryState } from "../registry/subagent-delivery-state.js";
 import {
   ANNOUNCE_COMPLETION_HARD_EXPIRY_MS,
@@ -79,7 +82,7 @@ function projectRedrivenTask(
 export function admitCorrelatedSubagentSessionDelivery(params: {
   runId: string;
   payload: Extract<QueuedSessionDeliveryPayload, { kind: "agentTurn" }>;
-}): { id: string; claimed: boolean; status: "pending" | "failed" | "completed" } {
+}): { id: string; claimed: boolean; status: DeliveryQueueStoredStatus } {
   const current = subagentRuns.get(params.runId);
   if (!current) {
     throw new Error(`subagent completion owner not found: ${params.runId}`);
@@ -135,14 +138,9 @@ export function admitCorrelatedSubagentSessionDelivery(params: {
   return { id: queueEntry.id, claimed: admission.claimed, status: status ?? "pending" };
 }
 
-function canonicalResultMessage(entry: SubagentRunRecord): string {
-  const result = resolveSubagentCompletionResultText(entry) ?? "(no output)";
-  return `${CANONICAL_RESULT_PROMPT}\n\n${result}`;
-}
-
 export function resolveCorrelatedSubagentDelivery(
   queued: QueuedSessionDelivery,
-): QueuedSessionDelivery {
+): QueuedSessionDelivery & { runtimeContextFragments?: RuntimeContextFragment[] } {
   if (queued.kind !== "agentTurn" || queued.owner?.kind !== "subagent_completion") {
     return queued;
   }
@@ -160,7 +158,15 @@ export function resolveCorrelatedSubagentDelivery(
   ) {
     throw new SessionDeliveryDeferredError("correlated subagent delivery owner mismatch");
   }
-  return { ...queued, message: canonicalResultMessage(entry) };
+  const result = resolveSubagentCompletionResultText(entry) ?? "(no output)";
+  return {
+    ...queued,
+    message: `${CANONICAL_RESULT_PROMPT}\n\n${result}`,
+    runtimeContextFragments: [
+      { kind: "runtime-instruction", text: CANONICAL_RESULT_PROMPT },
+      { kind: "conversation-data", text: result },
+    ],
+  };
 }
 
 export async function settleCorrelatedSubagentDelivery(
@@ -229,8 +235,9 @@ export async function retrySubagentCompletionDelivery(
   }
   const delivery = ensureDeliveryState(current);
   if (delivery.status === "in_progress" && delivery.queueId) {
-    await releaseSessionDeliveryClaim(delivery.queueId);
-    await scheduleSessionDelivery(delivery.queueId);
+    const queueContext = captureOpenClawStateWorkerContext();
+    await releaseSessionDeliveryClaim(delivery.queueId, queueContext);
+    await scheduleSessionDelivery(delivery.queueId, queueContext);
     return { ok: true, task: getTaskById(taskId) };
   }
   if (delivery.status !== "suspended") {
