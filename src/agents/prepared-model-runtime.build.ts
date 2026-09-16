@@ -57,8 +57,6 @@ export type PreparedModelRuntimeBuildCandidate = Readonly<{
   prepareInboundPluginRegistry?: boolean;
   isGenerationCurrent?: () => boolean;
   isBuildCurrent?: () => boolean;
-  /** Shared publication guards run before workspace preparation; registration guards do not. */
-  isPreparationCurrent?: () => boolean;
   onBeforeAuthCapture?: () => void;
   ownsRegistryResources?: boolean;
 }>;
@@ -104,11 +102,6 @@ async function buildSnapshotBatch(
   const candidateByInput = new Map(candidates.map((candidate) => [candidate.input, candidate]));
   const assertBuildCurrent = (input: PreparedModelRuntimeInput) =>
     assertPreparedModelRuntimeInputCurrent(input, candidateByInput.get(input)!.isBuildCurrent);
-  const assertPreparationCurrent = (input: PreparedModelRuntimeInput) =>
-    assertPreparedModelRuntimeInputCurrent(
-      input,
-      candidateByInput.get(input)!.isPreparationCurrent,
-    );
   const preparedGenerations = new Set<PreparedModelRuntimePluginGeneration>();
   try {
     const generations = groupBuildCandidates(candidates, (candidate) => candidate.pluginGeneration);
@@ -159,7 +152,7 @@ async function buildSnapshotBatch(
       // Already-resolved promises do not let timers or Gateway I/O run.
       await nextTurn();
       for (const candidate of groupCandidates) {
-        assertPreparedModelRuntimeInputCurrent(candidate.input, candidate.isPreparationCurrent);
+        assertBuildCurrent(candidate.input);
       }
       const prepareInboundPluginRegistry = groupCandidates.some(
         (candidate) => candidate.prepareInboundPluginRegistry,
@@ -182,7 +175,7 @@ async function buildSnapshotBatch(
           preferBuiltPluginArtifacts,
           includeCredentialProviders,
           getConfiguredHarnessRuntimes,
-          assertCurrent: assertPreparationCurrent,
+          assertCurrent: assertBuildCurrent,
           onBeforeAuthCapture: (input) => candidateByInput.get(input)!.onBeforeAuthCapture?.(),
           onStage,
           ...(groupCandidates.some((candidate) => candidate.ownsRegistryResources)

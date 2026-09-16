@@ -466,7 +466,6 @@ export async function publishPreparedModelRuntimeOwnerBatch(params: {
         owner.provenance === "run" || (owner.provenance === "ephemeral" && input.readOnly === true),
       isGenerationCurrent,
       isBuildCurrent: params.isBuildCurrent ?? isCurrent,
-      isPreparationCurrent: params.isBuildCurrent,
       onBeforeAuthCapture: () => {
         if (owner.generation === generation) {
           owner.authCaptureStarted = true;

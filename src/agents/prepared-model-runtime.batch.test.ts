@@ -8,6 +8,7 @@ import {
 import { setImmediate as nextTurn } from "node:timers/promises";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
 import {
   createOpenClawTestState,
   type OpenClawTestState,
@@ -15,6 +16,8 @@ import {
 import * as legacyAuth from "./legacy-inherited-auth-dir.js";
 import {
   getPreparedModelRuntimeSnapshot,
+  markPreparedModelRuntimeSnapshotsStale,
+  publishPreparedModelRuntimeSnapshot,
   refreshPreparedModelRuntimeSnapshots,
 } from "./prepared-model-runtime.js";
 import { AuthStorage } from "./sessions/auth-storage.js";
@@ -67,6 +70,26 @@ describe("prepared fleet batches", () => {
       expect(events.indexOf("event-loop")).toBeLessThan(events.indexOf("last"));
     },
   );
+
+  it("does not start plugin callbacks after cancellation at an event-loop boundary", async () => {
+    let cancelled = false;
+    let lateLoads = 0;
+    mocks.loadAgentRuntimePluginRegistryHandle.mockImplementation(() => {
+      if (cancelled) {
+        lateLoads += 1;
+      }
+      return createEmptyPluginRegistry();
+    });
+    const publication = publishPreparedModelRuntimeSnapshot({
+      config: {},
+      agentDir: state.agentDir("cancelled"),
+      workspaceDir: state.workspaceDir,
+    });
+    cancelled = true;
+    markPreparedModelRuntimeSnapshotsStale("cancel before workspace preparation");
+    await expect(publication).rejects.toThrow("superseded");
+    expect(lateLoads).toBe(0);
+  });
 
   it("captures one immutable config per fleet without freezing the caller or reusing a stale capture", async () => {
     const config: OpenClawConfig = {
