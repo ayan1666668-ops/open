@@ -29,6 +29,7 @@ export async function sendCommentThreadReply(params: {
   replyId?: string;
   accountId?: string;
   onDeliveryResult?: FeishuSendTextContext["onDeliveryResult"];
+  signal?: AbortSignal;
 }) {
   const target = parseFeishuCommentTarget(params.to);
   if (!target) {
@@ -70,6 +71,10 @@ export async function sendCommentThreadReply(params: {
     const sources: FeishuReplyDeliverySource[] = [];
     const acceptedChunks: string[] = [];
     for (const chunk of chunks.length ? chunks : [content]) {
+      // Every reply here is its own physical send, so the cancellation question is asked
+      // once per reply, the way the post path asks it. Ahead of the catch below, so an
+      // abort stays an abort instead of arriving as a delivery failure.
+      params.signal?.throwIfAborted();
       try {
         const result = await deliverCommentThreadText(client, {
           file_token: target.fileToken,

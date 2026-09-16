@@ -148,9 +148,11 @@ async function sendOutboundText(params: {
   replyToIdSource?: FeishuSendTextContext["replyToIdSource"];
   replyToMode?: FeishuSendTextContext["replyToMode"];
   onDeliveryResult?: FeishuSendTextContext["onDeliveryResult"];
+  signal?: AbortSignal;
   header?: CardHeaderConfig;
 }) {
-  const { cfg, to, text, accountId, replyToMessageId, replyInThread, onDeliveryResult } = params;
+  const { cfg, to, text, accountId, replyToMessageId, replyInThread, onDeliveryResult, signal } =
+    params;
   const commentResult = await sendCommentThreadReply({
     cfg,
     to,
@@ -158,6 +160,7 @@ async function sendOutboundText(params: {
     replyId: replyToMessageId,
     accountId,
     onDeliveryResult,
+    signal,
   });
   if (commentResult) {
     return commentResult;
@@ -252,6 +255,12 @@ async function sendOutboundText(params: {
   });
   const acceptedPostChunks: string[] = [];
   for (const [i, chunk] of (subChunks.length ? subChunks : [normalizedText]).entries()) {
+    // Core asks this before every text unit it sends for a channel that leaves the cut to
+    // it, and a channel that chunks its own text has to ask the same question or a
+    // cancellation only stops the next payload. Ahead of the catch below, so the abort
+    // reaches the caller as an abort rather than as a send failure; each chunk already
+    // accepted was reported as it was sent.
+    signal?.throwIfAborted();
     // Explicit replies and native topic roots stay sticky; implicit first replies do not.
     try {
       const sendParams = {
@@ -334,6 +343,7 @@ async function sendFeishuFallbackPayload(params: {
   // then preserve the complete fallback through the normal 4k text fanout.
   let lastResult: Awaited<ReturnType<typeof sendText>> | undefined;
   for (const mediaUrl of mediaUrls) {
+    ctx.signal?.throwIfAborted();
     lastResult = await sendMedia({
       ...ctx,
       text: "",
@@ -344,6 +354,7 @@ async function sendFeishuFallbackPayload(params: {
     });
   }
   if (text) {
+    ctx.signal?.throwIfAborted();
     // The fanout used to send these fragments one at a time, but the cut here lands on
     // the authored text, before the target's own table conversion runs. A table longer
     // than the fragment keeps its header only in the first one and the rest arrive as raw
@@ -409,6 +420,7 @@ async function sendFeishuTtsSupplementPayload(params: {
   }
 
   for (const mediaUrl of normalizeStringEntries(resolvePayloadMediaUrls(params.payload))) {
+    ctx.signal?.throwIfAborted();
     lastResult = await sendMedia({
       ...ctx,
       text: "",
@@ -463,12 +475,13 @@ async function deliverFeishuOutboundText({
   mediaReadFile,
   identity,
   onDeliveryResult,
+  signal,
 }: FeishuSendTextContext) {
   const { replyToMessageId, replyInThread } = resolveFeishuReplyMode({
     replyToId,
     threadId,
   });
-  const deliveryOptions = { replyToIdSource, replyToMode, onDeliveryResult };
+  const deliveryOptions = { replyToIdSource, replyToMode, onDeliveryResult, signal };
   // Scheme A compatibility shim:
   // when upstream accidentally returns a local image path as plain text,
   // auto-upload and send as Feishu image message instead of leaking path text.
@@ -775,6 +788,7 @@ export const feishuOutbound: ChannelOutboundAdapter = {
       replyToMode,
       threadId,
       onDeliveryResult,
+      signal,
       propagateMediaUploadFailure = false,
     }: Parameters<NonNullable<ChannelOutboundAdapter["sendMedia"]>>[0] & {
       /** When true, a media-upload failure is re-thrown to the caller instead of
@@ -800,7 +814,7 @@ export const feishuOutbound: ChannelOutboundAdapter = {
         });
         return { replyToMessageId, replyInThread };
       };
-      const deliveryOptions = { replyToIdSource, replyToMode, onDeliveryResult };
+      const deliveryOptions = { replyToIdSource, replyToMode, onDeliveryResult, signal };
       if (parseFeishuCommentTarget(to)) {
         // Document comments deliver media as visible links; they never enter
         // the upload path or use its failure-propagation policy.
@@ -856,6 +870,8 @@ export const feishuOutbound: ChannelOutboundAdapter = {
 
       const results: FeishuReplyDeliverySource[] = captionResult ? [captionResult] : [];
       let mediaResult: Awaited<ReturnType<typeof sendMediaFeishu>>;
+      // The caption above is its own physical send, so the attachment asks again.
+      signal?.throwIfAborted();
       const mediaReplyMode = nextReplyMode();
       try {
         mediaResult = await sendMediaFeishu({
