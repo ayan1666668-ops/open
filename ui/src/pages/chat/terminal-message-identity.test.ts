@@ -127,7 +127,11 @@ describe("deferred authoritative terminals", () => {
             {
               type: "text",
               text: "thinking out loud",
-              textSignature: { v: 1, id: "commentary-0", phase: "commentary" },
+              textSignature: JSON.stringify({
+                v: 1,
+                id: "commentary-0",
+                phase: "commentary",
+              }),
             },
           ],
           __openclaw: { id: "commentary-message" },

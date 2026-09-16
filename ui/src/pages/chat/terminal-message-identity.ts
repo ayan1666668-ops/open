@@ -4,6 +4,8 @@ import {
 } from "@openclaw/gateway-client/browser";
 import { asNullableRecord } from "@openclaw/normalization-core/record-coerce";
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
+import { resolveAssistantMessagePhase } from "../../../../src/shared/chat-message-content.js";
+import { extractText } from "../../lib/chat/message-extract.js";
 import { areUiSessionKeysEquivalent } from "../../lib/sessions/session-key.ts";
 
 type LiveTerminalIdentity = {
@@ -33,19 +35,12 @@ function ownsFinalReply(message: unknown): boolean {
   if (readAssistantStreamSegmentIdentity(message) !== undefined) {
     return false;
   }
-  const record = asNullableRecord(message);
-  const content = Array.isArray(record?.content) ? record.content : [];
-  return content.some((block) => {
-    const candidate = asNullableRecord(block);
-    if (!candidate || candidate.type !== "text" || typeof candidate.text !== "string") {
-      return false;
-    }
-    if (!candidate.text.trim()) {
-      return false;
-    }
-    const signature = asNullableRecord(candidate.textSignature);
-    return signature?.phase !== "commentary";
-  });
+  // The canonical phase owner decides commentary vs answer; reading the raw
+  // signature here would drift from that contract (#149153).
+  if (resolveAssistantMessagePhase(message) === "commentary") {
+    return false;
+  }
+  return Boolean(extractText(message)?.trim());
 }
 
 type PendingAuthoritativeTerminal = {
