@@ -14,8 +14,8 @@ import type { MentionTarget } from "./mention-target.types.js";
  * reading as a marker and suppressing a table that would have converted safely. A closer
  * keeps the carriage return of a CRLF source, since the line split is on the feed alone.
  */
-const FEISHU_FENCE_OPENER = /^((?:>[ \t]?)*) {0,3}(`{3,})[^`]*$/u;
-const FEISHU_FENCE_CLOSER = /^((?:>[ \t]?)*) {0,3}(`{3,})[ \t]*\r?$/u;
+const FEISHU_FENCE_OPENER = /^((?: {0,3}(?:>[ \t]?)+)?) {0,3}(`{3,})[^`]*$/u;
+const FEISHU_FENCE_CLOSER = /^((?: {0,3}(?:>[ \t]?)+)?) {0,3}(`{3,})[ \t]*\r?$/u;
 
 /** A quote prefix marks the container a fence lives in, and one optional space inside it
  * is decoration rather than depth. */

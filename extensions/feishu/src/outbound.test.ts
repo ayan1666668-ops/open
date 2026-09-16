@@ -3128,6 +3128,83 @@ describe("feishuOutbound.sendText replyToId forwarding", () => {
     expect(elements.join("")).toContain("row399");
   });
 
+  // A reply with no media went through the shared helper, which cuts the authored text
+  // before this channel's send converts it, so only the first fragment kept the header.
+  it("converts a whole table when a plain reply carries no media", async () => {
+    const rows = Array.from(
+      { length: 400 },
+      (_entry, index) => `| row${index} | detail ${index} |`,
+    );
+    const table = ["| name | detail |", "| --- | --- |", ...rows].join("\n");
+    // The case only means anything while the authored table needs more than one message.
+    expect(table.length).toBeGreaterThan(4000);
+    const payload = { text: table };
+    await feishuOutbound.sendPayload?.({
+      cfg: {
+        channels: { feishu: { accounts: { main: { markdown: { tables: "code" } } } } },
+      } as ClawdbotConfig,
+      to: "chat_1",
+      text: table,
+      accountId: "main",
+      payload,
+    } as never);
+
+    const delivered = [
+      ...sendMessageFeishuMock.mock.calls,
+      ...sendStructuredCardFeishuMock.mock.calls,
+    ]
+      .map((call) => String(call[0]?.text ?? ""))
+      .filter((text) => text.length > 0);
+    expect(delivered.length).toBeGreaterThan(1);
+    // Every message carrying rows carries the fence that makes them readable.
+    for (const message of delivered) {
+      if (!message.includes("|")) {
+        continue;
+      }
+      expect(message).toContain("```");
+    }
+    expect(delivered.join("")).toContain("row399");
+  });
+
+  // Indentation before a quote prefix is still a fence's own indentation, and reading the
+  // markers as ordinary text approved a conversion whose opener and closer then reached
+  // different comments.
+  it("leaves an indented quoted comment table unconverted", async () => {
+    const chunking = await vi.importActual<typeof import("openclaw/plugin-sdk/reply-chunking")>(
+      "openclaw/plugin-sdk/reply-chunking",
+    );
+    const rows = Array.from({ length: 40 }, (_entry, index) => `   > | row${index} | d |`);
+    const table = [
+      "   > | name | detail |",
+      "   > | --- | --- |",
+      ...rows,
+      `   > | wide | ${"w".repeat(220)} |`,
+    ].join("\n");
+    await sendText({
+      cfg: {
+        channels: {
+          feishu: {
+            accounts: {
+              main: { markdown: { tables: "code" } },
+            },
+          },
+        },
+      },
+      to: "comment:docx:doxcn123:7623358762119646411",
+      text: table,
+      accountId: "main",
+    });
+
+    const contents = deliverCommentThreadTextMock.mock.calls.map((_call, index) =>
+      String(commentThreadParams(index)?.content ?? ""),
+    );
+    // The case only means anything while the conversion carries indented quoted markers and
+    // needs more than one comment to arrive.
+    expect(convertMarkdownTables(table, "code")).toContain("   > ```");
+    expect(convertMarkdownTables(table, "code").length).toBeGreaterThan(4000);
+    expect(contents).toEqual(chunking.chunkMarkdownTextWithMode(table, 4000, "length"));
+  });
+
   // A quoted marker inside a top-level block is content, not a closer. Reading it as one
   // left the real closer looking like a second opener, and the comment then arrived as
   // raw rows a comment cannot draw.

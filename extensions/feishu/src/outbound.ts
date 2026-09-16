@@ -508,7 +508,11 @@ async function sendFeishuFallbackPayload(params: {
     return await sendTextMediaPayload({
       channel: "feishu",
       ctx,
-      adapter: feishuOutbound,
+      // The shared helper cuts the authored text before this channel's send converts it, and
+      // that cut lands on a table, so every fragment after the first arrives as raw rows.
+      // The send chunks again for its own target after converting, so the text goes whole,
+      // the way the fanout below already sends it.
+      adapter: { ...feishuOutbound, chunker: (value: string) => [value] },
     });
   }
 

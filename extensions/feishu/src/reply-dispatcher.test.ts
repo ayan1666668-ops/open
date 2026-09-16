@@ -6253,6 +6253,35 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
       expect(requireStreamingInstance(0).discard).toHaveBeenCalledTimes(1);
       expect(sendMessageFeishuMock).toHaveBeenCalled();
     });
+
+    // Reasoning shares the card with the answer, and its own conversion can outgrow the
+    // limit the answer preview answers to. It gives way to the text as authored there.
+    it("shows reasoning as authored when its conversion outgrows the chunk limit", async () => {
+      const convert = getFeishuRuntimeMock().channel.text.convertMarkdownTables;
+      const outgrows = [
+        "| name | detail |",
+        "| --- | --- |",
+        ...Array.from({ length: 40 }, (_entry, index) => `| row${index} | d |`),
+        `| wide | ${"w".repeat(220)} |`,
+      ].join("\n");
+      // Guard the fixture: authored inside the limit, projected past it.
+      expect(outgrows.length).toBeLessThanOrEqual(4000);
+      expect(convert(outgrows, "code").length).toBeGreaterThan(4000);
+
+      const fitting = createBlockTableHarness(tableCfg("code"), true);
+      fitting.result.replyOptions.onReasoningStream?.({ text: tableMarkdown });
+      await vi.waitFor(() => expect(streamingInstances).toHaveLength(1));
+      // Reasoning is quoted before it reaches the card, so the fence carries the quote.
+      await vi.waitFor(() => expect(streamingUpdateTexts(0).join("")).toContain("> ```"));
+
+      const outgrowing = createBlockTableHarness(tableCfg("code"), true);
+      outgrowing.result.replyOptions.onReasoningStream?.({ text: outgrows });
+      await vi.waitFor(() => expect(streamingInstances).toHaveLength(2));
+      await vi.waitFor(() => expect(streamingUpdateTexts(1).length).toBeGreaterThan(0));
+      const reasoning = streamingUpdateTexts(1).join("");
+      expect(reasoning).toContain("| wide |");
+      expect(reasoning).not.toContain("```");
+    });
   });
 });
 /* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */
