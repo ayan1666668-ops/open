@@ -87,8 +87,8 @@ describe("plugin runtime refresh admission", () => {
         sessionKey: undefined,
       });
       expect(result.meta.error).toBeUndefined();
-      expect(mockedRunEmbeddedAttempt).toHaveBeenCalledTimes(2);
       expect(mockedRunEmbeddedAttempt.mock.calls[1]?.[0]?.pluginRuntimeRefreshMessages).toEqual([]);
+      expect(mockedRunEmbeddedAttempt).toHaveBeenCalledTimes(2);
       const final = await buildReplyPayloads({
         payloads: result.payloads ?? [],
         messagingToolSentTexts: result.messagingToolSentTexts,
