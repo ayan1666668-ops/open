@@ -39,7 +39,7 @@ it.skipIf(process.platform === "win32").for(cases)(
             "--import",
             "./scripts/tsx.mjs",
             "--import",
-            path.resolve("test/scripts/fixtures/agent-plugin-gateway-cancellation.mjs"),
+            new URL("./fixtures/agent-plugin-gateway-cancellation.mjs", import.meta.url).href,
             "scripts/agent-plugin-gateway-e2e.ts",
           ],
           {
