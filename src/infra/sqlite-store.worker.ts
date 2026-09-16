@@ -167,10 +167,42 @@ async function receive(request: SqliteWorkerRequest): Promise<void> {
       if (!backend) {
         throw new Error("SQLite worker actor is closed");
       }
-      value = runInActorContext(request.actor, () => ({
-        // SAFETY: The typed host command is serialized once; framing validates complete reconstruction.
-        result: backend.execute(command as SqliteWorkerCommand<SqliteWorkerOperations>),
-      })).result;
+      const assertSettled = (failure?: { error: unknown }) => {
+        try {
+          const settlement: unknown = runInActorContext(request.actor, () =>
+            backend.assertSettled?.(),
+          );
+          if (
+            isPromise(settlement) ||
+            (isRecord(settlement) && typeof settlement.then === "function")
+          ) {
+            if (isPromise(settlement)) {
+              void settlement.catch(() => {});
+            }
+            throw new Error("SQLite worker settlement checks must remain synchronous");
+          }
+        } catch (error) {
+          // The broker joins native exit before settling this operation's admission.
+          retire = true;
+          if (failure && failure.error !== error) {
+            throw new AggregateError(
+              [failure.error, error],
+              `${String(failure.error)}; SQLite worker settlement failed: ${String(error)}`,
+              { cause: error },
+            );
+          }
+          throw error;
+        }
+      };
+      try {
+        value = runInActorContext(request.actor, () => ({
+          // SAFETY: The typed host command is serialized once; framing validates complete reconstruction.
+          result: backend.execute(command as SqliteWorkerCommand<SqliteWorkerOperations>),
+        })).result;
+      } catch (error) {
+        assertSettled({ error });
+        throw error;
+      }
       executed = true;
       completeResult = true;
       if (isPromise(value) || (isRecord(value) && typeof value.then === "function")) {
@@ -181,6 +213,7 @@ async function receive(request: SqliteWorkerRequest): Promise<void> {
         }
         throw new Error("SQLite worker operations must remain synchronous");
       }
+      assertSettled();
     };
     if (request.type === "result-next") {
       if (
@@ -285,7 +318,8 @@ async function receive(request: SqliteWorkerRequest): Promise<void> {
       if (
         !isRecord(backend) ||
         typeof backend.execute !== "function" ||
-        typeof backend.close !== "function"
+        typeof backend.close !== "function" ||
+        (backend.assertSettled !== undefined && typeof backend.assertSettled !== "function")
       ) {
         throw new Error("SQLite worker module returned an invalid backend");
       }

@@ -278,12 +278,13 @@ export class MemoryIndexDatabase {
         const worker = await this.getPublicationWorker();
         return await worker.run(operation, assertCurrent);
       } catch (error) {
-        try {
-          await this.closePublicationWorker();
-        } catch (cleanupError) {
-          throw new AggregateError([error, cleanupError], "Memory publication and cleanup failed", {
-            cause: cleanupError,
-          });
+        const [cleanup] = await Promise.allSettled([this.closePublicationWorker()]);
+        if (cleanup.status === "rejected") {
+          throw new AggregateError(
+            [error, cleanup.reason],
+            `${String(error)}; Memory publication cleanup failed: ${String(cleanup.reason)}`,
+            { cause: error },
+          );
         }
         throw error;
       }
@@ -333,29 +334,28 @@ export class MemoryIndexDatabase {
         input: { operation, header, rows: chunks.length },
       });
       let needsDiscard = true;
-      try {
-        for (const fragments of memoryPublicationBatches(replacement)) {
-          await scope.execute({ type: "stage.append", input: { operation, fragments } });
-        }
-        const result = await this.retryPublication(async () => {
-          const outcome = await scope.execute({
-            type: "source.replace",
-            input: { operation, state: this.publicationState() },
-          });
-          if (outcome.ok || outcome.entered) {
-            needsDiscard = false;
-          }
-          return outcome;
-        }, prepare);
-        if (this.isShadow) {
-          assertCurrent();
-        }
-        return result;
-      } finally {
-        if (needsDiscard) {
-          await scope.execute({ type: "stage.discard", input: { operation } });
-        }
+      for (const fragments of memoryPublicationBatches(replacement)) {
+        await scope.execute({ type: "stage.append", input: { operation, fragments } });
       }
+      const result = await this.retryPublication(async () => {
+        const outcome = await scope.execute({
+          type: "source.replace",
+          input: { operation, state: this.publicationState() },
+        });
+        if (outcome.ok || outcome.entered) {
+          needsDiscard = false;
+        }
+        return outcome;
+      }, prepare);
+      if (this.isShadow) {
+        assertCurrent();
+      }
+      // Thrown failures close the Worker through runPublication. A further
+      // command on that failed scope could hide the original write outcome.
+      if (needsDiscard) {
+        await scope.execute({ type: "stage.discard", input: { operation } });
+      }
+      return result;
     }, assertCurrent);
   }
 

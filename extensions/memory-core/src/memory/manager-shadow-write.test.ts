@@ -153,6 +153,45 @@ describe("private session source staging", () => {
     },
   );
 
+  it("preserves publication and generation cleanup failures through sync", async () => {
+    const { manager, db } = await setup();
+    await manager.sync({ reason: "baseline", force: true });
+    const before = db.prepare("SELECT path, text FROM memory_index_chunks ORDER BY path").all();
+    const database: unknown = Reflect.get(manager, "publishedDatabase");
+    if (!(database instanceof MemoryIndexDatabase)) {
+      throw new Error("Expected the manager's published database owner");
+    }
+    const original = new SqliteWorkerError(
+      "controlled publication result failure",
+      "outcome-unknown",
+    );
+    const cleanup = new Error("controlled generation cleanup failure");
+    vi.spyOn(MemoryIndexDatabase.prototype, "publishShadow").mockRejectedValueOnce(original);
+    vi.spyOn(database, "closePublicationWorker")
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(cleanup);
+    const failure: unknown = await manager
+      .sync({ reason: "failure", force: true })
+      .catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(AggregateError);
+    if (!(failure instanceof AggregateError)) {
+      throw new Error("Expected sync and cleanup failures");
+    }
+    expect(failure.cause).toBe(original);
+    expect(failure.errors).toHaveLength(2);
+    expect(failure.errors[0]).toBe(original);
+    expect(failure.errors[1]).toBe(cleanup);
+    expect(String(failure)).toContain(original.message);
+    expect(String(failure)).toContain(cleanup.message);
+    expect(db.prepare("SELECT path, text FROM memory_index_chunks ORDER BY path").all()).toEqual(
+      before,
+    );
+    await manager.sync({ reason: "retry", force: true });
+    expect(db.prepare("SELECT path, text FROM memory_index_chunks ORDER BY path").all()).toEqual(
+      before,
+    );
+  });
+
   it("drains accepted staging before manager close releases its database", async () => {
     const { manager, db } = await setup();
     const entered = createDeferred<void>();

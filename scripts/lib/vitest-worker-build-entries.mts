@@ -1,5 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { logbookSqliteBackendEntrypoint } from "../../extensions/logbook/src/sqlite-backend-entrypoint.test-support.ts";
+import { memoryPublicationFaultEntrypoint } from "../../extensions/memory-core/src/memory/manager-publication-fault-entrypoint.test-support.ts";
 import { qaGatewayCleanupRuntimeEntrypoint } from "../../extensions/qa-lab/src/gateway-child-artifacts-runtime.test-support.ts";
 import { teamReportsSqliteBackendEntrypoint } from "../../extensions/team-reports/src/sqlite-backend-entrypoint.test-support.ts";
 import { workboardSqliteBackendEntrypoint } from "../../extensions/workboard/src/sqlite-backend-entrypoint.test-support.ts";
@@ -61,6 +62,7 @@ export const vitestWorkerBuildEntries = {
   ...Object.fromEntries(
     [
       agentWorkerStoreFixtureEntrypoint,
+      memoryPublicationFaultEntrypoint,
       ...Object.values(triageTestRuntimeEntrypoints),
       ...Object.values(triageMaintenanceRuntimeEntrypoints),
       codeModeRetentionEntrypoint,

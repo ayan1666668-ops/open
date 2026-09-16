@@ -1,6 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { supportsNodeSqliteExtensionLoading } from "openclaw/plugin-sdk/memory-core-host-engine-knn";
 import {
+  assertTransactionUsable,
   openNodeSqliteDatabase,
   resolveExistingSqliteFileUri,
   requestSqliteWorkerOperationAdmission,
@@ -118,6 +119,12 @@ export function openExistingSqliteWorkerBackend(
       }
     };
     return {
+      assertSettled() {
+        assertTransactionUsable(db);
+        if (!db.isOpen || db.isTransaction) {
+          throw new Error("Memory publication left an unsettled native connection");
+        }
+      },
       execute(command) {
         assertPath();
         if (command.type === "stage.start") {

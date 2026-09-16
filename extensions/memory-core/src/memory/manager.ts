@@ -458,13 +458,14 @@ export class MemoryIndexManager extends MemorySearchOrchestration implements Mem
             await this.runSync(params).then(
               () => this.publishedDatabase.closePublicationWorker(),
               async (error: unknown) => {
-                try {
-                  await this.publishedDatabase.closePublicationWorker();
-                } catch (cleanupError) {
+                const [cleanup] = await Promise.allSettled([
+                  this.publishedDatabase.closePublicationWorker(),
+                ]);
+                if (cleanup.status === "rejected") {
                   throw new AggregateError(
-                    [error, cleanupError],
-                    "Memory sync and cleanup failed",
-                    { cause: cleanupError },
+                    [error, cleanup.reason],
+                    `${String(error)}; Memory sync cleanup failed: ${String(cleanup.reason)}`,
+                    { cause: error },
                   );
                 }
                 throw error;

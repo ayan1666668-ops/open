@@ -11,6 +11,8 @@ export type SqliteWorkerCommand<Operations extends SqliteWorkerOperations> = {
 
 export type SqliteWorkerBackend<Operations extends SqliteWorkerOperations> = {
   execute(command: SqliteWorkerCommand<Operations>): Operations[keyof Operations]["output"];
+  /** Synchronously reject native state that requires retirement before releasing the operation. */
+  assertSettled?(): void;
   close(): void | Promise<void>;
 };
 

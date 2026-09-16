@@ -44,6 +44,7 @@ export {
   prepareSqliteReadOnlyLocationSync,
 } from "../infra/sqlite-snapshot-source.js";
 export {
+  assertTransactionUsable,
   runSqliteImmediateTransaction,
   runSqliteImmediateTransactionSync,
 } from "../infra/sqlite-transaction.js";

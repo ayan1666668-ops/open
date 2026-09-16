@@ -182,6 +182,102 @@ describe("bounded memory publication transfer", () => {
     expect(owner.db.prepare("SELECT * FROM memory_index_sources").all()).toEqual([]);
   });
 
+  it.each([false, true])(
+    "preserves the failed publication outcome (close failure: %s)",
+    async (failClose) => {
+      const owner = createOwner();
+      const original = Object.assign(new Error("publication result unavailable"), {
+        code: "outcome-unknown",
+      });
+      const cleanup = new Error("publication close failed");
+      const commands: string[] = [];
+      let closed = false;
+      const run = sqliteRuntime.runSqliteWorkerStoreWrite;
+      vi.spyOn(sqliteRuntime, "runSqliteWorkerStoreWrite").mockImplementation(
+        (store, operation, assertCurrent, nativeLocations) =>
+          run(
+            store,
+            (scope) =>
+              operation({
+                execute: async (command) => {
+                  commands.push(command.type);
+                  if (command.type === "source.replace") {
+                    throw original;
+                  }
+                  if (command.type === "stage.discard") {
+                    throw new Error("retired publication scope");
+                  }
+                  return scope.execute(command);
+                },
+              }),
+            assertCurrent,
+            nativeLocations,
+          ),
+      );
+      const open = sqliteRuntime.openSqliteWorkerStore;
+      vi.spyOn(sqliteRuntime, "openSqliteWorkerStore").mockImplementation(async (options) => {
+        const store = await open(options);
+        if (store) {
+          const close = store.close.bind(store);
+          vi.spyOn(store, "close").mockImplementationOnce(async () => {
+            await close();
+            closed = true;
+            if (failClose) {
+              throw cleanup;
+            }
+          });
+        }
+        return store;
+      });
+      const result = owner.replaceSource(
+        replacement(),
+        () => undefined,
+        async () => true,
+      );
+      if (failClose) {
+        const failure: unknown = await result.catch((error: unknown) => error);
+        expect(failure).toBeInstanceOf(AggregateError);
+        if (!(failure instanceof AggregateError)) {
+          throw new Error("Expected publication and cleanup failures");
+        }
+        expect(failure.cause).toBe(original);
+        expect(failure.errors).toHaveLength(2);
+        expect(failure.errors[0]).toBe(original);
+        expect(failure.errors[1]).toBe(cleanup);
+        expect(String(failure)).toContain(original.message);
+        expect(String(failure)).toContain(cleanup.message);
+        await owner.closePublicationWorker();
+      } else {
+        await expect(result).rejects.toBe(original);
+      }
+      expect(closed).toBe(true);
+      expect(commands).toEqual(["stage.start", "stage.append", "source.replace"]);
+      expect(owner.db.prepare("SELECT * FROM memory_index_sources").all()).toEqual([]);
+    },
+  );
+
+  it("discards declined preparation and reuses its healthy publication owner", async () => {
+    const owner = createOwner();
+    const open = vi.spyOn(sqliteRuntime, "openSqliteWorkerStore");
+    await expect(
+      owner.replaceSource(
+        replacement("declined"),
+        () => undefined,
+        async () => false,
+      ),
+    ).resolves.toBeUndefined();
+    expect(owner.db.prepare("SELECT * FROM memory_index_sources").all()).toEqual([]);
+    await owner.replaceSource(
+      replacement("accepted"),
+      () => undefined,
+      async () => true,
+    );
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(owner.db.prepare("SELECT text FROM memory_index_chunks").all()).toEqual([
+      { text: "accepted" },
+    ]);
+  });
+
   it("roundtrips an oversized Unicode record and its metadata through the native publication owner", async () => {
     const owner = createOwner();
     // Non-BMP text spans many fragment boundaries, including pairs whose halves
