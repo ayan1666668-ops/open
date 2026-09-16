@@ -10,7 +10,11 @@ import {
   createAttachedChannelResultAdapter,
 } from "openclaw/plugin-sdk/channel-send-result";
 import { resolveMarkdownTableMode } from "openclaw/plugin-sdk/markdown-table-runtime";
-import { resolveChunkMode, resolveTextChunkLimit } from "openclaw/plugin-sdk/reply-chunking";
+import {
+  chunkMarkdownTextWithMode,
+  resolveChunkMode,
+  resolveTextChunkLimit,
+} from "openclaw/plugin-sdk/reply-chunking";
 import {
   getReplyPayloadTtsSupplement,
   resolvePayloadMediaUrls,
@@ -252,19 +256,46 @@ async function sendCommentThreadReply(params: {
     supportsBlockTables: false,
   });
   const content = convertMarkdownTables(params.text, tableMode);
+  // Core chunks raw text before channel rendering, so the conversion above can push
+  // a unit past the limit it was cut to. Re-chunk after the expansion, the way the
+  // post path below and the inbound comment dispatcher already do, so a fence is
+  // closed and reopened rather than cut in half.
+  const chunks = chunkMarkdownTextWithMode(
+    content,
+    resolveTextChunkLimit(params.cfg, "feishu", params.accountId, {
+      fallbackLimit: FEISHU_TEXT_CHUNK_LIMIT,
+    }),
+    resolveChunkMode(params.cfg, "feishu", params.accountId),
+  );
   const replyId = params.replyId?.trim();
   try {
-    const result = await deliverCommentThreadText(client, {
-      file_token: target.fileToken,
-      file_type: target.fileType,
-      comment_id: target.commentId,
-      content,
-    });
+    const results: Awaited<ReturnType<typeof deliverCommentThreadText>>[] = [];
+    const sources: FeishuReplyDeliverySource[] = [];
+    for (const chunk of chunks.length ? chunks : [content]) {
+      try {
+        const result = await deliverCommentThreadText(client, {
+          file_token: target.fileToken,
+          file_type: target.fileType,
+          comment_id: target.commentId,
+          content: chunk,
+        });
+        // Record acceptance before a later chunk can fail.
+        results.push(result);
+        sources.push({
+          messageId:
+            (result.delivery_mode === "reply_comment" ? result.reply_id : result.comment_id) ?? "",
+        });
+      } catch (error) {
+        throw partialFeishuSendError(error, sources);
+      }
+    }
+    const first = results[0]!;
     return {
-      messageId:
-        (result.delivery_mode === "reply_comment" ? result.reply_id : result.comment_id) ?? "",
+      // The first reply anchors the thread, which is the identity the shared merge
+      // helper keeps when several sends carry one answer.
+      messageId: sources[0]?.messageId ?? "",
       chatId: target.commentId,
-      result,
+      result: first,
     };
   } finally {
     if (replyId) {

@@ -2973,6 +2973,57 @@ describe("feishuOutbound.sendText replyToId forwarding", () => {
     }
   });
 
+  it("re-chunks a converted comment table at the selected account limit", async () => {
+    await sendText({
+      cfg: {
+        channels: {
+          feishu: {
+            accounts: {
+              main: { textChunkLimit: 50, markdown: { tables: "code" } },
+            },
+          },
+        },
+      },
+      to: "comment:docx:doxcn123:7623358762119646411",
+      text: tableMarkdown,
+      accountId: "main",
+    });
+
+    const contents = deliverCommentThreadTextMock.mock.calls.map((_call, index) =>
+      String(commentThreadParams(index)?.content ?? ""),
+    );
+    // The case only means anything while the source fits the limit and the fence
+    // conversion pushes it past, which is the unit the core planner handed over.
+    expect(tableMarkdown.length).toBeLessThanOrEqual(50);
+    expect(convertMarkdownTables(tableMarkdown, "code").length).toBeGreaterThan(50);
+    expect(contents.length).toBeGreaterThan(1);
+    for (const content of contents) {
+      expect(content.length).toBeLessThanOrEqual(50);
+    }
+    expect(contents.join("")).toContain("Ada");
+    expect(contents.join("")).toContain("Lead");
+  });
+
+  it("keeps a comment that fits in one delivery", async () => {
+    await sendText({
+      cfg: {
+        channels: {
+          feishu: {
+            accounts: {
+              main: { textChunkLimit: 50, markdown: { tables: "code" } },
+            },
+          },
+        },
+      },
+      to: "comment:docx:doxcn123:7623358762119646411",
+      text: "Looks good to me.",
+      accountId: "main",
+    });
+
+    expect(deliverCommentThreadTextMock).toHaveBeenCalledOnce();
+    expect(commentThreadParams()?.content).toBe("Looks good to me.");
+  });
+
   it("re-chunks expanded post-md text at the serialized byte envelope", async () => {
     await sendText({
       cfg: {
