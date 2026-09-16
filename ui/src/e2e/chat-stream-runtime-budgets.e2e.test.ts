@@ -188,7 +188,7 @@ async function installRenderProbe(page: ChatFlowPage) {
       "lit-runtime",
       "index",
     ];
-    const sourceNames = [
+    const sourceNames = new Set([
       "chat-state-render",
       "chat-state-controller",
       "chat-state-events",
@@ -200,7 +200,7 @@ async function installRenderProbe(page: ChatFlowPage) {
       "subscriptions-controller",
       "poll-controller",
       "reactive-element",
-    ];
+    ]);
     const classifyCaller = (frame: string): string => {
       const location = frame.match(/\/([^/\s?#]+)\.(js|ts)(?:\?[^\s]*)?:(\d{1,7}):(\d{1,7})\)?$/);
       const name = location?.[1] ?? "";
@@ -209,7 +209,7 @@ async function installRenderProbe(page: ChatFlowPage) {
           name.startsWith(`${prefix}-`) &&
           /^[A-Za-z0-9_-]{1,64}$/.test(name.slice(prefix.length + 1)),
       );
-      return location && (knownChunk || sourceNames.includes(name))
+      return location && (knownChunk || sourceNames.has(name))
         ? `${name}.${location[2]}:${location[3]}:${location[4]}`
         : "unknown";
     };
