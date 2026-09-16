@@ -698,7 +698,10 @@ suite.define(() => {
           .getByRole("button", { name: "Remove", exact: true })
           .click();
         await gateway.waitForRequest("plugins.uninstall", { after: uninstallCount });
-        await gateway.setMethodResponse("plugins.list", { ...inventory, plugins: [calendar] });
+        await gateway.setMethodResponse("plugins.list", {
+          ...inventory,
+          plugins: inventory.plugins.filter((plugin) => plugin.id !== workboard.id),
+        });
         await gateway.resolveDeferred("plugins.uninstall");
         await page.locator('[data-plugin-id="calendar"]').waitFor();
         expect(await page.locator('[data-plugin-id="workboard"]').count()).toBe(0);
