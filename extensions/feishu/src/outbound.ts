@@ -241,6 +241,7 @@ async function sendCommentThreadReply(params: {
   text: string;
   replyId?: string;
   accountId?: string;
+  onDeliveryResult?: FeishuSendTextContext["onDeliveryResult"];
 }) {
   const target = parseFeishuCommentTarget(params.to);
   if (!target) {
@@ -262,10 +263,10 @@ async function sendCommentThreadReply(params: {
   // closed and reopened rather than cut in half.
   const chunks = chunkMarkdownTextWithMode(
     content,
-    resolveTextChunkLimit(params.cfg, "feishu", params.accountId, {
+    resolveTextChunkLimit(params.cfg, "feishu", account.accountId, {
       fallbackLimit: FEISHU_TEXT_CHUNK_LIMIT,
     }),
-    resolveChunkMode(params.cfg, "feishu", params.accountId),
+    resolveChunkMode(params.cfg, "feishu", account.accountId),
   );
   const replyId = params.replyId?.trim();
   try {
@@ -279,24 +280,32 @@ async function sendCommentThreadReply(params: {
           comment_id: target.commentId,
           content: chunk,
         });
-        // Record acceptance before a later chunk can fail.
+        // Record acceptance before a callback or later chunk can fail.
         results.push(result);
-        sources.push({
-          messageId:
-            (result.delivery_mode === "reply_comment" ? result.reply_id : result.comment_id) ?? "",
-        });
+        const messageId =
+          (result.delivery_mode === "reply_comment" ? result.reply_id : result.comment_id) ?? "";
+        sources.push({ messageId });
+        // Every physical reply is reported, the way the post path reports each of
+        // its chunks, so a later one is not missing from delivery tracking.
+        await reportFeishuOutboundDelivery(
+          { messageId, chatId: target.commentId },
+          params.onDeliveryResult,
+        );
       } catch (error) {
         throw partialFeishuSendError(error, sources);
       }
     }
-    const first = results[0]!;
-    return {
-      // The first reply anchors the thread, which is the identity the shared merge
-      // helper keeps when several sends carry one answer.
-      messageId: sources[0]?.messageId ?? "",
-      chatId: target.commentId,
-      result: first,
-    };
+    return aggregateFeishuSendResult(
+      {
+        // The first reply anchors the thread, which is the identity the shared merge
+        // helper keeps when several sends carry one answer. The receipt below still
+        // holds every one of them.
+        messageId: sources[0]?.messageId ?? "",
+        chatId: target.commentId,
+        result: results[0]!,
+      },
+      sources,
+    );
   } finally {
     if (replyId) {
       void cleanupAmbientCommentTypingReaction({
@@ -330,9 +339,10 @@ async function sendOutboundText(params: {
     text,
     replyId: replyToMessageId,
     accountId,
+    onDeliveryResult,
   });
   if (commentResult) {
-    return await reportFeishuOutboundDelivery(commentResult, onDeliveryResult);
+    return commentResult;
   }
 
   const account = resolveFeishuAccount({ cfg, accountId });

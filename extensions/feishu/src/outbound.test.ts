@@ -3004,6 +3004,70 @@ describe("feishuOutbound.sendText replyToId forwarding", () => {
     expect(contents.join("")).toContain("Lead");
   });
 
+  it("chunks a converted comment at the account the request resolves to", async () => {
+    await sendText({
+      cfg: {
+        channels: {
+          feishu: {
+            defaultAccount: "work",
+            accounts: {
+              work: { textChunkLimit: 50, markdown: { tables: "code" } },
+              other: {},
+            },
+          },
+        },
+      },
+      to: "comment:docx:doxcn123:7623358762119646411",
+      text: tableMarkdown,
+      // No account id, so the limit has to come from the account the resolver picks.
+      accountId: undefined,
+    });
+
+    const contents = deliverCommentThreadTextMock.mock.calls.map((_call, index) =>
+      String(commentThreadParams(index)?.content ?? ""),
+    );
+    expect(contents.length).toBeGreaterThan(1);
+    for (const content of contents) {
+      expect(content.length).toBeLessThanOrEqual(50);
+    }
+  });
+
+  it("reports every comment chunk it delivers", async () => {
+    deliverCommentThreadTextMock.mockReset();
+    for (const replyId of ["om-c1", "om-c2", "om-c3", "om-c4"]) {
+      deliverCommentThreadTextMock.mockResolvedValueOnce({
+        delivery_mode: "reply_comment",
+        reply_id: replyId,
+      });
+    }
+    const onDeliveryResult = vi.fn();
+
+    const result = await sendText({
+      cfg: {
+        channels: {
+          feishu: {
+            accounts: {
+              main: { textChunkLimit: 50, markdown: { tables: "code" } },
+            },
+          },
+        },
+      },
+      to: "comment:docx:doxcn123:7623358762119646411",
+      text: tableMarkdown,
+      accountId: "main",
+      onDeliveryResult,
+    });
+
+    const delivered = deliverCommentThreadTextMock.mock.calls.length;
+    expect(delivered).toBeGreaterThan(1);
+    // One report per physical reply, and a receipt that holds all of them.
+    expect(onDeliveryResult).toHaveBeenCalledTimes(delivered);
+    const receiptIds = (result as { receipt?: { platformMessageIds?: string[] } }).receipt
+      ?.platformMessageIds;
+    expect(receiptIds).toHaveLength(delivered);
+    expect(receiptIds?.[0]).toBe("om-c1");
+  });
+
   it("keeps a comment that fits in one delivery", async () => {
     await sendText({
       cfg: {
