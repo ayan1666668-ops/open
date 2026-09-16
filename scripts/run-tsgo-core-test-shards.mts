@@ -12,9 +12,11 @@ import {
 import { resolveLocalCheckEnv } from "./lib/local-check-runtime.mts";
 import { runManagedCommand } from "./lib/managed-child-process.mts";
 import { resolveRepoRoot } from "./lib/repo-root.mjs";
+import { buildTsgoCoreTestTypedRuntimeDist } from "./lib/tsgo-core-test-dist-build.mts";
 import {
   selectTsgoCoreTestShards,
   selectChangedTsgoCoreTestShards,
+  selectDistDependentTsgoCoreTestConfigs,
   TSGO_CORE_TEST_SHARDS,
   selectTsgoCoreTestStripe,
 } from "./lib/tsgo-core-test-shards.mts";
@@ -47,6 +49,14 @@ async function runTsgoCoreTestShards(
   // The batch owns outputs once; its existing compiler concurrency stays intact
   // without children waiting to reacquire their parent's lock.
   return await withDistArtifactOwnership(repoRoot, async () => {
+    // A shard owning a dist-dependent test resolves `../../dist/*.js` imports, so
+    // build the typed runtime dist entries first or those imports report TS2307.
+    if (selectDistDependentTsgoCoreTestConfigs(shards).length > 0) {
+      const buildCode = await buildTsgoCoreTestTypedRuntimeDist(env);
+      if (buildCode !== 0) {
+        return buildCode;
+      }
+    }
     const queue = [...shards];
     let failureCode = 0;
     const workers = Array.from({ length: Math.min(concurrency, queue.length) }, async () => {
