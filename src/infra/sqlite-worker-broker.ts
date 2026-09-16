@@ -365,12 +365,6 @@ export class SqliteWorkerBroker {
         await Promise.race([...this.slots].map((slot) => slot.exit));
         return this.acquireSlot();
       }
-      if (process.versions.bun) {
-        throw new SqliteWorkerError(
-          "Bun SQLite workers support at most four distinct open databases; close a store or use Node",
-          "overloaded",
-        );
-      }
       const selected = available.reduce((left, right) =>
         left.actors.size <= right.actors.size ? left : right,
       );
@@ -625,7 +619,6 @@ export class SqliteWorkerBroker {
       }
       try {
         if (
-          process.versions.bun ||
           actor.slot.failed ||
           (!actor.slot.pendingOpens && [...actor.slot.actors].every((entry) => entry.backendClosed))
         ) {
