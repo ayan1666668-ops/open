@@ -455,6 +455,7 @@ export class ConfigPage extends OpenClawLightDomElement {
     },
   });
   private pendingRouteTargetId: string | null = null;
+  private routeTargetScrollFrame: number | null = null;
   private readonly gateway = new GatewayPageController(this, {
     getGateway: () => this.context?.gateway,
     invalidateRequests: () => this.invalidateSystemInfoRequest(),
@@ -533,6 +534,7 @@ export class ConfigPage extends OpenClawLightDomElement {
   }
 
   override disconnectedCallback() {
+    this.cancelRouteTargetScroll();
     window.removeEventListener(
       SIDEBAR_HIDDEN_SESSION_CATALOGS_CHANGED_EVENT,
       this.hiddenSessionCatalogsChanged,
@@ -632,6 +634,7 @@ export class ConfigPage extends OpenClawLightDomElement {
   }
 
   private syncRouteData() {
+    this.cancelRouteTargetScroll();
     // Pre-restructure deep links: sections that moved to their own page must
     // redirect before normalization discards them from the old page's list.
     const rawSection = this.routeData
@@ -660,19 +663,35 @@ export class ConfigPage extends OpenClawLightDomElement {
     this.pendingRouteTargetId = targetBlockId;
   }
 
-  private scrollToPendingRouteTarget() {
-    const targetId = this.pendingRouteTargetId;
-    if (!targetId) {
-      return;
+  private cancelRouteTargetScroll() {
+    if (this.routeTargetScrollFrame !== null) {
+      cancelAnimationFrame(this.routeTargetScrollFrame);
+      this.routeTargetScrollFrame = null;
     }
-    const target = [...this.renderRoot.querySelectorAll<HTMLElement>("[id]")].find(
-      (element) => element.id === targetId,
-    );
-    if (!target) {
-      return;
-    }
-    target.scrollIntoView?.({ behavior: resolveScrollBehavior(), block: "start" });
     this.pendingRouteTargetId = null;
+  }
+
+  private scrollToPendingRouteTarget() {
+    if (!this.pendingRouteTargetId || this.routeTargetScrollFrame !== null) {
+      return;
+    }
+    // Starting smooth scroll during the navigation render can leave Chromium
+    // at the old offset. Resolve the latest target after that render settles.
+    this.routeTargetScrollFrame = requestAnimationFrame(() => {
+      this.routeTargetScrollFrame = null;
+      const targetId = this.pendingRouteTargetId;
+      if (!this.isConnected || !targetId) {
+        return;
+      }
+      const target = [...this.renderRoot.querySelectorAll<HTMLElement>("[id]")].find(
+        (element) => element.id === targetId,
+      );
+      if (!target) {
+        return;
+      }
+      target.scrollIntoView?.({ behavior: resolveScrollBehavior(), block: "start" });
+      this.pendingRouteTargetId = null;
+    });
   }
 
   private isSystemInfoVisible(): boolean {
