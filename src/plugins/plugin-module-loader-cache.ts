@@ -10,6 +10,7 @@ import { toSafeImportPath } from "../shared/import-specifier.js";
 import { createJiti } from "./jiti-factory.js";
 import {
   clearPluginModuleRequireCache,
+  isPluginSourceModulePath,
   tryNativeRequireJavaScriptModule,
   tryNativeRequireModule,
 } from "./native-module-require.js";
@@ -90,6 +91,35 @@ function toSourceTransformImportPath(specifier: string): string {
   return toSafeImportPath(specifier);
 }
 
+function resolveNativeTypeScriptPeer(specifier: string, parent?: string): string | undefined {
+  if (!parent || !specifier.startsWith(".") || !isPluginSourceModulePath(parent)) {
+    return undefined;
+  }
+  const extension = path.extname(specifier).toLowerCase();
+  const sourceExtension =
+    extension === ".js"
+      ? ".ts"
+      : extension === ".mjs"
+        ? ".mts"
+        : extension === ".cjs"
+          ? ".cts"
+          : extension === ".jsx"
+            ? ".tsx"
+            : undefined;
+  if (!sourceExtension) {
+    return undefined;
+  }
+  const requested = path.resolve(path.dirname(parent), specifier);
+  if (fs.existsSync(requested)) {
+    return undefined;
+  }
+  const target = path.resolve(
+    path.dirname(parent),
+    `${specifier.slice(0, -extension.length)}${sourceExtension}`,
+  );
+  return fs.existsSync(target) ? target : undefined;
+}
+
 function resolveAutomaticJitiTsconfig(loaderFilename: string): string | undefined {
   const enabled = process.env.JITI_TSCONFIG_PATHS;
   if (enabled !== "1" && enabled !== "true") {
@@ -161,7 +191,7 @@ function createBunJitiImportCachePlugin(babel: {
             "body",
             babel.template.statements.ast(`
               var ${cache.name};
-              function ${load.name}(specifier) {
+              function ${load.name}(specifier, ...args) {
                 let entry = ${cache.name};
                 while (entry) {
                   if (entry.specifier === specifier) {
@@ -171,7 +201,7 @@ function createBunJitiImportCachePlugin(babel: {
                 }
                 const pending = (async () => {
                   await 0;
-                  return jitiImport(specifier);
+                  return jitiImport(specifier, ...args);
                 })();
                 ${cache.name} = { specifier, pending, next: ${cache.name} };
                 return pending;
@@ -285,6 +315,9 @@ function createPluginModuleLoader(
                 }
                 const native = tryNativeRequireModule(target, {
                   allowWindows: true,
+                  aliasMap: (specifier, parent) =>
+                    params.resolveAlias(specifier) ??
+                    resolveNativeTypeScriptPeer(specifier, parent),
                   fallbackOnMissingDependency: true,
                 });
                 return native.ok ? native.moduleExport : jitiLoader(target);

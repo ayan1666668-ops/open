@@ -46,6 +46,7 @@ export function bindNativePluginInstanceModuleLoader(
   artifact: ReturnType<typeof capturePluginGenerationArtifact>,
   loader: PluginModuleLoader,
   sdkRoots: readonly string[],
+  prepareEntryNativeScopes: boolean,
 ): void {
   const bun: import("./native-module-require.js").BunPluginRuntime | undefined = Reflect.get(
     globalThis,
@@ -66,31 +67,35 @@ export function bindNativePluginInstanceModuleLoader(
   };
   params.instance.lifecycle.onDispose(
     registerCapturedPluginModuleResolver({
-      load(request) {
-        if (!jsxEnabled || !bun || !artifact.sourceForCaptured(request)) {
-          return undefined;
-        }
-        const extension = path.extname(request).toLowerCase();
-        const sourceLoader = extension === ".jsx" ? "jsx" : "tsx";
-        let transpiler = jsxTranspilers.get(sourceLoader);
-        if (!transpiler) {
-          transpiler = new bun.Transpiler({
-            loader: sourceLoader,
-            tsconfig: {
-              compilerOptions: {
-                jsx: "react",
-                jsxFactory: "React.createElement",
-                jsxFragmentFactory: "React.Fragment",
-              },
+      ...(jsxEnabled && bun
+        ? {
+            load(request: string) {
+              if (!artifact.sourceForCaptured(request)) {
+                return undefined;
+              }
+              const extension = path.extname(request).toLowerCase();
+              const sourceLoader = extension === ".jsx" ? "jsx" : "tsx";
+              let transpiler = jsxTranspilers.get(sourceLoader);
+              if (!transpiler) {
+                transpiler = new bun.Transpiler({
+                  loader: sourceLoader,
+                  tsconfig: {
+                    compilerOptions: {
+                      jsx: "react" as const,
+                      jsxFactory: "React.createElement",
+                      jsxFragmentFactory: "React.Fragment",
+                    },
+                  },
+                });
+                jsxTranspilers.set(sourceLoader, transpiler);
+              }
+              return {
+                contents: transpiler.transformSync(fs.readFileSync(request, "utf8")),
+                loader: "js" as const,
+              };
             },
-          });
-          jsxTranspilers.set(sourceLoader, transpiler);
-        }
-        return {
-          contents: transpiler.transformSync(fs.readFileSync(request, "utf8")),
-          loader: "js",
-        };
-      },
+          }
+        : {}),
       prepare(request, parent, kind) {
         // Resolved URLs and built relative imports retain the selected host SDK's identity.
         const original = artifact.sourceForCaptured(parent);
@@ -242,6 +247,9 @@ export function bindNativePluginInstanceModuleLoader(
       withPluginCache(cache, () => {
         const captured = artifact.resolve(source, rejectHardlinks);
         artifact.prepareModule(captured);
+        if (prepareEntryNativeScopes) {
+          artifact.prepareNativeScopes(captured);
+        }
         return loader(toSafeImportPath(captured));
       }),
     artifact.hasSource,

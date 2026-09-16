@@ -75,6 +75,7 @@ type BunPluginImportKind =
   | "entry-point-run"
   | "entry-point-build";
 export type BunPluginRuntime = {
+  resolveSync?: (specifier: string, parent: string) => string;
   Transpiler: new (options: {
     loader: "jsx" | "tsx";
     tsconfig: {
@@ -104,10 +105,50 @@ export type BunPluginRuntime = {
   }): void;
 };
 
+const bunRuntimeOnResolveProbe = resolveGlobalSingleton(
+  Symbol.for("openclaw.bunRuntimeOnResolveProbe"),
+  () => ({ tested: false, supported: false }),
+);
+
+/** Whether Bun can redirect runtime-computed specifiers through public onResolve hooks. */
+export function supportsBunRuntimeOnResolveTargets(): boolean {
+  if (bunRuntimeOnResolveProbe.tested) {
+    return bunRuntimeOnResolveProbe.supported;
+  }
+  bunRuntimeOnResolveProbe.tested = true;
+  const bun = (globalThis as typeof globalThis & { Bun?: BunPluginRuntime }).Bun;
+  if (!bun?.resolveSync) {
+    return false;
+  }
+  const specifier = "openclaw-bun-runtime-onresolve-probe";
+  const target = fileURLToPath(import.meta.url);
+  let seen = false;
+  try {
+    bun.plugin({
+      name: specifier,
+      setup(builder) {
+        builder.onResolve(
+          { filter: /^openclaw-bun-runtime-onresolve-probe$/u, namespace: "file" },
+          () => {
+            seen = true;
+            return { path: target, namespace: "file" };
+          },
+        );
+      },
+    });
+    bunRuntimeOnResolveProbe.supported =
+      bun.resolveSync(specifier, path.dirname(target)) === target && seen;
+  } catch {
+    bunRuntimeOnResolveProbe.supported = false;
+  }
+  return bunRuntimeOnResolveProbe.supported;
+}
+
 const capturedModuleResolvers = resolveGlobalSingleton(
   Symbol.for("openclaw.capturedModuleResolvers"),
   () => ({
     installed: false,
+    loaderInstalled: false,
     resolving: false,
     owners: new Set<CapturedModuleBinding>(),
   }),
@@ -135,9 +176,9 @@ function resolveCapturedPluginModule<T>(
 
 /** Captured parents retain their resolver while their instance's consumers drain. */
 export function registerCapturedPluginModuleResolver(binding: CapturedModuleBinding): () => void {
+  // SAFETY: Bun supplies this synchronous public API; Node leaves the optional global absent.
+  const bun = (globalThis as typeof globalThis & { Bun?: BunPluginRuntime }).Bun;
   if (!capturedModuleResolvers.installed) {
-    // SAFETY: Bun supplies this synchronous public API; Node leaves the optional global absent.
-    const bun = (globalThis as typeof globalThis & { Bun?: BunPluginRuntime }).Bun;
     bun?.plugin({
       name: "openclaw-plugin-source-capture",
       setup(builder) {
@@ -150,17 +191,6 @@ export function registerCapturedPluginModuleResolver(binding: CapturedModuleBind
             // Package selection stays native; owners redirect only captured physical source paths.
             return target ? { path: target, namespace: "file" } : undefined;
           },
-        );
-        builder.onLoad(
-          {
-            filter: /openclaw-plugin-build-[^/\\]+[/\\].*\.[cm]?[jt]sx$/u,
-            namespace: "file",
-          },
-          ({ path: modulePath }) =>
-            resolveCapturedPluginModule((owner) => owner.load?.(modulePath)) ?? {
-              contents: fs.readFileSync(modulePath, "utf8"),
-              loader: modulePath.toLowerCase().endsWith(".jsx") ? "jsx" : "tsx",
-            },
         );
       },
     });
@@ -179,6 +209,25 @@ export function registerCapturedPluginModuleResolver(binding: CapturedModuleBind
       };
     }
     capturedModuleResolvers.installed = true;
+  }
+  if (binding.load && bun && !capturedModuleResolvers.loaderInstalled) {
+    bun.plugin({
+      name: "openclaw-plugin-source-jsx",
+      setup(builder) {
+        builder.onLoad(
+          {
+            filter: /openclaw-plugin-build-[^/\\]+[/\\].*\.[cm]?[jt]sx$/u,
+            namespace: "file",
+          },
+          ({ path: modulePath }) =>
+            resolveCapturedPluginModule((owner) => owner.load?.(modulePath)) ?? {
+              contents: fs.readFileSync(modulePath, "utf8"),
+              loader: modulePath.toLowerCase().endsWith(".jsx") ? "jsx" : "tsx",
+            },
+        );
+      },
+    });
+    capturedModuleResolvers.loaderInstalled = true;
   }
   capturedModuleResolvers.owners.add(binding);
   return () => {
@@ -237,7 +286,9 @@ export function tryNativeRequireModule(
   moduleSpecifier: string,
   options: {
     allowWindows?: boolean;
-    aliasMap?: Record<string, string> | ((specifier: string) => string | undefined);
+    aliasMap?:
+      | Record<string, string>
+      | ((specifier: string, parent?: string) => string | undefined);
     fallbackOnMissingDependency?: boolean;
     fallbackOnNativeError?: boolean;
   } = {},
@@ -319,7 +370,10 @@ function toNativeRequirePath(specifier: string): string {
 
 /** Runs a native require block with temporary CJS/ESM alias hooks and restores both afterward. */
 function withNativeRequireAliases<T>(
-  aliasMap: Record<string, string> | ((specifier: string) => string | undefined) | undefined,
+  aliasMap:
+    | Record<string, string>
+    | ((specifier: string, parent?: string) => string | undefined)
+    | undefined,
   run: () => T,
 ): T {
   if (!aliasMap || !moduleWithResolver["_resolveFilename"]) {
@@ -330,7 +384,10 @@ function withNativeRequireAliases<T>(
   const originalResolveFilename = moduleWithResolver["_resolveFilename"];
   const esmHooks = moduleWithResolver.registerHooks?.({
     resolve(specifier, context, nextResolve) {
-      const aliasTarget = resolveAlias(specifier);
+      const parent = context.parentURL?.startsWith("file:")
+        ? fileURLToPath(context.parentURL)
+        : undefined;
+      const aliasTarget = resolveAlias(specifier, parent);
       if (aliasTarget) {
         return {
           shortCircuit: true,
@@ -341,7 +398,7 @@ function withNativeRequireAliases<T>(
     },
   });
   moduleWithResolver["_resolveFilename"] = ((request, parent, isMain, options) => {
-    const aliasTarget = resolveAlias(request);
+    const aliasTarget = resolveAlias(request, parent?.filename);
     if (aliasTarget) {
       return aliasTarget;
     }

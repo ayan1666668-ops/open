@@ -160,6 +160,17 @@ describe("getCachedPluginModuleLoader", () => {
           };
           assert.equal(loadSdkFixture("enum", "enum State { Ready }\\nexport const ready = State.Ready;")().ready, 0);
           assert.equal(loadSdkFixture("source-host/node_modules/sdk/index", "export const ready: number = 1;")().ready, 1);
+          const peerRoot = path.join(root, "peers");
+          fs.mkdirSync(peerRoot);
+          fs.writeFileSync(path.join(peerRoot, "sdk.mts"), 'export { value } from "./peer.mjs";');
+          fs.writeFileSync(path.join(peerRoot, "peer.mjs"), 'export const value = "javascript";');
+          fs.writeFileSync(path.join(peerRoot, "peer.mts"), 'export const value = "typescript";');
+          fs.writeFileSync(path.join(peerRoot, "entry.ts"), 'export * from "openclaw/plugin-sdk/fixture";');
+          const peerLoader = getCachedPluginModuleLoader({
+            modulePath: path.join(peerRoot, "entry.ts"), importerUrl: import.meta.url, tryNative: false,
+            aliasMap: { "openclaw/plugin-sdk/fixture": path.join(peerRoot, "sdk.mts") },
+          });
+          assert.equal(peerLoader(path.join(peerRoot, "entry.ts")).value, "javascript");
           const broken = loadSdkFixture("broken", 'globalThis.sdkEvaluations = (globalThis.sdkEvaluations ?? 0) + 1; throw new Error("SDK evaluation failed");');
           assert.throws(broken, /SDK evaluation failed/);
           assert.equal(globalThis.sdkEvaluations, 1, "terminal native failures must not evaluate SDK source twice");

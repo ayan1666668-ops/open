@@ -5,7 +5,11 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import type { JitiOptions, JitiResolveOptions } from "jiti";
 import { toSafeImportPath } from "../shared/import-specifier.js";
 import { createJiti } from "./jiti-factory.js";
-import { isJavaScriptModulePath, isPluginSourceModulePath } from "./native-module-require.js";
+import {
+  isJavaScriptModulePath,
+  isPluginSourceModulePath,
+  supportsBunRuntimeOnResolveTargets,
+} from "./native-module-require.js";
 import type { PluginModuleLoader } from "./plugin-cache-artifacts.js";
 import {
   bindPluginCacheRoot,
@@ -29,7 +33,11 @@ import {
   type PluginSourceLoadMode,
 } from "./plugin-source-build.js";
 import { inspectPluginTypeScriptExecutionFacts } from "./plugin-source-references.js";
-import { preparePluginLoaderAliases, isPluginSdkAliasSpecifier } from "./sdk-alias.js";
+import {
+  preparePluginLoaderAliases,
+  isPluginSdkAliasSpecifier,
+  resolvePluginLoaderTryNative,
+} from "./sdk-alias.js";
 
 // Compiled recovery shares process code identity without closing over the
 // binder's predecessor instance or source-graph state.
@@ -157,21 +165,25 @@ export function bindPluginInstanceModuleLoader(params: PluginInstanceModuleLoade
       }
     }
     const bunNeedsNativeSource =
-      bunSourceFacts?.hasComputedImport === true ||
-      bunSourceFacts?.staticImports.some(
-        ({ specifier, sideEffect }) => sideEffect && /\.cjs(?:[?#].*)?$/u.test(specifier),
-      ) === true;
+      Boolean(process.versions.bun) &&
+      supportsBunRuntimeOnResolveTargets() &&
+      (bunSourceFacts?.hasComputedImport === true ||
+        bunSourceFacts?.staticImports.some(
+          ({ specifier, sideEffect }) => sideEffect && /\.cjs(?:[?#].*)?$/u.test(specifier),
+        ) === true);
+    const tryNative =
+      process.env.JITI_JSX === "1" || process.env.JITI_JSX === "true"
+        ? false
+        : (process.versions.bun && artifact.boundaryRoot.includes("\\")) || bunNeedsNativeSource
+          ? true
+          : undefined;
+    const effectiveTryNative = tryNative ?? resolvePluginLoaderTryNative(params.source);
     const loader = getCachedPluginModuleLoader({
       modulePath: params.source,
       importerUrl: import.meta.url,
       devSourceRoot: params.devSourceRoot,
       pluginSdkResolution: params.pluginSdkResolution,
-      tryNative:
-        process.env.JITI_JSX === "1" || process.env.JITI_JSX === "true"
-          ? false
-          : (process.versions.bun && artifact.boundaryRoot.includes("\\")) || bunNeedsNativeSource
-            ? true
-            : undefined,
+      tryNative,
       aliasMap: {
         ...nativeAliases.getAliasMap(),
         ...artifact.sourceAliases,
@@ -183,6 +195,7 @@ export function bindPluginInstanceModuleLoader(params: PluginInstanceModuleLoade
       artifact,
       loader,
       nativeAliases.sdkRoots,
+      !effectiveTryNative,
     );
     return;
   }
