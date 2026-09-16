@@ -154,7 +154,6 @@ export class PreparedModelRuntimeAuthPublicationOwner {
     transaction: PreparedModelRuntimeAuthTransaction,
     componentOwners: readonly PreparedModelRuntimeOwner[],
     owners: Map<string, PreparedModelRuntimeOwner>,
-    publishOwners: (owners: readonly PreparedModelRuntimeOwner[]) => void,
   ): void {
     if (this.#transaction !== transaction || transaction.adoptedBy) {
       return;
@@ -172,23 +171,8 @@ export class PreparedModelRuntimeAuthPublicationOwner {
         ? [{ owner, gate, snapshot: owner.snapshot }]
         : [],
     );
-    // Dispatch projection must become visible before exact-gate waiters resume.
-    for (const { owner } of completed) {
-      owner.pending = undefined;
-    }
-    try {
-      if (completed.length > 0) {
-        publishOwners(completed.map(({ owner }) => owner));
-      }
-    } catch (error) {
-      for (const { owner, gate } of completed) {
-        if (transaction.ownerGates.get(owner) === gate && owner.pending === undefined) {
-          owner.pending = gate.promise;
-        }
-      }
-      throw error;
-    }
     for (const { owner, gate, snapshot } of completed) {
+      owner.pending = undefined;
       transaction.ownerGates.delete(owner);
       gate.resolve(snapshot);
     }
@@ -226,7 +210,6 @@ export class PreparedModelRuntimeAuthPublicationOwner {
       }>,
       includeCredentialProviders: boolean,
     ) => Promise<void>;
-    publishOwners: (owners: readonly PreparedModelRuntimeOwner[]) => void;
     commit?: () => void;
     onOwnerFailure?: (error: unknown) => void;
   }): Promise<void> {
@@ -242,7 +225,7 @@ export class PreparedModelRuntimeAuthPublicationOwner {
           }
           const transaction = this.#transaction;
           if (transaction) {
-            this.settleComponent(transaction, componentOwners, params.owners, params.publishOwners);
+            this.settleComponent(transaction, componentOwners, params.owners);
           }
         } catch (error) {
           if (this.#transaction?.adoptedBy) {
@@ -306,11 +289,9 @@ export function invalidatePreparedModelRuntimeOwnersForAuthMutation(
   normalizedEvent: PreparedModelRuntimeAuthMutation,
 ): {
   invalidatedOwners: PreparedModelRuntimeOwner[];
-  invalidatedConfiguredAgentIds: Set<string>;
 } {
   const staleError = new Error("prepared model runtime owner is stale after auth mutation");
   const invalidatedOwners: PreparedModelRuntimeOwner[] = [];
-  const invalidatedConfiguredAgentIds = new Set<string>();
   for (const owner of owners.values()) {
     if (
       !normalizedEvent.affectsInheritedStores &&
@@ -325,9 +306,6 @@ export function invalidatePreparedModelRuntimeOwnersForAuthMutation(
     owner.refreshError = staleError;
     if (normalizedEvent.profileSetChanged) {
       owner.catalogStale = true;
-    }
-    if (owner.provenance === "configured" && owner.input.agentId) {
-      invalidatedConfiguredAgentIds.add(owner.input.agentId);
     }
   }
   // Rebind before queueing: readers must find the pending owner while an older build settles.
@@ -347,5 +325,5 @@ export function invalidatePreparedModelRuntimeOwnersForAuthMutation(
     owners.delete(previousKey);
     owners.set(ownerKey(input), owner);
   }
-  return { invalidatedOwners, invalidatedConfiguredAgentIds };
+  return { invalidatedOwners };
 }

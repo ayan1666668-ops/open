@@ -34,7 +34,6 @@ import {
   publishModelRuntimeSnapshot,
   rebindInputToCommittedConfiguredOwner,
   resolvePreparedModelRuntimeOwnerBySnapshot,
-  resolveConfiguredOwnerPublication,
   readPublishedModelRuntimeSnapshot,
   type PreparedModelRuntimeOwner,
   type PreparedModelRuntimeInput,
@@ -45,7 +44,10 @@ import {
   type PreparedModelRuntimeReplacementGateId,
   type PreparedModelRuntimeSnapshot,
 } from "./prepared-model-runtime.owner.js";
-import { releasePreparedPluginPublication } from "./prepared-model-runtime.plugin-lifetime.js";
+import {
+  registerPreparedPluginPublicationRetirement,
+  releasePreparedPluginPublication,
+} from "./prepared-model-runtime.plugin-lifetime.js";
 import {
   notifyPreparedModelRuntimePublication,
   resetPreparedModelRuntimePublicationListenersForTest,
@@ -58,6 +60,7 @@ import {
   collectPreparedModelRuntimeInventories,
   isPreparedModelRuntimeOwnerInRefreshScope,
   listConfiguredRefreshInputs,
+  markPreparedModelRuntimeOwnerStale,
   refreshCommittedProviderCatalogs,
   resolveSafeRefreshAgentIds,
   updateOwnersForScopedRefresh,
@@ -68,7 +71,7 @@ import type {
   PreparedModelCatalogRefreshOptions,
   PreparedModelRuntimeLeaseOptions,
 } from "./prepared-model-runtime.types.js";
-import { PreparedReplyDispatchPublicationOwner } from "./prepared-reply-dispatch-runtime.js";
+import { createGatewayReplyDispatchRuntimeLoader } from "./prepared-reply-dispatch-runtime.js";
 export {
   PreparedModelRuntimeOwnerNotPublishedError,
   preparedModelRuntimeConfigsMatch,
@@ -103,17 +106,11 @@ let refreshRequestEpoch = 0;
 let pendingModelRuntimeReplacement: PreparedModelRuntimeReplacement | undefined;
 const authPublication = new PreparedModelRuntimeAuthPublicationOwner();
 
-const replyDispatchPublication = new PreparedReplyDispatchPublicationOwner({
+export const loadPublishedGatewayReplyDispatchRuntime = createGatewayReplyDispatchRuntimeLoader({
+  getOwners: () => owners.values(),
   isGatewayLifecycleActive: () => gatewayLifecycleActive,
-  getPendingOwnerPublication: (agentId) =>
-    resolveConfiguredOwnerPublication(owners, {
-      agentId,
-      agentDir: ".",
-      config: {},
-    }).pending,
   getPendingReplacement: () => pendingModelRuntimeReplacement?.promise,
 });
-export const loadPublishedGatewayReplyDispatchRuntime = replyDispatchPublication.load;
 
 let releaseProcessLifetime: (() => void) | undefined;
 function captureModelRuntimeLifetime(): () => void {
@@ -127,14 +124,13 @@ async function closeModelRuntime(error: Error): Promise<void> {
   authPublication.reset(error);
   pendingModelRuntimeReplacement?.reject(error);
   pendingModelRuntimeReplacement = undefined;
-  // The final generation owner observes failures after all build and caller joins.
-  void closeEphemeralPreparedModelRuntimeResources().catch(() => {});
   const closingOwners = [...owners.values()];
   owners.clear();
+  // The final generation owner observes failures after all build and caller joins.
+  void closeEphemeralPreparedModelRuntimeResources().catch(() => {});
   retainedDirectRunOwners.clear(owners);
   retainedGatewayRunOwners.clear(owners);
   gatewayLifecycleActive = false;
-  replyDispatchPublication.clear();
   const results = await Promise.allSettled([
     refreshTail,
     ...agentBuildCompletions.values(),
@@ -160,7 +156,6 @@ export function advancePreparedModelRuntimeConfig(config: OpenClawConfig): void 
     }
     advancePreparedModelRuntimeOwnerConfig(owner, config);
   }
-  replyDispatchPublication.advanceConfig(config);
 }
 
 /** Resolves a published owner or activates a standalone lifecycle owner. */
@@ -457,7 +452,6 @@ export function markPreparedModelRuntimeSnapshotsStale(
   } = {},
 ): PreparedModelRuntimeReplacementGateId | undefined {
   captureModelRuntimeLifetime();
-  replyDispatchPublication.clear();
   if (options.waitForReplacement) {
     const superseded = pendingModelRuntimeReplacement;
     pendingModelRuntimeReplacement = createPreparedModelRuntimeReplacement();
@@ -610,7 +604,6 @@ export function refreshPreparedModelRuntimeSnapshots(
       return;
     }
     const adoptedAuthTransaction = authPublication.prepareAdoptedCommit(replacement.gateId);
-    replyDispatchPublication.rebuild(owners.values());
     pendingModelRuntimeReplacement = undefined;
     if (adoptedAuthTransaction) {
       authPublication.resolve(adoptedAuthTransaction, owners);
@@ -641,7 +634,7 @@ export function refreshPreparedModelRuntimeSnapshots(
       return;
     }
     await drainPendingAuthMutations(
-      // The final queue check, dispatch rebuild, and replacement resolution are one synchronous
+      // The final queue check and replacement resolution are one synchronous
       // commit. A mutation before it is adopted; a mutation after it starts a new auth transaction.
       commitReplacement,
     );
@@ -673,7 +666,6 @@ async function drainPendingAuthMutations(commit?: () => void): Promise<void> {
         ...(includeCredentialProviders ? { includeCredentialProviders: true } : {}),
         reusePluginGenerations: true,
       }),
-    publishOwners: (publishedOwners) => replyDispatchPublication.replace(publishedOwners),
     commit,
     onOwnerFailure: (error) => {
       const refreshError = toStringifiedError(error);
@@ -688,14 +680,15 @@ function invalidateForAuthMutation(event: PreparedModelRuntimeAuthMutation): voi
     ...event,
     agentDir: normalizeOptionalDir(event.agentDir),
   };
-  const { invalidatedOwners, invalidatedConfiguredAgentIds } =
-    invalidatePreparedModelRuntimeOwnersForAuthMutation(owners, normalizedEvent);
+  const { invalidatedOwners } = invalidatePreparedModelRuntimeOwnersForAuthMutation(
+    owners,
+    normalizedEvent,
+  );
   if (invalidatedOwners.length === 0) {
     // A first owner reads the already-published auth snapshot while it builds. Replaying an earlier
     // mutation would immediately stale that initial generation even though no prior owner existed.
     return;
   }
-  replyDispatchPublication.remove(invalidatedConfiguredAgentIds);
   const transaction = authPublication.enqueue(invalidatedOwners, normalizedEvent.profileSetChanged);
   if (pendingModelRuntimeReplacement) {
     // The active config transaction drains this event before its atomic dispatch commit. Retire
@@ -710,9 +703,9 @@ function invalidateForAuthMutation(event: PreparedModelRuntimeAuthMutation): voi
   }
   const publication = enqueuePreparedModelRuntimePublication(async () => {
     // A pending replacement gate means a queued config publication owns the next generation:
-    // it drains queued auth mutations against the new config and rebuilds/announces the
-    // dispatch publication. Rebuilding here would revive stale owners with the old config or
-    // throw on them, emitting a spurious failed/published event that wedges chat metadata.
+    // it drains queued auth mutations against the new config and announces publication.
+    // Publishing here would revive stale owners with the old config or emit a spurious
+    // failed/published event that wedges chat metadata.
     if (pendingModelRuntimeReplacement) {
       authPublication.adoptTransaction(transaction, pendingModelRuntimeReplacement.gateId);
       return;
@@ -750,6 +743,41 @@ function invalidateForAuthMutation(event: PreparedModelRuntimeAuthMutation): voi
     log.warn(`auth-triggered model runtime refresh failed: ${String(refreshError)}`);
   });
 }
+
+registerPreparedPluginPublicationRetirement((owner) => {
+  if (owners.get(ownerKey(owner.input)) !== owner) {
+    return;
+  }
+  markPreparedModelRuntimeOwnerStale(
+    owner,
+    new Error("Prepared model runtime plugin generation retired"),
+    { resetPluginGeneration: true },
+  );
+  const agentId = owner.input.agentId;
+  if (!gatewayLifecycleActive || owner.provenance !== "configured" || !agentId) {
+    return;
+  }
+  void enqueuePreparedModelRuntimePublication(async () => {
+    if (
+      !gatewayLifecycleActive ||
+      pendingModelRuntimeReplacement ||
+      owners.get(ownerKey(owner.input)) !== owner ||
+      !owner.needsRefresh
+    ) {
+      return;
+    }
+    // A queued replacement already owns recovery. Otherwise schedule our successor after
+    // this queue entry; awaiting it here would wait on ourselves.
+    void refreshPreparedModelRuntimeSnapshots(owner.input.config, {
+      agentIds: new Set([agentId]),
+      catalogMode: owner.catalogMode,
+      allowGatewaySubagentBinding: owner.input.allowGatewaySubagentBinding,
+      gatewayLifecycle: true,
+    }).catch((error: unknown) => {
+      log.warn(`plugin retirement model runtime refresh failed: ${String(error)}`);
+    });
+  });
+});
 
 registerRuntimeAuthProfileStoreMutationListener(invalidateForAuthMutation);
 registerPreparedRuntimeAuthMaterializationPublisher(owners, notifyPreparedModelRuntimePublication);

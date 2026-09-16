@@ -20,7 +20,6 @@ import {
   registerPreparedModelRuntimePublicationListener,
   refreshPreparedModelRuntimeSnapshots,
 } from "./prepared-model-runtime.js";
-import { PreparedReplyDispatchPublicationOwner } from "./prepared-reply-dispatch-runtime.js";
 
 const mocks = getPreparedModelRuntimeMocks();
 let state: OpenClawTestState;
@@ -167,9 +166,9 @@ describe("prepared model runtime reload auth adoption", () => {
       expect.soft(owner.needsRefresh).toBe(false);
       expect.soft(owner.refreshError).toBeUndefined();
       expect.soft(await prepareModelRuntimeSnapshot(input)).toBe(snapshot);
-      expect
-        .soft(await loadPublishedGatewayReplyDispatchRuntime({ agentId: "default" }))
-        .toBe(dispatch);
+      const afterFailure = await loadPublishedGatewayReplyDispatchRuntime({ agentId: "default" });
+      expect.soft(afterFailure).toStrictEqual(dispatch);
+      expect.soft(afterFailure?.pluginGeneration).toBe(dispatch?.pluginGeneration);
       expect.soft(snapshot.modelCatalog.refreshFailed).toBe(true);
       expect.soft(original.refreshFailed).toBe(true);
       expect.soft(events).toContainEqual({ phase: "catalog-failed", error: failure });
@@ -200,9 +199,9 @@ describe("prepared model runtime reload auth adoption", () => {
           },
           () => (active ? lease.snapshot : undefined),
         );
-        expect(await loadPublishedGatewayReplyDispatchRuntime({ agentId: "default" })).toBe(
-          dispatch,
-        );
+        const afterRefresh = await loadPublishedGatewayReplyDispatchRuntime({ agentId: "default" });
+        expect(afterRefresh).toStrictEqual(dispatch);
+        expect(afterRefresh?.pluginGeneration).toBe(dispatch?.pluginGeneration);
       } finally {
         active = false;
         await lease[Symbol.asyncDispose]();
@@ -731,9 +730,10 @@ describe("prepared model runtime reload auth adoption", () => {
         });
         await expect(
           loadPublishedGatewayReplyDispatchRuntime({ agentId: failedAgentId }),
-        ).rejects.toThrow(
-          `prepared reply dispatch runtime owner was not published for ${failedAgentId}`,
-        );
+        ).rejects.toMatchObject({
+          message: `prepared reply dispatch runtime owner was not published for ${failedAgentId}`,
+          cause: refreshError,
+        });
         expect(mocks.warn).toHaveBeenCalledOnce();
         expect(mocks.warn).toHaveBeenCalledWith(expect.stringContaining(refreshError.message));
       } finally {
@@ -874,47 +874,6 @@ describe("prepared model runtime reload auth adoption", () => {
       await Promise.allSettled([workerDispatch, researchDispatch]);
       unregister();
     }
-  });
-
-  it("isolates reply projection replacement failure to its component", async () => {
-    mocks.configuredAgentIds = ["default", "worker", "research"];
-    const config = {};
-    await refreshPreparedModelRuntimeSnapshots(config, { gatewayLifecycle: true });
-    const projectionError = new Error("reply projection replacement failed");
-    const events: string[] = [];
-    const unregister = registerPreparedModelRuntimePublicationListener((event) => {
-      events.push(event.phase);
-    });
-    const replaceSpy = vi
-      .spyOn(PreparedReplyDispatchPublicationOwner.prototype, "replace")
-      .mockImplementationOnce(() => {
-        throw projectionError;
-      });
-
-    mocks.mutationListener?.({
-      agentDir: state.agentDir("worker"),
-      affectsInheritedStores: false,
-    });
-    mocks.mutationListener?.({
-      agentDir: state.agentDir("research"),
-      affectsInheritedStores: false,
-    });
-    const workerDispatch = loadPublishedGatewayReplyDispatchRuntime({ agentId: "worker" });
-    const researchDispatch = loadPublishedGatewayReplyDispatchRuntime({ agentId: "research" });
-    void workerDispatch.catch(() => undefined);
-    void researchDispatch.catch(() => undefined);
-
-    await expect(workerDispatch).rejects.toBe(projectionError);
-    await expect(researchDispatch).resolves.toMatchObject({
-      agentId: "research",
-      agentDir: state.agentDir("research"),
-    });
-    await expect(loadPublishedGatewayReplyDispatchRuntime({ agentId: "worker" })).rejects.toThrow(
-      "prepared reply dispatch runtime owner was not published for worker",
-    );
-    expect(events.filter((phase) => phase === "failed")).toHaveLength(1);
-    replaceSpy.mockRestore();
-    unregister();
   });
 
   it("lets an adopting reload settle the gate after the obsolete auth build fails", async () => {

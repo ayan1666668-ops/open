@@ -141,15 +141,23 @@ export function updateOwnersForScopedRefresh(
       releasePreparedPluginPublication(owner);
       continue;
     }
-    owner.generation += 1;
-    owner.needsRefresh = true;
-    owner.refreshError = staleError;
-    if (options.clearPending) {
-      owner.pending = undefined;
-    }
-    if (options.resetPluginGeneration) {
-      owner.pluginGeneration = undefined;
-    }
+    markPreparedModelRuntimeOwnerStale(owner, staleError, options);
+  }
+}
+
+export function markPreparedModelRuntimeOwnerStale(
+  owner: PreparedModelRuntimeOwner,
+  staleError: Error,
+  options: { clearPending?: boolean; resetPluginGeneration?: boolean } = {},
+): void {
+  owner.generation += 1;
+  owner.needsRefresh = true;
+  owner.refreshError = staleError;
+  if (options.clearPending) {
+    owner.pending = undefined;
+  }
+  if (options.resetPluginGeneration) {
+    owner.pluginGeneration = undefined;
   }
 }
 

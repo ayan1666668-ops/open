@@ -197,6 +197,14 @@ export function retainPreparedPluginGeneration(
   };
 }
 
+let onPublishedGenerationRetired: ((owner: PreparedModelRuntimeOwner) => void) | undefined;
+
+export function registerPreparedPluginPublicationRetirement(
+  handler: (owner: PreparedModelRuntimeOwner) => void,
+): void {
+  onPublishedGenerationRetired = handler;
+}
+
 /** Publishing replaces one reference, while admitted leases retain their exact generation. */
 export function publishPreparedPluginGeneration(
   owner: PreparedModelRuntimeOwner,
@@ -230,10 +238,7 @@ export function publishPreparedPluginGeneration(
       // A cached publication cannot keep a closing Gateway's donor alive. Admitted
       // leases retain the same generation independently until their work finishes.
       if (owner.generation === version) {
-        owner.generation++;
-        owner.needsRefresh = true;
-        owner.refreshError = new Error("Prepared model runtime plugin generation retired");
-        owner.pluginGeneration = undefined;
+        onPublishedGenerationRetired?.(owner);
       }
       releasePreparedPluginPublication(owner);
       return;

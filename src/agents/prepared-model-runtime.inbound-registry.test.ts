@@ -297,9 +297,9 @@ describe("prepared reply dispatch runtime", () => {
         () => (active ? lease.snapshot : undefined),
       );
     }
-    expect(
-      (await loadPublishedGatewayReplyDispatchRuntime({ agentId: "default" })) === published,
-    ).toBe(true);
+    const current = await loadPublishedGatewayReplyDispatchRuntime({ agentId: "default" });
+    expect(current).toStrictEqual(published);
+    expect(current?.pluginGeneration).toBe(published.pluginGeneration);
     expect(published.pluginGeneration.pluginRegistry?.agentHarnesses).toEqual([]);
     expect(mocks.loadAgentRuntimePluginRegistryHandle).toHaveBeenCalledTimes(4);
   });
@@ -476,7 +476,7 @@ describe("prepared reply dispatch runtime", () => {
         config: replacementConfig,
         inboundPluginRegistry: replacementRegistry,
       });
-      expect(replacementRuntime).not.toBe(firstRuntime);
+      expect(replacementRuntime?.pluginGeneration).not.toBe(firstRuntime?.pluginGeneration);
       expect(replacementRuntime?.modelCatalog).not.toBe(firstRuntime?.modelCatalog);
     } finally {
       replacementCatalog.resolve({ entries: [] });
@@ -609,7 +609,7 @@ describe("prepared reply dispatch runtime", () => {
     expect(configuredSelectedBefore).not.toBe(configuredRuntimeBefore?.inboundPluginRegistry);
   });
 
-  it("waits only the affected configured projection during an auth refresh", async () => {
+  it("waits only for the affected configured owner during an auth refresh", async () => {
     mocks.configuredAgentIds = ["default", "worker"];
     const config = { agents: { defaults: { model: "openai/gpt-5.5" } } };
     await refreshPreparedModelRuntimeSnapshots(config, {
@@ -632,8 +632,12 @@ describe("prepared reply dispatch runtime", () => {
 
     const defaultRead = loadPublishedGatewayReplyDispatchRuntime({ agentId: "default" });
     const workerRead = loadPublishedGatewayReplyDispatchRuntime({ agentId: "worker" });
-    await expect(defaultRead).resolves.toBe(defaultRuntime);
-    await expect(workerRead).resolves.not.toBe(workerRuntime);
+    const retainedDefault = await defaultRead;
+    expect(retainedDefault).toStrictEqual(defaultRuntime);
+    expect(retainedDefault?.pluginGeneration).toBe(defaultRuntime?.pluginGeneration);
+    const committedWorker = await workerRead;
+    expect(committedWorker?.modelCatalog).not.toBe(workerRuntime?.modelCatalog);
+    expect(committedWorker?.inboundPluginRegistry).toBe(workerRuntime?.inboundPluginRegistry);
 
     await published.promise;
     unregister();
@@ -644,10 +648,11 @@ describe("prepared reply dispatch runtime", () => {
       agentDir: state.agentDir("worker"),
       workspaceDir: "/tmp/workspace-worker",
     });
-    expect(refreshedWorker).not.toBe(workerRuntime);
+    expect(refreshedWorker?.modelCatalog).toBe(committedWorker?.modelCatalog);
+    expect(refreshedWorker?.pluginGeneration).toBe(committedWorker?.pluginGeneration);
   });
 
-  it("keeps a rejected auth refresh projection unavailable without affecting siblings", async () => {
+  it("keeps a rejected auth refresh owner unavailable without affecting siblings", async () => {
     mocks.configuredAgentIds = ["default", "worker"];
     await refreshPreparedModelRuntimeSnapshots(
       {},
@@ -677,9 +682,9 @@ describe("prepared reply dispatch runtime", () => {
     await expect(loadPublishedGatewayReplyDispatchRuntime({ agentId: "worker" })).rejects.toThrow(
       "prepared reply dispatch runtime owner was not published for worker",
     );
-    await expect(loadPublishedGatewayReplyDispatchRuntime({ agentId: "default" })).resolves.toBe(
-      defaultRuntime,
-    );
+    const retainedDefault = await loadPublishedGatewayReplyDispatchRuntime({ agentId: "default" });
+    expect(retainedDefault).toStrictEqual(defaultRuntime);
+    expect(retainedDefault?.pluginGeneration).toBe(defaultRuntime?.pluginGeneration);
   });
 
   it("aborts run admission without retaining an owner after auth publication", async () => {

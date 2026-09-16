@@ -942,9 +942,9 @@ describe("prepared model runtime snapshots", () => {
         );
         unregister();
 
-        expect(runtime).toBe(
-          await loadPublishedGatewayReplyDispatchRuntime({ agentId: "default" }),
-        );
+        const current = await loadPublishedGatewayReplyDispatchRuntime({ agentId: "default" });
+        expect(runtime).toStrictEqual(current);
+        expect(runtime?.pluginGeneration).toBe(current?.pluginGeneration);
         expect(events.filter((phase) => phase === "published")).toHaveLength(1);
         expect(events).not.toContain("failed");
         expect(mocks.warn).not.toHaveBeenCalled();
