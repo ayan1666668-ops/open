@@ -63,26 +63,6 @@ async function raceWithNextMacrotask<T>(promise: Promise<T>): Promise<T | "pendi
   ]);
 }
 
-/**
- * A chunk that opens a fence nothing closes is the defect these cases guard against. A
- * run shorter than the one that opened the block is body text, not a close.
- */
-function fencesBalanceInChunk(chunk: string): boolean {
-  let openMarkerLength = 0;
-  for (const line of chunk.split("\n")) {
-    const marker = /^[ \t>]*(`{3,})[ \t]*$/u.exec(line)?.[1];
-    if (!marker) {
-      continue;
-    }
-    if (openMarkerLength === 0) {
-      openMarkerLength = marker.length;
-    } else if (marker.length >= openMarkerLength) {
-      openMarkerLength = 0;
-    }
-  }
-  return openMarkerLength === 0;
-}
-
 describe("createFeishuCommentReplyDispatcher", () => {
   afterAll(() => {
     vi.doUnmock("./accounts.js");
@@ -558,18 +538,36 @@ describe("createFeishuCommentReplyDispatcher", () => {
       }
     });
 
-    // Three shapes the chunker cannot cut without stranding a fence. A cell holding a
-    // backtick run the parser cannot pair keeps those characters as text and lengthens
-    // the marker. An indent widens the line the chunker has to fit at both ends. A quote
-    // prefix hides the marker from the fence scanner, which no limit repairs, so only a
-    // text short enough to never be cut is safe there. In each case the table is left as
-    // authored. The leading line matters: the send trims the text, and a trim on the
-    // table's own first line would take the indent with it.
+    const fenceShapeTable = (prefix: string, nameCell = "Ada") =>
+      [
+        "Roster",
+        "",
+        ...["| Name | Role |", "| --- | --- |", `| ${nameCell} | \`\`\` |`].map(
+          (line) => `${prefix}${line}`,
+        ),
+      ].join("\n");
+
+    // Shapes the chunker cannot cut without stranding a fence. A cell holding a backtick
+    // run the parser cannot pair keeps those characters as text and lengthens the marker.
+    // An indent widens the line the chunker has to fit at both ends. A quote prefix hides
+    // the marker from the fence scanner, which no limit repairs, so only a text short
+    // enough never to be cut is safe there. Below a handful of characters the cut lands
+    // inside the marker and delivers backtick fragments. A surrogate pair can push a
+    // balanced chunk one unit past the limit, which is core's split rule rather than this
+    // conversion, so the conversion declines to add a fence on top of it. The leading line
+    // matters: the send trims the text, and a trim on the table's own first line would
+    // take the indent with it.
     it.each([
-      { shape: "a cell lengthens the marker", prefix: "", limit: 10 },
-      { shape: "an indent widens the marker line", prefix: " ", limit: 11 },
-      { shape: "a quote prefix hides the marker", prefix: "> ", limit: 40 },
-    ])("leaves a comment table unconverted when $shape", async ({ prefix, limit }) => {
+      { shape: "a cell lengthens the marker", authored: fenceShapeTable(""), limit: 10 },
+      { shape: "an indent widens the marker line", authored: fenceShapeTable(" "), limit: 11 },
+      { shape: "a quote prefix hides the marker", authored: fenceShapeTable("> "), limit: 40 },
+      { shape: "the limit cannot carry the marker", authored: fenceShapeTable(""), limit: 2 },
+      {
+        shape: "a surrogate pair outgrows the limit",
+        authored: fenceShapeTable("", "\u{1F600}"),
+        limit: 11,
+      },
+    ])("leaves a comment table unconverted when $shape", async ({ authored, limit }) => {
       const chunking = await vi.importActual<typeof import("openclaw/plugin-sdk/reply-chunking")>(
         "openclaw/plugin-sdk/reply-chunking",
       );
@@ -588,32 +586,86 @@ describe("createFeishuCommentReplyDispatcher", () => {
         },
       });
       const created = createTestCommentReplyDispatcher();
-      const authored = [
-        "Roster",
-        "",
-        ...["| Name | Role |", "| --- | --- |", "| Ada | ``` |"].map((line) => `${prefix}${line}`),
-      ].join("\n");
-      // Guard the fixture: the shape only means anything while the conversion still
-      // produces a marker for this prefix.
-      expect(actual.convertMarkdownTables(authored, "code")).toContain(`${prefix}\`\`\`\``);
+      // Guard the fixture: the shape only means anything while the conversion still has a
+      // marker to strand.
+      expect(actual.convertMarkdownTables(authored, "code")).toContain("````");
 
       await replyDispatcherOptions(created).deliver({ text: authored }, { kind: "final" });
 
-      const contents = deliverCommentThreadTextMock.mock.calls.map(
-        (call) => call[1].content as string,
+      // The comments are the authored text cut up, not the converted table. Comparing
+      // against the chunker itself avoids asking a copy of the guard whether the guard
+      // was right.
+      expect(deliverCommentThreadTextMock.mock.calls.map((call) => call[1].content)).toEqual(
+        chunking.chunkMarkdownTextWithMode(authored, limit, "length"),
       );
-      // No comment opens a block another has to close. Converting any of these shapes at
-      // its limit strands two markers instead.
-      for (const content of contents) {
-        expect(fencesBalanceInChunk(content)).toBe(true);
-        expect(content.length).toBeLessThanOrEqual(limit);
-      }
-      // The chunker trims at the boundaries it cuts on, so the joined text is not the
-      // authored string, but nothing is dropped.
-      const joined = contents.join("");
-      for (const cell of ["Name", "Role", "Ada", "```"]) {
-        expect(joined).toContain(cell);
-      }
+    });
+
+    // The conversion still runs wherever the pieces do survive, including one character
+    // above and below the floor a lengthened marker sets. An authored code block with a
+    // language tag opens a fence too, and a guard that cannot read it as an opener takes
+    // its closing marker for one and stops an unrelated table converting at any limit.
+    it.each([
+      { shape: "a lengthened marker at its floor", limit: 11 },
+      { shape: "a lengthened marker above its floor", limit: 13 },
+    ])("converts a comment table with $shape", async ({ limit }) => {
+      const chunking = await vi.importActual<typeof import("openclaw/plugin-sdk/reply-chunking")>(
+        "openclaw/plugin-sdk/reply-chunking",
+      );
+      const runtime = getFeishuRuntimeMock();
+      getFeishuRuntimeMock.mockReturnValue({
+        ...runtime,
+        channel: {
+          ...runtime.channel,
+          text: {
+            ...runtime.channel.text,
+            resolveTextChunkLimit: vi.fn(() => limit),
+            resolveChunkMode: vi.fn(() => "length"),
+            chunkTextWithMode: chunking.chunkTextWithMode,
+            chunkMarkdownTextWithMode: chunking.chunkMarkdownTextWithMode,
+          },
+        },
+      });
+      const created = createTestCommentReplyDispatcher();
+      const authored = "| Name | Role |\n| --- | --- |\n| Ada | ``` |";
+      const converted = actual.convertMarkdownTables(authored, "code");
+
+      await replyDispatcherOptions(created).deliver({ text: authored }, { kind: "final" });
+
+      expect(deliverCommentThreadTextMock.mock.calls.map((call) => call[1].content)).toEqual(
+        chunking.chunkMarkdownTextWithMode(converted, limit, "length"),
+      );
+    });
+
+    it("converts a comment table that follows a language-tagged code block", async () => {
+      const chunking = await vi.importActual<typeof import("openclaw/plugin-sdk/reply-chunking")>(
+        "openclaw/plugin-sdk/reply-chunking",
+      );
+      const runtime = getFeishuRuntimeMock();
+      getFeishuRuntimeMock.mockReturnValue({
+        ...runtime,
+        channel: {
+          ...runtime.channel,
+          text: {
+            ...runtime.channel.text,
+            resolveTextChunkLimit: vi.fn(() => 4000),
+            resolveChunkMode: vi.fn(() => "length"),
+            chunkTextWithMode: chunking.chunkTextWithMode,
+            chunkMarkdownTextWithMode: chunking.chunkMarkdownTextWithMode,
+          },
+        },
+      });
+      const created = createTestCommentReplyDispatcher();
+      const authored = `\`\`\`js\nconst x = 1;\n\`\`\`\n\n${tableMarkdown}`;
+      const converted = actual.convertMarkdownTables(authored, "code");
+      // Guard the fixture: the authored block's own marker pair is what used to read as
+      // an unclosed opener.
+      expect(converted).toContain("```js");
+
+      await replyDispatcherOptions(created).deliver({ text: authored }, { kind: "final" });
+
+      expect(deliverCommentThreadTextMock.mock.calls.map((call) => call[1].content)).toEqual(
+        chunking.chunkMarkdownTextWithMode(converted, 4000, "length"),
+      );
     });
 
     it.each(["length", "newline"] as const)(

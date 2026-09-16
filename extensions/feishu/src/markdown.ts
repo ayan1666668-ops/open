@@ -6,11 +6,13 @@ import { chunkMarkdownTextWithMode, type ChunkMode } from "openclaw/plugin-sdk/r
 import type { MentionTarget } from "./mention-target.types.js";
 
 /**
- * The conversion puts a marker on its own line behind the table's source prefix, which
- * the IR restricts to spaces, tabs and quote markers. Matching only those keeps an inline
- * backtick run in ordinary prose from reading as a marker and suppressing a safe table.
+ * A fence opener may carry an info string, a closer may not, and both sit behind the
+ * table's source prefix, which the IR restricts to spaces, tabs and quote markers.
+ * Matching only those prefixes keeps an inline backtick run in ordinary prose from
+ * reading as a marker and suppressing a table that would have converted safely.
  */
-const FEISHU_TABLE_FENCE_LINE = /^[ \t>]*(`{3,})[ \t]*$/u;
+const FEISHU_FENCE_OPENER = /^[ \t>]*(`{3,})[^`]*$/u;
+const FEISHU_FENCE_CLOSER = /^[ \t>]*(`{3,})[ \t]*$/u;
 
 /**
  * A chunk that opens a fence nothing closes renders worse than the table it replaced, so
@@ -21,17 +23,20 @@ const FEISHU_TABLE_FENCE_LINE = /^[ \t>]*(`{3,})[ \t]*$/u;
 function fencesBalance(chunk: string): boolean {
   let openMarkerLength = 0;
   for (const line of chunk.split("\n")) {
-    const marker = FEISHU_TABLE_FENCE_LINE.exec(line)?.[1];
-    if (!marker) {
+    if (openMarkerLength === 0) {
+      openMarkerLength = FEISHU_FENCE_OPENER.exec(line)?.[1]?.length ?? 0;
       continue;
     }
-    if (openMarkerLength === 0) {
-      openMarkerLength = marker.length;
-    } else if (marker.length >= openMarkerLength) {
+    const closer = FEISHU_FENCE_CLOSER.exec(line)?.[1];
+    if (closer && closer.length >= openMarkerLength) {
       openMarkerLength = 0;
     }
   }
   return openMarkerLength === 0;
+}
+
+function isFenceMarkerLine(line: string): boolean {
+  return FEISHU_FENCE_OPENER.test(line) || FEISHU_FENCE_CLOSER.test(line);
 }
 
 /**
@@ -39,11 +44,22 @@ function fencesBalance(chunk: string): boolean {
  * at every boundary it cuts. It cannot do that for every shape. A cell's backticks
  * lengthen the marker, an indent widens the line the chunker has to fit twice, and a
  * quote prefix hides the marker from the fence scanner entirely, which no limit repairs.
- * Rather than model that budget, cut the converted text the way the send will and ask
- * whether the pieces balance.
+ * Below a handful of characters the cut lands inside the marker and delivers backtick
+ * fragments instead. Rather than model that budget, cut the converted text the way the
+ * send will and ask three things of the pieces: each one stays inside the limit, each one
+ * closes what it opened, and every marker arrives whole.
  */
 export function chunkedFencesBalance(converted: string, limit: number, mode: ChunkMode): boolean {
-  return chunkMarkdownTextWithMode(converted, limit, mode).every(fencesBalance);
+  const chunks = chunkMarkdownTextWithMode(converted, limit, mode);
+  if (!chunks.every((chunk) => chunk.length <= limit && fencesBalance(chunk))) {
+    return false;
+  }
+  const delivered = new Set(
+    chunks.flatMap((chunk) => chunk.split("\n")).map((line) => line.trim()),
+  );
+  return converted
+    .split("\n")
+    .every((line) => !isFenceMarkerLine(line) || delivered.has(line.trim()));
 }
 
 export type FeishuMarkdownNode = {
