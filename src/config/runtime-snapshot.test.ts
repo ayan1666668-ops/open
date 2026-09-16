@@ -1,5 +1,6 @@
 // Verifies runtime config snapshots preserve normalized public settings.
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { freezeJsonSnapshot } from "../shared/immutable-data.js";
 import {
   cloneConfigWithResolutionFacts,
   createConfigResolutionFacts,
@@ -139,6 +140,36 @@ describe("runtime snapshot state", () => {
 
     expect(first).not.toBe(second);
     expect(hashRuntimeConfigValue({ logging: { level: "info" } })).toBe(first);
+  });
+
+  it("hashes one immutable fleet only once across repeated agent reads", () => {
+    const config = freezeJsonSnapshot({
+      agents: {
+        entries: Object.fromEntries(
+          Array.from({ length: 200 }, (_, index) => [`agent-${index}`, { name: `${index}` }]),
+        ),
+      },
+    });
+    const keys = vi.spyOn(Object, "keys");
+    try {
+      const first = hashRuntimeConfigValue(config);
+      for (let index = 0; index < 200; index += 1) {
+        expect(hashRuntimeConfigValue(config)).toBe(first);
+      }
+      expect(keys.mock.calls.filter(([value]) => value === config.agents.entries)).toHaveLength(1);
+    } finally {
+      keys.mockRestore();
+    }
+  });
+
+  it("rehashes mutable descendants of a shallow-frozen config", () => {
+    const config = Object.freeze({ gateway: { port: 18789 } });
+    const before = hashRuntimeConfigValue(config);
+    config.gateway.port = 19001;
+    expect(hashRuntimeConfigValue(config)).not.toBe(before);
+    expect(hashRuntimeConfigValue(config)).toBe(
+      hashRuntimeConfigValue({ gateway: { port: 19001 } }),
+    );
   });
 
   it.each([false, true])(
