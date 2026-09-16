@@ -280,8 +280,7 @@ export async function maybeSpawnVisibleSession(params: {
   const spawnModelAutoSelection =
     initialSessionPatch.modelOverrideSource === "auto"
       ? {
-          ...(shouldInheritParentGroup ? { inheritParentGroup: true } : {}),
-        model: resolvedModelRef,
+          model: resolvedModelRef,
           hasFallbackOrigin: initialSessionPatch.modelOverrideFallbackOriginModel !== undefined,
         }
       : undefined;
@@ -381,6 +380,7 @@ export async function maybeSpawnVisibleSession(params: {
         ...(params.label ? { label: params.label } : {}),
         // sessions.create persists the group under the legacy wire field `category`.
         ...(group ? { category: group } : {}),
+        ...(shouldInheritParentGroup ? { inheritParentGroup: true } : {}),
         model: resolvedModelRef,
         task: buildSubagentTaskMessage({
           task: params.task,

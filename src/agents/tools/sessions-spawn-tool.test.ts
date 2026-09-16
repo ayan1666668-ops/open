@@ -668,9 +668,6 @@ describe("sessions_spawn tool", () => {
       "only an omitted or blank mountPath",
     );
     expect(schema.properties?.group?.description).toContain("leave it ungrouped");
-    expect(schema.properties?.inheritParentGroup?.description).toContain(
-      "later parent and child group changes are independent",
-    );
     expect(schema.properties?.mode?.enum).toEqual(["run"]);
     expect(schema.properties?.mode?.anyOf).toBeUndefined();
     expect(schema.properties?.worktree).toBeDefined();
@@ -713,6 +710,7 @@ describe("sessions_spawn tool", () => {
             task: "inspect issue",
             label: "Issue review",
             group: "P1 issues from beta feedback",
+            inheritParentGroup: true,
             model: "anthropic/claude-sonnet-4-6",
             cwd: dir,
             context: "fork",
@@ -882,16 +880,20 @@ describe("sessions_spawn tool", () => {
     );
   });
 
-  it("rejects parent group inheritance for a hidden spawn", async () => {
-    const tool = createSessionsSpawnTool({ agentSessionKey: "agent:main:main" });
+  it.each(["subagent", "acp"])(
+    "rejects parent group inheritance for a hidden %s spawn",
+    async (runtime) => {
+      const tool = createSessionsSpawnTool({ agentSessionKey: "agent:main:main" });
 
-    await expect(
-      tool.execute("hidden-inherit-group", {
-        task: "inspect issue",
-        inheritParentGroup: true,
-      }),
-    ).rejects.toThrow("Parameters require visible=true: inheritParentGroup");
-  });
+      await expect(
+        tool.execute("hidden-inherit-group", {
+          task: "inspect issue",
+          runtime,
+          inheritParentGroup: true,
+        }),
+      ).rejects.toThrow("Parameters require visible=true: inheritParentGroup");
+    },
+  );
 
   it("explains an out-of-workspace visible cwd denial without suggesting a CLI fallback", async () => {
     await withTestDir({ prefix: "openclaw-visible-spawn-external-cwd-" }, async (workspace) => {

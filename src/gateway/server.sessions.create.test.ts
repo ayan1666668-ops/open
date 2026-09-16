@@ -4502,6 +4502,7 @@ test.each([false, true])(
 
     const created = await createVisibleChild(true);
 
+    expect(listSessionGroups().map((group) => group.name)).toContain("Projects");
     expect(created.ok, JSON.stringify(created.error)).toBe(true);
     expect(created.payload?.key).toMatch(/^agent:main:dashboard:/);
     expect(created.payload?.entry).toMatchObject({
