@@ -15,7 +15,7 @@ import { createWorkerWorkspaceQuiescence } from "./workspace-quiescence.js";
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 
-async function fixture(exhaustProbeBudget = false) {
+async function fixture(probeClock?: "exhaust" | "census" | "identity") {
   const root = tempDirs.make("openclaw-quiescence-test-");
   const home = path.join(root, "home");
   let workspace = path.join(root, "workspace");
@@ -31,21 +31,32 @@ async function fixture(exhaustProbeBudget = false) {
   );
   await fs.chmod(path.join(bin, "ps"), 0o755);
   const clockPath = path.join(root, "probe-clock.cjs");
-  if (exhaustProbeBudget) {
-    // Recovery cases exercise deadline exhaustion after one real killable ps timeout.
-    // Advance only the monotonic budget clock; lease expiry still uses real wall time.
+  if (probeClock) {
+    // Model slow probes on the budget clock; real ps still supplies process identities.
+    // Exhaustion cases retain their real killable timeout, and lease expiry uses wall time.
     await fs.writeFile(
       clockPath,
       `
 const childProcess = require("node:child_process");
 const execFileSync = childProcess.execFileSync;
 const now = performance.now.bind(performance);
+const mode = ${JSON.stringify(probeClock)};
 let elapsed = 0;
+let slowProbePending = true;
 Object.defineProperty(performance, "now", { value: () => now() + elapsed });
-childProcess.execFileSync = (...args) => {
-  try { return execFileSync(...args); }
+childProcess.execFileSync = (command, args, options) => {
+  const selected = command === "ps" &&
+    (mode === "census" ? args[0] === "-axo" : mode === "identity" && args[1] === "lstart=");
+  if (selected && slowProbePending) {
+    elapsed += Math.min(3000, options.timeout);
+    if (options.timeout < 3000) {
+      throw Object.assign(new Error("simulated slow ps"), { code: "ETIMEDOUT", status: null, signal: options.killSignal });
+    }
+    slowProbePending = false;
+  }
+  try { return execFileSync(command, args, options); }
   catch (error) {
-    if (error.code === "ETIMEDOUT") elapsed += 60000;
+    if (mode === "exhaust" && error.code === "ETIMEDOUT") elapsed += 60000;
     throw error;
   }
 };
@@ -62,7 +73,7 @@ childProcess.execFileSync = (...args) => {
       HOME: home,
       OPENCLAW_TEST_PS_EXTRA: extraProcessPath,
       PATH: `${bin}:${process.env.PATH ?? ""}`,
-      ...(exhaustProbeBudget
+      ...(probeClock
         ? {
             NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --require ${JSON.stringify(clockPath)}`,
           }
@@ -191,27 +202,10 @@ describe("remote workspace quiescence scripts", () => {
     });
   });
 
-  it.each(["census", "identity"])(
+  it.each(["census", "identity"] as const)(
     "recovers a slow %s probe within the shared budget",
     async (probe) => {
-      const input = await fixture();
-      const psPath = path.join(input.bin, "ps");
-      await fs.rename(psPath, path.join(input.bin, "healthy-ps"));
-      await fs.writeFile(
-        psPath,
-        `#!/bin/sh
-case "$*" in
-  ${probe === "census" ? '"-axo "*' : '*"lstart= -p"*'})
-    if mkdir "$HOME/slow-probe" 2>/dev/null; then
-      trap '' TERM
-      while :; do :; done
-    fi
-    if mkdir "$HOME/slow-second-probe" 2>/dev/null; then sleep 3; fi ;;
-esac
-exec "$(dirname "$0")/healthy-ps" "$@"
-`,
-        { mode: 0o755 },
-      );
+      const input = await fixture(probe);
       const result = await runCommandWithTimeout(
         [
           process.execPath,
@@ -432,7 +426,7 @@ require("node:child_process").execFileSync("/bin/ps", process.argv.slice(2), { s
   });
 
   it("cleans up the initial watchdog when identity probing times out", async () => {
-    const input = await fixture(true);
+    const input = await fixture("exhaust");
     const watchdogPidPath = path.join(input.home, "initial-watchdog.pid");
     await fs.writeFile(
       path.join(input.bin, "ps"),
@@ -470,7 +464,7 @@ esac
   });
 
   it("releases an empty shared-host lease without depending on ps", async () => {
-    const input = await fixture(true);
+    const input = await fixture("exhaust");
     const healthyPs = await fs.readFile(path.join(input.bin, "ps"), "utf8");
     const nonce = await quiesce(input, true, "1000");
     const leaseFile = leasePath(input.home, input.workspace, nonce);
@@ -511,7 +505,7 @@ esac
     ["shared-host", true],
     ["dedicated", false],
   ])("removes an empty %s orphan lease without depending on ps", async (_mode, sharedHost) => {
-    const input = await fixture(true);
+    const input = await fixture("exhaust");
     const healthyPs = await fs.readFile(path.join(input.bin, "ps"), "utf8");
     const nonce = await quiesce(input, true, "30000");
     const leaseFile = leasePath(input.home, input.workspace, nonce);
@@ -555,7 +549,7 @@ esac
   });
 
   it("retains an unverified empty orphan lease until a dedicated retry can retire it", async () => {
-    const input = await fixture(true);
+    const input = await fixture("exhaust");
     const healthyPs = await fs.readFile(path.join(input.bin, "ps"), "utf8");
     const firstNonce = await quiesce(input, true, "30000");
     const firstLeaseFile = leasePath(input.home, input.workspace, firstNonce);
@@ -656,7 +650,7 @@ esac
   });
 
   it("keeps the watchdog resumer alive when the identity sweep aborts partway", async () => {
-    const input = await fixture(true);
+    const input = await fixture("exhaust");
     const child = spawnIdleWorker();
     await fs.writeFile(input.extraProcessPath, `${child.pid}\n`);
     let watchdogPid: number | undefined;
@@ -785,7 +779,7 @@ exec "$(dirname "$0")/healthy-ps" "$@"
   }, 100_000);
 
   it("recovers a frozen worker once a stalled ps answers again after lease expiry", async () => {
-    const input = await fixture(true);
+    const input = await fixture("exhaust");
     const healthyPs = await fs.readFile(path.join(input.bin, "ps"), "utf8");
     const child = spawnIdleWorker();
     await fs.writeFile(input.extraProcessPath, `${child.pid}\n`);
