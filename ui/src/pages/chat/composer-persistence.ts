@@ -209,6 +209,22 @@ function writeStoredComposerSession(
 
 type ChatComposerDraftRevisionState = ReturnType<typeof readDraftRevisionState>;
 
+export function markChatComposerEdit(
+  state: ChatComposerPersistenceState,
+  draftRevision?: number,
+): void {
+  const scope = resolveUiConversationIdentity(state, state.sessionKey);
+  const revision =
+    draftRevision ??
+    nextDraftRevision(loadCapturedChatComposerState(state, scope).revisions.latestAttempt);
+  rememberDraftEdit(
+    getSafeSessionStorage() ?? state,
+    storageTargetForGateway(state.settings?.gatewayUrl).key,
+    storedChatOutboxScopeKey(scope),
+    revision,
+  );
+}
+
 export function captureChatComposerReplacement(
   state: ChatComposerPersistenceState,
   sessionKey: string,
@@ -769,12 +785,7 @@ export class ChatComposerPersistence {
     this.pending = this.snapshot(state, draftRevision, this.committedDraftRevision);
     // An edit owns the draft before its debounced write. Otherwise another
     // pane's older async action can publish over it and fence out that write.
-    rememberDraftEdit(
-      getSafeSessionStorage() ?? state,
-      storageTargetForGateway(state.settings?.gatewayUrl).key,
-      storedChatOutboxScopeKey(this.pending.scope),
-      draftRevision,
-    );
+    markChatComposerEdit(state, draftRevision);
     this.clearTimer();
     this.timer = globalThis.setTimeout(
       () => this.persistNow(),
