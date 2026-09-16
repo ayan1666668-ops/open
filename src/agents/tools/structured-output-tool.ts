@@ -97,6 +97,7 @@ export function createStructuredOutputTool(params: {
           try {
             const parsedResult: unknown = parseJsonPreservingUnsafeIntegers(resultArg);
             const reparsed = validateJsonSchemaValue({
+              // SAFETY: same params.schema already treated as JsonSchemaObject above.
               schema: params.schema as JsonSchemaObject,
               cacheKey: `swarm-structured-output:${params.runId}`,
               value: parsedResult,
