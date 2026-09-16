@@ -16,9 +16,9 @@ describe("resolveSkillCollectionReviewMonitorSpecs", () => {
       skills: { workshop: { autonomous: { mode: "auto" } } },
     } as OpenClawConfig;
 
-    const specs = resolveSkillCollectionReviewMonitorSpecs(cfg, [], {
-      schedulerSeed: "test-seed",
-    });
+    const specs = Array.from(
+      resolveSkillCollectionReviewMonitorSpecs(cfg, [], { schedulerSeed: "test-seed" }),
+    );
 
     expect(specs.map(({ agentId }) => agentId)).toEqual(["main", "ops", "solo"]);
     expect(specs.map(({ input }) => input.declarationKey)).toEqual([
@@ -45,9 +45,9 @@ describe("resolveSkillCollectionReviewMonitorSpecs", () => {
       wakeMode: "next-heartbeat",
     });
     expect(specs[0]?.input.payload).not.toHaveProperty("toolsAllowIsDefault");
-    const repeated = resolveSkillCollectionReviewMonitorSpecs(cfg, [], {
-      schedulerSeed: "test-seed",
-    });
+    const repeated = Array.from(
+      resolveSkillCollectionReviewMonitorSpecs(cfg, [], { schedulerSeed: "test-seed" }),
+    );
     expect(repeated.map(({ input }) => input.schedule)).toEqual(
       specs.map(({ input }) => input.schedule),
     );
@@ -58,7 +58,10 @@ describe("resolveSkillCollectionReviewMonitorSpecs", () => {
       agents: { ownership: "explicit", entries: { ops: {}, research: {} } },
     } as unknown as OpenClawConfig;
     expect(
-      resolveSkillCollectionReviewMonitorSpecs(explicitFleet, []).map(({ agentId }) => agentId),
+      Array.from(
+        resolveSkillCollectionReviewMonitorSpecs(explicitFleet, []),
+        ({ agentId }) => agentId,
+      ),
     ).toEqual(["ops", "research"]);
 
     const systemAgentFleet = {
@@ -69,7 +72,10 @@ describe("resolveSkillCollectionReviewMonitorSpecs", () => {
       },
     } as unknown as OpenClawConfig;
     expect(
-      resolveSkillCollectionReviewMonitorSpecs(systemAgentFleet, []).map(({ agentId }) => agentId),
+      Array.from(
+        resolveSkillCollectionReviewMonitorSpecs(systemAgentFleet, []),
+        ({ agentId }) => agentId,
+      ),
     ).toEqual(["ops", "research"]);
   });
 
@@ -121,7 +127,10 @@ describe("resolveSkillCollectionReviewMonitorSpecs", () => {
     } as OpenClawConfig;
 
     const byAgent = new Map(
-      resolveSkillCollectionReviewMonitorSpecs(cfg, []).map((spec) => [spec.agentId, spec.input]),
+      Array.from(resolveSkillCollectionReviewMonitorSpecs(cfg, []), (spec) => [
+        spec.agentId,
+        spec.input,
+      ]),
     );
 
     expect(byAgent.get("blocked")).toMatchObject({
