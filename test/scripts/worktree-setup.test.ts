@@ -31,6 +31,7 @@ const COLD_SCRIPT_INPUTS = [
   "scripts/lib/static-extension-assets.mts",
   "scripts/lib/vitest-resource-ownership.mts",
   "scripts/lib/windows-taskkill.mjs",
+  "src/shared/non-packaged-plugin-dirs.ts",
 ];
 
 type CommandCall = { kind: "pnpm" | "gateway-build"; args: string[]; cwd: string };
