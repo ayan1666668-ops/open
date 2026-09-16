@@ -358,8 +358,9 @@ export async function persistQueuedCronRunReservations(params: {
       for (const receipt of replacedReceipts) {
         releaseLocalCronRunReceiptOwnership(receipt);
       }
-      if (params.manualRun?.onExit && committedReservations.length > 0) {
-        const { job, runReceipt } = committedReservations[0];
+      const firstReservation = committedReservations[0];
+      if (params.manualRun?.onExit && firstReservation) {
+        const { job, runReceipt } = firstReservation;
         // Transfer watcher custody before publishing its terminal disable.
         params.manualRun.onExit.onReserved(job, runReceipt);
         applyCronRuntimeRowsToState(params.state, [job]);
@@ -385,12 +386,11 @@ export async function persistQueuedCronRunReservations(params: {
       await ensureLoaded(params.state, { forceReload: true, skipRecompute: true }).catch(() =>
         applyCronRuntimeRowsToState(params.state, committedJobs),
       );
-      const committed = new Set(committedJobs.map((job) => job.id));
       const receiptByJobId = new Map(
         committedReservations.map(({ job, runReceipt }) => [job.id, runReceipt] as const),
       );
       const reloadedReservations = (params.state.store?.jobs ?? [])
-        .filter((job) => committed.has(job.id))
+        .filter((job) => receiptByJobId.has(job.id))
         .map((job) => ({ job, runReceipt: receiptByJobId.get(job.id)! }));
       const reloadedJobIds = new Set(reloadedReservations.map(({ job }) => job.id));
       for (const reservation of committedReservations) {
