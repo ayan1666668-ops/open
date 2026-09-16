@@ -44,6 +44,14 @@ describe.skipIf(process.platform === "win32")(
       for (const directory of [state, tmp, packageRoot, bin]) {
         mkdirSync(directory, { recursive: true });
       }
+      const redactor = join(home, "redactor.mjs");
+      // Unit diagnostics use the current source owner without loading a built SDK graph.
+      writeFileSync(
+        redactor,
+        `import { tsImport } from ${JSON.stringify(resolve("node_modules/tsx/dist/esm/api/index.mjs"))};
+export const { redactSensitiveText } = await tsImport(${JSON.stringify(resolve("src/logging/redact.ts"))}, import.meta.url);
+`,
+      );
       writeFileSync(
         join(packageRoot, "package.json"),
         JSON.stringify({ name: "openclaw", version: baselineVersion }),
@@ -122,6 +130,7 @@ trap 'case "$BASH_COMMAND" in "phase "*) install_fixture_phases ;; esac' DEBUG
           OPENCLAW_HOME: home,
           OPENCLAW_STATE_DIR: state,
           OPENCLAW_CONFIG_PATH: join(state, "openclaw.json"),
+          OPENCLAW_E2E_REDACTOR_MODULE: redactor,
           TMPDIR: tmp,
           OPENCLAW_UPGRADE_SURVIVOR_RUNTIME_ROOT: join(home, "runtime"),
           OPENCLAW_UPGRADE_SURVIVOR_SUMMARY_JSON: summaryPath,
