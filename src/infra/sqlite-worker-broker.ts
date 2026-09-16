@@ -360,8 +360,7 @@ export class SqliteWorkerBroker {
 
   private async acquireSlot(): Promise<Slot> {
     const available = [...this.slots].filter((slot) => !slot.failed && !slot.retiring);
-    // oxlint-disable-next-line no-warning-comments -- remove after the upstream Bun fix ships.
-    // TODO(bun): Return Bun to four shared workers after https://github.com/oven-sh/bun/pull/40005.
+    // Return Bun to four shared workers after https://github.com/oven-sh/bun/pull/40005 ships.
     if (this.slots.size >= (process.versions.bun ? MAX_STORES : MAX_WORKERS)) {
       if (!available.length || process.versions.bun) {
         const retiring = [...this.slots].filter((slot) => Boolean(slot.failed || slot.retiring));
