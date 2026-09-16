@@ -817,11 +817,10 @@ export async function buildGatewayInstallPlan(params: {
       : platform === "darwin"
         ? resolveLaunchAgentEnvWrapperPath(params.env, resolveLaunchAgentLabel(params.env))
         : undefined;
-  const wrapperPointsAtGeneratedScript = isSameServicePath(
-    wrapperInput,
-    generatedWrapperPath,
-    platform,
-  );
+  const wrapperPointsAtGeneratedScript =
+    generatedWrapperPath !== undefined &&
+    normalizeServicePathForCompare(wrapperInput, platform) ===
+      normalizeServicePathForCompare(generatedWrapperPath, platform);
   if (wrapperPointsAtGeneratedScript) {
     params.warn?.(
       platform === "win32"
@@ -839,11 +838,12 @@ export async function buildGatewayInstallPlan(params: {
     runtimePath: params.runtimePath,
     wrapperPath,
   });
-  const serviceInputEnv: Record<string, string | undefined> = wrapperPath
-    ? { ...params.env, [OPENCLAW_WRAPPER_ENV_KEY]: wrapperPath }
-    : wrapperPointsAtGeneratedScript
-      ? omitEnvKey(params.env, OPENCLAW_WRAPPER_ENV_KEY)
-      : params.env;
+  const serviceInputEnv = { ...params.env };
+  if (wrapperPath) {
+    serviceInputEnv[OPENCLAW_WRAPPER_ENV_KEY] = wrapperPath;
+  } else if (wrapperPointsAtGeneratedScript) {
+    delete serviceInputEnv[OPENCLAW_WRAPPER_ENV_KEY];
+  }
   const { programArguments, workingDirectory } = await resolveGatewayProgramArguments({
     port: params.port,
     allowUnconfigured:
@@ -916,25 +916,6 @@ function normalizeServicePathForCompare(
     return undefined;
   }
   return platform === "win32" ? path.win32.resolve(trimmed).toLowerCase() : path.resolve(trimmed);
-}
-
-function isSameServicePath(
-  left: string | undefined,
-  right: string | undefined,
-  platform: NodeJS.Platform,
-): boolean {
-  const normalizedLeft = normalizeServicePathForCompare(left, platform);
-  const normalizedRight = normalizeServicePathForCompare(right, platform);
-  return Boolean(normalizedLeft && normalizedRight && normalizedLeft === normalizedRight);
-}
-
-function omitEnvKey(
-  env: Record<string, string | undefined>,
-  key: string,
-): Record<string, string | undefined> {
-  const next = { ...env };
-  delete next[key];
-  return next;
 }
 
 /** Return the user-facing recovery hint for failed Gateway service installation. */
