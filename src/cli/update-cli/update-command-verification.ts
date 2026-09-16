@@ -212,6 +212,11 @@ function gatewayReadinessPending(health: GatewayRestartSnapshot): boolean {
   return (
     health.waitOutcome === "timeout" &&
     health.runtime.status === "running" &&
+    (typeof health.runtime.pid === "number" || Boolean(health.gatewayBootId)) &&
+    // Only the restart owner can establish startup; an HTTP failure is not progress.
+    ["waiting for Gateway listener", "startup migration", "settling healthy Gateway"].includes(
+      health.startupPhase ?? "",
+    ) &&
     !health.versionMismatch &&
     !health.buildIdMismatch &&
     !health.activatedPluginErrors?.length &&
@@ -310,6 +315,7 @@ async function observeUpdateGatewayReadiness(params: UpdateGatewayReadinessParam
     // or PID-less reboot during that observation cannot inherit the old boot.
     health = inspected.healthy ? await inspect() : inspected;
     assertCurrent();
+    health.startupPhase = settled.startupPhase;
     const sameGeneration =
       isSameGatewayRestartGeneration(settled, inspected) &&
       isSameGatewayRestartGeneration(inspected, health);

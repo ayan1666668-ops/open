@@ -382,8 +382,8 @@ describe("post-activation repair after rollback refusal or failure", () => {
   ])(
     "$rollback rollback with repaired=$repaired readinessUnavailable=$readinessUnavailable",
     async ({ rollback, repaired, healthy, readinessUnavailable }) => {
-      const pending = Boolean(healthy && readinessUnavailable);
-      if (pending) {
+      const unready = Boolean(healthy && readinessUnavailable);
+      if (unready) {
         vi.spyOn(gatewayService, "resolveGatewayService").mockReturnValue({
           ...gatewayService.resolveGatewayService(),
           readRuntime: async () => ({ status: mocks.healthy ? "running" : "stopped", pid: 4321 }),
@@ -520,12 +520,8 @@ describe("post-activation repair after rollback refusal or failure", () => {
           attempts: [attempt],
         };
       });
-      if ((repaired || pending) && rollback !== "restored") {
-        await expect(finishUpdate(params)).resolves.toMatchObject(
-          pending
-            ? { status: "skipped", reason: "gateway-readiness-unverified" }
-            : { status: "ok" },
-        );
+      if (repaired && rollback !== "restored") {
+        await expect(finishUpdate(params)).resolves.toMatchObject({ status: "ok" });
       } else {
         const reason =
           rollback === "blocked"
@@ -552,7 +548,7 @@ describe("post-activation repair after rollback refusal or failure", () => {
       expect(mocks.repair).toHaveBeenCalledOnce();
       if (rollback === "restored") {
         expect(completeRecovery).toHaveBeenCalled();
-        if (repaired || pending) {
+        if (repaired) {
           expect(completeRecovery).not.toHaveBeenCalledWith(false);
         } else {
           expect(completeRecovery).toHaveBeenCalledWith(false);
@@ -584,9 +580,7 @@ describe("post-activation repair after rollback refusal or failure", () => {
               : "failed"
             : repaired
               ? "succeeded"
-              : pending
-                ? "skipped"
-                : "failed",
+              : "failed",
         after: { version: rollback === "restored" ? "2026.9.1" : "2026.9.3" },
         ...(rollback === "restored" ? { reason: "readyz-unhealthy" } : {}),
         repair: [expect.objectContaining({ attempt: 1 })],
@@ -600,7 +594,7 @@ describe("post-activation repair after rollback refusal or failure", () => {
             }
           : {}),
       });
-      if (pending) {
+      if (unready) {
         expect(getUpdateRun(run.runId, { env: run.env })).toMatchObject({
           confirmedAtMs: null,
           verification: { serviceRunning: true, readyz: false, settled: false },
@@ -750,12 +744,8 @@ describe("post-activation repair after rollback refusal or failure", () => {
           },
         );
 
-        if (activated) {
-          await expect(finishUpdate(params)).resolves.toMatchObject(
-            finalProof
-              ? { status: "ok" }
-              : { status: "skipped", reason: "gateway-readiness-unverified" },
-          );
+        if (activated && finalProof) {
+          await expect(finishUpdate(params)).resolves.toMatchObject({ status: "ok" });
         } else {
           await expect(finishUpdate(params)).rejects.toMatchObject({
             exitCode: 1,
@@ -770,7 +760,7 @@ describe("post-activation repair after rollback refusal or failure", () => {
         expect(mocks.restart).toHaveBeenCalledOnce();
         expect(mocks.restartCommand).toHaveBeenCalledOnce();
         expect(mocks.stop).not.toHaveBeenCalled();
-        expect(enabled).toBe(activated);
+        expect(enabled).toBe(activated && finalProof);
         expect(signals.map((signal) => process.listenerCount(signal))).toEqual(baselineListeners);
       } finally {
         for (const recovery of recoveries) {

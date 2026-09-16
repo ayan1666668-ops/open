@@ -269,6 +269,7 @@ describe("update readiness generation", () => {
     { transition: "unchanged", supplied: false },
     { transition: "replacement", supplied: false },
     { transition: "replacement-at-deadline", supplied: false },
+    { transition: "unchanged-at-deadline", supplied: false },
     { transition: "same-pid-new-boot", supplied: false },
     { transition: "replacement-during-final-health", supplied: false },
     { transition: "same-pid-new-boot-during-native", supplied: false },
@@ -378,32 +379,30 @@ describe("update readiness generation", () => {
         bootId = "boot-b";
         runtime = { status: "running", pid: transition.startsWith("replacement") ? 8001 : 8000 };
       }
-      if (transition === "replacement-at-deadline") {
+      if (transition.endsWith("at-deadline")) {
         monotonicClock.nowMs = 305_500;
       }
       release.resolve();
       const result = await verification;
-      expect(result.ok).toBe(unchanged);
+      const verified = unchanged && transition !== "unchanged-at-deadline";
+      expect(result.ok).toBe(verified);
+      if (transition === "unchanged-at-deadline") {
+        expect(result.stopReason).toBe("gateway-readiness-pending");
+        expect(updateResult.steps[0]?.exitCode).toBe(0);
+      }
       if (transition === "replacement-at-deadline") {
         expect(result).toMatchObject({ ok: false, summary: "generation-changed" });
         expect(result.stopReason).toBeUndefined();
         expect(updateResult.steps[0]?.exitCode).toBe(1);
       }
       if (transition === "readyz-error") {
-        expect(result.stopReason).toBe("gateway-readiness-pending");
+        expect(result).toMatchObject({ ok: false, summary: "readyz-unhealthy" });
+        expect(result.stopReason).toBeUndefined();
         expect(updateResult.steps).toContainEqual(
-          expect.objectContaining({
-            name: "gateway verification",
-            exitCode: 0,
-            termination: "timeout",
-            advisory: {
-              kind: "recoverable-maintenance",
-              message: expect.stringContaining("Last HTTP readiness response: 503."),
-            },
-          }),
+          expect.objectContaining({ name: "gateway verification", exitCode: 1 }),
         );
       }
-      if (unchanged) {
+      if (verified) {
         expect(onVerified).toHaveBeenCalledOnce();
         expect(recordUpdateRunVerification).toHaveBeenLastCalledWith(
           "synthetic-update",

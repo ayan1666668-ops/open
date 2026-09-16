@@ -92,7 +92,7 @@ export async function maybeOfferUpdateBeforeDoctor(params: {
   root: string | null;
   confirm: (p: { message: string; initialValue: boolean }) => Promise<boolean>;
   outro: (message: string) => void;
-}): Promise<{ updated: boolean; handled?: boolean }> {
+}): Promise<{ updated: boolean; handled?: boolean; reason?: "gateway-readiness-unverified" }> {
   const updateInProgress = isTruthyEnvValue(process.env.OPENCLAW_UPDATE_IN_PROGRESS);
   const canOfferUpdate =
     !updateInProgress &&
@@ -246,6 +246,7 @@ export async function maybeOfferUpdateBeforeDoctor(params: {
       if (continued.exitCode !== 0) {
         throw new UpdateCommandFailure(continued.result, continued.exitCode);
       }
+      result = continued.result;
       return true;
     };
     const completeNativeRecovery = async (input: UpdateRunResult) => {
@@ -576,8 +577,20 @@ export async function maybeOfferUpdateBeforeDoctor(params: {
     } finally {
       stop();
     }
-    if (ledgerHandoffOwned) {
+    const finishOffer = () => {
+      if (result?.status === "skipped" && result.reason === "gateway-readiness-unverified") {
+        params.outro(
+          "OpenClaw installed; Gateway readiness remains unverified. Keep recovery backups and check `openclaw gateway status --deep`.",
+        );
+        return { ...outcome, handled: true, reason: "gateway-readiness-unverified" as const };
+      }
+      if (completionMessage) {
+        params.outro(completionMessage);
+      }
       return outcome;
+    };
+    if (ledgerHandoffOwned) {
+      return finishOffer();
     }
     if (!result) {
       throw new Error("Doctor update completed without a result.");
@@ -606,10 +619,7 @@ export async function maybeOfferUpdateBeforeDoctor(params: {
       });
       exitCliAfterOutput(params.runtime, 1);
     }
-    if (completionMessage) {
-      params.outro(completionMessage);
-    }
-    return outcome;
+    return finishOffer();
   }
 
   if (git === "not-git") {

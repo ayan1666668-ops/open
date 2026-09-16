@@ -116,7 +116,8 @@ describe("maybeOfferUpdateBeforeDoctor", () => {
     mocks.triageCommand.mockImplementation(async () => {
       expect(recoveryClosed).toBe(true);
     });
-    const offer = runOffer({ confirm: vi.fn().mockResolvedValue(true), runtime });
+    const outro = vi.fn();
+    const offer = runOffer({ confirm: vi.fn().mockResolvedValue(true), runtime, outro });
     const terminalFailure =
       unsafe ||
       mutationThrows ||
@@ -131,6 +132,7 @@ describe("maybeOfferUpdateBeforeDoctor", () => {
       await expect(offer).resolves.toEqual({
         updated: true,
         handled: true,
+        ...(outcome === "readiness-pending" ? { reason: "gateway-readiness-unverified" } : {}),
       });
     }
     expect(recoveryClosed).toBe(true);
@@ -178,6 +180,11 @@ describe("maybeOfferUpdateBeforeDoctor", () => {
       });
     }
     if (outcome === "readiness-pending") {
+      expect(outro).toHaveBeenCalledWith(expect.stringContaining("readiness remains unverified"));
+      expect(mocks.note).toHaveBeenCalledWith(
+        expect.stringContaining("Reason: gateway-readiness-unverified"),
+        "Update result",
+      );
       expect(mocks.restartUpdatedGateway).toHaveBeenCalledOnce();
       expect(mocks.maybeRestartServiceAfterFailedMutableUpdate).not.toHaveBeenCalled();
       expect(mocks.note).toHaveBeenCalledWith(expect.stringContaining("still starting"), "Update");
