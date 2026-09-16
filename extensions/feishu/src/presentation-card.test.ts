@@ -66,6 +66,47 @@ describe("buildFeishuPresentationCard", () => {
       },
     ]);
   });
+
+  // The shared adapter cuts a block to the 4,000-character text limit before this
+  // module runs, and `code` pads every cell and adds a fence afterwards, so a block
+  // that arrived inside the limit can leave it. Each piece is its own element and
+  // carries its own marker pair.
+  it("splits a projected table that outgrows the card text limit", () => {
+    const header = "Quarterly revenue attainment by named account owner";
+    const tableMarkdown = [
+      `| ${header} | n |`,
+      "| --- | --- |",
+      ...Array.from({ length: 80 }, (_entry, index) => `| r${index} | ${index % 10} |`),
+    ].join("\n");
+    const presentation = normalizeMessagePresentation({
+      blocks: [{ type: "text", text: tableMarkdown }],
+    });
+    if (!presentation) {
+      throw new Error("expected valid presentation");
+    }
+    // Guard the fixture: the case only means anything while the authored block fits the
+    // limit and the projection pushes it past.
+    expect(tableMarkdown.length).toBeLessThanOrEqual(4000);
+    expect(convertMarkdownTables(tableMarkdown, "code").length).toBeGreaterThan(4000);
+
+    const elements = buildFeishuPresentationCard({
+      presentation,
+      renderText: (text) => convertMarkdownTables(text, "code"),
+    }).body.elements as { tag: string; content: string }[];
+
+    expect(elements.length).toBeGreaterThan(1);
+    for (const element of elements) {
+      expect(element.tag).toBe("markdown");
+      expect(element.content.length).toBeLessThanOrEqual(4000);
+      // Each element closes what it opened.
+      const markers = element.content.match(/^```/gmu) ?? [];
+      expect(markers.length).toBe(2);
+    }
+    const joined = elements.map((element) => element.content).join("");
+    expect(joined).toContain(header);
+    expect(joined).toContain("r0");
+    expect(joined).toContain("r79");
+  });
 });
 
 describe("isFeishuCardWithinEnvelope", () => {

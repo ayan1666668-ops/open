@@ -19,6 +19,7 @@ import type { OutboundIdentity, ReplyPayload } from "../runtime-api.js";
 import { createFeishuCardInteractionEnvelope } from "./card-interaction.js";
 import { parseFeishuCommentTarget } from "./comment-target.js";
 import { resolveFeishuIdentityHeaderTitle } from "./identity-header.js";
+import { chunkFeishuMarkdown } from "./markdown.js";
 import type { MentionTarget } from "./mention-target.types.js";
 import { buildMentionedCardContent } from "./mention.js";
 import {
@@ -55,6 +56,23 @@ export const FEISHU_PRESENTATION_CAPABILITIES = {
     },
   },
 } satisfies NonNullable<ChannelOutboundAdapter["presentationCapabilities"]>;
+
+const FEISHU_CARD_TEXT_MAX_LENGTH = FEISHU_PRESENTATION_CAPABILITIES.limits.text.maxLength;
+
+/**
+ * The shared adapter splits a block to the text limit above before this module sees it,
+ * and `code` mode then pads every cell and adds a fence, so a block that arrived inside
+ * the limit can leave it. Split the projected form back, with the chunker that closes and
+ * reopens a fence rather than cutting one in half, and give each piece its own element.
+ */
+function projectBlockText(text: string, renderText: (text: string) => string): string[] {
+  const rendered = renderText(text);
+  if (rendered.length <= FEISHU_CARD_TEXT_MAX_LENGTH) {
+    return [rendered];
+  }
+  const parts = chunkFeishuMarkdown(rendered, FEISHU_CARD_TEXT_MAX_LENGTH);
+  return parts.length ? parts : [rendered];
+}
 
 const FEISHU_CARD_MAX_BYTES = 30 * 1024;
 const FEISHU_CARD_MAX_ELEMENTS = 200;
@@ -330,20 +348,23 @@ function buildFeishuCardElementsForBlock(
   renderText: (text: string) => string,
 ): Record<string, unknown>[] {
   if (block.type === "text") {
-    return [{ tag: "markdown", content: escapeFeishuCardMarkdownText(renderText(block.text)) }];
+    return projectBlockText(block.text, renderText).map((part) => ({
+      tag: "markdown",
+      content: escapeFeishuCardMarkdownText(part),
+    }));
   }
   if (block.type === "context") {
-    const content = escapeFeishuCardMarkdownText(renderText(block.text));
     // `code` mode hands this block a fenced table, and a fence only opens and closes
     // at the start of its own line. Inside the color tag those markers stop being
     // fences and the rows arrive as literal text, so a context block carrying one
     // keeps its shape and gives up the grey.
-    return [
-      {
+    return projectBlockText(block.text, renderText).map((part) => {
+      const content = escapeFeishuCardMarkdownText(part);
+      return {
         tag: "markdown",
         content: /```[\s\S]*?```/.test(content) ? content : `<font color='grey'>${content}</font>`,
-      },
-    ];
+      };
+    });
   }
   if (block.type === "divider") {
     return [{ tag: "hr" }];
