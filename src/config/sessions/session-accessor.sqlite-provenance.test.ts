@@ -98,18 +98,18 @@ describe("SQLite session provenance writes", () => {
 
       const tracker = trackTranscriptProbe(database);
       let boundTextBytes = 0;
-      const prepare = database.db.prepare.bind(database.db);
-      database.db.prepare = new Proxy(prepare, {
+      const prepareStatement = database.db.prepare.bind(database.db);
+      database.db.prepare = new Proxy(prepareStatement, {
         apply(prepare, receiver, args) {
           const statement = Reflect.apply(prepare, receiver, args);
           statement.run = new Proxy(statement.run.bind(statement), {
-            apply(run, receiver, args) {
-              for (const value of args) {
+            apply(run, runReceiver, runArgs) {
+              for (const value of runArgs) {
                 if (typeof value === "string") {
                   boundTextBytes += Buffer.byteLength(value);
                 }
               }
-              return Reflect.apply(run, receiver, args);
+              return Reflect.apply(run, runReceiver, runArgs);
             },
           });
           return statement;
