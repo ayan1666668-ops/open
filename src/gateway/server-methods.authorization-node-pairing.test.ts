@@ -54,6 +54,56 @@ describe("gateway node pairing fence guards", () => {
     );
   });
 
+  it("keeps a promoted connection's transport when the stale lookup resolves late", async () => {
+    const handler = vi.fn<GatewayRequestHandler>(({ respond }) => respond(true, { ok: true }));
+    const respond = vi.fn();
+    const resolveConnectionPairingState = vi
+      .fn()
+      // The request-time authority was stale, but the connection is promoted before the
+      // retirement side effect lands.
+      .mockResolvedValueOnce("stale")
+      .mockResolvedValue("current");
+    const disconnectClientForConnection = vi.fn();
+    const invalidateConnectionForPairingChange = vi.fn().mockReturnValue(false);
+
+    await handleGatewayRequest({
+      req: {
+        type: "req",
+        id: "req-node-promoted",
+        method: "node.event",
+        params: { event: "test" },
+      },
+      respond,
+      client: nodeClientFixture({ connId: "conn-node-promoted", deviceId: "node-promoted" }),
+      isWebchatConnect: () => false,
+      context: {
+        logGateway: { warn: vi.fn() },
+        nodeRegistry: { resolveConnectionPairingState, invalidateConnectionForPairingChange },
+        disconnectClientForConnection,
+      } as unknown as Parameters<typeof handleGatewayRequest>[0]["context"],
+      extraHandlers: { "node.event": handler },
+    });
+
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0);
+    });
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0);
+    });
+
+    expect(resolveConnectionPairingState).toHaveBeenCalledTimes(2);
+    expect(disconnectClientForConnection).not.toHaveBeenCalled();
+    expect(invalidateConnectionForPairingChange).not.toHaveBeenCalled();
+    expect(respond).toHaveBeenCalledWith(
+      false,
+      undefined,
+      expect.objectContaining({
+        code: "UNAVAILABLE",
+        details: { code: "PAIRING_CHANGED" },
+      }),
+    );
+  });
+
   it("keeps a retryable connection when the pairing store is unavailable", async () => {
     const handler = vi.fn<GatewayRequestHandler>(({ respond }) => respond(true, { ok: true }));
     const respond = vi.fn();

@@ -340,7 +340,19 @@ export async function authorizeGatewayRequestPreDispatch(params: {
       if (connId && pairingState === "stale") {
         const disconnect = params.context.disconnectClientForConnection?.bind(params.context);
         if (disconnect) {
-          setTimeout(() => disconnect(connId, "node pairing changed before request dispatch"), 0);
+          // The retirement decision is revalidated at the side effect: a session promoted
+          // while the first lookup awaited persistence reads current here, so the promoted
+          // connection keeps its transport (#148693).
+          const revalidate = params.context.nodeRegistry.resolveConnectionPairingState.bind(
+            params.context.nodeRegistry,
+          );
+          setTimeout(() => {
+            void revalidate(connId).then((currentState) => {
+              if (currentState === "stale") {
+                disconnect(connId, "node pairing changed before request dispatch");
+              }
+            });
+          }, 0);
         }
       }
       return {
