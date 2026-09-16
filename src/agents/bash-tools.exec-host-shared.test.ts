@@ -676,11 +676,54 @@ describe("buildExecApprovalPendingToolResult", () => {
     });
 
   it("resolves terminal no-route approvals inline", async () => {
-    // When no approval delivery route is available, fail closed by denying execution
     await expect(createRoute(null)).resolves.toMatchObject({
       kind: "inline",
-      preResolvedDecision: "deny",
-      state: { approvedByAsk: false, deniedReason: "user-denied" },
+      preResolvedDecision: null,
+      state: { approvedByAsk: false, deniedReason: "approval-timeout" },
+    });
+  });
+
+  it("leaves a no-route allowlist fallback to the caller's enforceable-plan evaluation", async () => {
+    const route = await createExecApprovalRequestRoute({
+      warnings: [],
+      approvalRunningNoticeMs: 1_000,
+      createApprovalSlug: (approvalId) => approvalId,
+      register: async (approvalId) => ({
+        id: approvalId,
+        expiresAtMs: 60_000,
+        finalDecision: null,
+      }),
+      askFallback: "allowlist",
+      requiresExplicitApproval: false,
+    });
+
+    expect(route).toMatchObject({
+      kind: "inline",
+      // Not a user decision: the timeout state keeps the caller's fallback hook —
+      // and its enforceable-plan revalidation — reachable instead of a blanket denial.
+      preResolvedDecision: null,
+      state: { baseDecision: { timedOut: true }, approvedByAsk: false, deniedReason: null },
+    });
+  });
+
+  it("resolves a no-route full fallback as an approved timeout", async () => {
+    const route = await createExecApprovalRequestRoute({
+      warnings: [],
+      approvalRunningNoticeMs: 1_000,
+      createApprovalSlug: (approvalId) => approvalId,
+      register: async (approvalId) => ({
+        id: approvalId,
+        expiresAtMs: 60_000,
+        finalDecision: null,
+      }),
+      askFallback: "full",
+      requiresExplicitApproval: false,
+    });
+
+    expect(route).toMatchObject({
+      kind: "inline",
+      preResolvedDecision: null,
+      state: { baseDecision: { timedOut: true }, approvedByAsk: true, deniedReason: null },
     });
   });
 
@@ -693,8 +736,6 @@ describe("buildExecApprovalPendingToolResult", () => {
   });
 
   it("applies strict approval ordering to an inline route", async () => {
-    // When requiresExplicitApproval is true and no delivery route is available,
-    // fail closed by denying execution rather than proceeding without approval
     await expect(
       createExecApprovalRequestRoute({
         warnings: [],
@@ -710,8 +751,7 @@ describe("buildExecApprovalPendingToolResult", () => {
       }),
     ).resolves.toMatchObject({
       kind: "inline",
-      preResolvedDecision: "deny",
-      state: { approvedByAsk: false, deniedReason: "user-denied" },
+      state: { approvedByAsk: false, deniedReason: "approval-timeout" },
     });
   });
 
