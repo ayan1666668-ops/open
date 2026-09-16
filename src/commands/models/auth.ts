@@ -628,6 +628,7 @@ async function runProviderAuthMethod(params: {
   refreshAfterLogin?: ModelsAuthLoginFlowOptions["refreshAfterLogin"];
   onModelAccessRequested?: (request: PreparedProviderModelAccess) => void;
   existingProfiles?: Readonly<Record<string, AuthProfileCredential>>;
+  allowMissingReusedProfile?: boolean;
 }): Promise<{
   result: ProviderAuthResult;
   profiles: ProviderAuthResult["profiles"];
@@ -712,10 +713,19 @@ async function runProviderAuthMethod(params: {
             profileId: string,
             current: AuthProfileCredential | undefined,
           ) => {
+            let currentMatches = false;
+            if (current) {
+              try {
+                currentMatches =
+                  params.method.matchesPersonalAccount?.(returnedProfile.credential, current) ===
+                  true;
+              } catch {
+                currentMatches = false;
+              }
+            }
             if (
               profileId !== reusedProfileId ||
-              !current ||
-              !params.method.matchesPersonalAccount?.(returnedProfile.credential, current)
+              (current ? !currentMatches : !params.allowMissingReusedProfile)
             ) {
               throw new Error(
                 "The existing auth profile identity changed during sign-in. Start the sign-in again.",
@@ -1321,6 +1331,7 @@ async function runModelsAuthLoginFlow(
     };
   }
 
+  let forcePurgedProviderProfiles = false;
   if (opts.force) {
     await opts.beforePersistentEffect?.();
     // Purge existing profiles for this provider only after we have a valid
@@ -1342,6 +1353,7 @@ async function runModelsAuthLoginFlow(
           "auth store is busy; close other OpenClaw commands using this state directory and retry",
         );
       }
+      forcePurgedProviderProfiles = true;
       opts.runtime.log(
         `Removed cached auth profiles for provider "${selectedProvider.id}" (--force). Running fresh auth flow.`,
       );
@@ -1378,6 +1390,7 @@ async function runModelsAuthLoginFlow(
     refreshAfterLogin: opts.refreshAfterLogin,
     onModelAccessRequested: opts.onModelAccessRequested,
     existingProfiles,
+    allowMissingReusedProfile: forcePurgedProviderProfiles,
   });
   maybeLogOpenAICodexNativeSearchTip(opts.runtime, selectedProvider.id);
   return {

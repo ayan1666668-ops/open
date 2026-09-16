@@ -612,6 +612,10 @@ describe("modelsAuthLoginCommand", () => {
           },
         },
       };
+      mocks.removeProviderAuthProfilesWithLock.mockImplementationOnce(async () => {
+        Reflect.deleteProperty(mocks.authProfileStore.profiles, "openai:setup-old");
+        return mocks.authProfileStore;
+      });
       runProviderAuth.mockResolvedValueOnce({
         profiles: [
           {
@@ -668,6 +672,82 @@ describe("modelsAuthLoginCommand", () => {
       ).toBeLessThan(mocks.removeProviderAuthProfilesWithLock.mock.invocationCallOrder[0]!);
     },
   );
+
+  it("rejects forced profile reuse when another account reclaims the purged id", async () => {
+    mocks.authProfileStore = {
+      version: 1,
+      profiles: {
+        "openai:setup-old": {
+          type: "oauth",
+          provider: "openai",
+          access: "old-access",
+          refresh: "old-refresh",
+          expires: Date.now() - 60_000,
+          accountId: "acct-old",
+        },
+      },
+    };
+    mocks.removeProviderAuthProfilesWithLock.mockImplementationOnce(async () => {
+      Reflect.deleteProperty(mocks.authProfileStore.profiles, "openai:setup-old");
+      return mocks.authProfileStore;
+    });
+    runProviderAuth.mockImplementationOnce(async () => {
+      mocks.authProfileStore.profiles["openai:setup-old"] = {
+        type: "oauth",
+        provider: "openai",
+        access: "reassigned-access",
+        refresh: "reassigned-refresh",
+        expires: Date.now() + 60_000,
+        accountId: "acct-reassigned",
+      };
+      return {
+        profiles: [
+          {
+            profileId: "openai:setup-new",
+            credential: {
+              type: "oauth" as const,
+              provider: "openai",
+              access: "new-access",
+              refresh: "new-refresh",
+              expires: Date.now() + 60_000,
+              accountId: "acct-old",
+            },
+          },
+        ],
+      };
+    });
+    const matchesPersonalAccount: NonNullable<
+      ProviderPlugin["auth"][number]["matchesPersonalAccount"]
+    > = (credential, existing) =>
+      credential.type === "oauth" &&
+      existing.type === "oauth" &&
+      credential.provider === existing.provider &&
+      credential.accountId === existing.accountId;
+    mocks.resolvePluginProvidersCore.mockReturnValue([
+      createProvider({
+        id: "openai",
+        run: runProviderAuth,
+        auth: [
+          {
+            id: "oauth",
+            label: "OAuth",
+            kind: "oauth",
+            run: runProviderAuth,
+            matchesPersonalAccount,
+          },
+        ],
+      }),
+    ]);
+
+    await expect(
+      runModelsAuthLoginFlowCore({
+        provider: "openai",
+        force: true,
+        runtime: createRuntime(),
+        prompter: mocks.createClackPrompter(),
+      }),
+    ).rejects.toThrow("existing auth profile identity changed during sign-in");
+  });
 
   it("does not collapse multiple returned profiles onto one existing account id", async () => {
     mocks.authProfileStore = {
