@@ -261,6 +261,8 @@ export function createSessionsHarness(agentId: string, keys: string[]) {
     archiveProvenance,
   );
   const groupsPut = vi.fn(() => Promise.resolve<SessionGroupMutationResult>("completed"));
+  const groupsAdd = vi.fn(() => Promise.resolve<SessionGroupMutationResult>("completed"));
+  const groupsReorder = vi.fn(() => Promise.resolve<SessionGroupMutationResult>("completed"));
   const groupsRename = vi.fn(() => Promise.resolve<SessionGroupMutationResult>("completed"));
   const groupsDelete = vi.fn(() => Promise.resolve<SessionGroupMutationResult>("completed"));
   const create = vi.fn(() => Promise.resolve("agent:main:fork"));
@@ -369,6 +371,8 @@ export function createSessionsHarness(agentId: string, keys: string[]) {
     groupsStatus: () => "ready",
     groupsInvalidate: () => undefined,
     groupsPut,
+    groupsAdd,
+    groupsReorder,
     groupsRename,
     groupsDelete,
     create,
@@ -499,6 +503,8 @@ export function createSessionsHarness(agentId: string, keys: string[]) {
   return {
     sessions,
     groupsPut,
+    groupsAdd,
+    groupsReorder,
     groupsRename,
     groupsDelete,
     create,
