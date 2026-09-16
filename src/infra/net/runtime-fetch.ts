@@ -22,7 +22,7 @@ export function resolveGuardedFetchSendDispatcher(params: {
   }
   if (!dispatcher || !params.useRuntimeFetch) {
     // A custom fetch can send bytes without invoking the supplied dispatcher,
-    // so absence of onRequestSent is not replay proof.
+    // so absence of send callbacks is not replay proof.
     sendTracker.state = "unknown";
     return dispatcher;
   }
@@ -32,6 +32,13 @@ export function resolveGuardedFetchSendDispatcher(params: {
         options,
         new Proxy(handler, {
           get(target, property) {
+            if (property === "onBodySent") {
+              return (chunk: Buffer) => {
+                // Completion can wait for socket drain after body bytes were handed off.
+                sendTracker.state = "sent";
+                return target.onBodySent?.(chunk);
+              };
+            }
             if (property === "onRequestSent") {
               return () => {
                 sendTracker.state = "sent";

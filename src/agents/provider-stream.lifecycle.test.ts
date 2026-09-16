@@ -11,11 +11,17 @@ import {
 import { registerProviderStreamForModel } from "./provider-stream.js";
 import { buildGuardedModelFetch } from "./provider-transport-fetch.js";
 
-const { fetchWithSsrFGuard, prepare, providerStream, reconcile, runtimeHandle } = vi.hoisted(() => {
+const {
+  fetchWithSsrFGuardWithTransportOptions,
+  prepare,
+  providerStream,
+  reconcile,
+  runtimeHandle,
+} = vi.hoisted(() => {
   const prepareMock = vi.fn(async () => undefined);
   const reconcileMock = vi.fn(async () => undefined);
   return {
-    fetchWithSsrFGuard: vi.fn(),
+    fetchWithSsrFGuardWithTransportOptions: vi.fn(),
     prepare: prepareMock,
     providerStream: vi.fn(),
     reconcile: reconcileMock,
@@ -36,7 +42,7 @@ const { fetchWithSsrFGuard, prepare, providerStream, reconcile, runtimeHandle } 
 });
 
 vi.mock("../infra/net/fetch-guard.js", () => ({
-  fetchWithSsrFGuard,
+  fetchWithSsrFGuardWithTransportOptions,
   withTrustedEnvProxyGuardedFetchMode: vi.fn((params) => params),
 }));
 
@@ -54,7 +60,7 @@ vi.mock("../plugins/provider-hook-runtime.js", async (importOriginal) => {
 
 describe("provider stream lifecycle registration", () => {
   beforeEach(() => {
-    fetchWithSsrFGuard.mockReset().mockResolvedValue({
+    fetchWithSsrFGuardWithTransportOptions.mockReset().mockResolvedValue({
       response: new Response("ok"),
       finalUrl: "http://127.0.0.1:19432/v1/responses",
       release: vi.fn(async () => undefined),
@@ -117,7 +123,7 @@ describe("provider stream lifecycle registration", () => {
         throw reconcileError;
       }
     });
-    fetchWithSsrFGuard.mockImplementation(async () => {
+    fetchWithSsrFGuardWithTransportOptions.mockImplementation(async () => {
       events.push("provider-request");
       return {
         response: new Response("ok"),

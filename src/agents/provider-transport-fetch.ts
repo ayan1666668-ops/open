@@ -943,7 +943,7 @@ export function buildGuardedModelFetch(
             throw error;
           }
           // The Messages transport serializes one JSON string. Retry only before
-          // Undici reports that the complete body reached its local socket.
+          // Undici reports that any body bytes reached its local socket.
           log.warn(
             `[model-fetch] retry provider=${model.provider} api=${model.api} model=${model.id} ` +
               `attempt=${attempt + 1}/${maxAttempts} elapsedMs=${Date.now() - fetchStartedAt} ${summarizeError(error)}`,

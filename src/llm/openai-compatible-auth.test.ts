@@ -10,7 +10,7 @@ import { captureEnv } from "../test-utils/env.js";
 import "./stream.js";
 
 const mocks = vi.hoisted(() => ({
-  fetchWithSsrFGuard: vi.fn(),
+  fetchWithSsrFGuardWithTransportOptions: vi.fn(),
 }));
 
 vi.mock("../infra/net/fetch-guard.js", async () => {
@@ -19,7 +19,7 @@ vi.mock("../infra/net/fetch-guard.js", async () => {
   );
   return {
     ...actual,
-    fetchWithSsrFGuard: mocks.fetchWithSsrFGuard,
+    fetchWithSsrFGuardWithTransportOptions: mocks.fetchWithSsrFGuardWithTransportOptions,
   };
 });
 
@@ -27,7 +27,7 @@ const originalEnv = captureEnv(["OPENAI_API_KEY"]);
 
 afterEach(() => {
   originalEnv.restore();
-  mocks.fetchWithSsrFGuard.mockReset();
+  mocks.fetchWithSsrFGuardWithTransportOptions.mockReset();
 });
 
 const context = {
@@ -74,21 +74,23 @@ describe("OpenAI-compatible provider credentials", () => {
 
   it("sends explicit API keys as bearer auth for generic chat-completions providers", async () => {
     let capturedHeaders: Headers | undefined;
-    mocks.fetchWithSsrFGuard.mockImplementationOnce(async (params: { init?: RequestInit }) => {
-      capturedHeaders = new Headers(params.init?.headers);
-      return {
-        response: new Response(
-          [
-            'data: {"id":"chatcmpl-test","object":"chat.completion.chunk","created":0,"model":"custom-model","choices":[{"index":0,"delta":{"content":"OK"},"finish_reason":null}]}',
-            'data: {"id":"chatcmpl-test","object":"chat.completion.chunk","created":0,"model":"custom-model","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}',
-            "data: [DONE]",
-            "",
-          ].join("\n\n"),
-          { headers: { "content-type": "text/event-stream" } },
-        ),
-        release: async () => undefined,
-      };
-    });
+    mocks.fetchWithSsrFGuardWithTransportOptions.mockImplementationOnce(
+      async (params: { init?: RequestInit }) => {
+        capturedHeaders = new Headers(params.init?.headers);
+        return {
+          response: new Response(
+            [
+              'data: {"id":"chatcmpl-test","object":"chat.completion.chunk","created":0,"model":"custom-model","choices":[{"index":0,"delta":{"content":"OK"},"finish_reason":null}]}',
+              'data: {"id":"chatcmpl-test","object":"chat.completion.chunk","created":0,"model":"custom-model","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}',
+              "data: [DONE]",
+              "",
+            ].join("\n\n"),
+            { headers: { "content-type": "text/event-stream" } },
+          ),
+          release: async () => undefined,
+        };
+      },
+    );
 
     const stream = streamOpenAICompletions(createBaseModel("openai-completions"), context, {
       apiKey: "sk-third-party",
