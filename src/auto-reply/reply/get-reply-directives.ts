@@ -53,6 +53,7 @@ import { shouldUseReplyFastTestRuntime } from "./get-reply-fast-path.js";
 import { defaultGroupActivation, resolveGroupRequireMention } from "./groups.js";
 import { createModelSelectionState, resolveContextTokens } from "./model-selection.js";
 import type { PreparedReplyConversation } from "./prompt-session-context.js";
+import { canUseReasoningState as isReasoningStateAuthorized } from "./reasoning-visibility.js";
 import { formatElevatedUnavailableMessage, resolveElevatedPermissions } from "./reply-elevated.js";
 import {
   createReplyModelLevelResolver,
@@ -389,10 +390,7 @@ export async function resolveReplyDirectives(params: {
   const configuredReasoningDefault =
     (agentEntry?.reasoningDefault as ReasoningLevel | undefined) ??
     (agentCfg?.reasoningDefault as ReasoningLevel | undefined);
-  const canUseReasoningState =
-    command.isAuthorizedSender ||
-    command.senderIsOwner ||
-    (Array.isArray(ctx.GatewayClientScopes) && ctx.GatewayClientScopes.includes("operator.admin"));
+  const canUseReasoningState = isReasoningStateAuthorized(command, ctx.GatewayClientScopes);
   const rawSessionReasoningLevel = targetSessionEntry?.reasoningLevel as
     | ReasoningLevel
     | null

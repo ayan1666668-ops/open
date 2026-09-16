@@ -102,6 +102,7 @@ export async function deliverMatrixReplies(params: {
   replyToId?: string;
   accountId?: string;
   mediaLocalRoots?: readonly string[];
+  shouldDeliverReasoning?: (payload: ReplyPayload) => boolean;
 }): Promise<MatrixReplyDeliveryResult> {
   const core = getMatrixRuntime();
   const logVerbose = (message: string) => {
@@ -161,16 +162,35 @@ export async function deliverMatrixReplies(params: {
           accountId: params.accountId,
         });
         for (const chunk of chunks) {
-          await sendMessageMatrix(params.roomId, chunk, {
-            client: params.client,
-            cfg: params.cfg,
-            replyToId: replyToIdForReply,
-            fallbackReplyToId,
-            threadId: params.threadId,
-            accountId: params.accountId,
-            extraContent: { msgtype: "m.notice", "m.mentions": {} },
-            onDeliveryResult,
-          });
+          if (!params.shouldDeliverReasoning?.(reply)) {
+            logVerbose("matrix reasoning suppressed by current turn policy");
+            break;
+          }
+          let suppressed = false;
+          try {
+            await sendMessageMatrix(params.roomId, chunk, {
+              client: params.client,
+              cfg: params.cfg,
+              replyToId: replyToIdForReply,
+              fallbackReplyToId,
+              threadId: params.threadId,
+              accountId: params.accountId,
+              extraContent: { msgtype: "m.notice", "m.mentions": {} },
+              onDeliveryResult,
+              assertBeforeSend: () => {
+                if (!params.shouldDeliverReasoning?.(reply)) {
+                  suppressed = true;
+                  throw new DOMException("Matrix reasoning visibility revoked", "AbortError");
+                }
+              },
+            });
+          } catch (error) {
+            if (!suppressed) {
+              throw error;
+            }
+            logVerbose("matrix reasoning suppressed before platform send");
+            break;
+          }
         }
         continue;
       }

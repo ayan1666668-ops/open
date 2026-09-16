@@ -34,6 +34,8 @@ export type ReplyRunVerbosity = {
 
 type InternalReplySessionOptions = {
   extractedFileImages?: import("../../media-understanding/extracted-file-images.js").ExtractedFileImage[];
+  /** Register policy cleanup with the dispatcher after its queued delivery settles. */
+  registerReasoningVisibilityCleanup?: (cleanup: () => void) => void;
   /** Rechecks the live Gateway caller before a chat login has a durable effect. */
   assertProviderLoginAuthority?: () => void;
   getProviderLoginConfig?: () => OpenClawConfig;

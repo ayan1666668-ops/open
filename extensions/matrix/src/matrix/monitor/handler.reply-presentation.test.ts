@@ -41,15 +41,6 @@ vi.mock("../send.js", () => ({
 }));
 
 const deliverMatrixRepliesMock = vi.hoisted(() => vi.fn());
-const getSessionEntryMock = vi.hoisted(() =>
-  vi.fn<typeof import("openclaw/plugin-sdk/session-store-runtime").getSessionEntry>(),
-);
-
-vi.mock("openclaw/plugin-sdk/session-store-runtime", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("openclaw/plugin-sdk/session-store-runtime")>()),
-  getSessionEntry: getSessionEntryMock,
-}));
-
 vi.mock("./replies.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./replies.js")>()),
   deliverMatrixReplies: deliverMatrixRepliesMock,
@@ -67,7 +58,6 @@ describe("matrix monitor handler reply presentation", () => {
     editMessageMatrixMock.mockClear();
     sendSingleTextMessageMatrixMock.mockClear();
     reactMatrixMessageMock.mockClear();
-    getSessionEntryMock.mockReset().mockReturnValue(undefined);
     deliverMatrixRepliesMock.mockReset().mockResolvedValue({
       messageIds: ["$reply1"],
       receipt: {
@@ -217,6 +207,8 @@ describe("matrix monitor handler reply presentation", () => {
     vi.useFakeTimers();
     try {
       expect(options.reasoningPayloadsEnabled).toBe(true);
+      expect(options.onReasoningVisibility).toBeTypeOf("function");
+      options.onReasoningVisibility?.(() => true);
       await options.onPartialReply?.({ text: "Answer prefix" });
       await vi.advanceTimersByTimeAsync(1000);
       expect(sendSingleTextMessageMatrixMock).toHaveBeenCalledTimes(1);
@@ -256,18 +248,13 @@ describe("matrix monitor handler reply presentation", () => {
     }
   });
 
-  it.each([
-    { name: "configured off", defaultLevel: "off", sessionOff: false, readError: false },
-    { name: "configured stream", defaultLevel: "stream", sessionOff: false, readError: false },
-    { name: "session override off", defaultLevel: "on", sessionOff: true, readError: false },
-    { name: "session read failure", defaultLevel: "on", sessionOff: false, readError: true },
-  ] as const)(
-    "suppresses typed reasoning for $name while delivering the answer",
-    async (testCase) => {
+  it.each(["unbound", "denied", "revoked"] as const)(
+    "suppresses typed reasoning when core visibility is %s while delivering the answer",
+    async (policy) => {
       const capturedDeliver = createDeferred<DeliverFn>();
       const { handler } = createMatrixHandlerTestHarness({
         cfg: {
-          agents: { defaults: { reasoningDefault: testCase.defaultLevel } },
+          agents: { defaults: { reasoningDefault: "on" } },
           channels: { matrix: { dm: { allowFrom: ["*"] } } },
         },
         streaming: "off",
@@ -280,21 +267,13 @@ describe("matrix monitor handler reply presentation", () => {
             markRunComplete: () => {},
           };
         },
-        dispatchInboundMessage: async () => {
-          // A directive can change the session after the Matrix dispatcher was created.
-          if (testCase.sessionOff) {
-            getSessionEntryMock.mockReturnValue({
-              sessionId: "reasoning-session",
-              updatedAt: 1,
-              reasoningLevel: "off",
-            });
-          }
-          if (testCase.readError) {
-            getSessionEntryMock.mockImplementation(() => {
-              throw new Error("session storage unavailable");
-            });
+        dispatchInboundMessage: async ({ replyOptions }) => {
+          let visible = policy === "revoked";
+          if (policy !== "unbound") {
+            replyOptions?.onReasoningVisibility?.(() => visible);
           }
           const deliver = await capturedDeliver.promise;
+          visible = false;
           await deliver({ text: "Hidden reasoning", isReasoning: true }, { kind: "block" });
           await deliver({ text: "Visible answer" }, { kind: "final" });
           return { queuedFinal: true, counts: { final: 1, block: 1, tool: 0 } };

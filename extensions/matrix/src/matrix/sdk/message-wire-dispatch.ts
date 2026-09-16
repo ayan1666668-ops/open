@@ -41,27 +41,41 @@ function resolveMessageWireDispatch(
 }
 
 export class MatrixMessageWireDispatchGuards {
-  private readonly guards = new Map<string, MatrixMessageWireDispatchGuard>();
+  private readonly guards = new Map<
+    string,
+    { guard?: MatrixMessageWireDispatchGuard; assertBeforeSend?: () => void }
+  >();
 
   beforeRequest(resource: RequestInfo | URL, init?: RequestInit): Promise<void> | undefined {
     const dispatch = resolveMessageWireDispatch(resource, init);
     return dispatch
-      ? Promise.resolve(this.guards.get(dispatch.transactionId)?.(dispatch))
+      ? Promise.resolve(this.guards.get(dispatch.transactionId)?.guard?.(dispatch))
       : undefined;
+  }
+
+  assertBeforeRequest(resource: RequestInfo | URL, init?: RequestInit): void {
+    const dispatch = resolveMessageWireDispatch(resource, init);
+    if (dispatch) {
+      this.guards.get(dispatch.transactionId)?.assertBeforeSend?.();
+    }
   }
 
   async run<T>(params: {
     transactionId?: string;
     guard?: MatrixMessageWireDispatchGuard;
+    assertBeforeSend?: () => void;
     run: () => Promise<T>;
   }): Promise<T> {
-    if (!params.transactionId || !params.guard) {
+    if (!params.transactionId || (!params.guard && !params.assertBeforeSend)) {
       return await params.run();
     }
     if (this.guards.has(params.transactionId)) {
       throw new Error(`Matrix transaction ${params.transactionId} already has a dispatch guard`);
     }
-    this.guards.set(params.transactionId, params.guard);
+    this.guards.set(params.transactionId, {
+      guard: params.guard,
+      assertBeforeSend: params.assertBeforeSend,
+    });
     try {
       return await params.run();
     } finally {

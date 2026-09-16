@@ -2221,44 +2221,57 @@ describe("followup queue collect routing", () => {
     }
   });
 
-  it("keeps same-participant evidence for a collected batch", async () => {
-    const cleanup = configureChannelAdmissionEvidenceCollection(true);
-    try {
-      const sameCase = createQueueCase(`test-collect-identity-same-${Date.now()}`);
-      for (const prompt of ["same one", "same two"]) {
-        const item = createRun({
-          prompt,
-          originatingChannel: "slack",
-          originatingTo: "channel:A",
-        });
-        enqueueFollowupRun(
-          sameCase.key,
-          {
-            ...item,
-            channelAdmissionEvidence: createChannelParticipantAdmissionEvidence({
-              channelId: "slack",
-              accountId: "default",
-              participantId: "user-1",
-            }),
-            run: { ...item.run, senderId: "user-1", senderIsOwner: false },
-          },
-          sameCase.settings,
+  it.each([false, true])(
+    "scopes collected reasoning to matching participants (mixed: %s)",
+    async (mixed) => {
+      const cleanup = configureChannelAdmissionEvidenceCollection(true);
+      try {
+        const sameCase = createQueueCase(`test-collect-identity-same-${Date.now()}`);
+        const reasoningVisibility = {
+          retainForQueue: () => {},
+          releaseDispatch: () => {},
+          close: () => {},
+        };
+        for (const [index, prompt] of ["same one", "same two"].entries()) {
+          const item = createRun({
+            prompt,
+            originatingChannel: "slack",
+            originatingTo: "channel:A",
+          });
+          enqueueFollowupRun(
+            sameCase.key,
+            {
+              ...item,
+              channelAdmissionEvidence: createChannelParticipantAdmissionEvidence({
+                channelId: "slack",
+                accountId: "default",
+                participantId: mixed ? `user-${index}` : "user-1",
+              }),
+              run: { ...item.run, senderId: "user-1", senderIsOwner: false, reasoningVisibility },
+            },
+            sameCase.settings,
+          );
+        }
+        await drainRecordedQueue(sameCase.key, sameCase.runFollowup, sameCase.done);
+        await vi.waitFor(() => expect(getExistingFollowupQueue(sameCase.key)).toBeUndefined());
+        expect(sameCase.calls).toHaveLength(1);
+        expect(sameCase.calls[0]?.run.senderId).toBe(mixed ? undefined : "user-1");
+        expect(sameCase.calls[0]?.run.reasoningVisibility).toBe(
+          mixed ? undefined : reasoningVisibility,
         );
+        if (!mixed) {
+          expect(
+            consumeChannelAdmissionEvidence(sameCase.calls[0]?.channelAdmissionEvidence),
+          ).toMatchObject({
+            ingressState: "present",
+            invoker: { state: "present", kind: "person" },
+          });
+        }
+      } finally {
+        cleanup();
       }
-      await drainRecordedQueue(sameCase.key, sameCase.runFollowup, sameCase.done);
-      await vi.waitFor(() => expect(getExistingFollowupQueue(sameCase.key)).toBeUndefined());
-      expect(sameCase.calls).toHaveLength(1);
-      expect(sameCase.calls[0]?.run.senderId).toBe("user-1");
-      expect(
-        consumeChannelAdmissionEvidence(sameCase.calls[0]?.channelAdmissionEvidence),
-      ).toMatchObject({
-        ingressState: "present",
-        invoker: { state: "present", kind: "person" },
-      });
-    } finally {
-      cleanup();
-    }
-  });
+    },
+  );
 
   it("splits collect batches when queued cancellation owners differ", async () => {
     const key = `test-collect-cancel-owner-split-${Date.now()}`;

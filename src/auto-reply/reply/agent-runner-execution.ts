@@ -75,6 +75,7 @@ import { prepareChannelRunAdmission } from "./channel-run-admission.js";
 import { shouldNotifyUserAboutCompaction } from "./compaction-notice.js";
 import { type CurrentTurnImages, resolveCurrentTurnImages } from "./current-turn-images.js";
 import type { FollowupRun } from "./queue.js";
+import { bindReplyReasoningVisibility, isReplyReasoningVisible } from "./reasoning-visibility.js";
 import type { DirectBlockDelivery } from "./reply-delivery.js";
 import type { ReplyMediaContext } from "./reply-media-paths.js";
 import { createReplyMediaContext } from "./reply-media-paths.runtime.js";
@@ -710,6 +711,7 @@ async function executeAgentTurnOutcome(params: AgentTurnParams): Promise<AgentTu
 
 /** Runs the agent turn and records its execution and message-tool delivery outcomes. */
 export async function executeAgentTurn(params: AgentTurnParams): Promise<AgentTurnExecutionResult> {
+  params.opts?.onReasoningVisibility?.(isReplyReasoningVisible);
   params.opts?.onRunVerbosityResolved?.({
     verboseLevelOverride: params.followupRun.run.verboseLevelOverride,
     resolvedVerboseLevel: params.resolvedVerboseLevel,
@@ -719,10 +721,30 @@ export async function executeAgentTurn(params: AgentTurnParams): Promise<AgentTu
     retainReplyOperationUntilComplete(params.replyOperation);
   }
   const runId = params.opts?.runId ?? crypto.randomUUID();
-  const executionParams =
-    params.opts?.runId === runId ? params : { ...params, opts: { ...params.opts, runId } };
+  const onBlockReply = params.opts?.onBlockReply;
+  const reasoningVisibility = params.followupRun.run.reasoningVisibility;
+  const executionParams: AgentTurnParams = {
+    ...params,
+    opts: {
+      ...params.opts,
+      runId,
+      ...(onBlockReply
+        ? {
+            onBlockReply: (payload, context) => {
+              bindReplyReasoningVisibility(payload, reasoningVisibility);
+              return onBlockReply(payload, context);
+            },
+          }
+        : {}),
+    },
+  };
   try {
     const result = await executeAgentTurnOutcome(executionParams);
+    if (result.outcome.kind === "settled") {
+      for (const payload of result.outcome.result.payloads ?? []) {
+        bindReplyReasoningVisibility(payload, reasoningVisibility);
+      }
+    }
     recordAgentTurnExecutionOutcome(executionParams, result);
     return result;
   } catch (error) {

@@ -1,5 +1,5 @@
 import type { TurnAdoptionLifecycle } from "../../get-reply-options.types.js";
-import type { FollowupRun } from "./types.js";
+import { isFollowupRunAborted, type FollowupRun } from "./types.js";
 
 const enqueuedTurnAdoptionLifecycles = new WeakSet<TurnAdoptionLifecycle>();
 const admittedTurnAdoptionLifecycles = new WeakSet<TurnAdoptionLifecycle>();
@@ -9,7 +9,12 @@ const completedTurnAdoptionLifecycles = new WeakSet<TurnAdoptionLifecycle>();
 const completedTurnAdoptionLifecycleCallbacks = new WeakSet<TurnAdoptionLifecycle>();
 const deferredHeartbeatStops = new WeakMap<TurnAdoptionLifecycle, () => void>();
 
-type FollowupLifecycleRun = Pick<FollowupRun, "steerPending" | "turnAdoptionLifecycle">;
+type FollowupLifecycleRun = Pick<
+  FollowupRun,
+  "steerPending" | "turnAdoptionLifecycle" | "abortSignal" | "queueAbortSignal"
+> & {
+  run?: Pick<FollowupRun["run"], "reasoningVisibility">;
+};
 
 export function startFollowupRunPreAdoptionHeartbeat(
   lifecycle: TurnAdoptionLifecycle | undefined,
@@ -66,6 +71,7 @@ export function markFollowupRunEnqueued(run: FollowupLifecycleRun): boolean {
     enqueuedTurnAdoptionLifecycles.add(lifecycle);
     startFollowupRunPreAdoptionHeartbeat(lifecycle);
   }
+  run.run?.reasoningVisibility?.retainForQueue(() => isFollowupRunAborted(run));
   return true;
 }
 
@@ -112,6 +118,7 @@ export function completeFollowupRunLifecycle(
   run: FollowupLifecycleRun,
   disposition?: "consumed",
 ): void {
+  run.run?.reasoningVisibility?.close();
   run.steerPending?.settle(false);
   const lifecycle = run.turnAdoptionLifecycle;
 

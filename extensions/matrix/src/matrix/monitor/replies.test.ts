@@ -422,6 +422,7 @@ describe("deliverMatrixReplies", () => {
       runtime: runtimeEnv,
       replyToMode: "first",
       replyToId: "$question",
+      shouldDeliverReasoning: () => true,
     });
 
     expect(result.visibleReplySent).toBe(true);

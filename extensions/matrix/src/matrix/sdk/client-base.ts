@@ -205,6 +205,8 @@ export abstract class MatrixClientBase {
       ssrfPolicy: opts.ssrfPolicy,
       dispatcherPolicy: opts.dispatcherPolicy,
       captureRequestAuthority: this.captureRequestAuthority,
+      assertBeforeSend: (resource, init) =>
+        this.messageWireDispatchGuards.assertBeforeRequest(resource, init),
       signal: this.requestAbortController.signal,
       beforeRequest: async (resource, init) => {
         // Complete admitted key persistence before checking live wire authority.

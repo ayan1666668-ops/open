@@ -315,6 +315,7 @@ export async function sendMessageMatrix(
                 await opts.onPlatformSendDispatch?.();
               }
             : opts.onPlatformSendDispatch,
+          opts.assertBeforeSend,
         );
         lastMessageId = eventId || lastMessageId;
         if (!eventId) {

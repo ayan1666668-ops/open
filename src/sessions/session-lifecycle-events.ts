@@ -7,6 +7,8 @@ export type SessionLifecycleEvent = {
   parentSessionKey?: string;
   label?: string;
   displayName?: string;
+  /** Explicit committed reasoning write, including a same-value off or a cleared setting. */
+  reasoningLevel?: string | null;
 } & (
   | { reason: string; swarmGroupId?: never; kind?: never; text?: never }
   | { reason: "swarm-note"; swarmGroupId: string; kind: "phase" | "log"; text: string }

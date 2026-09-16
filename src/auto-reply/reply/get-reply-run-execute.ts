@@ -45,6 +45,7 @@ import {
 } from "./get-reply-run-helpers.js";
 import { hasInboundAudio } from "./inbound-media.js";
 import { resolveOriginMessageProvider } from "./origin-routing.js";
+import { canUseReasoningState, createReplyReasoningVisibility } from "./reasoning-visibility.js";
 import { resolveReplyToMode } from "./reply-threading.js";
 import { resolveRoutedDeliveryThreadId } from "./routed-delivery-thread.js";
 import {
@@ -379,6 +380,22 @@ export async function executePreparedReplyRun(state: PreparedReplyRunAdmission) 
   }
   const admittedSessionSettings = opts?.admittedSessionSettings;
   const groupTurn = getGroupThreadTurn();
+  const reasoningVisibility =
+    opts?.onReasoningVisibility && opts.registerReasoningVisibilityCleanup
+      ? createReplyReasoningVisibility({
+          agentId,
+          sessionKey,
+          storePath,
+          sessionEntry: preparedSessionState.sessionEntry,
+          authorized: canUseReasoningState(command, ctx.GatewayClientScopes),
+          resolvedLevel: resolvedReasoningLevel,
+          override: params.directives.reasoningLevel,
+          abortSignal: opts.abortSignal,
+        })
+      : undefined;
+  if (reasoningVisibility) {
+    opts?.registerReasoningVisibilityCleanup?.(reasoningVisibility.releaseDispatch);
+  }
   const followupRun = {
     prompt: queuedBody,
     transcriptPrompt: transcriptCommandBody,
@@ -519,6 +536,7 @@ export async function executePreparedReplyRun(state: PreparedReplyRunAdmission) 
       })(),
       verboseLevel: resolvedVerboseLevel,
       reasoningLevel: resolvedReasoningLevel,
+      reasoningVisibility,
       elevatedLevel: resolvedElevatedLevel,
       execOverrides,
       bashElevated: {

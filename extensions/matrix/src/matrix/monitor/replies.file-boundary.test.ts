@@ -76,6 +76,7 @@ describe("deliverMatrixReplies file boundary", () => {
       }),
       undefined,
       undefined,
+      undefined,
     );
     expect(result).toMatchObject({ messageIds: ["$event-1"], visibleReplySent: true });
   });

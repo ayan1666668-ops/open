@@ -108,6 +108,8 @@ export type MatrixSendOpts = {
   deliveryPartCount?: number;
   /** Marks recipient-visible timeline dispatch after the recovery plan is durable. */
   onPlatformSendDispatch?: () => Promise<void>;
+  /** Revalidates the message policy immediately before every HTTP send. */
+  assertBeforeSend?: () => void;
   /** Additional Matrix event content fields to merge into the first sent event. */
   extraContent?: MatrixExtraContentFields;
   /** Send audio as voice message instead of audio file. Defaults to false. */

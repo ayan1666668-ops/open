@@ -13,6 +13,7 @@ import {
 } from "../tokens.js";
 import type { ReplyPayload } from "../types.js";
 import type { AgentTurnParams } from "./agent-runner-execution.types.js";
+import { bindReplyReasoningVisibility } from "./reasoning-visibility.js";
 import { createBlockReplyDeliveryHandler, type DirectBlockDelivery } from "./reply-delivery.js";
 import type { ReplyMediaContext } from "./reply-media-paths.js";
 import { hasCommittedReplyOperationOutcome } from "./reply-run-registry.js";
@@ -156,6 +157,12 @@ export function createAgentTurnPresentation(params: {
     sanitizeStreamingText,
     normalizeStreamingText,
     presentWithTyping,
-    blockReplyHandler,
+    blockReplyHandler: blockReplyHandler
+      ? (payload) => {
+          // The prebuilt block pipeline bypasses opts.onBlockReply while enqueueing.
+          bindReplyReasoningVisibility(payload, params.turn.followupRun.run.reasoningVisibility);
+          return blockReplyHandler(payload);
+        }
+      : undefined,
   };
 }

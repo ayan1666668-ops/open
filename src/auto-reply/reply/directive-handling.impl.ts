@@ -535,7 +535,14 @@ export async function handleDirectiveOnly(
     // List projections must observe committed settings, not only model selections.
     const sessionSettingsUpdated = directiveFieldsUpdated || shouldRemapUnsupportedThinkLevel;
     if (sessionKey && (sessionSettingsUpdated || modelSelectionUpdated)) {
-      emitSessionLifecycleEvent({ sessionKey, agentId: activeAgentId, reason: "patch" });
+      emitSessionLifecycleEvent({
+        sessionKey,
+        agentId: activeAgentId,
+        reason: "patch",
+        ...(directiveFieldsUpdated && directives.hasReasoningDirective
+          ? { reasoningLevel: directives.reasoningLevel }
+          : {}),
+      });
     }
     if (modelSelection && modelSelectionUpdated && sessionKey) {
       triggerSessionPatchHook({

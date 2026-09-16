@@ -55,7 +55,7 @@ export function createMatrixReplyDispatcher(config: {
   accountId: string;
   mediaLocalRoots: readonly string[];
   logVerboseMessage: (message: string) => void;
-  shouldDeliverReasoning?: () => boolean;
+  shouldDeliverReasoning?: (payload: ReplyPayload) => boolean;
 }) {
   const {
     cfg,
@@ -91,6 +91,7 @@ export function createMatrixReplyDispatcher(config: {
       replyToId: threadTarget ?? replyToEventId ?? undefined,
       accountId,
       mediaLocalRoots,
+      shouldDeliverReasoning: config.shouldDeliverReasoning,
     });
   let finalReplyDeliveryFailed = false;
   let nonFinalReplyDeliveryFailed = false;
@@ -111,7 +112,7 @@ export function createMatrixReplyDispatcher(config: {
     deliver: async (payload: ReplyPayload, info: { kind: string }) => {
       if (payload.isReasoning === true) {
         try {
-          return config.shouldDeliverReasoning?.()
+          return config.shouldDeliverReasoning?.(payload)
             ? await deliverPayload(payload)
             : mergeMatrixReplyDeliveryResults([]);
         } catch (error: unknown) {
