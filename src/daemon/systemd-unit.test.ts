@@ -94,6 +94,27 @@ describe("systemd unit value round-trips", () => {
     expect(unit).not.toContain('WorkingDirectory="');
     expect(unit).not.toContain('EnvironmentFile=-"');
   });
+
+  it("quotes EnvironmentFile entries containing whitespace and doubles %", () => {
+    const unit = buildSystemdUnit({
+      description: "OpenClaw Gateway",
+      programArguments: ["/usr/bin/openclaw", "gateway", "run"],
+      environmentFiles: ["/srv/Open Claw/env%s"],
+      environment: {},
+    });
+    expect(unit).toContain('EnvironmentFile=-"/srv/Open Claw/env%%s"');
+  });
+
+  it("refuses scalar paths ending in a backslash", () => {
+    expect(() =>
+      buildSystemdUnit({
+        description: "OpenClaw Gateway",
+        programArguments: ["/usr/bin/openclaw", "gateway", "run"],
+        workingDirectory: "/srv/trailing\\",
+        environment: {},
+      }),
+    ).toThrow(/backslash/);
+  });
 });
 
 describe("buildSystemdUnit", () => {

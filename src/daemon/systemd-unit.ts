@@ -34,14 +34,32 @@ function systemdEscapeArg(value: string): string {
 }
 
 /**
- * Scalar directives (WorkingDirectory, EnvironmentFile paths) take the raw
- * value directly: systemd expands specifiers there but does not strip shell
- * quotes, so quoting a path makes the unit invalid. Double % so specifiers
- * survive, and leave everything else byte-for-byte.
+ * Scalar directives (WorkingDirectory, EnvironmentFile paths) expand specifiers
+ * without ExecStart argument semantics. A trailing backslash would merge the
+ * next directive through systemd's logical-line continuation and cannot be
+ * escaped away, so refuse it. Double % so literal specifiers survive.
  */
 function systemdEscapeScalarPath(value: string): string {
   assertNoSystemdLineBreaks(value, "Systemd unit values");
+  if (/\\$/.test(value)) {
+    throw new Error(
+      "Systemd scalar path values cannot end in a backslash: it would continue the next directive line",
+    );
+  }
   return value.replaceAll("%", "%%");
+}
+
+/**
+ * EnvironmentFile entries are space-separated and quote-aware (unlike
+ * WorkingDirectory, systemd accepts quotes here). Keep quoting for values with
+ * whitespace, escape quotes/backslashes for the quoted form, and double %.
+ */
+function systemdEscapeEnvironmentFilePath(value: string): string {
+  const escaped = systemdEscapeScalarPath(value);
+  if (!/[\s"\\]/.test(escaped)) {
+    return escaped;
+  }
+  return `"${escaped.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
 }
 
 /**
@@ -79,7 +97,7 @@ function renderEnvironmentFileLines(environmentFiles: string[] | undefined): str
   }
   return normalizeStringEntries(environmentFiles).map((entry) => {
     assertNoSystemdLineBreaks(entry, "Systemd EnvironmentFile values");
-    return `EnvironmentFile=-${systemdEscapeScalarPath(entry)}`;
+    return `EnvironmentFile=-${systemdEscapeEnvironmentFilePath(entry)}`;
   });
 }
 
