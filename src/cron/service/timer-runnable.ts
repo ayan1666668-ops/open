@@ -4,7 +4,6 @@ import {
   computeJobPreviousRunAtOrBeforeMs,
   DEFAULT_ERROR_BACKOFF_SCHEDULE_MS,
   hasActiveCronRun,
-  hasPendingCronTriggerInterval,
   hasScheduledNextRunAtMs,
   isJobEnabled,
   resolveJobErrorBackoffUntilMs,
@@ -12,6 +11,7 @@ import {
 } from "./jobs-scheduling.js";
 import type { CronServiceState } from "./state.js";
 import { isScheduledTerminalOneShotRetry } from "./timer-trigger.js";
+import { hasPendingCronTriggerInterval } from "./trigger-interval.js";
 
 /**
  * Reports whether a cron job's last completed occurrence is older than its previous

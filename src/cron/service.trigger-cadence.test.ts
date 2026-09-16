@@ -29,6 +29,7 @@ describe("cron trigger cadence", () => {
     try {
       const job = await cron.add({
         name: "quiet occurrence",
+        enabled: true,
         schedule: { kind: "cron", expr: "0 * * * * *", tz: "UTC", staggerMs: 0 },
         trigger: { script: "json({ fire: false })" },
         sessionTarget: "main",
@@ -79,6 +80,7 @@ describe("cron trigger cadence", () => {
       try {
         const job = await cron.add({
           name: "cadence probe",
+          enabled: true,
           schedule: { kind: "cron", expr: "* * * * * *", tz: "UTC", staggerMs: 0 },
           trigger: { script: "json({ fire: false })" },
           sessionTarget: "main",
