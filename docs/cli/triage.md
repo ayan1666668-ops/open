@@ -167,14 +167,14 @@ Embedded repair exits with 0 when its validation proves resolution, 2 when a tim
 
 ## Options
 
-| Option                   | Effect                                                                                     |
-| ------------------------ | ------------------------------------------------------------------------------------------ |
-| `--json`                 | Emit prompt and archive paths, finding counts, detected agents, and commands.              |
-| `--no-export`            | Skip the diagnostics archive; still prepare the prompt and use the selected handoff route. |
-| `--agent <name>`         | Select `claude`, `codex`, `opencode`, or `pi` instead of automatic detection.              |
-| `--run`                  | Run one bounded embedded repair turn with installation or update-resolution validation.    |
-| `--non-interactive`      | Prepare diagnostics without prompting or starting an agent, including on a terminal.       |
-| `--update-result <path>` | Include the bounded update-failure JSON diagnostics artifact written by the updater.       |
+| Option                   | Effect                                                                                                  |
+| ------------------------ | ------------------------------------------------------------------------------------------------------- |
+| `--json`                 | Emit prompt and archive paths, finding counts, detected agents, and commands.                           |
+| `--no-export`            | Skip the diagnostics archive; still prepare the prompt and use the selected handoff route.              |
+| `--agent <name>`         | Select `claude`, `codex`, `cursor`, `grok`, `muse`, `opencode`, or `pi` instead of automatic detection. |
+| `--run`                  | Run one bounded embedded repair turn with installation or update-resolution validation.                 |
+| `--non-interactive`      | Prepare diagnostics without prompting or starting an agent, including on a terminal.                    |
+| `--update-result <path>` | Include the bounded update-failure JSON diagnostics artifact written by the updater.                    |
 
 `--run` cannot be combined with `--json`, `--non-interactive`, or `--agent`.
 
