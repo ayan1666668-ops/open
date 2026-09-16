@@ -1,10 +1,8 @@
 import { resolveTimerTimeoutMs } from "@openclaw/normalization-core/number-coercion";
-import { danger, shouldLogVerbose } from "../globals.js";
 import {
   decodeWindowsOutputBuffer,
   resolveWindowsConsoleEncoding,
 } from "../infra/windows-encoding.js";
-import { logDebug, logError } from "../logger.js";
 import { releaseChildProcessOutputAfterExit } from "./child-process.js";
 import { resolveMaxOutputBytes, type CommandOutputStream } from "./exec-output.js";
 import { runCommandWithTimeout } from "./exec-runner.js";
@@ -101,12 +99,18 @@ export async function runExec(
     const windowsEncoding = resolveWindowsConsoleEncoding();
     const decodedStdout = decodeExecOutput(stdout, windowsEncoding);
     const decodedStderr = decodeExecOutput(stderr, windowsEncoding);
-    if (resolvedOptions?.logOutput !== false && shouldLogVerbose()) {
-      if (decodedStdout.trim()) {
-        logDebug(decodedStdout.trim());
-      }
-      if (decodedStderr.trim()) {
-        logError(decodedStderr.trim());
+    if (resolvedOptions?.logOutput !== false) {
+      const [{ shouldLogVerbose }, { logDebug, logError }] = await Promise.all([
+        import("../globals.js"),
+        import("../logger.js"),
+      ]);
+      if (shouldLogVerbose()) {
+        if (decodedStdout.trim()) {
+          logDebug(decodedStdout.trim());
+        }
+        if (decodedStderr.trim()) {
+          logError(decodedStderr.trim());
+        }
       }
     }
     return { stdout: decodedStdout, stderr: decodedStderr };
@@ -129,8 +133,17 @@ export async function runExec(
         errorWithOutput.stderr = decodeExecOutput(errorWithOutput.stderr, windowsEncoding);
       }
     }
-    if (resolvedOptions?.logOutput !== false && shouldLogVerbose()) {
-      logError(danger(`Command failed: ${command}`));
+    if (resolvedOptions?.logOutput !== false) {
+      // Logging imports must not replace the original command failure.
+      const logging = await Promise.all([import("../globals.js"), import("../logger.js")]).catch(
+        () => undefined,
+      );
+      if (logging) {
+        const [{ danger, shouldLogVerbose }, { logError }] = logging;
+        if (shouldLogVerbose()) {
+          logError(danger(`Command failed: ${command}`));
+        }
+      }
     }
     throw err;
   }
