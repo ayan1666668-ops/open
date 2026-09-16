@@ -378,7 +378,9 @@ async function listDirectoryEntries(
   // the listed identity against the authorized policy path. A non-adopting
   // bridge resolves directory symlinks during listing without enforcing
   // that identity, so it keeps the non-following listing below, which never
-  // follows a symlink supplied as the source root.
+  // follows a symlink supplied as the source root. The listing is only used
+  // when every entry carries a boolean isFile; kind-less listings fall
+  // through to the non-following classification below.
   if (execServer.fsBridge.readDirectory && implementsSandboxFilePolicyPath(execServer.fsBridge)) {
     const entries = await execServer.fsBridge.readDirectory({
       filePath: readPath,
@@ -558,9 +560,16 @@ async function copySandboxPath(
       params.sourcePath,
       params.fsSandboxPolicy,
     )) {
-      // Entry kinds from listings may be unclassified; each child resolves its
-      // own authoritative kind through the pinned stat inside copySandboxPath,
-      // which declines unsupported entry kinds before any read effect.
+      // Both listing paths classify kinds: the direct bridge listing is only
+      // used when every entry carries a boolean isFile, and the guarded
+      // fallback listing classifies with a non-following check. An entry that
+      // is neither a regular file nor a directory is therefore explicitly
+      // unsupported — symlinks, FIFOs, sockets, and devices are never copy
+      // sources. Rejecting here keeps the child's alias-following stat from
+      // misreporting a directory symlink as a copyable directory.
+      if (!entry.isDirectory && !entry.isFile) {
+        throw new Error(`Cannot copy unsupported filesystem entry: ${entry.fileName}`);
+      }
       await copySandboxPath(execServer, {
         sourcePath: joinSandboxChildPath(params.sourcePath, entry.fileName),
         destinationPath: joinSandboxChildPath(params.destinationPath, entry.fileName),

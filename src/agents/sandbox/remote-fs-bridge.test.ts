@@ -128,10 +128,10 @@ describe("remote sandbox fs bridge", () => {
         await expect(createFileExclusive({ filePath, data: payload })).resolves.toBe("created");
         await expect(bridge.readFile({ filePath })).resolves.toEqual(payload);
         await expect(bridge.readDirectory({ filePath: "." })).resolves.toEqual([
-          // The dependency-owned guest listing no longer classifies entry
-          // kinds; unclassified entries parse as isFile: false and the security
-          // boundary is the authoritative pinned stat in copy consumers.
-          { name: filePath, isDirectory: false, isFile: false },
+          // The dependency-owned guest listing classifies no entry kinds;
+          // kind-less entries preserve the absent isFile, and the guarded
+          // listing boundary classifies kinds without following symlinks.
+          { name: filePath, isDirectory: false },
         ]);
         await expect(
           createFileExclusive({ filePath, data: Buffer.alloc(1_048_576) }),
