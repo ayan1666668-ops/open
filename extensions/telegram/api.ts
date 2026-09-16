@@ -33,7 +33,6 @@ export {
   lookupTelegramChatId,
   resolveTelegramChatLookupFetch,
 } from "./src/api-fetch.js";
-export { createTelegramMessageContextRuntime } from "./src/bot-handlers.message-context.js";
 export {
   buildGroupLabel,
   buildSenderLabel,
@@ -134,14 +133,12 @@ export {
   TELEGRAM_TEXT_CHUNK_LIMIT,
   telegramOutbound,
 } from "./src/outbound-adapter.js";
-export { recordOutboundMessageForPromptContext } from "./src/outbound-message-context.js";
 export {
   normalizeTelegramReplyToMessageId,
   parseTelegramReplyToMessageId,
   parseTelegramThreadId,
 } from "./src/outbound-params.js";
 export { probeTelegram, type TelegramProbe, type TelegramProbeOptions } from "./src/probe.js";
-export { createTelegramPromptContextProjectionCursor } from "./src/prompt-context-projection.js";
 export {
   type ResolvedReactionLevel,
   resolveTelegramReactionLevel,

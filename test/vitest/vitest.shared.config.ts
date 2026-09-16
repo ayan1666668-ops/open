@@ -197,10 +197,6 @@ export const sharedVitestConfig = {
         replacement: path.join(repoRoot, "extensions", "slack", "test-api.ts"),
       },
       {
-        find: "@openclaw/telegram/api.js",
-        replacement: path.join(repoRoot, "extensions", "telegram", "api.ts"),
-      },
-      {
         find: "@openclaw/whatsapp/api.js",
         replacement: path.join(repoRoot, "extensions", "whatsapp", "api.ts"),
       },
