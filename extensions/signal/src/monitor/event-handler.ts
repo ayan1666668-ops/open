@@ -57,6 +57,7 @@ import {
   triggerInternalHook,
 } from "openclaw/plugin-sdk/hook-runtime";
 import { kindFromMime } from "openclaw/plugin-sdk/media-runtime";
+import { parseStrictNonNegativeInteger } from "openclaw/plugin-sdk/number-runtime";
 import { createChannelHistoryWindow } from "openclaw/plugin-sdk/reply-history";
 import { resolveBatchedReplyThreadingPolicy } from "openclaw/plugin-sdk/reply-reference";
 import { resolveAgentRoute, resolveInboundLastRouteSessionKey } from "openclaw/plugin-sdk/routing";
@@ -142,11 +143,15 @@ function resolveSignalStatusReactionTimestamp(params: {
   timestamp?: number;
   messageId?: string;
 }): number | null {
+  // A Signal message id is a base-10 millisecond timestamp, so it must be a
+  // positive integer. A fractional inbound timestamp is not a usable id and
+  // must fall back to "unknown" rather than targeting a message that cannot
+  // exist. Number() would also coerce "0x10"/"1e3"/"0b101"/"0o17"/"1.5" spellings.
   if (typeof params.timestamp === "number") {
-    return Number.isFinite(params.timestamp) && params.timestamp > 0 ? params.timestamp : null;
+    return Number.isSafeInteger(params.timestamp) && params.timestamp > 0 ? params.timestamp : null;
   }
-  const parsed = Number(params.messageId);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  const parsed = parseStrictNonNegativeInteger(params.messageId);
+  return parsed !== undefined && parsed > 0 ? parsed : null;
 }
 
 type SignalStatusDispatchResult = {

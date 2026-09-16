@@ -1603,5 +1603,55 @@ describe("signal createSignalEventHandler inbound context", () => {
       shouldLogVerboseMock.mockReturnValue(false);
     }
   });
+
+  // A Signal status reaction targets the sender's millisecond timestamp. The
+  // handler derives `messageId` as String(inboundTimestamp), so a non-integer
+  // inbound timestamp reaches the string parse as e.g. "1.5". Number() accepts
+  // that spelling; a message id must be a base-10 integer timestamp, so the
+  // reaction target must fall back to "unknown" rather than a fractional value.
+  function createStatusReactionGroupHandler() {
+    return createTestHandler({
+      cfg: createGroupAllowlistConfig({
+        messages: {
+          ackReaction: "👀",
+          ackReactionScope: "group-all",
+          statusReactions: { enabled: true, timing: { ...statusReactionTiming } },
+        },
+        signal: {
+          groupAllowFrom: ["g1"],
+          groups: { "*": { requireMention: false } },
+        },
+      }),
+      groupPolicy: "allowlist",
+      groupAllowFrom: ["g1"],
+    });
+  }
+
+  it("does not target a fractional inbound timestamp as a status reaction id", async () => {
+    const handler = createStatusReactionGroupHandler();
+
+    await receiveGroupMessage(handler, "ship it", {}, { timestamp: 1.5 });
+    await nextTimerTick();
+
+    // Before the fix, String(1.5) -> "1.5" -> Number("1.5") -> 1.5 was accepted.
+    const fractional = sendReactionSignalMock.mock.calls.filter((call) => call[1] === 1.5);
+    expect(fractional).toEqual([]);
+  });
+
+  it("still targets a canonical integer inbound timestamp", async () => {
+    const handler = createStatusReactionGroupHandler();
+
+    await receiveGroupMessage(handler, "ship it", {}, { timestamp: 1700000000002 });
+    await nextTimerTick();
+
+    expect(sendReactionSignalMock).toHaveBeenCalledWith(
+      "",
+      1700000000002,
+      "👀",
+      expect.objectContaining({
+        groupId: "g1",
+      }),
+    );
+  });
 });
 /* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */
