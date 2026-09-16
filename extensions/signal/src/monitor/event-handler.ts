@@ -139,19 +139,16 @@ function resolveSignalInboundRoute(params: {
   });
 }
 
-function resolveSignalStatusReactionTimestamp(params: {
+function resolveSignalStatusReactionTimestamp(p: {
   timestamp?: number;
   messageId?: string;
 }): number | null {
-  // A Signal message id is a base-10 millisecond timestamp, so it must be a
-  // positive integer. A fractional inbound timestamp is not a usable id and
-  // must fall back to "unknown" rather than targeting a message that cannot
-  // exist. Number() would also coerce "0x10"/"1e3"/"0b101"/"0o17"/"1.5" spellings.
-  if (typeof params.timestamp === "number") {
-    return Number.isSafeInteger(params.timestamp) && params.timestamp > 0 ? params.timestamp : null;
-  }
-  const parsed = parseStrictNonNegativeInteger(params.messageId);
-  return parsed !== undefined && parsed > 0 ? parsed : null;
+  // A Signal message id is a positive integer millisecond timestamp; a fractional
+  // timestamp targets a message that cannot exist, and Number() would coerce
+  // "0x10"/"1e3"/"0b101"/"0o17"/"1.5" spellings.
+  const raw =
+    typeof p.timestamp === "number" ? p.timestamp : parseStrictNonNegativeInteger(p.messageId);
+  return raw !== undefined && Number.isSafeInteger(raw) && raw > 0 ? raw : null;
 }
 
 type SignalStatusDispatchResult = {
