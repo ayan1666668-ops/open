@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -57,6 +58,7 @@ it.skipIf(process.platform === "win32").each([false, true])(
           const [diagnostic] = discoverConfiguredPluginLoadPaths({
             loadPaths: [pluginPath],
           }).diagnostics;
+          assert(diagnostic, "Discovery must report the failed inspection");
           expect(diagnostic).toMatchObject({
             code: "configured-plugin-path-inspection-failed",
             configDisposition: "preserve",
