@@ -14,7 +14,6 @@
       "./index.ts"
     ],
     "build": {
-      "bundledDist": true,
       "staticAssets": [
         {
           "source": "./onepassword-op-path.js",

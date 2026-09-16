@@ -36,7 +36,6 @@
       "pluginApi": ">=2026.9.4"
     },
     "build": {
-      "bundledDist": true,
       "openclawVersion": "2026.9.4"
     },
     "release": {
