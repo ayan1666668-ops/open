@@ -6,8 +6,13 @@ import { Worker } from "node:worker_threads";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { expect, it, vi } from "vitest";
 import { subagentRuns } from "../../agents/subagents/registry/subagent-registry-memory.js";
+import * as registryQueries from "../../agents/subagents/registry/subagent-registry-queries.js";
 import * as registryRead from "../../agents/subagents/registry/subagent-registry-read.js";
-import { clearSubagentRunsReadCacheForTest } from "../../agents/subagents/registry/subagent-registry-state.js";
+import type { SubagentRunReadRecord } from "../../agents/subagents/registry/subagent-registry-read.types.js";
+import {
+  clearSubagentRunsReadCacheForTest,
+  persistSubagentRunsToDisk,
+} from "../../agents/subagents/registry/subagent-registry-state.js";
 import { saveSubagentRegistryToSqlite } from "../../agents/subagents/registry/subagent-registry.store.sqlite.js";
 import type { SubagentRunRecord } from "../../agents/subagents/registry/subagent-registry.types.js";
 import {
@@ -37,6 +42,7 @@ import { withOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
 import { createWorkerSessionPlacementStore } from "../worker-environments/placement-store.js";
 import {
   identifiedClient,
+  listSessions,
   requestContext,
   sessionReadHandlers,
 } from "./sessions-read-cache.test-support.js";
@@ -151,7 +157,7 @@ async function withFixture(
   );
 }
 
-function pauseRead(boundary: "worker" | "grouping") {
+function pauseRead(boundary: "worker" | "preparation" | "grouping") {
   const paused = createDeferredCore();
   const released = createDeferredCore();
   const restore: Array<() => void> = [];
@@ -175,7 +181,7 @@ function pauseRead(boundary: "worker" | "grouping") {
     });
     restore.push(() => spy.mockRestore());
   } else {
-    let grouping = false;
+    let budgetDue = false;
     let held = false;
     let offset = 0;
     const now = performance.now.bind(performance);
@@ -184,16 +190,20 @@ function pauseRead(boundary: "worker" | "grouping") {
     const prepared = vi
       .spyOn(registryRead, "prepareSubagentSessionListReadIndex")
       .mockImplementation(async (...args) => {
+        if (boundary === "preparation") {
+          budgetDue = true;
+          offset += 20;
+        }
         const work = await prepare(...args);
         return (function* () {
-          grouping = true;
+          budgetDue = true;
           offset += 20;
           return yield* work;
         })();
       });
     const immediate = timers.setImmediate;
     const yielded = vi.spyOn(timers, "setImmediate").mockImplementation(async (...args) => {
-      if (grouping && !held) {
+      if (budgetDue && !held) {
         held = true;
         paused.resolve();
         await released.promise;
@@ -214,7 +224,7 @@ function pauseRead(boundary: "worker" | "grouping") {
 }
 
 async function whilePaused(
-  boundary: "worker" | "grouping",
+  boundary: "worker" | "preparation" | "grouping",
   start: () => Promise<unknown>,
   change: () => Promise<void> | void,
 ) {
@@ -233,6 +243,94 @@ async function whilePaused(
     pause.restore();
   }
 }
+
+it("rechecks the shared budget before each coalesced caller captures registry facts", async () => {
+  await withFixture(async ({ context, viewer }) => {
+    await describeSession(context, viewer);
+    let chargedMs = 0;
+    let slice = 0;
+    const captureSlices: number[] = [];
+    const now = performance.now.bind(performance);
+    const clock = vi.spyOn(performance, "now").mockImplementation(() => now() + chargedMs);
+    const immediate = timers.setImmediate;
+    const yielded = vi.spyOn(timers, "setImmediate").mockImplementation(async (...args) => {
+      const result = await immediate(...args);
+      slice++;
+      return result;
+    });
+    const build = registryQueries.buildSubagentRunReadIndexWork;
+    const captures = vi
+      .spyOn(registryQueries, "buildSubagentRunReadIndexWork")
+      .mockImplementation(
+        <T extends SubagentRunReadRecord>(...args: Parameters<typeof build<T>>) => {
+          const work = build(...args);
+          captureSlices.push(slice);
+          chargedMs += 20;
+          return work;
+        },
+      );
+    const requests = Array.from({ length: 8 }, (_, index) =>
+      index % 2 === 0
+        ? describeSession(context, viewer)
+        : listSessions({ client: viewer, context, request: { limit: index + 1 } }),
+    );
+    try {
+      await Promise.all(requests);
+      expect(captureSlices).toHaveLength(8);
+      expect(new Set(captureSlices).size).toBe(captureSlices.length);
+    } finally {
+      await Promise.allSettled(requests);
+      captures.mockRestore();
+      yielded.mockRestore();
+      clock.mockRestore();
+    }
+  });
+});
+
+it.each(["describe", "list"] as const)(
+  "captures current registry facts after yielding before %s preparation",
+  async (method) => {
+    await withFixture(async ({ context, viewer }) => {
+      await describeSession(context, viewer);
+      const current = retainedRun("current-memory", {
+        childSessionKey: targetKey,
+        controllerSessionKey: "agent:main:current-controller",
+      });
+      try {
+        const response = await whilePaused(
+          "preparation",
+          () =>
+            method === "describe"
+              ? describeSession(context, viewer)
+              : listSessions({ client: viewer, context, request: { limit: 100 } }).then(
+                  (result) => ({
+                    session: result.sessions.find((row) => row.key === targetKey),
+                  }),
+                ),
+          () => {
+            const published = retainedRun("current-persisted", {
+              collect: true,
+              groupId: "current-group",
+              swarmRequesterSessionKey: targetKey,
+              collectorCompletion: { status: "done" },
+            });
+            persistSubagentRunsToDisk(new Map([[published.runId, published]]));
+            subagentRuns.set(current.runId, current);
+          },
+        );
+        expect(response).toMatchObject({
+          session: {
+            controlOwnerSessionKey: "agent:main:current-controller",
+            swarm: { groups: [{ groupId: "current-group", done: 1 }] },
+          },
+        });
+        expect(JSON.stringify(response)).not.toContain("retained-group");
+      } finally {
+        subagentRuns.delete(current.runId);
+      }
+    });
+  },
+);
 
 it.each(["worker", "grouping"] as const)(
   "projects current target, lineage, children and placement after the %s wait",
@@ -636,39 +734,45 @@ it.each(["executor", "reservation"] as const)(
   },
 );
 
-it("refuses a database generation retired while grouping is paused", async () => {
-  await withFixture(async ({ context, viewer }) => {
-    await expect(
-      whilePaused(
-        "grouping",
-        () => describeSession(context, viewer),
-        async () => {
-          await closeOpenClawStateDatabaseAsync();
-        },
-      ),
-    ).rejects.toThrow(/retired|changed|invalidated|closed/i);
-  });
-});
-
-it("refuses a maintenance scope closed while grouping is paused", async () => {
-  await withFixture(async ({ context, viewer }) => {
-    const scope = createOpenClawDatabaseMaintenanceScope();
-    try {
+it.each(["preparation", "grouping"] as const)(
+  "refuses a database generation retired while %s is paused",
+  async (boundary) => {
+    await withFixture(async ({ context, viewer }) => {
       await expect(
         whilePaused(
-          "grouping",
-          () =>
-            scope.run(() => ({
-              request: describeSession(context, viewer),
-            })).request,
-          () => scope.close(),
+          boundary,
+          () => describeSession(context, viewer),
+          async () => {
+            await closeOpenClawStateDatabaseAsync();
+          },
         ),
-      ).rejects.toThrow(/maintenance resource scope is closed/i);
-    } finally {
-      await scope.close();
-    }
-  });
-});
+      ).rejects.toThrow(/retired|changed|invalidated|closed/i);
+    });
+  },
+);
+
+it.each(["preparation", "grouping"] as const)(
+  "refuses a maintenance scope closed while %s is paused",
+  async (boundary) => {
+    await withFixture(async ({ context, viewer }) => {
+      const scope = createOpenClawDatabaseMaintenanceScope();
+      try {
+        await expect(
+          whilePaused(
+            boundary,
+            () =>
+              scope.run(() => ({
+                request: describeSession(context, viewer),
+              })).request,
+            () => scope.close(),
+          ),
+        ).rejects.toThrow(/maintenance resource scope is closed/i);
+      } finally {
+        await scope.close();
+      }
+    });
+  },
+);
 
 it("skips the native full index for missing or hidden targets without provisioning storage", async () => {
   await withOpenClawTestState({ scenario: "minimal" }, async () => {

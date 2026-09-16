@@ -166,7 +166,11 @@ publication instead of periodic reloads: named writes patch rows, while full
 replacement and restore replace snapshots. Retention rules remain unchanged.
 Gateway, embedded, and TUI callers merge accepted rows
 with current host memory and scheduler facts before building the full topology.
-Pure topology grouping yields through the shared session-projection work budget.
+Session reads check the shared projection budget before accepting a snapshot,
+then capture persisted rows and live ownership in one synchronous continuation.
+Each resumed caller rechecks the shared budget before admission and cache
+acceptance. Pure topology grouping uses the same budget; a single snapshot
+capture cannot yield midway.
 Synchronous readers reuse the same SQL and row decoder; runtime reads do not
 repair storage.
 

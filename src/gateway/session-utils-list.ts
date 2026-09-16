@@ -164,6 +164,7 @@ function* prepareSessionList(
   params: ListSessionsFromStoreParams,
   shouldYield: () => boolean,
   stateContext: OpenClawStateWorkerContext,
+  yieldIfNeeded: () => Promise<void> | undefined,
 ) {
   const { cfg, store, opts } = params;
   const now = Date.now();
@@ -172,9 +173,11 @@ function* prepareSessionList(
   let rowContext: SessionListRowContext | undefined;
   const prepareRowContext = function* () {
     let work: Awaited<ReturnType<typeof prepareSubagentSessionListReadIndex>> | undefined;
-    yield prepareSubagentSessionListReadIndex(now, stateContext, shouldYield).then((prepared) => {
-      work = prepared;
-    });
+    yield prepareSubagentSessionListReadIndex(now, stateContext, shouldYield, yieldIfNeeded).then(
+      (prepared) => {
+        work = prepared;
+      },
+    );
     const subagentRuns = yield* expectDefined(work, "prepared subagent index work");
     stateContext.maintenanceScope?.assertAdmission();
     stateContext.admission.assertCurrent();
@@ -369,7 +372,12 @@ export async function listSessionsFromStoreAsync(
       };
       try {
         const { cfg, store, targetsBySessionKey } = params;
-        const preparation = prepareSessionList(params, budget.shouldYield, stateContext);
+        const preparation = prepareSessionList(
+          params,
+          budget.shouldYield,
+          stateContext,
+          budget.yieldIfNeeded,
+        );
         // Each chunk shares roster facts, then releases them before another request can run.
         let step = withAgentRosterFactsBatch(cfg, () => preparation.next());
         while (!step.done) {

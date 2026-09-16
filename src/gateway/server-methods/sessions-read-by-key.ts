@@ -85,6 +85,7 @@ export const sessionByKeyReadHandlers: GatewayRequestHandlers = {
         indexNow,
         stateContext,
         budget.shouldYield,
+        budget.yieldIfNeeded,
       );
       budget.resumeAfterAwait();
       let step: ReturnType<typeof work.next>;

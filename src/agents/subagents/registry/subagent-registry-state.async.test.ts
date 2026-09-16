@@ -80,13 +80,29 @@ async function started(index: number) {
   await vi.waitFor(() => expect(replies).toHaveLength(index + 1));
   return replies[index]!;
 }
-function read() {
+function read(yieldIfNeeded?: () => Promise<void> | undefined) {
   return withSubagentSessionListRunsSnapshotForRead(
     memory,
     captureOpenClawStateWorkerContext(),
     (snapshot) => [...snapshot.values()].map((run) => run.model),
+    yieldIfNeeded,
   );
 }
+
+it("captures in-memory-only reads after the budget pause without reading persisted rows", async () => {
+  vi.stubEnv("OPENCLAW_TEST_READ_SUBAGENT_RUNS_FROM_SQLITE", "0");
+  memory = runs("before");
+  const pause = createDeferredCore();
+  let holdRead = true;
+  const first = read(() => (holdRead ? pause.promise : undefined));
+  for (const [id, entry] of runs("current")) {
+    memory.set(id, entry);
+  }
+  holdRead = false;
+  pause.resolve();
+  expect(await first).toEqual(["current"]);
+  expect(transport.execute).not.toHaveBeenCalled();
+});
 
 it("coalesces a fill and projects current memory after the reply", async () => {
   const first = read();
@@ -294,7 +310,21 @@ it.each(["read failure", "absent database"])(
         }
         return undefined;
       });
-    const readers = Array.from({ length: 8 }, () => read());
+    const resumed = createDeferredCore();
+    const paused = createDeferredCore();
+    let holdReaders = false;
+    let waitingReaders = 0;
+    const readers = Array.from({ length: 8 }, () =>
+      read(() => {
+        if (!holdReaders) {
+          return undefined;
+        }
+        if (++waitingReaders === 8) {
+          paused.resolve();
+        }
+        return resumed.promise;
+      }),
+    );
     await vi.waitFor(() => expect(operation).toHaveBeenCalledTimes(1));
     for (const [id, run] of runs("memory", "memory")) {
       memory.set(id, run);
@@ -304,16 +334,23 @@ it.each(["read failure", "absent database"])(
       ["written", "deleted"],
     );
     persistSubagentRunsToDisk(new Map(), ["deleted"]);
+    holdReaders = true;
     settled.resolve();
+    await paused.promise;
+    for (const [id, entry] of runs("resumed-memory", "memory")) {
+      memory.set(id, entry);
+    }
+    holdReaders = false;
+    resumed.resolve();
     expect(await Promise.all(readers)).toEqual(
-      Array.from({ length: 8 }, () => ["written", "memory"]),
+      Array.from({ length: 8 }, () => ["written", "resumed-memory"]),
     );
     expect(operation).toHaveBeenCalledTimes(1);
     operation.mockRestore();
 
     const retry = read();
     (await started(0)).resolve(runs("persisted", "persisted"));
-    expect(await retry).toEqual(["persisted", "written", "memory"]);
+    expect(await retry).toEqual(["persisted", "written", "resumed-memory"]);
   },
 );
 
