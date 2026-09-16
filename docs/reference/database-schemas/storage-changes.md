@@ -33,7 +33,18 @@ before loading; intervening writes leave it stale for the next load. An unavaila
 worker result or a failed load without a reported repair also invalidates the cached
 revision without replaying the operation. Error causes used by Doctor diagnostics
 cross the same closed-field error graph, without changing ordinary broker errors.
-Cron saves, their transaction hooks, synchronous diagnostic reads, and read-only
+Unguarded cron saves without transaction hooks also execute in that worker, using the same
+connection-bound kernels as native hook-bearing transactions. Full replacement,
+runtime-only updates, quarantine changes, and changed-row merges retain their
+existing transaction boundaries. Save results publish committed or uncertain
+invalidation before settlement. Internal service callers receive an operation-bound
+revision; intervening host writes leave the returned snapshot conservatively stale.
+Evicted revision entries fall back to the existing global publication sequence,
+and stale save receipts use a negative marker that cannot match a current revision.
+Public save signatures and return values are unchanged. Service mutations with
+commit guards, one-use authority capture, or caller preconditions retain their
+synchronous call-through to the native kernels; their worker admission remains
+separate work. Receipt-coupled transaction hooks, Doctor metadata callbacks, synchronous diagnostic reads, and read-only
 inspection retain their current owners and execution paths.
 
 iMessage outbound receipt recovery reads the external Messages SQLite database
@@ -42,6 +53,13 @@ each recovery operation retains its read-only connection through polling and
 joins worker cleanup before the send publishes its receipt. Numeric message IDs and the latest matching sent message keep their existing recovery
 rules, including the five-second polling deadline. This does not migrate
 iMessage's startup watermark or conversation-binding queries.
+
+Discord presence cooldown reads, claims, and conditional rollback use the shared
+state worker. The listener rechecks current policy and Gateway generation after
+storage waits, queues greetings only after a durable claim, and joins admitted
+work and rollback during provider shutdown, including work detached by reconnect.
+The same namespace, eight-hour expiry, and capacity policy remain in use. Thread
+binding persistence retains its synchronous owner and public completion contract.
 
 Memory-host event appends and bounded journal reads execute on the shared state
 worker. The plugin-state owner allocates the sequence, rereads the cursor and
@@ -181,6 +199,31 @@ finish asynchronous planning first, then reread authoritative rows after write
 admission. Publish live session changes and other dependent effects only after
 the durable write succeeds. A future network-backed owner must preserve that
 ordering while awaiting its driver.
+
+Read-only callbacks made while a cached agent writer holds a transaction use a
+separate read-only companion connection. Each call rereads committed rows and
+checks the current schema, agent owner, and physical file identity. The companion
+retains prepared statements and connection-local canonical-key validation, never
+an authorization result or an open read transaction. Canonical validation checks
+the committed main-key policy before reuse. The companion retires with its writer's
+native close, disposal, or replacement, including eviction and update cleanup.
+Cold session search retains one read-only connection while synchronously listing
+entries and checking each entry's current visibility. The entry accessor closes
+that connection before transcript search, including on errors; inherited async
+callbacks fall back to ordinary fresh reads. This scope preserves the same
+per-read admission and committed-row checks without caching visibility decisions.
+Other cold readers outside the history worker and extension-capable readers
+remain one-shot; incognito reads retain their existing process-local owner.
+
+The history worker retains one read-only connection across requests, rechecking
+schema, agent owner, and physical file identity before reuse. Every request keeps
+its own snapshot and current admission checks. Switching databases closes the
+previous connection. The parent retires the worker after 30 minutes without
+pending history reads; database cleanup revokes admission and joins native worker
+exit before closing the database. Cold restoration carries the request's same
+authority through queue waits and its native commit, so a revoked read cannot
+restore rows after database cleanup. These lifetimes change no schema or
+migration requirement.
 
 Correlated conversation replies retain their original store and state environment
 while waiting for write admission. Capture rechecks the live reply claim and
