@@ -5351,6 +5351,50 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
       expect(committed).not.toMatch(/_\| Ada {2}\| Lead \|_/u);
     });
 
+    // A fence is not the only shape the mode produces. `block` leaves a native table
+    // and `bullets` emits list markers, and underscoring those lines stops Feishu
+    // recognising either one.
+    it.each([
+      { tables: "block" as const, structural: "| Ada | Lead |", wrapped: "_| Ada | Lead |_" },
+      { tables: "bullets" as const, structural: "• Role: Lead", wrapped: "_• Role: Lead_" },
+    ])(
+      "keeps a delivered $tables reasoning table readable",
+      async ({ tables, structural, wrapped }) => {
+        const { options } = createBlockTableHarness(tableCfg(tables));
+        await options.deliver(
+          { text: `Checking the roster.\n\n${tableMarkdown}`, isReasoning: true },
+          { kind: "final" },
+        );
+        await options.onIdle?.();
+
+        const committed = String(
+          requireStreamingInstance(0).closeWithResult.mock.calls[0]?.[0] ?? "",
+        );
+        // Prose still reads as reasoning.
+        expect(committed).toContain("_Checking the roster._");
+        expect(committed).toContain(structural);
+        expect(committed).not.toContain(wrapped);
+      },
+    );
+
+    // The preview path renders tables too, then hands the result to the shared
+    // formatter. Its underscores are stripped again by the prefix builder, so this
+    // records that the structure survives rather than assuming either way.
+    it("keeps a streamed block reasoning table readable in the preview", async () => {
+      const { result } = createBlockTableHarness(tableCfg("block"), true);
+
+      await result.replyOptions.onReplyStart?.();
+      result.replyOptions.onReasoningStream?.({ text: `Checking.\n\n${tableMarkdown}` });
+      result.replyOptions.onPartialReply?.({ text: "answer part" });
+      await vi.waitFor(() => expect(streamingInstances).toHaveLength(1));
+      const instance = requireStreamingInstance(0);
+      await vi.waitFor(() => expect(instance.update).toHaveBeenCalled());
+
+      const shown = String(instance.update.mock.calls.at(-1)?.[0] ?? "");
+      expect(shown).toContain("| Ada | Lead |");
+      expect(shown).not.toContain("_| Ada | Lead |_");
+    });
+
     // An idle close with no prior block delivery owns nothing in the block receipt map,
     // so a partly accepted close post used to leave the matching final free to send the
     // whole answer again, including the prefix the provider had already taken.
@@ -5645,6 +5689,27 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
       { tables: "code" as const, converted: () => codeText },
     ];
 
+    // Mirrors the dispatcher's reasoning formatter in one place rather than inline at
+    // each call site: structure the renderer has to recognize stays plain, prose is
+    // italic. Kept here so a change to that rule updates one expectation, not three.
+    const reasoningStructureLine = /^\s*(?:```|\||[-*+\u2022]\s|\d+[.)]\s)/u;
+    const expectedReasoning = (text: string): string => {
+      let insideFence = false;
+      return (
+        "Thinking\n\n" +
+        text
+          .split("\n")
+          .map((line) => {
+            if (/^\s*```/u.test(line)) {
+              insideFence = !insideFence;
+              return line;
+            }
+            return insideFence || !line || reasoningStructureLine.test(line) ? line : `_${line}_`;
+          })
+          .join("\n")
+      );
+    };
+
     // The account that sends is the one the resolver picked, which is not always the
     // one the request named. A table mode configured on that account has to apply.
     it("reads the table mode from the account the request resolves to", async () => {
@@ -5704,22 +5769,10 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
           await reasoningOptions.deliver({ text: tableMarkdown, isReasoning: true }, { kind });
           await reasoningOptions.onIdle?.();
           const instance = requireStreamingInstance(kind === "block" ? 1 : 2);
-          // Underscores inside a fence are literal, so a converted code table keeps
-          // its fence and rows plain while prose around it stays italic.
-          let insideFence = false;
-          const expected =
-            "Thinking\n\n" +
-            converted()
-              .split("\n")
-              .map((line) => {
-                if (/^\s*```/u.test(line)) {
-                  insideFence = !insideFence;
-                  return line;
-                }
-                return insideFence || !line ? line : `_${line}_`;
-              })
-              .join("\n");
-          expect(instance.closeWithResult).toHaveBeenCalledWith(expected, expect.anything());
+          expect(instance.closeWithResult).toHaveBeenCalledWith(
+            expectedReasoning(converted()),
+            expect.anything(),
+          );
         }
       },
     );

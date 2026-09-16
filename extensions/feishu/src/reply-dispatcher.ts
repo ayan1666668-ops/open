@@ -396,25 +396,31 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
     visibleReplySent = true;
   };
 
-  // The shared formatter wraps every non-empty line in underscores. When the table
-  // mode has already converted a table into a fenced block, those underscores land
-  // inside the fence, where they are literal text, so the rows arrive corrupted and
-  // the fence markers stop being fences. Italicize prose only and leave a fence and
-  // its contents alone. The plain label stays so existing detection keeps working.
-  const formatReasoningWithFences = (text: string): string => {
+  // A line the renderer has to recognize as structure: a fence marker, a table row or
+  // delimiter, or a list item.
+  const reasoningStructureLine = /^\s*(?:```|\||[-*+\u2022]\s|\d+[.)]\s)/u;
+
+  // The shared formatter wraps every non-empty line in underscores, which suits prose
+  // and destroys every shape the table mode produces. Underscores inside a fence are
+  // literal, an underscored delimiter row is no longer a table, and an underscored
+  // marker is no longer a list item. Italicize prose only and leave structure alone.
+  // Text with no structure keeps going through the shared formatter untouched, and the
+  // plain label stays so existing detection keeps working.
+  const formatReasoningPreservingStructure = (text: string): string => {
     const trimmed = text.trim();
-    if (!trimmed || !trimmed.includes("```")) {
+    const lines = trimmed.split("\n");
+    if (!trimmed || !lines.some((line) => reasoningStructureLine.test(line))) {
       return formatReasoningMessage(text);
     }
     let insideFence = false;
-    const lines = trimmed.split("\n").map((line) => {
+    const formatted = lines.map((line) => {
       if (/^\s*```/u.test(line)) {
         insideFence = !insideFence;
         return line;
       }
-      return insideFence || !line ? line : `_${line}_`;
+      return insideFence || !line || reasoningStructureLine.test(line) ? line : `_${line}_`;
     });
-    return `Thinking\n\n${lines.join("\n")}`;
+    return `Thinking\n\n${formatted.join("\n")}`;
   };
 
   const formatReasoningPrefix = (thinking: string): string => {
@@ -1529,7 +1535,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
       const resolvedText = payload.text;
       const payloadText =
         payload.isReasoning && resolvedText
-          ? formatReasoningWithFences(resolvedText)
+          ? formatReasoningPreservingStructure(resolvedText)
           : resolvedText;
       const reply = resolveSendableOutboundReplyParts({ ...payload, text: payloadText });
       // Reasoning retains its established formatted delivery. Answer snapshots
