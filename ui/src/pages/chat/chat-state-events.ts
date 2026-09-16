@@ -64,10 +64,7 @@ import {
 import { reconcileSessionApprovalEvent } from "./session-approval-projection.ts";
 import { applySessionMessagePayload } from "./session-message-apply.ts";
 import { isSidebarSlotVisible } from "./sidebar-layout.ts";
-import {
-  armPendingAuthoritativeTerminal,
-  rememberAuthoritativeTerminal,
-} from "./terminal-message-identity.ts";
+import { rememberAuthoritativeTerminal } from "./terminal-message-identity.ts";
 import { readTerminalReplyRecoveryState } from "./terminal-reply-recovery.ts";
 import { handleSessionOperationEvent } from "./tool-stream-status.ts";
 import { handleAgentEvent } from "./tool-stream.ts";
@@ -133,10 +130,6 @@ function finishSessionMessageRunReconcile(
   if (!cleared) {
     return false;
   }
-  // A terminal persisted while this run still read active has no authoritative
-  // record yet; arm it now so the history reload below retires the live copy
-  // instead of rendering the reply a second time (#149153).
-  armPendingAuthoritativeTerminal({ host: state, runId, sessionKey });
   clearPendingQueueItemsForRun(state, runId ?? undefined);
   void loadChatHistory(state, { deferBranches: !presentation() })
     .finally(() => {

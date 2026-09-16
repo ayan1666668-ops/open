@@ -111,17 +111,27 @@ export function rememberAuthoritativeTerminal(options: {
   });
 }
 
-/** Arms a terminal deferred by an active run once that run clears (#149153). */
-export function armPendingAuthoritativeTerminal(options: {
+/**
+ * Arms a terminal deferred by an active run once the applied history carries that
+ * terminal. Single promotion owner: every history reload path converges here, so
+ * chat.final and session reconciliation both retire the live copy (#149153).
+ */
+export function armPendingAuthoritativeTerminalForHistory(options: {
   host: object;
-  runId: string | null | undefined;
   sessionKey: string;
+  visibleMessages: readonly unknown[];
 }): void {
   const pending = pendingAuthoritativeTerminals.get(options.host);
   if (!pending || !areUiSessionKeysEquivalent(pending.sessionKey, options.sessionKey)) {
     return;
   }
-  if (options.runId && pending.runId !== options.runId) {
+  const historyHasTerminal = options.visibleMessages.some((message) => {
+    const identity = readSessionMessageIdentity(message);
+    return (
+      identity?.role === "assistant" && !identity.isImported && identity.id === pending.messageId
+    );
+  });
+  if (!historyHasTerminal) {
     return;
   }
   pendingAuthoritativeTerminals.delete(options.host);
@@ -144,17 +154,18 @@ export function reconcileAuthoritativeTerminalHistory<T>(options: {
   visibleMessages: T[];
 }): T[] {
   const terminal = authoritativeTerminals.get(options.host);
-  const historyContainsTerminal = Boolean(
-    terminal &&
-    areUiSessionKeysEquivalent(terminal.sessionKey, options.sessionKey) &&
-    options.visibleMessages.some((message) => {
-      const identity = readSessionMessageIdentity(message);
-      return (
-        identity?.role === "assistant" && !identity.isImported && identity.id === terminal.messageId
-      );
-    }),
-  );
-  if (!terminal || !historyContainsTerminal) {
+  const terminalMessage =
+    terminal && areUiSessionKeysEquivalent(terminal.sessionKey, options.sessionKey)
+      ? options.visibleMessages.find((message) => {
+          const identity = readSessionMessageIdentity(message);
+          return (
+            identity?.role === "assistant" &&
+            !identity.isImported &&
+            identity.id === terminal.messageId
+          );
+        })
+      : undefined;
+  if (!terminal || !terminalMessage) {
     return options.previousMessages;
   }
   authoritativeTerminals.set(options.host, { ...terminal, historyApplied: true });

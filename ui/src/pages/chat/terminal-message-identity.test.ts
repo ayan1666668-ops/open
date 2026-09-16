@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  armPendingAuthoritativeTerminal,
+  armPendingAuthoritativeTerminalForHistory,
   reconcileAuthoritativeTerminalHistory,
   rememberAuthoritativeTerminal,
   rememberLiveTerminalRun,
@@ -40,9 +40,14 @@ describe("deferred authoritative terminals", () => {
       }),
     ).toEqual([liveTerminal]);
 
-    // The run-clear reconcile arms the deferred terminal, so the history reload
-    // that follows retires the live copy instead of stacking two renders.
-    armPendingAuthoritativeTerminal({ host, runId: "run-1", sessionKey: "main" });
+    // The history reload that carries the persisted terminal arms the deferred
+    // record, so that same reconcile retires the live copy instead of stacking
+    // two renders — this is the path chat.final already reaches.
+    armPendingAuthoritativeTerminalForHistory({
+      host,
+      sessionKey: "main",
+      visibleMessages: [persistedFinal()],
+    });
     expect(
       reconcileAuthoritativeTerminalHistory({
         host,
@@ -53,7 +58,7 @@ describe("deferred authoritative terminals", () => {
     ).toEqual([]);
   });
 
-  it("keeps the deferred terminal pending for a different run", () => {
+  it("keeps the deferred terminal pending until its own history arrives", () => {
     const host = {};
     const liveTerminal = rememberLiveTerminalRun(
       { role: "assistant", content: [{ type: "text", text: "Final answer" }] },
@@ -67,7 +72,17 @@ describe("deferred authoritative terminals", () => {
       runIdBeforeApply: "run-1",
     });
 
-    armPendingAuthoritativeTerminal({ host, runId: "run-2", sessionKey: "main" });
+    armPendingAuthoritativeTerminalForHistory({
+      host,
+      sessionKey: "main",
+      visibleMessages: [
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "Other reply" }],
+          __openclaw: { id: "other-message" },
+        },
+      ],
+    });
     expect(
       reconcileAuthoritativeTerminalHistory({
         host,
@@ -77,8 +92,12 @@ describe("deferred authoritative terminals", () => {
       }),
     ).toEqual([liveTerminal]);
 
-    // A later clear for the owning run still retires it.
-    armPendingAuthoritativeTerminal({ host, runId: "run-1", sessionKey: "main" });
+    // The owning terminal's own history still retires it.
+    armPendingAuthoritativeTerminalForHistory({
+      host,
+      sessionKey: "main",
+      visibleMessages: [persistedFinal()],
+    });
     expect(
       reconcileAuthoritativeTerminalHistory({
         host,
