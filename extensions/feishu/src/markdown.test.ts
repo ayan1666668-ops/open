@@ -136,6 +136,27 @@ describe("chunkedFencesBalance", () => {
 
     expect(chunkedFencesBalance(converted, 4_000, "length")).toBe(false);
   });
+
+  it("measures a closer's indentation the way an opener's is measured", () => {
+    // Four spaces make the rest of a line indented code wherever the block it sits in
+    // begins, so the marker inside the top-level fence is content and the fence closes on
+    // the last line rather than the indented one. The item's closer carries the four
+    // spaces its content starts at, which is no indentation of its own, so it still
+    // closes the fence its marker line opened.
+    const authored = [
+      "  - ```",
+      "    sample",
+      "    ```",
+      "",
+      "```",
+      "sample",
+      "    ```",
+      "```",
+    ].join("\n");
+    const converted = convertMarkdownTables(`${authored}\n\n${table}`, "code");
+
+    expect(chunkedFencesBalance(converted, 4_000, "length")).toBe(true);
+  });
 });
 
 describe("chunkFeishuMarkdown", () => {

@@ -98,6 +98,14 @@ function opensFence(line: FeishuFenceLine): boolean {
   return line.container !== "" || line.column <= 3;
 }
 
+/**
+ * Four spaces past the start of the block a line sits in are indented code on a closer the
+ * same way they are on an opener, so a marker that far in is body text and the fence stays
+ * open past it. The indentation a container's own markers carry is not the line's, which is
+ * why the check reads the measured indent rather than the column; a closer with no marker of
+ * its own carries the column its item's content starts at instead, and that is the width the
+ * fence was opened at rather than any indentation the closer added.
+ */
 function closesFence(open: FeishuFenceLine, line: FeishuFenceLine): boolean {
   if (line.info.trim() !== "" || line.marker[0] !== open.marker[0]) {
     return false;
@@ -105,9 +113,10 @@ function closesFence(open: FeishuFenceLine, line: FeishuFenceLine): boolean {
   if (line.marker.length < open.marker.length) {
     return false;
   }
-  return (
-    line.container === open.container || (line.container === "" && line.column === open.column)
-  );
+  if (line.container === open.container) {
+    return line.indent <= 3;
+  }
+  return line.container === "" && line.column === open.column;
 }
 
 /**
