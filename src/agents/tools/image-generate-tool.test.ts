@@ -432,6 +432,7 @@ describe("createImageGenerateTool", () => {
     expect(tool.description).toContain('background="transparent"');
     expect(tool.description).toContain("openai.background");
     expect(tool.description).toContain("gpt-image-1.5");
+    expect(tool.description).toContain("multiple images via images");
     expect(JSON.stringify(tool.parameters)).toContain("openai/gpt-image-1.5");
   });
 
