@@ -84,6 +84,8 @@ export async function runSetupInferenceTurn(params: {
   deps: ActivateSetupInferenceDeps;
   requireExecutionOwner: boolean;
   signal?: AbortSignal;
+  /** Approving run's live guard, rechecked after route preparation and before the probe's I/O. */
+  assertAuthority?: () => void;
   runtime?: RuntimeEnv;
 }): Promise<SetupTurnSuccess | SetupTurnFailure> {
   const { route, deps } = params;
@@ -161,6 +163,7 @@ export async function runSetupInferenceTurn(params: {
       return failed("auth", profileError);
     }
     let result: AgentRunResultView;
+    params.assertAuthority?.();
     if (route.runner === "cli") {
       const runCli = deps.runCliAgent ?? (await import("../agents/cli-runner.js")).runCliAgent;
       result = await runCli({
@@ -418,6 +421,8 @@ type SetupInferenceRequestParams = {
   runtime: RuntimeEnv;
   timeoutMs?: number;
   deps?: ActivateSetupInferenceDeps;
+  /** Approving run's live guard, rechecked immediately before the probe's provider or process I/O. */
+  assertAuthority?: () => void;
 };
 
 type VerifySetupInferenceParams = SetupInferenceRequestParams & { kind?: "existing-model" };
@@ -636,6 +641,7 @@ export async function verifySetupInferenceConfig(
     deps,
     requireExecutionOwner,
     runtime: params.runtime,
+    ...(params.assertAuthority ? { assertAuthority: params.assertAuthority } : {}),
   });
   if (!turn.ok) {
     return { ...turn, error: await redactSetupInferenceError(turn.error) };

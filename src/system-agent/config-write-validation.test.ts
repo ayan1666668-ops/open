@@ -105,7 +105,7 @@ describe("executeSystemAgentOperation approved config writes", () => {
     });
   });
 
-  it("rechecks the approving run's authority before the live probe", async () => {
+  it("rechecks the approving run's authority inside the verifier before the live probe", async () => {
     const stateDir = tempDirs.make("openclaw-config-write-authority-");
     const configPath = path.join(stateDir, "openclaw.json");
     vi.stubEnv("OPENCLAW_STATE_DIR", stateDir);
@@ -113,14 +113,20 @@ describe("executeSystemAgentOperation approved config writes", () => {
     const raw = JSON.stringify({ agents: { defaults: { model: { primary: "fixture/primary" } } } });
     await fs.writeFile(configPath, raw);
     const { runtime, lines } = createSystemAgentTestRuntime();
-    const verifyInferenceConfig =
-      vi.fn<NonNullable<SystemAgentCommandDeps["verifyInferenceConfig"]>>();
-    // Authority holds when the commit boundary opens, then lapses while the
-    // preflight is projecting the staged route.
-    let checks = 0;
+    // The real verifier rechecks the guard right before provider I/O; the
+    // stand-in mirrors that boundary and never answers once it throws.
+    let verifierRecheck = false;
+    const verifyInferenceConfig = vi.fn<
+      NonNullable<SystemAgentCommandDeps["verifyInferenceConfig"]>
+    >(async ({ assertAuthority }) => {
+      verifierRecheck = true;
+      assertAuthority?.();
+      return { ok: true, modelRef: "fixture/primary", latencyMs: 1 };
+    });
+    // Authority holds through the commit boundary and the writer's own guard,
+    // then lapses at the verifier's recheck.
     const beforePersistentApply = () => {
-      checks += 1;
-      if (checks > 1) {
+      if (verifierRecheck) {
         throw new Error("approving run closed");
       }
     };
@@ -132,7 +138,7 @@ describe("executeSystemAgentOperation approved config writes", () => {
       ),
     ).rejects.toThrow("operation exited with code 1");
     expect(lines.join("\n")).toContain("approving run closed");
-    expect(verifyInferenceConfig).not.toHaveBeenCalled();
+    expect(verifyInferenceConfig).toHaveBeenCalledOnce();
     expect(await fs.readFile(configPath, "utf8")).toBe(raw);
   });
 });

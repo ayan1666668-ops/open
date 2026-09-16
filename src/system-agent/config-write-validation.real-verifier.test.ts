@@ -6,7 +6,8 @@ import { writeOpenAiResponsesText } from "../../test/helpers/openai-responses-ss
 import { clearConfigCache, clearRuntimeConfigSnapshot } from "../config/config.js";
 import { buildMockOpenAiResponsesProvider } from "../gateway/test-openai-responses-model.js";
 import { createTempHomeEnv, type TempHomeEnv } from "../test-utils/temp-home.js";
-import { executeSystemAgentOperation } from "./operations.js";
+import { executeSystemAgentOperation, type SystemAgentCommandDeps } from "./operations.js";
+import { verifySetupInferenceConfig } from "./setup-inference.js";
 import { createSystemAgentTestRuntime } from "./system-agent.runtime.test-support.js";
 
 let home: TempHomeEnv | undefined;
@@ -95,23 +96,36 @@ describe("executeSystemAgentOperation with the real inference verifier", () => {
     });
     await fs.writeFile(configPath, raw);
     const { runtime, lines } = createSystemAgentTestRuntime();
-    // Authority holds when the commit boundary opens and lapses before the probe.
-    let checks = 0;
+    // Authority holds through the commit boundary and the writer's own guard,
+    // then lapses at the production verifier's recheck before its provider request.
+    let verifierRecheck = false;
     const beforePersistentApply = () => {
-      checks += 1;
-      if (revoked && checks > 1) {
+      if (revoked && verifierRecheck) {
         throw new Error("approving run closed");
       }
     };
+    const verifyInferenceConfig: NonNullable<SystemAgentCommandDeps["verifyInferenceConfig"]> = (
+      params,
+    ) =>
+      verifySetupInferenceConfig({
+        ...params,
+        assertAuthority: () => {
+          verifierRecheck = true;
+          params.assertAuthority?.();
+        },
+      });
 
     const execute = executeSystemAgentOperation(
       { kind: "config-set", path: "agents.defaults.params.temperature", value: "0.5" },
       runtime,
-      { approved: true, beforePersistentApply },
+      { approved: true, beforePersistentApply, deps: { verifyInferenceConfig } },
     );
     if (revoked) {
       await expect(execute).rejects.toThrow("operation exited with code 1");
-      expect(lines.join("\n")).toContain("approving run closed");
+      // The verifier itself reported the lapse, so the guard fired inside it.
+      expect(lines.join("\n")).toContain(
+        "Config write not applied: the default inference route would stop working (approving run closed)",
+      );
       expect(await fs.readFile(configPath, "utf8")).toBe(raw);
       expect(providerRequests).toBe(0);
       return;
