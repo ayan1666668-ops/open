@@ -147,6 +147,7 @@ jobs:
       run_control_ui_i18n: ${{ steps.manifest.outputs.run_control_ui_i18n }}
       strict_control_ui_i18n: ${{ github.event_name == 'workflow_dispatch' && !inputs.release_gate && 'true' || steps.changed_scope.outputs.strict_control_ui_i18n }}
       run_ui_tests: ${{ steps.manifest.outputs.run_ui_tests }}
+      run_control_ui_performance: ${{ steps.manifest.outputs.run_control_ui_performance }}
       run_ui_e2e: ${{ steps.manifest.outputs.run_ui_e2e }}
       ui_e2e_matrix: ${{ steps.manifest.outputs.ui_e2e_matrix }}
       run_native_i18n: ${{ steps.manifest.outputs.run_native_i18n }}
@@ -1518,15 +1519,21 @@ jobs:
           }
 
           const compactPullRequest = isCanonicalRepository && eventName === "pull_request";
+          const ownerPathEvent = isCanonicalRepository && (
+            eventName === "pull_request" ||
+            (eventName === "push" && process.env.GITHUB_REF === "refs/heads/main")
+          );
           const dockerSeedLanes =
-            compactPullRequest &&
+            ownerPathEvent &&
             changedPaths &&
             supportsDockerSeedE2e &&
             typeof changedNodeTestPlan.resolveChangedDockerSeedLanes === "function"
               ? changedNodeTestPlan.resolveChangedDockerSeedLanes(changedPaths)
               : [];
-          if (isCanonicalRepository && eventName === "push" &&
-              process.env.GITHUB_REF === "refs/heads/main" && supportsDockerSeedE2e) {
+          // Manual CI is Full Release Validation's owner for the exact
+          // legacy-operator-state + auto-auth seed contract.
+          if (isCanonicalRepository && supportsDockerSeedE2e && (
+              eventName === "workflow_dispatch" || (ownerPathEvent && changedPaths === null))) {
             dockerSeedLanes.push("published-upgrade-survivor");
           }
           // Canonical pushes also use compact bins: 80+ single-group jobs
@@ -1575,7 +1582,7 @@ jobs:
             changedNodeTestPlan.hasBuildArtifactAffectingChange(changedPaths);
           const changedScopeHasQaImpact =
             changedPaths === null ||
-            eventName !== "pull_request" ||
+            eventName === "workflow_dispatch" ||
             typeof changedNodeTestPlan.hasQaSmokeAffectingChange !== "function" ||
             changedNodeTestPlan.hasQaSmokeAffectingChange(changedPaths);
           // Prompt snapshots only change when the generator's import graph or
@@ -1599,6 +1606,11 @@ jobs:
             changedScopeHasSqliteSessionLifecycleImpact;
           const runBuildArtifacts =
             runNodeFull && (changedScopeHasBuildImpact || runSqliteSessionLifecycle);
+          const runControlUiPerformance = (runBuildArtifacts || runUiTests) && (
+            eventName === "workflow_dispatch" || changedPaths === null ||
+            typeof changedNodeTestPlan.hasControlUiPerformanceAffectingChange !== "function" ||
+            changedNodeTestPlan.hasControlUiPerformanceAffectingChange(changedPaths)
+          );
           const runQaSmokeCi =
             runNodeFull &&
             changedScopeHasQaImpact &&
@@ -1803,6 +1815,7 @@ jobs:
             run_format_check: runFormatCheck,
             run_control_ui_i18n: runControlUiI18n,
             run_ui_tests: runUiTests,
+            run_control_ui_performance: runControlUiPerformance,
             run_ui_e2e: runUiE2e,
             ui_e2e_matrix: createMatrix(Array.from({ length: uiE2eJobCount }, (_, index) => {
               const shard = index + 1;
@@ -2531,7 +2544,7 @@ jobs:
     permissions:
       contents: read
     needs: [preflight]
-    if: needs.preflight.outputs.run_build_artifacts == 'true' || needs.preflight.outputs.run_ui_tests == 'true'
+    if: needs.preflight.outputs.run_control_ui_performance == 'true'
     runs-on: ${{ (vars.OPENCLAW_CI_RUNNER_BACKEND == 'github' || vars.OPENCLAW_CI_RUNNER_BACKEND == 'hybrid') && 'ubuntu-24.04' || (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && github.run_attempt > 1)) && 'ubuntu-24.04' || (github.repository == 'openclaw/openclaw' && (github.event_name != 'pull_request' || contains(fromJSON('["OWNER","MEMBER","COLLABORATOR","CONTRIBUTOR"]'), github.event.pull_request.author_association)) && 'blacksmith-4vcpu-ubuntu-2404' || 'ubuntu-24.04') }}
     timeout-minutes: 15
     env:
@@ -5896,7 +5909,7 @@ jobs:
             security-fast=${{ needs.security-fast.result }}|true
             pnpm-store-warmup=${{ needs.pnpm-store-warmup.result }}|${{ (needs.preflight.outputs.run_node == 'true' || needs.preflight.outputs.run_check_docs == 'true') && (needs.preflight.outputs.runner_profile == 'github' || needs.preflight.outputs.runner_profile == 'hybrid' || (!(github.repository == 'openclaw/openclaw' && github.event_name == 'push' && github.ref == 'refs/heads/main') && !(github.repository == 'openclaw/openclaw' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && needs.preflight.outputs.run_node == 'true'))) }}
             build-artifacts=${{ needs.build-artifacts.result }}|${{ needs.preflight.outputs.run_build_artifacts }}
-            control-ui-performance=${{ needs.control-ui-performance.result }}|${{ needs.preflight.outputs.run_build_artifacts == 'true' || needs.preflight.outputs.run_ui_tests == 'true' }}
+            control-ui-performance=${{ needs.control-ui-performance.result }}|${{ needs.preflight.outputs.run_control_ui_performance }}
             native-i18n=${{ needs.native-i18n.result }}|${{ needs.preflight.outputs.run_native_i18n }}
             checks-ui=${{ needs.checks-ui.result }}|${{ needs.preflight.outputs.run_ui_tests }}
             checks-ui-e2e=${{ needs.checks-ui-e2e.result }}|${{ needs.preflight.outputs.run_ui_e2e == 'true' && needs.preflight.outputs.compatibility_target != 'true' }}
