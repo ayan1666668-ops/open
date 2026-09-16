@@ -1,3 +1,5 @@
+import { setReplyPayloadMetadata, type ReplyPayload } from "../../../auto-reply/reply-payload.js";
+import { SILENT_REPLY_TOKEN } from "../../../auto-reply/tokens.js";
 import type { PrepareAssistantTranscriptMessage } from "../../../config/sessions/transcript-assistant-delivery.js";
 import {
   appendExactAssistantMessageToSessionTranscript,
@@ -97,5 +99,3 @@ export async function prepareEmbeddedHandledBeforeAgentReply(
     ...(!transcript.ok ? { persistenceWarning: transcript.reason } : {}),
   };
 }
-import { setReplyPayloadMetadata, type ReplyPayload } from "../../../auto-reply/reply-payload.js";
-import { SILENT_REPLY_TOKEN } from "../../../auto-reply/tokens.js";
