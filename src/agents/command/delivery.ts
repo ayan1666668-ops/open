@@ -34,7 +34,6 @@ import { createReplyPrefixContext } from "../../channels/reply-prefix.js";
 import { formatUnknownChannelMessage } from "../../cli/error-format.js";
 import { createOutboundSendDeps, type CliDeps } from "../../cli/outbound-send-deps.js";
 import type { SessionEntry } from "../../config/sessions.js";
-import { isSessionWorkStartInvalidatedError } from "../../config/sessions/lifecycle.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { formatErrorMessage, toErrorObject } from "../../infra/errors.js";
 import {
@@ -42,7 +41,6 @@ import {
   resolveAgentOutboundTarget,
 } from "../../infra/outbound/agent-delivery.js";
 import { resolveMessageChannelSelection } from "../../infra/outbound/channel-selection.js";
-import { PlatformMessageNotDispatchedError } from "../../infra/outbound/deliver-types.js";
 import { resolveAgentOutboundIdentity } from "../../infra/outbound/identity.js";
 import {
   createOutboundPayloadPlan,
@@ -60,35 +58,14 @@ import { hasAnyNonEmptyString as hasNonEmptyStringArray } from "../delivery-evid
 import type { MessagingToolSend } from "../embedded-agent-messaging.types.js";
 import type { EmbeddedAgentRunMeta } from "../embedded-agent-runner/types.js";
 import { isNestedAgentLane } from "../lanes.js";
-import { isAgentRunRestartAbortReason } from "../run-termination.js";
+import {
+  createAgentCommandDeliveryGuard,
+  createRestartOnlyAbortSignal,
+} from "./delivery-authority.js";
 import type { AgentCommandOpts } from "./types.js";
 
 type RunResult = Awaited<ReturnType<(typeof import("../embedded-agent.js"))["runEmbeddedAgent"]>>;
 type DurableSendResult = Awaited<ReturnType<typeof sendDurableMessageBatchCore>>;
-
-function createRestartOnlyAbortSignal(source: AbortSignal | undefined): {
-  signal?: AbortSignal;
-  dispose: () => void;
-} {
-  if (!source) {
-    return { dispose: () => {} };
-  }
-  const controller = new AbortController();
-  const onAbort = () => {
-    if (isAgentRunRestartAbortReason(source.reason)) {
-      controller.abort(source.reason);
-    }
-  };
-  if (source.aborted) {
-    onAbort();
-  } else {
-    source.addEventListener("abort", onAbort, { once: true });
-  }
-  return {
-    signal: controller.signal,
-    dispose: () => source.removeEventListener("abort", onAbort),
-  };
-}
 
 /** Aggregate delivery status for an agent command result. */
 type AgentCommandDeliveryStatus = {
@@ -964,21 +941,7 @@ export async function deliverAgentCommandResult(
   if (deliver && deliveryChannel && !isInternalMessageChannel(deliveryChannel)) {
     if (deliveryTarget && !deliveryStatus) {
       params.assertDeliveryCurrent?.();
-      const assertPlatformSendCurrent = () => {
-        try {
-          params.assertDeliveryCurrent?.();
-        } catch (error) {
-          if (!isSessionWorkStartInvalidatedError(error)) {
-            throw error;
-          }
-          // Revoked task/session custody cannot leave a stale final queued for
-          // retry after this process-local assertion disappears.
-          throw new PlatformMessageNotDispatchedError("Agent final delivery custody was revoked", {
-            cause: error,
-            retryable: false,
-          });
-        }
-      };
+      const assertPlatformSendCurrent = createAgentCommandDeliveryGuard(params);
       // The outbound projection contains transport data, not private payload metadata.
       const pendingFinalCompletion = resolvePendingFinalDeliveryCompletion(payloads);
       const restartAbort = createRestartOnlyAbortSignal(opts.abortSignal);

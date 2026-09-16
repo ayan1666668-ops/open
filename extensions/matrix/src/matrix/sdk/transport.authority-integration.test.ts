@@ -135,7 +135,9 @@ test("redirect rechecks original transaction through the canonical registry", as
   );
   assert.equal(boundary.dispatched.length, 1);
   assert.equal(observed.length, 2);
-  assert.equal(observed[0].transactionId, "txn-1");
+  const firstDispatch = observed[0];
+  assert.ok(firstDispatch);
+  assert.equal(firstDispatch.transactionId, "txn-1");
   assert.deepEqual(observed[1], observed[0]);
   assert.equal(boundary.closed, 2);
   assert.equal(await guards.beforeRequest(url, init), undefined);

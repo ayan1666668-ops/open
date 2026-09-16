@@ -1,7 +1,6 @@
 // Owns process-local agent run context, ownership, and projection state.
 import { randomUUID } from "node:crypto";
 import { normalizeAgentId, parseAgentSessionKey } from "../routing/session-key.js";
-import { resolveGlobalSingleton } from "../shared/global-singleton.js";
 import { registerListener } from "../shared/listeners.js";
 import { recordAgentEventRouting } from "./agent-event-execution-context.js";
 import {
@@ -15,6 +14,7 @@ import {
   projectedAgentRunInputKey,
   projectedRunIdentity,
 } from "./agent-run-projection.js";
+import { getAgentRunRegistryState, bumpAgentRunIndexVersion } from "./agent-run-registry-state.js";
 import type {
   AgentRunContext,
   AgentRunContextOwnership,
@@ -27,21 +27,6 @@ import { clearAgentRunUsage, resetAgentRunUsageForTest } from "./agent-run-usage
 
 export type { AgentRunDelegatedAuthority } from "./agent-run-authority.types.js";
 export type { ProjectedAgentRunIndex } from "./agent-run-registry.types.js";
-
-const AGENT_RUN_REGISTRY_STATE_KEY = Symbol.for("openclaw.agentRunRegistry.state");
-
-function getAgentRunRegistryState(): AgentRunRegistryState {
-  return resolveGlobalSingleton<AgentRunRegistryState>(AGENT_RUN_REGISTRY_STATE_KEY, () => ({
-    contexts: new Map<string, AgentRunContext>(),
-    owners: new Map<string, AgentRunContextOwnership>(),
-    lifecycleGeneration: randomUUID(),
-    version: 0,
-  }));
-}
-
-function bumpAgentRunIndexVersion(): void {
-  getAgentRunRegistryState().version += 1;
-}
 
 /** Reads the process-local version of the active-run projection inputs. */
 export function readAgentRunIndexVersion(): number {
