@@ -9,12 +9,12 @@ import type {
   AgentIdentityResult,
   GatewaySessionRow,
   SessionRunStatus,
-  GatewayThinkingLevelOption,
   FastMode,
   SessionCompactionCheckpoint,
   SessionsListResult,
 } from "../../api/types.ts";
 import "../../styles/sessions.css";
+import { renderAgentRowChip } from "../../components/agent-row-chip.ts";
 import { renderCapacityMeter } from "../../components/capacity-meter.ts";
 import { icons } from "../../components/icons.ts";
 import {
@@ -29,23 +29,18 @@ import "../../components/web-awesome-popover.ts";
 import { t } from "../../i18n/index.ts";
 import { formatAgentRuntimeLabel } from "../../lib/agents/display.ts";
 import {
-  formatInheritedThinkingLabel,
   formatThinkingOverrideLabel,
   normalizeThinkingOptionValue,
+  resolveChatThinkingSelectState,
 } from "../../lib/chat/thinking.ts";
-import {
-  formatDurationCompact,
-  formatMs,
-  formatRelativeTimestamp,
-  formatCompactTokenCount,
-} from "../../lib/format.ts";
+import { formatDurationCompact } from "../../lib/format-duration.ts";
+import { formatMs, formatRelativeTimestamp, formatCompactTokenCount } from "../../lib/format.ts";
 import { handleContextMenuEvent } from "../../lib/keyboard-shortcuts.ts";
 import { shouldHandleNavigationClick } from "../../lib/navigation-click.ts";
 import { presenceViewerLabel } from "../../lib/presence-users.ts";
 import { formatSessionTokens } from "../../lib/presenter.ts";
 import { resolveSessionDisplayKind } from "../../lib/session-display.ts";
 import { formatGoalDetail, formatGoalSummary } from "../../lib/session-goal.ts";
-import { sessionModelMatchesDefaults } from "../../lib/session-model-defaults.ts";
 import { isSessionRunActive } from "../../lib/session-run-state.ts";
 import { resolveSessionContextLimit } from "../../lib/sessions/context-budget.ts";
 import { SESSION_DRAG_MIME } from "../../lib/sessions/drag.ts";
@@ -62,7 +57,7 @@ import {
   sessionNavigationTarget,
 } from "../../lib/sessions/route-navigation.ts";
 import { formatSessionArchiveReason } from "../../lib/sessions/session-archive-reason.ts";
-import { parseSessionKeyParts } from "../../lib/sessions/session-key.ts";
+import { parseAgentSessionKey, parseSessionKeyParts } from "../../lib/sessions/session-key.ts";
 import { SESSIONS_PAGE_DEFAULT_LIMIT } from "../../lib/sessions/session-requests.ts";
 
 type TranscriptSearchState =
@@ -71,13 +66,16 @@ type TranscriptSearchState =
   | { status: "error"; message: string }
   | {
       status: "results";
+      sessions: GatewaySessionRow[];
       results: SessionsSearchHit[];
       indexing: boolean;
       truncated: boolean;
+      archivedTranscriptsExcluded: number;
     };
 
 export type SessionsProps = {
   loading: boolean;
+  refreshing: boolean;
   result: SessionsListResult | null;
   error: string | null;
   activeMinutes: string;
@@ -168,7 +166,6 @@ export type SessionsProps = {
   onRestoreCheckpoint: (sessionKey: string, checkpointId: string) => void | Promise<void>;
 };
 
-const DEFAULT_THINK_LEVELS = ["off", "minimal", "low", "medium", "high"] as const;
 const VERBOSE_LEVEL_VALUES = ["", "off", "on", "full"] as const;
 const FAST_LEVEL_VALUES = ["", "auto", "on", "off"] as const;
 const REASONING_LEVELS = ["", "off", "on", "stream"] as const;
@@ -185,30 +182,14 @@ function resolveThinkLevelOptions(
   row: GatewaySessionRow,
   defaults?: SessionsListResult["defaults"],
 ): readonly { value: string; label: string }[] {
-  const modelMatchesDefaults = sessionModelMatchesDefaults(row, defaults);
-  const defaultLabel = formatInheritedThinkingLabel(
-    row.thinkingDefault ?? (modelMatchesDefaults ? defaults?.thinkingDefault : undefined),
-  );
-  const options: readonly GatewayThinkingLevelOption[] = row.thinkingLevels?.length
-    ? row.thinkingLevels
-    : modelMatchesDefaults && defaults?.thinkingLevels?.length
-      ? defaults.thinkingLevels
-      : (row.thinkingOptions?.length
-          ? row.thinkingOptions
-          : modelMatchesDefaults && defaults?.thinkingOptions?.length
-            ? defaults.thinkingOptions
-            : DEFAULT_THINK_LEVELS
-        ).map((label) => ({
-          id: normalizeThinkingOptionValue(label),
-          label,
-        }));
-  return [
-    { value: "", label: defaultLabel },
-    ...options.map((option) => ({
-      value: normalizeThinkingOptionValue(option.id),
-      label: formatThinkingOverrideLabel(option.id, option.label),
-    })),
-  ];
+  const state = resolveChatThinkingSelectState({
+    catalog: [],
+    session: row,
+    defaults,
+    sessionKey: row.key,
+    sessionsResult: null,
+  });
+  return [{ value: "", label: state.inherited.displayLabel }, ...state.options];
 }
 
 function withCurrentLabeledOption(
@@ -396,10 +377,11 @@ function transcriptSearchSessionLabel(hit: SessionsSearchHit, rows: GatewaySessi
   );
 }
 
-function renderTranscriptSearch(props: SessionsProps, rows: GatewaySessionRow[]) {
+function renderTranscriptSearch(props: SessionsProps) {
   const hasQuery = props.transcriptSearchQuery.trim().length > 0;
   const state = props.transcriptSearch;
   const results = state.status === "results" ? state.results : [];
+  const rows = state.status === "results" ? state.sessions : [];
   const loading = state.status === "loading";
   return html`
     <section
@@ -498,6 +480,15 @@ function renderTranscriptSearch(props: SessionsProps, rows: GatewaySessionRow[])
                   </button>
                 </div>
               `
+            : nothing
+        }
+        ${
+          state.status === "results" && state.archivedTranscriptsExcluded > 0
+            ? html`<div class="sessions-transcript-search__notice">
+                ${t("sessionsView.transcriptSearchArchivedExcluded", {
+                  count: String(state.archivedTranscriptsExcluded),
+                })}
+              </div>`
             : nothing
         }
         ${
@@ -1038,8 +1029,8 @@ export function renderSessions(props: SessionsProps) {
           `
         : nothing
     }
-    <button class="btn" ?disabled=${props.loading} @click=${props.onRefresh}>
-      ${props.loading ? t("common.loading") : t("common.refresh")}
+    <button class="btn" ?disabled=${props.refreshing} @click=${props.onRefresh}>
+      ${props.refreshing ? t("common.loading") : t("common.refresh")}
     </button>
   `;
   const children = [
@@ -1050,7 +1041,7 @@ export function renderSessions(props: SessionsProps) {
       {
         title: t("sessionsView.transcriptSearchTitle"),
       },
-      renderTranscriptSearch(props, rawRows),
+      renderTranscriptSearch(props),
     ),
     renderSettingsSection(
       {
@@ -1568,6 +1559,7 @@ function renderRows(row: GatewaySessionRow, props: SessionsProps) {
                     : nothing
                 }
               </span>
+              ${row.kind === "global" && !row.agentId ? nothing : renderAgentRowChip(parseAgentSessionKey(row.key)?.agentId ?? row.agentId)}
               ${
                 showDisplayName
                   ? html`<span class="muted session-key-display-name">${displayName}</span>`

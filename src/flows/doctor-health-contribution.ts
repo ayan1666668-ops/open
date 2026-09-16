@@ -15,6 +15,7 @@ export function createDoctorHealthContribution(params: {
   healthChecks?: DoctorContributionHealthCheck | readonly DoctorContributionHealthCheck[];
   hint?: string;
   required?: true;
+  updatePolicy?: DoctorHealthContribution["updatePolicy"];
   run?: (ctx: DoctorHealthFlowContext) => Promise<void>;
 }): DoctorHealthContribution {
   const healthChecks = normalizeHealthChecks(params.id, params.healthChecks);
@@ -35,6 +36,7 @@ export function createDoctorHealthContribution(params: {
     healthChecks,
     healthCheckIds,
     ...(params.required ? { required: true as const } : {}),
+    ...(params.updatePolicy ? { updatePolicy: params.updatePolicy } : {}),
     run:
       params.run ??
       ((ctx) =>
@@ -95,6 +97,7 @@ async function runStructuredDoctorHealthContribution(params: {
   const { runDoctorHealthRepairs } = await import("./doctor-repair-flow.js");
   const workspaceDir = resolveDoctorWorkspaceDir(params.ctx.cfg, params.ctx.env);
   const dryRun = !params.ctx.prompter.shouldRepair;
+  const configBeforeRepair = JSON.stringify(params.ctx.cfg);
   const result = await runDoctorHealthRepairs(
     {
       mode: "fix",
@@ -118,8 +121,15 @@ async function runStructuredDoctorHealthContribution(params: {
   for (const warning of result.warnings) {
     params.ctx.runtime.error(warning);
   }
-  for (const change of result.changes) {
-    params.ctx.runtime.log(change);
+  if (configBeforeRepair !== JSON.stringify(result.config)) {
+    params.ctx.configResult.pendingChangePanels = [
+      ...(params.ctx.configResult.pendingChangePanels ?? []),
+      ...result.changes,
+    ];
+  } else {
+    for (const change of result.changes) {
+      params.ctx.runtime.log(change);
+    }
   }
 }
 

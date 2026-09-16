@@ -10,6 +10,7 @@ import type { OpenClawConfig } from "../../config/config.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import { loadSessionEntry, replaceSessionEntry } from "../../config/sessions/session-accessor.js";
 import { clearSessionStoreCacheForTest } from "../../config/sessions/store-writer-state.js";
+import { resolveStoredModelOverride } from "../../sessions/stored-model-overrides.js";
 import type { ModelAliasIndex } from "./model-selection-directive.js";
 
 const readPreparedModelCatalog = vi.hoisted(() => vi.fn(async () => modelCatalog));
@@ -240,6 +241,49 @@ describe("applyResetModelOverride", () => {
       expect(sessionCtx.BodyStripped).toBe("summarize");
     },
   );
+
+  it("persists explicit default intent so a later turn does not re-inherit its parent", async () => {
+    const parentKey = "agent:main:parent";
+    const fixture = createResetFixture({
+      providerOverride: "minimax",
+      modelOverride: "m2.7",
+      modelOverrideSource: "user",
+    });
+
+    await applyResetModelOverride({
+      cfg: fixture.cfg,
+      resetTriggered: true,
+      bodyStripped: "openai/gpt-4o-mini summarize",
+      sessionCtx: fixture.sessionCtx,
+      ctx: fixture.ctx,
+      sessionEntry: fixture.sessionEntry,
+      sessionStore: fixture.sessionStore,
+      sessionKey: "agent:main:child",
+      defaultProvider: "openai",
+      defaultModel: "gpt-4o-mini",
+      aliasIndex: fixture.aliasIndex,
+      modelCatalog,
+    });
+
+    expect(fixture.sessionEntry.modelOverrideSource).toBe("default");
+    expect(
+      resolveStoredModelOverride({
+        sessionEntry: fixture.sessionEntry,
+        sessionStore: {
+          [parentKey]: {
+            sessionId: "parent-session",
+            updatedAt: 1,
+            providerOverride: "minimax",
+            modelOverride: "m2.7",
+            modelOverrideSource: "user",
+          },
+        },
+        sessionKey: "agent:main:child",
+        parentSessionKey: parentKey,
+        defaultProvider: "openai",
+      }),
+    ).toBeNull();
+  });
 
   it.each([
     { name: "empty catalog", catalog: [] },

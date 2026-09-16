@@ -4,41 +4,23 @@ import {
 } from "@openclaw/normalization-core/number-coercion";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import {
-  countActiveDescendantRuns,
-  getSessionDisplaySubagentRunByChildSessionKey,
-} from "../agents/subagents/registry/subagent-registry-read.js";
-import {
   RECENT_ENDED_SUBAGENT_CHILD_SESSION_MS,
   shouldKeepSubagentRunChildLink,
 } from "../agents/subagents/registry/subagent-run-liveness.js";
-import { stripInboundMetadata } from "../auto-reply/reply/strip-inbound-meta.js";
 import { isTerminalSessionStatus, type SessionEntry } from "../config/sessions.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { truncateUtf16Safe } from "../utils.js";
+import type { SynchronousWork } from "../shared/synchronous-work.js";
 import {
   estimateAggregateUsageCost,
   type ModelCostConfig,
   resolveModelCostConfig,
 } from "../utils/usage-format.js";
+import { deriveGoalSessionTitle } from "./derive-goal-session-title.js";
 import {
   createSessionRowModelCacheKey,
   type SessionListRowContext,
 } from "./session-utils-contracts.js";
 import type { GatewaySessionRow } from "./session-utils.types.js";
-
-const DERIVED_TITLE_MAX_LEN = 60;
-
-function truncateTitle(text: string, maxLen: number): string {
-  if (text.length <= maxLen) {
-    return text;
-  }
-  const cut = truncateUtf16Safe(text, maxLen - 1);
-  const lastSpace = cut.lastIndexOf(" ");
-  if (lastSpace > maxLen * 0.6) {
-    return cut.slice(0, lastSpace) + "…";
-  }
-  return cut + "…";
-}
 
 export function deriveSessionTitle(
   entry: SessionEntry | undefined,
@@ -65,13 +47,11 @@ export function deriveSessionTitle(
     return subject;
   }
 
-  // Transcript metadata is model-only; sanitize at the shared title boundary so
-  // SQLite, file-backed sessions, and every session-list client stay consistent.
-  const normalized = firstUserMessage
-    ? stripInboundMetadata(firstUserMessage).replace(/\s+/g, " ").trim()
-    : "";
-  if (normalized) {
-    return truncateTitle(normalized, DERIVED_TITLE_MAX_LEN);
+  // When no model label was persisted, prefer a task-bearing sentence over a
+  // raw first-bubble truncation so Control UI and gateway clients stay readable.
+  const goalTitle = deriveGoalSessionTitle(firstUserMessage);
+  if (goalTitle) {
+    return goalTitle;
   }
 
   // Derived titles are human content only; UI/TUI/ACP own key-based fallbacks,
@@ -83,90 +63,53 @@ export function resolvePositiveNumber(value: number | null | undefined): number 
   return asPositiveFiniteNumber(value);
 }
 
-export function deriveSessionUnread(
-  entry?: Pick<
-    SessionEntry,
-    "createdAt" | "lastReadAt" | "markedUnreadAt" | "lastInteractionAt" | "lastActivityAt"
-  >,
-): boolean {
-  // Creation starts unread tracking for modern rows without lighting up legacy
-  // rows that predate durable creation provenance.
-  const unreadBaselineAt = entry?.lastReadAt ?? entry?.createdAt;
-  return (
-    entry?.markedUnreadAt !== undefined ||
-    (unreadBaselineAt !== undefined &&
-      Math.max(entry?.lastInteractionAt ?? 0, entry?.lastActivityAt ?? 0) > unreadBaselineAt)
-  );
-}
-
 type SessionCompactionCheckpointEntry = NonNullable<SessionEntry["compactionCheckpoints"]>[number];
 
-function isProjectableCompactionCheckpoint(
-  value: unknown,
-): value is SessionCompactionCheckpointEntry {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return false;
-  }
-  const checkpoint = value as {
-    checkpointId?: unknown;
-    createdAt?: unknown;
-    reason?: unknown;
-  };
-  return (
-    Boolean(normalizeOptionalString(checkpoint.checkpointId)) &&
-    typeof checkpoint.createdAt === "number" &&
-    Number.isFinite(checkpoint.createdAt) &&
-    (checkpoint.reason === "manual" ||
-      checkpoint.reason === "auto-threshold" ||
-      checkpoint.reason === "overflow-retry" ||
-      checkpoint.reason === "timeout-retry")
-  );
-}
-
-export function resolveProjectableCompactionCheckpoints(
+export function resolveSessionCompactionSummary(
   entry?: Pick<SessionEntry, "compactionCheckpoints"> | null,
-): SessionCompactionCheckpointEntry[] {
+): Pick<GatewaySessionRow, "compactionCheckpointCount" | "latestCompactionCheckpoint"> {
   const checkpoints = entry?.compactionCheckpoints;
-  if (!Array.isArray(checkpoints) || checkpoints.length === 0) {
-    return [];
+  if (!Array.isArray(checkpoints)) {
+    return {};
   }
-  return checkpoints.filter(isProjectableCompactionCheckpoint);
-}
-
-export function resolveLatestCompactionCheckpoint(
-  checkpoints: readonly SessionCompactionCheckpointEntry[],
-): SessionCompactionCheckpointEntry | undefined {
-  return checkpoints.reduce<SessionCompactionCheckpointEntry | undefined>(
-    (latest, checkpoint) =>
-      !latest || checkpoint.createdAt > latest.createdAt ? checkpoint : latest,
-    undefined,
-  );
-}
-
-export function buildCompactionCheckpointPreview(
-  checkpoint: SessionCompactionCheckpointEntry | undefined,
-): GatewaySessionRow["latestCompactionCheckpoint"] {
-  if (!checkpoint) {
-    return undefined;
-  }
-  const checkpointId = normalizeOptionalString(checkpoint.checkpointId);
-  const createdAt = checkpoint.createdAt;
-  const reason = checkpoint.reason;
-  if (!checkpointId || typeof createdAt !== "number" || !Number.isFinite(createdAt)) {
-    return undefined;
-  }
-  if (
-    reason !== "manual" &&
-    reason !== "auto-threshold" &&
-    reason !== "overflow-retry" &&
-    reason !== "timeout-retry"
-  ) {
-    return undefined;
+  let compactionCheckpointCount = 0;
+  let latest: SessionCompactionCheckpointEntry | undefined;
+  for (const value of checkpoints) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      continue;
+    }
+    const checkpoint = value as {
+      checkpointId?: unknown;
+      createdAt?: unknown;
+      reason?: unknown;
+    };
+    const checkpointId = normalizeOptionalString(checkpoint.checkpointId);
+    const { createdAt, reason } = checkpoint;
+    if (
+      !checkpointId ||
+      typeof createdAt !== "number" ||
+      !Number.isFinite(createdAt) ||
+      (reason !== "manual" &&
+        reason !== "auto-threshold" &&
+        reason !== "overflow-retry" &&
+        reason !== "timeout-retry")
+    ) {
+      continue;
+    }
+    compactionCheckpointCount += 1;
+    if (!latest || createdAt > latest.createdAt) {
+      latest = value;
+    }
   }
   return {
-    checkpointId,
-    createdAt,
-    reason,
+    compactionCheckpointCount,
+    latestCompactionCheckpoint: latest
+      ? {
+          checkpointId: latest.checkpointId.trim(),
+          createdAt: latest.createdAt,
+          reason: latest.reason,
+        }
+      : undefined,
   };
 }
 
@@ -251,14 +194,12 @@ function shouldKeepStoreOnlyChildLink(entry: SessionEntry, now: number): boolean
       isFinitePositiveTimestamp(endedAt) && now - endedAt <= RECENT_ENDED_SUBAGENT_CHILD_SESSION_MS
     );
   }
-  if (entry.status === "running" || isFinitePositiveTimestamp(entry.startedAt)) {
-    return true;
-  }
-  // Store-only child links lack a live subagent registry entry. Keep recent
-  // unknown-state rows visible briefly so reloads do not hide fresh children.
+  // Store-only child links lack a live registry entry; retain recent unknown-state rows.
   return (
-    isFinitePositiveTimestamp(entry.updatedAt) &&
-    now - entry.updatedAt <= STALE_STORE_ONLY_CHILD_LINK_MS
+    entry.status === "running" ||
+    isFinitePositiveTimestamp(entry.startedAt) ||
+    (isFinitePositiveTimestamp(entry.updatedAt) &&
+      now - entry.updatedAt <= STALE_STORE_ONLY_CHILD_LINK_MS)
   );
 }
 
@@ -267,17 +208,13 @@ export function resolveSessionChildOwners(params: {
   key: string;
   entry: SessionEntry;
   now: number;
-  subagentRuns?: SessionListRowContext["subagentRuns"];
+  subagentRuns: SessionListRowContext["subagentRuns"];
 }): string[] {
   const { key, entry, now, subagentRuns } = params;
-  const latest = subagentRuns
-    ? subagentRuns.getDisplaySubagentRun(key)
-    : getSessionDisplaySubagentRunByChildSessionKey(key);
+  const latest = subagentRuns.getDisplaySubagentRun(key);
   const keep = latest
     ? shouldKeepSubagentRunChildLink(latest, {
-        activeDescendants: subagentRuns
-          ? subagentRuns.countActiveDescendantRuns(key)
-          : countActiveDescendantRuns(key),
+        activeDescendants: subagentRuns.countActiveDescendantRuns(key),
         now,
       })
     : shouldKeepStoreOnlyChildLink(entry, now);
@@ -289,33 +226,51 @@ export function resolveSessionChildOwners(params: {
     ? normalizeOptionalString(latest.controllerSessionKey) ||
       normalizeOptionalString(latest.requesterSessionKey)
     : normalizeOptionalString(entry.spawnedBy);
-  return [...new Set([controller, normalizeOptionalString(entry.parentSessionKey)])].filter(
-    (owner): owner is string => Boolean(owner) && owner !== key,
+  const parent = normalizeOptionalString(entry.parentSessionKey);
+  return [...new Set([controller, parent])].filter(
+    (owner): owner is string => owner !== undefined && owner !== key,
   );
 }
 
+export type SessionChildLink = { key: string; entry: SessionEntry };
+
 /** Index only canonical children; retained run results cannot create session links. */
-export function buildStoreChildSessionIndex(params: {
-  store: Record<string, SessionEntry>;
-  keys: readonly string[];
-  now: number;
-  subagentRuns?: SessionListRowContext["subagentRuns"];
-  excludedChildKeys?: ReadonlySet<string>;
-}): Map<string, string[]> {
-  const children = new Map<string, string[]>();
+export function* buildStoreChildSessionLinksWork(
+  params: {
+    store: Record<string, SessionEntry>;
+    keys: readonly string[];
+    subagentRunsByChildSessionKey: SessionListRowContext["subagentRunsByChildSessionKey"];
+  },
+  shouldYield?: () => boolean,
+): SynchronousWork<Map<string, SessionChildLink[]>> {
+  const children = new Map<string, SessionChildLink[]>();
   if (params.keys.length === 0) {
     return children;
   }
   const parents = new Set(params.keys);
   // One store pass discovers both persisted navigation and runtime-only controller links.
-  for (const [key, entry] of Object.entries(params.store)) {
-    if (!entry || params.excludedChildKeys?.has(key)) {
+  for (const key of Object.keys(params.store)) {
+    if (shouldYield?.()) {
+      yield;
+    }
+    const entry = params.store[key];
+    if (!entry) {
       continue;
     }
-    for (const owner of resolveSessionChildOwners({ ...params, key, entry })) {
-      if (parents.has(owner)) {
+    const runs = params.subagentRunsByChildSessionKey.get(key.trim()) ?? [];
+    const owners = new Set([
+      ...runs.map(
+        (run) =>
+          normalizeOptionalString(run.controllerSessionKey) ||
+          normalizeOptionalString(run.requesterSessionKey),
+      ),
+      normalizeOptionalString(entry.spawnedBy),
+      normalizeOptionalString(entry.parentSessionKey),
+    ]);
+    for (const owner of owners) {
+      if (owner && owner !== key && parents.has(owner)) {
         const siblings = children.get(owner) ?? [];
-        siblings.push(key);
+        siblings.push({ key, entry });
         children.set(owner, siblings);
       }
     }

@@ -2,7 +2,12 @@
 set -euo pipefail
 
 node_version="24.19.0"
-pnpm_spec="pnpm@12.3.4+sha512.961aa41fb077da3a04a441d9f8e15ebc0c96da8ef710b2eb67bf9ee7cb0610eabd48f1fd85f51cffe73846785fa0f87c56a3a872a1d893f8446741b5cce45457"
+pnpm_spec="pnpm@12.4.0+sha512.37536c26ed40ab4134b6511e09f6b27f3ebb45687468f2406ca3805279a4e5ca158c1931350ad9774d6ab2108d71b3dbaeb39943159294375e4d053e8e05685c"
+# Keep exact formerly trusted pins so older contributor heads remain verifiable.
+historical_pnpm_specs=(
+  "pnpm@12.3.4+sha512.961aa41fb077da3a04a441d9f8e15ebc0c96da8ef710b2eb67bf9ee7cb0610eabd48f1fd85f51cffe73846785fa0f87c56a3a872a1d893f8446741b5cce45457"
+  "pnpm@12.1.0+sha512.d9b8276d97f6ec86e49815877f91ee9f63cee61f2063b304e43b6dab8fa07ce8a9afd46d2facd39f921e6a9d06b3c75a81349c7b888c2d22886bae0229901037"
+)
 
 if [[ $# -lt 2 ]]; then
   echo "usage: $0 <expected-head-sha> <command> [args...]" >&2
@@ -88,15 +93,47 @@ if ! copy_verified_archive "$archive" "$node_sha256" 256; then
   fi
 fi
 
+sudo /usr/bin/env -i PATH=/usr/bin:/bin /bin/bash -s -- \
+  "$install_root" "$tmp_dir/$archive" <<'INSTALL_NODE'
+set -euo pipefail
+umask 022
+install_root="$1"
+archive_path="$2"
+/bin/rm -rf -- "$install_root"
+/usr/bin/mkdir -p "$install_root"
+/usr/bin/tar -xJf "$archive_path" -C "$install_root" --strip-components=1
+INSTALL_NODE
+
+candidate_package_json="$PWD/package.json"
+pnpm_spec="$(
+  cd "$install_root"
+  "$install_root/bin/node" - "$candidate_package_json" "$pnpm_spec" "${historical_pnpm_specs[@]}" <<'PACKAGE_MANAGER'
+const fs = require("node:fs");
+const [file, ...approvedPins] = process.argv.slice(2);
+let pkg;
+try {
+  pkg = JSON.parse(fs.readFileSync(file, "utf8"));
+} catch {
+  console.error("refusing untrusted run: invalid package.json");
+  process.exit(1);
+}
+if (!approvedPins.includes(pkg?.packageManager)) {
+  console.error("refusing untrusted run: packageManager pin differs from trusted main or approved history");
+  process.exit(1);
+}
+process.stdout.write(pkg.packageManager);
+PACKAGE_MANAGER
+)"
+
 pnpm_version="${pnpm_spec#pnpm@}"
 pnpm_version="${pnpm_version%%+*}"
 pnpm_native_sha512=""
 case "$pnpm_version:$node_arch" in
-  12.3.4:x64)
-    pnpm_native_sha512="d99a8e9523e47f05f5879711f853e259ff3e17eda1653ff74ef8542b9b22807ab06900888aaf11ec21b186774ab3adc9b5c2e2d9ad50a68fb05ff128c9f8f225"
+  12.4.0:x64)
+    pnpm_native_sha512="490560464711e17caa7fcf9535bb58d2bb5c1277c3ab8f11847df41d6a36fd47ea2847e57b6ace3321993a63750db330e19cc6e66598a02f353bb66a1c565c3f"
     ;;
-  12.3.4:arm64)
-    pnpm_native_sha512="b7bd40540ecb46a88a4f2679c4c61a65cda7e437dda4c6dfa2466e8883971c138cd371029c5d2de226306810ea26056394a6143b0685fdb4506a318d038709e3"
+  12.4.0:arm64)
+    pnpm_native_sha512="ea7a50530ab70ff5976d3811e1ebc0a44290f484f39d9e88cff769b5c8c1cc0efec122d369890af7c39ddb0b070a83e61056fdb46b4cf9cbc6f36fb0cb4a3db8"
     ;;
 esac
 pnpm_archive="pnpm-${pnpm_version}.tgz"
@@ -110,18 +147,16 @@ fi
 
 # Only public toolchain artifacts need shared access; keep caller state private.
 sudo /usr/bin/env -i PATH=/usr/bin:/bin /bin/bash -s -- \
-  "$install_root" "$corepack_home" "$tmp_dir/$archive" "$pnpm_spec" "$pnpm_seed" "$node_arch" <<'INSTALL'
+  "$install_root" "$corepack_home" "$pnpm_spec" "$pnpm_seed" "$node_arch" <<'INSTALL'
 set -euo pipefail
 umask 022
 install_root="$1"
 corepack_home="$2"
-archive_path="$3"
-pnpm_spec="$4"
-pnpm_seed="$5"
-node_arch="$6"
-/bin/rm -rf -- "$install_root" "$corepack_home"
-/usr/bin/mkdir -p "$install_root" "$corepack_home"
-/usr/bin/tar -xJf "$archive_path" -C "$install_root" --strip-components=1
+pnpm_spec="$3"
+pnpm_seed="$4"
+node_arch="$5"
+/bin/rm -rf -- "$corepack_home"
+/usr/bin/mkdir -p "$corepack_home"
 if [[ -n "$pnpm_seed" ]]; then
   pnpm_version="${pnpm_spec#pnpm@}"
   pnpm_version="${pnpm_version%%+*}"
@@ -144,6 +179,8 @@ fs.writeFileSync(file, JSON.stringify({
 METADATA
   export COREPACK_ENABLE_NETWORK=0
 fi
+# Corepack must select and warm the approved pin outside the untrusted checkout.
+cd "$install_root"
 /usr/bin/env \
   COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
   COREPACK_HOME="$corepack_home" \
@@ -154,8 +191,6 @@ fi
   COREPACK_HOME="$corepack_home" \
   PATH="$install_root/bin:/usr/bin:/bin" \
   "$install_root/bin/corepack" prepare "$pnpm_spec" --activate
-# Warm from the trusted tool directory, never the untrusted checkout.
-cd "$install_root"
 /usr/bin/env \
   COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
   COREPACK_HOME="$corepack_home" \
@@ -176,7 +211,7 @@ actual_package_manager="$(
     'const fs = require("node:fs"); const pkg = JSON.parse(fs.readFileSync("package.json", "utf8")); process.stdout.write(pkg.packageManager || "")'
 )"
 if [[ "$actual_package_manager" != "$pnpm_spec" ]]; then
-  echo "refusing untrusted run: packageManager pin differs from trusted main" >&2
+  echo "refusing untrusted run: packageManager pin changed during bootstrap" >&2
   exit 1
 fi
 

@@ -70,7 +70,7 @@ async function createSource(binarySize = 150000) {
     workspace,
     filePath,
     binary,
-    snapshot: buildSkillSnapshot(workspace, {
+    snapshot: await buildSkillSnapshot(workspace, {
       entries: loadWorkspaceSkills(workspace, { workspaceOnly: true }),
     }),
   };
@@ -775,7 +775,7 @@ describe("remote-exec skill resources", () => {
         path.join(staleBaseDir, "SKILL.md"),
         "---\ndescription: Stale resource\n---\n# Stale\n",
       );
-      const snapshot = buildSkillSnapshot(workspace, {
+      const snapshot = await buildSkillSnapshot(workspace, {
         entries: loadWorkspaceSkills(workspace, { workspaceOnly: true }),
       });
       const sourceSkill = snapshot.resolvedSkills?.[0];
@@ -845,13 +845,18 @@ describe("remote-exec skill resources", () => {
   );
 
   it.each(
-    ["ssh", "node"].flatMap((carrier) => ["init", "write"].map((phase) => ({ carrier, phase }))),
+    ["ssh", "node"].flatMap((carrier) =>
+      ["init", "write"].flatMap((phase) =>
+        ["abort", "authority"].map((revocation) => ({ carrier, phase, revocation })),
+      ),
+    ),
   )(
-    "cleans the accepted remote directory when cancellation arrives with $phase ($carrier)",
-    async ({ carrier, phase }) => {
+    "cleans the accepted remote directory when $revocation arrives with $phase ($carrier)",
+    async ({ carrier, phase, revocation }) => {
       const { snapshot } = await createSource();
       const transport = await createCarrier(carrier);
       const controller = new AbortController();
+      let runCurrent = true;
       let initializedRoot: string | undefined;
       try {
         await expect(
@@ -860,6 +865,11 @@ describe("remote-exec skill resources", () => {
             remoteWorkspaceDir: transport.workspace,
             signal: controller.signal,
             assertCurrent: () => {},
+            assertRunCurrent: () => {
+              if (!runCurrent) {
+                throw new DOMException("run authority closed", "AbortError");
+              }
+            },
             tunnel: {
               runWorkspaceCommand: async (command) => {
                 const result = await transport.runWorkspaceCommand(command);
@@ -870,7 +880,11 @@ describe("remote-exec skill resources", () => {
                   );
                 }
                 if (JSON.parse(command.input!).op === phase) {
-                  controller.abort();
+                  if (revocation === "abort") {
+                    controller.abort();
+                  } else {
+                    runCurrent = false;
+                  }
                 }
                 return result;
               },
