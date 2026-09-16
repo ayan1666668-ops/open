@@ -1159,6 +1159,10 @@ class MainViewModel private constructor(
     }
   }
 
+  fun acknowledgeTalkModeFailure() {
+    ensureRuntime().acknowledgeTalkModeFailure()
+  }
+
   fun setTalkModeEnabled(enabled: Boolean) {
     ensureRuntime().setTalkModeEnabled(enabled)
   }

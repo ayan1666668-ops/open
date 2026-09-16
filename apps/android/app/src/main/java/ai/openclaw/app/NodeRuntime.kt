@@ -3870,6 +3870,10 @@ class NodeRuntime private constructor(
     prefs.setVoiceMicEnabled(false)
   }
 
+  fun acknowledgeTalkModeFailure() {
+    talkMode.acknowledgeFailure()
+  }
+
   fun setTalkModeEnabled(value: Boolean) {
     setVoiceCaptureMode(if (value) VoiceCaptureMode.TalkMode else VoiceCaptureMode.Off)
   }

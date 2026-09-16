@@ -832,6 +832,7 @@ class TalkModeManagerTest {
       assertFalse(manager.isEnabled.value)
       assertFalse(manager.isListening.value)
       assertEquals("Gateway not connected", manager.statusText.value)
+      assertEquals("Gateway not connected", manager.failureText.value)
       assertTrue(stoppedByRelay.get())
     }
 
@@ -2454,6 +2455,49 @@ class TalkModeManagerTest {
         } finally {
           if (!replied) socket.send("""{"type":"res","id":"$requestId","ok":true,"payload":{"ok":true,"status":"idle"}}""")
         }
+      }
+    }
+
+  @Test
+  fun rejectedSessionCreateShowsFailureAndCanRetry() =
+    runBlocking {
+      val rejectCreate = AtomicBoolean(false)
+      val stoppedByRelay = AtomicBoolean(false)
+      withStartedTalk(
+        captureRelayStopNotification = { { isCurrent -> if (isCurrent()) stoppedByRelay.set(true) } },
+        interceptRequest = { request, socket ->
+          if (request.getValue("method").jsonPrimitive.content == "talk.session.create" && rejectCreate.get()) {
+            val requestId = request.getValue("id").jsonPrimitive.content
+            socket.send("""{"type":"res","id":"$requestId","ok":false,"error":{"code":"UNAVAILABLE","message":"Provider credentials invalid"}}""")
+            true
+          } else {
+            false
+          }
+        },
+      ) { proof ->
+        suspend fun awaitState(condition: () -> Boolean) {
+          val deadline = System.nanoTime() + 5_000_000_000L
+          while (!condition()) {
+            proof.scheduler.runCurrent()
+            check(System.nanoTime() < deadline) { "Timed out waiting for Talk startup transition" }
+            withContext(Dispatchers.Default) { delay(10) }
+          }
+        }
+        proof.manager.stopAllCapture()
+        proof.drainCancelledCapture()
+        rejectCreate.set(true)
+        proof.manager.setEnabled(true)
+        awaitState { stoppedByRelay.get() }
+        assertFalse(proof.manager.isEnabled.value)
+        assertFalse(proof.manager.isListening.value)
+        val failure = proof.manager.statusText.value
+        assertTrue(failure.contains("Provider credentials invalid"))
+        assertEquals(failure, proof.manager.failureText.value)
+
+        rejectCreate.set(false)
+        proof.manager.setEnabled(true)
+        awaitState { proof.manager.isListening.value }
+        assertNull(proof.manager.failureText.value)
       }
     }
 

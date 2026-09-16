@@ -1012,8 +1012,9 @@ class ChatComposerLayoutTest {
   }
 
   @Test
-  fun talkProviderFailureRemainsVisibleWhileTalkIsOff() {
-    val viewModel = showChat(useChatShell = true)
+  fun talkProviderFailureStaysDismissedAfterLeavingChatAndNewFailuresRemainVisible() {
+    val chatVisible = mutableStateOf(true)
+    val viewModel = showChat(useChatShell = true, chatVisible = { chatVisible.value })
     val message = "Realtime provider authentication failed. Check the provider credentials and try again."
     composeRule.runOnIdle {
       val getter = NodeRuntime::class.java.getDeclaredMethod("getTalkMode")
@@ -1029,6 +1030,21 @@ class ChatComposerLayoutTest {
     composeRule.onNodeWithText(message).assertIsDisplayed()
     composeRule.onNodeWithText(nativeString("OK")).performClick()
     composeRule.onNodeWithText(message).assertDoesNotExist()
+    // Navigation removes Chat from composition while the runtime retains its status.
+    composeRule.runOnIdle { chatVisible.value = false }
+    composeRule.waitForIdle()
+    composeRule.runOnIdle { chatVisible.value = true }
+    composeRule.onNodeWithText(message).assertDoesNotExist()
+    composeRule.runOnIdle {
+      val getter = NodeRuntime::class.java.getDeclaredMethod("getTalkMode")
+      getter.isAccessible = true
+      val manager = getter.invoke(runtime) as TalkModeManager
+      manager.stopAllCapture(failure = verbatimText(message))
+    }
+    composeRule.waitUntil {
+      composeRule.onAllNodesWithText(message).fetchSemanticsNodes().isNotEmpty()
+    }
+    composeRule.onNodeWithText(message).assertIsDisplayed()
   }
 
   @Test
@@ -4673,6 +4689,7 @@ class ChatComposerLayoutTest {
     expectedMessageCount: Int? = null,
     onOpenSidebar: () -> Unit = {},
     useChatShell: Boolean = false,
+    chatVisible: () -> Boolean = { true },
     currentViewportWidth: () -> Dp = { viewportWidth },
     displayFeatures: (() -> List<DisplayFeature>)? = null,
     viewportOffset: () -> IntOffset = { IntOffset.Zero },
@@ -4685,6 +4702,7 @@ class ChatComposerLayoutTest {
     viewModel.enterScreenshotFixtureMode(scene)
     val setContent = restorationTester?.let { it::setContent } ?: composeRule::setContent
     setContent {
+      if (!chatVisible()) return@setContent
       val currentActivity = requireNotNull(LocalActivity.current)
       SideEffect { chatActivity = currentActivity }
       if (scene == AndroidScreenshotScene.Branches) {

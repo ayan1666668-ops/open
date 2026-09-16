@@ -14,7 +14,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -47,20 +46,21 @@ internal fun rememberChatRealtimeTalkLauncher(viewModel: MainViewModel): () -> U
   val talkSetupReadiness by viewModel.talkSetupReadiness.collectAsState()
   val currentTalkSetup by rememberUpdatedState(talkSetupReadiness.realtimeTalk)
   val failureText by viewModel.talkModeFailureText.collectAsState()
-  var errorMessage by remember { mutableStateOf<String?>(null) }
-  LaunchedEffect(failureText) {
-    failureText?.let { errorMessage = it }
-  }
+  var setupMessage by remember { mutableStateOf<String?>(null) }
   val showSetupMessage = {
-    errorMessage = gatewayTalkSetupDescription(currentTalkSetup)
+    setupMessage = gatewayTalkSetupDescription(currentTalkSetup)
   }
-  errorMessage?.let { message ->
+  val dismissMessage = {
+    viewModel.acknowledgeTalkModeFailure()
+    setupMessage = null
+  }
+  (failureText ?: setupMessage)?.let { message ->
     FoldAwarePrompt(
-      onDismissRequest = { errorMessage = null },
+      onDismissRequest = dismissMessage,
       title = nativeString("Talk"),
       text = { Text(message, style = ClawTheme.type.body, color = ClawTheme.colors.textMuted) },
       actions = {
-        TextButton(onClick = { errorMessage = null }) { Text(nativeString("OK")) }
+        TextButton(onClick = dismissMessage) { Text(nativeString("OK")) }
       },
     )
   }
