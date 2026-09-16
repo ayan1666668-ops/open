@@ -281,23 +281,27 @@ inventories, process isolation, worker limits, naming scheme and timing-key
 generation remain owned by the existing planner. Repartitioned children receive
 new membership keys; the measured parent survives that change.
 
-Three families retain their previous complete timing entries:
+Three families retain their previous complete timing entries to avoid hosted expansion:
 `agentic-gateway-server-isolated`, `agentic-gateway-core-runtime`, and
 `agentic-agents-core-spawn-production-boundary`. Applying their Blacksmith refit
 would expand the hosted fallback beyond its 80-row compact cap. No two independent
 recent hosted samples were available to calibrate them. This scoped refresh
 therefore defers those families rather than introducing extra hosted rows or
 inventing hosted measurements. The unscoped refit and all observed overruns belong
-in the PR evidence for a later capacity-aware refresh.
+in the PR evidence for a later capacity-aware refresh. The `agentic-cli-process`
+family also retains its prior timings: distributing its new parent total by the
+existing file weights prices an indivisible child at 239 seconds, beyond its
+200-second contract. That family needs a separate file-cost refit; its assertions
+and budget remain unchanged.
 
-At the inspected inventory, hybrid compact descriptors change from 29 to 52 on
+At the inspected inventory, hybrid compact descriptors change from 29 to 51 on
 push and 53 to 75 on broad PRs; the maximum prediction remains 518 seconds for the
 standalone CLI. Ordinary two-child bins remain within 360 seconds. Excluding dist,
-the Node matrix uses 51 push rows and 113 broad-PR rows including 40 plugin rows,
+the Node matrix uses 50 push rows and 113 broad-PR rows including 40 plugin rows,
 within the unchanged 64/120 caps. Blacksmith compact descriptors change from
-34/52 to 58/76; the honest 804-second maximum belongs to standalone agent support.
-Hosted plans remain byte-identical at 51/79 descriptors. Hybrid adds 23/22
-registrations per push/PR, or 554 across the retained four-main/21-PR arrival
+34/52 to 57/75; the honest 804-second maximum belongs to standalone agent support.
+Hosted plans remain byte-identical at 51/79 descriptors. Hybrid adds 22/22
+registrations per push/PR, or 550 across the retained four-main/21-PR arrival
 envelope; these rows consume existing reserved capacity, so the enforced
 4,776-registration ceiling does not increase. Budgets and timeouts are unchanged.
 
