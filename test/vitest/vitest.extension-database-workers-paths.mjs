@@ -66,6 +66,7 @@ export const databaseWorkerExtensionTestFiles = [
   "extensions/nostr/doctor-contract-api.test.ts",
   "extensions/nostr/src/nostr-state-store.test.ts",
   "extensions/onepassword/src/tool-list.test.ts",
+  "extensions/qa-lab/src/execution-identity-storage-inspection.test.ts",
   "extensions/reef/doctor-contract-api.test.ts",
   "extensions/reef/src/channel.test.ts",
   "extensions/reef/src/setup.test.ts",
