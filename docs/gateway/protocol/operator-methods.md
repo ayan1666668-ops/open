@@ -177,6 +177,10 @@ commands and model projections. Requests prepare their agent's metadata on deman
 a slow agent does not delay other agents. Retained commands and projections are
 bounded. Shared model or account replacement still gates these reads, and history
 uses only already-prepared catalogs without starting or waiting for preparation.
+Saved-session metadata stays current across unrelated session writes. Before
+publishing, the Gateway rechecks the selected session's identity and canonical
+metadata, runtime configuration, and current access authority. Recreating a row
+with identical session facts does not invalidate the read.
 The Models settings page uses `preparedOnly: true` for its initial load, then
 requests `refresh: true` the first time a primary, utility, or fallback model
 picker opens for the current core-data snapshot. Pending opens share that page's request; completed reopens read the
