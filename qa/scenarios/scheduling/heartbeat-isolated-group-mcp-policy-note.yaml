@@ -62,6 +62,7 @@ scenario:
       heartbeatMarker: QA-HEARTBEAT-MCP-OK
       heartbeatJobName: heartbeat-qa
       mcpServerName: proof
+      expectedMcpTools: [proof__resources_list, proof__resources_read, proof__show]
       mcpServerScript: scripts/e2e/mcp-app-conformance-server.mjs
       bridgedToolName: heartbeat_respond
       blockerNeedle: Configured MCP is incomplete
@@ -138,9 +139,9 @@ flow:
           value:
             expr: "[String(heartbeatRequest.instructions ?? ''), String(heartbeatRequest.allInputText ?? '')].map((text) => { const index = text.indexOf(config.blockerNeedle); return index >= 0 ? text.slice(index, index + 320) : null; }).find((text) => text !== null) ?? null"
         - assert:
-            expr: "mcpToolNames.length > 0"
+            expr: "JSON.stringify(mcpToolNames.toSorted()) === JSON.stringify(config.expectedMcpTools.toSorted())"
             message:
-              expr: "`heartbeat request did not offer the configured MCP tool. job=${JSON.stringify({ id: heartbeatJob.id, name: heartbeatJob.name })} tools=${JSON.stringify(heartbeatToolNames)}`"
+              expr: "`heartbeat request did not offer every configured MCP tool. job=${JSON.stringify({ id: heartbeatJob.id, name: heartbeatJob.name })} tools=${JSON.stringify(heartbeatToolNames)}`"
         - assert:
             expr: "blockerText === null"
             message:
@@ -153,4 +154,7 @@ flow:
                 params: [candidate]
                 expr: "candidate.direction === 'outbound' && candidate.conversation.kind === 'group' && candidate.conversation.id === config.heartbeatRoom && String(candidate.text ?? '').trim() === config.heartbeatMarker"
             - expr: "liveTurnTimeoutMs(env, 150000)"
+        - assert:
+            expr: "getTransportSnapshot().messages.filter((candidate) => candidate.direction === 'outbound' && candidate.conversation.kind === 'group' && candidate.conversation.id === config.heartbeatRoom && String(candidate.text ?? '').trim() === config.heartbeatMarker).length === 1"
+            message: expected exactly one heartbeat reply in the configured group
       detailsExpr: "JSON.stringify({ verdict: 'PASS', gateway: 'ephemeral-child', provider: env.providerMode, runtime: 'codex', job: { id: heartbeatJob.id, name: heartbeatJob.name }, mcpTools: mcpToolNames, blockerText, deliveredTo: `${heartbeatOutbound.conversation.kind}:${heartbeatOutbound.conversation.id}`, deliveredText: heartbeatOutbound.text, toolCount: heartbeatToolNames.length })"

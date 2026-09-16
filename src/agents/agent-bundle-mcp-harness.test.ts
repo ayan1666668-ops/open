@@ -525,37 +525,46 @@ describe("materializeStaticMcpToolsForHarnessRunCore", () => {
     await result.dispose();
   });
 
-  it("keeps policy notes in the notice when the final policy pass removed tools", async () => {
-    const runtime = makeRuntime({ sessionId: "scheduled-group-deny", requesterSenderId: "unused" });
-    delete runtime.requesterScope;
-    mocks.acquireSessionMcpRuntime.mockResolvedValue({
-      runtime,
-      releaseLease: runtime.acquireLease?.() ?? (() => {}),
-    });
+  it.each([undefined, "-1000000000001"])(
+    "reports heartbeat policy omissions independently of group warnings (groupId: %s)",
+    async (groupId) => {
+      const runtime = makeRuntime({
+        sessionId: "scheduled-group-deny",
+        requesterSenderId: "unused",
+      });
+      delete runtime.requesterScope;
+      mocks.acquireSessionMcpRuntime.mockResolvedValue({
+        runtime,
+        releaseLease: runtime.acquireLease?.() ?? (() => {}),
+      });
 
-    const result = await materializeStaticMcpToolsForHarnessRunCore({
-      sessionId: "scheduled-group-deny",
-      workspaceDir: "/workspace",
-      toolsAllow: ["user-mail__inbox"],
-      autoApproveCodexAppServerApprovals: true,
-      policyContext: {
-        config: { agents: { entries: { demo: {} } } },
-        agentId: "demo",
-        sessionKey: "agent:demo:main:heartbeat",
-        groupId: "-1000000000001",
-        messageProvider: "telegram",
-        modelProvider: "openai",
-        conversationToolPolicy: { deny: ["user-mail__inbox"] },
-      },
-    });
+      const result = await materializeStaticMcpToolsForHarnessRunCore({
+        sessionId: "scheduled-group-deny",
+        workspaceDir: "/workspace",
+        toolsAllow: ["user-mail__inbox"],
+        autoApproveCodexAppServerApprovals: true,
+        policyContext: {
+          config: {
+            agents: { entries: { demo: {} } },
+            tools: { deny: ["user-mail__inbox"] },
+          },
+          agentId: "demo",
+          sessionKey: "agent:demo:main:heartbeat",
+          groupId,
+          messageProvider: "telegram",
+          modelProvider: "openai",
+        },
+      });
 
-    expect(result.tools).toEqual([]);
-    expect(result.diagnosticNotice).toContain(
-      "Configured MCP is incomplete for this scheduled run",
-    );
-    expect(result.diagnosticNotice).toContain("dropping caller-provided groupId");
-    await result.dispose();
-  });
+      expect(result.tools).toEqual([]);
+      expect(result.diagnosticNotice).toContain(
+        "Configured MCP is incomplete for this scheduled run",
+      );
+      expect(result.diagnosticNotice).toContain("1 configured MCP tool(s) omitted by policy");
+      expect(result.diagnosticNotice).not.toContain("dropping caller-provided groupId");
+      await result.dispose();
+    },
+  );
 
   it("omits prompt-approved MCP tools from unattended execution", async () => {
     const runtime = makeRuntime({ sessionId: "scheduled-prompt", requesterSenderId: "unused" });

@@ -294,21 +294,16 @@ export async function materializeStaticMcpToolsForHarnessRunCore(
     throw error;
   }
   try {
-    // Conversation-policy notes (for example a dropped caller-provided groupId) describe the
-    // policy inputs, not MCP availability; they only join the blocker notice when the final
-    // policy pass actually removed a configured tool. Approval omissions always join it.
-    const policyNotes: string[] = [];
-    const omittedTools: string[] = [];
-    let policyDroppedTools = false;
+    // Policy warnings describe inputs; only actual omissions make configured MCP incomplete.
+    const omissions: string[] = [];
     const policyParams = {
       ...params,
-      warn: (message: string) => {
-        policyNotes.push(message);
-        params.warn?.(message);
-      },
       onFilter: (event: ToolPolicyFilterEvent) => {
-        if (event.after.length < event.before.length) {
-          policyDroppedTools = true;
+        const omittedCount = event.before.length - event.after.length;
+        if (omittedCount > 0) {
+          omissions.push(
+            `${event.step.label}: ${omittedCount} configured MCP tool(s) omitted by policy`,
+          );
         }
       },
     };
@@ -323,7 +318,7 @@ export async function materializeStaticMcpToolsForHarnessRunCore(
       ...(params.requestInteractiveCodexApproval
         ? { requestApproval: params.requestInteractiveCodexApproval }
         : {}),
-      onOmitted: (message) => omittedTools.push(message),
+      onOmitted: (message) => omissions.push(message),
     });
     // App views outlive this attempt, so bind their callable surface to the
     // same complete catalog and final policy before any model tool can mint one.
@@ -335,7 +330,7 @@ export async function materializeStaticMcpToolsForHarnessRunCore(
           ...projectedApproval,
           ...(params.requestInteractiveCodexApproval
             ? {}
-            : { onOmitted: (message: string) => omittedTools.push(message) }),
+            : { onOmitted: (message: string) => omissions.push(message) }),
         },
       ),
     );
@@ -344,8 +339,7 @@ export async function materializeStaticMcpToolsForHarnessRunCore(
         ...(liveRuntime.diagnostics ?? []).map(
           (diagnostic) => `${diagnostic.serverName}: ${diagnostic.message}`,
         ),
-        ...omittedTools,
-        ...(policyDroppedTools ? policyNotes : []),
+        ...omissions,
       ],
       params.requestInteractiveCodexApproval ? "this run" : "this scheduled run",
     );
