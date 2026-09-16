@@ -4,6 +4,7 @@ import { createDeferred } from "../../../test/helpers/promise.js";
 import type { AdmittedRunContext } from "../../agents/admitted-run-context.js";
 import { configureRuntimeActionDecisionSink } from "../../audit/runtime-action-decision.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import type { ExecutionSelectionRequest } from "../../model-picker/apply-session-model-selection.js";
 import { withPluginRuntimePluginScope } from "./gateway-request-scope.js";
 import type { PluginRuntime } from "./types.js";
 
@@ -16,6 +17,11 @@ const mocks = vi.hoisted(() => ({
   })),
   getRuntimeConfig: vi.fn(() => ({}) as OpenClawConfig),
   prepareAgentRunAdmission: vi.fn(),
+  prepareExecutionSelection: vi.fn(),
+  selection: {
+    model: { provider: "qa-provider", id: "qa-model" },
+    executor: { kind: "harness" as const, id: "openclaw" },
+  },
   runEmbeddedAgentCore: vi.fn(),
 }));
 
@@ -30,6 +36,22 @@ vi.mock("../../agents/embedded-agent.js", () => ({
   runEmbeddedAgent: mocks.runEmbeddedAgentCore,
 }));
 vi.mock("../../config/config.js", () => ({ getRuntimeConfig: mocks.getRuntimeConfig }));
+vi.mock("../../config/sessions/session-accessor.js", () => ({
+  loadSessionEntryReadOnly: () => ({
+    sessionId: "session-plugin",
+    updatedAt: 1,
+    providerOverride: "qa-provider",
+    modelOverride: "qa-model",
+    agentRuntimeOverride: "openclaw",
+    modelOverrideSource: "user",
+    modelOverrideRouteResolution: "resolved",
+  }),
+}));
+vi.mock("../../model-picker/apply-session-model-selection.js", () => ({
+  resolveSessionExecutionFallbacks: () => ({ kind: "disabled_by_model_override" }),
+  prepareSessionExecutionSelection: (...args: unknown[]) =>
+    mocks.prepareExecutionSelection(...args),
+}));
 
 import { runPluginEmbeddedAgent } from "./runtime-embedded-agent.runtime.js";
 
@@ -53,6 +75,21 @@ describe("plugin embedded-agent runtime admission", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.authorityActive = true;
+    mocks.prepareExecutionSelection.mockImplementation(
+      async ({ request }: { request: ExecutionSelectionRequest }) => ({
+        status: "ready",
+        selection:
+          request.kind === "model"
+            ? { model: request.model, executor: request.executor ?? mocks.selection.executor }
+            : request.kind === "selection" || request.kind === "fallback"
+              ? request.selection
+              : mocks.selection,
+        before: mocks.selection,
+        reason: "model",
+        message: "Selection prepared.",
+        validateCommit: () => undefined,
+      }),
+    );
     mocks.close.mockImplementation(() => {
       mocks.authorityActive = false;
     });
@@ -293,4 +330,19 @@ describe("plugin embedded-agent runtime admission", () => {
       expect(mocks.runEmbeddedAgentCore).not.toHaveBeenCalled();
     },
   );
+
+  it("refuses an unconfirmed selection before invoking the backend", async () => {
+    mocks.prepareExecutionSelection.mockResolvedValueOnce({
+      status: "rejected",
+      reason: "unknown",
+      message: "Could not confirm support for the selected model. Your selection is unchanged.",
+    });
+    await expect(
+      withPluginRuntimePluginScope({ pluginId: "memory-plugin" }, () =>
+        runPluginEmbeddedAgent(params),
+      ),
+    ).rejects.toThrow("Could not confirm support");
+    expect(mocks.runEmbeddedAgentCore).not.toHaveBeenCalled();
+    expect(mocks.close).toHaveBeenCalledOnce();
+  });
 });

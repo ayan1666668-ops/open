@@ -4,9 +4,14 @@ import { afterEach, beforeEach, expect, vi } from "vitest";
 import { resetAcpManagerTaskStateForTests } from "../../../test/helpers/acp-manager-task-state.js";
 import { createTestAdmittedRunContext } from "../../agents/admitted-run-context.test-support.js";
 import type { OpenClawConfig } from "../../config/config.js";
-import type { AcpSessionRuntimeOptions, SessionAcpMeta } from "../../config/sessions/types.js";
+import type {
+  AcpSessionRuntimeOptions,
+  SessionAcpMeta,
+  SessionEntry,
+} from "../../config/sessions/types.js";
 import { deleteTestEnvValue, setTestEnvValue } from "../../test-utils/env.js";
 import { resetAcpActiveTurnsForTests } from "./active-turns.test-support.js";
+import type { AcpSessionManagerDeps } from "./manager.types.js";
 
 export type { AcpRuntime, OpenClawConfig, SessionAcpMeta };
 
@@ -350,22 +355,19 @@ export function installAcpSessionManagerTestLifecycle(): void {
 
 export function installMutableAcpSessionMetaUpsert(state: {
   currentMeta: SessionAcpMeta | undefined;
+  entry?: SessionEntry;
 }): void {
-  hoisted.upsertAcpSessionMetaMock.mockImplementation(async (paramsUnknown: unknown) => {
-    const params = paramsUnknown as {
-      mutate: (
-        current: SessionAcpMeta | undefined,
-        entry: { acp?: SessionAcpMeta } | undefined,
-      ) => SessionAcpMeta | null | undefined;
-    };
-    const next = params.mutate(state.currentMeta, { acp: state.currentMeta });
-    if (next) {
-      state.currentMeta = next;
-    }
-    return {
-      sessionId: "session-1",
-      updatedAt: Date.now(),
-      acp: state.currentMeta,
-    };
-  });
+  hoisted.upsertAcpSessionMetaMock.mockImplementation(
+    async (params: Parameters<AcpSessionManagerDeps["upsertSessionMeta"]>[0]) => {
+      const entry = state.entry ?? { sessionId: "session-1", updatedAt: Date.now() };
+      const next = params.mutate(state.currentMeta, { ...entry, acp: state.currentMeta });
+      params.assertCommitAllowed?.();
+      if (next !== undefined) state.currentMeta = next ?? undefined;
+      return {
+        ...entry,
+        updatedAt: Date.now(),
+        ...(state.currentMeta ? { acp: state.currentMeta } : {}),
+      };
+    },
+  );
 }

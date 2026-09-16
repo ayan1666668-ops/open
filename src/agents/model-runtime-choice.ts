@@ -2,7 +2,9 @@ import type { SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { getSessionExecutionSelection } from "../model-picker/execution-selection-state.js";
 import { isAcpExecutionSelection } from "../model-picker/execution-selection.js";
+import { resolveAgentHarnessPolicy } from "./harness/policy.js";
 import { buildAgentHarnessSupportContext } from "./harness/support.js";
+import type { ModelCatalogEntry } from "./model-catalog.types.js";
 import { modelKey } from "./model-ref-shared.js";
 import { resolveProviderModelMaterializationAuthMode } from "./provider-model-route-auth.js";
 
@@ -18,8 +20,8 @@ export async function evaluatePublishedModelRuntimeChoice(params: {
     Partial<SessionEntry>;
   profileProvider?: string;
 }): Promise<
-  | { kind: "unavailable" | "unknown" | "unsupported"; message: string }
-  | { kind: "ready"; validate: () => string | undefined }
+  | { kind: "unavailable" | "unknown" | "unsupported" | "forbidden"; message: string }
+  | { kind: "ready"; entry: ModelCatalogEntry; validate: () => string | undefined }
 > {
   const { getPublishedPreparedModelCatalogOwnerSnapshot, materializePreparedModelCatalogOwner } =
     await import("./prepared-model-catalog.js");
@@ -113,6 +115,25 @@ export async function evaluatePublishedModelRuntimeChoice(params: {
   );
   const evaluation = decisions.evaluateNative(entry, host, params.runtimeId);
   const route = evaluation.selectedRoute;
+  const policy = resolveAgentHarnessPolicy({
+    config: owner.config,
+    agentId: owner.agentId ?? params.agentId,
+    provider: params.provider,
+    modelId: params.model,
+    modelApi: route?.api ?? entry.api,
+    modelBaseUrl: route?.baseUrl ?? entry.baseUrl,
+    requestTransportOverrides: route?.requestTransportOverrides,
+  });
+  if (
+    (policy.forcedByEnvironment && policy.runtime !== params.runtimeId) ||
+    (evaluation.runtimeAuth && evaluation.runtimeAuth.id !== params.runtimeId)
+  ) {
+    return {
+      kind: "forbidden",
+      message:
+        "Could not change models. This app is not permitted for this session. Your selection is unchanged.",
+    };
+  }
   const compatible = route?.runtimePolicy?.compatibleIds;
   if (compatible && !compatible.includes(params.runtimeId)) {
     return { kind: "unsupported", message: unavailable };
@@ -160,12 +181,14 @@ export async function evaluatePublishedModelRuntimeChoice(params: {
       }),
     );
     if (!support.supported) {
-      return { kind: "unsupported", message: support.reason ?? unavailable };
+      // Older support hooks also return false when route metadata is absent.
+      // Only their declared lossless fallback proves incompatibility here;
+      // an explicit route exclusion was handled above.
+      return {
+        kind: support.fallbackRuntime ? "unsupported" : "unknown",
+        message: support.reason ?? unavailable,
+      };
     }
-  }
-  const choices = await decisions.runtimeChoices(entry, variants.length ? variants : [entry]);
-  if (!choices?.includes(params.runtimeId)) {
-    return { kind: "unknown", message: unavailable };
   }
   const validate = () =>
     decisions.isCurrent() &&
@@ -173,15 +196,5 @@ export async function evaluatePublishedModelRuntimeChoice(params: {
       ? undefined
       : unavailable;
 
-  return { kind: "ready", validate };
-}
-
-/** Transitional request adapter; readiness and compatibility have one evaluator. */
-export async function preparePublishedModelRuntimeChoice(
-  params: Parameters<typeof evaluatePublishedModelRuntimeChoice>[0],
-): Promise<
-  { kind: "unavailable"; message: string } | { kind: "ready"; validate: () => string | undefined }
-> {
-  const result = await evaluatePublishedModelRuntimeChoice(params);
-  return result.kind === "ready" ? result : { kind: "unavailable", message: result.message };
+  return { kind: "ready", entry, validate };
 }

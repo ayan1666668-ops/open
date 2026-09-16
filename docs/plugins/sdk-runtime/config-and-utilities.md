@@ -149,6 +149,8 @@ compatible, clears an incompatible pin, and enforces the model-selection lock.
 The caller still owns model allowlist validation, atomic persistence,
 `markLiveSwitchPending`, and any post-commit effects. Prefer
 `applySessionModelSelection(...)` whenever the full transaction is available.
+The deprecated setters preserve existing runtime pins and defer executor selection to the next prepared turn.
+Both synchronous setters are deprecated and will be removed in the first stable release after 2026.10; use `applySessionModelSelection(...)`.
 
 Model-picker actions carry only bounded snapshot and catalog tokens. Channel
 actor identity, source-message binding, and serialized callback data stay in

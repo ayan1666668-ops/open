@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { createPluginMetadataSnapshotFixture } from "../plugins/plugin-metadata.test-support.js";
-import { preparePublishedModelRuntimeChoice } from "./model-runtime-choice.js";
+import { evaluatePublishedModelRuntimeChoice } from "./model-runtime-choice.js";
 import { setPreparedModelRuntimeAuthStore } from "./prepared-model-runtime-auth.js";
 import type { PreparedModelRuntimeSnapshot } from "./prepared-model-runtime.types.js";
 import { AuthStorage, ModelRegistry } from "./sessions/index.js";
@@ -58,12 +58,12 @@ describe("published runtime choice", () => {
   });
 
   it("refuses an unpublished or unresolved model", async () => {
-    expect(await preparePublishedModelRuntimeChoice(request)).toMatchObject({
+    expect(await evaluatePublishedModelRuntimeChoice(request)).toMatchObject({
       kind: "unavailable",
     });
     publish();
     expect(
-      await preparePublishedModelRuntimeChoice({ ...request, model: "unobserved" }),
+      await evaluatePublishedModelRuntimeChoice({ ...request, model: "unobserved" }),
     ).toMatchObject({ kind: "unavailable" });
   });
 
@@ -82,7 +82,7 @@ describe("published runtime choice", () => {
     };
     let current = true;
     publish(() => current, config);
-    const choice = await preparePublishedModelRuntimeChoice({
+    const choice = await evaluatePublishedModelRuntimeChoice({
       ...request,
       cfg: config,
       model: "off-catalog",
@@ -111,7 +111,7 @@ describe("published runtime choice", () => {
     };
     publish(() => true, config);
     expect(
-      await preparePublishedModelRuntimeChoice({
+      await evaluatePublishedModelRuntimeChoice({
         ...request,
         cfg: config,
         model: "off-catalog",
@@ -123,7 +123,7 @@ describe("published runtime choice", () => {
   it("rechecks the same generation at the session commit boundary", async () => {
     let current = true;
     publish(() => current);
-    const choice = await preparePublishedModelRuntimeChoice(request);
+    const choice = await evaluatePublishedModelRuntimeChoice(request);
     expect(choice.kind).toBe("ready");
     if (choice.kind !== "ready") {
       throw new Error("Expected a supported runtime");

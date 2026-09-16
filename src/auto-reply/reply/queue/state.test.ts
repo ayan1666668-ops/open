@@ -24,9 +24,11 @@ function makeRun(): FollowupRun["run"] {
     sessionFile: "/tmp/session-1.jsonl",
     workspaceDir: "/tmp/workspace",
     config: {} as FollowupRun["run"]["config"],
-    provider: "anthropic",
-    model: "claude-opus-4-6",
-    requestedRouteResolution: "resolved",
+    executionSelection: {
+      model: { provider: "anthropic", id: "claude-opus-4-6" },
+      executor: { kind: "harness", id: "openclaw" },
+    },
+
     authProfileId: "profile-a",
     authProfileIdSource: "user",
     timeoutMs: 30_000,
@@ -67,93 +69,107 @@ describe("refreshQueuedFollowupSession", () => {
 
     refreshQueuedFollowupSession({
       key: QUEUE_KEY,
-      nextProvider: "openai",
-      nextModel: "gpt-4o",
-      nextRouteResolution: "resolved",
+      nextSelection: {
+        model: { provider: "openai", id: "gpt-4o" },
+        executor: { kind: "harness", id: "openclaw" },
+      },
+
       nextAuthProfileId: undefined,
       nextAuthProfileIdSource: undefined,
     });
 
     expect(queue.lastRun).toEqual({
       ...makeRun(),
-      provider: "openai",
-      model: "gpt-4o",
+      executionSelection: {
+        model: { provider: "openai", id: "gpt-4o" },
+        executor: { kind: "harness", id: "openclaw" },
+      },
+
       authProfileId: undefined,
       authProfileIdSource: undefined,
     });
     expect(queue.items[0]?.run).toEqual({
       ...makeRun(),
-      provider: "openai",
-      model: "gpt-4o",
+      executionSelection: {
+        model: { provider: "openai", id: "gpt-4o" },
+        executor: { kind: "harness", id: "openclaw" },
+      },
+
       authProfileId: undefined,
       authProfileIdSource: undefined,
     });
     expect(queue.summarySources[0]?.run).toEqual({
       ...makeRun(),
-      provider: "openai",
-      model: "gpt-4o",
+      executionSelection: {
+        model: { provider: "openai", id: "gpt-4o" },
+        executor: { kind: "harness", id: "openclaw" },
+      },
+
       authProfileId: undefined,
       authProfileIdSource: undefined,
     });
     expect(queue.summaryElisions[0]?.sources[0]?.run).toEqual({
       ...makeRun(),
-      provider: "openai",
-      model: "gpt-4o",
+      executionSelection: {
+        model: { provider: "openai", id: "gpt-4o" },
+        executor: { kind: "harness", id: "openclaw" },
+      },
+
       authProfileId: undefined,
       authProfileIdSource: undefined,
     });
   });
 
-  it("retargets queued runs with user model override source", () => {
+  it("retargets queued runs with the complete accepted pair", () => {
     const queue = getFollowupQueue(QUEUE_KEY, { mode: "followup" });
     const queuedRun: FollowupRun = {
       prompt: "queued message",
       enqueuedAt: Date.now(),
-      run: { ...makeRun(), hasAutoFallbackProvenance: true },
+      run: { ...makeRun() },
     };
     queue.items.push(queuedRun);
 
     refreshQueuedFollowupSession({
       key: QUEUE_KEY,
-      nextProvider: "ollama",
-      nextModel: "qwen3.5:27b",
-      nextRouteResolution: "resolved",
-      nextModelOverrideSource: "user",
+      nextSelection: {
+        model: { provider: "ollama", id: "qwen3.5:27b" },
+        executor: { kind: "harness", id: "openclaw" },
+      },
     });
 
     expect(queue.items[0]?.run).toEqual({
       ...makeRun(),
-      provider: "ollama",
-      model: "qwen3.5:27b",
-      hasSessionModelOverride: true,
-      modelOverrideSource: "user",
+      executionSelection: {
+        model: { provider: "ollama", id: "qwen3.5:27b" },
+        executor: { kind: "harness", id: "openclaw" },
+      },
     });
   });
 
-  it("clears queued model override strictness when retargeting to the configured default", () => {
+  it("replaces the reset pair without copying fallback authorization into the queue", () => {
     const queue = getFollowupQueue(QUEUE_KEY, { mode: "followup" });
     queue.items.push({
       prompt: "queued message",
       enqueuedAt: Date.now(),
       run: {
         ...makeRun(),
-        hasSessionModelOverride: true,
-        modelOverrideSource: "user",
+        executionSelection: {
+          model: { provider: "fixture", id: "previous" },
+          executor: { kind: "harness", id: "another-app" },
+        },
       },
     });
 
     refreshQueuedFollowupSession({
       key: QUEUE_KEY,
-      nextProvider: "anthropic",
-      nextModel: "claude-opus-4-6",
-      nextRouteResolution: "resolved",
-      nextModelOverrideSource: undefined,
+      nextSelection: {
+        model: { provider: "anthropic", id: "claude-opus-4-6" },
+        executor: { kind: "harness", id: "openclaw" },
+      },
     });
 
-    expect(queue.items[0]?.run).toMatchObject({
-      hasSessionModelOverride: false,
-      modelOverrideSource: undefined,
-    });
+    expect(queue.items[0]?.run?.executionSelection).toEqual(makeRun().executionSelection);
+    expect(queue.items[0]?.run).not.toHaveProperty("modelOverrideSource");
   });
 
   it("clamps queued Sol Ultra work to Codex Luna Max", () => {
@@ -163,27 +179,31 @@ describe("refreshQueuedFollowupSession", () => {
       enqueuedAt: Date.now(),
       run: {
         ...makeRun(),
-        provider: "openai",
-        model: "gpt-5.6-sol",
+        executionSelection: {
+          model: { provider: "openai", id: "gpt-5.6-sol" },
+          executor: { kind: "harness", id: "openclaw" },
+        },
+
         thinkLevel: "ultra",
       },
     });
 
     refreshQueuedFollowupSession({
       key: QUEUE_KEY,
-      nextProvider: "openai",
-      nextModel: "gpt-5.6-luna",
-      nextRouteResolution: "resolved",
+      nextSelection: {
+        model: { provider: "openai", id: "gpt-5.6-luna" },
+        executor: { kind: "harness", id: "codex" },
+      },
+
       nextThinking: {
         level: "ultra",
         catalog: [{ provider: "openai", id: "gpt-5.6-luna", name: "Luna", reasoning: true }],
-        agentRuntime: "codex",
       },
     });
 
     expect(queue.items[0]?.run).toMatchObject({
-      provider: "openai",
-      model: "gpt-5.6-luna",
+      executionSelection: { model: { provider: "openai", id: "gpt-5.6-luna" } },
+
       thinkLevel: "max",
       thinkingCatalog: [{ provider: "openai", id: "gpt-5.6-luna", name: "Luna", reasoning: true }],
     });
@@ -199,10 +219,12 @@ describe("refreshQueuedFollowupSession", () => {
 
     refreshQueuedFollowupSession({
       key: QUEUE_KEY,
-      nextProvider: "custom",
-      nextModel: "reasoner",
-      nextRouteResolution: "resolved",
-      nextThinking: { level: "ultra", agentRuntime: "openclaw" },
+      nextSelection: {
+        model: { provider: "custom", id: "reasoner" },
+        executor: { kind: "harness", id: "openclaw" },
+      },
+
+      nextThinking: { level: "ultra" },
     });
 
     expect(queue.items[0]?.run.thinkLevel).toBe("high");
@@ -283,12 +305,14 @@ describe("refreshQueuedFollowupSession", () => {
       });
       refreshQueuedFollowupSession({
         key: QUEUE_KEY,
-        nextProvider: "openai",
-        nextModel: model,
+        nextSelection: {
+          model: { provider: "openai", id: model },
+          executor: { kind: "harness", id: "codex" },
+        },
+
         nextThinking: {
           level: stored,
           catalog: [{ provider: "openai", id: model, name: model, reasoning }],
-          agentRuntime: "codex",
         },
       });
       expect(runs.map((run) => run.thinkLevel)).toEqual(Array(4).fill(expected));
@@ -326,12 +350,14 @@ describe("refreshQueuedFollowupSession", () => {
       for (const [index, model] of ["gpt-5.6-sol", "non-reasoner", "gpt-5.6-luna"].entries()) {
         refreshQueuedFollowupSession({
           key: QUEUE_KEY,
-          nextProvider: "openai",
-          nextModel: model,
+          nextSelection: {
+            model: { provider: "openai", id: model },
+            executor: { kind: "harness", id: "codex" },
+          },
+
           nextThinking: {
             level: stored,
             catalog: [{ provider: "openai", id: model, name: model, reasoning: index !== 1 }],
-            agentRuntime: "codex",
           },
         });
         expect(run.thinkLevel).toBe(expected[index]);
@@ -399,12 +425,14 @@ describe("refreshQueuedFollowupSession", () => {
       queue.items.push({ prompt: "task", enqueuedAt: Date.now(), run });
       refreshQueuedFollowupSession({
         key: QUEUE_KEY,
-        nextProvider: "openai",
-        nextModel: "gpt-5.6-sol",
+        nextSelection: {
+          model: { provider: "openai", id: "gpt-5.6-sol" },
+          executor: { kind: "harness", id: "codex" },
+        },
+
         nextThinking: {
           level: source === "default" ? "off" : undefined,
           catalog: [{ provider: "openai", id: "gpt-5.6-sol", name: "Sol", reasoning: true }],
-          agentRuntime: "codex",
         },
       });
       expect(run.thinkLevel).toBe(expected);
@@ -421,10 +449,12 @@ describe("refreshQueuedFollowupSession", () => {
 
     refreshQueuedFollowupSession({
       key: QUEUE_KEY,
-      nextProvider: "openai",
-      nextModel: "gpt-5.6-sol",
-      nextRouteResolution: "resolved",
-      nextThinking: { agentRuntime: "codex" },
+      nextSelection: {
+        model: { provider: "openai", id: "gpt-5.6-sol" },
+        executor: { kind: "harness", id: "codex" },
+      },
+
+      nextThinking: {},
     });
 
     // Sol's provider default reasoning level is medium (extensions/openai

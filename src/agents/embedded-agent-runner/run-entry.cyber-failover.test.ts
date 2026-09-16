@@ -52,8 +52,11 @@ function createDirectHarness() {
     workspaceDir: "/tmp/workspace",
     preparation: { kind: "direct" as const },
     prepareExecutionSelection: async (provider: string, model: string) => ({
-      model: { provider, id: model },
-      executor: { kind: "harness" as const, id: "openclaw" },
+      selection: {
+        model: { provider, id: model },
+        executor: { kind: "harness" as const, id: "openclaw" },
+      },
+      validateCommit: () => undefined,
     }),
   };
 }
@@ -71,7 +74,6 @@ describe("runEmbeddedAgentEntry cyber failover", () => {
       isFallbackRetry: boolean;
       routingStage: string;
     }> = [];
-    const reconciled: Array<{ provider: string; model: string }> = [];
     state.runWithModelFallback.mockImplementation(async (params: FallbackRunnerParams) => {
       await prepareFallbackRunner(params);
       const candidate = await params.run(
@@ -100,12 +102,6 @@ describe("runEmbeddedAgentEntry cyber failover", () => {
       identity: { runId: "run-cyber-escalation", agentId: "main", sessionId: "session-1" },
       harness: createDirectHarness(),
       behavior: { kind: "command-rpc", hasCommittedSideEffect: () => false },
-      sessionOverride: {
-        kind: "reconcile-completed",
-        reconcile: async (candidate) => {
-          reconciled.push(candidate);
-        },
-      },
       runCandidate: async ({ model: { provider, id: model } }, options) => {
         candidateCalls.push({
           provider,
@@ -158,8 +154,6 @@ describe("runEmbeddedAgentEntry cyber failover", () => {
       provider: "openai",
       model: "gpt-daybreak-blue-latest",
     });
-    await result.settleSessionOverride();
-    expect(reconciled).toEqual([]);
   });
 
   it("preserves the original refusal and cools off an unauthorized Daybreak target", async () => {
@@ -196,7 +190,6 @@ describe("runEmbeddedAgentEntry cyber failover", () => {
         identity: { runId: "run-cyber-cooloff", agentId: "main", sessionId: "session-1" },
         harness: createDirectHarness(),
         behavior: { kind: "command-rpc", hasCommittedSideEffect: () => false },
-        sessionOverride: { kind: "preserve" },
         runCandidate: async ({ model: { provider, id: model } }) => ({
           ...makeResult({ provider, model }),
           payloads: [{ text: "policy refusal", isError: true }],
@@ -251,7 +244,6 @@ describe("runEmbeddedAgentEntry cyber failover", () => {
       identity: { runId: "run-cyber-committed", agentId: "main", sessionId: "session-1" },
       harness: createDirectHarness(),
       behavior: { kind: "command-rpc", hasCommittedSideEffect: () => false },
-      sessionOverride: { kind: "preserve" },
       runCandidate: async ({ model: { provider, id: model } }) => {
         if (model === "gpt-daybreak-blue-latest") {
           // The retry executed a tool and only then failed, so it is not
@@ -342,7 +334,6 @@ describe("runEmbeddedAgentEntry cyber failover", () => {
         identity: { runId: "run-cyber-throw", agentId: "main", sessionId: "session-1" },
         harness: createDirectHarness(),
         behavior: { kind: "command-rpc", hasCommittedSideEffect: () => false },
-        sessionOverride: { kind: "preserve" },
         runCandidate: async ({ model: { provider, id: model } }) => ({
           ...makeResult({ provider, model }),
           payloads: [{ text: "policy refusal", isError: true }],
@@ -392,7 +383,6 @@ describe("runEmbeddedAgentEntry cyber failover", () => {
       identity: { runId: "run-cyber-replaced", agentId: "main", sessionId: "session-1" },
       harness: createDirectHarness(),
       behavior: { kind: "command-rpc", hasCommittedSideEffect: () => false },
-      sessionOverride: { kind: "preserve" },
       runCandidate: async ({ model: { provider, id: model } }, options) => {
         const preliminary = {
           ...makeResult({ provider, model }),
@@ -455,7 +445,6 @@ describe("runEmbeddedAgentEntry cyber failover", () => {
       identity: { runId: "run-cyber-preserve-returned", agentId: "main", sessionId: "session-1" },
       harness: createDirectHarness(),
       behavior: { kind: "command-rpc", hasCommittedSideEffect: () => committed },
-      sessionOverride: { kind: "preserve" },
       runCandidate: async ({ model: { provider, id: model } }) => {
         if (model === "gpt-daybreak-blue-latest") {
           committed = commit;
@@ -516,7 +505,6 @@ describe("runEmbeddedAgentEntry cyber failover", () => {
       identity: { runId: "run-cyber-warning", agentId: "main", sessionId: "session-1" },
       harness: createDirectHarness(),
       behavior: { kind: "command-rpc", hasCommittedSideEffect: () => false },
-      sessionOverride: { kind: "preserve" },
       runCandidate: async ({ model: { provider, id: model } }) =>
         model === "gpt-daybreak-blue-latest"
           ? {
@@ -584,7 +572,6 @@ describe("runEmbeddedAgentEntry cyber failover", () => {
       identity: { runId: "run-cyber-strict", agentId: "main", sessionId: "session-1" },
       harness: createDirectHarness(),
       behavior: { kind: "command-rpc", hasCommittedSideEffect: () => false },
-      sessionOverride: { kind: "preserve" },
       runCandidate: async ({ model: { provider, id: model } }) => ({
         ...makeResult({ provider, model }),
         payloads: [{ text: "policy refusal", isError: true }],
@@ -650,7 +637,6 @@ describe("runEmbeddedAgentEntry cyber failover", () => {
         identity: { runId: "run-cyber-transcript", agentId: "main", sessionId: "session-1" },
         harness: createDirectHarness(),
         behavior: { kind: "command-rpc", hasCommittedSideEffect: () => false },
-        sessionOverride: { kind: "preserve" },
         runCandidate: async ({ model: { provider, id: model } }, options) => {
           options.assistantErrorTranscript.record(
             makeAssistantMessageFixture({

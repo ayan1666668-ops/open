@@ -18,10 +18,15 @@ import {
 
 // Runtime eligibility belongs to the published-owner tests; these cases exercise its consumers.
 vi.mock("../agents/model-runtime-choice.js", () => ({
-  preparePublishedModelRuntimeChoice: vi.fn(async () => ({
-    kind: "ready",
-    validate: () => undefined,
-  })),
+  evaluatePublishedModelRuntimeChoice: vi.fn(
+    async (params: { provider: string; model: string }) => ({
+      kind: "ready",
+      entry: catalog.find(
+        (entry) => entry.provider === params.provider && entry.id === params.model,
+      ) ?? { provider: params.provider, id: params.model, name: "Selected model" },
+      validate: () => undefined,
+    }),
+  ),
 }));
 
 vi.mock("../agents/model-catalog.runtime.js", () => ({

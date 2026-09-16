@@ -206,7 +206,6 @@ export function refreshQueuedFollowupSession(params: {
   nextThinking?: {
     level?: string;
     catalog?: ModelCatalogEntry[];
-    agentRuntime?: string | null;
   };
 }): void {
   const cleaned = params.key.trim();
@@ -258,7 +257,7 @@ export function refreshQueuedFollowupSession(params: {
           provider: run.executionSelection.model.provider,
           model: run.executionSelection.model.id,
           catalog: params.nextThinking.catalog,
-          agentRuntime: params.nextThinking.agentRuntime,
+          agentRuntime: run.executionSelection.executor.id,
         };
         const explicitLevel =
           run.thinkLevelOverride === "default"

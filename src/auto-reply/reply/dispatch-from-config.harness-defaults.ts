@@ -1,5 +1,4 @@
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
-import { resolveSessionAgentId } from "../../agents/agent-scope.js";
 import { resolveAgentHarnessDeliveryDefaults } from "../../agents/harness/selection-decision.js";
 import {
   buildModelAliasIndex,
@@ -13,8 +12,9 @@ import type { SessionEntry } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { logVerbose } from "../../globals.js";
 import { formatErrorMessage } from "../../infra/errors.js";
+import { getSessionExecutionSelection } from "../../model-picker/execution-selection-state.js";
+import { isAcpExecutionSelection } from "../../model-picker/execution-selection.js";
 import { resolveSessionPinnedHarnessId } from "../../sessions/agent-harness-session-key.js";
-import { resolveStoredModelOverride } from "../../sessions/stored-model-overrides.js";
 import {
   sessionDeliveryChannel,
   sessionDeliveryOrigin,
@@ -22,10 +22,7 @@ import {
 import { isNativeCommandTurn, resolveCommandTurnContext } from "../command-turn-context.js";
 import type { FinalizedMsgContext } from "../templating.js";
 import { normalizeVerboseLevel } from "../thinking.js";
-import {
-  loadSessionStoreEntry,
-  resolveSessionStorePathCore,
-} from "./dispatch-from-config.runtime.js";
+import { loadSessionStoreEntry } from "./dispatch-from-config.runtime.js";
 import type { ReplyRunVerbosity } from "./get-reply.types.js";
 
 type HarnessSourceVisibleRepliesDefault = "automatic" | "message_tool";
@@ -164,35 +161,10 @@ function resolveStoredModelCandidate(params: {
   sessionKey?: string;
   sessionStore?: Record<string, SessionEntry>;
 }): HarnessDefaultCandidate | undefined {
-  const storedModelRef = resolveStoredModelOverride({
-    loadSessionEntry: (sessionKey) => {
-      const agentId = resolveSessionAgentId({
-        sessionKey,
-        config: params.cfg,
-        fallbackAgentId: params.sessionAgentId,
-      });
-      const storePath = resolveSessionStorePathCore(params.cfg.session?.store, { agentId });
-      return loadSessionStoreEntry({
-        agentId,
-        storePath,
-        sessionKey,
-        readConsistency: "latest",
-        clone: false,
-      });
-    },
-    sessionEntry: params.entry,
-    sessionStore: params.sessionStore,
-    sessionKey: params.sessionKey,
-    parentSessionKey: params.parentSessionKey,
-    defaultProvider: params.defaultProvider,
-  });
-  if (!storedModelRef) {
-    return undefined;
-  }
-  return {
-    provider: storedModelRef.provider ?? params.defaultProvider,
-    model: storedModelRef.model,
-  };
+  const selection = getSessionExecutionSelection(params.entry, params.cfg);
+  return selection && !isAcpExecutionSelection(selection)
+    ? { provider: selection.model.provider, model: selection.model.id }
+    : undefined;
 }
 
 function resolveModelOverrideCandidate(params: {

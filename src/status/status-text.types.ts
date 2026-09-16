@@ -18,6 +18,8 @@ export type BuildStatusTextParams = {
   /** Prepared owner for bare session keys shared by multiple agents. */
   agentId?: string;
   sessionEntry?: SessionEntry;
+  /** Current-turn observation for a status view; never changes the accepted selection. */
+  activeModel?: { provider?: string; model: string };
   sessionKey: string;
   parentSessionKey?: string;
   sessionScope?: SessionScope;

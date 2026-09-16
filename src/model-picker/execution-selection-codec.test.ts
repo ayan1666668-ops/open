@@ -5,6 +5,7 @@ import {
   loadSessionEntryReadOnly,
   replaceSessionEntry,
 } from "../config/sessions/session-accessor.js";
+import { createAgentPatchedSessionModelFallback } from "../config/sessions/session-model-fallback.js";
 import type { SessionAcpMeta, SessionEntry } from "../config/sessions/types.js";
 import {
   decodeSessionExecutionSelection,
@@ -109,6 +110,7 @@ describe("session-store execution selection codec", () => {
     ).toEqual({
       kind: "uninitialized",
       model: { provider: "qa-route", id: "qa-original" },
+      executor: pair.executor,
       discardAutomaticAuth: true,
     });
   });
@@ -239,4 +241,45 @@ describe("session-store execution selection codec", () => {
       }),
     ).toEqual({ status: "admitted", selections: [] });
   });
+  it.each(["configured", "default", "user", "legacy"] as const)(
+    "restores %s fallback permission from the existing rollback marker",
+    (source) => {
+      const previous = entry();
+      if (source === "default") {
+        previous.modelOverrideSource = "default";
+      } else if (source === "legacy") {
+        previous.providerOverride = pair.model.provider;
+        previous.modelOverride = pair.model.id;
+        previous.modelOverrideRouteResolution = "resolved";
+      } else {
+        encodeSessionExecutionSelection(previous, pair, {
+          kind: source === "configured" ? "initialize" : "user",
+        });
+      }
+      const marker = createAgentPatchedSessionModelFallback({
+        entry: previous,
+        provider: pair.model.provider,
+        model: pair.model.id,
+        ts: 1,
+      });
+      const current = entry();
+      encodeSessionExecutionSelection(
+        current,
+        { ...pair, model: { provider: "qa-other", id: "qa-agent-choice" } },
+        { kind: "user" },
+      );
+      encodeSessionExecutionSelection(current, pair, { kind: "rollback", fallback: marker });
+      expect(decodeSessionExecutionSelection(current, metadata)).toEqual({
+        kind: "initialized",
+        selection: pair,
+      });
+      const candidate: ModelExecutionSelection = {
+        ...pair,
+        model: { provider: "qa-backup", id: "qa-fallback" },
+      };
+      expect(admitSessionExecutionFallback({ entry: current, candidate, metadata }).status).toBe(
+        source === "configured" || source === "default" ? "admitted" : "rejected",
+      );
+    },
+  );
 });

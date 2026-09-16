@@ -4,6 +4,7 @@
  * Reports and updates session runtime state, model overrides, visibility, task status, and delivery context.
  */
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { readStringValue } from "@openclaw/normalization-core/string-coerce";
 import { Type } from "typebox";
 import type {
@@ -17,8 +18,16 @@ import {
   resolveSessionStorePathCore,
   type SessionEntry,
 } from "../../config/sessions.js";
+import { loadSessionEntryReadOnly } from "../../config/sessions/session-accessor.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { triggerSessionPatchHook } from "../../gateway/session-patch-hooks.js";
+import {
+  prepareSessionExecutionSelection,
+  commitSessionModelSelectionWithAuth,
+} from "../../model-picker/apply-session-model-selection.js";
+import { executionSelectionTransactionChanged } from "../../model-picker/execution-selection-codec.js";
+import { getSessionExecutionSelection } from "../../model-picker/execution-selection-state.js";
+import { isAcpExecutionSelection } from "../../model-picker/execution-selection.js";
 import {
   isPluginMetadataSnapshotCompatible,
   resolvePluginMetadataSnapshot,
@@ -30,7 +39,10 @@ import {
   parseAgentSessionKey,
   resolveAgentIdFromSessionKey,
 } from "../../routing/session-key.js";
-import { applyModelOverrideWithAuthProfileCompatibility } from "../../sessions/auth-profile-preservation.js";
+import {
+  isModelSelectionLocked,
+  ModelSelectionLockedError,
+} from "../../sessions/model-overrides.js";
 import {
   getSessionStateVersion,
   listSessionStateEventsSince,
@@ -61,14 +73,12 @@ import {
 } from "../agent-scope.js";
 import {
   buildModelAliasIndex,
-  modelKey,
   resolveDefaultModelForAgent,
   resolveModelRefFromString,
 } from "../model-selection.js";
 import { resolveThinkingDefault } from "../model-thinking-default.js";
-import { createModelVisibilityPolicy } from "../model-visibility-policy.js";
 import { loadPublishedPreparedModelCatalog } from "../prepared-model-catalog.js";
-import { resolveSessionModelIdentityRef } from "../session-model-ref.js";
+import { resolveSessionModelRef, resolveSessionModelIdentityRef } from "../session-model-ref.js";
 import {
   describeSessionStatusTool,
   SESSION_STATUS_TOOL_DISPLAY_SUMMARY,
@@ -421,22 +431,6 @@ function resolveActiveStatusModelIdentity(params: {
     : { model: activeModelId };
 }
 
-function withActiveStatusModelIdentity(
-  entry: SessionEntry,
-  identity: ActiveStatusModelIdentity,
-): SessionEntry {
-  const next: SessionEntry = {
-    ...entry,
-    model: identity.model,
-    ...(identity.provider ? { modelProvider: identity.provider } : {}),
-  };
-  delete next.providerOverride;
-  delete next.modelOverride;
-  delete next.modelOverrideSource;
-  delete next.modelOverrideRouteResolution;
-  return next;
-}
-
 function formatSessionTaskLine(params: {
   relatedSessionKey: string;
   callerOwnerKey: string;
@@ -475,25 +469,20 @@ async function resolveModelOverride(params: {
   workspaceDir: string;
   metadataSnapshot?: PluginMetadataSnapshot;
 }): Promise<
-  | { kind: "reset" }
+  | { kind: "reset"; catalog: Awaited<ReturnType<typeof loadPublishedPreparedModelCatalog>> }
   | {
       kind: "set";
       provider: string;
       model: string;
-      isDefault: boolean;
+      catalog: Awaited<ReturnType<typeof loadPublishedPreparedModelCatalog>>;
     }
 > {
   const raw = normalizeToolModelOverride(params.raw);
-  if (!raw) {
-    return { kind: "reset" };
-  }
-
-  const configDefault = resolveDefaultModelForAgent({
-    cfg: params.cfg,
-    agentId: params.agentId,
-  });
-  const currentProvider = params.sessionEntry?.providerOverride?.trim() || configDefault.provider;
-  const currentModel = params.sessionEntry?.modelOverride?.trim() || configDefault.model;
+  const { provider: currentProvider } = resolveSessionModelRef(
+    params.cfg,
+    params.sessionEntry,
+    params.agentId,
+  );
 
   const aliasIndex = buildModelAliasIndex({
     cfg: params.cfg,
@@ -509,6 +498,9 @@ async function resolveModelOverride(params: {
       ? { workspaceDir: params.sessionEntry.spawnedWorkspaceDir }
       : {}),
   });
+  if (!raw) {
+    return { kind: "reset", catalog };
+  }
   const workspaceDir = params.sessionEntry?.spawnedWorkspaceDir ?? params.workspaceDir;
   const manifestMetadataSnapshot =
     params.metadataSnapshot &&
@@ -528,16 +520,6 @@ async function resolveModelOverride(params: {
   const modelManifestContext = {
     manifestPlugins: manifestMetadataSnapshot,
   };
-  const policy = createModelVisibilityPolicy({
-    cfg: params.cfg,
-    catalog,
-    defaultProvider: currentProvider,
-    defaultModel: currentModel,
-    agentId: params.agentId,
-    allowManifestNormalization: true,
-    allowPluginNormalization: true,
-    ...modelManifestContext,
-  });
 
   const resolved = resolveModelRefFromString({
     cfg: params.cfg,
@@ -552,17 +534,11 @@ async function resolveModelOverride(params: {
   if (!resolved) {
     throw new Error(`Unrecognized model "${raw}".`);
   }
-  const key = modelKey(resolved.ref.provider, resolved.ref.model);
-  if (!policy.allows(resolved.ref)) {
-    throw new Error(`Model "${key}" is not allowed.`);
-  }
-  const isDefault =
-    resolved.ref.provider === configDefault.provider && resolved.ref.model === configDefault.model;
   return {
     kind: "set",
     provider: resolved.ref.provider,
     model: resolved.ref.model,
-    isDefault,
+    catalog,
   };
 }
 
@@ -591,7 +567,7 @@ export function createSessionStatusTool(opts?: {
     description: describeSessionStatusTool(),
     parameters: SessionStatusToolSchema,
     outputSchema: SessionStatusOutputSchema,
-    execute: async (_toolCallId, args) => {
+    execute: async (_toolCallId, args, signal) => {
       const params = args as Record<string, unknown>;
       const gatewayCall = opts?.callGateway ?? callAgentToolGatewayRequest;
       const changesSince = readNonNegativeIntegerParam(params, "changesSince");
@@ -962,104 +938,184 @@ export function createSessionStatusTool(opts?: {
       return await runWithScopedSessionAccess({
         cfg,
         agentId,
-        expectedSessionId: access.expectedSessionId,
+        expectedSessionId:
+          access.expectedSessionId ??
+          (scopedResolved.persisted ? scopedResolved.entry.sessionId : undefined),
+        signal,
         targetSessionKey: scopedResolved.key,
-        run: async () => {
+        run: async (assertCurrentAccess) => {
           const configured = resolveDefaultModelForAgent({ cfg, agentId });
           const selectedAgentDir = resolveAgentDir(cfg, agentId);
           const selectedWorkspaceDir = resolveAgentWorkspaceDir(cfg, agentId);
           const modelRaw = readToolStringParam(params, "model");
           let changedModel = false;
+          let resetModelRequested = false;
+          let modelChangeMessage: string | undefined;
           if (typeof modelRaw === "string") {
-            const selection = await resolveModelOverride({
-              cfg,
-              raw: modelRaw,
-              sessionEntry: scopedResolved.entry,
-              agentId,
-              agentDir: selectedAgentDir,
-              workspaceDir: selectedWorkspaceDir,
-              metadataSnapshot: opts?.metadataSnapshot,
-            });
-            const modelSelection =
-              selection.kind === "reset"
-                ? {
-                    provider: configured.provider,
-                    model: configured.model,
-                    isDefault: true,
-                  }
-                : {
-                    provider: selection.provider,
-                    model: selection.model,
-                    isDefault: selection.isDefault,
-                  };
-            const nextEntry: SessionEntry = { ...scopedResolved.entry };
-            const currentProvider =
-              scopedResolved.entry.providerOverride?.trim() ||
-              scopedResolved.entry.modelProvider?.trim() ||
-              configured.provider;
-            const applied = applyModelOverrideWithAuthProfileCompatibility({
-              cfg,
-              agentDir: selectedAgentDir,
-              entry: nextEntry,
-              currentProvider,
-              selection: modelSelection,
-              explicitDefaultSelection: modelSelection.isDefault,
-              markLiveSwitchPending: true,
-            });
-            if (applied.updated) {
-              const patchResult = await patchSessionEntryWithKey(
-                {
-                  agentId,
-                  sessionKey: scopedResolved.key,
-                  storePath,
+            const initialEntry = { ...scopedResolved.entry };
+            if (isModelSelectionLocked(initialEntry)) {
+              throw new ModelSelectionLockedError();
+            }
+            const accepted = getSessionExecutionSelection(initialEntry, cfg);
+            const assertCurrentSelectionAccess = () => {
+              assertCurrentAccess();
+              const current = scopedResolved.persisted
+                ? loadSessionEntryReadOnly({
+                    agentId,
+                    storePath,
+                    sessionKey: scopedResolved.key,
+                    readConsistency: "latest",
+                  })
+                : scopedResolved.entry;
+              if (
+                !current ||
+                current.sessionId !== initialEntry.sessionId ||
+                current.lifecycleRevision !== initialEntry.lifecycleRevision
+              ) {
+                throw new Error("Session changed while selecting a model.");
+              }
+              if (isModelSelectionLocked(current)) {
+                throw new ModelSelectionLockedError();
+              }
+            };
+            if (accepted && isAcpExecutionSelection(accepted)) {
+              const model = normalizeToolModelOverride(modelRaw);
+              resetModelRequested = !model;
+              const prepared = await prepareSessionExecutionSelection({
+                cfg,
+                agentId,
+                sessionKey: scopedResolved.key,
+                storePath,
+                sessionEntry: initialEntry,
+                request: {
+                  kind: "selection",
+                  selection: { ...accepted, model: model ? { id: model } : null },
                 },
-                (entry, context) => {
-                  const persistedEntryPatch: SessionEntry = { ...entry };
-                  applyModelOverrideWithAuthProfileCompatibility({
+                prepareAcp: async (selection) => {
+                  const { getAcpSessionManager } =
+                    await import("../../acp/control-plane/manager.js");
+                  assertCurrentSelectionAccess();
+                  return await getAcpSessionManager().setExecutionSelection({
                     cfg,
-                    agentDir: selectedAgentDir,
-                    entry: persistedEntryPatch,
-                    currentProvider:
-                      entry.providerOverride?.trim() ||
-                      entry.modelProvider?.trim() ||
-                      configured.provider,
-                    selection: modelSelection,
-                    explicitDefaultSelection: modelSelection.isDefault,
-                    markLiveSwitchPending: true,
+                    agentId,
+                    sessionKey: scopedResolved.key,
+                    selection,
+                    assertActive: assertCurrentSelectionAccess,
                   });
-                  if (
-                    !persistedEntryPatch.sessionId.trim() &&
-                    !context.existingEntry?.sessionId?.trim()
-                  ) {
-                    persistedEntryPatch.sessionId = randomUUID();
+                },
+              });
+              if (prepared.status !== "ready") {
+                throw new Error(prepared.message);
+              }
+              const current = loadSessionEntryReadOnly({
+                agentId,
+                storePath,
+                sessionKey: scopedResolved.key,
+                readConsistency: "latest",
+              });
+              if (!current) {
+                throw new Error(`Unknown sessionKey: ${scopedResolved.key}`);
+              }
+              scopedResolved = { entry: current, key: scopedResolved.key, persisted: true };
+              changedModel = !isDeepStrictEqual(accepted, prepared.selection);
+              modelChangeMessage = prepared.message;
+            } else {
+              const parsed = await resolveModelOverride({
+                cfg,
+                raw: modelRaw,
+                sessionEntry: initialEntry,
+                agentId,
+                agentDir: selectedAgentDir,
+                workspaceDir: selectedWorkspaceDir,
+                metadataSnapshot: opts?.metadataSnapshot,
+              });
+              resetModelRequested = parsed.kind === "reset";
+              const prepared = await prepareSessionExecutionSelection({
+                cfg,
+                agentId,
+                sessionKey: scopedResolved.key,
+                storePath,
+                sessionEntry: initialEntry,
+                modelCatalog: parsed.catalog,
+                request:
+                  parsed.kind === "reset"
+                    ? { kind: "reset" }
+                    : { kind: "model", model: { provider: parsed.provider, id: parsed.model } },
+              });
+              if (prepared.status !== "ready") {
+                throw new Error(prepared.message);
+              }
+              if (isAcpExecutionSelection(prepared.selection)) {
+                throw new Error("The selected app changed while selecting a model.");
+              }
+              const selection = prepared.selection;
+              const currentProvider =
+                accepted && !isAcpExecutionSelection(accepted)
+                  ? accepted.model.provider
+                  : resolveSessionModelRef(cfg, initialEntry, agentId).provider;
+              const patchResult = await patchSessionEntryWithKey(
+                { agentId, sessionKey: scopedResolved.key, storePath },
+                (entry, context) => {
+                  assertCurrentAccess();
+                  if (isModelSelectionLocked(entry)) {
+                    throw new ModelSelectionLockedError();
                   }
-                  return persistedEntryPatch;
+                  if (
+                    context.existingEntry &&
+                    (entry.sessionId !== initialEntry.sessionId ||
+                      entry.lifecycleRevision !== initialEntry.lifecycleRevision ||
+                      executionSelectionTransactionChanged(initialEntry, entry))
+                  ) {
+                    throw new Error("Session model selection changed. Try again.");
+                  }
+                  const next: SessionEntry = { ...entry };
+                  const applied = commitSessionModelSelectionWithAuth({
+                    cfg,
+                    agentId,
+                    entry: next,
+                    currentProvider,
+                    selection,
+                    markLiveSwitchPending: true,
+                    cause: { kind: resetModelRequested ? "reset" : "user" },
+                  });
+                  changedModel = applied.changed;
+                  if (applied.changed) {
+                    next.updatedAt = Date.now();
+                  }
+                  if (!next.sessionId.trim() && !context.existingEntry?.sessionId?.trim()) {
+                    next.sessionId = randomUUID();
+                  }
+                  return next;
                 },
                 {
-                  fallbackEntry: scopedResolved.persisted ? undefined : scopedResolved.entry,
+                  fallbackEntry: scopedResolved.persisted ? undefined : initialEntry,
                   replaceEntry: true,
+                  assertCommitAllowed: () => {
+                    assertCurrentAccess();
+                    const error = prepared.validateCommit();
+                    if (error) {
+                      throw new Error(error);
+                    }
+                  },
                 },
               );
               if (!patchResult) {
                 throw new Error(`Unknown sessionKey: ${scopedResolved.key}`);
               }
-              const persistedEntry = patchResult.entry;
               scopedResolved = {
-                entry: persistedEntry,
+                entry: patchResult.entry,
                 key: patchResult.sessionKey,
                 persisted: true,
               };
+              modelChangeMessage = prepared.message;
+            }
+            if (changedModel) {
               triggerSessionPatchHook({
                 cfg,
-                sessionEntry: persistedEntry,
-                sessionKey: patchResult.sessionKey,
-                patch: {
-                  key: patchResult.sessionKey,
-                  model:
-                    selection.kind === "reset" ? null : `${selection.provider}/${selection.model}`,
-                },
+                sessionEntry: scopedResolved.entry,
+                sessionKey: scopedResolved.key,
+                patch: { key: scopedResolved.key, model: resetModelRequested ? null : modelRaw },
               });
-              changedModel = true;
             }
           }
 
@@ -1091,30 +1147,31 @@ export function createSessionStatusTool(opts?: {
                 agentId,
                 `${configured.provider}/${configured.model}`,
               );
-          const hasExplicitModelOverride = Boolean(
-            !activeModelIdentity &&
-            (scopedResolved.entry.providerOverride?.trim() ||
-              scopedResolved.entry.modelOverride?.trim()),
-          );
-          const runtimeProviderForCard = runtimeModelIdentity.provider?.trim();
-          const runtimeModelForCard = runtimeModelIdentity.model.trim();
-          const defaultProviderForCard = hasExplicitModelOverride
-            ? configured.provider
-            : (runtimeProviderForCard ?? "");
-          const defaultModelForCard = hasExplicitModelOverride
-            ? configured.model
-            : runtimeModelForCard || configured.model;
+          const statusSelection = getSessionExecutionSelection(scopedResolved.entry, cfg);
+          const selectedModel = statusSelection?.model
+            ? {
+                model: statusSelection.model.id,
+                provider: !isAcpExecutionSelection(statusSelection)
+                  ? statusSelection.model.provider
+                  : undefined,
+              }
+            : undefined;
+          const displayModel = activeModelIdentity ?? selectedModel ?? runtimeModelIdentity;
+          const providerForCard = displayModel.provider ?? "";
+          const defaultModelForCard = displayModel.model;
           const statusSessionEntry = activeModelIdentity
-            ? withActiveStatusModelIdentity(scopedResolved.entry, activeModelIdentity)
-            : !hasExplicitModelOverride && !runtimeProviderForCard && runtimeModelForCard
-              ? { ...scopedResolved.entry, providerOverride: "" }
-              : scopedResolved.entry;
-          const providerOverrideForCard = statusSessionEntry.providerOverride?.trim();
-          const providerForCard = providerOverrideForCard ?? defaultProviderForCard;
+            ? {
+                ...scopedResolved.entry,
+                model: activeModelIdentity.model,
+                modelProvider: activeModelIdentity.provider,
+              }
+            : scopedResolved.entry;
           const primaryModelLabel =
-            providerForCard && defaultModelForCard
-              ? `${providerForCard}/${defaultModelForCard}`
-              : defaultModelForCard;
+            statusSelection && isAcpExecutionSelection(statusSelection) && !statusSelection.model
+              ? "the app's default model"
+              : providerForCard
+                ? `${providerForCard}/${defaultModelForCard}`
+                : defaultModelForCard;
           const isGroup =
             statusSessionEntry.chatType === "group" ||
             statusSessionEntry.chatType === "channel" ||
@@ -1141,6 +1198,7 @@ export function createSessionStatusTool(opts?: {
             cfg,
             agentId,
             sessionEntry: statusSessionEntry,
+            activeModel: activeModelIdentity,
             sessionKey: scopedResolved.key,
             parentSessionKey: statusSessionEntry.parentSessionKey,
             sessionScope: cfg.session?.scope,
@@ -1172,10 +1230,14 @@ export function createSessionStatusTool(opts?: {
             ...(providerForCard ? {} : { modelAuthOverride: undefined }),
             includeTranscriptUsage: true,
           });
-          const fullStatusText =
+          const statusWithTask =
             taskLine && !statusText.includes(taskLine) ? `${statusText}\n${taskLine}` : statusText;
-          const resultOverrideProvider = statusSessionEntry.providerOverride?.trim();
-          const resultOverrideModel = statusSessionEntry.modelOverride?.trim();
+          const fullStatusText = [modelChangeMessage, statusWithTask].filter(Boolean).join("\n\n");
+          const resultOverrideProvider =
+            statusSelection && !isAcpExecutionSelection(statusSelection)
+              ? statusSelection.model.provider
+              : undefined;
+          const resultOverrideModel = statusSelection?.model?.id;
           const liveSessionKeySet = new Set(
             liveSessionKeys
               .map((value) => value?.trim())
@@ -1211,11 +1273,13 @@ export function createSessionStatusTool(opts?: {
           const modelOverrideForResult =
             modelRaw === undefined
               ? undefined
-              : resultOverrideModel
-                ? resultOverrideProvider
-                  ? `${resultOverrideProvider}/${resultOverrideModel}`
-                  : resultOverrideModel
-                : null;
+              : resetModelRequested
+                ? null
+                : resultOverrideModel
+                  ? resultOverrideProvider
+                    ? `${resultOverrideProvider}/${resultOverrideModel}`
+                    : resultOverrideModel
+                  : null;
 
           return {
             content: [{ type: "text", text: visibleStatusText }],
@@ -1228,10 +1292,8 @@ export function createSessionStatusTool(opts?: {
               ...(stateChanges ? { stateChanges } : {}),
               ...(modelRaw !== undefined
                 ? {
-                    model: resultOverrideModel ?? defaultModelForCard,
-                    ...((resultOverrideProvider ?? providerForCard)
-                      ? { modelProvider: resultOverrideProvider ?? providerForCard }
-                      : {}),
+                    ...(resultOverrideModel ? { model: resultOverrideModel } : {}),
+                    ...(resultOverrideProvider ? { modelProvider: resultOverrideProvider } : {}),
                     modelOverride: modelOverrideForResult,
                   }
                 : {}),

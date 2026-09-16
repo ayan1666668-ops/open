@@ -7,52 +7,61 @@ import {
 } from "../../packages/gateway-protocol/src/index.js";
 import { normalizeOptionalAgentRuntimeId } from "../agents/agent-runtime-id.js";
 import { resolveDefaultModelForAgent, type ModelRef } from "../agents/model-selection.js";
-import { inheritSessionSelection } from "../config/sessions/session-entry-selection.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { prepareSessionExecutionSelection } from "../model-picker/apply-session-model-selection.js";
+import { executionSelectionCodecMetadata } from "../model-picker/execution-selection-state.js";
+import { isAcpExecutionSelection } from "../model-picker/execution-selection.js";
 import { resolveSessionPatchModelSelection } from "./server-methods/sessions-patch-model-selection.js";
 import type { GatewaySessionTitleModelSelection } from "./session-lifecycle-preparation.js";
 
-export function resolveSessionCreateModelSelection(
+export async function resolveSessionCreateModelSelection(
   cfg: OpenClawConfig,
   agentId: string,
   input: string | { model: string; agentRuntime?: string } | undefined,
   parentEntry?: SessionEntry,
   preparedModelSelection?: ModelRef,
-): GatewaySessionTitleModelSelection | null {
+): Promise<GatewaySessionTitleModelSelection | null> {
   const model = normalizeOptionalString(typeof input === "string" ? input : input?.model);
-  if (!model) {
-    const inherited = inheritSessionSelection(parentEntry);
-    return {
-      providerOverride: inherited.providerOverride,
-      modelOverride: inherited.modelOverride,
-      agentRuntimeOverride: inherited.agentRuntimeOverride,
-      authProfileOverride: inherited.authProfileOverride,
-    };
-  }
   const defaults = resolveDefaultModelForAgent({ cfg, agentId });
   // Reuse patch policy with the config-owned catalog projection. Persisted creation
   // remains the sole live-catalog availability validator.
-  const resolved = resolveSessionPatchModelSelection({
-    cfg,
-    agentId,
-    catalog: [],
-    raw: model,
-    defaultProvider: defaults.provider,
-    defaultModel: defaults.model,
-    preparedModelSelection,
-  });
-  if (!resolved.ok) {
+  const resolved = model
+    ? resolveSessionPatchModelSelection({
+        cfg,
+        agentId,
+        catalog: [],
+        raw: model,
+        defaultProvider: defaults.provider,
+        defaultModel: defaults.model,
+        preparedModelSelection,
+      })
+    : undefined;
+  if (resolved && !resolved.ok) {
     return null;
   }
-  const agentRuntimeOverride = normalizeOptionalAgentRuntimeId(
+  const runtime = normalizeOptionalAgentRuntimeId(
     typeof input === "string" ? undefined : input?.agentRuntime,
   );
+  const kind = runtime ? executionSelectionCodecMetadata(cfg).classifyExecutor(runtime) : undefined;
+  if (runtime && !kind) return null;
+  const prepared = await prepareSessionExecutionSelection({
+    cfg,
+    agentId,
+    sessionEntry: parentEntry,
+    request: resolved
+      ? {
+          kind: "model",
+          model: { provider: resolved.provider, id: resolved.model },
+          ...(runtime && kind ? { executor: { kind, id: runtime } } : {}),
+        }
+      : { kind: "initialize" },
+  });
+  if (prepared.status !== "ready" || isAcpExecutionSelection(prepared.selection)) return null;
   return {
-    providerOverride: resolved.provider,
-    modelOverride: resolved.model,
-    ...(agentRuntimeOverride ? { agentRuntimeOverride } : {}),
-    ...(resolved.profile ? { authProfileOverride: resolved.profile } : {}),
+    executionSelection: prepared.selection,
+    validate: prepared.validateCommit,
+    authProfileOverride: resolved?.profile ?? parentEntry?.authProfileOverride,
   };
 }
 

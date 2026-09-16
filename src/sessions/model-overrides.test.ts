@@ -5,7 +5,6 @@ import {
   applyModelOverrideToSessionEntry,
   MODEL_SELECTION_LOCKED_MESSAGE,
   ModelSelectionLockedError,
-  repairProviderWrappedModelOverride,
 } from "./model-overrides.js";
 
 function applyOpenAiSelection(entry: SessionEntry) {
@@ -119,7 +118,7 @@ describe("applyModelOverrideToSessionEntry", () => {
     expect(entry.contextTokensSource).toBeUndefined();
     expect(entry.contextBudgetStatus).toBeUndefined();
     expect(entry.fallbackNotice).toBeUndefined();
-    expect(entry.modelOverrideSource).toBe("user");
+    expect(entry.modelOverrideSource).toBeUndefined();
     expect(entry.modelOverrideRouteResolution).toBe("resolved");
   });
 
@@ -179,7 +178,7 @@ describe("applyModelOverrideToSessionEntry", () => {
     expect(result.updated).toBe(true);
     expect(entry.modelProvider).toBe("openai");
     expect(entry.model).toBe("gpt-5.4");
-    expect(entry.modelOverrideSource).toBe("user");
+    expect(entry.modelOverrideSource).toBeUndefined();
     expect(entry.contextTokens).toBe(200_000);
     expect(entry.contextTokensSource).toBe("runtime");
     expect(entry.contextBudgetStatus?.contextTokenBudget).toBe(200_000);
@@ -242,7 +241,7 @@ describe("applyModelOverrideToSessionEntry", () => {
       entry,
       selection: { provider: "anthropic", model: "claude-sonnet-4-6" },
     });
-    expect(entry.modelOverrideSource).toBe("user");
+    expect(entry.modelOverrideSource).toBeUndefined();
   });
 
   it("replaces explicit default intent with an automatic fallback source", () => {
@@ -403,82 +402,4 @@ describe("applyModelOverrideToSessionEntry", () => {
       expect(entry.authProfileOverrideCompactionCount).toBe(expectedProfile ? 2 : undefined);
     },
   );
-});
-
-describe("repairProviderWrappedModelOverride", () => {
-  it("rejects provider-wrapped repair for locked sessions without mutating them", () => {
-    const entry: SessionEntry = {
-      sessionId: "sess-locked-openrouter-repair",
-      updatedAt: Date.now() - 5_000,
-      providerOverride: "anthropic",
-      modelOverride: "claude-haiku-4.5",
-      modelOverrideSource: "user",
-      modelProvider: "openrouter",
-      model: "anthropic/claude-haiku-4.5",
-      contextTokens: 200_000,
-      modelSelectionLocked: true,
-    };
-    const before = { ...entry };
-
-    expect(() =>
-      repairProviderWrappedModelOverride({
-        entry,
-        defaultProvider: "openai",
-        defaultModel: "gpt-5.4",
-      }),
-    ).toThrow(ModelSelectionLockedError);
-    expect(entry).toEqual(before);
-  });
-
-  it("restores a provider-wrapped override from aligned runtime model fields", () => {
-    const before = Date.now() - 5_000;
-    const entry: SessionEntry = {
-      sessionId: "sess-openrouter-repair-runtime",
-      updatedAt: before,
-      providerOverride: "anthropic",
-      modelOverride: "claude-haiku-4.5",
-      modelOverrideSource: "user",
-      modelProvider: "openrouter",
-      model: "anthropic/claude-haiku-4.5",
-      contextTokens: 200_000,
-    };
-
-    const result = repairProviderWrappedModelOverride({
-      entry,
-      defaultProvider: "openai",
-      defaultModel: "gpt-5.4",
-    });
-
-    expect(result.updated).toBe(true);
-    expect(entry.providerOverride).toBe("openrouter");
-    expect(entry.modelOverride).toBe("anthropic/claude-haiku-4.5");
-    expect(entry.modelOverrideSource).toBe("user");
-    expect(entry.modelProvider).toBeUndefined();
-    expect(entry.model).toBeUndefined();
-    expect(entry.contextTokens).toBeUndefined();
-    expect((entry.updatedAt ?? 0) > before).toBe(true);
-  });
-
-  it("clears a provider-wrapped override that matches the configured default", () => {
-    const before = Date.now() - 5_000;
-    const entry: SessionEntry = {
-      sessionId: "sess-openrouter-repair-default",
-      updatedAt: before,
-      providerOverride: "anthropic",
-      modelOverride: "claude-haiku-4.5",
-      modelOverrideSource: "user",
-    };
-
-    const result = repairProviderWrappedModelOverride({
-      entry,
-      defaultProvider: "openrouter",
-      defaultModel: "anthropic/claude-haiku-4.5",
-    });
-
-    expect(result.updated).toBe(true);
-    expect(entry.providerOverride).toBeUndefined();
-    expect(entry.modelOverride).toBeUndefined();
-    expect(entry.modelOverrideSource).toBeUndefined();
-    expect((entry.updatedAt ?? 0) > before).toBe(true);
-  });
 });

@@ -1,5 +1,6 @@
 import { commitSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
 import { getSessionExecutionSelection } from "../../model-picker/execution-selection-state.js";
+import type { ExecutionSelection } from "../../model-picker/execution-selection.js";
 // Reset preservation retains accepted execution and explicit account choices.
 import { resolveSessionAuthProfileOverrideSource } from "./auth-profile-override-provenance.js";
 import type { SessionEntry } from "./types.js";
@@ -7,6 +8,7 @@ import type { SessionEntry } from "./types.js";
 /** Preserve the accepted pair and explicit account pin across a fresh conversation. */
 export function resolveResetPreservedSelection(params: {
   entry?: SessionEntry;
+  selection?: ExecutionSelection;
 }): Partial<SessionEntry> {
   const { entry } = params;
   if (!entry) {
@@ -14,7 +16,7 @@ export function resolveResetPreservedSelection(params: {
   }
 
   const preserved: Partial<SessionEntry> = {};
-  const selection = getSessionExecutionSelection(entry);
+  const selection = params.selection ?? getSessionExecutionSelection(entry);
   if (selection && selection.executor.kind !== "acp") {
     commitSessionExecutionSelection(preserved, selection, { cause: { kind: "inherit", entry } });
   }

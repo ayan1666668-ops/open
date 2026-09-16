@@ -1680,10 +1680,17 @@ export async function runMemoryFlushIfNeeded(params: {
           params.sessionKey,
         preparation: { kind: "direct" },
         prepareExecutionSelection: async (provider, model) => {
+          const sourceKey = params.sessionKey;
+          const sourceStore = params.sessionStore;
           const prepared = await prepareSessionExecutionSelection({
             cfg: params.cfg,
             agentId: params.followupRun.run.agentId,
             sessionKey: params.sessionKey,
+            storePath: params.storePath,
+            readSessionEntry:
+              !params.storePath && sourceKey && sourceStore
+                ? () => sourceStore[sourceKey]
+                : undefined,
             sessionEntry: activeSessionEntry,
             request: {
               kind: "fallback",
@@ -1703,11 +1710,10 @@ export async function runMemoryFlushIfNeeded(params: {
           if (isAcpExecutionSelection(prepared.selection)) {
             throw new Error("This maintenance turn requires a direct execution selection.");
           }
-          return prepared.selection;
+          return { selection: prepared.selection, validateCommit: prepared.validateCommit };
         },
       },
       behavior: { kind: "maintenance" },
-      sessionOverride: { kind: "preserve" },
       abortSignal: deferredLifecycle.signal,
       runCandidate: async (candidate, runOptions) => {
         const { provider, id: model } = candidate.model;

@@ -1,5 +1,6 @@
 /** Tests ACP manager backend failover across initialization and turn execution. */
 import { describe, expect, it, vi } from "vitest";
+import { createDeferred } from "../../../test/helpers/promise.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import type { SessionAcpMeta } from "../../config/sessions/types.js";
 import {
@@ -211,6 +212,54 @@ describe("AcpSessionManager backend failover", () => {
     ).rejects.toThrow("app did not confirm the last change");
     expect(harness.fallbackRuntime.runTurn).not.toHaveBeenCalled();
     expect(harness.currentMeta.backend).toBe("primary-backend");
+  });
+
+  it("does not overlap unresolved fallback timeout cleanup with another close", async () => {
+    vi.useFakeTimers();
+    const harness = setupFailoverBackends({
+      primaryUnavailableError: new AcpRuntimeError(
+        "ACP_BACKEND_UNAVAILABLE",
+        "primary backend unavailable",
+      ),
+    });
+    const entered = createDeferred();
+    const releaseTurn = createDeferred();
+    const releaseCancel = createDeferred();
+    harness.fallbackRuntime.runTurn.mockImplementation(async function* () {
+      entered.resolve();
+      await releaseTurn.promise;
+      yield { type: "done" };
+    });
+    harness.fallbackRuntime.cancel.mockImplementation(async () => await releaseCancel.promise);
+    const input = {
+      cfg: { ...harness.cfg, agents: { defaults: { timeoutSeconds: 1 } } },
+      sessionKey: harness.sessionKey,
+      provenance: "system" as const,
+      text: "continue",
+      mode: "prompt" as const,
+      requestId: "fallback-timeout",
+    };
+    try {
+      const turn = new AcpSessionManager().runTurn(input);
+      const settled = Promise.allSettled([turn]);
+      await entered.promise;
+      await vi.advanceTimersByTimeAsync(4_001);
+      expect((await settled)[0]).toMatchObject({
+        status: "rejected",
+        reason: { message: "ACP turn timed out after 1s." },
+      });
+      expect(harness.fallbackRuntime.cancel).toHaveBeenCalledOnce();
+      expect(harness.fallbackRuntime.close).not.toHaveBeenCalled();
+      await expect(
+        new AcpSessionManager().runTurn({ ...input, requestId: "after-timeout" }),
+      ).rejects.toThrow("app did not confirm the last change");
+      expect(harness.fallbackRuntime.runTurn).toHaveBeenCalledOnce();
+    } finally {
+      releaseTurn.resolve();
+      releaseCancel.resolve();
+      await vi.runAllTimersAsync();
+      vi.useRealTimers();
+    }
   });
 
   it("closes the previous persistent handle before switching fallback backends", async () => {

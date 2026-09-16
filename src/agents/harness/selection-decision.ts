@@ -95,8 +95,7 @@ export function resolveAgentHarnessSelectionDecision(
       }),
   });
   const policy = availability.policy;
-  // OpenClaw's built-in harness is intentionally not part of the plugin candidate list. Explicit plugin
-  // runtimes fail closed unless the selected plugin declares OpenClaw as a lossless fallback.
+  // Prepared executor intent cannot be replaced by a later support probe.
   const runtime = policy.runtime;
   if (runtime === "openclaw") {
     const selectedReason =
@@ -117,7 +116,7 @@ export function resolveAgentHarnessSelectionDecision(
     const forced = pluginHarnesses.find((entry) => entry.id === runtime);
     if (forced) {
       const support = availability.support;
-      if (!support || support.supported || support.fallbackRuntime === "openclaw") {
+      if (!support || support.supported || policy.forcedByEnvironment) {
         if (support && !support.supported) {
           log.info(
             `agent harness selected requested=${runtime} selected=${forced.id} reason=private_qa_forced_runtime`,

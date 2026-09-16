@@ -12,6 +12,7 @@ import type { ContextEngineTurnAttemptFacts } from "../harness/context-engine-tu
 import { runEmbeddedAgentEntry } from "./run-entry.js";
 import {
   makeResult,
+  createDirectHarness,
   recordTurnAttempt,
   prepareFallbackRunner,
   initialAttemptOptions,
@@ -53,17 +54,6 @@ vi.mock("../harness/runtime-plugin.js", () => ({
 vi.mock("../harness/selection.js", () => ({
   selectAgentHarness: (params: { provider: string }) => state.selectAgentHarness(params),
 }));
-
-function createDirectHarness() {
-  return {
-    workspaceDir: "/tmp/workspace",
-    preparation: { kind: "direct" as const },
-    prepareExecutionSelection: async (provider: string, model: string) => ({
-      model: { provider, id: model },
-      executor: { kind: "harness" as const, id: "openclaw" },
-    }),
-  };
-}
 
 describe("runEmbeddedAgentEntry", () => {
   beforeEach(() => {
@@ -158,7 +148,6 @@ describe("runEmbeddedAgentEntry", () => {
           identity: { runId: "run-stale-error", agentId: "main", sessionId: "session-1" },
           harness: createDirectHarness(),
           behavior: { kind: "command-rpc", hasCommittedSideEffect: () => false },
-          sessionOverride: { kind: "preserve" },
           runCandidate: async ({ model: { provider, id: model } }, options) => {
             if (options.isFallbackRetry) {
               throw new Error("fallback setup failed");
@@ -199,7 +188,6 @@ describe("runEmbeddedAgentEntry", () => {
         isFallbackRetry: boolean;
       }> = [];
       const candidateLeases: object[] = [];
-      const reconciled: Array<{ provider: string; model: string }> = [];
       const result = await runEmbeddedAgentEntry({
         selection: { cfg, provider: "primary-provider", model: "primary-model" },
         identity: {
@@ -222,12 +210,6 @@ describe("runEmbeddedAgentEntry", () => {
                 kind: "command-rpc" as const,
                 hasCommittedSideEffect: () => false,
               },
-        sessionOverride: {
-          kind: "reconcile-completed",
-          reconcile: async (candidate) => {
-            reconciled.push(candidate);
-          },
-        },
         runCandidate: async ({ model: { provider, id: model } }, options) => {
           expect(
             resolveProjectedAgentRunModel({
@@ -282,9 +264,7 @@ describe("runEmbeddedAgentEntry", () => {
         },
       });
       expect(getAgentRunContext("run-shared-fallback")?.activeModel).toBeUndefined();
-      await result.settleSessionOverride();
-      await result.settleSessionOverride();
-      return { result, candidateCalls, candidateLeases, reconciled };
+      return { result, candidateCalls, candidateLeases };
     };
 
     const channel = await runMode("channel-delivery");
@@ -352,10 +332,6 @@ describe("runEmbeddedAgentEntry", () => {
         modelId: "fallback-model",
       }),
     );
-    expect(channel.reconciled).toEqual(command.reconciled);
-    expect(channel.reconciled).toEqual([
-      { provider: "fallback-provider", model: "fallback-model" },
-    ]);
   });
 
   it("preflights caller-resolved CLI hosts instead of the model harness", async () => {
@@ -372,13 +348,15 @@ describe("runEmbeddedAgentEntry", () => {
         workspaceDir: "/tmp/workspace",
         preparation: { kind: "direct" },
         prepareExecutionSelection: async (provider: string, model: string) => ({
-          model: { provider, id: model },
-          executor: { kind: "harness" as const, id: "openclaw" },
+          selection: {
+            model: { provider, id: model },
+            executor: { kind: "harness" as const, id: "openclaw" },
+          },
+          validateCommit: () => undefined,
         }),
         resolveContextEngineHost,
       },
       behavior: { kind: "command-rpc", hasCommittedSideEffect: () => false },
-      sessionOverride: { kind: "preserve" },
       runCandidate: async ({ model: { provider, id: model } }) =>
         makeResult({
           provider,
@@ -418,12 +396,14 @@ describe("runEmbeddedAgentEntry", () => {
         workspaceDir: "/tmp/workspace",
         preparation: { kind: "direct" },
         prepareExecutionSelection: async (provider, model) => ({
-          model: { provider, id: model },
-          executor: { kind: "harness", id: `${provider}-harness` },
+          selection: {
+            model: { provider, id: model },
+            executor: { kind: "harness", id: `${provider}-harness` },
+          },
+          validateCommit: () => undefined,
         }),
       },
       behavior: { kind: "command-rpc", hasCommittedSideEffect: () => false },
-      sessionOverride: { kind: "preserve" },
       runCandidate: async ({ model: { provider, id: model } }) =>
         makeResult({
           provider,
@@ -459,7 +439,6 @@ describe("runEmbeddedAgentEntry", () => {
       identity: { runId: "maintenance", agentId: "main", sessionId: "session-1" },
       harness: createDirectHarness(),
       behavior: { kind: "maintenance" },
-      sessionOverride: { kind: "preserve" },
       runCandidate: async ({ model: { provider, id: model } }) => makeResult({ provider, model }),
     });
 
@@ -479,7 +458,6 @@ describe("runEmbeddedAgentEntry", () => {
       identity: { runId: "settle-winner", agentId: "main", sessionId: "session-1" },
       harness: createDirectHarness(),
       behavior: { kind: "command-rpc", hasCommittedSideEffect: () => false },
-      sessionOverride: { kind: "preserve" },
       onAcceptedTerminal,
       runCandidate: async ({ model: { provider, id: model } }, options) => {
         const label = provider === "primary-provider" ? "primary" : "fallback";
@@ -531,7 +509,6 @@ describe("runEmbeddedAgentEntry", () => {
           hasRetryBlockedDelivery: false,
         }),
       },
-      sessionOverride: { kind: "preserve" },
       abortSignal: abortController.signal,
       onAcceptedTerminal,
       runCandidate: async ({ model: { provider, id: model } }, options) => {
@@ -577,7 +554,6 @@ describe("runEmbeddedAgentEntry", () => {
         identity: { runId: "settle-result", agentId: "main", sessionId: "session-1" },
         harness: createDirectHarness(),
         behavior: { kind: "command-rpc", hasCommittedSideEffect },
-        sessionOverride: { kind: "preserve" },
         runCandidate: async ({ model: { provider, id: model } }, options) => {
           recordTurnAttempt(options.onContextEngineTurnCandidate, "candidate");
           const candidate = makeResult({ provider, model, classification: "empty" });
@@ -638,7 +614,6 @@ describe("runEmbeddedAgentEntry", () => {
       identity: { runId: "settle-exhausted", agentId: "main", sessionId: "session-1" },
       harness: createDirectHarness(),
       behavior: { kind: "command-rpc", hasCommittedSideEffect: () => false },
-      sessionOverride: { kind: "preserve" },
       runCandidate: async ({ model: { provider, id: model } }, options) => {
         recordTurnAttempt(options.onContextEngineTurnCandidate, provider);
         return makeResult({
@@ -729,7 +704,6 @@ describe("runEmbeddedAgentEntry", () => {
       identity: { runId: "settle-non-terminal", agentId: "main", sessionId: "session-1" },
       harness: createDirectHarness(),
       behavior: { kind: "command-rpc", hasCommittedSideEffect: () => true },
-      sessionOverride: { kind: "preserve" },
       runCandidate: async ({ model: { provider, id: model } }, options) => {
         recordTurnAttempt(options.onContextEngineTurnCandidate, "candidate");
         return makeResult({
@@ -786,7 +760,6 @@ describe("runEmbeddedAgentEntry", () => {
             throw classificationError;
           },
         },
-        sessionOverride: { kind: "preserve" },
         runCandidate: async ({ model: { provider, id: model } }, options) => {
           recordTurnAttempt(options.onContextEngineTurnCandidate, "candidate");
           return makeResult({ provider, model, classification: "empty" });
@@ -835,7 +808,6 @@ describe("runEmbeddedAgentEntry", () => {
             hasRetryBlockedDelivery: false,
           }),
         },
-        sessionOverride: { kind: "preserve" },
         runCandidate,
       }),
     ).rejects.toBe(failure);
@@ -902,7 +874,6 @@ describe("runEmbeddedAgentEntry", () => {
           hasRetryBlockedDelivery: false,
         }),
       },
-      sessionOverride: { kind: "preserve" },
       runCandidate,
     });
 
@@ -941,7 +912,6 @@ describe("runEmbeddedAgentEntry", () => {
       identity: { runId: "followup", agentId: "main", sessionId: "session-1" },
       harness: createDirectHarness(),
       behavior: { kind: "followup-delivery" },
-      sessionOverride: { kind: "preserve" },
       runCandidate: async ({ model: { provider, id: model } }) =>
         makeResult({ provider, model, classification: "empty" }),
     });
@@ -1013,7 +983,6 @@ describe("runEmbeddedAgentEntry", () => {
         identity: { runId, agentId: "main", sessionId: "session-1" },
         harness: createDirectHarness(),
         behavior: { kind: "command-rpc", hasCommittedSideEffect: () => false },
-        sessionOverride: { kind: "preserve" },
         runCandidate: async ({ model: { provider, id: model } }) => ({
           ...makeResult({ provider, model }),
           messagingToolSourceReplyPayloads: sourceReplies,

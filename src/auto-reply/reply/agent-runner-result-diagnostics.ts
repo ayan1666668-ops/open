@@ -100,6 +100,7 @@ export async function buildReplyDiagnosticsPayload(params: {
           cfg: cfg ?? {},
           agentId: followupRun.run.agentId,
           sessionKey: followupRun.run.sessionKey,
+          sessionEntry: activeSessionEntry,
           selection: followupRun.run.executionSelection,
           subagentSpawnLineage: followupRun.run.subagentSpawnLineage,
         }).kind === "active",

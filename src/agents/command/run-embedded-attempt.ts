@@ -286,6 +286,11 @@ export async function runEmbeddedAgentAttempt(params: RunEmbeddedAgentAttemptPar
               cfg,
               agentId: sessionAgentId,
               sessionKey,
+              storePath,
+              readSessionEntry:
+                !storePath && sessionKey && sessionStore
+                  ? () => sessionStore[sessionKey]
+                  : undefined,
               sessionEntry: sessionEntryForAttempt,
               request: {
                 kind: "fallback",
@@ -302,14 +307,13 @@ export async function runEmbeddedAgentAttempt(params: RunEmbeddedAgentAttemptPar
             if (isAcpExecutionSelection(prepared.selection)) {
               throw new Error("This turn requires a direct execution selection.");
             }
-            return prepared.selection;
+            return { selection: prepared.selection, validateCommit: prepared.validateCommit };
           },
         },
         behavior: {
           kind: "command-rpc",
           hasCommittedSideEffect: currentAttemptCommittedCronMedia,
         },
-        sessionOverride: { kind: "preserve" },
         abortSignal: deferredLifecycle.signal,
         onFallbackStep: (step) => {
           fallbackTrajectoryRecorder?.recordEvent("model.fallback_step", step);
@@ -506,7 +510,6 @@ export async function runEmbeddedAgentAttempt(params: RunEmbeddedAgentAttemptPar
       fallbackProvider = fallbackResult.provider;
       fallbackModel = fallbackResult.model;
       fallbackExhausted = fallbackResult.outcome === "exhausted";
-      await fallbackResult.settleSessionOverride();
       if (fallbackResult.attempts.length > 0 && result.meta.agentMeta) {
         result = {
           ...result,

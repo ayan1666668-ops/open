@@ -514,7 +514,6 @@ describe("runMemoryFlushIfNeeded", () => {
               outcome: { reason: "completed" as const, status: "ok" as const },
               metadata: {},
             },
-            settleSessionOverride: async () => undefined,
           };
         },
       );

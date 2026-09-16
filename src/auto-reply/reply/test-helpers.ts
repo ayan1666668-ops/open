@@ -131,8 +131,15 @@ export function createMockTypingController(
 
 /** Creates a minimal queued follow-up run fixture. */
 export function createMockFollowupRun(
-  overrides: Partial<Omit<FollowupRun, "run">> & { run?: Partial<FollowupRun["run"]> } = {},
+  overrides: Partial<Omit<FollowupRun, "run">> & {
+    run?: Partial<FollowupRun["run"]> & { provider?: string; model?: string };
+  } = {},
 ): FollowupRun {
+  const { provider = "anthropic", model = "claude", ...runOverrides } = overrides.run ?? {};
+  const executionSelection = runOverrides.executionSelection ?? {
+    model: { provider, id: model },
+    executor: { kind: "harness" as const, id: "openclaw" },
+  };
   const rootDir = useAutoCleanupTempDirTracker(onTestFinished).make("openclaw-mock-followup-");
   const skipProviderRuntimeHints = process.env.OPENCLAW_TEST_FAST === "1";
   const base: FollowupRun = {
@@ -154,12 +161,12 @@ export function createMockFollowupRun(
         prompt: "",
         skills: [],
       },
-      provider: "anthropic",
-      model: "claude",
+      executionSelection,
+
       thinkingCatalog: [
         {
-          provider: overrides.run?.provider ?? "anthropic",
-          id: overrides.run?.model ?? "claude",
+          provider: executionSelection.model.provider,
+          id: executionSelection.model.id,
           input: ["text"],
         },
       ],
@@ -180,7 +187,8 @@ export function createMockFollowupRun(
     ...overrides,
     run: {
       ...base.run,
-      ...overrides.run,
+      ...runOverrides,
+      executionSelection,
     },
   };
 }

@@ -7,6 +7,7 @@ import {
   findConfiguredProviderModel,
   resolveMergedModelProviderConfig,
 } from "../../config/model-provider-config.js";
+import type { SessionEntry } from "../../config/sessions/types.js";
 import { resolveSessionExecutionFallbacks } from "../../model-picker/apply-session-model-selection.js";
 import type { resolveProviderScopedAuthProfile } from "./agent-runner-auth-profile.js";
 import type { FollowupRun } from "./queue.js";
@@ -25,12 +26,14 @@ type ReasoningTagProviderResolver = (
 export function resolveModelFallbackOptions(
   run: FollowupRun["run"],
   configOverride: FollowupRun["run"]["config"] = run.config,
+  sessionEntry?: Partial<SessionEntry>,
 ) {
   const config = configOverride;
   const modelFallbackAvailability = resolveSessionExecutionFallbacks({
     cfg: config,
     agentId: run.agentId,
     sessionKey: run.sessionKey,
+    sessionEntry,
     selection: run.executionSelection,
     subagentSpawnLineage: run.subagentSpawnLineage,
   });
@@ -38,7 +41,7 @@ export function resolveModelFallbackOptions(
     cfg: config,
     provider: run.executionSelection.model.provider,
     model: run.executionSelection.model.id,
-    requestedRouteResolution: "resolved",
+    requestedRouteResolution: "resolved" as const,
     agentDir: run.agentDir,
     agentId: run.agentId,
     sessionKey: run.runtimePolicySessionKey ?? run.sessionKey,

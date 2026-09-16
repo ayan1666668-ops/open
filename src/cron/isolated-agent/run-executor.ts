@@ -502,7 +502,8 @@ function createCronPromptExecutor(
           const prepared = await prepareSessionExecutionSelection({
             cfg: params.cfgWithAgentDefaults,
             agentId: params.agentId,
-            sessionKey: params.runSessionKey,
+            sessionKey: params.agentSessionKey,
+            storePath: params.cronSession.storePath,
             sessionEntry: params.cronSession.sessionEntry,
             request: {
               kind: "fallback",
@@ -522,7 +523,7 @@ function createCronPromptExecutor(
           if (isAcpExecutionSelection(prepared.selection)) {
             throw new Error("This automation requires a direct execution selection.");
           }
-          return prepared.selection;
+          return { selection: prepared.selection, validateCommit: prepared.validateCommit };
         },
         resolveContextEngineHost: (selection) => {
           const { executionProvider, cliExecution } = resolveCandidateExecution(selection);
@@ -541,7 +542,6 @@ function createCronPromptExecutor(
         },
       },
       behavior: { kind: "command-rpc", hasCommittedSideEffect: currentAttemptCommittedMedia },
-      sessionOverride: { kind: "preserve" },
       abortSignal: params.abortSignal,
       runCandidate: async (candidateSelection, runOptions) => {
         const providerOverride = candidateSelection.model.provider;

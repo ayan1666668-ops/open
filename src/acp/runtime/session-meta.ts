@@ -1,4 +1,3 @@
-/** SQLite-backed ACP session metadata storage keyed through session-store entries. */
 import type { DatabaseSync } from "node:sqlite";
 import { safeParseJsonRecord } from "@openclaw/normalization-core";
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
@@ -23,6 +22,8 @@ import {
   decodeAcpExecutionSelectionStorage,
   encodeAcpExecutionSelectionStorage,
 } from "../../model-picker/execution-selection-codec.js";
+/** SQLite-backed ACP session metadata storage keyed through session-store entries. */
+import type { AcpExecutionSelection } from "../../model-picker/execution-selection.js";
 import { withExistingOpenClawStateDatabaseReadOnly } from "../../state/openclaw-state-db-readonly.js";
 import {
   type OpenClawStateDatabaseOptions,
@@ -514,6 +515,8 @@ function consumeLegacyAcpMigrationSources(params: {
 }
 
 export async function upsertAcpSessionMeta(params: {
+  executionSelection?: AcpExecutionSelection;
+  expectedExecutionSelectionSeed?: SessionEntry;
   assertCommitAllowed?: () => void;
   sessionKey: string;
   agentId?: string;
@@ -569,7 +572,12 @@ export async function upsertAcpSessionMeta(params: {
     },
     { env: params.env, path: params.databasePath },
   );
-  const metaToPersist = nextMeta;
+  const metaToPersist =
+    nextMeta && params.executionSelection
+      ? (
+          await import("../../model-picker/apply-session-model-selection.js")
+        ).commitAcpExecutionSelection(nextMeta, params.executionSelection)
+      : nextMeta;
   if (metaToPersist === undefined) {
     return current ? mergeAcpForReturn(entry, current) : (entry ?? null);
   }
@@ -717,5 +725,32 @@ export async function upsertAcpSessionMeta(params: {
     },
     { env: params.env, path: params.databasePath },
   );
+  if (params.executionSelection && params.expectedExecutionSelectionSeed) {
+    const { consumeSessionExecutionSelectionSeed } =
+      await import("../../model-picker/apply-session-model-selection.js");
+    const expected = params.expectedExecutionSelectionSeed;
+    const consumed = await patchSessionEntryWithKey(
+      {
+        ...(storeEntry.agentId ? { agentId: storeEntry.agentId } : {}),
+        storePath,
+        sessionKey: persisted.sessionKey,
+      },
+      (currentEntry) => {
+        const next = { ...currentEntry };
+        return consumeSessionExecutionSelectionSeed(next, expected) ? next : null;
+      },
+      {
+        ...sessionStoreUpdateOptions({ ...params, sessionKey: persisted.sessionKey }),
+        replaceEntry: true,
+        assertCommitAllowed: params.assertCommitAllowed,
+      },
+    );
+    if (!consumed) {
+      throw new Error(
+        "ACP selection committed but its staged model request could not be reconciled.",
+      );
+    }
+    return mergeAcpForReturn(consumed.entry, metaToPersist);
+  }
   return mergeAcpForReturn(persisted.entry, metaToPersist);
 }

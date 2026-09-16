@@ -12,9 +12,10 @@ import { resolveProviderIdForAuth } from "../agents/provider-auth-aliases.js";
 import type { SessionEntry } from "../config/sessions.js";
 import { resolveCollapsedSessionAuthPinSource } from "../config/sessions/auth-profile-override-provenance.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { encodeLegacySessionModelSelection } from "../model-picker/execution-selection-codec.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
 import { isUserModelAuthProfileId } from "../state/user-model-account-id.js";
-import { applyModelOverrideToSessionEntry } from "./model-overrides.js";
+import { assertModelSelectionUnlocked } from "./model-overrides.js";
 
 type ModelOverrideSelection = {
   provider: string;
@@ -98,7 +99,7 @@ export function shouldPreserveUnavailableSessionAuthProfileOverride(
   );
 }
 
-/** Applies a user model selection without dropping a compatible pinned auth profile. */
+/** @deprecated Use applySessionModelSelection; removed in the first stable release after 2026.10. */
 export function applyModelOverrideWithAuthProfileCompatibility(params: {
   cfg: OpenClawConfig;
   agentDir: string;
@@ -112,7 +113,8 @@ export function applyModelOverrideWithAuthProfileCompatibility(params: {
   markLiveSwitchPending?: boolean;
   metadataSnapshot?: Pick<PluginMetadataSnapshot, "plugins">;
 }): { updated: boolean } {
-  return applyModelOverrideToSessionEntry({
+  assertModelSelectionUnlocked(params.entry);
+  return encodeLegacySessionModelSelection({
     entry: params.entry,
     selection: params.selection,
     ...(params.profileOverride ? { profileOverride: params.profileOverride } : {}),

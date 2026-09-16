@@ -37,11 +37,13 @@ export async function runWithScopedSessionAccess<T>(params: {
   expectedSessionId?: string;
   signal?: AbortSignal;
   targetSessionKey: string;
-  run: () => Promise<T>;
+  run: (assertCurrent: () => void) => Promise<T>;
 }): Promise<T> {
   const expectedSessionId = params.expectedSessionId?.trim();
   if (!expectedSessionId) {
-    return await params.run();
+    return await params.run(() => {
+      params.signal?.throwIfAborted();
+    });
   }
   const { sessionAgentId: agentId } = resolveSessionAgentIds({
     config: params.cfg,
@@ -63,7 +65,15 @@ export async function runWithScopedSessionAccess<T>(params: {
     ...(params.signal ? { signal: params.signal } : {}),
   });
   try {
-    return await admission.run(params.run);
+    return await admission.run(() =>
+      params.run(() => {
+        params.signal?.throwIfAborted();
+        if (!admission.isActive()) {
+          throw new Error("Session access is no longer active.");
+        }
+        assertExpectedIncarnation();
+      }),
+    );
   } finally {
     admission.release();
   }

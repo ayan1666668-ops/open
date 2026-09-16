@@ -2,8 +2,17 @@
 import { isDeepStrictEqual } from "node:util";
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
-import { commitAcpExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
+import {
+  commitAcpExecutionSelection,
+  prepareSessionExecutionSelection,
+} from "../../model-picker/apply-session-model-selection.js";
+import { decodeSessionExecutionSelection } from "../../model-picker/execution-selection-codec.js";
+import { executionSelectionCodecMetadata } from "../../model-picker/execution-selection-state.js";
 import type { AcpExecutionSelection } from "../../model-picker/execution-selection.js";
+import {
+  isModelSelectionLocked,
+  MODEL_SELECTION_LOCKED_MESSAGE,
+} from "../../sessions/model-overrides.js";
 import { AcpRuntimeError, withAcpRuntimeErrorBoundary } from "../runtime/errors.js";
 import { resolveManagerRuntimeCapabilities } from "./manager.runtime-controls.js";
 import type { ManagerRuntimeHandleCache } from "./manager.runtime-handle-cache.js";
@@ -13,6 +22,7 @@ import type {
   ResolveManagerSession,
   WriteManagerSessionMeta,
   SessionAcpMeta,
+  SessionEntry,
 } from "./manager.types.js";
 import {
   ACP_SELECTION_REPAIR_MESSAGE,
@@ -95,6 +105,7 @@ export async function runSetManagerSessionConfigOption(
     key: string;
     value: string;
     assertActive?: () => void;
+    expectedExecutionSelectionSeed?: SessionEntry;
   },
 ): Promise<AcpSessionRuntimeOptions> {
   params.assertActive?.();
@@ -103,14 +114,33 @@ export async function runSetManagerSessionConfigOption(
     sessionKey: params.sessionKey,
     agentId: params.agentId,
   });
+  const inferredPatch = inferRuntimeOptionPatchFromConfigOption(params.key, params.value);
+  if (
+    inferredPatch.model !== undefined &&
+    resolution.kind === "ready" &&
+    isModelSelectionLocked(resolution.entry)
+  ) {
+    throw new AcpRuntimeError("ACP_BACKEND_UNSUPPORTED_CONTROL", MODEL_SELECTION_LOCKED_MESSAGE);
+  }
   const resolvedMeta = requireReadySessionMeta(resolution);
+  const decoded =
+    resolution.kind === "ready" && resolution.entry
+      ? decodeSessionExecutionSelection(
+          { ...resolution.entry, acp: resolvedMeta },
+          executionSelectionCodecMetadata(params.cfg),
+        )
+      : undefined;
+  const executionSelectionSeed =
+    params.expectedExecutionSelectionSeed ??
+    (decoded?.kind === "uninitialized" && resolution.kind === "ready" && resolution.entry
+      ? { ...resolution.entry }
+      : undefined);
   const { runtime, handle, meta } = await params.ensureRuntimeHandle({
     cfg: params.cfg,
     sessionKey: params.sessionKey,
     agentId: params.agentId,
     meta: resolvedMeta,
   });
-  const inferredPatch = inferRuntimeOptionPatchFromConfigOption(params.key, params.value);
   const capabilities = await resolveManagerRuntimeCapabilities({
     runtime,
     handle,
@@ -147,6 +177,7 @@ export async function runSetManagerSessionConfigOption(
     await markSelectionUnconfirmed(params, meta);
   }
   let controlCompleted = false;
+  let appliedSelection: AcpExecutionSelection | undefined;
   try {
     params.assertActive?.();
     const result = await withAcpRuntimeErrorBoundary({
@@ -160,10 +191,15 @@ export async function runSetManagerSessionConfigOption(
       mergeRuntimeOptions({ current: resolveRuntimeOptionsFromMeta(meta), patch: inferredPatch }),
       result,
     );
+    appliedSelection = {
+      ...requireAcpExecutionSelection(meta),
+      model: nextOptions.model ? { id: nextOptions.model } : null,
+    };
     await persistManagerRuntimeOptions({
       ...params,
       options: nextOptions,
       selectionConfirmed: selectingModel,
+      ...(selectingModel && executionSelectionSeed ? { executionSelectionSeed } : {}),
       expectedSelection: requireAcpExecutionSelection(meta),
       expectedRuntimeSessionName: meta.runtimeSessionName,
     });
@@ -174,6 +210,10 @@ export async function runSetManagerSessionConfigOption(
       const current = params.resolveSession(params);
       if (current.kind === "ready") {
         const committed = requireAcpExecutionSelection(current.meta);
+        if (executionSelectionSeed && isDeepStrictEqual(committed, appliedSelection)) {
+          // The pair committed; a failed legacy-seed cleanup must retain its durable pause.
+          throw error;
+        }
         if (
           committed.model &&
           current.meta.runtimeSessionName === meta.runtimeSessionName &&
@@ -279,11 +319,21 @@ async function persistManagerRuntimeOptions(
     selectionConfirmed?: boolean;
     expectedSelection?: AcpExecutionSelection;
     expectedRuntimeSessionName?: string;
+    executionSelectionSeed?: SessionEntry;
   },
 ): Promise<void> {
   const normalized = normalizeRuntimeOptions(params.options);
   const hasOptions = Object.keys(normalized).length > 0;
   const persisted = await params.writeSessionMeta({
+    ...(params.executionSelectionSeed && params.expectedSelection
+      ? {
+          executionSelection: {
+            ...params.expectedSelection,
+            model: normalized.model ? { id: normalized.model } : null,
+          },
+          expectedExecutionSelectionSeed: params.executionSelectionSeed,
+        }
+      : {}),
     cfg: params.cfg,
     sessionKey: params.sessionKey,
     agentId: params.agentId,
@@ -311,7 +361,7 @@ async function persistManagerRuntimeOptions(
         },
         { ...selection, model: normalized.model ? { id: normalized.model } : null },
       );
-      if (params.selectionConfirmed) {
+      if (params.selectionConfirmed && !params.executionSelectionSeed) {
         next.state = "idle";
         delete next.lastError;
       }
@@ -326,6 +376,34 @@ async function persistManagerRuntimeOptions(
       "ACP_SESSION_INIT_FAILED",
       "The session disappeared before its model selection could be committed.",
     );
+  }
+
+  if (params.selectionConfirmed && params.executionSelectionSeed) {
+    const committedSelection = requireAcpExecutionSelection(persisted.acp);
+    const settled = await params.writeSessionMeta({
+      cfg: params.cfg,
+      sessionKey: params.sessionKey,
+      agentId: params.agentId,
+      mutate: (current, entry) => {
+        if (!current || !entry) return null;
+        if (
+          current.lastError !== ACP_SELECTION_REPAIR_MESSAGE ||
+          !isDeepStrictEqual(requireAcpExecutionSelection(current), committedSelection)
+        )
+          return current;
+        const next = { ...current, state: "idle" as const };
+        delete next.lastError;
+        return next;
+      },
+      failOnError: true,
+      assertCommitAllowed: params.assertActive,
+    });
+    if (!settled?.acp) {
+      throw new AcpRuntimeError(
+        "ACP_SESSION_INIT_FAILED",
+        "The model change committed but its session could not be reopened.",
+      );
+    }
   }
 
   const cached = params.runtimeHandles.get(params);
@@ -373,6 +451,86 @@ async function markSelectionUnconfirmed(
     throw new AcpRuntimeError(
       "ACP_SESSION_INIT_FAILED",
       "Could not reserve the model change for this session.",
+    );
+  }
+}
+
+/** A fulfilled, already committed native selection only needs its captured legacy seed consumed. */
+export async function consumeManagerExecutionSelectionSeed(
+  params: RuntimeOptionCommandContext & { seed: SessionEntry },
+): Promise<void> {
+  const meta = requireReadySessionMeta(params.resolveSession(params));
+  await persistManagerRuntimeOptions({
+    ...params,
+    options: resolveRuntimeOptionsFromMeta(meta),
+    selectionConfirmed: true,
+    expectedSelection: requireAcpExecutionSelection(meta),
+    expectedRuntimeSessionName: meta.runtimeSessionName,
+    executionSelectionSeed: params.seed,
+  });
+}
+
+/** Legacy SDK setters stage a model; the next prepared ACP turn asks the same selection owner. */
+export async function initializeManagerExecutionSelection(
+  params: RuntimeOptionCommandContext,
+): Promise<void> {
+  const resolution = params.resolveSession(params);
+  const meta = requireReadySessionMeta(resolution);
+  if (resolution.kind !== "ready" || !resolution.entry) return;
+  const seed = { ...resolution.entry };
+  const decoded = decodeSessionExecutionSelection(
+    { ...seed, acp: meta },
+    executionSelectionCodecMetadata(params.cfg),
+  );
+  if (decoded.kind !== "uninitialized" || decoded.executor?.kind !== "acp") return;
+  const accepted = requireAcpExecutionSelection(meta);
+  if (accepted.model?.id === decoded.model?.id) {
+    await consumeManagerExecutionSelectionSeed({ ...params, seed });
+  } else {
+    const prepared = await prepareSessionExecutionSelection({
+      cfg: params.cfg,
+      sessionKey: params.sessionKey,
+      agentId: params.agentId,
+      sessionEntry: { ...seed, acp: meta },
+      request: { kind: "initialize" },
+      prepareAcp: async (selection) => {
+        const current = requireAcpExecutionSelection(
+          requireReadySessionMeta(params.resolveSession(params)),
+        );
+        if (current.model?.id === selection.model?.id) {
+          await consumeManagerExecutionSelectionSeed({ ...params, seed });
+          return current;
+        }
+        if (!selection.model) {
+          throw new AcpRuntimeError(
+            "ACP_BACKEND_UNSUPPORTED_CONTROL",
+            "This app cannot restore its default model in the current conversation. Select a model explicitly.",
+          );
+        }
+        const options = await runSetManagerSessionConfigOption({
+          ...params,
+          key: "model",
+          value: selection.model.id,
+          expectedExecutionSelectionSeed: seed,
+        });
+        return { ...selection, model: options.model ? { id: options.model } : null };
+      },
+    });
+    if (prepared.status !== "ready")
+      throw new AcpRuntimeError("ACP_INVALID_RUNTIME_OPTION", prepared.message);
+  }
+  const after = params.resolveSession(params);
+  if (
+    after.kind === "ready" &&
+    after.entry &&
+    decodeSessionExecutionSelection(
+      { ...after.entry, acp: after.meta },
+      executionSelectionCodecMetadata(params.cfg),
+    ).kind === "uninitialized"
+  ) {
+    throw new AcpRuntimeError(
+      "ACP_SESSION_INIT_FAILED",
+      "The model choice changed during preparation. Send the message again.",
     );
   }
 }

@@ -612,7 +612,7 @@ describe("generateVoiceResponse", () => {
     expect(result.text).toBe("Absolutely. Tell me what you want to do next.");
   });
 
-  it("pins the voice session to responseModel before running the embedded agent", async () => {
+  it("uses responseModel for the voice turn without replacing the accepted session selection", async () => {
     const { runtime, runEmbeddedAgent, patchSessionEntry, sessionStore } = createAgentRuntime([
       { text: '{"spoken":"Pinned model works."}' },
     ]);
@@ -623,6 +623,10 @@ describe("generateVoiceResponse", () => {
       modelProvider: "old-provider",
       contextTokens: 123,
       authProfileOverride: "old-auth-profile",
+      providerOverride: "qa-provider",
+      modelOverride: "qa-selected",
+      agentRuntimeOverride: "openclaw",
+      modelOverrideSource: "user",
     };
     const voiceConfig = VoiceCallConfigSchema.parse({
       responseModel: "openai/gpt-4.1-nano",
@@ -641,24 +645,19 @@ describe("generateVoiceResponse", () => {
     });
 
     expect(result.text).toBe("Pinned model works.");
-    const pinnedSessionEntry = sessionStore["agent:main:voice:15550001111"];
-    expect(pinnedSessionEntry?.providerOverride).toBe("openai");
-    expect(pinnedSessionEntry?.modelOverride).toBe("gpt-4.1-nano");
-    expect(pinnedSessionEntry?.modelOverrideSource).toBe("auto");
-    expect(pinnedSessionEntry?.model).toBeUndefined();
-    expect(pinnedSessionEntry?.modelProvider).toBeUndefined();
-    expect(pinnedSessionEntry?.contextTokens).toBeUndefined();
-    expect(pinnedSessionEntry?.authProfileOverride).toBeUndefined();
-    const patchSessionEntryCall = expectDefined(
-      patchSessionEntry.mock.calls.at(0),
-      "session entry patch",
-    );
-    expect(patchSessionEntryCall[0]).toMatchObject({
-      storePath: "/tmp/openclaw/main/sessions.json",
-      sessionKey: "agent:main:voice:15550001111",
-      replaceEntry: true,
+    expect(sessionStore["agent:main:voice:15550001111"]).toMatchObject({
+      sessionId: "existing-session",
+      updatedAt: 100,
+      model: "old-model",
+      modelProvider: "old-provider",
+      contextTokens: 123,
+      authProfileOverride: "old-auth-profile",
+      providerOverride: "qa-provider",
+      modelOverride: "qa-selected",
+      agentRuntimeOverride: "openclaw",
+      modelOverrideSource: "user",
     });
-    expect((patchSessionEntryCall[0] as { update?: unknown }).update).toBeTypeOf("function");
+    expect(patchSessionEntry).not.toHaveBeenCalled();
     const args = requireEmbeddedAgentArgs(runEmbeddedAgent);
     expect(args.provider).toBe("openai");
     expect(args.model).toBe("gpt-4.1-nano");

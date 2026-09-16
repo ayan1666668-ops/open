@@ -54,12 +54,14 @@ it.each(["uncertain", "confirmed", "released", "stop-reason"] as const)(
         workspaceDir: process.cwd(),
         preparation: { kind: "direct" },
         prepareExecutionSelection: async (provider: string, model: string) => ({
-          model: { provider, id: model },
-          executor: { kind: "harness" as const, id: "openclaw" },
+          selection: {
+            model: { provider, id: model },
+            executor: { kind: "harness" as const, id: "openclaw" },
+          },
+          validateCommit: () => undefined,
         }),
       },
       behavior: { kind: "channel-delivery", readDeliveryEvidence: () => evidence },
-      sessionOverride: { kind: "preserve" },
       runCandidate: async ({ model: { provider, id: model } }, options) => {
         const result: EmbeddedAgentRunResult = {
           payloads: [],

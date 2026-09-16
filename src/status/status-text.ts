@@ -319,16 +319,21 @@ export async function buildStatusReplyParts(
     sessionEntry?.spawnedWorkspaceDir ??
     resolveAgentWorkspaceDir(cfg, statusAgentId);
   const selection = getSessionExecutionSelection(sessionEntry, cfg);
-  const selectedProvider =
-    selection && !isAcpExecutionSelection(selection) ? selection.model.provider : provider;
-  const selectedModel = selection?.model?.id ?? model;
+  const selectedProvider = params.activeModel
+    ? (params.activeModel.provider ?? "")
+    : selection && !isAcpExecutionSelection(selection)
+      ? selection.model.provider
+      : provider;
+  const selectedModel = params.activeModel?.model ?? selection?.model?.id ?? model;
   const parseSelectedProvider = false;
   const modelParams = { selectedProvider, selectedModel, sessionEntry, parseSelectedProvider };
-  const activeModel = readSessionFallbackModel({
-    ...modelParams,
-    config: cfg,
-    sessionScope: { agentId: statusAgentId, sessionKey, storePath },
-  });
+  const activeModel = params.activeModel
+    ? { model: params.activeModel.model, modelProvider: params.activeModel.provider }
+    : readSessionFallbackModel({
+        ...modelParams,
+        config: cfg,
+        sessionScope: { agentId: statusAgentId, sessionKey, storePath },
+      });
   const modelRefs = resolveSelectedAndActiveModel({
     ...modelParams,
     sessionEntry: activeModel ?? sessionEntry,

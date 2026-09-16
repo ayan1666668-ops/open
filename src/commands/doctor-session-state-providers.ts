@@ -19,6 +19,16 @@ import type { SessionEntry } from "../config/sessions.js";
 import { applySessionEntryReplacements } from "../config/sessions/session-accessor.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { updateLegacySessionStore } from "../infra/state-migrations.legacy-session-store.js";
+import {
+  inspectLegacySessionRouteCleanup,
+  applyLegacySessionModelCleanup,
+  hasLegacySessionSelectionFields,
+  resolveSessionExecutionRepairPair,
+  readSessionExecutionRepairRef,
+} from "../model-picker/execution-selection-codec.js";
+import { resolveConfiguredExecutionSelection } from "../model-picker/execution-selection-configured.js";
+import { executionSelectionCodecMetadata } from "../model-picker/execution-selection-state.js";
+import type { ModelExecutionSelection } from "../model-picker/execution-selection.js";
 import { listPluginDoctorSessionRouteStateOwners } from "../plugins/doctor-contract-registry.js";
 import type { DoctorSessionRouteStateOwner } from "../plugins/doctor-session-route-state-owner-types.js";
 import { isValidAgentHarnessSessionStoreEntry } from "../sessions/agent-harness-session-key.js";
@@ -103,6 +113,11 @@ function resolveConfiguredDoctorSessionStateRoute(params: {
     defaultProvider: primary.provider,
     configuredModelRefs: [...configuredModelRefs],
     runtime,
+    selection: resolveConfiguredExecutionSelection({
+      cfg: params.cfg,
+      agentId,
+      model: { provider: primary.provider, id: primary.model },
+    }),
   };
 }
 
@@ -122,14 +137,11 @@ function entryMayContainPluginSessionRouteState(sessionKey: string, entry: Sessi
   }
   const record = entry;
   return (
-    normalizeString(record.providerOverride) !== undefined ||
-    normalizeString(record.modelOverride) !== undefined ||
-    normalizeString(record.modelOverrideSource) !== undefined ||
+    hasLegacySessionSelectionFields(record) ||
     record.liveModelSwitchPending !== undefined ||
     normalizeString(record.modelProvider) !== undefined ||
     normalizeString(record.model) !== undefined ||
     normalizeString(record.agentHarnessId) !== undefined ||
-    normalizeString(record.agentRuntimeOverride) !== undefined ||
     record.cliSessionBindings !== undefined ||
     record.cliSessionIds !== undefined ||
     normalizeString(record.claudeCliSessionId) !== undefined ||
@@ -142,6 +154,7 @@ type DoctorSessionRouteState = {
   defaultProvider: string;
   configuredModelRefs: string[];
   runtime?: string;
+  selection?: ModelExecutionSelection;
 };
 
 type DoctorSessionRouteStateRepair = {
@@ -149,7 +162,12 @@ type DoctorSessionRouteStateRepair = {
   ownerId: string;
   ownerLabel: string;
   reasons: string[];
-  pinnedRuntimeKeys: string[];
+  pinnedRuntimeKeys: Array<"agentHarnessId">;
+  modelRepair?: {
+    selection: ModelExecutionSelection;
+    expectedModel: { provider?: string; id: string };
+    expectedRuntime?: string;
+  };
   cliSessionKeys: string[];
 };
 
@@ -228,13 +246,10 @@ function hasOwnedCliSession(params: {
   });
 }
 
-function modelRefKey(provider: string, model: string): string {
-  return modelKey(provider, model).toLowerCase();
-}
-
 function scanEntryForOwner(params: {
   key: string;
-  entry: Record<string, unknown>;
+  entry: SessionEntry;
+  cfg: OpenClawConfig;
   owner: DoctorSessionRouteStateOwner;
   route: DoctorSessionRouteState | undefined;
 }): {
@@ -250,61 +265,62 @@ function scanEntryForOwner(params: {
   const routeAllowsOwnerRuntime =
     routeRuntime !== undefined && runtimeIds.has(normalizeProviderId(routeRuntime));
   const reasons: string[] = [];
-  const pinnedRuntimeKeys: string[] = [];
-  const directOverride = resolvePersistedOverrideModelRef({
+  const pinnedRuntimeKeys: Array<"agentHarnessId"> = [];
+  const inspection = inspectLegacySessionRouteCleanup({
+    entry: params.entry,
+    providerIds,
+    runtimeIds,
+    configuredModels: params.route?.configuredModelRefs ?? [],
+    routeAllowsOwner,
+    routeAllowsRuntime: routeAllowsOwnerRuntime,
     defaultProvider: params.route?.defaultProvider ?? "",
-    overrideProvider: params.entry.providerOverride,
-    overrideModel: params.entry.modelOverride,
   });
-  const directOverrideKey = directOverride
-    ? modelRefKey(directOverride.provider, directOverride.model)
-    : undefined;
-  const directOverrideIsOwned =
-    directOverride !== null && providerIds.has(normalizeProviderId(directOverride.provider));
-  const directOverrideIsConfigured =
-    directOverrideKey !== undefined &&
-    (params.route?.configuredModelRefs.some((ref) => ref.toLowerCase() === directOverrideKey) ??
-      false);
-  const directOverrideSource =
-    params.entry.modelOverrideSource === "user"
-      ? "user"
-      : params.entry.modelOverrideSource === "auto"
-        ? "auto"
-        : params.entry.modelOverride
-          ? "legacy"
-          : undefined;
-
-  if (directOverrideIsOwned && !directOverrideIsConfigured) {
-    if (directOverrideSource === "auto") {
-      addReason(reasons, "auto model override");
-    } else if (!routeAllowsOwner && directOverride) {
+  if (inspection.kind === "retain") {
+    return {};
+  }
+  if (inspection.kind === "manual") {
+    return {
+      manualReview: {
+        key: params.key,
+        ownerLabel: params.owner.label,
+        message: `${params.key} (${inspection.detail})`,
+      },
+    };
+  }
+  let modelRepair: DoctorSessionRouteStateRepair["modelRepair"];
+  if (inspection.kind === "reset-model") {
+    const selection =
+      params.route?.selection &&
+      resolveSessionExecutionRepairPair({
+        entry: params.entry,
+        model: params.route.selection.model,
+        executor: params.route.selection.executor,
+        metadata: executionSelectionCodecMetadata(params.cfg),
+      });
+    if (!selection) {
       return {
         manualReview: {
           key: params.key,
           ownerLabel: params.owner.label,
-          message: `${params.key} (${modelRefKey(directOverride.provider, directOverride.model)}, ${
-            directOverrideSource === "user" ? "user" : "legacy"
-          })`,
+          message: `${params.key} (configured executor could not be resolved; selection retained)`,
         },
       };
     }
+    modelRepair = {
+      selection,
+      expectedModel: inspection.model,
+      expectedRuntime: readSessionExecutionRepairRef(params.entry).runtime,
+    };
+    addReason(reasons, "auto model override");
   }
-
-  const explicitOwnedOverride =
-    directOverrideIsOwned && directOverrideSource !== undefined && directOverrideSource !== "auto";
-  if (!routeAllowsOwnerRuntime && !explicitOwnedOverride) {
+  if (!routeAllowsOwnerRuntime) {
     const harnessId = normalizeString(params.entry.agentHarnessId);
     if (harnessId && runtimeIds.has(normalizeProviderId(harnessId))) {
       addReason(reasons, "pinned runtime");
       pinnedRuntimeKeys.push("agentHarnessId");
     }
-    const runtimeOverride = normalizeString(params.entry.agentRuntimeOverride);
-    if (runtimeOverride && runtimeIds.has(normalizeProviderId(runtimeOverride))) {
-      addReason(reasons, "pinned runtime");
-      pinnedRuntimeKeys.push("agentRuntimeOverride");
-    }
   }
-  if (!routeAllowsOwner && !explicitOwnedOverride) {
+  if (!routeAllowsOwner) {
     const runtimeRef = resolvePersistedOverrideModelRef({
       defaultProvider: "",
       overrideProvider: params.entry.modelProvider,
@@ -334,6 +350,7 @@ function scanEntryForOwner(params: {
       ownerLabel: params.owner.label,
       reasons,
       pinnedRuntimeKeys,
+      ...(modelRepair ? { modelRepair } : {}),
       cliSessionKeys,
     },
   };
@@ -379,7 +396,7 @@ export function createPluginSessionStateDoctorScanner(params: {
         routeByAgentId.set(agentId, route);
       }
       for (const owner of owners) {
-        const scan = scanEntryForOwner({ key, entry, owner, route });
+        const scan = scanEntryForOwner({ key, entry, owner, route, cfg: params.cfg });
         if (scan.repair) {
           repairs.push(scan.repair);
         }
@@ -431,7 +448,7 @@ function clearRecordKeys(
 /** Clears stale plugin-owned routing fields from a session entry and refreshes updatedAt. */
 function applySessionRouteStateRepair(params: {
   sessionKey: string;
-  entry: Record<string, unknown>;
+  entry: SessionEntry;
   repair: DoctorSessionRouteStateRepair;
   now: number;
 }): boolean {
@@ -443,14 +460,11 @@ function applySessionRouteStateRepair(params: {
   const clear = (key: string) => {
     changed = clearEntryKey(params.entry, key) || changed;
   };
-  if (params.repair.reasons.includes("auto model override")) {
-    clear("providerOverride");
-    clear("modelOverride");
-    clear("modelOverrideSource");
-    clear("modelOverrideFallbackOriginProvider");
-    clear("modelOverrideFallbackOriginModel");
-    clear("modelOverrideRouteResolution");
-    clear("liveModelSwitchPending");
+  if (params.repair.modelRepair) {
+    if (!applyLegacySessionModelCleanup({ entry: params.entry, ...params.repair.modelRepair })) {
+      return false;
+    }
+    changed = true;
   }
   if (params.repair.reasons.includes("runtime model state")) {
     clear("model");
@@ -585,10 +599,10 @@ export async function runPluginSessionStateDoctorRepairs(params: {
     for (const [ownerLabel, hits] of grouped) {
       params.warnings.push(
         [
-          `- Found explicit ${ownerLabel} model overrides in ${countSessionLabel(
+          `- Found explicit ${ownerLabel} selections in ${countSessionLabel(
             hits.length,
           )} outside the current configured route.`,
-          "  Doctor leaves explicit or legacy user selections untouched; switch them with /model or reset the session if that provider is no longer intended.",
+          "  Doctor leaves accepted model choices and runtime pins untouched; use /model to change the selection if that app or provider is no longer intended.",
           `  Examples: ${hits
             .slice(0, 3)
             .map((hit) => hit.message)

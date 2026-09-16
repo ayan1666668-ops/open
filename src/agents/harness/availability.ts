@@ -75,7 +75,7 @@ export function resolveAgentHarnessAvailabilityDecision(
       providerOwnership: params.resolveProviderOwnership?.(),
     }),
   );
-  if (!support.supported && !policy.forcedByEnvironment) {
+  if (!support.supported && !policy.forcedByEnvironment && !runtimeOverride) {
     if (implicit || support.fallbackRuntime === "openclaw") {
       return {
         kind: implicit ? "implicit-unsupported" : "declared-fallback",

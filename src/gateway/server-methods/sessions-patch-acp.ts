@@ -108,8 +108,14 @@ export async function applyDedicatedAcpSessionPatch(params: {
     const prepared = await prepareSessionExecutionSelection({
       ...target,
       sessionEntry: { ...params.entry, acp: meta },
-      request:
-        typeof raw === "string" && !reset
+      request: reset
+        ? {
+            kind: "reset",
+            ...(typeof raw === "string"
+              ? { model: { provider: defaults.provider, id: raw.trim() } }
+              : {}),
+          }
+        : typeof raw === "string"
           ? { kind: "model", model: { provider: defaults.provider, id: raw.trim() } }
           : { kind: "reset" },
       prepareAcp: async (selection) =>

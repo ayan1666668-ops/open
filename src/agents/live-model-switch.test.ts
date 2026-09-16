@@ -66,11 +66,7 @@ const cfg = { session: { store: "/fixture/store.sqlite" } };
 const scope = { cfg, sessionKey: "agent:reply:main", agentId: "reply" };
 const current = {
   ...scope,
-  defaultProvider: "fixture",
-  defaultModel: "configured",
-  currentProvider: "fixture",
-  currentModel: "first",
-  currentAgentRuntimeOverride: "openclaw",
+  currentExecution: selection,
 };
 function storeSelection(pair = selection, fields: Partial<SessionEntry> = {}) {
   const entry: SessionEntry = {

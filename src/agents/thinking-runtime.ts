@@ -79,6 +79,7 @@ export function resolveEffectiveAgentRuntime(
     entry: params.sessionEntry,
     cfg: params.cfg,
   });
+  if (sessionRuntime) return sessionRuntime;
   const runtime = resolveAvailableAgentHarnessPolicy({
     ...params,
     mode: "projection",

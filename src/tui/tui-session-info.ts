@@ -10,8 +10,6 @@ export type SessionInfoDefaults = {
 export type SessionInfoEntry = SessionInfo & {
   key?: string;
   sessionId?: string;
-  modelOverride?: string;
-  providerOverride?: string;
 };
 
 /** Compare only session facts that change visible TUI behavior. */

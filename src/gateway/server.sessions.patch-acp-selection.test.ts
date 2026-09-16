@@ -5,8 +5,9 @@ import * as acpManagerModule from "../acp/control-plane/manager.js";
 import { disposeAcpSessionManagerInstance } from "../acp/control-plane/manager.lifecycle.js";
 import { readAcpSessionMeta, upsertAcpSessionMeta } from "../acp/runtime/session-meta.js";
 import { createTestAdmittedRunContext } from "../agents/admitted-run-context.test-support.js";
-import { loadSessionEntry } from "../config/sessions/session-accessor.js";
+import { loadSessionEntry, patchSessionEntryWithKey } from "../config/sessions/session-accessor.js";
 import { readAcpExecutionSelection } from "../model-picker/execution-selection-codec.js";
+import { applyModelOverrideToSessionEntry } from "../plugin-sdk/model-session-runtime.js";
 import { writeSessionStore } from "./test-helpers.js";
 import {
   acpRuntimeMocks,
@@ -20,6 +21,7 @@ import {
 const { createSessionStoreDir } = setupGatewaySessionsHandlerTestHarness();
 const acpKey = "agent:main:acp:selection-proof";
 const ordinaryKey = "agent:main:ordinary-proof";
+const missingKey = "agent:main:missing-proof";
 const managers: AcpSessionManager[] = [];
 
 afterEach(async () => {
@@ -117,6 +119,7 @@ test.each([
 test.each([
   [acpKey, ordinaryKey],
   [ordinaryKey, acpKey],
+  [missingKey, acpKey],
 ])("sessions.patchMany refuses mixed ACP selection before any target changes: %j", async (keys) => {
   const state = await setupSelection();
   const before = {
@@ -137,6 +140,7 @@ test.each([
     ordinary: state.readEntry(ordinaryKey),
     meta: state.readMeta(),
   }).toEqual(before);
+  expect(state.readEntry(missingKey)).toBeUndefined();
   expect(state.ensureSession).not.toHaveBeenCalled();
   expect(state.setConfigOption).not.toHaveBeenCalled();
   expect(sessionHookMocks.triggerInternalHook).not.toHaveBeenCalled();
@@ -182,6 +186,20 @@ test.each([{ model: null }, { agentRuntime: null }])(
   },
 );
 
+test("sessions.patch keeps a concrete ACP model when clearing its runtime preference", async () => {
+  const state = await setupSelection();
+  const result = await directSessionReq("sessions.patch", {
+    key: acpKey,
+    model: "qa-next",
+    agentRuntime: null,
+  });
+  expect(result).toMatchObject({ ok: true });
+  expect(state.setConfigOption).toHaveBeenCalledWith(
+    expect.objectContaining({ key: "model", value: "qa-next" }),
+  );
+  expect(readAcpExecutionSelection(state.readMeta())?.model).toEqual({ id: "qa-accepted" });
+});
+
 test("sessions.patch preserves ACP runtime ownership", async () => {
   const state = await setupSelection();
   const before = state.readMeta();
@@ -220,4 +238,67 @@ test("sessions.patch rejects stale ACP targeting controls before runtime changes
   expect({ entry: state.readEntry(), meta: state.readMeta() }).toEqual(before);
   expect(state.ensureSession).not.toHaveBeenCalled();
   expect(state.setConfigOption).not.toHaveBeenCalled();
+});
+
+async function stageLegacyModel(state: Awaited<ReturnType<typeof setupSelection>>, model: string) {
+  await patchSessionEntryWithKey(
+    { agentId: "main", sessionKey: acpKey, storePath: state.storePath },
+    (entry) => {
+      const next = { ...entry };
+      applyModelOverrideToSessionEntry({
+        entry: next,
+        selection: { provider: "qa-provider", model },
+      });
+      return next;
+    },
+    { replaceEntry: true },
+  );
+}
+
+function runPreparedTurn(state: Awaited<ReturnType<typeof setupSelection>>, requestId: string) {
+  return state.manager.runTurn({
+    cfg: state.cfg,
+    agentId: "main",
+    sessionKey: acpKey,
+    admittedRunContext: createTestAdmittedRunContext(requestId),
+    provenance: "human",
+    text: "continue",
+    mode: "prompt",
+    requestId,
+  });
+}
+
+test("a legacy SDK model request is accepted by the current ACP app on the next prepared turn", async () => {
+  const state = await setupSelection();
+  await stageLegacyModel(state, "qa-staged");
+  expect(readAcpExecutionSelection(state.readMeta())?.model).toEqual({ id: "qa-before" });
+  await runPreparedTurn(state, "legacy-acp-selection");
+  expect(readAcpExecutionSelection(state.readMeta())).toEqual({
+    executor: { kind: "acp", backend: "qa-acp", agent: "qa-agent" },
+    model: { id: "qa-accepted" },
+  });
+  expect(state.readEntry()).not.toHaveProperty("modelOverride");
+  await runPreparedTurn(state, "legacy-acp-selection-next");
+  expect(
+    state.setConfigOption.mock.calls.filter(([input]) => input.value === "qa-staged"),
+  ).toHaveLength(1);
+  expect(state.runTurn).toHaveBeenCalledTimes(2);
+});
+
+test("accepting a staged ACP model does not erase a newer SDK request", async () => {
+  const state = await setupSelection();
+  await stageLegacyModel(state, "qa-staged");
+  state.setConfigOption.mockImplementationOnce(async () => {
+    await stageLegacyModel(state, "qa-newer");
+    return { configOptions: [{ id: "model", category: "model", currentValue: "qa-accepted" }] };
+  });
+  await expect(runPreparedTurn(state, "legacy-acp-race")).rejects.toThrow(
+    "model choice changed during preparation",
+  );
+  expect(state.readEntry()).toMatchObject({ modelOverride: "qa-newer" });
+  expect(state.runTurn).not.toHaveBeenCalled();
+  await runPreparedTurn(state, "legacy-acp-race-next");
+  expect(state.setConfigOption.mock.calls.some(([input]) => input.value === "qa-newer")).toBe(true);
+  expect(state.readEntry()).not.toHaveProperty("modelOverride");
+  expect(state.runTurn).toHaveBeenCalledOnce();
 });

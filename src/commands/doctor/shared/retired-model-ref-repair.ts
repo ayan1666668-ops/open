@@ -26,16 +26,15 @@ import { mergeAgentModelEntryForConfig } from "../../../config/model-input.js";
 import { resolveMergedModelProviderConfig } from "../../../config/model-provider-config.js";
 import type { SessionEntry } from "../../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
+import { readSessionExecutionRepairModel } from "../../../model-picker/execution-selection-codec.js";
+import { repairSessionExecutionSelection } from "../../../model-picker/execution-selection-repair.js";
 import {
   loadManifestMetadataSnapshot,
   isManifestPluginAvailableForControlPlane,
 } from "../../../plugins/manifest-contract-eligibility.js";
 import { buildManifestBuiltInModelSuppressionResolver } from "../../../plugins/manifest-model-suppression.js";
 import type { PluginMetadataSnapshot } from "../../../plugins/plugin-metadata-snapshot.types.js";
-import {
-  applyModelOverrideToSessionEntry,
-  isModelSelectionLocked,
-} from "../../../sessions/model-overrides.js";
+import { isModelSelectionLocked } from "../../../sessions/model-overrides.js";
 import { listMutableCodexRouteAgentEntries } from "./codex-route-agent-entries.js";
 import { readModelConfigPrimaryRef } from "./codex-route-model-ref.js";
 import { rewriteModelReferenceSlot } from "./codex-route-model-slots.js";
@@ -634,13 +633,13 @@ export function repairRetiredSessionModelRef(
   resolve: ModelRefRepairResolver,
   defaultModelRef: string | undefined,
   warnings: string[],
+  cfg: OpenClawConfig,
 ): boolean {
-  if (!entry.modelOverride || isModelSelectionLocked(entry)) {
+  const model = readSessionExecutionRepairModel(entry);
+  if (!model || isModelSelectionLocked(entry)) {
     return false;
   }
-  const modelRef = entry.providerOverride
-    ? `${entry.providerOverride}/${entry.modelOverride}`
-    : entry.modelOverride;
+  const modelRef = model.provider ? `${model.provider}/${model.id}` : model.id;
   const decision = resolve({
     modelRef,
     agentId,
@@ -666,15 +665,31 @@ export function repairRetiredSessionModelRef(
     return false;
   }
   const slash = replacement.indexOf("/");
-  return applyModelOverrideToSessionEntry({
+  const repair = repairSessionExecutionSelection({
     entry,
-    selection: {
-      provider: replacement.slice(0, slash),
-      model: replacement.slice(slash + 1),
-      isDefault: decision.kind === "clear",
-    },
+    cfg,
+    agentId,
+    ...(decision.kind === "replace"
+      ? { model: { provider: replacement.slice(0, slash), id: replacement.slice(slash + 1) } }
+      : {}),
+    reset: decision.kind === "clear",
     preserveAuthProfileOverride:
       decision.kind === "replace" || replacement.slice(0, slash) === decision.provider,
-    selectionSource: entry.modelOverrideSource === "auto" ? "auto" : "user",
-  }).updated;
+  });
+  if (repair.status === "unresolved") {
+    const warning = `Session model repair for agent "${agentId}" needs its configured executor. The existing model and pin were retained.`;
+    if (!warnings.includes(warning)) {
+      warnings.push(warning);
+    }
+  }
+  if (repair.status === "repaired") {
+    delete entry.model;
+    delete entry.modelProvider;
+    delete entry.contextTokens;
+    delete entry.contextTokensSource;
+    delete entry.contextBudgetStatus;
+    delete entry.fallbackNotice;
+    return true;
+  }
+  return false;
 }

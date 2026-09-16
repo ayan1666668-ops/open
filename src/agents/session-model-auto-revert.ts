@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
+import { resolveCollapsedSessionAuthPinSource } from "../config/sessions/auth-profile-override-provenance.js";
 /** One-run rollback for agent-selected session models. */
 import {
   appendTranscriptMessage,
@@ -70,7 +71,19 @@ async function reconcileAgentPatchedSessionModel(params: {
             agentId: params.agentId,
           }),
           sessionKey: params.sessionKey,
-          sessionEntry: rollbackEntry,
+          sessionEntry: {
+            ...rollbackEntry,
+            authProfileOverride: rollbackMarker.prevAuthProfileOverride,
+            authProfileOverrideSource: resolveCollapsedSessionAuthPinSource({
+              authProfileOverride: rollbackMarker.prevAuthProfileOverride,
+              authProfileOverrideSource: rollbackMarker.prevAuthProfileOverrideSource,
+              authProfileOverrideCompactionCount:
+                rollbackMarker.prevAuthProfileOverrideCompactionCount,
+            }),
+            authProfileOverrideCompactionCount:
+              rollbackMarker.prevAuthProfileOverrideCompactionCount,
+          },
+          profileProvider: rollbackMarker.prevProvider,
           request: {
             kind: "model",
             model: { provider: rollbackMarker.prevProvider, id: rollbackMarker.prevModel },
@@ -119,6 +132,12 @@ async function reconcileAgentPatchedSessionModel(params: {
         rollback.status !== "ready" ||
         !rollbackEntry ||
         rollbackMarker?.ts !== marker.ts ||
+        entry.authProfileOverride !== rollbackEntry.authProfileOverride ||
+        entry.authProfileOverrideSource !== rollbackEntry.authProfileOverrideSource ||
+        entry.authProfileOverrideCompactionCount !==
+          rollbackEntry.authProfileOverrideCompactionCount ||
+        entry.thinkingLevel !== rollbackEntry.thinkingLevel ||
+        entry.contextWindow !== rollbackEntry.contextWindow ||
         !isDeepStrictEqual(
           getSessionExecutionSelection(entry, params.cfg),
           getSessionExecutionSelection(rollbackEntry, params.cfg),
@@ -133,7 +152,10 @@ async function reconcileAgentPatchedSessionModel(params: {
         throw new Error(selectionError);
       }
       const next = { ...entry };
-      commitSessionExecutionSelection(next, rollback.selection, { cfg: params.cfg });
+      commitSessionExecutionSelection(next, rollback.selection, {
+        cfg: params.cfg,
+        cause: { kind: "rollback", fallback: marker },
+      });
       result = "reverted";
       note = rollback.message;
       return {

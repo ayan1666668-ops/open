@@ -589,7 +589,7 @@ function* projectSessionPatchSteps(
     let selection:
       | { provider: string; model: string; profile?: string; isDefault: boolean }
       | undefined;
-    if (raw === null || patch.agentRuntime === null) {
+    if (raw === null || (raw === undefined && patch.agentRuntime === null)) {
       selection = { ...resolvedDefault, isDefault: true };
     } else if (raw !== undefined) {
       const trimmed = normalizeOptionalString(raw) ?? "";
@@ -666,15 +666,17 @@ function* projectSessionPatchSteps(
             : next,
           agentId: sessionAgentId,
           request:
-            raw === null || patch.agentRuntime === null
+            raw === null || (raw === undefined && patch.agentRuntime === null)
               ? { kind: "reset" }
-              : {
-                  kind: "model",
-                  model: { provider: selection.provider, id: selection.model },
-                  ...(runtimeId && executorKind
-                    ? { executor: { kind: executorKind, id: runtimeId } }
-                    : {}),
-                },
+              : patch.agentRuntime === null
+                ? { kind: "reset", model: { provider: selection.provider, id: selection.model } }
+                : {
+                    kind: "model",
+                    model: { provider: selection.provider, id: selection.model },
+                    ...(runtimeId && executorKind
+                      ? { executor: { kind: executorKind, id: runtimeId } }
+                      : {}),
+                  },
         };
       }
       const prepared = params.preparedExecution;
@@ -699,11 +701,12 @@ function* projectSessionPatchSteps(
         ...(params.providerAuthMetadataSnapshot
           ? { metadataSnapshot: params.providerAuthMetadataSnapshot }
           : {}),
-        markLiveSwitchPending: raw !== null && patch.agentRuntime !== null,
+        markLiveSwitchPending: true,
+        cause: {
+          kind:
+            raw === null || (raw === undefined && patch.agentRuntime === null) ? "reset" : "user",
+        },
       });
-      if (raw === null || patch.agentRuntime === null) {
-        delete next.liveModelSwitchPending;
-      }
     }
     if (agentModelFallback) {
       next.modelFallback = agentModelFallback;

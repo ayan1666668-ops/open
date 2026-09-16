@@ -496,14 +496,26 @@ export const sessionCreateHandlers: GatewayRequestHandlers = {
                   // Pre-commit naming uses the saved account until this chat owns a new selection.
                   entry:
                     requestedModel && !personalModelSelection
-                      ? { ...lifecycleTarget.entry, ...lifecycleTarget.titleModelSelection }
+                      ? {
+                          ...lifecycleTarget.entry,
+                          authProfileOverride:
+                            lifecycleTarget.titleModelSelection?.authProfileOverride,
+                        }
                       : lifecycleTarget.entry,
+                  executionSelection:
+                    requestedModel && !personalModelSelection
+                      ? lifecycleTarget.titleModelSelection?.executionSelection
+                      : undefined,
                   sessionId: lifecycleTarget.entry.sessionId,
                   sessionKey: lifecycleTarget.key,
                   storePath: lifecycleTarget.storePath,
                   currentUserMessage: message,
                   userMessage: source,
-                  commitGuard,
+                  commitGuard: () => {
+                    commitGuard?.();
+                    const error = lifecycleTarget.titleModelSelection?.validate();
+                    if (error) throw new Error(error);
+                  },
                   onError: (error) =>
                     sessionLog.warn(`worktree title failed: ${formatErrorMessage(error)}`),
                   onPersisted: () =>

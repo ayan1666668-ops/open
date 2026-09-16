@@ -14,6 +14,7 @@ import { supportsModelTools } from "../../agents/model-tool-support.js";
 import { resolveSandboxRuntimeStatus } from "../../agents/sandbox.js";
 import { isToolAllowedByPolicyName } from "../../agents/tool-policy-match.js";
 import { resolveConfiguredModelCompat } from "../../agents/tools-effective-inventory.js";
+import { getSessionExecutionSelection } from "../../model-picker/execution-selection-state.js";
 import { buildLearnPrompt, DEFAULT_LEARN_REQUEST } from "../../skills/workshop/learn-prompt.js";
 import { resolveSkillWorkshopToolPolicyAvailability } from "../../skills/workshop/tool-policy-diagnostic.js";
 import { applyCommandTextToParams } from "./command-context-rewrite.js";
@@ -71,7 +72,9 @@ function resolveWorkshopSurface(
 
   try {
     const targetSessionEntry = params.sessionStore?.[params.sessionKey] ?? params.sessionEntry;
-    const runtimeOverride = targetSessionEntry?.agentRuntimeOverride;
+    const selection = getSessionExecutionSelection(targetSessionEntry, params.cfg);
+    if (selection?.executor.kind === "acp") return undefined;
+    const runtimeOverride = selection?.executor.id;
     const cliProvider = isCliRuntimeAliasForProvider({
       provider: params.provider,
       runtime: runtimeOverride,
@@ -111,6 +114,7 @@ function resolveWorkshopSurface(
         config: params.cfg,
         agentId: params.agentId,
         sessionKey: params.sessionKey,
+        agentHarnessRuntimeOverride: runtimeOverride,
       });
       if (!agentHarnessExposesOpenClawTools(harness.id)) {
         return undefined;

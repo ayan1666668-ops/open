@@ -30,6 +30,13 @@ import {
   loadLegacySessionStore,
   updateLegacySessionStore,
 } from "../../../infra/state-migrations.legacy-session-store.js";
+import {
+  readSessionExecutionRepairRef,
+  admitAutomaticProviderlessModelRepair,
+} from "../../../model-picker/execution-selection-codec.js";
+import { repairSessionExecutionSelection } from "../../../model-picker/execution-selection-repair.js";
+import type { ModelExecutionSelection } from "../../../model-picker/execution-selection.js";
+import { parseAgentSessionKey } from "../../../routing/session-key.js";
 import { isValidAgentHarnessSessionStoreEntry } from "../../../sessions/agent-harness-session-key.js";
 import { resolveLegacyAuthProfilesPath } from "../../doctor-auth-legacy-paths.js";
 import {
@@ -59,6 +66,7 @@ import {
 } from "./retired-model-ref-repair.js";
 
 type SessionModelRetirement = {
+  cfg: OpenClawConfig;
   agentId: string;
   resolve: ModelRefRepairResolver;
   defaultModelRef?: string;
@@ -66,14 +74,18 @@ type SessionModelRetirement = {
 };
 
 function rewriteSessionModelPair(params: {
-  entry: SessionEntry;
-  providerKey: "modelProvider" | "providerOverride";
-  modelKey: "model" | "modelOverride";
+  provider?: string;
+  model?: string;
   blockedModelIdentities?: ReadonlySet<LegacyCodexModelIdentity>;
-}): { changed: boolean; runtime?: string } {
-  const provider = normalizeString(params.entry[params.providerKey]);
-  const model =
-    typeof params.entry[params.modelKey] === "string" ? params.entry[params.modelKey] : undefined;
+}): {
+  changed: boolean;
+  provider?: string;
+  model?: string;
+  selectionModel?: ModelExecutionSelection["model"];
+  executor?: ModelExecutionSelection["executor"];
+} {
+  const provider = normalizeString(params.provider);
+  const model = params.model;
   const legacyProviderModelRef =
     sessionProviderAllowsScopedModelRef(provider) && isOpenAICodexModelRef(model)
       ? model
@@ -94,20 +106,25 @@ function rewriteSessionModelPair(params: {
     return { changed: false };
   }
   if (isLegacyCodexProviderId(provider)) {
-    params.entry[params.providerKey] = "openai";
-    if (model) {
-      const modelId = toOpenAIModelId(model);
-      if (modelId) {
-        params.entry[params.modelKey] = modelId;
-      }
-    }
-    return { changed: true, runtime: "codex" };
+    const modelId = model ? toOpenAIModelId(model) : undefined;
+    return {
+      changed: true,
+      provider: "openai",
+      model: modelId ?? model,
+      ...(modelId ? { selectionModel: { provider: "openai", id: modelId } } : {}),
+      executor: { kind: "harness", id: "codex" },
+    };
   }
   const canonicalModel =
     legacyProviderModelRef && toCanonicalOpenAIModelRef(legacyProviderModelRef);
   if (canonicalModel) {
-    params.entry[params.modelKey] = canonicalModel;
-    return { changed: true, runtime: "codex" };
+    return {
+      changed: true,
+      provider: params.provider,
+      model: canonicalModel,
+      selectionModel: { provider: "openai", id: canonicalModel.slice("openai/".length) },
+      executor: { kind: "harness", id: "codex" },
+    };
   }
   const scopedRuntimeRef =
     model && (!provider || ["claude-cli", "google-gemini-cli"].includes(provider))
@@ -125,27 +142,25 @@ function rewriteSessionModelPair(params: {
   ) {
     return { changed: false };
   }
-  let changed = false;
-  if (params.entry[params.providerKey] !== migrated.provider) {
-    params.entry[params.providerKey] = migrated.provider;
-    changed = true;
-  }
-  if (params.entry[params.modelKey] !== migrated.model) {
-    params.entry[params.modelKey] = migrated.model;
-    changed = true;
-  }
-  return { changed, runtime: migrated.runtime };
+  return {
+    changed: params.provider !== migrated.provider || params.model !== migrated.model,
+    provider: migrated.provider,
+    model: migrated.model,
+    selectionModel: { provider: migrated.provider, id: migrated.model },
+    executor: { kind: migrated.cli ? "cli" : "harness", id: migrated.runtime },
+  };
 }
 
 function isCodexSessionRoute(entry: SessionEntry): boolean {
+  const selected = readSessionExecutionRepairRef(entry);
   return (
     isLegacyCodexProviderId(entry.modelProvider) ||
-    isLegacyCodexProviderId(entry.providerOverride) ||
+    isLegacyCodexProviderId(selected.provider) ||
     (sessionProviderAllowsScopedModelRef(normalizeString(entry.modelProvider)) &&
       isOpenAICodexModelRef(entry.model)) ||
-    (sessionProviderAllowsScopedModelRef(normalizeString(entry.providerOverride)) &&
-      isOpenAICodexModelRef(entry.modelOverride)) ||
-    normalizeRuntimeString(entry.agentRuntimeOverride) === "codex"
+    (sessionProviderAllowsScopedModelRef(normalizeString(selected.provider)) &&
+      isOpenAICodexModelRef(selected.model)) ||
+    normalizeRuntimeString(selected.runtime) === "codex"
   );
 }
 
@@ -163,10 +178,6 @@ function normalizeCodexSessionHarness(
     (legacyCodexHarness && entry.agentHarnessId === undefined)
   ) {
     entry.agentHarnessId = "codex";
-    changed = true;
-  }
-  if (normalizeRuntimeString(entry.agentRuntimeOverride) === "codex-cli") {
-    entry.agentRuntimeOverride = "codex";
     changed = true;
   }
   return changed;
@@ -206,44 +217,32 @@ function clearRepairedCodexSessionHarness(entry: SessionEntry): boolean {
   return changed;
 }
 
-function repairProviderlessCodexSessionOverride(
+function resolveProviderlessCodexSessionOverride(
   entry: SessionEntry,
   blockedModelIdentities?: ReadonlySet<LegacyCodexModelIdentity>,
-): boolean {
+): ModelExecutionSelection | undefined {
+  const model = admitAutomaticProviderlessModelRepair(entry);
   if (
-    !isProviderlessModelRef(entry.modelOverride) ||
+    !isProviderlessModelRef(model) ||
     !isOpenAICodexAuthProfileRef(entry.authProfileOverride) ||
     entry.authProfileOverrideSource !== "auto" ||
-    entry.modelOverrideSource !== "auto" ||
-    normalizeString(entry.providerOverride)
+    !model
   ) {
-    return false;
+    return undefined;
   }
   const authProvider = normalizeString(entry.authProfileOverride)?.split(":", 1)[0];
-  if (
-    isBlockedLegacyCodexModelPair({
-      providerId: authProvider,
-      modelId: entry.modelOverride,
-      blockedModelIdentities,
-    })
-  ) {
-    return false;
-  }
+  return isBlockedLegacyCodexModelPair({
+    providerId: authProvider,
+    modelId: model,
+    blockedModelIdentities,
+  })
+    ? undefined
+    : { model: { provider: "openai", id: model }, executor: { kind: "harness", id: "codex" } };
+}
 
-  entry.providerOverride = "openai";
-  entry.modelOverrideRouteResolution = "resolved";
-  if (entry.model !== undefined || entry.modelProvider !== undefined) {
-    delete entry.model;
-    delete entry.modelProvider;
-  }
-  if (entry.contextTokens !== undefined || entry.contextTokensSource !== undefined) {
-    delete entry.contextTokens;
-    delete entry.contextTokensSource;
-  }
-  if (entry.contextBudgetStatus !== undefined) {
-    delete entry.contextBudgetStatus;
-  }
-  return true;
+function resolveMigratedExecutor(id: string): ModelExecutionSelection["executor"] | undefined {
+  const alias = resolveLegacyRuntimeModelProviderAlias(id);
+  return alias ? { kind: alias.cli ? "cli" : "harness", id: alias.runtime } : undefined;
 }
 
 function migrateLegacyClaudeSessionField(
@@ -308,6 +307,8 @@ function repairSessionAuthProfileReferences(
 
 /** Complete account renames or repair legacy session bindings and model routes. */
 function repairCodexSessionStoreRoutes(params: {
+  cfg?: OpenClawConfig;
+  agentId?: string;
   store: Record<string, SessionEntry>;
   now?: number;
   blockedModelIdentities?: ReadonlySet<LegacyCodexModelIdentity>;
@@ -342,47 +343,74 @@ function repairCodexSessionStoreRoutes(params: {
     }
     const legacyCodexHarness = normalizeRuntimeString(entry.agentHarnessId) === "codex-cli";
     const wasCodexRoute = isCodexSessionRoute(entry);
-    const hasSelectedOverride = Boolean(entry.modelOverride?.trim());
-    const runtimeWasExplicit =
-      entry.agentRuntimeOverride !== undefined &&
-      normalizeRuntimeString(entry.agentRuntimeOverride) !== "auto";
+    const selected = readSessionExecutionRepairRef(entry);
+    const beforeRoute = structuredClone(entry);
     const runtimeModelRoute = rewriteSessionModelPair({
-      entry,
-      providerKey: "modelProvider",
-      modelKey: "model",
+      provider: entry.modelProvider,
+      model: entry.model,
       blockedModelIdentities: params.blockedModelIdentities,
     });
-    const overrideModelRoute = rewriteSessionModelPair({
-      entry,
-      providerKey: "providerOverride",
-      modelKey: "modelOverride",
-      blockedModelIdentities: params.blockedModelIdentities,
-    });
-    if (overrideModelRoute.changed) {
-      entry.modelOverrideRouteResolution = "resolved";
+    if (runtimeModelRoute.changed) {
+      entry.modelProvider = runtimeModelRoute.provider;
+      entry.model = runtimeModelRoute.model;
     }
-    const changedProviderlessOverride = repairProviderlessCodexSessionOverride(
+    const overrideModelRoute = rewriteSessionModelPair({
+      provider: selected.provider,
+      model: selected.model,
+      blockedModelIdentities: params.blockedModelIdentities,
+    });
+    const providerless = resolveProviderlessCodexSessionOverride(
       entry,
       params.blockedModelIdentities,
     );
-    const changedModelRoute =
-      runtimeModelRoute.changed || overrideModelRoute.changed || changedProviderlessOverride;
+    const executor =
+      providerless?.executor ??
+      (selected.model ? overrideModelRoute.executor : runtimeModelRoute.executor);
+    const model = providerless?.model ?? overrideModelRoute.selectionModel;
+    const runtimeAliasChanged =
+      selected.runtime &&
+      resolveMigratedExecutor(selected.runtime)?.id !== selected.runtime &&
+      resolveMigratedExecutor(selected.runtime) !== undefined;
+    let changedSelection = false;
+    if (overrideModelRoute.changed || providerless || executor || runtimeAliasChanged) {
+      const repair = repairSessionExecutionSelection({
+        entry,
+        cfg: params.cfg ?? params.retirement?.cfg,
+        agentId:
+          params.agentId ?? params.retirement?.agentId ?? parseAgentSessionKey(sessionKey)?.agentId,
+        model,
+        executor,
+        runtimeMigration: resolveMigratedExecutor,
+      });
+      if (repair.status === "unresolved") {
+        params.store[sessionKey] = beforeRoute;
+        const warning = `Session ${sessionKey}: its executor could not be resolved; model and runtime repair state was retained.`;
+        if (params.warnings && !params.warnings.includes(warning)) params.warnings.push(warning);
+        const authChanged = repairSessionAuthProfileReferences(
+          beforeRoute,
+          params.authProfileIdMap,
+        );
+        if (changedCliBinding || authChanged) {
+          beforeRoute.updatedAt = now;
+          sessionKeys.push(sessionKey);
+        }
+        continue;
+      }
+      changedSelection = repair.status === "repaired";
+      if (changedSelection && providerless) {
+        delete entry.model;
+        delete entry.modelProvider;
+        delete entry.contextTokens;
+        delete entry.contextTokensSource;
+        delete entry.contextBudgetStatus;
+      }
+    }
+    const changedModelRoute = runtimeModelRoute.changed || changedSelection;
     const changedFallbackNotice = clearStaleCodexFallbackNotice(
       entry,
       params.blockedModelIdentities,
     );
-    const selectedRuntime = changedProviderlessOverride
-      ? "codex"
-      : hasSelectedOverride
-        ? overrideModelRoute.runtime
-        : runtimeModelRoute.runtime;
-    const changedRuntimePins =
-      !runtimeWasExplicit &&
-      selectedRuntime !== undefined &&
-      entry.agentRuntimeOverride !== selectedRuntime;
-    if (changedRuntimePins) {
-      entry.agentRuntimeOverride = selectedRuntime;
-    }
+    const selectedRuntime = executor?.id;
     const changedCodexRuntimeHarness =
       selectedRuntime === "codex" ? clearRepairedCodexSessionHarness(entry) : false;
     const changedCodexHarness = normalizeCodexSessionHarness(
@@ -400,12 +428,12 @@ function repairCodexSessionStoreRoutes(params: {
           params.retirement.resolve,
           params.retirement.defaultModelRef,
           params.retirement.warnings,
+          params.retirement.cfg,
         )
       : false;
     if (
       !changedModelRoute &&
       !changedFallbackNotice &&
-      !changedRuntimePins &&
       !changedCodexRuntimeHarness &&
       !changedCodexHarness &&
       !changedAuthProfile &&
@@ -436,10 +464,14 @@ function scanCodexSessionStoreRoutes(
   retirement?: SessionModelRetirement,
   warnings?: string[],
   authProfileOnly = false,
+  cfg?: OpenClawConfig,
+  agentId?: string,
 ): string[] {
   // Preview executes the same repair against copies, so scanning and mutation
   // cannot disagree about a route, account pin, or retirement condition.
   return repairCodexSessionStoreRoutes({
+    cfg,
+    agentId,
     store: structuredClone(store),
     blockedModelIdentities,
     authProfileIdMap,
@@ -553,6 +585,7 @@ export async function maybeRepairCodexSessionRoutes(params: {
       : undefined;
     const retirement = resolveRetired
       ? {
+          cfg: params.cfg,
           agentId: target.agentId,
           resolve: resolveRetired,
           warnings,
@@ -589,6 +622,8 @@ export async function maybeRepairCodexSessionRoutes(params: {
           retirement,
           warnings,
           authProfileOnly,
+          params.cfg,
+          target.agentId,
         ).length > 0
       ) {
         staleSqliteSessionKeys.push(sessionKey);
@@ -663,6 +698,8 @@ export async function maybeRepairCodexSessionRoutes(params: {
             entries.map(({ sessionKey, entry }) => [sessionKey, entry]),
           );
           const repair = repairCodexSessionStoreRoutes({
+            cfg: params.cfg,
+            agentId: target.agentId,
             store,
             blockedModelIdentities: params.blockedModelIdentities,
             authProfileIdMap: target.authProfileIdMap,
@@ -692,12 +729,16 @@ export async function maybeRepairCodexSessionRoutes(params: {
         target.retirement,
         warnings,
         authProfileOnly,
+        params.cfg,
+        target.agentId,
       );
       if (staleLegacySessionKeys.length > 0) {
         const result = await updateLegacySessionStore(
           target.storePath,
           (store) =>
             repairCodexSessionStoreRoutes({
+              cfg: params.cfg,
+              agentId: target.agentId,
               store,
               blockedModelIdentities: params.blockedModelIdentities,
               authProfileIdMap: target.authProfileIdMap,

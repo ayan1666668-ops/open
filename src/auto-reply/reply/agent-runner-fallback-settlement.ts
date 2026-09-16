@@ -62,9 +62,6 @@ export async function settleAgentFallbackCycle(params: {
         code: attempt.code || undefined,
       }))
     : [];
-  if (!fallbackExhausted) {
-    await fallbackResult.settleSessionOverride();
-  }
   const embeddedError = runResult.meta?.error;
   const deferredLifecycleError = settledLifecycleTerminal?.getDeferredError();
   const userFacingErrorPayload = runResult.payloads?.find(

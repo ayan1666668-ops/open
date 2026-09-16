@@ -52,8 +52,11 @@ it.each(cleanupCases)(
             workspaceDir: process.cwd(),
             preparation: { kind: "direct" },
             prepareExecutionSelection: async (provider: string, model: string) => ({
-              model: { provider, id: model },
-              executor: { kind: "harness" as const, id: "openclaw" },
+              selection: {
+                model: { provider, id: model },
+                executor: { kind: "harness" as const, id: "openclaw" },
+              },
+              validateCommit: () => undefined,
             }),
           },
           behavior:
@@ -67,7 +70,6 @@ it.each(cleanupCases)(
                     hasRetryBlockedDelivery: false,
                   }),
                 },
-          sessionOverride: { kind: "preserve" },
           runCandidate: async ({ model: { provider, id: model } }) => ({
             payloads: [{ text: "Completed answer" }],
             meta: {

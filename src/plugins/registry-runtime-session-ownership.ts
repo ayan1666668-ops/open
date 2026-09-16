@@ -11,6 +11,7 @@ import { resolveSessionEntryAccessTarget } from "../config/sessions/session-acce
 import { resolveSessionStorePathForScope } from "../config/sessions/session-store-path.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { getSessionExecutionSelection } from "../model-picker/execution-selection-state.js";
 import {
   classifySessionKeyShape,
   isUnscopedSessionKeySentinel,
@@ -470,7 +471,7 @@ export function createPluginSessionOwnership(
     // Reuse the authorized snapshot, but never manufacture a native pin or replace
     // a turn-local request (including auto). Detached and raw-model runs own their selection.
     if (
-      !entry?.agentRuntimeOverride ||
+      !getSessionExecutionSelection(entry, params.config ?? currentSessionConfig()) ||
       params.agentHarnessRuntimeOverride !== undefined ||
       params.sessionPersistence === "detached" ||
       params.modelRun ||

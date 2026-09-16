@@ -7,21 +7,12 @@ import {
   normalizeProviderId,
 } from "../../agents/model-selection.js";
 import { RUNTIME_MODEL_VISIBILITY_NORMALIZATION } from "../../agents/model-visibility-policy.js";
-import {
-  needsThinkHydration,
-  resolveEffectiveAgentRuntime,
-} from "../../agents/thinking-runtime.js";
-import type { SessionEntry } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { getCurrentPluginMetadataSnapshot } from "../../plugins/current-plugin-metadata-snapshot.js";
 import {
   isManifestPluginAvailableForControlPlane,
   loadManifestMetadataSnapshot,
 } from "../../plugins/manifest-contract-eligibility.js";
-import {
-  applyModelRuntimeDirective,
-  resolveModelRuntimeDirective,
-} from "./directive-handling.model-runtime.js";
 
 export type RuntimeModelNormalization = NonNullable<Parameters<typeof normalizeModelRef>[2]>;
 
@@ -80,109 +71,6 @@ export function isKnownModelSelectionProvider(params: {
       plugin.providers.some((id) => normalizeProviderId(id) === provider) &&
       isManifestPluginAvailableForControlPlane({ snapshot, plugin, config: params.cfg }),
   );
-}
-
-type ModelSelectionPreparation =
-  | {
-      status: "ready";
-      catalog: ModelCatalogEntry[];
-      runtime: Exclude<ReturnType<typeof resolveModelRuntimeDirective>, { kind: "invalid" }>;
-      validateRuntimeSelection?: () => string | undefined;
-    }
-  | { status: "rejected"; reason: "invalid-runtime" | "unknown-provider"; message: string };
-
-/** Prepare runtime and capabilities for the selected route before any session mutation. */
-export async function prepareModelSelectionRuntime(params: {
-  cfg: OpenClawConfig;
-  agentId: string;
-  workspaceDir?: string;
-  provider: string;
-  model: string;
-  catalog: readonly ModelCatalogEntry[];
-  rawRuntime?: string;
-  profileOverride?: string;
-  sessionEntry?: Pick<
-    SessionEntry,
-    | "agentRuntimeOverride"
-    | "authProfileOverride"
-    | "authProfileOverrideSource"
-    | "modelProvider"
-    | "providerOverride"
-  >;
-}): Promise<ModelSelectionPreparation> {
-  const sessionEntry = params.profileOverride
-    ? {
-        ...params.sessionEntry,
-        providerOverride: params.provider,
-        modelProvider: params.provider,
-        authProfileOverride: params.profileOverride,
-        authProfileOverrideSource: "user" as const,
-      }
-    : params.sessionEntry;
-  const runtime = resolveModelRuntimeDirective(params);
-  if (runtime.kind === "invalid") {
-    return { status: "rejected", reason: "invalid-runtime", message: runtime.errorText };
-  }
-  const selected = findSelectedCatalogEntry(params);
-  if (!isKnownModelSelectionProvider(params)) {
-    return {
-      status: "rejected",
-      reason: "unknown-provider",
-      message: `Unknown provider "${params.provider}". Use /models to list providers.`,
-    };
-  }
-  let validateRuntimeSelection: (() => string | undefined) | undefined;
-  if (runtime.kind === "set") {
-    const { preparePublishedModelRuntimeChoice } =
-      await import("../../agents/model-runtime-choice.js");
-    const choice = await preparePublishedModelRuntimeChoice({
-      ...params,
-      sessionEntry,
-      runtimeId: runtime.runtime,
-    });
-    if (choice.kind === "unavailable") {
-      return { status: "rejected", reason: "invalid-runtime", message: choice.message };
-    }
-    validateRuntimeSelection = choice.validate;
-  }
-  const runtimeEntry = { ...sessionEntry };
-  applyModelRuntimeDirective(runtimeEntry, runtime);
-  const agentRuntime =
-    runtime.kind === "set"
-      ? runtime.runtime
-      : resolveEffectiveAgentRuntime({
-          cfg: params.cfg,
-          agentId: params.agentId,
-          provider: params.provider,
-          modelId: params.model,
-          modelApi: selected?.api,
-          modelBaseUrl: selected?.baseUrl,
-          sessionEntry: runtimeEntry,
-        });
-  if (!needsThinkHydration(params.catalog, params.provider, params.model, agentRuntime)) {
-    return { status: "ready", runtime, catalog: [...params.catalog], validateRuntimeSelection };
-  }
-  // The selected route owns its capabilities. A prepared default-provider row cannot
-  // supply thinking or context metadata for an explicit cross-provider selection.
-  const { loadProviderScopedThinkingCatalog } =
-    await import("../../agents/model-catalog.runtime.js");
-  const catalog = await loadProviderScopedThinkingCatalog({
-    config: params.cfg,
-    agentId: params.agentId,
-    provider: params.provider,
-    model: params.model,
-    agentRuntime,
-    workspaceDir: params.workspaceDir,
-  });
-  const resolved = findSelectedCatalogEntry({ ...params, catalog });
-  return {
-    status: "ready",
-    runtime,
-    validateRuntimeSelection,
-    catalog: resolved
-      ? [resolved, ...params.catalog.filter((entry) => entry !== selected)]
-      : [...params.catalog],
-  };
 }
 
 // Match catalog metadata by literal identity, not a potentially collapsed display key.

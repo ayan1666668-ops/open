@@ -212,7 +212,6 @@ async function runEmbeddedEntryFallback(params: {
         }),
       },
       behavior: { kind: "maintenance" },
-      sessionOverride: { kind: "preserve" },
       onFallbackStep: params.onFallbackStep,
       runCandidate: (provider, model, options) => {
         observedModelRoutingProvenance.push(options.modelRoutingProvenance);

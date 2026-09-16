@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from "vitest";
 import { formatBillingErrorMessage } from "../../agents/failover/user-copy.js";
 import { resetLogger, setLoggerOverride } from "../../logging/logger.js";
 import { loggingState } from "../../logging/state.js";
-import * as autoFallback from "./agent-runner-auto-fallback.js";
 import {
   setupAgentRunnerExecutionTestState,
   getExecuteAgentTurnForTest,
@@ -271,26 +270,6 @@ describe("executeAgentTurn: compaction events", () => {
       runResult: { payloads: [{ text: "recovered" }] },
     });
     expect(result.postCompactionModelFailure).toBeUndefined();
-  });
-
-  it("keeps session settlement failures out of the model failure fact", async () => {
-    const settleSessionOverride = vi
-      .spyOn(autoFallback, "clearRecoveredAutoFallbackPrimaryProbeSelection")
-      .mockRejectedValueOnce(new Error("session override settlement failed"));
-    state.runEmbeddedAgentMock.mockImplementationOnce(async (params: EmbeddedAgentParams) => {
-      params.onAutoCompactionSucceeded?.(1);
-      params.onExecutionPhase?.({ phase: "model_call_started" });
-      return { payloads: [{ text: "recovered" }], meta: {} };
-    });
-
-    try {
-      const result = await executeTestTurn();
-
-      expect(result).toMatchObject({ kind: "final" });
-      expect(result.postCompactionModelFailure).toBeUndefined();
-    } finally {
-      settleSessionOverride.mockRestore();
-    }
   });
 
   it("emits a compaction start notice when notifyUser is enabled", async () => {

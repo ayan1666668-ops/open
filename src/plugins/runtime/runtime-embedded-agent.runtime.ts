@@ -6,9 +6,25 @@ import {
   prepareAgentRunAdmission,
   type AdmittedRunContext,
 } from "../../agents/admitted-run-context.js";
+import {
+  isDefaultAgentRuntimeId,
+  normalizeOptionalAgentRuntimeId,
+} from "../../agents/agent-runtime-id.js";
+import { resolveSessionAgentId } from "../../agents/agent-scope.js";
 import { runEmbeddedAgent as runEmbeddedAgentCore } from "../../agents/embedded-agent.js";
+import { resolveDefaultModelForAgent } from "../../agents/model-selection-config.js";
 import { recordRuntimeActionDecision } from "../../audit/runtime-action-decision.js";
 import { getRuntimeConfig } from "../../config/config.js";
+import { loadSessionEntryReadOnly } from "../../config/sessions/session-accessor.js";
+import {
+  prepareSessionExecutionSelection,
+  resolveSessionExecutionFallbacks,
+} from "../../model-picker/apply-session-model-selection.js";
+import {
+  executionSelectionCodecMetadata,
+  getSessionExecutionSelection,
+} from "../../model-picker/execution-selection-state.js";
+import { isAcpExecutionSelection } from "../../model-picker/execution-selection.js";
 import { getPluginRuntimeGatewayRequestScope } from "./gateway-request-scope.js";
 import type { PluginRuntime } from "./types.js";
 
@@ -35,12 +51,18 @@ export const runPluginEmbeddedAgent: PluginRuntime["agent"]["runEmbeddedAgent"] 
   const decisionOccurrenceId = randomUUID();
   let admittedRunContext: AdmittedRunContext | undefined;
   const config = params.config ?? getRuntimeConfig();
+  const sessionKey = params.sessionKey ?? params.sessionTarget?.sessionKey;
+  const agentId = resolveSessionAgentId({
+    config,
+    sessionKey,
+    agentId: params.sessionTarget?.agentId ?? params.agentId,
+  });
   const preparedRunAdmission = prepareAgentRunAdmission({
     cfg: config,
     operationalRunInstance: createOperationalRunInstanceRef(params.runId),
     facts: {
       runId: params.runId,
-      agentId: params.sessionTarget?.agentId ?? params.agentId ?? "main",
+      agentId,
       ingress: {
         kind: "plugin",
         boundary: "plugin-runtime",
@@ -79,7 +101,81 @@ export const runPluginEmbeddedAgent: PluginRuntime["agent"]["runEmbeddedAgent"] 
   params.abortSignal?.addEventListener("abort", close, { once: true });
   try {
     params.abortSignal?.throwIfAborted();
-    const result = await runEmbeddedAgentCore({ ...params, config, preparedRunAdmission });
+    const sessionEntry = sessionKey
+      ? loadSessionEntryReadOnly({
+          agentId,
+          sessionKey,
+          storePath: params.sessionTarget?.storePath,
+          readConsistency: "latest",
+        })
+      : undefined;
+    const accepted = getSessionExecutionSelection(sessionEntry, config);
+    const configured = resolveDefaultModelForAgent({ cfg: config, agentId });
+    const selectedModel =
+      accepted && !isAcpExecutionSelection(accepted)
+        ? accepted.model
+        : { provider: configured.provider, id: configured.model };
+    const runtimeId = normalizeOptionalAgentRuntimeId(
+      params.agentHarnessId ?? params.agentHarnessRuntimeOverride,
+    );
+    const explicitRuntime =
+      runtimeId && !isDefaultAgentRuntimeId(runtimeId) ? runtimeId : undefined;
+    const executorKind = explicitRuntime
+      ? executionSelectionCodecMetadata(config).classifyExecutor(explicitRuntime)
+      : undefined;
+    if (explicitRuntime && !executorKind) {
+      throw new Error("Could not confirm support for the selected app.");
+    }
+    const prepared = await prepareSessionExecutionSelection({
+      cfg: config,
+      agentId,
+      sessionKey,
+      sessionEntry,
+      request:
+        params.provider || params.model || explicitRuntime
+          ? {
+              kind: "model",
+              model: {
+                provider: params.provider ?? selectedModel.provider,
+                id: params.model ?? selectedModel.id,
+              },
+              ...(explicitRuntime && executorKind
+                ? { executor: { kind: executorKind, id: explicitRuntime } }
+                : {}),
+            }
+          : { kind: "initialize" },
+    });
+    if (prepared.status !== "ready") {
+      throw new Error(prepared.message);
+    }
+    if (
+      isAcpExecutionSelection(prepared.selection) ||
+      prepared.selection.executor.kind !== "harness"
+    ) {
+      throw new Error("The selected app cannot run this embedded operation.");
+    }
+    const selectionError = prepared.validateCommit?.();
+    if (selectionError) {
+      throw new Error(selectionError);
+    }
+    params.abortSignal?.throwIfAborted();
+    const result = await runEmbeddedAgentCore({
+      ...params,
+      config,
+      preparedRunAdmission,
+      provider: prepared.selection.model.provider,
+      model: prepared.selection.model.id,
+      agentHarnessId: prepared.selection.executor.id,
+      agentHarnessRuntimeOverride: prepared.selection.executor.id,
+      modelFallbackAvailability: resolveSessionExecutionFallbacks({
+        cfg: config,
+        agentId,
+        sessionKey,
+        sessionEntry,
+        selection: prepared.selection,
+        modelFallbacksOverride: params.modelFallbacksOverride,
+      }),
+    });
     if (admittedRunContext && getAdmittedRunDelegatedAuthority(admittedRunContext)) {
       recordRuntimeActionDecision({
         token: admittedRunContext.executionIdentityToken,

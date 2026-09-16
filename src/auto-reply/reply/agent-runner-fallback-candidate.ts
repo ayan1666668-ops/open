@@ -89,7 +89,11 @@ export async function runAgentFallbackCandidates(params: AgentFallbackCycleParam
     sessionKey: turn.sessionKey,
     milestone: "before_model_fallback",
   });
-  const selection = resolveModelFallbackOptions(params.effectiveRun, params.runtimeConfig);
+  const selection = resolveModelFallbackOptions(
+    params.effectiveRun,
+    params.runtimeConfig,
+    params.liveModelSwitchRuntimeEntry ?? turn.getActiveSessionEntry(),
+  );
   const resolveCandidateRuntime = (candidate: ModelExecutionSelection) => ({
     candidateRun: {
       ...params.effectiveRun,
@@ -136,6 +140,8 @@ export async function runAgentFallbackCandidates(params: AgentFallbackCycleParam
             cfg: params.runtimeConfig,
             agentId: turn.followupRun.run.agentId,
             sessionKey: turn.sessionKey,
+            storePath: turn.storePath,
+            readSessionEntry: !turn.storePath ? turn.getActiveSessionEntry : undefined,
             sessionEntry: params.liveModelSwitchRuntimeEntry ?? turn.getActiveSessionEntry(),
             request: {
               kind: "fallback",
@@ -151,7 +157,7 @@ export async function runAgentFallbackCandidates(params: AgentFallbackCycleParam
           if (isAcpExecutionSelection(prepared.selection)) {
             throw new Error("This reply requires a direct execution selection.");
           }
-          return prepared.selection;
+          return { selection: prepared.selection, validateCommit: prepared.validateCommit };
         },
         resolveContextEngineHost: (candidate) => {
           const runtime = resolveCandidateRuntime(candidate);
@@ -183,7 +189,6 @@ export async function runAgentFallbackCandidates(params: AgentFallbackCycleParam
           ),
         }),
       },
-      sessionOverride: { kind: "preserve" },
       onAcceptedTerminal: () => {
         params.commitTerminalOutcome();
         return turn.replyOperation

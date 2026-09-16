@@ -301,9 +301,13 @@ vi.mock("./agent-runner-utils.js", async () => ({
             model: params.model,
             thinkLevel: params.run.thinkLevel,
             authProfileId:
-              params.provider === params.run.provider ? params.run.authProfileId : undefined,
+              params.provider === params.run.executionSelection.model.provider
+                ? params.run.authProfileId
+                : undefined,
             authProfileIdSource:
-              params.provider === params.run.provider ? params.run.authProfileIdSource : undefined,
+              params.provider === params.run.executionSelection.model.provider
+                ? params.run.authProfileIdSource
+                : undefined,
           },
         },
   resolveQueuedReplyRuntimeConfig: <T>(config: T) => config,
@@ -499,8 +503,11 @@ export function createFollowupRun(): FollowupRun {
       workspaceDir: rootDir,
       config: {},
       skillsSnapshot: {},
-      provider: "anthropic",
-      model: "claude",
+      executionSelection: {
+        model: { provider: "anthropic", id: "claude" },
+        executor: { kind: "harness", id: "openclaw" },
+      },
+
       // Missing fixture modalities trigger real provider catalog discovery during execution.
       thinkingCatalog: [
         { provider: "anthropic", id: "claude", input: ["text"] },

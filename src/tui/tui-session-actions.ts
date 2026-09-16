@@ -202,8 +202,6 @@ export function createSessionActions(context: SessionActionContext) {
       defaultModel: lastSessionDefaults?.model,
       entryProvider: entry?.modelProvider,
       entryModel: entry?.model,
-      overrideProvider: entry?.providerOverride,
-      overrideModel: entry?.modelOverride,
     });
   };
 

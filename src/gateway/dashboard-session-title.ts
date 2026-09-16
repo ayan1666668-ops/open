@@ -10,6 +10,7 @@ import { loadSessionEntry, patchSessionEntryCore } from "../config/sessions/sess
 import type { SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { withTimeout } from "../infra/fs-safe.js";
+import type { ModelExecutionSelection } from "../model-picker/execution-selection.js";
 import { parseAgentSessionKey } from "../sessions/session-key-utils.js";
 import { getOrCreatePromise } from "../shared/lazy-promise.js";
 import { isValidAttachmentBase64, type ChatAttachment } from "./chat-attachments.js";
@@ -17,17 +18,7 @@ import { deriveGoalSessionTitle } from "./derive-goal-session-title.js";
 import { resolveStoredSessionKeyForAgentStore } from "./session-store-key.js";
 import { readSessionTitleFieldsFromTranscript } from "./session-transcript-title-reader.js";
 
-type DashboardSessionTitleModelEntry = Pick<
-  SessionEntry,
-  | "agentHarnessId"
-  | "agentRuntimeOverride"
-  | "authProfileOverride"
-  | "model"
-  | "modelOverride"
-  | "modelProvider"
-  | "modelSelectionLocked"
-  | "providerOverride"
->;
+type DashboardSessionTitleModelEntry = Partial<SessionEntry>;
 
 const DASHBOARD_SESSION_TITLE_MAX_CHARS = 60;
 const DASHBOARD_SESSION_TITLE_SOURCE_MAX_CHARS = 1_000;
@@ -169,6 +160,7 @@ async function generateDashboardSessionTitle(params: {
   cfg: OpenClawConfig;
   agentId: string;
   entry?: DashboardSessionTitleModelEntry;
+  executionSelection?: ModelExecutionSelection;
   userMessage: string;
   attachments?: readonly ChatAttachment[];
   timeoutMs?: number;
@@ -183,12 +175,19 @@ async function generateDashboardSessionTitle(params: {
   if (!sourceText || sourceText.startsWith("/")) {
     return null;
   }
-  const regularModel = resolveSessionModelRef(params.cfg, params.entry, params.agentId);
-  const agentHarnessRuntimeOverride = resolveSessionRuntimeOverrideForProvider({
-    provider: regularModel.provider,
-    entry: params.entry,
-    cfg: params.cfg,
-  });
+  const regularModel = params.executionSelection
+    ? {
+        provider: params.executionSelection.model.provider,
+        model: params.executionSelection.model.id,
+      }
+    : resolveSessionModelRef(params.cfg, params.entry, params.agentId);
+  const agentHarnessRuntimeOverride =
+    params.executionSelection?.executor.id ??
+    resolveSessionRuntimeOverrideForProvider({
+      provider: regularModel.provider,
+      entry: params.entry,
+      cfg: params.cfg,
+    });
   const preferredProfile = resolveDashboardTitleAuthProfile({
     cfg: params.cfg,
     agentId: params.agentId,
@@ -323,6 +322,7 @@ export async function maybeGenerateSessionTitle(params: {
   cfg: OpenClawConfig;
   agentId: string;
   entry: SessionEntry | undefined;
+  executionSelection?: ModelExecutionSelection;
   sessionId: string;
   sessionKey: string;
   storePath: string;
@@ -376,6 +376,7 @@ export async function maybeGenerateSessionTitle(params: {
           cfg: params.cfg,
           agentId: params.agentId,
           entry: params.entry ?? entry,
+          executionSelection: params.executionSelection,
           userMessage: sourceText,
           ...(params.worktree ? { timeoutMs: WORKTREE_SESSION_TITLE_ATTEMPT_TIMEOUT_MS } : {}),
         });

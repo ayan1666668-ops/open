@@ -1,8 +1,13 @@
 // Codex plugin module implements conversation control behavior.
-import { resolveAgentDir } from "openclaw/plugin-sdk/agent-runtime";
 import {
-  applyModelOverrideWithAuthProfileCompatibility,
+  loadPreparedModelCatalog,
+  resolveDefaultModelForAgent,
+} from "openclaw/plugin-sdk/agent-runtime";
+import { getRuntimeConfig } from "openclaw/plugin-sdk/config-runtime";
+import {
+  applySessionModelSelection,
   ModelSelectionLockedError,
+  resolveSessionModelRef,
 } from "openclaw/plugin-sdk/model-session-runtime";
 import {
   getSessionEntry,
@@ -235,36 +240,59 @@ export async function setCodexConversationModel(params: {
       ? { contextEngine: { ...binding.contextEngine, projection: undefined } }
       : {};
   const identity = params.identity;
+  let selectionMessage: string | undefined;
   if (identity.kind === "session" && identity.sessionKey) {
     // SessionEntry owns the desired model; retain the loaded binding until
     // lifecycle reconciliation can rotate its native generation safely.
-    const updated = await patchSessionEntry({
+    const cfg = params.config ?? getRuntimeConfig();
+    const storePath =
+      params.storePath ?? resolveStorePath(cfg.session?.store, { agentId: identity.agentId });
+    const entry = getSessionEntry({
       agentId: identity.agentId,
-      storePath:
-        params.storePath ??
-        resolveStorePath(params.config?.session?.store, { agentId: identity.agentId }),
+      storePath,
       sessionKey: identity.sessionKey,
-      requireWriteSuccess: true,
-      replaceEntry: true,
-      assertCommitAllowed: params.assertCurrent,
-      update: (entry) => {
-        if (entry.sessionId !== identity.sessionId) {
-          throw new Error("Codex session changed while applying the model selection.");
-        }
-        applyModelOverrideWithAuthProfileCompatibility({
-          cfg: params.config ?? {},
-          agentDir: params.agentDir ?? resolveAgentDir(params.config ?? {}, identity.agentId),
-          entry,
-          currentProvider: binding.modelProvider ?? "openai",
-          selection: { provider: nextModelProvider ?? "openai", model: nextModel },
-          markLiveSwitchPending: true,
-        });
-        return entry;
-      },
+      readConsistency: "latest",
     });
-    if (!updated) {
+    params.assertCurrent();
+    if (!entry || entry.sessionId !== identity.sessionId) {
       throw new Error("Codex session changed while applying the model selection.");
     }
+    const configured = resolveDefaultModelForAgent({ cfg, agentId: identity.agentId });
+    const previous = resolveSessionModelRef(cfg, entry, identity.agentId);
+    const catalog = await loadPreparedModelCatalog({
+      config: cfg,
+      agentId: identity.agentId,
+      agentDir: params.agentDir,
+      readOnly: true,
+    });
+    const applied = await applySessionModelSelection({
+      cfg,
+      agentId: identity.agentId,
+      storePath,
+      sessionKey: identity.sessionKey,
+      sessionEntry: entry,
+      sessionStore: { [identity.sessionKey]: entry },
+      defaultProvider: configured.provider,
+      defaultModel: configured.model,
+      currentProvider: binding.modelProvider ?? previous.provider,
+      currentModel: previous.model,
+      modelCatalog: catalog,
+      request: {
+        provider: nextModelProvider ?? "openai",
+        model: nextModel,
+        isDefault: false,
+        runtime: { kind: "set", runtime: "codex" },
+      },
+      markLiveSwitchPending: true,
+      validateAuthProfileSelection: () => {
+        params.assertCurrent();
+        return undefined;
+      },
+    });
+    if (applied.status !== "applied") {
+      throw new Error(applied.message);
+    }
+    selectionMessage = applied.message;
     if (modelChanged && binding.contextEngine?.projection) {
       await patchThreadBinding(
         params.bindingStore,
@@ -289,7 +317,7 @@ export async function setCodexConversationModel(params: {
       params.assertCurrent,
     );
   }
-  return `Codex model set to ${formatCodexDisplayText(nextModel)}.`;
+  return selectionMessage ?? `Codex model set to ${formatCodexDisplayText(nextModel)}.`;
 }
 
 export async function setCodexConversationFastMode(params: {

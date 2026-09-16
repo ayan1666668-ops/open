@@ -90,13 +90,6 @@ type RunEntryHarnessPreparation =
 
 type RunEntryBehavior = RunEntryTerminalBehavior;
 
-type RunEntrySessionOverride =
-  | { kind: "preserve" }
-  | {
-      kind: "reconcile-completed";
-      reconcile: (candidate: { provider: string; model: string }) => Promise<void>;
-    };
-
 type EmbeddedAgentRunEntryResult<T extends EmbeddedAgentRunResult> = {
   outcome: "completed" | "exhausted";
   result: T;
@@ -104,8 +97,12 @@ type EmbeddedAgentRunEntryResult<T extends EmbeddedAgentRunResult> = {
   model: string;
   attempts: FallbackAttempt[];
   terminal: EmbeddedAgentRunEntryTerminal;
-  settleSessionOverride: () => Promise<void>;
   selection: ModelExecutionSelection;
+};
+
+type PreparedRunEntrySelection = {
+  selection: ModelExecutionSelection;
+  validateCommit: () => string | undefined;
 };
 
 type EmbeddedAgentRunEntryParams<T extends EmbeddedAgentRunResult> = {
@@ -132,13 +129,12 @@ type EmbeddedAgentRunEntryParams<T extends EmbeddedAgentRunResult> = {
     prepareExecutionSelection: (
       provider: string,
       model: string,
-    ) => Promise<ModelExecutionSelection>;
+    ) => Promise<PreparedRunEntrySelection>;
     resolveContextEngineHost?: (
       selection: ModelExecutionSelection,
     ) => ContextEngineHostSupport | undefined;
   };
   behavior: RunEntryBehavior;
-  sessionOverride: RunEntrySessionOverride;
   abortSignal?: AbortSignal;
   onFallbackStep?: (step: ModelFallbackStepFields) => void | Promise<void>;
   /** Runs once after the successful winner is accepted, before post-turn context commit. */
@@ -263,8 +259,8 @@ export async function runEmbeddedAgentEntry<T extends EmbeddedAgentRunResult>(
         }
       : undefined;
   const hasCommittedSideEffect = canFallback ? () => !canFallback() : undefined;
-  const preparedSelections = new Map<string, ModelExecutionSelection | Error>();
-  const readPreparedSelection = (provider: string, model: string): ModelExecutionSelection => {
+  const preparedSelections = new Map<string, PreparedRunEntrySelection | Error>();
+  const readPreparedSelection = (provider: string, model: string): PreparedRunEntrySelection => {
     const prepared = preparedSelections.get(modelKey(provider, model));
     if (!prepared) {
       throw new Error("Execution selection was not prepared before dispatch.");
@@ -273,6 +269,14 @@ export async function runEmbeddedAgentEntry<T extends EmbeddedAgentRunResult>(
       throw prepared;
     }
     return prepared;
+  };
+  const validatePreparedSelection = (provider: string, model: string): ModelExecutionSelection => {
+    const prepared = readPreparedSelection(provider, model);
+    const error = prepared.validateCommit();
+    if (error) {
+      throw new Error(error);
+    }
+    return prepared.selection;
   };
   const canFallbackAfterError = canFallback;
   try {
@@ -286,9 +290,9 @@ export async function runEmbeddedAgentEntry<T extends EmbeddedAgentRunResult>(
         ...params.identity,
         abortSignal: params.abortSignal,
         resolveAgentHarnessRuntimeOverride: (provider, model) =>
-          readPreparedSelection(provider, model).executor.id,
+          readPreparedSelection(provider, model).selection.executor.id,
         prepareCandidate: async (provider, model) => {
-          readPreparedSelection(provider, model);
+          validatePreparedSelection(provider, model);
         },
         prepareCandidateChain: async (candidates) => {
           for (const candidate of candidates) {
@@ -307,7 +311,10 @@ export async function runEmbeddedAgentEntry<T extends EmbeddedAgentRunResult>(
           }
           for (const candidate of candidates) {
             try {
-              const preparedSelection = readPreparedSelection(candidate.provider, candidate.model);
+              const preparedSelection = readPreparedSelection(
+                candidate.provider,
+                candidate.model,
+              ).selection;
               const agentHarnessRuntimeOverride = preparedSelection.executor.id;
               await prepareHarnessRuntime({
                 provider: candidate.provider,
@@ -376,6 +383,7 @@ export async function runEmbeddedAgentEntry<T extends EmbeddedAgentRunResult>(
               }),
             }),
         run: async (provider, model, options) => {
+          validatePreparedSelection(provider, model);
           assistantErrorTranscript.clear();
           if (!options) {
             throw new Error("Model fallback attempt is missing routing provenance");
@@ -433,7 +441,7 @@ export async function runEmbeddedAgentEntry<T extends EmbeddedAgentRunResult>(
             return classified.value;
           };
           try {
-            const result = await params.runCandidate(readPreparedSelection(provider, model), {
+            const result = await params.runCandidate(validatePreparedSelection(provider, model), {
               assistantErrorTranscript,
               // The original OpenAI refusal proves this turn's credential already
               // reached the provider. Keep a target-only entitlement rejection from
@@ -709,28 +717,10 @@ export async function runEmbeddedAgentEntry<T extends EmbeddedAgentRunResult>(
     } finally {
       releaseAcceptedTerminalWork?.();
     }
-    let sessionOverrideSettled = false;
-    const settleSessionOverride = async () => {
-      if (sessionOverrideSettled) {
-        return;
-      }
-      sessionOverrideSettled = true;
-      if (
-        !policyEscalated &&
-        settledResult.outcome === "completed" &&
-        params.sessionOverride.kind === "reconcile-completed"
-      ) {
-        await params.sessionOverride.reconcile({
-          provider: settledResult.provider,
-          model: settledResult.model,
-        });
-      }
-    };
     return {
       ...settledResult,
-      selection: readPreparedSelection(settledResult.provider, settledResult.model),
+      selection: readPreparedSelection(settledResult.provider, settledResult.model).selection,
       terminal,
-      settleSessionOverride,
     };
   } finally {
     if (unsettledContextEngineTurnAttempt) {

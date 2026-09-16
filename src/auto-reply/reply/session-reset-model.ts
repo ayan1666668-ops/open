@@ -1,7 +1,11 @@
 /** Applies model override tokens embedded in reset/new command text. */
 import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
-import { resolveAgentDir, resolveDefaultAgentId } from "../../agents/agent-scope.js";
+import {
+  resolveAgentDir,
+  resolveDefaultAgentId,
+  resolveSessionAgentId,
+} from "../../agents/agent-scope.js";
 import type { ModelCatalogEntry } from "../../agents/model-catalog.types.js";
 import { resolveModelRefFromString } from "../../agents/model-selection-shared.js";
 import { createModelVisibilityPolicy } from "../../agents/model-visibility-policy.js";
@@ -9,12 +13,22 @@ import type { InternalSessionEntry as SessionEntry } from "../../config/sessions
 import { SessionWorkStartInvalidatedError } from "../../config/sessions/lifecycle.js";
 import {
   adoptPersistedSessionSnapshot,
+  mergeSessionSnapshotChanges,
   SESSION_MODEL_OVERRIDE_TRANSACTION_FIELDS,
   sessionModelOverrideChangesApplied,
 } from "../../config/sessions/session-snapshot-merge.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
-import { applyModelOverrideWithAuthProfileCompatibility } from "../../sessions/auth-profile-preservation.js";
-import { ModelSelectionLockedError } from "../../sessions/model-overrides.js";
+import {
+  prepareSessionExecutionSelection,
+  commitSessionModelSelectionWithAuth,
+} from "../../model-picker/apply-session-model-selection.js";
+import { executionSelectionTransactionChanged } from "../../model-picker/execution-selection-codec.js";
+import { getSessionExecutionSelection } from "../../model-picker/execution-selection-state.js";
+import { isAcpExecutionSelection } from "../../model-picker/execution-selection.js";
+import {
+  isModelSelectionLocked,
+  ModelSelectionLockedError,
+} from "../../sessions/model-overrides.js";
 import type { MsgContext, TemplateContext } from "../templating.js";
 import { isKnownModelSelectionProvider } from "./model-runtime-normalization.js";
 import {
@@ -65,16 +79,35 @@ async function applySelectionToSession(params: {
   }
   const initialSessionEntry = { ...sessionEntry };
   const nextSessionEntry = { ...sessionEntry };
-  applyModelOverrideWithAuthProfileCompatibility({
+  const agentId = resolveSessionAgentId({ config: params.cfg, sessionKey });
+  const prepared = await prepareSessionExecutionSelection({
     cfg: params.cfg,
-    agentDir: params.agentDir,
+    agentId,
+    sessionKey,
+    sessionEntry,
+    storePath,
+    request: selection.resetToDefault
+      ? { kind: "reset" }
+      : { kind: "model", model: { provider: selection.provider, id: selection.model } },
+  });
+  if (prepared.status !== "ready") {
+    if (prepared.reason === "locked") throw new ModelSelectionLockedError();
+    throw new Error(prepared.message);
+  }
+  if (isAcpExecutionSelection(prepared.selection)) {
+    throw new Error("Change the model in its own request for this session");
+  }
+  const previous = getSessionExecutionSelection(sessionEntry, params.cfg);
+  commitSessionModelSelectionWithAuth({
+    cfg: params.cfg,
+    agentId,
     entry: nextSessionEntry,
     currentProvider:
-      sessionEntry.providerOverride?.trim() ||
-      sessionEntry.modelProvider?.trim() ||
-      params.defaultProvider,
-    selection,
-    explicitDefaultSelection: selection.isDefault,
+      previous && !isAcpExecutionSelection(previous)
+        ? previous.model.provider
+        : params.defaultProvider,
+    selection: prepared.selection,
+    cause: { kind: selection.resetToDefault ? "reset" : "user" },
   });
   let appliedEntry = nextSessionEntry;
   let selectionApplied = true;
@@ -87,8 +120,12 @@ async function applySelectionToSession(params: {
       entry: nextSessionEntry,
       touchedFields: SESSION_MODEL_OVERRIDE_TRANSACTION_FIELDS,
       requireModelSelectionUnlocked: true,
+      validateCommit: prepared.validateCommit,
     });
-    if (persistence.status === "lifecycle-invalidated") {
+    if (
+      persistence.status === "lifecycle-invalidated" ||
+      persistence.status === "commit-rejected"
+    ) {
       throw new SessionWorkStartInvalidatedError(persistence.error);
     }
     if (persistence.status === "model-selection-locked") {
@@ -100,6 +137,24 @@ async function applySelectionToSession(params: {
       initial: initialSessionEntry,
       next: nextSessionEntry,
       current: persistedEntry,
+    });
+  } else {
+    const current = sessionEntryHandle?.getCurrent() ?? sessionStore?.[sessionKey] ?? sessionEntry;
+    const error = prepared.validateCommit();
+    if (error) throw new Error(error);
+    if (isModelSelectionLocked(current)) throw new ModelSelectionLockedError();
+    if (
+      current !== sessionEntry ||
+      current.sessionId !== initialSessionEntry.sessionId ||
+      current.lifecycleRevision !== initialSessionEntry.lifecycleRevision ||
+      executionSelectionTransactionChanged(initialSessionEntry, current)
+    ) {
+      throw new SessionWorkStartInvalidatedError("The session changed. Retry the model selection.");
+    }
+    appliedEntry = mergeSessionSnapshotChanges({
+      initial: initialSessionEntry,
+      next: nextSessionEntry,
+      current,
     });
   }
   adoptPersistedSessionSnapshot(sessionEntry, appliedEntry);

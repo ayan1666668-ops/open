@@ -71,6 +71,8 @@ import {
 } from "../hooks/internal-hooks.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import { commitSessionExecutionSelection } from "../model-picker/apply-session-model-selection.js";
+import { getSessionExecutionSelection } from "../model-picker/execution-selection-state.js";
+import { isAcpExecutionSelection } from "../model-picker/execution-selection.js";
 import type { ModelExecutionSelection } from "../model-picker/execution-selection.js";
 import {
   isIncognitoSessionKey,
@@ -165,9 +167,10 @@ async function existingSessionSelectionWouldChange(params: {
     // keep catalog-owned model/runtime adoption fail-closed.
     return true;
   }
+  const accepted = getSessionExecutionSelection(params.existingEntry, params.cfg);
   if (
     params.requestedAgentRuntime !== undefined &&
-    params.requestedAgentRuntime !== params.existingEntry.agentRuntimeOverride
+    (accepted?.executor.kind === "acp" || params.requestedAgentRuntime !== accepted?.executor.id)
   ) {
     return true;
   }
@@ -216,26 +219,9 @@ async function existingSessionSelectionWouldChange(params: {
     // Non-admin existing-row creates fail closed before that mutation path.
     return true;
   }
-  let existingProvider =
-    normalizeOptionalString(params.existingEntry.providerOverride) ?? params.defaultProvider;
-  let existingModel =
-    normalizeOptionalString(params.existingEntry.modelOverride) ?? params.defaultModel;
-  if (!normalizeOptionalString(params.existingEntry.modelOverride) && params.subagentModelHint) {
-    const resolvedSubagentDefault = resolveSessionPatchModelSelection({
-      cfg: params.cfg,
-      agentId: params.agentId,
-      catalog: catalog.entries,
-      raw: params.subagentModelHint,
-      defaultProvider: params.defaultProvider,
-      defaultModel: params.defaultModel,
-    });
-    if (!resolvedSubagentDefault.ok) {
-      return true;
-    }
-    if (!normalizeOptionalString(params.existingEntry.providerOverride)) {
-      existingProvider = resolvedSubagentDefault.provider;
-    }
-    existingModel = resolvedSubagentDefault.model;
+  // An uninitialized row cannot prove a requested selection is an authorized no-op.
+  if (!accepted || isAcpExecutionSelection(accepted)) {
+    return true;
   }
   const existingProfile = normalizeOptionalString(params.existingEntry.authProfileOverride);
   const requestedProfile = normalizeOptionalString(resolved.profile);
@@ -246,15 +232,14 @@ async function existingSessionSelectionWouldChange(params: {
         !shouldPreserveSessionAuthProfileOverride({
           cfg: params.cfg,
           agentDir: resolveAgentDir(params.cfg, params.agentId),
-          currentProvider:
-            params.existingEntry.providerOverride ??
-            params.existingEntry.modelProvider ??
-            params.defaultProvider,
+          currentProvider: accepted.model.provider,
           entry: params.existingEntry,
           provider: resolved.provider,
         });
   return (
-    resolved.provider !== existingProvider || resolved.model !== existingModel || profileWouldChange
+    resolved.provider !== accepted.model.provider ||
+    resolved.model !== accepted.model.id ||
+    profileWouldChange
   );
 }
 
@@ -1095,7 +1080,7 @@ export async function createGatewaySession(params: {
         return { ok: false, error: root.error };
       }
     }
-    const titleModelSelection = resolveSessionCreateModelSelection(
+    const titleModelSelection = await resolveSessionCreateModelSelection(
       params.cfg,
       target.agentId,
       params.catalogTarget ??
@@ -1370,24 +1355,10 @@ export async function createGatewaySession(params: {
             ),
           };
         }
-        const catalogResolvedModel = params.catalogTarget
-          ? resolveSessionModelRef(params.cfg, patched.entry, target.agentId)
-          : undefined;
         const initializedEntry: InternalSessionEntry = {
           ...patched.entry,
           ...inheritedWorkspace,
           ...(createdNewEntry && displayName ? { displayName } : {}),
-          ...(createdNewEntry && spawnModelAutoSelection
-            ? {
-                modelOverrideSource: "auto" as const,
-                ...(spawnModelAutoSelection.hasFallbackOrigin
-                  ? {
-                      modelOverrideFallbackOriginProvider: patched.entry.providerOverride,
-                      modelOverrideFallbackOriginModel: patched.entry.modelOverride,
-                    }
-                  : {}),
-              }
-            : {}),
           // New rows must expose the same canonical delivery shape to callbacks
           // that the SQLite writer persists, or guarded finalization sees its own write as drift.
           ...(existingEntry === undefined && patched.entry.delivery === undefined
@@ -1409,13 +1380,8 @@ export async function createGatewaySession(params: {
           ...(params.pendingWorktree && createdNewEntry
             ? { pendingWorktree: params.pendingWorktree }
             : {}),
-          ...(catalogResolvedModel && catalogAgentRuntime
+          ...(params.catalogTarget && catalogAgentRuntime
             ? {
-                providerOverride: catalogResolvedModel.provider,
-                modelOverride: catalogResolvedModel.model,
-                modelOverrideSource: "user" as const,
-                modelOverrideRouteResolution: "resolved" as const,
-                agentRuntimeOverride: catalogAgentRuntime,
                 modelSelectionLocked: true,
                 pluginOwnerId: catalogPluginOwnerId,
               }
@@ -1475,6 +1441,12 @@ export async function createGatewaySession(params: {
             : {}),
           ...(existingEntry === undefined && incognito ? { incognito: true as const } : {}),
         };
+        if (createdNewEntry && spawnModelAutoSelection && patched.execution) {
+          commitSessionExecutionSelection(initializedEntry, patched.execution.selection, {
+            cfg: params.cfg,
+            cause: { kind: "reset" },
+          });
+        }
         if (authorizedPluginCreation && params.executionSelection) {
           commitSessionExecutionSelection(initializedEntry, params.executionSelection, {
             cfg: params.cfg,
@@ -1499,13 +1471,6 @@ export async function createGatewaySession(params: {
         const entry: SessionEntry = {
           ...initializedEntry,
           ...inheritedSelection,
-          // Main groups dashboard roots; it must not supply their reply-time model.
-          ...(createdNewEntry &&
-          dashboardParentSessionKey &&
-          !explicitParentSessionKey &&
-          !initializedEntry.modelOverride
-            ? { modelOverrideSource: "default" as const }
-            : {}),
           ...(storedParentSessionKey ? { parentSessionKey: storedParentSessionKey } : {}),
           ...(canonicalParentSessionKey && currentParentSessionEntry?.sessionId
             ? { parentSessionId: currentParentSessionEntry.sessionId }

@@ -110,7 +110,6 @@ export function resolveSubagentModelAndThinkingPlan(params: {
     modelApplied: Boolean(resolvedModel),
     thinkingOverride: thinkingPlan.thinkingOverride,
     initialSessionPatch: {
-      ...(resolvedModel ? { model: resolvedModel } : {}),
       ...(authProfileId
         ? {
             authProfileOverride: authProfileId,

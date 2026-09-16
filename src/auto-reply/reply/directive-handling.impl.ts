@@ -15,7 +15,6 @@ import { triggerSessionPatchHook } from "../../gateway/session-patch-hooks.js";
 import { enqueueSystemEvent } from "../../infra/system-events.js";
 import {
   prepareSessionExecutionSelection,
-  commitSessionExecutionSelection,
   commitSessionModelSelectionWithAuth,
 } from "../../model-picker/apply-session-model-selection.js";
 import { executionSelectionCodecMetadata } from "../../model-picker/execution-selection-state.js";
@@ -173,14 +172,7 @@ export async function handleDirectiveOnly(
 
   let resolvedProvider = modelSelection?.provider ?? provider;
   let resolvedModel = modelSelection?.model ?? model;
-  const runtimeRequest = resolveModelRuntimeDirective({
-    cfg: params.cfg,
-    provider: resolvedProvider,
-    rawRuntime: directives.rawModelRuntime,
-  });
-  if (runtimeRequest.kind === "invalid") {
-    return rejectModelTransaction(runtimeRequest.errorText);
-  }
+  const runtimeRequest = resolveModelRuntimeDirective(directives.rawModelRuntime);
   const kind =
     runtimeRequest.kind === "set"
       ? executionSelectionCodecMetadata(params.cfg).classifyExecutor(runtimeRequest.runtime)
@@ -204,9 +196,10 @@ export async function handleDirectiveOnly(
           : sessionEntry,
         profileProvider: profileOverride ? resolvedProvider : undefined,
         modelCatalog: thinkingCatalog ?? [],
-        request:
-          modelSelection.resetToDefault || runtimeRequest.kind === "clear"
-            ? { kind: "reset" }
+        request: modelSelection.resetToDefault
+          ? { kind: "reset" }
+          : runtimeRequest.kind === "clear"
+            ? { kind: "reset", model: { provider: resolvedProvider, id: resolvedModel } }
             : {
                 kind: "model",
                 model: { provider: resolvedProvider, id: resolvedModel },
@@ -228,29 +221,33 @@ export async function handleDirectiveOnly(
     }
   }
   const validateRuntimeSelection = preparedModel?.validateCommit;
-  const prospectiveSessionEntry = { ...sessionEntry };
-  if (preparedModel) {
-    commitSessionExecutionSelection(prospectiveSessionEntry, preparedModel.selection, {
-      cfg: params.cfg,
-    });
+  if (preparedModel?.catalogEntry) {
+    const selected = preparedModel.catalogEntry;
+    thinkingCatalog = [
+      selected,
+      ...(thinkingCatalog ?? []).filter(
+        (entry) => entry.provider !== selected.provider || entry.id !== selected.id,
+      ),
+    ];
   }
   const selectedCatalogEntry = findSelectedCatalogEntry({
     catalog: thinkingCatalog,
     provider: resolvedProvider,
     model: resolvedModel,
   });
-  const resolveThinkingRuntime = (entry: typeof sessionEntry) =>
-    resolveEffectiveAgentRuntime({
-      cfg: params.cfg,
-      provider: resolvedProvider,
-      modelId: resolvedModel,
-      modelApi: selectedCatalogEntry?.api,
-      modelBaseUrl: selectedCatalogEntry?.baseUrl,
-      agentId: activeAgentId,
-      sessionKey: runtimePolicySessionKey,
-      sessionEntry: entry,
-    });
-  const thinkingRuntime = resolveThinkingRuntime(prospectiveSessionEntry);
+  const thinkingRuntime =
+    preparedModel && !isAcpExecutionSelection(preparedModel.selection)
+      ? preparedModel.selection.executor.id
+      : resolveEffectiveAgentRuntime({
+          cfg: params.cfg,
+          provider: resolvedProvider,
+          modelId: resolvedModel,
+          modelApi: selectedCatalogEntry?.api,
+          modelBaseUrl: selectedCatalogEntry?.baseUrl,
+          agentId: activeAgentId,
+          sessionKey: runtimePolicySessionKey,
+          sessionEntry,
+        });
   const thinkingPolicy = {
     provider: resolvedProvider,
     model: resolvedModel,
@@ -534,6 +531,9 @@ export async function handleDirectiveOnly(
         selection: preparedModel.selection,
         profileOverride,
         markLiveSwitchPending: true,
+        cause: {
+          kind: modelSelection.resetToDefault ? "reset" : "user",
+        },
       }).changed;
     }
     sessionEntry.updatedAt = Date.now();
@@ -580,7 +580,13 @@ export async function handleDirectiveOnly(
     if (sessionKey && (sessionSettingsUpdated || modelSelectionUpdated)) {
       emitSessionLifecycleEvent({ sessionKey, agentId: activeAgentId, reason: "patch" });
     }
-    if (modelSelection && modelSelectionUpdated && sessionKey) {
+    if (
+      modelSelection &&
+      preparedModel &&
+      !isAcpExecutionSelection(preparedModel.selection) &&
+      modelSelectionUpdated &&
+      sessionKey
+    ) {
       triggerSessionPatchHook({
         cfg: params.cfg,
         sessionEntry,
@@ -596,16 +602,12 @@ export async function handleDirectiveOnly(
       // selection once the current turn finishes.
       refreshQueuedFollowupSession({
         key: sessionKey,
-        nextProvider: modelSelection.provider,
-        nextModel: modelSelection.model,
-        nextRouteResolution: "resolved",
-        nextModelOverrideSource: modelSelection.isDefault ? undefined : "user",
+        nextSelection: preparedModel.selection,
         nextAuthProfileId: sessionEntry.authProfileOverride,
         nextAuthProfileIdSource: resolveCollapsedSessionAuthPinSource(sessionEntry),
         nextThinking: {
           level: sessionEntry.thinkingLevel,
           catalog: thinkingCatalog,
-          agentRuntime: resolveThinkingRuntime(sessionEntry),
         },
       });
     }

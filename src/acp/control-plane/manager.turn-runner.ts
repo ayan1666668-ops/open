@@ -2,6 +2,7 @@
 import { isDeepStrictEqual } from "node:util";
 import type { AcpRuntime, AcpRuntimeHandle } from "@openclaw/acp-core/runtime/types";
 import { expectDefined } from "@openclaw/normalization-core";
+import { resolveAdmittedRunActiveAssertion } from "../../agents/admitted-run-context.js";
 import { logVerbose } from "../../globals.js";
 import { commitAcpExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
 import {
@@ -30,6 +31,7 @@ import {
 import { cancelManagerActiveTurn } from "./manager.cancel-session.js";
 import { applyManagerRuntimeControls } from "./manager.runtime-controls.js";
 import type { ManagerRuntimeHandleCache } from "./manager.runtime-handle-cache.js";
+import { initializeManagerExecutionSelection } from "./manager.runtime-options-commands.js";
 import { isAcpOwnerRepairRequired } from "./manager.runtime-owner.js";
 import { prepareFreshManagerRuntimeHandleRetry } from "./manager.runtime-resume-state.js";
 import { consumeAcpTurnStream } from "./manager.turn-stream.js";
@@ -82,6 +84,16 @@ export async function runManagerTurn(params: {
   if (input.admittedRunContext.operationalRunInstance.runId !== input.requestId) {
     throw new Error("ACP operational run instance disagrees with the admitted request");
   }
+  await initializeManagerExecutionSelection({
+    cfg: input.cfg,
+    sessionKey,
+    agentId,
+    runtimeHandles: params.runtimeHandles,
+    resolveSession: params.resolveSession,
+    ensureRuntimeHandle: params.ensureRuntimeHandle,
+    writeSessionMeta: params.writeSessionMeta,
+    assertActive: resolveAdmittedRunActiveAssertion(input.admittedRunContext, input.signal),
+  });
   const turnStartedAt = Date.now();
   const actorKey = acpSessionActorKey(params);
   const taskContext =
@@ -521,7 +533,7 @@ export async function runManagerTurn(params: {
               failOnStatusError: false,
             }));
           }
-          if (turnLocal && runtime && handle) {
+          if (turnLocal && !skipPostTurnCleanup && runtime && handle) {
             // A fallback binding never replaces the accepted conversation's native identifiers.
             await runtime.close({ handle, reason: "turn-local-fallback-complete" });
             params.runtimeHandles.clear(params);

@@ -30,6 +30,7 @@ import { leaseMcpAppModelContextForTurn } from "../../agents/mcp-app-model-conte
 import { createAgentPatchedSessionModelRunGuard } from "../../agents/session-model-auto-revert.js";
 import { readChannelContextGatewayContextResolver } from "../../channels/message-access/admission-evidence.js";
 import type { SessionEntry } from "../../config/sessions.js";
+import { loadSessionEntryReadOnly } from "../../config/sessions/session-accessor.js";
 import { logVerbose } from "../../globals.js";
 import {
   captureAgentRunLifecycleGeneration,
@@ -41,7 +42,6 @@ import { drainAgentRunTerminalWrites } from "../../infra/agent-run-terminal-writ
 import { isDiagnosticsEnabled } from "../../infra/diagnostic-events.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { logSessionTurnCreated } from "../../logging/diagnostic.js";
-import { commitSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
 import {
   bindGatewayContextResolver,
   getPluginRuntimeGatewayRequestScope,
@@ -146,14 +146,15 @@ async function executeAgentTurnInternalLoop(
     run.authProfileIdSource = err.authProfileId ? err.authProfileIdSource : undefined;
     // Keep runtime paired with the error's model/auth winner even if the
     // active in-memory session snapshot lags the persisted directive write.
-    const currentEntry = params.getActiveSessionEntry();
-    if (currentEntry) {
-      liveModelSwitchRuntimeEntry = { ...currentEntry };
-      commitSessionExecutionSelection(liveModelSwitchRuntimeEntry, err.selection, {
-        cfg: runtimeConfig,
-        cause: { kind: "user" },
-      });
-    }
+    liveModelSwitchRuntimeEntry =
+      params.storePath && params.sessionKey
+        ? loadSessionEntryReadOnly({
+            agentId: run.agentId,
+            storePath: params.storePath,
+            sessionKey: params.sessionKey,
+            readConsistency: "latest",
+          })
+        : params.getActiveSessionEntry();
   };
 
   const runId = params.opts?.runId ?? crypto.randomUUID();

@@ -158,7 +158,7 @@ async function createSessionEntry(
     { resolveGatewaySessionStoreTarget },
     { readAcpSessionMetaForEntry, upsertAcpSessionMeta },
     { resolveSandboxedSessionCreation },
-    { commitAcpExecutionSelection },
+    { commitAcpExecutionSelection, consumeSessionExecutionSelectionSeed },
     { readAcpExecutionSelection },
     { getSessionExecutionSelection },
   ] = await Promise.all([
@@ -261,6 +261,8 @@ async function createSessionEntry(
             sessionKey: context.key,
             agentId: context.agentId,
             mutate: () => meta,
+            executionSelection: readAcpExecutionSelection(meta),
+            expectedExecutionSelectionSeed: { ...context.entry },
           });
           if (!persisted?.acp) {
             throw new Error(`could not persist initial ACP binding for ${context.key}`);
@@ -270,7 +272,9 @@ async function createSessionEntry(
             storePath: context.storePath,
             readConsistency: "latest",
           });
-          if (!persistedEntry || !matchesExceptUpdatedAt(persistedEntry, context.entry)) {
+          const expectedEntry = { ...context.entry };
+          consumeSessionExecutionSelectionSeed(expectedEntry, context.entry);
+          if (!persistedEntry || !matchesExceptUpdatedAt(persistedEntry, expectedEntry)) {
             throw new Error(`created ACP session ${context.key} changed during initialization`);
           }
           callbackContext = { ...context, entry: persistedEntry };

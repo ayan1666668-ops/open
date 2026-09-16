@@ -1,8 +1,16 @@
 import { isDeepStrictEqual } from "node:util";
 import type { SessionAcpMeta } from "@openclaw/acp-core/types";
-import { resolveAgentDir, type AgentModelPrimaryWriteTarget } from "../agents/agent-scope.js";
+import {
+  resolveAgentDir,
+  resolveSessionAgentId,
+  resolveAgentModelFallbacksOverride,
+  resolveSubagentSpawnModelFallbacksOverride,
+  type AgentModelPrimaryWriteTarget,
+  type ModelFallbackAvailability,
+} from "../agents/agent-scope.js";
 import { resolveModelProviderAuthConfig } from "../agents/model-auth-provider-route.js";
 import type { ModelCatalogEntry } from "../agents/model-catalog.js";
+import { resolveModelCandidateChain } from "../agents/model-fallback-candidates.js";
 import { evaluatePublishedModelRuntimeChoice } from "../agents/model-runtime-choice.js";
 import { modelKey, resolveDefaultModelForAgent } from "../agents/model-selection.js";
 import {
@@ -14,16 +22,18 @@ import {
   persistStickyModelSelectionBestEffort,
   type StickyModelSelectionDispatchOutcome,
 } from "../agents/sticky-model-selection.js";
-import { resolveEffectiveAgentRuntime } from "../agents/thinking-runtime.js";
 import { findSelectedCatalogEntry } from "../auto-reply/reply/model-runtime-normalization.js";
 import { resolveContextTokens } from "../auto-reply/reply/model-selection-context.js";
 import { refreshQueuedFollowupSession } from "../auto-reply/reply/queue.js";
 import { persistReplySessionEntry } from "../auto-reply/reply/session-entry-persistence.js";
 import { resolveSupportedThinkingLevel } from "../auto-reply/thinking.js";
 import type { ThinkLevel } from "../auto-reply/thinking.shared.js";
+import { resolveAgentModelFallbackValues } from "../config/model-input.js";
 import { resolveCollapsedSessionAuthPinSource } from "../config/sessions/auth-profile-override-provenance.js";
+import { loadSessionEntryReadOnly } from "../config/sessions/session-accessor.js";
 import {
   adoptPersistedSessionSnapshot,
+  mergeSessionSnapshotChanges,
   SESSION_MODEL_OVERRIDE_TRANSACTION_FIELDS,
   sessionModelOverrideChangesApplied,
 } from "../config/sessions/session-snapshot-merge.js";
@@ -35,6 +45,7 @@ import { resolveWorkerPlacementCapabilities } from "../gateway/worker-environmen
 import { enqueueSystemEvent } from "../infra/system-events.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
 import { getPluginRegistryForContext } from "../plugins/runtime/gateway-request-scope.js";
+import { isSubagentSessionKey } from "../routing/session-key.js";
 import { shouldPreserveSessionAuthProfileOverride } from "../sessions/auth-profile-preservation.js";
 import {
   isModelSelectionLocked,
@@ -45,8 +56,13 @@ import {
   encodeAcpExecutionSelection,
   encodeSessionExecutionSelection,
   type ExecutionSelectionCommitCause,
+  admitSessionExecutionFallback,
+  admitSessionExecutionFallbacks,
+  consumeLegacySessionExecutionSeed,
+  executionSelectionTransactionChanged,
 } from "./execution-selection-codec.js";
 import { decodeSessionExecutionSelection } from "./execution-selection-codec.js";
+import { resolveConfiguredExecutionSelection } from "./execution-selection-configured.js";
 import { getSessionExecutionSelection } from "./execution-selection-state.js";
 import { executionSelectionCodecMetadata } from "./execution-selection-state.js";
 import {
@@ -55,6 +71,73 @@ import {
   type ExecutionSelection,
   type ModelExecutionSelection,
 } from "./execution-selection.js";
+
+/** Resolve retry permission without exposing stored selection provenance to callers. */
+export function resolveSessionExecutionFallbacks(params: {
+  cfg: OpenClawConfig;
+  agentId?: string;
+  sessionKey?: string | null;
+  sessionEntry?: Partial<SessionEntry>;
+  selection: ModelExecutionSelection;
+  modelFallbacksOverride?: string[];
+  subagentSpawnLineage?: boolean;
+}): ModelFallbackAvailability {
+  const agentId = resolveSessionAgentId({
+    config: params.cfg,
+    agentId: params.agentId,
+    sessionKey: params.sessionKey ?? undefined,
+  });
+  const entry =
+    params.sessionEntry ??
+    (params.sessionKey
+      ? loadSessionEntryReadOnly({ agentId, sessionKey: params.sessionKey })
+      : undefined);
+  const configured =
+    isSubagentSessionKey(params.sessionKey) || params.subagentSpawnLineage
+      ? resolveSubagentSpawnModelFallbacksOverride(params.cfg, agentId)
+      : resolveAgentModelFallbacksOverride(params.cfg, agentId);
+  const models =
+    params.modelFallbacksOverride ??
+    configured ??
+    resolveAgentModelFallbackValues(params.cfg.agents?.defaults?.model);
+  const candidates = resolveModelCandidateChain({
+    cfg: params.cfg,
+    agentId,
+    provider: params.selection.model.provider,
+    model: params.selection.model.id,
+    requestedRouteResolution: "resolved",
+    fallbacksOverride: models,
+  })
+    .slice(1)
+    .map(({ provider, model }): ModelExecutionSelection => ({
+      model: { provider, id: model },
+      executor: params.selection.executor,
+    }));
+  const admitted = admitSessionExecutionFallbacks({
+    entry,
+    candidates,
+    metadata: executionSelectionCodecMetadata(params.cfg),
+    explicitModels:
+      params.modelFallbacksOverride === undefined
+        ? undefined
+        : candidates.map((pair) => pair.model),
+  });
+  if (admitted.status === "rejected") {
+    return {
+      kind:
+        admitted.reason === "model-selection-locked"
+          ? "disabled_by_model_selection_lock"
+          : "disabled_by_model_override",
+    };
+  }
+  const source =
+    params.modelFallbacksOverride !== undefined ||
+    configured !== undefined ||
+    getSessionExecutionSelection(entry, params.cfg)
+      ? "explicit"
+      : "inherited";
+  return models.length ? { kind: "active", models, source } : { kind: "none_configured", source };
+}
 
 /** Synchronous selection mutation; callers retain their existing store transaction and authority. */
 export function commitSessionExecutionSelection(
@@ -67,15 +150,17 @@ export function commitSessionExecutionSelection(
   } = {},
 ): { changed: boolean } {
   const before = getSessionExecutionSelection(entry, options.cfg);
-  const changed = !isDeepStrictEqual(before, selection);
+  const initial = { ...entry };
+  const pairChanged = !isDeepStrictEqual(before, selection);
   encodeSessionExecutionSelection(entry, selection, options.cause ?? { kind: "user" });
-  if (changed) {
+  const changed = executionSelectionTransactionChanged(initial, entry);
+  if (pairChanged) {
     delete entry.contextTokens;
     delete entry.contextTokensSource;
     delete entry.contextBudgetStatus;
-    if (options.markLiveSwitchPending) {
-      entry.liveModelSwitchPending = true;
-    }
+  }
+  if (changed && options.markLiveSwitchPending) {
+    entry.liveModelSwitchPending = true;
   }
   return { changed };
 }
@@ -86,6 +171,13 @@ export function commitAcpExecutionSelection(
   selection: AcpExecutionSelection,
 ): SessionAcpMeta {
   return encodeAcpExecutionSelection(lifecycle, selection);
+}
+
+export function consumeSessionExecutionSelectionSeed(
+  entry: Partial<SessionEntry>,
+  expected: Partial<SessionEntry>,
+): boolean {
+  return consumeLegacySessionExecutionSeed(entry, expected);
 }
 
 export function commitSessionModelSelectionWithAuth(params: {
@@ -152,8 +244,9 @@ export type ExecutionSelectionRequest =
       executor?: ModelExecutionSelection["executor"];
     }
   | { kind: "selection"; selection: ExecutionSelection }
+  | { kind: "fallback"; selection: ModelExecutionSelection; explicitModels?: string[] }
   | { kind: "initialize"; model?: ModelExecutionSelection["model"] }
-  | { kind: "reset" };
+  | { kind: "reset"; model?: ModelExecutionSelection["model"] };
 
 export type PreparedSessionExecutionSelection =
   | {
@@ -162,7 +255,8 @@ export type PreparedSessionExecutionSelection =
       before?: ExecutionSelection;
       reason: "initialized" | "model" | "explicit" | "reset" | "unsupported";
       message: string;
-      validateCommit?: () => string | undefined;
+      catalogEntry?: ModelCatalogEntry;
+      validateCommit: () => string | undefined;
     }
   | {
       status: "rejected";
@@ -201,56 +295,61 @@ export async function prepareSessionExecutionSelection(params: {
   agentId: string;
   sessionKey?: string;
   sessionEntry?: Partial<SessionEntry>;
+  storePath?: string;
+  readSessionEntry?: () => Partial<SessionEntry> | undefined;
   modelCatalog?: readonly ModelCatalogEntry[];
   profileProvider?: string;
   request: ExecutionSelectionRequest;
   prepareAcp?: (selection: AcpExecutionSelection) => Promise<AcpExecutionSelection>;
 }): Promise<PreparedSessionExecutionSelection> {
+  const sessionSnapshot = params.sessionEntry ? { ...params.sessionEntry } : undefined;
   const configured = resolveDefaultModelForAgent({ cfg: params.cfg, agentId: params.agentId });
   const metadata = executionSelectionCodecMetadata(params.cfg, configured.provider);
-  const decoded = decodeSessionExecutionSelection(params.sessionEntry, metadata);
+  const decoded = decodeSessionExecutionSelection(sessionSnapshot, metadata);
   const before = decoded.kind === "initialized" ? decoded.selection : undefined;
   const catalog = params.modelCatalog ?? [];
-  const chooseConfigured = (
-    model: ModelExecutionSelection["model"],
-  ): ModelExecutionSelection | undefined => {
-    const entry = catalog.find(
-      (entry) => entry.provider === model.provider && entry.id === model.id,
-    );
-    const id = resolveEffectiveAgentRuntime({
+  const chooseConfigured = (model: ModelExecutionSelection["model"]) =>
+    resolveConfiguredExecutionSelection({
       cfg: params.cfg,
       agentId: params.agentId,
       sessionKey: params.sessionKey,
-      provider: model.provider,
-      modelId: model.id,
-      modelApi: entry?.api,
-      modelBaseUrl: entry?.baseUrl,
+      model,
+      modelCatalog: catalog,
+      metadata,
     });
-    const kind = metadata.classifyExecutor(id);
-    return kind ? { model, executor: { kind, id } } : undefined;
-  };
-  const initial =
+  const seed =
+    decoded.kind === "uninitialized" && decoded.model
+      ? { provider: decoded.model.provider ?? configured.provider, id: decoded.model.id }
+      : params.request.kind === "initialize" && params.request.model
+        ? params.request.model
+        : { provider: configured.provider, id: configured.model };
+  const pinned = decoded.kind === "uninitialized" ? decoded.executor : undefined;
+  const initial: ExecutionSelection | undefined =
     before ??
-    chooseConfigured(
-      decoded.kind === "uninitialized" && decoded.model
-        ? { provider: decoded.model.provider ?? configured.provider, id: decoded.model.id }
-        : params.request.kind === "initialize" && params.request.model
-          ? params.request.model
-          : { provider: configured.provider, id: configured.model },
-    );
+    (pinned?.kind === "acp"
+      ? {
+          model:
+            decoded.kind === "uninitialized" && decoded.model ? { id: decoded.model.id } : null,
+          executor: pinned,
+        }
+      : pinned
+        ? { model: seed, executor: pinned }
+        : chooseConfigured(seed));
   let selection: ExecutionSelection | undefined;
   let reason: Extract<PreparedSessionExecutionSelection, { status: "ready" }>["reason"];
   if (params.request.kind === "initialize") {
     selection = initial;
     reason = "initialized";
-  } else if (params.request.kind === "selection") {
+  } else if (params.request.kind === "selection" || params.request.kind === "fallback") {
     selection = params.request.selection;
-    reason = "explicit";
+    reason = params.request.kind === "fallback" ? "model" : "explicit";
   } else if (params.request.kind === "reset") {
     selection =
-      before && isAcpExecutionSelection(before)
-        ? { ...before, model: null }
-        : chooseConfigured({ provider: configured.provider, id: configured.model });
+      initial && isAcpExecutionSelection(initial)
+        ? { ...initial, model: params.request.model ? { id: params.request.model.id } : null }
+        : chooseConfigured(
+            params.request.model ?? { provider: configured.provider, id: configured.model },
+          );
     reason = "reset";
   } else {
     selection =
@@ -271,9 +370,60 @@ export async function prepareSessionExecutionSelection(params: {
   if (!selection) {
     return unknown();
   }
-  if (params.sessionEntry?.modelSelectionLocked && !isDeepStrictEqual(before, selection)) {
+  const lockedSelection = before ?? (pinned ? initial : undefined);
+  if (params.sessionEntry?.modelSelectionLocked && !isDeepStrictEqual(lockedSelection, selection)) {
     return { status: "rejected", reason: "locked", message: MODEL_SELECTION_LOCKED_MESSAGE };
   }
+  const fallbackRequest = params.request.kind === "fallback" ? params.request : undefined;
+  const explicitFallbackModels =
+    fallbackRequest?.explicitModels === undefined
+      ? undefined
+      : resolveModelCandidateChain({
+          cfg: params.cfg,
+          agentId: params.agentId,
+          provider:
+            before && !isAcpExecutionSelection(before)
+              ? before.model.provider
+              : fallbackRequest.selection.model.provider,
+          model:
+            before && !isAcpExecutionSelection(before)
+              ? before.model.id
+              : fallbackRequest.selection.model.id,
+          requestedRouteResolution: "resolved",
+          fallbacksOverride: fallbackRequest.explicitModels,
+        }).map(({ provider, model }) => ({ provider, id: model }));
+  const validateFallback = () => {
+    if (!fallbackRequest) return undefined;
+    const current = params.readSessionEntry
+      ? params.readSessionEntry()
+      : params.sessionKey
+        ? loadSessionEntryReadOnly({
+            agentId: params.agentId,
+            sessionKey: params.sessionKey,
+            storePath: params.storePath,
+          })
+        : params.sessionEntry;
+    if (
+      sessionSnapshot &&
+      (!current ||
+        current.sessionId !== sessionSnapshot.sessionId ||
+        current.lifecycleRevision !== sessionSnapshot.lifecycleRevision ||
+        executionSelectionTransactionChanged(sessionSnapshot, current))
+    ) {
+      return "The session selection changed. Retry the turn.";
+    }
+    const admitted = admitSessionExecutionFallback({
+      entry: current,
+      candidate: fallbackRequest.selection,
+      metadata,
+      explicitModels: explicitFallbackModels,
+    });
+    return admitted.status === "rejected"
+      ? "This session does not permit that model fallback."
+      : undefined;
+  };
+  const fallbackError = validateFallback();
+  if (fallbackError) return { status: "rejected", reason: "not-allowed", message: fallbackError };
   const validatePlacement = (candidate: ExecutionSelection) =>
     resolveActivePlacementModelSelectionError({
       sessionId: params.sessionEntry?.sessionId,
@@ -297,7 +447,9 @@ export async function prepareSessionExecutionSelection(params: {
       defaultModel: configured.model,
     });
     if (
-      params.request.kind !== "reset" &&
+      !(params.request.kind === "reset" && !params.request.model) &&
+      params.request.kind !== "initialize" &&
+      params.request.kind !== "fallback" &&
       !policy.allows({ provider: selection.model.provider, model: selection.model.id })
     ) {
       return {
@@ -315,14 +467,17 @@ export async function prepareSessionExecutionSelection(params: {
         provider: pair.model.provider,
         model: pair.model.id,
         runtimeId: pair.executor.id,
-        sessionEntry: params.sessionEntry,
+        sessionEntry: sessionSnapshot,
         profileProvider: params.profileProvider,
       });
     let evaluation = await evaluate(selection);
     if (
       evaluation.kind === "unsupported" &&
-      params.request.kind === "model" &&
-      !params.request.executor
+      ((params.request.kind === "model" && !params.request.executor) ||
+        params.request.kind === "fallback" ||
+        (params.request.kind === "initialize" &&
+          decoded.kind === "uninitialized" &&
+          decoded.executor !== undefined))
     ) {
       const alternative = chooseConfigured(selection.model);
       if (alternative && alternative.executor.id !== selection.executor.id) {
@@ -334,9 +489,21 @@ export async function prepareSessionExecutionSelection(params: {
         }
       }
     }
-    const labels = selectionDisplayNames(selection, catalog);
+    if (
+      params.sessionEntry?.modelSelectionLocked &&
+      !isDeepStrictEqual(lockedSelection, selection)
+    ) {
+      return { status: "rejected", reason: "locked", message: MODEL_SELECTION_LOCKED_MESSAGE };
+    }
+    const labels = selectionDisplayNames(
+      selection,
+      evaluation.kind === "ready" ? [evaluation.entry, ...catalog] : catalog,
+    );
     if (evaluation.kind === "unknown") {
       return unknown();
+    }
+    if (evaluation.kind === "forbidden") {
+      return { status: "rejected", reason: "not-allowed", message: evaluation.message };
     }
     if (evaluation.kind === "unsupported") {
       return {
@@ -366,6 +533,7 @@ export async function prepareSessionExecutionSelection(params: {
     const accepted = selection;
     const validateCommit = () =>
       (evaluation.kind === "ready" ? evaluation.validate() : undefined) ??
+      validateFallback() ??
       validatePlacement(accepted);
     const commitError = validateCommit();
     if (commitError) {
@@ -377,6 +545,7 @@ export async function prepareSessionExecutionSelection(params: {
       before,
       reason,
       message,
+      catalogEntry: evaluation.kind === "ready" ? evaluation.entry : undefined,
       validateCommit,
     };
   }
@@ -571,11 +740,21 @@ export async function applySessionModelSelection(
         sessionKey: params.sessionKey,
         agentId: params.agentId,
         selection,
+        assertActive: () => {
+          const error =
+            params.validateAuthProfileSelection?.() ??
+            resolveActivePlacementModelSelectionError({
+              sessionId: startingEntry.sessionId,
+              selection,
+            });
+          if (error) throw new Error(error);
+        },
       });
     },
-    request:
-      resetToDefault || request.runtime.kind === "clear"
-        ? { kind: "reset" }
+    request: resetToDefault
+      ? { kind: "reset" }
+      : request.runtime.kind === "clear"
+        ? { kind: "reset", model: { provider: request.provider, id: request.model } }
         : {
             kind: "model",
             model: { provider: request.provider, id: request.model },
@@ -588,7 +767,7 @@ export async function applySessionModelSelection(
     return prepared;
   }
   const validateSelection = () =>
-    params.validateAuthProfileSelection?.() ?? prepared.validateCommit?.();
+    params.validateAuthProfileSelection?.() ?? prepared.validateCommit();
   const authProfileError = validateSelection();
   if (authProfileError) {
     return { status: "rejected", reason: "not-allowed", message: authProfileError };
@@ -604,7 +783,10 @@ export async function applySessionModelSelection(
   if (
     !params.storePath &&
     (params.sessionStore[params.sessionKey] !== startingStoreEntry ||
-      currentEntry.sessionId !== initialEntry.sessionId)
+      currentEntry.sessionId !== initialEntry.sessionId ||
+      currentEntry.lifecycleRevision !== initialEntry.lifecycleRevision ||
+      (!isAcpExecutionSelection(prepared.selection) &&
+        executionSelectionTransactionChanged(initialEntry, currentEntry)))
   ) {
     return {
       status: "conflict",
@@ -622,8 +804,19 @@ export async function applySessionModelSelection(
   }
   request.provider = prepared.selection.model.provider;
   request.model = prepared.selection.model.id;
-  const thinkingCatalog = params.thinkingCatalog ?? params.modelCatalog;
-  const selectedCatalogEntry = findSelectedCatalogEntry({ catalog: thinkingCatalog, ...request });
+  const existingCatalog = params.thinkingCatalog ?? params.modelCatalog;
+  const thinkingCatalog = prepared.catalogEntry
+    ? [
+        prepared.catalogEntry,
+        ...existingCatalog.filter(
+          (entry) =>
+            entry.provider !== prepared.catalogEntry?.provider ||
+            entry.id !== prepared.catalogEntry?.id,
+        ),
+      ]
+    : existingCatalog;
+  const selectedCatalogEntry =
+    prepared.catalogEntry ?? findSelectedCatalogEntry({ catalog: thinkingCatalog, ...request });
   const nextEntry = { ...startingEntry };
   const applied = commitSessionModelSelectionWithAuth({
     cfg: params.cfg,
@@ -633,6 +826,7 @@ export async function applySessionModelSelection(
     currentProvider: params.currentProvider,
     profileOverride: request.profileOverride,
     markLiveSwitchPending: params.markLiveSwitchPending,
+    cause: { kind: resetToDefault ? "reset" : "user" },
   });
   const thinkingRuntime = prepared.selection.executor.id;
   const currentThinkingLevel = nextEntry.thinkingLevel as ThinkLevel | undefined;
@@ -704,7 +898,14 @@ export async function applySessionModelSelection(
     }
     persistedEntry = persistence.entry;
   } else {
-    adoptPersistedSessionSnapshot(params.sessionEntry, nextEntry);
+    adoptPersistedSessionSnapshot(
+      params.sessionEntry,
+      mergeSessionSnapshotChanges({
+        initial: initialEntry,
+        next: nextEntry,
+        current: currentEntry,
+      }),
+    );
     params.sessionStore[params.sessionKey] = params.sessionEntry;
     persistedEntry = params.sessionEntry;
   }
@@ -740,16 +941,12 @@ export async function applySessionModelSelection(
     });
     refreshQueuedFollowupSession({
       key: params.sessionKey,
-      nextProvider: provider,
-      nextModel: model,
-      nextRouteResolution: "resolved",
-      nextModelOverrideSource: request.isDefault ? undefined : "user",
+      nextSelection: prepared.selection,
       nextAuthProfileId: persistedEntry.authProfileOverride,
       nextAuthProfileIdSource: resolveCollapsedSessionAuthPinSource(persistedEntry),
       nextThinking: {
         level: persistedEntry.thinkingLevel,
         catalog: [...thinkingCatalog],
-        agentRuntime,
       },
     });
   }

@@ -17,6 +17,8 @@ type FollowupRunFixture = Pick<FollowupRun, "prompt" | "summaryLine" | "enqueued
   Partial<Omit<FollowupRun, "prompt" | "summaryLine" | "enqueuedAt" | "run">> & {
     run: Partial<Omit<FollowupRun["run"], "skillsSnapshot">> & {
       skillsSnapshot?: Partial<FollowupRun["run"]["skillsSnapshot"]>;
+      provider?: string;
+      model?: string;
     };
   };
 
@@ -43,7 +45,14 @@ export function createTestQueueSettings(overrides: Partial<QueueSettings> = {}):
   return { mode: "interrupt", ...overrides };
 }
 
-export function createTestFollowupRun(overrides: Partial<FollowupRun["run"]> = {}): FollowupRun {
+export function createTestFollowupRun(
+  overrides: Partial<FollowupRun["run"]> & { provider?: string; model?: string } = {},
+): FollowupRun {
+  const { provider = "anthropic", model = "claude", ...runOverrides } = overrides;
+  const executionSelection = runOverrides.executionSelection ?? {
+    model: { provider, id: model },
+    executor: { kind: "harness" as const, id: "openclaw" },
+  };
   const rootDir = useAutoCleanupTempDirTracker(onTestFinished).make("openclaw-followup-run-");
   return {
     prompt: "hello",
@@ -59,12 +68,10 @@ export function createTestFollowupRun(overrides: Partial<FollowupRun["run"]> = {
       workspaceDir: rootDir,
       config: {},
       skillsSnapshot: { prompt: "", skills: [] },
-      provider: "anthropic",
-      model: "claude",
       thinkingCatalog: [
         {
-          provider: overrides.provider ?? "anthropic",
-          id: overrides.model ?? "claude",
+          provider: executionSelection.model.provider,
+          id: executionSelection.model.id,
           input: ["text"],
         },
       ],
@@ -75,13 +82,24 @@ export function createTestFollowupRun(overrides: Partial<FollowupRun["run"]> = {
       timeoutMs: 1_000,
       blockReplyBreak: "message_end",
       skipProviderRuntimeHints: true,
-      ...overrides,
+      ...runOverrides,
+      executionSelection,
     },
   } satisfies FollowupRun;
 }
 
 export function createTestQueuedFollowupRun(fixture: FollowupRunFixture): FollowupRun {
-  return fixture as FollowupRun;
+  const { provider = "anthropic", model = "claude", ...run } = fixture.run;
+  return {
+    ...fixture,
+    run: {
+      ...run,
+      executionSelection: run.executionSelection ?? {
+        model: { provider, id: model },
+        executor: { kind: "harness", id: "openclaw" },
+      },
+    },
+  } as FollowupRun;
 }
 
 export function withTestModelContextTokens(params: {
@@ -93,8 +111,8 @@ export function withTestModelContextTokens(params: {
   if (params.contextTokens === undefined) {
     return params.cfg;
   }
-  const provider = params.followupRun.run.provider;
-  const model = params.followupRun.run.model ?? params.defaultModel;
+  const provider = params.followupRun.run.executionSelection.model.provider;
+  const model = params.followupRun.run.executionSelection.model.id ?? params.defaultModel;
   const providerConfig = params.cfg.models?.providers?.[provider];
   const configuredModels = providerConfig?.models ?? [];
   const configuredModel = configuredModels.find((entry) => entry.id === model);

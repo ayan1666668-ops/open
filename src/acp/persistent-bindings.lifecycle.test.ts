@@ -1,6 +1,10 @@
 /** Tests configured ACP binding lifecycle behavior. */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
+import {
+  readAcpExecutionSelection,
+  encodeAcpExecutionSelection,
+} from "../model-picker/execution-selection-codec.js";
 import type { AcpSessionResolution } from "./control-plane/manager.types.js";
 import {
   buildConfiguredAcpSessionKey,
@@ -71,6 +75,7 @@ function mockReadySession(params: {
     kind: "ready",
     sessionKey,
     agentId: params.spec.agentId,
+    entry: { sessionId: "bound-session", updatedAt: 1 },
     meta: {
       backend: "acpx",
       agent: params.spec.acpAgentId ?? params.spec.agentId,
@@ -127,32 +132,64 @@ describe("ensureConfiguredAcpBindingSession", () => {
   });
 
   it.each([
-    { model: "anthropic/claude-sonnet-4-6" },
+    { model: "fixture/configured-model" },
     { thinking: "off" },
-    { model: "anthropic/claude-sonnet-4-6", thinking: "off" },
-  ])("updates configured runtime options %j in place", async (runtimeOptions) => {
-    const spec = createPersistentSpec(runtimeOptions);
-    const sessionKey = mockReadySession({
-      spec,
-      cwd: "/workspace/openclaw",
-      model: "anthropic/claude-haiku-4-5",
-      thinking: "high",
-    });
+    { model: "fixture/configured-model", thinking: "off" },
+  ])(
+    "retains the accepted model while applying non-model configured options %j",
+    async (runtimeOptions) => {
+      const spec = createPersistentSpec(runtimeOptions);
+      const sessionKey = mockReadySession({
+        spec,
+        cwd: "/workspace/openclaw",
+        model: "fixture/accepted-model",
+        thinking: "high",
+      });
+      const resolution = managerMocks.resolveSession({ sessionKey });
+      if (resolution.kind !== "ready") throw new Error("expected a bound ACP session");
+      const accepted = readAcpExecutionSelection(resolution.meta);
+      if (!accepted) throw new Error("expected the accepted ACP pair");
+      managerMocks.setSessionConfigOption.mockImplementation(
+        async ({ key, value }: { key: string; value: string }) => {
+          if (key === "model") {
+            resolution.meta = encodeAcpExecutionSelection(resolution.meta, {
+              ...accepted,
+              model: { id: value },
+            });
+          } else if (key === "thinking") {
+            resolution.meta = {
+              ...resolution.meta,
+              runtimeOptions: { ...resolution.meta.runtimeOptions, thinking: value },
+            };
+          }
+          return resolution.meta.runtimeOptions;
+        },
+      );
 
-    const ensured = await ensureConfiguredAcpBindingSession({
-      cfg: baseCfg,
-      spec,
-    });
+      const ensured = await ensureConfiguredAcpBindingSession({ cfg: baseCfg, spec });
 
-    expect(ensured).toEqual({ ok: true, sessionKey });
-    expect(managerMocks.setSessionConfigOption.mock.calls).toEqual(
-      Object.entries(runtimeOptions).map(([key, value]) => [
-        { cfg: baseCfg, sessionKey, agentId: spec.agentId, key, value },
-      ]),
-    );
-    expect(managerMocks.closeSession).not.toHaveBeenCalled();
-    expect(managerMocks.initializeSession).not.toHaveBeenCalled();
-  });
+      expect(ensured).toEqual({ ok: true, sessionKey });
+      expect(managerMocks.setSessionConfigOption.mock.calls).toEqual(
+        runtimeOptions.thinking === undefined
+          ? []
+          : [
+              [
+                {
+                  cfg: baseCfg,
+                  sessionKey,
+                  agentId: spec.agentId,
+                  key: "thinking",
+                  value: runtimeOptions.thinking,
+                },
+              ],
+            ],
+      );
+      expect(readAcpExecutionSelection(resolution.meta)).toEqual(accepted);
+      expect(resolution.meta.runtimeOptions?.thinking).toBe(runtimeOptions.thinking ?? "high");
+      expect(managerMocks.closeSession).not.toHaveBeenCalled();
+      expect(managerMocks.initializeSession).not.toHaveBeenCalled();
+    },
+  );
 
   it("does not rewrite matching runtime options", async () => {
     const spec = createPersistentSpec({ model: "selected/model", thinking: "off" });

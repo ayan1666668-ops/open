@@ -115,3 +115,17 @@ export async function prepareFallbackRunner(
     })),
   ]);
 }
+
+export function createDirectHarness() {
+  return {
+    workspaceDir: "/tmp/workspace",
+    preparation: { kind: "direct" as const },
+    prepareExecutionSelection: async (provider: string, model: string) => ({
+      selection: {
+        model: { provider, id: model },
+        executor: { kind: "harness" as const, id: "openclaw" },
+      },
+      validateCommit: () => undefined,
+    }),
+  };
+}

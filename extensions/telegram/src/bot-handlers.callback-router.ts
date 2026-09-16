@@ -599,7 +599,7 @@ async function handleTelegramModelCallback(params: {
       agentDir: resolveAgentDir(runtimeCfg, sessionState.agentId),
       sessionEntry: sessionState.sessionEntry,
       availability,
-    })}\nSelecting a model also applies its configured runtime.`;
+    })}\nYour current app stays selected when it can run this model.`;
     await retryModelAction(() =>
       editMessageWithButtons(
         [modelData.refreshWarning, text].filter(Boolean).join("\n\n"),
@@ -631,8 +631,6 @@ async function handleTelegramModelCallback(params: {
       cfg: runtimeCfg,
       agentId: sessionState.agentId,
     });
-    const isDefaultSelection =
-      selection.provider === resolvedDefault.provider && selection.model === resolvedDefault.model;
     const persistedSessionEntry =
       sessionState.sessionEntry ??
       telegramDeps.getSessionEntry?.({ storePath, sessionKey: sessionState.sessionKey }) ??
@@ -642,7 +640,6 @@ async function handleTelegramModelCallback(params: {
       sessionId: randomUUID(),
       updatedAt: Date.now(),
     };
-    const previousAuthProfileId = sessionEntry.authProfileOverride?.trim();
     const sessionStore = { [sessionState.sessionKey]: sessionEntry };
     const currentModelRef = sessionState.model?.trim();
     const currentModelSeparator = currentModelRef?.indexOf("/") ?? -1;
@@ -672,8 +669,8 @@ async function handleTelegramModelCallback(params: {
         request: {
           provider: selection.provider,
           model: selection.model,
-          isDefault: isDefaultSelection,
-          runtime: { kind: "clear" },
+          isDefault: false,
+          runtime: { kind: "unchanged" },
         },
         markLiveSwitchPending: true,
       }),
@@ -682,23 +679,9 @@ async function handleTelegramModelCallback(params: {
       await editMessageWithButtons(`❌ ${applied.message}`, []);
       return true;
     }
-    const defaultAuthProfileNotice =
-      isDefaultSelection && previousAuthProfileId
-        ? sessionStore[sessionState.sessionKey]?.authProfileOverride?.trim() ===
-          previousAuthProfileId
-          ? "Compatible auth profile retained."
-          : "Incompatible auth profile cleared."
-        : undefined;
     const escapeHtml = (text: string) =>
       text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    const actionText = isDefaultSelection
-      ? "reset to default"
-      : `changed to <b>${escapeHtml(selection.provider)}/${escapeHtml(selection.model)}</b>`;
-    const runtimeText = `Runtime set to <b>${escapeHtml(applied.agentRuntime)}</b> from configured policy.`;
-    const scopeText = isDefaultSelection
-      ? `Session model selection cleared.${defaultAuthProfileNotice ? ` ${defaultAuthProfileNotice}` : ""} ${runtimeText} New replies use the agent's configured default.`
-      : `Session-only model selection. ${runtimeText} The agent default in openclaw.json is unchanged. This chat keeps the model selection across /new and /reset; use /model default -s to clear the session model selection.`;
-    await editMessageWithButtons(`✅ Model ${actionText}\n\n${scopeText}`, [], {
+    await editMessageWithButtons(`✅ ${escapeHtml(applied.message)}`, [], {
       parse_mode: "HTML",
     });
   } catch (err) {

@@ -117,12 +117,14 @@ describe("runEmbeddedAgentEntry cyber failover against the real fallback runner"
           workspaceDir: "/tmp/workspace",
           preparation: { kind: "direct" as const },
           prepareExecutionSelection: async (provider: string, model: string) => ({
-            model: { provider, id: model },
-            executor: { kind: "harness" as const, id: "openclaw" },
+            selection: {
+              model: { provider, id: model },
+              executor: { kind: "harness" as const, id: "openclaw" },
+            },
+            validateCommit: () => undefined,
           }),
         },
         behavior: { kind: "command-rpc", hasCommittedSideEffect: () => delivered },
-        sessionOverride: { kind: "preserve" },
         runCandidate: async ({ model: { provider, id: model } }) => {
           if (model === "gpt-daybreak-blue-latest") {
             delivered = true;
@@ -210,12 +212,14 @@ describe("runEmbeddedAgentEntry cyber failover against the real fallback runner"
           workspaceDir: "/tmp/workspace",
           preparation: { kind: "direct" as const },
           prepareExecutionSelection: async (provider: string, model: string) => ({
-            model: { provider, id: model },
-            executor: { kind: "harness" as const, id: "openclaw" },
+            selection: {
+              model: { provider, id: model },
+              executor: { kind: "harness" as const, id: "openclaw" },
+            },
+            validateCommit: () => undefined,
           }),
         },
         behavior: { kind: "command-rpc", hasCommittedSideEffect: () => false },
-        sessionOverride: { kind: "preserve" },
         runCandidate,
       });
 
@@ -235,12 +239,14 @@ describe("runEmbeddedAgentEntry cyber failover against the real fallback runner"
           workspaceDir: "/tmp/workspace",
           preparation: { kind: "direct" as const },
           prepareExecutionSelection: async (provider: string, model: string) => ({
-            model: { provider, id: model },
-            executor: { kind: "harness" as const, id: "openclaw" },
+            selection: {
+              model: { provider, id: model },
+              executor: { kind: "harness" as const, id: "openclaw" },
+            },
+            validateCommit: () => undefined,
           }),
         },
         behavior: { kind: "command-rpc", hasCommittedSideEffect: () => false },
-        sessionOverride: { kind: "preserve" },
         runCandidate,
       });
 

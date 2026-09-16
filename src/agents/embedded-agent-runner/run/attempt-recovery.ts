@@ -4,7 +4,6 @@ import { emitAgentEvent } from "../../../infra/agent-events.js";
 import { formatErrorMessage, toErrorObject } from "../../../infra/errors.js";
 import { isRetryableAssistantError } from "../../../llm/utils/retry.js";
 import { projectAgentRunAttemptTerminal } from "../../agent-run-terminal-outcome.js";
-import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "../../defaults.js";
 import type { FailoverReason } from "../../embedded-agent-helpers.js";
 import { buildAssistantFailoverSignal } from "../../embedded-agent-helpers/assistant-message-failures.js";
 import { findCliTerminalStopError, resolveFailoverReasonFromError } from "../../failover-error.js";
@@ -225,11 +224,10 @@ export async function recoverEmbeddedRunAttempt(input: {
     sessionPersistence: params.sessionPersistence,
     sessionKey: runInput.resolvedSessionKey,
     agentId: params.agentId,
-    defaultProvider: DEFAULT_PROVIDER,
-    defaultModel: DEFAULT_MODEL,
-    currentProvider: preparedRuntime.provider,
-    currentModel: preparedRuntime.modelId,
-    currentAgentRuntimeOverride: params.agentHarnessRuntimeOverride,
+    currentExecution: {
+      model: { provider: preparedRuntime.provider, id: preparedRuntime.modelId },
+      executor: { kind: "harness", id: runtime.agentHarness.id },
+    },
     currentAuthProfileId: preparedRuntime.preferredProfileId,
     currentAuthProfileIdSource: params.authProfileIdSource,
   });

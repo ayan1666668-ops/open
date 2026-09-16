@@ -7,12 +7,13 @@ import {
 import { retireSessionMcpRuntime } from "../../agents/agent-bundle-mcp-tools.js";
 import { resolveAgentWorkspaceDir, resolveSessionAgentId } from "../../agents/agent-scope.js";
 import { clearBootstrapSnapshotOnSessionBoundary } from "../../agents/bootstrap-cache.js";
-import { clearAllCliSessions, getCliSessionBinding } from "../../agents/cli-session.js";
+import { clearAllCliSessions } from "../../agents/cli-session.js";
 import { resetRegisteredAgentHarnessSessions } from "../../agents/harness/registry.js";
 import { cleanupBrowserSessionsForLifecycleEnd } from "../../browser-lifecycle-cleanup.js";
 import { normalizeChatType } from "../../channels/chat-type.js";
 import { resolveSessionParentSessionKey } from "../../channels/plugins/session-conversation.js";
 import { conversationRouteContextFromMsgContext } from "../../config/sessions/conversation-route-context.js";
+import { hasProviderOwnedSession } from "../../config/sessions/entry-freshness.js";
 import { resolveGroupSessionKey } from "../../config/sessions/group.js";
 import {
   hasTerminalMainSessionTranscriptNewerThanRegistry,
@@ -69,6 +70,8 @@ import { isDiagnosticFlagEnabled } from "../../infra/diagnostic-flags.js";
 import { getSessionBindingService } from "../../infra/outbound/session-binding-service.js";
 import { deliverSessionMaintenanceWarning } from "../../infra/session-maintenance-warning.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
+import { getSessionExecutionSelection } from "../../model-picker/execution-selection-state.js";
+import type { ExecutionSelection } from "../../model-picker/execution-selection.js";
 import { isPluginOwnedSessionBindingRecord } from "../../plugins/conversation-binding-metadata.js";
 import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
 import type { PluginHookSessionEndReason } from "../../plugins/hook-types.js";
@@ -189,11 +192,6 @@ function resolveStaleSessionEndReason(params: {
   freshness?: SessionFreshness;
 }): ReplySessionEndReason | undefined {
   return params.entry ? params.freshness?.staleReason : undefined;
-}
-
-function hasProviderOwnedSession(entry: SessionEntry | undefined): boolean {
-  const provider = normalizeOptionalString(entry?.providerOverride ?? entry?.modelProvider);
-  return Boolean(provider && getCliSessionBinding(entry, provider));
 }
 
 export type SessionInitResult = {
@@ -405,28 +403,12 @@ export function resolveReplySessionPreprocessingState(
   };
 }
 
-/** Initializes or reuses the reply session state for one inbound turn. */
-type SessionModelOverrideSelection = Pick<
-  SessionEntry,
-  "modelOverride" | "providerOverride" | "modelOverrideSource" | "modelOverrideRouteResolution"
->;
-
-function selectSessionModelOverride(
-  entry: Partial<SessionModelOverrideSelection>,
-): SessionModelOverrideSelection {
-  return {
-    modelOverride: entry.modelOverride,
-    providerOverride: entry.providerOverride,
-    modelOverrideSource: entry.modelOverrideSource,
-    modelOverrideRouteResolution: entry.modelOverrideRouteResolution,
-  };
-}
-
 function resolveReplySessionRolloverState(
   entry: SessionEntry,
   sessionKey: string,
+  selection: ExecutionSelection,
 ): Partial<InternalSessionEntry> {
-  const preservedSelection = resolveResetPreservedSelection({ entry });
+  const preservedSelection = resolveResetPreservedSelection({ entry, selection });
   // Stable ACP rows predate durable creation stamps. Preserve their restrictions
   // fail-closed so rollover cannot turn an existing child into a root session.
   const preserveSpawnLineage = isSubagentSessionKey(sessionKey) || isAcpSessionKey(sessionKey);
@@ -437,10 +419,7 @@ function resolveReplySessionRolloverState(
     reasoningLevel: entry.reasoningLevel,
     ttsAuto: entry.ttsAuto,
     responseUsage: entry.responseUsage,
-    ...selectSessionModelOverride(preservedSelection),
-    authProfileOverride: preservedSelection.authProfileOverride,
-    authProfileOverrideSource: preservedSelection.authProfileOverrideSource,
-    authProfileOverrideCompactionCount: preservedSelection.authProfileOverrideCompactionCount,
+    ...preservedSelection,
     label: entry.label,
     autoLabel: entry.autoLabel,
     displayName: entry.displayName,
@@ -890,7 +869,6 @@ async function initSessionStateAttemptLocked(
     sessionId = reusableEntry.sessionId;
     systemSent = reusableEntry.systemSent ?? false;
     abortedLastRun = reusableEntry.abortedLastRun ?? false;
-    preservedState = selectSessionModelOverride(reusableEntry);
   } else {
     // Durable resets retain their transcript identity for cursor continuity; ACP
     // resets still rotate the local session id that owns provider conversation state.
@@ -901,16 +879,8 @@ async function initSessionStateAttemptLocked(
     isNewSession = true;
     systemSent = false;
     abortedLastRun = false;
-    // Preserve user-driven model/auth overrides across ANY rollover that mints
-    // a new session from an existing entry — explicit /new and /reset AND
-    // implicit stale rollovers (daily/idle reset boundary). Auto-created
-    // fallback overrides (rate-limit auth rotation, model auto-pin) are still
-    // cleared by resolveResetPreservedSelection so resets return to the
-    // configured default. Previously this was gated on `resetTriggered`, so a
-    // user `/model` override set after the daily reset hour was silently
-    // dropped on the next turn (the rollover took this branch with
-    // resetTriggered === false), reverting the session to the default model
-    // despite the `Model set to ... for this session` ack (#90119, #69301).
+    // Both explicit and timed rollovers retain the accepted pair; temporary
+    // fallback execution never becomes the next conversation's selection.
     if (entry) {
       // Behavior overrides carry across ANY new-session mint (explicit /new AND
       // implicit daily/idle rollover), mirroring the model/auth carry above
@@ -918,7 +888,24 @@ async function initSessionStateAttemptLocked(
       // spawn-applied default (subagent-spawn-thinking.ts) — so unlike model
       // overrides these need no fallback-provenance filtering (#92562).
       // Explicit /new and /reset rotate CLI conversation bindings elsewhere.
-      preservedState = resolveReplySessionRolloverState(entry, sessionKey);
+      let selection = getSessionExecutionSelection(entry, cfg);
+      if (!selection) {
+        const { prepareSessionExecutionSelection } =
+          await import("../../model-picker/apply-session-model-selection.js");
+        const prepared = await prepareSessionExecutionSelection({
+          cfg,
+          agentId,
+          sessionKey,
+          sessionEntry: entry,
+          storePath,
+          request: { kind: "initialize" },
+        });
+        if (prepared.status !== "ready") throw new Error(prepared.message);
+        const error = prepared.validateCommit();
+        if (error) throw new Error(error);
+        selection = prepared.selection;
+      }
+      preservedState = resolveReplySessionRolloverState(entry, sessionKey, selection);
     }
   }
 
@@ -1064,9 +1051,7 @@ async function initSessionStateAttemptLocked(
   if (isNewSession) {
     sessionEntry.compactionCount = 0;
     sessionEntry.memoryFlush = undefined;
-    // Runtime model fields are persisted last-run cache, not user selection.
-    // Reset must drop them so the next turn resolves current defaults or the
-    // explicit providerOverride/modelOverride values preserved above.
+    // A new transcript has no observed model output. The accepted pair survives above.
     sessionEntry.modelProvider = undefined;
     sessionEntry.model = undefined;
     sessionEntry.fallbackNotice = undefined;

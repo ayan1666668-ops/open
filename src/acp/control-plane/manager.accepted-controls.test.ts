@@ -89,6 +89,26 @@ async function runTurn(manager: AcpSessionManager, requestId: string) {
 describe("AcpSessionManager accepted controls", () => {
   installAcpSessionManagerTestLifecycle();
 
+  it("rejects a direct model control for a locked session before contacting the runtime", async () => {
+    const state = setupSession();
+    const read = hoisted.readAcpSessionEntryMock.getMockImplementation()!;
+    hoisted.readAcpSessionEntryMock.mockImplementation((params) => {
+      const current = read(params);
+      return { ...current, entry: { ...current.entry, modelSelectionLocked: true } };
+    });
+    await expect(
+      state.manager.setSessionConfigOption({
+        cfg: baseCfg,
+        sessionKey,
+        key: "model",
+        value: "qa-next",
+      }),
+    ).rejects.toMatchObject({ code: "ACP_BACKEND_UNSUPPORTED_CONTROL" });
+    expect(state.ensureSession).not.toHaveBeenCalled();
+    expect(state.setConfigOption).not.toHaveBeenCalled();
+    expect(state.readMeta().runtimeOptions?.model).toBe(model);
+  });
+
   it("returns the accepted model and uses it after reopening", async () => {
     const state = setupSession();
     state.setConfigOption.mockResolvedValue({
@@ -226,6 +246,43 @@ describe("AcpSessionManager accepted controls", () => {
     await expect(runTurn(new AcpSessionManager(), "lost-selection-authority")).rejects.toThrow(
       "app did not confirm the last change",
     );
+  });
+
+  it("retains its pause when legacy seed cleanup fails after the accepted pair commits", async () => {
+    const state = setupSession();
+    const read = hoisted.readAcpSessionEntryMock.getMockImplementation()!;
+    hoisted.readAcpSessionEntryMock.mockImplementation((params) => {
+      const current = read(params);
+      return {
+        ...current,
+        entry: {
+          ...current.entry,
+          providerOverride: "fixture",
+          modelOverride: "qa-next",
+          modelOverrideSource: "user",
+        },
+      };
+    });
+    const persist = hoisted.upsertAcpSessionMetaMock.getMockImplementation()!;
+    hoisted.upsertAcpSessionMetaMock.mockImplementation(async (params) => {
+      const result = await persist(params);
+      if (params.expectedExecutionSelectionSeed) throw new Error("legacy seed cleanup failed");
+      return result;
+    });
+    await expect(
+      state.manager.setSessionConfigOption({
+        cfg: baseCfg,
+        sessionKey,
+        key: "model",
+        value: "qa-next",
+      }),
+    ).rejects.toThrow("legacy seed cleanup failed");
+    expect(state.setConfigOption).toHaveBeenCalledOnce();
+    expect(state.readMeta().runtimeOptions?.model).toBe("qa-next");
+    await expect(runTurn(new AcpSessionManager(), "failed-seed-cleanup-reopen")).rejects.toThrow(
+      "app did not confirm the last change",
+    );
+    expect(state.runTurn).not.toHaveBeenCalled();
   });
 
   it("keeps the default selection paused when failed persistence cannot be restored", async () => {

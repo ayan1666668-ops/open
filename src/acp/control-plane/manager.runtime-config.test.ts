@@ -12,13 +12,25 @@ import {
   expectNoMockCallFields,
   expectRecordFields,
   expectRejectedRecord,
-  extractRuntimeOptionsFromUpserts,
   hoisted,
   installAcpSessionManagerTestLifecycle,
   mockCallArg,
   readySessionMeta,
   type SessionAcpMeta,
 } from "./manager.test-helpers.js";
+
+function installWritableConfigSession(sessionKey: string, meta: SessionAcpMeta) {
+  const state = { currentMeta: meta, entry: { sessionId: "session-1", updatedAt: 1 } };
+  hoisted.readAcpSessionEntryMock.mockImplementation(() => ({
+    cfg: baseCfg,
+    sessionKey,
+    storeSessionKey: sessionKey,
+    entry: state.entry,
+    acp: state.currentMeta,
+  }));
+  installMutableAcpSessionMetaUpsert(state);
+  return state;
+}
 
 describe("AcpSessionManager runtime config", () => {
   installAcpSessionManagerTestLifecycle();
@@ -29,11 +41,7 @@ describe("AcpSessionManager runtime config", () => {
       id: "acpx",
       runtime: runtimeState.runtime,
     });
-    hoisted.readAcpSessionEntryMock.mockReturnValue({
-      sessionKey: "agent:codex:acp:session-1",
-      storeSessionKey: "agent:codex:acp:session-1",
-      acp: readySessionMeta(),
-    });
+    const metaState = installWritableConfigSession("agent:codex:acp:session-1", readySessionMeta());
 
     const manager = new AcpSessionManager();
     const options = await manager.setSessionRuntimeMode({
@@ -46,10 +54,7 @@ describe("AcpSessionManager runtime config", () => {
       mode: "plan",
     });
     expect(options.runtimeMode).toBe("plan");
-    const persistedRuntimeModes = extractRuntimeOptionsFromUpserts().map(
-      (entry) => entry?.runtimeMode,
-    );
-    expect(persistedRuntimeModes).toContain("plan");
+    expect(metaState.currentMeta.runtimeOptions?.runtimeMode).toBe("plan");
   });
 
   it("reapplies persisted controls on next turn after runtime option updates", async () => {
@@ -843,11 +848,10 @@ describe("AcpSessionManager runtime config", () => {
       id: "acpx",
       runtime: runtimeState.runtime,
     });
-    hoisted.readAcpSessionEntryMock.mockReturnValue({
-      sessionKey: "agent:claude:acp:session-1",
-      storeSessionKey: "agent:claude:acp:session-1",
-      acp: readySessionMeta({ agent: "claude" }),
-    });
+    const metaState = installWritableConfigSession(
+      "agent:claude:acp:session-1",
+      readySessionMeta({ agent: "claude" }),
+    );
 
     const manager = new AcpSessionManager();
     const nextOptions = await manager.setSessionConfigOption({
@@ -862,6 +866,7 @@ describe("AcpSessionManager runtime config", () => {
       value: "high",
     });
     expect(nextOptions).toEqual({ thinking: "high" });
+    expect(metaState.currentMeta.runtimeOptions).toEqual(nextOptions);
   });
 
   it("maps thinking config updates using status config options when capabilities omit keys", async () => {
@@ -879,11 +884,10 @@ describe("AcpSessionManager runtime config", () => {
       id: "acpx",
       runtime: runtimeState.runtime,
     });
-    hoisted.readAcpSessionEntryMock.mockReturnValue({
-      sessionKey: "agent:claude:acp:session-1",
-      storeSessionKey: "agent:claude:acp:session-1",
-      acp: readySessionMeta({ agent: "claude" }),
-    });
+    const metaState = installWritableConfigSession(
+      "agent:claude:acp:session-1",
+      readySessionMeta({ agent: "claude" }),
+    );
 
     const manager = new AcpSessionManager();
     const nextOptions = await manager.setSessionConfigOption({
@@ -899,6 +903,7 @@ describe("AcpSessionManager runtime config", () => {
       value: "high",
     });
     expect(nextOptions).toEqual({ thinking: "high" });
+    expect(metaState.currentMeta.runtimeOptions).toEqual(nextOptions);
   });
 
   it("persists explicit native effort config updates as canonical thinking options", async () => {
@@ -911,11 +916,10 @@ describe("AcpSessionManager runtime config", () => {
       id: "acpx",
       runtime: runtimeState.runtime,
     });
-    hoisted.readAcpSessionEntryMock.mockReturnValue({
-      sessionKey: "agent:claude:acp:session-1",
-      storeSessionKey: "agent:claude:acp:session-1",
-      acp: readySessionMeta({ agent: "claude" }),
-    });
+    const metaState = installWritableConfigSession(
+      "agent:claude:acp:session-1",
+      readySessionMeta({ agent: "claude" }),
+    );
 
     const manager = new AcpSessionManager();
     const nextOptions = await manager.setSessionConfigOption({
@@ -930,6 +934,7 @@ describe("AcpSessionManager runtime config", () => {
       value: "high",
     });
     expect(nextOptions).toEqual({ thinking: "high" });
+    expect(metaState.currentMeta.runtimeOptions).toEqual(nextOptions);
   });
 
   it("persists explicit native permission_mode config updates as canonical permission profiles", async () => {
@@ -942,11 +947,10 @@ describe("AcpSessionManager runtime config", () => {
       id: "acpx",
       runtime: runtimeState.runtime,
     });
-    hoisted.readAcpSessionEntryMock.mockReturnValue({
-      sessionKey: "agent:claude:acp:session-1",
-      storeSessionKey: "agent:claude:acp:session-1",
-      acp: readySessionMeta({ agent: "claude" }),
-    });
+    const metaState = installWritableConfigSession(
+      "agent:claude:acp:session-1",
+      readySessionMeta({ agent: "claude" }),
+    );
 
     const manager = new AcpSessionManager();
     const nextOptions = await manager.setSessionConfigOption({
@@ -961,5 +965,6 @@ describe("AcpSessionManager runtime config", () => {
       value: "strict",
     });
     expect(nextOptions).toEqual({ permissionProfile: "strict" });
+    expect(metaState.currentMeta.runtimeOptions).toEqual(nextOptions);
   });
 });

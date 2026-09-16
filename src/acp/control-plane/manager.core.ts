@@ -8,6 +8,8 @@ import { AgentSelectionRequiredError } from "../../agents/agent-scope-config.js"
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { logVerbose } from "../../globals.js";
 import { toErrorObject } from "../../infra/errors.js";
+import { decodeSessionExecutionSelection } from "../../model-picker/execution-selection-codec.js";
+import { executionSelectionCodecMetadata } from "../../model-picker/execution-selection-state.js";
 import type { AcpExecutionSelection } from "../../model-picker/execution-selection.js";
 import { isAcpSessionKey } from "../../sessions/session-key-utils.js";
 import { AcpRuntimeError } from "../runtime/errors.js";
@@ -25,6 +27,7 @@ import { registerAcpSessionManagerDisposer } from "./manager.lifecycle.js";
 import { ManagerRuntimeHandleCache } from "./manager.runtime-handle-cache.js";
 import { ensureManagerRuntimeHandle } from "./manager.runtime-handle-ensure.js";
 import {
+  consumeManagerExecutionSelectionSeed,
   runResetManagerSessionRuntimeOptions,
   runSetManagerSessionConfigOption,
   runSetManagerSessionRuntimeMode,
@@ -266,9 +269,9 @@ export class AcpSessionManager {
     const target = resolveAcpSessionTarget(params);
     return await this.withSessionActor(target, async () => {
       params.assertActive?.();
-      const current = requireAcpExecutionSelection(
-        requireReadySessionMeta(this.resolveSession({ ...params, ...target })),
-      );
+      const resolution = this.resolveSession({ ...params, ...target });
+      const meta = requireReadySessionMeta(resolution);
+      const current = requireAcpExecutionSelection(meta);
       if (
         current.executor.backend !== params.selection.executor.backend ||
         current.executor.agent !== params.selection.executor.agent
@@ -280,6 +283,22 @@ export class AcpSessionManager {
       }
       if (current.model?.id === params.selection.model?.id) {
         params.assertActive?.();
+        if (
+          resolution.kind === "ready" &&
+          resolution.entry &&
+          decodeSessionExecutionSelection(
+            { ...resolution.entry, acp: meta },
+            executionSelectionCodecMetadata(params.cfg),
+          ).kind === "uninitialized"
+        ) {
+          await consumeManagerExecutionSelectionSeed({
+            cfg: params.cfg,
+            ...target,
+            seed: { ...resolution.entry },
+            assertActive: params.assertActive,
+            ...this.runtimeOptionCommandServices(),
+          });
+        }
         return current;
       }
       if (!params.selection.model) {
@@ -543,6 +562,8 @@ export class AcpSessionManager {
   }
 
   private async writeSessionMeta(params: {
+    executionSelection?: AcpExecutionSelection;
+    expectedExecutionSelectionSeed?: SessionEntry;
     assertCommitAllowed?: () => void;
     cfg: OpenClawConfig;
     sessionKey: string;
@@ -561,6 +582,8 @@ export class AcpSessionManager {
         sessionKey: params.sessionKey,
         agentId: params.agentId,
         mutate: params.mutate,
+        executionSelection: params.executionSelection,
+        expectedExecutionSelectionSeed: params.expectedExecutionSelectionSeed,
         assertCommitAllowed: params.assertCommitAllowed,
         ...(params.skipMaintenance === true ? { skipMaintenance: true } : {}),
         ...(params.takeCacheOwnership === true ? { takeCacheOwnership: true } : {}),

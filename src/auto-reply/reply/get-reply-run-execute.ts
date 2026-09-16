@@ -1,7 +1,6 @@
 import crypto from "node:crypto";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { resolveAgentConfig, resolveAgentRunCwd } from "../../agents/agent-scope-config.js";
-import { hasSessionAutoModelFallbackProvenance } from "../../agents/agent-scope.js";
 import {
   createCronCreatorAuthorityCapability,
   runWithCronCreatorAuthorityCapability,
@@ -20,7 +19,8 @@ import { getRuntimeConfig } from "../../config/config.js";
 import { conversationIdentityFromMsgContext } from "../../config/sessions/conversation-identity.js";
 import { resolveGroupSessionKey } from "../../config/sessions/group.js";
 import { normalizeMediaFacts } from "../../media/media-facts.js";
-import { getSessionExecutionSelection } from "../../model-picker/execution-selection-state.js";
+import { prepareSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
+import { isAcpExecutionSelection } from "../../model-picker/execution-selection.js";
 import { MEDIA_ONLY_USER_TEXT } from "../../sessions/user-turn-media.js";
 import {
   createUserTurnTranscriptRecorder,
@@ -143,10 +143,30 @@ export async function executePreparedReplyRun(state: PreparedReplyRunAdmission) 
     elevatedAllowed,
   } = params;
 
-  const runExecutionSelection = getSessionExecutionSelection(
-    preparedSessionState.sessionEntry,
-    cfg,
-  );
+  let runExecutionSelection = params.modelState.executionSelection;
+  if (
+    !runExecutionSelection ||
+    runExecutionSelection.model.provider !== provider ||
+    runExecutionSelection.model.id !== model
+  ) {
+    const selectionResult = await prepareSessionExecutionSelection({
+      cfg,
+      agentId,
+      sessionKey,
+      sessionEntry: preparedSessionState.sessionEntry,
+      modelCatalog: thinkingCatalog,
+      request: { kind: "model", model: { provider, id: model } },
+    });
+    if (selectionResult.status !== "ready") {
+      typing.cleanup();
+      return { text: selectionResult.message };
+    }
+    if (isAcpExecutionSelection(selectionResult.selection)) {
+      typing.cleanup();
+      return { text: "This session requires its connected app." };
+    }
+    runExecutionSelection = selectionResult.selection;
+  }
   const originatingThreadId = resolveRoutedDeliveryThreadId({ ctx, sessionKey });
   // Abort-signal attachment for queued followups:
   // - room_event: always inherit (source admission fence / ambient cancel).
@@ -464,12 +484,8 @@ export async function executePreparedReplyRun(state: PreparedReplyRunAdmission) 
         ? admittedSessionSettings.toolOverrides
         : preparedSessionState.sessionEntry?.toolOverrides,
       skillsSnapshot,
-      provider,
-      model,
-      requestedRouteResolution,
       executionSelection: runExecutionSelection,
       modelSelectionLocked: preparedSessionState.sessionEntry?.modelSelectionLocked === true,
-      hasAutoFallbackProvenance: runHasAutoFallbackProvenance || undefined,
       // Visible spawn children keep dashboard keys; declared spawn lineage routes
       // them to the subagent fallback ladder like hidden subagent sessions.
       subagentSpawnLineage: (preparedSessionState.sessionEntry?.spawnDepth ?? 0) > 0,

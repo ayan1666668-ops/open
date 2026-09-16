@@ -56,7 +56,8 @@ export async function runManagerInitializeSession(params: {
   const requestedCwd = initialRuntimeOptions.cwd;
   const requestedModel = initialRuntimeOptions.model;
   const requestedThinking = initialRuntimeOptions.thinking;
-  const previousMeta = params.deps.loadSessionEntry({ cfg: input.cfg, sessionKey, agentId })?.acp;
+  const previous = params.deps.loadSessionEntry({ cfg: input.cfg, sessionKey, agentId });
+  const previousMeta = previous?.acp;
   if (previousMeta) {
     requireReadySessionMeta({ kind: "ready", sessionKey, agentId, meta: previousMeta });
   }
@@ -139,6 +140,7 @@ export async function runManagerInitializeSession(params: {
     sessionKey,
     agentId,
     meta,
+    executionSelectionSeed: previous?.entry ? { ...previous.entry } : undefined,
     runtime,
     handle,
     writeSessionMeta: params.writeSessionMeta,
@@ -173,6 +175,7 @@ async function persistInitializedSessionMeta(params: {
   sessionKey: string;
   agentId: string;
   meta: SessionAcpMeta;
+  executionSelectionSeed?: SessionEntry;
   runtime: AcpRuntime;
   handle: AcpRuntimeHandle;
   writeSessionMeta: WriteManagerSessionMeta;
@@ -183,6 +186,8 @@ async function persistInitializedSessionMeta(params: {
       sessionKey: params.sessionKey,
       agentId: params.agentId,
       mutate: () => params.meta,
+      executionSelection: readAcpExecutionSelection(params.meta),
+      expectedExecutionSelectionSeed: params.executionSelectionSeed,
       failOnError: true,
       assertCommitAllowed: params.assertCommitAllowed,
     });

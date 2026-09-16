@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 /**
  * Resolves and persists live-session model switch requests.
  */
@@ -16,7 +17,6 @@ import {
   type ModelExecutionSelection,
 } from "../model-picker/execution-selection.js";
 import { resolveSessionAgentId } from "./agent-scope.js";
-import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "./defaults.js";
 export { LiveSessionModelSwitchError } from "./live-model-switch-error.js";
 export type LiveSessionModelSelection = {
   selection: ModelExecutionSelection;
@@ -31,9 +31,6 @@ export type LiveSessionModelSelection = {
 function resolveSelectionFromSessionEntry(params: {
   cfg: OpenClawConfig;
   entry: SessionEntry | undefined;
-  agentId?: string;
-  defaultProvider: string;
-  defaultModel: string;
 }): LiveSessionModelSelection | undefined {
   const selection = getSessionExecutionSelection(params.entry, params.cfg);
   if (!selection || isAcpExecutionSelection(selection)) {
@@ -51,19 +48,14 @@ function resolveSelectionFromSessionEntry(params: {
 
 function hasDifferentLiveSessionModelSelection(
   current: {
-    provider: string;
-    model: string;
-    agentRuntimeOverride?: string;
+    execution: ModelExecutionSelection;
     authProfileId?: string;
     authProfileIdSource?: string;
   },
   next: LiveSessionModelSelection,
 ): boolean {
-  const modelSelectionDiffers =
-    current.provider !== next.selection.model.provider || current.model !== next.selection.model.id;
   return (
-    modelSelectionDiffers ||
-    normalizeOptionalString(current.agentRuntimeOverride) !== next.selection.executor.id ||
+    !isDeepStrictEqual(current.execution, next.selection) ||
     normalizeOptionalString(current.authProfileId) !== next.authProfileId ||
     (normalizeOptionalString(current.authProfileId) ? current.authProfileIdSource : undefined) !==
       next.authProfileIdSource
@@ -96,11 +88,7 @@ export function shouldSwitchToLiveModel(params: {
   sessionKey?: string;
   agentId?: string;
   sessionPersistence?: "durable" | "detached";
-  defaultProvider: string;
-  defaultModel: string;
-  currentProvider: string;
-  currentModel: string;
-  currentAgentRuntimeOverride?: string;
+  currentExecution: ModelExecutionSelection;
   currentAuthProfileId?: string;
   currentAuthProfileIdSource?: string;
 }): LiveSessionModelSelection | undefined {
@@ -126,9 +114,6 @@ export function shouldSwitchToLiveModel(params: {
   const persisted = resolveSelectionFromSessionEntry({
     cfg,
     entry,
-    agentId: params.agentId,
-    defaultProvider: params.defaultProvider,
-    defaultModel: params.defaultModel,
   });
   if (!persisted) {
     return undefined;
@@ -136,9 +121,7 @@ export function shouldSwitchToLiveModel(params: {
   if (
     !hasDifferentLiveSessionModelSelection(
       {
-        provider: params.currentProvider,
-        model: params.currentModel,
-        agentRuntimeOverride: params.currentAgentRuntimeOverride,
+        execution: params.currentExecution,
         authProfileId: params.currentAuthProfileId,
         authProfileIdSource: params.currentAuthProfileIdSource,
       },
@@ -207,9 +190,6 @@ export async function consolidateLiveModelSwitchAfterRun(params: {
       const persisted = resolveSelectionFromSessionEntry({
         cfg,
         entry,
-        agentId,
-        defaultProvider: DEFAULT_PROVIDER,
-        defaultModel: DEFAULT_MODEL,
       });
       const selectionApplied =
         persisted &&

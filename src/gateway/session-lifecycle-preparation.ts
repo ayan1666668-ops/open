@@ -1,11 +1,13 @@
 import type { Result } from "@openclaw/normalization-core/result";
 import type { ErrorShape } from "../../packages/gateway-protocol/src/index.js";
 import type { SessionEntry } from "../config/sessions/types.js";
+import type { ModelExecutionSelection } from "../model-picker/execution-selection.js";
 
-export type GatewaySessionTitleModelSelection = Pick<
-  SessionEntry,
-  "agentRuntimeOverride" | "authProfileOverride" | "modelOverride" | "providerOverride"
->;
+export type GatewaySessionTitleModelSelection = {
+  executionSelection: ModelExecutionSelection;
+  validate: () => string | undefined;
+  authProfileOverride?: string;
+};
 
 export type PreparedGatewaySessionLifecycle = {
   spawnedCwd?: string;

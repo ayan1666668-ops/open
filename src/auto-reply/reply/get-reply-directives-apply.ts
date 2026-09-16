@@ -431,16 +431,7 @@ export async function applyInlineDirectiveOverrides(params: {
       }
       const modelSelection = modelResolution.modelSelection;
       if (modelSelection) {
-        const runtime = resolveModelRuntimeDirective({
-          rawRuntime: directives.rawModelRuntime,
-          provider: modelSelection.provider,
-          cfg,
-          sessionEntry,
-        });
-        if (runtime.kind === "invalid") {
-          typing.cleanup();
-          return directiveRejection("model-runtime-invalid", runtime.errorText);
-        }
+        const runtime = resolveModelRuntimeDirective(directives.rawModelRuntime);
         const applied = await (
           await loadDirectivePersist()
         ).applySessionModelSelection({

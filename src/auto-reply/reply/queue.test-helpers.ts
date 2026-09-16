@@ -36,8 +36,11 @@ export function createQueueTestRun(params: {
       sessionFile: "/tmp/session.json",
       workspaceDir: "/tmp",
       config: {} as OpenClawConfig,
-      provider: "openai",
-      model: "gpt-test",
+      executionSelection: {
+        model: { provider: "openai", id: "gpt-test" },
+        executor: { kind: "harness", id: "openclaw" },
+      },
+
       timeoutMs: 10_000,
       blockReplyBreak: "text_end",
     },

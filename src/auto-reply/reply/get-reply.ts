@@ -45,7 +45,6 @@ import {
   ModelSelectionLockedError,
 } from "../../sessions/model-overrides.js";
 import { ensureSessionDiffBaseline } from "../../sessions/session-diff-baseline.js";
-import { resolveStoredModelOverride } from "../../sessions/stored-model-overrides.js";
 import { createLazyImportLoader } from "../../shared/lazy-promise.js";
 import { readAgentDatabaseAdmissionRefusal } from "../../state/agent-database-admission.js";
 import {
@@ -101,7 +100,6 @@ import { SessionResetCleanupError } from "./session-reset-cleanup.js";
 import { initSessionState, resolveReplySessionPreprocessingState } from "./session.js";
 import { mergeSkillFilters } from "./skill-filter.js";
 import { stageRemoteInboundMediaIfNeeded } from "./stage-remote-inbound-media.js";
-import { isStaleHeartbeatAutoFallbackOverride } from "./stored-model-override.js";
 import { createTypingController } from "./typing.js";
 
 type ResetCommandAction = "new" | "reset";

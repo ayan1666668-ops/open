@@ -66,8 +66,11 @@ export function createFollowupTurnTestTurn(
         sessionFile: "/tmp/session.jsonl",
         workspaceDir: "/tmp",
         config: {},
-        provider: "anthropic",
-        model: "claude",
+        executionSelection: {
+          model: { provider: "anthropic", id: "claude" },
+          executor: { kind: "harness", id: "openclaw" },
+        },
+
         messageProvider: "slack",
         senderId: "user-1",
         timeoutMs: 1_000,
