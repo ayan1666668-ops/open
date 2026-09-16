@@ -10,7 +10,6 @@ import { toSafeImportPath } from "../shared/import-specifier.js";
 import { createJiti } from "./jiti-factory.js";
 import {
   clearPluginModuleRequireCache,
-  isPluginSourceModulePath,
   tryNativeRequireJavaScriptModule,
   tryNativeRequireModule,
 } from "./native-module-require.js";
@@ -89,35 +88,6 @@ function toSourceTransformImportPath(specifier: string): string {
     return pathToFileURL(specifier).href;
   }
   return toSafeImportPath(specifier);
-}
-
-function resolveNativeTypeScriptPeer(specifier: string, parent?: string): string | undefined {
-  if (!parent || !specifier.startsWith(".") || !isPluginSourceModulePath(parent)) {
-    return undefined;
-  }
-  const extension = path.extname(specifier).toLowerCase();
-  const sourceExtension =
-    extension === ".js"
-      ? ".ts"
-      : extension === ".mjs"
-        ? ".mts"
-        : extension === ".cjs"
-          ? ".cts"
-          : extension === ".jsx"
-            ? ".tsx"
-            : undefined;
-  if (!sourceExtension) {
-    return undefined;
-  }
-  const requested = path.resolve(path.dirname(parent), specifier);
-  if (fs.existsSync(requested)) {
-    return undefined;
-  }
-  const target = path.resolve(
-    path.dirname(parent),
-    `${specifier.slice(0, -extension.length)}${sourceExtension}`,
-  );
-  return fs.existsSync(target) ? target : undefined;
 }
 
 function resolveAutomaticJitiTsconfig(loaderFilename: string): string | undefined {
@@ -315,9 +285,7 @@ function createPluginModuleLoader(
                 }
                 const native = tryNativeRequireModule(target, {
                   allowWindows: true,
-                  aliasMap: (specifier, parent) =>
-                    params.resolveAlias(specifier) ??
-                    resolveNativeTypeScriptPeer(specifier, parent),
+                  aliasMap: params.resolveAlias,
                   fallbackOnMissingDependency: true,
                 });
                 return native.ok ? native.moduleExport : jitiLoader(target);

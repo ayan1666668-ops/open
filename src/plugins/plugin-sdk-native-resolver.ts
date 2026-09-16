@@ -5,7 +5,11 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { isPathInside, isPathStrictlyInside } from "../infra/path-guards.js";
-import { supportsNativeModuleAliasHooks, type BunPluginRuntime } from "./native-module-require.js";
+import {
+  isPluginSourceModulePath,
+  supportsNativeModuleAliasHooks,
+  type BunPluginRuntime,
+} from "./native-module-require.js";
 import { pluginCacheExistsSync, pluginCacheRealpathSync } from "./plugin-cache-files.js";
 import { getPluginSdkHostFacts } from "./plugin-cache-sdk.js";
 import { getPluginCache } from "./plugin-cache.js";
@@ -262,6 +266,26 @@ function resolveAliasTargetForParentPath(
   parentFilename: string | undefined,
 ): string | undefined {
   const native = getPluginCache().sdk.native;
+  if (parentFilename && request.startsWith(".") && isPluginSourceModulePath(parentFilename)) {
+    const extension = path.extname(request).toLowerCase();
+    const sourceExtension =
+      extension === ".js"
+        ? ".ts"
+        : extension === ".mjs"
+          ? ".mts"
+          : extension === ".cjs"
+            ? ".cts"
+            : extension === ".jsx"
+              ? ".tsx"
+              : undefined;
+    if (sourceExtension) {
+      const requested = path.resolve(path.dirname(parentFilename), request);
+      const sourcePeer = `${requested.slice(0, -extension.length)}${sourceExtension}`;
+      if (!pluginCacheExistsSync(requested) && pluginCacheExistsSync(sourcePeer)) {
+        return sourcePeer;
+      }
+    }
+  }
   if (parentFilename && isPluginSdkAliasSpecifier(request)) {
     let first: { target: string; order: number } | undefined;
     for (const [root, provider] of native.sdkProviders) {
