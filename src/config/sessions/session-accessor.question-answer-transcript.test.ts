@@ -44,12 +44,14 @@ it.each([
   await withQuestionGateway(async (gateway) => {
     const dir = tempDirs.make("question-transcript-append-");
     const storePath = path.join(dir, "sessions.sqlite");
-    const target = createTestUserTurnTranscriptTarget({
-      sessionId: "question-transcript",
-      sessionKey: "agent:main:question-transcript",
+    const target = {
+      ...createTestUserTurnTranscriptTarget({
+        sessionId: "question-transcript",
+        sessionKey: "agent:main:question-transcript",
+        cwd: dir,
+      }),
       storePath,
-      cwd: dir,
-    });
+    };
     await replaceSessionEntry(target, { sessionId: target.sessionId, updatedAt: 1 });
     const original = createUserTurnTranscriptRecorder({
       target,
