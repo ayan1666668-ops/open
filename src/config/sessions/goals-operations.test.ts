@@ -16,6 +16,7 @@ import {
   loadTranscriptEvents,
   persistSessionTranscriptTurn,
   replaceSessionEntry,
+  replaceSessionEntrySync,
   upsertSessionEntryCore,
 } from "./session-accessor.js";
 import { resolveSqliteScope, toDatabaseOptions } from "./session-accessor.sqlite-scope.js";
@@ -172,6 +173,60 @@ describe("typed Goal operation persistence", () => {
         operation: editOperation,
       }),
     ).toEqual(edited.result);
+  });
+
+  it("edits only the exact case-sensitive session without publishing an identity change", async () => {
+    const target = { ...scope(), sessionKey: "agent:main:matrix:group:!Room:example.org" };
+    const sibling = { ...scope(), sessionKey: "agent:main:matrix:group:!room:example.org" };
+    await replaceSessionEntry(target, { sessionId, updatedAt: now });
+    await replaceSessionEntry(sibling, { sessionId: "sibling-session", updatedAt: now });
+    const goal = await createSessionGoal({ ...target, objective: "target objective" });
+    await createSessionGoal({ ...sibling, objective: "sibling objective" });
+    const beforeSibling = loadSessionEntry(sibling);
+    const identityMutation = vi.fn();
+    const unsubscribe = onSessionIdentityMutation(identityMutation);
+    try {
+      const edited = await mutateSessionGoal({
+        ...target,
+        expectedSessionId: sessionId,
+        operation: {
+          ...identity("edit-case-sensitive"),
+          action: "edit",
+          goalId: goal.id,
+          objective: "updated target",
+        },
+      });
+      expect(edited.result.goal?.objective).toBe("updated target");
+      expect(loadSessionEntry(target)?.goal?.objective).toBe("updated target");
+      expect(loadSessionEntry(sibling)).toEqual(beforeSibling);
+      expect(identityMutation).not.toHaveBeenCalled();
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it("rejects a session replacement made by the commit authority check", async () => {
+    const goal = await createSessionGoal({ ...scope(), objective: "original objective" });
+    const before = loadSessionEntry(scope());
+    await expect(
+      mutateSessionGoal({
+        ...scope(),
+        expectedSessionId: sessionId,
+        operation: {
+          ...identity("edit-rebound"),
+          action: "edit",
+          goalId: goal.id,
+          objective: "must not commit",
+        },
+        assertCurrent: () => {
+          replaceSessionEntrySync(scope(), {
+            ...before!,
+            sessionId: "replacement-session",
+          });
+        },
+      }),
+    ).rejects.toMatchObject({ code: "session-rebound" });
+    expect(loadSessionEntry(scope())).toEqual(before);
   });
 
   it("replays the original success after clear and reopening without recreating Goal or turn", async () => {

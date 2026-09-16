@@ -334,7 +334,12 @@ export async function mutateSessionGoal(
         const goal = applySessionGoalOperation(fresh.entry, options.operation, Date.now());
         const next = mergeSessionEntry(fresh.entry, { goal });
         const identityKeys = collectSessionEntryLookupKeys(database, resolved.sessionKey);
-        const previousIdentity = readSessionIdentitySnapshot(database, identityKeys);
+        const previousIdentity = readSessionIdentitySnapshot(
+          database,
+          identityKeys.filter((key) => key !== resolved.sessionKey),
+        );
+        // The selected row remains current in this write reservation; read only its siblings.
+        previousIdentity.set(resolved.sessionKey, fresh.entry);
         writeSessionEntry(database, resolved.sessionKey, next, {
           canonicalPreviousEntry: previousIdentity.get(resolved.sessionKey) ?? null,
         });
