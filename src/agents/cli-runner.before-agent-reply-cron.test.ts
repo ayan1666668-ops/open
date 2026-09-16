@@ -1,6 +1,7 @@
 import { expectDefined } from "@openclaw/normalization-core";
 /** Tests cron before_agent_reply gating at the CLI runner entrypoint. */
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { getReplyPayloadMetadata } from "../auto-reply/reply-payload.js";
 import { SILENT_REPLY_TOKEN } from "../auto-reply/tokens.js";
 import {
   getAgentEventLifecycleGeneration,
@@ -57,8 +58,11 @@ const {
     (_context: unknown, _cliSessionIdToUse?: string) => Promise<CliOutput>
   >(async () => ({ text: "" })),
   persistClaimedCliAssistantReplyMock: vi.fn<
-    (params: { runParams: unknown; text: string | undefined }) => Promise<void>
-  >(async () => {}),
+    (params: {
+      runParams: unknown;
+      text: string | undefined;
+    }) => Promise<{ owned: boolean; idempotencyKey?: string } | undefined>
+  >(async () => undefined),
   prepareCliRunContextMock: vi.fn(),
   closeCliSessionMock: vi.fn(),
   closeMcpLoopbackServerMock: vi.fn(),
@@ -697,6 +701,35 @@ describe("runCliAgent before_agent_reply seam", () => {
       text: "claimed cron reply",
     });
     expect(result.meta.finalAssistantVisibleText).toBe("claimed cron reply");
+  });
+
+  it("attaches the transcript write receipt to the claimed payloads", async () => {
+    hasHooksMock.mockImplementation((hookName) => hookName === "before_agent_reply");
+    runBeforeAgentReplyMock.mockResolvedValue({
+      handled: true,
+      reply: { text: "claimed reply" },
+    });
+    persistClaimedCliAssistantReplyMock.mockResolvedValue({
+      owned: true,
+      idempotencyKey: "cli-assistant:run-claim",
+    });
+
+    try {
+      const result = await runCliAgent({
+        ...baseRunParams,
+        trigger: "cron",
+        jobId: "cron-job-123",
+      });
+
+      const payload = result.payloads?.[0] as object | undefined;
+      expect(payload).toMatchObject({ text: "claimed reply" });
+      expect(getReplyPayloadMetadata(payload!)).toMatchObject({
+        assistantTranscriptOwned: true,
+        assistantTranscriptIdempotencyKey: "cli-assistant:run-claim",
+      });
+    } finally {
+      persistClaimedCliAssistantReplyMock.mockResolvedValue(undefined);
+    }
   });
 
   it("does not persist a silent claim", async () => {

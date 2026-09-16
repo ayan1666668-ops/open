@@ -29,6 +29,7 @@ import {
   markAuthProfileSuccess,
 } from "./auth-profiles.js";
 import { resolveCliBackendConfig } from "./cli-backends.js";
+import { resolveClaimedReplyPayloads } from "./cli-runner/claimed-reply-payloads.js";
 import { runCliCleanup } from "./cli-runner/cleanup.js";
 import { acceptsCliLiveSession } from "./cli-runner/cli-live-session-registry.js";
 import {
@@ -54,7 +55,6 @@ import {
   buildCliHookUserMessage,
   finalizeCliContextEngineTurn,
   persistApprovedCliUserTurnTranscript,
-  persistClaimedCliAssistantReply,
   persistCliAssistantTranscript,
   persistCliRunBlock,
   resolveCliAssistantStopReason,
@@ -212,9 +212,13 @@ async function runCliAgentInternal(
     cliBackendLog.info(
       `cli synthetic turn: provider=${params.provider} model=<synthetic> requestedModel=${params.model ?? ""} durationMs=${Date.now() - hookStartedAt} ${formatCliBackendOutputDigest(finalText)}`,
     );
-    await persistClaimedCliAssistantReply({ runParams: params, text: hookResult.reply?.text });
+    const claimedPayloads = await resolveClaimedReplyPayloads(
+      buildHandledBeforeAgentReplyPayloads(hookResult.reply),
+      params,
+      hookResult.reply?.text,
+    );
     return {
-      payloads: buildHandledBeforeAgentReplyPayloads(hookResult.reply),
+      payloads: claimedPayloads,
       meta: {
         durationMs: Date.now() - hookStartedAt,
         agentMeta: {

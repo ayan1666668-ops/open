@@ -134,12 +134,12 @@ export async function persistApprovedCliUserTurnTranscript(
 export async function persistClaimedCliAssistantReply(params: {
   runParams: RunCliAgentParams;
   text: string | undefined;
-}): Promise<void> {
+}): Promise<{ owned: boolean; idempotencyKey?: string } | undefined> {
   const text = params.text?.trim();
   if (!text) {
-    return;
+    return undefined;
   }
-  await persistCliAssistantTranscript({
+  return await persistCliAssistantTranscript({
     runParams: params.runParams,
     text,
     modelId: params.runParams.model ?? "",
