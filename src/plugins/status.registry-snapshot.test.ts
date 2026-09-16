@@ -1012,7 +1012,7 @@ describe("buildPluginRegistrySnapshotReport", () => {
     expect(isColdPluginRuntimeLoaded(fixture)).toBe(false);
   });
 
-  it("builds cold snapshots without importing plugin runtime", () => {
+  it("builds read-only plugin status snapshots without importing plugin runtime", () => {
     const fixture = createColdPluginFixture({
       rootDir: makeTempDir(),
       pluginId: "snapshot-demo",
