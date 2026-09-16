@@ -23,10 +23,7 @@ import { getAgentEventLifecycleGeneration } from "../../infra/agent-events.js";
 import { createUserTurnTranscriptRecorder } from "../../sessions/user-turn-transcript.js";
 import { createTestUserTurnTranscriptTarget } from "../../sessions/user-turn-transcript.test-support.js";
 import { createDeferredCore } from "../../shared/deferred.js";
-import {
-  disposeOpenClawAgentDatabaseByPath,
-  runOpenClawAgentWriteTransaction,
-} from "../../state/openclaw-agent-db.js";
+import { runOpenClawAgentWriteTransaction } from "../../state/openclaw-agent-db.js";
 import { listOpenClawAgentDatabasesForTest } from "../../state/openclaw-agent-db.test-support.js";
 import { registerGeneratedMediaTaskActivity } from "../../tasks/generated-media-task-activity.js";
 import { resetGeneratedMediaTaskActivityForTests } from "../../tasks/task-runtime.test-helpers.js";
@@ -784,13 +781,6 @@ describe("CLI attempt execution", () => {
   });
 
   afterAll(async () => {
-    for (const database of listOpenClawAgentDatabasesForTest()) {
-      if (database.path.startsWith(`${suiteRoot}${path.sep}`)) {
-        disposeOpenClawAgentDatabaseByPath(database.path, {
-          env: { OPENCLAW_STATE_DIR: suiteRoot },
-        });
-      }
-    }
     await cleanupSessionStateForTest({ stateDir: suiteRoot });
     await fixtureRoot.cleanup();
   });

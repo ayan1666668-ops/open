@@ -785,8 +785,6 @@ describe("main-session-restart-recovery", () => {
       } finally {
         admission?.release();
         removeAgentDeletionJournal(deletion.agentId, deletion.operationId);
-        closeOpenClawAgentDatabasesForTest();
-        closeOpenClawStateDatabaseForTest();
       }
     });
   });

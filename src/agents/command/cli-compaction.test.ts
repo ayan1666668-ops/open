@@ -94,20 +94,6 @@ async function writeSessionFile(params: { sessionFile: string; sessionId: string
   );
 }
 
-async function persistSessionEntry(params: {
-  sessionKey: string;
-  storePath: string;
-  entry: SessionEntry;
-}) {
-  await replaceSessionEntry(
-    {
-      sessionKey: params.sessionKey,
-      storePath: params.storePath,
-    },
-    params.entry,
-  );
-}
-
 type CliCompactionTestDeps = Parameters<typeof setCliCompactionTestDeps>[0];
 type CliCompactionParams = Parameters<typeof runCliTurnCompactionLifecycle>[0];
 type CompactParams = Parameters<ContextEngine["compact"]>[0];
@@ -187,7 +173,7 @@ async function prepareCompactionScenario(params: {
     ...params.sessionEntry,
   };
   const sessionStore: Record<string, SessionEntry> = { [sessionKey]: sessionEntry };
-  await persistSessionEntry({ sessionKey, storePath, entry: sessionEntry });
+  await replaceSessionEntry({ sessionKey, storePath }, sessionEntry);
 
   const compactCalls: CompactParams[] = [];
   const contextEngine =
@@ -653,11 +639,10 @@ describe("runCliTurnCompactionLifecycle", () => {
       suffix: "session-key",
       tmpDir,
       result: async ({ sessionKey, storePath }) => {
-        await persistSessionEntry({
-          sessionKey,
-          storePath,
-          entry: { sessionId: successorId, updatedAt: Date.now() },
-        });
+        await replaceSessionEntry(
+          { sessionKey, storePath },
+          { sessionId: successorId, updatedAt: Date.now() },
+        );
         return {
           ok: true,
           compacted: true,
@@ -1475,7 +1460,7 @@ describe("runCliTurnCompactionLifecycle", () => {
       totalTokensVersion: SESSION_TOTAL_TOKENS_VERSION,
     };
     const sessionStore: Record<string, SessionEntry> = { [sessionKey]: sessionEntry };
-    await persistSessionEntry({ sessionKey, storePath, entry: sessionEntry });
+    await replaceSessionEntry({ sessionKey, storePath }, sessionEntry);
 
     const bigOutput = "x".repeat(20_000);
     const compactCalls: CompactParams[] = [];

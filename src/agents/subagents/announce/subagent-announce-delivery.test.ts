@@ -1,6 +1,5 @@
 // Subagent announce delivery tests cover the last-mile routing used when child
 // runs report progress or completion back to the requester session.
-import fs from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { validateAgentParams } from "../../../../packages/gateway-protocol/src/index.js";
@@ -393,7 +392,6 @@ async function createRequesterTranscriptFixture(sessionId: string) {
   const dir = tempDirs.make("openclaw-subagent-announce-transcript-");
   const sessionKey = "agent:main:slack:channel:C123:thread:171.222";
   const storePath = path.join(dir, "agents", "main", "sessions", "sessions.json");
-  fs.mkdirSync(path.dirname(storePath), { recursive: true });
   const entry: SessionEntry = {
     sessionId,
     sessionFile: formatSqliteSessionFileMarker({ agentId: "main", sessionId, storePath }),
@@ -409,14 +407,7 @@ async function readRequesterTranscriptMessages(fixture: {
   sessionKey: string;
   storePath: string;
 }): Promise<Array<Record<string, unknown>>> {
-  return (
-    await loadTranscriptEvents({
-      agentId: fixture.agentId,
-      sessionId: fixture.sessionId,
-      sessionKey: fixture.sessionKey,
-      storePath: fixture.storePath,
-    })
-  )
+  return (await loadTranscriptEvents(fixture))
     .map((event) => (event as { message?: unknown }).message)
     .filter(
       (message): message is Record<string, unknown> =>
