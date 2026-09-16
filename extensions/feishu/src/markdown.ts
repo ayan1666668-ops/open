@@ -52,9 +52,8 @@ function isFenceMarkerLine(line: string): boolean {
  * send will and ask three things of the pieces: each one stays inside the limit, each one
  * closes what it opened, and every marker arrives whole.
  */
-export function chunkedFencesBalance(converted: string, limit: number, mode: ChunkMode): boolean {
-  const chunks = chunkMarkdownTextWithMode(converted, limit, mode);
-  if (!chunks.every((chunk) => chunk.length <= limit && fencesBalance(chunk))) {
+function fencesSurvive(converted: string, chunks: string[]): boolean {
+  if (!chunks.every(fencesBalance)) {
     return false;
   }
   const delivered = new Set(
@@ -63,6 +62,11 @@ export function chunkedFencesBalance(converted: string, limit: number, mode: Chu
   return converted
     .split("\n")
     .every((line) => !isFenceMarkerLine(line) || delivered.has(line.trim()));
+}
+
+export function chunkedFencesBalance(converted: string, limit: number, mode: ChunkMode): boolean {
+  const chunks = chunkMarkdownTextWithMode(converted, limit, mode);
+  return chunks.every((chunk) => chunk.length <= limit) && fencesSurvive(converted, chunks);
 }
 
 export type FeishuMarkdownNode = {
@@ -241,6 +245,16 @@ export function chunkFeishuPostMarkdown(params: FeishuMarkdownChunkOptions): str
         ...(isFirst ? (params.firstChunkMentions ?? []) : []),
       ]),
   });
+}
+
+/**
+ * The post chunker owns its own envelope, so the size question is already settled and only
+ * the markers are in doubt. A quote-prefixed marker is invisible to the fence scanner, so
+ * a converted blockquoted table cannot be closed and reopened at a cut and its two markers
+ * land in different messages.
+ */
+export function postFencesSurvive(converted: string, params: FeishuMarkdownChunkOptions): boolean {
+  return fencesSurvive(converted, chunkFeishuPostMarkdown(params));
 }
 
 /** Measure the actual transport envelope, including UTF-8, JSON escapes and fence wrappers. */

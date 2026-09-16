@@ -4232,6 +4232,40 @@ describe("feishuOutbound.sendText markdown table modes in auto mode", () => {
     },
   );
 
+  // The shared fence scanner reads no quote prefix, so a converted blockquoted table
+  // cannot be closed and reopened at a cut and its two markers land in different
+  // messages. The table is left as authored there, the way the comment paths leave it.
+  it("posts a quoted table as authored when its fence would not survive the cut", async () => {
+    const quoted = [
+      "Roster",
+      "",
+      ...[
+        "| Name | Role |",
+        "| --- | --- |",
+        ...Array.from({ length: 12 }, (_e, i) => `| r${i} | Lead |`),
+      ].map((line) => `> ${line}`),
+    ].join("\n");
+    const cfg: ClawdbotConfig = {
+      channels: {
+        feishu: { accounts: { main: { textChunkLimit: 200, markdown: { tables: "block" } } } },
+      },
+    };
+    // Guard the fixture: converting would put a quote-prefixed marker at each end.
+    expect(convertMarkdownTables(quoted, "code")).toContain("> ```");
+
+    await sendText({ cfg, to: "chat_1", text: quoted, accountId: "main" });
+
+    const posted = sendMessageFeishuMock.mock.calls.map(([call]) => String(call.text));
+    expect(posted.length).toBeGreaterThan(1);
+    // No message opens a block another has to close.
+    for (const message of posted) {
+      expect((message.match(/^>?\s*```/gmu) ?? []).length % 2).toBe(0);
+    }
+    const joined = posted.join("");
+    expect(joined).toContain("Name");
+    expect(joined).toContain("r11");
+  });
+
   it("off keeps a fenced table sample on the card path", async () => {
     const cfg: ClawdbotConfig = {
       channels: { feishu: { renderMode: "card", markdown: { tables: "off" } } },

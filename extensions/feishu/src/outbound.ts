@@ -39,6 +39,7 @@ import {
   chunkFeishuMarkdown,
   chunkFeishuPostMarkdown,
   chunkedFencesBalance,
+  postFencesSurvive,
   materializeFeishuPostMarkdownSoftBreaks,
 } from "./markdown.js";
 import { buildFeishuMediaFallbackText } from "./media-fallback.js";
@@ -408,11 +409,22 @@ async function sendOutboundText(params: {
   // Post rendering has no native tables, so block falls back to code there.
   // Tables need contiguous source rows, so convert them before the parser
   // materializes prose soft breaks for Feishu post rendering.
-  const normalizedText = useCard
-    ? tableText
-    : materializeFeishuPostMarkdownSoftBreaks(
-        nativeTables ? convertMarkdownTables(text, "code") : tableText,
-      );
+  const postTableText = nativeTables ? convertMarkdownTables(text, "code") : tableText;
+  const postCandidate = materializeFeishuPostMarkdownSoftBreaks(postTableText);
+  // The shared fence scanner does not read a quote-prefixed marker, so a converted
+  // blockquoted table cannot be closed and reopened at a cut and its two markers land in
+  // different messages. Ask the question of the text the send will actually chunk, soft
+  // breaks materialized, the way the comment paths ask it of their own chunker.
+  const postText =
+    postTableText === text ||
+    postFencesSurvive(postCandidate, {
+      text: postCandidate,
+      limit: postLimit,
+      mode: postChunkMode,
+    })
+      ? postCandidate
+      : materializeFeishuPostMarkdownSoftBreaks(text);
+  const normalizedText = useCard ? tableText : postText;
 
   // Core chunks raw text before channel rendering. Re-chunk after expansion
   // and keep each fenced-code chunk independently valid Markdown.
