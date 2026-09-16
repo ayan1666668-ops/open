@@ -94,6 +94,7 @@ export function createMatrixReplyDispatcher(config: {
     });
   let finalReplyDeliveryFailed = false;
   let nonFinalReplyDeliveryFailed = false;
+  const reasoningDeliveryErrors = new Set<unknown>();
   const beginNextBlockDraft = () => {
     // Each block owns a new draft generation; prior retained/consumed state must not
     // suppress settlement or cleanup for the next provider-visible event.
@@ -109,9 +110,16 @@ export function createMatrixReplyDispatcher(config: {
     humanDelay,
     deliver: async (payload: ReplyPayload, info: { kind: string }) => {
       if (payload.isReasoning === true) {
-        return config.shouldDeliverReasoning?.()
-          ? await deliverPayload(payload)
-          : mergeMatrixReplyDeliveryResults([]);
+        try {
+          return config.shouldDeliverReasoning?.()
+            ? await deliverPayload(payload)
+            : mergeMatrixReplyDeliveryResults([]);
+        } catch (error: unknown) {
+          // Preserve partial-delivery evidence while keeping the shared error callback
+          // from advancing an answer draft for a reasoning-only block.
+          reasoningDeliveryErrors.add(error);
+          throw error;
+        }
       }
       const completeDelivery = async (
         result: MatrixReplyDeliveryResult,
@@ -430,12 +438,13 @@ export function createMatrixReplyDispatcher(config: {
       return await completeDelivery(await deliverPayload(payload));
     },
     onError: (err: unknown, info: { kind: "tool" | "block" | "final" }) => {
+      const reasoningFailed = reasoningDeliveryErrors.delete(err);
       if (info.kind === "final") {
         finalReplyDeliveryFailed = true;
       } else {
         nonFinalReplyDeliveryFailed = true;
       }
-      if (info.kind === "block") {
+      if (info.kind === "block" && !reasoningFailed) {
         beginNextBlockDraft();
       }
       runtime.error?.(`matrix ${info.kind} reply failed: ${String(err)}`);
