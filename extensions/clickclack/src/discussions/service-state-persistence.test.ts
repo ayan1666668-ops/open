@@ -103,6 +103,31 @@ describe("ClickClack discussion state persistence", () => {
     expect(harness.createChannel).not.toHaveBeenCalled();
   });
 
+  it.each([true, false])(
+    "requires a durable installation identity after registration returns %s",
+    async (registered) => {
+      const harness = createHarness({ label: "Missing durable installation" });
+      harness.runtime.state.openKeyedStore = () => ({
+        register: async () => {},
+        registerIfAbsent: async () => registered,
+        lookup: async () => undefined,
+        consume: async () => undefined,
+        delete: async () => false,
+        entries: async () => [],
+        clear: async () => {},
+      });
+      const service = new ClickClackDiscussionService(harness.runtime, {
+        clientFactory: () => harness.client,
+        startTimer: false,
+      });
+
+      await expect(service.open("agent:main:missing-installation")).rejects.toThrow(
+        "installation identity is unavailable",
+      );
+      expect(harness.createChannel).not.toHaveBeenCalled();
+    },
+  );
+
   it("clears stale display title confirmation when a patch response omits the field", async () => {
     const harness = createHarness({ label: "Original title" });
     const sessionKey = "agent:main:stale-title-confirmation";

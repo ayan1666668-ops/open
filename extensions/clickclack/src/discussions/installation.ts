@@ -19,5 +19,11 @@ export async function getClickClackDiscussionInstallationId(
   }
   const id = randomUUID();
   await store.registerIfAbsent(INSTALLATION_KEY, { id });
-  return (await store.lookup(INSTALLATION_KEY))?.id ?? id;
+  const persisted = (await store.lookup(INSTALLATION_KEY))?.id;
+  if (!persisted) {
+    throw new Error(
+      "ClickClack discussion installation identity is unavailable; retry opening the discussion",
+    );
+  }
+  return persisted;
 }
