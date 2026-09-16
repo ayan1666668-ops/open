@@ -1,6 +1,7 @@
 // Feishu plugin module implements presentation card behavior.
 import type { ChannelOutboundAdapter } from "openclaw/plugin-sdk/channel-send-result";
 import {
+  adaptMessagePresentationForChannel,
   legacyInteractiveReplyToPresentation,
   normalizeLegacyInteractiveReply,
   normalizeMessagePresentation,
@@ -737,6 +738,38 @@ function projectPresentationBlocks(
     }
   }
   return { ...presentation, blocks };
+}
+
+/**
+ * Core adapts a presentation to this channel's limits before the plugin renders anything, and
+ * the registered outbound path reaches the renderer with that cut already made. Projecting the
+ * source and adapting the projection hands the same adapter blocks that already fit, so it
+ * leaves them whole. A projection that changes nothing leaves core's own adaptation standing.
+ */
+export function projectPresentationForDelivery(params: {
+  presentation: NormalizedMessagePresentation;
+  sourcePresentation?: NormalizedMessagePresentation;
+  renderText?: (text: string) => string;
+}): NormalizedMessagePresentation {
+  const { presentation, sourcePresentation, renderText } = params;
+  if (!renderText || !sourcePresentation) {
+    return presentation;
+  }
+  const projected = projectPresentationBlocks(sourcePresentation, renderText);
+  const unchanged =
+    projected.blocks.length === sourcePresentation.blocks.length &&
+    projected.blocks.every((block, index) => block === sourcePresentation.blocks[index]);
+  if (unchanged) {
+    return presentation;
+  }
+  return (
+    normalizeMessagePresentation(
+      adaptMessagePresentationForChannel({
+        presentation: projected,
+        capabilities: FEISHU_PRESENTATION_CAPABILITIES,
+      }),
+    ) ?? presentation
+  );
 }
 
 export async function renderFeishuReplyPayload(

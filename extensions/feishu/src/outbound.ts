@@ -58,6 +58,7 @@ import {
   hasCardMarkdownTable,
   hasUndrawableCardTable,
   markRenderedFeishuCard,
+  projectPresentationForDelivery,
   readNativeFeishuCard,
   renderFeishuPresentationPayload,
   renderFeishuPresentationFallbackText,
@@ -647,11 +648,16 @@ export const feishuOutbound: ChannelOutboundAdapter = {
   chunkerMode: "markdown",
   textChunkLimit: FEISHU_TEXT_CHUNK_LIMIT,
   presentationCapabilities: FEISHU_PRESENTATION_CAPABILITIES,
-  renderPresentation: (params) =>
-    renderFeishuPresentationPayload({
+  renderPresentation: (params) => {
+    const renderText = presentationTextRenderer(params.ctx);
+    const presentation = projectPresentationForDelivery({ ...params, renderText });
+    return renderFeishuPresentationPayload({
       ...params,
-      ctx: { ...params.ctx, renderText: presentationTextRenderer(params.ctx) },
-    }),
+      payload: { ...params.payload, presentation },
+      presentation,
+      ctx: { ...params.ctx, renderText },
+    });
+  },
   sendPayload: async (ctx) => {
     const { payload, presentationFallback } = consumeFeishuPresentationFallbackMarker(ctx.payload);
     // Core-rendered payloads already carry their card or fallback. Only authored

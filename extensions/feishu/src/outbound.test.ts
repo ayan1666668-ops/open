@@ -10,6 +10,7 @@ import { verifyChannelMessageAdapterCapabilityProofs } from "openclaw/plugin-sdk
 import {
   adaptMessagePresentationForChannel,
   renderMessagePresentationFallbackText,
+  renderPresentationForDelivery,
   type MessagePresentation,
   type MessagePresentationAction,
 } from "openclaw/plugin-sdk/interactive-runtime";
@@ -133,6 +134,7 @@ import { createFeishuCardInteractionEnvelope } from "./card-interaction.js";
 import { feishuPlugin } from "./channel.js";
 import { buildFeishuPostMessageContent } from "./markdown.js";
 import { FEISHU_PROPAGATE_MEDIA_UPLOAD_FAILURE_MARKER, feishuOutbound } from "./outbound.js";
+import { readNativeFeishuCard } from "./presentation-card.js";
 import { createFeishuSendReceipt } from "./send-result.js";
 
 async function raceWithNextMacrotask<T>(promise: Promise<T>): Promise<T | "pending"> {
@@ -3077,6 +3079,53 @@ describe("feishuOutbound.sendText replyToId forwarding", () => {
     // the pair a ten-character limit can carry.
     expect(convertMarkdownTables(backtickedTable, "code")).toContain("````");
     expect(contents).toEqual(chunking.chunkMarkdownTextWithMode(backtickedTable, 10, "length"));
+  });
+
+  // Core adapts a presentation to the card's text limit before the registered renderer runs, and
+  // that cut lands on the authored table, so every fragment after the first stops parsing as one.
+  // The projection belongs before that cut, which is where the reply path already puts it.
+  it("converts a whole presentation table on the registered outbound path", async () => {
+    const rows = Array.from(
+      { length: 400 },
+      (_entry, index) => `| row${index} | detail ${index} |`,
+    );
+    const table = ["| name | detail |", "| --- | --- |", ...rows].join("\n");
+    // The case only means anything while the authored block outgrows the element limit and core
+    // therefore cuts it.
+    expect(table.length).toBeGreaterThan(4000);
+    const cfg = {
+      channels: { feishu: { accounts: { main: { markdown: { tables: "code" } } } } },
+    } as ClawdbotConfig;
+    const payload = { presentation: { blocks: [{ type: "text", text: table }] } } as ReplyPayload;
+
+    const rendered = await renderPresentationForDelivery(
+      {
+        presentationCapabilities: feishuOutbound.presentationCapabilities,
+        renderPresentation: async (adapted, sourcePresentation) =>
+          await feishuOutbound.renderPresentation!({
+            payload: adapted,
+            presentation: adapted.presentation,
+            sourcePresentation,
+            ctx: { cfg, to: "chat_1", text: "", accountId: "main", payload: adapted } as never,
+          }),
+      },
+      payload,
+    );
+
+    const elements = (
+      (readNativeFeishuCard(rendered)?.body?.elements ?? []) as {
+        content?: string;
+      }[]
+    ).map((element) => element.content ?? "");
+    expect(elements.length).toBeGreaterThan(1);
+    // Every element carrying rows carries the fence that makes them readable.
+    for (const content of elements) {
+      if (!content.includes("|")) {
+        continue;
+      }
+      expect(content).toContain("```");
+    }
+    expect(elements.join("")).toContain("row399");
   });
 
   // A quoted marker inside a top-level block is content, not a closer. Reading it as one
