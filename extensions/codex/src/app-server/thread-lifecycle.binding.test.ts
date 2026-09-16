@@ -996,7 +996,8 @@ describe("Codex app-server thread lifecycle bindings", () => {
       { developerInstructions: "replacement policy", fault: "binding commit" },
     ].flatMap((scenario) =>
       (["stdio", "websocket", "unix", "proxy"] as const).map((transport) => ({
-        ...scenario,
+        developerInstructions: scenario.developerInstructions,
+        fault: scenario.fault,
         transport,
       })),
     ),
