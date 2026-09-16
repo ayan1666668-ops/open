@@ -87,6 +87,7 @@ export const databaseWorkerExtensionTestFiles = [
   "extensions/qa-lab/src/execution-identity-storage-inspection.test.ts",
   "extensions/reef/doctor-contract-api.test.ts",
   "extensions/reef/src/channel.test.ts",
+  "extensions/reef/src/inbox-cursor.test.ts",
   "extensions/reef/src/setup.test.ts",
   "extensions/reef/src/state.test.ts",
   "extensions/sms/src/media-limits.test.ts",
