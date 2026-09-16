@@ -19,7 +19,7 @@ concurrency:
 
 env:
   NODE_OPTIONS: --max-old-space-size=8192
-  SOURCE_PINS: '{"package.json":"2eff013c5971df482a4a1299158e36014d856364b279559695f7ed956b9e4754","pnpm-lock.yaml":"a6a6f2aecc88c5a04c7f268a2ffbbc998deead2567e7161773f753b7ca4370c2",".github/actions/setup-node-env/action.yml":"fea305846e06212801d1db28b4a911d4af7e33944515ac9d1b651876655a756a","test/scripts/fixtures/vitest-worker-compiler.mjs":"91a151b810b676ceb42f499f3bd8df626deab94c9621508ecbe164a50ac96e54","test/scripts/fixtures/ci-fixture-runtime.cjs":"1fc703337b3b3bb6dbc4b8b754d2c898c4d80a4e56a6831e70e4477f640a7101","test/scripts/vitest-worker-artifacts.test-support.ts":"627fd1c1b102cc245123d330893c854066e52fcd8b32e210ecaf6b1a2de6eff3","test/scripts/vitest-worker-artifacts.transforms.test-support.ts":"b471211c1a271e7cfb45312ba26863754dd556e09ec26147b69bbf475e34a435","test/scripts/vitest-worker-artifacts.transforms.test.ts":"8a1fc75655b04097951901d35cb99a0e949f3d75a61ded95b6fa42c1c596a965","test/scripts/vitest-worker-artifacts.test.ts":"e168711ac7e9559d100d15e3387dc8fc793c697c164c0f28a16bf471947e195c","test/scripts/vitest-worker-artifacts.ci.test.ts":"b8d013909836f797dd0f288d489a2b0166538664bcc84d9dffd1a4f38d2c3926","test/helpers/run-node-script.ts":"c7ca780b077c7dec05d4a5f5417b998f3b70145e8de249f8a33f97919ebe6236","scripts/run-vitest-child.mts":"7a31d1d0af29e53d080f6c216400c4cc6b4d88190edb4d577a58b3236836b292","scripts/run-vitest.mts":"886a82e4e45e24a06baceba727e802856bacaab119ddcf7573fa4da3526e81df","scripts/lib/vitest-worker-run.mts":"399e25186231c8ebc3efcadbae1408d14612926da5190ef2da7258c51c7a665c","scripts/lib/vitest-worker-artifacts.mts":"55c84550381fddb1fadcb4203d6b595cdb041799bb1576380924e95fe9f32c8c","test/vitest/vitest.worker-artifacts.ts":"5170cef320ee4fd2ab7d0d23ad6afaeed8ca883709b19f6d4a2a67ac60554a90","test/vitest/vitest.tooling.config.ts":"7b605b7cc182559e4d8f50aec0917cc89add1add2d2d74be802d104a424618b8","test/vitest/vitest.scoped-config.ts":"5e4d5f780b6b8a445972d30cbcc35c8c90dcf83b3d215a9fd8f64c31afb2b05e","test/vitest/vitest.shared.config.ts":"6152861da83f7c7ef4b1ad855187665d57996392af3f19ff52155c4b17cc08f8","src/infra/runtime-process-entrypoints.ts":"a43fce5e00930162f580fe071c4200ddde9d02fd523151ec2ed0c5cc87552462"}'
+  SOURCE_PINS: '{"package.json":"2eff013c5971df482a4a1299158e36014d856364b279559695f7ed956b9e4754","pnpm-lock.yaml":"a6a6f2aecc88c5a04c7f268a2ffbbc998deead2567e7161773f753b7ca4370c2",".github/actions/setup-node-env/action.yml":"fea305846e06212801d1db28b4a911d4af7e33944515ac9d1b651876655a756a","test/scripts/fixtures/vitest-worker-compiler.mjs":"91a151b810b676ceb42f499f3bd8df626deab94c9621508ecbe164a50ac96e54","test/scripts/fixtures/ci-fixture-runtime.cjs":"1fc703337b3b3bb6dbc4b8b754d2c898c4d80a4e56a6831e70e4477f640a7101","test/scripts/vitest-worker-artifacts.test-support.ts":"627fd1c1b102cc245123d330893c854066e52fcd8b32e210ecaf6b1a2de6eff3","test/scripts/vitest-worker-artifacts.transforms.test-support.ts":"b471211c1a271e7cfb45312ba26863754dd556e09ec26147b69bbf475e34a435","test/scripts/vitest-worker-artifacts.transforms.test.ts":"d87bf1afb61bcaff26e5801310173ee3f5a683948b04c3718204cc3b9a24f9d3","test/scripts/vitest-worker-artifacts.test.ts":"e168711ac7e9559d100d15e3387dc8fc793c697c164c0f28a16bf471947e195c","test/scripts/vitest-worker-artifacts.ci.test.ts":"b8d013909836f797dd0f288d489a2b0166538664bcc84d9dffd1a4f38d2c3926","test/helpers/run-node-script.ts":"c7ca780b077c7dec05d4a5f5417b998f3b70145e8de249f8a33f97919ebe6236","scripts/run-vitest-child.mts":"7a31d1d0af29e53d080f6c216400c4cc6b4d88190edb4d577a58b3236836b292","scripts/run-vitest.mts":"886a82e4e45e24a06baceba727e802856bacaab119ddcf7573fa4da3526e81df","scripts/lib/vitest-worker-run.mts":"399e25186231c8ebc3efcadbae1408d14612926da5190ef2da7258c51c7a665c","scripts/lib/vitest-worker-artifacts.mts":"55c84550381fddb1fadcb4203d6b595cdb041799bb1576380924e95fe9f32c8c","test/vitest/vitest.worker-artifacts.ts":"5170cef320ee4fd2ab7d0d23ad6afaeed8ca883709b19f6d4a2a67ac60554a90","test/vitest/vitest.tooling.config.ts":"7b605b7cc182559e4d8f50aec0917cc89add1add2d2d74be802d104a424618b8","test/vitest/vitest.scoped-config.ts":"5e4d5f780b6b8a445972d30cbcc35c8c90dcf83b3d215a9fd8f64c31afb2b05e","test/vitest/vitest.shared.config.ts":"6152861da83f7c7ef4b1ad855187665d57996392af3f19ff52155c4b17cc08f8","src/infra/runtime-process-entrypoints.ts":"a43fce5e00930162f580fe071c4200ddde9d02fd523151ec2ed0c5cc87552462"}'
 
 jobs:
   bun-transform:
@@ -40,7 +40,7 @@ jobs:
       - name: Verify exact source
         env:
           EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
-          EXPECTED_PARENT: ae90f457b36068e79779044824c81b92092667ef
+          EXPECTED_PARENT: 755845b130f36a227ff47928dc44810859e08386
         run: |
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
           test "$(git rev-parse HEAD^)" = "$EXPECTED_PARENT"
@@ -120,7 +120,7 @@ jobs:
         if: always()
         env:
           EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
-          EXPECTED_PARENT: ae90f457b36068e79779044824c81b92092667ef
+          EXPECTED_PARENT: 755845b130f36a227ff47928dc44810859e08386
         run: |
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
           test "$(git rev-parse HEAD^)" = "$EXPECTED_PARENT"
