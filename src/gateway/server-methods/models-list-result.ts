@@ -691,10 +691,10 @@ export async function prepareModelsListResult(
   return {
     isCurrent: () => isCurrent() && projector.isCurrent(),
     read: () => {
-      const catalog = readCatalog();
+      const currentCatalog = readCatalog();
       const keyOf = createModelCatalogIdentityKeyResolver();
       return {
-        models: catalog.filter(matchesProvider).map((entry) => {
+        models: currentCatalog.filter(matchesProvider).map((entry) => {
           const key = keyOf(entry);
           const evaluation = evaluations.get(key);
           if (!evaluation) {
