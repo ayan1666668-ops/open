@@ -184,6 +184,41 @@ describe("runCronIsolatedAgentTurn — interim ack retry", () => {
   });
 
   it.each([true, false])(
+    "replaces stale context after a context-only retry with final context available=%s",
+    async (available) => {
+      usePayloadTextExtraction();
+      const cronSession = makeCronSession();
+      cronSession.sessionEntry.totalTokens = 99;
+      cronSession.sessionEntry.totalTokensFresh = true;
+      resolveCronSessionMock.mockReturnValue(cronSession);
+      const { deriveSessionTotalTokens } = await import("../../agents/usage.js");
+      deriveSessionTotalTokensMock.mockImplementation(deriveSessionTotalTokens);
+      const firstUsage = { contextUsage: { state: "available", promptTokens: 21 } } as const;
+      const finalUsage = {
+        contextUsage: available
+          ? ({ state: "available", promptTokens: 37 } as const)
+          : ({ state: "unavailable" } as const),
+      };
+      runEmbeddedAgentMock
+        .mockResolvedValueOnce({
+          payloads: [{ text: "On it, checking the report now." }],
+          meta: { agentMeta: { usage: firstUsage, lastCallUsage: firstUsage } },
+        })
+        .mockResolvedValueOnce({
+          payloads: [{ text: "The report is complete." }],
+          meta: { agentMeta: { usage: finalUsage, lastCallUsage: finalUsage } },
+        });
+      mockRunCronFallbackPassthrough();
+
+      const result = await runTurnAndExpectOk(2, 2);
+
+      expect(result.usage).toBeUndefined();
+      expect(cronSession.sessionEntry.totalTokens).toBe(available ? 37 : undefined);
+      expect(cronSession.sessionEntry.totalTokensFresh).toBe(available);
+    },
+  );
+
+  it.each([true, false])(
     "keeps per-model prices and diagnostics when prior pricing is available=%s",
     async (priced) => {
       usePayloadTextExtraction();

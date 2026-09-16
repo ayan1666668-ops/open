@@ -167,15 +167,6 @@ export async function finalizeCronRun(params: {
     const output = usage.output ?? 0;
     const cacheRead = usage.cacheRead ?? 0;
     const cacheWrite = usage.cacheWrite ?? 0;
-    const lastCallTotalTokens = deriveSessionTotalTokens({
-      usage: lastCallUsage,
-      contextTokens,
-      promptTokens,
-    });
-    const totalTokens =
-      typeof lastCallTotalTokens === "number" && lastCallTotalTokens > 0
-        ? lastCallTotalTokens
-        : undefined;
     prepared.cronSession.sessionEntry.inputTokens = input;
     prepared.cronSession.sessionEntry.outputTokens = output;
     const bucketTotalTokens = input + output + cacheRead + cacheWrite;
@@ -192,6 +183,20 @@ export async function finalizeCronRun(params: {
       ...(cacheRead > 0 ? { cache_read_tokens: cacheRead } : {}),
       ...(cacheWrite > 0 ? { cache_write_tokens: cacheWrite } : {}),
     };
+    prepared.cronSession.sessionEntry.cacheRead = cacheRead;
+    prepared.cronSession.sessionEntry.cacheWrite = cacheWrite;
+    telemetry = {
+      model: modelUsed,
+      provider: providerUsed,
+      usage: telemetryUsage,
+    };
+  }
+  if (hasNonzeroUsage(usage) || hasNonzeroUsage(finalRunResult.meta?.agentMeta?.usage)) {
+    const totalTokens = deriveSessionTotalTokens({
+      usage: lastCallUsage,
+      contextTokens,
+      promptTokens,
+    });
     if (typeof totalTokens === "number" && Number.isFinite(totalTokens) && totalTokens > 0) {
       prepared.cronSession.sessionEntry.totalTokens = totalTokens;
       prepared.cronSession.sessionEntry.totalTokensFresh = true;
@@ -201,13 +206,6 @@ export async function finalizeCronRun(params: {
       prepared.cronSession.sessionEntry.totalTokensFresh = false;
       prepared.cronSession.sessionEntry.totalTokensVersion = undefined;
     }
-    prepared.cronSession.sessionEntry.cacheRead = cacheRead;
-    prepared.cronSession.sessionEntry.cacheWrite = cacheWrite;
-    telemetry = {
-      model: modelUsed,
-      provider: providerUsed,
-      usage: telemetryUsage,
-    };
   }
   await recordCronRunUsage({ prepared, execution, contextTokens });
   await prepared.persistSessionEntry();
