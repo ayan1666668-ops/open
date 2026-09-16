@@ -15,6 +15,7 @@ import { clearMemoryPluginState } from "../../../plugins/memory-state.test-fixtu
 import { createUserTurnTranscriptRecorder } from "../../../sessions/user-turn-transcript.js";
 import { projectAgentRunAttemptTerminal } from "../../agent-run-terminal-outcome.js";
 import { makeAgentAssistantMessage } from "../../test-helpers/agent-message-fixtures.js";
+import { sumToolResultTextChars } from "../tool-result-context-guard.test-support.js";
 import type { AttemptContextEngine } from "./attempt-context-engine-helpers.js";
 import {
   cleanupTempPaths,
@@ -61,34 +62,6 @@ const requireRecord = createRequireRecord("object", "expected-label");
 function requireRecords(value: unknown, label: string): Array<Record<string, unknown>> {
   expect(value, label).toBeInstanceOf(Array);
   return value as Array<Record<string, unknown>>;
-}
-
-function sumToolResultTextChars(messages: AgentMessage[]): number {
-  // Context-engine budget tests need deterministic text size accounting for
-  // toolResult blocks.
-  return messages.reduce((sum, message) => {
-    if (message.role !== "toolResult") {
-      return sum;
-    }
-    const content = (message as { content?: unknown }).content;
-    if (!Array.isArray(content)) {
-      return sum;
-    }
-    return (
-      sum +
-      content.reduce((blockSum, block) => {
-        if (
-          block &&
-          typeof block === "object" &&
-          (block as { type?: unknown }).type === "text" &&
-          typeof (block as { text?: unknown }).text === "string"
-        ) {
-          return blockSum + (block as { text: string }).text.length;
-        }
-        return blockSum;
-      }, 0)
-    );
-  }, 0);
 }
 
 function findRecord(
