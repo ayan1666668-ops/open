@@ -5341,9 +5341,7 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
       );
       await options.onIdle?.();
 
-      const committed = String(
-        requireStreamingInstance(0).closeWithResult.mock.calls[0]?.[0] ?? "",
-      );
+      const committed = requireStreamingInstance(0).closeWithResult.mock.calls[0]?.[0] ?? "";
       expect(committed).toContain("_Checking the roster._");
       expect(committed).toContain("```");
       expect(committed).not.toContain("_```_");
@@ -5367,9 +5365,7 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
         );
         await options.onIdle?.();
 
-        const committed = String(
-          requireStreamingInstance(0).closeWithResult.mock.calls[0]?.[0] ?? "",
-        );
+        const committed = requireStreamingInstance(0).closeWithResult.mock.calls[0]?.[0] ?? "";
         // Prose still reads as reasoning.
         expect(committed).toContain("_Checking the roster._");
         expect(committed).toContain(structural);
@@ -5381,9 +5377,9 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
     // formatter. Its underscores are stripped again by the prefix builder, so this
     // records that the structure survives rather than assuming either way.
     it("keeps a streamed block reasoning table readable in the preview", async () => {
-      const { result } = createBlockTableHarness(tableCfg("block"), true);
+      const { result, options } = createBlockTableHarness(tableCfg("block"), true);
 
-      await result.replyOptions.onReplyStart?.();
+      await options.onReplyStart?.();
       result.replyOptions.onReasoningStream?.({ text: `Checking.\n\n${tableMarkdown}` });
       result.replyOptions.onPartialReply?.({ text: "answer part" });
       await vi.waitFor(() => expect(streamingInstances).toHaveLength(1));
