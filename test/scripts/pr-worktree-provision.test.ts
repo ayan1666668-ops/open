@@ -4,6 +4,8 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  rmdirSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { join, relative } from "node:path";
@@ -62,6 +64,30 @@ describePosix("native PR source provisioning", () => {
     expect(f.git(f.canonical, "for-each-ref", "refs/openclaw/pr-operation-locks")).toBe("");
     expect(existsSync(join(f.canonical, ".worktrees", ".templates"))).toBe(false);
   });
+
+  it.each([false, true])(
+    "preserves a symlinked parent through native Git (acceleration=%s)",
+    (acceleration) => {
+      const f = coldFixture(false);
+      writeFileSync(
+        f.env.OPENCLAW_CONFIG_PATH!,
+        JSON.stringify({ worktreeAcceleration: acceleration }),
+      );
+      const parent = join(f.canonical, ".worktrees");
+      const physicalParent = join(f.root, "pr-worktrees");
+      rmdirSync(parent);
+      mkdirSync(physicalParent);
+      symlinkSync(physicalParent, parent, "dir");
+      const result = f.run("review-init");
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stderr).toContain("PR source checkout: Git checkout.");
+      expectSeed(f);
+      expect(f.git(f.worktree, "rev-parse", "--show-toplevel")).toBe(join(physicalParent, "pr-42"));
+      expect(f.git(f.worktree, "rev-parse", "FETCH_HEAD")).toBe(f.main);
+      expect(f.git(f.canonical, "for-each-ref", "refs/openclaw/pr-operation-locks")).toBe("");
+      expect(existsSync(join(physicalParent, ".templates"))).toBe(false);
+    },
+  );
 
   it.runIf(process.platform === "linux")(
     "keeps native Git provisioning on an unsupported source filesystem",

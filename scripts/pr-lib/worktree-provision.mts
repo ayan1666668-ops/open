@@ -214,8 +214,16 @@ async function provisionPrWorktree(params: ProvisionParams): Promise<void> {
       };
       await assertSeed();
       const worktreeRoot = path.join(root, ".worktrees");
-      const destination = path.join(worktreeRoot, `pr-${params.pr}`);
-      const native = await needsNativeGit(rawGit, env);
+      const resolvedWorktreeRoot = await fs.realpath(worktreeRoot).catch((error: unknown) => {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+          throw error;
+        }
+        return worktreeRoot;
+      });
+      const destination = path.join(resolvedWorktreeRoot, `pr-${params.pr}`);
+      // Native PR tooling supports a symlinked parent. Keep that path on Git
+      // rather than registering managed templates under an aliased namespace.
+      const native = resolvedWorktreeRoot !== worktreeRoot || (await needsNativeGit(rawGit, env));
       const gitBytes = await estimateWorktreeGitBytes(root, params.seed, {
         signal: guard.signal,
         assertCurrent,
@@ -241,8 +249,8 @@ async function provisionPrWorktree(params: ProvisionParams): Promise<void> {
       requireSpace(0);
       await fs.mkdir(worktreeRoot, { recursive: true });
       assertCurrent();
-      if ((await fs.realpath(worktreeRoot)) !== worktreeRoot) {
-        throw new Error("PR worktree parent resolves outside its canonical location.");
+      if ((await fs.realpath(worktreeRoot)) !== resolvedWorktreeRoot) {
+        throw new Error("PR worktree parent changed during provisioning.");
       }
       await assertSeed();
       let templateCloned = false;
@@ -282,6 +290,7 @@ async function provisionPrWorktree(params: ProvisionParams): Promise<void> {
         await requiredGit(destination, ["rev-parse", "--path-format=absolute", "--git-common-dir"]),
       );
       if (
+        (await fs.realpath(worktreeRoot)) !== resolvedWorktreeRoot ||
         (await fs.realpath(top)) !== destination ||
         (await fs.realpath(common)) !== commonDir ||
         (await requiredGit(destination, ["symbolic-ref", "HEAD"])) !== seedRef ||
