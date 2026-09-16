@@ -47,7 +47,7 @@ function renderRuntimeModel(entry: ModelCatalogEntry, selectedRuntime?: string) 
 
 describe("chat model runtime choices", () => {
   it.each([false, true])(
-    "follows configured routing with runtime ownership locked: %s",
+    "retains generic selection, honors explicit runtime and resets from Default with runtime locked: %s",
     async (runtimeLocked) => {
       const defaultModel: ModelCatalogEntry = {
         id: "gpt-5.6-luna",
@@ -153,12 +153,15 @@ describe("chat model runtime choices", () => {
           .querySelector<HTMLButtonElement>('[data-chat-model-option="openai/gpt-5.6-sol"]')!
           .click();
         await selection;
+        expect(
+          host.request.mock.calls.filter(([method]) => method === "sessions.patch"),
+        ).toHaveLength(patchesBeforeReset);
+        expect(result.sessions[0]!.agentRuntime).toEqual({ id: "codex", source: "session-key" });
+        container.querySelector<HTMLButtonElement>('[data-chat-model-default="true"]')!.click();
+        await selection;
         const patches = host.request.mock.calls.filter(([method]) => method === "sessions.patch");
         expect(patches).toHaveLength(patchesBeforeReset + 1);
-        expect(patches.at(-1)?.[1]).toEqual({
-          key: "main",
-          model: "openai/gpt-5.6-sol",
-        });
+        expect(patches.at(-1)?.[1]).toEqual({ key: "main", model: null });
       } finally {
         host.sessions.dispose();
       }

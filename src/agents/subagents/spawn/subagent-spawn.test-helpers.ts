@@ -1,10 +1,16 @@
 // Subagent spawn test helpers install mocked runtime seams so sessions_spawn
 // tests can exercise orchestration without real gateway/session-store effects.
 import os from "node:os";
+import path from "node:path";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { expect, vi } from "vitest";
+import type { ModelProviderConfig } from "../../../config/types.models.js";
+import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import { resolveLeastPrivilegeOperatorScopesForMethod } from "../../../gateway/method-scopes.js";
 import type { SubagentLifecycleHookRunner } from "../../../plugins/hooks.js";
+import { createPluginMetadataSnapshotFixture } from "../../../plugins/plugin-metadata.test-support.js";
+import { createEmptyPluginRegistry } from "../../../plugins/registry-empty.js";
+import type { PreparedModelRuntimeSnapshot } from "../../prepared-model-runtime.types.js";
 
 type MockFn = (...args: unknown[]) => unknown;
 type MockImplementationTarget = {
@@ -29,6 +35,22 @@ export function createSubagentSpawnTestConfig(
   overrides?: Record<string, unknown>,
 ) {
   return {
+    models: {
+      providers: Object.fromEntries(
+        ["openai", "anthropic", "custom"].map(
+          (provider) =>
+            [
+              provider,
+              {
+                api: "openai-completions",
+                baseUrl: "https://models.example.invalid/v1",
+                agentRuntime: { id: "openclaw" },
+                models: [],
+              },
+            ] satisfies [string, ModelProviderConfig],
+        ),
+      ),
+    },
     session: {
       mainKey: "main",
       scope: "per-sender",
@@ -209,7 +231,103 @@ export async function loadSubagentSpawnModuleForTest(params: {
     vi.resetModules();
   }
 
-  const resetSubagentRegistryForTests = vi.fn();
+  let generation = 0;
+  const resetSubagentRegistryForTests = vi.fn(() => {
+    generation += 1;
+  });
+  const { setPreparedModelRuntimeAuthStore } = await import("../../prepared-model-runtime-auth.js");
+  const { AuthStorage, ModelRegistry } = await import("../../sessions/index.js");
+  const { getActivePluginRegistry, getActivePluginRegistryVersion } =
+    await import("../../../plugins/runtime.js");
+  const { getRuntimeAuthProfileStoreCredentialsRevision } =
+    await import("../../auth-profiles/runtime-snapshots.js");
+  const { capturePluginRegistryLifecycleEpoch, capturePluginRegistryLifecycleSignal } =
+    await import("../../../plugins/registry-lifecycle.js");
+  const registry = createEmptyPluginRegistry();
+  const publishedModels = {
+    openai: ["gpt-4", "gpt-5.4", "gpt-5.5", "gpt-5.6-luna"],
+    anthropic: ["claude-opus-4-7", "claude-sonnet-4-6"],
+    custom: ["custom/model", "middle", "final"],
+    "plugin-provider": ["new-model"],
+  };
+  const entries = Object.entries(publishedModels).flatMap(([provider, models]) =>
+    models.map((id) => ({
+      provider,
+      id,
+      name: id,
+      api: "openai-completions" as const,
+      baseUrl: "https://models.example.invalid/v1",
+    })),
+  );
+  const catalogRuntime = await import("../../prepared-model-catalog.js");
+  vi.spyOn(catalogRuntime, "getPublishedPreparedModelCatalogOwnerSnapshot").mockImplementation(
+    ({ config, agentId = "main", workspaceDir } = {}) => {
+      if (!config) return undefined;
+      const capturedGeneration = generation;
+      const capturedRegistry = getActivePluginRegistry();
+      const registryVersion = getActivePluginRegistryVersion();
+      const registrySignal = capturedRegistry
+        ? capturePluginRegistryLifecycleSignal(
+            capturedRegistry,
+            capturePluginRegistryLifecycleEpoch(capturedRegistry),
+            { scopedRuntime: true },
+          )
+        : undefined;
+      const authRevision = getRuntimeAuthProfileStoreCredentialsRevision();
+      const workspace = workspaceDir ?? params.workspaceDir ?? os.tmpdir();
+      const owner: PreparedModelRuntimeSnapshot = {
+        config,
+        observationConfig: config,
+        catalogOwner: { agentId, workspaceDir: workspace },
+        agentId,
+        agentDir: path.join(workspace, "agent"),
+        workspaceDir: workspace,
+        activeProjectKeys: [],
+        authModes: {},
+        metadataSnapshot: createPluginMetadataSnapshotFixture(),
+        pluginRegistry: capturedRegistry ?? registry,
+        isCurrent: () =>
+          generation === capturedGeneration &&
+          capturedRegistry === getActivePluginRegistry() &&
+          (!capturedRegistry || (registrySignal !== undefined && !registrySignal.aborted)) &&
+          registryVersion === getActivePluginRegistryVersion() &&
+          authRevision === getRuntimeAuthProfileStoreCredentialsRevision(),
+        allowGatewaySubagentBinding: false,
+        modelCatalog: { entries, routeVariants: entries },
+        configuredRuntimeModels: [],
+        inlineProviderModels: [],
+        createStores() {
+          const authStorage = AuthStorage.inMemory({});
+          return { authStorage, modelRegistry: ModelRegistry.inMemory(authStorage) };
+        },
+      };
+      setPreparedModelRuntimeAuthStore(owner, {
+        version: 1,
+        profiles: Object.fromEntries(
+          [
+            ...new Set([
+              ...Object.keys(publishedModels),
+              ...Object.keys(config.models?.providers ?? {}),
+            ]),
+          ].map(
+            (provider) =>
+              [
+                `${provider}:test-profile`,
+                {
+                  type: "api_key" as const,
+                  provider,
+                  key: "synthetic-spawn-credential",
+                },
+              ] as const,
+          ),
+        ),
+      });
+      return owner;
+    },
+  );
+  vi.spyOn(catalogRuntime, "materializePreparedModelCatalogOwner").mockImplementation(
+    (owner) => owner,
+  );
 
   vi.doMock("../../provider-model-normalization.runtime.js", () => ({
     normalizeProviderModelIdWithRuntime: () => undefined,
@@ -321,6 +439,7 @@ export async function loadSubagentSpawnModuleForTest(params: {
     upsertSessionEntryCore: async (
       scope: { storePath?: string; sessionKey: string },
       patch: Record<string, unknown>,
+      options?: { assertCommitAllowed?: () => void },
     ) => {
       const updateSessionStore =
         params.updateSessionStoreMock ??
@@ -333,6 +452,7 @@ export async function loadSubagentSpawnModuleForTest(params: {
       const storePath =
         scope.storePath ?? params.sessionStorePath ?? "/tmp/subagent-spawn-model-session.json";
       await updateSessionStore(storePath, (store: SessionStore) => {
+        options?.assertCommitAllowed?.();
         updated = Object.assign({}, store[scope.sessionKey], patch);
         store[scope.sessionKey] = updated;
       });

@@ -1,5 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { createDeferred } from "../../../../test/helpers/promise.js";
 import { LegacyContextEngine } from "../../../context-engine/legacy.js";
 import {
@@ -106,7 +106,6 @@ describe("spawn context-engine resource custody", () => {
   afterEach(() => {
     resetScheduler();
     vi.unstubAllEnvs();
-    vi.restoreAllMocks();
   });
 
   it.each([
@@ -211,7 +210,8 @@ describe("spawn context-engine resource custody", () => {
           return { ok: true };
         });
       }
-      vi.spyOn(console, "warn").mockImplementation(() => {});
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      onTestFinished(() => warn.mockRestore());
       let settled = false;
       const operation = spawn({ task: "synthetic child" }, { agentSessionKey: "main" }).finally(
         () => {

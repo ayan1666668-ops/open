@@ -11,12 +11,16 @@ import {
   patchSessionEntryCore,
   upsertSessionEntryCore,
 } from "../../config/sessions/session-accessor.js";
+import type { SessionEntry } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { GatewayClientRequestError } from "../../gateway/client.js";
 import { isAgentSessionModelPatchOrigin } from "../../gateway/session-model-patch-origin.js";
+import { commitStoredSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
+import type { ExecutionFallbackPermission } from "../../model-picker/execution-selection.js";
 import { beginSessionWorkAdmission } from "../../sessions/session-lifecycle-admission.js";
 import { withTestDir } from "../../test-helpers/temp-dir.js";
 import * as failoverErrors from "../failover-error.js";
+import { evaluatePublishedModelRuntimeChoice } from "../model-runtime-choice.js";
 import { createAgentPatchedSessionModelRunGuard } from "../session-model-auto-revert.js";
 import { withGatewayToolCallerIdentity } from "./gateway-caller-context.js";
 import type { AgentToolGatewayRequestCaller } from "./in-process-gateway.js";
@@ -26,7 +30,8 @@ import {
   expectExactResolvedAcknowledgement,
 } from "./sessions-tool.test-helpers.js";
 
-const gatewayMocks = vi.hoisted(() => ({ callGateway: vi.fn() }));
+const gatewayMocks = vi.hoisted(() => ({ callGateway: vi.fn(), generation: 0 }));
+vi.mock("../model-runtime-choice.js", () => ({ evaluatePublishedModelRuntimeChoice: vi.fn() }));
 vi.mock("../../gateway/call.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../gateway/call.js")>()),
   callGateway: gatewayMocks.callGateway,
@@ -34,7 +39,34 @@ vi.mock("../../gateway/call.js", async (importOriginal) => ({
 
 beforeEach(() => {
   gatewayMocks.callGateway.mockReset();
+  gatewayMocks.generation++;
+  vi.mocked(evaluatePublishedModelRuntimeChoice).mockImplementation(async ({ provider, model }) => {
+    const generation = gatewayMocks.generation;
+    return {
+      kind: "ready",
+      entry: { provider, id: model, name: "Restored model" },
+      validate: () =>
+        generation === gatewayMocks.generation
+          ? undefined
+          : "The model catalog changed. Try again.",
+    };
+  });
 });
+
+function acceptedSelection(
+  provider: string,
+  model: string,
+  fallbackPermission: ExecutionFallbackPermission = "explicit",
+) {
+  const entry: Partial<SessionEntry> = {};
+  commitStoredSessionExecutionSelection(entry, {
+    state: "accepted",
+    selection: { model: { provider, id: model }, executor: { kind: "harness", id: "openclaw" } },
+    fallbackPermission,
+  });
+  if (!entry.executionSelection) throw new Error("Expected accepted fixture selection");
+  return entry.executionSelection;
+}
 
 type AgentToolGatewayRequest = Parameters<AgentToolGatewayRequestCaller>[0];
 
@@ -616,11 +648,7 @@ describe("sessions tool", () => {
         updatedAt: 1,
         model: "good",
         modelProvider: "openai",
-        modelOverride: "good",
-        providerOverride: "openai",
-        modelOverrideSource: "auto",
-        modelOverrideFallbackOriginProvider: "openai",
-        modelOverrideFallbackOriginModel: "primary",
+        executionSelection: acceptedSelection("openai", "good", "configured"),
         authProfileOverride: "good-profile",
         authProfileOverrideSource: "user",
         thinkingLevel: "high",
@@ -633,22 +661,12 @@ describe("sessions tool", () => {
             label: request.params.label as string,
             model: "bad",
             modelProvider: "broken",
-            modelOverride: "bad",
-            providerOverride: "broken",
-            modelOverrideSource: "user",
-            modelOverrideFallbackOriginProvider: undefined,
-            modelOverrideFallbackOriginModel: undefined,
+            executionSelection: acceptedSelection("broken", "bad"),
             authProfileOverride: "bad-profile",
             authProfileOverrideSource: "user",
             thinkingLevel: "low",
             modelFallback: {
-              prevModel: "good",
-              prevProvider: "openai",
-              prevModelOverride: "good",
-              prevProviderOverride: "openai",
-              prevModelOverrideSource: "auto",
-              prevModelOverrideFallbackOriginProvider: "openai",
-              prevModelOverrideFallbackOriginModel: "primary",
+              previous: acceptedSelection("openai", "good", "configured"),
               prevAuthProfileOverride: "good-profile",
               prevAuthProfileOverrideSource: "user",
               prevThinkingLevel: "high",
@@ -685,11 +703,7 @@ describe("sessions tool", () => {
       expect(loadSessionEntry(sessionScope)).toMatchObject({
         label: "Research",
         modelFallback: {
-          prevModel: "good",
-          prevProvider: "openai",
-          prevModelOverrideSource: "auto",
-          prevModelOverrideFallbackOriginProvider: "openai",
-          prevModelOverrideFallbackOriginModel: "primary",
+          previous: acceptedSelection("openai", "good", "configured"),
           prevAuthProfileOverride: "good-profile",
           prevThinkingLevel: "high",
           source: "agent-patch",
@@ -726,11 +740,7 @@ describe("sessions tool", () => {
       const runGuard = createAgentPatchedSessionModelRunGuard(guardParams);
       await runGuard.fail(failure);
       expect(loadSessionEntry(sessionScope)).toMatchObject({
-        model: "good",
-        modelProvider: "openai",
-        modelOverrideSource: "auto",
-        modelOverrideFallbackOriginProvider: "openai",
-        modelOverrideFallbackOriginModel: "primary",
+        executionSelection: acceptedSelection("openai", "good", "configured"),
         authProfileOverride: "good-profile",
         thinkingLevel: "high",
       });
@@ -740,7 +750,8 @@ describe("sessions tool", () => {
         expect.objectContaining({
           message: expect.objectContaining({
             customType: "openclaw.system-note",
-            content: "System note: model broken/bad failed; reverted to openai/good.",
+            content:
+              "The requested model could not be used. Restored the previous selection. Now using Restored model in OpenClaw.",
           }),
         }),
       );
@@ -765,8 +776,7 @@ describe("sessions tool", () => {
           sessionId: "session-main",
           updatedAt: 1,
           modelFallback: {
-            prevModel: "good",
-            prevProvider: "openai",
+            previous: acceptedSelection("openai", "good", "configured"),
             ts: 1,
             source: "agent-patch",
           },
@@ -817,11 +827,9 @@ describe("sessions tool", () => {
           updatedAt: 1,
           model: "bad",
           modelProvider: "broken",
-          modelOverride: "bad",
-          providerOverride: "broken",
+          executionSelection: acceptedSelection("broken", "bad"),
           modelFallback: {
-            prevModel: "good",
-            prevProvider: "openai",
+            previous: acceptedSelection("openai", "good", "configured"),
             ts: 1,
             source: "agent-patch",
           },
@@ -844,8 +852,7 @@ describe("sessions tool", () => {
       await runGuard.finish(!needsRevert);
 
       expect(loadSessionEntry({ agentId: "main", sessionKey, storePath })).toMatchObject({
-        model: "good",
-        modelProvider: "openai",
+        executionSelection: acceptedSelection("openai", "good", "configured"),
       });
       expect(loadSessionEntry({ agentId: "main", sessionKey, storePath })).not.toHaveProperty(
         "modelFallback",
@@ -867,11 +874,9 @@ describe("sessions tool", () => {
           updatedAt: 1,
           model: "b",
           modelProvider: "openai",
-          modelOverride: "b",
-          providerOverride: "openai",
+          executionSelection: acceptedSelection("openai", "b"),
           modelFallback: {
-            prevModel: "a",
-            prevProvider: "openai",
+            previous: acceptedSelection("openai", "a", "configured"),
             ts: 10,
             source: "agent-patch",
           },
@@ -885,10 +890,9 @@ describe("sessions tool", () => {
       });
       await patchSessionEntryCore({ agentId: "main", sessionKey, storePath }, () => ({
         model: "c",
-        modelOverride: "c",
+        executionSelection: acceptedSelection("openai", "c"),
         modelFallback: {
-          prevModel: "a",
-          prevProvider: "openai",
+          previous: acceptedSelection("openai", "a", "configured"),
           ts: 20,
           source: "agent-patch",
         },
@@ -901,10 +905,9 @@ describe("sessions tool", () => {
       });
       await patchSessionEntryCore({ agentId: "main", sessionKey, storePath }, () => ({
         model: "d",
-        modelOverride: "d",
+        executionSelection: acceptedSelection("openai", "d"),
         modelFallback: {
-          prevModel: "a",
-          prevProvider: "openai",
+          previous: acceptedSelection("openai", "a", "configured"),
           ts: 30,
           source: "agent-patch",
         },
@@ -921,18 +924,14 @@ describe("sessions tool", () => {
       expect(
         loadSessionEntry({ agentId: "main", sessionKey, storePath })?.modelFallback,
       ).toMatchObject({
-        prevModel: "c",
-        prevProvider: "openai",
+        previous: acceptedSelection("openai", "c"),
         lastValidatedPatchTs: 20,
         ts: 30,
       });
 
       await runD.fail({ status: 404, message: "No endpoints found for openai/d." });
       expect(loadSessionEntry({ agentId: "main", sessionKey, storePath })).toMatchObject({
-        model: "c",
-        modelProvider: "openai",
-        modelOverride: "c",
-        providerOverride: "openai",
+        executionSelection: acceptedSelection("openai", "c"),
       });
     });
   });

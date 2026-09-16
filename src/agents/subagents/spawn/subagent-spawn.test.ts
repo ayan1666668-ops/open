@@ -666,6 +666,29 @@ describe("spawnSubagentDirect seam flow", () => {
     });
   });
 
+  it("rejects a replaced model publication before committing child state", async () => {
+    const store: Record<string, Record<string, unknown>> = {};
+    hoisted.updateSessionStoreMock.mockImplementationOnce(
+      async (_path: string, mutate: (store: Record<string, Record<string, unknown>>) => void) => {
+        resetSubagentRegistryForTests();
+        mutate(store);
+        return store;
+      },
+    );
+
+    const result = await spawnSubagentDirect(
+      { task: "respect the current model publication", model: "openai/gpt-5.4" },
+      { agentSessionKey: "agent:main:main" },
+    );
+
+    expect(result.status).toBe("error");
+    expect(result.error).toContain("not available");
+    expect(store).toEqual({});
+    expect(hoisted.registerSubagentRunMock).not.toHaveBeenCalled();
+    expect(hoisted.callGatewayMock).not.toHaveBeenCalled();
+    expect(hoisted.emitSessionLifecycleEventMock).not.toHaveBeenCalled();
+  });
+
   it("rejects an explicit non-allowlisted model before creating child state", async () => {
     hoisted.configOverride = createConfigOverride({
       agents: {
@@ -785,7 +808,7 @@ describe("spawnSubagentDirect seam flow", () => {
       { agentSessionKey: "agent:main:main" },
     );
 
-    expect(result).toMatchObject({
+    expect(result, JSON.stringify(result)).toMatchObject({
       status: "accepted",
       modelApplied: true,
       resolvedModel: "loopback/new-model",
@@ -1154,16 +1177,29 @@ describe("spawnSubagentDirect seam flow", () => {
 
     const results = await Promise.all([
       spawnSubagentDirect(
-        { task: "first concurrent child", collect: true, groupId: "shared" },
+        {
+          task: "first concurrent child",
+          model: "openai/gpt-5.4",
+          collect: true,
+          groupId: "shared",
+        },
         { agentSessionKey: "agent:main:main", requesterRunId: "parent-run" },
       ),
       spawnSubagentDirect(
-        { task: "second concurrent child", collect: true, groupId: "shared" },
+        {
+          task: "second concurrent child",
+          model: "openai/gpt-5.4",
+          collect: true,
+          groupId: "shared",
+        },
         { agentSessionKey: "agent:main:main", requesterRunId: "parent-run" },
       ),
     ]);
 
-    expect(results.map((result) => result.status).toSorted()).toEqual(["accepted", "forbidden"]);
+    expect(results.map((result) => result.status).toSorted(), JSON.stringify(results)).toEqual([
+      "accepted",
+      "forbidden",
+    ]);
     expect(results.find((result) => result.status === "forbidden")?.error).toContain(
       "tools.swarm.maxChildrenPerGroup",
     );
@@ -1204,10 +1240,25 @@ describe("spawnSubagentDirect seam flow", () => {
       completionOwnerKey: "agent:main:main",
     };
 
-    const first = spawnSubagentDirect({ task: "first pending child" }, spawnContext);
-    const second = spawnSubagentDirect({ task: "second pending child" }, spawnContext);
-    await vi.waitFor(() => expect(dispatchedRuns).toBe(2));
-    const rejected = await spawnSubagentDirect({ task: "third over-cap child" }, spawnContext);
+    const first = spawnSubagentDirect(
+      { task: "first pending child", model: "openai/gpt-5.4" },
+      spawnContext,
+    );
+    const second = spawnSubagentDirect(
+      { task: "second pending child", model: "openai/gpt-5.4" },
+      spawnContext,
+    );
+    await vi
+      .waitFor(() => expect(dispatchedRuns).toBe(2))
+      .catch(async (error: unknown) => {
+        releasePendingDispatches();
+        const results = await Promise.all([first, second]);
+        throw new Error(JSON.stringify(results), { cause: error });
+      });
+    const rejected = await spawnSubagentDirect(
+      { task: "third over-cap child", model: "openai/gpt-5.4" },
+      spawnContext,
+    );
     releasePendingDispatches();
     const accepted = await Promise.all([first, second]);
 
@@ -1351,7 +1402,12 @@ describe("spawnSubagentDirect seam flow", () => {
       { task: "pending native child" },
       { agentSessionKey: controllerSessionKey, completionOwnerKey: "agent:main:main" },
     );
-    await vi.waitFor(() => expect(nativeDispatchStarted).toBe(true));
+    await vi
+      .waitFor(() => expect(nativeDispatchStarted).toBe(true))
+      .catch(async (error: unknown) => {
+        releaseNativeDispatch();
+        throw new Error(JSON.stringify(await native), { cause: error });
+      });
     const visibleGateway = vi.fn();
 
     const rejected = await maybeSpawnVisibleSession({
@@ -1983,7 +2039,7 @@ describe("spawnSubagentDirect seam flow", () => {
         defaults: {
           workspace: os.tmpdir(),
           models: {
-            "openai-codex/gpt-5.4": {
+            "openai/gpt-5.4": {
               params: {
                 thinking: "low",
               },
@@ -2001,8 +2057,16 @@ describe("spawnSubagentDirect seam flow", () => {
     });
     hoisted.loadSessionStoreMock.mockReturnValue({
       "agent:main:main": {
-        providerOverride: "openai-codex",
-        modelOverride: "gpt-5.4",
+        sessionId: "selected-parent",
+        updatedAt: 1,
+        executionSelection: {
+          state: "accepted",
+          selection: {
+            model: { provider: "openai", id: "gpt-5.4" },
+            executor: { kind: "harness", id: "openclaw" },
+          },
+          fallbackPermission: "explicit",
+        },
         modelProvider: "anthropic",
         model: "claude-opus-4-7",
       },
@@ -2034,7 +2098,7 @@ describe("spawnSubagentDirect seam flow", () => {
         defaults: {
           workspace: os.tmpdir(),
           models: {
-            "openai-codex/gpt-5.4": {
+            "openai/gpt-5.4": {
               params: {
                 thinking: "low",
               },
@@ -2051,8 +2115,16 @@ describe("spawnSubagentDirect seam flow", () => {
     });
     hoisted.loadSessionStoreMock.mockReturnValue({
       "agent:main:main": {
-        providerOverride: "openai-codex",
-        modelOverride: "gpt-5.4",
+        sessionId: "selected-parent",
+        updatedAt: 1,
+        executionSelection: {
+          state: "accepted",
+          selection: {
+            model: { provider: "openai", id: "gpt-5.4" },
+            executor: { kind: "harness", id: "openclaw" },
+          },
+          fallbackPermission: "explicit",
+        },
         modelProvider: "anthropic",
         model: "claude-opus-4-7",
       },
@@ -2084,7 +2156,7 @@ describe("spawnSubagentDirect seam flow", () => {
         defaults: {
           workspace: os.tmpdir(),
           models: {
-            "openai-codex/gpt-5.4": {
+            "openai/gpt-5.4": {
               params: {
                 thinking: "low",
               },
@@ -2102,7 +2174,7 @@ describe("spawnSubagentDirect seam flow", () => {
     });
     hoisted.loadSessionStoreMock.mockReturnValue({
       "agent:main:main": {
-        modelProvider: "openai-codex",
+        modelProvider: "openai",
         model: "gpt-5.4",
       },
     });
@@ -2126,14 +2198,16 @@ describe("spawnSubagentDirect seam flow", () => {
     expect(persistedStore?.[childSessionKey]?.thinkingLevel).toBe("high");
   });
 
-  it("inherits requester runtime-model thinking when caller session has no stored thinking or agent default", async () => {
+  it("uses configured thinking and model instead of observed parent history", async () => {
     let persistedStore: Record<string, Record<string, unknown>> | undefined;
     hoisted.configOverride = createConfigOverride({
       agents: {
         defaults: {
           workspace: os.tmpdir(),
+          model: { primary: "anthropic/claude-opus-4-7" },
           models: {
-            "openai-codex/gpt-5.4": {
+            "anthropic/claude-opus-4-7": { params: { thinking: "high" } },
+            "openai/gpt-5.4": {
               params: {
                 thinking: "low",
               },
@@ -2150,7 +2224,7 @@ describe("spawnSubagentDirect seam flow", () => {
     });
     hoisted.loadSessionStoreMock.mockReturnValue({
       "agent:main:main": {
-        modelProvider: "openai-codex",
+        modelProvider: "openai",
         model: "gpt-5.4",
       },
     });
@@ -2162,7 +2236,7 @@ describe("spawnSubagentDirect seam flow", () => {
 
     const result = await spawnSubagentDirect(
       {
-        task: "inherit runtime model thinking",
+        task: "ignore observed parent history",
       },
       {
         agentSessionKey: "agent:main:main",
@@ -2171,7 +2245,14 @@ describe("spawnSubagentDirect seam flow", () => {
 
     expect(result.status).toBe("accepted");
     const childSessionKey = result.childSessionKey as string;
-    expect(persistedStore?.[childSessionKey]?.thinkingLevel).toBe("low");
+    expect(persistedStore?.[childSessionKey]?.thinkingLevel).toBe("high");
+    expect(persistedStore?.[childSessionKey]?.executionSelection).toMatchObject({
+      state: "accepted",
+      selection: {
+        model: { provider: "anthropic", id: "claude-opus-4-7" },
+        executor: { kind: "harness", id: "openclaw" },
+      },
+    });
   });
 
   it("inherits provider/model thinking default when no caller-specific default exists", async () => {
@@ -2180,9 +2261,9 @@ describe("spawnSubagentDirect seam flow", () => {
       agents: {
         defaults: {
           workspace: os.tmpdir(),
-          model: "openai-codex/gpt-5.4",
+          model: "openai/gpt-5.4",
           models: {
-            "openai-codex/gpt-5.4": {
+            "openai/gpt-5.4": {
               params: {
                 thinking: "low",
               },

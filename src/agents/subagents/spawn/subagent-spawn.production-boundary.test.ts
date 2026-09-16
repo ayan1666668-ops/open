@@ -1,4 +1,11 @@
 /** Recursive spawn authority must survive the real Gateway and agent-command admission path. */
+// Preserve module setup before modules that consume it.
+// oxfmt-ignore
+import {
+  cleanupPreparedModelRuntimeHarness,
+  getPreparedModelRuntimeMocks,
+  resetPreparedModelRuntimeHarness,
+} from "../../prepared-model-runtime.test-harness.js";
 import { expectDefined } from "@openclaw/normalization-core";
 import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -57,11 +64,6 @@ import {
 } from "../../admitted-run-context.js";
 import { finalizeAgentTools } from "../../agent-tools.finalize.js";
 import type { EmbeddedAgentRunResult } from "../../embedded-agent.js";
-import {
-  cleanupPreparedModelRuntimeHarness,
-  getPreparedModelRuntimeMocks,
-  resetPreparedModelRuntimeHarness,
-} from "../../prepared-model-runtime.test-harness.js";
 import { createAgentsWaitTool } from "../../tools/agents-wait-tool.js";
 import {
   createAdmittedGatewayToolCallerIdentity,

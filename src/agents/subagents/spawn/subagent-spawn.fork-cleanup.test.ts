@@ -136,6 +136,16 @@ describe("subagent fork context through SQLite and tool boundaries", () => {
     tempDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-fork-cleanup-")));
     storePath = path.join(tempDir, "sessions.json");
     config = {
+      models: {
+        providers: {
+          openai: {
+            api: "openai-completions",
+            baseUrl: "https://models.example.invalid/v1",
+            agentRuntime: { id: "openclaw" },
+            models: [],
+          },
+        },
+      },
       session: { store: storePath, mainKey: "main", scope: "per-sender" },
       tools: { swarm: { enabled: true, maxConcurrent: 1 } },
       agents: {
