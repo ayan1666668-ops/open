@@ -86,6 +86,29 @@ user, system, or already-localized data.
 
 ## Surface ratchets
 
+Line caps are cumulative gates: independently green changes can exceed a cap
+when merged together. Hosted lint stripes warn on `max-lines`, while PR CI
+blocks new violations and growth in files already over their cap. The existing
+`checks-fast-baseline-ratchets` job runs `pnpm check:line-cap-ratchet` against
+the prepared PR merge tree and its base. Renames compare against the old path;
+unchanged or shrinking over-cap files pass. Oxlint counts both versions with
+the caps, exclusions, and skip-blank/skip-comments options from `.oxlintrc.json`.
+Measurement copies ignore lint-disable directives so grandfathered suppressed
+files cannot hide growth; the source files and suppression inventory stay intact.
+
+`pnpm check:changed` also runs the growth ratchet. Its ordinary lint checks,
+local `pnpm check`, and landing gates keep `max-lines` as an error. Only the
+explicit hosted-stripe setting `OPENCLAW_LINT_CUMULATIVE_SEVERITY=warn` enables
+warnings. Read the individual diagnostics and the one-line
+`[oxlint] max-lines warnings: N` summary in each stripe's job log to see debt
+that still needs extraction even when main is green.
+
+When a file exceeds its cap, extract a coherent sibling module. Never trim
+test coverage, disable the rule, or raise a cap to make the check pass. The
+plugin-sdk declaration budget and lint-suppression inventory are candidates
+for the same PR-growth/main-warning policy in follow-up work; their current
+gates are unchanged. Automatically filing repair issues is also a follow-up.
+
 Two shrink-only budgets guard the configuration surface. Both fail CI on growth
 until the budget file is consciously updated in the same PR, and both demand a
 ratchet-down when cleanup lowers the real count.

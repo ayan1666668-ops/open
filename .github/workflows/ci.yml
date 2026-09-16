@@ -3193,6 +3193,9 @@ jobs:
                 fi
               fi
               pnpm check:max-lines-ratchet --base "$base_ref"
+              if [[ -n "${RATCHET_PR_HEAD_SHA:-}" ]]; then
+                pnpm check:line-cap-ratchet --base "$base_ref"
+              fi
               pnpm check:assertion-safety --base "$base_ref"
               pnpm config:docs:check
               pnpm plugins:inventory:check
@@ -4120,6 +4123,8 @@ jobs:
     if: ${{ needs.preflight.outputs.run_check == 'true' && (needs.preflight.outputs.runner_profile == 'github' || needs.preflight.outputs.runner_profile == 'hybrid') && (needs.preflight.outputs.frozen_target != 'true' || needs.preflight.outputs.hosted_runner_profile_contract == 'true') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    env:
+      OPENCLAW_LINT_CUMULATIVE_SEVERITY: warn
     strategy:
       fail-fast: false
       max-parallel: 5
