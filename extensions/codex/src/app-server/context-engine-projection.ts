@@ -57,7 +57,7 @@ const APPROX_RENDERED_CHARS_PER_TOKEN = 4;
 const CONTEXT_ENGINE_CHARS_PER_TOKEN = 3;
 // Codex app-server validates the summed v2 turn/start text input against
 // codex-rs/protocol/src/user_input.rs::MAX_USER_INPUT_TEXT_CHARS.
-const CODEX_TURN_START_TEXT_INPUT_MAX_CHARS = 1 << 20;
+export const CODEX_TURN_START_TEXT_INPUT_MAX_CHARS = 1 << 20;
 /** Default token reserve kept out of rendered context-engine prompt text. */
 const DEFAULT_CODEX_PROJECTION_RESERVE_TOKENS = 40_000;
 const MIN_PROMPT_BUDGET_RATIO = 0.5;
