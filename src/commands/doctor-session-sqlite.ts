@@ -30,11 +30,11 @@ import {
 } from "../infra/deferred-plugin-migrations.js";
 import {
   captureDeferredPluginSessionSources,
+  resolveTrajectoryPath,
+  resolveTrajectoryPointerPath,
   deferredPluginSessionStoreIds,
   readDeferredPluginSessionImport,
   recordDeferredPluginSessionImport,
-  resolveTrajectoryPath,
-  resolveTrajectoryPointerPath,
   type DeferredPluginSessionImport,
 } from "../infra/deferred-plugin-session-sources.js";
 import { formatErrorMessage } from "../infra/errors.js";
