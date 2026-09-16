@@ -87,6 +87,32 @@ function snapshot(db: DatabaseSync) {
 }
 
 describe("memory source index native kernel", () => {
+  it.each([0, 4, 2048])("bounds statement preparations for %s chunks", async (chunks) => {
+    const database = await createDatabase();
+    const tables = [
+      "memory_index_chunks",
+      "memory_index_chunk_recall_metadata",
+      "memory_index_chunk_provenance",
+      "memory_index_chunks_fts",
+    ];
+    const prepare = vi.spyOn(database.db, "prepare");
+    try {
+      write(database, replacement("memory/current.md", "original", chunks));
+      const prepared = prepare.mock.calls.flatMap(([sql]) => {
+        const table = /^\s*INSERT INTO "?(\w+)"?\s*\(/i.exec(sql)?.[1];
+        return table && tables.includes(table) ? [table] : [];
+      });
+      for (const table of tables) {
+        expect(
+          prepared.filter((value) => value === table),
+          table,
+        ).toHaveLength(chunks ? 1 : 0);
+      }
+    } finally {
+      prepare.mockRestore();
+    }
+  });
+
   it("uses native vector point lookups for sparse replacement and source deletion", async () => {
     const database = await createDatabase();
     const pathname = "memory/current.md";
