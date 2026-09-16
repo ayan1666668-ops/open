@@ -3976,7 +3976,6 @@ describe("codex command", () => {
       ],
     });
     expect(safeCodexControlRequest).not.toHaveBeenCalled();
-
     await expect(
       handleCodexCommand(
         createContext(`diagnostics confirm ${token}`, sessionFile, {
@@ -4014,6 +4013,7 @@ describe("codex command", () => {
       {
         config: {},
         agentDir: path.join(tempDir, "agents", "main", "agent"),
+        assertCurrent: expect.any(Function),
         sessionId: "session-1",
         sessionKey: "agent:main:session-1",
       },
@@ -4237,7 +4237,6 @@ describe("codex command", () => {
       value: { threadId: "thread-approved" },
     }));
     const deps = createDeps({ safeCodexControlRequest });
-
     await expect(
       handleCodexCommand(
         createContext("diagnostics approved repro", sessionFile, {
@@ -4277,6 +4276,7 @@ describe("codex command", () => {
       {
         config: {},
         agentDir: path.join(tempDir, "agents", "main", "agent"),
+        assertCurrent: expect.any(Function),
         sessionId: "session-approved",
         sessionKey: "agent:main:telegram:approved",
       },
@@ -4347,7 +4347,6 @@ describe("codex command", () => {
     expect(request.text).toContain("OpenClaw session id: `session-two`");
     expect(request.text).toContain("Codex thread id: `thread-222`");
     expect(safeCodexControlRequest).not.toHaveBeenCalled();
-
     await expect(
       handleCodexCommand(
         createContext(`diagnostics confirm ${token}`, undefined, {
@@ -4390,6 +4389,7 @@ describe("codex command", () => {
     expect(mockArg(safeCodexControlRequest, 0, 3)).toEqual({
       config: {},
       agentDir: path.join(tempDir, "agents", "first", "agent"),
+      assertCurrent: expect.any(Function),
       authProfileId: "openai:first",
       sessionId: "session-one",
       sessionKey: "agent:first:whatsapp:one",
@@ -4402,12 +4402,12 @@ describe("codex command", () => {
     expect(mockArg(safeCodexControlRequest, 1, 3)).toEqual({
       config: {},
       agentDir: path.join(tempDir, "agents", "second", "agent"),
+      assertCurrent: expect.any(Function),
       authProfileId: "openai:second",
       sessionId: "session-two",
       sessionKey: "agent:second:discord:two",
     });
   });
-
   it("uses the host agent for diagnostics inventory sessions with unscoped keys", async () => {
     await writeTestBinding(
       {

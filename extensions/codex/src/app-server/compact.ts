@@ -493,18 +493,19 @@ async function compactCodexNativeThread(
   }
   let binding = initialBinding;
   const requestedAuthProfileId = params.authProfileId?.trim() || undefined;
-  let connection: ReturnType<typeof resolveCodexBindingAppServerConnection>;
+  let connection: Awaited<ReturnType<typeof resolveCodexBindingAppServerConnection>>;
   try {
     const config = params.config ?? {};
     const agentId =
       params.agentId ??
       readAgentIdFromSessionKey(params.sessionKey) ??
       resolveDefaultAgentId(config);
-    connection = resolveCodexBindingAppServerConnection({
+    connection = await resolveCodexBindingAppServerConnection({
       binding,
       authProfileId: requestedAuthProfileId ?? binding.authProfileId,
       pluginConfig: options.pluginConfig,
       config,
+      assertCurrent,
       agentDir: resolveAgentDir(config, agentId),
     });
   } catch (error) {
@@ -1022,8 +1023,7 @@ function isCodexThreadNotFoundError(error: unknown): boolean {
   // app-server's own contract/test asserts the "thread not found" MESSAGE as
   // the discriminator (thread_processor.rs load_thread → invalid_request;
   // compaction.rs asserts message.contains("thread not found")). So the message
-  // is the authoritative positive signal here, not the generic code. This is a
-  // self-heal recovery gate, not user-facing classification.
+  // gates recovery, not user-facing classification; the generic code is ambiguous.
   return coerceErrorMessage(error).toLowerCase().includes("thread not found");
 }
 
