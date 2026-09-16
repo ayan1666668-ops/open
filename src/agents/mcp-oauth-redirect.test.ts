@@ -6,18 +6,11 @@ import { createMcpOAuthClientProvider } from "./mcp-oauth-provider.js";
 import { completeMcpOAuthAuthorization, resolveMcpOAuthAccessToken } from "./mcp-oauth.js";
 
 const TEST_UNDICI_RUNTIME_DEPS_KEY = "__OPENCLAW_TEST_UNDICI_RUNTIME_DEPS__";
-const { authMock, lookupMock } = vi.hoisted(() => ({
-  authMock: vi.fn(),
-  lookupMock: vi.fn(),
-}));
+const lookupMock = vi.hoisted(() => vi.fn());
 
 class TestDispatcher {
   constructor(readonly options: unknown) {}
 }
-
-vi.mock("@modelcontextprotocol/sdk/client/auth.js", () => ({
-  auth: authMock,
-}));
 
 vi.mock("node:dns/promises", () => ({
   lookup: lookupMock,
@@ -42,9 +35,33 @@ function installRedirectingRuntime(status: number) {
   return runtimeFetchMock;
 }
 
+async function createPreparedProvider(params: {
+  identity: ReturnType<typeof operatorMcpOAuthIdentity>;
+  allowAuthorizationRedirect?: boolean;
+}) {
+  const authorizationServerUrl = new URL("https://example.com");
+  const provider = createMcpOAuthClientProvider(params);
+  await provider.saveClientInformation?.({ client_id: "fixture-client" });
+  await provider.saveDiscoveryState?.({
+    authorizationServerUrl: authorizationServerUrl.toString(),
+    authorizationServerMetadata: {
+      issuer: authorizationServerUrl.toString(),
+      authorization_endpoint: new URL("/authorize", authorizationServerUrl).toString(),
+      token_endpoint: new URL("/token", authorizationServerUrl).toString(),
+      response_types_supported: ["code"],
+      grant_types_supported: ["authorization_code", "refresh_token"],
+      token_endpoint_auth_methods_supported: ["none"],
+    },
+    resourceMetadata: {
+      resource: params.identity.serverUrl,
+      authorization_servers: [authorizationServerUrl.toString()],
+    },
+  });
+  return provider;
+}
+
 describe("MCP OAuth redirects", () => {
   beforeEach(() => {
-    authMock.mockReset();
     lookupMock.mockReset();
     lookupMock.mockResolvedValue([{ address: "93.184.216.34", family: 4 }]);
     closeOpenClawStateDatabaseForTest();
@@ -60,7 +77,7 @@ describe("MCP OAuth redirects", () => {
     async (status) => {
       await withTempHome(`openclaw-mcp-oauth-cross-origin-redirect-${status}-`, async () => {
         const identity = operatorMcpOAuthIdentity(`Redirect ${status}`, "https://example.com/mcp");
-        const provider = createMcpOAuthClientProvider({
+        const provider = await createPreparedProvider({
           identity,
           allowAuthorizationRedirect: true,
         });
@@ -71,15 +88,6 @@ describe("MCP OAuth redirects", () => {
         await provider.redirectToAuthorization(authorizationUrl);
 
         const runtimeFetchMock = installRedirectingRuntime(status);
-        authMock.mockImplementationOnce(async (_loginProvider, options) => {
-          await options.fetchFn("https://example.com/token", {
-            method: "POST",
-            headers: { "content-type": "application/x-www-form-urlencoded" },
-            body: "code=synthetic-code&code_verifier=synthetic-verifier",
-          });
-          return "AUTHORIZED";
-        });
-
         await expect(
           completeMcpOAuthAuthorization(
             identity,
@@ -101,10 +109,10 @@ describe("MCP OAuth redirects", () => {
     },
   );
 
-  it("uses the hardened fetch when a refresh caller does not provide one", async () => {
+  it("preserves the redirect refusal through real SDK token refresh", async () => {
     await withTempHome("openclaw-mcp-oauth-refresh-redirect-", async () => {
       const identity = operatorMcpOAuthIdentity("Refresh Redirect", "https://example.com/mcp");
-      const provider = createMcpOAuthClientProvider({ identity });
+      const provider = await createPreparedProvider({ identity });
       await provider.saveTokens({
         access_token: "expired-access",
         refresh_token: "synthetic-refresh",
@@ -112,14 +120,6 @@ describe("MCP OAuth redirects", () => {
         expires_in: -1,
       });
       const runtimeFetchMock = installRedirectingRuntime(307);
-      authMock.mockImplementationOnce(async (_refreshProvider, options) => {
-        await options.fetchFn("https://example.com/token", {
-          method: "POST",
-          headers: { "content-type": "application/x-www-form-urlencoded" },
-          body: "grant_type=refresh_token&refresh_token=synthetic-refresh",
-        });
-        return "AUTHORIZED";
-      });
 
       await expect(resolveMcpOAuthAccessToken({ identity })).rejects.toThrow(
         "Refusing to follow cross-origin redirect for POST request body",

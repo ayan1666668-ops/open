@@ -226,19 +226,40 @@ export async function resolveMcpOAuthAccessToken(
       });
       const fetchFn =
         params.fetchFn ?? buildMcpOAuthHttpFetch({ resourceUrl: params.identity.serverUrl });
-      const result = await auth(provider, {
-        serverUrl: params.identity.serverUrl,
-        resourceMetadataUrl:
-          params.resourceMetadataUrl ??
-          (pendingChallenge?.resourceMetadataUrl
-            ? new URL(pendingChallenge.resourceMetadataUrl)
-            : undefined),
-        scope:
-          params.scope ??
-          normalizeOptionalString(pendingChallenge?.scope) ??
-          normalizeOptionalString(params.config?.scope),
-        fetchFn: withMcpOAuthLeaseSignal(fetchFn, lease.signal),
-      });
+      const leasedFetchFn = withMcpOAuthLeaseSignal(fetchFn, lease.signal);
+      let latestFetchFailure: { error: unknown } | undefined;
+      let result: Awaited<ReturnType<typeof auth>>;
+      try {
+        result = await auth(provider, {
+          serverUrl: params.identity.serverUrl,
+          resourceMetadataUrl:
+            params.resourceMetadataUrl ??
+            (pendingChallenge?.resourceMetadataUrl
+              ? new URL(pendingChallenge.resourceMetadataUrl)
+              : undefined),
+          scope:
+            params.scope ??
+            normalizeOptionalString(pendingChallenge?.scope) ??
+            normalizeOptionalString(params.config?.scope),
+          fetchFn: async (url, init) => {
+            try {
+              const response = await leasedFetchFn(url, init);
+              latestFetchFailure = undefined;
+              return response;
+            } catch (error) {
+              latestFetchFailure = { error };
+              throw error;
+            }
+          },
+        });
+      } catch (error) {
+        // SDK 1.30.0 converts refresh transport failures into an authorization fallback.
+        // Preserve the actionable failure when no later request recovered from it.
+        throw latestFetchFailure ? latestFetchFailure.error : error;
+      }
+      if (latestFetchFailure) {
+        throw latestFetchFailure.error;
+      }
       lease.assertOwned();
       const refreshedTokens = await provider.tokens();
       if (result !== "AUTHORIZED" || !refreshedTokens?.access_token) {
