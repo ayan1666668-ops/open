@@ -320,6 +320,7 @@ const enSettings = {
     login: {
       action: "Connect provider",
       title: "Connect a provider",
+      noOptions: "No account connection methods are available.",
       description: "Save credentials for this agent. Choose the active model separately.",
       done: "Provider credentials saved.",
       finishing: "Credentials are being saved. Wait for the result.",
@@ -341,6 +342,7 @@ const enSettings = {
       apiKey: "API key",
       denied: "Credentials rejected",
       configured: "Credentials configured",
+      modelsUnavailable: "Models unavailable",
     },
     expiresIn: "Credential expires in {time}",
     models: "{count} models",
@@ -366,6 +368,8 @@ const enSettings = {
     profiles: {
       title: "Provider profiles",
       accountOne: "1 account",
+      account: "Account {number}",
+      details: "Details",
       accounts: "{count} accounts",
       reorderHint: "Drag to set your preferred account order.",
       reorder: "Reorder {account}, position {position}",
@@ -471,7 +475,6 @@ const enSettings = {
         "Sets the global default for new sessions. Auto starts in fast mode and returns to standard mode after the model's configured interval; On and Off keep that behavior fixed.",
       fastModeDefaultHelp:
         "Uses the selected model's fast-mode policy. Unlike Auto, Default does not enable fast mode by itself.",
-      saved: "Defaults saved.",
     },
     readOnly: {
       disconnected: "Connect to the gateway to change model settings.",
@@ -536,6 +539,9 @@ const enSettings = {
       gitFetchFailed: "Could not fetch the tracked upstream",
       gitNoUpstream: "No tracked upstream is configured",
       gitComparisonFailed: "Could not compare this checkout with its tracked upstream",
+      checking: "Checking for updates…",
+      checkRequired: "Check for updates successfully before starting an update.",
+      updating: "Updating…",
       updateNow: "Update now",
       updateNowDescription: "Install the available update and restart the Gateway.",
       latestAttempt: "Latest update attempt",
@@ -998,7 +1004,7 @@ const enSettings = {
         "Enter a CSS width such as 960px, 82%, min(1280px, 82%), or calc(100% - 2rem).",
       collapseTaskProgress: "Collapse task progress by default",
       collapseTaskProgressHint:
-        "Keep task progress collapsed while work is active, then expand it at the bottom when the response finishes. Manual changes last for the current task.",
+        "Start task progress collapsed. It can expand when the response finishes if you are at the end of the chat. A manual close keeps it collapsed for that session.",
     },
     sessionSources: {
       title: "Session sources",

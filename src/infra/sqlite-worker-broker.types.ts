@@ -1,5 +1,11 @@
 import type { Worker } from "node:worker_threads";
+import type { OpenClawDatabaseMaintenanceScope } from "../state/openclaw-state-db-async-lifecycle.js";
 import type { SqliteWorkerRequest } from "./sqlite-worker-contract.js";
+import type {
+  SqliteWorkerAdmissionFactory,
+  SqliteWorkerOperationAdmission,
+} from "./sqlite-worker-operation-admission.js";
+import type { SqliteWorkerOperationSettlement } from "./sqlite-worker-operation-settlement.js";
 import type { SqliteWorkerStateContext } from "./sqlite-worker-state-context.js";
 import type {
   createSqliteWorkerTransferOwner,
@@ -19,6 +25,12 @@ export type RequestBody = SqliteWorkerRequest extends infer Request
   : never;
 type DispatchState = { dispatched: boolean };
 export type Job = {
+  maintenanceScope?: OpenClawDatabaseMaintenanceScope;
+  maintenanceSchemaFence?: { actor: Actor; delegate: StateLifecycleDelegate };
+  createAdmission?: SqliteWorkerAdmissionFactory;
+  operationAdmission?: { admission: SqliteWorkerOperationAdmission; releaseService(): void };
+  settleNative?: (settlement: SqliteWorkerOperationSettlement) => void;
+  nativeDispatched?: boolean;
   stateLifecycle?: { actor: Actor; delegate: StateLifecycleDelegate };
   assertCurrent?: () => void;
   inputTransfer?: {
@@ -68,12 +80,15 @@ export type Actor = {
   pendingStateLifecycles: Set<StateLifecycleDelegate>;
 };
 export type OperationScope = {
+  createAdmission?: SqliteWorkerAdmissionFactory;
   assertCurrent?: (commandType: PropertyKey) => void;
   active: boolean;
   pending: Set<Promise<unknown>>;
   stateContext?: SqliteWorkerStateContext;
 };
 export type EnqueueOptions = {
+  maintenanceScope?: OpenClawDatabaseMaintenanceScope;
+  createAdmission?: SqliteWorkerAdmissionFactory;
   signal?: AbortSignal;
   dispatchState?: DispatchState;
   scope?: OperationScope;
@@ -98,10 +113,18 @@ export type SqliteWorkerStoreOptions = {
 };
 
 export type PreparedSqliteWorkerOpen = {
+  maintenanceScope?: OpenClawDatabaseMaintenanceScope;
+  retainCleanup?: (cleanup: SqliteWorkerAdmissionCleanup) => void;
   assertCurrent?: () => void;
   moduleUrl: URL;
   databasePath: string;
   input: Buffer;
   existingOnly: boolean;
   stateContext?: SqliteWorkerStateContext;
+};
+
+/** Exact failed-admission custody; pathname cleanup can include unrelated actors. */
+export type SqliteWorkerAdmissionCleanup = {
+  readonly pending: boolean;
+  close(): Promise<void>;
 };

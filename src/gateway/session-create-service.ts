@@ -93,6 +93,7 @@ import { createLazyRuntimeModule } from "../shared/lazy-runtime.js";
 import { isUserModelAuthProfileId } from "../state/user-model-account-id.js";
 import { isUserModelAuthProfileOwner } from "../state/user-model-accounts.js";
 import { normalizeSessionDeliveryState } from "../utils/delivery-context.shared.js";
+import type { AgentRuntimeSpawnModelAutoSelection } from "./agent-runtime-session-spawn-context.js";
 import type {
   ModelAccountConnectAction,
   UserModelAccountSelection,
@@ -100,7 +101,10 @@ import type {
 import { ModelAccountConnectAuthorityError } from "./model-account-connect.js";
 import { authorizeGatewaySessionCreation, resolveCreatorSandbox } from "./operator-role-policy.js";
 import { ADMIN_SCOPE } from "./operator-scopes.js";
-import { prepareSessionCreateFilesystemRoot } from "./server-methods/session-create-root.js";
+import {
+  prepareSessionCreateFilesystemRoot,
+  prepareSessionForkFilesystemRoot,
+} from "./server-methods/session-create-root.js";
 import {
   prepareSessionPatchRuntimeSelection,
   refreshSessionPatchQueuedSelection,
@@ -337,6 +341,8 @@ export async function createGatewaySession(params: {
   };
   spawnedCwd?: string;
   sessionRoot?: string;
+  /** Canonical agent default prepared by the RPC adapter, used only without a selected root. */
+  defaultSessionRoot?: string;
   permissionMode?: SessionEntry["permissionMode"];
   toolOverrides?: SessionToolOverrides;
   /** Prepares session-owned resources while the target lifecycle fence is held. */
@@ -380,6 +386,8 @@ export async function createGatewaySession(params: {
     actor?: SessionCreatedActor;
     sandbox?: "required";
     skillLibrarySelections?: import("../../packages/gateway-protocol/src/schema/skill-library.js").SkillLibrarySelection[];
+    /** Trusted config-resolved spawn model provenance for the `model` field. */
+    spawnModelAutoSelection?: AgentRuntimeSpawnModelAutoSelection;
   };
   /** Exact harness namespace authorized by the scoped plugin runtime. */
   authorizedAgentHarnessId?: string;
@@ -1037,6 +1045,30 @@ export async function createGatewaySession(params: {
       creation?.sandbox ?? (creation ? resolveCreatorSandbox(params.cfg, creation) : undefined);
     const sandboxRequired =
       currentTargetEntry?.sandbox === "required" || creationSandbox === "required";
+    const forkWorkspace =
+      params.fork === true &&
+      currentParentSessionEntry &&
+      !currentTargetEntry &&
+      parentSessionTarget?.agentId === target.agentId &&
+      !projectId &&
+      !params.spawnedCwd &&
+      !params.sessionRoot &&
+      !params.execNode &&
+      !params.prepareLifecycle &&
+      !params.pendingWorktree &&
+      !params.pendingProjectGitUrl
+        ? prepareSessionForkFilesystemRoot({
+            cfg: params.cfg,
+            parent: currentParentSessionEntry,
+            targetAgentId: target.agentId,
+            sessionKey: target.canonicalKey,
+            sandboxRequired,
+          })
+        : undefined;
+    if (forkWorkspace && !forkWorkspace.ok) {
+      return { ok: false, error: forkWorkspace.error };
+    }
+    const inheritedWorkspace = forkWorkspace?.value;
     const requestedRoot = normalizeOptionalString(params.spawnedCwd ?? params.sessionRoot);
     // The parent lock has resolved inherited policy; validate direct roots before binding
     // a child or allowing transcript/baseline preparation to process the selected checkout.
@@ -1077,9 +1109,14 @@ export async function createGatewaySession(params: {
       return { ok: false, error: preparationResult.error };
     }
     preparedLifecycle = preparationResult?.value;
-    const spawnedCwd = normalizeOptionalString(preparedLifecycle?.spawnedCwd ?? params.spawnedCwd);
+    const spawnedCwd = normalizeOptionalString(
+      preparedLifecycle?.spawnedCwd ?? params.spawnedCwd ?? inheritedWorkspace?.spawnedCwd,
+    );
     const sessionRoot = normalizeOptionalString(
-      preparedLifecycle?.sessionRoot ?? params.sessionRoot,
+      preparedLifecycle?.sessionRoot ??
+        params.sessionRoot ??
+        inheritedWorkspace?.sessionRoot ??
+        params.defaultSessionRoot,
     );
     const runtimeCwd = spawnedCwd ?? sessionRoot;
 
@@ -1270,6 +1307,11 @@ export async function createGatewaySession(params: {
         if (!patched.ok) {
           return patched;
         }
+        // Bind automatic intent before using the patch owner's canonical selection.
+        const spawnModelAutoSelection =
+          params.creation?.spawnModelAutoSelection?.model === requestedModel
+            ? params.creation?.spawnModelAutoSelection
+            : undefined;
         if (
           requestedToolOverrides &&
           existingEntry !== undefined &&
@@ -1322,7 +1364,19 @@ export async function createGatewaySession(params: {
           : undefined;
         const initializedEntry: InternalSessionEntry = {
           ...patched.entry,
+          ...inheritedWorkspace,
           ...(createdNewEntry && displayName ? { displayName } : {}),
+          ...(createdNewEntry && spawnModelAutoSelection
+            ? {
+                modelOverrideSource: "auto" as const,
+                ...(spawnModelAutoSelection.hasFallbackOrigin
+                  ? {
+                      modelOverrideFallbackOriginProvider: patched.entry.providerOverride,
+                      modelOverrideFallbackOriginModel: patched.entry.modelOverride,
+                    }
+                  : {}),
+              }
+            : {}),
           // New rows must expose the same canonical delivery shape to callbacks
           // that the SQLite writer persists, or guarded finalization sees its own write as drift.
           ...(existingEntry === undefined && patched.entry.delivery === undefined

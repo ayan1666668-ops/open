@@ -2,12 +2,16 @@ import { isMainThread } from "node:worker_threads";
 import { resolveGlobalSingleton } from "../shared/global-singleton.js";
 import { hydrateOpenClawStateWorkerError } from "../state/openclaw-state-worker-error.js";
 import { SqliteWorkerBroker } from "./sqlite-worker-broker.js";
-import type { SqliteWorkerStoreOptions } from "./sqlite-worker-broker.types.js";
+import type {
+  PreparedSqliteWorkerOpen,
+  SqliteWorkerStoreOptions,
+} from "./sqlite-worker-broker.types.js";
 import {
   SqliteWorkerError,
   type SqliteWorkerOperations,
   type SqliteWorkerStore,
 } from "./sqlite-worker-contract.js";
+import type { SqliteWorkerAdmissionFactory } from "./sqlite-worker-operation-admission.js";
 import type { SqliteWorkerStateContext } from "./sqlite-worker-state-context.js";
 
 function withCallerErrors<T>(result: Promise<T>): Promise<T> {
@@ -46,6 +50,7 @@ export function runSqliteWorkerStoreOperation<Operations extends SqliteWorkerOpe
   operation: (scope: Pick<SqliteWorkerStore<Operations>, "execute">) => T | Promise<T>,
   stateContext?: SqliteWorkerStateContext,
   assertCurrent?: (commandType: PropertyKey) => void,
+  createAdmission?: SqliteWorkerAdmissionFactory,
 ): Promise<T> {
   return withCallerErrors(
     resolveSqliteWorkerBroker().runOperation(
@@ -53,6 +58,7 @@ export function runSqliteWorkerStoreOperation<Operations extends SqliteWorkerOpe
       (scope) => operation(bindCallerExecute(scope)),
       stateContext,
       assertCurrent,
+      createAdmission,
     ),
   );
 }
@@ -108,6 +114,7 @@ export function openSharedStateSqliteWorkerStore<Operations extends SqliteWorker
   options: Omit<SqliteWorkerStoreOptions, "input">,
   stateContext: SqliteWorkerStateContext,
   assertCurrent?: () => void,
+  lifecycle?: Pick<PreparedSqliteWorkerOpen, "maintenanceScope" | "retainCleanup">,
 ): Promise<SqliteWorkerStore<Operations> | undefined> {
   if (!isMainThread) {
     return Promise.reject(
@@ -119,6 +126,7 @@ export function openSharedStateSqliteWorkerStore<Operations extends SqliteWorker
       { ...options, input: undefined },
       stateContext,
       assertCurrent,
+      lifecycle,
     ),
   ).then((store) => {
     if (store) {

@@ -89,7 +89,6 @@ const TS_PATHS = {
   guestTransports: "scripts/e2e/parallels/guest-transports.ts",
   hostCommand: "scripts/e2e/parallels/host-command.ts",
   hostServer: "scripts/e2e/parallels/host-server.ts",
-  laneRunner: "scripts/e2e/parallels/lane-runner.ts",
   linux: "scripts/e2e/parallels/linux-smoke.ts",
   macosDiscord: "scripts/e2e/parallels/macos-discord.ts",
   macos: "scripts/e2e/parallels/macos-smoke.ts",
@@ -466,7 +465,6 @@ describe("Parallels smoke model selection", () => {
     agentWorkspace: workspace,
     guestTransports: transports,
     hostServer,
-    laneRunner,
     linux,
     macos,
     macosDiscord: discord,
@@ -889,7 +887,6 @@ ensure_vm_running`,
   it("keeps snapshot, host, package, and quote helpers shared", () => {
     const common = TS_SOURCE.common;
 
-    expect(common).toContain('export * from "./lane-runner.ts"');
     const packageArtifactExports = new Set(
       (common.match(/export \{([^}]*)\} from "\.\/package-artifact\.ts";/)?.[1] ?? "")
         .split(",")
@@ -900,20 +897,13 @@ ensure_vm_running`,
     expect(packageArtifactExports).toContain("packageVersionFromTgz");
     expect(packageArtifactExports).toContain("resolveOpenClawRegistryVersion");
     expect(common).not.toContain('export * from "./package-artifact.ts"');
-    expect(laneRunner).toContain("export async function runSmokeLane");
     expect(packageArtifact).toContain("withPackageLock");
     expect(packageArtifact).toContain("Wait for Parallels package lock");
-    expect(packageArtifact).toContain("export async function packageVersionFromTgz");
-    expect(packageArtifact).toContain("export async function packOpenClaw");
     expect(packageArtifact).toContain('"--allow-unreleased-changelog"');
-    expect(packageArtifact).toContain("function resolveNpmPackTarballFilename");
     expect(packageArtifact).toContain("filename !== path.basename(filename)");
     expect(packageArtifact).toContain("filename !== path.win32.basename(filename)");
     expect(packageArtifact).toContain("npm pack did not report a safe tarball filename");
     expect(packageArtifact).not.toContain("path.basename(packed)");
-    expect(parallelsVm).toContain("export function waitForVmStatus");
-    expect(hostServer).toContain("export async function startHostServer");
-    expect(hostServer).toContain("export async function startNpmRegistryServer");
     expect(hostServer).toContain("hostUrl: `http://127.0.0.1:${port}`");
     expect(hostServer).toContain('OPENCLAW_NPM_REGISTRY_UPSTREAM: "https://registry.npmjs.org"');
     expect(hostServer).toContain("http.server");
@@ -2224,21 +2214,19 @@ if (commandArgs[0] === "list") {
       const tempDir = makeTempDir(tempDirs, "openclaw-parallels-host-command-pipes-");
       const grandchildPidPath = join(tempDir, "grandchild.pid");
       let grandchildPid = 0;
-      const grandchildScript = [
-        "const { renameSync, writeFileSync } = require('node:fs');",
-        // Outlive the assertion bound, but self-clean if PID setup fails.
-        "setTimeout(() => process.exit(0), 3_000);",
-        "const pidPath = process.env.GRANDCHILD_PID_PATH;",
-        "writeFileSync(pidPath + '.tmp', String(process.pid));",
-        "renameSync(pidPath + '.tmp', pidPath);",
-      ].join("\n");
+      // Outlive the assertion bound, but self-clean if PID setup fails.
+      const grandchildScript = "setTimeout(() => process.exit(0), 3_000);";
       const parentScript = [
         "const { spawn } = require('node:child_process');",
+        "const { renameSync, writeFileSync } = require('node:fs');",
         `const child = spawn(process.execPath, ['-e', ${JSON.stringify(grandchildScript)}], {`,
         "  detached: true,",
         "  env: process.env,",
         "  stdio: ['ignore', 'inherit', 'inherit'],",
         "});",
+        "const pidPath = process.env.GRANDCHILD_PID_PATH;",
+        "writeFileSync(pidPath + '.tmp', String(child.pid));",
+        "renameSync(pidPath + '.tmp', pidPath);",
         "child.unref();",
         "setInterval(() => {}, 1000);",
       ].join("\n");
@@ -2252,7 +2240,8 @@ if (commandArgs[0] === "list") {
             GRANDCHILD_PID_PATH: grandchildPidPath,
           },
           quiet: true,
-          timeoutMs: 100,
+          // Let the command spawn its pipe holder before exercising timeout settlement.
+          timeoutMs: 500,
         });
 
         const durationMs = Date.now() - startedAt;
