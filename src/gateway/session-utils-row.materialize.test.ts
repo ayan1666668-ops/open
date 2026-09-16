@@ -486,6 +486,33 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+test("stamps read snapshots without changing persisted session update time", async () => {
+  await withStateDirEnv("openclaw-row-snapshot-clock-", async ({ stateDir }) => {
+    const cfg = config();
+    setRuntimeConfigSnapshot(cfg);
+    setActivePluginRegistry(createEmptyPluginRegistry());
+    const key = "agent:main:snapshot-clock";
+    const entry = { sessionId: "snapshot-clock", updatedAt: 10 };
+    const project = (now: number) =>
+      buildGatewaySessionRow({
+        cfg,
+        agentId: "main",
+        storePath: path.join(stateDir, "agents", "main", "sessions", "sessions.json"),
+        store: { [key]: entry },
+        key,
+        entry,
+        now,
+        skipTranscriptUsageFallback: true,
+      });
+    const earlier = project(100);
+    const later = project(200);
+    expect(earlier).toMatchObject({ snapshotAt: 100, updatedAt: 10 });
+    expect(later).toMatchObject({ snapshotAt: 200, updatedAt: 10 });
+    expect(structuredClone(earlier).snapshotAt).toBe(100);
+    expect(entry).toEqual({ sessionId: "snapshot-clock", updatedAt: 10 });
+  });
+});
+
 test("preserves complete base rows across time and caller presentation fixtures", async () => {
   await withStateDirEnv("openclaw-row-materialize-golden-", async ({ stateDir }) => {
     const cfg = config();
