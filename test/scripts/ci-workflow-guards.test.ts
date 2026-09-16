@@ -183,6 +183,7 @@ function evaluateWorkflowExpression(
     workflow?: string;
     workflowSha?: string;
     workflowToken?: string;
+    workspace?: string;
   },
 ) {
   if (typeof expression !== "string") {
@@ -231,6 +232,7 @@ function evaluateWorkflowExpression(
       sha: context.sha,
       workflow: context.workflow,
       workflow_sha: context.workflowSha,
+      workspace: context.workspace,
       token: context.workflowToken,
       event:
         context.githubEvent ??
@@ -4740,7 +4742,9 @@ require("node:fs").writeFileSync("scheduler-baseline", process.env.OPENCLAW_UPGR
   it.each([
     { eventName: "pull_request" as const, production: false, expected: false },
     { eventName: "pull_request" as const, production: true, expected: true },
-    { eventName: "push" as const, production: false, expected: true },
+    { eventName: "push" as const, production: false, expected: false },
+    { eventName: "push" as const, production: true, expected: true },
+    { eventName: "workflow_dispatch" as const, production: false, expected: true },
   ])("routes published-upgrade proof for $eventName (production=$production)", (options) => {
     const changedPaths = [
       "src/commands/doctor-config-preflight.admission.process.test.ts",
@@ -4784,12 +4788,14 @@ require("node:fs").writeFileSync("scheduler-baseline", process.env.OPENCLAW_UPGR
         bundledPlanner: true,
         eventName: "push",
         repository,
-        changedPaths: ["assets/logo.svg"],
+        changedPaths: ["scripts/e2e/docker-openai-seed.ts"],
         scopeEnv: { GITHUB_REF: ref },
       });
       expect(result.status, result.output).toBe(0);
       expect(result.outputs.run_docker_seed_e2e).toBe(String(expected));
-      expect(result.outputs.docker_seed_lanes).toBe(expected ? "published-upgrade-survivor" : "");
+      expect(result.outputs.docker_seed_lanes).toBe(
+        expected ? "mcp-channels cron-mcp-cleanup" : "",
+      );
     },
   );
 
@@ -4820,8 +4826,68 @@ require("node:fs").writeFileSync("scheduler-baseline", process.env.OPENCLAW_UPGR
       scopeEnv: { GITHUB_REF: "refs/heads/main" },
     });
     expect(result.status, result.output).toBe(0);
-    expect(result.outputs.run_docker_seed_e2e).toBe("true");
-    expect(result.outputs.docker_seed_lanes).toBe("published-upgrade-survivor");
+    expect(result.outputs.run_docker_seed_e2e).toBe("false");
+    expect(result.outputs.docker_seed_lanes).toBe("");
+  });
+
+  it.each([
+    {
+      eventName: "push" as const,
+      changedPaths: ["src/cli/cron-cli/shared.ts"],
+      qa: false,
+      performance: false,
+    },
+    {
+      eventName: "pull_request" as const,
+      changedPaths: ["src/cli/cron-cli/shared.ts"],
+      qa: false,
+      performance: false,
+    },
+    {
+      eventName: "push" as const,
+      changedPaths: ["extensions/qa-lab/src/ci-smoke-plan.ts"],
+      qa: true,
+      performance: false,
+    },
+    {
+      eventName: "pull_request" as const,
+      changedPaths: ["extensions/telegram/src/index.ts"],
+      qa: true,
+      performance: false,
+    },
+    { eventName: "push" as const, changedPaths: ["ui/src/main.ts"], qa: false, performance: true },
+    {
+      eventName: "push" as const,
+      changedPaths: ["src/gateway/control-ui-asset-manifest.ts"],
+      qa: false,
+      performance: true,
+    },
+    { eventName: "push" as const, changedPaths: null, qa: true, performance: true },
+    {
+      eventName: "workflow_dispatch" as const,
+      changedPaths: ["src/cli/cron-cli/shared.ts"],
+      qa: true,
+      performance: true,
+    },
+  ])("selects owner/release coverage for $eventName $changedPaths", (fixture) => {
+    const plannerUrl = pathToFileURL(
+      path.resolve("scripts/lib/ci-changed-node-test-plan.mts"),
+    ).href;
+    const result = runCiManifestFixture({
+      ...fixture,
+      bundledPlanner: true,
+      historicalCompatibility: false,
+      changedPlannerSource: `
+        import { hasQaSmokeAffectingChange, hasControlUiPerformanceAffectingChange as performance } from ${JSON.stringify(plannerUrl)};
+        export { hasQaSmokeAffectingChange };
+        export const hasControlUiPerformanceAffectingChange = paths => performance(paths, { cwd: ${JSON.stringify(process.cwd())} });
+        export const createChangedNodeTestShards = () => null;
+        export const createChangedExtensionFallbackShards = () => [];
+      `,
+    });
+    expect(result.status, result.output).toBe(0);
+    expect(result.outputs.run_qa_smoke_ci).toBe(String(fixture.qa));
+    expect(result.outputs.run_control_ui_performance).toBe(String(fixture.performance));
   });
 
   it("splits Windows tests two ways on every runner backend", () => {
@@ -13812,8 +13878,8 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
     expect(current.outputs.run_native_i18n).toBe("true");
     expect(current.outputs.run_openclawkit_tests).toBe("true");
     expect(current.outputs.run_qa_smoke_ci).toBe("true");
-    expect(current.outputs.run_docker_seed_e2e).toBe("false");
-    expect(current.outputs.docker_seed_lanes).toBe("");
+    expect(current.outputs.run_docker_seed_e2e).toBe("true");
+    expect(current.outputs.docker_seed_lanes).toBe("published-upgrade-survivor");
     expect(current.outputs.run_sqlite_session_lifecycle).toBe("true");
     expect(current.outputs.run_channel_contracts_shards).toBe("true");
     expect(current.outputs.run_protocol_event_coverage).toBe("true");
@@ -14298,6 +14364,21 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
       (step: WorkflowStep) => step.name === "Lint Control UI window.open usage",
     );
     const test = ui.steps.find((step: WorkflowStep) => step.name === "Test Control UI");
+    const diagnostics = expectDefined(
+      ui.steps.find((step: WorkflowStep) => step.name === "Upload Control UI timeout diagnostics"),
+      "Control UI timeout diagnostic upload",
+    );
+    expect(ui.steps.indexOf(diagnostics)).toBeGreaterThan(ui.steps.indexOf(test));
+    expect(diagnostics).toMatchObject({
+      if: "failure()",
+      uses: UPLOAD_ARTIFACT_V7,
+      with: {
+        name: "control-ui-test-timeout-${{ matrix.shard }}-${{ github.run_attempt }}",
+        path: test.env.OPENCLAW_UI_E2E_DIAGNOSTIC_DIR,
+        "if-no-files-found": "ignore",
+        "retention-days": 7,
+      },
+    });
     const context = {
       eventName: scenario.frozenTarget ? "workflow_dispatch" : "pull_request",
       frozenTarget: scenario.frozenTarget,
@@ -14336,11 +14417,11 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
       ]);
     }
     for (const shard of scenario.shards) {
-      const rowContext = { ...context, matrix: { shard } };
+      const rowContext = { ...context, matrix: { shard }, workspace: root };
       const resolveValue = (value: unknown): string =>
-        typeof value === "string" && value.startsWith("${{")
-          ? String(evaluateWorkflowExpression(value, rowContext))
-          : String(value);
+        String(value).replace(/\$\{\{[\s\S]*?\}\}/gu, (expression) =>
+          String(evaluateWorkflowExpression(expression, rowContext)),
+        );
       expect(resolveValue(ui.name)).toBe(
         scenario.frozenTarget ? "checks-ui" : `checks-ui (${shard}/3)`,
       );
@@ -14354,6 +14435,9 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
         ]),
       );
       expect(env.OPENCLAW_NODE_TEST_PLAN_CONCURRENCY).toBe("1");
+      expect(env.OPENCLAW_UI_E2E_DIAGNOSTIC_DIR).toBe(
+        `${root}/.artifacts/control-ui-e2e-timeouts/ui-shard-${shard}-attempt-1`,
+      );
       const flags = [
         "--maxWorkers",
         "3",
@@ -14391,6 +14475,9 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
             runChild: async (args, childEnv) => {
               forwarded.push(args);
               expect(childEnv.OPENCLAW_TEST_PROJECTS_PARALLEL).toBe("1");
+              expect(childEnv.OPENCLAW_UI_E2E_DIAGNOSTIC_DIR).toBe(
+                resolveValue(diagnostics.with.path),
+              );
               return 0;
             },
           }),
@@ -16836,17 +16923,27 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
     },
     {
       label: "UI performance without runtime artifact changes",
-      context: { preflightOutputs: { run_build_artifacts: "false", run_ui_tests: "true" } },
+      context: {
+        preflightOutputs: { run_control_ui_performance: "true", run_build_artifacts: "false" },
+      },
       expected: { "control-ui-performance": true },
     },
     {
-      label: "UI performance for shared runtime build changes",
-      context: { preflightOutputs: { run_build_artifacts: "true", run_ui_tests: "false" } },
-      expected: { "control-ui-performance": true },
+      label: "unrelated runtime build skips UI performance",
+      context: {
+        preflightOutputs: { run_control_ui_performance: "false", run_build_artifacts: "true" },
+      },
+      expected: { "control-ui-performance": false },
     },
     {
       label: "UI performance outside build and UI scope",
-      context: { preflightOutputs: { run_build_artifacts: "false", run_ui_tests: "false" } },
+      context: {
+        preflightOutputs: {
+          run_control_ui_performance: "false",
+          run_build_artifacts: "false",
+          run_ui_tests: "false",
+        },
+      },
       expected: { "control-ui-performance": false },
     },
     {
