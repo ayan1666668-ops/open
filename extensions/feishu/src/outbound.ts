@@ -453,6 +453,7 @@ async function sendOutboundText(params: {
     replyToIdSource: params.replyToIdSource,
     replyToMode: params.replyToMode ?? "first",
   });
+  const acceptedPostChunks: string[] = [];
   for (const [i, chunk] of (subChunks.length ? subChunks : [normalizedText]).entries()) {
     // Explicit replies and native topic roots stay sticky; implicit first replies do not.
     try {
@@ -469,9 +470,13 @@ async function sendOutboundText(params: {
         : await sendMessageFeishu({ ...sendParams, preparedPostText: true });
       // Record acceptance before a callback or later chunk can fail.
       results.push(result);
+      acceptedPostChunks.push(chunk);
       await reportFeishuOutboundDelivery(result, onDeliveryResult);
     } catch (error) {
-      throw partialFeishuSendError(error, results);
+      // The accepted sends carry the only text that reached the peer, and projection can
+      // turn a message that fit into several of them. Without this the turn records the
+      // unsent suffix as delivered, the same way the comment loop used to.
+      throw partialFeishuSendError(error, results, acceptedPostChunks.join(""));
     }
   }
   return aggregateFeishuSendResult(results.at(-1)!, results);

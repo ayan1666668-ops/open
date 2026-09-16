@@ -26,7 +26,11 @@ import { resolveFeishuRuntimeAccount } from "./accounts.js";
 import { resolveConfiguredHttpTimeoutMs } from "./client-timeout.js";
 import { createFeishuClient } from "./client.js";
 import { resolveFeishuIdentityEmoji } from "./identity-header.js";
-import { chunkFeishuPostMarkdown, materializeFeishuPostMarkdownSoftBreaks } from "./markdown.js";
+import {
+  chunkFeishuPostMarkdown,
+  materializeFeishuPostMarkdownSoftBreaks,
+  postFencesSurvive,
+} from "./markdown.js";
 import { buildFeishuMediaFallbackText } from "./media-fallback.js";
 import { sendMediaFeishu, shouldSuppressFeishuTextForVoiceMedia } from "./media.js";
 import type { MentionTarget } from "./mention-target.types.js";
@@ -915,11 +919,24 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
       mentions?: MentionTarget[];
     }) => Promise<FeishuReplyDeliverySource>;
   }): Promise<FeishuReplyDeliveryResult> => {
+    const convertedPostText = materializeFeishuPostMarkdownSoftBreaks(
+      core.channel.text.convertMarkdownTables(paramsLocal.text, postTableMode),
+    );
+    // The shared fence scanner reads no quote prefix, so a converted blockquoted table
+    // cannot be closed and reopened at a cut and its two markers land in different
+    // messages. The outbound post path asks the same question of the same chunker.
     const chunkSource = paramsLocal.useCard
       ? paramsLocal.text
-      : materializeFeishuPostMarkdownSoftBreaks(
-          core.channel.text.convertMarkdownTables(paramsLocal.text, postTableMode),
-        );
+      : convertedPostText === paramsLocal.text ||
+          postFencesSurvive(convertedPostText, {
+            text: convertedPostText,
+            limit: textChunkLimit,
+            mode: chunkMode,
+            firstChunkMentions: paramsLocal.firstChunkMentions,
+            chunkMentions: paramsLocal.chunkMentions,
+          })
+        ? convertedPostText
+        : materializeFeishuPostMarkdownSoftBreaks(paramsLocal.text);
     const initialChunks = core.channel.text.chunkMarkdownTextWithMode(
       chunkSource,
       textChunkLimit,

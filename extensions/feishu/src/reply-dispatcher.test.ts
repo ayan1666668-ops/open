@@ -5459,6 +5459,41 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
       expect(committed).toContain("Inventory complete.");
     });
 
+    // The shared fence scanner reads no quote prefix, so a converted blockquoted table
+    // cannot be closed and reopened at a cut and its two markers land in different
+    // messages. The reply post path asks the same question the outbound one does.
+    it("posts a quoted reply table as authored when its fence would not survive the cut", async () => {
+      const { chunkMarkdownTextWithMode } = await vi.importActual<
+        typeof import("openclaw/plugin-sdk/reply-chunking")
+      >("openclaw/plugin-sdk/reply-chunking");
+      getFeishuRuntimeMock().channel.text.chunkMarkdownTextWithMode.mockImplementation(
+        chunkMarkdownTextWithMode,
+      );
+      getFeishuRuntimeMock().channel.text.resolveTextChunkLimit.mockReturnValue(200);
+      const { options } = createBlockTableHarness(tableCfg("block"));
+      const quoted = [
+        "Roster",
+        "",
+        ...[
+          "| Name | Role |",
+          "| --- | --- |",
+          ...Array.from({ length: 12 }, (_entry, i) => `| r${i} | Lead |`),
+        ].map((line) => `> ${line}`),
+      ].join("\n");
+
+      await options.deliver({ text: quoted }, { kind: "final" });
+
+      const posted = sendMessageFeishuMock.mock.calls.map(([call]) => String(call.text));
+      expect(posted.length).toBeGreaterThan(1);
+      // No message opens a block another has to close.
+      for (const message of posted) {
+        expect((message.match(/^>?\s*```/gmu) ?? []).length % 2).toBe(0);
+      }
+      const joined = posted.join("");
+      expect(joined).toContain("Name");
+      expect(joined).toContain("r11");
+    });
+
     // Reasoning is blockquoted before it reaches the card, and a card drops the rows of a
     // quoted table, so the preview used to lose them for as long as it ran. This asserts
     // the drawable form the close path already commits, not the pipes behind it.

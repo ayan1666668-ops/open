@@ -2989,6 +2989,33 @@ describe("feishuOutbound.sendText replyToId forwarding", () => {
     expect(contents.join("")).toContain("Lead");
   });
 
+  // The same is true of the post path, where table projection can turn a message that fit
+  // into several sends.
+  it("reports only the accepted post text when a later chunk is rejected", async () => {
+    const chunking = await vi.importActual<typeof import("openclaw/plugin-sdk/reply-chunking")>(
+      "openclaw/plugin-sdk/reply-chunking",
+    );
+    const text = Array.from({ length: 12 }, (_entry, i) => `line number ${i}`).join("\n");
+    // Guard the fixture: the answer is cut into several sends.
+    expect(chunking.chunkMarkdownTextWithMode(text, 40, "length").length).toBeGreaterThan(2);
+    sendMessageFeishuMock
+      .mockResolvedValueOnce({ messageId: "om-1" })
+      .mockRejectedValueOnce(new Error("second send rejected"));
+
+    const error: unknown = await sendText({
+      cfg: { channels: { feishu: { accounts: { main: { textChunkLimit: 40 } } } } },
+      to: "chat_1",
+      text,
+      accountId: "main",
+    }).catch((caught: unknown) => caught);
+
+    const delivered = isChannelPartialDeliveryError(error) ? error.deliveryResult : undefined;
+    const sent = String(sendMessageFeishuMock.mock.calls[0]?.[0]?.text ?? "");
+    expect(delivered?.content).toBe(sent);
+    // The authored answer is longer than what reached the peer.
+    expect(delivered?.content).not.toBe(text);
+  });
+
   // A partial comment failure owns the text that actually reached the thread. Without it
   // the shared lifecycle falls back to the authored payload and records an answer that
   // was never delivered.

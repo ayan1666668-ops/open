@@ -108,6 +108,38 @@ describe("buildFeishuPresentationCard", () => {
     expect(joined).toContain("r79");
   });
 
+  // The colour tag is added after the split, so its own characters have to come out of
+  // the budget the parts are sized to.
+  it("keeps a projected context part inside the limit once the colour tag is added", () => {
+    const tableMarkdown = [
+      "| Region | Owner |",
+      "| --- | --- |",
+      ...Array.from({ length: 240 }, (_entry, i) => `| region-${i} | owner-name-${i} |`),
+    ].join("\n");
+    const presentation = normalizeMessagePresentation({
+      blocks: [{ type: "context", text: tableMarkdown }],
+    });
+    if (!presentation) {
+      throw new Error("expected valid presentation");
+    }
+    // Guard the fixture: bullets leaves no fence, so every part keeps the colour tag.
+    const projected = convertMarkdownTables(tableMarkdown, "bullets");
+    expect(projected).not.toContain("```");
+    expect(projected.length).toBeGreaterThan(4000);
+
+    const elements = buildFeishuPresentationCard({
+      presentation,
+      renderText: (text) => convertMarkdownTables(text, "bullets"),
+    }).body.elements as { tag: string; content: string }[];
+
+    expect(elements.length).toBeGreaterThan(1);
+    for (const element of elements) {
+      expect(element.content).toContain("<font color='grey'>");
+      // This is the content the card sends, tag included.
+      expect(element.content.length).toBeLessThanOrEqual(4000);
+    }
+  });
+
   // The element carries the escaped text, and escaping turns one ampersand into five
   // characters after the cut has been made, so a part sized to the limit can leave it.
   it("sizes a projected table by the length the element will carry", () => {

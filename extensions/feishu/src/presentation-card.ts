@@ -58,6 +58,9 @@ export const FEISHU_PRESENTATION_CAPABILITIES = {
 } satisfies NonNullable<ChannelOutboundAdapter["presentationCapabilities"]>;
 
 const FEISHU_CARD_TEXT_MAX_LENGTH = FEISHU_PRESENTATION_CAPABILITIES.limits.text.maxLength;
+const FEISHU_CARD_GREY_OPEN = "<font color='grey'>";
+const FEISHU_CARD_GREY_CLOSE = "</font>";
+const FEISHU_CARD_GREY_LENGTH = FEISHU_CARD_GREY_OPEN.length + FEISHU_CARD_GREY_CLOSE.length;
 
 /**
  * The shared adapter splits a block to the text limit above before this module sees it,
@@ -69,23 +72,28 @@ function escapedLength(text: string): number {
   return escapeFeishuCardMarkdownText(text).length;
 }
 
-function projectBlockText(text: string, renderText: (text: string) => string): string[] {
+function projectBlockText(
+  text: string,
+  renderText: (text: string) => string,
+  reserve = 0,
+): string[] {
+  const ceiling = FEISHU_CARD_TEXT_MAX_LENGTH - reserve;
   const rendered = renderText(text);
-  if (escapedLength(rendered) <= FEISHU_CARD_TEXT_MAX_LENGTH) {
+  if (escapedLength(rendered) + reserve <= FEISHU_CARD_TEXT_MAX_LENGTH) {
     return [rendered];
   }
   // The element carries the escaped text, and escaping turns one `&`, `<` or `>` into four
   // or five characters after the cut has already been made. Cutting the escaped text
   // instead would split an entity, so the budget comes down from the limit by whatever
   // the longest part actually measured, until the escaped parts fit.
-  let budget = FEISHU_CARD_TEXT_MAX_LENGTH;
+  let budget = ceiling;
   let parts = chunkFeishuMarkdown(rendered, budget);
   for (let attempt = 0; attempt < 8 && parts.length > 0; attempt += 1) {
     const longest = Math.max(...parts.map(escapedLength));
-    if (longest <= FEISHU_CARD_TEXT_MAX_LENGTH) {
+    if (longest <= ceiling) {
       return parts;
     }
-    const next = Math.floor((budget * FEISHU_CARD_TEXT_MAX_LENGTH) / longest);
+    const next = Math.floor((budget * ceiling) / longest);
     if (next < 1 || next >= budget) {
       break;
     }
@@ -379,11 +387,16 @@ function buildFeishuCardElementsForBlock(
     // at the start of its own line. Inside the color tag those markers stop being
     // fences and the rows arrive as literal text, so a context block carrying one
     // keeps its shape and gives up the grey.
-    return projectBlockText(block.text, renderText).map((part) => {
+    // The colour tag is added after the split, so its own characters come out of the
+    // budget the parts are sized to. A part carrying a fence gives the tag up and could
+    // have had them back, which costs a little room rather than an oversized element.
+    return projectBlockText(block.text, renderText, FEISHU_CARD_GREY_LENGTH).map((part) => {
       const content = escapeFeishuCardMarkdownText(part);
       return {
         tag: "markdown",
-        content: /```[\s\S]*?```/.test(content) ? content : `<font color='grey'>${content}</font>`,
+        content: /```[\s\S]*?```/.test(content)
+          ? content
+          : `${FEISHU_CARD_GREY_OPEN}${content}${FEISHU_CARD_GREY_CLOSE}`,
       };
     });
   }
