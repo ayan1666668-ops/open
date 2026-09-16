@@ -1327,12 +1327,17 @@ describe("local SQLite snapshot repository", () => {
             }
           };
           if (phase === "before") {
-            await replaceStaging();
+            // Keep the removed inode live so the replacement cannot reuse its identity.
+            const stagingHandle = await fs.open(options.sourcePath, "r");
+            try {
+              await replaceStaging();
+              return await publish(options);
+            } finally {
+              await stagingHandle.close();
+            }
           }
           const published = await publish(options);
-          if (phase === "after") {
-            await replaceStaging();
-          }
+          await replaceStaging();
           return published;
         });
 

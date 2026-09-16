@@ -743,16 +743,22 @@ describe("createVerifiedSqliteSnapshot", () => {
           replacementBytes = await fs.readFile(options.sourcePath);
         };
         if (phase === "before") {
-          await replaceStaging();
-        } else {
-          __setFsSafeTestHooksForTest({
-            afterPublishTargetCreated: async () => {
-              await replaceStaging();
-              await fs.unlink(options.targetPath);
-              await fs.link(options.sourcePath, options.targetPath);
-            },
-          });
+          // Keep the retired inode live so replacement guarantees a different identity.
+          const originalSource = await fs.open(options.sourcePath, "r");
+          try {
+            await replaceStaging();
+            return await publish(options);
+          } finally {
+            await originalSource.close();
+          }
         }
+        __setFsSafeTestHooksForTest({
+          afterPublishTargetCreated: async () => {
+            await replaceStaging();
+            await fs.unlink(options.targetPath);
+            await fs.link(options.sourcePath, options.targetPath);
+          },
+        });
         return await publish(options);
       };
 
