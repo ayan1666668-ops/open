@@ -118,8 +118,15 @@ function projectBlockText(
   // fence in another, and neither draws a block. The send paths answer this the same way:
   // a conversion the cut cannot carry gives way to the authored text, which is the form
   // the shared adapter would have cut anyway.
+  // A post draws the authored rows, but a card draws nothing at all for a table under a
+  // quote or a list marker, so handing them back here would lose them where the projection
+  // had only made them unreadable. The conversion has already hidden that table inside a
+  // fence by the time the element renderer asks, so this is the one place left that can see
+  // it. A list survives the container and the cut alike, which is the shape every other card
+  // path degrades an undrawable table to.
   if (rendered !== text && parts.length > 0 && !fencesSurvive(rendered, parts)) {
-    const authored = fitBlockParts(text, ceiling);
+    const drawable = hasUndrawableCardTable(text) ? convertMarkdownTables(text, "bullets") : text;
+    const authored = fitBlockParts(drawable, ceiling);
     if (authored.length > 0) {
       return authored;
     }
