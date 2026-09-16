@@ -33,6 +33,7 @@ describe("models.list configured runtime choices", () => {
             input: ["text"],
             cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
             contextWindow: 32_000,
+            contextTokens: 16_000 + index,
             maxTokens: 4096,
           }));
           const configuredModels = new Proxy(models, {
@@ -54,6 +55,7 @@ describe("models.list configured runtime choices", () => {
             id: `model-${index}`,
             name: `Catalog ${index}`,
             contextWindow: 8192,
+            contextTokens: 2048,
           }));
           const cfg: OpenClawConfig = {
             agents: { defaults: { workspace: state.workspaceDir, model: `${provider}/model-0` } },
@@ -93,10 +95,17 @@ describe("models.list configured runtime choices", () => {
             return;
           }
           const projected = await projector.projectCatalog();
-          expect(projected.map(({ name, contextWindow }) => ({ name, contextWindow }))).toEqual(
+          expect(
+            projected.map(({ name, contextWindow, contextTokens }) => ({
+              name,
+              contextWindow,
+              contextTokens,
+            })),
+          ).toEqual(
             selectedIndexes.map((index) => ({
               name: `Configured ${index}`,
               contextWindow: 32_000,
+              contextTokens: 16_000 + index,
             })),
           );
           expect(
