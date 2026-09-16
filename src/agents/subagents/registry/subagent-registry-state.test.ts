@@ -4,6 +4,7 @@ import {
   onSessionLifecycleEvent,
   type SessionLifecycleEvent,
 } from "../../../sessions/session-lifecycle-events.js";
+import type { SubagentRunReadRecord } from "./subagent-registry-read.types.js";
 import {
   clearSubagentRunsReadCacheForTest,
   getSubagentMaintenanceRunsSnapshotForRead,
@@ -20,11 +21,7 @@ import {
   publishSubagentRunsAfterAtomicStore,
   restoreSubagentRunsFromDisk,
 } from "./subagent-registry-state.js";
-import type {
-  SubagentRunMaintenanceRecord,
-  SubagentRunReadRecord,
-  SubagentRunRecord,
-} from "./subagent-registry.types.js";
+import type { SubagentRunMaintenanceRecord, SubagentRunRecord } from "./subagent-registry.types.js";
 
 const mocks = vi.hoisted(() => ({
   loadSubagentRunsForChildSessionFromSqlite:
@@ -298,6 +295,42 @@ describe("subagent registry state read cache", () => {
     expect(getSubagentRunsSnapshotForRead(new Map()).has(unrelated.runId)).toBe(false);
     expect(mocks.loadSubagentRegistryFromSqlite).toHaveBeenCalledOnce();
   });
+
+  it.each([
+    ["full", getSubagentRunsSnapshotForSessions, getSubagentRunsSnapshotForRead],
+    [
+      "session-list",
+      getSubagentSessionListRunsSnapshotForSessions,
+      getSubagentSessionListRunsSnapshotForRead,
+    ],
+  ] as const)(
+    "keeps cold failed deletions when a complete %s tree fills the cache",
+    (_kind, readTree, readAll) => {
+      const removed = createRun("removed");
+      const retained = createRun("retained");
+      const nested = { ...createRun("nested"), requesterSessionKey: removed.childSessionKey };
+      mocks.loadSubagentRunsForSessionsFromSqlite.mockReturnValue({
+        sessionKeys: new Set([
+          removed.requesterSessionKey,
+          removed.childSessionKey,
+          retained.childSessionKey,
+          nested.childSessionKey,
+        ]),
+        runs: new Map([removed, retained, nested].map((run) => [run.runId, run])),
+        complete: true,
+      });
+      mocks.saveSubagentRegistryChangesToSqlite.mockImplementationOnce(() => {
+        throw new Error("disk unavailable");
+      });
+      persistSubagentRunsToDisk(new Map(), [removed.runId]);
+
+      expect([...readTree(new Map(), [removed.requesterSessionKey]).keys()]).toEqual([
+        retained.runId,
+      ]);
+      expect([...readAll(new Map()).keys()]).toEqual([retained.runId, nested.runId]);
+      expect(mocks.loadSubagentRunsForSessionsFromSqlite).toHaveBeenCalledOnce();
+    },
+  );
 
   it("preserves unrelated projected rows across incremental writes", () => {
     const retained = createRun("retained");
