@@ -911,6 +911,11 @@ async function inspectOrMigrateTarget(params: {
         const sources = new Map<string, MigrationArtifactIdentity>([
           [path.resolve(params.target.storePath), indexIdentity],
         ]);
+        for (const file of report.unreferencedJsonlFiles) {
+          if (!params.referencedPaths?.has(canonicalMigrationFilePath(file))) {
+            sources.set(path.resolve(file), readMigrationArtifactIdentity(file));
+          }
+        }
         for (const record of records) {
           if (!record.transcriptPath || !record.sourceFingerprint) {
             continue;
