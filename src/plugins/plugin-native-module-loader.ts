@@ -1,6 +1,7 @@
 import { isBuiltin } from "node:module";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { moduleResolve } from "import-meta-resolve";
 import { isPathInside } from "../infra/path-guards.js";
 import { toSafeImportPath } from "../shared/import-specifier.js";
 import { shouldRejectHardlinkedPluginFiles } from "./hardlink-policy.js";
@@ -54,21 +55,62 @@ export function bindNativePluginInstanceModuleLoader(
         }
         return withPluginCache(cache, () => {
           artifact.prepareModule(source);
+          let target: string | undefined;
           if (source === parent && request.startsWith(".")) {
-            artifact.captureModule(parent, request, ["node"]);
+            const captured = artifact.captureModule(parent, request, ["node"]);
+            if (captured && "target" in captured) {
+              target =
+                captured.target.search || captured.target.hash
+                  ? captured.target.href
+                  : fileURLToPath(captured.target);
+            }
+          } else if (
+            source === parent &&
+            !path.isAbsolute(request) &&
+            !request.startsWith("file:") &&
+            !request.startsWith("#") &&
+            !isBuiltin(request)
+          ) {
+            const captured = artifact.captureModule(parent, request, ["node", "import"]);
+            if (captured && "target" in captured) {
+              target =
+                captured.target.search || captured.target.hash
+                  ? captured.target.href
+                  : fileURLToPath(captured.target);
+            } else if (captured?.additions.length && original) {
+              try {
+                const selected = moduleResolve(
+                  request,
+                  pathToFileURL(original),
+                  new Set(["bun", "node", "import"]),
+                );
+                const capturedTarget = artifact.captureResolvedModule(fileURLToPath(selected));
+                if (capturedTarget) {
+                  const capturedUrl = pathToFileURL(capturedTarget);
+                  capturedUrl.search = selected.search;
+                  capturedUrl.hash = selected.hash;
+                  target =
+                    capturedUrl.search || capturedUrl.hash ? capturedUrl.href : capturedTarget;
+                }
+              } catch {
+                // Native resolution owns the final error when the request remains unavailable.
+              }
+            }
           }
-          const target =
+          target ??=
             source === parent && (path.isAbsolute(request) || request.startsWith("file:"))
               ? artifact.captureResolvedModule(
                   request.startsWith("file:") ? fileURLToPath(request) : request,
                 )
-              : source === request
+              : source === request && parent
                 ? request
                 : undefined;
           if (target) {
-            artifact.prepareModule(target);
+            artifact.prepareModule(target.startsWith("file:") ? fileURLToPath(target) : target);
           }
-          artifact.prepareNativeScopes(target ?? source);
+          artifact.prepareNativeScopes(
+            target?.startsWith("file:") ? fileURLToPath(target) : (target ?? source),
+          );
           return target;
         });
       },

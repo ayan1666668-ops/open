@@ -192,6 +192,16 @@ try {
     "late-abs.mjs": "export const value = 41;",
     "late-url.mjs": "export const value = 42;",
   });
+  const conditionalDependency = fixture("conditional-link-dependency", {
+    "package.json": JSON.stringify({
+      name: "conditional-link-dependency",
+      type: "module",
+      exports: { bun: "./bun.mjs?runtime=bun", import: "./import.mjs" },
+    }),
+    "first.mjs": "export const value = 48;",
+    "bun.mjs": "export const value = import.meta.url.endsWith('?runtime=bun') ? 49 : 0;",
+    "import.mjs": "export const value = 0;",
+  });
   const linkedRoot = fixture("dependency-link", {
     "package.json": JSON.stringify({
       type: "module",
@@ -204,6 +214,11 @@ try {
   });
   fs.mkdirSync(path.join(linkedRoot, "node_modules"));
   fs.symlinkSync(dependency, path.join(linkedRoot, "node_modules/linked-dependency"), "dir");
+  fs.symlinkSync(
+    conditionalDependency,
+    path.join(linkedRoot, "node_modules/conditional-link-dependency"),
+    "dir",
+  );
   const linkedInstance = createInstance(linkedRoot, true);
   const linkedEntry = linkedInstance.loadModule(path.join(linkedRoot, "index.ts")) as {
     bridge(): Promise<{ url: string; read(target: string): Promise<number> }>;
@@ -224,6 +239,8 @@ try {
     fs.unlinkSync(path.join(dependency, filename));
     assert.equal(await bridge.read(target), value, "captured aliases survive original removal");
   }
+  assert.equal(await bridge.read(path.join(conditionalDependency, "first.mjs")), 48);
+  assert.equal(await bridge.read("conditional-link-dependency"), 49);
 
   for (const standalone of [false, true]) {
     const directory = fixture(`absolute-${standalone}`, {
