@@ -21,6 +21,7 @@ use openclaw_gateway_client::{
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::future::Future;
 #[cfg(any(target_os = "linux", test))]
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -1041,10 +1042,23 @@ impl GatewayClient {
             gated_canvas_surface_url(hello.canvas_surface_url, inline_widgets_available),
         );
 
-        let agents =
-            request_agents_list_session(&session, Instant::now() + REQUEST_TIMEOUT).await?;
-        let accent =
-            request_gateway_accent_session(&session, Instant::now() + REQUEST_TIMEOUT).await?;
+        let config_changed = AtomicBool::new(false);
+        let agents = await_session_result_while_dispatching(
+            &session,
+            request_agents_list_session(&session, Instant::now() + REQUEST_TIMEOUT),
+            |event| {
+                dispatch_gateway_event(app, event, GatewayGeneration(generation), &config_changed);
+            },
+        )
+        .await?;
+        let accent = await_session_result_while_dispatching(
+            &session,
+            request_gateway_accent_session(&session, Instant::now() + REQUEST_TIMEOUT),
+            |event| {
+                dispatch_gateway_event(app, event, GatewayGeneration(generation), &config_changed);
+            },
+        )
+        .await?;
         if self.inner.config_generation.load(Ordering::SeqCst) != generation {
             return Ok(());
         }
@@ -1057,7 +1071,6 @@ impl GatewayClient {
             None,
             GatewayGeneration(generation),
         );
-        let config_changed = AtomicBool::new(false);
         let mut transport_activity = session.subscribe_transport_activity();
         let mut last_gateway_activity = Instant::now();
 
@@ -1072,9 +1085,19 @@ impl GatewayClient {
                 return Ok(());
             }
             if config_changed.swap(false, Ordering::SeqCst) {
-                let accent =
-                    request_gateway_accent_session(&session, Instant::now() + REQUEST_TIMEOUT)
-                        .await?;
+                let accent = await_session_result_while_dispatching(
+                    &session,
+                    request_gateway_accent_session(&session, Instant::now() + REQUEST_TIMEOUT),
+                    |event| {
+                        dispatch_gateway_event(
+                            app,
+                            event,
+                            GatewayGeneration(generation),
+                            &config_changed,
+                        );
+                    },
+                )
+                .await?;
                 if self.inner.config_generation.load(Ordering::SeqCst) != generation {
                     return Ok(());
                 }
@@ -1663,20 +1686,37 @@ async fn perform_request_while_dispatching(
     deadline: Instant,
     config_changed: &AtomicBool,
 ) -> Result<GatewayResponse, RequestFailure> {
-    let request =
-        perform_session_request(client, connection_generation, session, request, deadline);
+    await_session_result_while_dispatching(
+        session,
+        perform_session_request(client, connection_generation, session, request, deadline),
+        |event| {
+            dispatch_gateway_event(
+                app,
+                event,
+                GatewayGeneration(connection_generation),
+                config_changed,
+            );
+        },
+    )
+    .await
+}
+
+async fn await_session_result_while_dispatching<T, F, D>(
+    session: &SharedGatewaySession,
+    request: F,
+    mut dispatch: D,
+) -> Result<T, RequestFailure>
+where
+    F: Future<Output = Result<T, RequestFailure>>,
+    D: FnMut(&GatewayEvent),
+{
     tokio::pin!(request);
     loop {
         tokio::select! {
             result = &mut request => return result,
             event = session.next_event() => {
                 let event = event.map_err(RequestFailure::from_shared)?;
-                dispatch_gateway_event(
-                    app,
-                    &event,
-                    GatewayGeneration(connection_generation),
-                    config_changed,
-                );
+                dispatch(&event);
             }
         }
     }
@@ -2094,6 +2134,87 @@ pub(crate) mod tests {
         })
         .await
         .unwrap()
+    }
+
+    #[tokio::test]
+    async fn session_request_drains_events_while_waiting_for_response() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("ws://{}", listener.local_addr().unwrap());
+        let (close_tx, close_rx) = oneshot::channel();
+        let (dispatched_tx, mut dispatched_rx) = mpsc::unbounded_channel();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut socket = accept_test_session(stream).await;
+            let request = socket.next().await.unwrap().unwrap();
+            let Message::Text(text) = request else {
+                panic!("expected request frame");
+            };
+            let request: Value = serde_json::from_str(&text).unwrap();
+            for sequence in [1, 2] {
+                socket
+                    .send(Message::Text(
+                        json!({
+                            "type": "event",
+                            "event": "config.changed",
+                            "payload": { "sequence": sequence },
+                        })
+                        .to_string()
+                        .into(),
+                    ))
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    dispatched_rx.recv().await,
+                    Some(sequence),
+                    "event must dispatch before the request response"
+                );
+            }
+            socket
+                .send(Message::Text(
+                    json!({
+                        "type": "res",
+                        "id": request["id"],
+                        "ok": true,
+                        "payload": {
+                            "defaultId": "main",
+                            "mainKey": "main",
+                            "scope": "per-sender",
+                            "agents": [{ "id": "main" }],
+                        },
+                    })
+                    .to_string()
+                    .into(),
+                ))
+                .await
+                .unwrap();
+            let _ = close_rx.await;
+            socket.close(None).await.unwrap();
+        });
+        let session = SharedGatewayClient::connect(
+            SharedGatewayClientConfig::new(&url)
+                .unwrap()
+                .event_capacity(1),
+            |_| async { Ok::<_, Infallible>(json!({"role": "test"})) },
+        )
+        .await
+        .unwrap();
+        let mut sequences = Vec::new();
+        let result = await_session_result_while_dispatching(
+            &session,
+            request_agents_list_session(&session, Instant::now() + Duration::from_secs(1)),
+            |event| {
+                let sequence = event.payload["sequence"].as_u64().unwrap();
+                sequences.push(sequence);
+                dispatched_tx.send(sequence).unwrap();
+            },
+        )
+        .await
+        .unwrap_or_else(|failure| panic!("request failed: {}", failure.message));
+
+        assert_eq!(result.default_id, "main");
+        assert_eq!(sequences, [1, 2]);
+        close_tx.send(()).unwrap();
+        server.await.unwrap();
     }
 
     async fn perform_request(

@@ -165,6 +165,76 @@ async fn dispatch_guard_rejects_before_wire_without_closing_the_session() {
 }
 
 #[tokio::test]
+async fn dispatch_guard_rejection_after_enqueue_retires_the_session() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let (tcp, _) = listener.accept().await.unwrap();
+        let mut socket = accept_async(tcp).await.unwrap();
+        send_json(
+            &mut socket,
+            json!({
+                "type":"event", "event":"connect.challenge", "payload":{"nonce":"nonce-guard-retire","ts":1_700_000_000_123_u64}
+            }),
+        )
+        .await;
+        let connect = receive_json(&mut socket).await;
+        send_json(
+            &mut socket,
+            json!({
+                "type":"res", "id":connect["id"], "ok":true,
+                "payload":{"type":"hello-ok","protocol":4}
+            }),
+        )
+        .await;
+
+        let closed = tokio::time::timeout(Duration::from_secs(1), socket.next())
+            .await
+            .expect("client close timeout");
+        assert!(
+            !matches!(closed, Some(Ok(Message::Text(_)))),
+            "rejected frame must not reach the server"
+        );
+    });
+
+    let session = GatewayClient::connect(
+        GatewayClientConfig::new(format!("ws://{address}")).unwrap(),
+        |_| async { Ok::<_, io::Error>(json!({"role":"node"})) },
+    )
+    .await
+    .unwrap();
+    let rejected = session
+        .request_with_dispatch_deadline(
+            "node.invalid-guard",
+            json!({}),
+            tokio::time::Instant::now() + Duration::from_secs(1),
+            |dispatch| {
+                dispatch.enqueue();
+                Err(DispatchRejection::new("late rejection"))
+            },
+        )
+        .await;
+    assert!(matches!(
+        rejected,
+        Err(ClientError::Closed(reason))
+            if reason == "dispatch guard rejected after enqueue: late rejection"
+    ));
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while !session.is_closed() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("session retirement timeout");
+    assert!(matches!(
+        session.request("node.after-invalid-guard", json!({})).await,
+        Err(ClientError::Closed(reason))
+            if reason == "dispatch guard rejected after enqueue: late rejection"
+    ));
+    server.await.unwrap();
+}
+
+#[tokio::test]
 async fn protocol_fallback_reconnects_once_with_a_fresh_challenge() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
@@ -919,6 +989,63 @@ async fn malformed_idle_text_is_activity_and_does_not_close_the_session() {
     assert_eq!(
         session
             .request("node.after-malformed", json!({}))
+            .await
+            .unwrap(),
+        json!({"stillConnected":true})
+    );
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn malformed_response_does_not_close_a_session_with_a_pending_request() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let (tcp, _) = listener.accept().await.unwrap();
+        let mut socket = accept_async(tcp).await.unwrap();
+        send_json(
+            &mut socket,
+            json!({
+                "type":"event", "event":"connect.challenge",
+                "payload":{"nonce":"nonce-malformed-pending","ts":1_700_000_000_123_u64}
+            }),
+        )
+        .await;
+        let connect = receive_json(&mut socket).await;
+        send_json(
+            &mut socket,
+            json!({
+                "type":"res", "id":connect["id"], "ok":true,
+                "payload":{"type":"hello-ok","protocol":4}
+            }),
+        )
+        .await;
+        let request = receive_json(&mut socket).await;
+        socket
+            .send(Message::Text(
+                json!({"type":"res","ok":true}).to_string().into(),
+            ))
+            .await
+            .unwrap();
+        send_json(
+            &mut socket,
+            json!({
+                "type":"res", "id":request["id"], "ok":true,
+                "payload":{"stillConnected":true}
+            }),
+        )
+        .await;
+    });
+
+    let session = GatewayClient::connect(
+        GatewayClientConfig::new(format!("ws://{address}")).unwrap(),
+        |_| async { Ok::<_, io::Error>(json!({"role":"node"})) },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        session
+            .request("node.with-malformed", json!({}))
             .await
             .unwrap(),
         json!({"stillConnected":true})

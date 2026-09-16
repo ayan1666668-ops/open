@@ -658,7 +658,9 @@ impl GatewaySession {
     ///
     /// The guard runs synchronously in the session task after the socket becomes
     /// writable. It must call [`DispatchContext::enqueue`] exactly where the
-    /// request becomes authorized and must not block.
+    /// request becomes authorized, return `Ok(())` immediately afterward, and
+    /// must not block. Rejecting after enqueue retires the session because the
+    /// frame can no longer be withdrawn from the WebSocket sink.
     pub async fn request_with_dispatch_deadline<G>(
         &self,
         method: impl Into<String>,
@@ -805,7 +807,6 @@ impl Drop for RequestCancellation {
 #[derive(Clone, Debug)]
 enum SessionCloseCause {
     Closed(String),
-    InvalidFrame(String),
     Transport(String),
     WriteTimeout(String),
 }
@@ -814,7 +815,6 @@ impl SessionCloseCause {
     fn to_client_error(&self) -> ClientError {
         match self {
             Self::Closed(reason) => ClientError::Closed(reason.clone()),
-            Self::InvalidFrame(reason) => ClientError::InvalidFrame(reason.clone()),
             Self::Transport(reason) => ClientError::Transport(reason.clone()),
             Self::WriteTimeout(operation) => ClientError::WriteTimeout(operation.clone()),
         }
@@ -824,7 +824,6 @@ impl SessionCloseCause {
         let suffix = format!("; request {method} did not complete");
         match self {
             Self::Closed(reason) => ClientError::Closed(format!("{reason}{suffix}")),
-            Self::InvalidFrame(reason) => ClientError::InvalidFrame(format!("{reason}{suffix}")),
             Self::Transport(reason) => ClientError::Transport(format!("{reason}{suffix}")),
             Self::WriteTimeout(operation) => {
                 ClientError::WriteTimeout(format!("{operation}{suffix}"))
@@ -1022,15 +1021,24 @@ where
                         .map_err(|error| ClientError::Transport(error.to_string())),
                 );
             };
-            let enqueued = {
+            let (guard_result, enqueued) = {
                 let mut dispatch = DispatchContext {
                     enqueue: &mut enqueue,
                     enqueued: false,
                 };
-                guard(&mut dispatch)
-                    .map_err(|rejection| ClientError::DispatchRejected(rejection.reason))?;
-                dispatch.enqueued
+                let result = guard(&mut dispatch);
+                (result, dispatch.enqueued)
             };
+            if let Err(rejection) = guard_result {
+                if !enqueued {
+                    return Err(ClientError::DispatchRejected(rejection.reason));
+                }
+                enqueue_result.expect("enqueued dispatch must record a result")?;
+                return Err(ClientError::Closed(format!(
+                    "dispatch guard rejected after enqueue: {}",
+                    rejection.reason
+                )));
+            }
             if !enqueued {
                 return Err(ClientError::DispatchRejected(
                     "dispatch guard did not enqueue the request".into(),
@@ -1157,6 +1165,10 @@ async fn run_session<S>(
                             Err(error @ ClientError::DispatchRejected(_)) => {
                                 let _ = reply.send(Err(error));
                             }
+                            Err(ClientError::Closed(reason)) => {
+                                let _ = reply.send(Err(ClientError::Closed(reason.clone())));
+                                break SessionCloseCause::Closed(reason);
+                            }
                             Err(error) => {
                                 let reason = error.to_string();
                                 let _ = reply.send(Err(error));
@@ -1193,8 +1205,9 @@ async fn run_session<S>(
                                     ));
                                 }
                             }
-                            Err(_) if pending.is_empty() => {}
-                            Err(error) => break SessionCloseCause::InvalidFrame(error.to_string()),
+                            // Match the authoritative TypeScript client: unknown text frames are
+                            // not responses or events, regardless of request timing.
+                            Err(_) => {}
                         }
                     }
                     Some(Ok(Message::Ping(payload))) => {
@@ -1237,6 +1250,7 @@ struct PendingRequest {
 
 fn session_close_cause(error: ClientError) -> SessionCloseCause {
     match error {
+        ClientError::Closed(reason) => SessionCloseCause::Closed(reason),
         ClientError::WriteTimeout(operation) => SessionCloseCause::WriteTimeout(operation),
         error => SessionCloseCause::Transport(error.to_string()),
     }
