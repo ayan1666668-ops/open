@@ -331,7 +331,7 @@ export function fitCodexProjectedContextForTurnStart(params: {
   if (
     requestRange &&
     requestRange.start >= range.end &&
-    requestRange.end < params.promptText.length
+    requestRange.end <= params.promptText.length
   ) {
     const request = params.promptText.slice(requestRange.start, requestRange.end);
     if (request.length >= maxChars) {

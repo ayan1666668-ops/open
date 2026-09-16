@@ -498,9 +498,7 @@ describe("projectContextEngineAssemblyForCodex", () => {
       const fitted = fitCodexProjectedContextForTurnStart({
         promptText,
         imageGroups,
-        ...(mode === "preserved"
-          ? { preservedRange: { start: before.length, end: promptText.length } }
-          : { contextRange: { start: before.length, end: before.length + context.length } }),
+        contextRange: { start: before.length, end: before.length + context.length },
         ...(mode === "hook"
           ? {
               requestRange: {

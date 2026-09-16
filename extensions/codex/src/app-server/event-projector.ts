@@ -505,7 +505,14 @@ export class CodexAppServerEventProjector extends CodexTurnProjection {
         return;
       }
       this.eventProjection.emitCompactionEnd(itemId, true);
-    } else if (item?.type === "dynamicToolCall" || item?.type === "agentMessage") {
+    } else if (
+      item?.type === "agentMessage" ||
+      item?.type === "dynamicToolCall" ||
+      item?.type === "commandExecution" ||
+      item?.type === "fileChange" ||
+      item?.type === "mcpToolCall" ||
+      item?.type === "webSearch"
+    ) {
       this.continuousCompactionAttempts = 0;
     }
     this.toolProgressProjection.recordToolMeta(item);
