@@ -4,6 +4,7 @@ import { bundledDistPluginRootAt, bundledPluginRootAt } from "openclaw/plugin-sd
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BundledPluginSource } from "../../../plugins/bundled-sources.js";
 import * as bundledSources from "../../../plugins/bundled-sources.js";
+import * as discovery from "../../../plugins/discovery.js";
 import {
   collectBundledPluginLoadPathWarnings,
   maybeRepairBundledPluginLoadPaths,
@@ -38,6 +39,11 @@ function createPluginLoadPathConfig(
 
 describe("bundled plugin load path repair", () => {
   beforeEach(() => {
+    // Layout cases use inspected metadata; the availability test exercises real discovery.
+    vi.spyOn(discovery, "discoverConfiguredPluginLoadPaths").mockReturnValue({
+      candidates: [],
+      diagnostics: [],
+    });
     const packageRoot = "/app/node_modules/openclaw";
     mockBundledSource("feishu", bundledDistPluginRootAt(packageRoot, "feishu"));
   });
@@ -104,7 +110,7 @@ describe("bundled plugin load path repair", () => {
     expect(result.config.plugins?.load?.paths).toStrictEqual([]);
   });
 
-  it("removes stale bundled paths from old versioned OpenClaw package roots", () => {
+  it("removes available bundled aliases from old versioned OpenClaw package roots", () => {
     const currentPackageRoot = path.resolve("node_modules", "openclaw");
     const stalePackageRoot = path.resolve(
       "pnpm-global",
@@ -127,7 +133,7 @@ describe("bundled plugin load path repair", () => {
     expect(result.config.plugins?.load?.paths).toStrictEqual(["/custom/path", "/custom/path"]);
   });
 
-  it("removes stale legacy bundled paths from old versioned OpenClaw package roots", () => {
+  it("removes available legacy aliases from old versioned OpenClaw package roots", () => {
     const currentPackageRoot = path.resolve("node_modules", "openclaw");
     const stalePackageRoot = path.resolve(
       "pnpm-global",
@@ -148,7 +154,7 @@ describe("bundled plugin load path repair", () => {
     expect(result.config.plugins?.load?.paths).toStrictEqual([]);
   });
 
-  it("does not remove arbitrary missing paths that happen to use the bundled dist layout", () => {
+  it("preserves custom paths outside installed OpenClaw package roots", () => {
     const currentPackageRoot = path.resolve("node_modules", "openclaw");
     const customPath = path.resolve("elsewhere", "dist", "extensions", "feishu");
     mockBundledSource("feishu", bundledDistPluginRootAt(currentPackageRoot, "feishu"));
