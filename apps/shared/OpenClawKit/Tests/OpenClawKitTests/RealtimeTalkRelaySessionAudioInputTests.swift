@@ -267,8 +267,10 @@ struct RealtimeTalkRelaySessionAudioInputTests {
         #expect(timestamp == timestamp.rounded())
     }
 
-    @Test func `microphone saturation terminates once without sending the fifth frame`() async throws {
+    @Test(arguments: [false, true])
+    func `capture packets saturate held acknowledgments once without uploading later audio`(burst: Bool) async throws {
         let requests = ControlledRealtimeAudioRequests()
+        let payloads = RealtimeRelayStartupRequestLog()
         let audioCapture = TestRealtimeTalkAudioCapture()
         var statuses: [String] = []
         var issues: [RealtimeTalkRelayIssue] = []
@@ -277,7 +279,10 @@ struct RealtimeTalkRelaySessionAudioInputTests {
         let session = RealtimeTalkRelaySession(
             transport: RealtimeTalkRelayTransport(
                 subscribeServerEvents: { _ in AsyncStream { $0.finish() } },
-                request: { method, _, _ in try await requests.request(method: method) }),
+                request: { method, params, _ in
+                    await payloads.record(method: method, params: params)
+                    return try await requests.request(method: method)
+                }),
             options: .init(sessionKey: "main", provider: "openai", model: nil, voice: nil),
             audioCapture: audioCapture,
             pcmPlayer: UnusedPCMStreamingAudioPlayer(),
@@ -292,30 +297,31 @@ struct RealtimeTalkRelaySessionAudioInputTests {
         session._test_prepareAudioSender(relaySessionId: "relay-1")
         try session._test_startMicrophonePump()
         let stopCountBeforeFailure = audioCapture.stopCount
+        // Realistic 100ms mono PCM16 packets at24kHz, through the installed callback.
+        let frames = (0..<5).map { index in
+            RealtimeTalkAudioFrame(
+                data: Data(repeating: UInt8(index), count: 4800),
+                timestampMs: Double(index * 100),
+                rms: 0.1)
+        }
 
         var pending: [Task<Void, Never>] = []
-        var saturated: Task<Void, Never>?
         do {
             for index in 0..<4 {
-                guard let send = session._test_enqueueMicrophoneFrame(Data([UInt8(index)])) else {
-                    throw RealtimeRelayTestTimeout(operation: "microphone frame \(index) admission")
-                }
-                pending.append(send)
+                audioCapture.emit(frames[index])
+                // Hold every ACK. Exercise both staggered dispatch and a burst of callbacks
+                // without relying on wall-clock sleeps or pretending to measure network RTT.
+                if !burst { try await requests.waitForRequestCount(index + 1) }
             }
             try await requests.waitForRequestCount(4)
-            guard let saturationSend = session._test_enqueueMicrophoneFrame(Data([0xFF])) else {
-                throw RealtimeRelayTestTimeout(operation: "saturation frame admission")
-            }
-            saturated = saturationSend
+            pending = session._test_pendingMicrophoneSends()
+            #expect(pending.count == 4)
+            audioCapture.emit(frames[4])
             _ = try await terminationObserved.next("microphone saturation termination")
-            await saturated?.value
             try await requests.waitForRequestCount(5)
         } catch {
-            saturated?.cancel()
-            pending.forEach { $0.cancel() }
             session.stop()
             await requests.succeedPendingAppends()
-            await saturated?.value
             for task in pending {
                 await task.value
             }
@@ -335,8 +341,12 @@ struct RealtimeTalkRelaySessionAudioInputTests {
         #expect(issues.map(\.message) == [message])
         #expect(terminations == [.audioInputFailed(message: message)])
         #expect(audioCapture.stopCount == stopCountBeforeFailure + 1)
+        let sent = await payloads.snapshot().filter { $0.method == "talk.session.appendAudio" }
+        #expect(sent.count == 4)
+        #expect(Set(sent.compactMap { $0.params?["audioBase64"]?.stringValue }) ==
+            Set(frames.prefix(4).map { $0.data.base64EncodedString() }))
 
-        await requests.succeedPendingAppends()
+        // Late ACKs for the retired capture cannot report another failure or revive it.
         await requests.succeedPendingAppends()
         for task in pending {
             await task.value
@@ -344,6 +354,7 @@ struct RealtimeTalkRelaySessionAudioInputTests {
         #expect(statuses == [message])
         #expect(issues.count == 1)
         #expect(terminations.count == 1)
+        #expect(!audioCapture.isStarted)
         #expect(await requests.snapshot().filter { $0 == "talk.session.close" }.count == 1)
     }
 

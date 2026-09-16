@@ -676,6 +676,15 @@ extension TalkModeRuntime {
         _ transcript: RealtimeTalkTranscript,
         relayGeneration: UInt64) async
     {
+        if transcript.isFinal, transcript.role == "user" {
+            let current = self.realtimeSession != nil && self.realtimeRelayGeneration == relayGeneration
+            self.logger.info(
+                """
+                talk realtime final user transcript current=\(current, privacy: .public) \
+                enabled=\(self.isEnabled, privacy: .public) paused=\(self.isPaused, privacy: .public) \
+                cancelled=\(Task.isCancelled, privacy: .public) chars=\(transcript.text.count, privacy: .public)
+                """)
+        }
         guard let session = realtimeSession,
               ownsRealtimeRelay(relayGeneration, session),
               isEnabled,

@@ -130,53 +130,6 @@ public enum RealtimeTalkRelayTermination: Equatable, Sendable {
     case outputPlaybackOverflow
 }
 
-private enum RealtimeAudioSendOutcome {
-    case sent, inactive, saturated, failed(String)
-}
-
-private actor RealtimeAudioSender {
-    private let request: @Sendable (String, [String: AnyCodable]?, Double) async throws -> Data
-    private var relaySessionId: String?
-    private var pendingSends = 0
-    private let maxPendingSends = 4
-
-    init(
-        relaySessionId: String,
-        request: @escaping @Sendable (String, [String: AnyCodable]?, Double) async throws -> Data)
-    {
-        self.relaySessionId = relaySessionId
-        self.request = request
-    }
-
-    func close() {
-        self.relaySessionId = nil
-    }
-
-    func send(_ data: Data, timestampMs: Double) async -> RealtimeAudioSendOutcome {
-        guard !Task.isCancelled, let relaySessionId else { return .inactive }
-        guard self.pendingSends < self.maxPendingSends else { return .saturated }
-        self.pendingSends += 1
-        defer { self.pendingSends -= 1 }
-        // The Gateway carries this straight into the provider's media timeline, and OpenAI rejects
-        // a `conversation.item.truncate` whose `audio_end_ms` is not an integer -- a fractional
-        // timestamp here kills the session on the first barge-in.
-        let payload: [String: AnyCodable] = [
-            "sessionId": AnyCodable(relaySessionId),
-            "audioBase64": AnyCodable(data.base64EncodedString()),
-            "timestamp": AnyCodable(timestampMs.rounded()),
-        ]
-        do {
-            try Task.checkCancellation()
-            let response = try await self.request("talk.session.appendAudio", payload, 8000)
-            try Task.checkCancellation()
-            _ = try JSONDecoder().decode(TalkSessionOkResult.self, from: response)
-            return .sent
-        } catch {
-            return Task.isCancelled ? .inactive : .failed(error.localizedDescription)
-        }
-    }
-}
-
 @MainActor
 public final class RealtimeTalkRelaySession {
     private static let agentControlToolName = "openclaw_agent_control"
@@ -1643,6 +1596,11 @@ extension RealtimeTalkRelaySession {
     // periphery:ignore - package tests start the pump to observe capture failure handling.
     func _test_startMicrophonePump() throws {
         try self.startMicrophonePump(lifecycleGeneration: self.lifecycleGeneration)
+    }
+
+    // periphery:ignore - callback-driven tests join sends after capture retirement clears ownership.
+    func _test_pendingMicrophoneSends() -> [Task<Void, Never>] {
+        Array(self.audioSendTasks.values)
     }
 }
 #endif

@@ -183,7 +183,12 @@ actor TalkModeRuntime {
         // inherit an earlier session's completed command.
         guard self.ownsTranscript(owner) else { return false }
         let matches = TalkStopPhrase.matches(text, phrases: phrases)
-        self.logger.debug("talk local stop evaluation match=\(matches)")
+        // Persist only the decision and configured count, never recognized or configured speech.
+        self.logger.info(
+            """
+            talk local stop evaluation match=\(matches, privacy: .public) \
+            phraseCount=\(phrases.count, privacy: .public)
+            """)
         guard matches else { return false }
         if self.realtimeSession == nil, self.phase == .speaking, self.isLikelyEcho(of: text) { return false }
 

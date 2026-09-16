@@ -307,7 +307,7 @@ private func deliverTranscriptWithBlockedPreferences(
     }
 }
 
-private func waitForRuntimeCondition(
+func waitForRuntimeCondition(
     _ operation: String,
     condition: @escaping @Sendable () async -> Bool) async throws
 {
@@ -392,9 +392,11 @@ func makeRuntimeTestBootstrap(
     probe: RuntimeCommitProbe? = nil,
     sessionKey: String = "main",
     realtimeModel: String = "gpt-realtime-2",
-    catalog: Data? = nil) throws -> GatewayConnection.RealtimeTalkBootstrap
+    catalog: Data? = nil,
+    eventChannel: (stream: AsyncStream<EventFrame>, continuation: AsyncStream<EventFrame>.Continuation)? = nil) throws
+    -> GatewayConnection.RealtimeTalkBootstrap
 {
-    let events = AsyncStream<EventFrame>.makeStream(bufferingPolicy: .bufferingNewest(8))
+    let events = eventChannel ?? AsyncStream<EventFrame>.makeStream(bufferingPolicy: .bufferingNewest(8))
     let result = TalkSessionCreateResult(
         sessionid: "talk-session",
         mode: AnyCodable("realtime"),
