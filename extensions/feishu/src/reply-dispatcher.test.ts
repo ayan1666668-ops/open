@@ -6293,6 +6293,41 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
       expect(reasoning).toContain("| wide |");
       expect(reasoning).not.toContain("```");
     });
+
+    // The lifecycle records the reported content as what the reader received, so a fallback
+    // that sends the authored table has to report the authored table.
+    it("reports the text it posted when the conversion gave way to the authored table", async () => {
+      const chunking = await vi.importActual<typeof import("openclaw/plugin-sdk/reply-chunking")>(
+        "openclaw/plugin-sdk/reply-chunking",
+      );
+      getFeishuRuntimeMock().channel.text.chunkMarkdownTextWithMode.mockImplementation(
+        chunking.chunkMarkdownTextWithMode,
+      );
+      resolveFeishuAccountMock.mockReturnValue({
+        accountId: "main",
+        appId: "app_id",
+        appSecret: "app_secret",
+        domain: "feishu",
+        config: { renderMode: "raw", streaming: { mode: "off" } },
+      });
+      const rows = Array.from({ length: 40 }, (_entry, index) => `> | row${index} | d |`);
+      const text = [
+        "> | name | detail |",
+        "> | --- | --- |",
+        ...rows,
+        `> | wide | ${"w".repeat(220)} |`,
+      ].join("\n");
+      const convert = getFeishuRuntimeMock().channel.text.convertMarkdownTables;
+      // The case only means anything while the conversion is the thing that cannot be sent.
+      expect(convert(text, "code").length).toBeGreaterThan(4000);
+
+      const { options } = createDispatcherHarness({ accountId: "main", cfg: tableCfg("code") });
+      const accepted = await options.deliver({ text }, { kind: "final" });
+
+      const posts = sendMessageFeishuMock.mock.calls.map((call) => String(call[0]?.text ?? ""));
+      expect(posts.join("")).toBe(text);
+      expect(accepted?.content).toBe(text);
+    });
   });
 });
 /* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

@@ -1037,7 +1037,9 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
     return createFeishuReplyDeliveryResult({
       results,
       visibleReplySent: results.length > 0,
-      content: paramsLocal.text,
+      // What was cut and sent, which is the authored text whenever the conversion could not
+      // survive the cut. Reporting the requested text would record prose nobody received.
+      content: chunkSource,
       kind: paramsLocal.useCard ? "card" : "text",
     });
   };
@@ -1995,7 +1997,11 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
           { ...withMedia, content: withMedia.content ?? "" },
         );
       }
-      const deliveredContent = hasVoiceMedia ? (deliveredResults.at(-1)?.content ?? text) : text;
+      // The delivered results own what was sent. The requested text stands in only when they
+      // carry nothing of their own, as a media-only acceptance does.
+      const deliveredContent = hasVoiceMedia
+        ? (deliveredResults.at(-1)?.content ?? text)
+        : (mergeFeishuReplyDeliveryResults(deliveredResults).content ?? text);
       const result = mergeFeishuReplyDeliveryResults(deliveredResults, deliveredContent);
       if (priorClosedStreamingSettlement?.error !== undefined) {
         throw createFeishuPartialReplyDeliveryError(
