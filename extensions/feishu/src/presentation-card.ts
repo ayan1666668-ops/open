@@ -333,10 +333,15 @@ function buildFeishuCardElementsForBlock(
     return [{ tag: "markdown", content: escapeFeishuCardMarkdownText(renderText(block.text)) }];
   }
   if (block.type === "context") {
+    const content = escapeFeishuCardMarkdownText(renderText(block.text));
+    // `code` mode hands this block a fenced table, and a fence only opens and closes
+    // at the start of its own line. Inside the color tag those markers stop being
+    // fences and the rows arrive as literal text, so a context block carrying one
+    // keeps its shape and gives up the grey.
     return [
       {
         tag: "markdown",
-        content: `<font color='grey'>${escapeFeishuCardMarkdownText(renderText(block.text))}</font>`,
+        content: /```[\s\S]*?```/.test(content) ? content : `<font color='grey'>${content}</font>`,
       },
     ];
   }

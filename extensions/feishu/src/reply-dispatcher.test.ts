@@ -5801,7 +5801,8 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
         expect(presentationCardMarkdown()).toEqual([
           converted(),
           converted(),
-          `<font color='grey'>${converted()}</font>`,
+          // `code` converts the table to a fence, which cannot survive the color tag.
+          tables === "code" ? converted() : `<font color='grey'>${converted()}</font>`,
         ]);
         expect(delivery?.content?.split(converted())).toHaveLength(4);
         expect(delivery?.content).not.toContain("| --- |");

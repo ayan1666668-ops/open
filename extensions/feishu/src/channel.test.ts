@@ -1355,7 +1355,11 @@ describe("feishuPlugin actions", () => {
           accountId: selection === "named" ? "work" : undefined,
         });
 
-        expect(markdown).toEqual([converted, `<font color='grey'>${converted}</font>`]);
+        // `code` converts the table to a fence, which cannot survive the color tag.
+        expect(markdown).toEqual([
+          converted,
+          tables === "code" ? converted : `<font color='grey'>${converted}</font>`,
+        ]);
         expect(markdown.join("\n")).not.toContain("| --- |");
         expect(sendMessageFeishuMock).not.toHaveBeenCalled();
       },

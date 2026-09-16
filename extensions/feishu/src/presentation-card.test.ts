@@ -1,4 +1,5 @@
 import { normalizeMessagePresentation } from "openclaw/plugin-sdk/interactive-runtime";
+import { convertMarkdownTables } from "openclaw/plugin-sdk/text-chunking";
 import { describe, expect, it } from "vitest";
 import {
   buildFeishuPresentationCard,
@@ -32,6 +33,36 @@ describe("buildFeishuPresentationCard", () => {
         tag: "markdown",
         content:
           "Pipeline (table)\n- Account: Acme; Stage: Won; ARR: 125000\n- Account: Globex; Stage: Review; ARR: 82000",
+      },
+    ]);
+  });
+
+  // A context block is grey, and grey comes from an inline tag. A fence has to
+  // open and close its own line, so the two cannot share one element.
+  it.each([
+    { tables: "code" as const, grey: false },
+    { tables: "bullets" as const, grey: true },
+  ])("renders a $tables context table the card can draw", ({ tables, grey }) => {
+    const tableMarkdown = "| Name | Role |\n| --- | --- |\n| Ada | Lead |";
+    const presentation = normalizeMessagePresentation({
+      blocks: [{ type: "context", text: tableMarkdown }],
+    });
+    if (!presentation) {
+      throw new Error("expected valid presentation");
+    }
+    const converted = convertMarkdownTables(tableMarkdown, tables);
+    // Guard the fixture: the case only means anything while `code` still opens a fence.
+    expect(converted.startsWith("```")).toBe(!grey);
+
+    expect(
+      buildFeishuPresentationCard({
+        presentation,
+        renderText: (text) => convertMarkdownTables(text, tables),
+      }).body.elements,
+    ).toEqual([
+      {
+        tag: "markdown",
+        content: grey ? `<font color='grey'>${converted}</font>` : converted,
       },
     ]);
   });

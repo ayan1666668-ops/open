@@ -3970,7 +3970,8 @@ describe("feishuOutbound.sendText markdown table modes in auto mode", () => {
       expect(elements.map((element: { content: string }) => element.content)).toEqual([
         converted,
         converted,
-        `<font color='grey'>${converted}</font>`,
+        // `code` converts the table to a fence, which cannot survive the color tag.
+        tables === "code" ? converted : `<font color='grey'>${converted}</font>`,
       ]);
       expect(sendCardFeishuMock).toHaveBeenCalledTimes(1);
       expect(sendMessageFeishuMock).not.toHaveBeenCalled();
