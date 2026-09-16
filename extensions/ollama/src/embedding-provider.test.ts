@@ -192,7 +192,6 @@ describe("ollama embedding provider", () => {
     expect(firstGuardedFetchCall()).toMatchObject({
       url: "http://127.0.0.1:11434/api/embed",
       policy: {
-        hostnameAllowlist: ["127.0.0.1"],
         allowedOrigins: ["http://127.0.0.1:11434"],
         allowUnspecifiedIpv4Range: true,
       },
@@ -220,7 +219,6 @@ describe("ollama embedding provider", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(firstGuardedFetchCall()).toMatchObject({
       policy: {
-        hostnameAllowlist: ["host.docker.internal"],
         allowedOrigins: ["http://host.docker.internal:11434"],
         allowUnspecifiedIpv4Range: true,
       },
@@ -235,7 +233,6 @@ describe("ollama embedding provider", () => {
     expect(firstGuardedFetchCall()).toMatchObject({
       url: "https://ollama.com/api/embed",
       policy: {
-        hostnameAllowlist: ["ollama.com"],
         allowedOrigins: ["https://ollama.com"],
         allowUnspecifiedIpv4Range: true,
       },
@@ -450,7 +447,6 @@ describe("ollama embedding provider", () => {
     expect(firstGuardedFetchCall()).toMatchObject({
       url: "http://127.0.0.1:11434/api/embed",
       policy: {
-        hostnameAllowlist: ["127.0.0.1"],
         allowedOrigins: ["http://127.0.0.1:11434"],
         allowUnspecifiedIpv4Range: true,
       },

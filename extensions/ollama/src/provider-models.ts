@@ -111,18 +111,19 @@ export function buildOllamaBaseUrlSsrFPolicy(baseUrl: string): SsrFPolicy | unde
  * Ordinary RFC1918 addresses are unaffected either way: the trusted-hostname policy
  * already allows those without either flag.
  *
- * Also sets `allowedOrigins` (distinct from `hostnameAllowlist`, which only gates whether
- * the request is attempted at all, and from a flat `allowedHostnames`, which is not
- * scoped to a specific port): `resolveHostnamePolicyChecks` runs an earlier, stricter
- * literal-hostname/IP check (`assertAllowedHostOrIpOrThrow`) for any hostname not
- * trusted via `allowedHostnames` or `allowPrivateNetwork` — that earlier check has no
- * `allowUnspecifiedIpv4Range` exemption and would reject a literal loopback/private-range
- * hostname (e.g. a configured `127.0.0.1` base URL) before DNS resolution ever runs.
- * `allowedOrigins` is re-evaluated against each URL inside the redirect loop
- * (`resolveSsrFPolicyForUrl` in src/infra/net/ssrf.ts) and only promotes the hostname
- * into that hop's trusted `allowedHostnames` when the *exact* configured origin
- * (scheme + host + port) matches — so a redirect to a different port on the same
- * hostname does not inherit this trust, unlike a flat hostname-only allowlist.
+ * Deliberately sets only `allowedOrigins`, not `hostnameAllowlist`: `allowedOrigins` is
+ * re-evaluated per URL inside the redirect loop (`resolveSsrFPolicyForUrl` in
+ * src/infra/net/ssrf.ts) — including the initial request, whose URL always matches its
+ * own origin — and promotes the hostname into that hop's trusted `allowedHostnames` only
+ * when the *exact* configured origin (scheme + host + port) matches, which is what skips
+ * the early literal-hostname/IP check (`assertAllowedHostOrIpOrThrow`) and grants the
+ * `allowUnspecifiedIpv4Range` exemption for the configured host. A static
+ * `hostnameAllowlist`, by contrast, is checked unconditionally on every hop
+ * (`resolveHostnamePolicyChecks`) regardless of origin match, so adding one here would
+ * block a redirect to a different public hostname that the prior origin-only policy
+ * (`ssrfPolicyFromHttpBaseUrlAllowedOrigin`) always allowed to fall through to ordinary
+ * SSRF checks — `allowedOrigins` alone preserves that redirect behavior while still
+ * scoping the private-network exemption to only the configured origin.
  */
 export function buildOllamaEmbeddingSsrFPolicy(baseUrl: string): SsrFPolicy | undefined {
   const target = parseOllamaHostnameAllowlistTarget(baseUrl);
@@ -130,7 +131,6 @@ export function buildOllamaEmbeddingSsrFPolicy(baseUrl: string): SsrFPolicy | un
     return undefined;
   }
   return {
-    hostnameAllowlist: [target.hostname],
     allowedOrigins: [target.origin],
     allowUnspecifiedIpv4Range: true,
   };
