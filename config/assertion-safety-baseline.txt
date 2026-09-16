@@ -46,8 +46,8 @@ extensions/browser/src/browser-proxy-envelope.ts	8
 extensions/browser/src/browser-proxy-upload.ts	2
 extensions/browser/src/browser-tool-binding.ts	3
 extensions/browser/src/browser-tool-session-tabs.ts	3
-extensions/browser/src/browser-tool.actions.ts	10
-extensions/browser/src/browser-tool.snapshot.ts	2
+extensions/browser/src/browser-tool.actions.ts	9
+extensions/browser/src/browser-tool.snapshot.ts	1
 extensions/browser/src/browser-tool.ts	6
 extensions/browser/src/browser/bridge-server.ts	2
 extensions/browser/src/browser/cdp-page-session.ts	3
@@ -56,9 +56,8 @@ extensions/browser/src/browser/cdp-websocket.ts	2
 extensions/browser/src/browser/cdp.helpers.ts	4
 extensions/browser/src/browser/cdp.ts	13
 extensions/browser/src/browser/chrome-mcp-routing.ts	1
-extensions/browser/src/browser/chrome-mcp-session.ts	1
 extensions/browser/src/browser/chrome-mcp-tabs.ts	1
-extensions/browser/src/browser/chrome.diagnostics.ts	2
+extensions/browser/src/browser/chrome.diagnostics.ts	1
 extensions/browser/src/browser/chrome.executables.ts	1
 extensions/browser/src/browser/chrome.profile-decoration.ts	1
 extensions/browser/src/browser/chrome.ts	4
@@ -90,7 +89,7 @@ extensions/browser/src/browser/routes/agent.act.normalize.ts	1
 extensions/browser/src/browser/routes/agent.act.shared.ts	3
 extensions/browser/src/browser/routes/agent.act.ts	1
 extensions/browser/src/browser/routes/agent.shared.ts	2
-extensions/browser/src/browser/routes/agent.snapshot.ts	8
+extensions/browser/src/browser/routes/agent.snapshot.ts	6
 extensions/browser/src/browser/routes/agent.storage.ts	2
 extensions/browser/src/browser/routes/basic.ts	6
 extensions/browser/src/browser/routes/permissions.ts	1
@@ -108,7 +107,7 @@ extensions/browser/src/browser/test-port.ts	1
 extensions/browser/src/browser/unhandled-rejections.ts	2
 extensions/browser/src/cli/browser-cli-actions-input/register.batch.ts	1
 extensions/browser/src/cli/browser-cli-inspect.ts	2
-extensions/browser/src/cli/browser-cli-manage.ts	3
+extensions/browser/src/cli/browser-cli-manage.ts	1
 extensions/browser/src/cli/browser-cli-shared.ts	1
 extensions/browser/src/cli/browser-cli-state.ts	1
 extensions/browser/src/gateway/browser-request.ts	4

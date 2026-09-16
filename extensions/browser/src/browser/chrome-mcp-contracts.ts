@@ -5,6 +5,7 @@ import { ErrorCode } from "@modelcontextprotocol/sdk/types.js";
 import { createAsyncLock } from "openclaw/plugin-sdk/async-lock-runtime";
 import type { SsrFPolicy } from "../infra/net/ssrf.js";
 import type { CdpActionTimeouts } from "./cdp.js";
+import type { ChromeMcpSessionOwner } from "./chrome-mcp-session.js";
 
 export type ChromeMcpStructuredPage = {
   id: number;
@@ -106,34 +107,15 @@ export type ChromeMcpOptionsInput =
 
 export type ChromeMcpSessionLease = {
   session: ChromeMcpSession;
-  cacheKey: string;
+  owner: ChromeMcpSessionOwner;
   temporary: boolean;
+  release: () => Promise<void>;
 };
 
 export type ChromeMcpSessionFactory = (
   profileName: string,
   options?: NormalizedChromeMcpProfileOptions,
 ) => Promise<ChromeMcpSession>;
-
-export type PendingChromeMcpSession = {
-  cacheKey: string;
-  id: symbol;
-  promise: Promise<ChromeMcpSession>;
-  cleanup: Promise<void>;
-  abortController: AbortController;
-  state: {
-    waiters: number;
-    settled: boolean;
-    session?: ChromeMcpSession;
-    cancelled: boolean;
-    cleanupSettled: boolean;
-  };
-};
-
-export type PendingChromeMcpSessionLease = {
-  session: ChromeMcpSession;
-  release: (closeIfLastWaiter: boolean) => Promise<boolean>;
-};
 
 /** One OS snapshot row: ancestry and immutable birth identity from the same read. */
 export type ChromeMcpProcessSnapshot = {
