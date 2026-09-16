@@ -8,7 +8,7 @@ import { subagentRuns } from "./subagent-registry-memory.js";
 /**
  * Subagent registry state persistence bridge.
  *
- * Merges process-local active runs with persisted SQLite state for cross-process readers.
+ * Merges live runs with retained SQLite rows under the process-local registry owner.
  */
 import {
   loadSubagentRunsForChildSessionFromSqlite,
@@ -29,15 +29,8 @@ import type {
 } from "./subagent-registry.types.js";
 import { collectSubagentSessionReadKeys } from "./subagent-session-read-scope.js";
 
-export const SUBAGENT_RUNS_READ_CACHE_TTL_MS = 500;
-
-type SubagentRunsSnapshot<T extends SubagentRunReadRecord> = {
-  loadedAtMs: number;
-  runs: Map<string, T>;
-};
-
 type SubagentRunsCache<T extends SubagentRunReadRecord> = {
-  snapshot?: SubagentRunsSnapshot<T>;
+  snapshot?: Map<string, T>;
   load: () => Map<string, T>;
   copy: (entry: SubagentRunRecord) => T;
   project: (entry: SubagentRunRecord) => T;
@@ -199,45 +192,33 @@ function rememberSubagentRunsSnapshot<T extends SubagentRunReadRecord>(
   cache: SubagentRunsCache<T>,
   runs: Map<string, SubagentRunRecord>,
   changedRunIds: readonly string[] | undefined,
-  loadedAtMs: number,
 ): void {
   const snapshot = cache.snapshot;
-  if (!changedRunIds || !snapshot) {
-    cache.snapshot = {
-      loadedAtMs,
-      runs: new Map([...runs].map(([runId, entry]) => [runId, cache.copy(entry)])),
-    };
+  if (!changedRunIds) {
+    cache.snapshot = new Map([...runs].map(([runId, entry]) => [runId, cache.copy(entry)]));
+    return;
+  }
+  // A keyed write may contain only live runs, not the retained rows in SQLite.
+  if (!snapshot) {
     return;
   }
   for (const runId of new Set(changedRunIds)) {
     const entry = runs.get(runId);
     if (entry) {
-      snapshot.runs.set(runId, cache.copy(entry));
+      snapshot.set(runId, cache.copy(entry));
     } else {
-      snapshot.runs.delete(runId);
+      snapshot.delete(runId);
     }
   }
-  snapshot.loadedAtMs = loadedAtMs;
 }
 
 function rememberPersistedSubagentRunsSnapshot(
   runs: Map<string, SubagentRunRecord>,
   changedRunIds?: readonly string[],
 ): void {
-  const loadedAtMs = Date.now();
-  rememberSubagentRunsSnapshot(persistedSubagentRunsReadCache, runs, changedRunIds, loadedAtMs);
-  rememberSubagentRunsSnapshot(
-    persistedSubagentSessionListRunsReadCache,
-    runs,
-    changedRunIds,
-    loadedAtMs,
-  );
-  rememberSubagentRunsSnapshot(
-    persistedSubagentMaintenanceRunsReadCache,
-    runs,
-    changedRunIds,
-    loadedAtMs,
-  );
+  rememberSubagentRunsSnapshot(persistedSubagentRunsReadCache, runs, changedRunIds);
+  rememberSubagentRunsSnapshot(persistedSubagentSessionListRunsReadCache, runs, changedRunIds);
+  rememberSubagentRunsSnapshot(persistedSubagentMaintenanceRunsReadCache, runs, changedRunIds);
 }
 
 /** Publishes registry rows already committed by a cross-owner shared-state transaction. */
@@ -258,28 +239,11 @@ function shouldReadPersistedSubagentRuns(): boolean {
   return !isVitestRuntimeEnv() || process.env.OPENCLAW_TEST_READ_SUBAGENT_RUNS_FROM_SQLITE === "1";
 }
 
-function getFreshPersistedSubagentRunsSnapshot<T extends SubagentRunReadRecord>(
-  cache: SubagentRunsCache<T>,
-  nowMs: number,
-): Map<string, T> | null {
-  const cached = cache.snapshot;
-  return cached &&
-    nowMs >= cached.loadedAtMs &&
-    nowMs - cached.loadedAtMs < SUBAGENT_RUNS_READ_CACHE_TTL_MS
-    ? cached.runs
-    : null;
-}
-
 function loadPersistedSubagentRunsForRead<T extends SubagentRunReadRecord>(
   cache: SubagentRunsCache<T>,
 ): Map<string, T> {
-  const nowMs = Date.now();
-  const cached = getFreshPersistedSubagentRunsSnapshot(cache, nowMs);
-  if (cached) {
-    return cached;
-  }
-  cache.snapshot = { loadedAtMs: nowMs, runs: cache.load() };
-  return cache.snapshot.runs;
+  // The registry owns live writes; replacement and restore replace this snapshot.
+  return (cache.snapshot ??= cache.load());
 }
 
 export function clearSubagentRunsReadCacheForTest(): void {
@@ -335,9 +299,7 @@ export function restoreSubagentRunsFromDisk(params: {
   mergeOnly?: boolean;
 }) {
   const restored = loadSubagentRegistryFromSqlite();
-  if (restored.size === 0) {
-    return 0;
-  }
+  rememberPersistedSubagentRunsSnapshot(restored);
   let added = 0;
   for (const [runId, entry] of restored.entries()) {
     if (!runId || !entry) {
@@ -356,6 +318,7 @@ export function restoreSubagentRunsFromDisk(params: {
     subagentRuns.commitOwnership(entry);
     added += 1;
   }
+  emitSubagentRegistryPersisted();
   return added;
 }
 
@@ -372,12 +335,8 @@ function getSubagentRunsSnapshot<T extends SubagentRunReadRecord>(
   const merged = new Map<string, T>();
   if (shouldReadPersistedSubagentRuns()) {
     try {
-      // Persisted state lets other worker processes observe active runs.
-      // Scoped reads use indexed SQL unless a fresh local write owns the result.
-      const cached =
-        scope?.load && !scope.fresh
-          ? getFreshPersistedSubagentRunsSnapshot(cache, Date.now())
-          : null;
+      // Scoped reads use indexed SQL until a complete owner snapshot is available.
+      const cached = scope?.load && !scope.fresh ? cache.snapshot : undefined;
       const persisted = scope?.load
         ? (cached?.values() ?? scope.load())
         : loadPersistedSubagentRunsForRead(cache).values();
@@ -476,9 +435,7 @@ function getSubagentSessionTreeSnapshot<T extends SubagentRunReadRecord>(
   if (!sessionKeys.some((key) => key.trim())) {
     return new Map();
   }
-  const cached = shouldReadPersistedSubagentRuns()
-    ? getFreshPersistedSubagentRunsSnapshot(cache, Date.now())
-    : null;
+  const cached = shouldReadPersistedSubagentRuns() ? cache.snapshot : undefined;
   let selected = collectSubagentSessionReadKeys(
     sessionKeys,
     cached?.values() ?? [],
@@ -493,11 +450,10 @@ function getSubagentSessionTreeSnapshot<T extends SubagentRunReadRecord>(
       if (cached) {
         return cached.values();
       }
-      const loadedAtMs = Date.now();
       const snapshot = load();
       // A tree covering every physical row may populate the existing full cache.
       if (snapshot.complete) {
-        cache.snapshot = { loadedAtMs, runs: snapshot.runs };
+        cache.snapshot = snapshot.runs;
       }
       selected = snapshot.sessionKeys;
       return snapshot.runs.values();
@@ -506,7 +462,7 @@ function getSubagentSessionTreeSnapshot<T extends SubagentRunReadRecord>(
   });
 }
 
-/** Exact rows share cache freshness while projecting only their complete requester trees. */
+/** Exact rows share the owner snapshot while projecting only their complete requester trees. */
 export function getSubagentSessionListRunsSnapshotForSessions(
   inMemoryRuns: Map<string, SubagentRunRecord>,
   sessionKeys: readonly string[],
@@ -546,7 +502,7 @@ export function getSubagentRunsSnapshotForController(
   });
 }
 
-/** Current-turn results bypass the hot-list cache without loading unrelated payloads. */
+/** Current-turn results use the owner snapshot or hydrate only their scoped payloads. */
 export function getSubagentRunsSnapshotForSession(
   inMemoryRuns: Map<string, SubagentRunRecord>,
   sessionKey: string,
@@ -557,7 +513,6 @@ export function getSubagentRunsSnapshotForSession(
   }
   return getSubagentRunsSnapshot(inMemoryRuns, persistedSubagentRunsReadCache, {
     load: () => loadSubagentRunsForSessionFromSqlite(key),
-    fresh: true,
     matches: (entry) =>
       entry.controllerSessionKey?.trim() === key || entry.requesterSessionKey.trim() === key,
   });
