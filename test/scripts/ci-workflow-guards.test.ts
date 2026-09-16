@@ -183,6 +183,7 @@ function evaluateWorkflowExpression(
     workflow?: string;
     workflowSha?: string;
     workflowToken?: string;
+    workspace?: string;
   },
 ) {
   if (typeof expression !== "string") {
@@ -231,6 +232,7 @@ function evaluateWorkflowExpression(
       sha: context.sha,
       workflow: context.workflow,
       workflow_sha: context.workflowSha,
+      workspace: context.workspace,
       token: context.workflowToken,
       event:
         context.githubEvent ??
@@ -14216,6 +14218,21 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
       (step: WorkflowStep) => step.name === "Lint Control UI window.open usage",
     );
     const test = ui.steps.find((step: WorkflowStep) => step.name === "Test Control UI");
+    const diagnostics = expectDefined(
+      ui.steps.find((step: WorkflowStep) => step.name === "Upload Control UI timeout diagnostics"),
+      "Control UI timeout diagnostic upload",
+    );
+    expect(ui.steps.indexOf(diagnostics)).toBeGreaterThan(ui.steps.indexOf(test));
+    expect(diagnostics).toMatchObject({
+      if: "failure()",
+      uses: UPLOAD_ARTIFACT_V7,
+      with: {
+        name: "control-ui-test-timeout-${{ matrix.shard }}-${{ github.run_attempt }}",
+        path: test.env.OPENCLAW_UI_E2E_DIAGNOSTIC_DIR,
+        "if-no-files-found": "ignore",
+        "retention-days": 7,
+      },
+    });
     const context = {
       eventName: scenario.frozenTarget ? "workflow_dispatch" : "pull_request",
       frozenTarget: scenario.frozenTarget,
@@ -14254,11 +14271,11 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
       ]);
     }
     for (const shard of scenario.shards) {
-      const rowContext = { ...context, matrix: { shard } };
+      const rowContext = { ...context, matrix: { shard }, workspace: root };
       const resolveValue = (value: unknown): string =>
-        typeof value === "string" && value.startsWith("${{")
-          ? String(evaluateWorkflowExpression(value, rowContext))
-          : String(value);
+        String(value).replace(/\$\{\{[\s\S]*?\}\}/gu, (expression) =>
+          String(evaluateWorkflowExpression(expression, rowContext)),
+        );
       expect(resolveValue(ui.name)).toBe(
         scenario.frozenTarget ? "checks-ui" : `checks-ui (${shard}/3)`,
       );
@@ -14272,6 +14289,9 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
         ]),
       );
       expect(env.OPENCLAW_NODE_TEST_PLAN_CONCURRENCY).toBe("1");
+      expect(env.OPENCLAW_UI_E2E_DIAGNOSTIC_DIR).toBe(
+        `${root}/.artifacts/control-ui-e2e-timeouts/ui-shard-${shard}-attempt-1`,
+      );
       const flags = [
         "--maxWorkers",
         "3",
@@ -14309,6 +14329,9 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
             runChild: async (args, childEnv) => {
               forwarded.push(args);
               expect(childEnv.OPENCLAW_TEST_PROJECTS_PARALLEL).toBe("1");
+              expect(childEnv.OPENCLAW_UI_E2E_DIAGNOSTIC_DIR).toBe(
+                resolveValue(diagnostics.with.path),
+              );
               return 0;
             },
           }),
