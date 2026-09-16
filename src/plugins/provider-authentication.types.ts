@@ -209,6 +209,7 @@ export type ProviderAuthMethod = {
 };
 
 export type ProviderPluginWizardSetup = {
+  modelTarget?: "utility";
   choiceId?: string;
   choiceLabel?: string;
   choiceHint?: string;

@@ -5,6 +5,7 @@ import type { ProviderAuthChoiceMetadata } from "../plugins/provider-auth-choice
 import type { ProviderInstallCatalogEntry } from "../plugins/provider-install-catalog.js";
 
 type SetupInferenceOptionPresentation = {
+  modelTarget?: "utility";
   /** Provider-auth choice id sent back to the selected setup operation. */
   id: string;
   /** Canonical provider identity for clients with bundled brand artwork. */
@@ -28,7 +29,7 @@ export type SetupInferenceAuthOption = SetupInferenceOptionPresentation & {
 
 type ChoicePresentationSource = Pick<
   ProviderAuthChoiceMetadata,
-  "choiceId" | "providerId" | "choiceLabel" | "choiceHint" | "icon" | "website"
+  "choiceId" | "providerId" | "choiceLabel" | "choiceHint" | "icon" | "website" | "modelTarget"
 >;
 
 function projectChoicePresentation(
@@ -37,6 +38,7 @@ function projectChoicePresentation(
 ): SetupInferenceOptionPresentation {
   return {
     id,
+    ...(choice.modelTarget ? { modelTarget: choice.modelTarget } : {}),
     brandId: choice.providerId,
     label: choice.choiceLabel,
     ...(choice.choiceHint?.trim() ? { hint: choice.choiceHint.trim() } : {}),
@@ -120,6 +122,7 @@ export function listSetupInferenceInstallOptions(
     options.set(entry.choiceId, {
       ...projectChoicePresentation({
         choiceId: entry.choiceId,
+        ...(entry.modelTarget ? { modelTarget: entry.modelTarget } : {}),
         providerId: entry.providerId,
         choiceLabel: entry.choiceLabel,
         choiceHint: entry.choiceHint,

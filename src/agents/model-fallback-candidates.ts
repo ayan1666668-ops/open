@@ -43,6 +43,7 @@ import {
   resolveModelRefFromString,
 } from "./model-selection-resolve.js";
 import { normalizeProviderModelIdWithRuntime } from "./provider-model-normalization.runtime.js";
+import { readUtilityModelSetting } from "./utility-model-setting.js";
 
 const MAX_FALLBACK_CANDIDATE_CACHE_ENTRIES = 256;
 const fallbackCandidateCache = new Map<string, ModelFallbackCandidate[]>();
@@ -223,6 +224,7 @@ function resolveFallbackCandidateContext(params: ModelCandidateChainParams) {
     fallbacksOverride: params.fallbacksOverride,
     agentsDefaultsModel: params.cfg?.agents?.defaults?.model,
     agentsDefaultsModels: params.cfg?.agents?.defaults?.models,
+    utilityModel: params.cfg ? readUtilityModelSetting(params.cfg, params.agentId) : undefined,
     modelProviders: resolveFallbackCandidateModelProviderCacheParts(params.cfg),
     pluginControlPlane: resolvePluginControlPlaneFingerprint({
       config: params.cfg,

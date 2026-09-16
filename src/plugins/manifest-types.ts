@@ -612,6 +612,8 @@ export type PluginManifestProviderAuthChoice = {
   method: string;
   /** Stable auth-choice id used by onboarding and other CLI auth flows. */
   choiceId: string;
+  /** Configure a utility model without replacing the regular agent primary. */
+  modelTarget?: "utility";
   /** Supported Gateway host platforms; omission allows all, an empty list allows none. */
   platforms?: NodeJS.Platform[];
   /** Optional user-facing choice label/hint for grouped onboarding UI. */

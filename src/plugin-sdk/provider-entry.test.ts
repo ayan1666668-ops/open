@@ -314,21 +314,21 @@ describe("defineSingleProviderPluginEntry", () => {
 
   it("merges manifest onboarding metadata with provider-owned wizard model policies", () => {
     const manifest = createProviderManifest();
+    const manifestChoice = {
+      ...manifest.providerAuthChoices[0]!,
+      assistantPriority: 4,
+      modelTarget: "utility",
+      assistantVisibility: "manual-only",
+      onboardingFeatured: true,
+      onboardingScopes: ["text-inference", "music-generation"],
+    };
     const entry = defineSingleProviderPluginEntry({
       id: "demo",
       name: "Demo Provider",
       description: "Demo provider plugin",
       manifest: {
         ...manifest,
-        providerAuthChoices: [
-          {
-            ...manifest.providerAuthChoices[0]!,
-            assistantPriority: 4,
-            assistantVisibility: "manual-only",
-            onboardingFeatured: true,
-            onboardingScopes: ["text-inference", "music-generation"],
-          },
-        ],
+        providerAuthChoices: [manifestChoice],
       },
       provider: {
         label: "Demo",
@@ -351,6 +351,7 @@ describe("defineSingleProviderPluginEntry", () => {
       groupLabel: "Demo providers",
       groupHint: "Manifest-owned setup",
       assistantPriority: 4,
+      modelTarget: "utility",
       assistantVisibility: "manual-only",
       onboardingFeatured: true,
       onboardingScopes: ["text-inference", "music-generation"],

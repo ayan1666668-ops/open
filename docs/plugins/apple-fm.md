@@ -7,9 +7,10 @@ title: "Apple Foundation Models"
 ---
 
 The bundled Apple Foundation Models plugin runs Apple's on-device model through
-the native Foundation Models framework. It is a free local option for lightweight
-setup and short tasks. For full agent sessions with large instructions, many
-tools, or long conversations, choose a model with a larger context window.
+the native Foundation Models framework. It is a free local **setup and utility**
+model. Setup saves it in `utilityModel` and preserves your regular agent model.
+When no primary model is configured, it can power the OpenClaw setup assistant.
+Choose a separate primary model before starting regular agent chat.
 
 ## Requirements
 
@@ -52,9 +53,21 @@ third-party executable, or accept license terms for you. If the tools are missin
 install Xcode or the appropriate Apple Command Line Tools and retry. The tools
 must include a macOS 27 SDK.
 
-OpenClaw's setup flow tests the selected inference route before making it active.
-The model reference is `apple-fm/system`; setup records the detected model name and
-context limit. No API key or provider auth profile is created.
+OpenClaw tests the selected utility route before saving it. The model reference
+is `apple-fm/system`; setup records the detected model name and context limit.
+No API key or provider auth profile is created. The native route uses the
+OpenClaw runtime even if your primary model uses a different agent runtime.
+
+On a fresh installation, onboarding opens the OpenClaw setup assistant. It can
+inspect configuration and help with channels and other setup. The interface keeps
+regular agent setup incomplete until you choose and verify a primary model in
+**Model Setup** or by rerunning `openclaw onboard`. Afterward, Apple remains the
+utility model; the system assistant follows the primary model normally.
+
+On an existing installation, choosing Apple changes only the utility selection
+and its provider configuration. Your primary model, fallbacks, and credentials
+are preserved. Explicit utility-model configuration can also be set per agent
+with `agents.entries.<id>.utilityModel`.
 
 Later discovery reuses the prepared helper and checks the current model again.
 To select Apple explicitly from a script:
@@ -70,10 +83,22 @@ OpenClaw's normal execution and approval flow. The helper is started for model
 requests; no HTTP server, launch agent, or separate model daemon is installed.
 OpenClaw retains ownership of tool execution and its normal approval checks.
 
+Utility calls power short internal tasks such as session titles and progress
+narration through OpenClaw's existing utility-model routing. Apple is not selected
+as the ordinary agent's primary model by onboarding.
+
 The model shares its context window across instructions, tool definitions,
 conversation, tool results, and output. The provider defaults to a maximum of
 1,024 output tokens per reply. A large workspace or a full agent prompt can exceed
-the window even before useful conversation history accumulates.
+the window even before useful conversation history accumulates. Keep setup
+questions focused; the small on-device model can be less reliable than a larger
+model on complex requests.
+
+Native generation supports closed objects, arrays, primitive types, enums,
+nullable values, and supported schema unions. String length and regex constraints
+remain enforced by OpenClaw after generation because Apple does not provide usable
+native guides for them. Structured responses are checked against the caller's
+original schema before publication. Unsupported structural schemas fail explicitly.
 
 ## Troubleshooting
 
@@ -83,8 +108,10 @@ the model download to finish. Retry setup after changing its availability.
 If the reported context window is below 8,192 tokens, choose another local or
 cloud model. OpenClaw does not inflate the model's advertised limit.
 
-If the native helper is missing after an update, rerun setup and select the
-detected Apple model to compile the helper matching the installed plugin.
-Ordinary inference never compiles code or installs dependencies.
+If the native helper is missing after an update, use **Recheck & repair** on the
+configured utility card in Model Setup, or rerun onboarding and select the
+detected Apple model. This compiles the helper matching the installed plugin and
+verifies the utility route again. Ordinary inference never compiles code or
+installs dependencies.
 
 See [Model providers](/concepts/model-providers) for other inference options.

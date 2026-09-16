@@ -125,6 +125,21 @@ describe("loadSystemAgentOverview", () => {
     expect(startup).not.toContain("typed commands as last resort");
   });
 
+  it("describes utility setup without claiming ordinary agent readiness", () => {
+    const overview = {
+      ...createOverview(),
+      setupModel: "fixture/small",
+      utilityModel: "fixture/small",
+    };
+    expect(formatSystemAgentStartupMessage(overview)).toContain("Setup model: fixture/small");
+    expect(formatSystemAgentStartupMessage(overview)).not.toContain("Inference is unavailable");
+    const welcome = formatSystemAgentOnboardingWelcome(overview);
+    expect(welcome).toContain("Verified setup model: fixture/small");
+    expect(welcome).toContain("Choose a primary model");
+    expect(welcome).not.toContain("Say `talk to agent`");
+    expect(formatSystemAgentOverview(overview)).toContain("Default model: not configured");
+  });
+
   it("describes post-inference onboarding as the start of remaining setup", () => {
     const overview = createOverview("openai/gpt-5.2");
 

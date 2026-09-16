@@ -5,10 +5,7 @@ import type {
   ProviderAuthMethodNonInteractiveContext,
   ProviderAuthResult,
 } from "openclaw/plugin-sdk/plugin-entry";
-import {
-  applyAgentDefaultModelPrimary,
-  ensureModelAllowlistEntry,
-} from "openclaw/plugin-sdk/provider-onboard";
+import { ensureModelAllowlistEntry } from "openclaw/plugin-sdk/provider-onboard";
 import {
   APPLE_FM_MIN_CONTEXT_WINDOW,
   APPLE_FM_MODEL_REF,
@@ -18,8 +15,8 @@ import {
 import type { AppleFmFacts, AppleFmNative } from "./native.js";
 
 const SETUP_NOTE =
-  "Apple Foundation Models runs on this Mac without an API key. Its small context window is best " +
-  "suited to lightweight setup and short tasks. Choose a larger model for full agent sessions.";
+  "Apple Foundation Models is your on-device setup and utility model, with no API key. " +
+  "Choose a separate primary model for regular agent conversations.";
 
 function requireUsableModel(facts: AppleFmFacts): void {
   if (!facts.available) {
@@ -45,6 +42,11 @@ function setupResult(facts: AppleFmFacts): ProviderAuthResult {
     notes: [SETUP_NOTE],
     configPatch: {
       models: { providers: { [APPLE_FM_PROVIDER_ID]: buildAppleFmProviderConfig(facts) } },
+      agents: {
+        defaults: {
+          models: { [APPLE_FM_MODEL_REF]: { agentRuntime: { id: "openclaw" } } },
+        },
+      },
     },
   };
 }
@@ -59,7 +61,7 @@ export async function detectAppleFmSetup(
   }
   return {
     modelRef: APPLE_FM_MODEL_REF,
-    detail: `${facts.modelName} · ${facts.contextWindow.toLocaleString("en-US")} tokens · on-device`,
+    detail: `${facts.modelName} · ${facts.contextWindow.toLocaleString("en-US")} tokens · on-device setup and utility`,
   };
 }
 
@@ -106,20 +108,31 @@ export async function configureAppleFmNonInteractive(
 ): Promise<OpenClawConfig> {
   const facts = await native.prepare();
   requireUsableModel(facts);
-  return applyAgentDefaultModelPrimary(
-    ensureModelAllowlistEntry({
-      cfg: {
-        ...ctx.config,
-        models: {
-          ...ctx.config.models,
-          providers: {
-            ...ctx.config.models?.providers,
-            [APPLE_FM_PROVIDER_ID]: buildAppleFmProviderConfig(facts),
+  return ensureModelAllowlistEntry({
+    cfg: {
+      ...ctx.config,
+      models: {
+        ...ctx.config.models,
+        providers: {
+          ...ctx.config.models?.providers,
+          [APPLE_FM_PROVIDER_ID]: buildAppleFmProviderConfig(facts),
+        },
+      },
+      agents: {
+        ...ctx.config.agents,
+        defaults: {
+          ...ctx.config.agents?.defaults,
+          utilityModel: APPLE_FM_MODEL_REF,
+          models: {
+            ...ctx.config.agents?.defaults?.models,
+            [APPLE_FM_MODEL_REF]: {
+              ...ctx.config.agents?.defaults?.models?.[APPLE_FM_MODEL_REF],
+              agentRuntime: { id: "openclaw" },
+            },
           },
         },
       },
-      modelRef: APPLE_FM_MODEL_REF,
-    }),
-    APPLE_FM_MODEL_REF,
-  );
+    },
+    modelRef: APPLE_FM_MODEL_REF,
+  });
 }

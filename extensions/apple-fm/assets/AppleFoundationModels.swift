@@ -85,6 +85,10 @@ private func dynamicSchema(_ schema: [String: Any], name: String) throws -> Dyna
         "items",
         "enum",
         "const",
+        "anyOf",
+        "default",
+        "minLength",
+        "maxLength",
         "minimum",
         "maximum",
         "minItems",
@@ -96,6 +100,23 @@ private func dynamicSchema(_ schema: [String: Any], name: String) throws -> Dyna
     ]
     if let key = schema.keys.sorted().first(where: { !supported.contains($0) }) {
         throw BridgeError("Unsupported schema keyword \(key) in \(name)")
+    }
+    if let alternatives = schema["anyOf"] {
+        let annotations: Set = ["anyOf", "title", "description", "default", "$schema"]
+        guard schema.keys.allSatisfy(annotations.contains),
+              let alternatives = alternatives as? [[String: Any]], !alternatives.isEmpty
+        else { throw BridgeError("Unsupported combined anyOf schema: \(name)") }
+        return try .init(name: name, anyOf: alternatives.enumerated().map { index, alternative in
+            try dynamicSchema(alternative, name: "\(name)_option\(index)")
+        })
+    }
+    if let types = schema["type"] as? [String] {
+        guard !types.isEmpty else { throw BridgeError("Schema type union is empty: \(name)") }
+        return try .init(name: name, anyOf: types.enumerated().map { index, type in
+            var alternative = schema
+            alternative["type"] = type
+            return try dynamicSchema(alternative, name: "\(name)_option\(index)")
+        })
     }
     let type = try string(schema["type"], "\(name).type")
     if let literal = schema["const"] {
@@ -146,8 +167,14 @@ private func dynamicSchema(_ schema: [String: Any], name: String) throws -> Dyna
         if let value = try number(schema["maximum"], "\(name).maximum") { guides.append(.maximum(value)) }
         return .init(type: Double.self, guides: guides)
     case "boolean": return .init(type: Bool.self)
+    case "null": return .null
     case "string":
-        // AFM rejects regex generation guides. OpenClaw still validates the original tool schema.
+        let minimum = try integer(schema["minLength"], "\(name).minLength") ?? 0
+        let maximum = try integer(schema["maxLength"], "\(name).maxLength")
+        guard minimum >= 0, maximum.map({ $0 >= minimum }) ?? true else {
+            throw BridgeError("Invalid string length bounds: \(name)")
+        }
+        // AFM has no length guides and rejects regex guides. Host validation retains these constraints.
         return .init(type: String.self)
     default: throw BridgeError("Unsupported schema type \(type) in \(name)")
     }

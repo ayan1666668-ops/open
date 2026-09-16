@@ -22,6 +22,7 @@ export type FlowOption<Value extends string = string> = {
   docs?: FlowDocsLink;
   assistantPriority?: number;
   assistantVisibility?: "visible" | "manual-only" | "detected-only";
+  modelTarget?: "utility";
 };
 
 /** Generic contribution envelope used by plugin/core setup surfaces. */

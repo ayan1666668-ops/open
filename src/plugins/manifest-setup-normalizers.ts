@@ -455,6 +455,7 @@ export function normalizeProviderAuthChoices(
       provider,
       method,
       choiceId,
+      ...(entry.modelTarget === "utility" ? { modelTarget: "utility" as const } : {}),
       ...(entry.platforms !== undefined
         ? { platforms: normalizeManifestPlatforms(entry.platforms) }
         : {}),

@@ -105,6 +105,27 @@ the matching model. The configured model and setup-complete state remain recorde
 an unavailable model does not turn an existing installation into fresh setup.
 Providers with an ordinary supported setup method retain their existing behavior.
 
+An optional `modelTarget: "utility"` uses the existing per-agent or default
+`utilityModel` setting; omission selects the primary role. Setup verifies the
+utility role without replacing a working primary or its runtime and credentials.
+If no regular primary is configured, the system setup assistant can use the
+explicit utility model. Automatic utility defaults never bootstrap setup. A regular
+primary takes precedence once configured, and ordinary agent readiness remains
+separate from utility setup.
+Explicit `provider-plugin:<provider>:<method>` choices retain the role declared
+for that same plugin, provider, and method. Runtime wizard metadata does not need
+to repeat the manifest's role.
+Bare provider choices also retain the role of the method selected by setup.
+An exact manifest choice ID still owns dispatch for unprefixed choices.
+
+Clients must echo `modelTarget: "utility"` when activating a utility choice.
+Missing or mismatched role acknowledgement is rejected before provider preparation,
+so older clients cannot accidentally treat a utility activation as primary-ready.
+Detection and successful activation/verification report the role. Detection keeps
+`configuredModel` and `setupComplete` primary-only, exposes an explicit `utilityModel`,
+and exposes `setupModel` only when that utility is the no-primary setup fallback.
+Verification accepts the utility target explicitly, including alongside a primary.
+
 When `appGuidedDiscovery` is true, the matching provider auth method must expose
 `appGuidedSetup.detect` and `appGuidedSetup.prepare`. Detection must be
 read-only: no login, model pull, download, or config write. Preparation rechecks

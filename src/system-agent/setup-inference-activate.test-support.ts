@@ -57,6 +57,8 @@ export async function fixture(
     codex?: boolean;
     subscription?: boolean;
     homeScope?: "agent" | "user";
+    modelTarget?: "utility";
+    primaryModel?: string;
   } = {},
 ) {
   const root = tempDirs.make("setup-activation-");
@@ -94,6 +96,9 @@ export async function fixture(
       entries: { main: { default: true } },
       defaults: {
         workspace,
+        ...(options.primaryModel
+          ? { model: { primary: options.primaryModel, fallbacks: ["stable/fallback"] } }
+          : {}),
         skipBootstrap: true,
         models: { [modelRef]: { agentRuntime: { id: "openclaw" } } },
       },
@@ -148,6 +153,7 @@ export async function fixture(
     methodId: "fixture-login",
     choiceId: "fixture-login",
     choiceLabel: "Fixture sign-in",
+    ...(options.modelTarget ? { modelTarget: options.modelTarget } : {}),
     ...(options.authMethod === "api_key"
       ? { appGuidedSecret: true }
       : { appGuidedAuth: "oauth" as const }),
@@ -294,12 +300,13 @@ export async function fixture(
     activationConfirmed?: true,
     overrides: Pick<
       ActivateSetupInferenceParams,
-      "apiKey" | "signal" | "onActivationCompletion"
+      "apiKey" | "signal" | "onActivationCompletion" | "modelTarget" | "modelRef"
     > = {},
   ) =>
     metadata.run(() =>
       activateSetupInference({
         kind,
+        ...(options.modelTarget ? { modelTarget: options.modelTarget } : {}),
         authChoice: choice.choiceId,
         modelRef,
         nativeSessionCatalogsEnabled: false,

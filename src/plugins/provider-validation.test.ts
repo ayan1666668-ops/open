@@ -103,6 +103,7 @@ describe("normalizeRegisteredProvider", () => {
             kind: "custom",
             wizard: {
               choiceId: " demo-primary ",
+              modelTarget: "utility",
               assistantVisibility: "detected-only",
               onboardingFeatured: true,
               modelAllowlist: {
@@ -147,6 +148,7 @@ describe("normalizeRegisteredProvider", () => {
             kind: "custom",
             wizard: {
               choiceId: "demo-primary",
+              modelTarget: "utility",
               assistantVisibility: "detected-only",
               onboardingFeatured: true,
               modelAllowlist: {

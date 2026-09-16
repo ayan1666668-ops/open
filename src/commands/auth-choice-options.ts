@@ -51,6 +51,7 @@ function resolveProviderChoiceOptions(params?: {
       {},
       { value: contribution.option.value as AuthChoice, label: contribution.option.label },
       { providerId: contribution.providerId },
+      contribution.option.modelTarget ? { modelTarget: contribution.option.modelTarget } : {},
       contribution.option.hint ? { hint: contribution.option.hint } : {},
       contribution.option.assistantPriority !== undefined
         ? { assistantPriority: contribution.option.assistantPriority }

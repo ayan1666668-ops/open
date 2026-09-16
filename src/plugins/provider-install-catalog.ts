@@ -51,6 +51,7 @@ type PreferredInstallSources = {
 type ProviderInstallCatalogChoiceFields = Pick<
   ProviderAuthChoiceMetadata,
   | "choiceHint"
+  | "modelTarget"
   | "assistantPriority"
   | "assistantVisibility"
   | "groupId"
@@ -203,6 +204,7 @@ function resolveProviderInstallCatalogChoiceFields(
 ): Partial<ProviderInstallCatalogChoiceFields> {
   return {
     ...(choice.choiceHint ? { choiceHint: choice.choiceHint } : {}),
+    ...(choice.modelTarget ? { modelTarget: choice.modelTarget } : {}),
     ...(choice.assistantPriority !== undefined
       ? { assistantPriority: choice.assistantPriority }
       : {}),
@@ -281,6 +283,7 @@ function resolveOfficialExternalProviderInstallCatalogEntries(params: {
           choiceLabel,
           ...resolveProviderInstallCatalogChoiceFields({
             choiceHint: choice.choiceHint,
+            modelTarget: choice.modelTarget,
             assistantPriority: choice.assistantPriority,
             assistantVisibility: choice.assistantVisibility,
             groupId: choice.groupId,

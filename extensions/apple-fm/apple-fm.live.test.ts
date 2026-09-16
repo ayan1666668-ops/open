@@ -2,10 +2,11 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { validateToolCall } from "openclaw/plugin-sdk/llm";
+import { validateToolCall, type Model } from "openclaw/plugin-sdk/llm";
 import { Type } from "typebox";
 import { expect, it } from "vitest";
 import { createAppleFmNative } from "./native.js";
+import { createAppleFmStream } from "./stream.js";
 
 const live =
   process.env.OPENCLAW_LIVE_TEST === "1" &&
@@ -24,10 +25,17 @@ it.runIf(live)(
       parameters: Type.Object({
         action: Type.Literal("connect_channel"),
         channel: Type.Literal("telegram"),
+        ids: Type.Array(Type.String({ minLength: 1, maxLength: 20 }), {
+          minItems: 1,
+          maxItems: 1,
+        }),
         sha256: Type.Optional(Type.String({ pattern: "^[a-fA-F0-9]{64}$" })),
       }),
     };
-    const user = { role: "user", content: "Use the setup tool to connect Telegram." };
+    const user = {
+      role: "user",
+      content: 'Use the setup tool to connect Telegram with ids ["primary"].',
+    };
     try {
       const detected = await native.probe(options);
       expect(detected?.available).toBe(true);
@@ -53,7 +61,7 @@ it.runIf(live)(
       }
       expect(call).toMatchObject({
         name: "setup",
-        arguments: { action: "connect_channel", channel: "telegram" },
+        arguments: { action: "connect_channel", channel: "telegram", ids: ["primary"] },
       });
       expect(validateToolCall([tool], { type: "toolCall", ...call })).toEqual(call.arguments);
       expect(() =>
@@ -61,6 +69,13 @@ it.runIf(live)(
           type: "toolCall",
           ...call,
           arguments: { ...call.arguments, sha256: "invalid" },
+        }),
+      ).toThrow();
+      expect(() =>
+        validateToolCall([tool], {
+          type: "toolCall",
+          ...call,
+          arguments: { ...call.arguments, ids: [""] },
         }),
       ).toThrow();
       const second = await native.run(
@@ -88,15 +103,49 @@ it.runIf(live)(
       expect(second.toolCalls).toEqual([]);
       expect(second.text.toLowerCase()).toContain("form");
       expect(second.inputTokens).toBeGreaterThan(first.inputTokens);
-      const structured = await native.run(
-        {
-          messages: [{ role: "user", content: "Report the status ready." }],
-          maxTokens: 64,
-          responseFormat: Type.Object({ status: Type.Literal("ready") }),
+      const model: Model<"openai-completions"> = {
+        id: "system",
+        name: facts.modelName,
+        provider: "apple-fm",
+        api: "openai-completions",
+        baseUrl: "http://127.0.0.1",
+        contextWindow: facts.contextWindow,
+        maxTokens: 256,
+        reasoning: false,
+        input: ["text"],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      };
+      const stream = createAppleFmStream({
+        run: (nativeRequest, runOptions) =>
+          native.run(nativeRequest, { ...options, ...runOptions }),
+      });
+      const responseFormat = {
+        type: "object",
+        properties: {
+          status: {
+            anyOf: [{ type: "string", minLength: 5, maxLength: 5 }, { type: "null" }],
+          },
+          note: { type: "string", default: "unused" },
         },
-        options,
-      );
-      expect(JSON.parse(structured.text)).toEqual({ status: "ready" });
+        required: ["status"],
+      };
+      for (const [prompt, status] of [
+        ["Report the status ready. Omit note.", "ready"],
+        ["Report the missing status as null. Omit note.", null],
+      ] as const) {
+        const structured = await stream(
+          model,
+          { messages: [{ role: "user", content: prompt, timestamp: 0 }] },
+          { maxTokens: 64, temperature: 0, responseFormat },
+        );
+        const result = await structured.result();
+        expect(result.stopReason, result.errorMessage).toBe("stop");
+        const text = result.content.find((block) => block.type === "text");
+        expect(text?.type).toBe("text");
+        if (text?.type === "text") {
+          expect(JSON.parse(text.text)).toEqual({ status });
+        }
+      }
     } finally {
       await fs.rm(directory, { recursive: true, force: true });
     }

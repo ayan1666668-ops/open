@@ -56,6 +56,51 @@ afterEach(async () => {
 });
 
 describe("setup activation credentials and configuration", () => {
+  it.each([
+    { target: "utility" as const, requested: undefined },
+    { target: undefined, requested: "utility" as const },
+  ])(
+    "rejects mismatched setup-role acknowledgement before login ($target/$requested)",
+    async ({ target, requested }) => {
+      const setup = await fixture({ modelTarget: target });
+      const result = await setup.activate("provider-auth", undefined, { modelTarget: requested });
+      expect(result).toMatchObject({ ok: false, status: "unavailable" });
+      expect(setup.login).not.toHaveBeenCalled();
+      expect(setup.run).not.toHaveBeenCalled();
+      expect(await fs.readFile(setup.configPath, "utf8")).toBe(setup.before);
+    },
+  );
+
+  it.each([
+    { primaryModel: undefined, fail: false },
+    { primaryModel: "stable/working-model", fail: false },
+    { primaryModel: "stable/working-model", fail: true },
+  ])(
+    "isolates utility activation from primary $primaryModel (failure: $fail)",
+    async ({ primaryModel, fail }) => {
+      const setup = await fixture({ modelTarget: "utility", primaryModel });
+      if (fail) {
+        setup.run.mockRejectedValueOnce(new Error("Utility inference unavailable"));
+      }
+      const result = await setup.activate();
+      expect(result, await setup.diagnostics(result)).toMatchObject({ ok: !fail });
+      const saved = await readConfigFileSnapshot();
+      expect(saved.sourceConfig.agents?.defaults?.model).toEqual(
+        setup.config.agents?.defaults?.model,
+      );
+      if (fail) {
+        expect(saved.sourceConfig.agents?.defaults?.utilityModel).toBeUndefined();
+      } else {
+        expect(result).toMatchObject({ modelTarget: "utility", modelRef });
+        expect(saved.sourceConfig.agents?.defaults?.utilityModel).toContain(modelRef);
+        expect(setup.run.mock.calls[0]?.[0]).toMatchObject({
+          provider: "openai",
+          model: "gpt-4.1-mini",
+        });
+      }
+    },
+  );
+
   it.each([true, false])(
     "signs in before verifying an isolated detected Codex installation (fresh: %s)",
     async (fresh) => {

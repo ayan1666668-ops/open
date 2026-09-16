@@ -1,10 +1,90 @@
 // Verifies configured model ref resolution and OpenRouter compatibility aliases.
+import { expectDefined } from "@openclaw/normalization-core";
 import { describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../config/types.js";
 import {
   resolveAllowedModelRefCore,
   resolveConfiguredModelRef,
 } from "./model-selection-resolve.js";
+import { makeProviderModelFixture } from "./test-helpers/provider-model-fixture.js";
+
+describe("implicit primary selection with an explicit utility model", () => {
+  const provider = "local-utility";
+  function config(): OpenClawConfig {
+    return {
+      agents: {
+        defaults: {
+          utilityModel: `${provider}/small`,
+          models: { [`${provider}/small`]: { alias: "helper" } },
+        },
+        entries: { worker: {} },
+      },
+      models: {
+        providers: {
+          [provider]: {
+            baseUrl: "http://127.0.0.1:9/v1",
+            models: [
+              makeProviderModelFixture({
+                id: "small",
+                provider,
+                api: "openai-completions",
+                baseUrl: "http://127.0.0.1:9/v1",
+              }),
+            ],
+          },
+        },
+      },
+    };
+  }
+  function resolve(cfg: OpenClawConfig, agentId?: string) {
+    return resolveConfiguredModelRef({
+      cfg,
+      agentId,
+      defaultProvider: "ordinary",
+      defaultModel: "primary",
+      allowManifestNormalization: false,
+      allowPluginNormalization: false,
+    });
+  }
+
+  it.each(["local-utility/small", " Local-Utility/small@utility:setup ", "helper@utility:setup"])(
+    "does not promote the explicit utility ref %s to primary",
+    (utilityModel) => {
+      const cfg = config();
+      expectDefined(cfg.agents?.defaults, "default agent config").utilityModel = utilityModel;
+      expect(resolve(cfg)).toEqual({ provider: "ordinary", model: "primary" });
+      expect(resolve(cfg, "worker")).toEqual({ provider: "ordinary", model: "primary" });
+    },
+  );
+
+  it.each([
+    { utilityModel: "helper@agent", expectedProvider: "ordinary", expectedModel: "primary" },
+    { utilityModel: "other/small", expectedProvider: provider, expectedModel: "small" },
+    { utilityModel: "", expectedProvider: provider, expectedModel: "small" },
+  ])("honors the agent utility override $utilityModel", (scenario) => {
+    const cfg = config();
+    expectDefined(cfg.agents?.entries?.worker, "worker config").utilityModel =
+      scenario.utilityModel;
+    expect(resolve(cfg, "worker")).toEqual({
+      provider: scenario.expectedProvider,
+      model: scenario.expectedModel,
+    });
+    expect(resolve(cfg)).toEqual({ provider: "ordinary", model: "primary" });
+  });
+
+  it.each(["defaults", "agent"])(
+    "preserves an explicit utility model chosen as %s primary",
+    (scope) => {
+      const cfg = config();
+      const owner = expectDefined(
+        scope === "defaults" ? cfg.agents?.defaults : cfg.agents?.entries?.worker,
+        "model config owner",
+      );
+      owner.model = { primary: `${provider}/small@primary:chosen`, fallbacks: ["ordinary/backup"] };
+      expect(resolve(cfg, "worker")).toEqual({ provider, model: "small" });
+    },
+  );
+});
 
 describe("model-selection-resolve OpenRouter compat aliases", () => {
   it("keeps inherited policy aliases bound to default metadata for per-agent selection", () => {

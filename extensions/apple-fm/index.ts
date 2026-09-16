@@ -28,6 +28,7 @@ export default defineSingleProviderPluginEntry({
           id: "local",
           label: "Apple Foundation Models (on-device)",
           kind: "custom",
+          wizard: { modelTarget: "utility" },
           run: async (ctx) => (await loadSetup()).runAppleFmSetup(ctx, await loadNative()),
           runNonInteractive: async (ctx) =>
             (await loadSetup()).configureAppleFmNonInteractive(ctx, await loadNative()),

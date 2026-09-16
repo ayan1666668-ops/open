@@ -2577,6 +2577,23 @@ export const en: TranslationMap & {
       stayHere: "Stay in settings",
       configuredModel: "Configured model",
     },
+    utility: {
+      role: "Setup & utility",
+      hint: "Helps set up OpenClaw and handles lightweight tasks. Regular chats need a primary model.",
+      useSetup: "Use for setup",
+      useUtility: "Use as utility",
+      ready: "Setup & utility model ready",
+      configured: "Setup & utility model",
+      verified:
+        "OpenClaw received a real reply from {modelRef}. This model is ready for setup and lightweight tasks.",
+      model: "Utility model",
+      choosePrimary:
+        "Choose a primary model below for regular chats. Your setup assistant remains available.",
+      primaryReady:
+        "This model handles setup and lightweight tasks. Regular chats use your primary model.",
+      openAssistant: "Open setup assistant",
+      repair: "Recheck & repair",
+    },
     failure: {
       auth: "Authentication failed",
       rateLimit: "Rate limited",

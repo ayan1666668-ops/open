@@ -4,28 +4,26 @@
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { getCurrentPluginMetadataSnapshot } from "../plugins/current-plugin-metadata-snapshot.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
-import { resolveAgentConfig, resolveAgentEffectiveModelPrimary } from "./agent-scope.js";
+import { resolveAgentEffectiveModelPrimary } from "./agent-scope.js";
 import { splitTrailingAuthProfile } from "./model-ref-profile.js";
 import { resolveDefaultModelForAgent } from "./model-selection.js";
+import { readUtilityModelSetting } from "./utility-model-setting.js";
 
-type UtilityModelSetting =
-  | { kind: "explicit"; modelRef: string }
-  | { kind: "disabled" }
-  | { kind: "auto" };
-
-/**
- * Reads the configured utility-model setting. A defined-but-empty value is an
- * explicit opt-out ("disabled"), distinct from unset ("auto"); the agent-level
- * value wins over defaults even when it is the empty string.
- */
-export function readUtilityModelSetting(cfg: OpenClawConfig, agentId: string): UtilityModelSetting {
-  const value =
-    resolveAgentConfig(cfg, agentId)?.utilityModel ?? cfg.agents?.defaults?.utilityModel;
-  if (value === undefined) {
-    return { kind: "auto" };
+/** Setup can use an explicit utility model until the agent has its own primary. */
+export function resolveConfiguredSetupModelForAgent(params: {
+  cfg: OpenClawConfig;
+  agentId: string;
+  /** An explicit utility selection is used only to verify that configuration role. */
+  modelTarget?: "utility";
+}): { modelRef: string; modelTarget?: "utility" } | undefined {
+  const primary = resolveAgentEffectiveModelPrimary(params.cfg, params.agentId)?.trim();
+  if (primary && params.modelTarget !== "utility") {
+    return { modelRef: primary };
   }
-  const trimmed = value.trim();
-  return trimmed ? { kind: "explicit", modelRef: trimmed } : { kind: "disabled" };
+  const utility = readUtilityModelSetting(params.cfg, params.agentId);
+  return utility.kind === "explicit"
+    ? { modelRef: utility.modelRef, modelTarget: "utility" }
+    : undefined;
 }
 
 /**

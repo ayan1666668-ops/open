@@ -26,6 +26,7 @@ import { applyAuthProfileConfig } from "./provider-auth-helpers.js";
 import { runProviderPluginAuthMethodUnpersisted } from "./provider-auth-method.js";
 import { persistProviderAuthProfileBatch } from "./provider-auth-persistence.js";
 import { resolveProviderInstallCatalogEntry } from "./provider-install-catalog.js";
+import { buildProviderPluginMethodChoice } from "./provider-plugin-choice.js";
 import type {
   ProviderAuthMethod,
   ProviderAuthOptionBag,
@@ -53,6 +54,8 @@ type ApplyProviderAuthChoiceParams = {
 type ApplyProviderAuthChoiceResult = {
   config: OpenClawConfig;
   agentModelOverride?: string;
+  utilityModelOverride?: string;
+  modelTarget?: "utility";
   retrySelection?: boolean;
 };
 
@@ -407,6 +410,25 @@ export async function prepareAuthChoiceLoadedPluginProvider<T>(
         env: params.env,
         includeUntrustedWorkspacePlugins: false,
       });
+      const resolveChoice = (providers: ProviderPlugin[], config: OpenClawConfig) =>
+        resolveProviderPluginChoice({
+          providers,
+          choice: params.authChoice,
+          manifestChoice: manifestAuthChoice ?? installCatalogEntry,
+          resolveManifestMethodChoice: (provider, method) =>
+            provider.pluginId
+              ? resolveManifestProviderAuthChoice(
+                  buildProviderPluginMethodChoice(provider.id, method.id),
+                  {
+                    config,
+                    workspaceDir,
+                    env: params.env,
+                    pluginId: provider.pluginId,
+                    includeUntrustedWorkspacePlugins: false,
+                  },
+                )
+              : undefined,
+        });
       const choicePlugin = manifestAuthChoice
         ? { pluginId: manifestAuthChoice.pluginId, label: manifestAuthChoice.choiceLabel }
         : installCatalogEntry
@@ -467,18 +489,10 @@ export async function prepareAuthChoiceLoadedPluginProvider<T>(
       let providers = setupProvider
         ? [withProviderPluginId(setupProvider, manifestAuthChoice!.pluginId)]
         : resolveScopedRuntimeProviders(enabledConfig);
-      let resolved = resolveProviderPluginChoice({
-        providers,
-        choice: params.authChoice,
-        manifestChoice: manifestAuthChoice ?? installCatalogEntry,
-      });
+      let resolved = resolveChoice(providers, enabledConfig);
       if (!resolved && setupProvider) {
         providers = resolveScopedRuntimeProviders(enabledConfig);
-        resolved = resolveProviderPluginChoice({
-          providers,
-          choice: params.authChoice,
-          manifestChoice: manifestAuthChoice ?? installCatalogEntry,
-        });
+        resolved = resolveChoice(providers, enabledConfig);
       }
       if (!resolved && installCatalogEntry) {
         const { ensureOnboardingPluginInstalled } =
@@ -513,13 +527,7 @@ export async function prepareAuthChoiceLoadedPluginProvider<T>(
         // Installer facts need a fresh view without replacing the Gateway's inventory.
         cache = installedCache;
         providers = resolveScopedRuntimeProviders(nextConfig, pendingPluginInstalls);
-        resolved = withPluginCache(cache, () =>
-          resolveProviderPluginChoice({
-            providers,
-            choice: params.authChoice,
-            manifestChoice: manifestAuthChoice ?? installCatalogEntry,
-          }),
-        );
+        resolved = withPluginCache(cache, () => resolveChoice(providers, nextConfig));
       }
       if (!resolved) {
         return nextConfig === params.config
@@ -563,6 +571,21 @@ export async function prepareAuthChoiceLoadedPluginProvider<T>(
     let agentModelOverride: string | undefined;
     if (applied.defaultModel) {
       const selectedModel = applied.defaultModel;
+      if (resolved.wizard?.modelTarget === "utility") {
+        return await consume(
+          {
+            config: restoreConfiguredPrimaryModel(nextConfig, params.config),
+            modelTarget: "utility",
+            utilityModelOverride: selectedModel,
+            ...(prepared.pendingPluginInstalls
+              ? { pendingPluginInstalls: prepared.pendingPluginInstalls }
+              : {}),
+            authProfiles: applied.authProfiles,
+            persistAuthProfiles: applied.persistAuthProfiles,
+          },
+          resolved.provider,
+        );
+      }
       const selectedModelDisplay = formatModelRefForDisplay(selectedModel, resolved.provider);
       if (params.setDefaultModel) {
         const defaultModelConfig = await applyDefaultModelFromAuthChoice({
@@ -637,6 +660,9 @@ export async function applyAuthChoiceLoadedPluginProvider(
   await prepared.persistAuthProfiles();
   return {
     config: prepared.config,
+    ...(prepared.utilityModelOverride
+      ? { utilityModelOverride: prepared.utilityModelOverride, modelTarget: prepared.modelTarget }
+      : {}),
     ...(prepared.agentModelOverride ? { agentModelOverride: prepared.agentModelOverride } : {}),
     ...(prepared.retrySelection ? { retrySelection: true } : {}),
   };

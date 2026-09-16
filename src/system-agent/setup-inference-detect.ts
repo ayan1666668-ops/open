@@ -6,6 +6,8 @@ import { resolveAgentDir, resolveAgentEffectiveModelPrimary } from "../agents/ag
 import { loadAuthProfileStoreWithoutExternalProfiles } from "../agents/auth-profiles/store-runtime.js";
 import { areRuntimeModelRefsEquivalent } from "../agents/model-runtime-aliases.js";
 import { resolveModelRuntimePolicy } from "../agents/model-runtime-policy.js";
+import { readUtilityModelSetting } from "../agents/utility-model-setting.js";
+import { resolveConfiguredSetupModelForAgent } from "../agents/utility-model.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { formatErrorMessage, toErrorObject } from "../infra/errors.js";
 import { enablePluginInConfig } from "../plugins/enable.js";
@@ -50,7 +52,7 @@ async function listSavedSetupInferenceCandidates(params: {
   deps: DetectSetupInferenceDeps;
   signal: AbortSignal;
 }): Promise<SetupInferenceCandidate[]> {
-  const { withSetupProviderAuthMethod } = await import("./setup-inference-credentials.js");
+  const { withSetupProviderAuthMethod } = await import("./setup-provider-method.js");
   const agentDir = resolveAgentDir(params.cfg, params.agentId);
   const store = loadAuthProfileStoreWithoutExternalProfiles(agentDir);
   const candidates: SetupInferenceCandidate[] = [];
@@ -80,6 +82,7 @@ async function listSavedSetupInferenceCandidates(params: {
     }
     candidates.push({
       kind: toSavedAuthSetupKind(profileId),
+      ...(choice?.modelTarget ? { modelTarget: choice.modelTarget } : {}),
       modelRef,
       brandId: choice?.providerId ?? credential.provider,
       label: `Saved ${choice?.choiceLabel ?? credential.provider} sign-in`,
@@ -163,6 +166,24 @@ async function prepareSetupInferenceOptions(deps: DetectSetupInferenceDeps, agen
     (choice) => !authChoices.includes(choice),
   );
   const setupComplete = Boolean(resolveAgentEffectiveModelPrimary(cfg, targetAgentId));
+  const setupSelection = resolveConfiguredSetupModelForAgent({ cfg, agentId: targetAgentId });
+  const utilitySetting = readUtilityModelSetting(cfg, targetAgentId);
+  let utilityModel: string | undefined;
+  if (utilitySetting.kind === "explicit") {
+    const { resolveSimpleCompletionSelectionForAgent } =
+      await import("../agents/simple-completion-runtime.js");
+    const selection = resolveSimpleCompletionSelectionForAgent({
+      cfg,
+      agentId: targetAgentId,
+      modelRef: utilitySetting.modelRef,
+      manifestPlugins: pluginMetadataSnapshot,
+    });
+    // Bind candidates and repair actions to execution identity; keep the authored
+    // alias and auth-profile suffix unchanged in the source configuration.
+    if (selection) {
+      utilityModel = `${selection.provider}/${selection.modelId}`;
+    }
+  }
   const installOptions = listSetupInferenceInstallOptions(
     resolveProviderInstallCatalogEntries({
       config: cfg,
@@ -192,6 +213,10 @@ async function prepareSetupInferenceOptions(deps: DetectSetupInferenceDeps, agen
     metadataSnapshot: pluginMetadataSnapshot,
   });
   const manual = {
+    ...(utilityModel ? { utilityModel } : {}),
+    ...(utilityModel && setupSelection?.modelTarget === "utility"
+      ? { setupModel: utilityModel }
+      : {}),
     manualProviders: listSetupInferenceManualProviders(authChoices),
     authOptions,
     prepareOptions: listSetupInferencePrepareOptions(authChoices),
@@ -215,7 +240,13 @@ export async function listManualSetupInferenceOptions(
 ): Promise<
   Pick<
     SetupInferenceDetection,
-    "manualProviders" | "authOptions" | "prepareOptions" | "workspace" | "setupComplete"
+    | "manualProviders"
+    | "authOptions"
+    | "prepareOptions"
+    | "workspace"
+    | "setupComplete"
+    | "setupModel"
+    | "utilityModel"
   >
 > {
   return (await prepareSetupInferenceOptions(deps, agentId)).manual;
@@ -347,6 +378,17 @@ async function discoverSetupInference(
     ),
   );
   candidates.push(...savedCandidates);
+  if (!configuredModel && manual.setupModel) {
+    candidates.push({
+      kind: "existing-model",
+      modelTarget: "utility",
+      modelRef: manual.setupModel,
+      label: "Configured setup utility",
+      detail: `${manual.setupModel} — regular agent model still needed`,
+      recommended: false,
+      credentials: true,
+    });
+  }
   const pendingCandidates = candidates.filter(requiresDetection);
   const offeredCandidates = candidates.filter((candidate) => !requiresDetection(candidate));
   onPartial({
@@ -399,6 +441,7 @@ async function discoverSetupInference(
               label: choice.choiceLabel,
               detail: candidate.detail?.trim() || "available locally",
               modelRef: candidate.modelRef,
+              ...(choice.modelTarget ? { modelTarget: choice.modelTarget } : {}),
               recommended: false as const,
               credentials: true,
             },

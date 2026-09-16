@@ -11,6 +11,7 @@ import { normalizeAgentId, normalizeAgentIdStrict } from "../routing/session-key
 type SystemAgentModelSelectionParams = {
   config: OpenClawConfig;
   model: string;
+  modelTarget?: "utility";
   /** Write the model onto this configured agent instead of the default route. */
   targetAgentId?: string;
   agentRuntimeId?: string;
@@ -43,10 +44,14 @@ function applySystemAgentModelSelectionWithModules(
   if (targetAgentId && !roster.some((entry) => normalizeAgentId(entry.id) === targetAgentId)) {
     throw new Error(`Could not resolve configured agent "${targetAgentId}".`);
   }
-  // A targeted selection always lands on the agent entry; the default-route
-  // selection only writes the agent when it already carries an explicit model.
+  // Explicit fleets keep utility selections on their agent; legacy default-route
+  // selections stay global until that agent authors its own override.
   const writesAgent = Boolean(
-    targetAgentId || agentScope.resolveAgentExplicitModelPrimary(nextConfig, agentId),
+    targetAgentId ||
+    (params.modelTarget === "utility"
+      ? nextConfig.agents?.ownership === "explicit" ||
+        agentScope.resolveAgentConfig(nextConfig, agentId)?.utilityModel !== undefined
+      : agentScope.resolveAgentExplicitModelPrimary(nextConfig, agentId)),
   );
   const target = modelConfig.resolveModelTarget({ raw: params.model, cfg: nextConfig });
   const key = modelConfig.upsertCanonicalModelConfigEntry({}, target);
@@ -91,7 +96,7 @@ function applySystemAgentModelSelectionWithModules(
       agentRuntime: { id: params.agentRuntimeId },
     };
     runtimeTarget.models = agentModels;
-  } else {
+  } else if (params.modelTarget !== "utility") {
     const clearRuntimePin = (
       models: Record<string, AgentModelEntryConfig>,
     ): Record<string, AgentModelEntryConfig> => {
@@ -111,9 +116,17 @@ function applySystemAgentModelSelectionWithModules(
     }
   }
   const selectedModel = params.authProfileId ? `${key}@${params.authProfileId}` : key;
-  agentScope.setAgentEffectiveModelPrimary(nextConfig, agentId, selectedModel, {
-    forceAgent: Boolean(targetAgentId),
-  });
+  if (params.modelTarget === "utility") {
+    if (writesAgent && agent) {
+      agent.utilityModel = selectedModel;
+    } else {
+      agentDefaults.utilityModel = selectedModel;
+    }
+  } else {
+    agentScope.setAgentEffectiveModelPrimary(nextConfig, agentId, selectedModel, {
+      forceAgent: Boolean(targetAgentId),
+    });
+  }
   if (params.agentRuntimeId) {
     const effectiveRuntime = runtimePolicy.resolveModelRuntimePolicy({
       config: nextConfig,

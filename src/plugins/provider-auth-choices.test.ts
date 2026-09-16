@@ -254,6 +254,65 @@ describe("provider auth choice manifest helpers", () => {
     });
   });
 
+  it("resolves explicit method identity before a conflicting manifest choice ID", () => {
+    const explicitChoice = "provider-plugin:Demo:LOCAL";
+    setManifestPlugins([
+      createManifestPlugin("demo-plugin", [
+        {
+          provider: "demo",
+          method: "local",
+          choiceId: "demo-local",
+          modelTarget: "utility",
+        },
+        {
+          provider: "demo",
+          method: "remote",
+          choiceId: "demo-remote",
+        },
+      ]),
+      createManifestPlugin("other-plugin", [
+        {
+          provider: "other",
+          method: "remote",
+          choiceId: explicitChoice,
+        },
+      ]),
+    ]);
+    expect(resolveManifestProviderAuthChoice(explicitChoice)).toMatchObject({
+      pluginId: "demo-plugin",
+      providerId: "demo",
+      methodId: "local",
+      choiceId: "demo-local",
+      modelTarget: "utility",
+    });
+    expect(resolveManifestProviderAuthChoice("provider-plugin:demo:remote")).toMatchObject({
+      pluginId: "demo-plugin",
+      providerId: "demo",
+      methodId: "remote",
+      choiceId: "demo-remote",
+    });
+    expect(resolveManifestProviderAuthChoice("provider-plugin:demo:missing")).toBeUndefined();
+  });
+
+  it("binds post-dispatch method metadata to the selected plugin despite ambiguous provider declarations", () => {
+    setManifestPlugins(
+      ["selected", "other"].map((id) =>
+        createManifestPlugin(id, [
+          {
+            provider: "demo",
+            method: "local",
+            choiceId: `${id}-local`,
+            ...(id === "selected" ? { modelTarget: "utility" } : {}),
+          },
+        ]),
+      ),
+    );
+    expect(resolveManifestProviderAuthChoice("provider-plugin:demo:local")).toBeUndefined();
+    expect(
+      resolveManifestProviderAuthChoice("provider-plugin:demo:local", { pluginId: "selected" }),
+    ).toMatchObject({ pluginId: "selected", modelTarget: "utility" });
+  });
+
   it("keeps descriptor setup fallback out of executable declared choices", () => {
     setManifestPlugins([
       {

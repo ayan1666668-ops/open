@@ -11,6 +11,7 @@ export type AuthChoiceOption = {
   groupHint?: string;
   assistantPriority?: number;
   assistantVisibility?: "visible" | "manual-only" | "detected-only";
+  modelTarget?: "utility";
   onboardingFeatured?: boolean;
 };
 

@@ -12,6 +12,7 @@ import {
   prepareAuthChoiceLoadedPluginProvider,
   runProviderPluginAuthMethod,
 } from "../plugins/provider-auth-choice.js";
+import { resolveProviderPluginChoiceCore } from "../plugins/provider-wizard.js";
 import { createColdPluginFixture } from "../plugins/test-helpers/cold-plugin-fixtures.js";
 import type { ProviderPlugin, ProviderAuthMethod } from "../plugins/types.js";
 import { withTestDir } from "../test-helpers/temp-dir.js";
@@ -36,7 +37,7 @@ const resolvePluginSetupProvider = vi.hoisted(() =>
   vi.fn<ResolvePluginSetupProvider>(() => undefined),
 );
 const resolveProviderPluginChoice = vi.hoisted(() =>
-  vi.fn<() => { provider: ProviderPlugin; method: ProviderAuthMethod } | null>(),
+  vi.fn<typeof import("../plugins/provider-wizard.js").resolveProviderPluginChoiceCore>(),
 );
 const runProviderModelSelectedHook = vi.hoisted(() => vi.fn(async () => {}));
 vi.mock("../plugins/provider-auth-choice.runtime.js", () => ({
@@ -413,6 +414,55 @@ describe("applyAuthChoiceLoadedPluginProvider", () => {
     });
     expect(runProviderModelSelectedHook).not.toHaveBeenCalled();
   });
+
+  it.each(
+    [true, false].flatMap((setDefaultModel) =>
+      ["explicit", "provider"].map((syntax) => ({ setDefaultModel, syntax })),
+    ),
+  )(
+    "keeps $syntax manifest-only utility choices out of primary overrides (set default: $setDefaultModel)",
+    async ({ setDefaultModel, syntax }) => {
+      const provider = { ...buildProvider(), pluginId: "local-provider-plugin" };
+      const explicitChoice = `provider-plugin:${provider.id}:${LOCAL_AUTH_METHOD_ID}`;
+      const authChoice = syntax === "explicit" ? explicitChoice : provider.id;
+      resolveManifestProviderAuthChoice.mockImplementation((choice) =>
+        choice === explicitChoice
+          ? {
+              pluginId: provider.pluginId,
+              providerId: provider.id,
+              methodId: LOCAL_AUTH_METHOD_ID,
+              choiceId: "friendly-utility-choice",
+              choiceLabel: LOCAL_PROVIDER_LABEL,
+              modelTarget: "utility",
+            }
+          : undefined,
+      );
+      resolvePluginSetupProvider.mockReturnValue(provider);
+      resolvePluginProviders.mockReturnValue([provider]);
+      resolveProviderPluginChoice.mockImplementationOnce(resolveProviderPluginChoiceCore);
+      const config = { agents: { defaults: { model: "stable/working-model" } } };
+      const result = await applyAuthChoiceLoadedPluginProvider(
+        buildParams({ authChoice, config, setDefaultModel }),
+      );
+      expect(result?.config.agents?.defaults?.model).toBe("stable/working-model");
+      expect(result?.agentModelOverride).toBeUndefined();
+      expect(result).toMatchObject({
+        utilityModelOverride: LOCAL_DEFAULT_MODEL,
+        modelTarget: "utility",
+      });
+      expect(runProviderModelSelectedHook).not.toHaveBeenCalled();
+      expect(resolveManifestProviderAuthChoice).toHaveBeenCalledWith(
+        authChoice,
+        expect.any(Object),
+      );
+      if (syntax === "provider") {
+        expect(resolveManifestProviderAuthChoice).toHaveBeenCalledWith(
+          explicitChoice,
+          expect.objectContaining({ pluginId: provider.pluginId }),
+        );
+      }
+    },
+  );
 
   it("keeps provider config patches when default model application is deferred", async () => {
     const provider: ProviderPlugin = {

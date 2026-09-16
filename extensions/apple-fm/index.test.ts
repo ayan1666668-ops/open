@@ -220,13 +220,11 @@ describe("Apple Foundation Models setup", () => {
     expect(updated?.auth).toEqual(before.auth);
     expect(updated?.models?.mode).toBe("replace");
     expect(updated?.models?.providers?.existing).toEqual(before.models?.providers?.existing);
-    expect(updated?.agents?.defaults?.model).toEqual({
-      primary: "apple-fm/system",
-      fallbacks: ["backup/model"],
-    });
+    expect(updated?.agents?.defaults?.model).toEqual(before.agents?.defaults?.model);
+    expect(updated?.agents?.defaults?.utilityModel).toBe("apple-fm/system");
     expect(updated?.agents?.defaults?.models).toEqual({
       ...before.agents?.defaults?.models,
-      "apple-fm/system": {},
+      "apple-fm/system": { agentRuntime: { id: "openclaw" } },
     });
   });
 

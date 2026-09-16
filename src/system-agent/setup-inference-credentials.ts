@@ -10,9 +10,6 @@ import { normalizeAgentModelRefForConfig } from "../config/model-input.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { PluginInstallRecord } from "../config/types.plugins.js";
 import { formatErrorMessage } from "../infra/errors.js";
-import { enablePluginWithCapabilityConsent } from "../plugins/enable.js";
-import { createPluginCache, withPluginCache } from "../plugins/plugin-cache.js";
-import { withPluginLifecycleLease } from "../plugins/plugin-lifecycle-lease.js";
 import {
   applyProviderPluginAuthMethodResultConfig,
   prepareAuthChoiceLoadedPluginProvider,
@@ -25,9 +22,7 @@ import {
 import { runProviderPluginAuthMethodUnpersisted } from "../plugins/provider-auth-method.js";
 import { persistProviderAuthProfilesAfterLogin } from "../plugins/provider-auth-persistence.js";
 import { resolveProviderInstallCatalogEntry } from "../plugins/provider-install-catalog.js";
-import { resolvePluginProvidersCore } from "../plugins/providers.runtime.js";
-import type { ProviderAuthMethod, ProviderAuthResult, ProviderPlugin } from "../plugins/types.js";
-import { createPluginCapabilityConsentPrompter } from "../wizard/plugin-capability-consent.js";
+import type { ProviderAuthResult, ProviderPlugin } from "../plugins/types.js";
 import { createQuickstartNotePrompter } from "./setup-apply.js";
 import {
   choiceMatchesCredential,
@@ -35,85 +30,22 @@ import {
   supportsSetupTextInference,
 } from "./setup-inference-auth-options.js";
 import {
-  type ActivateSetupInferenceParams,
-  type ActivateSetupInferenceDeps,
   type StagedCandidate,
   type StageContext,
   type StageFailure,
   parseInferenceRef,
   resolveSetupModel,
+  validateSetupModelTarget,
   SetupInferenceCancelledError,
   throwIfSetupInferenceCancelled,
   waitForProviderAuth,
 } from "./setup-inference-core.js";
 import { prepareCustomSetupCredentials } from "./setup-inference-custom.js";
 import { projectSetupInferenceConfig } from "./setup-model-selection.js";
-
-type SetupProviderAuthMethod = {
-  config: OpenClawConfig;
-  provider: ProviderPlugin;
-  method: ProviderAuthMethod;
-};
-
-/** Import under the mutation lease; keep provider callbacks owned through their materialization. */
-export async function withSetupProviderAuthMethod<T>(
-  params: {
-    cfg: OpenClawConfig;
-    workspace: string;
-    choice: ProviderAuthChoiceMetadata;
-    deps: Pick<ActivateSetupInferenceDeps, "resolvePluginProviders">;
-    activation?: ActivateSetupInferenceParams;
-    beforePersistentEffect?: () => Promise<void>;
-    signal?: AbortSignal;
-  },
-  consume: (loaded: SetupProviderAuthMethod) => T | Promise<T>,
-): Promise<T | StageFailure> {
-  await using cache = createPluginCache();
-  const activation = params.activation;
-  const loaded = await withPluginLifecycleLease(
-    { signal: params.signal ?? activation?.signal },
-    async () =>
-      withPluginCache(cache, async (): Promise<SetupProviderAuthMethod | StageFailure> => {
-        const enabled = await enablePluginWithCapabilityConsent(
-          params.cfg,
-          params.choice.pluginId,
-          {
-            workspaceDir: params.workspace,
-            beforePersistentEffect: params.beforePersistentEffect,
-            onCapabilityConsent: activation?.prompter
-              ? createPluginCapabilityConsentPrompter(activation.prompter, () =>
-                  throwIfSetupInferenceCancelled(activation),
-                )
-              : undefined,
-          },
-        );
-        if (!enabled.enabled) {
-          return {
-            error: `${params.choice.choiceLabel} is disabled (${enabled.reason ?? "blocked"}).`,
-          };
-        }
-        const providers = (params.deps.resolvePluginProviders ?? resolvePluginProvidersCore)({
-          config: enabled.config,
-          workspaceDir: params.workspace,
-          mode: "setup",
-          cache: true,
-          includeUntrustedWorkspacePlugins: false,
-          onlyPluginIds: [params.choice.pluginId],
-        });
-        const provider = providers.find(
-          (entry) =>
-            entry.pluginId === params.choice.pluginId &&
-            normalizeProviderId(entry.id) === normalizeProviderId(params.choice.providerId),
-        );
-        const method = provider?.auth.find((entry) => entry.id === params.choice.methodId);
-        if (!provider || !method || !supportsSetupTextInference(method.wizard?.onboardingScopes)) {
-          return { error: "That provider setup is not available on this Gateway." };
-        }
-        return { config: enabled.config, provider, method };
-      }),
-  );
-  return "error" in loaded ? loaded : await withPluginCache(cache, () => consume(loaded));
-}
+import {
+  withSetupProviderAuthMethod,
+  type SetupProviderAuthMethod,
+} from "./setup-provider-method.js";
 
 export function selectSetupCredential(
   profiles: ProviderAuthResult["profiles"],
@@ -250,10 +182,16 @@ async function stagePreparedCandidate(
     provider?: ProviderPlugin;
     pluginId?: string;
     modelRef?: string;
+    modelTarget?: "utility";
     pendingPluginInstalls?: Record<string, PluginInstallRecord>;
     agentRuntimeId?: string;
   },
 ): Promise<StagedCandidate | StageFailure> {
+  const modelTarget = params.choice?.modelTarget ?? params.modelTarget;
+  const roleError = validateSetupModelTarget(modelTarget, ctx.params.modelTarget);
+  if (roleError) {
+    return roleError;
+  }
   const resolvedModel = resolveSetupModel({
     label: params.provider?.label ?? params.choice?.choiceLabel ?? "Custom provider",
     providerId:
@@ -307,6 +245,7 @@ async function stagePreparedCandidate(
   });
   return {
     modelRef,
+    ...(modelTarget ? { modelTarget } : {}),
     config,
     agentRuntimeId:
       params.agentRuntimeId ??
@@ -352,6 +291,10 @@ export async function stageSavedAuthCandidate(
     return {
       error: "The saved sign-in's provider is no longer available. Review installed providers.",
     };
+  }
+  const roleError = validateSetupModelTarget(choice?.modelTarget, ctx.params.modelTarget);
+  if (roleError) {
+    return roleError;
   }
   const materialize = async (
     loaded?: SetupProviderAuthMethod,
@@ -421,6 +364,10 @@ export async function stageProviderAutoCandidate(
   ) {
     return { error: "That detected provider is no longer available on this Gateway." };
   }
+  const roleError = validateSetupModelTarget(choice.modelTarget, ctx.params.modelTarget);
+  if (roleError) {
+    return roleError;
+  }
   return await withSetupProviderAuthMethod(
     { ...ctx, choice, activation: ctx.params },
     async (loaded) => {
@@ -467,6 +414,10 @@ export async function stageProviderAuthCandidate(
   }
   const authChoice = params.authChoice?.trim();
   if (interactive && authChoice === "custom-api-key") {
+    const roleError = validateSetupModelTarget(undefined, params.modelTarget);
+    if (roleError) {
+      return roleError;
+    }
     if (params.isRemoteProviderAuth ?? params.surface === "gateway") {
       return {
         error:
@@ -524,6 +475,13 @@ export async function stageProviderAuthCandidate(
           (!choice.appGuidedAuth && choice.appGuidedDiscovery !== true))
       ? { pluginId: choice.pluginId, label: choice.groupLabel ?? choice.choiceLabel }
       : undefined;
+  const roleError = validateSetupModelTarget(
+    choice?.modelTarget ?? installEntry?.modelTarget,
+    params.modelTarget,
+  );
+  if (roleError) {
+    return roleError;
+  }
   if (interactive && authChoice && managedWizardChoice) {
     if (!params.prompter) {
       return { error: "Installing this provider requires an interactive setup session." };
@@ -545,7 +503,8 @@ export async function stageProviderAuthCandidate(
       },
       async (prepared, provider) => {
         throwIfSetupInferenceCancelled(params);
-        if (!prepared || prepared.retrySelection || !prepared.agentModelOverride?.trim()) {
+        const selectedModel = prepared?.utilityModelOverride ?? prepared?.agentModelOverride;
+        if (!prepared || prepared.retrySelection || !selectedModel?.trim()) {
           return {
             error:
               prepared?.installError ||
@@ -553,7 +512,8 @@ export async function stageProviderAuthCandidate(
           };
         }
         return await stagePreparedCandidate(ctx, {
-          result: { profiles: prepared.authProfiles, defaultModel: prepared.agentModelOverride },
+          result: { profiles: prepared.authProfiles, defaultModel: selectedModel },
+          ...(prepared.modelTarget ? { modelTarget: prepared.modelTarget } : {}),
           config: prepared.config,
           credentialState: "new",
           choice,

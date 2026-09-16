@@ -32,7 +32,7 @@ vi.mock("../agents/auth-profiles/store-runtime.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../agents/auth-profiles/store-runtime.js")>()),
   loadAuthProfileStoreWithoutExternalProfiles: fixture.loadAuthProfileStore,
 }));
-vi.mock("./setup-inference-credentials.js", () => ({
+vi.mock("./setup-provider-method.js", () => ({
   withSetupProviderAuthMethod: fixture.withSetupProviderAuthMethod,
 }));
 vi.mock("./setup-native-session-catalogs.js", () => ({

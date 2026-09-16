@@ -1,4 +1,6 @@
 import type { StreamFn } from "openclaw/plugin-sdk/agent-core";
+import { validateJsonSchemaValue } from "openclaw/plugin-sdk/json-schema-runtime";
+import { quoteUnsafeIntegerLiterals } from "openclaw/plugin-sdk/json-unsafe-integers";
 import { createAssistantMessageEventStream, type AssistantMessage } from "openclaw/plugin-sdk/llm";
 import {
   createEmptyTransportUsage,
@@ -24,13 +26,16 @@ export function createAppleFmStream(native: Pick<AppleFmNative, "run">): StreamF
     void (async () => {
       try {
         options?.signal?.throwIfAborted();
+        const responseFormat = options?.responseFormat
+          ? structuredClone(options.responseFormat)
+          : undefined;
         const request = {
           systemPrompt: context.systemPrompt,
           messages: context.messages,
           tools: context.tools ?? [],
           maxTokens: options?.maxTokens ?? model.maxTokens,
           temperature: options?.temperature,
-          responseFormat: options?.responseFormat,
+          responseFormat: responseFormat ? structuredClone(responseFormat) : undefined,
         };
         const payload = (await options?.onPayload?.(request, model)) ?? request;
         if (!payload || typeof payload !== "object") {
@@ -39,6 +44,46 @@ export function createAppleFmStream(native: Pick<AppleFmNative, "run">): StreamF
         options?.signal?.throwIfAborted();
         const result = await native.run(payload, { signal: options?.signal });
         options?.signal?.throwIfAborted();
+        if (responseFormat && result.toolCalls.length === 0) {
+          const unsafeNumberMessage =
+            "Apple Foundation Models returned an invalid structured response: an unsafe numeric value cannot be validated without losing precision.";
+          if (quoteUnsafeIntegerLiterals(result.text) !== result.text) {
+            throw new Error(unsafeNumberMessage);
+          }
+          let value: unknown;
+          try {
+            value = JSON.parse(result.text, (_key, parsedValue: unknown) => {
+              // The literal detector excludes exponent forms; preserve numeric types while checking them too.
+              if (
+                typeof parsedValue === "number" &&
+                (!Number.isFinite(parsedValue) ||
+                  (Number.isInteger(parsedValue) && !Number.isSafeInteger(parsedValue)))
+              ) {
+                throw new Error(unsafeNumberMessage);
+              }
+              return parsedValue;
+            });
+          } catch (error) {
+            if (error instanceof SyntaxError) {
+              // oxlint-disable-next-line preserve-caught-error -- JSON.parse errors can contain model response text.
+              throw new Error(
+                "Apple Foundation Models returned an invalid structured response: malformed JSON.",
+              );
+            }
+            throw error;
+          }
+          const validation = validateJsonSchemaValue({
+            schema: responseFormat,
+            cacheKey: "apple-fm.structured-response",
+            value,
+            applyDefaults: false,
+          });
+          if (!validation.ok) {
+            throw new Error(
+              `Apple Foundation Models returned an invalid structured response at ${validation.errors.map((error) => error.path).join(", ")}.`,
+            );
+          }
+        }
         message.usage.input = result.inputTokens;
         message.usage.output = result.outputTokens;
         message.usage.totalTokens = result.inputTokens + result.outputTokens;
