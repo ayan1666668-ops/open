@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { toUSVString } from "node:util";
-import { sql, type Selectable } from "kysely";
+import type { Selectable } from "kysely";
 import {
   executeSqliteQuerySync,
   executeSqliteQueryTakeFirstSync,
@@ -75,8 +75,7 @@ function prepareExactSessionEntryQueries(database: DatabaseSync) {
           (parameter) =>
             selectSessionEntryRows({ db: database }, "list", [], ownerColumns)
               .select(["current_session_id", "updated_at"])
-              // kysely-allow-raw: SQLite's implicit row identity is not a schema column.
-              .select(sql<string>`CAST(rowid AS TEXT)`.as("rowid"))
+              .select((eb) => eb.cast<string>("session_nodes.rowid", "text").as("rowid"))
               .where(
                 "session_key",
                 "=",
