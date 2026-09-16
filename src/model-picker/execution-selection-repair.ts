@@ -2,15 +2,54 @@ import { isDeepStrictEqual } from "node:util";
 import { resolveDefaultModelForAgent } from "../agents/model-selection-config.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import {
-  encodeSessionExecutionSelection,
-  resolveSessionExecutionRepairPair,
-} from "./execution-selection-codec.js";
-import { resolveConfiguredExecutionSelection } from "./execution-selection-configured.js";
-import { executionSelectionCodecMetadata } from "./execution-selection-state.js";
-import type { ModelExecutionSelection } from "./execution-selection.js";
+import { commitStoredSessionExecutionSelection } from "./apply-session-model-selection.js";
+import { isModelExecutionSelection, type ModelExecutionSelection } from "./execution-selection.js";
 
-/** Existing Doctor repairs use configured/static identity; readiness belongs to the next turn. */
+export function readSessionExecutionRepairModel(
+  entry: Partial<SessionEntry>,
+): { provider?: string; id: string } | undefined {
+  const fact = entry.executionSelection;
+  if (!fact) return undefined;
+  if (fact.state === "accepted") {
+    return isModelExecutionSelection(fact.selection) ? fact.selection.model : undefined;
+  }
+  return fact.request.model === "native-managed" ? undefined : fact.request.model;
+}
+
+export function readSessionExecutionRepairRef(entry: Partial<SessionEntry>): {
+  provider?: string;
+  model?: string;
+  runtime?: string;
+} {
+  const model = readSessionExecutionRepairModel(entry);
+  const fact = entry.executionSelection;
+  const executor = fact?.state === "accepted" ? fact.selection.executor : fact?.request.executor;
+  return {
+    provider: model?.provider,
+    model: model?.id,
+    runtime:
+      executor && executor.kind !== "acp"
+        ? executor.id
+        : fact?.state === "deferred"
+          ? fact.request.runtime
+          : undefined,
+  };
+}
+
+export function admitAutomaticProviderlessModelRepair(
+  entry: Partial<SessionEntry>,
+): string | undefined {
+  const fact = entry.executionSelection;
+  const model = readSessionExecutionRepairModel(entry);
+  return fact?.state === "deferred" &&
+    fact.fallbackPermission === "configured" &&
+    model &&
+    !model.provider
+    ? model.id
+    : undefined;
+}
+
+/** Doctor stages corrected intent; the selection owner checks readiness before the next turn. */
 export function repairSessionExecutionSelection(params: {
   entry: SessionEntry;
   cfg?: OpenClawConfig;
@@ -20,10 +59,11 @@ export function repairSessionExecutionSelection(params: {
   runtimeMigration?: (id: string) => ModelExecutionSelection["executor"] | undefined;
   reset?: boolean;
   preserveAuthProfileOverride?: boolean;
-}):
-  | { status: "unchanged" | "unresolved" }
-  | { status: "repaired"; selection: ModelExecutionSelection } {
-  if (params.entry.modelSelectionLocked || params.entry.acp) {
+}): { status: "unchanged" | "unresolved" | "repaired" } {
+  const fact = params.entry.executionSelection;
+  const priorExecutor =
+    fact?.state === "accepted" ? fact.selection.executor : fact?.request.executor;
+  if (params.entry.modelSelectionLocked || params.entry.acp || priorExecutor?.kind === "acp") {
     return { status: "unchanged" };
   }
   const configured =
@@ -34,46 +74,36 @@ export function repairSessionExecutionSelection(params: {
           allowPluginNormalization: false,
         })
       : undefined;
+  const currentModel = readSessionExecutionRepairModel(params.entry);
   const model =
     params.model ??
+    (!params.reset ? currentModel : undefined) ??
     (configured ? { provider: configured.provider, id: configured.model } : undefined);
-  if (!model) {
-    return { status: "unresolved" };
-  }
-  const metadata = executionSelectionCodecMetadata(params.cfg, configured?.provider);
-  const configuredSelection =
-    params.cfg && params.agentId
-      ? resolveConfiguredExecutionSelection({
-          cfg: params.cfg,
-          agentId: params.agentId,
-          model,
-          metadata,
-        })
-      : undefined;
-  const selection = resolveSessionExecutionRepairPair({
-    entry: params.entry,
-    model,
-    executor: params.executor ?? configuredSelection?.executor,
-    metadata,
-    runtimeMigration: params.runtimeMigration,
-  });
-  if (!selection) {
-    return { status: "unresolved" };
-  }
+  if (!model) return { status: "unresolved" };
+  const runtime = readSessionExecutionRepairRef(params.entry).runtime;
+  const executor = runtime
+    ? (params.runtimeMigration?.(runtime) ?? priorExecutor)
+    : params.executor;
   const before = structuredClone(params.entry);
-  encodeSessionExecutionSelection(
-    params.entry,
-    selection,
-    params.reset ? { kind: "reset" } : { kind: "inherit", entry: before },
-  );
+  commitStoredSessionExecutionSelection(params.entry, {
+    state: "deferred",
+    request: {
+      model,
+      ...(executor ? { executor } : runtime ? { runtime } : {}),
+    },
+    fallbackPermission: params.reset ? "configured" : (fact?.fallbackPermission ?? "configured"),
+    ...(fact?.state === "accepted"
+      ? { previous: fact.selection }
+      : fact?.previous
+        ? { previous: fact.previous }
+        : {}),
+  });
   if (params.preserveAuthProfileOverride === false) {
     delete params.entry.authProfileOverride;
     delete params.entry.authProfileOverrideSource;
     delete params.entry.authProfileOverrideCompactionCount;
   }
-  if (isDeepStrictEqual(before, params.entry)) {
-    return { status: "unchanged" };
-  }
+  if (isDeepStrictEqual(before, params.entry)) return { status: "unchanged" };
   params.entry.updatedAt = Date.now();
-  return { status: "repaired", selection };
+  return { status: "repaired" };
 }

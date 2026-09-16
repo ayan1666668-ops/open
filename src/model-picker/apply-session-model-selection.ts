@@ -1,5 +1,4 @@
 import { isDeepStrictEqual } from "node:util";
-import type { SessionAcpMeta } from "@openclaw/acp-core/types";
 import {
   resolveAgentDir,
   resolveSessionAgentId,
@@ -43,6 +42,7 @@ import { triggerSessionPatchHook } from "../gateway/session-patch-hooks.js";
 import { resolveSessionWorkerPlacementContext } from "../gateway/session-worker-placement-context.js";
 import { resolveWorkerPlacementCapabilities } from "../gateway/worker-environments/placement-capabilities.js";
 import { enqueueSystemEvent } from "../infra/system-events.js";
+import { getCurrentPluginMetadataSnapshot } from "../plugins/current-plugin-metadata-snapshot.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
 import { getPluginRegistryForContext } from "../plugins/runtime/gateway-request-scope.js";
 import { isSubagentSessionKey } from "../routing/session-key.js";
@@ -52,25 +52,135 @@ import {
   MODEL_SELECTION_LOCKED_MESSAGE,
 } from "../sessions/model-overrides.js";
 import { emitSessionLifecycleEvent } from "../sessions/session-lifecycle-events.js";
-import {
-  encodeAcpExecutionSelection,
-  encodeSessionExecutionSelection,
-  type ExecutionSelectionCommitCause,
-  admitSessionExecutionFallback,
-  admitSessionExecutionFallbacks,
-  consumeLegacySessionExecutionSeed,
-  executionSelectionTransactionChanged,
-} from "./execution-selection-codec.js";
-import { decodeSessionExecutionSelection } from "./execution-selection-codec.js";
 import { resolveConfiguredExecutionSelection } from "./execution-selection-configured.js";
-import { getSessionExecutionSelection } from "./execution-selection-state.js";
-import { executionSelectionCodecMetadata } from "./execution-selection-state.js";
 import {
   isAcpExecutionSelection,
+  isModelExecutionSelection,
+  SESSION_EXECUTION_SELECTION_TRANSACTION_FIELDS,
+  type SessionExecutionSelection,
+  type ExecutionFallbackPermission,
+  type DeferredExecutionSelectionRequest,
   type AcpExecutionSelection,
   type ExecutionSelection,
   type ModelExecutionSelection,
 } from "./execution-selection.js";
+
+export function getSessionExecutionSelection(
+  entry: Partial<SessionEntry> | undefined,
+  _cfg?: OpenClawConfig,
+): ExecutionSelection | undefined {
+  return entry?.executionSelection?.state === "accepted"
+    ? entry.executionSelection.selection
+    : undefined;
+}
+
+export function getCommittedSessionExecutionSelection(
+  entry: Partial<SessionEntry> | undefined,
+): ExecutionSelection | undefined {
+  const stored = entry?.executionSelection;
+  return stored?.state === "accepted" ? stored.selection : stored?.previous;
+}
+
+export function inheritSessionExecutionSelection(
+  entry: Partial<SessionEntry> | undefined,
+): Partial<SessionEntry> {
+  return entry?.executionSelection
+    ? { executionSelection: structuredClone(entry.executionSelection) }
+    : {};
+}
+
+export function commitStoredSessionExecutionSelection(
+  entry: Partial<SessionEntry>,
+  fact: SessionExecutionSelection,
+): void {
+  entry.executionSelection = structuredClone(fact);
+}
+
+export function executionSelectionTransactionChanged(
+  before: Partial<SessionEntry>,
+  after: Partial<SessionEntry>,
+): boolean {
+  return SESSION_EXECUTION_SELECTION_TRANSACTION_FIELDS.some(
+    (field) => !isDeepStrictEqual(before[field], after[field]),
+  );
+}
+
+export function executionSelectionRouteChanged(
+  before: Partial<SessionEntry>,
+  after: Partial<SessionEntry>,
+): boolean {
+  return !isDeepStrictEqual(
+    getSessionExecutionSelection(before),
+    getSessionExecutionSelection(after),
+  );
+}
+
+export function copyExecutionSelectionTransaction(
+  next: Partial<SessionEntry>,
+  patch: Partial<SessionEntry>,
+): void {
+  patch.executionSelection = next.executionSelection
+    ? structuredClone(next.executionSelection)
+    : undefined;
+  patch.authProfileOverride = next.authProfileOverride;
+  patch.authProfileOverrideSource = next.authProfileOverrideSource;
+  patch.authProfileOverrideCompactionCount = next.authProfileOverrideCompactionCount;
+}
+
+export function resolveExecutionSelectionExecutorKind(
+  cfg: OpenClawConfig | undefined,
+  id: string,
+): "harness" | "cli" | undefined {
+  if (id === "openclaw") return "harness";
+  const registry = getPluginRegistryForContext();
+  const metadata = getCurrentPluginMetadataSnapshot({
+    config: cfg,
+    allowSynchronousPolicyRead: false,
+    allowWorkspaceScopedSnapshot: true,
+  });
+  const harness =
+    registry?.agentHarnesses.some(({ harness }) => harness.id === id) ||
+    metadata?.plugins.some((plugin) => plugin.activation?.onAgentHarnesses?.includes(id));
+  const cli =
+    registry?.cliBackends.some(({ backend }) => backend.id === id) ||
+    metadata?.owners.cliBackends.has(id);
+  return harness && !cli ? "harness" : cli && !harness ? "cli" : undefined;
+}
+
+export type ExecutionSelectionCommitCause =
+  | { kind: "initialize" | "reset" | "user" }
+  | { kind: "inherit"; entry: Partial<SessionEntry> };
+
+function fallbackPermissionForCommit(
+  entry: Partial<SessionEntry>,
+  cause: ExecutionSelectionCommitCause,
+): ExecutionFallbackPermission {
+  if (cause.kind === "user") return "explicit";
+  if (cause.kind === "reset") return "configured";
+  return (
+    (cause.kind === "inherit" ? cause.entry : entry).executionSelection?.fallbackPermission ??
+    "configured"
+  );
+}
+
+function admitSessionExecutionFallback(params: {
+  entry: Partial<SessionEntry> | undefined;
+  candidate: ModelExecutionSelection;
+  explicitModels?: readonly { provider: string; id: string }[];
+}):
+  | { status: "accepted" }
+  | { status: "rejected"; reason: "model-selection-locked" | "user-model-selection" } {
+  const current = getCommittedSessionExecutionSelection(params.entry);
+  if (isDeepStrictEqual(current, params.candidate)) return { status: "accepted" };
+  if (params.entry?.modelSelectionLocked)
+    return { status: "rejected", reason: "model-selection-locked" };
+  const explicit = params.explicitModels?.some((model) =>
+    isDeepStrictEqual(model, params.candidate.model),
+  );
+  if (!explicit && params.entry?.executionSelection?.fallbackPermission === "explicit")
+    return { status: "rejected", reason: "user-model-selection" };
+  return { status: "accepted" };
+}
 
 /** Resolve retry permission without exposing stored selection provenance to callers. */
 export function resolveSessionExecutionFallbacks(params: {
@@ -113,16 +223,12 @@ export function resolveSessionExecutionFallbacks(params: {
       model: { provider, id: model },
       executor: params.selection.executor,
     }));
-  const admitted = admitSessionExecutionFallbacks({
-    entry,
-    candidates,
-    metadata: executionSelectionCodecMetadata(params.cfg),
-    explicitModels:
-      params.modelFallbacksOverride === undefined
-        ? undefined
-        : candidates.map((pair) => pair.model),
-  });
-  if (admitted.status === "rejected") {
+  const explicitModels =
+    params.modelFallbacksOverride === undefined ? undefined : candidates.map((pair) => pair.model);
+  const admitted = candidates
+    .map((candidate) => admitSessionExecutionFallback({ entry, candidate, explicitModels }))
+    .find((result) => result.status === "rejected");
+  if (admitted?.status === "rejected") {
     return {
       kind:
         admitted.reason === "model-selection-locked"
@@ -152,7 +258,11 @@ export function commitSessionExecutionSelection(
   const before = getSessionExecutionSelection(entry, options.cfg);
   const initial = { ...entry };
   const pairChanged = !isDeepStrictEqual(before, selection);
-  encodeSessionExecutionSelection(entry, selection, options.cause ?? { kind: "user" });
+  commitStoredSessionExecutionSelection(entry, {
+    state: "accepted",
+    selection,
+    fallbackPermission: fallbackPermissionForCommit(entry, options.cause ?? { kind: "user" }),
+  });
   const changed = executionSelectionTransactionChanged(initial, entry);
   if (pairChanged) {
     delete entry.contextTokens;
@@ -165,32 +275,20 @@ export function commitSessionExecutionSelection(
   return { changed };
 }
 
-/** ACP keeps lifecycle persistence and actor custody while this owner writes its accepted pair. */
-export function commitAcpExecutionSelection(
-  lifecycle: Omit<SessionAcpMeta, "backend" | "agent">,
-  selection: AcpExecutionSelection,
-): SessionAcpMeta {
-  return encodeAcpExecutionSelection(lifecycle, selection);
-}
-
-export function consumeSessionExecutionSelectionSeed(
-  entry: Partial<SessionEntry>,
-  expected: Partial<SessionEntry>,
-): boolean {
-  return consumeLegacySessionExecutionSeed(entry, expected);
-}
-
 export function commitSessionModelSelectionWithAuth(params: {
   cfg: OpenClawConfig;
   agentId: string;
   entry: SessionEntry;
   currentProvider: string;
-  selection: ModelExecutionSelection;
+  selection: Exclude<ExecutionSelection, AcpExecutionSelection>;
   profileOverride?: string;
   markLiveSwitchPending?: boolean;
   metadataSnapshot?: Pick<PluginMetadataSnapshot, "plugins">;
   cause?: ExecutionSelectionCommitCause;
 }): { changed: boolean } {
+  if (!isModelExecutionSelection(params.selection)) {
+    return commitSessionExecutionSelection(params.entry, params.selection, params);
+  }
   const preserve =
     !params.profileOverride &&
     shouldPreserveSessionAuthProfileOverride({
@@ -269,13 +367,15 @@ function selectionDisplayNames(
   catalog: readonly ModelCatalogEntry[],
 ) {
   const registry = getPluginRegistryForContext();
-  const model = selection.model
-    ? (catalog.find(
-        (entry) =>
-          entry.id === selection.model?.id &&
-          (isAcpExecutionSelection(selection) || entry.provider === selection.model.provider),
-      )?.name ?? "the selected model")
-    : "the app's default model";
+  const model =
+    selection.model !== "native-managed"
+      ? (catalog.find(
+          (entry) =>
+            selection.model !== "native-managed" &&
+            entry.id === selection.model.id &&
+            (!isModelExecutionSelection(selection) || entry.provider === selection.model.provider),
+        )?.name ?? "the selected model")
+      : "the app's default model";
   const executor = selection.executor;
   const app =
     executor.kind === "acp"
@@ -300,13 +400,12 @@ export async function prepareSessionExecutionSelection(params: {
   modelCatalog?: readonly ModelCatalogEntry[];
   profileProvider?: string;
   request: ExecutionSelectionRequest;
-  prepareAcp?: (selection: AcpExecutionSelection) => Promise<AcpExecutionSelection>;
 }): Promise<PreparedSessionExecutionSelection> {
   const sessionSnapshot = params.sessionEntry ? { ...params.sessionEntry } : undefined;
   const configured = resolveDefaultModelForAgent({ cfg: params.cfg, agentId: params.agentId });
-  const metadata = executionSelectionCodecMetadata(params.cfg, configured.provider);
-  const decoded = decodeSessionExecutionSelection(sessionSnapshot, metadata);
-  const before = decoded.kind === "initialized" ? decoded.selection : undefined;
+  const stored = sessionSnapshot?.executionSelection;
+  const deferred = stored?.state === "deferred" ? stored.request : undefined;
+  const before = getCommittedSessionExecutionSelection(sessionSnapshot);
   const catalog = params.modelCatalog ?? [];
   const chooseConfigured = (model: ModelExecutionSelection["model"]) =>
     resolveConfiguredExecutionSelection({
@@ -315,26 +414,67 @@ export async function prepareSessionExecutionSelection(params: {
       sessionKey: params.sessionKey,
       model,
       modelCatalog: catalog,
-      metadata,
     });
   const seed =
-    decoded.kind === "uninitialized" && decoded.model
-      ? { provider: decoded.model.provider ?? configured.provider, id: decoded.model.id }
+    deferred?.model && deferred.model !== "native-managed"
+      ? { provider: deferred.model.provider ?? configured.provider, id: deferred.model.id }
       : params.request.kind === "initialize" && params.request.model
         ? params.request.model
         : { provider: configured.provider, id: configured.model };
-  const pinned = decoded.kind === "uninitialized" ? decoded.executor : undefined;
-  const initial: ExecutionSelection | undefined =
-    before ??
-    (pinned?.kind === "acp"
-      ? {
-          model:
-            decoded.kind === "uninitialized" && decoded.model ? { id: decoded.model.id } : null,
-          executor: pinned,
-        }
-      : pinned
-        ? { model: seed, executor: pinned }
-        : chooseConfigured(seed));
+  const deferredKind = deferred?.runtime
+    ? resolveExecutionSelectionExecutorKind(params.cfg, deferred.runtime)
+    : undefined;
+  const pinned =
+    deferred?.executor ??
+    (deferred?.runtime && deferredKind
+      ? { kind: deferredKind, id: deferred.runtime }
+      : before?.executor);
+  let initial: ExecutionSelection | undefined =
+    stored?.state === "accepted"
+      ? stored.selection
+      : pinned?.kind === "acp"
+        ? {
+            executor: pinned,
+            model:
+              deferred?.model === "native-managed" || !deferred?.model
+                ? "native-managed"
+                : { id: deferred.model.id },
+          }
+        : pinned?.kind === "harness" && deferred?.model === "native-managed"
+          ? { executor: pinned, model: "native-managed" }
+          : pinned
+            ? { executor: pinned, model: seed }
+            : deferred?.runtime
+              ? undefined
+              : chooseConfigured(seed);
+  if (
+    stored?.state === "deferred" &&
+    pinned?.kind === "harness" &&
+    params.sessionEntry?.sessionId
+  ) {
+    const { readSessionRuntimeOwnership } =
+      await import("../agents/harness/session-runtime-ownership.js");
+    const ownership = readSessionRuntimeOwnership({
+      config: params.cfg,
+      agentId: params.agentId,
+      sessionKey: params.sessionKey,
+      storePath: params.storePath,
+      sessionEntry: params.sessionEntry,
+    });
+    if (ownership?.auth === "native") {
+      initial = {
+        executor: pinned,
+        model: ownership.modelRef
+          ? { provider: ownership.modelRef.provider, id: ownership.modelRef.model }
+          : "native-managed",
+      };
+    } else if (ownership?.modelRef) {
+      initial = {
+        executor: pinned,
+        model: { provider: ownership.modelRef.provider, id: ownership.modelRef.model },
+      };
+    }
+  }
   let selection: ExecutionSelection | undefined;
   let reason: Extract<PreparedSessionExecutionSelection, { status: "ready" }>["reason"];
   if (params.request.kind === "initialize") {
@@ -346,7 +486,10 @@ export async function prepareSessionExecutionSelection(params: {
   } else if (params.request.kind === "reset") {
     selection =
       initial && isAcpExecutionSelection(initial)
-        ? { ...initial, model: params.request.model ? { id: params.request.model.id } : null }
+        ? {
+            ...initial,
+            model: params.request.model ? { id: params.request.model.id } : "native-managed",
+          }
         : chooseConfigured(
             params.request.model ?? { provider: configured.provider, id: configured.model },
           );
@@ -382,7 +525,7 @@ export async function prepareSessionExecutionSelection(params: {
           cfg: params.cfg,
           agentId: params.agentId,
           provider:
-            before && !isAcpExecutionSelection(before)
+            before && isModelExecutionSelection(before)
               ? before.model.provider
               : fallbackRequest.selection.model.provider,
           model:
@@ -415,7 +558,6 @@ export async function prepareSessionExecutionSelection(params: {
     const admitted = admitSessionExecutionFallback({
       entry: current,
       candidate: fallbackRequest.selection,
-      metadata,
       explicitModels: explicitFallbackModels,
     });
     return admitted.status === "rejected"
@@ -433,12 +575,7 @@ export async function prepareSessionExecutionSelection(params: {
   if (placementError) {
     return { status: "rejected", reason: "not-allowed", message: placementError };
   }
-  if (isAcpExecutionSelection(selection)) {
-    if (!params.prepareAcp) {
-      return unknown();
-    }
-    selection = await params.prepareAcp(selection);
-  } else {
+  if (isModelExecutionSelection(selection)) {
     const policy = createModelVisibilityPolicy({
       cfg: params.cfg,
       agentId: params.agentId,
@@ -476,8 +613,8 @@ export async function prepareSessionExecutionSelection(params: {
       ((params.request.kind === "model" && !params.request.executor) ||
         params.request.kind === "fallback" ||
         (params.request.kind === "initialize" &&
-          decoded.kind === "uninitialized" &&
-          decoded.executor !== undefined))
+          stored?.state === "deferred" &&
+          pinned !== undefined))
     ) {
       const alternative = chooseConfigured(selection.model);
       if (alternative && alternative.executor.id !== selection.executor.id) {
@@ -711,7 +848,7 @@ export async function applySessionModelSelection(
 
   const explicitKind =
     request.runtime.kind === "set"
-      ? executionSelectionCodecMetadata(params.cfg).classifyExecutor(request.runtime.runtime)
+      ? resolveExecutionSelectionExecutorKind(params.cfg, request.runtime.runtime)
       : undefined;
   if (request.runtime.kind === "set" && !explicitKind) {
     return {

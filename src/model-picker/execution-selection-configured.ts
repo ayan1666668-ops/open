@@ -1,8 +1,7 @@
 import type { ModelCatalogEntry } from "../agents/model-catalog.js";
 import { resolveEffectiveAgentRuntime } from "../agents/thinking-runtime.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import type { ExecutionSelectionCodecMetadata } from "./execution-selection-codec.js";
-import { executionSelectionCodecMetadata } from "./execution-selection-state.js";
+import { resolveExecutionSelectionExecutorKind } from "./apply-session-model-selection.js";
 import type { ModelExecutionSelection } from "./execution-selection.js";
 
 /** Configured policy and loaded metadata choose identity; readiness is evaluated separately. */
@@ -12,7 +11,6 @@ export function resolveConfiguredExecutionSelection(params: {
   sessionKey?: string;
   model: ModelExecutionSelection["model"];
   modelCatalog?: readonly ModelCatalogEntry[];
-  metadata?: ExecutionSelectionCodecMetadata;
 }): ModelExecutionSelection | undefined {
   const entry = params.modelCatalog?.find(
     (entry) => entry.provider === params.model.provider && entry.id === params.model.id,
@@ -26,8 +24,6 @@ export function resolveConfiguredExecutionSelection(params: {
     modelApi: entry?.api,
     modelBaseUrl: entry?.baseUrl,
   });
-  const kind = (params.metadata ?? executionSelectionCodecMetadata(params.cfg)).classifyExecutor(
-    id,
-  );
+  const kind = resolveExecutionSelectionExecutorKind(params.cfg, id);
   return kind ? { model: params.model, executor: { kind, id } } : undefined;
 }

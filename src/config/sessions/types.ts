@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import type {
   AcpSessionRuntimeOptions,
   SessionAcpIdentity,
-  SessionAcpMeta,
+  SessionAcpLifecycle,
 } from "@openclaw/acp-core/types";
 import { asNonNegativeFiniteNumber } from "@openclaw/normalization-core/number-coercion";
 import { normalizeOptionalString, type FastMode } from "@openclaw/normalization-core/string-coerce";
@@ -23,6 +23,7 @@ import type {
   CronToolsAllowExecTarget,
   CronToolsAllowExecTargetRequirement,
 } from "../../cron/scheduled-tool-policy.js";
+import type { SessionExecutionSelection } from "../../model-picker/execution-selection.js";
 import type { ChannelRouteRef } from "../../plugin-sdk/channel-route.js";
 import type { SessionBoardFace } from "../../shared/session-types.js";
 import type { DeliveryContext } from "../../utils/delivery-context.types.js";
@@ -110,7 +111,7 @@ type MemoryFlushState =
       failureCount: number;
     };
 
-export type { AcpSessionRuntimeOptions, SessionAcpIdentity, SessionAcpMeta };
+export type { AcpSessionRuntimeOptions, SessionAcpIdentity, SessionAcpLifecycle };
 
 export type CliSessionReseedReceipt = {
   version: 1;
@@ -505,6 +506,7 @@ type SessionEntryCore = SessionRestartRecoveryState &
     /** Working directory interpreted only by the bound exec node. */
     execCwd?: string;
     responseUsage?: "on" | "off" | "tokens" | "full";
+    executionSelection?: SessionExecutionSelection;
     providerOverride?: string;
     modelOverride?: string;
     /** Session-scoped agent runtime/harness override selected with the model picker. */
@@ -622,7 +624,7 @@ type SessionEntryCore = SessionRestartRecoveryState &
      * Each plugin owns and may overwrite only its own entry between turns.
      */
     pluginDebugEntries?: SessionPluginDebugEntry[];
-    acp?: SessionAcpMeta;
+    acp?: SessionAcpLifecycle;
   };
 
 export interface SessionEntry extends SessionEntryCore {}
