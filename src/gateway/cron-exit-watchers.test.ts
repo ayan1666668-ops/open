@@ -559,25 +559,83 @@ describe("createCronExitWatchers", () => {
     expect(releaseCompletion).toHaveBeenCalledOnce();
   });
 
-  it("is one-shot: a fired job is not re-armed on a later reconcile", async () => {
+  it("is one-shot: a completed job is not re-armed on a later reconcile", async () => {
     const { supervisor, runs } = makeFakeSupervisor();
+    let job = onExitJob("job-a");
     const w = createCronExitWatchers({
       getProcessSupervisor: () => supervisor as never,
-      persistCompletion: vi.fn(async () => {}),
+      persistCompletion: vi.fn(async () => {
+        job = { ...job, enabled: false };
+      }),
       fireOnExit: vi.fn(async () => {}),
       logger: noopLogger,
     });
-    w.reconcile([onExitJob("job-a")]);
+    w.reconcile([job]);
     await flush();
     expectDefined(runs[0], "runs[0] test invariant").deferred.resolve({
       exitCode: 0,
       reason: "exit",
     });
     await flush();
-    w.reconcile([onExitJob("job-a")]);
+    w.reconcile([job]);
     await flush();
     expect(supervisor.spawn).toHaveBeenCalledTimes(1);
   });
+
+  it.each(["true", "echo rearmed"])(
+    "re-arms %s while the previous payload settles and drains both owners",
+    async (command) => {
+      const { supervisor, runs } = makeFakeSupervisor();
+      const payload = createDeferred();
+      let job = onExitJob("job-a");
+      const fireOnExit = vi.fn(async () => await payload.promise);
+      const w = createCronExitWatchers({
+        getProcessSupervisor: () => supervisor as never,
+        persistCompletion: vi.fn(async () => {
+          job = { ...job, enabled: false };
+        }),
+        fireOnExit,
+        logger: noopLogger,
+      });
+
+      try {
+        w.reconcile([job]);
+        await flush();
+        expectDefined(runs[0], "first watcher").deferred.resolve({
+          exitCode: 0,
+          reason: "exit",
+        });
+        await vi.waitFor(() => expect(fireOnExit).toHaveBeenCalledOnce());
+        w.reconcile([job]);
+        expect(supervisor.spawn).toHaveBeenCalledOnce();
+
+        job = { ...job, enabled: true, schedule: { kind: "on-exit", command } };
+        w.reconcile([job]);
+        await flush();
+        expect(supervisor.spawn).toHaveBeenCalledTimes(2);
+        expect(w.activeJobIds()).toEqual([job.id]);
+
+        const drained = vi.fn();
+        const drain = w.cancelAll().then(drained);
+        expectDefined(runs[1], "replacement watcher").deferred.resolve({
+          exitCode: null,
+          reason: "manual-cancel",
+        });
+        await flush();
+        expect(drained).not.toHaveBeenCalled();
+        payload.resolve();
+        await drain;
+        expect(w.activeJobIds()).toEqual([]);
+        expect(fireOnExit).toHaveBeenCalledOnce();
+      } finally {
+        payload.resolve();
+        for (const run of runs) {
+          run.deferred.resolve({ exitCode: null, reason: "manual-cancel" });
+        }
+        await w.cancelAll();
+      }
+    },
+  );
 });
 
 describe("resolveExitWatchShell", () => {

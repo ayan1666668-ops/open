@@ -349,13 +349,10 @@ export function createCronExitWatchers(
     for (const [jobId, job] of want) {
       const slot = active.get(jobId);
       if (slot) {
-        // Already tracked. A fired one-shot stays put (re-watch = re-add). If
-        // the watched command/cwd changed, cancel the stale watcher and re-arm.
-        if (slot.fired) {
-          continue;
-        }
         const { command, cwd } = job.schedule;
-        if (slot.command === command && slot.cwd === cwd) {
+        // Completion persists disabled before firing, so an enabled job after
+        // that point is a new arm, even while the previous payload is settling.
+        if (!slot.fired && slot.command === command && slot.cwd === cwd) {
           slot.job = job;
           continue;
         }

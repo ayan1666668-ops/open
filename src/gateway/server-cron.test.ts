@@ -1213,6 +1213,79 @@ describe("buildGatewayCronService", () => {
     }
   });
 
+  it.each(["true", "echo rearmed"])(
+    "re-arms an on-exit job with %s while its previous payload is running",
+    async (command) => {
+      const firstExit = createDeferred<RunExit>();
+      const secondExit = createDeferred<RunExit>();
+      const releasePayload = createDeferred();
+      const payloadFinished = createDeferred();
+      const spawn = vi.fn().mockImplementationOnce(async () => ({
+        runId: "on-exit-first",
+        startedAtMs: Date.now(),
+        cancel: vi.fn(),
+        wait: () => firstExit.promise,
+      }));
+      spawn.mockImplementation(async () => ({
+        runId: "on-exit-rearmed",
+        startedAtMs: Date.now(),
+        cancel: vi.fn(),
+        wait: () => secondExit.promise,
+      }));
+      getProcessSupervisorMock.mockReturnValue({ spawn, cancelScope: vi.fn() });
+      requestHeartbeatAndWaitMock.mockImplementationOnce(async () => {
+        await releasePayload.promise;
+        return { status: "ran", durationMs: 1 };
+      });
+      const state = loadCronService(createCronConfig("server-cron-on-exit-rearm"));
+      getCronDeps(state).nowMs = () => 1_700_000_000_000;
+      const run = state.cron.run.bind(state.cron);
+      vi.spyOn(state.cron, "run").mockImplementationOnce(async (...args) => {
+        try {
+          return await run(...args);
+        } finally {
+          payloadFinished.resolve();
+        }
+      });
+
+      try {
+        const job = await addSystemEventJob(state, "watch and rearm", "done", {
+          schedule: { kind: "on-exit", command: "true" },
+          sessionTarget: "main",
+          wakeMode: "now",
+        });
+        await state.reconcileExitWatchers();
+        firstExit.resolve(runExit({ reason: "exit", exitCode: 0 }));
+        await vi.waitFor(() => expect(requestHeartbeatAndWaitMock).toHaveBeenCalledOnce());
+        expect(state.cron.getJob(job.id)?.enabled).toBe(false);
+        await state.reconcileExitWatchers();
+        expect(spawn).toHaveBeenCalledOnce();
+
+        const rearmed = await state.cron.update(job.id, {
+          enabled: true,
+          schedule: { kind: "on-exit", command },
+        });
+        expect(rearmed.updatedAtMs).toBe(job.updatedAtMs);
+        await state.reconcileExitWatchers();
+        expect(spawn).toHaveBeenCalledTimes(2);
+
+        releasePayload.resolve();
+        await payloadFinished.promise;
+        await state.reconcileExitWatchers();
+        expect(state.cron.getJob(job.id)?.enabled).toBe(true);
+        expect(spawn).toHaveBeenCalledTimes(2);
+        secondExit.resolve(runExit({ reason: "exit", exitCode: 0 }));
+        await vi.waitFor(() => expect(requestHeartbeatAndWaitMock).toHaveBeenCalledTimes(2));
+        expect(state.cron.getJob(job.id)?.enabled).toBe(false);
+      } finally {
+        releasePayload.resolve();
+        firstExit.resolve(runExit());
+        secondExit.resolve(runExit());
+        await state.cron.stopAndDrain?.();
+      }
+    },
+  );
+
   it("persists an existing watcher exit during drain but fences its new scheduled run", async () => {
     resetGatewayWorkAdmission();
     const commandExit = createDeferred<RunExit>();
