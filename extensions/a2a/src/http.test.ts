@@ -294,6 +294,33 @@ describe("A2A HTTP agent discovery", () => {
 
     expect(card.supportedInterfaces[0]?.url).toBe("http://gateway.example.test/a2a/v1");
   });
+
+  it("preserves an explicit advertisedUrl even behind a configured trusted proxy", async () => {
+    const harness = await startHttpHarness({
+      config: {
+        agents: { list: [{ id: "main" }] },
+        gateway: { trustedProxies: ["127.0.0.1"] },
+      },
+      a2aConfig: { advertisedUrl: "https://operator-configured.example.test/" },
+    });
+    const request = createMockIncomingRequest([]);
+    request.method = "GET";
+    request.url = "/.well-known/agent-card.json";
+    request.headers = { host: "gateway.example.test", "x-forwarded-proto": "https" };
+    Object.defineProperty(request.socket, "remoteAddress", { value: "127.0.0.1" });
+    const response = createMockServerResponse();
+
+    await harness.handler(request, response);
+    const card = JSON.parse(response.body ?? "") as {
+      supportedInterfaces: Array<{ url: string }>;
+    };
+
+    // An operator's explicit advertisedUrl always wins; it must never be
+    // overridden by request-derived trusted-proxy scheme detection.
+    expect(card.supportedInterfaces[0]?.url).toBe(
+      "https://operator-configured.example.test/a2a/v1",
+    );
+  });
 });
 
 describe("A2A HTTP authentication and request limits", () => {
