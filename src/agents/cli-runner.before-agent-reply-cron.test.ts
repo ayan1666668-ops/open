@@ -56,7 +56,9 @@ const {
   executePreparedCliRunMock: vi.fn<
     (_context: unknown, _cliSessionIdToUse?: string) => Promise<CliOutput>
   >(async () => ({ text: "" })),
-  persistClaimedCliAssistantReplyMock: vi.fn(async () => {}),
+  persistClaimedCliAssistantReplyMock: vi.fn<
+    (params: { runParams: unknown; text: string | undefined }) => Promise<void>
+  >(async () => {}),
   prepareCliRunContextMock: vi.fn(),
   closeCliSessionMock: vi.fn(),
   closeMcpLoopbackServerMock: vi.fn(),
