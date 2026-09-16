@@ -581,7 +581,6 @@ export async function handleDirectiveOnly(
         }
         modelSelectionUpdated = isAcpExecutionSelection(selection)
           ? commitSessionExecutionSelection(sessionEntry, selection, {
-              cfg: params.cfg,
               markLiveSwitchPending: true,
               cause: { kind: modelSelection.resetToDefault ? "reset" : "user" },
             }).changed
@@ -626,6 +625,7 @@ export async function handleDirectiveOnly(
       }
       selectionCommitted = true;
     };
+    let confirmationNotice: string | undefined;
     try {
       if (preparedModel) {
         await withPreparedSessionExecutionSelection({
@@ -637,14 +637,6 @@ export async function handleDirectiveOnly(
           assertSelectionCurrent,
           commitAccepted: commitDirectives,
         });
-        modelAcknowledgment = acceptedSelection
-          ? formatExecutionSelectionAcknowledgment({
-              selection: acceptedSelection,
-              before: preparedModel.before,
-              reason: preparedModel.reason,
-              catalog: thinkingCatalog ?? [],
-            })
-          : preparedModel.message;
       } else {
         await commitDirectives();
       }
@@ -660,12 +652,7 @@ export async function handleDirectiveOnly(
           })
         : undefined;
       if (selectionCommitted && failure && acceptedSelection && preparedModel) {
-        modelAcknowledgment = `${formatExecutionSelectionAcknowledgment({
-          selection: acceptedSelection,
-          before: preparedModel.before,
-          reason: preparedModel.reason,
-          catalog: thinkingCatalog ?? [],
-        })}${failure.confirmationNotice ? ` ${failure.confirmationNotice}` : ""}`;
+        confirmationNotice = failure.confirmationNotice;
       } else if (error instanceof DirectiveCommitError) {
         return rejectModelTransaction(error.message);
       } else if (failure) {
@@ -673,6 +660,15 @@ export async function handleDirectiveOnly(
       } else {
         throw error;
       }
+    }
+    if (preparedModel && acceptedSelection) {
+      modelAcknowledgment = formatExecutionSelectionAcknowledgment({
+        selection: acceptedSelection,
+        before: preparedModel.before,
+        reason: preparedModel.reason,
+        catalog: thinkingCatalog ?? [],
+      });
+      if (confirmationNotice) modelAcknowledgment += ` ${confirmationNotice}`;
     }
     if (
       modelSelection &&

@@ -19,6 +19,18 @@ import { buildStatusReplyParts } from "./status-text.js";
 
 type StatusTextParams = Parameters<typeof buildStatusReplyParts>[0];
 
+function acceptedSelection(
+  provider: string,
+  id: string,
+  fallbackPermission: "configured" | "explicit" = "explicit",
+): NonNullable<InternalSessionEntry["executionSelection"]> {
+  return {
+    state: "accepted",
+    selection: { model: { provider, id }, executor: { kind: "harness", id: "openclaw" } },
+    fallbackPermission,
+  };
+}
+
 describe("buildStatusText prepared context windows", () => {
   afterEach(() => cliBackendsTesting.resetDepsForTest());
   const catalog = [
@@ -205,10 +217,10 @@ describe("buildStatusText prepared context windows", () => {
       },
     ],
     [
-      "legacy embedded provider",
+      "accepted provider and case-sensitive model",
       {
         entry: {
-          modelOverride: "MiXeD/Model:Case",
+          executionSelection: acceptedSelection("mixed", "Model:Case"),
           fallbackNotice: {
             kind: "active",
             selectedModel: "MiXeD/Model:Case",
@@ -303,7 +315,7 @@ describe("buildStatusText prepared context windows", () => {
 
   it("retains the incoming prepared cap when it already belongs to the terminal pair", async () => {
     const parts = await renderTerminalFallback({
-      entry: { providerOverride: "deepseek", modelOverride: "deepseek-v4-flash" },
+      entry: { executionSelection: acceptedSelection("deepseek", "deepseek-v4-flash") },
       status: {
         provider: "fallback",
         model: "small-model",
@@ -396,25 +408,19 @@ describe("buildStatusText prepared context windows", () => {
 
   it.each([
     ["prepared alias", "candidate", "middle", {}, "candidate/middle"],
-    [
-      "opaque empty provider",
-      "",
-      "Vendor/Model:opaque",
-      { providerOverride: "" },
-      "Vendor/Model:opaque",
-    ],
+    ["opaque empty provider", "", "Vendor/Model:opaque", {}, "Vendor/Model:opaque"],
     [
       "explicit override",
       "candidate",
       "entry",
-      { providerOverride: "candidate", modelOverride: "middle" },
+      { executionSelection: acceptedSelection("candidate", "middle") },
       "candidate/middle",
     ],
     [
-      "legacy explicit override",
+      "accepted provider change",
       "candidate",
       "entry",
-      { modelOverride: "fallback/small-model" },
+      { executionSelection: acceptedSelection("fallback", "small-model") },
       "fallback/small-model",
     ],
   ] satisfies Array<[string, string, string, Partial<InternalSessionEntry>, string]>)(
@@ -478,10 +484,7 @@ describe("buildStatusText prepared context windows", () => {
       input: { provider: "deepseek", model: "deepseek-v4-flash" },
       entry: {
         status: "running",
-        providerOverride: "fallback",
-        modelOverride: "small-model",
-        agentRuntimeOverride: "openclaw",
-        modelOverrideRouteResolution: "resolved",
+        executionSelection: acceptedSelection("fallback", "small-model"),
         modelProvider: "deepseek",
         model: "deepseek-v4-flash",
         liveModelSwitchPending: true,
@@ -503,10 +506,7 @@ describe("buildStatusText prepared context windows", () => {
       sessionKey: "agent:worker:subagent:configured",
       input: { provider: "deepseek", model: "deepseek-v4-flash" },
       entry: {
-        providerOverride: "fallback",
-        modelOverride: "small-model",
-        agentRuntimeOverride: "openclaw",
-        modelOverrideRouteResolution: "resolved",
+        executionSelection: acceptedSelection("fallback", "small-model", "configured"),
       },
       expectedModel: "fallback/small-model",
       absent: ["auto fallback", "check provider", "pinned session"],
@@ -610,10 +610,7 @@ describe("buildStatusText prepared context windows", () => {
       sessionEntry: {
         sessionId: "selected-prepared-context",
         updatedAt: 0,
-        providerOverride: "deepseek",
-        modelOverride: "deepseek-v4-flash",
-        agentRuntimeOverride: "openclaw",
-        modelOverrideRouteResolution: "resolved",
+        executionSelection: acceptedSelection("deepseek", "deepseek-v4-flash"),
         modelProvider: "fallback",
         model: "small-model",
         totalTokens: 45_000,
@@ -631,8 +628,7 @@ describe("buildStatusText prepared context windows", () => {
       sessionEntry: {
         sessionId: "active-prepared-context",
         updatedAt: 0,
-        providerOverride: "deepseek",
-        modelOverride: "deepseek-v4-flash",
+        executionSelection: acceptedSelection("deepseek", "deepseek-v4-flash"),
         modelProvider: "fallback",
         model: "small-model",
         fallbackNotice: {

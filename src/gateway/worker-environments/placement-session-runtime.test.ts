@@ -14,7 +14,7 @@ import {
   resolveWorkerPlacementCapabilities,
   resolveWorkerPlacementExecutionMode,
   resolveWorkerPlacementSessionRuntime,
-  resolveWorkerPlacementSessionRuntimeCapabilities,
+  resolveWorkerPlacementModelRuntime,
 } from "./placement-session-runtime.js";
 
 const originalPluginRegistry = getActivePluginRegistry();
@@ -45,53 +45,46 @@ describe("worker placement runtime capabilities", () => {
 
   it.each([
     {
-      name: "ignores an unlocked historical runtime after selecting a different provider",
-      entry: { agentHarnessId: "codex" },
-      expected: "openclaw",
+      name: "ignores a different historical runtime",
+      observed: "previous-app",
+      model: { provider: "fixture", id: "model" },
+      runtime: "openclaw",
     },
     {
-      name: "ignores an unlocked historical runtime behind the default override",
-      entry: { agentHarnessId: "codex", agentRuntimeOverride: "default" },
-      expected: "openclaw",
+      name: "preserves the accepted native owner",
+      observed: "previous-app",
+      model: "native-managed",
+      runtime: "native-app",
+      locked: true,
     },
     {
-      name: "preserves locked transcript ownership",
-      entry: { agentHarnessId: "codex", modelSelectionLocked: true },
-      expected: "codex",
+      name: "keeps an explicit accepted executor over producer history",
+      observed: "openclaw",
+      model: { provider: "fixture", id: "model" },
+      runtime: "selected-app",
     },
-    {
-      name: "does not let a historical embedded runtime override a Codex model",
-      entry: {
-        agentHarnessId: "openclaw",
-        providerOverride: "openai",
-        modelOverride: "gpt-5.6-sol",
-      },
-      expected: "codex",
-    },
-    {
-      name: "honors an explicit compatible runtime override",
-      entry: {
-        agentRuntimeOverride: "codex",
-        providerOverride: "openai",
-        modelOverride: "gpt-test",
-      },
-      expected: "codex",
-    },
-  ])("$name", ({ entry, expected }) => {
+  ] as const)("$name", (scenario) => {
     expect(
       resolveWorkerPlacementSessionRuntime({
         cfg: {},
         entry: {
           sessionId: "placement-runtime-session",
           updatedAt: 0,
-          providerOverride: "anthropic",
-          modelOverride: "claude-test",
-          ...entry,
+          agentHarnessId: scenario.observed,
+          ...("locked" in scenario ? { modelSelectionLocked: scenario.locked } : {}),
+          executionSelection: {
+            state: "accepted",
+            selection: {
+              model: scenario.model,
+              executor: { kind: "harness", id: scenario.runtime },
+            },
+            fallbackPermission: "explicit",
+          },
         },
         agentId: "main",
         sessionKey: "agent:main:placement-runtime",
       }),
-    ).toBe(expected);
+    ).toBe(scenario.runtime);
   });
 
   it.each([
@@ -227,7 +220,9 @@ describe("resolveWorkerPlacementSessionRuntimeCapabilities", () => {
   });
 
   it("returns worker-turn for a model with an explicit openclaw runtime policy", () => {
-    const caps = resolveWorkerPlacementSessionRuntimeCapabilities({
+    const runtime = resolveWorkerPlacementModelRuntime({
+      provider: "anthropic",
+      model: "claude-test",
       cfg: {
         models: {
           providers: {
@@ -242,12 +237,11 @@ describe("resolveWorkerPlacementSessionRuntimeCapabilities", () => {
       entry: {
         sessionId: "s1",
         updatedAt: 0,
-        providerOverride: "anthropic",
-        modelOverride: "claude-test",
       },
       agentId: "main",
       sessionKey: "agent:main:s1",
     });
+    const caps = resolveWorkerPlacementCapabilities(runtime);
     expect(caps.executionMode).toBe("worker-turn");
     expect(caps.devicePlacement).toBeDefined();
   });
@@ -259,17 +253,18 @@ describe("resolveWorkerPlacementSessionRuntimeCapabilities", () => {
     // auto_openclaw), so the capabilities mirror that — the guard must not
     // falsely reject a model whose execution will use the placement-capable
     // built-in runtime. (A CLI-backed provider is covered separately below.)
-    const caps = resolveWorkerPlacementSessionRuntimeCapabilities({
+    const runtime = resolveWorkerPlacementModelRuntime({
+      provider: "embedded-auto-provider",
+      model: "embedded-auto-model",
       cfg: {},
       entry: {
         sessionId: "s2",
         updatedAt: 0,
-        providerOverride: "embedded-auto-provider",
-        modelOverride: "embedded-auto-model",
       },
       agentId: "main",
       sessionKey: "agent:main:s2",
     });
+    const caps = resolveWorkerPlacementCapabilities(runtime);
     expect(caps.executionMode).toBe("worker-turn");
     expect(caps.devicePlacement).toBeDefined();
   });
@@ -290,17 +285,18 @@ describe("resolveWorkerPlacementSessionRuntimeCapabilities", () => {
         source: "test",
       });
     }
-    const caps = resolveWorkerPlacementSessionRuntimeCapabilities({
+    const runtime = resolveWorkerPlacementModelRuntime({
+      provider: "claude-cli",
+      model: "claude-fable-5-1",
       cfg: {},
       entry: {
         sessionId: "s-cli",
         updatedAt: 0,
-        providerOverride: "claude-cli",
-        modelOverride: "claude-fable-5-1",
       },
       agentId: "main",
       sessionKey: "agent:main:s-cli",
     });
+    const caps = resolveWorkerPlacementCapabilities(runtime);
     expect(caps.executionMode).toBeUndefined();
     expect(caps.devicePlacement).toBeUndefined();
   });
@@ -319,18 +315,26 @@ describe("resolveWorkerPlacementSessionRuntimeCapabilities", () => {
         source: "test",
       });
     }
-    const caps = resolveWorkerPlacementSessionRuntimeCapabilities({
+    const runtime = resolveWorkerPlacementModelRuntime({
+      provider: "claude-cli",
+      model: "opus-4.7",
       cfg: {},
       entry: {
+        executionSelection: {
+          state: "accepted",
+          selection: {
+            model: { provider: "claude-cli", id: "opus-4.7" },
+            executor: { kind: "harness", id: "openclaw" },
+          },
+          fallbackPermission: "explicit",
+        },
         sessionId: "s-override",
         updatedAt: 0,
-        providerOverride: "claude-cli",
-        modelOverride: "opus-4.7",
-        agentRuntimeOverride: "openclaw",
       },
       agentId: "main",
       sessionKey: "agent:main:s-override",
     });
+    const caps = resolveWorkerPlacementCapabilities(runtime);
     expect(caps.executionMode).toBe("worker-turn");
   });
 
@@ -347,7 +351,9 @@ describe("resolveWorkerPlacementSessionRuntimeCapabilities", () => {
         source: "test",
       });
     }
-    const caps = resolveWorkerPlacementSessionRuntimeCapabilities({
+    const runtime = resolveWorkerPlacementModelRuntime({
+      provider: "anthropic",
+      model: "opus-4.7",
       cfg: {
         auth: {
           order: { anthropic: ["anthropic:claude-cli", "anthropic:api"] },
@@ -360,13 +366,12 @@ describe("resolveWorkerPlacementSessionRuntimeCapabilities", () => {
       entry: {
         sessionId: "s-auth-direct",
         updatedAt: 0,
-        providerOverride: "anthropic",
-        modelOverride: "opus-4.7",
         authProfileOverride: "anthropic:api",
       },
       agentId: "main",
       sessionKey: "agent:main:s-auth-direct",
     });
+    const caps = resolveWorkerPlacementCapabilities(runtime);
     expect(caps.executionMode).toBe("worker-turn");
   });
 
@@ -383,7 +388,9 @@ describe("resolveWorkerPlacementSessionRuntimeCapabilities", () => {
         source: "test",
       });
     }
-    const caps = resolveWorkerPlacementSessionRuntimeCapabilities({
+    const runtime = resolveWorkerPlacementModelRuntime({
+      provider: "anthropic",
+      model: "opus-4.7",
       cfg: {
         auth: {
           order: { anthropic: ["anthropic:api"] },
@@ -396,13 +403,12 @@ describe("resolveWorkerPlacementSessionRuntimeCapabilities", () => {
       entry: {
         sessionId: "s-auth-cli",
         updatedAt: 0,
-        providerOverride: "anthropic",
-        modelOverride: "opus-4.7",
         authProfileOverride: "anthropic:claude-cli",
       },
       agentId: "main",
       sessionKey: "agent:main:s-auth-cli",
     });
+    const caps = resolveWorkerPlacementCapabilities(runtime);
     expect(caps.executionMode).toBeUndefined();
   });
 
@@ -423,7 +429,9 @@ describe("resolveWorkerPlacementSessionRuntimeCapabilities", () => {
       },
     });
 
-    const caps = resolveWorkerPlacementSessionRuntimeCapabilities({
+    const runtime = resolveWorkerPlacementModelRuntime({
+      provider: "device-harness",
+      model: "model-x",
       cfg: {
         models: {
           providers: {
@@ -438,12 +446,11 @@ describe("resolveWorkerPlacementSessionRuntimeCapabilities", () => {
       entry: {
         sessionId: "s3",
         updatedAt: 0,
-        providerOverride: "device-harness",
-        modelOverride: "model-x",
       },
       agentId: "main",
       sessionKey: "agent:main:s3",
     });
+    const caps = resolveWorkerPlacementCapabilities(runtime);
     expect(caps.executionMode).toBe("remote-exec");
     expect(caps.devicePlacement).toEqual({
       requiredNodeCommands: ["runtime.exec-server.v1"],
@@ -472,17 +479,18 @@ describe("resolveWorkerPlacementSessionRuntimeCapabilities", () => {
       },
     });
 
-    const caps = resolveWorkerPlacementSessionRuntimeCapabilities({
+    const runtime = resolveWorkerPlacementModelRuntime({
+      provider: "auto-provider",
+      model: "auto-model",
       cfg: {},
       entry: {
         sessionId: "s4",
         updatedAt: 0,
-        providerOverride: "auto-provider",
-        modelOverride: "auto-model",
       },
       agentId: "main",
       sessionKey: "agent:main:s4",
     });
+    const caps = resolveWorkerPlacementCapabilities(runtime);
     expect(caps.executionMode).toBe("remote-exec");
     expect(caps.devicePlacement).toEqual({
       requiredNodeCommands: ["runtime.exec-server.v1"],
@@ -511,17 +519,18 @@ describe("resolveWorkerPlacementSessionRuntimeCapabilities", () => {
       },
     });
 
-    const caps = resolveWorkerPlacementSessionRuntimeCapabilities({
+    const runtime = resolveWorkerPlacementModelRuntime({
+      provider: "unsupported-provider",
+      model: "unsupported-model",
       cfg: {},
       entry: {
         sessionId: "s5",
         updatedAt: 0,
-        providerOverride: "unsupported-provider",
-        modelOverride: "unsupported-model",
       },
       agentId: "main",
       sessionKey: "agent:main:s5",
     });
+    const caps = resolveWorkerPlacementCapabilities(runtime);
     expect(caps.executionMode).toBe("worker-turn");
     expect(caps.devicePlacement).toEqual({
       requiredNodeCommands: [],
@@ -576,8 +585,14 @@ describe("resolveWorkerPlacementSessionRuntimeCapabilities", () => {
       entry: {
         sessionId,
         updatedAt: 0,
-        providerOverride: "claude-cli",
-        modelOverride: "claude-fable-5-1",
+        executionSelection: {
+          state: "accepted",
+          selection: {
+            model: { provider: "claude-cli", id: "claude-fable-5-1" },
+            executor: { kind: "cli", id: "claude-cli" },
+          },
+          fallbackPermission: "explicit",
+        },
       } as never,
       key: "agent:main:s6",
       patch: { key: "agent:main:s6", model: "claude-cli/claude-fable-5-1" } as never,
@@ -633,8 +648,14 @@ describe("resolveWorkerPlacementSessionRuntimeCapabilities", () => {
       entry: {
         sessionId,
         updatedAt: 0,
-        providerOverride: "anthropic",
-        modelOverride: "claude-test",
+        executionSelection: {
+          state: "accepted",
+          selection: {
+            model: { provider: "anthropic", id: "claude-test" },
+            executor: { kind: "harness", id: "openclaw" },
+          },
+          fallbackPermission: "explicit",
+        },
       } as never,
       key: "agent:main:s7",
       patch: { key: "agent:main:s7", model: "anthropic/claude-test" } as never,
@@ -682,8 +703,14 @@ describe("resolveWorkerPlacementSessionRuntimeCapabilities", () => {
       entry: {
         sessionId,
         updatedAt: 0,
-        providerOverride: "some-provider",
-        modelOverride: "some-model",
+        executionSelection: {
+          state: "accepted",
+          selection: {
+            model: { provider: "some-provider", id: "some-model" },
+            executor: { kind: "harness", id: "openclaw" },
+          },
+          fallbackPermission: "explicit",
+        },
       } as never,
       key: "agent:main:s8",
       patch: { key: "agent:main:s8", model: "some-provider/some-model" } as never,

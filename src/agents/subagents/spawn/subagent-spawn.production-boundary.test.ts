@@ -580,9 +580,14 @@ describe("recursive spawn production boundary", () => {
     await upsertSessionEntryCore(
       { storePath: bound.storePath, sessionKey: parentSessionKey },
       {
-        providerOverride: "custom",
-        modelOverride: storedParentModel,
-        modelOverrideSource: "user",
+        executionSelection: {
+          state: "accepted",
+          selection: {
+            model: { provider: "custom", id: storedParentModel },
+            executor: { kind: "harness", id: "openclaw" },
+          },
+          fallbackPermission: "explicit",
+        },
       },
     );
     const { context, runtime, identities, readAgentRuntimeExecutionLineage } =
@@ -638,11 +643,14 @@ describe("recursive spawn production boundary", () => {
       ).toMatchObject({
         spawnedBy: parentSessionKey,
         spawnDepth: 2,
-        providerOverride: "custom",
-        modelOverride: "child-model",
-        modelOverrideSource: "auto",
-        modelOverrideFallbackOriginProvider: "custom",
-        modelOverrideFallbackOriginModel: "child-model",
+        executionSelection: {
+          state: "accepted",
+          selection: {
+            model: { provider: "custom", id: "child-model" },
+            executor: { kind: "harness", id: "openclaw" },
+          },
+          fallbackPermission: "configured",
+        },
       });
       expect(subagentRuns.get(details.runId)).toMatchObject({
         childSessionKey: details.childSessionKey,

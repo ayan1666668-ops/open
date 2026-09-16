@@ -1,5 +1,4 @@
 import { z } from "zod";
-import type { SessionExecutionSelection } from "./execution-selection.js";
 
 const identity = z.string().min(1);
 const model = z.object({ provider: identity, id: identity }).strict();
@@ -34,7 +33,3 @@ export const sessionExecutionSelectionSchema = z.discriminatedUnion("state", [
     })
     .strict(),
 ]);
-
-export function parseSessionExecutionSelection(value: unknown): SessionExecutionSelection {
-  return sessionExecutionSelectionSchema.parse(value);
-}

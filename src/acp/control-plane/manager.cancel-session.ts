@@ -13,7 +13,7 @@ import type {
   SetManagerSessionState,
   WithManagerSessionActor,
 } from "./manager.types.js";
-import { acpSessionActorKey, requireReadySessionMeta } from "./manager.utils.js";
+import { acpSessionActorKey, requireReadySession } from "./manager.utils.js";
 
 /** Cancels either the active ACP turn or the idle runtime handle for a session. */
 export async function runManagerCancelSession(params: {
@@ -85,7 +85,7 @@ export async function runManagerCancelSession(params: {
       sessionKey: params.sessionKey,
       agentId: params.agentId,
     });
-    const resolvedMeta = requireReadySessionMeta(resolution);
+    const { meta: resolvedMeta } = requireReadySession(resolution);
     const { runtime, handle } = await params.ensureRuntimeHandle({
       cfg: params.cfg,
       sessionKey: params.sessionKey,

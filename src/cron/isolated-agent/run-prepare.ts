@@ -93,7 +93,7 @@ import {
   resolveHookExternalContentSource,
   isThinkingLevelSupported,
   resolveSupportedThinkingLevel,
-  resolveSessionRuntimeOverrideForProvider,
+  resolvePersistedSessionRuntimeId,
   resolveThinkingDefault,
 } from "./run.runtime.js";
 import type { RunCronAgentTurnResult } from "./run.types.js";
@@ -384,7 +384,6 @@ export async function prepareCronRunContext(params: {
         throw new Error(initialSelection.message);
       }
       commitSessionExecutionSelection(cronSession.sessionEntry, initialSelection.selection, {
-        cfg: runtimeCfg,
         cause: { kind: "initialize" },
       });
       validateInitialSelection = initialSelection.validateCommit;
@@ -479,7 +478,6 @@ export async function prepareCronRunContext(params: {
     const executionSelection = preparedSelection.selection;
     if (!getSessionExecutionSelection(cronSession.sessionEntry)) {
       commitSessionExecutionSelection(cronSession.sessionEntry, executionSelection, {
-        cfg: cfgWithAgentDefaults,
         cause: { kind: "initialize" },
       });
       validateInitialSelection = preparedSelection.validateCommit;
@@ -540,11 +538,7 @@ export async function prepareCronRunContext(params: {
         workspaceDir,
         allowGatewaySubagentBinding: true,
         runtimePluginSelections: runtimePluginCandidates.map((candidate) => {
-          const runtime = resolveSessionRuntimeOverrideForProvider({
-            provider: candidate.provider,
-            entry: cronSession.sessionEntry,
-            cfg: cfgWithAgentDefaults,
-          });
+          const runtime = resolvePersistedSessionRuntimeId(cronSession.sessionEntry);
           return runtime
             ? { provider: candidate.provider, modelId: candidate.model, runtime, agentId }
             : { provider: candidate.provider, modelId: candidate.model, agentId };

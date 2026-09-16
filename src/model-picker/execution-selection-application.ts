@@ -276,7 +276,6 @@ export async function applySessionExecutionSelection(
     };
     const changedSelection = isAcpExecutionSelection(selection)
       ? commitSessionExecutionSelection(next, selection, {
-          cfg,
           cause,
           markLiveSwitchPending: params.markLiveSwitchPending,
         })

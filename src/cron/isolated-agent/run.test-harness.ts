@@ -149,11 +149,11 @@ vi.mock("./run.runtime.js", async () => ({
   isCliProvider: isCliProviderMock,
   resolveThinkingDefault: resolveThinkingDefaultMock,
   resolveEffectiveAgentRuntime: resolveEffectiveAgentRuntimeMock,
-  resolveSessionRuntimeOverrideForProvider: (
+  resolvePersistedSessionRuntimeId: (
     await vi.importActual<typeof import("../../agents/session-runtime-compat.js")>(
       "../../agents/session-runtime-compat.js",
     )
-  ).resolveSessionRuntimeOverrideForProvider,
+  ).resolvePersistedSessionRuntimeId,
   buildWorkspaceSkillSnapshot: buildWorkspaceSkillSnapshotMock,
   getSkillsSnapshotVersion: getSkillsSnapshotVersionMock,
   resolveAgentTimeoutMs: resolveAgentTimeoutMsMock,

@@ -290,7 +290,6 @@ export async function resolveEmbeddedModelSelection(params: {
   ) {
     const next = { ...sessionEntry };
     commitSessionExecutionSelection(next, executionSelection, {
-      cfg: params.cfg,
       cause: { kind: "initialize" },
     });
     sessionEntry = await persistAgentSession({

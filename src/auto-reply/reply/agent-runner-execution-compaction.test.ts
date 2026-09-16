@@ -1,7 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { formatBillingErrorMessage } from "../../agents/failover/user-copy.js";
+import { evaluatePublishedModelRuntimeChoice } from "../../agents/model-runtime-choice.js";
 import { resetLogger, setLoggerOverride } from "../../logging/logger.js";
 import { loggingState } from "../../logging/state.js";
+import { requireActivePluginRegistry, setActivePluginRegistry } from "../../plugins/runtime.js";
 import {
   setupAgentRunnerExecutionTestState,
   getExecuteAgentTurnForTest,
@@ -189,6 +191,41 @@ describe("executeAgentTurn: compaction events", () => {
   });
 
   it("carries committed compaction into a later CLI fallback failure", async () => {
+    const registry = requireActivePluginRegistry();
+    setActivePluginRegistry({
+      ...registry,
+      cliBackends: [
+        ...registry.cliBackends,
+        {
+          pluginId: "test-cli",
+          source: "test",
+          backend: {
+            id: "claude-cli",
+            modelProvider: "claude-cli",
+            config: { command: "test-cli" },
+          },
+        },
+      ],
+    });
+    onTestFinished(() => setActivePluginRegistry(registry));
+    const evaluate = vi.mocked(evaluatePublishedModelRuntimeChoice).getMockImplementation();
+    if (!evaluate) throw new Error("Missing prepared catalog fixture.");
+    vi.mocked(evaluatePublishedModelRuntimeChoice).mockImplementation((params) =>
+      params.provider === "claude-cli" && params.runtimeId !== "claude-cli"
+        ? Promise.resolve({
+            kind: "unsupported",
+            message: "This fixture route requires its CLI executor.",
+          })
+        : evaluate(params),
+    );
+    const followupRun = createFollowupRun();
+    followupRun.run.config = {
+      agents: {
+        defaults: {
+          models: { "claude-cli/claude-sonnet-4-6": { agentRuntime: { id: "claude-cli" } } },
+        },
+      },
+    };
     state.isCliProviderMock.mockImplementation((provider: unknown) => provider === "claude-cli");
     state.runEmbeddedAgentMock.mockImplementationOnce(async (params: EmbeddedAgentParams) => {
       params.onAutoCompactionSucceeded?.(1);
@@ -231,7 +268,7 @@ describe("executeAgentTurn: compaction events", () => {
       };
     });
 
-    const result = await executeTestTurn();
+    const result = await executeTestTurn({ followupRun });
 
     expect(result).toMatchObject({
       kind: "success",

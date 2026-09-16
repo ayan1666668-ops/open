@@ -6,7 +6,7 @@ import {
   resolveModelRefFromString,
   type ModelAliasIndex,
 } from "../../agents/model-selection.js";
-import { resolveSessionRuntimeOverrideForProvider } from "../../agents/session-runtime-compat.js";
+import { resolvePersistedSessionRuntimeId } from "../../agents/session-runtime-compat.js";
 import { resolveChannelModelOverride } from "../../channels/model-overrides.js";
 import type { SessionEntry } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
@@ -268,11 +268,7 @@ function resolveHarnessSourceVisibleRepliesDefault(params: {
       modelOverride: params.turnModelOverride,
     });
     const resolveCandidateDefault = (candidate: { provider: string; model?: string }) => {
-      const agentHarnessRuntimeOverride = resolveSessionRuntimeOverrideForProvider({
-        provider: candidate.provider,
-        entry: params.entry,
-        cfg: params.cfg,
-      });
+      const agentHarnessRuntimeOverride = resolvePersistedSessionRuntimeId(params.entry);
       const defaults = resolveAgentHarnessDeliveryDefaults({
         provider: candidate.provider,
         modelId: candidate.model,

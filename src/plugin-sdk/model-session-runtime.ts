@@ -3,9 +3,14 @@ import { isDeepStrictEqual } from "node:util";
  * Runtime SDK subpath for model overrides and agent concurrency session helpers.
  */
 import { expectDefined } from "@openclaw/normalization-core";
+import {
+  isDefaultAgentRuntimeId,
+  normalizeOptionalAgentRuntimeId,
+} from "../agents/agent-runtime-id.js";
 import type { AgentModelPrimaryWriteTarget } from "../agents/agent-scope.js";
 import type { ModelCatalogEntry } from "../agents/model-catalog.js";
 import type { ModelVisibilityPolicy } from "../agents/model-visibility-policy.js";
+import { resolvePersistedSessionRuntimeId as resolveAcceptedSessionRuntimeId } from "../agents/session-runtime-compat.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { ApplySessionExecutionSelectionResult as OwnerSelectionResult } from "../model-picker/apply-session-model-selection.js";
 import {
@@ -13,6 +18,7 @@ import {
   isModelExecutionSelection,
   getCommittedSessionExecutionSelection,
 } from "../model-picker/execution-selection.js";
+import { resolveSessionPinnedHarnessId } from "../sessions/agent-harness-session-key.js";
 import type { SessionEntry as PublicSelectionEntry } from "./session-store-runtime-internal.js";
 
 export type SessionModelSelectionRequest = {
@@ -104,23 +110,14 @@ export async function applySessionModelSelection(
   const sessionStore = { [params.sessionKey]: canonical };
   const acpInstruction =
     "Use applySessionExecutionSelection for app-managed models; this API returns a concrete model route.";
-  const isAcpBound = () => {
-    const entry = params.storePath
-      ? (loadSessionEntryReadOnly({
-          storePath: params.storePath,
-          sessionKey: params.sessionKey,
-          agentId: params.agentId,
-        }) ?? params.sessionEntry)
-      : (params.sessionStore[params.sessionKey] ?? params.sessionEntry);
-    const selection = getCommittedSessionExecutionSelection(entry);
-    return (
-      (selection !== undefined && isAcpExecutionSelection(selection)) ||
-      (entry.executionSelection?.state === "deferred" &&
-        entry.executionSelection.request.executor?.kind === "acp")
-    );
-  };
-  if (isAcpBound())
+  const selection = getCommittedSessionExecutionSelection(canonical);
+  if (
+    (selection && isAcpExecutionSelection(selection)) ||
+    (canonical.executionSelection?.state === "deferred" &&
+      canonical.executionSelection.request.executor?.kind === "acp")
+  ) {
     return { status: "rejected", reason: "invalid-runtime", message: acpInstruction };
+  }
   const owner = await import("../model-picker/apply-session-model-selection.js");
   const request = params.request;
   const executorKind =
@@ -151,7 +148,6 @@ export async function applySessionModelSelection(
     profileOverride: request.profileOverride,
     validateCommit: () =>
       params.validateAuthProfileSelection?.() ??
-      (isAcpBound() ? acpInstruction : undefined) ??
       (!isDeepStrictEqual(original, initial) ||
       (params.sessionStore[params.sessionKey] !== undefined &&
         params.sessionStore[params.sessionKey] !== original)
@@ -204,7 +200,27 @@ export async function applySessionModelSelection(
 
 export { resolveChannelModelOverride } from "../channels/model-overrides.js";
 export { resolveAgentMaxConcurrent } from "../config/agent-limits.js";
-export { resolvePersistedSessionRuntimeId } from "../agents/session-runtime-compat.js";
+/** Released read contract for legacy plugin inputs; core reads only the accepted executor. */
+export function resolvePersistedSessionRuntimeId(
+  entry?: Partial<
+    Pick<
+      PublicSelectionEntry,
+      | "executionSelection"
+      | "agentRuntimeOverride"
+      | "agentHarnessId"
+      | "modelSelectionLocked"
+      | "pluginOwnerId"
+    >
+  >,
+): string | undefined {
+  if (entry?.executionSelection) return resolveAcceptedSessionRuntimeId(entry);
+  const pinned = resolveSessionPinnedHarnessId(entry);
+  if (pinned && !isDefaultAgentRuntimeId(pinned)) return pinned;
+  const runtime = normalizeOptionalAgentRuntimeId(entry?.agentRuntimeOverride);
+  return runtime && !isDefaultAgentRuntimeId(runtime)
+    ? runtime
+    : normalizeOptionalAgentRuntimeId(entry?.agentHarnessId);
+}
 export { resolveSessionModelRef } from "../agents/session-model-ref.js";
 export {
   applyModelOverrideToSessionEntry,

@@ -3,7 +3,7 @@ import {
   LEGACY_SELECTION_VIEW_FIELDS,
   type LegacySelectionView,
 } from "../../model-picker/execution-selection-projection.js";
-import { parseSessionExecutionSelection } from "../../model-picker/execution-selection.schema.js";
+import { sessionExecutionSelectionSchema } from "../../model-picker/execution-selection.schema.js";
 import {
   deliveryContextFromSession,
   sessionDeliveryChannel,
@@ -95,7 +95,7 @@ export function bindSessionNode(params: {
   const releasedView: typeof canonicalEntry & LegacySelectionView = canonicalEntry;
   for (const key of LEGACY_SELECTION_VIEW_FIELDS) delete releasedView[key];
   if (canonicalEntry.executionSelection) {
-    canonicalEntry.executionSelection = parseSessionExecutionSelection(
+    canonicalEntry.executionSelection = sessionExecutionSelectionSchema.parse(
       canonicalEntry.executionSelection,
     );
   }

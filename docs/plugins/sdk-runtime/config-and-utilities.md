@@ -133,24 +133,23 @@ accepts owner authority only from the exact active, trusted plugin registered fo
 Model-picker integrations use two focused runtime subpaths. Import the typed
 `ModelPickerAction` and `ModelPickerCapabilityProfile` contracts from
 `openclaw/plugin-sdk/interactive-runtime`. Import
-`applySessionModelSelection(...)` and its result types from
-`openclaw/plugin-sdk/model-session-runtime`; this is the live-session mutation
-seam, including its authoritative conflict check and post-commit effects. The
-lower-level `applyModelOverrideToSessionEntry(...)` helper is not a picker
-persistence API.
+`applySessionExecutionSelection(...)` from
+`openclaw/plugin-sdk/model-session-runtime` to prepare and commit one model and
+executor selection. Its result carries the accepted selection, the previous
+selection, and the acknowledgment. The owner checks support, account access,
+placement, and current session authority before committing and publishing effects.
+A model-only request keeps a supported executor. A reset resolves configured
+policy once; repeat the reset to follow later policy changes.
 
-Use `applyModelOverrideWithAuthProfileCompatibility(...)` only as the direct
-persistence fallback when a channel callback cannot enter the full live-session
-transaction and already owns an atomic canonical session-entry patch. Pass the
-active config, resolved agent directory, entry, effective provider before the
-change, and validated selection. The helper mutates that entry only: it keeps a
-pinned auth profile when its recorded credential provider or configured alias is
-compatible, clears an incompatible pin, and enforces the model-selection lock.
-The caller still owns model allowlist validation, atomic persistence,
-`markLiveSwitchPending`, and any post-commit effects. Prefer
-`applySessionModelSelection(...)` whenever the full transaction is available.
-The deprecated setters preserve existing runtime pins and defer executor selection to the next prepared turn.
-Both synchronous setters are deprecated and will be removed in the first stable release after 2026.10; use `applySessionModelSelection(...)`.
+The released `applySessionModelSelection(...)` method preserves its existing
+flat result for concrete models. App-managed selections require the pair API.
+The synchronous `applyModelOverrideToSessionEntry(...)` and
+`applyModelOverrideWithAuthProfileCompatibility(...)` setters remain deprecated
+adapters. They preserve model, runtime-pin, source, account, and lock semantics
+and stage deferred intent without claiming that execution is ready. Existing
+callers still own persistence of the changed entry. Both setters will be removed
+in the first stable release after 2026.10; use
+`applySessionExecutionSelection(...)` for new integrations.
 
 Model-picker actions carry only bounded snapshot and catalog tokens. Channel
 actor identity, source-message binding, and serialized callback data stay in

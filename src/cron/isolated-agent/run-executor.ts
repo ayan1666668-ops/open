@@ -874,6 +874,25 @@ function createCronPromptExecutor(
     };
     const execute = async () => {
       const accepted = params.liveSelection.selection;
+      const runEntry = {
+        identity: {
+          runId,
+          sessionId: params.cronSession.sessionEntry.sessionId,
+          lane: resolveCronAgentLane(params.lane),
+          agentId: params.agentId,
+          sessionKey: params.runSessionKey,
+        },
+        harness: {
+          workspaceDir: params.executionRoot ?? params.workspaceDir,
+          sessionKey: params.runSessionKey,
+        },
+        behavior: {
+          kind: "command-rpc" as const,
+          hasCommittedSideEffect: currentAttemptCommittedMedia,
+        },
+        abortSignal: params.abortSignal,
+        runCandidate,
+      };
       if (accepted.model === "native-managed") {
         const prepared = await prepareSessionExecutionSelection({
           cfg: params.cfgWithAgentDefaults,
@@ -885,6 +904,7 @@ function createCronPromptExecutor(
         });
         if (prepared.status !== "ready") throw new Error(prepared.message);
         return runEmbeddedAgentEntry({
+          ...runEntry,
           kind: "native",
           selection: {
             cfg: params.cfgWithAgentDefaults,
@@ -892,23 +912,10 @@ function createCronPromptExecutor(
             executionSelection: accepted,
             validateCommit: prepared.validateCommit,
           },
-          identity: {
-            runId,
-            sessionId: params.cronSession.sessionEntry.sessionId,
-            lane: resolveCronAgentLane(params.lane),
-            agentId: params.agentId,
-            sessionKey: params.runSessionKey,
-          },
-          harness: {
-            workspaceDir: params.executionRoot ?? params.workspaceDir,
-            sessionKey: params.runSessionKey,
-          },
-          behavior: { kind: "command-rpc", hasCommittedSideEffect: currentAttemptCommittedMedia },
-          abortSignal: params.abortSignal,
-          runCandidate,
         });
       }
       return runEmbeddedAgentEntry({
+        ...runEntry,
         selection: {
           cfg: params.cfgWithAgentDefaults,
           provider: accepted.model.provider,
@@ -921,16 +928,8 @@ function createCronPromptExecutor(
               : undefined,
           fallbacksOverride: cronFallbacksOverride,
         },
-        identity: {
-          runId,
-          sessionId: params.cronSession.sessionEntry.sessionId,
-          lane: resolveCronAgentLane(params.lane),
-          agentId: params.agentId,
-          sessionKey: params.runSessionKey,
-        },
         harness: {
-          workspaceDir: params.executionRoot ?? params.workspaceDir,
-          sessionKey: params.runSessionKey,
+          ...runEntry.harness,
           preparation: { kind: "direct" },
           prepareExecutionSelection: async (provider, model) => {
             const prepared = await prepareSessionExecutionSelection({
@@ -979,9 +978,6 @@ function createCronPromptExecutor(
             });
           },
         },
-        behavior: { kind: "command-rpc", hasCommittedSideEffect: currentAttemptCommittedMedia },
-        abortSignal: params.abortSignal,
-        runCandidate,
       });
     };
     const fallbackResult = await execute()

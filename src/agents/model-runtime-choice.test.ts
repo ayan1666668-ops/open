@@ -59,7 +59,7 @@ describe("published runtime choice", () => {
 
   it("refuses an unpublished or unresolved model", async () => {
     expect(await evaluatePublishedModelRuntimeChoice(request)).toMatchObject({
-      kind: "unavailable",
+      kind: "unknown",
     });
     publish();
     expect(
@@ -96,7 +96,7 @@ describe("published runtime choice", () => {
     expect(choice.validate()).toContain("not available");
   });
 
-  it("does not grant an incompatible runtime to an off-catalog model", async () => {
+  it("does not grant an unregistered runtime to an off-catalog model", async () => {
     const config: OpenClawConfig = {
       ...cfg,
       models: {
@@ -117,7 +117,7 @@ describe("published runtime choice", () => {
         model: "off-catalog",
         runtimeId: "codex",
       }),
-    ).toMatchObject({ kind: "unavailable" });
+    ).toMatchObject({ kind: "unknown" });
   });
 
   it("rechecks the same generation at the session commit boundary", async () => {

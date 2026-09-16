@@ -268,7 +268,6 @@ export async function createModelSelectionState(params: {
       const initialEntry = { ...sessionEntry };
       const nextEntry = { ...sessionEntry };
       commitSessionExecutionSelection(nextEntry, executionSelection, {
-        cfg,
         cause: { kind: "initialize" },
       });
       if (storePath) {

@@ -11,7 +11,7 @@ import type {
   ExecutionFallbackPermission,
   SessionExecutionSelection,
 } from "../../../model-picker/execution-selection.js";
-import { parseSessionExecutionSelection } from "../../../model-picker/execution-selection.schema.js";
+import { sessionExecutionSelectionSchema } from "../../../model-picker/execution-selection.schema.js";
 import { resolveSessionPinnedHarnessId } from "../../../sessions/agent-harness-session-key.js";
 
 const RETIRED_SELECTION_FIELDS = [
@@ -97,7 +97,7 @@ export function migrateSessionExecutionSelection(params: {
   const requestedModel = ref ? { provider: ref.provider, id: ref.model } : request;
   if (entry.executionSelection !== undefined) {
     // An interrupted retry must not replace a pair committed by the selection owner.
-    selection = parseSessionExecutionSelection(entry.executionSelection);
+    selection = sessionExecutionSelectionSchema.parse(entry.executionSelection);
   } else {
     if (acp) {
       const previous = {
@@ -155,7 +155,7 @@ export function migrateSessionExecutionSelection(params: {
       fallback.previous = previous.entry.executionSelection;
       fallbackChanged = true;
     } else {
-      parseSessionExecutionSelection(fallback.previous);
+      sessionExecutionSelectionSchema.parse(fallback.previous);
     }
     for (const field of RETIRED_FALLBACK_FIELDS) {
       fallbackChanged ||= Object.hasOwn(fallback, field);
@@ -197,6 +197,9 @@ export function migrateSessionExecutionSelection(params: {
     delete entry.authProfileOverrideCompactionCount;
   }
   const canonical: Pick<SessionEntry, "executionSelection"> = {};
-  commitStoredSessionExecutionSelection(canonical, parseSessionExecutionSelection(selection));
+  commitStoredSessionExecutionSelection(
+    canonical,
+    sessionExecutionSelectionSchema.parse(selection),
+  );
   return { entry: { ...entry, ...canonical }, changed };
 }

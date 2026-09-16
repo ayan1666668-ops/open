@@ -225,7 +225,7 @@ describe("resolveEffectiveAgentRuntime", () => {
   });
 
   it.each([false, true])(
-    "projects explicit session overrides with declared fallback=%s",
+    "keeps accepted execution when the support hook later declares fallback=%s",
     (fallback) => {
       registerAgentHarness({
         id: "codex",
@@ -242,9 +242,19 @@ describe("resolveEffectiveAgentRuntime", () => {
           cfg,
           provider: "openai",
           modelId: "gpt-5.6-luna",
-          sessionEntry: { agentRuntimeOverride: "codex", agentHarnessId: "openclaw" },
+          sessionEntry: {
+            agentHarnessId: "openclaw",
+            executionSelection: {
+              state: "accepted",
+              selection: {
+                model: { provider: "openai", id: "fixture-model" },
+                executor: { kind: "harness", id: "codex" },
+              },
+              fallbackPermission: "explicit",
+            },
+          },
         }),
-      ).toBe(fallback ? "openclaw" : "codex");
+      ).toBe("codex");
     },
   );
 
@@ -277,7 +287,17 @@ describe("resolveEffectiveAgentRuntime", () => {
         cfg: openAIConfig("codex"),
         provider: "openai",
         modelId: "gpt-5.6-luna",
-        sessionEntry: { agentRuntimeOverride: "openclaw", agentHarnessId: "codex" },
+        sessionEntry: {
+          agentHarnessId: "codex",
+          executionSelection: {
+            state: "accepted",
+            selection: {
+              model: { provider: "openai", id: "fixture-model" },
+              executor: { kind: "harness", id: "openclaw" },
+            },
+            fallbackPermission: "explicit",
+          },
+        },
       }),
     ).toBe("openclaw");
   });

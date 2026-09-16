@@ -93,7 +93,7 @@ import type { AgentRuntimeAuthPlan } from "./runtime-plan/types.js";
 import { resolveSandboxContext } from "./sandbox/context.js";
 import { resolveSessionModelRefCore as resolveSessionModelRef } from "./session-model-ref.js";
 import { resolveSessionPlacementSandbox } from "./session-placement-admission.js";
-import { resolveSessionRuntimeOverrideForProvider } from "./session-runtime-compat.js";
+import { resolvePersistedSessionRuntimeId } from "./session-runtime-compat.js";
 import { stripToolResultDetails } from "./session-transcript-repair.js";
 import { getModelRegistryRuntime } from "./sessions/model-registry-runtime.js";
 import { resolveAgentTimeoutMs } from "./timeout.js";
@@ -729,11 +729,7 @@ export async function runBtwSideQuestion(
         : undefined;
       const agentHarnessRuntimeOverride = agentHarnessId
         ? undefined
-        : resolveSessionRuntimeOverrideForProvider({
-            provider,
-            entry: params.sessionEntry,
-            cfg: params.cfg,
-          });
+        : resolvePersistedSessionRuntimeId(params.sessionEntry);
       const selectedHarnessId = agentHarnessId ?? agentHarnessRuntimeOverride ?? "configured";
       const key = [
         `${provider}/${modelId}/${selectedHarnessId}`,

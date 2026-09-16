@@ -572,11 +572,15 @@ export async function createGatewaySession(params: {
     };
   }
 
-  const authorizedHarnessCreation = Boolean(
+  const authorizedHarnessSelection = Boolean(
     explicitTargetKey &&
-    params.initialEntry &&
+    params.initialEntry?.agentHarnessId &&
     normalizeOptionalAgentRuntimeId(params.authorizedAgentHarnessId) ===
-      normalizeOptionalAgentRuntimeId(params.initialEntry.agentHarnessId) &&
+      normalizeOptionalAgentRuntimeId(params.initialEntry.agentHarnessId),
+  );
+  const authorizedHarnessCreation = Boolean(
+    authorizedHarnessSelection &&
+    explicitTargetKey &&
     isAgentHarnessSessionKeyOwnedBy(explicitTargetKey, params.authorizedAgentHarnessId),
   );
   const authorizedPluginCreation = Boolean(
@@ -586,7 +590,7 @@ export async function createGatewaySession(params: {
   );
   if (
     (params.initialEntry?.pluginOwnerId && !authorizedPluginCreation) ||
-    (params.executionSelection && !authorizedPluginCreation && !authorizedHarnessCreation)
+    (params.executionSelection && !authorizedPluginCreation && !authorizedHarnessSelection)
   ) {
     return {
       ok: false,
@@ -1089,6 +1093,7 @@ export async function createGatewaySession(params: {
           params.catalogTarget ??
             (params.model ? { model: params.model, agentRuntime: params.agentRuntime } : undefined),
           currentParentSessionEntry,
+          params.preparedModelSelection?.ref,
         );
     commitGuard?.();
     const preparationResult = params.prepareLifecycle
@@ -1446,7 +1451,6 @@ export async function createGatewaySession(params: {
         };
         if (createdNewEntry && spawnModelAutoSelection && patched.execution) {
           commitSessionExecutionSelection(initializedEntry, patched.execution.selection, {
-            cfg: params.cfg,
             cause: { kind: "reset" },
           });
         }

@@ -26,7 +26,7 @@ import type {
   SessionEntry,
   WriteManagerSessionMeta,
 } from "./manager.types.js";
-import { requireReadySessionMeta } from "./manager.utils.js";
+import { requireReadySession } from "./manager.utils.js";
 import {
   normalizeRuntimeOptions,
   normalizeText,
@@ -65,7 +65,7 @@ export async function runManagerInitializeSession(params: {
   const previousAcpSelection =
     previousSelection && isAcpExecutionSelection(previousSelection) ? previousSelection : undefined;
   if (previousMeta && previous?.entry && previousAcpSelection) {
-    requireReadySessionMeta({
+    requireReadySession({
       kind: "ready",
       sessionKey,
       agentId,

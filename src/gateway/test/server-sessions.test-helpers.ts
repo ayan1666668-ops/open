@@ -6,6 +6,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type { AssistantMessage, UserMessage } from "openclaw/plugin-sdk/llm";
 import { beforeEach, expect, vi } from "vitest";
+import type { AcpSessionManager } from "../../acp/control-plane/manager.core.js";
 import { makeAgentAssistantMessage } from "../../agents/test-helpers/agent-message-fixtures.js";
 import { createZeroUsageFixture } from "../../agents/test-helpers/usage-fixtures.js";
 import type { InternalSessionEntry as SessionEntry } from "../../config/sessions.js";
@@ -169,6 +170,7 @@ const acpRuntimeMocks = vi.hoisted(() => ({
   requireAcpRuntimeBackend: vi.fn(),
 }));
 const acpManagerMocks = vi.hoisted(() => ({
+  getManager: vi.fn<() => AcpSessionManager | undefined>(),
   cancelSession: vi.fn(async () => {}),
   closeSession: vi.fn(async () => {}),
 }));
@@ -284,10 +286,11 @@ vi.mock("../../acp/runtime/registry.js", async () => {
 });
 
 vi.mock("../../acp/control-plane/manager.js", () => ({
-  getAcpSessionManager: () => ({
-    cancelSession: acpManagerMocks.cancelSession,
-    closeSession: acpManagerMocks.closeSession,
-  }),
+  getAcpSessionManager: () =>
+    acpManagerMocks.getManager() ?? {
+      cancelSession: acpManagerMocks.cancelSession,
+      closeSession: acpManagerMocks.closeSession,
+    },
 }));
 
 vi.mock("../../plugin-sdk/browser-maintenance.js", () => ({
@@ -348,6 +351,7 @@ function createGatewaySessionsTestHarness(startServer: boolean, setup?: GatewayS
     acpRuntimeMocks.requireAcpRuntimeBackend.mockImplementation((backendId?: string) =>
       acpRuntimeMocks.getAcpRuntimeBackend(backendId),
     );
+    acpManagerMocks.getManager.mockReset();
     acpManagerMocks.cancelSession.mockClear();
     acpManagerMocks.closeSession.mockClear();
     browserSessionTabMocks.closeTrackedBrowserTabsForSessions.mockClear();

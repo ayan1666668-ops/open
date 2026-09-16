@@ -117,13 +117,13 @@ export function expectPersistedRuntimeModel(params: {
   } else {
     expect(persistedKey).toMatch(params.sessionKey);
   }
-  expect(persistedEntry?.modelProvider).toBe(params.provider);
-  expect(persistedEntry?.model).toBe(params.model);
-  expect(persistedEntry?.providerOverride).toBe(params.provider);
-  expect(persistedEntry?.modelOverride).toBe(params.model);
-  if (params.overrideSource) {
-    expect(persistedEntry?.modelOverrideSource).toBe(params.overrideSource);
-  }
+  expect(persistedEntry?.executionSelection).toMatchObject({
+    state: "accepted",
+    selection: { model: { provider: params.provider, id: params.model } },
+    ...(params.overrideSource
+      ? { fallbackPermission: params.overrideSource === "auto" ? "configured" : "explicit" }
+      : {}),
+  });
 }
 
 /** Load subagent-spawn with runtime dependencies replaced by test doubles. */

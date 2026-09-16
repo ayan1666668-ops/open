@@ -54,6 +54,7 @@ import * as sessionWatchMigration from "./openclaw-state-db-session-watch-migrat
 import * as retirements from "./openclaw-state-db-table-retirements.js";
 import { recoverOrphanTaskDeliveryRows } from "./openclaw-state-db-task-delivery-recovery.js";
 import { describeAgentPathMigration } from "./openclaw-state-db.paths.js";
+import { OPENCLAW_AGENT_DATABASE_LEASE_SCHEMA } from "./openclaw-state-lease-schema.js";
 import {
   assertOpenClawStateWriteAllowed,
   OpenClawStateOwnershipError,
@@ -65,7 +66,7 @@ import { UpdateSchemaRefusalError } from "./openclaw-update-schema-refusal.js";
 export function repairStateSchema(
   pathname: string,
   env: NodeJS.ProcessEnv,
-  scope: "automatic" | "doctor" | "readability",
+  scope: "automatic" | "doctor" | "readability" | "lease-prerequisite",
   beforeSchemaMigration?: (database: DatabaseSync) => void,
 ): {
   changes: string[];
@@ -98,6 +99,45 @@ export function repairStateSchema(
             busyTimeoutMs: OPENCLAW_SQLITE_BUSY_TIMEOUT_MS,
             databaseLabel: pathname,
             operationLabel: "state.schema.readability-repair",
+          },
+        ),
+        warnings: [],
+      };
+    }
+    if (scope === "lease-prerequisite") {
+      return {
+        changes: runStateSchemaMigrationTransaction(
+          db,
+          pathname,
+          () => {
+            assertOpenClawStateWriteAllowed({ database: db, databasePath: pathname, env });
+            assertOpenClawStateDatabaseOwner(db, { pathname });
+            const version = assertSupportedStateSchemaVersion(db, pathname);
+            if (version >= OPENCLAW_STATE_STRICT_SCHEMA_VERSION) {
+              return [];
+            }
+            assertSqliteIntegrity(db, pathname);
+            const result = migrateSqliteSchemaToStrictInTransaction(
+              db,
+              OPENCLAW_AGENT_DATABASE_LEASE_SCHEMA,
+              { databaseLabel: pathname },
+            );
+            return result.migratedTables.length
+              ? [
+                  "Prepared Doctor maintenance tables for SQLite STRICT typing: " +
+                    result.migratedTables.join(", ") +
+                    ". Original schema version retained.",
+                ]
+              : [];
+          },
+          {
+            busyTimeoutMs: OPENCLAW_SQLITE_BUSY_TIMEOUT_MS,
+            databaseLabel: pathname,
+            operationLabel: "state.schema.lease-prerequisite",
+          },
+          () => {
+            beforeSchemaMigration?.(db);
+            repairAdmittedSchema?.();
           },
         ),
         warnings: [],

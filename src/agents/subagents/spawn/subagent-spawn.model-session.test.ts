@@ -155,9 +155,15 @@ describe("spawnSubagentDirect runtime model persistence", () => {
     loadSessionStoreMock.mockReturnValue({
       "agent:main:main": {
         sessionId: "model-identity-parent",
-        providerOverride: "custom",
-        modelOverride: model,
-        modelOverrideRouteResolution: "resolved",
+        updatedAt: 1,
+        executionSelection: {
+          state: "accepted",
+          selection: {
+            model: { provider: "custom", id: model },
+            executor: { kind: "harness", id: "openclaw" },
+          },
+          fallbackPermission: "explicit",
+        },
       },
     });
     let persistedStore: Record<string, Record<string, unknown>> | undefined;
@@ -185,12 +191,10 @@ describe("spawnSubagentDirect runtime model persistence", () => {
       model,
       overrideSource: "auto",
     });
-    const [, entry] = Object.entries(persistedStore ?? {})[0] ?? [];
-    expect(entry?.modelOverrideRouteResolution).toBe("resolved");
     expect(result.resolvedModel).toBe(`custom/${model}`);
   });
 
-  it("persists self-origin metadata for auto-selected subagent models", async () => {
+  it("permits configured fallback for an automatically selected child model", async () => {
     const dedicatedUpdateSessionStoreMock = vi.fn();
     const {
       resetSubagentRegistryForTests: resetForAutoModelTest,
@@ -230,9 +234,11 @@ describe("spawnSubagentDirect runtime model persistence", () => {
 
     expect(result.status).toBe("accepted");
     const [, persistedEntry] = Object.entries(persistedStore ?? {})[0] ?? [];
-    expect(persistedEntry?.modelOverrideSource).toBe("auto");
-    expect(persistedEntry?.modelOverrideFallbackOriginProvider).toBe("openai");
-    expect(persistedEntry?.modelOverrideFallbackOriginModel).toBe("gpt-5.4");
+    expect(persistedEntry?.executionSelection).toMatchObject({
+      state: "accepted",
+      fallbackPermission: "configured",
+      selection: { model: { provider: "openai", id: "gpt-5.4" } },
+    });
   });
 
   it("persists an inherited auth profile separately from the child model id", async () => {

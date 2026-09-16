@@ -11,13 +11,14 @@ import {
   type AdmittedRunContext,
   type PreparedAgentRunAdmission,
 } from "../../agents/admitted-run-context.js";
-import { createAssistantErrorTranscript } from "../../agents/assistant-error-transcript.js";
 import { testing as cliBackendsTesting } from "../../agents/cli-backends.test-support.js";
 import { resetContextWindowCacheForTest } from "../../agents/context.js";
 import { acceptCompactionSuccessor } from "../../agents/embedded-agent-runner/compaction-successor.js";
 import type { runEmbeddedAgentEntry } from "../../agents/embedded-agent-runner/run-entry.js";
 import type { EmbeddedAgentRunResult } from "../../agents/embedded-agent-runner/types.js";
+import type { runWithModelFallback } from "../../agents/model-fallback-runner.js";
 import type { ModelFallbackAttemptProvenance } from "../../agents/model-fallback.types.js";
+import { evaluatePublishedModelRuntimeChoice } from "../../agents/model-runtime-choice.js";
 import { withSessionCompactionPersistence } from "../../agents/sessions/session-compaction-persistence.js";
 import { SessionManager } from "../../agents/sessions/session-manager.js";
 import { makeAssistantMessageFixture } from "../../agents/test-helpers/assistant-message-fixtures.js";
@@ -36,13 +37,17 @@ import { replaceTranscriptEvents } from "../../config/sessions/session-accessor.
 import { resolveSessionStorePathForScope } from "../../config/sessions/session-store-path.js";
 import { onAgentEventForRun } from "../../infra/agent-events.js";
 import {
+  getSessionExecutionSelection,
+  type ModelExecutionSelection,
+} from "../../model-picker/execution-selection.js";
+import {
   clearMemoryPluginState,
   registerMemoryCapability,
   type MemoryFlushPlan,
   type MemoryFlushPlanResolver,
 } from "../../plugins/memory-state.test-fixtures.js";
 import { createEmptyPluginRegistry } from "../../plugins/registry-empty.js";
-import { setActivePluginRegistry } from "../../plugins/runtime.js";
+import { getActivePluginRegistryVersion, setActivePluginRegistry } from "../../plugins/runtime.js";
 import type { ReplyPayload } from "../types.js";
 import {
   runMemoryFlushIfNeeded as runMemoryFlushIfNeededRaw,
@@ -74,11 +79,73 @@ const {
   registerAgentRunContextMock: vi.fn(),
   clearAgentRunContextMock: vi.fn(),
 }));
-const runWithModelFallbackMock = vi.fn();
+const runWithModelFallbackMock = vi.fn<
+  (params: ModelFallbackParams) => Promise<{
+    outcome?: "completed" | "exhausted";
+    result: EmbeddedAgentRunResult;
+    provider: string;
+    model: string;
+    attempts: [];
+  }>
+>();
 const ensureSelectedAgentHarnessPluginMock = vi.fn();
 
-vi.mock("../../agents/embedded-agent-runner/run-entry.js", () => ({
-  runEmbeddedAgentEntry: runEmbeddedAgentEntryMock,
+vi.mock("../../agents/model-runtime-choice.js", () => ({
+  evaluatePublishedModelRuntimeChoice: vi.fn(),
+}));
+type MemoryRunEntryParams = Parameters<typeof runEmbeddedAgentEntry<EmbeddedAgentRunResult>>[0];
+type MemoryRunEntry = (
+  params: MemoryRunEntryParams,
+) => ReturnType<typeof runEmbeddedAgentEntry<EmbeddedAgentRunResult>>;
+type MemoryFallbackParams = Parameters<
+  typeof runWithModelFallback<{ result: EmbeddedAgentRunResult }>
+>[0];
+
+vi.mock("../../agents/embedded-agent-runner/run-entry.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../../agents/embedded-agent-runner/run-entry.js")>();
+  return {
+    ...actual,
+    runEmbeddedAgentEntry: (params: MemoryRunEntryParams) =>
+      runEmbeddedAgentEntryMock(params, actual.runEmbeddedAgentEntry),
+  };
+});
+vi.mock("../../agents/harness/runtime-plugin.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../agents/harness/runtime-plugin.js")>()),
+  ensureSelectedAgentHarnessPlugin: (
+    ...args: Parameters<
+      typeof import("../../agents/harness/runtime-plugin.js").ensureSelectedAgentHarnessPlugin
+    >
+  ) => ensureSelectedAgentHarnessPluginMock(...args),
+}));
+vi.mock("../../agents/model-fallback-runner.js", () => ({
+  runWithModelFallback: async (params: MemoryFallbackParams) => {
+    const candidates = new WeakMap<
+      EmbeddedAgentRunResult,
+      Awaited<ReturnType<typeof params.run>>
+    >();
+    const result = await runWithModelFallbackMock({
+      ...params,
+      run: async (provider, model, options) => {
+        await params.prepareCandidateChain?.([
+          { provider, model, routeOrigin: "requested", routeResolution: "resolved" },
+        ]);
+        await params.prepareCandidate?.(provider, model);
+        await params.prepareAgentHarnessRuntime?.({
+          provider,
+          model,
+          agentHarnessRuntimeOverride: params.resolveAgentHarnessRuntimeOverride?.(provider, model),
+        });
+        const candidate = await params.run(provider, model, options);
+        candidates.set(candidate.result, candidate);
+        return candidate.result;
+      },
+    });
+    const candidate = candidates.get(result.result);
+    if (!candidate)
+      throw new Error("The memory fixture returned a result without an admitted attempt.");
+    return { ...result, outcome: result.outcome ?? "completed", result: candidate };
+  },
 }));
 vi.mock("../../agents/embedded-agent.js", () => ({
   compactEmbeddedAgentSession: compactEmbeddedAgentSessionMock,
@@ -153,6 +220,12 @@ function createMemoryFlushPlan(): MemoryFlushPlan {
 
 function createModifiedMemoryFlushPlan(overrides: Partial<MemoryFlushPlan>): MemoryFlushPlan {
   return { ...createMemoryFlushPlan(), ...overrides };
+}
+
+function acceptedMemorySelection(
+  selection: ModelExecutionSelection,
+): SessionEntry["executionSelection"] {
+  return { state: "accepted", selection, fallbackPermission: "configured" };
 }
 
 function createFlushSessionEntry(overrides: Partial<SessionEntry> = {}): SessionEntry {
@@ -380,7 +453,9 @@ describe("runMemoryFlushIfNeeded", () => {
     const sessionKey = overrides.sessionKey ?? "main";
     return await runMemoryFlushIfNeeded({
       cfg: { agents: { defaults: { compaction: { memoryFlush: {} } } } },
-      followupRun: createTestFollowupRun(),
+      followupRun: createTestFollowupRun({
+        executionSelection: getSessionExecutionSelection(sessionEntry),
+      }),
       defaultModel: "anthropic/claude-opus-4-6",
       modelContextTokens: 100_000,
       resolvedVerboseLevel: "off",
@@ -401,7 +476,11 @@ describe("runMemoryFlushIfNeeded", () => {
     const sessionKey = overrides.sessionKey ?? "main";
     return await runSessionCompactionIfNeeded({
       cfg: { agents: { defaults: { compaction: { memoryFlush: {} } } } },
-      followupRun: createTestFollowupRun({ sessionId: "session", sessionKey }),
+      followupRun: createTestFollowupRun({
+        executionSelection: getSessionExecutionSelection(sessionEntry),
+        sessionId: "session",
+        sessionKey,
+      }),
       defaultModel: "anthropic/claude-opus-4-6",
       modelContextTokens: 100_000,
       sessionEntry,
@@ -445,6 +524,23 @@ describe("runMemoryFlushIfNeeded", () => {
   beforeEach(async () => {
     rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-memory-unit-"));
     registerMemoryFlushPlanResolverForTest(createMemoryFlushPlan);
+    const generation = { current: true };
+    onTestFinished(() => {
+      generation.current = false;
+    });
+    vi.mocked(evaluatePublishedModelRuntimeChoice).mockImplementation(
+      async ({ provider, model }) => {
+        const registryGeneration = getActivePluginRegistryVersion();
+        return {
+          kind: "ready",
+          entry: { provider, id: model, name: model },
+          validate: () =>
+            generation.current && registryGeneration === getActivePluginRegistryVersion()
+              ? undefined
+              : "Memory fixture catalog retired.",
+        };
+      },
+    );
     runWithModelFallbackMock.mockReset().mockImplementation(async ({ provider, model, run }) => ({
       result: await run(provider, model, {
         modelRoutingProvenance: modelRoutingProvenance(provider, model),
@@ -455,67 +551,8 @@ describe("runMemoryFlushIfNeeded", () => {
     }));
     runEmbeddedAgentEntryMock
       .mockReset()
-      .mockImplementation(
-        async (params: Parameters<typeof runEmbeddedAgentEntry<EmbeddedAgentRunResult>>[0]) => {
-          const assistantErrorTranscript = createAssistantErrorTranscript({
-            runId: params.identity.runId,
-          });
-          const fallbackResult = (await runWithModelFallbackMock({
-            ...params.selection,
-            ...params.identity,
-            abortSignal: params.abortSignal,
-            resolveAgentHarnessRuntimeOverride: params.harness.resolveRuntimeOverride,
-            prepareAgentHarnessRuntime: async ({
-              provider,
-              model,
-              agentHarnessRuntimeOverride,
-            }: {
-              provider: string;
-              model: string;
-              agentHarnessRuntimeOverride?: string;
-            }) => {
-              await ensureSelectedAgentHarnessPluginMock({
-                config: params.selection.cfg,
-                provider,
-                modelId: model,
-                agentId: params.identity.agentId,
-                sessionKey: params.harness.sessionKey,
-                agentHarnessId: agentHarnessRuntimeOverride,
-                agentHarnessRuntimeOverride,
-                workspaceDir: params.harness.workspaceDir,
-              });
-            },
-            run: (
-              provider: string,
-              model: string,
-              options: Parameters<ModelFallbackParams["run"]>[2],
-            ) =>
-              params.runCandidate(provider, model, {
-                assistantErrorTranscript,
-                classifyResult: () => undefined,
-                allowTransientCooldownProbe: options.allowTransientCooldownProbe,
-                isFinalFallbackAttempt: options.isFinalFallbackAttempt,
-                isFallbackRetry: false,
-                modelRoutingProvenance: options.modelRoutingProvenance,
-                contextEngineLogicalTurnLease: {} as never,
-                onContextEngineTurnCandidate: () => {},
-              }),
-          })) as {
-            outcome?: "completed" | "exhausted";
-            result: EmbeddedAgentRunResult;
-            provider: string;
-            model: string;
-            attempts: [];
-          };
-          return {
-            ...fallbackResult,
-            outcome: fallbackResult.outcome ?? ("completed" as const),
-            terminal: {
-              outcome: { reason: "completed" as const, status: "ok" as const },
-              metadata: {},
-            },
-          };
-        },
+      .mockImplementation((params: MemoryRunEntryParams, delegate: MemoryRunEntry) =>
+        delegate(params),
       );
     compactEmbeddedAgentSessionMock.mockReset().mockResolvedValue({
       ok: true,
@@ -1013,10 +1050,14 @@ describe("runMemoryFlushIfNeeded", () => {
   });
 
   it("keeps catalog-adopted sessions on Codex for memory flush turns", async () => {
+    const executionSelection: ModelExecutionSelection = {
+      model: { provider: "anthropic", id: "claude-opus-4-6" },
+      executor: { kind: "harness", id: "codex" },
+    };
     const sessionEntry: SessionEntry = createFlushSessionEntry({
       sessionId: "catalog-adopted-session",
       agentHarnessId: "codex",
-      agentRuntimeOverride: "claude-cli",
+      executionSelection: acceptedMemorySelection(executionSelection),
       modelSelectionLocked: true,
       pluginExtensions: {
         codex: {
@@ -1040,6 +1081,7 @@ describe("runMemoryFlushIfNeeded", () => {
         },
       },
       followupRun: createTestFollowupRun({
+        executionSelection,
         provider: "anthropic",
         model: "claude-opus-4-6",
         sessionId: sessionEntry.sessionId,
@@ -1511,8 +1553,12 @@ describe("runMemoryFlushIfNeeded", () => {
           },
         },
       };
+      const executionSelection: ModelExecutionSelection = {
+        model: { provider: "openai", id: "gpt-5.4" },
+        executor: { kind: "harness", id: "codex" },
+      };
       const sessionEntry: SessionEntry = createFlushSessionEntry({
-        agentRuntimeOverride: "codex",
+        executionSelection: acceptedMemorySelection(executionSelection),
         modelSelectionLocked: pluginOwnerId !== undefined,
         pluginOwnerId,
         agentHarnessId: "openclaw",
@@ -1533,6 +1579,7 @@ describe("runMemoryFlushIfNeeded", () => {
       await runMemoryFlushIfNeeded({
         cfg,
         followupRun: createTestFollowupRun({
+          executionSelection,
           agentId: "main",
           sessionKey: "main",
           runtimePolicySessionKey,
@@ -1588,9 +1635,9 @@ describe("runMemoryFlushIfNeeded", () => {
     },
   );
 
-  it("ignores stale runtime pins before memory-flush fallback preflight", async () => {
+  it("ignores observed harness history before memory-flush fallback preflight", async () => {
     const sessionEntry: SessionEntry = createFlushSessionEntry({
-      agentRuntimeOverride: "unsupported-runtime",
+      agentHarnessId: "unsupported-runtime",
     });
 
     await runMemoryFlushIfNeeded({
@@ -1611,7 +1658,7 @@ describe("runMemoryFlushIfNeeded", () => {
 
     expect(
       requireModelFallbackCall().resolveAgentHarnessRuntimeOverride?.("openai", "gpt-5.4"),
-    ).toBeUndefined();
+    ).toBe("openclaw");
   });
 
   it("skips memory flush for CLI providers", async () => {
@@ -1626,7 +1673,12 @@ describe("runMemoryFlushIfNeeded", () => {
 
     const result = await runMemoryFlushIfNeeded({
       cfg: {},
-      followupRun: createTestFollowupRun({ provider: "codex-cli" }),
+      followupRun: createTestFollowupRun({
+        executionSelection: {
+          model: { provider: "codex-cli", id: "claude" },
+          executor: { kind: "cli", id: "codex-cli" },
+        },
+      }),
       defaultModel: "codex-cli/gpt-5.5",
       modelContextTokens: 100_000,
       resolvedVerboseLevel: "off",
@@ -1673,15 +1725,20 @@ describe("runMemoryFlushIfNeeded", () => {
     expect(runEmbeddedAgentMock).not.toHaveBeenCalled();
   });
 
-  it("skips memory flush for compatible CLI session runtime pins", async () => {
+  it("skips memory flush for accepted CLI execution selections", async () => {
     registerClaudeCliBackend();
+    const executionSelection: ModelExecutionSelection = {
+      model: { provider: "anthropic", id: "claude-opus-4-6" },
+      executor: { kind: "cli", id: "claude-cli" },
+    };
     const sessionEntry: SessionEntry = createFlushSessionEntry({
-      agentRuntimeOverride: "claude-cli",
+      executionSelection: acceptedMemorySelection(executionSelection),
     });
 
     const result = await runMemoryFlushIfNeeded({
       cfg: { agents: { defaults: { compaction: { memoryFlush: {} } } } },
       followupRun: createTestFollowupRun({
+        executionSelection,
         provider: "anthropic",
         model: "claude-opus-4-6",
       }),
@@ -1798,6 +1855,14 @@ describe("runMemoryFlushIfNeeded", () => {
       totalTokens: 120,
       totalTokensFresh: true,
       totalTokensVersion: 1,
+      executionSelection: {
+        state: "accepted",
+        selection: {
+          model: { provider: "anthropic", id: "claude" },
+          executor: { kind: "harness", id: "openclaw" },
+        },
+        fallbackPermission: "configured",
+      },
       agentHarnessId: "openclaw",
       modelSelectionLocked: true,
     };
@@ -2216,11 +2281,15 @@ describe("runMemoryFlushIfNeeded", () => {
     async ({ totalTokens, shouldCompact, requestedRuntime, contextWindowTokens }) => {
       // A disabled memory plugin supplies no flush plan; compaction still owns its budget.
       registerMemoryFlushPlanResolverForTest(() => null);
+      const executionSelection: ModelExecutionSelection = {
+        model: { provider: "openai", id: "gpt-5.6-luna" },
+        executor: { kind: "harness", id: requestedRuntime },
+      };
       const sessionEntry = createFlushSessionEntry({
         totalTokens,
         compactionCount: 0,
         agentHarnessId: requestedRuntime,
-        agentRuntimeOverride: requestedRuntime,
+        executionSelection: acceptedMemorySelection(executionSelection),
         lifecycleRevision: "owned-generation",
       });
       const authorize = () => true;
@@ -2253,6 +2322,7 @@ describe("runMemoryFlushIfNeeded", () => {
           },
         },
         followupRun: createTestFollowupRun({
+          executionSelection,
           provider: "openai",
           model: "gpt-5.6-luna",
           workspaceDir: rootDir,
@@ -2995,7 +3065,7 @@ describe("runMemoryFlushIfNeeded", () => {
     expect(refreshQueuedFollowupSessionMock).not.toHaveBeenCalled();
   });
 
-  it("skips OpenClaw preflight compaction for explicit Codex runtime overrides", async () => {
+  it("skips OpenClaw preflight compaction for accepted Codex execution selections", async () => {
     registerMemoryFlushPlanResolverForTest(() => ({
       softThresholdTokens: 4_000,
       forceFlushTranscriptBytes: 1_000_000_000,
@@ -3004,12 +3074,16 @@ describe("runMemoryFlushIfNeeded", () => {
       systemPrompt: "Write memory to memory/YYYY-MM-DD.md.",
       relativePath: "memory/2023-11-14.md",
     }));
+    const executionSelection: ModelExecutionSelection = {
+      model: { provider: "openai", id: "gpt-5.5" },
+      executor: { kind: "harness", id: "codex" },
+    };
     const sessionEntry: SessionEntry = {
       sessionId: "session",
       updatedAt: Date.now(),
       totalTokens: 347_000,
       totalTokensFresh: false,
-      agentRuntimeOverride: "codex",
+      executionSelection: acceptedMemorySelection(executionSelection),
       agentHarnessId: "openclaw",
     };
 
@@ -3023,6 +3097,7 @@ describe("runMemoryFlushIfNeeded", () => {
         agents: { defaults: { compaction: { memoryFlush: {} } } },
       } as never,
       followupRun: createTestFollowupRun({
+        executionSelection,
         provider: "openai",
         model: "gpt-5.5",
         sessionId: "session",
@@ -3041,7 +3116,7 @@ describe("runMemoryFlushIfNeeded", () => {
     expect(compactEmbeddedAgentSessionMock).not.toHaveBeenCalled();
   });
 
-  it("skips fresh persisted token totals for explicit Codex runtime overrides", async () => {
+  it("skips fresh persisted token totals for accepted Codex execution selections", async () => {
     registerMemoryFlushPlanResolverForTest(() => ({
       softThresholdTokens: 4_000,
       forceFlushTranscriptBytes: 1_000_000_000,
@@ -3050,13 +3125,17 @@ describe("runMemoryFlushIfNeeded", () => {
       systemPrompt: "Write memory to memory/YYYY-MM-DD.md.",
       relativePath: "memory/2023-11-14.md",
     }));
+    const executionSelection: ModelExecutionSelection = {
+      model: { provider: "openai", id: "gpt-5.5" },
+      executor: { kind: "harness", id: "codex" },
+    };
     const sessionEntry: SessionEntry = {
       sessionId: "session",
       updatedAt: Date.now(),
       totalTokens: 347_000,
       totalTokensFresh: true,
       totalTokensVersion: 1,
-      agentRuntimeOverride: "codex",
+      executionSelection: acceptedMemorySelection(executionSelection),
       agentHarnessId: "openclaw",
     };
 
@@ -3070,6 +3149,7 @@ describe("runMemoryFlushIfNeeded", () => {
         agents: { defaults: { compaction: { memoryFlush: {} } } },
       } as never,
       followupRun: createTestFollowupRun({
+        executionSelection,
         provider: "openai",
         model: "gpt-5.5",
         sessionId: "session",
@@ -3088,7 +3168,7 @@ describe("runMemoryFlushIfNeeded", () => {
     expect(compactEmbeddedAgentSessionMock).not.toHaveBeenCalled();
   });
 
-  it("skips preflight compaction for compatible CLI session runtime pins", async () => {
+  it("skips preflight compaction for accepted CLI execution selections", async () => {
     registerClaudeCliBackend();
     registerMemoryFlushPlanResolverForTest(() => ({
       softThresholdTokens: 4_000,
@@ -3098,13 +3178,17 @@ describe("runMemoryFlushIfNeeded", () => {
       systemPrompt: "Write memory to memory/YYYY-MM-DD.md.",
       relativePath: "memory/2023-11-14.md",
     }));
+    const executionSelection: ModelExecutionSelection = {
+      model: { provider: "anthropic", id: "claude-opus-4-6" },
+      executor: { kind: "cli", id: "claude-cli" },
+    };
     const sessionEntry: SessionEntry = {
       sessionId: "session",
       updatedAt: Date.now(),
       totalTokens: 347_000,
       totalTokensFresh: true,
       totalTokensVersion: 1,
-      agentRuntimeOverride: "claude-cli",
+      executionSelection: acceptedMemorySelection(executionSelection),
     };
 
     const entry = await runSessionCompactionIfNeeded({
@@ -3117,6 +3201,7 @@ describe("runMemoryFlushIfNeeded", () => {
         agents: { defaults: { compaction: { memoryFlush: {} } } },
       } as never,
       followupRun: createTestFollowupRun({
+        executionSelection,
         provider: "anthropic",
         model: "claude-opus-4-6",
         sessionId: "session",
@@ -3136,7 +3221,7 @@ describe("runMemoryFlushIfNeeded", () => {
     expect(compactEmbeddedAgentSessionMock).not.toHaveBeenCalled();
   });
 
-  it("keeps the OpenAI API context window for persisted OpenClaw runtime overrides", async () => {
+  it("keeps the OpenAI API context window for accepted OpenClaw execution selections", async () => {
     registerMemoryFlushPlanResolverForTest(() => ({
       softThresholdTokens: 4_000,
       forceFlushTranscriptBytes: 1_000_000_000,
@@ -3145,12 +3230,16 @@ describe("runMemoryFlushIfNeeded", () => {
       systemPrompt: "Write memory to memory/YYYY-MM-DD.md.",
       relativePath: "memory/2023-11-14.md",
     }));
+    const executionSelection: ModelExecutionSelection = {
+      model: { provider: "openai", id: "gpt-5.5" },
+      executor: { kind: "harness", id: "openclaw" },
+    };
     const sessionEntry: SessionEntry = {
       sessionId: "session",
       updatedAt: Date.now(),
       totalTokens: 347_000,
       totalTokensFresh: false,
-      agentRuntimeOverride: "openclaw",
+      executionSelection: acceptedMemorySelection(executionSelection),
     };
 
     const entry = await runSessionCompactionIfNeeded({
@@ -3163,6 +3252,7 @@ describe("runMemoryFlushIfNeeded", () => {
         agents: { defaults: { compaction: { memoryFlush: {} } } },
       } as never,
       followupRun: createTestFollowupRun({
+        executionSelection,
         provider: "openai",
         model: "gpt-5.5",
         sessionId: "session",
@@ -3261,12 +3351,16 @@ describe("runMemoryFlushIfNeeded", () => {
         ],
       });
       const transcriptBefore = readSessionTranscriptMessageEvents(scope);
+      const executionSelection: ModelExecutionSelection = {
+        model: { provider: "openai", id: "gpt-5.5" },
+        executor: { kind: "harness", id: "openclaw" },
+      };
       const sessionEntry: SessionEntry = {
         sessionId: "session",
         updatedAt: Date.now(),
         totalTokensFresh: false,
         agentHarnessId: "codex",
-        agentRuntimeOverride: "openclaw",
+        executionSelection: acceptedMemorySelection(executionSelection),
       };
       compactEmbeddedAgentSessionMock.mockResolvedValueOnce({
         ok: false,
@@ -3277,6 +3371,7 @@ describe("runMemoryFlushIfNeeded", () => {
       const entry = await runSessionCompactionIfNeeded({
         cfg: { agents: { defaults: { compaction: { memoryFlush: {} } } } },
         followupRun: createTestFollowupRun({
+          executionSelection,
           provider: "openai",
           model: "gpt-5.5",
           sessionId: "session",
@@ -3309,17 +3404,22 @@ describe("runMemoryFlushIfNeeded", () => {
         },
       })),
     });
+    const executionSelection: ModelExecutionSelection = {
+      model: { provider: "openai", id: "gpt-5.5" },
+      executor: { kind: "harness", id: "openclaw" },
+    };
     const sessionEntry: SessionEntry = {
       sessionId: "session",
       updatedAt: Date.now(),
       totalTokensFresh: false,
       agentHarnessId: "codex",
-      agentRuntimeOverride: "openclaw",
+      executionSelection: acceptedMemorySelection(executionSelection),
     };
 
     await runSessionCompactionIfNeeded({
       cfg: { agents: { defaults: { compaction: { memoryFlush: {} } } } },
       followupRun: createTestFollowupRun({
+        executionSelection,
         provider: "openai",
         model: "gpt-5.5",
         sessionId: "session",
@@ -3374,17 +3474,22 @@ describe("runMemoryFlushIfNeeded", () => {
           })),
         ],
       });
+      const executionSelection: ModelExecutionSelection = {
+        model: { provider: "openai", id: "gpt-5.5" },
+        executor: { kind: "harness", id: "openclaw" },
+      };
       const sessionEntry: SessionEntry = {
         sessionId: "session",
         updatedAt: Date.now(),
         totalTokensFresh: false,
         agentHarnessId: "codex",
-        agentRuntimeOverride: "openclaw",
+        executionSelection: acceptedMemorySelection(executionSelection),
       };
 
       await runSessionCompactionIfNeeded({
         cfg: { agents: { defaults: { compaction: { memoryFlush: {} } } } },
         followupRun: createTestFollowupRun({
+          executionSelection,
           provider: "openai",
           model: "gpt-5.5",
           sessionId: "session",
@@ -3836,10 +3941,16 @@ describe("runMemoryFlushIfNeeded", () => {
       ]);
       expect(readTranscriptStatsSync(scope).sizeBytes).toBeGreaterThan(10);
 
+      const executionSelection: ModelExecutionSelection = {
+        model: { provider: "openai", id: "gpt-5.5" },
+
+        executor: { kind: "harness", id: "codex" },
+      };
+
       const sessionEntry: SessionEntry = createFlushSessionEntry({
         totalTokens: 10,
         compactionCount: 0,
-        agentRuntimeOverride: "codex",
+        executionSelection: acceptedMemorySelection(executionSelection),
         agentHarnessId,
       });
       const sessionStore = { [sessionKey]: sessionEntry };
@@ -3854,6 +3965,7 @@ describe("runMemoryFlushIfNeeded", () => {
             },
           },
           followupRun: createTestFollowupRun({
+            executionSelection,
             provider: "openai",
             model: "gpt-5.5",
             sessionId: "session",
@@ -3980,10 +4092,14 @@ describe("runMemoryFlushIfNeeded", () => {
     const manager = SessionManager.open(scope, rootDir);
     manager.appendMessage({ role: "user", content: "x".repeat(256), timestamp: 1 });
     const activeBytes = readSessionTranscriptActiveStats(scope).sizeBytes;
+    const executionSelection: ModelExecutionSelection = {
+      model: { provider: "openai", id: "gpt-5.5" },
+      executor: { kind: "harness", id: "codex" },
+    };
     const sessionEntry: SessionEntry = createFlushSessionEntry({
       totalTokens: 10,
       compactionCount: 0,
-      agentRuntimeOverride: "codex",
+      executionSelection: acceptedMemorySelection(executionSelection),
       agentHarnessId: "openclaw",
     });
     const sessionStore = { [sessionKey]: sessionEntry };
@@ -4039,6 +4155,7 @@ describe("runMemoryFlushIfNeeded", () => {
         agents: { defaults: { compaction: { maxActiveTranscriptBytes: "10b" } } },
       },
       followupRun: createTestFollowupRun({
+        executionSelection,
         provider: "openai",
         model: "gpt-5.5",
         sessionId: "session",
@@ -4087,9 +4204,13 @@ describe("runMemoryFlushIfNeeded", () => {
       sessionKey,
       storePath: fixture.storePath,
     };
+    const executionSelection: ModelExecutionSelection = {
+      model: { provider: "openai", id: "gpt-5.5" },
+      executor: { kind: "harness", id: "codex" },
+    };
     const sessionEntry: SessionEntry = {
       ...fixture.sessionEntry,
-      agentRuntimeOverride: "codex",
+      executionSelection: acceptedMemorySelection(executionSelection),
       agentHarnessId: "openclaw",
     };
     await upsertSessionEntryCore(scope, sessionEntry);
@@ -4097,6 +4218,7 @@ describe("runMemoryFlushIfNeeded", () => {
       await runSessionCompactionIfNeeded({
         cfg: { agents: { defaults: { compaction: { maxActiveTranscriptBytes: "10b" } } } },
         followupRun: createTestFollowupRun({
+          executionSelection,
           provider: "openai",
           model: "gpt-5.5",
           sessionId: "session",
@@ -4170,11 +4292,15 @@ describe("runMemoryFlushIfNeeded", () => {
       { message: { role: "user", content: "small" }, type: "message" },
     ]);
     const activeBytes = readSessionTranscriptActiveStats(scope).sizeBytes;
+    const executionSelection: ModelExecutionSelection = {
+      model: { provider: "openai", id: "gpt-5.5" },
+      executor: { kind: "harness", id: "codex" },
+    };
     const sessionEntry: SessionEntry = {
       sessionId: "session",
       updatedAt: Date.now(),
       compactionCount: 1,
-      agentRuntimeOverride: "codex",
+      executionSelection: acceptedMemorySelection(executionSelection),
       agentHarnessId: "openclaw",
       transcriptByteCompactionLatch: {
         activeBytes: activeBytes + 100,
@@ -4193,7 +4319,7 @@ describe("runMemoryFlushIfNeeded", () => {
           },
         },
       },
-      followupRun: createTestFollowupRun({ sessionId: "session", sessionKey }),
+      followupRun: createTestFollowupRun({ executionSelection, sessionId: "session", sessionKey }),
       defaultModel: "gpt-5.5",
       modelContextTokens: 1_000_000,
       sessionEntry,
@@ -4229,11 +4355,15 @@ describe("runMemoryFlushIfNeeded", () => {
     await replaceTranscriptEvents(scope, [
       { message: { role: "user", content: "x".repeat(256) }, type: "message" },
     ]);
+    const executionSelection: ModelExecutionSelection = {
+      model: { provider: "openai", id: "gpt-5.5" },
+      executor: { kind: "harness", id: "codex" },
+    };
     const sessionEntry: SessionEntry = {
       sessionId: "session",
       updatedAt: Date.now(),
       compactionCount: 1,
-      agentRuntimeOverride: "codex",
+      executionSelection: acceptedMemorySelection(executionSelection),
       agentHarnessId: "openclaw",
       transcriptByteCompactionLatch: latch,
     };
@@ -4242,7 +4372,7 @@ describe("runMemoryFlushIfNeeded", () => {
 
     const entry = await runSessionCompactionIfNeeded({
       cfg: { agents: { defaults: { compaction: { maxActiveTranscriptBytes: "10b" } } } },
-      followupRun: createTestFollowupRun({ sessionId: "session", sessionKey }),
+      followupRun: createTestFollowupRun({ executionSelection, sessionId: "session", sessionKey }),
       defaultModel: "gpt-5.5",
       modelContextTokens: 1_000_000,
       sessionEntry,
@@ -4290,10 +4420,16 @@ describe("runMemoryFlushIfNeeded", () => {
     ]);
     expect(readSessionTranscriptActiveStats(scope).sizeBytes).toBeLessThan(10 * 1024);
 
+    const executionSelection: ModelExecutionSelection = {
+      model: { provider: "openai", id: "gpt-5.5" },
+
+      executor: { kind: "harness", id: "codex" },
+    };
+
     const sessionEntry: SessionEntry = createFlushSessionEntry({
       totalTokens: 347_000,
       compactionCount: 0,
-      agentRuntimeOverride: "codex",
+      executionSelection: acceptedMemorySelection(executionSelection),
       agentHarnessId: "openclaw",
     });
     const replyOperation = createReplyOperation();
@@ -4307,6 +4443,7 @@ describe("runMemoryFlushIfNeeded", () => {
         },
       },
       followupRun: createTestFollowupRun({
+        executionSelection,
         provider: "openai",
         model: "gpt-5.5",
         sessionId: "session",
@@ -4347,7 +4484,12 @@ describe("runMemoryFlushIfNeeded", () => {
     ]);
     expect(readTranscriptStatsSync(scope).sizeBytes).toBeGreaterThan(10);
 
+    const executionSelection: ModelExecutionSelection = {
+      model: { provider: "anthropic", id: "claude-opus-4-6" },
+      executor: { kind: "cli", id: "claude-cli" },
+    };
     const sessionEntry: SessionEntry = createFlushSessionEntry({
+      executionSelection: acceptedMemorySelection(executionSelection),
       totalTokens: 10,
       compactionCount: 0,
     });
@@ -4365,6 +4507,7 @@ describe("runMemoryFlushIfNeeded", () => {
       },
     } as const;
     const followupRun = createTestFollowupRun({
+      executionSelection,
       provider: "anthropic",
       model: "claude-opus-4-6",
       sessionId: "session",

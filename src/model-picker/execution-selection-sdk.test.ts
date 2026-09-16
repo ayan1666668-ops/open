@@ -10,7 +10,11 @@ import {
   ModelSelectionLockedError,
 } from "../plugin-sdk/model-session-runtime.js";
 import { projectPluginSessionEntry } from "../plugin-sdk/session-store-runtime-internal.js";
-import { patchSessionEntry, type SessionEntry } from "../plugin-sdk/session-store-runtime.js";
+import {
+  patchSessionEntry,
+  upsertSessionEntry,
+  type SessionEntry,
+} from "../plugin-sdk/session-store-runtime.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 
 vi.mock("../agents/model-runtime-choice.js", async (importOriginal) => ({
@@ -156,39 +160,101 @@ describe("released model-selection SDK entry points", () => {
     },
   );
 
+  it.each([false, true])(
+    "invalidates request context without rewriting observations, pending=%s",
+    (pending) => {
+      const row = {
+        ...entry(),
+        modelProvider: "observed",
+        model: "observed-model",
+        contextTokens: 4096,
+        contextTokensSource: "runtime" as const,
+        authProfileOverride: "old-account",
+        authProfileOverrideSource: "user" as const,
+      };
+      applyModelOverrideToSessionEntry({
+        entry: row,
+        selection,
+        profileOverride: "new-account",
+        markLiveSwitchPending: pending,
+      });
+      expect(row.modelProvider).toBe("observed");
+      expect(row.model).toBe("observed-model");
+      expect(row.contextTokens).toBeUndefined();
+      expect(row.contextTokensSource).toBeUndefined();
+      expect(row.authProfileOverride).toBe("new-account");
+      expect(row.liveModelSwitchPending).toBe(pending ? true : undefined);
+    },
+  );
+
+  it.each([false, true])("preserves account metadata only when requested=%s", (preserve) => {
+    const row = {
+      ...entry(),
+      authProfileOverride: "fixture:account",
+      authProfileOverrideSource: "user" as const,
+      authProfileOverrideCompactionCount: 2,
+    };
+    applyModelOverrideToSessionEntry({
+      entry: row,
+      selection,
+      preserveAuthProfileOverride: preserve,
+    });
+    expect(row.authProfileOverride).toBe(preserve ? "fixture:account" : undefined);
+    expect(row.authProfileOverrideSource).toBe(preserve ? "user" : undefined);
+    expect(row.authProfileOverrideCompactionCount).toBe(preserve ? 2 : undefined);
+  });
+
+  it("keeps released default/source semantics through a new user request", () => {
+    const row = entry();
+    applyModelOverrideToSessionEntry({
+      entry: row,
+      selection: { ...selection, isDefault: true },
+      explicitDefaultSelection: true,
+    });
+    expect(row.modelOverrideSource).toBe("default");
+    expect(row.modelOverride).toBeUndefined();
+    applyModelOverrideToSessionEntry({ entry: row, selection });
+    expect(row.executionSelection?.fallbackPermission).toBe("explicit");
+    expect(row.modelOverrideSource).toBe("user");
+  });
+
   it.each(["auto", "user"] as const)(
     "prepares and commits a staged %s request through the async API",
     async (source) => {
-      const row = entry();
-      applyModelOverrideToSessionEntry({ entry: row, selection, selectionSource: source });
-      const sessionKey = "agent:main:sdk";
-      // The host loads the canonical entry after the public setter has staged its request.
-      const { acp: _acp, modelFallback: _fallback, ...canonical } = row;
-      const sessionStore = { [sessionKey]: canonical };
-      const result = await applySessionExecutionSelection({
-        cfg: {
-          agents: {
-            defaults: {
-              model: "fixture/default",
-              models: { "fixture/default": {}, "fixture/family/after": {} },
+      await withOpenClawTestState({ label: "sdk-stage-initialize" }, async () => {
+        const row = entry();
+        applyModelOverrideToSessionEntry({ entry: row, selection, selectionSource: source });
+        const sessionKey = "agent:main:sdk";
+        const scope = { agentId: "main", sessionKey };
+        await upsertSessionEntry({ ...scope, entry: row });
+        const canonical = loadSessionEntryReadOnly(scope);
+        if (!canonical) throw new Error("Expected staged session");
+        const sessionStore = { [sessionKey]: canonical };
+        const result = await applySessionExecutionSelection({
+          cfg: {
+            agents: {
+              defaults: {
+                model: "fixture/default",
+                models: { "fixture/default": {}, "fixture/family/after": {} },
+              },
             },
           },
-        },
-        agentId: "main",
-        sessionKey,
-        sessionEntry: canonical,
-        sessionStore,
-        modelCatalog: [{ provider: "fixture", id: "family/after", name: "Requested" }],
-        request: { kind: "initialize" },
-      });
-      expect(result.status).toBe("applied");
-      expect(sessionStore[sessionKey].executionSelection).toEqual({
-        state: "accepted",
-        selection: {
-          model: { provider: "fixture", id: "family/after" },
-          executor: { kind: "harness", id: "openclaw" },
-        },
-        fallbackPermission: source === "auto" ? "configured" : "explicit",
+          agentId: "main",
+          sessionKey,
+          sessionEntry: canonical,
+          sessionStore,
+          modelCatalog: [{ provider: "fixture", id: "family/after", name: "Requested" }],
+          request: { kind: "initialize" },
+        });
+        expect(result.status).toBe("applied");
+        expect(sessionStore[sessionKey].executionSelection).toEqual({
+          state: "accepted",
+          selection: {
+            model: { provider: "fixture", id: "family/after" },
+            executor: { kind: "harness", id: "openclaw" },
+          },
+          fallbackPermission: source === "auto" ? "configured" : "explicit",
+        });
       });
     },
   );

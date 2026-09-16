@@ -3,6 +3,7 @@ import { resolveModelCandidateChain } from "../agents/model-fallback-candidates.
 import { evaluatePublishedModelRuntimeChoice } from "../agents/model-runtime-choice.js";
 import { resolveDefaultModelForAgent } from "../agents/model-selection.js";
 import { createModelVisibilityPolicy } from "../agents/model-visibility-policy.js";
+import { resolveEffectiveAgentRuntime } from "../agents/thinking-runtime.js";
 import { loadSessionEntryReadOnly } from "../config/sessions/session-accessor.js";
 import { resolveSessionWorkerPlacementContext } from "../gateway/session-worker-placement-context.js";
 import { resolveWorkerPlacementCapabilities } from "../gateway/worker-environments/placement-capabilities.js";
@@ -12,7 +13,6 @@ import {
   resolveExecutionSelectionExecutorKind,
   executionSelectionTransactionChanged,
 } from "./apply-session-model-selection.js";
-import { resolveConfiguredExecutionSelection } from "./execution-selection-configured.js";
 import {
   selectionDisplayNames,
   formatExecutionSelectionAcknowledgment,
@@ -37,14 +37,24 @@ export async function prepareSessionExecutionSelection(
   const deferred = stored?.state === "deferred" ? stored.request : undefined;
   const before = getCommittedSessionExecutionSelection(sessionSnapshot);
   const catalog = params.modelCatalog ?? [];
-  const chooseConfigured = (model: ModelExecutionSelection["model"]) =>
-    resolveConfiguredExecutionSelection({
+  const chooseConfigured = (
+    model: ModelExecutionSelection["model"],
+  ): ModelExecutionSelection | undefined => {
+    const entry = catalog.find(
+      (entry) => entry.provider === model.provider && entry.id === model.id,
+    );
+    const id = resolveEffectiveAgentRuntime({
       cfg: params.cfg,
       agentId: params.agentId,
       sessionKey: params.sessionKey,
-      model,
-      modelCatalog: catalog,
+      provider: model.provider,
+      modelId: model.id,
+      modelApi: entry?.api,
+      modelBaseUrl: entry?.baseUrl,
     });
+    const kind = resolveExecutionSelectionExecutorKind(params.cfg, id);
+    return kind ? { model, executor: { kind, id } } : undefined;
+  };
   const seed =
     deferred?.model && deferred.model !== "native-managed"
       ? { provider: deferred.model.provider ?? configured.provider, id: deferred.model.id }

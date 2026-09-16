@@ -440,7 +440,11 @@ describe("handleCompactCommand", () => {
           sessionId: "locked-session",
           updatedAt: Date.now(),
           agentHarnessId: "codex",
-          agentRuntimeOverride: "openclaw",
+          executionSelection: {
+            state: "accepted",
+            selection: { model: "native-managed", executor: { kind: "harness", id: "codex" } },
+            fallbackPermission: "explicit",
+          },
           modelSelectionLocked: true,
         },
       } as HandleCommandsParams,
@@ -482,6 +486,14 @@ describe("handleCompactCommand", () => {
           sessionEntry: {
             sessionId: "cli-session",
             updatedAt: Date.now(),
+            executionSelection: {
+              state: "accepted",
+              selection: {
+                model: { provider: "anthropic", id: "fixture" },
+                executor: { kind: "cli", id: "claude-cli" },
+              },
+              fallbackPermission: "explicit",
+            },
             cliSessionBindings: {
               "claude-cli": { sessionId: "native-claude-session" },
             },
@@ -501,16 +513,14 @@ describe("handleCompactCommand", () => {
   });
 
   it.each([
-    { provider: "anthropic", harness: "claude-cli", override: true, expectedRuntime: "claude-cli" },
     { provider: "anthropic", harness: "claude-cli", expectedRuntime: "claude-cli" },
-    { provider: "openai", harness: "claude-cli", override: true, expectedRuntime: undefined },
     { provider: "openai", harness: "claude-cli", expectedRuntime: undefined },
-    { provider: "anthropic", harness: "codex", override: true, expectedRuntime: undefined },
+    { provider: "anthropic", harness: "codex", expectedRuntime: undefined },
     { provider: "openai", harness: "codex", expectedRuntime: "codex" },
     { provider: "github-copilot", harness: "copilot", expectedRuntime: "copilot" },
   ])(
-    "uses the model picker's runtime only when it serves $provider (#117470)",
-    async ({ provider, harness, expectedRuntime, ...testCase }) => {
+    "compacts through the accepted executor and ignores historical $harness for $provider (#117470)",
+    async ({ provider, harness, expectedRuntime }) => {
       cliBackendsTesting.setDepsForTest({
         resolveRuntimeCliBackends: () =>
           [
@@ -548,7 +558,21 @@ describe("handleCompactCommand", () => {
             sessionEntry: {
               sessionId: "picker-session",
               updatedAt: Date.now(),
-              ...("override" in testCase ? { agentRuntimeOverride: harness } : {}),
+              ...(expectedRuntime
+                ? {
+                    executionSelection: {
+                      state: "accepted",
+                      selection: {
+                        model: { provider, id: "fixture" },
+                        executor: {
+                          kind: harness === "codex" ? "harness" : "cli",
+                          id: expectedRuntime,
+                        },
+                      },
+                      fallbackPermission: "explicit",
+                    },
+                  }
+                : {}),
               agentHarnessId: harness,
             },
           } as HandleCommandsParams,

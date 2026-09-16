@@ -149,7 +149,6 @@ async function reconcileAgentPatchedSessionModel(params: {
       }
       const next = { ...entry };
       commitSessionExecutionSelection(next, rollback.selection, {
-        cfg: params.cfg,
         cause: { kind: "inherit", entry: { executionSelection: marker.previous } },
       });
       result = "reverted";

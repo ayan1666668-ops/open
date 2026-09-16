@@ -413,7 +413,6 @@ export function commitSessionExecutionSelection(
   entry: Partial<SessionEntry>,
   selection: ExecutionSelection,
   options: {
-    cfg?: OpenClawConfig;
     markLiveSwitchPending?: boolean;
     cause?: ExecutionSelectionCommitCause;
   } = {},

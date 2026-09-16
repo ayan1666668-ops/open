@@ -754,7 +754,7 @@ describe("AcpSessionManager runtime handles", () => {
     { agent: "claude", model: "anthropic/claude-sonnet-4-6", supportsModel: true },
     { agent: "opencode", model: "inherited/default", supportsModel: false },
   ])(
-    "preserves legacy $agent model state across status and turn restart",
+    "preserves the saved $agent model and pauses unconfirmed replay across restart",
     async ({ agent, model, supportsModel }) => {
       const runtimeState = createRuntime();
       hoisted.requireAcpRuntimeBackendMock.mockReturnValue({
@@ -792,6 +792,22 @@ describe("AcpSessionManager runtime handles", () => {
       expect(persisted.readOptions()?.model).toBe(model);
 
       for (const [index, manager] of [original, new AcpSessionManager()].entries()) {
+        if (!supportsModel && index > 0) {
+          await expect(manager.getSessionStatus({ cfg: baseCfg, sessionKey })).rejects.toThrow(
+            "app did not confirm the last change",
+          );
+          await expect(
+            manager.runTurn({
+              provenance: "system",
+              cfg: baseCfg,
+              sessionKey,
+              text: "Use the selected model",
+              mode: "prompt",
+              requestId: `model-replay-${index}`,
+            }),
+          ).rejects.toThrow("app did not confirm the last change");
+          continue;
+        }
         await expect(manager.getSessionStatus({ cfg: baseCfg, sessionKey })).resolves.toMatchObject(
           {
             runtimeOptions: { model },
@@ -813,8 +829,8 @@ describe("AcpSessionManager runtime handles", () => {
       }
 
       expect(runtimeState.runTurn).toHaveBeenCalledTimes(supportsModel ? 2 : 0);
-      expect(runtimeState.setConfigOption).toHaveBeenCalledTimes(2);
-      expectRecordFields(mockCallArg(runtimeState.setConfigOption, 1), {
+      expect(runtimeState.setConfigOption).toHaveBeenCalledTimes(supportsModel ? 2 : 1);
+      expectRecordFields(mockCallArg(runtimeState.setConfigOption, supportsModel ? 1 : 0), {
         key: "model",
         value: model,
       });

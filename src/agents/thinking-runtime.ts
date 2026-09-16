@@ -11,7 +11,7 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { resolveAvailableAgentHarnessPolicy } from "./harness/availability.js";
 import { resolveAutoAgentHarnessId } from "./harness/support.js";
 import type { AgentRuntimePolicyScope } from "./model-runtime-policy.js";
-import { resolveSessionRuntimeOverrideForProvider } from "./session-runtime-compat.js";
+import { resolvePersistedSessionRuntimeId } from "./session-runtime-compat.js";
 
 export function hasResolvedThinkingCatalogEntry(params: {
   catalog?: readonly ThinkingCatalogEntry[];
@@ -74,11 +74,7 @@ export function resolveEffectiveAgentRuntime(
     sessionEntry?: Partial<SessionEntry>;
   } & AgentRuntimePolicyScope,
 ): string {
-  const sessionRuntime = resolveSessionRuntimeOverrideForProvider({
-    provider: params.provider,
-    entry: params.sessionEntry,
-    cfg: params.cfg,
-  });
+  const sessionRuntime = resolvePersistedSessionRuntimeId(params.sessionEntry);
   if (sessionRuntime) return sessionRuntime;
   const runtime = resolveAvailableAgentHarnessPolicy({
     ...params,

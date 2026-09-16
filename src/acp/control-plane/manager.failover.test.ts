@@ -236,7 +236,12 @@ describe("AcpSessionManager backend failover", () => {
       await vi.advanceTimersByTimeAsync(4_001);
       expect((await settled)[0]).toMatchObject({
         status: "rejected",
-        reason: { message: "ACP turn timed out after 1s." },
+        reason: {
+          code: "ACP_TURN_FAILED",
+          detailCode: "TURN_TIMEOUT",
+          message:
+            "All ACP backends failed (2): primary-backend: primary backend unavailable | fallback-backend: ACP turn timed out after 1s.",
+        },
       });
       expect(harness.fallbackRuntime.cancel).toHaveBeenCalledOnce();
       expect(harness.fallbackRuntime.close).not.toHaveBeenCalled();

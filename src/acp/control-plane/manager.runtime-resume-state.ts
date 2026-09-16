@@ -149,14 +149,8 @@ async function clearPersistedRuntimeResumeState(params: {
       };
       return {
         ...base,
-        runtimeSessionName: base.runtimeSessionName,
         identity: nextIdentity,
-        mode: base.mode,
-        ...(base.runtimeOptions ? { runtimeOptions: base.runtimeOptions } : {}),
-        ...(base.cwd ? { cwd: base.cwd } : {}),
-        state: base.state,
         lastActivityAt: now,
-        ...(base.lastError ? { lastError: base.lastError } : {}),
       };
     },
   });
@@ -198,16 +192,18 @@ export async function discardPersistedManagerRuntimeState(params: {
             lastUpdatedAt: now,
           }
         : undefined;
-      return {
+      const next: SessionAcpLifecycle = {
         ...base,
-        runtimeSessionName: base.runtimeSessionName,
-        ...(nextIdentity ? { identity: nextIdentity } : {}),
-        mode: base.mode,
-        ...(base.runtimeOptions ? { runtimeOptions: base.runtimeOptions } : {}),
-        ...(base.cwd ? { cwd: base.cwd } : {}),
         state: "idle",
         lastActivityAt: now,
       };
+      delete next.lastError;
+      if (nextIdentity) {
+        next.identity = nextIdentity;
+      } else {
+        delete next.identity;
+      }
+      return next;
     },
     failOnError: true,
   });

@@ -229,10 +229,4 @@ describe("chat-model-ref helpers", () => {
       ]),
     ).toBe("nvidia/deepseek-ai/deepseek-v3.2");
   });
-
-  it("uses catalog resolution for provider-less raw server model values", () => {
-    expect(resolvePreferredServerChatModelValue("gpt-5-mini", null, [OPENAI_GPT5_MINI_MODEL])).toBe(
-      "openai/gpt-5-mini",
-    );
-  });
 });

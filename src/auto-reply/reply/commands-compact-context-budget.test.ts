@@ -154,9 +154,14 @@ describe("handleCompactCommand context budget", () => {
         sessionEntry: {
           sessionId: "legacy-model-session",
           updatedAt: Date.now(),
-          providerOverride: "custom",
-          modelOverride: "legacy-fast-model",
-          modelOverrideSource: "user",
+          executionSelection: {
+            state: "accepted",
+            selection: {
+              model: { provider: "custom", id: "actual-model" },
+              executor: { kind: "harness", id: "openclaw" },
+            },
+            fallbackPermission: "explicit",
+          },
           contextTokens: 777_777,
         },
       } as HandleCommandsParams,

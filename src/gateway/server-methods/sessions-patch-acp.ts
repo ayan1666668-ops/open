@@ -6,7 +6,7 @@ import {
   type SessionsPatchParams,
 } from "../../../packages/gateway-protocol/src/index.js";
 import type { AcpSessionManager } from "../../acp/control-plane/manager.core.js";
-import { requireReadySessionMeta } from "../../acp/control-plane/manager.utils.js";
+import { requireReadySession } from "../../acp/control-plane/manager.utils.js";
 import { splitTrailingAuthProfile } from "../../agents/model-ref-profile.js";
 import type { SessionEntry } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
@@ -109,7 +109,7 @@ export async function prepareAcpSessionPatch(params: {
   try {
     assertActive();
     const current = manager.resolveSession(target);
-    const meta = requireReadySessionMeta(current);
+    const { meta } = requireReadySession(current);
     const prepared = await prepareSessionExecutionSelection({
       ...target,
       sessionEntry: { ...params.entry, acp: meta },

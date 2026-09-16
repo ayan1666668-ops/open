@@ -128,6 +128,7 @@ const deferredStateDatabases = new WeakSet<DatabaseSync>();
 export function repairOpenClawStateDatabaseSchema(
   options: OpenClawStateDatabaseOptions = {},
   beforeSchemaMigration?: (database: DatabaseSync) => void,
+  stage: "complete" | "lease-prerequisite" = "complete",
 ): {
   changes: string[];
   warnings: string[];
@@ -146,7 +147,12 @@ export function repairOpenClawStateDatabaseSchema(
     "state schema repair",
     () =>
       withStateSchemaFence({ databasePath: pathname }, () =>
-        repairStateSchema(pathname, env, "doctor", beforeSchemaMigration),
+        repairStateSchema(
+          pathname,
+          env,
+          stage === "complete" ? "doctor" : "lease-prerequisite",
+          beforeSchemaMigration,
+        ),
       ),
   );
 }

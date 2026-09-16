@@ -389,6 +389,7 @@ async function createSessionEntry(
               },
             },
             commandSource: "plugin-runtime",
+            commitGuard: assertCreationOwner,
             afterCreate: async (context) => {
               callbackContext = context;
               if (initializesAfterCreate) await runAfterCreate(context);

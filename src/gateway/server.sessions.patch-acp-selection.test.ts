@@ -1,7 +1,6 @@
 import type { AcpRuntime } from "@openclaw/acp-core/runtime/types";
 import { afterEach, expect, test, vi } from "vitest";
 import { AcpSessionManager } from "../acp/control-plane/manager.core.js";
-import * as acpManagerModule from "../acp/control-plane/manager.js";
 import { disposeAcpSessionManagerInstance } from "../acp/control-plane/manager.lifecycle.js";
 import { DEFAULT_DEPS, type AcpSessionManagerDeps } from "../acp/control-plane/manager.types.js";
 import { ACP_SELECTION_REPAIR_MESSAGE } from "../acp/control-plane/manager.utils.js";
@@ -23,6 +22,7 @@ import {
 import { writeSessionStore } from "./test-helpers.js";
 import {
   acpRuntimeMocks,
+  acpManagerMocks,
   directSessionReq,
   getGatewayConfigModule,
   sessionHookMocks,
@@ -105,15 +105,28 @@ async function setupSelection(
     cancel: vi.fn(async () => {}),
     close: vi.fn(async () => {}),
   };
-  acpRuntimeMocks.getAcpRuntimeBackend.mockReturnValue({ id: "qa-acp", runtime });
-  const manager = new AcpSessionManager({ ...DEFAULT_DEPS, upsertSessionMeta });
+  const backend = { id: "qa-acp", runtime };
+  const getRuntimeBackend = (id?: string) => (!id || id === backend.id ? backend : null);
+  acpRuntimeMocks.getAcpRuntimeBackend.mockImplementation(getRuntimeBackend);
+  const managerDeps: AcpSessionManagerDeps = {
+    ...DEFAULT_DEPS,
+    upsertSessionMeta,
+    getRuntimeBackend,
+    requireRuntimeBackend: (id) => {
+      const selected = getRuntimeBackend(id);
+      if (!selected) throw new AcpRuntimeError("ACP_BACKEND_MISSING", "Unknown fixture backend.");
+      return selected;
+    },
+  };
+  const manager = new AcpSessionManager(managerDeps);
   managers.push(manager);
-  vi.spyOn(acpManagerModule, "getAcpSessionManager").mockReturnValue(manager);
+  acpManagerMocks.getManager.mockReturnValue(manager);
   sessionHookMocks.triggerInternalHook.mockClear();
   return {
     cfg,
     storePath,
     manager,
+    managerDeps,
     setConfigOption,
     runTurn,
     ensureSession,
@@ -138,6 +151,7 @@ async function applyAcpDirective(state: Awaited<ReturnType<typeof setupSelection
     model: "qa-before",
     allowedModels: [],
     senderIsOwner: true,
+    gatewayClientScopes: ["operator.admin"],
   });
 }
 
@@ -150,7 +164,10 @@ test("sessions.patch commits an ACP accepted model and accompanying metadata tog
     pinned: true,
   });
   expect(result).toMatchObject({ ok: true });
-  expect(state.readEntry()).toMatchObject({ label: "Changed title", pinned: true });
+  expect(state.readEntry()).toMatchObject({
+    label: "Changed title",
+    pinnedAt: expect.any(Number),
+  });
   expect(getSessionExecutionSelection(state.readEntry())?.model).toEqual({ id: "qa-accepted" });
 });
 
@@ -292,7 +309,7 @@ test.each([false, true])(
     expect(result.error?.message).toContain("This app cannot change that model setting here.");
     expect(result.error?.message?.includes("Chat is paused")).toBe(submitted);
     expect(state.setConfigOption).toHaveBeenCalledTimes(submitted ? 1 : 0);
-    expect(state.readEntry()?.pinned).toBeUndefined();
+    expect(state.readEntry()?.pinnedAt).toBeUndefined();
     expect(getCommittedSessionExecutionSelection(state.readEntry())?.model).toEqual({
       id: "qa-before",
     });
@@ -336,7 +353,7 @@ test.each(["/model qa-next", "/model qa-next /verbose on", "sessions.patch"])(
 test("a later ACP actor confirmation failure preserves every committed batch outcome", async () => {
   let state: Awaited<ReturnType<typeof setupSelection>>;
   state = await setupSelection("qa-before", false, async (input) => {
-    if (input.sessionKey === ordinaryKey && state.readEntry(ordinaryKey)?.pinned) {
+    if (input.sessionKey === ordinaryKey && state.readEntry(ordinaryKey)?.pinnedAt !== undefined) {
       throw new Error("inner confirmation storage unavailable");
     }
     return upsertAcpSessionMeta(input);
@@ -376,7 +393,7 @@ test("a later ACP actor confirmation failure preserves every committed batch out
     error: { message: expect.stringContaining("Session settings were saved.") },
   });
   for (const key of [acpKey, ordinaryKey]) {
-    expect(state.readEntry(key)?.pinned).toBe(true);
+    expect(state.readEntry(key)?.pinnedAt).toEqual(expect.any(Number));
     expect(getCommittedSessionExecutionSelection(state.readEntry(key))?.model).toEqual({
       id: "qa-accepted",
     });
@@ -434,12 +451,12 @@ test("sessions.patch rechecks conditional metadata after ACP preparation and bef
 });
 
 test.each([
-  [acpKey, ordinaryKey],
-  [ordinaryKey, acpKey],
-  [missingKey, acpKey],
+  { keys: [acpKey, ordinaryKey] },
+  { keys: [ordinaryKey, acpKey] },
+  { keys: [missingKey, acpKey] },
 ])(
   "sessions.patchMany preserves per-target outcomes when an ACP model is accepted: %j",
-  async (keys) => {
+  async ({ keys }) => {
     const state = await setupSelection();
     const result = await directSessionReq<{ outcomes: Array<{ key: string; ok: boolean }> }>(
       "sessions.patchMany",
@@ -473,7 +490,7 @@ test("sessions.patch applies and returns the backend's accepted model before the
   expect(state.setConfigOption).toHaveBeenCalledWith(
     expect.objectContaining({ key: "model", value: "qa-next" }),
   );
-  const reopened = new AcpSessionManager();
+  const reopened = new AcpSessionManager(state.managerDeps);
   managers.push(reopened);
   await reopened.runTurn({
     cfg: state.cfg,

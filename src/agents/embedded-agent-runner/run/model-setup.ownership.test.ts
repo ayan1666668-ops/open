@@ -21,7 +21,7 @@ import { prepareSystemAgentRunAdmission } from "../../admitted-run-context.js";
 import { registerAgentHarness } from "../../harness/registry.js";
 import { withPreparedEmbeddedRunToolAuthority } from "../../harness/tool-authority.runtime.js";
 import type { AgentHarness } from "../../harness/types.js";
-import { resolveSessionRuntimeOverrideForProvider } from "../../session-runtime-compat.js";
+import { resolvePersistedSessionRuntimeId } from "../../session-runtime-compat.js";
 import { resolveExtraParams } from "../extra-params.js";
 import {
   createModelGenerationFixture,
@@ -56,6 +56,9 @@ afterEach(async () => {
 async function createFixture(
   config: OpenClawConfig = {},
   nativeOwner?: AgentHarness["resolveSessionRuntimeOwnership"],
+  selectedModel: { provider: string; id: string } | "native-managed" = nativeOwner
+    ? "native-managed"
+    : { provider: "openai", id: "fixture-model" },
 ) {
   const state = await createOpenClawTestState({ label: "model-ownership" });
   states.push(state);
@@ -107,14 +110,12 @@ async function createFixture(
     sessionId: runParams.sessionId,
     updatedAt: 1,
     modelSelectionLocked: true,
-    ...(nativeOwner
-      ? { agentHarnessId: "codex" }
-      : {
-          pluginOwnerId: "catalog-owner",
-          providerOverride: "openai",
-          modelOverride: "fixture-model",
-          agentRuntimeOverride: "codex",
-        }),
+    executionSelection: {
+      state: "accepted",
+      selection: { model: selectedModel, executor: { kind: "harness", id: "codex" } },
+      fallbackPermission: "explicit",
+    },
+    ...(nativeOwner ? { agentHarnessId: "codex" } : { pluginOwnerId: "catalog-owner" }),
   };
   await replaceSessionEntry(target, entry);
   const resolve = () =>
@@ -206,19 +207,21 @@ describe("model chat and native model ownership", () => {
       const entry = loadSessionEntryReadOnly(fixture.target);
       expect(entry).toMatchObject({
         pluginOwnerId: "catalog-owner",
-        providerOverride: "openai",
-        modelOverride: "fixture-model",
-        agentRuntimeOverride: "codex",
+        executionSelection: {
+          state: "accepted",
+          selection: {
+            model: { provider: "openai", id: "fixture-model" },
+            executor: { kind: "harness", id: "codex" },
+          },
+          fallbackPermission: "explicit",
+        },
         modelSelectionLocked: true,
       });
       expect(entry?.agentHarnessId).toBe(observation);
       const committedEntry = sessionStore[fixture.target.sessionKey];
       expect(committedEntry).toBeDefined();
       expect(committedEntry?.agentHarnessId).toBe(observation);
-      fixture.runParams.agentHarnessRuntimeOverride = resolveSessionRuntimeOverrideForProvider({
-        provider: "openai",
-        entry,
-      });
+      fixture.runParams.agentHarnessRuntimeOverride = resolvePersistedSessionRuntimeId(entry);
       expect(fixture.runParams.agentHarnessRuntimeOverride).toBe("codex");
       const setup = await fixture.resolve();
       expect(setup.nativeModelOwned).toBe(false);
@@ -325,11 +328,15 @@ describe("model chat and native model ownership", () => {
   );
 
   it("keeps guarded reply input aligned with a host-auth native model", async () => {
-    const fixture = await createFixture({}, () => ({
-      model: "native",
-      auth: "host",
-      modelRef: { provider: "openai", model: "bound-native-model" },
-    }));
+    const fixture = await createFixture(
+      {},
+      () => ({
+        model: "native",
+        auth: "host",
+        modelRef: { provider: "openai", model: "bound-native-model" },
+      }),
+      { provider: "openai", id: "bound-native-model" },
+    );
     const profile = { authProfileId: "openai:fixture", authProfileIdSource: "user" as const };
     await fixture.state.writeAuthProfiles({
       version: 1,

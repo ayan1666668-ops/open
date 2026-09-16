@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, expectTypeOf, test, vi } from "vitest";
 import * as acpManager from "../acp/control-plane/manager.js";
 import { evaluatePublishedModelRuntimeChoice } from "../agents/model-runtime-choice.js";
-import type { ModelVisibilityPolicy } from "../agents/model-selection.js";
+import type { ModelVisibilityPolicy } from "../agents/model-visibility-policy.js";
 import {
   loadSessionEntryReadOnly,
   replaceSessionEntry,
@@ -132,6 +132,37 @@ test.each(["native-managed", { id: "opaque" }] as const)(
   },
 );
 
+test("rejects a released ACP-only view before backend work without a store path", async () => {
+  await withOpenClawTestState({ label: "sdk-legacy-acp-view" }, async () => {
+    const params = request();
+    const legacyEntry: ApplySessionModelSelectionParams["sessionEntry"] = {
+      sessionId: "legacy-acp",
+      updatedAt: 1,
+      acp: {
+        backend: "fixture-backend",
+        agent: "fixture-agent",
+        runtimeSessionName: "fixture-native",
+        mode: "persistent",
+        state: "idle",
+        lastActivityAt: 1,
+        runtimeOptions: { model: "opaque" },
+      },
+    };
+    params.sessionEntry = legacyEntry;
+    params.sessionStore[scope.sessionKey] = legacyEntry;
+    const before = structuredClone(legacyEntry);
+    const backend = vi.spyOn(acpManager, "getAcpSessionManager");
+    expect(await applySessionModelSelection(params)).toMatchObject({
+      status: "rejected",
+      reason: "invalid-runtime",
+      message: expect.stringContaining("Use applySessionExecutionSelection"),
+    });
+    expect(backend).not.toHaveBeenCalled();
+    expect(evaluatePublishedModelRuntimeChoice).not.toHaveBeenCalled();
+    expect(legacyEntry).toEqual(before);
+  });
+});
+
 test("rechecks released caller custody after preparation", async () => {
   await withOpenClawTestState({ label: "sdk-flat-custody" }, async () => {
     const params = request();
@@ -157,7 +188,7 @@ test("rechecks released caller custody after preparation", async () => {
     expect(await applySessionModelSelection(params)).toMatchObject({
       status: "rejected",
       reason: "not-allowed",
-      message: expect.stringContaining("Use applySessionExecutionSelection"),
+      message: "The session changed. Retry the model selection.",
     });
     expect(params.sessionEntry).toEqual(before);
     expect(params.sessionStore[scope.sessionKey]?.executionSelection).toMatchObject({
@@ -184,3 +215,35 @@ test.each(["unknown", "unavailable", "unsupported"] as const)(
     });
   },
 );
+
+test("released runtime reader preserves legacy ownership and pin priority", async () => {
+  const { resolvePersistedSessionRuntimeId } = await import("./model-session-runtime.js");
+  expect(
+    resolvePersistedSessionRuntimeId({
+      agentHarnessId: "native-app",
+      agentRuntimeOverride: "openclaw",
+      modelSelectionLocked: true,
+    }),
+  ).toBe("native-app");
+  expect(
+    resolvePersistedSessionRuntimeId({
+      agentHarnessId: "native-app",
+      agentRuntimeOverride: "openclaw",
+      modelSelectionLocked: true,
+      pluginOwnerId: "model-owner",
+    }),
+  ).toBe("openclaw");
+  expect(
+    resolvePersistedSessionRuntimeId({
+      agentHarnessId: "native-app",
+      agentRuntimeOverride: "default",
+    }),
+  ).toBe("native-app");
+  expect(
+    resolvePersistedSessionRuntimeId({
+      ...ordinary,
+      agentHarnessId: "native-app",
+      modelSelectionLocked: true,
+    }),
+  ).toBe("openclaw");
+});

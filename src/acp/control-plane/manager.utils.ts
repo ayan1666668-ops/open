@@ -2,9 +2,11 @@ import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/st
 import type { SessionAcpLifecycle, SessionEntry } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { toErrorObject } from "../../infra/errors.js";
-import { getCommittedSessionExecutionSelection } from "../../model-picker/execution-selection.js";
-import { isAcpExecutionSelection } from "../../model-picker/execution-selection.js";
-import type { AcpExecutionSelection } from "../../model-picker/execution-selection.js";
+import {
+  getCommittedSessionExecutionSelection,
+  isAcpExecutionSelection,
+  type AcpExecutionSelection,
+} from "../../model-picker/execution-selection.js";
 import { normalizeAgentId, parseAgentSessionKey } from "../../routing/session-key.js";
 /** Shared ACP manager normalization, resolution, and error helpers. */
 import { ACP_ERROR_CODES, AcpRuntimeError } from "../runtime/errors.js";
@@ -72,10 +74,6 @@ export function requireReadySession(
     return resolution;
   }
   throw toErrorObject(resolveAcpSessionResolutionError(resolution), "Non-Error thrown");
-}
-
-export function requireReadySessionMeta(resolution: AcpSessionResolution): SessionAcpLifecycle {
-  return requireReadySession(resolution).meta;
 }
 
 /** Resolve ownership before main aliases can erase the encoded agent namespace. */

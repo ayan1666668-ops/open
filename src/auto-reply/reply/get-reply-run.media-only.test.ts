@@ -200,28 +200,16 @@ vi.mock("../../agents/model-selection.js", () => ({
   }),
 }));
 
-const resolveSessionRuntimeOverrideForProviderMock = vi.hoisted(() =>
-  vi.fn(
-    (params: {
-      entry?: {
-        agentHarnessId?: string;
-        agentRuntimeOverride?: string;
-        modelSelectionLocked?: boolean;
-      };
-    }) => {
-      if (
-        params.entry?.agentHarnessId ||
-        params.entry?.agentRuntimeOverride ||
-        params.entry?.modelSelectionLocked
-      ) {
-        preparedReplyMockState.unexpectedCalls.push("resolveSessionRuntimeOverrideForProvider");
-      }
-      return undefined;
-    },
-  ),
+const resolvePersistedSessionRuntimeIdMock = vi.hoisted(() =>
+  vi.fn((entry?: { executionSelection?: unknown }) => {
+    if (entry?.executionSelection) {
+      preparedReplyMockState.unexpectedCalls.push("resolvePersistedSessionRuntimeId");
+    }
+    return undefined;
+  }),
 );
 vi.mock("../../agents/session-runtime-compat.js", () => ({
-  resolveSessionRuntimeOverrideForProvider: resolveSessionRuntimeOverrideForProviderMock,
+  resolvePersistedSessionRuntimeId: resolvePersistedSessionRuntimeIdMock,
 }));
 
 // Provider policy projection belongs to its adapter and provider-local suites. These tests
@@ -473,6 +461,16 @@ function baseParams(
   return {
     ...defaults,
     ...overrides,
+    modelState: {
+      executionSelection: {
+        executor: { kind: "harness", id: "openclaw" },
+        model: {
+          provider: overrides.provider ?? defaults.provider,
+          id: overrides.model ?? defaults.model,
+        },
+      },
+      ...(overrides.modelState ?? defaults.modelState),
+    },
     conversation:
       overrides.conversation ??
       prepareReplyConversation({
@@ -3628,8 +3626,6 @@ describe("runPreparedReply media-only handling", () => {
       sessionId: "session-before-wait",
       sessionKey: dispatchSessionKey,
       opts: withReplySystemEventContext({}, { sessionKey: routeSessionKey }),
-      provider: "",
-      model: "",
       resolvedThinkLevel: "off",
     });
 
@@ -3678,8 +3674,6 @@ describe("runPreparedReply media-only handling", () => {
     const runPromise = runPrepared({
       isNewSession: false,
       sessionId: "session-events-after-wait",
-      provider: "",
-      model: "",
       resolvedThinkLevel: "off",
     });
 
@@ -5268,8 +5262,6 @@ describe("runPreparedReply media-only handling", () => {
                 { isHeartbeat: true },
                 { sessionKey: queueKey, events: [generic] },
               ),
-        provider: "",
-        model: "",
         resolvedThinkLevel: "off",
         sessionKey: runKey,
       });
@@ -5322,8 +5314,6 @@ describe("runPreparedReply media-only handling", () => {
       agentId: "main",
       ctx: createInboundBody("report queued reactions"),
       opts: withReplySystemEventContext({}, { sessionKey: "agent:main:slack:channel:c123" }),
-      provider: "",
-      model: "",
       resolvedThinkLevel: "off",
       sessionKey: "agent:main:slack:channel:c123:thread:123.456",
     });

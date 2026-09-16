@@ -30,7 +30,6 @@ import {
   resolveProjectedAgentRunModel,
   type ProjectedAgentRunIndex,
 } from "../infra/agent-run-registry.js";
-import { executionSelectionWireSourceProjection } from "../model-picker/execution-selection-projection.js";
 import { projectPluginSessionExtensionsSync } from "../plugins/host-hook-state.js";
 import { resolveActiveSessionAgentStatus } from "../sessions/session-agent-status.js";
 import { deriveSessionUnread } from "../shared/session-unread.js";
@@ -572,7 +571,11 @@ export function materializeSessionRow(input: ReturnType<typeof readSessionRowInp
     model: input.rowModelIdentity.model,
     activeModelProvider: undefined,
     activeModel: undefined,
-    ...executionSelectionWireSourceProjection(entry),
+    modelOverrideSource: entry?.executionSelection
+      ? entry.executionSelection.fallbackPermission === "explicit"
+        ? "user"
+        : "auto"
+      : null,
     modelSelectionLocked: entry?.modelSelectionLocked,
     runtimeSelectionLocked: input.thinkingProjection.runtimeSelectionLocked,
     agentRuntime: input.agentRuntime,

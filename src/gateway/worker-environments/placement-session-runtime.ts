@@ -2,12 +2,12 @@ import { resolveEffectiveAgentDir } from "../../agents/agent-scope-config.js";
 import { resolveLegacyInheritedAuthAgentId } from "../../agents/legacy-inherited-auth-dir.js";
 import { resolveCliRuntimeExecutionProvider } from "../../agents/model-runtime-aliases.js";
 import { isCliProvider } from "../../agents/model-selection-cli.js";
-import { resolveSessionRuntimeOverrideForProvider } from "../../agents/session-runtime-compat.js";
+import { resolvePersistedSessionRuntimeId } from "../../agents/session-runtime-compat.js";
 import { resolveEffectiveAgentRuntime } from "../../agents/thinking-runtime.js";
 import { captureRuntimeStateEnvironment } from "../../config/paths.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
-import { getCommittedSessionExecutionSelection } from "../../model-picker/execution-selection.js";
+import { getSessionExecutionSelection } from "../../model-picker/execution-selection.js";
 import type { PluginMetadataSnapshot } from "../../plugins/plugin-metadata-snapshot.types.js";
 import { resolveSessionPinnedHarnessId } from "../../sessions/agent-harness-session-key.js";
 import type { GatewayAgentRuntime } from "../../shared/session-types.js";
@@ -27,9 +27,12 @@ export function resolveWorkerPlacementSessionRuntime(params: {
   agentId: string;
   sessionKey: string;
 }): string {
-  const accepted = getCommittedSessionExecutionSelection(params.entry);
+  const accepted = getSessionExecutionSelection(params.entry);
   if (accepted) {
     return accepted.executor.kind === "acp" ? accepted.executor.backend : accepted.executor.id;
+  }
+  if (params.entry.executionSelection?.state === "deferred") {
+    throw new Error("Prepare a model selection before choosing session placement.");
   }
   const { provider, model } = resolveSessionSelectedModelRef({
     ...params,
@@ -61,7 +64,7 @@ export function resolveWorkerPlacementModelRuntime(
     metadataSnapshot?: PluginMetadataSnapshot;
   },
 ): string {
-  const sessionRuntimeOverride = resolveSessionRuntimeOverrideForProvider(params);
+  const sessionRuntimeOverride = resolvePersistedSessionRuntimeId(params.entry);
   const pinnedHarnessId = resolveSessionPinnedHarnessId(params.entry);
   const locksPersistedHarness =
     pinnedHarnessId !== undefined && pinnedHarnessId === sessionRuntimeOverride;

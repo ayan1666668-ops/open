@@ -172,7 +172,6 @@ export async function createInitialSubagentSession(params: {
       return { status: "error", error: preparedSelection.message };
     }
     commitSessionExecutionSelection(childPatch, preparedSelection.selection, {
-      cfg: params.cfg,
       cause: { kind: params.executionRequest.kind === "initialize" ? "initialize" : "user" },
     });
     const entry = await upsertSessionEntryCore(

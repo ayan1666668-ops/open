@@ -564,7 +564,7 @@ describe("AcpSessionManager runtime config", () => {
         runtime: runtimeState.runtime,
       });
       const sessionKey = "agent:codex:acp:session-cwd-update";
-      installPublicAcpSessionFixture(sessionKey, readySessionMeta());
+      const persisted = installPublicAcpSessionFixture(sessionKey, readySessionMeta());
 
       const manager = new AcpSessionManager();
       await manager.runTurn({
@@ -586,10 +586,10 @@ describe("AcpSessionManager runtime config", () => {
         cwd: "/workspace/next",
       });
 
-      expect(currentEntry.acp.runtimeOptions).toEqual({
+      expect(persisted.currentMeta.runtimeOptions).toEqual({
         cwd: "/workspace/next",
       });
-      expect(currentEntry.acp.cwd).toBe("/workspace/next");
+      expect(persisted.currentMeta.cwd).toBe("/workspace/next");
 
       if (operation === "shutdown") {
         await disposeAcpSessionManagerInstance(manager, "gateway-shutdown");

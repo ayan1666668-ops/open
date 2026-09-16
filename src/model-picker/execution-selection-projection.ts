@@ -55,20 +55,6 @@ export function executionSelectionModelOverrideProjection(
     : {};
 }
 
-export function executionSelectionWireSourceProjection(
-  entry: Pick<SessionEntry, "executionSelection"> | undefined,
-): {
-  modelOverrideSource: "auto" | "user" | null;
-} {
-  return {
-    modelOverrideSource: entry?.executionSelection
-      ? entry.executionSelection.fallbackPermission === "explicit"
-        ? "user"
-        : "auto"
-      : null,
-  };
-}
-
 export function projectLegacyExecutionSelection(
   stored: SessionExecutionSelection | undefined,
 ): LegacySelectionView {
@@ -80,7 +66,13 @@ export function projectLegacyExecutionSelection(
     executor?.kind === "acp"
       ? undefined
       : (executor?.id ?? (stored.state === "deferred" ? stored.request.runtime : undefined));
-  if (!model || model === "native-managed") return runtime ? { agentRuntimeOverride: runtime } : {};
+  if (!model || model === "native-managed")
+    return {
+      ...(runtime ? { agentRuntimeOverride: runtime } : {}),
+      ...(!model && stored.fallbackPermission === "configured"
+        ? { modelOverrideSource: "default" as const }
+        : {}),
+    };
   const provider =
     stored.state === "accepted"
       ? isModelExecutionSelection(stored.selection)

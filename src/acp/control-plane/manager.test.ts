@@ -65,12 +65,14 @@ describe("AcpSessionManager", () => {
       id: "acpx",
       runtime: runtimeState.runtime,
     });
-    const mainEntry = createAcpSessionStoreEntryFixture({
-      sessionKey: "agent:main:main",
-      acp: readySessionMeta({ agent: "main", runtimeSessionName: "agent:main:main" }),
-    });
-    hoisted.readAcpSessionEntryMock.mockImplementation(({ sessionKey }: { sessionKey: string }) =>
-      sessionKey === "agent:main:main" ? structuredClone(mainEntry) : null,
+    installPublicAcpSessionFixture(
+      "agent:main:main",
+      readySessionMeta({ agent: "main", runtimeSessionName: "agent:main:main" }),
+    );
+    const readMain = hoisted.readAcpSessionEntryMock.getMockImplementation();
+    if (!readMain) throw new Error("Main session fixture reader is missing");
+    hoisted.readAcpSessionEntryMock.mockImplementation((input: { sessionKey: string }) =>
+      input.sessionKey === "agent:main:main" ? readMain(input) : null,
     );
 
     const manager = new AcpSessionManager();

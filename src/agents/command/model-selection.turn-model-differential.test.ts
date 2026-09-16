@@ -109,7 +109,7 @@ vi.mock("../provider-auth-aliases.js", () => ({
   resolveProviderIdForAuth: (provider: string) => provider,
 }));
 vi.mock("../session-runtime-compat.js", () => ({
-  resolveSessionRuntimeOverrideForProvider: () => undefined,
+  resolvePersistedSessionRuntimeId: () => undefined,
 }));
 vi.mock("../thinking-runtime.js", () => ({
   needsThinkHydration: () => false,

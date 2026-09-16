@@ -6,7 +6,7 @@ import { logVerbose } from "../globals.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import type { AcpExecutionSelection } from "../model-picker/execution-selection.js";
 import { getAcpSessionManager } from "./control-plane/manager.js";
-import { requireReadySessionMeta } from "./control-plane/manager.utils.js";
+import { requireReadySession } from "./control-plane/manager.utils.js";
 import {
   buildConfiguredAcpSessionKey,
   normalizeText,
@@ -72,7 +72,7 @@ export async function ensureConfiguredAcpBindingSession(params: {
       sessionKey,
     });
     if (resolution.kind === "ready") {
-      requireReadySessionMeta(resolution);
+      requireReadySession(resolution);
     }
     if (
       resolution.kind === "ready" &&

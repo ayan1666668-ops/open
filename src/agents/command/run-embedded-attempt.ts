@@ -466,6 +466,21 @@ export async function runEmbeddedAgentAttempt(params: RunEmbeddedAgentAttemptPar
           await candidateAccounting.finish(sessionEntry);
         }
       };
+      const runEntry = {
+        identity: {
+          runId,
+          agentId: sessionAgentId,
+          sessionId,
+          sessionKey: sessionKey ?? sessionId,
+        },
+        harness: { workspaceDir, sessionKey },
+        behavior: {
+          kind: "command-rpc" as const,
+          hasCommittedSideEffect: currentAttemptCommittedCronMedia,
+        },
+        abortSignal: deferredLifecycle.signal,
+        runCandidate,
+      };
       let fallbackResult: Awaited<ReturnType<typeof runEmbeddedAgentEntry<AgentAttemptResult>>>;
       if (executionSelection.model === "native-managed") {
         const preparedNative = await prepareSessionExecutionSelection({
@@ -480,6 +495,7 @@ export async function runEmbeddedAgentAttempt(params: RunEmbeddedAgentAttemptPar
         });
         if (preparedNative.status !== "ready") throw new Error(preparedNative.message);
         fallbackResult = await runEmbeddedAgentEntry<AgentAttemptResult>({
+          ...runEntry,
           kind: "native",
           selection: {
             cfg,
@@ -487,22 +503,10 @@ export async function runEmbeddedAgentAttempt(params: RunEmbeddedAgentAttemptPar
             executionSelection,
             validateCommit: preparedNative.validateCommit,
           },
-          identity: {
-            runId,
-            agentId: sessionAgentId,
-            sessionId,
-            sessionKey: sessionKey ?? sessionId,
-          },
-          harness: { workspaceDir, sessionKey },
-          behavior: {
-            kind: "command-rpc",
-            hasCommittedSideEffect: currentAttemptCommittedCronMedia,
-          },
-          abortSignal: deferredLifecycle.signal,
-          runCandidate,
         });
       } else {
         fallbackResult = await runEmbeddedAgentEntry<AgentAttemptResult>({
+          ...runEntry,
           selection: {
             cfg,
             provider,
@@ -516,15 +520,8 @@ export async function runEmbeddedAgentAttempt(params: RunEmbeddedAgentAttemptPar
                 : undefined,
             ...modelManifestContext,
           },
-          identity: {
-            runId,
-            agentId: sessionAgentId,
-            sessionId,
-            sessionKey: sessionKey ?? sessionId,
-          },
           harness: {
-            workspaceDir,
-            sessionKey,
+            ...runEntry.harness,
             preparation: { kind: "direct" },
             prepareExecutionSelection: async (candidateProvider, candidateModel) => {
               const prepared = await prepareSessionExecutionSelection({
@@ -555,15 +552,9 @@ export async function runEmbeddedAgentAttempt(params: RunEmbeddedAgentAttemptPar
               return { selection: prepared.selection, validateCommit: prepared.validateCommit };
             },
           },
-          behavior: {
-            kind: "command-rpc",
-            hasCommittedSideEffect: currentAttemptCommittedCronMedia,
-          },
-          abortSignal: deferredLifecycle.signal,
           onFallbackStep: (step) => {
             fallbackTrajectoryRecorder?.recordEvent("model.fallback_step", step);
           },
-          runCandidate,
         });
       }
       result = fallbackResult.result;

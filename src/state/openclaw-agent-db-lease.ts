@@ -41,8 +41,8 @@ import {
   resolveOpenClawStateSqlitePath,
   resolveOpenClawStateDirForDatabasePath,
 } from "./openclaw-state-db.paths.js";
+import { OPENCLAW_AGENT_DATABASE_LEASE_SCHEMA } from "./openclaw-state-lease-schema.js";
 import type { OpenClawStateLeaseContext } from "./openclaw-state-lease.js";
-import { OPENCLAW_STATE_SCHEMA_SQL } from "./openclaw-state-schema.js";
 
 type AgentDatabaseLeaseDatabase = Pick<
   OpenClawStateKyselyDatabase,
@@ -462,17 +462,6 @@ export function assertNoOpenClawAgentDatabaseLeases(
   }
 }
 
-const existingAgentLeaseSchema = ["schema_meta", "state_leases", "agent_database_leases"]
-  .map((table) => {
-    const start = OPENCLAW_STATE_SCHEMA_SQL.indexOf(`CREATE TABLE IF NOT EXISTS ${table} (`);
-    const end = OPENCLAW_STATE_SCHEMA_SQL.indexOf(") STRICT;", start);
-    if (start < 0 || end < 0) {
-      throw new Error("Existing agent lease schema is unavailable.");
-    }
-    return OPENCLAW_STATE_SCHEMA_SQL.slice(start, end + ") STRICT;".length);
-  })
-  .join("\n");
-
 function withExistingAgentLeaseWrite<T>(
   maintenance: OpenClawStateLeaseContext,
   options: OpenClawStateDatabaseOptions,
@@ -488,7 +477,7 @@ function withExistingAgentLeaseWrite<T>(
     options,
     {
       operationLabel: "agent.database.maintenance.admission",
-      schemaSql: existingAgentLeaseSchema,
+      schemaSql: OPENCLAW_AGENT_DATABASE_LEASE_SCHEMA,
       busyTimeoutMs: 0,
     },
   );

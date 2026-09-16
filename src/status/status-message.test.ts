@@ -478,10 +478,14 @@ describe("buildStatusMessage context window", () => {
       sessionEntry: {
         sessionId: "manual-switch-stale-runtime",
         updatedAt: 0,
-        providerOverride: "ollama-cloud",
-        modelOverride: "glm-5.1",
-        agentRuntimeOverride: "openclaw",
-        modelOverrideRouteResolution: "resolved",
+        executionSelection: {
+          state: "accepted",
+          selection: {
+            model: { provider: "ollama-cloud", id: "glm-5.1" },
+            executor: { kind: "harness", id: "openclaw" },
+          },
+          fallbackPermission: "explicit",
+        },
         modelProvider: "ollama-cloud",
         model: "deepseek-v4-pro",
         totalTokens: 128_393,

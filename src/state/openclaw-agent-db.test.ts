@@ -16,6 +16,8 @@ import * as nodeSqlite from "../infra/node-sqlite.js";
 import { listOpenFileDescriptorsForPath } from "../infra/open-file-descriptors.test-support.js";
 import { readSqliteNumberPragma } from "../infra/sqlite-pragma.test-support.js";
 import { runSqliteImmediateTransactionSync } from "../infra/sqlite-transaction.js";
+import { acquireGatewayMaintenanceCoordinator } from "../infra/state-database-coordinator.js";
+import { migrateLegacyExecutionSelections } from "../infra/state-migrations.execution-selection.js";
 import { VERSION } from "../version.js";
 import {
   beginAgentDeletionJournal,
@@ -64,6 +66,7 @@ import {
 import { resolveIncognitoOpenClawAgentSqlitePath } from "./openclaw-agent-db.paths.js";
 import { removeCanonicalValidationFromHistoricalAgentFixture } from "./openclaw-agent-db.test-support.js";
 import { OPENCLAW_AGENT_SCHEMA_SQL } from "./openclaw-agent-schema.js";
+import { createOpenClawDatabaseMaintenanceScope } from "./openclaw-state-db-async-lifecycle.js";
 import {
   closeOpenClawStateDatabaseForTest,
   OPENCLAW_SQLITE_BUSY_TIMEOUT_MS,
@@ -269,14 +272,22 @@ async function migrateAndOpenLegacyAgentDatabaseForTest(
   // Prepare the unrelated registry before the real maintenance lease's acquisition budget.
   materializeSharedStateDatabase(options.env);
   const pathname = resolveOpenClawAgentSqlitePath(options);
-  const { DatabaseSync } = requireNodeSqlite();
-  const database = new DatabaseSync(pathname);
+  const coordinator = acquireGatewayMaintenanceCoordinator({
+    databasePath: resolveOpenClawStateSqlitePath(options.env),
+  });
+  const resources = createOpenClawDatabaseMaintenanceScope(coordinator.createSchemaFenceDelegate);
   try {
-    await withAgentDatabaseMaintenanceLease({ env: options?.env }, async () =>
-      ensureOpenClawAgentDatabaseSchema(database, options),
+    const result = await resources.run(() =>
+      migrateLegacyExecutionSelections({
+        cfg: { agents: { entries: { [options.agentId]: {} } } },
+        env: options.env,
+        configuredAgentDatabaseTargets: [{ agentId: options.agentId, path: pathname }],
+      }),
     );
+    if (result.warnings.length) throw new Error(result.warnings.join("\n"));
   } finally {
-    database.close();
+    await resources.close();
+    coordinator.release();
   }
   return openOpenClawAgentDatabase(options);
 }
@@ -4084,7 +4095,7 @@ describe("openclaw agent database", () => {
       drifted.close();
     }
 
-    materializeSharedStateDatabase(env);
+    await migrateAndOpenLegacyAgentDatabaseForTest({ agentId: "worker-1", env });
     await withAgentDatabaseMaintenanceLease({ env }, (maintenance) =>
       migrateOpenClawAgentDatabaseForMaintenance(
         { agentId: "worker-1", pathname: databasePath },

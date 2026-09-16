@@ -1,7 +1,12 @@
 /** Accepted backend controls, not stale requests, own subsequent session replay. */
 import { expectDefined } from "@openclaw/normalization-core";
 import { describe, expect, it, vi } from "vitest";
-import { commitSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
+import * as placementContext from "../../gateway/session-worker-placement-context.js";
+import type { WorkerSessionPlacementRecord } from "../../gateway/worker-environments/placement-record.js";
+import {
+  commitSessionExecutionSelection,
+  commitStoredSessionExecutionSelection,
+} from "../../model-picker/apply-session-model-selection.js";
 import {
   AcpRuntimeError,
   AcpSessionManager,
@@ -86,6 +91,66 @@ async function runTurn(manager: AcpSessionManager, requestId: string) {
 
 describe("AcpSessionManager accepted controls", () => {
   installAcpSessionManagerTestLifecycle();
+
+  it.each(["before-control", "before-commit"] as const)(
+    "rechecks placement after preparing a staged ACP choice: %s",
+    async (phase) => {
+      const state = setupSession();
+      const previous = state.readSelection();
+      await state.patchEntry({ agentId: "main", sessionKey }, (entry) => {
+        commitStoredSessionExecutionSelection(entry, {
+          state: "deferred",
+          previous,
+          fallbackPermission: "explicit",
+          request: { executor: previous.executor, model: { id: "qa-next" } },
+        });
+        return entry;
+      });
+      const staged = state.readEntry().executionSelection;
+      const placements = new Map<string, WorkerSessionPlacementRecord>();
+      vi.spyOn(placementContext, "resolveSessionWorkerPlacementContext").mockReturnValue({
+        workerSessionPlacementService: { getMany: () => placements },
+      });
+      const revokePlacement = () =>
+        placements.set("accepted-controls", {
+          sessionId: "accepted-controls",
+          agentId: "main",
+          sessionKey,
+          state: "requested",
+          executionMode: "remote-exec",
+          generation: 1,
+          turnClaim: null,
+          environmentId: null,
+          activeOwnerEpoch: null,
+          workspaceBaseManifestRef: null,
+          remoteWorkspaceDir: null,
+          workerBundleHash: null,
+          lastTranscriptAckCursor: null,
+          lastLiveEventAckCursor: null,
+          recoveryError: null,
+          terminalReason: null,
+          terminalAtMs: null,
+          createdAtMs: 1,
+          updatedAtMs: 1,
+          stateChangedAtMs: 1,
+        });
+      if (phase === "before-control") {
+        state.getCapabilities.mockImplementationOnce(async () => {
+          revokePlacement();
+          return { controls: ["session/set_config_option"], configOptionKeys: ["model"] };
+        });
+      } else {
+        state.setConfigOption.mockImplementationOnce(async () => {
+          revokePlacement();
+          return { configOptions: [{ id: "model", category: "model", currentValue: "qa-next" }] };
+        });
+      }
+      await expect(runTurn(state.manager, `placement-${phase}`)).rejects.toThrow("cloud placement");
+      expect(state.setConfigOption).toHaveBeenCalledTimes(phase === "before-control" ? 0 : 1);
+      expect(state.readEntry().executionSelection).toEqual(staged);
+      expect(state.runTurn).not.toHaveBeenCalled();
+    },
+  );
 
   it("releases an unsubmitted model reservation after request authority expires", async () => {
     const state = setupSession();

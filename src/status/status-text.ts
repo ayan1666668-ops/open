@@ -20,7 +20,7 @@ import {
 import { resolveDefaultModelForAgent } from "../agents/model-selection.js";
 import { resolveConfiguredThinkingDefault } from "../agents/model-thinking-default.js";
 import { listOpenAIAuthProfileProvidersForAgentRuntime } from "../agents/openai-routing.js";
-import { resolveSessionRuntimeOverrideForProvider } from "../agents/session-runtime-compat.js";
+import { resolvePersistedSessionRuntimeId } from "../agents/session-runtime-compat.js";
 import {
   resolveInternalSessionKey,
   resolveMainSessionAlias,
@@ -205,11 +205,7 @@ async function resolveStatusHarnessId(params: {
   sessionEntry?: SessionEntry;
 }): Promise<string | undefined> {
   try {
-    const sessionRuntime = resolveSessionRuntimeOverrideForProvider({
-      provider: params.provider,
-      entry: params.sessionEntry,
-      cfg: params.cfg,
-    });
+    const sessionRuntime = resolvePersistedSessionRuntimeId(params.sessionEntry);
     const configuredRuntime = resolveAgentHarnessPolicy({
       provider: params.provider,
       modelId: params.model,

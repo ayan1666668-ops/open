@@ -328,6 +328,12 @@ export function repairLegacyGatewayRestartHandoffsForStrictMigration(db: Databas
 }
 
 export function assertCanonicalStateSchemaShape(db: DatabaseSync, pathname: string): void {
+  if (tableHasColumn(db, "acp_sessions", "backend")) {
+    throw new OpenClawStateDatabaseSchemaMigrationRequiredError(
+      "acp-execution-selection-v18",
+      pathname,
+    );
+  }
   operatorApprovalMigration.assertCanonicalOperatorApprovalKinds(db, pathname);
   if (!hasCanonicalAgentDatabasesPrimaryKey(db)) {
     if (canRepairAgentDatabasesPrimaryKey(db)) {

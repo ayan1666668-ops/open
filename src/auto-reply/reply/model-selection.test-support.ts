@@ -12,6 +12,10 @@ export function createModelSelectionStateFixture(params: {
   return {
     provider: params.provider,
     model: params.model,
+    executionSelection: {
+      model: { provider: params.provider, id: params.model },
+      executor: { kind: "harness", id: "openclaw" },
+    },
     requestedRouteResolution: "resolved",
     modelPolicy: createModelVisibilityPolicy({
       cfg: { agents: { defaults: params.agentCfg } },

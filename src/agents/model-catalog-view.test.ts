@@ -118,7 +118,16 @@ describe("prepared model catalog view", () => {
       agentDir: prepared.agentDir,
       workspaceDir: prepared.workspaceDir,
       entries: [row("codex", "unavailable")],
-      sessionEntry: { agentRuntimeOverride: "codex" },
+      sessionEntry: {
+        executionSelection: {
+          state: "accepted",
+          selection: {
+            model: { provider: "openai", id: "fixture-model" },
+            executor: { kind: "harness", id: "codex" },
+          },
+          fallbackPermission: "explicit",
+        },
+      },
     });
     expect(view.providerAuthLabels.get("codex")).toBe("missing");
   });

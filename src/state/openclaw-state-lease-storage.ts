@@ -10,7 +10,7 @@ import {
   type OpenClawStateDatabaseOptions,
 } from "./openclaw-state-db.js";
 import { resolveOpenClawStateSqlitePath } from "./openclaw-state-db.paths.js";
-import { OPENCLAW_STATE_SCHEMA_SQL } from "./openclaw-state-schema.js";
+import { OPENCLAW_STATE_LEASE_SCHEMA } from "./openclaw-state-lease-schema.js";
 
 export type OpenClawStateLeaseDatabase = {
   scope: "shared";
@@ -18,17 +18,6 @@ export type OpenClawStateLeaseDatabase = {
   /** Storage compatibility only, never authority. Acquisition still claims the real lease. */
   schemaPolicy?: "existing";
 };
-const leaseSchema = ["schema_meta", "state_leases"]
-  .map((table) => {
-    const start = OPENCLAW_STATE_SCHEMA_SQL.indexOf(`CREATE TABLE IF NOT EXISTS ${table} (`);
-    const marker = ") STRICT;";
-    const end = OPENCLAW_STATE_SCHEMA_SQL.indexOf(marker, start);
-    if (start < 0 || end < 0) {
-      throw new Error("Existing lease schema is unavailable.");
-    }
-    return OPENCLAW_STATE_SCHEMA_SQL.slice(start, end + marker.length);
-  })
-  .join("\n");
 
 export function prepareLeaseDatabase(database: OpenClawStateLeaseDatabase): void {
   if (database.schemaPolicy !== "existing") {
@@ -59,7 +48,7 @@ export function withLeaseWriteTransaction<T>(
     return runExistingOpenClawStateWriteTransaction(
       ({ db }) => operation(db),
       database.options ?? {},
-      { operationLabel, busyTimeoutMs, schemaSql: leaseSchema },
+      { operationLabel, busyTimeoutMs, schemaSql: OPENCLAW_STATE_LEASE_SCHEMA },
     );
   }
   const stateDatabase = openOpenClawStateDatabase(database.options);

@@ -9,12 +9,15 @@ import type { RunEmbeddedAgentInternalParams } from "../../agents/embedded-agent
 import type { EmbeddedAgentRunResult } from "../../agents/embedded-agent-runner/types.js";
 import { FailoverError, type FallbackAttemptRecord } from "../../agents/failover-error.js";
 import { AUTH_INVALID_TOKEN_USER_TEXT } from "../../agents/failover/user-copy.js";
+import type { runWithModelFallback } from "../../agents/model-fallback-runner.js";
+import { evaluatePublishedModelRuntimeChoice } from "../../agents/model-runtime-choice.js";
 import {
   initialModelFallbackAttemptOptions,
   type TestModelFallbackRunnerParams,
 } from "../../agents/test-helpers/model-fallback-runner.test-support.js";
 import type { ModelDefinitionConfig } from "../../config/types.models.js";
 import { isModelExecutionSelection } from "../../model-picker/execution-selection.js";
+import { getActivePluginRegistryVersion } from "../../plugins/runtime.js";
 import {
   createUserTurnTranscriptRecorder,
   type PersistedUserTurnMessage,
@@ -121,16 +124,36 @@ vi.mock("../../agents/cli-runner.js", () => ({
   runCliAgent: (params: unknown) => state.runCliAgentMock(params),
 }));
 
+vi.mock("../../agents/model-runtime-choice.js", () => ({
+  evaluatePublishedModelRuntimeChoice: vi.fn(),
+}));
+vi.mock("../../agents/harness/runtime-plugin.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../agents/harness/runtime-plugin.js")>()),
+  ensureSelectedAgentHarnessPlugin: vi.fn(),
+}));
 vi.mock("../../agents/model-fallback-runner.js", () => ({
-  runWithModelFallback: async (params: unknown) => {
-    const input = params as {
-      classifyResult?: (classification: { result: unknown; [key: string]: unknown }) => unknown;
-      [key: string]: unknown;
+  runWithModelFallback: async (params: Parameters<typeof runWithModelFallback<unknown>>[0]) => {
+    const input = {
+      ...params,
+      run: async (provider: string, model: string, options: Parameters<typeof params.run>[2]) => {
+        await params.prepareCandidateChain?.([
+          { provider, model, routeOrigin: "requested", routeResolution: "resolved" },
+        ]);
+        await params.prepareCandidate?.(provider, model);
+        await params.prepareAgentHarnessRuntime?.({
+          provider,
+          model,
+          agentHarnessRuntimeOverride: params.resolveAgentHarnessRuntimeOverride?.(provider, model),
+        });
+        return params.run(provider, model, options);
+      },
     };
     const adapted = input.classifyResult
       ? {
           ...input,
-          classifyResult: (classification: { result: unknown; [key: string]: unknown }) => {
+          classifyResult: (
+            classification: Parameters<NonNullable<typeof params.classifyResult>>[0],
+          ) => {
             const candidate = classification.result;
             const wrappedCandidate =
               candidate && typeof candidate === "object" && "result" in candidate
@@ -715,6 +738,23 @@ export async function setupAgentRunnerExecutionTestState() {
 
   beforeEach(() => {
     vi.useRealTimers();
+    const generation = { current: true };
+    onTestFinished(() => {
+      generation.current = false;
+    });
+    vi.mocked(evaluatePublishedModelRuntimeChoice).mockImplementation(
+      async ({ provider, model }) => {
+        const registryGeneration = getActivePluginRegistryVersion();
+        return {
+          kind: "ready",
+          entry: { provider, id: model, name: model },
+          validate: () =>
+            generation.current && registryGeneration === getActivePluginRegistryVersion()
+              ? undefined
+              : "Execution fixture catalog retired.",
+        };
+      },
+    );
     state.runEmbeddedAgentMock.mockReset();
     state.runEmbeddedAgentEntryMock
       .mockReset()
