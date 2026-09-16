@@ -637,8 +637,10 @@ export function renderFeishuPresentationPayload({
             ),
             // The prose this payload carries is a conversion of the presentation, and a cut
             // that cannot carry its fences has to fall back to something. The top-level text
-            // is only part of it, so the whole of it travels with the payload.
-            ...(fallbackText === rawFallbackText ? {} : { authoredText: rawFallbackText }),
+            // is only part of it, so the whole of it travels with the payload, whichever
+            // form the conversion took: a mode that converts nothing still contributed the
+            // blocks, and falling back to the payload's own text would drop them.
+            authoredText: rawFallbackText,
           },
           ...(fallbackHasCommand ? { fallbackHasCommand: true } : {}),
         },
@@ -738,11 +740,16 @@ export async function renderFeishuReplyPayload(
   const rendered = await renderPresentationForDelivery(
     {
       presentationCapabilities: FEISHU_PRESENTATION_CAPABILITIES,
-      renderPresentation: (adapted, sourcePresentation) =>
+      // The projection below is what the shared renderer receives, so the presentation it
+      // hands back as the source is that projection and not the authored one. A fallback
+      // built from it would be a conversion of itself, and the payload would then travel
+      // with no authored form for a cut that cannot carry the conversion to fall back to.
+      // The authored presentation is still here, so it goes through directly.
+      renderPresentation: (adapted) =>
         renderFeishuPresentationPayload({
           payload: adapted,
           presentation: adapted.presentation,
-          sourcePresentation,
+          sourcePresentation: presentation,
           ctx,
         }),
     },

@@ -989,4 +989,70 @@ describe("createFeishuReplyDispatcher table limits", () => {
     expect(posts.join("")).toBe(text);
     expect(accepted?.content).toBe(text);
   });
+
+  // A presentation whose prose outgrows the card envelope, carrying a quoted table whose
+  // conversion no cut at this limit can close and reopen.
+  function forcedPresentationFallback() {
+    const runtimeText = getFeishuRuntimeMock().channel.text;
+    runtimeText.resolveTextChunkLimit.mockReturnValue(100);
+    resolveFeishuAccountMock.mockReturnValue(createReplyAccount("auto", "off", "feishu"));
+    const prose = Array.from(
+      { length: 1000 },
+      (_entry, index) => `Line ${index} of the release report.`,
+    ).join("\n");
+    const quotedTable = [
+      "> | name | detail |",
+      "> | --- | --- |",
+      "> | Ada | Lead |",
+      `> | wide | ${"w".repeat(220)} |`,
+    ].join("\n");
+    const { options } = createDispatcherHarness({ accountId: "main", cfg: tableCfg("code") });
+    return {
+      quotedTable,
+      lastProseLine: "Line 999 of the release report.",
+      quotedRow: "> | Ada | Lead |",
+      deliver: async () =>
+        await options.deliver(
+          {
+            text: "Release summary.",
+            presentation: {
+              blocks: [
+                { type: "text", text: prose },
+                { type: "text", text: quotedTable },
+              ],
+            },
+          },
+          { kind: "final" },
+        ),
+    };
+  }
+
+  // The refused card leaves the presentation to a post, and the prose that post has to be
+  // able to send is the presentation's own. Its blocks are projected before the shared
+  // renderer sees them, so the authored form recorded for the cut has to come from the
+  // authored presentation rather than from that projection, which already carries fences.
+  it("posts the whole presentation when a refused card forces an unconvertible fallback", async () => {
+    const chunking = await vi.importActual<typeof import("openclaw/plugin-sdk/reply-chunking")>(
+      "openclaw/plugin-sdk/reply-chunking",
+    );
+    getFeishuRuntimeMock().channel.text.chunkMarkdownTextWithMode.mockImplementation(
+      chunking.chunkMarkdownTextWithMode,
+    );
+    const convert = getFeishuRuntimeMock().channel.text.convertMarkdownTables;
+    const fallback = forcedPresentationFallback();
+    // The case only means anything while the conversion carries quoted markers, which a cut
+    // at this limit can neither close nor reopen.
+    expect(convert(fallback.quotedTable, "code")).toContain("> ```");
+
+    await fallback.deliver();
+
+    // Guard the fixture: the envelope refused the card, so the post owns the whole message.
+    expect(sendCardFeishuMock).not.toHaveBeenCalled();
+    const posted = sendMessageFeishuMock.mock.calls
+      .map((call) => String(call[0]?.text ?? ""))
+      .join("");
+    expect(posted).toContain(fallback.lastProseLine);
+    expect(posted).toContain(fallback.quotedRow);
+    expect(posted).not.toContain("```");
+  });
 });
