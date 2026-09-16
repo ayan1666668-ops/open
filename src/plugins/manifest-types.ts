@@ -624,7 +624,7 @@ export type PluginManifestProviderAuthChoice = {
   /** Lower values sort earlier in interactive assistant pickers. */
   assistantPriority?: number;
   /** Keep the choice out of interactive assistant pickers while preserving manual CLI support. */
-  assistantVisibility?: "visible" | "manual-only";
+  assistantVisibility?: "visible" | "manual-only" | "detected-only";
   /** Legacy choice ids that should point users at this replacement choice. */
   deprecatedChoiceIds?: string[];
   /** Optional grouping metadata for auth-choice pickers. */

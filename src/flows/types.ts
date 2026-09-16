@@ -21,7 +21,7 @@ export type FlowOption<Value extends string = string> = {
   group?: FlowOptionGroup;
   docs?: FlowDocsLink;
   assistantPriority?: number;
-  assistantVisibility?: "visible" | "manual-only";
+  assistantVisibility?: "visible" | "manual-only" | "detected-only";
 };
 
 /** Generic contribution envelope used by plugin/core setup surfaces. */

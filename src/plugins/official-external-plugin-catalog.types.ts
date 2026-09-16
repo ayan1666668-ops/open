@@ -22,7 +22,7 @@ export type OfficialExternalProviderAuthChoice = {
   choiceLabel?: string;
   choiceHint?: string;
   assistantPriority?: number;
-  assistantVisibility?: "visible" | "manual-only";
+  assistantVisibility?: "visible" | "manual-only" | "detected-only";
   groupId?: string;
   groupLabel?: string;
   groupHint?: string;

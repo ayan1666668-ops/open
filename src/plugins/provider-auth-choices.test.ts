@@ -229,6 +229,11 @@ describe("provider auth choice manifest helpers", () => {
         platform === "darwin" ? ["native-local"] : [],
       );
       expect(config.plugins.entries.native.enabled).toBe(true);
+      expect(
+        resolveManifestProviderAuthChoices({ config, includeUnsupportedPlatforms: true }).map(
+          (choice) => choice.choiceId,
+        ),
+      ).toEqual(["native-local", "native-remote", "unavailable"]);
     },
   );
 

@@ -25,6 +25,7 @@ beforeEach(async () => {
   native = createAppleFmNative(fileURLToPath(new URL(".", import.meta.url)));
   directory = await fs.mkdtemp(path.join(os.tmpdir(), "apple-fm-native-test-"));
   vi.stubEnv("OPENCLAW_STATE_DIR", directory);
+  vi.spyOn(os, "tmpdir").mockReturnValue(directory);
   Object.defineProperty(process, "platform", { ...originalPlatform, value: "darwin" });
   Object.defineProperty(process, "arch", { ...originalArch, value: "arm64" });
   vi.spyOn(os, "release").mockReturnValue("26.0.0");
@@ -50,17 +51,37 @@ afterEach(async () => {
 });
 
 describe("Apple Foundation Models helper lifecycle", () => {
-  it("keeps discovery and unprepared inference read-only", async () => {
-    expect(await native.probe()).toBeNull();
+  it("discovers a cold model without installing a helper or enabling inference", async () => {
+    expect(await native.probe()).toEqual(facts);
+    expect(await fs.readdir(directory)).toEqual([]);
     await expect(native.run({ messages: [] })).rejects.toThrow("setup again");
+  });
+
+  it("cleans up cold discovery on cancellation without publishing an executable", async () => {
+    const abort = new AbortController();
+    vi.mocked(runCommandBuffered).mockImplementation(async (argv) => {
+      if (argv[0] === "/usr/bin/xcrun") {
+        await fs.writeFile(argv.at(-1)!, "synthetic executable");
+        abort.abort();
+      }
+      return success();
+    });
+    await expect(native.probe({ signal: abort.signal })).rejects.toThrow();
+    expect(await fs.readdir(directory)).toEqual([]);
+    await expect(native.run({ messages: [] })).rejects.toThrow("setup again");
+  });
+
+  it.each(["linux", "win32"])("does not probe or compile on %s", async (platform) => {
+    Object.defineProperty(process, "platform", { ...originalPlatform, value: platform });
+    expect(await native.probe()).toBeNull();
     expect(runCommandBuffered).not.toHaveBeenCalled();
     expect(await fs.readdir(directory)).toEqual([]);
   });
 
-  it("compiles only during explicit setup and reuses the prepared helper", async () => {
+  it("installs a helper during selected setup and reuses it for discovery and inference", async () => {
     const first = await native.prepare();
     expect(first).toMatchObject(facts);
-    expect(first.command.startsWith(directory)).toBe(true);
+    expect(await native.probe()).toEqual(facts);
     const second = await native.prepare();
     expect(second).toEqual(first);
     expect(
@@ -86,16 +107,14 @@ describe("Apple Foundation Models helper lifecycle", () => {
       return success();
     });
     await expect(native.prepare({ signal: abort.signal })).rejects.toThrow();
-    expect(await native.probe()).toBeNull();
+    await expect(native.run({ messages: [] })).rejects.toThrow("setup again");
     const [buildRoot] = await fs.readdir(path.join(directory, "tools", "apple-fm"));
     expect(await fs.readdir(path.join(directory, "tools", "apple-fm", buildRoot!))).toEqual([]);
   });
 
   it("reports missing developer tools without starting an installer", async () => {
     vi.mocked(runCommandBuffered).mockResolvedValue({ ...success(), code: 1 });
-    await expect(native.prepare()).rejects.toThrow(
-      "does not install developer tools automatically",
-    );
+    await expect(native.probe()).rejects.toThrow("does not install developer tools automatically");
     expect(runCommandBuffered).toHaveBeenCalledOnce();
     expect(await fs.readdir(directory)).toEqual([]);
   });

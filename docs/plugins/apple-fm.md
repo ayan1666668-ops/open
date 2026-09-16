@@ -34,21 +34,30 @@ Run:
 openclaw onboard
 ```
 
-Choose **Apple Foundation Models** from the model provider list. The choice is
-offered on macOS. Setup reports missing prerequisites before activation.
+Allow local discovery, then choose **Apple Foundation Models** when it appears.
+Setup offers this option only after a background probe confirms that the model is
+available and has at least 8,192 context tokens. It stays hidden while eligibility
+is unknown, when prerequisites are missing, or when the model has a smaller window.
 
-When selected, setup compiles the plugin's bundled Swift helper with your installed
-Apple tools, then checks the native model. It does not install developer tools,
-download a third-party executable, or accept license terms for you. If the tools
-are missing, install Xcode or the appropriate Apple Command Line Tools and retry.
-The tools must include a macOS 27 SDK.
+On first discovery, OpenClaw compiles the bundled Swift helper in a temporary
+directory with your installed Apple tools, reads the native model's availability
+and context size, and removes the temporary helper. Compilation and probing run
+in child processes so they do not block the Gateway's event loop. Discovery does
+not install an inference helper or change your configuration. It is bounded and
+cancellable; a failed or timed-out check does not offer the model.
+
+Selecting the detected model builds its persistent helper and rechecks eligibility
+before activation. OpenClaw does not install developer tools, download a
+third-party executable, or accept license terms for you. If the tools are missing,
+install Xcode or the appropriate Apple Command Line Tools and retry. The tools
+must include a macOS 27 SDK.
 
 OpenClaw's setup flow tests the selected inference route before making it active.
 The model reference is `apple-fm/system`; setup records the detected model name and
 context limit. No API key or provider auth profile is created.
 
-Once the helper has been prepared, app-guided setup can discover the available
-model without compiling or changing anything. To reuse it from a script:
+Later discovery reuses the prepared helper and checks the current model again.
+To select Apple explicitly from a script:
 
 ```bash
 openclaw onboard --non-interactive --auth-choice apple-fm --accept-risk
@@ -74,8 +83,8 @@ the model download to finish. Retry setup after changing its availability.
 If the reported context window is below 8,192 tokens, choose another local or
 cloud model. OpenClaw does not inflate the model's advertised limit.
 
-If the native helper is missing after an update, rerun Apple Foundation Models
-setup to compile the helper matching the installed plugin. Ordinary inference and
-read-only discovery never compile code or install dependencies.
+If the native helper is missing after an update, rerun setup and select the
+detected Apple model to compile the helper matching the installed plugin.
+Ordinary inference never compiles code or installs dependencies.
 
 See [Model providers](/concepts/model-providers) for other inference options.

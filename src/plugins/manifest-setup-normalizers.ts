@@ -425,7 +425,9 @@ export function normalizeProviderAuthChoices(
         ? entry.assistantPriority
         : undefined;
     const assistantVisibility =
-      entry.assistantVisibility === "manual-only" || entry.assistantVisibility === "visible"
+      entry.assistantVisibility === "manual-only" ||
+      entry.assistantVisibility === "visible" ||
+      entry.assistantVisibility === "detected-only"
         ? entry.assistantVisibility
         : undefined;
     const deprecatedChoiceIds = normalizeTrimmedStringList(entry.deprecatedChoiceIds);

@@ -70,8 +70,7 @@ export async function prepareAppleFmSetup(
   if (ctx.modelRef !== APPLE_FM_MODEL_REF) {
     return null;
   }
-  const facts = await native.probe({ signal: ctx.signal, env: ctx.env });
-  return facts ? setupResult(facts) : null;
+  return setupResult(await native.prepare({ signal: ctx.signal, env: ctx.env }));
 }
 
 export async function runAppleFmSetup(
@@ -88,7 +87,7 @@ export async function validateAppleFmNonInteractive(
   const facts = await native.probe();
   if (!facts) {
     ctx.runtime.error(
-      "Apple Foundation Models has not been prepared on this Mac. Run interactive Apple Foundation Models setup first.",
+      "Apple Foundation Models requires an Apple Silicon Mac running macOS 27 or later.",
     );
     return false;
   }

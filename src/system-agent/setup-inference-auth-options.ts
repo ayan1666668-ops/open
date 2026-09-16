@@ -73,6 +73,7 @@ function listSetupInferenceGuidedOptions<
     if (
       !id ||
       options.has(id) ||
+      choice.assistantVisibility === "detected-only" ||
       !supportsSetupTextInference(choice.onboardingScopes) ||
       !params.include(choice)
     ) {
@@ -111,6 +112,7 @@ export function listSetupInferenceInstallOptions(
     if (
       installed.has(entry.choiceId) ||
       options.has(entry.choiceId) ||
+      entry.assistantVisibility === "detected-only" ||
       !supportsSetupTextInference(entry.onboardingScopes)
     ) {
       continue;
@@ -150,7 +152,12 @@ export function listSetupInferenceManualProviders(
   const choices = new Map<string, SetupInferenceManualProvider>();
   for (const choice of authChoices) {
     const id = choice.choiceId.trim();
-    if (!id || choices.has(id) || !supportsSetupManualSecret(choice)) {
+    if (
+      !id ||
+      choices.has(id) ||
+      choice.assistantVisibility === "detected-only" ||
+      !supportsSetupManualSecret(choice)
+    ) {
       continue;
     }
     choices.set(id, {
@@ -182,7 +189,11 @@ export function listSetupInferenceEnableOptions(
   choices: readonly ProviderAuthChoiceMetadata[],
 ): SetupInferenceAuthOption[] {
   return choices
-    .filter((choice) => supportsSetupTextInference(choice.onboardingScopes))
+    .filter(
+      (choice) =>
+        choice.assistantVisibility !== "detected-only" &&
+        supportsSetupTextInference(choice.onboardingScopes),
+    )
     .map((choice) => {
       const option: SetupInferenceAuthOption = Object.assign(
         projectChoicePresentation(choice, choice.choiceId),

@@ -21,7 +21,6 @@ const native = vi.hoisted(() => ({
 vi.mock("./native.js", () => ({ createAppleFmNative: native.createAppleFmNative }));
 
 const facts: AppleFmFacts = {
-  command: "/test/native-helper",
   available: true,
   modelName: "AFM 3 Core Advanced",
   contextWindow: 8_192,
@@ -156,7 +155,7 @@ describe("Apple Foundation Models setup", () => {
     });
   });
 
-  it("keeps detection and candidate preparation read-only and rechecks the selected model", async () => {
+  it("prepares only the selected model and rechecks its eligibility before activation", async () => {
     const guided = registeredProvider().method.appGuidedSetup;
     if (!guided) {
       throw new Error("Apple guided setup missing");
@@ -169,9 +168,32 @@ describe("Apple Foundation Models setup", () => {
     });
     native.probe.mockResolvedValue(null);
     expect(await guided.detect(context)).toBeNull();
-    expect(await guided.prepare({ ...context, modelRef: "apple-fm/system" })).toBeNull();
-    expect(native.prepare).not.toHaveBeenCalled();
+    native.prepare.mockResolvedValue({ ...facts, contextWindow: 4_096 });
+    await expect(guided.prepare({ ...context, modelRef: "apple-fm/system" })).rejects.toThrow(
+      "requires at least 8192",
+    );
+    native.prepare.mockResolvedValue({ ...facts, available: false, reason: "Model unavailable" });
+    await expect(guided.prepare({ ...context, modelRef: "apple-fm/system" })).rejects.toThrow(
+      "Model unavailable",
+    );
     expect(native.probe).toHaveBeenCalledWith({ signal: context.signal, env: {} });
+  });
+
+  it.each([
+    { result: null, visible: false },
+    { result: { ...facts, available: false }, visible: false },
+    { result: { ...facts, contextWindow: 0 }, visible: false },
+    { result: { ...facts, contextWindow: 4_096 }, visible: false },
+    { result: { ...facts, contextWindow: 8_191 }, visible: false },
+    { result: facts, visible: true },
+    { result: { ...facts, contextWindow: 16_384 }, visible: true },
+  ])("offers only an available 8K or larger model: $result", async ({ result, visible }) => {
+    native.probe.mockResolvedValue(result);
+    const guided = registeredProvider().method.appGuidedSetup!;
+    const context = { config: {}, env: {} };
+    expect(Boolean(await guided.detect(context))).toBe(visible);
+    expect(await guided.detectAvailability?.(context)).toBe(visible);
+    expect(native.prepare).not.toHaveBeenCalled();
   });
 
   it("preserves other providers, auth, model restrictions, and fallbacks during noninteractive setup", async () => {
@@ -213,7 +235,7 @@ describe("Apple Foundation Models setup", () => {
     await expect(registeredProvider().method.run(authContext())).rejects.toThrow("macOS 27 SDK");
   });
 
-  it("requires prepared inference before a noninteractive reset can proceed", async () => {
+  it("rejects unsupported hosts before a noninteractive reset can proceed", async () => {
     native.probe.mockResolvedValue(null);
     const validator = registeredProvider().method.validateNonInteractive;
     if (!validator) {
@@ -221,7 +243,7 @@ describe("Apple Foundation Models setup", () => {
     }
     const context = nonInteractiveContext({});
     expect(await validator(context)).toBe(false);
-    expect(context.runtime.error).toHaveBeenCalledWith(expect.stringContaining("interactive"));
+    expect(context.runtime.error).toHaveBeenCalledWith(expect.stringContaining("macOS 27"));
     expect(native.prepare).not.toHaveBeenCalled();
   });
 

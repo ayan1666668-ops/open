@@ -9,6 +9,7 @@ import { resolveModelRuntimePolicy } from "../agents/model-runtime-policy.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { formatErrorMessage, toErrorObject } from "../infra/errors.js";
 import { enablePluginInConfig } from "../plugins/enable.js";
+import { isProviderAuthChoicePlatformSupported } from "../plugins/provider-auth-choice-platform.js";
 import {
   type ProviderAuthChoiceMetadata,
   resolveManifestProviderAuthChoices,
@@ -140,11 +141,27 @@ async function prepareSetupInferenceOptions(deps: DetectSetupInferenceDeps, agen
     metadataSnapshot: pluginMetadataSnapshot,
     includeUntrustedWorkspacePlugins: false,
     includeWorkspacePlugins: false,
+    includeUnsupportedPlatforms: true,
   });
-  const authChoices = allAuthChoices.filter(
+  const supportedAuthChoices = allAuthChoices.filter((choice) =>
+    isProviderAuthChoicePlatformSupported(choice.platforms),
+  );
+  const detectionRequiredProviders = new Set(
+    allAuthChoices
+      .filter((choice) => choice.assistantVisibility === "detected-only")
+      .map((choice) => normalizeProviderId(choice.providerId)),
+  );
+  for (const choice of supportedAuthChoices) {
+    if (choice.assistantVisibility !== "detected-only") {
+      detectionRequiredProviders.delete(normalizeProviderId(choice.providerId));
+    }
+  }
+  const authChoices = supportedAuthChoices.filter(
     (choice) => (deps.enablePluginInConfig ?? enablePluginInConfig)(cfg, choice.pluginId).enabled,
   );
-  const disabledAuthChoices = allAuthChoices.filter((choice) => !authChoices.includes(choice));
+  const disabledAuthChoices = supportedAuthChoices.filter(
+    (choice) => !authChoices.includes(choice),
+  );
   const setupComplete = Boolean(resolveAgentEffectiveModelPrimary(cfg, targetAgentId));
   const installOptions = listSetupInferenceInstallOptions(
     resolveProviderInstallCatalogEntries({
@@ -188,7 +205,7 @@ async function prepareSetupInferenceOptions(deps: DetectSetupInferenceDeps, agen
     // Declining discovery must not turn an already configured install into fresh setup.
     setupComplete,
   };
-  return { cfg, targetAgentId, authChoices, manual };
+  return { cfg, targetAgentId, authChoices, detectionRequiredProviders, manual };
 }
 
 /** Manual setup options use only config and manifests, never machine or credential probes. */
@@ -248,6 +265,7 @@ async function discoverSetupInference(
     cfg,
     targetAgentId,
     authChoices,
+    detectionRequiredProviders,
     manual,
   }: Awaited<ReturnType<typeof prepareSetupInferenceOptions>>,
   deps: DetectSetupInferenceDeps,
@@ -255,6 +273,10 @@ async function discoverSetupInference(
   onPartial: (detection: SetupInferenceDetection) => void,
 ): Promise<SetupInferenceDetection> {
   const { workspace } = manual;
+  const requiresDetection = (candidate: Pick<SetupInferenceCandidate, "modelRef">) => {
+    const ref = parseProviderModelRef(candidate.modelRef);
+    return ref !== null && detectionRequiredProviders.has(normalizeProviderId(ref.provider));
+  };
   const savedCandidates = await listSavedSetupInferenceCandidates({
     cfg,
     agentId: targetAgentId,
@@ -266,7 +288,7 @@ async function discoverSetupInference(
   signal.throwIfAborted();
   const partial: SetupInferenceDetection = {
     ...manual,
-    candidates: savedCandidates,
+    candidates: savedCandidates.filter((candidate) => !requiresDetection(candidate)),
     unavailableCandidates: [],
     recommendedInstalls: listRecommendedToolInstalls(),
   };
@@ -325,9 +347,11 @@ async function discoverSetupInference(
     ),
   );
   candidates.push(...savedCandidates);
+  const pendingCandidates = candidates.filter(requiresDetection);
+  const offeredCandidates = candidates.filter((candidate) => !requiresDetection(candidate));
   onPartial({
     ...partial,
-    candidates: [...candidates],
+    candidates: [...offeredCandidates],
     unavailableCandidates,
     ...(configuredModel ? { configuredModel } : {}),
     setupComplete: Boolean(configuredModel),
@@ -389,11 +413,21 @@ async function discoverSetupInference(
         }
       },
     );
-    candidates.push(...discovered.filter((candidate) => candidate !== null));
+    const available = discovered.filter((candidate) => candidate !== null);
+    offeredCandidates.push(
+      ...pendingCandidates.filter((candidate) =>
+        available.some((discoveredCandidate) =>
+          areRuntimeModelRefsEquivalent(candidate.modelRef, discoveredCandidate.modelRef, {
+            config: cfg,
+          }),
+        ),
+      ),
+    );
+    offeredCandidates.push(...available);
   }
   return {
     ...partial,
-    candidates,
+    candidates: offeredCandidates,
     unavailableCandidates,
     ...(configuredModel ? { configuredModel } : {}),
     setupComplete: Boolean(configuredModel),

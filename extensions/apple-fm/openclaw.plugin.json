@@ -17,6 +17,7 @@
       "method": "local",
       "choiceId": "apple-fm",
       "platforms": ["darwin"],
+      "assistantVisibility": "detected-only",
       "choiceLabel": "Apple Foundation Models (on-device)",
       "choiceHint": "Free local inference for lightweight setup; requires macOS 27 and Apple Intelligence",
       "groupId": "apple-fm",

@@ -264,7 +264,9 @@ function resolveManifestProviderAuth(params: {
   }
   const defaultModel = readManifestProviderDefaultModelRef(params.manifest, params.providerId);
   const assistantVisibility =
-    choice.assistantVisibility === "visible" || choice.assistantVisibility === "manual-only"
+    choice.assistantVisibility === "visible" ||
+    choice.assistantVisibility === "manual-only" ||
+    choice.assistantVisibility === "detected-only"
       ? choice.assistantVisibility
       : undefined;
   const onboardingScopes = choice.onboardingScopes?.filter(

@@ -42,6 +42,8 @@ type ManifestProviderAuthChoiceParams = {
   metadataSnapshot?: PluginMetadataSnapshot;
   includeUntrustedWorkspacePlugins?: boolean;
   includeWorkspacePlugins?: boolean;
+  /** Policy readers retain platform restrictions without offering unsupported setup choices. */
+  includeUnsupportedPlatforms?: boolean;
 };
 
 const PROVIDER_AUTH_CHOICE_ORIGIN_PRIORITY: Readonly<Record<PluginOrigin, number>> = {
@@ -191,7 +193,10 @@ function resolveManifestProviderAuthChoiceCandidates(
     }
     const choices: ProviderAuthChoiceCandidate[] = [];
     for (const choice of plugin.providerAuthChoices ?? []) {
-      if (!isProviderAuthChoicePlatformSupported(choice.platforms)) {
+      if (
+        !params?.includeUnsupportedPlatforms &&
+        !isProviderAuthChoicePlatformSupported(choice.platforms)
+      ) {
         continue;
       }
       choices.push(

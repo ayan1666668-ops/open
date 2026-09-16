@@ -9,7 +9,6 @@ import { resolveStateDir } from "openclaw/plugin-sdk/state-paths";
 import { z } from "zod";
 
 export type AppleFmFacts = {
-  command: string;
   available: boolean;
   reason?: string;
   modelName: string;
@@ -118,23 +117,28 @@ export function createAppleFmNative(pluginRoot: string) {
       return null;
     }
     const command = await helperPath(options.env);
-    if (!(await helperExists(command))) {
-      return null;
+    if (await helperExists(command)) {
+      return infoSchema.parse(await invoke(command, ["info"], "", options));
     }
-    return { command, ...infoSchema.parse(await invoke(command, ["info"], "", options)) };
+    // First-time discovery runs a disposable helper off-process. It must not install
+    // anything in OpenClaw state before the user selects this model.
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-apple-fm-probe-"));
+    const temporary = path.join(directory, "helper");
+    const timeout = AbortSignal.timeout(30_000);
+    const probeOptions = {
+      ...options,
+      signal: options.signal ? AbortSignal.any([options.signal, timeout]) : timeout,
+    };
+    try {
+      await compileHelper(temporary, probeOptions);
+      return infoSchema.parse(await invoke(temporary, ["info"], "", probeOptions));
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true });
+    }
   }
 
-  /** Compilation belongs to explicit setup; discovery and inference only use an existing helper. */
-  async function prepareAppleFm(options: NativeOptions = {}): Promise<AppleFmFacts> {
-    if (!supportsNativeModel()) {
-      throw new Error(
-        "Apple Foundation Models requires an Apple Silicon Mac running macOS 27 or later.",
-      );
-    }
-    const existing = await probeAppleFm(options);
-    if (existing) {
-      return existing;
-    }
+  async function compileHelper(temporary: string, options: NativeOptions): Promise<void> {
+    options.signal?.throwIfAborted();
     const developerTools = await runCommandBuffered(["/usr/bin/xcode-select", "-p"], {
       input: "",
       baseEnv: nativeEnvironment(options.env),
@@ -148,47 +152,60 @@ export function createAppleFmNative(pluginRoot: string) {
         "Install Apple's developer tools with the macOS 27 SDK, then rerun Apple Foundation Models setup. OpenClaw does not install developer tools automatically.",
       );
     }
-    const command = await helperPath(options.env);
-    await fs.mkdir(path.dirname(command), { recursive: true, mode: 0o700 });
-    const directory = await fs.mkdtemp(path.join(path.dirname(command), "build-"));
-    const temporary = path.join(directory, "helper");
-    try {
-      const result = await runCommandBuffered(
-        [
-          "/usr/bin/xcrun",
-          "--sdk",
-          "macosx",
-          "swiftc",
-          "-parse-as-library",
-          "-O",
-          "-target",
-          "arm64-apple-macos27.0",
-          SOURCE,
-          "-o",
-          temporary,
-        ],
-        {
-          input: "",
-          baseEnv: nativeEnvironment(options.env),
-          signal: options.signal,
-          timeoutMs: 120_000,
-          maxOutputBytes: 64 * 1024,
-          killProcessTree: true,
-        },
+    const result = await runCommandBuffered(
+      [
+        "/usr/bin/xcrun",
+        "--sdk",
+        "macosx",
+        "swiftc",
+        "-parse-as-library",
+        "-O",
+        "-target",
+        "arm64-apple-macos27.0",
+        SOURCE,
+        "-o",
+        temporary,
+      ],
+      {
+        input: "",
+        baseEnv: nativeEnvironment(options.env),
+        signal: options.signal,
+        timeoutMs: 120_000,
+        maxOutputBytes: 64 * 1024,
+        killProcessTree: true,
+      },
+    );
+    options.signal?.throwIfAborted();
+    if (result.code !== 0 || result.termination !== "exit") {
+      throw new Error(
+        `Could not build the Apple Foundation Models helper. Select Apple developer tools with the macOS 27 SDK and retry setup. ${result.stderr.toString("utf8").trim()}`,
       );
-      options.signal?.throwIfAborted();
-      if (result.code !== 0 || result.termination !== "exit") {
-        throw new Error(
-          `Could not build the Apple Foundation Models helper. Select Apple developer tools with the macOS 27 SDK and retry setup. ${result.stderr.toString("utf8").trim()}`,
-        );
-      }
-      await fs.chmod(temporary, 0o700);
-      options.signal?.throwIfAborted();
-      await fs.rename(temporary, command);
-    } finally {
-      await fs.rm(directory, { recursive: true, force: true });
     }
-    return { command, ...infoSchema.parse(await invoke(command, ["info"], "", options)) };
+  }
+
+  /** Only selected setup publishes the helper used by ordinary inference. */
+  async function prepareAppleFm(options: NativeOptions = {}): Promise<AppleFmFacts> {
+    options.signal?.throwIfAborted();
+    if (!supportsNativeModel()) {
+      throw new Error(
+        "Apple Foundation Models requires an Apple Silicon Mac running macOS 27 or later.",
+      );
+    }
+    const command = await helperPath(options.env);
+    if (!(await helperExists(command))) {
+      await fs.mkdir(path.dirname(command), { recursive: true, mode: 0o700 });
+      const directory = await fs.mkdtemp(path.join(path.dirname(command), "build-"));
+      const temporary = path.join(directory, "helper");
+      try {
+        await compileHelper(temporary, options);
+        await fs.chmod(temporary, 0o700);
+        options.signal?.throwIfAborted();
+        await fs.rename(temporary, command);
+      } finally {
+        await fs.rm(directory, { recursive: true, force: true });
+      }
+    }
+    return infoSchema.parse(await invoke(command, ["info"], "", options));
   }
 
   async function runAppleFm(request: object, options: NativeOptions = {}): Promise<AppleFmResult> {

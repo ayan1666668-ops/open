@@ -29,6 +29,11 @@ it.runIf(live)(
     };
     const user = { role: "user", content: "Use the setup tool to connect Telegram." };
     try {
+      const detected = await native.probe(options);
+      expect(detected?.available).toBe(true);
+      expect(detected?.contextWindow).toBeGreaterThanOrEqual(8192);
+      expect(await fs.readdir(directory)).toEqual([]);
+      await expect(native.run({ messages: [user] }, options)).rejects.toThrow("setup again");
       const facts = await native.prepare(options);
       expect(facts.available).toBe(true);
       expect(facts.contextWindow).toBeGreaterThanOrEqual(8192);

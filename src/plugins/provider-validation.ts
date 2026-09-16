@@ -117,7 +117,8 @@ function buildNormalizedWizardSetup(params: {
       ? { assistantPriority: params.setup.assistantPriority }
       : {}),
     ...(params.setup.assistantVisibility === "manual-only" ||
-    params.setup.assistantVisibility === "visible"
+    params.setup.assistantVisibility === "visible" ||
+    params.setup.assistantVisibility === "detected-only"
       ? { assistantVisibility: params.setup.assistantVisibility }
       : {}),
     ...(params.setup.onboardingFeatured === true ? { onboardingFeatured: true } : {}),
