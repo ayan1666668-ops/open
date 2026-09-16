@@ -726,16 +726,16 @@ describe("projectContextEngineAssemblyForCodex", () => {
 
   it("uses the shared reserve-token shape while preserving small-model prompt budget", async () => {
     expect(resolveCodexContextEngineProjectionMaxChars({ contextTokenBudget: 80_000 })).toBe(
-      240_000,
+      120_000,
     );
     expect(resolveCodexContextEngineProjectionMaxChars({ contextTokenBudget: 16_000 })).toBe(
-      32_000,
+      24_000,
     );
   });
 
   it.each([
-    { contextTokenBudget: 4_000, maxRenderedContextChars: 8_000 },
-    { contextTokenBudget: 8_000, maxRenderedContextChars: 16_000 },
+    { contextTokenBudget: 4_000, maxRenderedContextChars: 6_000 },
+    { contextTokenBudget: 8_000, maxRenderedContextChars: 12_000 },
   ])(
     "keeps a $contextTokenBudget-token model within its reserved prompt budget",
     ({ contextTokenBudget, maxRenderedContextChars }) => {
@@ -751,13 +751,23 @@ describe("projectContextEngineAssemblyForCodex", () => {
         contextTokenBudget: 80_000,
         reserveTokens: 40_000,
       }),
-    ).toBe(160_000);
+    ).toBe(120_000);
   });
 
   it("caps very large runtime budgets to a bounded projection size", async () => {
     expect(resolveCodexContextEngineProjectionMaxChars({ contextTokenBudget: 1_000_000 })).toBe(
       1_000_000,
     );
+  });
+
+  it("prevents 258k-window projection from exceeding effective model capacity", () => {
+    const maxChars = resolveCodexContextEngineProjectionMaxChars({
+      contextTokenBudget: 258_400,
+    });
+    // With 3×(258400-40000) = 655,200 chars max, a 108k projection fits
+    // but leaves sufficient headroom for tool/instruction overhead.
+    expect(maxChars).toBe(655_200);
+    expect(maxChars).toBeLessThanOrEqual(700_000);
   });
 });
 
@@ -773,7 +783,7 @@ describe("resolveCodexContinuityProjectionMaxChars", () => {
   });
 
   it("keeps the fixed reserve and prompt-budget floor for small models", () => {
-    expect(resolveCodexContinuityProjectionMaxChars({ contextTokenBudget: 30_000 })).toBe(30_000);
+    expect(resolveCodexContinuityProjectionMaxChars({ contextTokenBudget: 30_000 })).toBe(24_000);
     expect(resolveCodexContinuityProjectionMaxChars({ contextTokenBudget: 16_000 })).toBe(24_000);
   });
 
@@ -881,9 +891,18 @@ describe("resolveCodexContinuityProjectionMaxChars", () => {
     );
   });
 
-  it("stays strictly under the shared whole-window projection cap", () => {
-    for (const contextTokenBudget of [16_000, 80_000, 258_400, 300_000]) {
+  it("stays at or under the context-engine projection cap", () => {
+    // On large windows the continuity reserve ratio (0.5) exceeds the fixed
+    // context-engine reserve, so continuity is strictly smaller.
+    for (const contextTokenBudget of [258_400, 300_000]) {
       expect(resolveCodexContinuityProjectionMaxChars({ contextTokenBudget })).toBeLessThan(
+        resolveCodexContextEngineProjectionMaxChars({ contextTokenBudget }),
+      );
+    }
+    // On small windows both resolvers converge because the effective reserve
+    // is clamped to preserve MIN_PROMPT_BUDGET and both use 3 chars/token.
+    for (const contextTokenBudget of [16_000, 80_000]) {
+      expect(resolveCodexContinuityProjectionMaxChars({ contextTokenBudget })).toBeLessThanOrEqual(
         resolveCodexContextEngineProjectionMaxChars({ contextTokenBudget }),
       );
     }

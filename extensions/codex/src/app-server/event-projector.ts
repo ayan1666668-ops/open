@@ -37,6 +37,12 @@ import {
   type JsonValue,
 } from "./protocol.js";
 
+// Safety fuse: maximum number of completed compaction items within a single turn
+// before the projector aborts with a bounded error.  Normal multi-turn sessions
+// may trigger 1–3 compactions legitimately; 5 is generous enough to avoid false
+// positives while preventing runaway loops (see #149689).
+const MAX_COMPACTION_ATTEMPTS_PER_TURN = 5;
+
 export class CodexAppServerEventProjector extends CodexTurnProjection {
   getCompletedTurnStatus(): CodexTurn["status"] | undefined {
     return this.completedTurn?.status;
@@ -446,6 +452,22 @@ export class CodexAppServerEventProjector extends CodexTurnProjection {
       }
       this.activeCompactionItemIds.delete(itemId);
       this.completedCompactionCount += 1;
+      // Safety fuse: native compaction operates on prior turn history only and
+      // cannot reduce an oversized active user prompt.  If compaction repeats
+      // without making progress, terminate the turn with a bounded error rather
+      // than looping indefinitely (see #149689: 38 compactions / 99 minutes).
+      if (this.completedCompactionCount >= MAX_COMPACTION_ATTEMPTS_PER_TURN) {
+        this.settledTurnFailureFinalizationAllowed = true;
+        this.terminalFailure.record({
+          message: `Native compaction exhausted (${this.completedCompactionCount} attempts) without reducing active prompt below context budget`,
+          codexErrorInfo: undefined,
+          rateLimits: undefined,
+          fallbackMessage: "compaction loop exhausted",
+          promptErrorSource: "compaction",
+        });
+        this.aborted = true;
+        return;
+      }
       await this.options.onContextCompacted?.();
       if (!this.isCompactionProjectionActive()) {
         return;

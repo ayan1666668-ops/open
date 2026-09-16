@@ -407,6 +407,7 @@ export async function prepareCodexAttemptPrompt(context: CodexAttemptContext) {
               start: group.start + imageOffset,
               end: group.end + imageOffset,
             })),
+      maxChars: codexContextProjectionMaxChars,
     });
     turnContextImageGroups = fitted.imageGroups ?? [];
     return fitted.promptText;
