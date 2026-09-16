@@ -11,9 +11,18 @@ type LiveTerminalIdentity = {
 
 const liveTerminalIdentities = new WeakMap<object, LiveTerminalIdentity>();
 const authoritativeTerminals = new WeakMap<object, AuthoritativeTerminal>();
+// Terminals whose run still read active at persistence time; the run-clear
+// reconcile promotes them so the live copy retires once history applies (#149153).
+const pendingAuthoritativeTerminals = new WeakMap<object, PendingAuthoritativeTerminal>();
 
 type AuthoritativeTerminal = {
   historyApplied: boolean;
+  messageId: string;
+  runId: string;
+  sessionKey: string;
+};
+
+type PendingAuthoritativeTerminal = {
   messageId: string;
   runId: string;
   sessionKey: string;
@@ -79,19 +88,52 @@ export function rememberAuthoritativeTerminal(options: {
     messageId: payload?.messageId,
   });
   const messageId = identity?.role === "assistant" && !identity.isImported ? identity.id : null;
-  if (
-    !options.runIdBeforeApply ||
-    !options.matchesChat ||
-    options.event.hasActiveRun === true ||
-    !messageId
-  ) {
+  if (!options.runIdBeforeApply || !options.matchesChat || !messageId) {
+    return;
+  }
+  const runId = options.event.clientRunId ?? options.event.runId ?? options.runIdBeforeApply;
+  if (options.event.hasActiveRun === true) {
+    // The persisted final landed while its run still reads active. Keep it pending:
+    // the run-clear reconcile arms it before history applies, otherwise the live
+    // terminal copy is never retired and the reply renders twice (#149153).
+    pendingAuthoritativeTerminals.set(options.host, {
+      messageId,
+      runId,
+      sessionKey: options.event.key,
+    });
     return;
   }
   authoritativeTerminals.set(options.host, {
     historyApplied: false,
     messageId,
-    runId: options.event.clientRunId ?? options.event.runId ?? options.runIdBeforeApply,
+    runId,
     sessionKey: options.event.key,
+  });
+}
+
+/** Arms a terminal deferred by an active run once that run clears (#149153). */
+export function armPendingAuthoritativeTerminal(options: {
+  host: object;
+  runId: string | null | undefined;
+  sessionKey: string;
+}): void {
+  const pending = pendingAuthoritativeTerminals.get(options.host);
+  if (!pending || !areUiSessionKeysEquivalent(pending.sessionKey, options.sessionKey)) {
+    return;
+  }
+  if (options.runId && pending.runId !== options.runId) {
+    return;
+  }
+  pendingAuthoritativeTerminals.delete(options.host);
+  const armed = authoritativeTerminals.get(options.host);
+  if (armed?.historyApplied && armed.runId === pending.runId) {
+    return;
+  }
+  authoritativeTerminals.set(options.host, {
+    historyApplied: false,
+    messageId: pending.messageId,
+    runId: pending.runId,
+    sessionKey: pending.sessionKey,
   });
 }
 
