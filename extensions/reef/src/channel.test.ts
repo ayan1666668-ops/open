@@ -14,6 +14,7 @@ import {
 import { createPluginRuntimeMock } from "openclaw/plugin-sdk/plugin-test-runtime";
 import { defaultRuntime } from "openclaw/plugin-sdk/runtime";
 import { createPluginRuntimeStore } from "openclaw/plugin-sdk/runtime-store";
+import { closeOpenClawStateDatabaseAsync } from "openclaw/plugin-sdk/sqlite-runtime-testing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { generateIdentity } from "../protocol/index.js";
 import { runReefChannelLifecycle } from "./channel-lifecycle.js";
@@ -171,7 +172,8 @@ describe("Reef conversation directory", () => {
     );
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await closeOpenClawStateDatabaseAsync();
     resetPluginStateStoreForTests();
     fs.rmSync(stateDir, { recursive: true, force: true });
   });
@@ -289,6 +291,7 @@ describe("Reef gateway account ownership", () => {
     vi.unstubAllEnvs();
     activeReefSlot.clearRuntime();
     reefRuntimeSlot.clearRuntime();
+    await closeOpenClawStateDatabaseAsync();
     resetPluginStateStoreForTests();
     fs.rmSync(stateDir, { recursive: true, force: true });
     expect(relayRequests).toBe(0);
