@@ -177,6 +177,7 @@ async function createFakeGateway(
   ownerOptions: {
     signal?: AbortSignal;
     verifyCleanup?: (cleanup: () => Promise<void>) => Promise<void>;
+    gatewayCommandPrefix?: string[];
   } = {},
 ) {
   const cwd = await fs.mkdtemp(path.join(tmpdir(), "openclaw-test-instance-gateway-"));
@@ -1134,6 +1135,8 @@ describe("openclaw test instance", () => {
       control,
       {
         signal: controller.signal,
+        // This fixture intentionally lets a stderr writer outlive its launcher.
+        gatewayCommandPrefix: [process.execPath],
       },
     );
     const exited = createDeferred();
@@ -1165,6 +1168,7 @@ describe("openclaw test instance", () => {
         1_000,
         1_500,
         control,
+        refusalAction === "late-refuse" ? { gatewayCommandPrefix: [process.execPath] } : {},
       );
       // This case owns refusal/retry ordering, not deadline expiry. Keep native
       // bootstrap and HTTP gates real without charging them to the policy clock.
@@ -1665,6 +1669,58 @@ describe("openclaw test instance", () => {
           [stdout, stderr].map((pipe) => (pipe.closed ? Promise.resolve() : once(pipe, "close"))),
         );
         closePipes();
+        await closed;
+      }
+    },
+  );
+
+  it.each(["joined", "exited owner", "held pipe", "live owner"] as const)(
+    "joins Windows Job termination with %s",
+    async (outcome) => {
+      const stdout = new PassThrough();
+      const stderr = new PassThrough();
+      const processState = createGatewayProcessState({
+        pid: 12345,
+        exitCode: outcome === "exited owner" ? 0 : null,
+      });
+      const kill = vi.fn(() => {
+        setImmediate(() => {
+          if (outcome !== "live owner" && outcome !== "exited owner") {
+            processState.signalCode = "SIGKILL";
+            processState.emit("exit", null, "SIGKILL");
+          }
+          stdout.destroy();
+          if (outcome !== "held pipe") {
+            stderr.destroy();
+          }
+        });
+        return true;
+      });
+      // SAFETY: This event-driven double supplies the owned child's lifecycle and output.
+      const child = Object.assign(processState, { kill, stdout, stderr }) as unknown as Parameters<
+        typeof testing.stopGatewayProcess
+      >[0];
+      const runTaskkill = vi.fn(() => ({ status: 255 }));
+      try {
+        await expect(
+          testing.stopGatewayProcess(child, Date.now() + 500, 250, {
+            platform: "win32",
+            windowsJobOwned: true,
+            runTaskkill,
+          }),
+        ).resolves.toBe(outcome === "joined" || outcome === "exited owner");
+        expect(runTaskkill).not.toHaveBeenCalled();
+        expect(kill).toHaveBeenCalledExactlyOnceWith("SIGKILL");
+        expect(child.listenerCount("exit")).toBe(0);
+        expect(child.listenerCount("close")).toBe(0);
+        expect(stdout.listenerCount("close")).toBe(0);
+        expect(stderr.listenerCount("close")).toBe(0);
+      } finally {
+        const closed = Promise.all(
+          [stdout, stderr].map((pipe) => (pipe.closed ? Promise.resolve() : once(pipe, "close"))),
+        );
+        stdout.destroy();
+        stderr.destroy();
         await closed;
       }
     },

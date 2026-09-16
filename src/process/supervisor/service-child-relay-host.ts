@@ -11,17 +11,14 @@ import {
   resolveRuntimeWorkerUrl,
 } from "../../infra/runtime-worker-url.js";
 import { createDeferredCore } from "../../shared/deferred.js";
-import {
-  createAwaitedDecodedOutput,
-  joinProcessCompletionAndOutput,
-  onDecodedOutput,
-} from "../decoded-output.js";
+import { joinProcessCompletionAndOutput } from "../decoded-output.js";
 import { pipeProcessOutput } from "../pipe-output.js";
 import { prepareSecretInputStdio } from "../spawn-secret-input.js";
 import { createManagedChildStdin } from "./adapters/child-stdin.js";
 import { toStringEnv } from "./adapters/env.js";
 import { createProcessAdapterEvents } from "./adapters/process-events.js";
 import { GRACEFUL_CANCEL_TIMEOUT_MS } from "./cancellation-policy.js";
+import { createOutputRelay } from "./service-child-output.js";
 import {
   encodeServiceChildMessage,
   type ServiceChildAnchorMessage,
@@ -37,7 +34,6 @@ type ServiceChildRelayAdapter = SpawnProcessAdapter<NodeJS.Signals | null> & {
 type AuthorityState = "starting" | "active" | "closing" | "closed" | "identity-lost";
 type StdioEntry = "ignore" | "inherit" | "ipc" | "pipe" | number;
 
-const PUSHED_OUTPUT_BUFFER_LIMIT_BYTES = 256 * 1024;
 const CONTROL_PENDING_LINE_LIMIT_BYTES = 256 * 1024;
 
 function readChildMessage(raw: unknown): ServiceChildRelayMessage | ServiceChildAnchorMessage {
@@ -57,90 +53,6 @@ function reserveStdioEntry(stdio: StdioEntry[], value: StdioEntry): number {
   return fd;
 }
 
-function createOutputRelay(stream?: Readable, piped = false, onFailure?: () => void) {
-  const consumer = onFailure && stream ? createAwaitedDecodedOutput(stream, onFailure) : undefined;
-  const listeners = new Set<(chunk: string) => void>();
-  const rawListeners = new Set<(chunk: Buffer) => void>();
-  const pending: Array<string | Buffer> = [];
-  let pendingBytes = 0;
-  let active = false;
-  let ended = false;
-  const deliver = (chunk: string | Buffer) => {
-    if (typeof chunk === "string") {
-      listeners.forEach((listener) => listener(chunk));
-    } else {
-      rawListeners.forEach((listener) => listener(chunk));
-    }
-  };
-  const activate = (keepOutput: boolean) => {
-    if (active || piped) {
-      return;
-    }
-    active = true;
-    if (keepOutput) {
-      pending.forEach(deliver);
-    }
-    pending.length = 0;
-    pendingBytes = 0;
-    stream?.resume();
-  };
-  const push = (chunk: string | Buffer) => {
-    if (active) {
-      deliver(chunk);
-      return true;
-    }
-    const chunkBytes = Buffer.isBuffer(chunk) ? chunk.length : Buffer.byteLength(chunk);
-    if (!stream && pendingBytes + chunkBytes > PUSHED_OUTPUT_BUFFER_LIMIT_BYTES) {
-      return false;
-    }
-    pending.push(chunk);
-    if (!stream || Buffer.isBuffer(chunk)) {
-      pendingBytes += chunkBytes;
-    }
-    if (stream && pendingBytes >= stream.readableHighWaterMark) {
-      // POSIX can retain later output in its native pipe until subscription.
-      stream.pause();
-    }
-    return true;
-  };
-  const end = () => {
-    ended = true;
-  };
-  if (stream) {
-    if (!piped && !consumer) {
-      onDecodedOutput(stream, push, push);
-    }
-    stream.once("end", end);
-    stream.once("close", end);
-  }
-  return {
-    get ended() {
-      return ended;
-    },
-    push,
-    end,
-    subscribe: (listener: (chunk: string) => void, onRaw?: (chunk: Buffer) => void) => {
-      if (consumer) {
-        throw new Error("Process stdout requires its awaited consumer");
-      }
-      listeners.add(listener);
-      if (onRaw) {
-        rawListeners.add(onRaw);
-      }
-      activate(true);
-    },
-    consume: consumer?.consume,
-    drain: () => (consumer ? consumer.drain() : activate(false)),
-    clear: () => {
-      consumer?.close();
-      listeners.clear();
-      rawListeners.clear();
-      pending.length = 0;
-      pendingBytes = 0;
-    },
-  };
-}
-
 export async function createServiceChildRelayAdapter(
   params: ProcessAdapterConstruction & {
     command: string;
@@ -154,12 +66,15 @@ export async function createServiceChildRelayAdapter(
     stderrDestination?: Writable;
     stdoutConsumption?: "awaited";
     oomScoreWrapperSelected: boolean;
+    windowsJob?: boolean;
     windowsShellCommand?: string;
+    cleanupTimeoutMs?: number;
   },
 ): Promise<ServiceChildRelayAdapter> {
   const generation = randomUUID();
   const useWindowsJobAnchor =
-    process.platform === "win32" && params.windowsShellCommand !== undefined;
+    process.platform === "win32" &&
+    (params.windowsJob === true || params.windowsShellCommand !== undefined);
   if (useWindowsJobAnchor && params.stdoutConsumption === "awaited") {
     throw new Error("Windows Job output does not support awaited stdout consumption");
   }
@@ -318,6 +233,13 @@ export async function createServiceChildRelayAdapter(
     try {
       loseIdentity(message);
     } finally {
+      if (useWindowsJobAnchor) {
+        try {
+          child.kill("SIGKILL");
+        } catch (cause) {
+          childError ??= toErrorObject(cause, "Windows Job anchor termination failed");
+        }
+      }
       control?.destroy();
       lineage?.destroy();
       child.stdout?.destroy();
@@ -325,13 +247,18 @@ export async function createServiceChildRelayAdapter(
     }
   };
   const beginCleanupDeadline = () => {
-    if (useWindowsJobAnchor || completionSettled || cleanupDeadline !== undefined) {
+    if (
+      (useWindowsJobAnchor && params.cleanupTimeoutMs === undefined) ||
+      completionSettled ||
+      cleanupDeadline !== undefined
+    ) {
       return;
     }
     // One owner budget spans cancellation, ACK, native joins and output drain.
     // Repeated KILL, a later receipt or control EOF must not renew it.
-    cleanupDeadline = performance.now() + GRACEFUL_CANCEL_TIMEOUT_MS;
-    cleanupTimer = setTimeout(expireCleanup, GRACEFUL_CANCEL_TIMEOUT_MS);
+    const timeoutMs = params.cleanupTimeoutMs ?? GRACEFUL_CANCEL_TIMEOUT_MS;
+    cleanupDeadline = performance.now() + timeoutMs;
+    cleanupTimer = setTimeout(expireCleanup, timeoutMs);
   };
 
   const sendChildMessage = (

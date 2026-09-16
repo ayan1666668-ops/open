@@ -38,7 +38,12 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-async function createRelay(platform: "linux" | "darwin" | "win32", retainLineage = false) {
+async function createRelay(
+  platform: "linux" | "darwin" | "win32",
+  retainLineage = false,
+  windowsJob = false,
+  cleanupTimeoutMs?: number,
+) {
   platformMock = mockProcessPlatform(platform);
   const groupProbe = vi.spyOn(process, "kill").mockImplementation(() => {
     throw Object.assign(new Error("synthetic missing process group"), { code: "ESRCH" });
@@ -76,7 +81,12 @@ async function createRelay(platform: "linux" | "darwin" | "win32", retainLineage
     args: [],
     stdinMode: "pipe-closed",
     oomScoreWrapperSelected: false,
-    ...(platform === "win32" ? { windowsShellCommand: "synthetic-command" } : {}),
+    cleanupTimeoutMs,
+    ...(platform === "win32"
+      ? windowsJob
+        ? { windowsJob: true }
+        : { windowsShellCommand: "synthetic-command" }
+      : {}),
   });
   const start = firstMockArg(stub.sendMock, "service start");
   if (!isRecord(start) || typeof start.generation !== "string") {
@@ -404,10 +414,15 @@ it("bounds the newline search before inspecting an oversized control frame", asy
   close();
 });
 
-describe.each(["linux", "win32"] as const)("service closing authority (%s)", (platform) => {
+describe.each(["linux", "win32", "raw"] as const)("service closing authority (%s)", (mode) => {
+  const platform = mode === "raw" ? "win32" : mode;
+  const windowsJob = mode === "raw";
   it("acknowledges the exact POSIX receipt without certifying extinction", async () => {
-    const { adapter, start, acknowledgements, emit, completeRoot, close } =
-      await createRelay(platform);
+    const { adapter, start, acknowledgements, emit, completeRoot, close } = await createRelay(
+      platform,
+      false,
+      windowsJob,
+    );
     expect(start.acknowledgeClosing).toBe(platform === "linux" ? true : undefined);
     completeRoot();
     await adapter.wait();
@@ -436,7 +451,7 @@ describe.each(["linux", "win32"] as const)("service closing authority (%s)", (pl
   it.each([false, true])(
     "keeps root knowledge independent of failed extinction (root observed=%s)",
     async (rootObserved) => {
-      const { adapter, completeRoot, close } = await createRelay(platform);
+      const { adapter, completeRoot, close } = await createRelay(platform, false, windowsJob);
       adapter.kill("SIGTERM");
       if (rootObserved) {
         completeRoot();
@@ -453,7 +468,7 @@ describe.each(["linux", "win32"] as const)("service closing authority (%s)", (pl
   );
 
   it("publishes root exit before output drain and replays it to late observers", async () => {
-    const { adapter, emit, completeRoot, close } = await createRelay(platform);
+    const { adapter, emit, completeRoot, close } = await createRelay(platform, false, windowsJob);
     const onExit = vi.fn();
     adapter.onExit(onExit);
     emit({ type: "root-result", code: 0, signal: null });
@@ -476,7 +491,11 @@ describe.each(["linux", "win32"] as const)("service closing authority (%s)", (pl
   it.each(["after receipt", "before receipt"])(
     "preserves confirmed extinction when cancellation starts %s",
     async (order) => {
-      const { adapter, cancellations, emit, completeRoot, close } = await createRelay(platform);
+      const { adapter, cancellations, emit, completeRoot, close } = await createRelay(
+        platform,
+        false,
+        windowsJob,
+      );
       completeRoot();
       await expect(adapter.wait()).resolves.toEqual({ code: 0, signal: null });
       const extinction = adapter.waitForExtinction();
@@ -503,7 +522,11 @@ describe.each(["linux", "win32"] as const)("service closing authority (%s)", (pl
   it.each(["failed cancellation", "channel close"])(
     "rejects %s without an authoritative closing receipt",
     async (fault) => {
-      const { adapter, cancellations, completeRoot, close } = await createRelay(platform);
+      const { adapter, cancellations, completeRoot, close } = await createRelay(
+        platform,
+        false,
+        windowsJob,
+      );
       const onError = vi.fn();
       adapter.onError(onError);
       completeRoot();
@@ -814,24 +837,48 @@ it.each(["control EOF", "relay exit", "lineage EOF", "kernel group", "output EOF
   },
 );
 
-it("bounds hard cancellation without any closing receipt or root result", async () => {
-  const { adapter, cancellations, stdout, stderr } = await createRelay("linux");
-  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-  try {
-    const outcomes = Promise.allSettled([adapter.wait(), adapter.waitForExtinction()]);
-    adapter.kill("SIGKILL");
-    await vi.advanceTimersByTimeAsync(5_000);
-    expect(await outcomes).toEqual([
-      expect.objectContaining({ status: "rejected", reason: expect.any(Error) }),
-      expect.objectContaining({ status: "rejected", reason: expect.any(Error) }),
-    ]);
-    expect(cancellations).toHaveLength(1);
-    expect(stdout?.destroyed).toBe(true);
-    expect(stderr?.destroyed).toBe(true);
-  } finally {
-    vi.useRealTimers();
-  }
-});
+it.each([
+  { platform: "linux", cleanupTimeoutMs: undefined, deadlineMs: 5_000 },
+  { platform: "win32", cleanupTimeoutMs: 250, deadlineMs: 250 },
+] as const)(
+  "bounds $platform hard cancellation without any closing receipt or root result",
+  async ({ platform, cleanupTimeoutMs, deadlineMs }) => {
+    const { adapter, cancellations, stdout, stderr, emit, completeRoot, close, killSpy } =
+      await createRelay(platform, false, platform === "win32", cleanupTimeoutMs);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const outcomes = Promise.allSettled([adapter.wait(), adapter.waitForExtinction()]);
+      const settled = vi.fn();
+      void outcomes.then(settled);
+      adapter.kill("SIGKILL");
+      await vi.advanceTimersByTimeAsync(deadlineMs - 1);
+      expect(settled).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(settled).toHaveBeenCalledOnce();
+      const results = await outcomes;
+      expect(results).toEqual([
+        expect.objectContaining({ status: "rejected", reason: expect.any(Error) }),
+        expect.objectContaining({ status: "rejected", reason: expect.any(Error) }),
+      ]);
+      expect(cancellations).toHaveLength(1);
+      if (platform === "linux") {
+        expect(killSpy).not.toHaveBeenCalled();
+        expect(stdout?.destroyed).toBe(true);
+        expect(stderr?.destroyed).toBe(true);
+      } else {
+        expect(killSpy).toHaveBeenCalledExactlyOnceWith("SIGKILL");
+      }
+      completeRoot();
+      emit({ type: "closing", reason: "cancel" });
+      close();
+      expect(await Promise.allSettled([adapter.wait(), adapter.waitForExtinction()])).toEqual(
+        results,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  },
+);
 
 it.each([-60_000, 60_000])(
   "does not renew hard cleanup for repeated KILL, receipt, EOF or a %s ms wall-clock jump",

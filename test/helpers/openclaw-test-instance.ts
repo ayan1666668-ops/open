@@ -1,6 +1,7 @@
 // OpenClaw test instance helper spawns isolated OpenClaw processes.
 import { type ChildProcess, type ChildProcessByStdio, spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import type { EventEmitter } from "node:events";
 import fs from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
@@ -59,7 +60,15 @@ type OpenClawTestInstanceCommandResult = {
   stderr: string;
 };
 
-type OpenClawTestProcess = ChildProcessByStdio<null, Readable, Readable>;
+export type OpenClawTestProcess = EventEmitter<{
+  exit: [code: number | null, signal: NodeJS.Signals | null];
+  close: [code: number | null, signal: NodeJS.Signals | null];
+  error: [error: Error];
+}> &
+  Pick<
+    ChildProcessByStdio<null, Readable, Readable>,
+    "pid" | "exitCode" | "signalCode" | "killed" | "stdout" | "stderr"
+  > & { kill: (signal?: NodeJS.Signals) => boolean };
 
 export type OpenClawTestInstance = {
   name: string;
@@ -110,6 +119,7 @@ type OpenClawTestProcessReadiness = Pick<OpenClawTestProcess, "pid" | "exitCode"
 };
 type GatewayProcessStopOptions = NonNullable<Parameters<typeof terminateManagedChild>[2]> & {
   forceWindowsTree?: boolean;
+  windowsJobOwned?: boolean;
 };
 type TaskkillResult = Exclude<
   ReturnType<NonNullable<GatewayProcessStopOptions["runTaskkill"]>>,
@@ -439,6 +449,30 @@ async function waitForGatewayClose(
   return hasGatewayProcessClosed(child, platform);
 }
 
+function waitForWindowsJobClose(child: OpenClawTestProcess, timeoutMs: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const finish = (closed: boolean) => {
+      clearTimeout(timeout);
+      child.off("exit", observe);
+      child.off("close", observe);
+      child.stdout.off("close", observe);
+      child.stderr.off("close", observe);
+      resolve(closed);
+    };
+    const observe = () => {
+      if (hasGatewayProcessClosed(child, "win32")) {
+        finish(true);
+      }
+    };
+    const timeout = setTimeout(() => finish(false), Math.max(0, timeoutMs));
+    child.on("exit", observe);
+    child.on("close", observe);
+    child.stdout.on("close", observe);
+    child.stderr.on("close", observe);
+    observe();
+  });
+}
+
 async function stopGatewayProcess(
   child: OpenClawTestProcess,
   deadline: number,
@@ -525,6 +559,15 @@ async function stopGatewayProcess(
       );
       return false;
     };
+    if (options.windowsJobOwned) {
+      try {
+        // Live Job authority survives root exit; cancellation never retargets its numeric PID.
+        child.kill("SIGKILL");
+        return (await waitForWindowsJobClose(child, stopTimeoutMs)) || failed("close-incomplete");
+      } catch (error) {
+        return failed("exception", error);
+      }
+    }
     if (hasChildExited(child) && (await waitForClose(2))) {
       return true;
     }
@@ -721,6 +764,11 @@ export async function createOpenClawTestInstance(
     extraEnv: options.env ?? {},
   });
   let child: { process: OpenClawTestProcess; ready: boolean } | undefined;
+  const windowsJobChildren = new WeakSet<OpenClawTestProcess>();
+  const gatewayCleanups = new Set<Promise<void>>();
+  let spawnWindowsGateway:
+    | typeof import("./openclaw-test-instance-windows.js").spawnWindowsGatewayProcess
+    | undefined;
   const commands = new Set<Promise<OpenClawTestInstanceCommandResult>>();
   const reserveIdlePort = async () => {
     if (options.port === undefined && acceptingWork && !reservation) {
@@ -751,15 +799,45 @@ export async function createOpenClawTestInstance(
     return next.promise;
   };
   const stopTimeoutMs = options.stopTimeoutMs ?? GATEWAY_STOP_TIMEOUT_MS;
-  const spawnGatewayProcess = (args: string[], attemptStderr: string[]): OpenClawTestProcess => {
+  const spawnGatewayProcess = async (
+    args: string[],
+    attemptStderr: string[],
+    deadline: number,
+  ): Promise<OpenClawTestProcess> => {
     const [command = "node", ...prefixArgs] = options.gatewayCommandPrefix ?? [];
     signal?.throwIfAborted();
-    const next = spawn(command, [...prefixArgs, ...args], {
-      cwd,
-      env,
-      stdio: ["ignore", "pipe", "pipe"],
-      detached: shouldUseOpenClawTestProcessGroup(),
-    });
+    let next: OpenClawTestProcess;
+    if (spawnWindowsGateway) {
+      next = await spawnWindowsGateway({
+        args,
+        cwd,
+        env,
+        signal,
+        startupDeadline: deadline,
+        stopTimeoutMs,
+        onError: (error) => {
+          appendLogChunk(stderr, `Windows Gateway process cleanup failed: ${String(error)}\n`);
+        },
+        onSpawnCleanup: (completion) => {
+          const cleanup = verifyCleanup(() => completion);
+          gatewayCleanups.add(cleanup);
+          void cleanup.then(
+            () => gatewayCleanups.delete(cleanup),
+            () => {
+              acceptingWork = false;
+            },
+          );
+        },
+      });
+      windowsJobChildren.add(next);
+    } else {
+      next = spawn(command, [...prefixArgs, ...args], {
+        cwd,
+        env,
+        stdio: ["ignore", "pipe", "pipe"],
+        detached: shouldUseOpenClawTestProcessGroup(),
+      });
+    }
     next.stdout.setEncoding("utf8");
     next.stderr.setEncoding("utf8");
     next.stdout.on("data", (chunk) => appendLogChunk(stdout, chunk));
@@ -774,7 +852,13 @@ export async function createOpenClawTestInstance(
     deadline: number,
     stopOptions: GatewayProcessStopOptions = {},
   ): Promise<boolean> => {
-    const closed = await stopGatewayProcess(target, deadline, stopTimeoutMs, stopOptions, stderr);
+    const closed = await stopGatewayProcess(
+      target,
+      deadline,
+      stopTimeoutMs,
+      { ...stopOptions, windowsJobOwned: windowsJobChildren.has(target) },
+      stderr,
+    );
     if (closed && child?.process === target) {
       child = undefined;
     }
@@ -860,6 +944,11 @@ export async function createOpenClawTestInstance(
         }
         const commandEntrypoint = await entrypoint();
         signal?.throwIfAborted();
+        if (process.platform === "win32" && options.gatewayCommandPrefix === undefined) {
+          spawnWindowsGateway ??= (await import("./openclaw-test-instance-windows.js"))
+            .spawnWindowsGatewayProcess;
+          signal?.throwIfAborted();
+        }
         const gatewayArgs = [
           ...commandEntrypoint,
           "gateway",
@@ -888,7 +977,7 @@ export async function createOpenClawTestInstance(
           signal?.throwIfAborted();
           let attempt: OpenClawTestProcess;
           try {
-            attempt = spawnGatewayProcess(gatewayArgs, attemptStderr);
+            attempt = await spawnGatewayProcess(gatewayArgs, attemptStderr, deadline);
           } catch (error) {
             await runQaGatewayFixture(async (): Promise<never> => {
               throw error;
@@ -898,7 +987,15 @@ export async function createOpenClawTestInstance(
           const owner = { process: attempt, ready: false };
           child = owner;
           try {
-            await waitForGatewayReady(attempt, stdout, stderr, port, remainingMs, fetch, signal);
+            await waitForGatewayReady(
+              attempt,
+              stdout,
+              stderr,
+              port,
+              Math.max(0, deadline - Date.now()),
+              fetch,
+              signal,
+            );
             signal?.throwIfAborted();
             owner.ready = true;
             return;
@@ -976,6 +1073,9 @@ export async function createOpenClawTestInstance(
             // Terminal cleanup has no graceful-shutdown contract. Force the Windows
             // tree so inherited pipes cannot outlive the completed test instance.
             return stopGatewayChild({ forceWindowsTree: true });
+          },
+          async () => {
+            await Promise.all(gatewayCleanups);
           },
           releasePort,
         );

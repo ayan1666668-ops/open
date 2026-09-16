@@ -1402,7 +1402,7 @@ async function runAbruptRestartProof(
   return await proof;
 }
 
-async function forceGatewayExit(child: ProofChildProcess) {
+async function forceGatewayExit(child: NonNullable<OpenClawTestInstance["child"]>) {
   if (child.exitCode !== null || child.signalCode !== null) {
     throw new Error("Gateway already exited before the abrupt-restart proof");
   }
@@ -1413,7 +1413,11 @@ async function forceGatewayExit(child: ProofChildProcess) {
     once(child, "close", { signal: abort.signal }),
   ]);
   try {
-    const termination = terminateManagedChild(child, "SIGKILL");
+    // Windows fixture cancellation uses its Job owner; its close event joins extinction.
+    const termination =
+      process.platform === "win32"
+        ? child.kill("SIGKILL")
+        : terminateManagedChild(child, "SIGKILL");
     const [[code, signal], [closeCode, closeSignal]] = await withTimeout(
       observed,
       SQLITE_FLIP_PROOF_OPERATION_TIMEOUT_MS,
@@ -1421,7 +1425,7 @@ async function forceGatewayExit(child: ProofChildProcess) {
     );
     if (
       (process.platform === "win32"
-        ? termination?.processTreeState !== "terminated" || code === null || code === 0
+        ? termination !== true || code === null || code === 0
         : code !== null || signal !== "SIGKILL") ||
       closeCode !== code ||
       closeSignal !== signal

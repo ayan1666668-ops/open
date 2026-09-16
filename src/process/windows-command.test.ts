@@ -2,13 +2,26 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { isPidAlive } from "../shared/pid-alive.js";
 import { withTempDir } from "../test-utils/temp-dir.js";
 import { withMockedWindowsPlatform } from "../test-utils/vitest-spies.js";
 import { runCommandWithTimeout } from "./exec.js";
+import { createServiceChildRelayAdapter } from "./supervisor/service-child-relay-host.js";
 import { spawnTerminalPty } from "./terminal-pty.js";
-import { resolveSafeChildProcessInvocation, resolveWindowsCommandShim } from "./windows-command.js";
+import {
+  buildWindowsProcessCommandLine,
+  resolveSafeChildProcessInvocation,
+  resolveWindowsCommandShim,
+} from "./windows-command.js";
 
 describe("Windows command helpers", () => {
+  it.each([
+    ["node\0.exe", []],
+    ["node.exe", ["before\0after"]],
+  ] as const)("rejects NUL bytes before native command-line truncation (%s)", (command, args) => {
+    expect(() => buildWindowsProcessCommandLine(command, args)).toThrow("NUL byte");
+  });
+
   it("leaves commands unchanged outside Windows", () => {
     expect(
       resolveWindowsCommandShim({
@@ -195,6 +208,63 @@ describe("Windows command helpers", () => {
     });
   });
 });
+
+it.runIf(process.platform === "win32")(
+  "preserves raw argv and owns ignored-stdio descendants after the Windows root exits",
+  async ({ signal, onTestFinished }) => {
+    const args = [
+      "",
+      "two words",
+      "two\twords",
+      'say "hello"',
+      "C:\\two words\\",
+      'left\\"right',
+      'left\\\\"right',
+      "&|<>%^!$()",
+      "line\nbreak",
+      "é😀",
+    ];
+    const adapter = await createServiceChildRelayAdapter({
+      command: process.execPath,
+      args: [
+        "-e",
+        [
+          'const child = require("node:child_process").spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {detached:true,stdio:"ignore"})',
+          "child.unref()",
+          "process.stdout.write(JSON.stringify({pid:process.pid,descendantPid:child.pid,args:process.argv.slice(1)}))",
+        ].join(";"),
+        ...args,
+      ],
+      windowsJob: true,
+      stdinMode: "pipe-closed",
+      oomScoreWrapperSelected: false,
+      abortSignal: signal,
+      onSpawnCleanup: (cleanup) => onTestFinished(() => cleanup),
+    });
+    let stdout = "";
+    adapter.onStdout((chunk) => (stdout += chunk));
+    const cancel = () => adapter.kill("SIGKILL");
+    signal.addEventListener("abort", cancel, { once: true });
+    try {
+      if (signal.aborted) {
+        cancel();
+      }
+      await expect(adapter.wait()).resolves.toEqual({ code: 0, signal: null });
+      const result = JSON.parse(stdout);
+      expect(result).toEqual({ pid: adapter.pid, descendantPid: expect.any(Number), args });
+      expect(isPidAlive(result.descendantPid)).toBe(true);
+      cancel();
+      await adapter.waitForExtinction();
+      expect(isPidAlive(result.descendantPid)).toBe(false);
+    } finally {
+      signal.removeEventListener("abort", cancel);
+      cancel();
+      await adapter.waitForExtinction();
+      adapter.dispose();
+    }
+  },
+  30_000,
+);
 
 describe.runIf(process.platform === "win32")("Windows batch argv preservation", () => {
   const cases = [

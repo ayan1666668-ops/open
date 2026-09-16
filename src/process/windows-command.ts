@@ -192,6 +192,25 @@ export function buildWindowsCmdExeCommandLine(command: string, args: readonly st
   return `"${escaped.join(" ")}"`;
 }
 
+/** Encode executable argv for CreateProcessW without cmd.exe expansion. */
+export function buildWindowsProcessCommandLine(command: string, args: readonly string[]): string {
+  return [command, ...args]
+    .map((arg) => {
+      if (arg.includes("\0")) {
+        throw new Error("Windows process argument contains a NUL byte");
+      }
+      // CRT parsing consumes backslashes before quotes and the closing delimiter.
+      const quoted = arg
+        .replace(/\\+/g, (backslashes, offset) => {
+          const next = arg[offset + backslashes.length];
+          return next === '"' || next === undefined ? backslashes.repeat(2) : backslashes;
+        })
+        .replace(/"/g, '\\"');
+      return `"${quoted}"`;
+    })
+    .join(" ");
+}
+
 export function resolveTrustedWindowsCmdExe(platform: NodeJS.Platform = process.platform): string {
   if (platform !== "win32") {
     return "cmd.exe";

@@ -4,6 +4,7 @@ import { resolveEnvironmentValue } from "../../infra/process-env.js";
 import { createWindowsOutputDecoder } from "../../infra/windows-encoding.js";
 import { getWindowsCmdExePath } from "../../infra/windows-install-roots.js";
 import { createDeferredCore } from "../../shared/deferred.js";
+import { buildWindowsProcessCommandLine } from "../windows-command.js";
 import type {
   ServiceChildAnchorMessage,
   ServiceChildAnchorPayload,
@@ -436,11 +437,6 @@ export function runServiceChildWindowsJobAnchor(): void {
 
   const startCommand = async (next: ServiceChildStart) => {
     start = next;
-    if (typeof next.windowsShellCommand !== "string") {
-      state = "closed";
-      finishAnchor(1);
-      return;
-    }
     try {
       const koffi = (await import("koffi")).default;
       if (state !== "starting") {
@@ -468,15 +464,20 @@ export function runServiceChildWindowsJobAnchor(): void {
       const processInfo: Record<string, unknown> = {};
       try {
         processAttributes = bindings.createProcessAttributeList(commandStdio.inheritedHandles, job);
-        const shell =
-          resolveEnvironmentValue(next.env, "COMSPEC", "win32") || getWindowsCmdExePath(next.env);
+        const command =
+          next.windowsShellCommand === undefined
+            ? next.command
+            : resolveEnvironmentValue(next.env, "COMSPEC", "win32") ||
+              getWindowsCmdExePath(next.env);
         const commandLine = Buffer.from(
-          `"${shell}" /d /s /c "${next.windowsShellCommand}"\0`,
+          (next.windowsShellCommand === undefined
+            ? buildWindowsProcessCommandLine(next.argv0 ?? command, next.args)
+            : `"${command}" /d /s /c "${next.windowsShellCommand}"`) + "\0",
           "utf16le",
         );
         if (
           !bindings.CreateProcessW(
-            shell,
+            command,
             commandLine,
             null,
             null,
