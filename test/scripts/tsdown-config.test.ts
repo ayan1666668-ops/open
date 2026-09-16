@@ -3,6 +3,7 @@ import { execFile } from "node:child_process";
 import fs from "node:fs";
 import { createRequire, isBuiltin } from "node:module";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { build } from "tsdown";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -347,7 +348,10 @@ describe("tsdown config", () => {
         (resolve) => {
           execFile(
             testNodeExecPath,
-            [path.resolve("test/scripts/imap-packaged-service.test-support.mjs"), root],
+            [
+              fileURLToPath(new URL("./imap-packaged-service.test-support.mjs", import.meta.url)),
+              root,
+            ],
             {
               cwd: root,
               env: { ...process.env, OPENCLAW_STATE_DIR: path.join(root, "state") },
