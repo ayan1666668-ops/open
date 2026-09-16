@@ -107,7 +107,7 @@ import {
   waitForFast,
 } from "../subagent-test-fixtures.test-helpers.js";
 import { subagentRuns } from "../subagents/registry/subagent-registry-memory.js";
-import { registerHarnessCompletionRecoveryCases } from "./main-session-harness-completion.test-support.js";
+import { registerHarnessCompletionRecoveryCases } from "./main-session-harness-completion.test-harness.js";
 import * as recoveryOwnerRelease from "./main-session-recovery-owner-release.js";
 import {
   claimMainSessionRecoveryOwner,

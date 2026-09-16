@@ -41,7 +41,7 @@ import {
   createTestModelSelection,
   createTestModelVisibilityPolicy,
 } from "./agent-command.live-model-switch.test-helpers.js";
-import { registerAgentCommandRecoveryCases } from "./agent-command.restart-recovery.test-support.js";
+import { registerAgentCommandRecoveryCases } from "./agent-command.restart-recovery.test-harness.js";
 import { createApiKeyCredential } from "./auth-profiles/credential-fixtures.test-support.js";
 import type { FailoverReason } from "./failover/signal.js";
 import { formatAgentInternalEventsForPrompt, type AgentInternalEvent } from "./internal-events.js";
