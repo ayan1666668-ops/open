@@ -26,7 +26,7 @@ import { mergeAgentModelEntryForConfig } from "../../../config/model-input.js";
 import { resolveMergedModelProviderConfig } from "../../../config/model-provider-config.js";
 import type { SessionEntry } from "../../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
-import { readSessionExecutionRepairModel } from "../../../model-picker/execution-selection-codec.js";
+import { readSessionExecutionRepairModel } from "../../../model-picker/execution-selection-repair.js";
 import { repairSessionExecutionSelection } from "../../../model-picker/execution-selection-repair.js";
 import {
   loadManifestMetadataSnapshot,

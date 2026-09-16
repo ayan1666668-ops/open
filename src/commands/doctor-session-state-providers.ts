@@ -19,16 +19,6 @@ import type { SessionEntry } from "../config/sessions.js";
 import { applySessionEntryReplacements } from "../config/sessions/session-accessor.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { updateLegacySessionStore } from "../infra/state-migrations.legacy-session-store.js";
-import {
-  inspectLegacySessionRouteCleanup,
-  applyLegacySessionModelCleanup,
-  hasLegacySessionSelectionFields,
-  resolveSessionExecutionRepairPair,
-  readSessionExecutionRepairRef,
-} from "../model-picker/execution-selection-codec.js";
-import { resolveConfiguredExecutionSelection } from "../model-picker/execution-selection-configured.js";
-import { executionSelectionCodecMetadata } from "../model-picker/execution-selection-state.js";
-import type { ModelExecutionSelection } from "../model-picker/execution-selection.js";
 import { listPluginDoctorSessionRouteStateOwners } from "../plugins/doctor-contract-registry.js";
 import type { DoctorSessionRouteStateOwner } from "../plugins/doctor-session-route-state-owner-types.js";
 import { isValidAgentHarnessSessionStoreEntry } from "../sessions/agent-harness-session-key.js";
@@ -113,11 +103,6 @@ function resolveConfiguredDoctorSessionStateRoute(params: {
     defaultProvider: primary.provider,
     configuredModelRefs: [...configuredModelRefs],
     runtime,
-    selection: resolveConfiguredExecutionSelection({
-      cfg: params.cfg,
-      agentId,
-      model: { provider: primary.provider, id: primary.model },
-    }),
   };
 }
 
@@ -132,12 +117,13 @@ function entryMayContainPluginSessionRouteState(sessionKey: string, entry: Sessi
   if (isValidAgentHarnessSessionStoreEntry(sessionKey, entry)) {
     return false;
   }
+  // Accepted choices and imported requests survive later configuration changes.
+  if (entry.executionSelection || entry.acp) return false;
   if (!isRecord(entry)) {
     return false;
   }
   const record = entry;
   return (
-    hasLegacySessionSelectionFields(record) ||
     record.liveModelSwitchPending !== undefined ||
     normalizeString(record.modelProvider) !== undefined ||
     normalizeString(record.model) !== undefined ||
@@ -154,7 +140,6 @@ type DoctorSessionRouteState = {
   defaultProvider: string;
   configuredModelRefs: string[];
   runtime?: string;
-  selection?: ModelExecutionSelection;
 };
 
 type DoctorSessionRouteStateRepair = {
@@ -163,23 +148,11 @@ type DoctorSessionRouteStateRepair = {
   ownerLabel: string;
   reasons: string[];
   pinnedRuntimeKeys: Array<"agentHarnessId">;
-  modelRepair?: {
-    selection: ModelExecutionSelection;
-    expectedModel: { provider?: string; id: string };
-    expectedRuntime?: string;
-  };
   cliSessionKeys: string[];
-};
-
-type DoctorSessionRouteStateManualReview = {
-  key: string;
-  ownerLabel: string;
-  message: string;
 };
 
 type DoctorSessionRouteStateScan = {
   repairs: DoctorSessionRouteStateRepair[];
-  manualReview: DoctorSessionRouteStateManualReview[];
 };
 
 function resolvePersistedOverrideModelRef(params: {
@@ -249,12 +222,10 @@ function hasOwnedCliSession(params: {
 function scanEntryForOwner(params: {
   key: string;
   entry: SessionEntry;
-  cfg: OpenClawConfig;
   owner: DoctorSessionRouteStateOwner;
   route: DoctorSessionRouteState | undefined;
 }): {
   repair?: DoctorSessionRouteStateRepair;
-  manualReview?: DoctorSessionRouteStateManualReview;
 } {
   const providerIds = normalizeIdSet(params.owner.providerIds);
   const runtimeIds = normalizeIdSet(params.owner.runtimeIds);
@@ -266,53 +237,6 @@ function scanEntryForOwner(params: {
     routeRuntime !== undefined && runtimeIds.has(normalizeProviderId(routeRuntime));
   const reasons: string[] = [];
   const pinnedRuntimeKeys: Array<"agentHarnessId"> = [];
-  const inspection = inspectLegacySessionRouteCleanup({
-    entry: params.entry,
-    providerIds,
-    runtimeIds,
-    configuredModels: params.route?.configuredModelRefs ?? [],
-    routeAllowsOwner,
-    routeAllowsRuntime: routeAllowsOwnerRuntime,
-    defaultProvider: params.route?.defaultProvider ?? "",
-  });
-  if (inspection.kind === "retain") {
-    return {};
-  }
-  if (inspection.kind === "manual") {
-    return {
-      manualReview: {
-        key: params.key,
-        ownerLabel: params.owner.label,
-        message: `${params.key} (${inspection.detail})`,
-      },
-    };
-  }
-  let modelRepair: DoctorSessionRouteStateRepair["modelRepair"];
-  if (inspection.kind === "reset-model") {
-    const selection =
-      params.route?.selection &&
-      resolveSessionExecutionRepairPair({
-        entry: params.entry,
-        model: params.route.selection.model,
-        executor: params.route.selection.executor,
-        metadata: executionSelectionCodecMetadata(params.cfg),
-      });
-    if (!selection) {
-      return {
-        manualReview: {
-          key: params.key,
-          ownerLabel: params.owner.label,
-          message: `${params.key} (configured executor could not be resolved; selection retained)`,
-        },
-      };
-    }
-    modelRepair = {
-      selection,
-      expectedModel: inspection.model,
-      expectedRuntime: readSessionExecutionRepairRef(params.entry).runtime,
-    };
-    addReason(reasons, "auto model override");
-  }
   if (!routeAllowsOwnerRuntime) {
     const harnessId = normalizeString(params.entry.agentHarnessId);
     if (harnessId && runtimeIds.has(normalizeProviderId(harnessId))) {
@@ -350,7 +274,6 @@ function scanEntryForOwner(params: {
       ownerLabel: params.owner.label,
       reasons,
       pinnedRuntimeKeys,
-      ...(modelRepair ? { modelRepair } : {}),
       cliSessionKeys,
     },
   };
@@ -363,7 +286,6 @@ export function createPluginSessionStateDoctorScanner(params: {
   env?: NodeJS.ProcessEnv;
 }) {
   const repairs: DoctorSessionRouteStateRepair[] = [];
-  const manualReview: DoctorSessionRouteStateManualReview[] = [];
   let owners: DoctorSessionRouteStateOwner[] | undefined;
   const routeByAgentId = new Map<string, DoctorSessionRouteState>();
   return {
@@ -396,17 +318,14 @@ export function createPluginSessionStateDoctorScanner(params: {
         routeByAgentId.set(agentId, route);
       }
       for (const owner of owners) {
-        const scan = scanEntryForOwner({ key, entry, owner, route, cfg: params.cfg });
+        const scan = scanEntryForOwner({ key, entry, owner, route });
         if (scan.repair) {
           repairs.push(scan.repair);
-        }
-        if (scan.manualReview) {
-          manualReview.push(scan.manualReview);
         }
       }
     },
     result(): DoctorSessionRouteStateScan {
-      return { repairs, manualReview };
+      return { repairs };
     },
   };
 }
@@ -453,19 +372,17 @@ function applySessionRouteStateRepair(params: {
   now: number;
 }): boolean {
   // Revalidate at mutation time: the harness may have claimed and locked this row after the scan.
-  if (isValidAgentHarnessSessionStoreEntry(params.sessionKey, params.entry)) {
+  if (
+    isValidAgentHarnessSessionStoreEntry(params.sessionKey, params.entry) ||
+    params.entry.executionSelection ||
+    params.entry.acp
+  ) {
     return false;
   }
   let changed = false;
   const clear = (key: string) => {
     changed = clearEntryKey(params.entry, key) || changed;
   };
-  if (params.repair.modelRepair) {
-    if (!applyLegacySessionModelCleanup({ entry: params.entry, ...params.repair.modelRepair })) {
-      return false;
-    }
-    changed = true;
-  }
   if (params.repair.reasons.includes("runtime model state")) {
     clear("model");
     clear("modelProvider");
@@ -529,7 +446,7 @@ export async function runPluginSessionStateDoctorRepairs(params: {
       params.warnings.push(
         [
           `- Found stale ${ownerLabel} session routing state in ${staleCount} outside the current configured model/runtime route.`,
-          "  This can keep later message-channel runs pinned to an old runtime/provider after defaults move elsewhere.",
+          "  These records describe a previous execution route and can be cleared.",
           `  Examples: ${repairs.slice(0, 3).map(repairExample).join(", ")}`,
         ].join("\n"),
       );
@@ -589,26 +506,6 @@ export async function runPluginSessionStateDoctorRepairs(params: {
           );
         }
       }
-    }
-  }
-  if (scan.manualReview.length > 0) {
-    const grouped = new Map<string, DoctorSessionRouteStateManualReview[]>();
-    for (const hit of scan.manualReview) {
-      grouped.set(hit.ownerLabel, [...(grouped.get(hit.ownerLabel) ?? []), hit]);
-    }
-    for (const [ownerLabel, hits] of grouped) {
-      params.warnings.push(
-        [
-          `- Found explicit ${ownerLabel} selections in ${countSessionLabel(
-            hits.length,
-          )} outside the current configured route.`,
-          "  Doctor leaves accepted model choices and runtime pins untouched; use /model to change the selection if that app or provider is no longer intended.",
-          `  Examples: ${hits
-            .slice(0, 3)
-            .map((hit) => hit.message)
-            .join(", ")}`,
-        ].join("\n"),
-      );
     }
   }
 }

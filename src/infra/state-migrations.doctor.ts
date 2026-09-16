@@ -1163,6 +1163,7 @@ function buildUnresolvedBlockedPreludeSteps(
 }
 
 function createStateSchemaMigrationStep(params: {
+  config: OpenClawConfig;
   stateDir: string;
   env: NodeJS.ProcessEnv;
   mode: LegacyStateMigrationMode;
@@ -1173,17 +1174,52 @@ function createStateSchemaMigrationStep(params: {
     kind: "sqlite",
     path: resolveOpenClawStateSqlitePath(stateEnv),
   };
+  const selectionEndpoints: LegacyStateMigrationEndpoint[] =
+    params.mode === "doctor"
+      ? [
+          { kind: "path", path: path.join(params.stateDir, "agents") },
+          ...resolveConfiguredAgentDatabaseTargets(params.config, { env: stateEnv }).map(
+            ({ path: databasePath }): LegacyStateMigrationEndpoint => ({
+              kind: "sqlite",
+              path: databasePath,
+            }),
+          ),
+        ]
+      : [];
   return {
     id: "state-schema",
     phase: "shared",
-    source: [database],
-    target: [database],
+    source: uniqueMigrationEndpoints([database, ...selectionEndpoints]),
+    target: uniqueMigrationEndpoints([
+      database,
+      ...selectionEndpoints,
+      ...(params.mode === "doctor"
+        ? [
+            {
+              kind: "path" as const,
+              path: path.join(params.stateDir, "backups", "execution-selection"),
+            },
+          ]
+        : []),
+    ]),
     requiredness: params.requiredness,
     reversibility: "checkpoint-required",
-    run: () =>
-      params.mode === "doctor"
-        ? repairOpenClawStateDatabaseSchema({ env: stateEnv })
-        : repairOpenClawStateDatabaseSchemaIfNeeded({ env: stateEnv }),
+    run: async () => {
+      const selections =
+        params.mode === "doctor"
+          ? await (
+              await import("./state-migrations.execution-selection.js")
+            ).migrateLegacyExecutionSelections({ cfg: params.config, env: stateEnv })
+          : { changes: [], warnings: [] };
+      const schema =
+        params.mode === "doctor"
+          ? repairOpenClawStateDatabaseSchema({ env: stateEnv })
+          : repairOpenClawStateDatabaseSchemaIfNeeded({ env: stateEnv });
+      return {
+        changes: [...selections.changes, ...schema.changes],
+        warnings: [...selections.warnings, ...schema.warnings],
+      };
+    },
   };
 }
 
@@ -2206,6 +2242,7 @@ function buildLegacyStateMigrationSteps(
 
   return [
     createStateSchemaMigrationStep({
+      config: params.config,
       stateDir,
       env,
       mode: params.mode,
@@ -2441,6 +2478,7 @@ export async function planLegacyStateMigrationsReadOnly(params: {
     ]);
     const steps = [
       createStateSchemaMigrationStep({
+        config: configBefore.config,
         stateDir: snapshot.stateDir,
         env,
         mode: params.mode,
@@ -2503,6 +2541,7 @@ export async function planLegacyStateMigrationsReadOnly(params: {
     ]);
     const blockedSteps = [
       createStateSchemaMigrationStep({
+        config: configBefore.config,
         stateDir: snapshot.stateDir,
         env,
         mode: params.mode,
@@ -3445,6 +3484,7 @@ async function executeLegacyStateMigrations(
     return receipts;
   };
   let stateSchemaStep = createStateSchemaMigrationStep({
+    config: params.cfg,
     stateDir,
     env,
     mode,
@@ -3518,6 +3558,7 @@ async function executeLegacyStateMigrations(
   try {
     if (detectOpenClawStateDatabaseSchemaMigrations(stateSchemaOptions).length > 0) {
       stateSchemaStep = createStateSchemaMigrationStep({
+        config: params.cfg,
         stateDir,
         env,
         mode,

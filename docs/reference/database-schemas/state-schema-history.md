@@ -29,6 +29,25 @@ Doctor completes recognized schema-1 databases that predate the audit ledger bef
 | 15      | Conversation bindings use exact target keys; redundant agent/session projections removed                                                                                                                                                                                                                                        | Unreleased          |
 | 16      | Skill Workshop ownership moves from workspace/provenance columns to per-agent directory containment                                                                                                                                                                                                                             | Unreleased          |
 | 17      | Prepared worker lifecycle facts and one-use node workspace bindings                                                                                                                                                                                                                                                             | Unreleased          |
+| 18      | ACP execution selection moves to the owning agent session; backend and agent selector columns and their index are retired                                                                                                                                                                                                       | Unreleased          |
+
+### State schema 18
+
+Schema **18** removes `acp_sessions.backend`, `acp_sessions.agent`, and
+`idx_acp_sessions_agent_activity`. The selected model also leaves
+`runtime_options_json`. Handles, lifecycle state, control recovery information,
+and other runtime options remain in shared state.
+
+Doctor first commits each ACP selection in its owning agent database at
+[agent schema 22](/reference/database-schemas/agent-schema-history#session-execution-selection).
+Only after every source has a verified owning session does Doctor remove the
+shared selectors and publish schema 18 in one transaction. An interruption can
+leave some agents converted while shared sources remain; retrying Doctor
+completes this state without replacing a committed selection.
+
+Older builds refuse the new schema. Rollback restores the verified shared and
+agent backups together with the matching previous build. Native companion
+readers support schema 18 but do not perform this migration.
 
 ### State schema 17
 

@@ -37,6 +37,7 @@ import {
 import {
   AGENT_MEDIA_SCHEMA_VERSION,
   CANONICAL_SESSION_VALIDATION_SCHEMA_VERSION,
+  EXECUTION_SELECTION_SCHEMA_VERSION,
   OPENCLAW_AGENT_SCHEMA_VERSION,
   type OpenClawAgentDatabaseOptions,
 } from "./openclaw-agent-db-contract.js";
@@ -528,6 +529,7 @@ function ensureAgentSchema(
   agentId: string,
   pathname: string,
   targetVersion = OPENCLAW_AGENT_SCHEMA_VERSION,
+  migrateExecutionSelection?: (database: DatabaseSync) => void,
 ): void {
   const schemaSql =
     targetVersion < 18
@@ -564,6 +566,17 @@ function ensureAgentSchema(
         throw new Error(
           `OpenClaw agent database ${pathname} uses schema version ${previousVersion}; expected at most ${targetVersion} for this migration.`,
         );
+      }
+      if (
+        previousVersion > 0 &&
+        previousVersion < EXECUTION_SELECTION_SCHEMA_VERSION &&
+        targetVersion >= EXECUTION_SELECTION_SCHEMA_VERSION
+      ) {
+        if (!migrateExecutionSelection) {
+          throw new Error(
+            "Session execution selection requires Doctor migration before the database schema can advance.",
+          );
+        }
       }
       if (
         previousVersion === CANONICAL_SESSION_VALIDATION_SCHEMA_VERSION - 1 &&
@@ -666,6 +679,14 @@ function ensureAgentSchema(
       repairCanonicalSqliteIndexes(db, pathname, schemaSql, {
         verifyPhysicalIntegrity: false,
       });
+      if (
+        previousVersion > 0 &&
+        previousVersion < EXECUTION_SELECTION_SCHEMA_VERSION &&
+        targetVersion >= EXECUTION_SELECTION_SCHEMA_VERSION
+      ) {
+        migrateExecutionSelection!(db);
+        maintenanceAuthority.assertAgentDatabaseMaintenanceAuthority();
+      }
       db.exec(`PRAGMA user_version = ${targetVersion};`);
       persistAgentSchemaMetadata(db, agentId, targetVersion);
       assertAgentSchemaVersion(db, { agentId, pathname, version: targetVersion }, schemaSql);

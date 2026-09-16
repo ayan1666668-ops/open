@@ -1167,8 +1167,6 @@ CREATE INDEX IF NOT EXISTS idx_gateway_boot_lifecycle_started
 CREATE TABLE IF NOT EXISTS acp_sessions (
   session_key TEXT NOT NULL PRIMARY KEY,
   session_id TEXT,
-  backend TEXT NOT NULL,
-  agent TEXT NOT NULL,
   runtime_session_name TEXT NOT NULL,
   identity_json TEXT,
   mode TEXT NOT NULL,
@@ -1182,9 +1180,6 @@ CREATE TABLE IF NOT EXISTS acp_sessions (
 
 CREATE INDEX IF NOT EXISTS idx_acp_sessions_state_activity
   ON acp_sessions(state, last_activity_at DESC, session_key);
-
-CREATE INDEX IF NOT EXISTS idx_acp_sessions_agent_activity
-  ON acp_sessions(agent, last_activity_at DESC, session_key);
 
 CREATE TABLE IF NOT EXISTS acp_replay_sessions (
   session_id TEXT NOT NULL PRIMARY KEY,

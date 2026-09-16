@@ -1,3 +1,4 @@
+import type { DatabaseSync } from "node:sqlite";
 import { clearNodeSqliteKyselyCacheForDatabase } from "../infra/kysely-sync.js";
 import { openNodeSqliteDatabase } from "../infra/node-sqlite.js";
 import { setSqliteBusyTimeout } from "../infra/sqlite-busy-timeout.js";
@@ -65,6 +66,7 @@ export function repairStateSchema(
   pathname: string,
   env: NodeJS.ProcessEnv,
   scope: "automatic" | "doctor" | "readability",
+  beforeSchemaMigration?: (database: DatabaseSync) => void,
 ): {
   changes: string[];
   warnings: string[];
@@ -161,6 +163,7 @@ export function repairStateSchema(
             `Migrated shared state session watch cursors → provenance column (${sessionWatchResult.migratedAmbientWatches} ambient, ${sessionWatchResult.removedLegacySentinels} sentinels removed)`,
           );
         }
+        beforeSchemaMigration?.(db);
         assertCanonicalStateSchemaShape(db, pathname);
         // Recognized schema-1 stores predate audit; Doctor must finish their schema
         // before its later read-only workspace and agent readers can consume it.

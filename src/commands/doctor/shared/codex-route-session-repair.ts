@@ -33,7 +33,7 @@ import {
 import {
   readSessionExecutionRepairRef,
   admitAutomaticProviderlessModelRepair,
-} from "../../../model-picker/execution-selection-codec.js";
+} from "../../../model-picker/execution-selection-repair.js";
 import { repairSessionExecutionSelection } from "../../../model-picker/execution-selection-repair.js";
 import type { ModelExecutionSelection } from "../../../model-picker/execution-selection.js";
 import { parseAgentSessionKey } from "../../../routing/session-key.js";
@@ -363,9 +363,7 @@ function repairCodexSessionStoreRoutes(params: {
       entry,
       params.blockedModelIdentities,
     );
-    const executor =
-      providerless?.executor ??
-      (selected.model ? overrideModelRoute.executor : runtimeModelRoute.executor);
+    const executor = providerless?.executor ?? overrideModelRoute.executor;
     const model = providerless?.model ?? overrideModelRoute.selectionModel;
     const runtimeAliasChanged =
       selected.runtime &&

@@ -125,7 +125,10 @@ function assertOpenClawStateDatabaseFreshOpenAllowed(
 const stateDbLog = createSubsystemLogger("state/db");
 const deferredStateDatabases = new WeakSet<DatabaseSync>();
 
-export function repairOpenClawStateDatabaseSchema(options: OpenClawStateDatabaseOptions = {}): {
+export function repairOpenClawStateDatabaseSchema(
+  options: OpenClawStateDatabaseOptions = {},
+  beforeSchemaMigration?: (database: DatabaseSync) => void,
+): {
   changes: string[];
   warnings: string[];
 } {
@@ -143,7 +146,7 @@ export function repairOpenClawStateDatabaseSchema(options: OpenClawStateDatabase
     "state schema repair",
     () =>
       withStateSchemaFence({ databasePath: pathname }, () =>
-        repairStateSchema(pathname, env, "doctor"),
+        repairStateSchema(pathname, env, "doctor", beforeSchemaMigration),
       ),
   );
 }

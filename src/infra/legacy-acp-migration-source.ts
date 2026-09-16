@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
+import type { SessionAcpMeta } from "@openclaw/acp-core/types";
 import { stableStringify } from "@openclaw/normalization-core";
 import { z } from "zod";
-import type { SessionAcpMeta, SessionEntry } from "../config/sessions/types.js";
+import type { SessionEntry } from "../config/sessions/types.js";
 import {
   readLegacyMigrationReceiptFromDatabase,
   recordLegacyMigrationReceipt,

@@ -76,6 +76,14 @@ code is refused. Rollback uses the verified pre-migration backup and matching
 build, not marker changes or removal of the derived table alone. See
 [incremental canonical-session validation](/reference/database-schemas/agent-schema-history#incremental-canonical-session-validation).
 
+Agent schema 22 and shared-state schema 18 move execution selection into one
+agent-owned fact. Doctor backs up both database roles before conversion and
+commits each agent before retiring shared ACP selectors. Deferred requests
+preserve unresolved intent without admitting execution. The retired model and
+runtime fields are not readable by older builds, so rollback requires the
+matching pre-migration backups and build. See
+[session execution selection](/reference/database-schemas/agent-schema-history#session-execution-selection).
+
 Agent schema 19 records collected input consumption in the nullable
 `session_pending_inputs.consumed_event_id TEXT` column. Doctor and the feature's
 first-use ensure add it when needed; the schema version stays 19. The column

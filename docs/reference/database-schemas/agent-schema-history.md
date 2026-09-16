@@ -29,8 +29,35 @@ title: "Agent schema history"
 | 19      | Source-qualified immutable session creators; historical ambiguity remains unknown                                                                                                                                                                      | Unreleased                                      |
 | 20      | Authoritative cold transcript archives with exact restoration metadata and self-contained backup payloads                                                                                                                                              | Unreleased                                      |
 | 21      | Incremental canonical-session validation with transactional node, window, and main-key invalidation                                                                                                                                                    | Unreleased                                      |
+| 22      | One stored execution selection replaces separate model and runtime selections                                                                                                                                                                          | Unreleased                                      |
 
 Version 3 was an unshipped development step folded into version 4.
+
+### Session execution selection
+
+Agent schema **22** stores the model and its executor together in
+`session_nodes.entry_json.executionSelection`. An accepted choice includes its
+fallback permission. A deferred request preserves imported model and runtime
+intent without claiming that execution is ready. Native-managed selections
+retain the connected app's model ownership until it supplies a concrete model.
+
+Doctor removes `providerOverride`, `modelOverride`, `agentRuntimeOverride`,
+`modelOverrideSource`, `modelOverrideRouteResolution`,
+`modelOverrideFallbackOriginProvider`, and `modelOverrideFallbackOriginModel`.
+An unpinned request preserves the original model before a temporary fallback;
+the first prepared turn resolves configured policy once. Observed model output
+and harness history do not supply missing selection intent.
+
+Doctor takes verified database backups under stopped-writer maintenance.
+Each agent's conversion and schema marker commit together before the shared
+ACP source is removed. A retry keeps already committed selections and completes
+the remaining databases. Missing executor metadata leaves a deferred request;
+that request cannot run until the selection owner prepares it successfully.
+ACP model controls staged by older plugins retain the previous committed pair
+and the pending request until the backend control settles.
+
+Older builds refuse schema 22. Restore all matching pre-migration database
+backups and the previous build to roll back; do not lower schema markers.
 
 ### Incremental canonical-session validation
 
