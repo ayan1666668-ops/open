@@ -276,17 +276,25 @@ class LockTests(unittest.TestCase):
         result = self.complete(self.supervise('pr_operation_lock_process_identity "$$"', sandbox=True), 0)
         self.assertRegex(result, r'^[IRSTZ]\t[A-Z][a-z]{2} ')
 
-    @unittest.skipUnless(sys.platform == 'darwin', 'Darwin interpreter preflight')
-    def test_missing_python_fails_before_child(self):
-        # Invoke the genuine Node path; no fake interpreter or identity output.
-        # An empty PATH models a caller without the documented Python tool.
-        self.env['PATH'] = str(self.root / 'no-tools')
+    @unittest.skipUnless(sys.platform == 'darwin', 'Darwin interpreter compatibility')
+    def test_python_free_operations_require_python_only_when_ps_is_unavailable(self):
+        # Real platform tools, but no Python. The unsandboxed workflow already
+        # works on released versions; adding sandbox support must preserve it.
+        tools = self.root / 'tools'; tools.mkdir()
+        for name in ('bash', 'node', 'git', 'ps', 'awk', 'uname', 'sleep'):
+            (tools / name).symlink_to(shutil.which(name))
+        self.env['PATH'] = str(tools)
         marker = self.root / 'child-started'
-        p = self.supervise('touch "'+str(marker)+'"')
-        text = self.complete(p, 1)
-        self.assertIn('require Python 3', text)
-        self.assertFalse(marker.exists())
-        self.assertFalse(self.exists())
+        for sandbox in (False, True):
+            with self.subTest(sandbox=sandbox):
+                p = self.supervise('acquire_pr_operation_lock 42\n: > "'+str(marker)+'"', sandbox=sandbox)
+                text = self.complete(p, 1 if sandbox else 0)
+                self.assertEqual(marker.exists(), not sandbox)
+                self.assertFalse(self.exists())
+                if sandbox:
+                    self.assertIn('process identity', text)
+                else:
+                    marker.unlink()
 
     @unittest.skipUnless(sys.platform=='darwin','Darwin preflight')
     def test_missing_provider_fails_before_child_or_git_mutation(self):

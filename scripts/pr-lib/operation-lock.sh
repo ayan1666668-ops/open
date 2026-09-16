@@ -39,17 +39,18 @@ pr_operation_lock_zero_oid() {
   esac
 }
 
+pr_operation_lock_darwin_identity() {
+  [ "$(uname -s)" = Darwin ] || return 1
+  [ -n "$PR_OPERATION_DARWIN_IDENTITY_SOURCE" ] || return 1
+  python3 -I -S -B -c "$PR_OPERATION_DARWIN_IDENTITY_SOURCE" "$@"
+}
+
 pr_operation_lock_process_identity() {
-  local pid="$1"
+  local pid="$1" identity
   case "$pid" in ''|0|1|*[!0-9]*) return 1 ;; esac
-  local platform
-  platform=$(uname -s) || return 1
-  if [ "$platform" = Darwin ]; then
-    [ -n "$PR_OPERATION_DARWIN_IDENTITY_SOURCE" ] || return 1
-    python3 -I -S -B -c "$PR_OPERATION_DARWIN_IDENTITY_SOURCE" identity "$pid"
-    return $?
-  fi
-  TZ=UTC0 LC_ALL=C ps -o state= -o lstart= -p "$pid" 2>/dev/null | awk '
+  # Released macOS workflows work without Python. Keep ps when available;
+  # Seatbelt rejects Apple's setuid ps even with an allow-default profile.
+  if identity=$(TZ=UTC0 LC_ALL=C ps -o state= -o lstart= -p "$pid" 2>/dev/null | awk '
     NF {
       state = $1
       $1 = ""
@@ -58,22 +59,23 @@ pr_operation_lock_process_identity() {
       found = 1
     }
     END { exit found ? 0 : 1 }
-  '
+  '); then
+    printf '%s\n' "$identity"
+    return 0
+  fi
+  pr_operation_lock_darwin_identity identity "$pid"
 }
 
-# Use the same kernel backend for the leader check; failed queries never mint
-# completion authority. Other platforms retain their existing ps behavior.
+# The leader check uses the same ps/libproc policy. Failed queries never mint
+# completion authority; no PID/birth value is inferred from another process.
 pr_operation_lock_process_group_id() {
-  local pid="$1"
+  local pid="$1" pgid
   case "$pid" in ''|0|1|*[!0-9]*) return 1 ;; esac
-  local platform
-  platform=$(uname -s) || return 1
-  if [ "$platform" = Darwin ]; then
-    [ -n "$PR_OPERATION_DARWIN_IDENTITY_SOURCE" ] || return 1
-    python3 -I -S -B -c "$PR_OPERATION_DARWIN_IDENTITY_SOURCE" pgid "$pid"
-  else
-    ps -o pgid= -p "$pid" 2>/dev/null
+  if pgid=$(ps -o pgid= -p "$pid" 2>/dev/null) && [ -n "$pgid" ]; then
+    printf '%s\n' "$pgid"
+    return 0
   fi
+  pr_operation_lock_darwin_identity pgid "$pid"
 }
 
 pr_operation_lock_process_birth() {
