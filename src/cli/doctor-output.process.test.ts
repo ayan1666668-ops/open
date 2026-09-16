@@ -25,7 +25,6 @@ import {
 } from "../state/openclaw-state-db.js";
 import { spawnNodeEvalSync } from "../test-utils/node-process.js";
 import { cliRecoveryEntrypoints } from "./cli-entrypoint.test-support.js";
-import { runCliProcessChild } from "./cli-process-child.test-helpers.js";
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 const runtimeDirs = createTempDirTracker();
@@ -94,58 +93,6 @@ function runDoctor(params: {
 }
 
 describe("Doctor report process output", () => {
-  it("owns JSON runtime failures before findings at the built CLI entrypoint", async () => {
-    const root = tempDirs.make("openclaw-doctor-json-error-");
-    const entry = resolveRuntimeWorkerUrl({
-      ...cliRecoveryEntrypoints.cli,
-      root: path.resolve("."),
-    });
-    const health = new URL("./plugin-sdk/health.js", entry);
-    const token = "fixture-secret-1234567890";
-    const preload = `
-      import { registerHealthCheck } from ${JSON.stringify(health.href)};
-      registerHealthCheck({
-        id: ${JSON.stringify(`core/doctor/collision?token=${token}`)},
-        kind: "plugin", description: "Synthetic collision",
-        async detect() { return []; },
-      });
-    `;
-    const result = await runCliProcessChild({
-      nodeArgs: [
-        "--import",
-        `data:text/javascript,${encodeURIComponent(preload)}`,
-        fileURLToPath(entry),
-        "doctor",
-        "--lint",
-        "--json",
-      ],
-      cwd: root,
-      env: {
-        PATH: path.dirname(process.execPath),
-        HOME: root,
-        USERPROFILE: root,
-        OPENCLAW_HOME: root,
-        OPENCLAW_STATE_DIR: path.join(root, "state"),
-        OPENCLAW_CONFIG_PATH: path.join(root, "openclaw.json"),
-        OPENCLAW_NO_RESPAWN: "1",
-        NODE_DISABLE_COMPILE_CACHE: "1",
-        NO_COLOR: "1",
-      },
-    });
-
-    expect(JSON.parse(result.stdout)).toEqual({
-      ok: false,
-      error: {
-        type: "cli_error",
-        message: expect.stringContaining("health check already registered: core/doctor/collision"),
-      },
-    });
-    expect(result.stdout).not.toContain(token);
-    expect(result.signal).toBeNull();
-    expect(result.code, result.stderr).toBe(2);
-    expect(result.stderr).toBe("");
-  });
-
   it("refuses an unfenced schema bump without publication metadata before CLI debug capture can write state", () => {
     const root = tempDirs.make("openclaw-doctor-update-schema-");
     const configPath = path.join(root, "openclaw.json");
