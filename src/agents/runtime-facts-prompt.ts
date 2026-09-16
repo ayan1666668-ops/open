@@ -16,6 +16,8 @@ import { buildActiveSubagentRuntimeContext } from "./subagents/registry/subagent
 
 type RuntimeFactsParams = {
   capabilityToolNames: ReadonlySet<string>;
+  /** Explicit process-tool scope override resolved once for the owning attempt. */
+  scopeKey?: string;
   sessionKey?: string;
   sessionId?: string;
   agentId: string;
