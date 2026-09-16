@@ -6,14 +6,44 @@ import { chunkMarkdownTextWithMode, type ChunkMode } from "openclaw/plugin-sdk/r
 import type { MentionTarget } from "./mention-target.types.js";
 
 /**
- * A fenced block spends four characters on its opening marker and newline and
- * four more closing the pair, so a chunk limit below nine cannot carry a balanced
- * fence around even one character of content. Converting a table to a fence under
- * such a limit leaves an opening marker with nothing closing it and a close with
- * nothing opening it, which renders worse than the table it replaced.
+ * The conversion puts a marker on its own line behind the table's source prefix, which
+ * the IR restricts to spaces, tabs and quote markers. Matching only those keeps an inline
+ * backtick run in ordinary prose from reading as a marker and suppressing a safe table.
  */
-export function chunkLimitHoldsFence(limit: number): boolean {
-  return limit >= 9;
+const FEISHU_TABLE_FENCE_LINE = /^[ \t>]*(`{3,})[ \t]*$/u;
+
+/**
+ * A chunk that opens a fence nothing closes renders worse than the table it replaced, so
+ * the conversion only runs when every chunk closes what it opened. A run shorter than the
+ * one that opened the block is body text, which is how a cell carrying its own backticks
+ * survives inside the longer marker the conversion gave it.
+ */
+function fencesBalance(chunk: string): boolean {
+  let openMarkerLength = 0;
+  for (const line of chunk.split("\n")) {
+    const marker = FEISHU_TABLE_FENCE_LINE.exec(line)?.[1];
+    if (!marker) {
+      continue;
+    }
+    if (openMarkerLength === 0) {
+      openMarkerLength = marker.length;
+    } else if (marker.length >= openMarkerLength) {
+      openMarkerLength = 0;
+    }
+  }
+  return openMarkerLength === 0;
+}
+
+/**
+ * `code` mode wraps each table in a fence, and the chunker closes and reopens that fence
+ * at every boundary it cuts. It cannot do that for every shape. A cell's backticks
+ * lengthen the marker, an indent widens the line the chunker has to fit twice, and a
+ * quote prefix hides the marker from the fence scanner entirely, which no limit repairs.
+ * Rather than model that budget, cut the converted text the way the send will and ask
+ * whether the pieces balance.
+ */
+export function chunkedFencesBalance(converted: string, limit: number, mode: ChunkMode): boolean {
+  return chunkMarkdownTextWithMode(converted, limit, mode).every(fencesBalance);
 }
 
 export type FeishuMarkdownNode = {

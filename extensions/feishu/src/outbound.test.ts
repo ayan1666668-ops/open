@@ -229,6 +229,26 @@ const nonTableShapes = [
     text: "| Name | Role |\n\n| --- | --- |\n| Ada | Lead |",
   },
 ] as const;
+/**
+ * A chunk that opens a fence nothing closes is the defect these cases guard against. A
+ * run shorter than the one that opened the block is body text, not a close.
+ */
+function fencesBalanceInChunk(chunk: string): boolean {
+  let openMarkerLength = 0;
+  for (const line of chunk.split("\n")) {
+    const marker = /^[ \t>]*(`{3,})[ \t]*$/u.exec(line)?.[1];
+    if (!marker) {
+      continue;
+    }
+    if (openMarkerLength === 0) {
+      openMarkerLength = marker.length;
+    } else if (marker.length >= openMarkerLength) {
+      openMarkerLength = 0;
+    }
+  }
+  return openMarkerLength === 0;
+}
+
 const fencedTableSample = "```\n| Name | Role |\n| --- | --- |\n| Ada | Lead |\n```";
 const fencedCodeSample = "```js\nconst value = 1;\n```";
 // Root credentials make the implicit default account configured, so a send
@@ -2987,6 +3007,44 @@ describe("feishuOutbound.sendText replyToId forwarding", () => {
     }
     expect(contents.join("")).toContain("Ada");
     expect(contents.join("")).toContain("Lead");
+  });
+
+  // A cell holding a backtick run the parser cannot pair keeps those characters as text,
+  // and the conversion then lengthens the marker to clear them. Ten characters carry the
+  // three-character pair this branch used to assume and not the four this table
+  // produces, so the table is left as it arrived.
+  it("leaves a comment table unconverted when a cell lengthens the fence", async () => {
+    const backtickedTable = "| Name | Role |\n| --- | --- |\n| Ada | ``` |";
+    await sendText({
+      cfg: {
+        channels: {
+          feishu: {
+            accounts: {
+              main: { textChunkLimit: 10, markdown: { tables: "code" } },
+            },
+          },
+        },
+      },
+      to: "comment:docx:doxcn123:7623358762119646411",
+      text: backtickedTable,
+      accountId: "main",
+    });
+
+    const contents = deliverCommentThreadTextMock.mock.calls.map((_call, index) =>
+      String(commentThreadParams(index)?.content ?? ""),
+    );
+    const joined = contents.join("");
+    // The case only means anything while the conversion would have grown the marker
+    // past the pair a ten-character limit can carry.
+    expect(convertMarkdownTables(backtickedTable, "code")).toContain("````");
+    // No comment opens a block another has to close.
+    for (const content of contents) {
+      expect(fencesBalanceInChunk(content)).toBe(true);
+      expect(content.length).toBeLessThanOrEqual(10);
+    }
+    for (const cell of ["Name", "Role", "Ada", "```"]) {
+      expect(joined).toContain(cell);
+    }
   });
 
   it("chunks a converted comment at the account the request resolves to", async () => {

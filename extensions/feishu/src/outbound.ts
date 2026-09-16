@@ -38,7 +38,7 @@ import { resolveFeishuIdentityHeaderTitle } from "./identity-header.js";
 import {
   chunkFeishuMarkdown,
   chunkFeishuPostMarkdown,
-  chunkLimitHoldsFence,
+  chunkedFencesBalance,
   materializeFeishuPostMarkdownSoftBreaks,
 } from "./markdown.js";
 import { buildFeishuMediaFallbackText } from "./media-fallback.js";
@@ -260,22 +260,24 @@ async function sendCommentThreadReply(params: {
   const commentLimit = resolveTextChunkLimit(params.cfg, "feishu", account.accountId, {
     fallbackLimit: FEISHU_TEXT_CHUNK_LIMIT,
   });
-  // A limit too small to hold a balanced fence would turn the conversion into an
+  const commentChunkMode = resolveChunkMode(params.cfg, "feishu", account.accountId);
+  const requestedContent = convertMarkdownTables(params.text, requestedTableMode);
+  // Comments this text cannot be cut into without stranding a fence would arrive as an
   // unterminated code block, so the table is left as it arrived instead.
   const tableMode =
-    requestedTableMode === "code" && !chunkLimitHoldsFence(commentLimit)
+    requestedTableMode === "code" &&
+    !chunkedFencesBalance(requestedContent, commentLimit, commentChunkMode)
       ? "off"
       : requestedTableMode;
-  const content = convertMarkdownTables(params.text, tableMode);
+  const content =
+    tableMode === requestedTableMode
+      ? requestedContent
+      : convertMarkdownTables(params.text, tableMode);
   // Core chunks raw text before channel rendering, so the conversion above can push
   // a unit past the limit it was cut to. Re-chunk after the expansion, the way the
   // post path below and the inbound comment dispatcher already do, so a fence is
   // closed and reopened rather than cut in half.
-  const chunks = chunkMarkdownTextWithMode(
-    content,
-    commentLimit,
-    resolveChunkMode(params.cfg, "feishu", account.accountId),
-  );
+  const chunks = chunkMarkdownTextWithMode(content, commentLimit, commentChunkMode);
   const replyId = params.replyId?.trim();
   try {
     const results: Awaited<ReturnType<typeof deliverCommentThreadText>>[] = [];

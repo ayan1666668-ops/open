@@ -63,6 +63,26 @@ async function raceWithNextMacrotask<T>(promise: Promise<T>): Promise<T | "pendi
   ]);
 }
 
+/**
+ * A chunk that opens a fence nothing closes is the defect these cases guard against. A
+ * run shorter than the one that opened the block is body text, not a close.
+ */
+function fencesBalanceInChunk(chunk: string): boolean {
+  let openMarkerLength = 0;
+  for (const line of chunk.split("\n")) {
+    const marker = /^[ \t>]*(`{3,})[ \t]*$/u.exec(line)?.[1];
+    if (!marker) {
+      continue;
+    }
+    if (openMarkerLength === 0) {
+      openMarkerLength = marker.length;
+    } else if (marker.length >= openMarkerLength) {
+      openMarkerLength = 0;
+    }
+  }
+  return openMarkerLength === 0;
+}
+
 describe("createFeishuCommentReplyDispatcher", () => {
   afterAll(() => {
     vi.doUnmock("./accounts.js");
@@ -494,12 +514,12 @@ describe("createFeishuCommentReplyDispatcher", () => {
 
     // A converted table is one fenced block, so the chunker that splits it has to
     // close and reopen the fence instead of cutting the block in half. This covers an
-    // ordinary table at a workable limit, in both real chunk modes. A limit too small to
-    // hold a marker pair, or a marker grown long by backticks inside a cell, still falls
-    // back to a raw boundary in the core chunker and is not repaired here.
-    // Below nine characters a fence cannot balance, so converting would leave the
-    // first comment opening a code block nothing closes and the last closing one
-    // nothing opened. The table is left as it arrived instead.
+    // ordinary table at a workable limit, in both real chunk modes.
+    // A limit that cannot carry the marker pair around one character of content would
+    // leave the first comment opening a code block nothing closes and the last closing
+    // one nothing opened. The table is left as it arrived instead. Nine characters is
+    // that floor only for the shortest pair, so the guard reads the marker the
+    // conversion produced.
     it("leaves a comment table unconverted when the limit cannot hold a fence", async () => {
       const chunking = await vi.importActual<typeof import("openclaw/plugin-sdk/reply-chunking")>(
         "openclaw/plugin-sdk/reply-chunking",
@@ -535,6 +555,64 @@ describe("createFeishuCommentReplyDispatcher", () => {
       }
       for (const content of contents) {
         expect(content.length).toBeLessThanOrEqual(8);
+      }
+    });
+
+    // Three shapes the chunker cannot cut without stranding a fence. A cell holding a
+    // backtick run the parser cannot pair keeps those characters as text and lengthens
+    // the marker. An indent widens the line the chunker has to fit at both ends. A quote
+    // prefix hides the marker from the fence scanner, which no limit repairs, so only a
+    // text short enough to never be cut is safe there. In each case the table is left as
+    // authored. The leading line matters: the send trims the text, and a trim on the
+    // table's own first line would take the indent with it.
+    it.each([
+      { shape: "a cell lengthens the marker", prefix: "", limit: 10 },
+      { shape: "an indent widens the marker line", prefix: " ", limit: 11 },
+      { shape: "a quote prefix hides the marker", prefix: "> ", limit: 40 },
+    ])("leaves a comment table unconverted when $shape", async ({ prefix, limit }) => {
+      const chunking = await vi.importActual<typeof import("openclaw/plugin-sdk/reply-chunking")>(
+        "openclaw/plugin-sdk/reply-chunking",
+      );
+      const runtime = getFeishuRuntimeMock();
+      getFeishuRuntimeMock.mockReturnValue({
+        ...runtime,
+        channel: {
+          ...runtime.channel,
+          text: {
+            ...runtime.channel.text,
+            resolveTextChunkLimit: vi.fn(() => limit),
+            resolveChunkMode: vi.fn(() => "length"),
+            chunkTextWithMode: chunking.chunkTextWithMode,
+            chunkMarkdownTextWithMode: chunking.chunkMarkdownTextWithMode,
+          },
+        },
+      });
+      const created = createTestCommentReplyDispatcher();
+      const authored = [
+        "Roster",
+        "",
+        ...["| Name | Role |", "| --- | --- |", "| Ada | ``` |"].map((line) => `${prefix}${line}`),
+      ].join("\n");
+      // Guard the fixture: the shape only means anything while the conversion still
+      // produces a marker for this prefix.
+      expect(actual.convertMarkdownTables(authored, "code")).toContain(`${prefix}\`\`\`\``);
+
+      await replyDispatcherOptions(created).deliver({ text: authored }, { kind: "final" });
+
+      const contents = deliverCommentThreadTextMock.mock.calls.map(
+        (call) => call[1].content as string,
+      );
+      // No comment opens a block another has to close. Converting any of these shapes at
+      // its limit strands two markers instead.
+      for (const content of contents) {
+        expect(fencesBalanceInChunk(content)).toBe(true);
+        expect(content.length).toBeLessThanOrEqual(limit);
+      }
+      // The chunker trims at the boundaries it cuts on, so the joined text is not the
+      // authored string, but nothing is dropped.
+      const joined = contents.join("");
+      for (const cell of ["Name", "Role", "Ada", "```"]) {
+        expect(joined).toContain(cell);
       }
     });
 
