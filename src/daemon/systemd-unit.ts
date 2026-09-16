@@ -50,19 +50,6 @@ function systemdEscapeScalarPath(value: string): string {
 }
 
 /**
- * EnvironmentFile entries are space-separated and quote-aware (unlike
- * WorkingDirectory, systemd accepts quotes here). Keep quoting for values with
- * whitespace, escape quotes/backslashes for the quoted form, and double %.
- */
-function systemdEscapeEnvironmentFilePath(value: string): string {
-  const escaped = systemdEscapeScalarPath(value);
-  if (!/[\s"\\]/.test(escaped)) {
-    return escaped;
-  }
-  return `"${escaped.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
-}
-
-/**
  * Re-renders a key/value pair parsed back from an existing unit line. The value
  * is already in serialized form (%% encoded, intentional %h intact), so % must
  * be preserved verbatim — re-escaping would corrupt preserved settings during
@@ -97,7 +84,13 @@ function renderEnvironmentFileLines(environmentFiles: string[] | undefined): str
   }
   return normalizeStringEntries(environmentFiles).map((entry) => {
     assertNoSystemdLineBreaks(entry, "Systemd EnvironmentFile values");
-    return `EnvironmentFile=-${systemdEscapeEnvironmentFilePath(entry)}`;
+    const scalar = systemdEscapeScalarPath(entry);
+    if (/\s/.test(scalar)) {
+      throw new Error(
+        "Systemd EnvironmentFile entries cannot contain whitespace: entries are space-separated and systemd does not strip quotes from the path",
+      );
+    }
+    return `EnvironmentFile=-${scalar}`;
   });
 }
 
