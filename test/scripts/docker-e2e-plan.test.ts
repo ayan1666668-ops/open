@@ -49,6 +49,18 @@ function writeFrozenScenarioContract(targetRoot: string, scenarios: string[]): s
   return assertionsFile;
 }
 
+function copyCurrentScenarioMetadata(targetRoot: string) {
+  const paths = [
+    "scripts/e2e/lib/upgrade-survivor/assertions.mjs",
+    "scripts/lib/upgrade-survivor-policy.mjs",
+  ];
+  for (const relative of paths) {
+    mkdirSync(dirname(join(targetRoot, relative)), { recursive: true });
+    copyFileSync(relative, join(targetRoot, relative));
+  }
+  return { assertionsFile: join(targetRoot, paths[0]!), policyFile: join(targetRoot, paths[1]!) };
+}
+
 function planFor(
   overrides: Partial<Parameters<typeof resolveDockerE2ePlan>[0]> = {},
 ): ReturnType<typeof resolveDockerE2ePlan>["plan"] {
@@ -174,9 +186,7 @@ describe("scripts/lib/docker-e2e-plan", () => {
     "admits the current frozen catalog for %s",
     (scenario) => {
       const root = tempDirs.make("openclaw-current-inert-catalog-");
-      const relative = "scripts/e2e/lib/upgrade-survivor/assertions.mjs";
-      mkdirSync(dirname(join(root, relative)), { recursive: true });
-      copyFileSync(relative, join(root, relative));
+      copyCurrentScenarioMetadata(root);
       copyFileSync("package.json", join(root, "package.json"));
       const { sha } = commitTarget(root);
       const baseline = scenario === "missing-configured-plugin-migration" ? "2026.9.2" : "2026.9.4";
@@ -193,6 +203,111 @@ describe("scripts/lib/docker-e2e-plan", () => {
       expect(plan.omittedUnsupportedLanes).toEqual([]);
     },
   );
+
+  it.each(["committed", "unapproved checkout"])(
+    "reads the imported literal catalog without executing its %s modules",
+    (mode) => {
+      const root = tempDirs.make("openclaw-imported-inert-catalog-");
+      const { assertionsFile, policyFile } = copyCurrentScenarioMetadata(root);
+      const marker = join(root, "executed");
+      const markerCode = `\nimport { writeFileSync as markExecuted } from "node:fs"; markExecuted(${JSON.stringify(marker)}, "executed");\n`;
+      for (const file of [assertionsFile, policyFile]) {
+        writeFileSync(file, readFileSync(file, "utf8") + markerCode);
+      }
+      const { sha } = commitTarget(root);
+      const source = createFrozenTargetSource(root, sha);
+      if (mode === "committed") {
+        writeFileSync(policyFile, 'throw new Error("uncommitted policy must not be read");\n');
+      }
+      const plan = planFor({
+        selectedLaneNames: ["published-upgrade-survivor"],
+        upgradeSurvivorBaselines: "2026.9.4",
+        upgradeSurvivorScenarios: "msteams-polls",
+        upgradeSurvivorTargetRoot: root,
+        allowFrozenTargetScenarioOmissions: false,
+        ...(mode === "committed" ? { frozenTarget: { mode: "inert" as const, source } } : {}),
+      });
+      expect(plan.lanes.map((lane) => lane.name)).toEqual([
+        "published-upgrade-survivor-2026.9.4-msteams-polls",
+      ]);
+      expect(existsSync(marker)).toBe(false);
+    },
+  );
+
+  it.each([
+    "missing policy",
+    "dynamic policy",
+    "spread policy",
+    "duplicate entry",
+    "different import",
+    "different legacy member",
+    "dynamic assertion list",
+    "shadowed Object import",
+    "shadowed Set declaration",
+    "destructured Object binding",
+    "rebound Object.freeze",
+    "rebound global Set",
+    "mutated assertion set",
+    "mutated policy list",
+    "computed assertion call",
+    "assigned policy entry",
+  ])("rejects unsupported imported metadata: %s", (shape) => {
+    const root = tempDirs.make("openclaw-unsupported-inert-catalog-");
+    const { assertionsFile, policyFile } = copyCurrentScenarioMetadata(root);
+    let assertions = readFileSync(assertionsFile, "utf8");
+    let policy = readFileSync(policyFile, "utf8");
+    if (shape === "mutated assertion set") {
+      assertions += '\nSCENARIOS.add("unexpected");\n';
+    } else if (shape === "mutated policy list") {
+      policy += '\nUPGRADE_SURVIVOR_SCENARIOS.push("unexpected");\n';
+    } else if (shape === "computed assertion call") {
+      assertions += '\nSCENARIOS[operation]("base");\n';
+    } else if (shape === "assigned policy entry") {
+      policy += '\nUPGRADE_SURVIVOR_SCENARIOS[0] = "base";\n';
+    } else if (shape === "shadowed Object import") {
+      policy = 'import Object from "./unread.mjs";\n' + policy;
+    } else if (shape === "shadowed Set declaration") {
+      assertions = "const Set = globalThis.Set;\n" + assertions;
+    } else if (shape === "destructured Object binding") {
+      policy = "const { Object } = globalThis;\n" + policy;
+    } else if (shape === "rebound Object.freeze") {
+      policy += "\nObject.freeze = Object.freeze;\n";
+    } else if (shape === "rebound global Set") {
+      assertions += "\nglobalThis.Set = globalThis.Set;\n";
+    } else if (shape === "dynamic policy") {
+      policy = policy
+        .replace("Object.freeze([", "Object.freeze(loadCatalog([")
+        .replace("]);", "]));");
+    } else if (shape === "spread policy") {
+      policy = policy.replace("Object.freeze([", "Object.freeze([...otherScenarios,");
+    } else if (shape === "duplicate entry") {
+      policy = policy.replace("Object.freeze([", 'Object.freeze(["base",');
+    } else if (shape === "different import") {
+      assertions = assertions.replace(
+        "../../../lib/upgrade-survivor-policy.mjs",
+        "./other-policy.mjs",
+      );
+    } else if (shape === "different legacy member") {
+      assertions = assertions.replace('"codex-allowlist-survival",', '"unreviewed-legacy-member",');
+    } else if (shape === "dynamic assertion list") {
+      assertions = assertions.replace("...UPGRADE_SURVIVOR_SCENARIOS,", "...loadCatalog(),");
+    }
+    writeFileSync(assertionsFile, assertions);
+    writeFileSync(policyFile, policy);
+    if (shape === "missing policy") {
+      rmSync(policyFile);
+    }
+    const { sha } = commitTarget(root);
+    expect(() =>
+      planFor({
+        selectedLaneNames: ["published-upgrade-survivor"],
+        upgradeSurvivorBaselines: "2026.9.4",
+        upgradeSurvivorScenarios: "base",
+        upgradeSurvivorTargetRoot: root,
+        frozenTarget: { mode: "inert", source: createFrozenTargetSource(root, sha) },
+      }),
+    ).toThrow(/inert scenario catalog/);
+  });
 
   it("keeps admission inert even when frozen omissions authorize executable legacy planning", () => {
     const root = tempDirs.make("openclaw-inert-catalog-");
@@ -1456,7 +1571,7 @@ await import('./scripts/check-docker-e2e-boundaries.mts');`,
     ).toContain(name);
   });
 
-  it.each(["projects-doctor", "taskflow-restoration"])(
+  it.each(["projects-doctor", "projects-startup-migration", "taskflow-restoration"])(
     "plans %s only for its exact published writer without registry or credential fixtures",
     (scenario) => {
       const plan = planFor({
@@ -1617,11 +1732,13 @@ await import('./scripts/check-docker-e2e-boundaries.mts');`,
       ].join("\n"),
     );
 
+    const { sha } = commitTarget(targetRoot);
     const plan = planFor({
       selectedLaneNames: ["published-upgrade-survivor"],
       upgradeSurvivorBaselines: "2026.6.11",
       upgradeSurvivorScenarios: "reported-issues",
       upgradeSurvivorTargetRoot: targetRoot,
+      frozenTarget: { mode: "inert", source: createFrozenTargetSource(targetRoot, sha) },
     });
 
     expect(plan.omittedUnsupportedLanes).toEqual([

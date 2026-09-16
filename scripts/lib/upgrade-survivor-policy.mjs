@@ -1,4 +1,4 @@
-const UPGRADE_SURVIVOR_SCENARIOS = Object.freeze([
+export const UPGRADE_SURVIVOR_SCENARIOS = Object.freeze([
   "base",
   "msteams-polls",
   "abandoned-update",
@@ -14,6 +14,7 @@ const UPGRADE_SURVIVOR_SCENARIOS = Object.freeze([
   "missing-configured-plugin-migration",
   "custom-plugin-siblings",
   "projects-doctor",
+  "projects-startup-migration",
   "taskflow-restoration",
   "stale-source-plugin-shadow",
   "prerelease-plugin-registry",
@@ -46,6 +47,7 @@ const TRUSTED_HARNESS_OWNED_SCENARIOS = new Set([
   "mobile-pairing-reconnect",
   "abandoned-update",
   "projects-doctor",
+  "projects-startup-migration",
   "taskflow-restoration",
   "workshop-doctor-recovery",
 ]);
@@ -65,6 +67,7 @@ const aggregateScenarios = UPGRADE_SURVIVOR_SCENARIOS.filter(
     scenario !== "abandoned-update" &&
     scenario !== "missing-configured-plugin-migration" &&
     scenario !== "projects-doctor" &&
+    scenario !== "projects-startup-migration" &&
     scenario !== "taskflow-restoration" &&
     scenario !== "workshop-doctor-recovery" &&
     scenario !== "mobile-pairing-reconnect" &&
@@ -162,7 +165,11 @@ function comparePublishedReleaseVersion(a, b) {
 
 export function supportsUpgradeSurvivorScenarioAtBaseline(scenario, baselineSpec) {
   const version = parsePublishedReleaseVersion(baselineSpec);
-  if (scenario === "projects-doctor" || scenario === "taskflow-restoration") {
+  if (
+    scenario === "projects-doctor" ||
+    scenario === "projects-startup-migration" ||
+    scenario === "taskflow-restoration"
+  ) {
     return baselineSpec === "openclaw@2026.9.4";
   }
   if (scenario === "abandoned-update" || scenario === "missing-configured-plugin-migration") {

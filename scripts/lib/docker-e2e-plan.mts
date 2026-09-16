@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { parse, type Expression, type Program } from "acorn";
 import { resolveUpgradeSurvivorConfigStepsForBaseline } from "../e2e/lib/upgrade-survivor/config-recipe.mts";
 import {
   BUNDLED_PLUGIN_INSTALL_UNINSTALL_SHARDS,
@@ -131,7 +132,7 @@ function sanitizeLaneNameSuffix(value: string): string {
 const UPGRADE_SURVIVOR_RUNTIME_COMPANION_PACKAGES = ["@openclaw/codex"];
 
 // Pre-protocol catalogs are content-addressed. Unknown legacy blocks fail
-// closed instead of requiring a dependency or reimplementing a JavaScript parser.
+// closed; current imported declarations are inspected separately without execution.
 const LEGACY_UPGRADE_SURVIVOR_SCENARIO_CATALOGS = new Map([
   [
     "f2549a057028829ff5286db89d357e5b3d4ec1f5cdb3ca07672b7e34a739b60a",
@@ -242,13 +243,273 @@ function readLegacyFrozenScenarioContract(source: string): string[] | undefined 
   return LEGACY_UPGRADE_SURVIVOR_SCENARIO_CATALOGS.get(digest)?.split(" ");
 }
 
+const UPGRADE_SURVIVOR_POLICY_PATH = "scripts/lib/upgrade-survivor-policy.mjs";
+
+function readScenarioConst(program: Program, name: string, exported: boolean) {
+  const values: Expression[] = [];
+  for (const statement of program.body) {
+    const declaration = exported
+      ? statement.type === "ExportNamedDeclaration"
+        ? statement.declaration
+        : undefined
+      : statement;
+    if (declaration?.type !== "VariableDeclaration" || declaration.kind !== "const") {
+      continue;
+    }
+    for (const binding of declaration.declarations) {
+      if (binding.id.type === "Identifier" && binding.id.name === name && binding.init) {
+        values.push(binding.init);
+      }
+    }
+  }
+  return values.length === 1 ? values[0] : undefined;
+}
+
+function hasScenarioGlobalMutation(program: Program): boolean {
+  const protectedName = (name: unknown) => name === "Object" || name === "Set";
+  const protectedBinding = (node: unknown): boolean => {
+    if (Array.isArray(node)) {
+      return node.some(protectedBinding);
+    }
+    if (!node || typeof node !== "object") {
+      return false;
+    }
+    if ("type" in node && node.type === "Identifier" && "name" in node) {
+      return protectedName(node.name);
+    }
+    return Object.values(node).some(protectedBinding);
+  };
+  const protectedTarget = (node: unknown): boolean => {
+    if (!node || typeof node !== "object" || !("type" in node)) {
+      return false;
+    }
+    if (node.type === "Identifier" && "name" in node) {
+      return (
+        protectedName(node.name) ||
+        node.name === "globalThis" ||
+        node.name === "global" ||
+        node.name === "SCENARIOS" ||
+        node.name === "UPGRADE_SURVIVOR_SCENARIOS"
+      );
+    }
+    return node.type === "MemberExpression" && "object" in node && protectedTarget(node.object);
+  };
+  // Recognize only the canonical declarations and read methods, without interpreting control flow.
+  const visit = (node: unknown): boolean => {
+    if (Array.isArray(node)) {
+      return node.some(visit);
+    }
+    if (!node || typeof node !== "object") {
+      return false;
+    }
+    if ("type" in node) {
+      if (node.type === "CallExpression" && "callee" in node) {
+        const callee = node.callee;
+        if (
+          callee &&
+          typeof callee === "object" &&
+          "type" in callee &&
+          callee.type === "MemberExpression" &&
+          "object" in callee &&
+          "property" in callee
+        ) {
+          const receiver = callee.object;
+          if (
+            receiver &&
+            typeof receiver === "object" &&
+            "type" in receiver &&
+            receiver.type === "Identifier" &&
+            "name" in receiver &&
+            (receiver.name === "SCENARIOS" || receiver.name === "UPGRADE_SURVIVOR_SCENARIOS")
+          ) {
+            const method = callee.property;
+            const reads = receiver.name === "SCENARIOS" ? ["has"] : ["filter", "includes", "join"];
+            if (
+              !("computed" in callee) ||
+              callee.computed ||
+              !method ||
+              typeof method !== "object" ||
+              !("type" in method) ||
+              method.type !== "Identifier" ||
+              !("name" in method) ||
+              typeof method.name !== "string" ||
+              !reads.includes(method.name)
+            ) {
+              return true;
+            }
+          }
+        }
+      }
+      if (
+        (node.type === "VariableDeclarator" ||
+          node.type === "FunctionDeclaration" ||
+          node.type === "FunctionExpression" ||
+          node.type === "ClassDeclaration" ||
+          node.type === "ClassExpression") &&
+        "id" in node &&
+        protectedBinding(node.id)
+      ) {
+        return true;
+      }
+      if (
+        (node.type === "ImportSpecifier" ||
+          node.type === "ImportDefaultSpecifier" ||
+          node.type === "ImportNamespaceSpecifier") &&
+        "local" in node &&
+        protectedBinding(node.local)
+      ) {
+        return true;
+      }
+      if ("params" in node && protectedBinding(node.params)) {
+        return true;
+      }
+      if (node.type === "CatchClause" && "param" in node && protectedBinding(node.param)) {
+        return true;
+      }
+      if (
+        (node.type === "AssignmentExpression" ||
+          node.type === "ForInStatement" ||
+          node.type === "ForOfStatement") &&
+        "left" in node &&
+        (protectedTarget(node.left) || protectedBinding(node.left))
+      ) {
+        return true;
+      }
+      if (
+        (node.type === "UpdateExpression" ||
+          (node.type === "UnaryExpression" && "operator" in node && node.operator === "delete")) &&
+        "argument" in node &&
+        protectedTarget(node.argument)
+      ) {
+        return true;
+      }
+    }
+    return Object.values(node).some(visit);
+  };
+  return visit(program);
+}
+
+function readImportedFrozenScenarioContract(
+  source: string,
+  policySource: string,
+): string[] | undefined {
+  let assertions: Program;
+  let policy: Program;
+  try {
+    assertions = parse(source, { ecmaVersion: "latest", sourceType: "module" });
+    policy = parse(policySource, { ecmaVersion: "latest", sourceType: "module" });
+  } catch {
+    return undefined;
+  }
+  if (hasScenarioGlobalMutation(assertions) || hasScenarioGlobalMutation(policy)) {
+    return undefined;
+  }
+  const imports = assertions.body.filter(
+    (statement) =>
+      statement.type === "ImportDeclaration" &&
+      statement.source.value === "../../../lib/upgrade-survivor-policy.mjs",
+  );
+  const imported = imports[0];
+  if (
+    imports.length !== 1 ||
+    imported?.type !== "ImportDeclaration" ||
+    imported.specifiers.length !== 1 ||
+    imported.attributes.length !== 0
+  ) {
+    return undefined;
+  }
+  const specifier = imported.specifiers[0];
+  if (
+    specifier?.type !== "ImportSpecifier" ||
+    specifier.imported.type !== "Identifier" ||
+    specifier.imported.name !== "UPGRADE_SURVIVOR_SCENARIOS" ||
+    specifier.local.name !== "UPGRADE_SURVIVOR_SCENARIOS"
+  ) {
+    return undefined;
+  }
+  const assertionSet = readScenarioConst(assertions, "SCENARIOS", false);
+  if (
+    assertionSet?.type !== "NewExpression" ||
+    assertionSet.callee.type !== "Identifier" ||
+    assertionSet.callee.name !== "Set" ||
+    assertionSet.arguments.length !== 1
+  ) {
+    return undefined;
+  }
+  const assertionList = assertionSet.arguments[0];
+  if (assertionList?.type !== "ArrayExpression" || assertionList.elements.length !== 2) {
+    return undefined;
+  }
+  const [spread, legacy] = assertionList.elements;
+  if (
+    spread?.type !== "SpreadElement" ||
+    spread.argument.type !== "Identifier" ||
+    spread.argument.name !== "UPGRADE_SURVIVOR_SCENARIOS" ||
+    legacy?.type !== "Literal" ||
+    legacy.value !== "codex-allowlist-survival"
+  ) {
+    return undefined;
+  }
+  const frozen = readScenarioConst(policy, "UPGRADE_SURVIVOR_SCENARIOS", true);
+  if (
+    frozen?.type !== "CallExpression" ||
+    frozen.optional ||
+    frozen.arguments.length !== 1 ||
+    frozen.callee.type !== "MemberExpression" ||
+    frozen.callee.computed ||
+    frozen.callee.optional ||
+    frozen.callee.object.type !== "Identifier" ||
+    frozen.callee.object.name !== "Object" ||
+    frozen.callee.property.type !== "Identifier" ||
+    frozen.callee.property.name !== "freeze"
+  ) {
+    return undefined;
+  }
+  const literalList = frozen.arguments[0];
+  if (literalList?.type !== "ArrayExpression" || literalList.elements.length === 0) {
+    return undefined;
+  }
+  const scenarios: string[] = [];
+  for (const entry of literalList.elements) {
+    if (
+      entry?.type !== "Literal" ||
+      typeof entry.value !== "string" ||
+      !/^[a-z0-9][a-z0-9-]*$/u.test(entry.value) ||
+      scenarios.includes(entry.value)
+    ) {
+      return undefined;
+    }
+    scenarios.push(entry.value);
+  }
+  if (scenarios.includes(legacy.value)) {
+    return undefined;
+  }
+  return [...scenarios, legacy.value];
+}
+
+function readInertFrozenScenarioContract(
+  source: string,
+  targetRoot: string | undefined,
+  frozenTarget?: InertTargetContract,
+): string[] | undefined {
+  const legacy = readLegacyFrozenScenarioContract(source);
+  if (legacy) {
+    return legacy;
+  }
+  const policy = readTargetMetadata(targetRoot, UPGRADE_SURVIVOR_POLICY_PATH, frozenTarget);
+  return policy === null ? undefined : readImportedFrozenScenarioContract(source, policy);
+}
+
 function readFrozenScenarioContract(
   assertionsFile: string,
   targetRoot: string,
   allowExecutableContract: boolean,
 ): string[] {
   if (!allowExecutableContract) {
-    const inertScenarios = readLegacyFrozenScenarioContract(readFileSync(assertionsFile, "utf8"));
+    const inertScenarios = readInertFrozenScenarioContract(
+      readFileSync(assertionsFile, "utf8"),
+      targetRoot,
+    );
     if (inertScenarios) {
       return inertScenarios;
     }
@@ -266,8 +527,9 @@ function readFrozenScenarioContract(
   if (result.status !== 0) {
     const errorLines = result.stderr.trim().split("\n");
     if (result.stderr.includes("unknown upgrade-survivor assertion command: list-scenarios")) {
-      const legacyScenarios = readLegacyFrozenScenarioContract(
+      const legacyScenarios = readInertFrozenScenarioContract(
         readFileSync(assertionsFile, "utf8"),
+        targetRoot,
       );
       if (legacyScenarios) {
         return legacyScenarios;
@@ -322,7 +584,10 @@ function filterUpgradeSurvivorScenariosForTarget(
   const relativePath = "scripts/e2e/lib/upgrade-survivor/assertions.mjs";
   if (frozenTarget) {
     const source = frozenTarget.source.readText(relativePath);
-    const catalog = source === null ? undefined : readLegacyFrozenScenarioContract(source);
+    const catalog =
+      source === null
+        ? undefined
+        : readInertFrozenScenarioContract(source, targetRoot, frozenTarget);
     if (!catalog) {
       throw new Error(`unrecognized required inert scenario catalog: ${relativePath}`);
     }
@@ -699,6 +964,7 @@ export function requiredPrepublishPluginPackagesForLanes(poolLanes: DockerE2eLan
       scenario === "abandoned-update" ||
       scenario === "custom-plugin-siblings" ||
       scenario === "projects-doctor" ||
+      scenario === "projects-startup-migration" ||
       scenario === "taskflow-restoration" ||
       scenario === "workshop-doctor-recovery"
     ) {
