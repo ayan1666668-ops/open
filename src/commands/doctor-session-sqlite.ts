@@ -29,9 +29,12 @@ import {
   type DeferredPluginMigration,
 } from "../infra/deferred-plugin-migrations.js";
 import {
+  captureDeferredPluginSessionSources,
   deferredPluginSessionStoreIds,
   readDeferredPluginSessionImport,
   recordDeferredPluginSessionImport,
+  resolveTrajectoryPath,
+  resolveTrajectoryPointerPath,
   type DeferredPluginSessionImport,
 } from "../infra/deferred-plugin-session-sources.js";
 import { formatErrorMessage } from "../infra/errors.js";
@@ -908,35 +911,13 @@ async function inspectOrMigrateTarget(params: {
       report.issues.every(isMissingTranscriptIssue)
     ) {
       try {
-        const sources = new Map<string, MigrationArtifactIdentity>([
-          [path.resolve(params.target.storePath), indexIdentity],
-        ]);
-        for (const file of report.unreferencedJsonlFiles) {
-          if (!params.referencedPaths?.has(canonicalMigrationFilePath(file))) {
-            sources.set(path.resolve(file), readMigrationArtifactIdentity(file));
-          }
-        }
-        for (const record of records) {
-          if (!record.transcriptPath || !record.sourceFingerprint) {
-            continue;
-          }
-          sources.set(
-            path.resolve(record.transcriptPath),
-            readMigrationArtifactIdentity(record.transcriptPath, 1n, record.sourceFingerprint),
-          );
-          for (const file of [
-            resolveTrajectoryPath(record.transcriptPath),
-            resolveTrajectoryPointerPath(record.transcriptPath),
-          ]) {
-            if (file && fs.existsSync(file)) {
-              sources.set(path.resolve(file), readMigrationArtifactIdentity(file));
-            }
-          }
-        }
-        verifiedSources = [...sources].map(([sourcePath, identity]) => ({
-          path: sourcePath,
-          identity,
-        }));
+        verifiedSources = captureDeferredPluginSessionSources({
+          storePath: params.target.storePath,
+          indexIdentity,
+          records,
+          unreferencedJsonlFiles: report.unreferencedJsonlFiles,
+          referencedPaths: params.referencedPaths,
+        });
       } catch (error) {
         report.issues.push({
           code: "transcript_archive_failed",
@@ -1905,18 +1886,6 @@ function planImportedTranscriptArtifactsToArchive(
     addMove(trajectoryPointerPath, "trajectory");
   }
   return moves;
-}
-
-function resolveTrajectoryPath(transcriptPath: string): string | undefined {
-  return transcriptPath.endsWith(".jsonl")
-    ? `${transcriptPath.slice(0, -".jsonl".length)}.trajectory.jsonl`
-    : undefined;
-}
-
-function resolveTrajectoryPointerPath(transcriptPath: string): string | undefined {
-  return transcriptPath.endsWith(".jsonl")
-    ? `${transcriptPath.slice(0, -".jsonl".length)}.trajectory-path.json`
-    : undefined;
 }
 
 function planSessionJsonlArchiveMove(params: {
