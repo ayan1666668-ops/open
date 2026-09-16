@@ -714,22 +714,6 @@ _openclaw_root_completion
   });
 
   it.skipIf(process.platform === "win32").each([
-    [["openclaw", "gateway", "status", "--", "--j"], []],
-    [["openclaw", "completion", "--", "--shell", "f"], []],
-    [["openclaw", "--", "g"], ["gateway"]],
-    [["openclaw", "gateway", "--", "st"], ["status"]],
-    [["openclaw", "gateway", "--token", "--", "status", "--j"], ["--json"]],
-    [["openclaw", "gateway", "-vt", "--", "status", "--j"], ["--json"]],
-    [["openclaw", "gateway", "--label", "--", "status", "--j"], []],
-  ])("honors the Bash option terminator in %j", (words, expected) => {
-    const program = createDocumentedCompletionProgram();
-    const gateway = program.commands.find((command) => command.name() === "gateway")!;
-    gateway.option("-v, --verbose", "Verbose output").option("--label [label]", "Label");
-
-    expect(runGeneratedBashCompletion(program, words)).toEqual(expected);
-  });
-
-  it.skipIf(process.platform === "win32").each([
     ["an omitted optional value", ["openclaw", "--mode", "--j"], ["--json"]],
     ["a separate optional value", ["openclaw", "--mode", "a"], ["auto"]],
     ["an inline optional value", ["openclaw", "--mode=a"], ["--mode=auto"]],

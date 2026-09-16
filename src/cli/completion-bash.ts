@@ -93,7 +93,7 @@ _${rootCmd}_completion() {
                 done
             fi
             if [[ \${word} != *=* && -n \${flag} && " \${value_options} " == *" \${flag} "* &&
-                ( \${words[i+1]} != -- || " \${required_value_options} " == *" \${flag} "* ) ]]; then
+                ( \${words[i+1]} != -?* || " \${required_value_options} " == *" \${flag} "* ) ]]; then
                 i=$((i + 1))
             fi
             continue
@@ -104,42 +104,40 @@ ${commandPathUpdate}
     done
 
     if (( options_ended )); then
-        # Commander still accepts command names after '--', but no options or choices.
         for word in \${opts}; do
             [[ \${word} == -* ]] || literal_opts+=" \${word}"
         done
-        COMPREPLY=( $(compgen -W "\${literal_opts}" -- "\${cur}") )
-        COMPREPLY=("\${COMPREPLY[@]#"\${word_prefix}"}")
-        return
-    fi
+        opts="\${literal_opts}"
+    else
 
-    choice_flag="\${words[cword-1]}"
-    choice_prefix="\${cur}"
-    choice_completion_prefix=""
-    if [[ "\${cur}" == --*=* ]]; then
-        choice_flag="\${cur%%=*}"
-        choice_prefix="\${cur#*=}"
-        choice_completion_prefix="\${choice_flag}="
-    fi
-    for short_group in "\${choice_flag}" "\${cur}"; do
-        [[ "\${short_group}" == -??* && "\${short_group}" != --* ]] || continue
-        short_group="\${short_group#-}"
-        for ((short_index = 0; short_index < \${#short_group}; short_index++)); do
-            short_flag="-\${short_group:short_index:1}"
-            if [[ " \${value_options} " == *" \${short_flag} "* ]]; then
-                if [[ "\${cur}" == "-\${short_group}" ]]; then
-                    choice_flag="\${short_flag}"
-                    choice_prefix="\${short_group:short_index+1}"
-                    choice_completion_prefix="-\${short_group:0:short_index+1}"
-                elif ((short_index == \${#short_group} - 1)); then
-                    choice_flag="\${short_flag}"
+        choice_flag="\${words[cword-1]}"
+        choice_prefix="\${cur}"
+        choice_completion_prefix=""
+        if [[ "\${cur}" == --*=* ]]; then
+            choice_flag="\${cur%%=*}"
+            choice_prefix="\${cur#*=}"
+            choice_completion_prefix="\${choice_flag}="
+        fi
+        for short_group in "\${choice_flag}" "\${cur}"; do
+            [[ "\${short_group}" == -??* && "\${short_group}" != --* ]] || continue
+            short_group="\${short_group#-}"
+            for ((short_index = 0; short_index < \${#short_group}; short_index++)); do
+                short_flag="-\${short_group:short_index:1}"
+                if [[ " \${value_options} " == *" \${short_flag} "* ]]; then
+                    if [[ "\${cur}" == "-\${short_group}" ]]; then
+                        choice_flag="\${short_flag}"
+                        choice_prefix="\${short_group:short_index+1}"
+                        choice_completion_prefix="-\${short_group:0:short_index+1}"
+                    elif ((short_index == \${#short_group} - 1)); then
+                        choice_flag="\${short_flag}"
+                    fi
+                    break
                 fi
-                break
-            fi
+            done
         done
-    done
 
 ${choiceCompletion}
+    fi
     COMPREPLY=( $(compgen -W "\${opts}" -- "\${cur}") )
     COMPREPLY=("\${COMPREPLY[@]#"\${word_prefix}"}")
 }

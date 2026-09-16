@@ -215,12 +215,16 @@ export function renderChatComposerView(context: ChatComposerViewContext) {
   const disabledReasonId = paneDomId(props.paneId, "disabled-reason");
   const composerAlerts = showComposerInput
     ? renderChatVoiceStatus({
-        status: props.realtimeTalkCameraError ? "error" : props.realtimeTalkStatus,
-        detail: props.realtimeTalkDetail,
+        status:
+          props.realtimeTalkCameraError || props.realtimeTalkVoice?.error
+            ? "error"
+            : props.realtimeTalkStatus,
+        detail: props.realtimeTalkVoice?.error ?? props.realtimeTalkDetail,
         onUseSystemDefaultMicrophone: props.onUseSystemDefaultMicrophone,
-        onDismissError: props.realtimeTalkCameraError
-          ? undefined
-          : props.onDismissRealtimeTalkError,
+        onDismissError:
+          props.realtimeTalkCameraError || props.realtimeTalkVoice?.error
+            ? undefined
+            : props.onDismissRealtimeTalkError,
       })
     : nothing;
   const offlineText = props.offline
@@ -289,13 +293,20 @@ export function renderChatComposerView(context: ChatComposerViewContext) {
           props.runActive,
           props.collapseTaskProgress,
           {
+            gatewayScope: props.gatewayScope,
+            sessionIdentity: props.progressCardIdentity,
             activeRunId: props.runId,
             readingHistory: props.readingHistory,
             completedRunId: props.runStatus?.phase === "done" ? props.runStatus.runId : null,
           },
         )}
       </div>`
-    : nothing;
+    : props.progressCardInitialLoading
+      ? html`<div
+          class="agent-chat__progress-float agent-chat__progress-float--loading"
+          aria-hidden="true"
+        ></div>`
+      : nothing;
   const queue = renderChatQueue({
     queue: props.queue,
     displayQueue: props.displayQueue,
