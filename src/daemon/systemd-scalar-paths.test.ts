@@ -264,6 +264,40 @@ describe.skipIf(process.platform === "win32")("systemd scalar paths", () => {
       },
     );
 
+    it.each(
+      literalDirectories.filter(({ name }) =>
+        ["asterisk", "question mark", "brackets", "backslash"].includes(name),
+      ),
+    )(
+      "preserves escaped $name alongside a real wildcard",
+      async ({ directory, expression, alternatives }) => {
+        await writeEnvironmentFile(
+          path.join(home, directory, "set-10.env"),
+          "FIRST=retained\nSHARED=first\n",
+        );
+        await writeEnvironmentFile(path.join(home, directory, "set-20.env"), "SHARED=second\n");
+        for (const alternative of alternatives) {
+          await writeEnvironmentFile(
+            path.join(home, alternative, "set-10.env"),
+            "FOREIGN=must-not-be-selected\n",
+          );
+        }
+        const command = await readExpression(source, path.join(home, expression, "set-*.env"));
+        expect(command?.environment).toEqual({ FIRST: "retained", SHARED: "second" });
+        expect(command?.environmentValueSources).toEqual({ FIRST: "file", SHARED: "file" });
+      },
+    );
+
+    it("preserves an escaped filename after a wildcard directory", async () => {
+      await writeEnvironmentFile(path.join(home, "set-1", "token?.env"));
+      await writeEnvironmentFile(
+        path.join(home, "set-1", "token1.env"),
+        "FOREIGN=must-not-be-selected\n",
+      );
+      const command = await readExpression(source, path.join(home, "set-*", "token\\?.env"));
+      expect(command?.environment).toEqual({ SELECTED: "intended" });
+    });
+
     it("reads singleton [a-a] as the file a rather than the literal expression", async () => {
       await writeEnvironmentFile(path.join(home, "a.env"));
       await writeEnvironmentFile(path.join(home, "[a-a].env"), "FOREIGN=literal-expression-trap\n");
@@ -301,6 +335,24 @@ describe.skipIf(process.platform === "win32")("systemd scalar paths", () => {
       },
     );
   });
+
+  it.each(["*.env", "[12]*.env"])(
+    "reads manager-expanded EnvironmentFile pattern %s in deterministic precedence order",
+    async (pattern) => {
+      const environmentDir = path.join(home, "env.d");
+      await writeEnvironmentFile(path.join(environmentDir, "20-override.env"), "SHARED=second\n");
+      await writeEnvironmentFile(path.join(environmentDir, "10-base.env"), "SHARED=first\n");
+      await writeUnit();
+      mockManager({
+        environment: ["SHARED=inline"],
+        environmentFiles: [[path.join(environmentDir, pattern), false]],
+      });
+
+      const command = await readSystemdServiceExecStart(serviceEnv());
+      expect(command?.environment).toEqual({ SHARED: "second" });
+      expect(command?.environmentValueSources).toEqual({ SHARED: "inline-and-file" });
+    },
+  );
 
   it.each(["*.env", "[12]*.env"])(
     "preserves authored wildcard %s and declaration precedence",

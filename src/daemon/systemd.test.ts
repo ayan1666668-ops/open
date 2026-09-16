@@ -435,6 +435,7 @@ const assertRestartSuccess = async (env: NodeJS.ProcessEnv) => {
 
 let testFixtureId = 0;
 beforeEach(() => {
+  findSystemGatewayServicesMock.mockReset().mockResolvedValue([]);
   const runtime = `/fixture/systemd-test-${++testFixtureId}`;
   vi.stubEnv("XDG_RUNTIME_DIR", runtime);
   vi.stubEnv("DBUS_SESSION_BUS_ADDRESS", `unix:path=${runtime}/bus`);
@@ -1103,6 +1104,26 @@ describe("system-scope gateway unit detection (openclaw#87577)", () => {
     expect(result).toBeNull();
   });
 
+  it("does not adopt a system Gateway while inspecting the node service", async () => {
+    mockUnitFileLayout({ system: false });
+    findSystemGatewayServicesMock.mockResolvedValue([
+      {
+        platform: "linux",
+        label: "openclaw.service",
+        detail: "unit: /etc/systemd/system/openclaw.service",
+        scope: "system",
+        marker: "openclaw",
+      },
+    ]);
+    await expect(
+      findInstalledSystemdGatewayScope({
+        HOME: TEST_MANAGED_HOME,
+        OPENCLAW_SERVICE_KIND: "node",
+        OPENCLAW_SYSTEMD_UNIT: "openclaw-node",
+      }),
+    ).resolves.toBeNull();
+  });
+
   it("isSystemdServiceEnabled queries the marker-owned custom system unit name", async () => {
     mockUnitFileLayout({ system: false });
     findSystemGatewayServicesMock.mockResolvedValueOnce([
@@ -1172,6 +1193,7 @@ describe("system-scope gateway unit detection (openclaw#87577)", () => {
         null,
         [
           "Id=openclaw-gateway.service",
+          "LoadState=loaded",
           "ActiveState=active",
           "SubState=running",
           "MainPID=4242",
@@ -1183,6 +1205,7 @@ describe("system-scope gateway unit detection (openclaw#87577)", () => {
     expect(runtime.status).toBe("running");
     expect(runtime.pid).toBe(4242);
     expect(runtime.systemd?.unit).toBe("openclaw-gateway.service");
+    expect(runtime.systemd?.scope).toBe("system");
   });
 
   it("restartSystemdService refuses to use the user manager when the unit is system-scope and the caller is not root", async () => {
@@ -1282,7 +1305,7 @@ describe("readSystemdServiceRuntime", () => {
       .mockImplementationOnce((_cmd, args, _opts, cb) => {
         expect(args[0]).toBe("--user");
         expect(args[1]).toBe("show");
-        cb(null, output, "");
+        cb(null, `LoadState=loaded\n${output}`, "");
       });
     return await readSystemdServiceRuntime(
       { HOME: TEST_MANAGED_HOME },
@@ -1404,7 +1427,7 @@ describe("readSystemdServiceRuntime", () => {
             { commandInspection: { kind: "present" } },
           ),
         ).resolves.toMatchObject({
-          status: result === "error" ? "unknown" : "stopped",
+          status: "unknown",
           ...(result === "error"
             ? { detail: "Unit openclaw-gateway.service could not be found." }
             : {}),
@@ -1490,6 +1513,7 @@ describe("readSystemdServiceRuntime", () => {
             null,
             [
               "Id=openclaw-gateway.service",
+              "LoadState=loaded",
               "ActiveState=active",
               "SubState=running",
               "MainPID=1234",
@@ -1520,6 +1544,7 @@ describe("readSystemdServiceRuntime", () => {
       lastExitStatus: 0,
       lastExitReason: "running",
       systemd: {
+        scope: "user",
         unit: "openclaw-gateway.service",
         killMode: "process",
         tasksCurrent: 807,
@@ -1574,6 +1599,7 @@ describe("readSystemdServiceRuntime", () => {
           null,
           [
             "Id=openclaw-gateway.service",
+            "LoadState=loaded",
             "ActiveState=failed",
             "SubState=failed",
             "Result=exit-code",
@@ -2359,45 +2385,6 @@ describe("readSystemdServiceExecStart", () => {
       sourcePath: `${TEST_SERVICE_HOME}/.config/systemd/user/${GATEWAY_SERVICE}`,
     });
   });
-
-  // Native Linux manager tuples cannot contain host Windows drive or UNC paths.
-  it.skipIf(process.platform === "win32").each(["*.env", "[12]*.env"])(
-    "reads manager-expanded EnvironmentFile pattern %s in deterministic precedence order",
-    async (pattern) => {
-      const home = await fs.realpath(
-        await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-systemd-glob-")),
-      );
-      const env = { HOME: home };
-      const unitPath = resolveSystemdUnitPath(env);
-      const environmentDir = path.join(home, "env.d");
-      try {
-        await fs.mkdir(path.dirname(unitPath), { recursive: true, mode: 0o755 });
-        await fs.mkdir(environmentDir, { mode: 0o700 });
-        await fs.writeFile(unitPath, "[Service]\nExecStart=/usr/bin/openclaw gateway run\n", {
-          mode: 0o644,
-        });
-        await fs.writeFile(path.join(environmentDir, "20-override.env"), "SHARED=second\n", {
-          mode: 0o600,
-        });
-        await fs.writeFile(path.join(environmentDir, "10-base.env"), "SHARED=first\n", {
-          mode: 0o600,
-        });
-        mockSystemdManagerSnapshot({
-          programArguments: ["/usr/bin/openclaw", "gateway", "run"],
-          environment: ["SHARED=inline"],
-          fragmentPath: unitPath,
-          environmentFiles: [[path.join(environmentDir, pattern), false]],
-        });
-
-        const command = await readSystemdServiceExecStart(env);
-
-        expect(command?.environment).toEqual({ SHARED: "second" });
-        expect(command?.environmentValueSources).toEqual({ SHARED: "inline-and-file" });
-      } finally {
-        await fs.rm(home, { recursive: true, force: true });
-      }
-    },
-  );
 
   it.each([
     { name: "loaded ownership", properties: JSON.stringify({ type: "as", data: [] }) },
