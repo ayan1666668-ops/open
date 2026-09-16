@@ -48,6 +48,12 @@ type ModelSelectedContext = {
   thinkLevel: string | undefined;
 };
 
+/** Delivery outcome of a settled queued followup, so cleanup owners can keep failure records. */
+export type QueuedFollowupSettlement = {
+  /** The queued turn's final delivery failed or was handed to a source retry. */
+  finalDeliveryFailed: boolean;
+};
+
 /** Typing indicator class for channel-owned UX policy. */
 export type TypingPolicy =
   | "auto"
@@ -387,7 +393,7 @@ export type GetReplyOptions = {
   /** Called after a queued followup owns the reply lane, before its model run starts. */
   onQueuedFollowupAdmitted?: () => Promise<void> | void;
   /** Called after an admitted queued followup finishes, including failed attempts. */
-  onQueuedFollowupSettled?: () => Promise<void> | void;
+  onQueuedFollowupSettled?: (settlement: QueuedFollowupSettlement) => Promise<void> | void;
   /** Allow channel-owned progress UI while final/source reply delivery remains message-tool-only. */
   allowProgressCallbacksWhenSourceDeliverySuppressed?: boolean;
   /** Called when a suppressed source reply mode observes visible delivery through another path. */

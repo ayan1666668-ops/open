@@ -138,7 +138,7 @@ export async function executeDispatch(state: PrepareDispatchExecutionReadyState)
                 onAssistantMessageStart: wrapProgressCallback(
                   params.replyOptions?.onAssistantMessageStart,
                 ),
-                onQueuedFollowupSettled: async () => {
+                onQueuedFollowupSettled: async (settlement) => {
                   // Retained block callbacks only enqueue; cleanup must join their
                   // delivery even when this dispatch has already returned.
                   try {
@@ -152,7 +152,7 @@ export async function executeDispatch(state: PrepareDispatchExecutionReadyState)
                     }
                   } catch (error) {
                     try {
-                      await params.replyOptions?.onQueuedFollowupSettled?.();
+                      await params.replyOptions?.onQueuedFollowupSettled?.(settlement);
                     } catch (cleanupError) {
                       logVerbose(
                         `dispatch-from-config: queued cleanup failed; preserving delivery error: ${formatErrorMessage(cleanupError)}`,
@@ -160,7 +160,7 @@ export async function executeDispatch(state: PrepareDispatchExecutionReadyState)
                     }
                     throw error;
                   }
-                  await params.replyOptions?.onQueuedFollowupSettled?.();
+                  await params.replyOptions?.onQueuedFollowupSettled?.(settlement);
                 },
                 onBlockReplyQueued: wrapProgressCallback(params.replyOptions?.onBlockReplyQueued),
                 onToolStart: wrapProgressCallback(params.replyOptions?.onToolStart, {

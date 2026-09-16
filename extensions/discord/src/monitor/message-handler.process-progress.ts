@@ -83,10 +83,11 @@ export function createDiscordMessageProgressRuntime(params: {
       : undefined,
     // A queued follow-up drains after its dispatch returned, so the processing
     // finally block cannot settle the progress message it publishes; this
-    // callback is the only remaining cleanup owner.
+    // callback is the only remaining cleanup owner. A failed final delivery
+    // keeps the draft, matching the ordinary closeout retention contract.
     onQueuedFollowupSettled: draftPreview.draftStream
-      ? async () => {
-          await draftPreview.cleanup();
+      ? async ({ finalDeliveryFailed }) => {
+          await draftPreview.cleanup({ finalDeliveryFailed });
         }
       : undefined,
     suppressDefaultToolProgressMessages:
