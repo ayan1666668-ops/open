@@ -549,7 +549,7 @@ export function applyDeclarativeJobSpec(
     delete job.delivery;
   }
   if (opts.enabledExplicit) {
-    // Reconciliation preserves a running job's failure streak; explicit recovery
+    // Reconciliation preserves an enabled job's failure streak; explicit recovery
     // of a stopped job uses the same reset as the enable command.
     if (
       input.enabled &&

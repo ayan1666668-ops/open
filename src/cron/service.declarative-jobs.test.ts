@@ -145,10 +145,10 @@ describe("CronService declarative jobs", () => {
       });
 
       await cron.update(created.id, { state: { consecutiveErrors: 2 } });
-      const stillRunning = declarativeResult(
+      const alreadyEnabled = declarativeResult(
         await cron.add(declaration(), { enabledExplicit: true }),
       );
-      expect(stillRunning).toMatchObject({
+      expect(alreadyEnabled).toMatchObject({
         updated: false,
         job: { enabled: true, state: { consecutiveErrors: 2 } },
       });
