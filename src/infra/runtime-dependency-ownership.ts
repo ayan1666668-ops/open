@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import { join } from "node:path";
-import { isRecord } from "@openclaw/normalization-core/record-coerce";
+import { isRecord } from "../../packages/normalization-core/src/record-coerce.ts";
 
 export const RUNTIME_DEPENDENCY_OWNERSHIP_RELATIVE_PATH = "dist/runtime-dependency-ownership.json";
 export const RUNTIME_DEPENDENCY_OWNERSHIP_ASSET_NAME = "runtime-dependency-ownership.json";

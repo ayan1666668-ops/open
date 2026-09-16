@@ -66,20 +66,4 @@ export function materializeDeclarationPackages(root: string, unified: boolean) {
       !["typescript", "tsdown"].includes(name),
     );
   }
-  // Generator imports must resolve even when a test replaces tsconfig.json.
-  const normalization = path.join(root, "node_modules/@openclaw/normalization-core");
-  fs.mkdirSync(normalization, { recursive: true });
-  fs.writeFileSync(
-    path.join(normalization, "package.json"),
-    JSON.stringify({
-      name: "@openclaw/normalization-core",
-      private: true,
-      type: "module",
-      exports: { "./record-coerce": "./record-coerce.mjs" },
-    }),
-  );
-  fs.writeFileSync(
-    path.join(normalization, "record-coerce.mjs"),
-    'export * from "../../../packages/normalization-core/src/record-coerce.ts";\n',
-  );
 }
