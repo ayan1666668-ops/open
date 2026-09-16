@@ -169,9 +169,12 @@ export async function buildHealthAgentSummaries(
       sessions: projectHealthSessions(store.path, store),
     });
     // Each synchronous store read can block for tens of ms on a slow disk;
-    // yielding after every entry keeps a large fleet from freezing the event
+    // yielding after every entry (except the last, where there is no more
+    // work left to interleave) keeps a large fleet from freezing the event
     // loop for the whole pass (#149931).
-    await yieldToEventLoop();
+    if (index < ordered.length - 1) {
+      await yieldToEventLoop();
+    }
   }
   return summaries;
 }
