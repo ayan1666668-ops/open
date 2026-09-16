@@ -586,7 +586,7 @@ export function readNativeFeishuCard(payload: { channelData?: Record<string, unk
 
 export function consumeFeishuPresentationFallbackMarker(payload: ReplyPayload): {
   payload: ReplyPayload;
-  presentationFallback?: { hasVisibleContent: boolean };
+  presentationFallback?: { hasVisibleContent: boolean; authoredText?: string };
 } {
   const feishuData = isRecord(payload.channelData?.feishu) ? payload.channelData.feishu : undefined;
   const presentationFallback = feishuData?.[FEISHU_PRESENTATION_FALLBACK_MARKER];
@@ -609,7 +609,12 @@ export function consumeFeishuPresentationFallbackMarker(payload: ReplyPayload): 
       ...payload,
       channelData: Object.keys(nextChannelData).length > 0 ? nextChannelData : undefined,
     },
-    presentationFallback: { hasVisibleContent: presentationFallback.hasVisibleContent },
+    presentationFallback: {
+      hasVisibleContent: presentationFallback.hasVisibleContent,
+      ...(typeof presentationFallback.authoredText === "string"
+        ? { authoredText: presentationFallback.authoredText }
+        : {}),
+    },
   };
 }
 
@@ -723,6 +728,10 @@ export function renderFeishuPresentationPayload({
             hasVisibleContent: Boolean(
               renderFeishuPresentationFallbackText({ presentation: fallbackPresentation }).trim(),
             ),
+            // The prose this payload carries is a conversion of the presentation, and a cut
+            // that cannot carry its fences has to fall back to something. The top-level text
+            // is only part of it, so the whole of it travels with the payload.
+            ...(fallbackText === rawFallbackText ? {} : { authoredText: rawFallbackText }),
           },
           ...(fallbackHasCommand ? { fallbackHasCommand: true } : {}),
         },

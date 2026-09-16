@@ -1349,6 +1349,10 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
       const payload = rendered.payload;
       const presentationCard = prepared.card;
       const hasPresentationFallback = rendered.presentationFallback?.hasVisibleContent === true;
+      // A presentation's prose reaches this payload converted, and the top-level text is only
+      // part of it, so a cut that cannot carry the conversion falls back to the whole of what
+      // the presentation contributed rather than to the fragment the payload came with.
+      const authoredFallbackText = rendered.presentationFallback?.authoredText ?? sourceText;
       const hasIndependentPresentation = presentationCard !== undefined || hasPresentationFallback;
       const resolvedText = payload.text;
       const payloadText =
@@ -1527,7 +1531,9 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
             // has been attempted and both are reported together.
             try {
               await collectDelivery(
-                sendPostReply(text, info?.kind, firstChunkMentions, { authoredText: sourceText }),
+                sendPostReply(text, info?.kind, firstChunkMentions, {
+                  authoredText: authoredFallbackText,
+                }),
               );
             } catch (error: unknown) {
               holdPartialForMedia(error, hasMedia);
@@ -1664,7 +1670,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
           try {
             deliveredResults.push(
               await sendPostReply(text, info?.kind, firstChunkMentions, {
-                authoredText: sourceText,
+                authoredText: authoredFallbackText,
               }),
             );
           } catch (error: unknown) {
