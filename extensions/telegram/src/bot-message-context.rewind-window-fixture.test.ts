@@ -12,6 +12,7 @@ import { join } from "node:path";
 import type { Message } from "grammy/types";
 import {
   closeOpenClawStateDatabaseForTest,
+  openOpenClawStateDatabase,
   resetPluginStateStoreForTests,
 } from "openclaw/plugin-sdk/plugin-state-test-runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -121,6 +122,25 @@ describe("telegram rewind chat-window fixture", () => {
       promptContextProjection: projection,
       ownerAgentId: "main",
     });
+    if (!recordedReply) {
+      // The boolean wrapper swallows the real error into the verbose log; open
+      // the state database directly so the failure carries the underlying
+      // cause chain and the path that was actually resolved.
+      let detail = `state-dir=${process.env.OPENCLAW_STATE_DIR ?? "<unset>"}`;
+      try {
+        openOpenClawStateDatabase({ env: process.env });
+        detail += " manual-open=ok";
+      } catch (error) {
+        const chain: string[] = [];
+        let cursor: unknown = error;
+        while (cursor instanceof Error && chain.length < 5) {
+          chain.push(`${cursor.name}: ${cursor.message}`);
+          cursor = (cursor as { cause?: unknown }).cause;
+        }
+        detail += ` manual-open-chain=${chain.join(" <= ")}`;
+      }
+      throw new Error(detail);
+    }
     expect(recordedReply, verboseLog.lines.join("\n")).toBe(true);
     const currentMessage = inboundTextMessage(104, "fresh follow-up", 4);
     const telegramCtx = {
