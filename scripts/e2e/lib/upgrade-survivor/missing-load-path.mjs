@@ -42,6 +42,7 @@ function seed() {
   });
   writeJson(path.join(pluginRoot, "openclaw.plugin.json"), {
     id: pluginId,
+    activation: { onStartup: true },
     configSchema: { type: "object", additionalProperties: true },
   });
   fs.writeFileSync(
