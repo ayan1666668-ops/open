@@ -265,6 +265,20 @@ export function shouldUseCard(text: string, nativeTables: boolean): boolean {
   return total > 0 && drawable === total;
 }
 
+/**
+ * A card carries a table as one component, and the card chunker cuts on lines without
+ * repeating the header and its delimiter, so every card after the first shows those rows
+ * as raw pipes. A table that does not fit one card belongs on the post path, which renders
+ * it as a fenced block that survives the cut. One rule, asked at every place that promotes
+ * text to a card.
+ */
+export function cardCarriesWholeTable(
+  text: string,
+  chunk: (text: string) => readonly string[],
+): boolean {
+  return !hasCardMarkdownTable(text) || chunk(text).length <= 1;
+}
+
 export function feishuCardWithinTableLimit(card: Record<string, unknown>): boolean {
   let remaining = FEISHU_CARD_TABLE_LIMIT;
   const visit = (value: unknown): boolean => {

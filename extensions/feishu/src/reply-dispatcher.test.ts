@@ -2543,7 +2543,11 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
         ),
       );
       const { options } = createDispatcherHarness();
-      const text = kind === "card" ? "| first | second |\n| - | - |" : "firstsecondthird";
+      // The card fixture is a fenced block rather than a table. A card carries a table as
+      // one component and the chunker does not repeat its header, so a table needing more
+      // than one card takes the post path now; a fence promotes to a card without being a
+      // table, which is what this case is actually about.
+      const text = kind === "card" ? "```\nfirst second third\n```" : "firstsecondthird";
 
       const error = await options
         .deliver({ text }, { kind: "final" })
@@ -5459,6 +5463,42 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
       expect(committed).toContain("Inventory complete.");
     });
 
+    // A card carries a table as one component and the card chunker does not repeat the
+    // header, so every card after the first would show raw pipes. An automatic reply asks
+    // the same question the outbound send path does, including for the pipe-less shape
+    // this branch taught the promotion to recognise.
+    it.each([
+      { shape: "piped", row: "| r%d | Lead |", head: ["| Name | Role |", "| --- | --- |"] },
+      { shape: "pipe-less", row: "r%d | Lead", head: ["Name | Role", "--- | ---"] },
+    ])(
+      "posts an oversized $shape final rather than splitting it across cards",
+      async ({ row, head }) => {
+        const { chunkMarkdownTextWithMode } = await vi.importActual<
+          typeof import("openclaw/plugin-sdk/reply-chunking")
+        >("openclaw/plugin-sdk/reply-chunking");
+        getFeishuRuntimeMock().channel.text.chunkMarkdownTextWithMode.mockImplementation(
+          chunkMarkdownTextWithMode,
+        );
+        getFeishuRuntimeMock().channel.text.resolveTextChunkLimit.mockReturnValue(200);
+        const { options } = createBlockTableHarness(tableCfg("block"));
+        const table = [
+          ...head,
+          ...Array.from({ length: 40 }, (_entry, i) => row.replace("%d", String(i))),
+        ].join("\n");
+        // Guard the fixture: one card could not hold it.
+        expect(table.length).toBeGreaterThan(200);
+
+        await options.deliver({ text: table }, { kind: "final" });
+
+        expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
+        const posted = sendMessageFeishuMock.mock.calls.map(([call]) => String(call.text)).join("");
+        // The post path renders it as a fenced block, so the header survives every cut.
+        expect(posted).toContain("```");
+        expect(posted).toContain("Name");
+        expect(posted).toContain("r39");
+      },
+    );
+
     // The shared fence scanner reads no quote prefix, so a converted blockquoted table
     // cannot be closed and reopened at a cut and its two markers land in different
     // messages. The reply post path asks the same question the outbound one does.
@@ -5546,6 +5586,15 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
       expect(sendMediaFeishuMock).toHaveBeenCalledTimes(1);
       // The rejection still reaches the caller rather than being swallowed.
       expect(finalError).toBeInstanceOf(Error);
+      // And it reports what was accepted, not what was asked for. Handing the merge the
+      // whole reply as an authoritative override would report the rejected suffix as
+      // delivered, which is the shape the shared lifecycle then records.
+      const reported = isChannelPartialDeliveryError(finalError)
+        ? finalError.deliveryResult
+        : undefined;
+      expect(reported?.content).toBeDefined();
+      expect(reported?.content).not.toBe(text);
+      expect(text.startsWith(reported?.content ?? "")).toBe(true);
     });
 
     // An idle close with no prior block delivery owns nothing in the block receipt map,

@@ -39,6 +39,7 @@ import {
   hasCardMarkdownTable,
   hasUndrawableCardTable,
   renderFeishuReplyPayload,
+  cardCarriesWholeTable,
   shouldUseCard,
   withinCardTableLimit,
 } from "./presentation-card.js";
@@ -1228,7 +1229,17 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
     const useRecoveryCard =
       !tableNeedsPostPath(content) &&
       !answerTableNeedsPostPath(content) &&
-      withinCardTableLimit(content);
+      withinCardTableLimit(content) &&
+      // The recovery card promotes text the same way, so it asks the same question.
+      cardCarriesWholeTable(content, (candidate) =>
+        chunkFeishuCardMarkdown({
+          text: candidate,
+          limit: textChunkLimit,
+          mode: chunkMode,
+          header: cardHeader,
+          note: cardNote,
+        }),
+      );
     return await sendChunkedTextReply({
       text: content,
       useCard: useRecoveryCard,
@@ -1645,8 +1656,18 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
         renderMode === "card" ||
         (info?.kind === "block" && coreBlockStreamingEnabled && renderMode !== "raw") ||
         (renderMode === "auto" && shouldUseCard(text, nativeTables));
+      // A card carries a table as one component and the card chunker does not repeat the
+      // header, so a table needing more than one card takes the post path instead. The
+      // outbound send path asks the same question through the same rule.
+      const cardKeepsTableWhole = cardCarriesWholeTable(text, (candidate) =>
+        chunkFeishuCardMarkdown({ text: candidate, limit: textChunkLimit, mode: chunkMode }),
+      );
       const useStaticCard =
-        hasText && cardRenderingRequested && !tableNeedsPost && withinCardTableLimit(text);
+        hasText &&
+        cardRenderingRequested &&
+        !tableNeedsPost &&
+        withinCardTableLimit(text) &&
+        cardKeepsTableWhole;
       const useStreamingCard =
         hasText &&
         streamingEnabled &&
@@ -1777,7 +1798,9 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
               await collectDelivery(sendMediaReplies(payload));
             }
             if (textPartialFailure !== undefined) {
-              const accumulated = mergeFeishuReplyDeliveryResults(deliveredResults, text);
+              // No content override here. The merge derives it from what was accepted, and
+              // handing it the whole reply would report the rejected suffix as delivered.
+              const accumulated = mergeFeishuReplyDeliveryResults(deliveredResults);
               throw createFeishuPartialReplyDeliveryError(
                 textPartialFailure instanceof Error
                   ? (textPartialFailure.cause ?? textPartialFailure)
@@ -1866,7 +1889,8 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
           useStaticCard ||
           (useStreamingCard &&
             !isStreamingStartBackedOff(account.accountId) &&
-            withinCardTableLimit(text));
+            withinCardTableLimit(text) &&
+            cardKeepsTableWhole);
         if (useFallbackCard) {
           const cardHeader = resolveCardHeader(agentId, identity);
           const cardNote = resolveCardNote(agentId, identity, responsePrefixContextProvider());
@@ -1915,7 +1939,8 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
         );
       }
       if (textPartialFailure !== undefined) {
-        const withMedia = mergeFeishuReplyDeliveryResults(deliveredResults, text);
+        // Same here: the accepted chunks own the content, not the text that was requested.
+        const withMedia = mergeFeishuReplyDeliveryResults(deliveredResults);
         throw createFeishuPartialReplyDeliveryError(
           textPartialFailure instanceof Error
             ? (textPartialFailure.cause ?? textPartialFailure)

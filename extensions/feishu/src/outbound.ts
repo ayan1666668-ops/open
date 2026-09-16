@@ -64,6 +64,7 @@ import {
   resolveFeishuRichReply,
   shouldUseCard,
   withinCardTableLimit,
+  cardCarriesWholeTable,
 } from "./presentation-card.js";
 import {
   createFeishuPartialReplyDeliveryError,
@@ -399,14 +400,14 @@ async function sendOutboundText(params: {
   // which renders it as a fenced block that survives the cut. This branch taught the
   // promotion to recognise pipe-less tables, which used to miss it and land here anyway,
   // and the same cut applies to the piped ones the promotion already accepted.
-  const cardCarriesWholeTable =
-    !hasCardMarkdownTable(tableText) ||
+  const cardKeepsTableWhole = cardCarriesWholeTable(tableText, (candidate) =>
     chunkFeishuCardMarkdown({
-      text: tableText,
+      text: candidate,
       limit: postLimit,
       mode: postChunkMode,
       header: params.header,
-    }).length <= 1;
+    }),
+  );
   const useCard =
     (renderMode === "card" ||
       (renderMode === "auto" &&
@@ -414,7 +415,7 @@ async function sendOutboundText(params: {
         !hasUndrawableCardTable(tableText))) &&
     !(tableMode === "off" && hasCardMarkdownTable(tableText)) &&
     withinCardTableLimit(tableText) &&
-    cardCarriesWholeTable;
+    cardKeepsTableWhole;
 
   // Post rendering has no native tables, so block falls back to code there.
   // Tables need contiguous source rows, so convert them before the parser
