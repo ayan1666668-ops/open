@@ -396,9 +396,17 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
     visibleReplySent = true;
   };
 
-  // A line the renderer has to recognize as structure: a fence marker, a table row or
-  // delimiter, or a list item.
-  const reasoningStructureLine = /^\s*(?:```|\||[-*+\u2022]\s|\d+[.)]\s)/u;
+  // A line the renderer has to recognize as structure. A table row is any line
+  // carrying a cell separator, not only one that opens with a pipe, because the
+  // shapes this change taught the card parser include pipe-less, leading-pipe-only
+  // and trailing-pipe-only tables, and a blockquoted table carries its prefix first.
+  // Erring toward leaving a line plain costs an italic; erring the other way
+  // destroys a delimiter row and with it the table.
+  const isReasoningStructureLine = (line: string): boolean =>
+    /^\s*```/u.test(line) ||
+    line.includes("|") ||
+    /^\s*(?:[-*+\u2022]\s|\d+[.)]\s)/u.test(line) ||
+    /^\s*>?\s*:?-{3,}:?\s*$/u.test(line);
 
   // The shared formatter wraps every non-empty line in underscores, which suits prose
   // and destroys every shape the table mode produces. Underscores inside a fence are
@@ -409,7 +417,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
   const formatReasoningPreservingStructure = (text: string): string => {
     const trimmed = text.trim();
     const lines = trimmed.split("\n");
-    if (!trimmed || !lines.some((line) => reasoningStructureLine.test(line))) {
+    if (!trimmed || !lines.some(isReasoningStructureLine)) {
       return formatReasoningMessage(text);
     }
     let insideFence = false;
@@ -418,7 +426,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
         insideFence = !insideFence;
         return line;
       }
-      return insideFence || !line || reasoningStructureLine.test(line) ? line : `_${line}_`;
+      return insideFence || !line || isReasoningStructureLine(line) ? line : `_${line}_`;
     });
     return `Thinking\n\n${formatted.join("\n")}`;
   };

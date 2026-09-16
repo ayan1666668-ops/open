@@ -5373,6 +5373,28 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
       },
     );
 
+    // `block` leaves every one of these shapes as it found them, so the formatter is
+    // the last thing standing between the delimiter row and the card. A row is a row
+    // whether or not it opens with a pipe.
+    it.each(nativeTableShapes)(
+      "keeps a delivered $shape reasoning table readable",
+      async ({ text }) => {
+        const { options } = createBlockTableHarness(tableCfg("block"));
+        await options.deliver(
+          { text: `Checking.\n\n${text}`, isReasoning: true },
+          { kind: "final" },
+        );
+        await options.onIdle?.();
+
+        const committed = requireStreamingInstance(0).closeWithResult.mock.calls[0]?.[0] ?? "";
+        expect(committed).toContain("_Checking._");
+        for (const line of text.split(/\r?\n/u)) {
+          expect(committed).toContain(line);
+          expect(committed).not.toContain(`_${line}_`);
+        }
+      },
+    );
+
     // The preview path renders tables too, then hands the result to the shared
     // formatter. Its underscores are stripped again by the prefix builder, so this
     // records that the structure survives rather than assuming either way.
