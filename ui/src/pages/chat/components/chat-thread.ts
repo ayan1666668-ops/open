@@ -1,5 +1,6 @@
 import { html, nothing, type TemplateResult } from "lit";
 import { ref } from "lit/directives/ref.js";
+import { githubLinkPrefetch } from "../../../components/github-link-prefetch.ts";
 import { renderLoadingState } from "../../../components/loading-state.ts";
 import { markdownBlocks } from "../../../components/markdown-blocks.ts";
 import { handleMarkdownCodeBlockClick } from "../../../components/markdown-code-blocks.ts";
@@ -20,6 +21,7 @@ import {
   CHAT_HISTORY_BOUNDARY_HEIGHT_PX,
   renderChatHistoryBoundary,
 } from "./chat-history-boundary.ts";
+import "./chat-comment-pins.ts";
 import { renderChatPositionRail } from "./chat-position-rail.ts";
 import {
   handleTranscriptContextMenu,
@@ -77,7 +79,11 @@ function renderTranscriptShell(
                   ? renderPanelLoadingSkeleton("chat", t("chat.thread.loading"))
                   : nothing
               }
-              ${projection.isEmpty && !projection.searchOpen ? renderWelcomeState(props) : nothing}
+              ${
+                projection.isEmpty && !projection.searchOpen
+                  ? renderWelcomeState({ ...props, onModelSetup: undefined })
+                  : nothing
+              }
               ${
                 projection.isEmpty && projection.searchOpen
                   ? html` <div class="agent-chat__empty">${t("chat.thread.noMatches")}</div> `
@@ -90,6 +96,7 @@ function renderTranscriptShell(
     <div
       class="chat-thread ${projection.isDirectThread ? "chat-thread--direct" : ""}"
       ${markdownBlocks(props.transcriptVisible ?? true)}
+      ${githubLinkPrefetch(props.sessionKey, (props.transcriptVisible ?? true) && !projection.showLoadingSkeleton, Boolean(props.gatewayClient?.connected))}
       ${ref((element) => {
         if (element instanceof HTMLElement) {
           hydrateLinkFavicons(element, props.fetchLinkFavicon);
@@ -149,11 +156,19 @@ function renderTranscriptShell(
         >${transcript.liveAnnouncementText}</span
       >
       ${renderChatPositionRail({
-        messages: projection.positionMessages,
+        positions: projection.positionIndex,
         transcript,
         requestUpdate: props.onRequestUpdate ?? (() => {}),
       })}
       ${transcriptContents}
+      ${
+        props.commentAttachments?.attachments?.some((attachment) => attachment.selectionAnnotation)
+          ? html`<openclaw-chat-comment-pins
+              .props=${props.commentAttachments}
+              .sessionKey=${props.sessionKey}
+            ></openclaw-chat-comment-pins>`
+          : nothing
+      }
     </div>
   `;
 }

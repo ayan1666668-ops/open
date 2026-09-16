@@ -32,6 +32,7 @@ const nativeDeviceSettingsSnapshotSchema = z.object({
       appearance: z.enum(["system", "light", "dark"]).optional(),
       notificationsEnabled: z.boolean().optional(),
       showDockIcon: z.boolean().optional(),
+      nativeExperienceEnabled: z.boolean().optional(),
       // Advertised by hosts with Dock icon selection.
       iconStyle: z.object({ selectedId: z.string(), available: namedDevicesSchema }).optional(),
       iconAnimationsEnabled: z.boolean().optional(),
@@ -54,8 +55,10 @@ const nativeDeviceSettingsSnapshotSchema = z.object({
       cuaDriverBundled: z.boolean().optional(),
       peekabooBridgeEnabled: z.boolean().optional(),
       activeComputerPresenceEnabled: z.boolean().optional(),
+      unattendedDesktopEnabled: z.boolean().optional(),
     })
     .optional(),
+  desktopAvailability: z.object({ state: z.enum(["locked", "unlocked", "unknown"]) }).optional(),
   browser: z
     .object({
       importAvailable: z.boolean(), // local mode with Chrome-family cookies available
@@ -128,6 +131,7 @@ export type SettingKey =
   | "app.appearance"
   | "app.notificationsEnabled"
   | "app.showDockIcon"
+  | "app.nativeExperienceEnabled"
   | "app.iconStyle"
   | "app.iconAnimationsEnabled"
   | "app.launchAtLogin"
@@ -141,6 +145,7 @@ export type SettingKey =
   | "capabilities.computerControlProvider"
   | "capabilities.peekabooBridgeEnabled"
   | "capabilities.activeComputerPresenceEnabled"
+  | "capabilities.unattendedDesktopEnabled"
   | "browser.cookieSync.enabled"
   | "browser.cookieSync.domains"
   | "browser.cookieSync.targetProfile"
