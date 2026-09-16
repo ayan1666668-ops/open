@@ -1,5 +1,7 @@
+import path from "node:path";
 import { expectDefined } from "@openclaw/normalization-core";
 import { listRuntimeLocalProfileIds } from "../../agents/auth-profiles/runtime-snapshot-owner.js";
+import { resolveSharedMainAuthAgentDir } from "../../agents/auth-profiles/shared-main-dir.js";
 import { loadAuthProfileStoreWithoutExternalProfiles } from "../../agents/auth-profiles/store-runtime.js";
 import type { AuthProfileCredential } from "../../agents/auth-profiles/types.js";
 import type { ProviderAuthMethod, ProviderAuthResult } from "../../plugins/types.js";
@@ -13,7 +15,14 @@ export function snapshotReloginAuthProfiles(params: {
   if (!params.matchesPersonalAccount) {
     return undefined;
   }
-  const store = loadAuthProfileStoreWithoutExternalProfiles(params.agentDir);
+  // Main-agent OAuth writes are redirected to the shared owner. Read that owner
+  // directly so its profiles are local candidates, while derived agents still
+  // exclude credentials inherited from the shared store.
+  const storeAgentDir =
+    path.resolve(params.agentDir) === path.resolve(resolveSharedMainAuthAgentDir())
+      ? undefined
+      : params.agentDir;
+  const store = loadAuthProfileStoreWithoutExternalProfiles(storeAgentDir);
   return Object.fromEntries(
     listRuntimeLocalProfileIds(store).flatMap((profileId) => {
       const credential = store.profiles[profileId];

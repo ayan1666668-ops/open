@@ -2,6 +2,7 @@
 
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { resolveSharedMainAuthAgentDir } from "../../agents/auth-profiles/shared-main-dir.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import type { ConfigWriteOptions } from "../../config/io.js";
 import type { ProviderPlugin } from "../../plugins/types.js";
@@ -308,6 +309,7 @@ vi.mock("../../plugins/provider-auth-choice-helpers.js", async (importOriginal) 
   };
 });
 
+const { snapshotReloginAuthProfiles } = await import("./auth-relogin-identity.js");
 const { runModelsAuthLoginFlowCore } = await import("./auth.js");
 
 function createRuntime(): RuntimeEnv {
@@ -478,6 +480,30 @@ describe("modelsAuthLoginCommand", () => {
     restoreStdin?.();
     restoreStdin = null;
   });
+
+  it("snapshots shared-owner profiles for explicit main-agent relogin", () => {
+    mocks.authProfileStore = {
+      version: 1,
+      profiles: {
+        "openai:shared": {
+          type: "oauth",
+          provider: "openai",
+          access: "shared-access",
+          refresh: "shared-refresh",
+          expires: Date.now() + 60_000,
+        },
+      },
+    };
+
+    expect(
+      snapshotReloginAuthProfiles({
+        agentDir: resolveSharedMainAuthAgentDir(),
+        matchesPersonalAccount: () => true,
+      }),
+    ).toEqual(mocks.authProfileStore.profiles);
+    expect(mocks.loadAuthProfileStoreWithoutExternalProfiles).toHaveBeenCalledWith(undefined);
+  });
+
   it.each([
     {
       name: "same account",
