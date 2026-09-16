@@ -54,6 +54,7 @@ import {
   buildCliHookUserMessage,
   finalizeCliContextEngineTurn,
   persistApprovedCliUserTurnTranscript,
+  persistClaimedCliAssistantReply,
   persistCliAssistantTranscript,
   persistCliRunBlock,
   resolveCliAssistantStopReason,
@@ -211,6 +212,7 @@ async function runCliAgentInternal(
     cliBackendLog.info(
       `cli synthetic turn: provider=${params.provider} model=<synthetic> requestedModel=${params.model ?? ""} durationMs=${Date.now() - hookStartedAt} ${formatCliBackendOutputDigest(finalText)}`,
     );
+    await persistClaimedCliAssistantReply({ runParams: params, text: hookResult.reply?.text });
     return {
       payloads: buildHandledBeforeAgentReplyPayloads(hookResult.reply),
       meta: {
