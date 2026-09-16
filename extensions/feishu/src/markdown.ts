@@ -39,7 +39,12 @@ function readFenceLine(line: string): FeishuFenceLine | undefined {
   // than characters: one tab is the four that make a line indented code.
   let column = 0;
   let container = "";
-  let indent = -1;
+  let indent = 0;
+  // A quote or list marker takes the one column that follows it, so the content of the block
+  // it opens starts there and the four that make indented code are counted from that column.
+  // Every level is measured and the widest one settles the line, because four spaces before
+  // the first marker are already indented code and a marker after them does not undo that.
+  let markerColumn = 0;
   for (;;) {
     const columnStart = column;
     while (line[index] === " " || line[index] === "\t") {
@@ -47,14 +52,13 @@ function readFenceLine(line: string): FeishuFenceLine | undefined {
         line[index] === "\t" ? column + FEISHU_TAB_STOP - (column % FEISHU_TAB_STOP) : column + 1;
       index += 1;
     }
-    if (indent < 0) {
-      indent = column - columnStart;
-    }
+    indent = Math.max(indent, column - columnStart - markerColumn);
     const rest = line.slice(index);
     if (rest.startsWith(">")) {
       container += ">";
       index += 1;
       column += 1;
+      markerColumn = 1;
       continue;
     }
     const list = FEISHU_LIST_MARKER.exec(rest);
@@ -64,6 +68,7 @@ function readFenceLine(line: string): FeishuFenceLine | undefined {
     container += "-";
     index += list[0].length;
     column += list[0].length;
+    markerColumn = 1;
   }
   const marker = FEISHU_FENCE_MARKER.exec(line.slice(index));
   if (!marker?.[1]) {
@@ -76,7 +81,7 @@ function readFenceLine(line: string): FeishuFenceLine | undefined {
   if (marker[1].startsWith("`") && info.includes("`")) {
     return undefined;
   }
-  return { container, column, indent: Math.max(indent, 0), marker: marker[1], info };
+  return { container, column, indent, marker: marker[1], info };
 }
 
 /**
