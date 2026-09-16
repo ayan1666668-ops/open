@@ -10,7 +10,6 @@ import {
 import { withEnvAsync } from "../test-utils/env.js";
 import { runDoctorConfigPreflight } from "./doctor-config-preflight.js";
 import { withDoctorConfigPreflightHome } from "./doctor-config-preflight.test-support.js";
-import { inspectPluginMigrationAvailability } from "./doctor/shared/plugin-migration-availability.js";
 
 const runtimeId = "fixture-cli";
 const pluginId = "runtime-owner";
@@ -61,25 +60,14 @@ async function withRuntimeOwner(
 }
 
 describe("runtime plugin migration ownership", () => {
-  it.each(["cliBackends", "harness"] as const)(
-    "inspects the declared %s owner and preserves a genuinely missing plugin",
-    async (declaration) => {
-      await withRuntimeOwner(async () => {
-        const result = await inspectPluginMigrationAvailability({
-          cfg: { ...config, plugins: { entries: { "missing-fixture": { enabled: true } } } },
-          env: process.env,
-          installRecords: {},
-          deferInstallation: false,
-        });
-        expect(result.pending.map((entry) => entry.pluginId)).toEqual(["missing-fixture"]);
-        expect(result.statelessPluginIds).toEqual([pluginId]);
-      }, declaration);
-    },
-  );
-
-  it.each(["startup", "doctor"] as const)(
-    "%s reconciles an old runtime record through the shared preflight and keeps missing owners pending",
-    async (entry) => {
+  it.each([
+    { entry: "startup", declaration: "cliBackends" },
+    { entry: "startup", declaration: "harness" },
+    { entry: "doctor", declaration: "cliBackends" },
+    { entry: "doctor", declaration: "harness" },
+  ] as const)(
+    "$entry reconciles the $declaration runtime record and keeps missing owners pending",
+    async ({ entry, declaration }) => {
       await withRuntimeOwner(async (configPath) => {
         await fs.writeFile(
           configPath,
@@ -106,7 +94,7 @@ describe("runtime plugin migration ownership", () => {
         expect(result.stateMigrationStepReceipts).not.toContainEqual(
           expect.objectContaining({ id: `plugin:${runtimeId}`, outcome: "deferred" }),
         );
-      });
+      }, declaration);
     },
   );
 
@@ -131,14 +119,23 @@ describe("runtime plugin migration ownership", () => {
   });
 
   it("keeps an explicitly configured missing plugin separate from a runtime with the same name", async () => {
-    await withRuntimeOwner(async () => {
-      const result = await inspectPluginMigrationAvailability({
-        cfg: { ...config, plugins: { entries: { [runtimeId]: { enabled: true } } } },
-        env: process.env,
-        installRecords: {},
-        deferInstallation: false,
+    await withRuntimeOwner(async (configPath) => {
+      await fs.writeFile(
+        configPath,
+        JSON.stringify({ ...config, plugins: { entries: { [runtimeId]: { enabled: true } } } }),
+      );
+      recordDeferredPluginMigrations({ pending: [pending] });
+      const result = await runDoctorConfigPreflight({
+        migrateLegacyConfig: false,
+        invalidConfigNote: false,
+        repairPrefixedConfig: true,
+        doctorOnlyStateMigrations: true,
       });
-      expect(result.pending.map((entry) => entry.pluginId)).toEqual([runtimeId]);
+      expect(result.snapshot.valid).toBe(true);
+      expect(readDeferredPluginMigrations().map((record) => record.pluginId)).toEqual([runtimeId]);
+      expect(result.stateMigrationStepReceipts).toContainEqual(
+        expect.objectContaining({ id: `plugin:${runtimeId}`, outcome: "deferred" }),
+      );
     });
   });
 
