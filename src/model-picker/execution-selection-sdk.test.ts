@@ -1,251 +1,195 @@
 import { describe, expect, it, vi } from "vitest";
-import type { SessionEntry } from "../config/sessions/types.js";
+import {
+  loadSessionEntryReadOnly,
+  replaceSessionEntry,
+} from "../config/sessions/session-accessor.js";
 import {
   applyModelOverrideToSessionEntry,
   applyModelOverrideWithAuthProfileCompatibility,
+  applySessionExecutionSelection,
   ModelSelectionLockedError,
 } from "../plugin-sdk/model-session-runtime.js";
-import {
-  prepareSessionExecutionSelection,
-  commitSessionExecutionSelection,
-} from "./apply-session-model-selection.js";
-import {
-  admitSessionExecutionFallback,
-  decodeSessionExecutionSelection,
-  encodeSessionExecutionSelection,
-  encodeAcpExecutionSelection,
-  consumeLegacySessionExecutionSeed,
-} from "./execution-selection-codec.js";
+import { projectPluginSessionEntry } from "../plugin-sdk/session-store-runtime-internal.js";
+import { patchSessionEntry, type SessionEntry } from "../plugin-sdk/session-store-runtime.js";
+import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 
 vi.mock("../agents/model-runtime-choice.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../agents/model-runtime-choice.js")>()),
   evaluatePublishedModelRuntimeChoice: vi.fn(
-    async (params: { runtimeId: string; provider: string; model: string }) =>
-      params.runtimeId === "openclaw"
-        ? {
-            kind: "ready" as const,
-            entry: { provider: params.provider, id: params.model, name: "Requested" },
-            validate: () => undefined,
-          }
-        : { kind: "unknown" as const, message: "No prepared executor" },
+    async (params: { runtimeId: string; provider: string; model: string }) => ({
+      kind: "ready" as const,
+      entry: { provider: params.provider, id: params.model, name: "Requested" },
+      validate: () => undefined,
+    }),
   ),
 }));
 
-import type { ModelExecutionSelection } from "./execution-selection.js";
-
-const metadata = {
-  defaultProvider: "qa-route",
-  classifyExecutor: (id: string) => (id === "openclaw" ? ("harness" as const) : undefined),
-};
-const initial: ModelExecutionSelection = {
-  model: { provider: "qa-route", id: "qa-original" },
-  executor: { kind: "harness", id: "openclaw" },
-};
-const nextModel = { provider: "qa-route", id: "qa-route/family/qa-selected" };
-const fallback: ModelExecutionSelection = {
-  model: { provider: "qa-backup", id: "qa-fallback" },
-  executor: { kind: "harness", id: "openclaw" },
-};
-function entry(): SessionEntry {
-  return { sessionId: "qa-sdk", updatedAt: 1, delivery: { kind: "none" } };
+function entry(pinned = true): SessionEntry {
+  return projectPluginSessionEntry({
+    sessionId: "sdk-session",
+    updatedAt: 1,
+    ...(pinned
+      ? {
+          executionSelection: {
+            state: "accepted" as const,
+            selection: {
+              model: { provider: "fixture", id: "before" },
+              executor: { kind: "harness" as const, id: "openclaw" },
+            },
+            fallbackPermission: "explicit" as const,
+          },
+        }
+      : {}),
+  });
 }
+const selection = { provider: "fixture", model: "family/after" };
 
-describe("released model-selection SDK compatibility adapters", () => {
-  it.each([false, true])(
-    "stages an exact model with existing pin=%s without accepting an executor",
-    (pinned) => {
-      const row = entry();
-      if (pinned) {
-        encodeSessionExecutionSelection(row, initial, { kind: "user" });
-      }
-      const result = applyModelOverrideToSessionEntry({
-        entry: row,
-        selection: { provider: nextModel.provider, model: nextModel.id },
-        markLiveSwitchPending: true,
+describe("released model-selection SDK entry points", () => {
+  it.each(["accepted", "deferred"] as const)(
+    "stages a supplied %s pair without accepting forged recovery history",
+    async (state) => {
+      await withOpenClawTestState({ label: "sdk-selection-recovery" }, async () => {
+        const scope = { agentId: "main", sessionKey: "agent:main:sdk" };
+        const previous = {
+          model: { provider: "fixture", id: "original" },
+          executor: { kind: "harness" as const, id: "openclaw" },
+        };
+        const proposed = {
+          model: { provider: "fixture", id: "proposed" },
+          executor: { kind: "harness" as const, id: "openclaw" },
+        };
+        await replaceSessionEntry(scope, {
+          sessionId: "sdk-session",
+          updatedAt: 1,
+          executionSelection: {
+            state: "accepted",
+            selection: previous,
+            fallbackPermission: "explicit",
+          },
+        });
+        await patchSessionEntry({
+          ...scope,
+          update: () => ({
+            executionSelection:
+              state === "accepted"
+                ? { state, selection: proposed, fallbackPermission: "explicit" }
+                : { state, request: proposed, previous: proposed, fallbackPermission: "explicit" },
+          }),
+        });
+        expect(loadSessionEntryReadOnly(scope)?.executionSelection).toEqual({
+          state: "deferred",
+          request: proposed,
+          previous,
+          fallbackPermission: "explicit",
+        });
       });
-      expect(result).toEqual({ updated: true });
-      expect(decodeSessionExecutionSelection(row, metadata)).toEqual({
-        kind: "uninitialized",
-        model: nextModel,
-        ...(pinned ? { executor: initial.executor } : {}),
-      });
-      expect(row.agentRuntimeOverride).toBe(pinned ? "openclaw" : undefined);
-      expect(row.liveModelSwitchPending).toBe(true);
-      expect(admitSessionExecutionFallback({ entry: row, candidate: fallback, metadata })).toEqual({
-        status: "rejected",
-        reason: "user-model-selection",
-      });
-      expect(
-        applyModelOverrideToSessionEntry({
-          entry: row,
-          selection: { provider: nextModel.provider, model: nextModel.id },
-        }),
-      ).toEqual({ updated: false });
     },
   );
 
-  it("retains automatic permission while preparing the pinned executor for the next turn", () => {
-    const row = entry();
-    encodeSessionExecutionSelection(row, initial, { kind: "initialize" });
-    applyModelOverrideToSessionEntry({
-      entry: row,
-      selection: { provider: nextModel.provider, model: nextModel.id },
-      selectionSource: "auto",
+  it.each([false, true])("stages a model with pin=%s without claiming acceptance", (pinned) => {
+    const row = entry(pinned);
+    expect(
+      applyModelOverrideToSessionEntry({ entry: row, selection, markLiveSwitchPending: true }),
+    ).toEqual({ updated: true });
+    expect(row.executionSelection).toMatchObject({
+      state: "deferred",
+      request: { model: { provider: selection.provider, id: selection.model } },
+      fallbackPermission: "explicit",
     });
-    expect(decodeSessionExecutionSelection(row, metadata)).toEqual({
-      kind: "uninitialized",
-      model: nextModel,
-      executor: initial.executor,
-    });
-    expect(admitSessionExecutionFallback({ entry: row, candidate: fallback, metadata })).toEqual({
-      status: "admitted",
-      selection: fallback,
-    });
+    expect(row.agentRuntimeOverride).toBe(pinned ? "openclaw" : undefined);
+    expect(row.liveModelSwitchPending).toBe(true);
+    expect(applyModelOverrideToSessionEntry({ entry: row, selection })).toEqual({ updated: false });
   });
 
-  it.each([false, true])(
-    "retains the runtime pin when clearing the model with explicitDefault=%s",
-    (explicitDefaultSelection) => {
-      const row = entry();
-      encodeSessionExecutionSelection(row, initial, { kind: "user" });
-      applyModelOverrideToSessionEntry({
-        entry: row,
-        selection: { provider: "qa-route", model: "qa-default", isDefault: true },
-        explicitDefaultSelection,
-      });
-      expect(decodeSessionExecutionSelection(row, metadata)).toEqual({
-        kind: "uninitialized",
-        executor: initial.executor,
-      });
-      expect(row.agentRuntimeOverride).toBe("openclaw");
-      expect(row.modelOverride).toBeUndefined();
-      expect(row.providerOverride).toBeUndefined();
-    },
-  );
+  it("clears the model without clearing the released runtime pin", () => {
+    const row = entry();
+    applyModelOverrideToSessionEntry({
+      entry: row,
+      selection: { ...selection, isDefault: true },
+      explicitDefaultSelection: true,
+    });
+    expect(row.executionSelection).toMatchObject({
+      state: "deferred",
+      request: { executor: { kind: "harness", id: "openclaw" } },
+      fallbackPermission: "configured",
+    });
+    expect(
+      row.executionSelection?.state === "deferred" && row.executionSelection.request.model,
+    ).toBeUndefined();
+    expect(row.agentRuntimeOverride).toBe("openclaw");
+    expect(row.modelOverride).toBeUndefined();
+  });
 
-  it("retains compatible account intent through the auth-aware SDK entry point", () => {
+  it("preserves a compatible account through the auth-aware setter", () => {
     const row = {
       ...entry(),
-      authProfileOverride: "qa-account",
+      authProfileOverride: "fixture-account",
       authProfileOverrideSource: "user" as const,
     };
     applyModelOverrideWithAuthProfileCompatibility({
-      cfg: { auth: { profiles: { "qa-account": { provider: "qa-route", mode: "api_key" } } } },
-      agentDir: "/nonexistent/qa-sdk-agent",
-      currentProvider: "qa-route",
+      cfg: { auth: { profiles: { "fixture-account": { provider: "fixture", mode: "api_key" } } } },
+      agentDir: "/nonexistent/sdk-agent",
+      currentProvider: "fixture",
       entry: row,
-      selection: { provider: nextModel.provider, model: nextModel.id },
+      selection,
       metadataSnapshot: { plugins: [] },
     });
-    expect(row.authProfileOverride).toBe("qa-account");
-    expect(decodeSessionExecutionSelection(row, metadata)).toEqual({
-      kind: "uninitialized",
-      model: nextModel,
-    });
+    expect(row.authProfileOverride).toBe("fixture-account");
+    expect(row.executionSelection?.state).toBe("deferred");
   });
 
-  it("preserves the released lock error and performs no partial mutation", () => {
-    const row = { ...entry(), modelSelectionLocked: true };
-    const before = structuredClone(row);
-    expect(() =>
-      applyModelOverrideToSessionEntry({
-        entry: row,
-        selection: { provider: nextModel.provider, model: nextModel.id },
-      }),
-    ).toThrow(ModelSelectionLockedError);
-    expect(row).toEqual(before);
-  });
-  it("stages ACP model input without replacing its binding, then clears only the consumed request", () => {
-    const binding = { kind: "acp" as const, backend: "qa-backend", agent: "qa-agent" };
-    const row = entry();
-    row.acp = encodeAcpExecutionSelection(
-      { runtimeSessionName: "qa-native", mode: "persistent", state: "idle", lastActivityAt: 1 },
-      { executor: binding, model: { id: "qa-old" } },
-    );
-    applyModelOverrideToSessionEntry({
-      entry: row,
-      selection: { provider: nextModel.provider, model: nextModel.id },
-    });
-    expect(decodeSessionExecutionSelection(row, metadata)).toEqual({
-      kind: "uninitialized",
-      executor: binding,
-      model: nextModel,
-    });
-    const captured = structuredClone(row);
-    const newer = structuredClone(row);
-    applyModelOverrideToSessionEntry({
-      entry: newer,
-      selection: { provider: "qa-route", model: "qa-newer" },
-    });
-    expect(consumeLegacySessionExecutionSeed(newer, captured)).toBe(false);
-    expect(newer.modelOverride).toBe("qa-newer");
-    expect(consumeLegacySessionExecutionSeed(row, captured)).toBe(true);
-    expect(row.acp).toEqual(captured.acp);
-  });
-
-  it.each([false, true])(
-    "preserves ACP default semantics with explicitDefault=%s",
-    (explicitDefaultSelection) => {
-      const binding = { kind: "acp" as const, backend: "qa-backend", agent: "qa-agent" };
-      const pair = { executor: binding, model: { id: "qa-native-model" } };
-      const row = entry();
-      row.acp = encodeAcpExecutionSelection(
-        { runtimeSessionName: "qa-native", mode: "persistent", state: "idle", lastActivityAt: 1 },
-        pair,
-      );
-      applyModelOverrideToSessionEntry({
-        entry: row,
-        selection: { provider: "qa-route", model: "qa-default", isDefault: true },
-        explicitDefaultSelection,
-      });
-      expect(decodeSessionExecutionSelection(row, metadata)).toEqual(
-        explicitDefaultSelection
-          ? { kind: "uninitialized", executor: binding }
-          : { kind: "initialized", selection: pair },
-      );
+  it.each([applyModelOverrideToSessionEntry, applyModelOverrideWithAuthProfileCompatibility])(
+    "refuses a locked selection without partial mutation",
+    (setter) => {
+      const row = { ...entry(), modelSelectionLocked: true };
+      const before = structuredClone(row);
+      expect(() =>
+        setter({
+          cfg: {},
+          agentDir: "/nonexistent/sdk-agent",
+          currentProvider: "fixture",
+          entry: row,
+          selection,
+        }),
+      ).toThrow(ModelSelectionLockedError);
+      expect(row).toEqual(before);
     },
   );
-  it.each(["user", "auto"] as const)(
-    "prepares a staged %s model with its retained pin, then commits one accepted pair",
-    async (selectionSource) => {
-      const stagedModel = { provider: "qa-route", id: "qa-next" };
+
+  it.each(["auto", "user"] as const)(
+    "prepares and commits a staged %s request through the async API",
+    async (source) => {
       const row = entry();
-      encodeSessionExecutionSelection(row, initial, { kind: "user" });
-      applyModelOverrideToSessionEntry({
-        entry: row,
-        selection: { provider: stagedModel.provider, model: stagedModel.id },
-        selectionSource,
-      });
-      const prepared = await prepareSessionExecutionSelection({
+      applyModelOverrideToSessionEntry({ entry: row, selection, selectionSource: source });
+      const sessionKey = "agent:main:sdk";
+      // The host loads the canonical entry after the public setter has staged its request.
+      const { acp: _acp, modelFallback: _fallback, ...canonical } = row;
+      const sessionStore = { [sessionKey]: canonical };
+      const result = await applySessionExecutionSelection({
         cfg: {
           agents: {
             defaults: {
-              model: "qa-config/qa-default",
-              models: {
-                "qa-config/qa-default": {},
-                [`${stagedModel.provider}/${stagedModel.id}`]: { agentRuntime: { id: "qa-other" } },
-              },
+              model: "fixture/default",
+              models: { "fixture/default": {}, "fixture/family/after": {} },
             },
           },
         },
         agentId: "main",
-        sessionEntry: row,
-        modelCatalog: [{ provider: stagedModel.provider, id: stagedModel.id, name: "Requested" }],
+        sessionKey,
+        sessionEntry: canonical,
+        sessionStore,
+        modelCatalog: [{ provider: "fixture", id: "family/after", name: "Requested" }],
         request: { kind: "initialize" },
       });
-      expect(prepared.status).toBe("ready");
-      if (prepared.status !== "ready") {
-        throw new Error(prepared.message);
-      }
-      expect(prepared.selection).toEqual({ model: stagedModel, executor: initial.executor });
-      commitSessionExecutionSelection(row, prepared.selection, { cause: { kind: "initialize" } });
-      expect(decodeSessionExecutionSelection(row, metadata)).toEqual({
-        kind: "initialized",
-        selection: prepared.selection,
+      expect(result.status).toBe("applied");
+      expect(sessionStore[sessionKey].executionSelection).toEqual({
+        state: "accepted",
+        selection: {
+          model: { provider: "fixture", id: "family/after" },
+          executor: { kind: "harness", id: "openclaw" },
+        },
+        fallbackPermission: source === "auto" ? "configured" : "explicit",
       });
-      expect(
-        admitSessionExecutionFallback({ entry: row, candidate: fallback, metadata }).status,
-      ).toBe(selectionSource === "auto" ? "admitted" : "rejected");
     },
   );
 });

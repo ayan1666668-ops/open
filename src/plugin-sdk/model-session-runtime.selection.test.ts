@@ -1,27 +1,49 @@
 import { afterEach, beforeEach, expect, expectTypeOf, test, vi } from "vitest";
 import * as acpManager from "../acp/control-plane/manager.js";
-import * as acpStore from "../acp/runtime/session-meta.js";
+import { evaluatePublishedModelRuntimeChoice } from "../agents/model-runtime-choice.js";
 import type { ModelVisibilityPolicy } from "../agents/model-selection.js";
-import * as sessionStore from "../config/sessions/session-accessor.js";
-import * as selectionOwner from "../model-picker/apply-session-model-selection.js";
+import {
+  loadSessionEntryReadOnly,
+  replaceSessionEntry,
+} from "../config/sessions/session-accessor.js";
+import type { SessionEntry } from "../config/sessions/types.js";
+import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import {
   applySessionModelSelection,
   type ApplySessionModelSelectionParams,
 } from "./model-session-runtime.js";
+import { projectPluginSessionEntry } from "./session-store-runtime-internal.js";
 
-function request(): ApplySessionModelSelectionParams {
-  const entry = { sessionId: "sdk-session", updatedAt: 1 };
+vi.mock("../agents/model-runtime-choice.js", () => ({
+  evaluatePublishedModelRuntimeChoice: vi.fn(),
+}));
+const scope = { agentId: "main", sessionKey: "agent:main:sdk" };
+const ordinary: SessionEntry = {
+  sessionId: "sdk-session",
+  updatedAt: 1,
+  executionSelection: {
+    state: "accepted",
+    selection: {
+      model: { provider: "fixture", id: "before" },
+      executor: { kind: "harness", id: "openclaw" },
+    },
+    fallbackPermission: "configured",
+  },
+};
+function request(entry = ordinary): ApplySessionModelSelectionParams {
+  const publicEntry = projectPluginSessionEntry(entry);
   return {
-    cfg: {},
-    agentId: "main",
-    sessionKey: "agent:main:sdk",
-    sessionEntry: entry,
-    sessionStore: { "agent:main:sdk": entry },
+    cfg: { agents: { defaults: { model: "fixture/before" } } },
+    ...scope,
+    sessionEntry: publicEntry,
+    sessionStore: { [scope.sessionKey]: publicEntry },
     defaultProvider: "fixture",
-    defaultModel: "default",
+    defaultModel: "before",
     currentProvider: "fixture",
     currentModel: "before",
-    modelCatalog: [],
+    modelCatalog: [
+      { provider: "fixture", id: "requested", name: "Requested", contextTokens: 4096 },
+    ],
     request: {
       provider: "fixture",
       model: "requested",
@@ -31,117 +53,134 @@ function request(): ApplySessionModelSelectionParams {
     markLiveSwitchPending: true,
   };
 }
-
 beforeEach(() => {
-  vi.spyOn(acpStore, "readAcpSessionMetaForEntry").mockReturnValue(undefined);
+  vi.mocked(evaluatePublishedModelRuntimeChoice)
+    .mockReset()
+    .mockResolvedValue({
+      kind: "ready",
+      entry: { provider: "fixture", id: "requested", name: "Requested", contextTokens: 4096 },
+      validate: () => undefined,
+    });
 });
 afterEach(() => vi.restoreAllMocks());
 
-test("projects all published flat fields from the one accepted ordinary pair", async () => {
-  const owner = vi.spyOn(selectionOwner, "applySessionModelSelection").mockResolvedValue({
-    status: "applied",
-    selection: {
-      model: { provider: "fixture", id: "accepted" },
-      executor: { kind: "harness", id: "openclaw" },
-    },
-    message: "Model changed to QA. Still using OpenClaw.",
-    changed: true,
-    contextTokens: 4096,
+test("the released operation returns all flat fields and a matching public entry", async () => {
+  await withOpenClawTestState({ label: "sdk-flat-selection" }, async () => {
+    const params = request();
+    const result = await applySessionModelSelection(params);
+    expect(result).toMatchObject({
+      status: "applied",
+      provider: "fixture",
+      model: "requested",
+      effectiveModelRef: "fixture/requested",
+      agentRuntime: "openclaw",
+      contextTokens: 4096,
+      message: "Model changed to Requested. Still using OpenClaw.",
+    });
+    expect(params.sessionEntry).toMatchObject({
+      providerOverride: "fixture",
+      modelOverride: "requested",
+      agentRuntimeOverride: "openclaw",
+    });
+    if (result.status !== "applied") throw new Error("Expected accepted ordinary selection");
+    expectTypeOf(result.provider).toEqualTypeOf<string>();
+    expectTypeOf(result.model).toEqualTypeOf<string>();
+    expectTypeOf(result.effectiveModelRef).toEqualTypeOf<string>();
+    expectTypeOf(result.agentRuntime).toEqualTypeOf<string>();
+    expectTypeOf(result.contextTokens).toEqualTypeOf<number>();
+    expectTypeOf<ApplySessionModelSelectionParams["modelPolicy"]>().toEqualTypeOf<
+      ModelVisibilityPolicy | undefined
+    >();
   });
-  const params = request();
-  const result = await applySessionModelSelection(params);
-  expect(owner).toHaveBeenCalledOnce();
-  expect(owner.mock.calls[0]?.[0].request).toEqual(params.request);
-  expect(result).toMatchObject({
-    status: "applied",
-    provider: "fixture",
-    model: "accepted",
-    effectiveModelRef: "fixture/accepted",
-    agentRuntime: "openclaw",
-    contextTokens: 4096,
-    selection: {
-      model: { provider: "fixture", id: "accepted" },
-      executor: { kind: "harness", id: "openclaw" },
-    },
-  });
-  if (result.status !== "applied") throw new Error("expected accepted ordinary selection");
-  expectTypeOf(result.provider).toEqualTypeOf<string>();
-  expectTypeOf(result.model).toEqualTypeOf<string>();
-  expectTypeOf(result.effectiveModelRef).toEqualTypeOf<string>();
-  expectTypeOf(result.agentRuntime).toEqualTypeOf<string>();
-  expectTypeOf(result.contextTokens).toEqualTypeOf<number>();
-  expectTypeOf<ApplySessionModelSelectionParams["modelPolicy"]>().toEqualTypeOf<
-    ModelVisibilityPolicy | undefined
-  >();
 });
 
-test.each([undefined, "qa-opaque-model"])(
-  "rejects ACP %s before owner, backend, or store mutation",
+test.each(["native-managed", { id: "opaque" }] as const)(
+  "rejects ACP %j before backend or storage effects",
   async (model) => {
-    vi.mocked(acpStore.readAcpSessionMetaForEntry).mockReturnValue({
-      backend: "qa-backend",
-      agent: "qa-agent",
-      runtimeSessionName: "qa-native",
-      mode: "persistent",
-      state: "idle",
-      lastActivityAt: 1,
-      ...(model ? { runtimeOptions: { model } } : {}),
+    await withOpenClawTestState({ label: "sdk-flat-acp" }, async () => {
+      const entry: SessionEntry = {
+        ...ordinary,
+        executionSelection: {
+          state: "accepted",
+          selection: {
+            executor: { kind: "acp", backend: "fixture-backend", agent: "fixture-agent" },
+            model,
+          },
+          fallbackPermission: "explicit",
+        },
+        acp: {
+          runtimeSessionName: "fixture-native",
+          mode: "persistent",
+          state: "idle",
+          lastActivityAt: 1,
+        },
+      };
+      await replaceSessionEntry(scope, entry);
+      const params = request(entry);
+      const before = structuredClone(params.sessionEntry);
+      const backend = vi.spyOn(acpManager, "getAcpSessionManager");
+      expect(await applySessionModelSelection(params)).toMatchObject({
+        status: "rejected",
+        reason: "invalid-runtime",
+        message: expect.stringContaining("Use applySessionExecutionSelection"),
+      });
+      expect(backend).not.toHaveBeenCalled();
+      expect(evaluatePublishedModelRuntimeChoice).not.toHaveBeenCalled();
+      expect(params.sessionEntry).toEqual(before);
+      expect(loadSessionEntryReadOnly(scope)).toMatchObject(entry);
     });
-    const owner = vi.spyOn(selectionOwner, "applySessionModelSelection");
-    const backend = vi.spyOn(acpManager, "getAcpSessionManager");
-    const acpWrite = vi.spyOn(acpStore, "upsertAcpSessionMeta");
-    const ordinaryWrite = vi.spyOn(sessionStore, "patchSessionEntryCore");
-    const params = request();
-    const before = structuredClone(params.sessionEntry);
-    await expect(applySessionModelSelection(params)).resolves.toMatchObject({
-      status: "rejected",
-      reason: "invalid-runtime",
-      message: expect.stringContaining("dedicated session model request"),
-    });
-    expect(owner).not.toHaveBeenCalled();
-    expect(backend).not.toHaveBeenCalled();
-    expect(acpWrite).not.toHaveBeenCalled();
-    expect(ordinaryWrite).not.toHaveBeenCalled();
-    expect(params.sessionEntry).toEqual(before);
   },
 );
 
-test("rechecks ACP binding before a delegate can mutate after awaited preparation", async () => {
-  const owner = vi
-    .spyOn(selectionOwner, "applySessionModelSelection")
-    .mockImplementation(async (params) => {
-      vi.mocked(acpStore.readAcpSessionMetaForEntry).mockReturnValue({
-        backend: "qa-backend",
-        agent: "qa-agent",
-        runtimeSessionName: "qa-native",
-        mode: "persistent",
-        state: "idle",
-        lastActivityAt: 1,
+test("rechecks released caller custody after preparation", async () => {
+  await withOpenClawTestState({ label: "sdk-flat-custody" }, async () => {
+    const params = request();
+    vi.mocked(evaluatePublishedModelRuntimeChoice).mockImplementationOnce(async () => {
+      params.sessionStore[scope.sessionKey] = projectPluginSessionEntry({
+        ...ordinary,
+        executionSelection: {
+          state: "accepted",
+          selection: {
+            executor: { kind: "acp", backend: "fixture-backend", agent: "fixture-agent" },
+            model: "native-managed",
+          },
+          fallbackPermission: "explicit",
+        },
       });
-      const message = params.validateAuthProfileSelection?.();
-      if (!message) throw new Error("ACP binding should invalidate ordinary selection");
-      return { status: "rejected", reason: "invalid-runtime", message };
+      return {
+        kind: "ready",
+        entry: { provider: "fixture", id: "requested", name: "Requested" },
+        validate: () => undefined,
+      };
     });
-  const validate = vi.fn(() => undefined);
-  await expect(
-    applySessionModelSelection({ ...request(), validateAuthProfileSelection: validate }),
-  ).resolves.toMatchObject({ status: "rejected", reason: "invalid-runtime" });
-  expect(owner).toHaveBeenCalledOnce();
-  expect(validate).toHaveBeenCalled();
+    const before = structuredClone(params.sessionEntry);
+    expect(await applySessionModelSelection(params)).toMatchObject({
+      status: "rejected",
+      reason: "not-allowed",
+      message: expect.stringContaining("Use applySessionExecutionSelection"),
+    });
+    expect(params.sessionEntry).toEqual(before);
+    expect(params.sessionStore[scope.sessionKey]?.executionSelection).toMatchObject({
+      selection: { executor: { kind: "acp" } },
+    });
+  });
 });
 
 test.each(["unknown", "unavailable", "unsupported"] as const)(
   "keeps the stable rejection union for %s",
-  async (reason) => {
-    vi.spyOn(selectionOwner, "applySessionModelSelection").mockResolvedValue({
-      status: "rejected",
-      reason,
-      message: "The app cannot accept this selection.",
-    });
-    await expect(applySessionModelSelection(request())).resolves.toEqual({
-      status: "rejected",
-      reason: "invalid-runtime",
-      message: "The app cannot accept this selection.",
+  async (kind) => {
+    await withOpenClawTestState({ label: "sdk-flat-refusal" }, async () => {
+      vi.mocked(evaluatePublishedModelRuntimeChoice).mockResolvedValue({
+        kind,
+        message: "The app cannot accept this selection.",
+      });
+      const params = request();
+      const before = structuredClone(params.sessionEntry);
+      expect(await applySessionModelSelection(params)).toMatchObject({
+        status: "rejected",
+        reason: "invalid-runtime",
+      });
+      expect(params.sessionEntry).toEqual(before);
     });
   },
 );

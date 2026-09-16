@@ -36,11 +36,7 @@ import { resolveSqliteTargetFromSessionStorePath } from "../config/sessions/sess
 import { resolveSessionStoreEntryCore as resolveSessionStoreEntryFromStore } from "../config/sessions/store-entry.js";
 import { normalizeResolvedMaintenanceConfigInput } from "../config/sessions/store-maintenance.js";
 import type { ResolvedSessionMaintenanceConfigInput } from "../config/sessions/store-maintenance.js";
-import type {
-  AmbientTranscriptWatermark,
-  InternalSessionEntry,
-  SessionEntry,
-} from "../config/sessions/types.js";
+import type { AmbientTranscriptWatermark, InternalSessionEntry } from "../config/sessions/types.js";
 import { replaceFileAtomicSync } from "../infra/replace-file.js";
 import { resolveAgentIdFromSessionKey } from "../routing/session-key.js";
 import {
@@ -51,6 +47,7 @@ import {
   projectPluginSessionStore,
   reconcilePluginSessionStore,
   type SessionStoreReadParams,
+  type SessionEntry,
   toSessionAccessScope,
 } from "./session-store-runtime-internal.js";
 import type { SessionTranscriptEvent } from "./session-transcript-runtime.js";
@@ -154,7 +151,7 @@ type SessionLifecycleArtifactsCleanupResult = {
 
 function preserveGenerationPrivateFields(
   persistedEntry: InternalSessionEntry,
-  publicPatch: Partial<SessionEntry>,
+  publicPatch: Partial<InternalSessionEntry>,
 ): Partial<InternalSessionEntry> {
   const nextSessionId = Object.hasOwn(publicPatch, "sessionId")
     ? publicPatch.sessionId
@@ -478,12 +475,19 @@ export async function patchSessionEntry(
       if (!patch) {
         return null;
       }
-      return preserveGenerationPrivateFields(persistedEntry, projectPluginSessionEntryPatch(patch));
+      return preserveGenerationPrivateFields(
+        persistedEntry,
+        projectPluginSessionEntryPatch(patch, persistedEntry, { replace: params.replaceEntry }),
+      );
     },
     {
       assertCommitAllowed: params.assertCommitAllowed,
       fallbackEntry: params.fallbackEntry
-        ? projectPluginSessionEntry(params.fallbackEntry)
+        ? {
+            ...projectPluginSessionEntryPatch(params.fallbackEntry),
+            sessionId: params.fallbackEntry.sessionId,
+            updatedAt: params.fallbackEntry.updatedAt,
+          }
         : undefined,
       maintenanceConfig:
         params.maintenanceConfig !== undefined
@@ -524,7 +528,10 @@ export async function updateSessionStoreEntry(
         return null;
       }
       const persistedEntry = internalEntry as InternalSessionEntry;
-      return preserveGenerationPrivateFields(persistedEntry, projectPluginSessionEntryPatch(patch));
+      return preserveGenerationPrivateFields(
+        persistedEntry,
+        projectPluginSessionEntryPatch(patch, persistedEntry),
+      );
     },
     {
       skipMaintenance: params.skipMaintenance,
@@ -537,14 +544,24 @@ export async function updateSessionStoreEntry(
 
 /** Replaces or creates one session entry by agent/session identity. */
 export async function upsertSessionEntry(params: UpsertSessionEntryParams): Promise<void> {
-  const publicEntry = projectPluginSessionEntry(params.entry);
+  const publicEntry = params.entry;
   await patchAccessorSessionEntry(
     toSessionAccessScope(params),
     (internalEntry) => {
       const persistedEntry = internalEntry as InternalSessionEntry;
-      return preserveGenerationPrivateFields(persistedEntry, publicEntry);
+      return preserveGenerationPrivateFields(
+        persistedEntry,
+        projectPluginSessionEntryPatch(publicEntry, persistedEntry, { replace: true }),
+      );
     },
-    { fallbackEntry: publicEntry, replaceEntry: true },
+    {
+      fallbackEntry: {
+        ...projectPluginSessionEntryPatch(publicEntry),
+        sessionId: publicEntry.sessionId,
+        updatedAt: publicEntry.updatedAt,
+      },
+      replaceEntry: true,
+    },
   );
 }
 
@@ -646,5 +663,5 @@ export {
   resolveThreadFlag,
 } from "../config/sessions/reset.js";
 export { resolveSendPolicy } from "../sessions/send-policy.js";
-export type { SessionEntry } from "../config/sessions/types.js";
+export type { SessionEntry } from "./session-store-runtime-internal.js";
 export type { SessionScope } from "../config/sessions/types.js";

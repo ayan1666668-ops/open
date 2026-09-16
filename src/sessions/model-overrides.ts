@@ -1,6 +1,7 @@
 // Session model override helpers normalize per-session provider model choices.
 import type { SessionEntry } from "../config/sessions/types.js";
-import { encodeLegacySessionModelSelection } from "../model-picker/execution-selection-codec.js";
+import { stageSessionExecutionSelection } from "../model-picker/apply-session-model-selection.js";
+import type { LegacySelectionView } from "../model-picker/execution-selection-projection.js";
 
 type ModelOverrideSelection = {
   provider: string;
@@ -36,9 +37,9 @@ export function assertModelSelectionUnlocked(
   }
 }
 
-/** @deprecated Use applySessionModelSelection; removed in the first stable release after 2026.10. */
+/** @deprecated Use applySessionExecutionSelection; removed in the first stable release after 2026.10. */
 export function applyModelOverrideToSessionEntry(params: {
-  entry: SessionEntry;
+  entry: Omit<SessionEntry, "acp" | "modelFallback"> & LegacySelectionView;
   selection: ModelOverrideSelection;
   profileOverride?: string;
   profileOverrideSource?: "auto" | "user";
@@ -48,5 +49,5 @@ export function applyModelOverrideToSessionEntry(params: {
   markLiveSwitchPending?: boolean;
 }): { updated: boolean } {
   assertModelSelectionUnlocked(params.entry);
-  return encodeLegacySessionModelSelection(params);
+  return stageSessionExecutionSelection(params);
 }

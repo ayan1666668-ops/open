@@ -7,10 +7,25 @@ import {
   resolvePersistedOverrideModelRef,
 } from "../agents/model-selection-persisted.js";
 import { resolveSessionParentSessionKey } from "../channels/plugins/session-conversation.js";
-import {
-  hasSessionActiveAutoModelFallback,
-  resolveSessionModelOverrideRouteResolution,
-} from "../config/sessions/model-override-provenance.js";
+import type { PublicSessionEntry } from "../model-picker/execution-selection-projection.js";
+import { getSessionExecutionSelection } from "../model-picker/execution-selection.js";
+import { isModelExecutionSelection } from "../model-picker/execution-selection.js";
+
+function legacyViewMetadata(entry: PublicSessionEntry | undefined) {
+  const originProvider = normalizeOptionalString(entry?.modelOverrideFallbackOriginProvider);
+  const originModel = normalizeOptionalString(entry?.modelOverrideFallbackOriginModel);
+  const provider = normalizeOptionalString(entry?.providerOverride);
+  const model = normalizeOptionalString(entry?.modelOverride);
+  const hasOrigin = Boolean((provider || model) && originProvider && originModel);
+  return {
+    routeResolution:
+      entry?.modelOverrideRouteResolution ?? (hasOrigin ? ("resolved" as const) : ("raw" as const)),
+    activeFallback:
+      hasOrigin &&
+      (entry?.modelOverrideSource === undefined || entry.modelOverrideSource === "auto") &&
+      ((provider ?? originProvider) !== originProvider || (model ?? originModel) !== originModel),
+  };
+}
 import type { SessionEntry } from "../config/sessions/types.js";
 
 /** Model override loaded from the current session or its parent session. */
@@ -23,7 +38,7 @@ export type StoredModelOverride = {
 
 function resolveStoredOverrideFromEntry(
   params: {
-    entry?: SessionEntry;
+    entry?: PublicSessionEntry;
     defaultProvider: string;
     source: StoredModelOverride["source"];
     allowPluginNormalization?: boolean;
@@ -32,7 +47,7 @@ function resolveStoredOverrideFromEntry(
   if (params.entry?.modelOverrideSource === "default") {
     return null;
   }
-  const routeResolution = resolveSessionModelOverrideRouteResolution(params.entry);
+  const routeResolution = legacyViewMetadata(params.entry).routeResolution;
   const normalized = normalizeStoredOverrideModel({
     providerOverride: params.entry?.providerOverride,
     modelOverride: params.entry?.modelOverride,
@@ -58,7 +73,7 @@ function resolveStoredOverrideFromEntry(
 /** Resolves only the current session's persisted model override. */
 export function resolveDirectStoredModelOverride(
   params: {
-    sessionEntry?: SessionEntry;
+    sessionEntry?: PublicSessionEntry;
     defaultProvider: string;
     allowPluginNormalization?: boolean;
   } & ModelManifestNormalizationContext,
@@ -87,28 +102,27 @@ function resolveParentSessionKeyCandidate(params: {
   return null;
 }
 
-/** Keep prepared host metadata outside the published command resolver contract. */
+/** Released SDK-only reader for public legacy views; core uses the canonical reader below. */
 export function resolveStoredModelOverride(params: {
-  loadSessionEntry?: (sessionKey: string) => SessionEntry | undefined;
-  sessionEntry?: SessionEntry;
-  sessionStore?: Record<string, SessionEntry>;
+  loadSessionEntry?: (sessionKey: string) => PublicSessionEntry | undefined;
+  sessionEntry?: PublicSessionEntry;
+  sessionStore?: Record<string, PublicSessionEntry>;
   sessionKey?: string;
   parentSessionKey?: string;
   defaultProvider: string;
   allowPluginNormalization?: boolean;
 }): StoredModelOverride | null {
-  return resolveStoredModelOverrideCore({
-    loadSessionEntry: params.loadSessionEntry,
-    sessionEntry: params.sessionEntry,
-    sessionStore: params.sessionStore,
-    sessionKey: params.sessionKey,
-    parentSessionKey: params.parentSessionKey,
-    defaultProvider: params.defaultProvider,
-    allowPluginNormalization: params.allowPluginNormalization,
-  });
+  if (params.sessionEntry?.modelOverrideSource === "default") return null;
+  const direct = resolveDirectStoredModelOverride(params);
+  if (direct) return direct;
+  const parentKey = resolveParentSessionKeyCandidate(params);
+  if (!parentKey) return null;
+  const entry = params.loadSessionEntry?.(parentKey) ?? params.sessionStore?.[parentKey];
+  if (legacyViewMetadata(entry).activeFallback) return null;
+  return resolveStoredOverrideFromEntry({ ...params, entry, source: "parent" });
 }
 
-/** Resolves the persisted model override visible to the current session. */
+/** Canonical session intent for core views; observed output never supplies selection. */
 export function resolveStoredModelOverrideCore(
   params: {
     loadSessionEntry?: (sessionKey: string) => SessionEntry | undefined;
@@ -120,34 +134,30 @@ export function resolveStoredModelOverrideCore(
     allowPluginNormalization?: boolean;
   } & ModelManifestNormalizationContext,
 ): StoredModelOverride | null {
-  if (params.sessionEntry?.modelOverrideSource === "default") {
-    return null;
-  }
-  const direct = resolveDirectStoredModelOverride({
-    sessionEntry: params.sessionEntry,
-    defaultProvider: params.defaultProvider,
-    allowPluginNormalization: params.allowPluginNormalization,
-    manifestPlugins: params.manifestPlugins,
-  });
-  if (direct) {
-    return direct;
-  }
-  const parentKey = resolveParentSessionKeyCandidate({
-    sessionKey: params.sessionKey,
-    parentSessionKey: params.parentSessionKey,
-  });
-  if (!parentKey) {
-    return null;
-  }
-  const parentEntry = params.loadSessionEntry?.(parentKey) ?? params.sessionStore?.[parentKey];
-  if (hasSessionActiveAutoModelFallback(parentEntry)) {
-    return null;
-  }
-  return resolveStoredOverrideFromEntry({
-    entry: parentEntry,
-    defaultProvider: params.defaultProvider,
-    source: "parent",
-    allowPluginNormalization: params.allowPluginNormalization,
-    manifestPlugins: params.manifestPlugins,
-  });
+  const project = (
+    entry: SessionEntry | undefined,
+    source: StoredModelOverride["source"],
+  ): StoredModelOverride | null => {
+    const stored = entry?.executionSelection;
+    const selected = getSessionExecutionSelection(entry);
+    const model =
+      selected && isModelExecutionSelection(selected)
+        ? selected.model
+        : stored?.state === "deferred" && stored.request.model !== "native-managed"
+          ? stored.request.model
+          : undefined;
+    return model
+      ? {
+          provider: model.provider ?? params.defaultProvider,
+          model: model.id,
+          source,
+          routeResolution: "resolved",
+        }
+      : null;
+  };
+  if (params.sessionEntry?.executionSelection) return project(params.sessionEntry, "session");
+  const parentKey = resolveParentSessionKeyCandidate(params);
+  return parentKey
+    ? project(params.loadSessionEntry?.(parentKey) ?? params.sessionStore?.[parentKey], "parent")
+    : null;
 }

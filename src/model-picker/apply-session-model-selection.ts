@@ -1,59 +1,44 @@
 import { isDeepStrictEqual } from "node:util";
 import {
+  isDefaultAgentRuntimeId,
+  normalizeOptionalAgentRuntimeId,
+} from "../agents/agent-runtime-id.js";
+import {
   resolveAgentDir,
   resolveSessionAgentId,
   resolveAgentModelFallbacksOverride,
   resolveSubagentSpawnModelFallbacksOverride,
-  type AgentModelPrimaryWriteTarget,
   type ModelFallbackAvailability,
 } from "../agents/agent-scope.js";
 import { resolveModelProviderAuthConfig } from "../agents/model-auth-provider-route.js";
-import type { ModelCatalogEntry } from "../agents/model-catalog.js";
 import { resolveModelCandidateChain } from "../agents/model-fallback-candidates.js";
-import { evaluatePublishedModelRuntimeChoice } from "../agents/model-runtime-choice.js";
 import { modelKey, resolveDefaultModelForAgent } from "../agents/model-selection.js";
-import {
-  createModelVisibilityPolicy,
-  type ModelVisibilityPolicy,
-} from "../agents/model-visibility-policy.js";
-import { resolveContextConfigProviderForRuntime } from "../agents/openai-routing.js";
-import {
-  persistStickyModelSelectionBestEffort,
-  type StickyModelSelectionDispatchOutcome,
-} from "../agents/sticky-model-selection.js";
-import { findSelectedCatalogEntry } from "../auto-reply/reply/model-runtime-normalization.js";
-import { resolveContextTokens } from "../auto-reply/reply/model-selection-context.js";
-import { refreshQueuedFollowupSession } from "../auto-reply/reply/queue.js";
-import { persistReplySessionEntry } from "../auto-reply/reply/session-entry-persistence.js";
-import { resolveSupportedThinkingLevel } from "../auto-reply/thinking.js";
-import type { ThinkLevel } from "../auto-reply/thinking.shared.js";
 import { resolveAgentModelFallbackValues } from "../config/model-input.js";
-import { resolveCollapsedSessionAuthPinSource } from "../config/sessions/auth-profile-override-provenance.js";
 import { loadSessionEntryReadOnly } from "../config/sessions/session-accessor.js";
-import {
-  adoptPersistedSessionSnapshot,
-  mergeSessionSnapshotChanges,
-  SESSION_MODEL_OVERRIDE_TRANSACTION_FIELDS,
-  sessionModelOverrideChangesApplied,
-} from "../config/sessions/session-snapshot-merge.js";
 import type { InternalSessionEntry as SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { triggerSessionPatchHook } from "../gateway/session-patch-hooks.js";
-import { resolveSessionWorkerPlacementContext } from "../gateway/session-worker-placement-context.js";
-import { resolveWorkerPlacementCapabilities } from "../gateway/worker-environments/placement-capabilities.js";
-import { enqueueSystemEvent } from "../infra/system-events.js";
 import { getCurrentPluginMetadataSnapshot } from "../plugins/current-plugin-metadata-snapshot.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
 import { getPluginRegistryForContext } from "../plugins/runtime/gateway-request-scope.js";
 import { isSubagentSessionKey } from "../routing/session-key.js";
 import { shouldPreserveSessionAuthProfileOverride } from "../sessions/auth-profile-preservation.js";
+import { ModelSelectionLockedError } from "../sessions/model-overrides.js";
 import {
-  isModelSelectionLocked,
-  MODEL_SELECTION_LOCKED_MESSAGE,
-} from "../sessions/model-overrides.js";
-import { emitSessionLifecycleEvent } from "../sessions/session-lifecycle-events.js";
-import { resolveConfiguredExecutionSelection } from "./execution-selection-configured.js";
+  LEGACY_SELECTION_VIEW_FIELDS,
+  projectLegacyExecutionSelection,
+  projectExecutionSelectionEntry,
+  type LegacySelectionView,
+  type PublicSessionEntry,
+} from "./execution-selection-projection.js";
 import {
+  type ExecutionSelectionCommitCause,
+  type PreparedSessionExecutionSelection,
+  type ApplySessionExecutionSelectionResult,
+  type ApplySessionExecutionSelectionParams,
+  type PrepareSessionExecutionSelectionParams,
+  type PreparedSessionExecutionCommitParams,
+  getSessionExecutionSelection,
+  getCommittedSessionExecutionSelection,
   isAcpExecutionSelection,
   isModelExecutionSelection,
   SESSION_EXECUTION_SELECTION_TRANSACTION_FIELDS,
@@ -64,22 +49,6 @@ import {
   type ExecutionSelection,
   type ModelExecutionSelection,
 } from "./execution-selection.js";
-
-export function getSessionExecutionSelection(
-  entry: Partial<SessionEntry> | undefined,
-  _cfg?: OpenClawConfig,
-): ExecutionSelection | undefined {
-  return entry?.executionSelection?.state === "accepted"
-    ? entry.executionSelection.selection
-    : undefined;
-}
-
-export function getCommittedSessionExecutionSelection(
-  entry: Partial<SessionEntry> | undefined,
-): ExecutionSelection | undefined {
-  const stored = entry?.executionSelection;
-  return stored?.state === "accepted" ? stored.selection : stored?.previous;
-}
 
 export function inheritSessionExecutionSelection(
   entry: Partial<SessionEntry> | undefined,
@@ -94,6 +63,204 @@ export function commitStoredSessionExecutionSelection(
   fact: SessionExecutionSelection,
 ): void {
   entry.executionSelection = structuredClone(fact);
+}
+
+/** Synchronous SDK intake records a request for the async owner; it makes no readiness claim. */
+export function stageSessionExecutionSelection(params: {
+  entry: Omit<SessionEntry, "acp" | "modelFallback"> & LegacySelectionView;
+  selection: { provider: string; model: string; isDefault?: boolean };
+  profileOverride?: string;
+  profileOverrideSource?: "auto" | "user";
+  preserveAuthProfileOverride?: boolean;
+  selectionSource?: "auto" | "user";
+  explicitDefaultSelection?: boolean;
+  markLiveSwitchPending?: boolean;
+}): { updated: boolean } {
+  const { entry, selection } = params;
+  if (entry.modelSelectionLocked) throw new ModelSelectionLockedError();
+  const initial = { ...entry };
+  const pinInput = reconcileSessionExecutionSelectionView(entry, {
+    agentRuntimeOverride: entry.agentRuntimeOverride,
+  });
+  const staged = { ...entry, ...pinInput };
+  const previous = getCommittedSessionExecutionSelection(staged);
+  const existing =
+    staged.executionSelection?.state === "deferred" ? staged.executionSelection.request : undefined;
+  const runtime = existing?.runtime;
+  const request: DeferredExecutionSelectionRequest = {
+    ...(selection.isDefault
+      ? {}
+      : { model: { provider: selection.provider, id: selection.model } }),
+    ...((existing?.executor ?? (existing ? undefined : previous?.executor))
+      ? { executor: existing?.executor ?? previous?.executor }
+      : {}),
+    ...(runtime ? { runtime } : {}),
+  };
+  const fallbackPermission =
+    selection.isDefault || params.selectionSource === "auto" ? "configured" : "explicit";
+  const alreadyAccepted =
+    previous &&
+    isModelExecutionSelection(previous) &&
+    !selection.isDefault &&
+    previous.model.provider === selection.provider &&
+    previous.model.id === selection.model &&
+    staged.executionSelection?.state === "accepted" &&
+    staged.executionSelection.fallbackPermission === fallbackPermission;
+  const preserveAcpDefault =
+    selection.isDefault &&
+    !params.explicitDefaultSelection &&
+    previous &&
+    isAcpExecutionSelection(previous);
+  if (!alreadyAccepted && !preserveAcpDefault)
+    commitStoredSessionExecutionSelection(entry, {
+      state: "deferred",
+      request,
+      fallbackPermission,
+      ...(previous ? { previous } : {}),
+    });
+  if (params.profileOverride) {
+    entry.authProfileOverride = params.profileOverride;
+    entry.authProfileOverrideSource = params.profileOverrideSource ?? "user";
+    delete entry.authProfileOverrideCompactionCount;
+  } else if (!params.preserveAuthProfileOverride) {
+    delete entry.authProfileOverride;
+    delete entry.authProfileOverrideSource;
+    delete entry.authProfileOverrideCompactionCount;
+  }
+  const selectionChanged = executionSelectionTransactionChanged(initial, entry);
+  const clearFallback = selectionChanged || params.selectionSource !== "auto";
+  const hadFallback = Reflect.get(entry, "modelFallback") !== undefined;
+  if (clearFallback) Reflect.set(entry, "modelFallback", undefined);
+  const updated = selectionChanged || (clearFallback && hadFallback);
+  if (updated) {
+    delete entry.contextTokens;
+    delete entry.contextTokensSource;
+    delete entry.contextBudgetStatus;
+    delete entry.fallbackNotice;
+    if (params.markLiveSwitchPending) entry.liveModelSwitchPending = true;
+    entry.updatedAt = Date.now();
+  }
+  // These fields belong only to the caller's released SDK view, never the session encoding.
+  for (const key of LEGACY_SELECTION_VIEW_FIELDS) delete entry[key];
+  Object.assign(entry, projectLegacyExecutionSelection(entry.executionSelection));
+  return { updated };
+}
+
+/** Released store inputs stage requests at the owner without making a readiness claim. */
+export function reconcileSessionExecutionSelectionView(
+  current: Partial<SessionEntry> | undefined,
+  patch: Partial<PublicSessionEntry> & Pick<SessionEntry, "executionSelection">,
+  options: { replace?: boolean } = {},
+): Pick<SessionEntry, "executionSelection" | "modelFallback"> {
+  const before = current?.executionSelection;
+  const projected = projectExecutionSelectionEntry(current ?? {});
+  const replace =
+    options.replace ||
+    (patch.sessionId !== undefined && patch.sessionId !== current?.sessionId) ||
+    (patch.lifecycleRevision !== undefined &&
+      patch.lifecycleRevision !== current?.lifecycleRevision);
+  const next = replace ? patch : { ...projected, ...patch };
+  const previous = before?.state === "accepted" ? before.selection : before?.previous;
+  const changed = LEGACY_SELECTION_VIEW_FIELDS.some(
+    (field) =>
+      (replace || Object.hasOwn(patch, field)) &&
+      !isDeepStrictEqual(patch[field], projected[field]),
+  );
+  const acpChanged =
+    patch.acp &&
+    (patch.acp.backend !== projected.acp?.backend ||
+      patch.acp.agent !== projected.acp?.agent ||
+      patch.acp.runtimeOptions?.model !== projected.acp?.runtimeOptions?.model);
+  const entry: Pick<SessionEntry, "executionSelection" | "modelFallback"> = {};
+  if (patch.executionSelection && !isDeepStrictEqual(before, patch.executionSelection)) {
+    if (current?.modelSelectionLocked) throw new ModelSelectionLockedError();
+    const proposed = patch.executionSelection;
+    commitStoredSessionExecutionSelection(entry, {
+      state: "deferred",
+      request:
+        proposed.state === "deferred"
+          ? proposed.request
+          : { model: proposed.selection.model, executor: proposed.selection.executor },
+      fallbackPermission: proposed.fallbackPermission,
+      ...(previous ? { previous } : {}),
+    });
+  } else if (changed || acpChanged) {
+    if (current?.modelSelectionLocked) throw new ModelSelectionLockedError();
+    const normalizedRuntime = normalizeOptionalAgentRuntimeId(next.agentRuntimeOverride);
+    const runtime = isDefaultAgentRuntimeId(normalizedRuntime) ? undefined : normalizedRuntime;
+    const request: DeferredExecutionSelectionRequest =
+      acpChanged && patch.acp
+        ? {
+            executor: { kind: "acp", backend: patch.acp.backend, agent: patch.acp.agent },
+            model: patch.acp.runtimeOptions?.model
+              ? { id: patch.acp.runtimeOptions.model }
+              : "native-managed",
+          }
+        : {
+            ...(next.modelOverride
+              ? {
+                  model: {
+                    id: next.modelOverride,
+                    ...(next.providerOverride ? { provider: next.providerOverride } : {}),
+                  },
+                }
+              : {}),
+            ...(runtime ? { runtime } : {}),
+            ...(!replace && !Object.hasOwn(patch, "agentRuntimeOverride") && previous
+              ? { executor: previous.executor }
+              : {}),
+          };
+    commitStoredSessionExecutionSelection(entry, {
+      state: "deferred",
+      request,
+      fallbackPermission:
+        next.modelOverrideSource === "user"
+          ? "explicit"
+          : next.modelOverrideSource || !next.modelOverride
+            ? "configured"
+            : "explicit",
+      ...(previous ? { previous } : {}),
+    });
+  } else if (before) {
+    commitStoredSessionExecutionSelection(entry, before);
+  }
+  if (Object.hasOwn(patch, "modelFallback") || (replace && projected.modelFallback)) {
+    const fallback = patch.modelFallback;
+    if (!fallback) entry.modelFallback = undefined;
+    else if (isDeepStrictEqual(fallback, projected.modelFallback))
+      entry.modelFallback = current?.modelFallback;
+    else
+      entry.modelFallback = {
+        previous: {
+          state: "deferred",
+          request: {
+            model: {
+              provider: fallback.prevProviderOverride ?? fallback.prevProvider,
+              id: fallback.prevModelOverride ?? fallback.prevModel,
+            },
+          },
+          fallbackPermission:
+            fallback.prevModelOverrideSource === "user" ? "explicit" : "configured",
+        },
+        prevAuthProfileOverride: fallback.prevAuthProfileOverride,
+        prevAuthProfileOverrideSource: fallback.prevAuthProfileOverrideSource,
+        prevAuthProfileOverrideCompactionCount: fallback.prevAuthProfileOverrideCompactionCount,
+        prevContextWindow: fallback.prevContextWindow,
+        prevThinkingLevel: fallback.prevThinkingLevel,
+        lastValidatedPatchTs: fallback.lastValidatedPatchTs,
+        ts: fallback.ts,
+        source: fallback.source,
+      };
+  } else if (!isDeepStrictEqual(before, entry.executionSelection)) {
+    entry.modelFallback = undefined;
+  } else if (
+    current?.modelFallback &&
+    (!patch.sessionId || patch.sessionId === current.sessionId) &&
+    (!patch.lifecycleRevision || patch.lifecycleRevision === current.lifecycleRevision)
+  ) {
+    entry.modelFallback = current.modelFallback;
+  }
+  return entry;
 }
 
 export function executionSelectionTransactionChanged(
@@ -147,10 +314,6 @@ export function resolveExecutionSelectionExecutorKind(
   return harness && !cli ? "harness" : cli && !harness ? "cli" : undefined;
 }
 
-export type ExecutionSelectionCommitCause =
-  | { kind: "initialize" | "reset" | "user" }
-  | { kind: "inherit"; entry: Partial<SessionEntry> };
-
 function fallbackPermissionForCommit(
   entry: Partial<SessionEntry>,
   cause: ExecutionSelectionCommitCause,
@@ -163,7 +326,7 @@ function fallbackPermissionForCommit(
   );
 }
 
-function admitSessionExecutionFallback(params: {
+export function admitSessionExecutionFallback(params: {
   entry: Partial<SessionEntry> | undefined;
   candidate: ModelExecutionSelection;
   explicitModels?: readonly { provider: string; id: string }[];
@@ -239,7 +402,7 @@ export function resolveSessionExecutionFallbacks(params: {
   const source =
     params.modelFallbacksOverride !== undefined ||
     configured !== undefined ||
-    getSessionExecutionSelection(entry, params.cfg)
+    getSessionExecutionSelection(entry)
       ? "explicit"
       : "inherited";
   return models.length ? { kind: "active", models, source } : { kind: "none_configured", source };
@@ -255,7 +418,7 @@ export function commitSessionExecutionSelection(
     cause?: ExecutionSelectionCommitCause;
   } = {},
 ): { changed: boolean } {
-  const before = getSessionExecutionSelection(entry, options.cfg);
+  const before = getSessionExecutionSelection(entry);
   const initial = { ...entry };
   const pairChanged = !isDeepStrictEqual(before, selection);
   commitStoredSessionExecutionSelection(entry, {
@@ -263,7 +426,12 @@ export function commitSessionExecutionSelection(
     selection,
     fallbackPermission: fallbackPermissionForCommit(entry, options.cause ?? { kind: "user" }),
   });
-  const changed = executionSelectionTransactionChanged(initial, entry);
+  if (options.cause?.kind === "user" || options.cause?.kind === "reset" || !options.cause) {
+    delete entry.modelFallback;
+  }
+  const changed =
+    executionSelectionTransactionChanged(initial, entry) ||
+    initial.modelFallback !== entry.modelFallback;
   if (pairChanged) {
     delete entry.contextTokens;
     delete entry.contextTokensSource;
@@ -289,6 +457,14 @@ export function commitSessionModelSelectionWithAuth(params: {
   if (!isModelExecutionSelection(params.selection)) {
     return commitSessionExecutionSelection(params.entry, params.selection, params);
   }
+  const configured = resolveDefaultModelForAgent({ cfg: params.cfg, agentId: params.agentId });
+  const cause =
+    (!params.cause || params.cause.kind === "user") &&
+    modelKey(params.selection.model.provider, params.selection.model.id) ===
+      modelKey(configured.provider, configured.model)
+      ? { kind: "reset" as const }
+      : params.cause;
+
   const preserve =
     !params.profileOverride &&
     shouldPreserveSessionAuthProfileOverride({
@@ -316,7 +492,10 @@ export function commitSessionModelSelectionWithAuth(params: {
     params.entry.authProfileOverride !== profile ||
     params.entry.authProfileOverrideSource !== source ||
     params.entry.authProfileOverrideCompactionCount !== count;
-  const applied = commitSessionExecutionSelection(params.entry, params.selection, params);
+  const applied = commitSessionExecutionSelection(params.entry, params.selection, {
+    ...params,
+    cause,
+  });
   if (profile) {
     params.entry.authProfileOverride = profile;
     params.entry.authProfileOverrideSource = source;
@@ -335,785 +514,48 @@ export function commitSessionModelSelectionWithAuth(params: {
   return { changed: applied.changed || authChanged };
 }
 
-export type ExecutionSelectionRequest =
-  | {
-      kind: "model";
-      model: { provider: string; id: string };
-      executor?: ModelExecutionSelection["executor"];
-    }
-  | { kind: "selection"; selection: ExecutionSelection }
-  | { kind: "fallback"; selection: ModelExecutionSelection; explicitModels?: string[] }
-  | { kind: "initialize"; model?: ModelExecutionSelection["model"] }
-  | { kind: "reset"; model?: ModelExecutionSelection["model"] };
+export const SESSION_EXECUTION_CONFIRMATION_PAUSED_MESSAGE =
+  "Chat is paused while the app confirms the saved selection.";
+export type {
+  ExecutionSelectionCommitCause,
+  ExecutionSelectionRequest,
+  PreparedSessionExecutionSelection,
+  ApplySessionExecutionSelectionResult,
+  ApplySessionExecutionSelectionParams,
+} from "./execution-selection.js";
+export { formatExecutionSelectionAcknowledgment } from "./execution-selection-presentation.js";
 
-export type PreparedSessionExecutionSelection =
-  | {
-      status: "ready";
-      selection: ExecutionSelection;
-      before?: ExecutionSelection;
-      reason: "initialized" | "model" | "explicit" | "reset" | "unsupported";
-      message: string;
-      catalogEntry?: ModelCatalogEntry;
-      validateCommit: () => string | undefined;
-    }
-  | {
-      status: "rejected";
-      reason: "locked" | "not-allowed" | "unknown" | "unavailable" | "unsupported";
-      message: string;
-    };
-
-function selectionDisplayNames(
-  selection: ExecutionSelection,
-  catalog: readonly ModelCatalogEntry[],
-) {
-  const registry = getPluginRegistryForContext();
-  const model =
-    selection.model !== "native-managed"
-      ? (catalog.find(
-          (entry) =>
-            selection.model !== "native-managed" &&
-            entry.id === selection.model.id &&
-            (!isModelExecutionSelection(selection) || entry.provider === selection.model.provider),
-        )?.name ?? "the selected model")
-      : "the app's default model";
-  const executor = selection.executor;
-  const app =
-    executor.kind === "acp"
-      ? "the selected app"
-      : executor.id === "openclaw"
-        ? "OpenClaw"
-        : (registry?.agentHarnesses.find(({ harness }) => harness.id === executor.id)?.harness
-            .label ??
-          registry?.cliBackends.find(({ backend }) => backend.id === executor.id)?.backend.label ??
-          "the selected app");
-  return { model, app };
-}
-
-/** Prepare one accepted pair or one turn-local pair; persistence is an explicit later operation. */
-export async function prepareSessionExecutionSelection(params: {
-  cfg: OpenClawConfig;
-  agentId: string;
-  sessionKey?: string;
-  sessionEntry?: Partial<SessionEntry>;
-  storePath?: string;
-  readSessionEntry?: () => Partial<SessionEntry> | undefined;
-  modelCatalog?: readonly ModelCatalogEntry[];
-  profileProvider?: string;
-  request: ExecutionSelectionRequest;
-}): Promise<PreparedSessionExecutionSelection> {
-  const sessionSnapshot = params.sessionEntry ? { ...params.sessionEntry } : undefined;
-  const configured = resolveDefaultModelForAgent({ cfg: params.cfg, agentId: params.agentId });
-  const stored = sessionSnapshot?.executionSelection;
-  const deferred = stored?.state === "deferred" ? stored.request : undefined;
-  const before = getCommittedSessionExecutionSelection(sessionSnapshot);
-  const catalog = params.modelCatalog ?? [];
-  const chooseConfigured = (model: ModelExecutionSelection["model"]) =>
-    resolveConfiguredExecutionSelection({
-      cfg: params.cfg,
-      agentId: params.agentId,
-      sessionKey: params.sessionKey,
-      model,
-      modelCatalog: catalog,
-    });
-  const seed =
-    deferred?.model && deferred.model !== "native-managed"
-      ? { provider: deferred.model.provider ?? configured.provider, id: deferred.model.id }
-      : params.request.kind === "initialize" && params.request.model
-        ? params.request.model
-        : { provider: configured.provider, id: configured.model };
-  const deferredKind = deferred?.runtime
-    ? resolveExecutionSelectionExecutorKind(params.cfg, deferred.runtime)
-    : undefined;
-  const pinned =
-    deferred?.executor ??
-    (deferred?.runtime && deferredKind
-      ? { kind: deferredKind, id: deferred.runtime }
-      : before?.executor);
-  let initial: ExecutionSelection | undefined =
-    stored?.state === "accepted"
-      ? stored.selection
-      : pinned?.kind === "acp"
-        ? {
-            executor: pinned,
-            model:
-              deferred?.model === "native-managed" || !deferred?.model
-                ? "native-managed"
-                : { id: deferred.model.id },
-          }
-        : pinned?.kind === "harness" && deferred?.model === "native-managed"
-          ? { executor: pinned, model: "native-managed" }
-          : pinned
-            ? { executor: pinned, model: seed }
-            : deferred?.runtime
-              ? undefined
-              : chooseConfigured(seed);
-  if (
-    stored?.state === "deferred" &&
-    pinned?.kind === "harness" &&
-    params.sessionEntry?.sessionId
-  ) {
-    const { readSessionRuntimeOwnership } =
-      await import("../agents/harness/session-runtime-ownership.js");
-    const ownership = readSessionRuntimeOwnership({
-      config: params.cfg,
-      agentId: params.agentId,
-      sessionKey: params.sessionKey,
-      storePath: params.storePath,
-      sessionEntry: params.sessionEntry,
-    });
-    if (ownership?.auth === "native") {
-      initial = {
-        executor: pinned,
-        model: ownership.modelRef
-          ? { provider: ownership.modelRef.provider, id: ownership.modelRef.model }
-          : "native-managed",
-      };
-    } else if (ownership?.modelRef) {
-      initial = {
-        executor: pinned,
-        model: { provider: ownership.modelRef.provider, id: ownership.modelRef.model },
-      };
-    }
-  }
-  let selection: ExecutionSelection | undefined;
-  let reason: Extract<PreparedSessionExecutionSelection, { status: "ready" }>["reason"];
-  if (params.request.kind === "initialize") {
-    selection = initial;
-    reason = "initialized";
-  } else if (params.request.kind === "selection" || params.request.kind === "fallback") {
-    selection = params.request.selection;
-    reason = params.request.kind === "fallback" ? "model" : "explicit";
-  } else if (params.request.kind === "reset") {
-    selection =
-      initial && isAcpExecutionSelection(initial)
-        ? {
-            ...initial,
-            model: params.request.model ? { id: params.request.model.id } : "native-managed",
-          }
-        : chooseConfigured(
-            params.request.model ?? { provider: configured.provider, id: configured.model },
-          );
-    reason = "reset";
-  } else {
-    selection =
-      initial && isAcpExecutionSelection(initial)
-        ? { ...initial, model: { id: params.request.model.id } }
-        : params.request.executor
-          ? { model: params.request.model, executor: params.request.executor }
-          : initial
-            ? { model: params.request.model, executor: initial.executor }
-            : undefined;
-    reason = params.request.executor ? "explicit" : before ? "model" : "initialized";
-  }
-  const unknown = (): PreparedSessionExecutionSelection => ({
-    status: "rejected",
-    reason: "unknown",
-    message: `Could not confirm support for ${selection ? selectionDisplayNames(selection, catalog).model : "the selected model"}. Your selection is unchanged.`,
-  });
-  if (!selection) {
-    return unknown();
-  }
-  const lockedSelection = before ?? (pinned ? initial : undefined);
-  if (params.sessionEntry?.modelSelectionLocked && !isDeepStrictEqual(lockedSelection, selection)) {
-    return { status: "rejected", reason: "locked", message: MODEL_SELECTION_LOCKED_MESSAGE };
-  }
-  const fallbackRequest = params.request.kind === "fallback" ? params.request : undefined;
-  const explicitFallbackModels =
-    fallbackRequest?.explicitModels === undefined
-      ? undefined
-      : resolveModelCandidateChain({
-          cfg: params.cfg,
-          agentId: params.agentId,
-          provider:
-            before && isModelExecutionSelection(before)
-              ? before.model.provider
-              : fallbackRequest.selection.model.provider,
-          model:
-            before && !isAcpExecutionSelection(before)
-              ? before.model.id
-              : fallbackRequest.selection.model.id,
-          requestedRouteResolution: "resolved",
-          fallbacksOverride: fallbackRequest.explicitModels,
-        }).map(({ provider, model }) => ({ provider, id: model }));
-  const validateFallback = () => {
-    if (!fallbackRequest) return undefined;
-    const current = params.readSessionEntry
-      ? params.readSessionEntry()
-      : params.sessionKey
-        ? loadSessionEntryReadOnly({
-            agentId: params.agentId,
-            sessionKey: params.sessionKey,
-            storePath: params.storePath,
-          })
-        : params.sessionEntry;
-    if (
-      sessionSnapshot &&
-      (!current ||
-        current.sessionId !== sessionSnapshot.sessionId ||
-        current.lifecycleRevision !== sessionSnapshot.lifecycleRevision ||
-        executionSelectionTransactionChanged(sessionSnapshot, current))
-    ) {
-      return "The session selection changed. Retry the turn.";
-    }
-    const admitted = admitSessionExecutionFallback({
-      entry: current,
-      candidate: fallbackRequest.selection,
-      explicitModels: explicitFallbackModels,
-    });
-    return admitted.status === "rejected"
-      ? "This session does not permit that model fallback."
-      : undefined;
-  };
-  const fallbackError = validateFallback();
-  if (fallbackError) return { status: "rejected", reason: "not-allowed", message: fallbackError };
-  const validatePlacement = (candidate: ExecutionSelection) =>
-    resolveActivePlacementModelSelectionError({
-      sessionId: params.sessionEntry?.sessionId,
-      selection: candidate,
-    });
-  const placementError = validatePlacement(selection);
-  if (placementError) {
-    return { status: "rejected", reason: "not-allowed", message: placementError };
-  }
-  if (isModelExecutionSelection(selection)) {
-    const policy = createModelVisibilityPolicy({
-      cfg: params.cfg,
-      agentId: params.agentId,
-      catalog: [...catalog],
-      defaultProvider: configured.provider,
-      defaultModel: configured.model,
-    });
-    if (
-      !(params.request.kind === "reset" && !params.request.model) &&
-      params.request.kind !== "initialize" &&
-      params.request.kind !== "fallback" &&
-      !policy.allows({ provider: selection.model.provider, model: selection.model.id })
-    ) {
-      return {
-        status: "rejected",
-        reason: "not-allowed",
-        message:
-          "Could not change models. This model is not available for this agent. Your selection is unchanged.",
-      };
-    }
-    const evaluate = (pair: ModelExecutionSelection) =>
-      evaluatePublishedModelRuntimeChoice({
-        cfg: params.cfg,
-        agentId: params.agentId,
-        workspaceDir: params.sessionEntry?.spawnedWorkspaceDir,
-        provider: pair.model.provider,
-        model: pair.model.id,
-        runtimeId: pair.executor.id,
-        sessionEntry: sessionSnapshot,
-        profileProvider: params.profileProvider,
-      });
-    let evaluation = await evaluate(selection);
-    if (
-      evaluation.kind === "unsupported" &&
-      ((params.request.kind === "model" && !params.request.executor) ||
-        params.request.kind === "fallback" ||
-        (params.request.kind === "initialize" &&
-          stored?.state === "deferred" &&
-          pinned !== undefined))
-    ) {
-      const alternative = chooseConfigured(selection.model);
-      if (alternative && alternative.executor.id !== selection.executor.id) {
-        const candidate = await evaluate(alternative);
-        if (candidate.kind === "ready") {
-          selection = alternative;
-          evaluation = candidate;
-          reason = "unsupported";
-        }
-      }
-    }
-    if (
-      params.sessionEntry?.modelSelectionLocked &&
-      !isDeepStrictEqual(lockedSelection, selection)
-    ) {
-      return { status: "rejected", reason: "locked", message: MODEL_SELECTION_LOCKED_MESSAGE };
-    }
-    const labels = selectionDisplayNames(
-      selection,
-      evaluation.kind === "ready" ? [evaluation.entry, ...catalog] : catalog,
-    );
-    if (evaluation.kind === "unknown") {
-      return unknown();
-    }
-    if (evaluation.kind === "forbidden") {
-      return { status: "rejected", reason: "not-allowed", message: evaluation.message };
-    }
-    if (evaluation.kind === "unsupported") {
-      return {
-        status: "rejected",
-        reason: "unsupported",
-        message: `${labels.app} cannot run ${labels.model}. Choose another model or app.`,
-      };
-    }
-    if (evaluation.kind === "unavailable" && params.request.kind !== "reset") {
-      return {
-        status: "rejected",
-        reason: "unavailable",
-        message: `Could not change models. Sign in to ${labels.app}, then try again.`,
-      };
-    }
-    let message =
-      reason === "reset"
-        ? `Using the configured default: ${labels.model} in ${labels.app}.`
-        : reason === "unsupported" && initial
-          ? `Now using ${labels.model} in ${labels.app}; ${selectionDisplayNames(initial, catalog).app} cannot run it.`
-          : reason === "model" || reason === "initialized"
-            ? `Model changed to ${labels.model}. Still using ${labels.app}.`
-            : `Now using ${labels.model} in ${labels.app}.`;
-    if (evaluation.kind === "unavailable") {
-      message += ` Sign in to ${labels.app}, then try again.`;
-    }
-    const accepted = selection;
-    const validateCommit = () =>
-      (evaluation.kind === "ready" ? evaluation.validate() : undefined) ??
-      validateFallback() ??
-      validatePlacement(accepted);
-    const commitError = validateCommit();
-    if (commitError) {
-      return { status: "rejected", reason: "not-allowed", message: commitError };
-    }
-    return {
-      status: "ready",
-      selection,
-      before,
-      reason,
-      message,
-      catalogEntry: evaluation.kind === "ready" ? evaluation.entry : undefined,
-      validateCommit,
-    };
-  }
-  const accepted = selection;
-  const labels = selectionDisplayNames(selection, catalog);
-  return {
-    status: "ready",
-    selection,
-    before,
-    reason,
-    validateCommit: () => validatePlacement(accepted),
-    message:
-      reason === "reset"
-        ? `Using the configured default: ${labels.model} in ${labels.app}.`
-        : `Model changed to ${labels.model}. Still using ${labels.app}.`,
-  };
-}
-
-export type SessionModelSelectionRequest = {
-  provider: string;
-  model: string;
-  isDefault: boolean;
-  resetToDefault?: true;
-  alias?: string;
-  profileOverride?: string;
-  runtime: { kind: "unchanged" } | { kind: "clear" } | { kind: "set"; runtime: string };
-};
-
-export type ApplySessionModelSelectionParams = {
-  cfg: OpenClawConfig;
-  agentId: string;
-  sessionKey: string;
-  storePath?: string;
-  sessionEntry: SessionEntry;
-  sessionStore: Record<string, SessionEntry>;
-  allowCreate?: boolean;
-  defaultProvider: string;
-  defaultModel: string;
-  currentProvider: string;
-  currentModel: string;
-  modelPolicy?: Omit<ModelVisibilityPolicy, "catalog">;
-  modelCatalog: readonly ModelCatalogEntry[];
-  thinkingCatalog?: readonly ModelCatalogEntry[];
-  canPersistStickyModelSelection?: boolean;
-  stickyModelSelectionTarget?: AgentModelPrimaryWriteTarget;
-  validateAuthProfileSelection?: () => string | undefined;
-  request: SessionModelSelectionRequest;
-  /** Raw directive text used only by the existing session patch hook. */
-  patchModel?: string;
-  markLiveSwitchPending: true;
-};
-
-export type ApplySessionModelSelectionResult =
-  | {
-      status: "applied";
-      selection: ExecutionSelection;
-      message: string;
-      changed: boolean;
-      contextTokens?: number;
-      configuredDefaultUpdate?: StickyModelSelectionDispatchOutcome;
-      thinkingRemap?: {
-        from: ThinkLevel;
-        to: ThinkLevel;
-        provider: string;
-        model: string;
-      };
-    }
-  | {
-      status: "rejected";
-      reason:
-        | "locked"
-        | "not-allowed"
-        | "invalid-runtime"
-        | "unknown-provider"
-        | "unknown"
-        | "unavailable"
-        | "unsupported";
-      message: string;
-    }
-  | { status: "conflict"; message: string };
-
-function formatModelSwitchEvent(provider: string, model: string, alias?: string): string {
-  const label = `${provider}/${model}`;
-  return alias ? `Model switched to ${alias} (${label}).` : `Model switched to ${label}.`;
-}
-
-function rejectNotAllowed(provider: string, model: string): ApplySessionModelSelectionResult {
-  return {
-    status: "rejected",
-    reason: "not-allowed",
-    message: `Model ${provider}/${model} is not available for this agent.`,
-  };
-}
-
-/**
- * Rejects a model selection when the candidate runtime is incompatible with an
- * active cloud-worker placement. Mirrors the sessions.patch guard so directive
- * model changes are validated before they persist.
- */
-function resolveActivePlacementModelSelectionError(params: {
-  sessionId?: string;
-  selection: ExecutionSelection;
-}): string | undefined {
-  const sessionId = params.sessionId;
-  if (!sessionId) {
-    return undefined;
-  }
-  const placementService = resolveSessionWorkerPlacementContext().workerSessionPlacementService;
-  const placement = placementService?.getMany([sessionId]).get(sessionId);
-  if (!placement || placement.state === "local") {
-    return undefined;
-  }
-  const executor = params.selection.executor;
-  const { executionMode } = resolveWorkerPlacementCapabilities(
-    executor.kind === "acp" ? executor.backend : executor.id,
+// Async preparation and persistence load only when requested; the stored fact is written above.
+export async function prepareSessionExecutionSelection(
+  params: PrepareSessionExecutionSelectionParams,
+): Promise<PreparedSessionExecutionSelection> {
+  return (await import("./execution-selection-preparation.js")).prepareSessionExecutionSelection(
+    params,
   );
-  if (executionMode === placement.executionMode) {
-    return undefined;
-  }
-  return executionMode
-    ? `Session cannot change cloud placement execution mode while placement is ${placement.state}.`
-    : `Session cannot select a runtime without cloud placement support while cloud worker placement is ${placement.state}.`;
 }
-
-/** Applies one validated picker selection to the authoritative live session. */
-export async function applySessionModelSelection(
-  params: ApplySessionModelSelectionParams,
-): Promise<ApplySessionModelSelectionResult> {
-  const startingStoreEntry = params.sessionStore[params.sessionKey];
-  const startingEntry = params.storePath
-    ? params.sessionEntry
-    : (startingStoreEntry ?? params.sessionEntry);
-  const initialEntry = { ...startingEntry };
-  if (isModelSelectionLocked(startingEntry)) {
-    return { status: "rejected", reason: "locked", message: MODEL_SELECTION_LOCKED_MESSAGE };
-  }
-
-  const resetToDefault = params.request.resetToDefault === true;
-  const selectedRef = resetToDefault
-    ? resolveDefaultModelForAgent({ cfg: params.cfg, agentId: params.agentId })
-    : params.request;
-  const normalizedModelKey = modelKey(selectedRef.provider, selectedRef.model);
-  const request: SessionModelSelectionRequest = {
-    ...params.request,
-    provider: selectedRef.provider,
-    model: selectedRef.model,
-    isDefault:
-      resetToDefault ||
-      normalizedModelKey === modelKey(params.defaultProvider, params.defaultModel),
-  };
-  const policy =
-    params.modelPolicy ??
-    createModelVisibilityPolicy({
-      cfg: params.cfg,
-      catalog: [...params.modelCatalog],
-      defaultProvider: params.defaultProvider,
-      defaultModel: params.defaultModel,
-      agentId: params.agentId,
-    });
-  if (!resetToDefault && !policy.allows(request)) {
-    return rejectNotAllowed(request.provider, request.model);
-  }
-
-  const explicitKind =
-    request.runtime.kind === "set"
-      ? resolveExecutionSelectionExecutorKind(params.cfg, request.runtime.runtime)
-      : undefined;
-  if (request.runtime.kind === "set" && !explicitKind) {
-    return {
-      status: "rejected",
-      reason: "unknown",
-      message: "Could not confirm support for the selected model. Your selection is unchanged.",
-    };
-  }
-  const prepared = await prepareSessionExecutionSelection({
-    cfg: params.cfg,
-    agentId: params.agentId,
-    sessionKey: params.sessionKey,
-    sessionEntry: request.profileOverride
-      ? {
-          ...startingEntry,
-          authProfileOverride: request.profileOverride,
-          authProfileOverrideSource: "user",
-        }
-      : startingEntry,
-    profileProvider: request.profileOverride ? request.provider : undefined,
-    modelCatalog: params.thinkingCatalog ?? params.modelCatalog,
-    prepareAcp: async (selection) => {
-      const { getAcpSessionManager } = await import("../acp/control-plane/manager.js");
-      return getAcpSessionManager().setExecutionSelection({
-        cfg: params.cfg,
-        sessionKey: params.sessionKey,
-        agentId: params.agentId,
-        selection,
-        assertActive: () => {
-          const error =
-            params.validateAuthProfileSelection?.() ??
-            resolveActivePlacementModelSelectionError({
-              sessionId: startingEntry.sessionId,
-              selection,
-            });
-          if (error) throw new Error(error);
-        },
-      });
-    },
-    request: resetToDefault
-      ? { kind: "reset" }
-      : request.runtime.kind === "clear"
-        ? { kind: "reset", model: { provider: request.provider, id: request.model } }
-        : {
-            kind: "model",
-            model: { provider: request.provider, id: request.model },
-            ...(request.runtime.kind === "set" && explicitKind
-              ? { executor: { kind: explicitKind, id: request.runtime.runtime } }
-              : {}),
-          },
-  });
-  if (prepared.status === "rejected") {
-    return prepared;
-  }
-  const validateSelection = () =>
-    params.validateAuthProfileSelection?.() ?? prepared.validateCommit();
-  const authProfileError = validateSelection();
-  if (authProfileError) {
-    return { status: "rejected", reason: "not-allowed", message: authProfileError };
-  }
-  // Metadata preparation can yield. Memory-only sessions need the same lock and
-  // replacement fence that persisted sessions enforce in their atomic write.
-  const currentEntry = params.storePath
-    ? startingEntry
-    : (params.sessionStore[params.sessionKey] ?? params.sessionEntry);
-  if (isModelSelectionLocked(currentEntry)) {
-    return { status: "rejected", reason: "locked", message: MODEL_SELECTION_LOCKED_MESSAGE };
-  }
-  if (
-    !params.storePath &&
-    (params.sessionStore[params.sessionKey] !== startingStoreEntry ||
-      currentEntry.sessionId !== initialEntry.sessionId ||
-      currentEntry.lifecycleRevision !== initialEntry.lifecycleRevision ||
-      (!isAcpExecutionSelection(prepared.selection) &&
-        executionSelectionTransactionChanged(initialEntry, currentEntry)))
-  ) {
-    return {
-      status: "conflict",
-      message: "Model change was not applied because the session changed. Retry.",
-    };
-  }
-  if (isAcpExecutionSelection(prepared.selection)) {
-    return {
-      status: "applied",
-      selection: prepared.selection,
-      message: prepared.message,
-      changed: !isDeepStrictEqual(prepared.before, prepared.selection),
-      contextTokens: params.sessionEntry.contextTokens,
-    };
-  }
-  request.provider = prepared.selection.model.provider;
-  request.model = prepared.selection.model.id;
-  const existingCatalog = params.thinkingCatalog ?? params.modelCatalog;
-  const thinkingCatalog = prepared.catalogEntry
-    ? [
-        prepared.catalogEntry,
-        ...existingCatalog.filter(
-          (entry) =>
-            entry.provider !== prepared.catalogEntry?.provider ||
-            entry.id !== prepared.catalogEntry?.id,
-        ),
-      ]
-    : existingCatalog;
-  const selectedCatalogEntry =
-    prepared.catalogEntry ?? findSelectedCatalogEntry({ catalog: thinkingCatalog, ...request });
-  const nextEntry = { ...startingEntry };
-  const applied = commitSessionModelSelectionWithAuth({
-    cfg: params.cfg,
-    agentId: params.agentId,
-    entry: nextEntry,
-    selection: prepared.selection,
-    currentProvider: params.currentProvider,
-    profileOverride: request.profileOverride,
-    markLiveSwitchPending: params.markLiveSwitchPending,
-    cause: { kind: resetToDefault ? "reset" : "user" },
-  });
-  const thinkingRuntime = prepared.selection.executor.id;
-  const currentThinkingLevel = nextEntry.thinkingLevel as ThinkLevel | undefined;
-  let thinkingRemap: Extract<
-    ApplySessionModelSelectionResult,
-    { status: "applied" }
-  >["thinkingRemap"];
-  if (currentThinkingLevel) {
-    const remapped = resolveSupportedThinkingLevel({
-      provider: request.provider,
-      model: request.model,
-      level: currentThinkingLevel,
-      catalog: [...thinkingCatalog],
-      agentRuntime: thinkingRuntime,
-    });
-    if (remapped !== currentThinkingLevel) {
-      nextEntry.thinkingLevel = remapped;
-      thinkingRemap = {
-        from: currentThinkingLevel,
-        to: remapped,
-        provider: request.provider,
-        model: request.model,
-      };
-    }
-  }
-  // An explicit selection retains the existing persistence and conflict semantics even when idempotent.
-  nextEntry.updatedAt = Date.now();
-  let persistedEntry: SessionEntry;
-  // The pre-persistence read above can be overtaken by placement activation before the
-  // durable write commits. Revalidate placement inside the synchronous commit boundary so an
-  // override that became incompatible during that window is rejected without mutating state.
-  const validateCommit = validateSelection;
-  if (params.storePath) {
-    const persistence = await persistReplySessionEntry({
-      storePath: params.storePath,
-      sessionKey: params.sessionKey,
-      initialEntry,
-      entry: nextEntry,
-      allowCreate: params.allowCreate,
-      reassertLiveModelSwitchPending: applied.changed && nextEntry.liveModelSwitchPending === true,
-      requireModelSelectionUnlocked: true,
-      touchedFields: SESSION_MODEL_OVERRIDE_TRANSACTION_FIELDS,
-      validateCommit,
-    });
-    if (persistence.entry) {
-      params.sessionStore[params.sessionKey] = persistence.entry;
-      adoptPersistedSessionSnapshot(params.sessionEntry, persistence.entry);
-    }
-    if (persistence.status === "model-selection-locked") {
-      return { status: "rejected", reason: "locked", message: MODEL_SELECTION_LOCKED_MESSAGE };
-    }
-    if (persistence.status === "commit-rejected") {
-      return { status: "rejected", reason: "not-allowed", message: persistence.error };
-    }
-    if (
-      persistence.status !== "current" ||
-      !sessionModelOverrideChangesApplied({
-        initial: initialEntry,
-        next: nextEntry,
-        current: persistence.entry,
-        reassertLiveModelSwitchPending:
-          applied.changed && nextEntry.liveModelSwitchPending === true,
-      })
-    ) {
-      return {
-        status: "conflict",
-        message: "Model change was not applied because the session changed. Retry.",
-      };
-    }
-    persistedEntry = persistence.entry;
-  } else {
-    adoptPersistedSessionSnapshot(
-      params.sessionEntry,
-      mergeSessionSnapshotChanges({
-        initial: initialEntry,
-        next: nextEntry,
-        current: currentEntry,
-      }),
-    );
-    params.sessionStore[params.sessionKey] = params.sessionEntry;
-    persistedEntry = params.sessionEntry;
-  }
-
-  const agentRuntime = prepared.selection.executor.id;
-
-  const provider = request.provider;
-  const model = request.model;
-  const effectiveModelRef = `${provider}/${model}`;
-  const changed = applied.changed || thinkingRemap !== undefined;
-  const configuredDefaultUpdate =
-    params.canPersistStickyModelSelection === true &&
-    (!request.isDefault || params.stickyModelSelectionTarget)
-      ? persistStickyModelSelectionBestEffort({
-          agentId: params.agentId,
-          model: effectiveModelRef,
-          // The shipped SDK opt-in resolves its effective layer inside the config mutation.
-          // Ordinary chat callers supply an authorized target or leave persistence disabled.
-          target: params.stickyModelSelectionTarget ?? "effective",
-        })
-      : undefined;
-  if (changed) {
-    emitSessionLifecycleEvent({
-      sessionKey: params.sessionKey,
-      agentId: params.agentId,
-      reason: "patch",
-    });
-    triggerSessionPatchHook({
-      cfg: params.cfg,
-      sessionEntry: persistedEntry,
-      sessionKey: params.sessionKey,
-      patch: { key: params.sessionKey, model: params.patchModel ?? effectiveModelRef },
-    });
-    refreshQueuedFollowupSession({
-      key: params.sessionKey,
-      nextSelection: prepared.selection,
-      nextAuthProfileId: persistedEntry.authProfileOverride,
-      nextAuthProfileIdSource: resolveCollapsedSessionAuthPinSource(persistedEntry),
-      nextThinking: {
-        level: persistedEntry.thinkingLevel,
-        catalog: [...thinkingCatalog],
-      },
-    });
-  }
-
-  if (`${params.currentProvider}/${params.currentModel}` !== effectiveModelRef) {
-    enqueueSystemEvent(formatModelSwitchEvent(provider, model, request.alias), {
-      sessionKey: params.sessionKey,
-      contextKey: `model:${effectiveModelRef}`,
-    });
-  }
-
-  const contextProvider = resolveContextConfigProviderForRuntime({
-    provider,
-    runtimeId: agentRuntime,
-    config: params.cfg,
-  });
-  return {
-    status: "applied",
-    selection: prepared.selection,
-    message: prepared.message,
-    changed,
-    contextTokens: resolveContextTokens({
-      cfg: params.cfg,
-      provider: contextProvider,
-      model,
-      modelContextWindow: selectedCatalogEntry?.contextWindow,
-      modelContextTokens: selectedCatalogEntry?.contextTokens,
-    }),
-    ...(configuredDefaultUpdate ? { configuredDefaultUpdate } : {}),
-
-    ...(thinkingRemap ? { thinkingRemap } : {}),
-  };
+export async function withPreparedSessionExecutionSelection<T>(
+  params: PreparedSessionExecutionCommitParams<T>,
+): Promise<T> {
+  return (
+    await import("./execution-selection-application.js")
+  ).withPreparedSessionExecutionSelection(params);
+}
+export async function resolveSessionExecutionControlFailure(
+  error: unknown,
+  target: Parameters<
+    typeof import("./execution-selection-application.js").resolveSessionExecutionControlFailure
+  >[1],
+): ReturnType<
+  typeof import("./execution-selection-application.js").resolveSessionExecutionControlFailure
+> {
+  return (
+    await import("./execution-selection-application.js")
+  ).resolveSessionExecutionControlFailure(error, target);
+}
+export async function applySessionExecutionSelection(
+  params: ApplySessionExecutionSelectionParams,
+): Promise<ApplySessionExecutionSelectionResult> {
+  return (await import("./execution-selection-application.js")).applySessionExecutionSelection(
+    params,
+  );
 }

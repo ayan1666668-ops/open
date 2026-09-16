@@ -198,6 +198,7 @@ function importSqliteSessionRowsInTransaction(
 /** Imports legacy session rows that share one SQLite store in one durable transaction. */
 export async function importSqliteSessionRowsBatch(
   params: readonly SqliteSessionImportRowsParams[],
+  supplied?: Parameters<typeof runOpenClawAgentWriteTransaction>[3],
 ): Promise<SqliteSessionImportRowsResult[]> {
   if (params.length === 0) {
     return [];
@@ -253,6 +254,8 @@ export async function importSqliteSessionRowsBatch(
               ),
             ),
           toDatabaseOptions(resolved),
+          {},
+          supplied,
         );
       }),
     "session.import.batch",

@@ -2,10 +2,17 @@ import { MAIN_SESSION_RECOVERY_CLEAR_PATCH } from "../agents/main-session-recove
 import type { SessionAccessScope } from "../config/sessions/session-accessor.js";
 import {
   projectPublicSessionEntry,
-  projectPublicSessionEntryPatch,
+  stripPrivateSessionEntryFields,
   SESSION_ENTRY_PRIVATE_CLEAR_PATCH,
 } from "../config/sessions/session-entry-projection.js";
-import type { InternalSessionEntry, SessionEntry } from "../config/sessions/types.js";
+import type { InternalSessionEntry } from "../config/sessions/types.js";
+import { reconcileSessionExecutionSelectionView } from "../model-picker/apply-session-model-selection.js";
+import {
+  LEGACY_SELECTION_VIEW_FIELDS,
+  type PublicSessionEntry,
+} from "../model-picker/execution-selection-projection.js";
+import type { SessionExecutionSelection } from "../model-picker/execution-selection.js";
+export type SessionEntry = PublicSessionEntry & { executionSelection?: SessionExecutionSelection };
 
 export type SessionStoreReadParams = {
   agentId?: string;
@@ -34,6 +41,9 @@ export function projectPluginSessionEntry(entry: InternalSessionEntry): SessionE
   const publicEntry = projectPublicSessionEntry(entry);
   return {
     ...publicEntry,
+    ...(entry.executionSelection
+      ? { executionSelection: structuredClone(entry.executionSelection) }
+      : {}),
     ...(entry.restartRecoveryRuns
       ? { restartRecoveryRuns: entry.restartRecoveryRuns.map((run) => ({ ...run })) }
       : {}),
@@ -41,9 +51,35 @@ export function projectPluginSessionEntry(entry: InternalSessionEntry): SessionE
 }
 
 export function projectPluginSessionEntryPatch(
-  patch: Partial<InternalSessionEntry>,
-): Partial<SessionEntry> {
-  return projectPublicSessionEntryPatch(patch);
+  patch: Partial<SessionEntry>,
+  existing?: InternalSessionEntry,
+  options: { replace?: boolean } = {},
+): Partial<InternalSessionEntry> {
+  const { acp, modelFallback, executionSelection: _selection, ...fields } = patch;
+  const selectionPatch = reconcileSessionExecutionSelectionView(existing, patch, options);
+  for (const field of LEGACY_SELECTION_VIEW_FIELDS) delete fields[field];
+  const metadata = stripPrivateSessionEntryFields(fields);
+  return {
+    ...metadata,
+    ...selectionPatch,
+    ...(Object.hasOwn(patch, "acp")
+      ? {
+          acp: acp
+            ? {
+                ...(({
+                  backend: _backend,
+                  agent: _agent,
+                  runtimeOptions: _options,
+                  ...lifecycle
+                }) => lifecycle)(acp),
+                runtimeOptions: acp.runtimeOptions
+                  ? (({ model: _model, ...options }) => options)(acp.runtimeOptions)
+                  : undefined,
+              }
+            : undefined,
+        }
+      : {}),
+  };
 }
 
 export function projectPluginSessionStore(
@@ -101,7 +137,7 @@ export function generationValidPrivateFieldsForSameSession(
 
 export function clearGenerationPrivateFieldsForRotatedSessionPatch(
   existingEntry: InternalSessionEntry,
-  publicPatch: Partial<SessionEntry>,
+  publicPatch: Partial<InternalSessionEntry>,
 ): Partial<InternalSessionEntry> {
   return (Object.hasOwn(publicPatch, "sessionId") &&
     publicPatch.sessionId !== existingEntry.sessionId) ||
@@ -125,8 +161,12 @@ export function reconcilePluginSessionStore(params: {
     }
   }
   for (const [sessionKey, publicEntry] of Object.entries(params.publicStore)) {
-    const projectedEntry = projectPluginSessionEntry(publicEntry as InternalSessionEntry);
     const existingEntry = params.internalStore[sessionKey];
+    const projectedEntry = {
+      ...projectPluginSessionEntryPatch(publicEntry, existingEntry, { replace: true }),
+      sessionId: publicEntry.sessionId,
+      updatedAt: publicEntry.updatedAt,
+    };
     const existingPrivateFields = generationValidPrivateFieldsForSameSession(
       existingEntry,
       projectedEntry.sessionId,

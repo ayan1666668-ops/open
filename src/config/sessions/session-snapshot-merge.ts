@@ -1,18 +1,16 @@
 import {
-  SESSION_MODEL_OVERRIDE_TRANSACTION_FIELDS,
   executionSelectionRouteChanged,
   executionSelectionTransactionChanged,
   copyExecutionSelectionTransaction,
-} from "../../model-picker/execution-selection-codec.js";
-export { SESSION_MODEL_OVERRIDE_TRANSACTION_FIELDS } from "../../model-picker/execution-selection-codec.js";
+} from "../../model-picker/apply-session-model-selection.js";
+import { SESSION_EXECUTION_SELECTION_TRANSACTION_FIELDS } from "../../model-picker/execution-selection.js";
+export { SESSION_EXECUTION_SELECTION_TRANSACTION_FIELDS } from "../../model-picker/execution-selection.js";
 import { isDeepStrictEqual } from "node:util";
 import type { InternalSessionEntry as SessionEntry } from "./types.js";
 
 type SessionEntryRecord = Partial<Record<keyof SessionEntry, unknown>>;
 
 const MODEL_OVERRIDE_RUNTIME_FIELDS = [
-  "modelProvider",
-  "model",
   "fallbackNotice",
   "contextTokens",
   "contextTokensSource",
@@ -212,8 +210,8 @@ export function projectSessionSnapshotChanges(params: {
       MAIN_SESSION_RECOVERY_TRANSACTION_FIELDS.includes(
         field as (typeof MAIN_SESSION_RECOVERY_TRANSACTION_FIELDS)[number],
       ) ||
-      SESSION_MODEL_OVERRIDE_TRANSACTION_FIELDS.includes(
-        field as (typeof SESSION_MODEL_OVERRIDE_TRANSACTION_FIELDS)[number],
+      SESSION_EXECUTION_SELECTION_TRANSACTION_FIELDS.includes(
+        field as (typeof SESSION_EXECUTION_SELECTION_TRANSACTION_FIELDS)[number],
       )
     ) {
       continue;
@@ -286,7 +284,7 @@ export function sessionSnapshotTouchedFieldsConflict(params: {
   const next = params.next as SessionEntryRecord;
   const current = params.current as SessionEntryRecord;
   const fields = new Set(params.touchedFields ?? []);
-  if (SESSION_MODEL_OVERRIDE_TRANSACTION_FIELDS.some((field) => fields.has(field))) {
+  if (SESSION_EXECUTION_SELECTION_TRANSACTION_FIELDS.some((field) => fields.has(field))) {
     for (const field of MODEL_OVERRIDE_CONFLICT_DEPENDENT_FIELDS) {
       if (!isDeepStrictEqual(initial[field], next[field])) {
         fields.add(field);

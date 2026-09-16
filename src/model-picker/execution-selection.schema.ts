@@ -8,8 +8,8 @@ const cli = z.object({ kind: z.literal("cli"), id: identity }).strict();
 const acp = z.object({ kind: z.literal("acp"), backend: identity, agent: identity }).strict();
 const managed = z.literal("native-managed");
 const pair = z.union([
-  z.object({ model: z.union([model, managed]), executor: harness }).strict(),
-  z.object({ model, executor: cli }).strict(),
+  z.object({ model, executor: z.union([harness, cli]) }).strict(),
+  z.object({ model: managed, executor: harness }).strict(),
   z
     .object({ model: z.union([z.object({ id: identity }).strict(), managed]), executor: acp })
     .strict(),

@@ -1,39 +1,71 @@
+import { isDeepStrictEqual } from "node:util";
 /**
  * Runtime SDK subpath for model overrides and agent concurrency session helpers.
  */
 import { expectDefined } from "@openclaw/normalization-core";
-import type { ModelVisibilityPolicy } from "../agents/model-selection.js";
-import type {
-  ApplySessionModelSelectionParams as OwnerSelectionParams,
-  ApplySessionModelSelectionResult as OwnerSelectionResult,
-  SessionModelSelectionRequest as OwnerSelectionRequest,
-} from "../model-picker/apply-session-model-selection.js";
+import type { AgentModelPrimaryWriteTarget } from "../agents/agent-scope.js";
+import type { ModelCatalogEntry } from "../agents/model-catalog.js";
+import type { ModelVisibilityPolicy } from "../agents/model-visibility-policy.js";
+import type { OpenClawConfig } from "../config/types.openclaw.js";
+import type { ApplySessionExecutionSelectionResult as OwnerSelectionResult } from "../model-picker/apply-session-model-selection.js";
 import {
   isAcpExecutionSelection,
-  type ModelExecutionSelection,
+  isModelExecutionSelection,
+  getCommittedSessionExecutionSelection,
 } from "../model-picker/execution-selection.js";
+import type { SessionEntry as PublicSelectionEntry } from "./session-store-runtime-internal.js";
 
-export type SessionModelSelectionRequest = Pick<
-  OwnerSelectionRequest,
-  "provider" | "model" | "isDefault" | "alias" | "profileOverride" | "runtime"
->;
-export type ApplySessionModelSelectionParams = Omit<
-  OwnerSelectionParams,
-  "request" | "modelPolicy"
-> & {
-  request: SessionModelSelectionRequest;
-  modelPolicy?: ModelVisibilityPolicy;
+export type SessionModelSelectionRequest = {
+  provider: string;
+  model: string;
+  isDefault: boolean;
+  alias?: string;
+  profileOverride?: string;
+  runtime: { kind: "unchanged" } | { kind: "clear" } | { kind: "set"; runtime: string };
 };
+
+export type ApplySessionModelSelectionParams = {
+  cfg: OpenClawConfig;
+  agentId: string;
+  sessionKey: string;
+  storePath?: string;
+  sessionEntry: PublicSelectionEntry;
+  sessionStore: Record<string, PublicSelectionEntry>;
+  allowCreate?: boolean;
+  defaultProvider: string;
+  defaultModel: string;
+  currentProvider: string;
+  currentModel: string;
+  modelPolicy?: ModelVisibilityPolicy;
+  modelCatalog: readonly ModelCatalogEntry[];
+  thinkingCatalog?: readonly ModelCatalogEntry[];
+  canPersistStickyModelSelection?: boolean;
+  stickyModelSelectionTarget?: AgentModelPrimaryWriteTarget;
+  validateAuthProfileSelection?: () => string | undefined;
+  request: SessionModelSelectionRequest;
+  /** Raw directive text used only by the existing session patch hook. */
+  patchModel?: string;
+  markLiveSwitchPending: true;
+};
+
 export type ApplySessionModelSelectionResult =
-  | (Omit<Extract<OwnerSelectionResult, { status: "applied" }>, "selection" | "contextTokens"> & {
-      selection: ModelExecutionSelection;
+  | {
+      status: "applied";
       provider: string;
       model: string;
       effectiveModelRef: string;
       agentRuntime: string;
+      changed: boolean;
       contextTokens: number;
+      /** Optional so released hosts and result literals remain compatible. */
+      message?: string;
+      configuredDefaultUpdate?: Extract<
+        OwnerSelectionResult,
+        { status: "applied" }
+      >["configuredDefaultUpdate"];
       runtimeChange?: { kind: "clear" } | { kind: "set"; runtime: string };
-    })
+      thinkingRemap?: Extract<OwnerSelectionResult, { status: "applied" }>["thinkingRemap"];
+    }
   | {
       status: "rejected";
       reason: "locked" | "not-allowed" | "invalid-runtime" | "unknown-provider";
@@ -45,48 +77,115 @@ export type ApplySessionModelSelectionResult =
 export async function applySessionModelSelection(
   params: ApplySessionModelSelectionParams,
 ): Promise<ApplySessionModelSelectionResult> {
-  const { readAcpSessionMetaForEntry } = await import("../acp/runtime/session-meta.js");
-  const acpInstruction =
-    "Change the model in its own request for this session. Use the dedicated session model request for this app.";
-  const isAcpBound = () => {
-    const entry = params.storePath
-      ? params.sessionEntry
-      : (params.sessionStore[params.sessionKey] ?? params.sessionEntry);
-    return Boolean(
-      entry.acp ||
-      readAcpSessionMetaForEntry({
-        cfg: params.cfg,
+  const { loadSessionEntryReadOnly } = await import("../config/sessions/session-accessor.js");
+  const { projectPluginSessionEntry, projectPluginSessionEntryPatch } =
+    await import("./session-store-runtime-internal.js");
+  const original = params.sessionStore[params.sessionKey] ?? params.sessionEntry;
+  const initial = structuredClone(original);
+  const current = params.storePath
+    ? loadSessionEntryReadOnly({
+        storePath: params.storePath,
         sessionKey: params.sessionKey,
         agentId: params.agentId,
-        entry,
-      }),
+      })
+    : undefined;
+  if (
+    current &&
+    (current.sessionId !== original.sessionId ||
+      current.lifecycleRevision !== original.lifecycleRevision)
+  ) {
+    return { status: "conflict", message: "The session changed. Retry the model selection." };
+  }
+  const canonical = current ?? {
+    ...projectPluginSessionEntryPatch(original),
+    sessionId: original.sessionId,
+    updatedAt: original.updatedAt,
+  };
+  const sessionStore = { [params.sessionKey]: canonical };
+  const acpInstruction =
+    "Use applySessionExecutionSelection for app-managed models; this API returns a concrete model route.";
+  const isAcpBound = () => {
+    const entry = params.storePath
+      ? (loadSessionEntryReadOnly({
+          storePath: params.storePath,
+          sessionKey: params.sessionKey,
+          agentId: params.agentId,
+        }) ?? params.sessionEntry)
+      : (params.sessionStore[params.sessionKey] ?? params.sessionEntry);
+    const selection = getCommittedSessionExecutionSelection(entry);
+    return (
+      (selection !== undefined && isAcpExecutionSelection(selection)) ||
+      (entry.executionSelection?.state === "deferred" &&
+        entry.executionSelection.request.executor?.kind === "acp")
     );
   };
   if (isAcpBound())
     return { status: "rejected", reason: "invalid-runtime", message: acpInstruction };
   const owner = await import("../model-picker/apply-session-model-selection.js");
-  const result = await owner.applySessionModelSelection({
+  const request = params.request;
+  const executorKind =
+    request.runtime.kind === "set"
+      ? owner.resolveExecutionSelectionExecutorKind(params.cfg, request.runtime.runtime)
+      : undefined;
+  if (request.runtime.kind === "set" && !executorKind) {
+    return {
+      status: "rejected",
+      reason: "invalid-runtime",
+      message: "Could not confirm support for the selected app. Your selection is unchanged.",
+    };
+  }
+  const result = await owner.applySessionExecutionSelection({
     ...params,
-    validateAuthProfileSelection: () =>
-      params.validateAuthProfileSelection?.() ?? (isAcpBound() ? acpInstruction : undefined),
+    sessionEntry: canonical,
+    sessionStore,
+    request:
+      request.runtime.kind === "clear"
+        ? { kind: "reset", model: { provider: request.provider, id: request.model } }
+        : {
+            kind: "model",
+            model: { provider: request.provider, id: request.model },
+            ...(request.runtime.kind === "set" && executorKind
+              ? { executor: { kind: executorKind, id: request.runtime.runtime } }
+              : {}),
+          },
+    profileOverride: request.profileOverride,
+    validateCommit: () =>
+      params.validateAuthProfileSelection?.() ??
+      (isAcpBound() ? acpInstruction : undefined) ??
+      (!isDeepStrictEqual(original, initial) ||
+      (params.sessionStore[params.sessionKey] !== undefined &&
+        params.sessionStore[params.sessionKey] !== original)
+        ? "The session changed. Retry the model selection."
+        : undefined),
   });
   if (result.status === "conflict") return result;
   if (result.status === "rejected") {
     const reason =
-      result.reason === "locked" ||
-      result.reason === "not-allowed" ||
-      result.reason === "unknown-provider"
+      result.reason === "locked" || result.reason === "not-allowed"
         ? result.reason
         : "invalid-runtime";
     return { ...result, reason };
   }
-  if (isAcpExecutionSelection(result.selection)) {
-    throw new Error("ACP selection crossed the flat SDK response boundary.");
+  if (!isModelExecutionSelection(result.selection)) {
+    throw new Error("Concrete model request returned an app-managed selection.");
   }
+  const projected = projectPluginSessionEntry(
+    expectDefined(sessionStore[params.sessionKey], "Applied selection lost its session entry"),
+  );
+  for (const key of Object.keys(params.sessionEntry)) {
+    if (!Object.hasOwn(projected, key)) Reflect.deleteProperty(params.sessionEntry, key);
+  }
+  Object.assign(params.sessionEntry, projected);
+  params.sessionStore[params.sessionKey] = projected;
   const { provider, id: model } = result.selection.model;
   return {
-    ...result,
-    selection: result.selection,
+    status: "applied",
+    changed: result.changed,
+    message: result.message,
+    ...(result.configuredDefaultUpdate
+      ? { configuredDefaultUpdate: result.configuredDefaultUpdate }
+      : {}),
+    ...(result.thinkingRemap ? { thinkingRemap: result.thinkingRemap } : {}),
     provider,
     model,
     effectiveModelRef: `${provider}/${model}`,
@@ -114,3 +213,13 @@ export {
   ModelSelectionLockedError,
 } from "../sessions/model-overrides.js";
 export { applyModelOverrideWithAuthProfileCompatibility } from "../sessions/auth-profile-preservation.js";
+
+export { applySessionExecutionSelection } from "../model-picker/apply-session-model-selection.js";
+export { getSessionExecutionSelection } from "../model-picker/execution-selection.js";
+export type { ApplySessionExecutionSelectionParams } from "../model-picker/apply-session-model-selection.js";
+export type {
+  ExecutionSelection,
+  ModelExecutionSelection,
+  NativeManagedExecutionSelection,
+  SessionExecutionSelection,
+} from "../model-picker/execution-selection.js";

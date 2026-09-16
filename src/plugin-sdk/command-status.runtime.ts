@@ -9,6 +9,10 @@ import { createModelSelectionState } from "../auto-reply/reply/model-selection.j
 import type { ReplyPayload } from "../auto-reply/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { loadGatewaySessionEntryReadOnly } from "../gateway/session-utils.js";
+import {
+  getSessionExecutionSelection,
+  isModelExecutionSelection,
+} from "../model-picker/execution-selection.js";
 
 /** Inputs for rendering direct-session status replies outside the active channel turn. */
 export type ResolveDirectStatusReplyForSessionParams = {
@@ -63,12 +67,11 @@ export async function resolveDirectStatusReplyForSessionCore(
     cfg: statusCfg,
     agentId: statusAgentId,
   });
+  const accepted = getSessionExecutionSelection(statusEntry);
+  const concrete = accepted && isModelExecutionSelection(accepted) ? accepted.model : undefined;
   const selectedProvider =
-    statusEntry?.providerOverride?.trim() ||
-    statusEntry?.modelProvider?.trim() ||
-    statusModel.provider;
-  const selectedModel =
-    statusEntry?.modelOverride?.trim() || statusEntry?.model?.trim() || statusModel.model;
+    concrete?.provider ?? statusEntry?.modelProvider?.trim() ?? statusModel.provider;
+  const selectedModel = concrete?.id ?? statusEntry?.model?.trim() ?? statusModel.model;
   const modelState = await createModelSelectionState({
     cfg: statusCfg,
     agentId: statusAgentId,

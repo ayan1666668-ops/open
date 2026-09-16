@@ -12,7 +12,8 @@ import { resolveProviderIdForAuth } from "../agents/provider-auth-aliases.js";
 import type { SessionEntry } from "../config/sessions.js";
 import { resolveCollapsedSessionAuthPinSource } from "../config/sessions/auth-profile-override-provenance.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { encodeLegacySessionModelSelection } from "../model-picker/execution-selection-codec.js";
+import { stageSessionExecutionSelection } from "../model-picker/apply-session-model-selection.js";
+import type { LegacySelectionView } from "../model-picker/execution-selection-projection.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
 import { isUserModelAuthProfileId } from "../state/user-model-account-id.js";
 import { assertModelSelectionUnlocked } from "./model-overrides.js";
@@ -99,11 +100,11 @@ export function shouldPreserveUnavailableSessionAuthProfileOverride(
   );
 }
 
-/** @deprecated Use applySessionModelSelection; removed in the first stable release after 2026.10. */
+/** @deprecated Use applySessionExecutionSelection; removed in the first stable release after 2026.10. */
 export function applyModelOverrideWithAuthProfileCompatibility(params: {
   cfg: OpenClawConfig;
   agentDir: string;
-  entry: SessionEntry;
+  entry: Omit<SessionEntry, "acp" | "modelFallback"> & LegacySelectionView;
   currentProvider: string;
   selection: ModelOverrideSelection;
   profileOverride?: string;
@@ -114,7 +115,7 @@ export function applyModelOverrideWithAuthProfileCompatibility(params: {
   metadataSnapshot?: Pick<PluginMetadataSnapshot, "plugins">;
 }): { updated: boolean } {
   assertModelSelectionUnlocked(params.entry);
-  return encodeLegacySessionModelSelection({
+  return stageSessionExecutionSelection({
     entry: params.entry,
     selection: params.selection,
     ...(params.profileOverride ? { profileOverride: params.profileOverride } : {}),

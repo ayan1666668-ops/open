@@ -181,19 +181,20 @@ export function collectSessionEntryLookupKeys(_database: unknown, sessionKey: st
     : [];
 }
 
-type SessionEntryCandidate = {
-  entry: SessionEntry;
+type SessionLookupEntry = SessionCanonicalDeliveryEvidence & Pick<SessionEntry, "updatedAt">;
+type SessionEntryCandidate<T extends SessionLookupEntry = SessionEntry> = {
+  entry: T;
   sessionKey: string;
 };
 
-export function resolveSessionEntryCandidates(params: {
-  entries: Iterable<SessionEntryCandidate>;
+export function resolveSessionEntryCandidates<T extends SessionLookupEntry>(params: {
+  entries: Iterable<SessionEntryCandidate<T>>;
   sessionKey: string;
   /** Every consumed candidate has already passed canonical-key validation. */
   canonicalKeys?: true;
 }): {
   normalizedKey: string;
-  existing: SessionEntryCandidate | undefined;
+  existing: SessionEntryCandidate<T> | undefined;
   legacyKeys: string[];
 } {
   const trimmedKey = params.sessionKey.trim();
@@ -202,7 +203,7 @@ export function resolveSessionEntryCandidates(params: {
   const lookupKeys = params.canonicalKeys
     ? new Set([trimmedKey, normalizedKey, ...foldedLegacyKeys])
     : undefined;
-  const entries = new Map<string, SessionEntryCandidate>();
+  const entries = new Map<string, SessionEntryCandidate<T>>();
   for (const candidate of params.entries) {
     if (!lookupKeys || lookupKeys.has(candidate.sessionKey)) {
       entries.set(candidate.sessionKey, candidate);
@@ -220,7 +221,7 @@ export function resolveSessionEntryCandidates(params: {
   // Matrix folded aliases need proof they still deliver to this room. Otherwise a
   // genuinely case-distinct sibling that merely folds to the same lowercase could
   // be deleted or returned as this room's existing session.
-  let foldedLegacyEntry: SessionEntryCandidate | undefined;
+  let foldedLegacyEntry: SessionEntryCandidate<T> | undefined;
   let foldedLegacyUpdatedAt = 0;
   for (const foldedLegacyKey of foldedLegacyKeys) {
     const candidate = entries.get(foldedLegacyKey);
@@ -287,12 +288,12 @@ export function resolveSessionEntryCandidates(params: {
   };
 }
 
-export function resolveSessionStoreEntryCore(params: {
-  store: Record<string, SessionEntry>;
+export function resolveSessionStoreEntryCore<T extends SessionLookupEntry>(params: {
+  store: Record<string, T>;
   sessionKey: string;
 }): {
   normalizedKey: string;
-  existing: SessionEntry | undefined;
+  existing: T | undefined;
   legacyKeys: string[];
 } {
   const resolved = resolveSessionEntryCandidates({

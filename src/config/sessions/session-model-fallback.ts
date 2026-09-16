@@ -1,13 +1,9 @@
-import { captureSessionModelFallback } from "../../model-picker/execution-selection-codec.js";
+import type { SessionExecutionSelection } from "../../model-picker/execution-selection.js";
+import type { SessionEntry } from "./types.js";
+
+/** A rollback request records its previous accepted/deferred intent, never another active selector. */
 export type AgentPatchedSessionModelFallback = {
-  prevModel: string;
-  prevProvider: string;
-  prevModelOverride?: string;
-  prevProviderOverride?: string;
-  prevModelOverrideSource?: "auto" | "user" | "default";
-  prevModelOverrideRouteResolution?: "resolved";
-  prevModelOverrideFallbackOriginProvider?: string;
-  prevModelOverrideFallbackOriginModel?: string;
+  previous: SessionExecutionSelection;
   prevAuthProfileOverride?: string;
   prevAuthProfileOverrideSource?: "auto" | "user" | "user-link";
   prevAuthProfileOverrideCompactionCount?: number;
@@ -21,20 +17,24 @@ export type AgentPatchedSessionModelFallback = {
 export function createAgentPatchedSessionModelFallback(params: {
   model: string;
   provider: string;
-  entry: {
-    modelOverride?: string;
-    providerOverride?: string;
-    modelOverrideSource?: "auto" | "user" | "default";
-    modelOverrideRouteResolution?: "resolved";
-    modelOverrideFallbackOriginProvider?: string;
-    modelOverrideFallbackOriginModel?: string;
-    authProfileOverride?: string;
-    authProfileOverrideSource?: "auto" | "user" | "user-link";
-    authProfileOverrideCompactionCount?: number;
-    contextWindow?: string;
-    thinkingLevel?: string;
-  };
+  entry: Partial<SessionEntry>;
   ts: number;
 }): AgentPatchedSessionModelFallback {
-  return captureSessionModelFallback(params);
+  const { entry } = params;
+  return {
+    previous: entry.executionSelection
+      ? structuredClone(entry.executionSelection)
+      : {
+          state: "deferred",
+          request: { model: { provider: params.provider, id: params.model } },
+          fallbackPermission: "configured",
+        },
+    prevAuthProfileOverride: entry.authProfileOverride,
+    prevAuthProfileOverrideSource: entry.authProfileOverrideSource,
+    prevAuthProfileOverrideCompactionCount: entry.authProfileOverrideCompactionCount,
+    prevContextWindow: entry.contextWindow,
+    prevThinkingLevel: entry.thinkingLevel,
+    ts: params.ts,
+    source: "agent-patch",
+  };
 }

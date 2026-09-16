@@ -100,7 +100,7 @@ export {
 export function resolveSessionEntrySelection(
   scope: SessionAccessScope,
   options: { readOnly?: boolean } = {},
-): ReturnType<typeof resolveSessionEntryFromStore> {
+): ReturnType<typeof resolveSessionEntry> {
   return resolveSessionEntry(scope, options);
 }
 

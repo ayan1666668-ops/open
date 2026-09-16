@@ -507,21 +507,6 @@ type SessionEntryCore = SessionRestartRecoveryState &
     execCwd?: string;
     responseUsage?: "on" | "off" | "tokens" | "full";
     executionSelection?: SessionExecutionSelection;
-    providerOverride?: string;
-    modelOverride?: string;
-    /** Session-scoped agent runtime/harness override selected with the model picker. */
-    agentRuntimeOverride?: string;
-    /**
-     * Tracks whether the persisted model selection came from an explicit user
-     * action (`/model`, `sessions.patch`), a temporary runtime fallback, or an
-     * explicit configured-default selection that blocks parent inheritance.
-     */
-    modelOverrideSource?: "auto" | "user" | "default";
-    /** Present only when providerOverride/modelOverride are a canonical route pair. */
-    modelOverrideRouteResolution?: "resolved";
-    /** Selected model that produced the current auto fallback override. */
-    modelOverrideFallbackOriginProvider?: string;
-    modelOverrideFallbackOriginModel?: string;
     /** One-run rollback guard for a model selected by the agent sessions tool. */
     modelFallback?: AgentPatchedSessionModelFallback;
     authProfileOverride?: string;
