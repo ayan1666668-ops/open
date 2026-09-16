@@ -89,8 +89,10 @@ describe("feishu outbound cancellation", () => {
       onDeliveryResult: (result: { messageId?: string }) => {
         delivered.push(result.messageId ?? "");
       },
+      // Synchronous on purpose: the senders await whatever comes back, and an async
+      // implementation here would hand a promise to a mock typed for a void return.
       abortOnFirst: (mock: ReturnType<typeof vi.fn>, result: Record<string, unknown>) => {
-        mock.mockImplementation(async () => {
+        mock.mockImplementation(() => {
           controller.abort();
           return result;
         });
