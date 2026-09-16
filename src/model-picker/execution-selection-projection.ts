@@ -69,7 +69,9 @@ export function projectLegacyExecutionSelection(
   if (!model || model === "native-managed")
     return {
       ...(runtime ? { agentRuntimeOverride: runtime } : {}),
-      ...(!model && stored.fallbackPermission === "configured"
+      ...(!model &&
+      stored.fallbackPermission === "configured" &&
+      !(stored.state === "deferred" && stored.request.defaultSelection === "inherit")
         ? { modelOverrideSource: "default" as const }
         : {}),
     };

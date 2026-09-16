@@ -5,9 +5,11 @@ import { resolveDefaultModelForAgent } from "../agents/model-selection.js";
 import { createModelVisibilityPolicy } from "../agents/model-visibility-policy.js";
 import { resolveEffectiveAgentRuntime } from "../agents/thinking-runtime.js";
 import { loadSessionEntryReadOnly } from "../config/sessions/session-accessor.js";
+import type { InternalSessionEntry } from "../config/sessions/types.js";
 import { resolveSessionWorkerPlacementContext } from "../gateway/session-worker-placement-context.js";
 import { resolveWorkerPlacementCapabilities } from "../gateway/worker-environments/placement-capabilities.js";
 import { MODEL_SELECTION_LOCKED_MESSAGE } from "../sessions/model-overrides.js";
+import { resolveStoredModelOverrideCore } from "../sessions/stored-model-overrides.js";
 import {
   admitSessionExecutionFallback,
   resolveExecutionSelectionExecutorKind,
@@ -49,7 +51,7 @@ export async function prepareSessionExecutionSelection(
     );
     const id = resolveEffectiveAgentRuntime({
       cfg: params.cfg,
-      agentId: params.agentId,
+      agentScope: { kind: "prepared", agentId: params.agentId },
       sessionKey: params.sessionKey,
       provider: model.provider,
       modelId: model.id,
@@ -59,12 +61,46 @@ export async function prepareSessionExecutionSelection(
     const kind = resolveExecutionSelectionExecutorKind(params.cfg, id);
     return kind ? { model, executor: { kind, id } } : undefined;
   };
+  let parentRead: { sessionKey: string; entry: InternalSessionEntry | undefined } | undefined;
+  const loadParent = (sessionKey: string) =>
+    loadSessionEntryReadOnly({
+      agentId: params.sessionAgentId ?? params.agentId,
+      sessionKey,
+      storePath: params.storePath,
+    });
+  const inheritedModel =
+    params.request.kind === "initialize" && deferred?.defaultSelection === "inherit"
+      ? resolveStoredModelOverrideCore({
+          sessionKey: params.sessionKey,
+          parentSessionKey: params.parentSessionKey ?? sessionSnapshot?.parentSessionKey,
+          defaultProvider: configured.provider,
+          loadSessionEntry: (sessionKey) => {
+            const entry = loadParent(sessionKey);
+            parentRead = { sessionKey, entry: entry ? structuredClone(entry) : undefined };
+            return entry;
+          },
+        })
+      : null;
+  const fallbackPermission = inheritedModel
+    ? parentRead?.entry?.executionSelection?.fallbackPermission
+    : undefined;
+  const validateParent = () => {
+    if (!parentRead) return undefined;
+    const current = loadParent(parentRead.sessionKey);
+    return current?.sessionId !== parentRead.entry?.sessionId ||
+      current?.lifecycleRevision !== parentRead.entry?.lifecycleRevision ||
+      executionSelectionTransactionChanged(parentRead.entry ?? {}, current ?? {})
+      ? "The parent session selection changed. Retry the turn."
+      : undefined;
+  };
   const seed =
     deferred?.model && deferred.model !== "native-managed"
       ? { provider: deferred.model.provider ?? configured.provider, id: deferred.model.id }
-      : params.request.kind === "initialize" && params.request.model
-        ? params.request.model
-        : { provider: configured.provider, id: configured.model };
+      : inheritedModel
+        ? { provider: inheritedModel.provider ?? configured.provider, id: inheritedModel.model }
+        : params.request.kind === "initialize" && params.request.model
+          ? params.request.model
+          : { provider: configured.provider, id: configured.model };
   const deferredKind = deferred?.runtime
     ? resolveExecutionSelectionExecutorKind(params.cfg, deferred.runtime)
     : undefined;
@@ -334,6 +370,7 @@ export async function prepareSessionExecutionSelection(
     const validateCommit = () =>
       (evaluation.kind === "ready" ? evaluation.validate() : undefined) ??
       validateFallback() ??
+      validateParent() ??
       validatePlacement(accepted);
     const commitError = validateCommit();
     if (commitError) {
@@ -346,6 +383,7 @@ export async function prepareSessionExecutionSelection(
       reason,
       message,
       catalogEntry: evaluation.kind === "ready" ? evaluation.entry : undefined,
+      fallbackPermission,
       validateCommit,
     };
   }
@@ -374,7 +412,8 @@ export async function prepareSessionExecutionSelection(
     selection,
     before,
     reason,
-    validateCommit: () => validateNative?.() ?? validatePlacement(accepted),
+    fallbackPermission,
+    validateCommit: () => validateNative?.() ?? validateParent() ?? validatePlacement(accepted),
     message: formatExecutionSelectionAcknowledgment({
       selection,
       before: initial,

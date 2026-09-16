@@ -39,10 +39,11 @@ export function stripPrivateSessionEntryFields(
   entry: Partial<InternalSessionEntry>,
 ): Partial<SessionEntry>;
 export function stripPrivateSessionEntryFields(
-  entry: Partial<InternalSessionEntry>,
+  entry: Partial<InternalSessionEntry> & { thinkingLevelSelection?: unknown },
 ): Partial<SessionEntry> {
   const projected = { ...entry };
   for (const key of PRIVATE_SESSION_ENTRY_KEYS) delete projected[key];
+  delete projected.thinkingLevelSelection;
   return projected;
 }
 

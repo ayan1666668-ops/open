@@ -38,10 +38,15 @@ export const SESSION_EXECUTION_SELECTION_TRANSACTION_FIELDS = [
 
 /** Deferred requests preserve imported or legacy SDK intent without claiming an executor. */
 export type DeferredExecutionSelectionRequest = {
-  model?: { provider?: string; id: string } | "native-managed";
   runtime?: string;
   executor?: ExecutionSelection["executor"];
-};
+} & (
+  | {
+      model?: { provider?: string; id: string } | "native-managed";
+      defaultSelection?: never;
+    }
+  | { model?: never; defaultSelection: "inherit" | "configured" }
+);
 
 export type SessionExecutionSelection =
   | {
@@ -85,7 +90,8 @@ export function getCommittedSessionExecutionSelection(
 }
 
 export type ExecutionSelectionCommitCause =
-  | { kind: "initialize" | "reset" | "user" }
+  | { kind: "initialize"; fallbackPermission?: ExecutionFallbackPermission }
+  | { kind: "reset" | "user" }
   | { kind: "inherit"; entry: Partial<SessionEntry> };
 
 export type ExecutionSelectionRequest =
@@ -107,6 +113,7 @@ export type PreparedSessionExecutionSelection =
       reason: "initialized" | "model" | "explicit" | "reset" | "unsupported";
       message: string;
       catalogEntry?: ModelCatalogEntry;
+      fallbackPermission?: ExecutionFallbackPermission;
       validateCommit: () => string | undefined;
     }
   | {
@@ -162,7 +169,10 @@ export type ApplySessionExecutionSelectionParams = {
 export type PrepareSessionExecutionSelectionParams = ModelManifestNormalizationContext & {
   cfg: OpenClawConfig;
   agentId: string;
+  /** Owner of sessionEntry for inherited-parent reads; agentId remains the policy target. */
+  sessionAgentId?: string;
   sessionKey?: string;
+  parentSessionKey?: string;
   sessionEntry?: Partial<SessionEntry>;
   storePath?: string;
   readSessionEntry?: () => Partial<SessionEntry> | undefined;

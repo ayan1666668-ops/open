@@ -213,7 +213,13 @@ export function resolvePersistedSessionRuntimeId(
     >
   >,
 ): string | undefined {
-  if (entry?.executionSelection) return resolveAcceptedSessionRuntimeId(entry);
+  if (entry?.executionSelection?.state === "accepted")
+    return resolveAcceptedSessionRuntimeId(entry);
+  if (entry?.executionSelection?.state === "deferred") {
+    const { executor, runtime } = entry.executionSelection.request;
+    const requested = executor?.kind === "acp" ? undefined : (executor?.id ?? runtime);
+    return requested && !isDefaultAgentRuntimeId(requested) ? requested : undefined;
+  }
   const pinned = resolveSessionPinnedHarnessId(entry);
   if (pinned && !isDefaultAgentRuntimeId(pinned)) return pinned;
   const runtime = normalizeOptionalAgentRuntimeId(entry?.agentRuntimeOverride);

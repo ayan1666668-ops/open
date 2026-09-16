@@ -267,13 +267,9 @@ export async function applySessionExecutionSelection(
   ): Promise<ApplySessionExecutionSelectionResult> => {
     assertCurrent();
     const next = { ...initial };
-    const cause: ExecutionSelectionCommitCause = {
-      kind: initializing
-        ? "initialize"
-        : params.request.kind === "reset" && !params.request.model
-          ? "reset"
-          : "user",
-    };
+    const cause: ExecutionSelectionCommitCause = initializing
+      ? { kind: "initialize", fallbackPermission: prepared.fallbackPermission }
+      : { kind: params.request.kind === "reset" && !params.request.model ? "reset" : "user" };
     const changedSelection = isAcpExecutionSelection(selection)
       ? commitSessionExecutionSelection(next, selection, {
           cause,

@@ -466,7 +466,6 @@ export async function patchSessionEntry(
   const entry = await patchAccessorSessionEntry(
     toSessionAccessScope(params),
     async (internalEntry, context) => {
-      const persistedEntry = internalEntry as InternalSessionEntry;
       const patch = await params.update(projectPluginSessionEntry(internalEntry), {
         existingEntry: context.existingEntry
           ? projectPluginSessionEntry(context.existingEntry)
@@ -476,8 +475,10 @@ export async function patchSessionEntry(
         return null;
       }
       return preserveGenerationPrivateFields(
-        persistedEntry,
-        projectPluginSessionEntryPatch(patch, persistedEntry, { replace: params.replaceEntry }),
+        internalEntry,
+        projectPluginSessionEntryPatch(patch, context.existingEntry, {
+          replace: params.replaceEntry,
+        }),
       );
     },
     {
@@ -547,13 +548,11 @@ export async function upsertSessionEntry(params: UpsertSessionEntryParams): Prom
   const publicEntry = params.entry;
   await patchAccessorSessionEntry(
     toSessionAccessScope(params),
-    (internalEntry) => {
-      const persistedEntry = internalEntry as InternalSessionEntry;
-      return preserveGenerationPrivateFields(
-        persistedEntry,
-        projectPluginSessionEntryPatch(publicEntry, persistedEntry, { replace: true }),
-      );
-    },
+    (internalEntry, context) =>
+      preserveGenerationPrivateFields(
+        internalEntry,
+        projectPluginSessionEntryPatch(publicEntry, context.existingEntry, { replace: true }),
+      ),
     {
       fallbackEntry: {
         ...projectPluginSessionEntryPatch(publicEntry),

@@ -1,22 +1,28 @@
 import { describe, expect, it, vi } from "vitest";
+import { evaluatePublishedModelRuntimeChoice } from "../agents/model-runtime-choice.js";
 import {
   loadSessionEntryReadOnly,
   replaceSessionEntry,
 } from "../config/sessions/session-accessor.js";
+import { resolveStoredModelOverride } from "../plugin-sdk/command-auth-native.js";
 import {
   applyModelOverrideToSessionEntry,
   applyModelOverrideWithAuthProfileCompatibility,
   applySessionExecutionSelection,
   ModelSelectionLockedError,
+  resolvePersistedSessionRuntimeId,
+  resolveSessionModelRef,
 } from "../plugin-sdk/model-session-runtime.js";
 import { projectPluginSessionEntry } from "../plugin-sdk/session-store-runtime-internal.js";
 import {
+  getSessionEntry,
   patchSessionEntry,
   upsertSessionEntry,
   type SessionEntry,
 } from "../plugin-sdk/session-store-runtime.js";
 import { getActivePluginRegistryVersion } from "../plugins/runtime.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
+import type { AcpExecutionSelection } from "./execution-selection.js";
 
 vi.mock("../agents/model-runtime-choice.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../agents/model-runtime-choice.js")>()),
@@ -97,6 +103,115 @@ describe("released model-selection SDK entry points", () => {
     },
   );
 
+  it.each(
+    [false, true].flatMap((authAware) =>
+      [
+        { shape: "raw", existing: false, write: "upsert" },
+        { shape: "raw", existing: false, write: "patch" },
+        { shape: "raw", existing: true, write: "upsert" },
+        { shape: "projected", existing: true, write: "upsert" },
+      ].flatMap((row) => [false, true].map((isDefault) => ({ ...row, authAware, isDefault }))),
+    ),
+  )(
+    "preserves ACP selection through a $shape row, existing=$existing, write=$write, auth-aware=$authAware, default=$isDefault",
+    async ({ shape, existing, write, authAware, isDefault }) => {
+      await withOpenClawTestState({ label: "sdk-acp-row-selection" }, async () => {
+        const scope = { agentId: "main", sessionKey: "agent:main:sdk-acp" };
+        const previous: AcpExecutionSelection = {
+          executor: { kind: "acp", backend: "fixture-backend", agent: "fixture-agent" },
+          model: { id: "prior" },
+        };
+        const raw: SessionEntry = {
+          sessionId: "sdk-acp-session",
+          updatedAt: 1,
+          acp: {
+            backend: "fixture-backend",
+            agent: "fixture-agent",
+            runtimeSessionName: "fixture-handle",
+            mode: "persistent",
+            state: "idle",
+            lastActivityAt: 1,
+            runtimeOptions: { model: "prior", runtimeMode: "normal" },
+          },
+        };
+        if (existing) {
+          await replaceSessionEntry(scope, {
+            sessionId: raw.sessionId,
+            updatedAt: raw.updatedAt,
+            executionSelection: {
+              state: "accepted",
+              selection: previous,
+              fallbackPermission: "explicit",
+            },
+            acp: {
+              runtimeSessionName: "fixture-handle",
+              mode: "persistent",
+              state: "idle",
+              lastActivityAt: 1,
+              runtimeOptions: { runtimeMode: "normal" },
+            },
+          });
+        }
+        const row = shape === "projected" ? getSessionEntry(scope) : raw;
+        if (!row) throw new Error("Expected released ACP session view");
+        const originalAcp = structuredClone(row.acp);
+        const setter = authAware
+          ? applyModelOverrideWithAuthProfileCompatibility
+          : applyModelOverrideToSessionEntry;
+        setter({
+          cfg: {},
+          agentDir: "/nonexistent/sdk-agent",
+          currentProvider: "fixture",
+          entry: row,
+          selection: {
+            provider: "fixture",
+            model: isDefault ? "configured-default" : "requested",
+            isDefault,
+          },
+          metadataSnapshot: { plugins: [] },
+        });
+        expect(row.acp).toEqual(originalAcp);
+        if (write === "patch") {
+          await patchSessionEntry({
+            ...scope,
+            fallbackEntry: row,
+            replaceEntry: true,
+            requireWriteSuccess: true,
+            update: () => row,
+          });
+        } else {
+          await upsertSessionEntry({ ...scope, entry: row });
+        }
+        const stored = loadSessionEntryReadOnly(scope);
+        if (!stored) throw new Error("Expected stored ACP session");
+        if (shape === "projected" && isDefault) {
+          expect(stored.executionSelection).toEqual({
+            state: "accepted",
+            selection: previous,
+            fallbackPermission: "explicit",
+          });
+        } else {
+          expect(stored.executionSelection).toEqual({
+            state: "deferred",
+            request: {
+              executor: previous.executor,
+              model: isDefault ? { id: "prior" } : { provider: "fixture", id: "requested" },
+            },
+            fallbackPermission: isDefault ? "configured" : "explicit",
+            ...(existing ? { previous } : {}),
+          });
+        }
+        expect(stored.acp).toEqual({
+          runtimeSessionName: "fixture-handle",
+          mode: "persistent",
+          state: "idle",
+          lastActivityAt: 1,
+          runtimeOptions: { runtimeMode: "normal" },
+        });
+      });
+    },
+  );
+
   it.each([false, true])("stages a model with pin=%s without claiming acceptance", (pinned) => {
     const row = entry(pinned);
     expect(
@@ -168,7 +283,7 @@ describe("released model-selection SDK entry points", () => {
   );
 
   it.each([false, true])(
-    "invalidates request context without rewriting observations, pending=%s",
+    "invalidates stale released caller observations and context, pending=%s",
     (pending) => {
       const row = {
         ...entry(),
@@ -185,8 +300,8 @@ describe("released model-selection SDK entry points", () => {
         profileOverride: "new-account",
         markLiveSwitchPending: pending,
       });
-      expect(row.modelProvider).toBe("observed");
-      expect(row.model).toBe("observed-model");
+      expect(row.modelProvider).toBeUndefined();
+      expect(row.model).toBeUndefined();
       expect(row.contextTokens).toBeUndefined();
       expect(row.contextTokensSource).toBeUndefined();
       expect(row.authProfileOverride).toBe("new-account");
@@ -283,6 +398,178 @@ describe("released model-selection SDK entry points", () => {
     applyModelOverrideToSessionEntry({ entry: row, selection });
     expect(row.executionSelection?.fallbackPermission).toBe("explicit");
     expect(row.modelOverrideSource).toBe("user");
+  });
+
+  it.each([
+    [false, false, "user"],
+    [false, true, "user"],
+    [true, false, "user"],
+    [true, true, "user"],
+    [false, false, "auto"],
+    [false, true, "auto"],
+    [true, false, "auto"],
+    [true, true, "auto"],
+  ] as const)(
+    "preserves released default intake across the store: auth=%s explicit=%s parent=%s",
+    async (authAware, explicit, parentSource) => {
+      await withOpenClawTestState({ label: "sdk-default-intake" }, async () => {
+        const cfg = {
+          agents: {
+            defaults: {
+              model: "fixture/default",
+              models: { "fixture/default": {}, "fixture/parent": {} },
+            },
+          },
+        };
+        const parentKey = "agent:main:sdk-parent";
+        const scope = { agentId: "main", sessionKey: "agent:main:sdk-child" };
+        const parent = { ...entry(), sessionId: "sdk-parent" };
+        applyModelOverrideToSessionEntry({
+          entry: parent,
+          selection: { provider: "fixture", model: "parent" },
+          selectionSource: parentSource,
+        });
+        await upsertSessionEntry({ agentId: "main", sessionKey: parentKey, entry: parent });
+        await upsertSessionEntry({
+          ...scope,
+          entry: {
+            ...entry(),
+            parentSessionKey: parentKey,
+            modelProvider: "fixture",
+            model: "observed",
+          },
+        });
+        await patchSessionEntry({
+          ...scope,
+          replaceEntry: true,
+          requireWriteSuccess: true,
+          update: (row) => {
+            const params = {
+              entry: row,
+              selection: { provider: "fixture", model: "default", isDefault: true },
+              explicitDefaultSelection: explicit,
+            };
+            if (authAware)
+              applyModelOverrideWithAuthProfileCompatibility({
+                ...params,
+                cfg,
+                agentDir: "/nonexistent/sdk-agent",
+                currentProvider: "fixture",
+                metadataSnapshot: { plugins: [] },
+              });
+            else applyModelOverrideToSessionEntry(params);
+            expect(row.modelOverrideSource).toBe(explicit ? "default" : undefined);
+            return row;
+          },
+        });
+        const loaded = getSessionEntry(scope);
+        expect(loaded?.modelOverrideSource).toBe(explicit ? "default" : undefined);
+        expect(resolvePersistedSessionRuntimeId(loaded)).toBe("openclaw");
+        expect(loaded?.model).toBeUndefined();
+        expect(loaded?.modelProvider).toBeUndefined();
+        expect(
+          resolveSessionModelRef(cfg, loaded, undefined, { allowPluginNormalization: false }),
+        ).toEqual({ provider: "fixture", model: "default" });
+        expect(
+          resolveStoredModelOverride({
+            sessionEntry: loaded,
+            sessionKey: scope.sessionKey,
+            parentSessionKey: parentKey,
+            defaultProvider: "fixture",
+            loadSessionEntry: (sessionKey) => getSessionEntry({ agentId: "main", sessionKey }),
+            allowPluginNormalization: false,
+          }),
+        ).toEqual(
+          explicit
+            ? null
+            : {
+                provider: "fixture",
+                model: "parent",
+                source: "parent",
+                routeResolution: "resolved",
+              },
+        );
+        const canonical = loadSessionEntryReadOnly(scope);
+        if (!canonical) throw new Error("Expected deferred default selection");
+        const result = await applySessionExecutionSelection({
+          cfg,
+          ...scope,
+          sessionEntry: canonical,
+          modelCatalog: [
+            { provider: "fixture", id: "parent", name: "Parent" },
+            { provider: "fixture", id: "default", name: "Default" },
+          ],
+          request: { kind: "initialize" },
+        });
+        expect(result.status).toBe("applied");
+        expect(loadSessionEntryReadOnly(scope)?.executionSelection).toEqual({
+          state: "accepted",
+          selection: {
+            executor: { kind: "harness", id: "openclaw" },
+            model: { provider: "fixture", id: explicit ? "default" : "parent" },
+          },
+          fallbackPermission: explicit || parentSource === "auto" ? "configured" : "explicit",
+        });
+      });
+    },
+  );
+
+  it("does not accept an inherited model when its parent changes during preparation", async () => {
+    await withOpenClawTestState({ label: "sdk-inherit-current-parent" }, async () => {
+      const cfg = {
+        agents: {
+          defaults: {
+            model: "fixture/default",
+            models: { "fixture/default": {}, "fixture/before": {} },
+          },
+        },
+      };
+      const parentScope = { agentId: "main", sessionKey: "agent:main:sdk-parent" };
+      const scope = { agentId: "main", sessionKey: "agent:main:sdk-child" };
+      await upsertSessionEntry({ ...parentScope, entry: { ...entry(), sessionId: "sdk-parent" } });
+      const child = { ...entry(), parentSessionKey: parentScope.sessionKey };
+      applyModelOverrideToSessionEntry({
+        entry: child,
+        selection: { provider: "fixture", model: "default", isDefault: true },
+      });
+      await upsertSessionEntry({ ...scope, entry: child });
+      const canonical = loadSessionEntryReadOnly(scope);
+      if (!canonical) throw new Error("Expected deferred inherited selection");
+      const before = structuredClone(canonical.executionSelection);
+      vi.mocked(evaluatePublishedModelRuntimeChoice).mockImplementationOnce(async (params) => {
+        const generation = getActivePluginRegistryVersion();
+        await patchSessionEntry({
+          ...parentScope,
+          update: (row) => {
+            applyModelOverrideToSessionEntry({
+              entry: row,
+              selection: { provider: "fixture", model: "changed" },
+            });
+            return row;
+          },
+        });
+        return {
+          kind: "ready",
+          entry: { provider: params.provider, id: params.model, name: "Requested" },
+          validate: () =>
+            generation === getActivePluginRegistryVersion()
+              ? undefined
+              : "Prepared selection is no longer current.",
+        };
+      });
+      const result = await applySessionExecutionSelection({
+        cfg,
+        ...scope,
+        sessionEntry: canonical,
+        modelCatalog: [{ provider: "fixture", id: "before", name: "Parent" }],
+        request: { kind: "initialize" },
+      });
+      expect(result).toMatchObject({
+        status: "rejected",
+        message: "The parent session selection changed. Retry the turn.",
+      });
+      expect(loadSessionEntryReadOnly(scope)?.executionSelection).toEqual(before);
+    });
   });
 
   it.each(["auto", "user"] as const)(

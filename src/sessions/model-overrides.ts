@@ -1,7 +1,7 @@
 // Session model override helpers normalize per-session provider model choices.
 import type { SessionEntry } from "../config/sessions/types.js";
 import { stageSessionExecutionSelection } from "../model-picker/apply-session-model-selection.js";
-import type { LegacySelectionView } from "../model-picker/execution-selection-projection.js";
+import type { PublicSessionEntry } from "../model-picker/execution-selection-projection.js";
 
 type ModelOverrideSelection = {
   provider: string;
@@ -23,13 +23,15 @@ export class ModelSelectionLockedError extends Error {
   }
 }
 
-export function isModelSelectionLocked(entry: SessionEntry | undefined): boolean {
+export function isModelSelectionLocked(
+  entry: SessionEntry | PublicSessionEntry | undefined,
+): boolean {
   return entry?.modelSelectionLocked === true;
 }
 
 /** A locked harness owns both model selection and transcript lineage. */
 export function assertModelSelectionUnlocked(
-  entry: SessionEntry,
+  entry: SessionEntry | PublicSessionEntry,
   message = MODEL_SELECTION_LOCKED_MESSAGE,
 ): void {
   if (isModelSelectionLocked(entry)) {
@@ -39,7 +41,7 @@ export function assertModelSelectionUnlocked(
 
 /** @deprecated Use applySessionExecutionSelection; removed in the first stable release after 2026.10. */
 export function applyModelOverrideToSessionEntry(params: {
-  entry: Omit<SessionEntry, "acp" | "modelFallback"> & LegacySelectionView;
+  entry: Parameters<typeof stageSessionExecutionSelection>[0]["entry"];
   selection: ModelOverrideSelection;
   profileOverride?: string;
   profileOverrideSource?: "auto" | "user";
@@ -48,6 +50,5 @@ export function applyModelOverrideToSessionEntry(params: {
   explicitDefaultSelection?: boolean;
   markLiveSwitchPending?: boolean;
 }): { updated: boolean } {
-  assertModelSelectionUnlocked(params.entry);
   return stageSessionExecutionSelection(params);
 }

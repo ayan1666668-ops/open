@@ -13,7 +13,6 @@ import type { SessionEntry } from "../config/sessions.js";
 import { resolveCollapsedSessionAuthPinSource } from "../config/sessions/auth-profile-override-provenance.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { stageSessionExecutionSelection } from "../model-picker/apply-session-model-selection.js";
-import type { LegacySelectionView } from "../model-picker/execution-selection-projection.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
 import { isUserModelAuthProfileId } from "../state/user-model-account-id.js";
 import { assertModelSelectionUnlocked } from "./model-overrides.js";
@@ -41,7 +40,10 @@ function resolvePinnedAuthProfileProvider(params: {
 type SessionAuthProfilePreservationParams = {
   cfg: OpenClawConfig;
   agentDir: string;
-  entry: SessionEntry;
+  entry: Pick<
+    SessionEntry,
+    "authProfileOverride" | "authProfileOverrideSource" | "authProfileOverrideCompactionCount"
+  >;
   currentProvider: string;
   provider: string;
   metadataSnapshot?: Pick<PluginMetadataSnapshot, "plugins">;
@@ -104,7 +106,7 @@ export function shouldPreserveUnavailableSessionAuthProfileOverride(
 export function applyModelOverrideWithAuthProfileCompatibility(params: {
   cfg: OpenClawConfig;
   agentDir: string;
-  entry: Omit<SessionEntry, "acp" | "modelFallback"> & LegacySelectionView;
+  entry: Parameters<typeof stageSessionExecutionSelection>[0]["entry"];
   currentProvider: string;
   selection: ModelOverrideSelection;
   profileOverride?: string;

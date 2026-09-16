@@ -122,7 +122,12 @@ describe("plugin session writer claim projection", () => {
   );
 
   it("excludes private claims and retired thinking provenance from entries and patches", () => {
-    const entry = {
+    const entry: InternalSessionEntry & {
+      thinkingLevelSelection: unknown;
+      modelFallback: NonNullable<InternalSessionEntry["modelFallback"]> & {
+        prevThinkingLevelSelection: unknown;
+      };
+    } = {
       activeWriterRunId: "run-writer",
       lifecycleRunId: "run-lifecycle",
       sessionDiffBaselineCapture: {
@@ -135,10 +140,13 @@ describe("plugin session writer claim projection", () => {
         sessionId: "session-writer",
         maxBytes: 50_000,
       },
-      model: "gpt-5.6",
+      model: "observed-current",
       modelFallback: {
-        prevModel: "gpt-5.5",
-        prevProvider: "openai",
+        previous: {
+          state: "deferred",
+          request: { model: { provider: "fixture", id: "previous" } },
+          fallbackPermission: "explicit",
+        },
         prevThinkingLevelSelection: { retired: true },
         source: "agent-patch",
         ts: 1,
@@ -146,48 +154,54 @@ describe("plugin session writer claim projection", () => {
       sessionId: "session-writer",
       thinkingLevelSelection: { retired: true },
       updatedAt: 10,
-    } as unknown as InternalSessionEntry;
+    };
 
     expect(projectPluginSessionEntry(entry)).toEqual({
-      model: "gpt-5.6",
+      model: "observed-current",
       modelFallback: {
-        prevModel: "gpt-5.5",
-        prevProvider: "openai",
+        prevModel: "previous",
+        prevProvider: "fixture",
+        prevModelOverride: "previous",
+        prevProviderOverride: "fixture",
+        prevModelOverrideSource: "user",
+        prevModelOverrideRouteResolution: "resolved",
         source: "agent-patch",
         ts: 1,
       },
       sessionId: "session-writer",
       updatedAt: 10,
     });
-    expect(
-      projectPluginSessionEntryPatch({
-        activeWriterRunId: "run-next",
-        lifecycleRunId: "run-lifecycle-next",
-        sessionDiffBaselineCapture: {
-          version: 1,
-          captureId: "capture-next",
-          status: "pending",
-        },
-        transcriptByteCompactionLatch: {
-          activeBytes: 70_000,
-          sessionId: "session-next",
-          maxBytes: 60_000,
-        },
-        model: "gpt-5.5",
-        modelFallback: {
-          prevModel: "gpt-5.4",
-          prevProvider: "openai",
-          prevThinkingLevelSelection: { retired: true },
-          source: "agent-patch",
-          ts: 2,
-        },
-        thinkingLevelSelection: { retired: true },
-      } as unknown as Partial<InternalSessionEntry>),
-    ).toEqual({
-      model: "gpt-5.5",
+    const patch = {
+      activeWriterRunId: "run-next",
+      lifecycleRunId: "run-lifecycle-next",
+      sessionDiffBaselineCapture: {
+        version: 1,
+        captureId: "capture-next",
+        status: "pending",
+      },
+      transcriptByteCompactionLatch: {
+        activeBytes: 70_000,
+        sessionId: "session-next",
+        maxBytes: 60_000,
+      },
+      model: "observed-next",
       modelFallback: {
-        prevModel: "gpt-5.4",
-        prevProvider: "openai",
+        prevModel: "earlier",
+        prevProvider: "fixture",
+        prevThinkingLevelSelection: { retired: true },
+        source: "agent-patch" as const,
+        ts: 2,
+      },
+      thinkingLevelSelection: { retired: true },
+    };
+    expect(projectPluginSessionEntryPatch(patch)).toEqual({
+      model: "observed-next",
+      modelFallback: {
+        previous: {
+          state: "deferred",
+          request: { model: { provider: "fixture", id: "earlier" } },
+          fallbackPermission: "configured",
+        },
         source: "agent-patch",
         ts: 2,
       },
