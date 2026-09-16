@@ -5,7 +5,7 @@ import {
   type CronStreamSchedule,
 } from "../cron/stream-schedule.js";
 import type { CronJob } from "../cron/types.js";
-import { compileSafeRegex, testRegexWithBoundedInput } from "../security/safe-regex.js";
+import { compileSafeRegex } from "../security/safe-regex.js";
 import { truncateUtf8Prefix } from "../utils/utf8-truncate.js";
 
 const MAX_BUFFERED_OUTPUT_SEGMENTS = 64;
@@ -687,7 +687,8 @@ export class CronStreamOutput {
   }
 
   private matchesLine(line: string): boolean {
-    return !this.matcher || testRegexWithBoundedInput(this.matcher, line);
+    // Intake already bounds complete lines; slicing changes anchored matches.
+    return !this.matcher || this.matcher.test(line);
   }
 
   private hasAcceptedSourceInput(): boolean {
