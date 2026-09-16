@@ -974,15 +974,17 @@ function prepareModelPolicy(params: ModelPolicyPreparationParams) {
   }).map((entry) => applyModelCatalogMetadata({ entry, metadata }));
   const capturedByKey = indexFirstByKey(params.catalog, modelCatalogEntryKey);
   const defaultModel = params.defaultModel?.trim();
+  // defaultModel is already the resolved model id of the default provider pair.
+  // Re-parsing it as provider/model text would split slash-containing model ids
+  // such as "zai-org/GLM-5.2-TEE" and break the configured-default exception.
   const defaultRef =
     defaultModel && params.defaultProvider
-      ? parseModelRefWithCompatAlias({
-          ...params,
-          raw: defaultModel,
+      ? normalizeModelRef(params.defaultProvider, defaultModel, {
           allowManifestNormalization: visibility.hasEntries
             ? params.allowManifestNormalization
             : false,
           allowPluginNormalization: visibility.hasEntries ? params.allowPluginNormalization : false,
+          manifestPlugins: params.manifestPlugins,
         })
       : null;
   return {
