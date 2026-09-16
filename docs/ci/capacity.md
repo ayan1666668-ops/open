@@ -279,7 +279,16 @@ the hybrid storage/state family from three parts into ten, Doctor config/state
 from two into five, and runtime config from three into six. Their complete file
 inventories, process isolation, worker limits, naming scheme and timing-key
 generation remain owned by the existing planner. Repartitioned children receive
-new membership keys; the measured parent survives that change.
+new membership keys; the measured parent survives that change. Blacksmith also
+adds Gateway core-1 and core-2 to its existing split-owner list after their
+complete measurements reached 578 and 491 seconds. Hybrid and hosted already
+split those owners. Standalone agent support retains its existing whole-group
+contract.
+
+Blacksmith-profile PRs changing the compact planner or committed timing file run
+the complete compact core plan: focused planner tests alone cannot measure the
+resulting packing. Hosted profiles retain precise changed-test targeting. This
+uses the existing matrices and caps; plugin fallback keeps its separate owner.
 
 Three families retain their previous complete timing entries to avoid hosted expansion:
 `agentic-gateway-server-isolated`, `agentic-gateway-core-runtime`, and
@@ -299,7 +308,7 @@ push and 53 to 75 on broad PRs; the maximum prediction remains 518 seconds for t
 standalone CLI. Ordinary two-child bins remain within 360 seconds. Excluding dist,
 the Node matrix uses 50 push rows and 113 broad-PR rows including 40 plugin rows,
 within the unchanged 64/120 caps. Blacksmith compact descriptors change from
-34/52 to 57/75; the honest 804-second maximum belongs to standalone agent support.
+34/52 to 59/77; the honest 804-second maximum belongs to standalone agent support.
 Hosted plans remain byte-identical at 51/79 descriptors. Hybrid adds 22/22
 registrations per push/PR, or 550 across the retained four-main/21-PR arrival
 envelope; these rows consume existing reserved capacity, so the enforced
