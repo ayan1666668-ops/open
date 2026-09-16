@@ -765,6 +765,17 @@ describe("Slack live QA runtime helpers", () => {
             }),
           }),
         ).toContain("verified");
+        expect(
+          verifyObserved({
+            finalMessage: { text: finalMarker, ts: "2.000000" },
+            messages: messages.map((message) => {
+              if (message.ts !== "1.500000") {
+                return message;
+              }
+              return Object.assign({}, message, { blockText: ["Run — `sleep 5`"] });
+            }),
+          }),
+        ).toContain("verified");
       }
     }
   });
