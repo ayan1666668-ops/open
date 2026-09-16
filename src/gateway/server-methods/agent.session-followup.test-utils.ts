@@ -1,4 +1,5 @@
 // Registered agent RPC proof for parent-visible session follow-up activity.
+import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createDeferred } from "../../../test/helpers/promise.js";
 import {
@@ -60,9 +61,11 @@ describe("gateway agent follow-up activity", () => {
           deliveryStatus: previousState === "completed" ? "delivered" : "pending",
         });
         mocks.updateSessionStore.mockResolvedValue(undefined);
+        const storePath = path.join(root, "agents", "main", "sessions", "sessions.json");
+        mocks.userTurnStorePath = storePath;
         mocks.loadSessionEntry.mockReturnValue({
           cfg: {},
-          storePath: "/tmp/sessions.json",
+          storePath,
           entry: {
             sessionId: "spawned-child-session",
             updatedAt: Date.now(),
@@ -127,41 +130,46 @@ describe("gateway agent follow-up activity", () => {
     { name: "another sender", publicClient: false, source: "agent:main:other" },
     { name: "ACP child", publicClient: false, source: "agent:main:parent", acp: true },
   ])("does not publish parent activity for $name", async ({ publicClient, source, acp }) => {
-    const childSessionKey = `agent:main:${acp ? "acp" : "subagent"}:review`;
-    const runId = "untracked-child-followup";
-    mocks.updateSessionStore.mockResolvedValue(undefined);
-    mocks.agentCommand.mockResolvedValue({ payloads: [], meta: { durationMs: 1 } });
-    mocks.loadSessionEntry.mockReturnValue({
-      cfg: {},
-      storePath: "/tmp/sessions.json",
-      entry: {
-        sessionId: "spawned-child-session",
-        updatedAt: Date.now(),
-        spawnedBy: "agent:main:parent",
-      },
-      canonicalKey: childSessionKey,
-    });
-    const context = makeContext();
-    await invokeAgent(
-      {
-        message: "Check progress",
-        sessionKey: childSessionKey,
-        idempotencyKey: runId,
-        inputProvenance: {
-          kind: "inter_session",
-          sourceSessionKey: source,
-          sourceTool: "sessions_send",
+    await withTestDir({ prefix: "openclaw-followup-scope-" }, async (root) => {
+      useTestStateDir(root);
+      const storePath = path.join(root, "agents", "main", "sessions", "sessions.json");
+      mocks.userTurnStorePath = storePath;
+      const childSessionKey = `agent:main:${acp ? "acp" : "subagent"}:review`;
+      const runId = "untracked-child-followup";
+      mocks.updateSessionStore.mockResolvedValue(undefined);
+      mocks.agentCommand.mockResolvedValue({ payloads: [], meta: { durationMs: 1 } });
+      mocks.loadSessionEntry.mockReturnValue({
+        cfg: {},
+        storePath,
+        entry: {
+          sessionId: "spawned-child-session",
+          updatedAt: Date.now(),
+          spawnedBy: "agent:main:parent",
         },
-      },
-      {
-        context,
-        reqId: runId,
-        client: publicClient ? operatorWriteCliClient() : backendGatewayClient(),
-      },
-    );
-    await waitForAssertion(() => {
-      expectRecordFields(context.dedupe.get(`agent:${runId}`)?.payload, { status: "ok" });
+        canonicalKey: childSessionKey,
+      });
+      const context = makeContext();
+      await invokeAgent(
+        {
+          message: "Check progress",
+          sessionKey: childSessionKey,
+          idempotencyKey: runId,
+          inputProvenance: {
+            kind: "inter_session",
+            sourceSessionKey: source,
+            sourceTool: "sessions_send",
+          },
+        },
+        {
+          context,
+          reqId: runId,
+          client: publicClient ? operatorWriteCliClient() : backendGatewayClient(),
+        },
+      );
+      await waitForAssertion(() => {
+        expectRecordFields(context.dedupe.get(`agent:${runId}`)?.payload, { status: "ok" });
+      });
+      expect(findTaskByRunId(runId)).toBeUndefined();
     });
-    expect(findTaskByRunId(runId)).toBeUndefined();
   });
 });
