@@ -122,11 +122,7 @@ export function createGatewayAgentModelCatalogProjector(params: ModelCatalogDeci
               pluginRegistry: params.pluginRegistry,
             })?.id ?? "openclaw";
           const selected = selectModelCatalogRuntimeEntry({ entry, routeVariants, runtimeId });
-          return createModelCatalogView({
-            cfg: params.cfg,
-            catalog: [selected.entry],
-            routeVariants: selected.variants,
-          }).project(selected.entry, evaluation).runtimeEntry;
+          return view.project(selected.entry, evaluation, selected.variants).runtimeEntry;
         }),
       ));
     },
@@ -697,13 +693,12 @@ export async function prepareModelsListResult(
       models: readCatalog()
         .filter(matchesProvider)
         .map((entry) => {
-          const evaluation = evaluations.get(resolveModelCatalogIdentityKey(entry));
+          const key = resolveModelCatalogIdentityKey(entry);
+          const evaluation = evaluations.get(key);
           if (!evaluation) {
             throw new Error("Model catalog publication omitted prepared auth evaluation");
           }
-          const runtimeChoices = runtimeChoiceReaders.get(
-            resolveModelCatalogIdentityKey(entry),
-          )?.();
+          const runtimeChoices = runtimeChoiceReaders.get(key)?.();
           const projected = projectPublic(entry, evaluation);
           if (runtimeChoices?.length) {
             projected.runtimeChoices = runtimeChoices;

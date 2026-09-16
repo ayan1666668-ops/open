@@ -337,6 +337,9 @@ export function createSessionsHarness(agentId: string, keys: string[]) {
     get state() {
       return state;
     },
+    get presentation() {
+      return state;
+    },
     get canonicalListRevision() {
       return canonicalListRevision;
     },
@@ -421,6 +424,8 @@ export function createSessionsHarness(agentId: string, keys: string[]) {
       scopedSessions!.inheritRow(...args),
     projectRows: (rows: readonly GatewaySessionRow[]) => scopedSessions!.projectRows(rows),
     refresh,
+    invalidate: (...args: Parameters<SessionCapability["invalidate"]>) =>
+      scopedSessions!.invalidate(...args),
     refreshReplacement,
     subscribeMessages,
     unsubscribeMessages,

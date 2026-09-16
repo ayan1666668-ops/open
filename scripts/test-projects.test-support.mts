@@ -2703,7 +2703,10 @@ const SEMANTIC_TOOLING_TARGET_PATTERNS: Array<[RegExp, string[]]> = [
   ],
   [/^scripts\/run-node\.(?:mjs|mts)$/u, [runNode]],
   [/^scripts\/ios-write-swift-filelist\.m[jt]s$/u, ["ios-run"]],
-  [/^scripts\/pr-lib\/merge(?:-outcome)?\.sh$/u, ["pr-merge", "pr-merge-outcome"]],
+  [
+    /^scripts\/pr-lib\/(?:merge(?:-outcome)?\.sh|merge-legacy-refusal\.mjs)$/u,
+    ["pr-merge", "pr-merge-outcome"],
+  ],
   [/^scripts\/plugin-clawhub-publish\.sh$/u, ["test/plugin-clawhub-release.test.ts"]],
   [/^scripts\/openclaw-npm-postpublish-verify\.ts$/u, [npmPostpublish]],
   [
@@ -3381,6 +3384,9 @@ function resolveToolingTestTargets(changedPath: string, cwd = process.cwd()) {
       ? resolveDirectToolingReferenceTests(implementationPath, cwd)
       : [];
   const targets = [
+    ...(!hasDirectOwner && isRoutableChangedTarget(changedPath) && isTestFileTarget(changedPath)
+      ? [changedPath]
+      : []),
     ...exactTargets,
     ...(explicitTargets ?? []),
     ...semanticTargets,

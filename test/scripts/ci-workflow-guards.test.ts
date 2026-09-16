@@ -27,6 +27,7 @@ import { minimatch } from "minimatch";
 import ts from "typescript";
 import { afterEach, describe, expect, it } from "vitest";
 import { parse } from "yaml";
+import * as qaEvidence from "../../extensions/qa-lab/api.js";
 import {
   detectChangedScope,
   detectNodeFastScope,
@@ -48,6 +49,7 @@ import {
 import { buildVitestRunPlans } from "../../scripts/test-projects.test-support.mts";
 import { resolveTestNodeExecPath } from "../../src/test-utils/node-process.js";
 import { createTempDirTracker, useAutoCleanupTempDirTracker } from "../helpers/temp-dir.js";
+import { resolveWorkflowBash } from "../helpers/workflow-bash.js";
 import { sharedVitestConfig } from "../vitest/vitest.shared.config.ts";
 import {
   createUiE2eVitestConfig,
@@ -130,13 +132,24 @@ function evaluateWorkflowExpression(
   expression: unknown,
   context: {
     action?: string;
+    actor?: string;
+    githubEvent?: Record<string, unknown>;
+    maintainerCommands?: string;
     // Runner routing keys off contributor trust, so pull-request cases default
     // to CONTRIBUTOR: same-repo PRs always come from someone with write access.
     authorAssociation?: string;
     cancelled?: boolean;
     dispatchId?: string;
     draft?: boolean;
-    eventName: "pull_request" | "push" | "workflow_dispatch" | "repository_dispatch" | "schedule";
+    eventName:
+      | "pull_request"
+      | "pull_request_target"
+      | "issue_comment"
+      | "issues"
+      | "push"
+      | "workflow_dispatch"
+      | "repository_dispatch"
+      | "schedule";
     failed?: boolean;
     env?: Record<string, string>;
     frozenTarget?: boolean;
@@ -208,6 +221,7 @@ function evaluateWorkflowExpression(
     startsWith: (value: unknown, prefix: unknown) => String(value).startsWith(String(prefix)),
     toJson: (value: unknown) => JSON.stringify(value),
     github: {
+      actor: context.actor ?? "",
       event_name: context.eventName,
       repository: context.repository,
       ref: context.ref ?? "refs/heads/main",
@@ -219,7 +233,8 @@ function evaluateWorkflowExpression(
       workflow_sha: context.workflowSha,
       token: context.workflowToken,
       event:
-        context.headRepository || context.eventName === "pull_request"
+        context.githubEvent ??
+        (context.headRepository || context.eventName === "pull_request"
           ? {
               action: context.action,
               pull_request: {
@@ -232,7 +247,7 @@ function evaluateWorkflowExpression(
                 },
               },
             }
-          : {},
+          : {}),
     },
     inputs: {
       dispatch_id: context.dispatchId ?? "",
@@ -259,6 +274,7 @@ function evaluateWorkflowExpression(
       },
     },
     vars: {
+      MAINTAINER_COMMAND_REACTIONS: context.maintainerCommands ?? "",
       OPENCLAW_CI_RUNNER_BACKEND: context.runnerBackend ?? "",
     },
   });
@@ -268,7 +284,9 @@ function runCiGateFixture(jobResults: string) {
   const gateStep = readCiWorkflow().jobs["ci-gate"].steps.find(
     (step: WorkflowStep) => step.name === "Verify selected CI lanes",
   );
-  return spawnSync("bash", ["-c", gateStep.run], {
+  // Homebrew Bash 5.3 can block writing this here-string before its reader starts.
+  const bash = process.platform === "darwin" ? "/bin/bash" : "bash";
+  return spawnSync(bash, ["-c", gateStep.run], {
     encoding: "utf8",
     env: {
       ...process.env,
@@ -335,7 +353,9 @@ function runPreflightNodeInvocation(
     '#!/bin/sh\nprintf \'%s\\n\' "$@" > "$OPENCLAW_NODE_ARGS"\ncat >/dev/null\n',
   );
   chmodSync(nodePath, 0o755);
-  const result = spawnSync("bash", ["-c", script], {
+  // Avoid Darwin Bash 5.3 heredoc deadlocks while preserving the PATH node spy.
+  const bash = process.platform === "darwin" ? "/bin/bash" : "bash";
+  const result = spawnSync(bash, ["-c", script], {
     encoding: "utf8",
     env: {
       ...process.env,
@@ -350,10 +370,13 @@ function runPreflightNodeInvocation(
   return readFileSync(argsPath, "utf8").trim().split("\n");
 }
 
+let linuxWorkflowBash: string | undefined;
+
 function runWorkflowShellScript(
   script: string,
-  options: { cwd?: string; env?: NodeJS.ProcessEnv },
+  options: { cwd?: string; env?: NodeJS.ProcessEnv; linuxWorkflow?: boolean },
 ) {
+  const { linuxWorkflow, ...spawnOptions } = options;
   const root = mkdtempSync(path.join(tmpdir(), "openclaw-workflow-shell-"));
   const modulePaths: string[] = [];
   try {
@@ -383,8 +406,12 @@ function runWorkflowShellScript(
       );
     const scriptPath = path.join(root, "run.sh");
     writeFileSync(scriptPath, rewritten.endsWith("\n") ? rewritten : `${rewritten}\n`, "utf8");
-    return spawnSync("bash", [scriptPath], {
-      ...options,
+    const bash =
+      linuxWorkflow && process.platform === "darwin"
+        ? (linuxWorkflowBash ??= resolveWorkflowBash())
+        : "bash";
+    return spawnSync(bash, [scriptPath], {
+      ...spawnOptions,
       encoding: "utf8",
       // Child caches and temporary artifacts share the fixture's cleanup owner.
       // Inheriting a huge host tsx cache makes startup depend on unrelated runs.
@@ -396,6 +423,143 @@ function runWorkflowShellScript(
     }
     rmSync(root, { force: true, recursive: true });
   }
+}
+
+function workflowOccurrenceEvidence(
+  instances: {
+    scenarioId: string;
+    attempts: qaEvidence.QaEvidenceStatus[];
+    selected?: number;
+    retry?: boolean;
+  }[],
+  evidenceMode: "full" | "slim" = "full",
+) {
+  const identity = {
+    source: { ref: null, integrity: null },
+    runtime: { id: null, version: null },
+    package: null,
+    protocol: null,
+    accountRef: null,
+    proofClass: null,
+  };
+  const occurrences: qaEvidence.QaEvidenceOccurrence[] = [];
+  const entries: qaEvidence.QaEvidenceSummaryV3Entry[] = [];
+  for (const [index, instance] of instances.entries()) {
+    const anchorId = `instance-${index}`;
+    const parentCell = {
+      scenarioId: instance.scenarioId,
+      executionKind: "flow" as const,
+      channel: null,
+    };
+    occurrences.push({
+      id: anchorId,
+      parentCell,
+      scenario: {
+        kind: "instance",
+        resultOccurrenceId:
+          instance.selected === undefined ? null : `${anchorId}-attempt-${instance.selected}`,
+      },
+      retryOf: null,
+      terminalStatus: null,
+      assertions: null,
+      launch: identity,
+      receipts: [],
+    });
+    for (const [attempt, status] of instance.attempts.entries()) {
+      const id = `${anchorId}-attempt-${attempt}`;
+      occurrences.push({
+        id,
+        parentCell,
+        scenario: { kind: "observation", instanceOccurrenceId: anchorId },
+        retryOf:
+          attempt === 0 || instance.retry === false ? null : `${anchorId}-attempt-${attempt - 1}`,
+        terminalStatus: status,
+        assertions: null,
+        launch: identity,
+        receipts: [],
+      });
+      entries.push({
+        test: { kind: "scenario", id: instance.scenarioId, title: instance.scenarioId },
+        coverage: [],
+        result: { status },
+        binding: { occurrenceId: id, assertionId: null, receiptId: null },
+        effective: instance.retry === false || attempt === instance.selected,
+      });
+    }
+  }
+  return qaEvidence.buildQaOccurrenceEvidenceSummary({
+    generatedAt: "2026-08-05T00:00:00.000Z",
+    evidenceMode,
+    occurrences,
+    entries,
+  });
+}
+
+function writeWorkflowEvidenceApi(root: string, accessors = true) {
+  const apiPath = path.join(root, "extensions/qa-lab/api.ts");
+  mkdirSync(path.dirname(apiPath), { recursive: true });
+  writeFileSync(
+    path.join(root, "tsconfig.json"),
+    JSON.stringify({ extends: path.resolve("tsconfig.json") }),
+  );
+  const source = pathToFileURL(path.resolve("extensions/qa-lab/src/evidence-summary.ts")).href;
+  // Historical checkouts can validate v2 without exporting the v3 readers.
+  writeFileSync(
+    apiPath,
+    `export { validateQaEvidenceSummaryJson${accessors ? ", getEffectiveQaEvidenceEntries, projectQaEvidenceScenarioOutcomes" : ""} } from ${JSON.stringify(source)};\n`,
+  );
+}
+
+function runMantisEvidenceReader(
+  kind: "status-reactions" | "thread-attachment",
+  evidence: unknown,
+  accessors = true,
+) {
+  const root = tempDirs.make("openclaw-mantis-reader-");
+  const laneRoot = path.join(root, "lanes/baseline");
+  const outputDir = path.join(root, "evidence/baseline");
+  mkdirSync(outputDir, { recursive: true });
+  const moduleRoot = kind === "status-reactions" ? root : laneRoot;
+  writeWorkflowEvidenceApi(moduleRoot, accessors);
+  // A reader must not silently use a newer neighboring checkout's API.
+  const otherRoot = kind === "status-reactions" ? laneRoot : root;
+  writeWorkflowEvidenceApi(otherRoot);
+  writeFileSync(
+    path.join(otherRoot, "extensions/qa-lab/api.ts"),
+    'throw new Error("wrong evidence API owner");\n',
+  );
+  if (evidence !== undefined) {
+    writeFileSync(
+      path.join(outputDir, "qa-evidence.json"),
+      typeof evidence === "string" ? evidence : JSON.stringify(evidence),
+    );
+  }
+  const scenarioId =
+    kind === "status-reactions"
+      ? "discord-status-reactions-tool-only"
+      : "discord-thread-reply-filepath-attachment";
+  writeFileSync(
+    path.join(outputDir, "discord-qa-summary.json"),
+    JSON.stringify({ scenarios: [{ id: scenarioId, status: "pass" }] }),
+  );
+  const workflow = readWorkflow(`.github/workflows/mantis-discord-${kind}.yml`);
+  const job = kind === "status-reactions" ? "run_status_reactions" : "run_thread_attachment";
+  const script = expectDefined(
+    workflow.jobs[job].steps.find((step: WorkflowStep) => step.id === "run_mantis")?.run,
+    "Mantis run script",
+  );
+  const functionName =
+    kind === "status-reactions"
+      ? "read_discord_status_reaction_status"
+      : "read_discord_thread_attachment_status";
+  const start = script.indexOf(`${functionName}()`);
+  const end = script.indexOf("\nbaseline_status=", start);
+  expect(start).toBeGreaterThanOrEqual(0);
+  expect(end).toBeGreaterThan(start);
+  return runWorkflowShellScript(
+    `set -euo pipefail\nroot=${quoteShell(path.join(root, "evidence"))}\nworktree_root=lanes\n${script.slice(start, end)}\n${functionName} baseline\n`,
+    { cwd: root, env: { ...process.env, GITHUB_WORKSPACE: root } },
+  );
 }
 
 function runCiChangedScopeFixture(changedPaths: string[]): Record<string, string> {
@@ -2652,6 +2816,130 @@ NODE
       "${{ github.event.action == 'synchronize' }}",
     );
   });
+
+  it.each([
+    // name, body, override, permission, issue, admitted, reacts
+    ["plain", "Thanks", "", "write", false, false, false],
+    ["empty", "", "", "write", false, false, false],
+    ["multiline", "context\r\n \t/merge now \r\n", "", "write", false, true, true],
+    ["slash nonmatch", "/landscape", "", "write", false, true, false],
+    ["custom words", "ship it now", " ship it ,", "write", false, true, true],
+    ["custom Unicode", "  ✅ later  ", "✅", "write", false, true, true],
+    ["false override", "false", "false", "write", false, true, true],
+    ["zero override", "0", "0", "write", false, true, true],
+    ["empty parsed override", "Thanks", " , ", "write", false, true, false],
+    ["non-maintainer", "/merge", "", "read", false, true, false],
+    ["issue autoclose", "/autoclose reason", "", "write", true, true, true],
+    ["issue non-autoclose", "/merge", "", "write", true, true, false],
+  ] as const)(
+    "preserves reaction admission and actions for %s",
+    async (_name, body, commands, permission, issue, admitted, reacts) => {
+      const job = readWorkflow(".github/workflows/maintainer-command-reactions.yml").jobs.react;
+      const event = {
+        comment: { id: 456, body, user: { login: "comment-author" } },
+        issue: { number: 123, ...(issue ? {} : { pull_request: {} }) },
+      };
+      const context = {
+        repository: "openclaw/openclaw",
+        runAttempt: 1,
+        eventName: "issue_comment" as const,
+        actor: "event-actor",
+        githubEvent: event,
+        maintainerCommands: commands,
+      };
+      const reactions: string[] = [];
+      const permissionUsers: string[] = [];
+      const step = job.steps.find((candidate: WorkflowStep) => candidate.with?.script);
+      await runInNewContext(`(async () => { ${step.with.script} })()`, {
+        context: { payload: event, repo: { owner: "openclaw", repo: "openclaw" } },
+        process: {
+          env: {
+            MAINTAINER_COMMAND_REACTIONS: evaluateWorkflowExpression(
+              job.env.MAINTAINER_COMMAND_REACTIONS,
+              context,
+            ),
+          },
+        },
+        core: { info() {}, warning() {} },
+        github: {
+          rest: {
+            repos: {
+              async getCollaboratorPermissionLevel({ username }: { username: string }) {
+                permissionUsers.push(username);
+                return { data: { permission } };
+              },
+            },
+            reactions: {
+              async createForIssueComment({ content }: { content: string }) {
+                reactions.push(content);
+              },
+            },
+          },
+        },
+      });
+      expect(reactions).toEqual(reacts ? ["eyes"] : []);
+      expect(permissionUsers.every((login) => login === "comment-author")).toBe(true);
+      expect(Boolean(evaluateWorkflowExpression(job.if, context))).toBe(admitted);
+    },
+  );
+
+  it("keeps reaction admission open for every configured default and closed for bot actors", () => {
+    const workflow = readWorkflow(".github/workflows/maintainer-command-reactions.yml");
+    const job = workflow.jobs.react;
+    const context = {
+      repository: "openclaw/openclaw",
+      runAttempt: 1,
+      eventName: "issue_comment" as const,
+      actor: "maintainer",
+    };
+    const defaults = String(
+      evaluateWorkflowExpression(job.env.MAINTAINER_COMMAND_REACTIONS, context),
+    );
+    for (const command of defaults.split(",")) {
+      // A future nonslash default would invalidate the necessary-character admission guard.
+      expect(command, "default commands must retain slash admission").toContain("/");
+      const githubEvent = { comment: { body: `earlier line\n  ${command} args  ` } };
+      expect(evaluateWorkflowExpression(job.if, { ...context, githubEvent })).toBe(true);
+      expect(
+        evaluateWorkflowExpression(job.if, {
+          ...context,
+          githubEvent,
+          actor: "automation[bot]",
+          maintainerCommands: "ship",
+        }),
+      ).toBe(false);
+    }
+    expect(workflow.on.issue_comment.types).toEqual(["created", "edited"]);
+  });
+
+  it.each([
+    ["issue_comment", "created", "Bot", "human", false],
+    ["issue_comment", "created", "User", "clawsweeper[bot]", true],
+    ["issue_comment", "created", undefined, "human", true],
+    ["issues", "opened", "Bot", "clawsweeper[bot]", true],
+    ["pull_request_target", "opened", "Bot", "clawsweeper[bot]", true],
+    ["pull_request_target", "labeled", "Bot", "clawsweeper[bot]", false],
+    ["pull_request_target", "unlabeled", "Bot", "openclaw-clawsweeper[bot]", false],
+    ["pull_request_target", "labeled", "Bot", "openclaw-barnacle[bot]", true],
+    ["pull_request_target", "labeled", "User", "maintainer", true],
+  ] as const)(
+    "preserves Barnacle comment admission for %s/%s/%s/%s",
+    (eventName, action, type, actor, admitted) => {
+      const job = readWorkflow(".github/workflows/auto-response.yml").jobs["auto-response"];
+      expect(
+        evaluateWorkflowExpression(job.if, {
+          repository: "openclaw/openclaw",
+          runAttempt: 1,
+          eventName,
+          actor,
+          githubEvent: {
+            action,
+            comment: { body: "testflight @openclaw/maintainer", user: { type } },
+          },
+        }),
+      ).toBe(admitted);
+    },
+  );
 
   it("isolates auto-response per item and ignores ClawSweeper PR label feedback", () => {
     const workflow = readWorkflow(".github/workflows/auto-response.yml");
@@ -5271,6 +5559,7 @@ require("node:fs").writeFileSync("scheduler-baseline", process.env.OPENCLAW_UPGR
         "if (process.argv.includes(process.env.FAIL_GRADLE_TASK)) process.exit(23);",
       ]);
       const result = runWorkflowShellScript(expectDefined(step.run, "Android commands"), {
+        linuxWorkflow: true,
         cwd: root,
         env: {
           ...process.env,
@@ -6338,11 +6627,11 @@ setImmediate(() => {
       ...expectedHostedRunners,
       "security-fast": "blacksmith-4vcpu-ubuntu-2404",
       android: "blacksmith-8vcpu-ubuntu-2404",
-      "build-artifacts": "blacksmith-16vcpu-ubuntu-2404",
+      "build-artifacts": "blacksmith-32vcpu-ubuntu-2404",
       "checks-node-core-test-nondist-shard": "blacksmith-32vcpu-ubuntu-2404",
       "checks-ui-e2e": "blacksmith-8vcpu-ubuntu-2404",
       "checks-ui-e2e-real-gateway": "blacksmith-32vcpu-ubuntu-2404",
-      "docker-seed-e2e": "blacksmith-32vcpu-ubuntu-2404",
+      "docker-seed-e2e": "blacksmith-16vcpu-ubuntu-2404",
       "qa-smoke-ci-profile": "blacksmith-16vcpu-ubuntu-2404",
       "check-test-types-hosted-core-shard": "blacksmith-32vcpu-ubuntu-2404",
       "checks-ui": "blacksmith-8vcpu-ubuntu-2404",
@@ -8654,7 +8943,7 @@ server.listen(0, "127.0.0.1", () => {
     expect(source).toContain("createNodeTestShardBundles");
     const artifactRunner = workflow.jobs["build-artifacts"]["runs-on"];
     for (const [frozenTarget, expected] of [
-      ["false", "blacksmith-16vcpu-ubuntu-2404"],
+      ["false", "blacksmith-32vcpu-ubuntu-2404"],
       ["true", "blacksmith-32vcpu-ubuntu-2404"],
       ["", "blacksmith-32vcpu-ubuntu-2404"],
     ] as const) {
@@ -8720,7 +9009,7 @@ server.listen(0, "127.0.0.1", () => {
     expect(readFrozenAdditionalCheckRows()).toContainEqual({
       check_name: "check-additional-runtime-topology-architecture",
       group: "runtime-topology-architecture",
-      runner: "blacksmith-32vcpu-ubuntu-2404",
+      runner: "blacksmith-16vcpu-ubuntu-2404",
     });
     expect(readFrozenAdditionalCheckRows()).toContainEqual({
       check_name: "check-session-accessor-boundary",
@@ -11126,12 +11415,23 @@ if (args[0] === 'delete-keychain') fs.unlinkSync(args.at(-1));
         "build --package-path apps/macos --build-system native --enable-code-coverage --build-tests",
         ...(buildExitCode === 0
           ? [
-              "test --package-path apps/macos --build-system native --enable-code-coverage --skip-build --experimental-maximum-parallelization-width 4 --skip AppStateIsolationTests",
+              expect.stringMatching(
+                /^test --package-path apps\/macos --build-system native --enable-code-coverage --skip-build --experimental-maximum-parallelization-width 4 --skip AppStateIsolationTests\|ProfileChatPreferencesTests --event-stream-output-path \S+\/swift-testing-events\.jsonl --event-stream-version 6\.3$/,
+              ),
             ]
           : []),
       ]);
       const output = existsSync(outputPath) ? readFileSync(outputPath, "utf8").trim() : "";
-      expect(output).toBe(buildExitCode === 0 ? "debug-tests-built=true" : "");
+      const outputLines = output.split("\n");
+      if (buildExitCode === 0) {
+        expect(outputLines).toHaveLength(2);
+        expect(outputLines[0]).toBe("debug-tests-built=true");
+        expect(
+          outputLines[1]?.startsWith(`menu-default-artifact-path=${root}/openclaw-menu-default-`),
+        ).toBe(true);
+      } else {
+        expect(output).toBe("");
+      }
     }
   });
 
@@ -12698,10 +12998,10 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
     expect(checksFastRun.run).toContain('pnpm check:assertion-safety --base "$base_ref"');
     expect(checksFastRun.run).toContain("pnpm config:docs:check");
     expect(checksFastRun.run).toContain("pnpm plugins:inventory:check");
+    expect(maxLinesRatchet).toContain('} from "./check-env-var-count.mts";');
     expect(maxLinesRatchet).toContain(
-      'import { main as checkEnvVarCount } from "./check-env-var-count.mts";',
+      "checkEnvVarCount(envVarCountArgs(argv), root, envVarNames);",
     );
-    expect(maxLinesRatchet).toContain("checkEnvVarCount(envVarCountArgs(argv), root);");
     expect(checksFastRun.run).toContain(
       '--only=core --split-core --core-stripe="${stripe}/5" --threads=1',
     );
@@ -14855,6 +15155,7 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
         { mode: 0o755 },
       );
       const result = runWorkflowShellScript(expectDefined(step.run, "real-Gateway script"), {
+        linuxWorkflow: true,
         cwd: directory,
         env: {
           ...process.env,
@@ -17689,7 +17990,7 @@ fi
     expect(validateManifestStep.run).toContain("QA evidence manifest profile must be all");
     expect(validateManifestStep.run).toContain("manifest.targetSha !== targetSha");
     expect(validateManifestStep.run).toMatch(
-      /qaProfileEvidencePlan\.attest\(\s*evidence\.profilePlan,\s*manifest\.qaPassed === true,?\s*\)/u,
+      /qaProfileEvidencePlan\.attest\(\s*evidence\.profilePlan,\s*manifest\.qaPassed === true,\s*evidence,?\s*\)/u,
     );
     expect(validateManifestStep.run).toContain("profilePlanSha256");
     expect(validateManifestStep.run).toContain("rerun the QA Profile Evidence workflow");
@@ -17884,6 +18185,136 @@ fi
   });
 
   it.skipIf(process.platform === "win32")(
+    "Mantis evidence readers project a passing retry from the canonical owner",
+    () => {
+      for (const kind of ["status-reactions", "thread-attachment"] as const) {
+        const scenarioId =
+          kind === "status-reactions"
+            ? "discord-status-reactions-tool-only"
+            : "discord-thread-reply-filepath-attachment";
+        const evidence = workflowOccurrenceEvidence([
+          { scenarioId, attempts: ["fail", "pass"], selected: 1 },
+        ]);
+        const result = runMantisEvidenceReader(kind, evidence);
+        expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+        expect(result.stdout.trim()).toBe("pass");
+      }
+    },
+  );
+
+  it.skipIf(process.platform === "win32").each(["full", "slim"] as const)(
+    "Mantis evidence readers preserve v2 %s rows without new API exports",
+    (evidenceMode) => {
+      for (const kind of ["status-reactions", "thread-attachment"] as const) {
+        const scenarioId =
+          kind === "status-reactions"
+            ? "discord-status-reactions-tool-only"
+            : "discord-thread-reply-filepath-attachment";
+        const evidence = {
+          kind: "openclaw.qa.evidence-summary",
+          schemaVersion: 2,
+          generatedAt: "2026-08-05T00:00:00.000Z",
+          evidenceMode,
+          entries: ["fail", "pass"].map((status) => ({
+            test: { kind: "scenario", id: scenarioId, title: scenarioId },
+            coverage: [],
+            result: { status },
+          })),
+        };
+        const result = runMantisEvidenceReader(kind, evidence, false);
+        expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+        expect(result.stdout.trim()).toBe(kind === "status-reactions" ? "fail" : "fail\npass");
+      }
+    },
+  );
+
+  it.skipIf(process.platform === "win32").each([
+    { name: "unresolved first", firstId: null, attempts: [], selected: undefined, first: "null" },
+    {
+      name: "foreign first owner",
+      firstId: "another-scenario",
+      attempts: ["pass"],
+      selected: 0,
+      first: "null",
+    },
+    {
+      name: "nonpassing retry",
+      firstId: null,
+      attempts: ["fail", "blocked"],
+      selected: 0,
+      first: "fail",
+    },
+  ] as const)("Mantis evidence readers retain $name and independent instances", (testCase) => {
+    for (const kind of ["status-reactions", "thread-attachment"] as const) {
+      const scenarioId =
+        kind === "status-reactions"
+          ? "discord-status-reactions-tool-only"
+          : "discord-thread-reply-filepath-attachment";
+      const evidence = workflowOccurrenceEvidence(
+        [
+          {
+            scenarioId: testCase.firstId ?? scenarioId,
+            attempts: [...testCase.attempts],
+            selected: testCase.selected,
+          },
+          { scenarioId, attempts: ["pass"], selected: 0 },
+        ],
+        "slim",
+      );
+      const result = runMantisEvidenceReader(kind, evidence);
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+      expect(result.stdout.trim()).toBe(
+        kind === "status-reactions"
+          ? testCase.first
+          : testCase.firstId
+            ? "pass"
+            : `${testCase.first}\npass`,
+      );
+    }
+  });
+
+  it
+    .skipIf(process.platform === "win32")
+    .each(["invalid JSON", "null", "invalid binding", "missing v3 accessor"])(
+    "Mantis evidence readers reject %s without legacy fallback",
+    (invalid) => {
+      for (const kind of ["status-reactions", "thread-attachment"] as const) {
+        const scenarioId =
+          kind === "status-reactions"
+            ? "discord-status-reactions-tool-only"
+            : "discord-thread-reply-filepath-attachment";
+        const evidence = workflowOccurrenceEvidence([
+          { scenarioId, attempts: ["pass"], selected: 0 },
+        ]);
+        if (invalid === "invalid binding") {
+          evidence.entries[0]!.binding.occurrenceId = "foreign";
+        }
+        const input = invalid === "invalid JSON" ? "{" : invalid === "null" ? null : evidence;
+        const result = runMantisEvidenceReader(kind, input, invalid !== "missing v3 accessor");
+        expect(result.status, `${result.stdout}${result.stderr}`).not.toBe(0);
+        expect(result.stderr).toContain(
+          invalid === "invalid JSON"
+            ? "SyntaxError"
+            : invalid === "missing v3 accessor"
+              ? "scenario reader"
+              : "ZodError",
+        );
+      }
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "Mantis evidence readers use legacy summaries only when evidence is absent",
+    () => {
+      for (const kind of ["status-reactions", "thread-attachment"] as const) {
+        const result = runMantisEvidenceReader(kind, undefined);
+        expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+        expect(result.stdout.trim()).toBe("pass");
+      }
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
     "round-trips profile evidence and rejects digest drift",
     () => {
       const qaWorkflow = readQaProfileEvidenceWorkflow();
@@ -17897,6 +18328,13 @@ fi
       const producerScript = expectDefined(producerStep?.run, "QA evidence producer script");
       const consumerScript = expectDefined(consumerStep?.run, "QA evidence consumer script");
       const root = tempDirs.make("openclaw-qa-profile-artifact-");
+      const selectedRoot = path.join(root, "selected");
+      writeWorkflowEvidenceApi(selectedRoot, false);
+      mkdirSync(path.join(selectedRoot, "extensions/qa-lab/src"), { recursive: true });
+      writeFileSync(
+        path.join(selectedRoot, "extensions/qa-lab/src/profile-evidence-plan.ts"),
+        `export { qaProfileEvidencePlan } from ${JSON.stringify(pathToFileURL(path.resolve("extensions/qa-lab/src/profile-evidence-plan.ts")).href)};\n`,
+      );
       const evidencePath = path.join(root, "qa-evidence.json");
       const manifestPath = path.join(root, "qa-profile-evidence-manifest.json");
       const protocolBaseSha = "b".repeat(40);
@@ -17999,6 +18437,7 @@ fi
         });
       const runConsumer = () =>
         runWorkflowShellScript(consumerScript, {
+          cwd: selectedRoot,
           env: {
             ...process.env,
             GITHUB_OUTPUT: path.join(root, "consumer-output"),
@@ -18028,6 +18467,125 @@ fi
         expect(readFileSync(path.join(root, "consumer-output"), "utf8")).toContain(
           "scorecard_passed=true",
         );
+
+        const originalEvidence = JSON.parse(readFileSync(evidencePath, "utf8"));
+        writeFileSync(evidencePath, JSON.stringify({ ...originalEvidence, evidenceMode: "slim" }));
+        const oldApiSlim = runConsumer();
+        expect(oldApiSlim.status, `${oldApiSlim.stdout}${oldApiSlim.stderr}`).toBe(0);
+        expect(readFileSync(manifestPath, "utf8")).toBe(completeManifest);
+
+        const retryEvidence = {
+          ...originalEvidence,
+          ...workflowOccurrenceEvidence([
+            { scenarioId: "scenario-one", attempts: ["fail", "pass"], selected: 1 },
+          ]),
+          profile: originalEvidence.profile,
+          profilePlan: originalEvidence.profilePlan,
+          scorecard,
+        };
+        writeFileSync(evidencePath, JSON.stringify(retryEvidence));
+        const missingReader = runConsumer();
+        expect(missingReader.status).toBe(1);
+        expect(`${missingReader.stdout}${missingReader.stderr}`).toContain(
+          "requires the selected checkout's effective-entry reader",
+        );
+        writeWorkflowEvidenceApi(selectedRoot);
+
+        for (const evidenceMode of ["full", "slim"] as const) {
+          writeFileSync(evidencePath, JSON.stringify({ ...retryEvidence, evidenceMode }));
+          const producer = runProducer("0");
+          expect(producer.status, `${producer.stdout}${producer.stderr}`).toBe(0);
+          expect(JSON.parse(readFileSync(manifestPath, "utf8")).profilePlanSha256).toBe(
+            JSON.parse(completeManifest).profilePlanSha256,
+          );
+          writeFileSync(path.join(root, "consumer-output"), "");
+          const consumer = runConsumer();
+          expect(consumer.status, `${consumer.stdout}${consumer.stderr}`).toBe(0);
+          const output = readFileSync(path.join(root, "consumer-output"), "utf8");
+          expect(output).toContain("scorecard_passed=true");
+          expect(output).toContain("passed_count=1");
+          expect(output).toContain("failed_count=0");
+        }
+
+        for (const obligation of ["required", "advisory"] as const) {
+          const declared = {
+            ...retryEvidence,
+            profilePlan: {
+              ...retryEvidence.profilePlan,
+              proofRequirements: [
+                {
+                  id: "observed-protocol",
+                  coverageId: "qa.reporting",
+                  obligation,
+                  owner: "fixture-owner",
+                  acceptedRef: "qa/fixtures/acceptance",
+                  retryAcceptance: "selected-attempt",
+                  alternatives: [{ protocol: "gateway:3" }],
+                },
+              ],
+            },
+          };
+          writeFileSync(evidencePath, JSON.stringify(declared));
+          const producer = runProducer("0");
+          expect(producer.status, `${producer.stdout}${producer.stderr}`).toBe(0);
+          const consumer = runConsumer();
+          expect(consumer.status, `${consumer.stdout}${consumer.stderr}`).toBe(
+            obligation === "required" ? 1 : 0,
+          );
+          if (obligation === "required") {
+            expect(`${consumer.stdout}${consumer.stderr}`).toContain(
+              "observed-protocol (insufficient)",
+            );
+          }
+        }
+        writeFileSync(manifestPath, completeManifest);
+
+        for (const status of ["fail", "blocked"] as const) {
+          const parentFailure = {
+            ...originalEvidence,
+            ...workflowOccurrenceEvidence([
+              // Parent failure is independent of the child, not a retry of its pass.
+              { scenarioId: "scenario-one", attempts: ["pass", status], selected: 1, retry: false },
+            ]),
+            profile: originalEvidence.profile,
+            profilePlan: originalEvidence.profilePlan,
+            scorecard,
+          };
+          writeFileSync(evidencePath, JSON.stringify(parentFailure));
+          writeFileSync(path.join(root, "consumer-output"), "");
+          const consumer = runConsumer();
+          expect(consumer.status, `${consumer.stdout}${consumer.stderr}`).toBe(0);
+          const output = readFileSync(path.join(root, "consumer-output"), "utf8");
+          expect(output).toContain("scorecard_passed=false");
+          expect(output).toContain("passed_count=1");
+          expect(output).toContain(`${status === "fail" ? "failed" : "blocked"}_count=1`);
+        }
+
+        writeFileSync(evidencePath, JSON.stringify(retryEvidence));
+        writeFileSync(
+          manifestPath,
+          JSON.stringify({ ...JSON.parse(completeManifest), qaPassed: false }),
+        );
+        writeFileSync(path.join(root, "consumer-output"), "");
+        const failedProducer = runConsumer();
+        expect(failedProducer.status, `${failedProducer.stdout}${failedProducer.stderr}`).toBe(0);
+        expect(readFileSync(path.join(root, "consumer-output"), "utf8")).toContain(
+          "scorecard_passed=false",
+        );
+        writeFileSync(
+          manifestPath,
+          JSON.stringify({ ...JSON.parse(completeManifest), targetSha: protocolBaseSha }),
+        );
+        const wrongSource = runConsumer();
+        expect(wrongSource.status).toBe(1);
+        expect(`${wrongSource.stdout}${wrongSource.stderr}`).toContain(
+          "does not match selected ref",
+        );
+        writeFileSync(manifestPath, completeManifest);
+        const invalidBinding = structuredClone(retryEvidence);
+        invalidBinding.entries[0]!.binding.occurrenceId = "foreign";
+        writeFileSync(evidencePath, JSON.stringify(invalidBinding));
+        expect(runConsumer().status).toBe(1);
 
         writeEvidence("fail");
         writeFileSync(path.join(root, "consumer-output"), "", "utf8");
