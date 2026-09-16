@@ -57,12 +57,11 @@ describe("gateway node pairing fence guards", () => {
   it("keeps a promoted connection's transport when the stale lookup resolves late", async () => {
     const handler = vi.fn<GatewayRequestHandler>(({ respond }) => respond(true, { ok: true }));
     const respond = vi.fn();
-    const resolveConnectionPairingState = vi
-      .fn()
-      // The request-time authority was stale, but the connection is promoted before the
-      // retirement side effect lands.
-      .mockResolvedValueOnce("stale")
-      .mockResolvedValue("current");
+    const resolveConnectionPairingState = vi.fn().mockResolvedValue("stale");
+    const pairingGenerationForConnection = vi.fn().mockReturnValue("generation-1");
+    // The connection is promoted while the lookup awaits persistence, so the atomic
+    // retirement compares generations and preserves the session.
+    const retireRejectedConnection = vi.fn().mockReturnValue("preserve");
     const disconnectClientForConnection = vi.fn();
     const invalidateConnectionForPairingChange = vi.fn().mockReturnValue(false);
 
@@ -78,7 +77,12 @@ describe("gateway node pairing fence guards", () => {
       isWebchatConnect: () => false,
       context: {
         logGateway: { warn: vi.fn() },
-        nodeRegistry: { resolveConnectionPairingState, invalidateConnectionForPairingChange },
+        nodeRegistry: {
+          resolveConnectionPairingState,
+          pairingGenerationForConnection,
+          retireRejectedConnection,
+          invalidateConnectionForPairingChange,
+        },
         disconnectClientForConnection,
       } as unknown as Parameters<typeof handleGatewayRequest>[0]["context"],
       extraHandlers: { "node.event": handler },
@@ -91,7 +95,7 @@ describe("gateway node pairing fence guards", () => {
       setTimeout(resolve, 0);
     });
 
-    expect(resolveConnectionPairingState).toHaveBeenCalledTimes(2);
+    expect(resolveConnectionPairingState).toHaveBeenCalledTimes(1);
     expect(disconnectClientForConnection).not.toHaveBeenCalled();
     expect(invalidateConnectionForPairingChange).not.toHaveBeenCalled();
     expect(respond).toHaveBeenCalledWith(
@@ -108,6 +112,7 @@ describe("gateway node pairing fence guards", () => {
     const handler = vi.fn<GatewayRequestHandler>(({ respond }) => respond(true, { ok: true }));
     const respond = vi.fn();
     const resolveConnectionPairingState = vi.fn().mockResolvedValue("unavailable");
+    const pairingGenerationForConnection = vi.fn().mockReturnValue("generation-1");
     const invalidateConnectionForPairingChange = vi.fn().mockReturnValue(false);
 
     await handleGatewayRequest({
@@ -125,7 +130,11 @@ describe("gateway node pairing fence guards", () => {
       isWebchatConnect: () => false,
       context: {
         logGateway: { warn: vi.fn() },
-        nodeRegistry: { resolveConnectionPairingState, invalidateConnectionForPairingChange },
+        nodeRegistry: {
+          resolveConnectionPairingState,
+          pairingGenerationForConnection,
+          invalidateConnectionForPairingChange,
+        },
       } as unknown as Parameters<typeof handleGatewayRequest>[0]["context"],
       extraHandlers: { "node.event": handler },
     });
@@ -146,6 +155,8 @@ describe("gateway node pairing fence guards", () => {
     const handler = vi.fn<GatewayRequestHandler>(({ respond }) => respond(true, { ok: true }));
     const respond = vi.fn();
     const resolveConnectionPairingState = vi.fn().mockResolvedValue("stale");
+    const pairingGenerationForConnection = vi.fn().mockReturnValue("generation-1");
+    const retireRejectedConnection = vi.fn().mockReturnValue("retire");
     const disconnectClientForConnection = vi.fn();
     const invalidateConnectionForPairingChange = vi.fn().mockReturnValue(false);
 
@@ -172,7 +183,12 @@ describe("gateway node pairing fence guards", () => {
       isWebchatConnect: () => false,
       context: {
         logGateway: { warn: vi.fn() },
-        nodeRegistry: { resolveConnectionPairingState, invalidateConnectionForPairingChange },
+        nodeRegistry: {
+          resolveConnectionPairingState,
+          pairingGenerationForConnection,
+          retireRejectedConnection,
+          invalidateConnectionForPairingChange,
+        },
         disconnectClientForConnection,
       } as unknown as Parameters<typeof handleGatewayRequest>[0]["context"],
       extraHandlers: { "node.event": handler },
@@ -183,6 +199,12 @@ describe("gateway node pairing fence guards", () => {
     // rejection frame, so a same-device replacement keeps its transport.
     await new Promise<void>((resolve) => {
       setTimeout(resolve, 0);
+    });
+    expect(pairingGenerationForConnection).toHaveBeenCalledWith("conn-node-stale");
+    expect(retireRejectedConnection).toHaveBeenCalledWith({
+      connId: "conn-node-stale",
+      observedGeneration: "generation-1",
+      reason: "node pairing changed before request dispatch",
     });
     expect(disconnectClientForConnection).toHaveBeenCalledWith(
       "conn-node-stale",

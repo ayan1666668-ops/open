@@ -327,6 +327,12 @@ export async function authorizeGatewayRequestPreDispatch(params: {
   }
   if (params.client?.connect.role === "node") {
     const connId = params.client.connId;
+    // Captured synchronously before the authority lookup: a promotion landing during that
+    // lookup advances the generation, and the retirement decision below compares against
+    // this capture instead of re-reading after the await (#148693).
+    const observedGeneration = connId
+      ? params.context.nodeRegistry.pairingGenerationForConnection(connId)
+      : undefined;
     const pairingState = connId
       ? await params.context.nodeRegistry.resolveConnectionPairingState(connId)
       : "stale";
@@ -340,18 +346,21 @@ export async function authorizeGatewayRequestPreDispatch(params: {
       if (connId && pairingState === "stale") {
         const disconnect = params.context.disconnectClientForConnection?.bind(params.context);
         if (disconnect) {
-          // The retirement decision is revalidated at the side effect: a session promoted
-          // while the first lookup awaited persistence reads current here, so the promoted
-          // connection keeps its transport (#148693).
-          const revalidate = params.context.nodeRegistry.resolveConnectionPairingState.bind(
+          // Retirement is decided atomically by the registry against the captured
+          // generation, so a promotion that landed during the lookup is preserved and its
+          // transport stays open (#148693).
+          const retire = params.context.nodeRegistry.retireRejectedConnection.bind(
             params.context.nodeRegistry,
           );
           setTimeout(() => {
-            void revalidate(connId).then((currentState) => {
-              if (currentState === "stale") {
-                disconnect(connId, "node pairing changed before request dispatch");
-              }
+            const outcome = retire({
+              connId,
+              observedGeneration,
+              reason: "node pairing changed before request dispatch",
             });
+            if (outcome !== "preserve") {
+              disconnect(connId, "node pairing changed before request dispatch");
+            }
           }, 0);
         }
       }

@@ -835,6 +835,51 @@ export class NodeRegistry {
     return node?.pairingGeneration === pairingGeneration ? node : undefined;
   }
 
+  /**
+   * Reports the pairing generation of the live session for one connection, synchronously.
+   * Callers capture it before an async authority lookup so a promotion that lands during
+   * that lookup is detectable at retirement time (#148693).
+   */
+  pairingGenerationForConnection(connId: string): string | undefined {
+    const nodeId = this.nodesByConn.get(connId);
+    const node = nodeId ? this.nodesById.get(nodeId) : undefined;
+    return node && node.connId === connId ? node.pairingGeneration : undefined;
+  }
+
+  /**
+   * Atomically decides retirement for a rejected connection and retires the session when
+   * the captured authority is still the live one. Synchronous on purpose: no promotion can
+   * interleave between the comparison and the invalidation, so a session promoted during
+   * the caller's lookup is preserved instead of being retired with the obsolete lease.
+   */
+  retireRejectedConnection(params: {
+    connId: string;
+    observedGeneration: string | undefined;
+    reason: string;
+  }): "retire" | "obsolete" | "preserve" {
+    const nodeId = this.nodesByConn.get(params.connId);
+    const node = nodeId ? this.nodesById.get(nodeId) : undefined;
+    if (!node || node.connId !== params.connId) {
+      // The connection is gone from the registry (replaced or disconnected): nothing on
+      // this connection can be promoted, so its obsolete transport may be closed.
+      return "obsolete";
+    }
+    if (node.client.invalidated === true) {
+      return "retire";
+    }
+    if (
+      params.observedGeneration !== undefined &&
+      node.pairingGeneration !== params.observedGeneration
+    ) {
+      return "preserve";
+    }
+    const invalidatedPresence = this.invalidateSessionForPairingChange(node, params.reason);
+    if (invalidatedPresence) {
+      this.publishActiveNodeContext();
+    }
+    return node.client.invalidated === true ? "retire" : "preserve";
+  }
+
   /** Revalidates that one inbound node connection still owns its persisted pairing state. */
   async isConnectionCurrentPairingState(connId: string): Promise<boolean> {
     return (await this.resolveConnectionPairingState(connId)) === "current";
