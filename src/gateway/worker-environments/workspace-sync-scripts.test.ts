@@ -685,6 +685,7 @@ esac
       expect(result.termination).toBe("exit");
       expect(result.code).not.toBe(0);
       // The watchdog is the only owner left that can still thaw this lease.
+      expect(result.stderr).toContain(`workspace quiescence recovery pending PIDs: ${child.pid}`);
       expect(() => process.kill(watchdogPid!, 0)).not.toThrow();
     } finally {
       if (watchdogPid !== undefined) {
@@ -698,6 +699,90 @@ esac
       await fs.rm(input.extraProcessPath, { force: true });
     }
   });
+
+  it("resumes every worker without revisiting a recovered prefix after probe exhaustion", async () => {
+    const input = await fixture();
+    const workers = Array.from({ length: 16 }, () => spawnIdleWorker());
+    const pids = workers.map((worker) => worker.pid!);
+    const callsPath = path.join(input.home, "probe-calls");
+    const psPath = path.join(input.bin, "ps");
+    const healthyPs = await fs.readFile(psPath, "utf8");
+    let watchdogPid: number | undefined;
+    try {
+      await fs.writeFile(input.extraProcessPath, pids.join(","));
+      const nonce = await quiesce(input, false, "10000");
+      const leaseFile = leasePath(input.home, input.workspace, nonce);
+      const lease = JSON.parse(await fs.readFile(leaseFile, "utf8")) as {
+        processes: Array<{ pid: number }>;
+        watchdog: { pid: number };
+      };
+      watchdogPid = lease.watchdog.pid;
+      expect(
+        lease.processes.map((entry) => entry.pid).toSorted((left, right) => left - right),
+      ).toEqual(pids.toSorted((left, right) => left - right));
+      for (const pid of pids) {
+        expect(await processState(pid)).toMatch(/^T/u);
+      }
+      await fs.writeFile(path.join(input.bin, "healthy-ps"), healthyPs, { mode: 0o755 });
+      await fs.writeFile(
+        psPath,
+        `#!/bin/sh
+case "$*" in
+  *"lstart= -p"*)
+    for pid do :; done
+    count=0
+    if [ -f "$HOME/probe-count" ]; then count=$(cat "$HOME/probe-count"); fi
+    count=$((count + 1))
+    printf '%s\n' "$count" > "$HOME/probe-count"
+    printf '%s\n' "$pid" >> "$HOME/probe-calls"
+    if [ $((count % 2)) -eq 0 ]; then
+      trap '' TERM
+      while :; do :; done
+    fi
+    sleep 1 ;;
+esac
+exec "$(dirname "$0")/healthy-ps" "$@"
+`,
+      );
+      const firstPid = lease.processes[0]!.pid;
+      let calls: number[] = [];
+      let leaseExists = true;
+      const deadline = Date.now() + 75_000;
+      while (Date.now() < deadline && leaseExists) {
+        const trace = await fs.readFile(callsPath, "utf8").catch(() => "");
+        calls = trace.trim().split(/\s+/u).filter(Boolean).map(Number);
+        // Fail as soon as a later pass spends its budget on an already recovered worker.
+        if (calls.filter((pid) => pid === firstPid).length > 1) {
+          break;
+        }
+        leaseExists = await fs.stat(leaseFile).then(
+          () => true,
+          () => false,
+        );
+        if (leaseExists) {
+          await new Promise((resolve) => {
+            setTimeout(resolve, 250);
+          });
+        }
+      }
+      expect(calls.filter((pid) => pid === firstPid)).toHaveLength(1);
+      expect(leaseExists, `probe calls: ${calls.join(",")}`).toBe(false);
+      expect(calls.length).toBeLessThanOrEqual(35);
+      for (const pid of pids) {
+        expect(await processState(pid)).not.toMatch(/^T/u);
+      }
+    } finally {
+      await fs.writeFile(psPath, healthyPs);
+      if (watchdogPid !== undefined) {
+        try {
+          process.kill(watchdogPid, "SIGTERM");
+        } catch {
+          /* Already retired after recovery. */
+        }
+      }
+      await Promise.all(workers.map(stopIdleWorker));
+    }
+  }, 100_000);
 
   it("recovers a frozen worker once a stalled ps answers again after lease expiry", async () => {
     const input = await fixture(true);

@@ -10,7 +10,7 @@ const REMOTE_QUIESCENCE_PS_JS = String.raw`function createProcessProbe() {
       if (remaining <= 0) {
         const message = "workspace quiescence process probe budget exhausted after 30000 ms; check host load and ps availability";
         process.stderr.write(message + "\n");
-        throw new Error(message);
+        throw Object.assign(new Error(message), { code: "WORKSPACE_PROBE_BUDGET_EXHAUSTED" });
       }
       try {
         // SIGTERM can be ignored; SIGKILL keeps even a stuck probe bounded.
@@ -60,6 +60,26 @@ function processIdentity(pid) {
   } catch (error) {
     if (error && error.status === 1) return null;
     throw error;
+  }
+}
+function reportPendingProcesses(entries) {
+  const pids = entries.filter((entry) => Number.isSafeInteger(entry?.pid) && entry.pid > 0).map((entry) => entry.pid);
+  process.stderr.write("workspace quiescence recovery pending PIDs: " + pids.join(", ") + "\n");
+}
+// EPERM on SIGCONT implies the target was never ours to freeze: signal permission checks
+// are identical for SIGSTOP and SIGCONT, so every process we stopped can be resumed.
+function resumeProcesses(entries) {
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index];
+    try {
+      if (processIdentity(entry.pid) !== entry.start) continue;
+      try { process.kill(entry.pid, "SIGCONT"); } catch (error) {
+        if (!error || (error.code !== "ESRCH" && error.code !== "EPERM")) throw error;
+      }
+    } catch (error) {
+      if (error && error.code === "WORKSPACE_PROBE_BUDGET_EXHAUSTED") reportPendingProcesses(entries.slice(index));
+      throw error;
+    }
   }
 }
 function processStatus(pid) {
@@ -218,18 +238,6 @@ function writeLease(expiresAtMs = Date.now() + watchdogTimeoutMs) {
     expiresAtMs,
   });
 }
-// EPERM on SIGCONT implies the target was never ours to freeze: kill permission checks are
-// identical for SIGSTOP and SIGCONT, so any process this uid successfully stopped can be resumed.
-function resumeProcesses(entries) {
-  for (const entry of entries) {
-    if (processIdentity(entry.pid) !== entry.start) continue;
-    try {
-      process.kill(entry.pid, "SIGCONT");
-    } catch (error) {
-      if (!error || (error.code !== "ESRCH" && error.code !== "EPERM")) throw error;
-    }
-  }
-}
 const orphanNames = fs.readdirSync(leaseDirectory).filter((name) =>
   name.startsWith(workspaceKey + ".") && name.endsWith(".json"),
 );
@@ -272,7 +280,7 @@ if (!sharedHost && sawUnverifiedEmptyLeaseWatchdog) {
 writeLease();
 const watchdog = childProcess.spawn(
   process.execPath,
-  ["-e", createProcessProbe.toString() + "\nlet processProbe;\n" + processIdentity.toString() + "\n(" + watchdogMain.toString() + ")(process.argv[1], process.argv[2])", leasePath, nonce],
+  ["-e", createProcessProbe.toString() + "\nlet processProbe;\n" + reportPendingProcesses.toString() + "\n" + processIdentity.toString() + "\n(" + watchdogMain.toString() + ")(process.argv[1], process.argv[2])", leasePath, nonce],
   { detached: true, stdio: "ignore" },
 );
 watchdog.unref();
@@ -357,6 +365,9 @@ try {
 }
 function watchdogMain(watchedLeasePath, watchedNonce) {
   let retryDelayMs = 1000;
+  // Keep unfinished references across exhausted passes: replaying a resumed prefix
+  // can consume every budget and leave later workers stopped forever.
+  let remainingProcesses;
   const check = () => {
     try {
       const watchdogFs = require("node:fs");
@@ -370,6 +381,8 @@ function watchdogMain(watchedLeasePath, watchedNonce) {
       ) return;
       const remainingMs = lease.expiresAtMs - Date.now();
       if (remainingMs > 0) {
+        remainingProcesses = undefined;
+        processProbe = undefined;
         setTimeout(check, Math.min(remainingMs, 60 * 1000));
         return;
       }
@@ -379,23 +392,28 @@ function watchdogMain(watchedLeasePath, watchedNonce) {
         if (!current || current.version !== 1 || current.nonce !== watchedNonce || !Array.isArray(current.processes) || !Number.isSafeInteger(current.expiresAtMs)) return false;
         const remaining = current.expiresAtMs - Date.now();
         if (remaining <= 0) return true;
+        remainingProcesses = undefined;
+        processProbe = undefined;
         setTimeout(check, Math.min(remaining, 60 * 1000));
         return false;
       };
       if (!canResume()) return;
-      // Each recovery sweep gets a fresh budget; the watchdog can outlive its first deadline.
-      processProbe = createProcessProbe();
-      for (const entry of lease.processes) {
+      processProbe ??= createProcessProbe();
+      remainingProcesses ??= lease.processes;
+      while (remainingProcesses.length > 0) {
+        const entry = remainingProcesses[0];
         if (
           !entry ||
           !Number.isSafeInteger(entry.pid) ||
           entry.pid < 1 ||
           typeof entry.start !== "string"
-        ) continue;
+        ) { remainingProcesses.shift(); continue; }
         const start = processIdentity(entry.pid);
         if (!canResume()) return;
-        if (start !== entry.start) continue;
-        try { process.kill(entry.pid, "SIGCONT"); } catch (error) { if (!error || (error.code !== "ESRCH" && error.code !== "EPERM")) throw error; }
+        if (start === entry.start) {
+          try { process.kill(entry.pid, "SIGCONT"); } catch (error) { if (!error || (error.code !== "ESRCH" && error.code !== "EPERM")) throw error; }
+        }
+        remainingProcesses.shift();
       }
       if (canResume()) watchdogFs.unlinkSync(watchedLeasePath);
     } catch (error) {
@@ -406,6 +424,10 @@ function watchdogMain(watchedLeasePath, watchedNonce) {
       // An unreadable lease is terminal: the pids to resume live in that file, so retrying
       // cannot recover them and would leave this detached process alive forever.
       if (error instanceof SyntaxError) return;
+      if (error && error.code === "WORKSPACE_PROBE_BUDGET_EXHAUSTED") {
+        reportPendingProcesses(remainingProcesses);
+        processProbe = undefined;
+      }
       // Otherwise this is the lease's last resumer, so it retries with backoff until the sweep
       // completes or the lease file is gone. Any attempt cap would just re-create the permanent
       // freeze for a longer stall; whoever removes the lease retires this watchdog next tick.
@@ -586,10 +608,7 @@ try { raw = fs.readFileSync(leasePath, "utf8"); } catch (error) {
 const input = parseLease(raw, nonce);
 // Thaw before retiring the watchdog: a bounded identity lookup can still fail, and
 // retiring the last resumer first would strand whatever the aborted sweep never reached.
-for (const entry of input.processes) {
-  if (processIdentity(entry.pid) !== entry.start) continue;
-  try { process.kill(entry.pid, "SIGCONT"); } catch (error) { if (!error || (error.code !== "ESRCH" && error.code !== "EPERM")) throw error; }
-}
+resumeProcesses(input.processes);
 let watchdogStart = null;
 try { if (input.watchdog !== null) watchdogStart = processIdentity(input.watchdog.pid); } catch (error) {
   // An empty lease has nothing to strand, so ps cannot block its release.
