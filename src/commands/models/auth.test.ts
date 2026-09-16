@@ -1090,7 +1090,7 @@ describe("modelsAuthLoginCommand", () => {
     const runtime = createRuntime();
     const abortController = new AbortController();
     const cancellation = new Error("Login was replaced");
-    runProviderAuth.mockImplementationOnce(async () => {
+    runProviderAuth.mockImplementationOnce(() => {
       abortController.abort(cancellation);
       return {
         profiles: [
