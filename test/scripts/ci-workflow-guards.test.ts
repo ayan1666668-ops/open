@@ -4686,16 +4686,12 @@ NODE
       expect(Number(baseline.outputs.hybrid_hosted_base_rows)).toBe(originalBase);
       for (const baseRows of [40, 41, 45, 46]) {
         const manifest = manifestWithHostedNodeRows(baseRows - originalBase);
-        if (baseRows === 46) {
-          expect(manifest.status).not.toBe(0);
-          expect(manifest.output).toContain(
-            "Hybrid base manifest has 46 hosted jobs, exceeding limit 45",
-          );
-          expect(manifest.outputs.run_node).toBeUndefined();
-          expect(manifest.outputs.hybrid_hosted_offload).toBeUndefined();
-          continue;
-        }
         expect(manifest.status, manifest.output).toBe(0);
+        if (baseRows === 46) {
+          expect(manifest.output).toContain(
+            "::warning::Hybrid base manifest has 46 hosted jobs, above the 45-row offload budget; keeping optional offloads on Blacksmith.",
+          );
+        }
         const hosted = emittedHostedRows(manifest.outputs);
         expect(manifest.outputs.hybrid_hosted_offload).toBe(String(baseRows <= 40));
         expect(Number(manifest.outputs.hybrid_hosted_base_rows)).toBe(baseRows);

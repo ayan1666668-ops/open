@@ -1963,7 +1963,7 @@ jobs:
                 manifest.ui_e2e_matrix.include.filter((row) => row.task === "browser-extension").length);
           }
           if (hybridHostedEligible && hybridHostedBaseRows > HYBRID_HOSTED_ROW_LIMIT) {
-            throw new Error(`Hybrid base manifest has ${hybridHostedBaseRows} hosted jobs, exceeding limit ${HYBRID_HOSTED_ROW_LIMIT}`);
+            console.warn(`::warning::Hybrid base manifest has ${hybridHostedBaseRows} hosted jobs, above the ${HYBRID_HOSTED_ROW_LIMIT}-row offload budget; keeping optional offloads on Blacksmith.`);
           }
           const hybridHostedOffload = hybridHostedEligible &&
             hybridHostedBaseRows <= HYBRID_HOSTED_BASE_ROW_LIMIT &&

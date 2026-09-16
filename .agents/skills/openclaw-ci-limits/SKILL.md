@@ -202,8 +202,9 @@ These are intentionally guarded by `test/scripts/ci-workflow-guards.test.ts`:
 - Automatic canonical hybrid first attempts count every selected hosted row in
   preflight. `HYBRID_HOSTED_BASE_ROW_LIMIT = 40` admits at most five optional
   rows within `HYBRID_HOSTED_ROW_LIMIT = 45`: security, three Control UI unit
-  rows, and only browser-extension E2E. At 41–45 base rows, retain their
-  Blacksmith routes; an eligible base above 45 fails before manifest outputs.
+  rows, and only browser-extension E2E. Above 40 base rows, retain their
+  Blacksmith routes; an eligible base above 45 warns with counts and retains
+  the complete base manifest. The budget limits optional admission, not coverage.
   Record base/total rows and compare the actual workflow expansion in guards.
   This never expands test coverage or workers; Control UI E2E shards, QA,
   real-Gateway, Android, and compiler-heavy jobs retain their existing routes.
