@@ -20,6 +20,7 @@ export const databaseWorkerExtensionTestFiles = [
   "extensions/clickclack/src/discussions/service-state-persistence.test.ts",
   "extensions/codex/doctor-contract-api.test.ts",
   "extensions/codex/src/app-server/dynamic-tool-build.test.ts",
+  "extensions/copilot/harness.test.ts",
   "extensions/copilot/src/tool-bridge.test.ts",
   "extensions/crabbox/doctor-contract-api.test.ts",
   "extensions/device-pair/doctor-contract-api.test.ts",
