@@ -109,6 +109,46 @@ describe("buildFeishuPresentationCard", () => {
     expect(joined).toContain("r79");
   });
 
+  // A quote prefix hides a fence marker from the chunker's scanner, so the cut it makes
+  // leaves an opener in one element and a closer in another. Neither draws a block, and
+  // no limit repairs it, so the projection gives way to the text as authored.
+  it("keeps a quoted table readable when its projection cannot survive the split", () => {
+    const tableMarkdown = [
+      "> | name | detail |",
+      "> | --- | --- |",
+      ...Array.from({ length: 40 }, (_entry, index) => `> | row${index} | d |`),
+      `> | wide | ${"w".repeat(220)} |`,
+    ].join("\n");
+    const presentation = normalizeMessagePresentation({
+      blocks: [{ type: "text", text: tableMarkdown }],
+    });
+    if (!presentation) {
+      throw new Error("expected valid presentation");
+    }
+    const converted = convertMarkdownTables(tableMarkdown, "code");
+    // Guard the fixture: the case only means anything while the authored block fits the
+    // limit, the projection pushes it past, and its markers carry the quote prefix.
+    expect(tableMarkdown.length).toBeLessThanOrEqual(4000);
+    expect(converted.length).toBeGreaterThan(4000);
+    expect(converted).toContain("> ```");
+
+    const elements = buildFeishuPresentationCard({
+      presentation,
+      renderText: (text) => convertMarkdownTables(text, "code"),
+    }).body.elements as { tag: string; content: string }[];
+
+    for (const element of elements) {
+      expect(element.content.length).toBeLessThanOrEqual(4000);
+      // An element opens and closes its own fences or carries none at all.
+      expect((element.content.match(/^(?:&gt; ?)*```/gmu) ?? []).length % 2).toBe(0);
+    }
+    const joined = elements.map((element) => element.content).join("");
+    for (let index = 0; index < 40; index += 1) {
+      expect(joined).toContain(`row${index}`);
+    }
+    expect(joined).toContain("wide");
+  });
+
   // The colour tag is added after the split, so its own characters have to come out of
   // the budget the parts are sized to.
   it("keeps a projected context part inside the limit once the colour tag is added", () => {

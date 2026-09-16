@@ -6151,6 +6151,41 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
       expect(sendMessageFeishuMock).not.toHaveBeenCalled();
       expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
     });
+
+    // `code` pads every cell and adds a fence, so an answer that fits the chunk limit as
+    // authored can leave it once the preview projects it. The preview carries the
+    // projected form, so that is the form the limit asks about: past it, the close sends
+    // the answer through the chunked path and an update would spend the generation on a
+    // card element the target refuses.
+    it("holds the preview back once the projected answer outgrows the chunk limit", async () => {
+      const convert = getFeishuRuntimeMock().channel.text.convertMarkdownTables;
+      const fits = tableMarkdown;
+      const outgrows = [
+        "| name | detail |",
+        "| --- | --- |",
+        ...Array.from({ length: 40 }, (_entry, index) => `| row${index} | d |`),
+        `| wide | ${"w".repeat(220)} |`,
+      ].join("\n");
+      // Guard the fixture: both fit the limit as authored, and only one projection stays
+      // inside it.
+      expect(outgrows.length).toBeLessThanOrEqual(4000);
+      expect(convert(fits, "code").length).toBeLessThanOrEqual(4000);
+      expect(convert(outgrows, "code").length).toBeGreaterThan(4000);
+
+      // The same shape either side of the limit, so the empty half below is a decision
+      // and not a preview that never ran.
+      const fitting = createBlockTableHarness(tableCfg("code"));
+      fitting.result.replyOptions.onPartialReply?.({ text: fits });
+      await vi.waitFor(() => expect(streamingInstances).toHaveLength(1));
+      await fitting.options.deliver({ text: fits }, { kind: "final" });
+      expect(streamingUpdateTexts(0)).toContain(convert(fits, "code"));
+
+      const outgrowing = createBlockTableHarness(tableCfg("code"));
+      outgrowing.result.replyOptions.onPartialReply?.({ text: outgrows });
+      await vi.waitFor(() => expect(streamingInstances).toHaveLength(2));
+      await outgrowing.options.deliver({ text: outgrows }, { kind: "final" });
+      expect(streamingUpdateTexts(1)).toEqual([]);
+    });
   });
 });
 /* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

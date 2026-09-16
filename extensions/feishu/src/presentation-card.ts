@@ -19,7 +19,7 @@ import type { OutboundIdentity, ReplyPayload } from "../runtime-api.js";
 import { createFeishuCardInteractionEnvelope } from "./card-interaction.js";
 import { parseFeishuCommentTarget } from "./comment-target.js";
 import { resolveFeishuIdentityHeaderTitle } from "./identity-header.js";
-import { chunkFeishuMarkdown } from "./markdown.js";
+import { chunkFeishuMarkdown, fencesSurvive } from "./markdown.js";
 import type { MentionTarget } from "./mention-target.types.js";
 import { buildMentionedCardContent } from "./mention.js";
 import {
@@ -72,22 +72,13 @@ function escapedLength(text: string): number {
   return escapeFeishuCardMarkdownText(text).length;
 }
 
-function projectBlockText(
-  text: string,
-  renderText: (text: string) => string,
-  reserve = 0,
-): string[] {
-  const ceiling = FEISHU_CARD_TEXT_MAX_LENGTH - reserve;
-  const rendered = renderText(text);
-  if (escapedLength(rendered) + reserve <= FEISHU_CARD_TEXT_MAX_LENGTH) {
-    return [rendered];
-  }
-  // The element carries the escaped text, and escaping turns one `&`, `<` or `>` into four
-  // or five characters after the cut has already been made. Cutting the escaped text
-  // instead would split an entity, so the budget comes down from the limit by whatever
-  // the longest part actually measured, until the escaped parts fit.
+// The element carries the escaped text, and escaping turns one `&`, `<` or `>` into four
+// or five characters after the cut has already been made. Cutting the escaped text
+// instead would split an entity, so the budget comes down from the limit by whatever the
+// longest part actually measured, until the escaped parts fit.
+function fitBlockParts(text: string, ceiling: number): string[] {
   let budget = ceiling;
-  let parts = chunkFeishuMarkdown(rendered, budget);
+  let parts = chunkFeishuMarkdown(text, budget);
   for (let attempt = 0; attempt < 8 && parts.length > 0; attempt += 1) {
     const longest = Math.max(...parts.map(escapedLength));
     if (longest <= ceiling) {
@@ -98,7 +89,32 @@ function projectBlockText(
       break;
     }
     budget = next;
-    parts = chunkFeishuMarkdown(rendered, budget);
+    parts = chunkFeishuMarkdown(text, budget);
+  }
+  return parts;
+}
+
+function projectBlockText(
+  text: string,
+  renderText: (text: string) => string,
+  reserve = 0,
+): string[] {
+  const ceiling = FEISHU_CARD_TEXT_MAX_LENGTH - reserve;
+  const rendered = renderText(text);
+  if (escapedLength(rendered) + reserve <= FEISHU_CARD_TEXT_MAX_LENGTH) {
+    return [rendered];
+  }
+  const parts = fitBlockParts(rendered, ceiling);
+  // A quote prefix hides a fence marker from the chunker's scanner, so a quoted table
+  // long enough to need several elements leaves its opening fence in one and its closing
+  // fence in another, and neither draws a block. The send paths answer this the same way:
+  // a conversion the cut cannot carry gives way to the authored text, which is the form
+  // the shared adapter would have cut anyway.
+  if (rendered !== text && parts.length > 0 && !fencesSurvive(rendered, parts)) {
+    const authored = fitBlockParts(text, ceiling);
+    if (authored.length > 0) {
+      return authored;
+    }
   }
   return parts.length ? parts : [rendered];
 }

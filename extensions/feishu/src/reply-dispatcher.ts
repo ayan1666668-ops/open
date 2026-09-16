@@ -502,11 +502,20 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
   // exactly as much as for a settled answer: a card that shows a native table
   // while generating and the configured form at close has told two stories.
   const streamDisplayText = () => renderTables(streamText);
-  // Once the answer carries a shape a card drops rows from, the close routes the whole
+  // Once the answer carries a shape a card drops rows from, or one whose projection has
+  // outgrown the limit a single streamed card is held to, the close routes the whole
   // message to a post and the preview is discarded. Updating it in the meantime would
-  // spend the generation showing rows the card has already dropped, so the preview stands
-  // down and the text keeps accumulating for the post that settles it.
-  const previewShowsAnswer = () => !answerTableNeedsPostPath(streamText);
+  // spend the generation on a card the close throws away, so the preview stands down and
+  // the text keeps accumulating for the post that settles it. Standing down is not the
+  // same as having nothing to show: an answer that has not started yet still lets a
+  // reasoning or status update through.
+  const previewAnswerText = (): string | undefined => {
+    if (answerTableNeedsPostPath(streamText)) {
+      return undefined;
+    }
+    const display = streamDisplayText();
+    return display.length > textChunkLimit ? undefined : display;
+  };
 
   const queueStreamingUpdate = (
     nextText: string,
@@ -545,8 +554,9 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
       }
       lastSnapshotTextLength = nextText.length;
     }
-    if (previewShowsAnswer()) {
-      flushStreamingCardUpdate(buildCombinedStreamText(reasoningText, streamDisplayText()));
+    const answerPreview = previewAnswerText();
+    if (answerPreview !== undefined) {
+      flushStreamingCardUpdate(buildCombinedStreamText(reasoningText, answerPreview));
     }
   };
 
@@ -555,8 +565,9 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
       return;
     }
     reasoningText = nextThinking;
-    if (previewShowsAnswer()) {
-      flushStreamingCardUpdate(buildCombinedStreamText(reasoningText, streamDisplayText()));
+    const answerPreview = previewAnswerText();
+    if (answerPreview !== undefined) {
+      flushStreamingCardUpdate(buildCombinedStreamText(reasoningText, answerPreview));
     }
   };
 
@@ -902,7 +913,9 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
       return false;
     }
     startStreaming();
-    flushStreamingCardUpdate(buildCombinedStreamText(reasoningText, streamDisplayText()));
+    // A status line still belongs on the card while the answer stands down, so this
+    // update carries the status without the answer the close will send elsewhere.
+    flushStreamingCardUpdate(buildCombinedStreamText(reasoningText, previewAnswerText() ?? ""));
     return false;
   };
 

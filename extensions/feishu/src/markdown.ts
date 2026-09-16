@@ -52,7 +52,7 @@ function isFenceMarkerLine(line: string): boolean {
  * send will and ask three things of the pieces: each one stays inside the limit, each one
  * closes what it opened, and every marker arrives whole.
  */
-function fencesSurvive(converted: string, chunks: string[]): boolean {
+export function fencesSurvive(converted: string, chunks: readonly string[]): boolean {
   if (!chunks.every(fencesBalance)) {
     return false;
   }
