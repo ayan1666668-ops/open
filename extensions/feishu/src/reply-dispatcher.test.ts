@@ -5325,6 +5325,35 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
       expect(committed).not.toContain(quoteReasoning(tableMarkdown));
     });
 
+    // This post stands in for the final and the final is then skipped as a duplicate,
+    // so the mentions the final would have carried have to ride the post. Otherwise a
+    // group reply forwarding mentioned users delivers the answer without notifying them.
+    it("forwards mentions when an idle close posts a table", async () => {
+      const mentions = [{ openId: "ou_target", name: "Target User", key: "@_user_1" }];
+      resolveFeishuAccountMock.mockReturnValue({
+        accountId: "main",
+        appId: "app_id",
+        appSecret: "app_secret",
+        domain: "feishu",
+        config: {
+          renderMode: "auto",
+          streaming: { mode: "partial", block: { enabled: true } },
+        },
+      });
+      const { result, options } = createDispatcherHarness({
+        accountId: "main",
+        cfg: tableCfg("off"),
+        mentionTargets: mentions,
+      });
+      result.replyOptions.onPartialReply?.({ text: tableMarkdown });
+      await vi.waitFor(() => expect(streamingInstances).toHaveLength(1));
+
+      await options.onIdle?.();
+
+      expect(sendMessageFeishuMock).toHaveBeenCalledTimes(1);
+      expect(sendMessageFeishuMock.mock.calls[0]?.[0]).toMatchObject({ mentions });
+    });
+
     // off has no card representation at all, so a reasoning-only table still diverts
     // the whole close to a post rather than being converted.
     it("posts an off close whose only table is in streamed reasoning", async () => {

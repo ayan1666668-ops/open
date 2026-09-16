@@ -640,7 +640,16 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
         // A failed removal can leave the card visible, so only a clean discard hands
         // the text to a post instead.
         if (closeNeedsPost && finalizationError === undefined) {
-          result = await sendPostReply(text, "final", undefined, answerText);
+          // This post stands in for the final, and the matching final is then skipped as a
+          // duplicate, so it has to carry the mentions the final would have carried. A group
+          // reply that forwards mentioned users otherwise delivers the answer without
+          // notifying them.
+          result = await sendPostReply(
+            text,
+            "final",
+            mentionTargets?.length ? mentionTargets : undefined,
+            answerText,
+          );
         }
         if (result.visibleReplySent) {
           markVisibleReplySent();
