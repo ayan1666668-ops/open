@@ -109,7 +109,9 @@ describe("remote shell upload diagnostic bound", () => {
           : Buffer.alloc(64 * 1024, 0x62),
       );
     }
-    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => {
+      setImmediate(resolve);
+    });
     tar.emit("close", 0, null);
     remote.emit("close", 1, null);
 
@@ -147,9 +149,9 @@ function waitForListeners(child: FakeChildProcess): Promise<void> {
     const check = () => {
       if (child.listenerCount("close") > 0 && child.stdout.listenerCount("data") > 0) {
         resolve();
-        return;
+      } else {
+        setTimeout(check, 5);
       }
-      setTimeout(check, 5);
     };
     check();
   });
