@@ -1,6 +1,5 @@
 /* @vitest-environment jsdom */
 
-import type { RouteLocation, RouterState } from "@openclaw/uirouter";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import type { GatewayBrowserClient } from "../api/gateway.ts";
 import type { AgentsListResult, GatewayAgentRow } from "../api/types.ts";
@@ -19,6 +18,7 @@ import { createSessionCapabilityHarness } from "../lib/sessions/session-capabili
 import { createStorageMock } from "../test-helpers/storage.ts";
 import { selectShellRouteState } from "./app-host-route-state.ts";
 import {
+  committedRouterState,
   createLazyElementSpec,
   resetAppHostTestGlobals,
   type ShellKeyboardState,
@@ -260,24 +260,8 @@ type ShellSessionNavigationState = {
   routeState: { routeId?: RouteId };
   navigate: (routeId: RouteId) => void;
   handleCommandPaletteSlashCommand: (command: string) => void;
-  replaceChatWithCurrentSession: () => boolean;
+  recoverNotFoundRoute: () => boolean;
 };
-
-function committedRouterState(
-  routeId: RouteId,
-  pathname: string,
-  data?: unknown,
-): RouterState<RouteId> {
-  const location = { pathname, search: "", hash: "" } satisfies RouteLocation;
-  return {
-    location,
-    resolvedLocation: location,
-    status: "success",
-    matches: [{ routeId, location, data }],
-    pendingMatches: [],
-    cachedMatches: [],
-  } as unknown as RouterState<RouteId>;
-}
 
 describe("OpenClaw app lifecycle", () => {
   it("hides revealed login credentials when the app connection epoch ends", () => {
@@ -539,11 +523,11 @@ describe("OpenClaw shell route session commits", () => {
     shell.activeSessionKey = "main";
     shell.routeState = { routeId: "chat" };
 
-    expect(shell.replaceChatWithCurrentSession()).toBe(false);
+    expect(shell.recoverNotFoundRoute()).toBe(false);
     expect(replace).not.toHaveBeenCalled();
 
     snapshot.phase = "connected";
-    expect(shell.replaceChatWithCurrentSession()).toBe(true);
+    expect(shell.recoverNotFoundRoute()).toBe(true);
     expect(replace).toHaveBeenCalledWith("chat", { pathname: "/chat/research" });
   });
 

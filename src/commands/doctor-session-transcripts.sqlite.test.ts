@@ -158,8 +158,6 @@ describe("doctor session transcript repair", () => {
     await noteSessionTranscriptHealth({
       cfg,
       env,
-      sessionDirs: [sessionsDir],
-      sessionSqlite: true,
       shouldRepair: true,
     });
 
@@ -232,6 +230,7 @@ describe("doctor session transcript repair", () => {
       config: cfg,
       env,
       maintenanceAuthority: { assertCurrent: expect.any(Function) },
+      beforeCompletion: expect.any(Function),
     });
     expect(withDoctorSqliteMaintenanceLock).toHaveBeenCalledWith({
       env,
@@ -278,8 +277,6 @@ describe("doctor session transcript repair", () => {
       await noteSessionTranscriptHealth({
         cfg: {},
         env: { ...process.env, OPENCLAW_STATE_DIR: root },
-        sessionDirs: [sessionsDir],
-        sessionSqlite: true,
         shouldRepair: true,
       });
       expect({
@@ -320,8 +317,6 @@ describe("doctor session transcript repair", () => {
     await noteSessionTranscriptHealth({
       cfg: {},
       env: { ...process.env, OPENCLAW_STATE_DIR: root },
-      sessionDirs: [sessionsDir],
-      sessionSqlite: true,
       shouldRepair: true,
     });
 
@@ -340,7 +335,15 @@ describe("doctor session transcript repair", () => {
   it("keeps session SQLite dry-run read-only without taking maintenance ownership", async () => {
     const sessionsDir = path.join(root, "agents", "main", "sessions");
     await fs.mkdir(sessionsDir, { recursive: true });
+    const storePath = path.join(sessionsDir, "sessions.json");
+    const warning = "Session entry is missing a valid sessionId.";
     runDoctorSessionSqlite.mockResolvedValueOnce({
+      targets: [
+        {
+          storePath,
+          issues: [{ code: "entry_invalid", message: warning, sessionKey: "agent:main:invalid" }],
+        },
+      ],
       totals: {
         archivedTranscriptFiles: 0,
         archivedUnreferencedJsonlFiles: 0,
@@ -358,8 +361,6 @@ describe("doctor session transcript repair", () => {
     await noteSessionTranscriptHealth({
       cfg,
       env,
-      sessionDirs: [sessionsDir],
-      sessionSqlite: true,
       shouldRepair: false,
     });
 
@@ -380,6 +381,10 @@ describe("doctor session transcript repair", () => {
       expect.stringContaining(
         'Inspect with "openclaw doctor --session-sqlite dry-run --session-sqlite-all-agents".',
       ),
+      "Session SQLite",
+    );
+    expect(note).toHaveBeenCalledWith(
+      expect.stringContaining(`${storePath}: [entry_invalid] ${warning}`),
       "Session SQLite",
     );
   });
@@ -408,8 +413,6 @@ describe("doctor session transcript repair", () => {
     const receipt = await noteSessionTranscriptHealth({
       cfg: {},
       env: { ...process.env, OPENCLAW_STATE_DIR: root },
-      sessionDirs: [sessionsDir],
-      sessionSqlite: true,
       shouldRepair: true,
       postSessionPluginMigration: preparedPostSessionPluginMigration,
       onStepReceipt: (entry) => receipts.push(entry),
@@ -449,7 +452,6 @@ describe("doctor session transcript repair", () => {
     const params = {
       cfg: {},
       env: { ...process.env, OPENCLAW_STATE_DIR: root },
-      sessionSqlite: true,
       shouldRepair: true,
       postSessionPluginMigration: preparedPostSessionPluginMigration,
       onStepReceipt: recordReceipt,
@@ -462,6 +464,7 @@ describe("doctor session transcript repair", () => {
       config: {},
       env: params.env,
       maintenanceAuthority: { assertCurrent: expect.any(Function) },
+      beforeCompletion: expect.any(Function),
       plannedActions: preparedPostSessionPluginMigration.plannedActions,
     });
     expect(first).toMatchObject({
@@ -485,7 +488,6 @@ describe("doctor session transcript repair", () => {
     const receipt = await noteSessionTranscriptHealth({
       cfg: {},
       env: { ...process.env, OPENCLAW_STATE_DIR: root },
-      sessionSqlite: true,
       shouldRepair: true,
       postSessionPluginMigration: preparedPostSessionPluginMigration,
       onStepReceipt: (entry) => receipts.push(entry),
@@ -508,7 +510,6 @@ describe("doctor session transcript repair", () => {
     const receipt = await noteSessionTranscriptHealth({
       cfg: {},
       env: { ...process.env, OPENCLAW_STATE_DIR: root },
-      sessionSqlite: true,
       shouldRepair: false,
       postSessionPluginMigration: preparedPostSessionPluginMigration,
       onStepReceipt: (entry) => receipts.push(entry),
@@ -540,7 +541,6 @@ describe("doctor session transcript repair", () => {
       const receipt = await noteSessionTranscriptHealth({
         cfg: { plugins: { enabled: false } },
         env: { ...process.env, OPENCLAW_STATE_DIR: root },
-        sessionSqlite: true,
         shouldRepair,
         postSessionPluginMigration: { step, plannedActions: [] },
         onStepReceipt: (entry) => receipts.push(entry),
@@ -558,7 +558,6 @@ describe("doctor session transcript repair", () => {
     await noteSessionTranscriptHealth({
       cfg: { plugins: { entries: { external: { enabled: true } } } },
       env: { ...process.env, OPENCLAW_STATE_DIR: root },
-      sessionSqlite: true,
       shouldRepair: true,
       postSessionPluginMigrationPlanBound: true,
       onStepReceipt: (receipt) => receipts.push(receipt),
@@ -581,7 +580,6 @@ describe("doctor session transcript repair", () => {
       noteSessionTranscriptHealth({
         cfg: {},
         env,
-        sessionSqlite: true,
         shouldRepair: true,
       }),
     ).resolves.toBeUndefined();
@@ -607,7 +605,6 @@ describe("doctor session transcript repair", () => {
       noteSessionTranscriptHealth({
         cfg: {},
         env: { ...process.env, OPENCLAW_STATE_DIR: root },
-        sessionSqlite: true,
         shouldRepair: true,
         postSessionPluginMigration: preparedPostSessionPluginMigration,
         onStepReceipt: (receipt) => receipts.push(receipt),

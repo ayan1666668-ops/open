@@ -155,6 +155,45 @@ afterEach(() => {
 });
 
 describe("cron CLI with the real Gateway pagination contract", () => {
+  it.each(["list", "show"])(
+    "preserves active run status in %s with a disabled stream source",
+    async (surface) => {
+      const job = createJob(400, {
+        agentId: "main",
+        schedule: { kind: "stream", command: ["node", "events.mjs"] },
+        state: {
+          runningAtMs: Date.now(),
+          streamStatus: "disabled",
+          streamError: "cron is disabled",
+        },
+      });
+      installRealCronGateway([job]);
+      const args = surface === "list" ? ["list"] : ["show", job.id];
+
+      await runCron(args);
+
+      const lines = mocks.runtime.log.mock.calls.flatMap(([line]) => String(line).split("\n"));
+      if (surface === "list") {
+        const row = lines.find((line) => line.includes(job.id));
+        expect(row).toContain("running");
+        expect(row).not.toContain("disabled");
+      } else {
+        expect(lines).toContain("status: running");
+        expect(lines).toContain("stream status: disabled");
+        expect(lines).toContain("stream error: cron is disabled");
+      }
+
+      await runCron([...args, "--json"]);
+      const result = mocks.runtime.writeJson.mock.calls.at(-1)?.[0];
+      const expected = {
+        id: job.id,
+        status: "running",
+        state: { runningAtMs: job.state.runningAtMs, streamStatus: "disabled" },
+      };
+      expect(result).toMatchObject(surface === "list" ? { jobs: [expected] } : expected);
+    },
+  );
+
   it.each([
     { name: "all jobs as JSON", args: ["--json"], ids: ["job-000", "job-001", "job-002"] },
     { name: "the agent filter", args: ["--json", "--agent", "ops"], ids: ["job-002"] },
@@ -526,23 +565,87 @@ describe("cron CLI with the real Gateway pagination contract", () => {
     expect(mocks.runtime.writeJson).not.toHaveBeenCalled();
   });
 
-  it("prefers a canonical cron.get ID over another job's identical name", async () => {
+  it.each(["job-200", "JOB-200"])("prefers ID %s over multiple matching names", async (id) => {
     const nameCollision = createJob(0, { id: "name-owner", name: "job-200" });
+    const secondNameCollision = createJob(1, { name: "JOB-200" });
     const actualId = createJob(200, { id: "job-200", name: "Actual ID owner" });
-    installRealCronGateway([nameCollision, actualId]);
+    installRealCronGateway([nameCollision, secondNameCollision, actualId]);
 
-    await runCron(["show", "job-200", "--json"]);
+    await runCron(["show", id, "--json"]);
 
     const result = mocks.runtime.writeJson.mock.calls.at(-1)?.[0] as CronJob;
     expect(result.id).toBe("job-200");
     expect(result.name).toBe("Actual ID owner");
     expect(mocks.callGatewayFromCli).toHaveBeenCalledWith("cron.get", expect.anything(), {
-      id: "job-200",
+      id,
     });
     expect(mocks.callGatewayFromCli.mock.calls.some(([method]) => method === "cron.list")).toBe(
-      false,
+      id !== actualId.id,
     );
   });
+
+  it.each(
+    [
+      { label: "identical names", first: "Backup", last: "Backup", query: "Backup" },
+      { label: "mixed case", first: "Backup", last: "BACKUP", query: "bAcKuP", json: true },
+      { label: "reversed case", first: "BACKUP", last: "Backup", query: "bAcKuP" },
+      { label: "protocol v4", first: "Backup", last: "BACKUP", query: "Backup", legacy: true },
+      ...[false, true].map((json) => ({
+        label: `terminal controls with json=${json}`,
+        first: "backup\u001B]0;name\u0007\r\njob",
+        last: "backup\u001B]0;name\u0007\r\njob",
+        query: "backup\u001B]0;name\u0007\r\njob",
+        json,
+      })),
+    ].map((scenario) => Object.assign({ json: false, legacy: false }, scenario)),
+  )(
+    "rejects ambiguous $label across Gateway pages",
+    async ({ first, last, query, json, legacy }) => {
+      const jobs = Array.from({ length: 201 }, (_, index) => createJob(index));
+      jobs[0] = createJob(0, { name: first });
+      jobs[200] = createJob(200, { name: last, enabled: false });
+      installRealCronGateway(
+        jobs,
+        legacy
+          ? {
+              transformListPage(page) {
+                const {
+                  jobs: pageJobs,
+                  hasMore,
+                  nextOffset,
+                  deliveryPreviews,
+                } = page as Record<string, unknown>;
+                return { jobs: pageJobs, hasMore, nextOffset, deliveryPreviews };
+              },
+            }
+          : {},
+      );
+      if (legacy) {
+        disableCronGetForProtocolV4Gateway();
+      }
+
+      const message =
+        "Multiple automations match this name. Use a job ID from `openclaw cron list --all`.";
+      if (json) {
+        await expect(runCronWithJsonOwner(["show", query, "--json"])).rejects.toMatchObject({
+          name: "ExpectedCliError",
+          message,
+          machineOutput: message,
+        });
+      } else {
+        await expect(runCron(["show", query])).rejects.toThrow("exit 1");
+        expect(mocks.runtime.error).toHaveBeenCalledWith(expect.stringContaining(message));
+        expect(mocks.runtime.error.mock.calls.flat().join("\n")).not.toContain(query);
+      }
+      expect(mocks.runtime.log).not.toHaveBeenCalled();
+      expect(mocks.runtime.writeJson).not.toHaveBeenCalled();
+      expect(
+        mocks.callGatewayFromCli.mock.calls
+          .filter(([method]) => method === "cron.list")
+          .map((call) => (call[2] as { offset: number }).offset),
+      ).toEqual([0, 200]);
+    },
+  );
 
   it("preserves hostile stored values in cron show JSON", async () => {
     const name = "job\u001B]0;cron-json\u0007🦞\r\nname";

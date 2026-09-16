@@ -23,7 +23,7 @@ import type { TelegramTransport } from "./fetch.js";
 import type { TelegramRuntime } from "./runtime.types.js";
 
 const downstreamTurns = vi.hoisted(() =>
-  vi.fn(async (_ctx: MsgContext) => ({
+  vi.fn(async (_ctx: MsgContext, _abortSignal?: AbortSignal) => ({
     queuedFinal: false,
     counts: { block: 0, final: 0, tool: 0 },
   })),
@@ -45,7 +45,7 @@ vi.mock("openclaw/plugin-sdk/channel-inbound", async (importOriginal) => {
     ...actual,
     runChannelInboundEvent: async (params: Parameters<typeof actual.runChannelInboundEvent>[0]) =>
       await runTelegramChannelInboundEventWithHarness(actual, params, async (dispatchParams) => {
-        return await downstreamTurns(dispatchParams.ctx);
+        return await downstreamTurns(dispatchParams.ctx, dispatchParams.replyOptions?.abortSignal);
       }),
   };
 });
@@ -154,23 +154,17 @@ function createBotApiTransport() {
     const url = input instanceof Request ? input.url : input instanceof URL ? input.href : input;
     if (url.includes("/getFile")) {
       getFileCall += 1;
-      return new Response(
-        JSON.stringify({
-          ok: true,
-          result: {
-            file_id: `photo-${getFileCall}`,
-            file_unique_id: `unique-${getFileCall}`,
-            file_size: 4,
-            file_path: `photos/photo-${getFileCall}.jpg`,
-          },
-        }),
-        { status: 200, headers: { "content-type": "application/json" } },
-      );
+      return Response.json({
+        ok: true,
+        result: {
+          file_id: `photo-${getFileCall}`,
+          file_unique_id: `unique-${getFileCall}`,
+          file_size: 4,
+          file_path: `photos/photo-${getFileCall}.jpg`,
+        },
+      });
     }
-    return new Response(JSON.stringify({ ok: true, result: true }), {
-      status: 200,
-      headers: { "content-type": "application/json" },
-    });
+    return Response.json({ ok: true, result: true });
   }) as unknown as typeof fetch;
   return { fetch: fetchImpl, sourceFetch: fetchImpl, close: async () => {} };
 }
@@ -323,7 +317,6 @@ describe("Telegram durable ingress coalescing", () => {
     const monitor = createTelegramTransportIngressMonitor({
       spoolDir,
       bot,
-      cfg,
       accountId: "default",
       botInfo: telegramBotInfoForTest,
       ...(options.adoptionStallTimeoutMs === undefined
@@ -447,6 +440,49 @@ describe("Telegram durable ingress coalescing", () => {
 
     await monitor.stop();
     await telegramTransport.close();
+  });
+
+  it("keeps a text update pending when shutdown aborts the turn before adoption", async () => {
+    const update = textUpdate({
+      updateId: 901,
+      messageId: 1,
+      text: "interrupted by restart",
+    });
+    const eventId = telegramQueueEventId(update.update_id);
+    await writeTelegramSpooledUpdate({ spoolDir, update });
+    const queue = openTelegramIngressQueue(spoolDir);
+    downstreamTurns.mockImplementationOnce(async (_ctx, abortSignal) => {
+      if (!abortSignal) {
+        throw new Error("Expected the turn's abort signal");
+      }
+      await new Promise<void>((resolve) => {
+        abortSignal.addEventListener("abort", () => resolve(), { once: true });
+      });
+      return { queuedFinal: false, counts: { block: 0, final: 0, tool: 0 } };
+    });
+    const { monitor, telegramTransport } = await createMonitor();
+
+    monitor.start();
+    await awaitSingleDownstreamTurn();
+    await monitor.stop();
+    await telegramTransport.close();
+
+    await vi.waitFor(async () => {
+      expect(await queue.listClaims()).toEqual([]);
+      expect(await queue.listPending({ limit: "all" })).toMatchObject([
+        { id: eventId, attempts: 0 },
+      ]);
+    });
+    expect(
+      (
+        await queue.enqueue(eventId, {
+          version: 1,
+          updateId: update.update_id,
+          receivedAt: Date.now(),
+          update,
+        })
+      ).kind,
+    ).not.toBe("completed");
   });
 
   it("releases a stale forwarded claim once when custom debounce dispatch fails", async () => {
