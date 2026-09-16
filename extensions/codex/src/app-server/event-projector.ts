@@ -511,7 +511,10 @@ export class CodexAppServerEventProjector extends CodexTurnProjection {
       item?.type === "commandExecution" ||
       item?.type === "fileChange" ||
       item?.type === "mcpToolCall" ||
-      item?.type === "webSearch"
+      item?.type === "webSearch" ||
+      item?.type === "imageGeneration" ||
+      item?.type === "imageView" ||
+      item?.type === "collabAgentToolCall"
     ) {
       this.continuousCompactionAttempts = 0;
     }
