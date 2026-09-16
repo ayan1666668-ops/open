@@ -686,7 +686,8 @@ function buildRequestBody(
   }
 
   if (context.tools) {
-    const tools = convertResponsesToolPayload(context.tools, { strict: null });
+    // Explicit false prevents the backend from normalizing optional properties into required ones.
+    const tools = convertResponsesToolPayload(context.tools, { strict: false });
     if (tools.length > 0) {
       body.tools = tools;
       body.tool_choice = "auto";
