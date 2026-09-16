@@ -5,12 +5,13 @@ import { DEFAULT_CRON_FORM } from "../../test-helpers/cron.ts";
 import { validateCronForm } from "./index.ts";
 
 // Build userinfo-bearing URLs at runtime (mirroring what a user could type)
-// so the fixtures stay free of literal embedded-credential strings.
+// so the fixtures stay free of literal embedded-credential strings. Any
+// non-empty userinfo segment must be rejected, so the values are arbitrary.
 const webhookUrlWithUserinfo = (scheme: "http" | "https", withPassword: boolean) => {
   const url = new URL(`${scheme}://example.com/hook`);
   url.username = "user";
   if (withPassword) {
-    url.password = "pass";
+    url.password = url.username;
   }
   return url.href;
 };
