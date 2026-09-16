@@ -9,6 +9,7 @@ import {
   setQwenChatTemplateThinking,
 } from "openclaw/plugin-sdk/provider-stream-shared";
 import {
+  resolveVllmQwenEffortLevels,
   resolveVllmQwenThinkingFormatFromCompat,
   type VllmQwenThinkingFormat,
 } from "./thinking-policy.js";
@@ -54,6 +55,8 @@ export function createVllmQwenThinkingWrapper(params: {
   baseStreamFn: StreamFn | undefined;
   format: VllmQwenThinkingFormat;
   thinkingLevel: VllmThinkingLevel;
+  /** The model row declares `supportedReasoningEfforts`; keep the graded `reasoning_effort`. */
+  effortLadder?: boolean;
 }): StreamFn {
   return createPayloadPatchStreamWrapper(
     params.baseStreamFn,
@@ -67,7 +70,11 @@ export function createVllmQwenThinkingWrapper(params: {
       } else {
         payloadObj.enable_thinking = enableThinking;
       }
-      delete payloadObj.reasoning_effort;
+      // The transport already mapped the level through `reasoningEffortMap`;
+      // only a declared ladder keeps it, and never alongside disabled thinking.
+      if (!params.effortLadder || !enableThinking) {
+        delete payloadObj.reasoning_effort;
+      }
       delete payloadObj.reasoningEffort;
       delete payloadObj.reasoning;
     },
@@ -100,6 +107,7 @@ export function wrapVllmProviderStream(ctx: ProviderWrapStreamFnContext): Stream
           baseStreamFn: streamFn,
           format: qwenFormat,
           thinkingLevel: ctx.thinkingLevel,
+          effortLadder: resolveVllmQwenEffortLevels(ctx.model?.compat) !== undefined,
         })),
     (streamFn) =>
       createPayloadPatchStreamWrapper(

@@ -360,6 +360,37 @@ describe("openai completions params", () => {
     expect(params).not.toHaveProperty("reasoning_effort");
   });
 
+  it("sends reasoning_effort for a qwen model that declares an effort ladder", () => {
+    const model = {
+      id: "qwen38-flash-next",
+      name: "Qwen 3.8 Flash Next",
+      api: "openai-completions",
+      provider: "vllm",
+      baseUrl: "http://10.0.0.30:8000/v1",
+      reasoning: true,
+      input: ["text"],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 180224,
+      maxTokens: 65536,
+      compat: {
+        thinkingFormat: "qwen-chat-template",
+        supportedReasoningEfforts: ["low", "medium", "xhigh"],
+      },
+    } as unknown as Model<"openai-completions">;
+    const params = buildOpenAICompletionsParams(model, emptyContext(), {
+      reasoning: "xhigh",
+    } as never) as { chat_template_kwargs?: Record<string, unknown>; reasoning_effort?: unknown };
+
+    expect(params.chat_template_kwargs).toEqual({ enable_thinking: true });
+    expect(params.reasoning_effort).toBe("xhigh");
+
+    const disabled = buildOpenAICompletionsParams(model, emptyContext(), {
+      reasoning: "off",
+    } as never) as { chat_template_kwargs?: Record<string, unknown>; reasoning_effort?: unknown };
+    expect(disabled.chat_template_kwargs).toEqual({ enable_thinking: false });
+    expect(disabled).not.toHaveProperty("reasoning_effort");
+  });
+
   it("maps together thinking format to reasoning enabled", () => {
     const baseModel = {
       id: "moonshotai/Kimi-K2.5",

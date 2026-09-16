@@ -180,6 +180,32 @@ To keep the provider dynamic without listing every model, add a wildcard to the 
 
     Non-`off` thinking levels send `enable_thinking: true`. If your endpoint expects DashScope-style top-level flags instead, use `compat.thinkingFormat: "qwen"` to send `enable_thinking` at the request root.
 
+    Some vLLM reasoning parsers also honor `reasoning_effort`. When your server accepts it, list the efforts it takes, spelled the way the server expects, in `compat.supportedReasoningEfforts`. The model then exposes exactly those `/think` levels (plus `off`) instead of the binary profile and sends the selected level as `reasoning_effort` alongside `enable_thinking: true`:
+
+    ```json5
+    {
+      models: {
+        providers: {
+          vllm: {
+            models: [
+              {
+                id: "qwen38-flash-next",
+                name: "Qwen 3.8 Flash Next",
+                reasoning: true,
+                compat: {
+                  thinkingFormat: "qwen-chat-template",
+                  supportedReasoningEfforts: ["low", "medium", "xhigh"],
+                },
+              },
+            ],
+          },
+        },
+      },
+    }
+    ```
+
+    With that entry `/think low|medium|xhigh` send `reasoning_effort: "low" | "medium" | "xhigh"`, and `/think off` still sends only `enable_thinking: false`. Accepted spellings are the OpenAI effort names (`minimal`, `low`, `medium`, `high`, `xhigh`, `max`); anything else is ignored, and an empty list keeps the binary profile.
+
   </Accordion>
 
   <Accordion title="Nemotron 3 thinking controls">

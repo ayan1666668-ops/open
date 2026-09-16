@@ -78,6 +78,12 @@ function resolveOpenAICompletionsReasoningEffort(options: OpenAICompletionsOptio
   return options?.reasoningEffort ?? options?.reasoning ?? "high";
 }
 
+function hasDeclaredReasoningEfforts(compat: unknown): boolean {
+  const efforts = (compat as { supportedReasoningEfforts?: unknown } | undefined)
+    ?.supportedReasoningEfforts;
+  return Array.isArray(efforts) && efforts.some((effort) => typeof effort === "string" && effort);
+}
+
 function resolveOpenAICompletionsMaxTokens(
   model: OpenAIModeModel,
   options: OpenAICompletionsOptions | undefined,
@@ -570,6 +576,12 @@ export function buildOpenAICompletionsRequest(
     payload: params,
     requestedEffort: completionsReasoningEffort,
   });
+  // Qwen thinking is an on/off flag, but a model row that declares the efforts
+  // its server accepts also sends the graded level as `reasoning_effort`.
+  const qwenEffortLadder =
+    handledQwenThinkingFormat &&
+    isOpenAICompletionsThinkingEnabled(completionsReasoningEffort) &&
+    hasDeclaredReasoningEfforts(model.compat);
   applyTogetherOpenAICompletionsThinkingParams({
     compatThinkingFormat: compat.thinkingFormat,
     modelReasoning: model.reasoning,
@@ -591,8 +603,8 @@ export function buildOpenAICompletionsRequest(
   } else if (
     resolvedCompletionsReasoningEffort &&
     model.reasoning &&
-    compat.supportsReasoningEffort &&
-    !handledQwenThinkingFormat &&
+    (compat.supportsReasoningEffort || qwenEffortLadder) &&
+    (!handledQwenThinkingFormat || qwenEffortLadder) &&
     !omitChatCompletionsToolReasoningEffort
   ) {
     params.reasoning_effort = resolvedCompletionsReasoningEffort;

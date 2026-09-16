@@ -30,6 +30,39 @@ describe("vLLM provider thinking policy", () => {
     });
   });
 
+  it("exposes the declared effort ladder for Qwen chat-template models", () => {
+    expect(
+      resolveThinkingProfile({
+        provider: "vllm",
+        modelId: "qwen38-flash-next",
+        reasoning: true,
+        compat: {
+          thinkingFormat: "qwen-chat-template",
+          supportedReasoningEfforts: ["xhigh", "medium", "low"],
+        },
+      }),
+    ).toEqual({
+      levels: [{ id: "off" }, { id: "low" }, { id: "medium" }, { id: "xhigh" }],
+      defaultLevel: "off",
+    });
+  });
+
+  it("keeps the binary profile when the declared efforts are empty or unknown", () => {
+    for (const supportedReasoningEfforts of [[], ["turbo"]]) {
+      expect(
+        resolveThinkingProfile({
+          provider: "vllm",
+          modelId: "Qwen/Qwen3-8B",
+          reasoning: true,
+          compat: { thinkingFormat: "qwen", supportedReasoningEfforts },
+        }),
+      ).toEqual({
+        levels: [{ id: "off" }, { id: "low", label: "on" }],
+        defaultLevel: "off",
+      });
+    }
+  });
+
   it("exposes a binary profile for vLLM Nemotron 3 reasoning models", () => {
     expect(
       resolveThinkingProfile({
