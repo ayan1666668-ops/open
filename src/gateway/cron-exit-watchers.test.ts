@@ -115,6 +115,7 @@ describe("createCronExitWatchers", () => {
       order.push("fire");
     });
     const w = createCronExitWatchers({
+      readJob: async () => undefined,
       getProcessSupervisor: () => supervisor as never,
       persistCompletion,
       fireOnExit,
@@ -158,6 +159,7 @@ describe("createCronExitWatchers", () => {
     const newPersistCompletion = vi.fn(async () => {});
     const newFireOnExit = vi.fn(async () => {});
     const watchers = createCronExitWatchers({
+      readJob: async () => undefined,
       getProcessSupervisor: () => supervisor as never,
       persistCompletion: oldPersistCompletion,
       fireOnExit: oldFireOnExit,
@@ -173,6 +175,7 @@ describe("createCronExitWatchers", () => {
     await vi.waitFor(() => expect(oldPersistCompletion).toHaveBeenCalledOnce());
 
     const handoff = watchers.updateHandlers({
+      readJob: async () => undefined,
       getProcessSupervisor: () => supervisor as never,
       persistCompletion: newPersistCompletion,
       fireOnExit: newFireOnExit,
@@ -203,6 +206,7 @@ describe("createCronExitWatchers", () => {
     const oldUpdateWatcherState = vi.fn(async () => {});
     const newUpdateWatcherState = vi.fn(async () => {});
     const watchers = createCronExitWatchers({
+      readJob: async () => undefined,
       getProcessSupervisor: () => supervisor as never,
       persistCompletion: vi.fn(async () => {}),
       fireOnExit: vi.fn(async () => {}),
@@ -214,6 +218,7 @@ describe("createCronExitWatchers", () => {
     watchers.reconcile([onExitJob("job-a")]);
     await flush();
     await watchers.updateHandlers({
+      readJob: async () => undefined,
       getProcessSupervisor: () => supervisor as never,
       persistCompletion: vi.fn(async () => {}),
       fireOnExit: vi.fn(async () => {}),
@@ -234,6 +239,7 @@ describe("createCronExitWatchers", () => {
     // disabled job and must NOT re-arm (which would re-run the command).
     const { supervisor, runs } = makeFakeSupervisor();
     const w = createCronExitWatchers({
+      readJob: async () => undefined,
       getProcessSupervisor: () => supervisor as never,
       persistCompletion: vi.fn(async () => {}),
       fireOnExit: vi.fn(async () => {}),
@@ -249,6 +255,7 @@ describe("createCronExitWatchers", () => {
     expect(supervisor.spawn).toHaveBeenCalledTimes(1);
     // Simulate restart: a fresh manager reconciling the now-disabled persisted job.
     const restarted = createCronExitWatchers({
+      readJob: async () => undefined,
       getProcessSupervisor: () => supervisor as never,
       persistCompletion: vi.fn(async () => {}),
       fireOnExit: vi.fn(async () => {}),
@@ -264,6 +271,7 @@ describe("createCronExitWatchers", () => {
     const { supervisor, runs } = makeFakeSupervisor();
     const fireOnExit = vi.fn(async () => {});
     const w = createCronExitWatchers({
+      readJob: async () => undefined,
       getProcessSupervisor: () => supervisor as never,
       persistCompletion: vi.fn(async () => {
         throw new Error("store write failed");
@@ -292,6 +300,7 @@ describe("createCronExitWatchers", () => {
     const fireOnExit = vi.fn(async () => {});
     const updateWatcherState = vi.fn(async () => {});
     const w = createCronExitWatchers({
+      readJob: async () => undefined,
       getProcessSupervisor: () => supervisor as never,
       persistCompletion,
       fireOnExit,
@@ -333,6 +342,7 @@ describe("createCronExitWatchers", () => {
     supervisor.spawn.mockRejectedValueOnce(new Error("spawn blew up"));
     const updateWatcherState = vi.fn(async () => {});
     const w = createCronExitWatchers({
+      readJob: async () => undefined,
       getProcessSupervisor: () => supervisor as never,
       persistCompletion: vi.fn(async () => {}),
       fireOnExit: vi.fn(async () => {}),
@@ -368,6 +378,7 @@ describe("createCronExitWatchers", () => {
   it("replaces the watcher when the watched command changes", async () => {
     const { supervisor, cancelledScopes } = makeFakeSupervisor();
     const w = createCronExitWatchers({
+      readJob: async () => undefined,
       getProcessSupervisor: () => supervisor as never,
       persistCompletion: vi.fn(async () => {}),
       fireOnExit: vi.fn(async () => {}),
@@ -387,6 +398,7 @@ describe("createCronExitWatchers", () => {
     const { supervisor, runs } = makeFakeSupervisor();
     const fireOnExit = vi.fn<FireOnExit>(async () => {});
     const w = createCronExitWatchers({
+      readJob: async () => undefined,
       getProcessSupervisor: () => supervisor as never,
       persistCompletion: vi.fn(async () => {}),
       fireOnExit,
@@ -417,6 +429,7 @@ describe("createCronExitWatchers", () => {
     const fake = makeFakeSupervisor({ deferSpawn: true });
     const fireOnExit = vi.fn(async () => {});
     const w = createCronExitWatchers({
+      readJob: async () => undefined,
       getProcessSupervisor: () => fake.supervisor as never,
       persistCompletion: vi.fn(async () => {}),
       fireOnExit,
@@ -442,6 +455,7 @@ describe("createCronExitWatchers", () => {
   it("does not arm a watcher for time-based or disabled jobs", async () => {
     const { supervisor } = makeFakeSupervisor();
     const w = createCronExitWatchers({
+      readJob: async () => undefined,
       getProcessSupervisor: () => supervisor as never,
       persistCompletion: vi.fn(async () => {}),
       fireOnExit: vi.fn(async () => {}),
@@ -460,6 +474,7 @@ describe("createCronExitWatchers", () => {
   it("is idempotent: re-reconciling the same job does not double-arm", async () => {
     const { supervisor } = makeFakeSupervisor();
     const w = createCronExitWatchers({
+      readJob: async () => undefined,
       getProcessSupervisor: () => supervisor as never,
       persistCompletion: vi.fn(async () => {}),
       fireOnExit: vi.fn(async () => {}),
@@ -475,6 +490,7 @@ describe("createCronExitWatchers", () => {
   it("keeps a cancelled watcher blocking until the supervised child settles", async () => {
     const { supervisor, cancelled, runs } = makeFakeSupervisor();
     const w = createCronExitWatchers({
+      readJob: async () => undefined,
       getProcessSupervisor: () => supervisor as never,
       persistCompletion: vi.fn(async () => {}),
       fireOnExit: vi.fn(async () => {}),
@@ -503,6 +519,7 @@ describe("createCronExitWatchers", () => {
     const { supervisor, runs } = makeFakeSupervisor();
     const fireOnExit = vi.fn(async () => {});
     const w = createCronExitWatchers({
+      readJob: async () => undefined,
       getProcessSupervisor: () => supervisor as never,
       persistCompletion: vi.fn(async () => {}),
       fireOnExit,
@@ -531,6 +548,7 @@ describe("createCronExitWatchers", () => {
     );
     const fireOnExit = vi.fn(async () => {});
     const w = createCronExitWatchers({
+      readJob: async () => undefined,
       getProcessSupervisor: () => supervisor as never,
       persistCompletion,
       fireOnExit,
@@ -563,6 +581,7 @@ describe("createCronExitWatchers", () => {
     const { supervisor, runs } = makeFakeSupervisor();
     let job = onExitJob("job-a");
     const w = createCronExitWatchers({
+      readJob: async () => undefined,
       getProcessSupervisor: () => supervisor as never,
       persistCompletion: vi.fn(async () => {
         job = { ...job, enabled: false };
@@ -589,11 +608,13 @@ describe("createCronExitWatchers", () => {
       const payload = createDeferred();
       let job = onExitJob("job-a");
       const fireOnExit = vi.fn(async () => await payload.promise);
+      const persistCompletion = vi.fn(async () => {
+        job = { ...job, enabled: false };
+      });
       const w = createCronExitWatchers({
+        readJob: async () => undefined,
         getProcessSupervisor: () => supervisor as never,
-        persistCompletion: vi.fn(async () => {
-          job = { ...job, enabled: false };
-        }),
+        persistCompletion,
         fireOnExit,
         logger: noopLogger,
       });
@@ -614,13 +635,15 @@ describe("createCronExitWatchers", () => {
         await flush();
         expect(supervisor.spawn).toHaveBeenCalledTimes(2);
         expect(w.activeJobIds()).toEqual([job.id]);
+        expectDefined(runs[1], "replacement watcher").deferred.resolve({
+          exitCode: 0,
+          reason: "exit",
+        });
+        await flush();
+        expect(persistCompletion).toHaveBeenCalledOnce();
 
         const drained = vi.fn();
         const drain = w.cancelAll().then(drained);
-        expectDefined(runs[1], "replacement watcher").deferred.resolve({
-          exitCode: null,
-          reason: "manual-cancel",
-        });
         await flush();
         expect(drained).not.toHaveBeenCalled();
         payload.resolve();
@@ -633,6 +656,79 @@ describe("createCronExitWatchers", () => {
           run.deferred.resolve({ exitCode: null, reason: "manual-cancel" });
         }
         await w.cancelAll();
+      }
+    },
+  );
+
+  it.each([false, true])(
+    "keeps only the latest pending exit after another rearm (read failure: %s)",
+    async (failRead) => {
+      const { supervisor, runs } = makeFakeSupervisor();
+      const payload = createDeferred();
+      let job = onExitJob("job-a");
+      const readJob = vi.fn(async () => {
+        if (failRead) {
+          throw new Error("store read failed");
+        }
+        return job;
+      });
+      const persistCompletion = vi.fn(async () => {
+        job = { ...job, enabled: false };
+      });
+      const fireOnExit = vi.fn<FireOnExit>(async () => await payload.promise);
+      const warn = vi.fn();
+      const watchers = createCronExitWatchers({
+        getProcessSupervisor: () => supervisor as never,
+        readJob,
+        persistCompletion,
+        fireOnExit,
+        logger: { ...noopLogger, warn },
+      });
+
+      try {
+        watchers.reconcile([job]);
+        await flush();
+        expectDefined(runs[0], "first watcher").deferred.resolve({ exitCode: 0, reason: "exit" });
+        await vi.waitFor(() => expect(fireOnExit).toHaveBeenCalledOnce());
+
+        for (const command of ["second", "third"]) {
+          job = { ...job, enabled: true, schedule: { kind: "on-exit", command } };
+          watchers.reconcile([job]);
+          await flush();
+          expectDefined(runs.at(-1), "replacement watcher").deferred.resolve({
+            exitCode: 0,
+            reason: "exit",
+          });
+          await flush();
+        }
+        expect(persistCompletion).toHaveBeenCalledOnce();
+        expect(fireOnExit).toHaveBeenCalledOnce();
+        payload.resolve();
+
+        if (failRead) {
+          await vi.waitFor(() => expect(warn).toHaveBeenCalledOnce());
+          expect(warn).toHaveBeenCalledWith(
+            expect.objectContaining({ err: "Error: store read failed", jobId: job.id }),
+            "cron-exit: pending completion read failed; NOT firing",
+          );
+          expect(fireOnExit).toHaveBeenCalledOnce();
+          expect(watchers.activeJobIds()).toEqual([]);
+        } else {
+          await vi.waitFor(() => expect(fireOnExit).toHaveBeenCalledTimes(2));
+          expect(fireOnExit.mock.calls[1]?.[0].schedule).toEqual({
+            kind: "on-exit",
+            command: "third",
+          });
+          expect(persistCompletion).toHaveBeenCalledTimes(2);
+        }
+        expect(readJob).toHaveBeenCalledOnce();
+        expect(supervisor.spawn).toHaveBeenCalledTimes(3);
+      } finally {
+        payload.resolve();
+        for (const run of runs) {
+          run.deferred.resolve({ exitCode: null, reason: "manual-cancel" });
+        }
+        await watchers.cancelAll();
       }
     },
   );

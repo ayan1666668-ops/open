@@ -27,7 +27,7 @@ Timestamps without a timezone are treated as UTC. Add `--tz America/New_York` to
 
 Recurring top-of-hour expressions (minute `0` with a wildcard hour field) are automatically staggered by up to 5 minutes to reduce load spikes. Use `--exact` to force precise timing, or `--stagger 30s` for an explicit window (cron schedules only).
 
-An `on-exit` job disables itself when its watched command exits, before running the payload. Re-enable the job to watch again; this also works while the previous payload is still finishing. You can change the watched command or working directory when re-enabling it.
+An `on-exit` job disables itself when its watched command exits, before running the payload. Re-enable the job to watch again; this also works while the previous payload is still finishing. If the new command exits before that payload finishes, its exit waits for the previous run to settle before disabling the job and starting the next payload. You can change the watched command or working directory when re-enabling it.
 
 ### Heartbeat task migration
 

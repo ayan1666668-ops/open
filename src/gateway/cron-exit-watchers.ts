@@ -31,6 +31,7 @@ export type CronExitResult = {
 
 export type CronExitWatcherHandlers = {
   getProcessSupervisor: () => ProcessSupervisor;
+  readJob: (jobId: string) => Promise<CronJob | undefined>;
   persistCompletion: (job: OnExitCronJob) => Promise<(() => void) | void>;
   fireOnExit: (job: CronJob, exit: CronExitResult) => void | Promise<void>;
   updateWatcherState?: (
@@ -140,6 +141,9 @@ export function createCronExitWatchers(
     const command = job.schedule.command;
     const cwd = job.schedule.cwd;
     const armToken: object = {};
+    const predecessors = Array.from(settlingCancelledSlots)
+      .filter((previous) => previous.job.id === job.id)
+      .map((previous) => previous.settlement.promise);
     // Reserve the slot synchronously so a concurrent cancel/replace can observe
     // and act on this arm before the child is spawned.
     const slot: WatcherSlot = {
@@ -258,6 +262,39 @@ export function createCronExitWatchers(
       }
       if (!owns()) {
         return;
+      }
+      if (predecessors.length > 0) {
+        // Keep the exit pending until earlier payloads and their writes settle.
+        await Promise.all(predecessors);
+        if (!owns() || slot.cancelled) {
+          return;
+        }
+        let current: CronJob | undefined;
+        try {
+          current = await handlers.readJob(job.id);
+        } catch (err) {
+          if (owns()) {
+            active.delete(job.id);
+          }
+          handlers.logger.warn(
+            { err: String(err), jobId: job.id },
+            "cron-exit: pending completion read failed; NOT firing",
+          );
+          return;
+        }
+        if (!owns() || slot.cancelled) {
+          return;
+        }
+        if (
+          !current ||
+          !isWatchableExitJob(current) ||
+          current.schedule.command !== slot.command ||
+          current.schedule.cwd !== slot.cwd
+        ) {
+          cancel(job.id);
+          return;
+        }
+        slot.job = current;
       }
       const owner = handlers;
       owner.logger.info(

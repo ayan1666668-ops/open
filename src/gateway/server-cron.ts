@@ -1160,6 +1160,7 @@ export function buildGatewayCronService(params: {
 
   const exitWatcherHandlers = {
     getProcessSupervisor,
+    readJob: (jobId) => cron.readJob(jobId),
     persistCompletion: async (job) => {
       const completionToken: Parameters<CronService["updateWithPrecondition"]>[2] = (current) => {
         if (!current.enabled || current.updatedAtMs !== job.updatedAtMs) {

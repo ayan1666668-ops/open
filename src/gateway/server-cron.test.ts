@@ -2,6 +2,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { createServer } from "node:http";
 import os from "node:os";
 import path from "node:path";
+import { setImmediate } from "node:timers/promises";
 // Gateway cron tests cover isolated agent turns, heartbeat wakeups, completion
 // delivery, lifecycle cleanup, hook emission, and SSRF-guarded webhooks.
 import { createRequireRecord } from "openclaw/plugin-sdk/test-fixtures";
@@ -1213,9 +1214,14 @@ describe("buildGatewayCronService", () => {
     }
   });
 
-  it.each(["true", "echo rearmed"])(
-    "re-arms an on-exit job with %s while its previous payload is running",
-    async (command) => {
+  it.each([
+    { command: "true", exitTiming: "after" },
+    { command: "echo rearmed", exitTiming: "after" },
+    { command: "true", exitTiming: "before" },
+    { command: "echo rearmed", exitTiming: "before" },
+  ])(
+    "re-arms on-exit $command when its next exit arrives $exitTiming the previous payload finishes",
+    async ({ command, exitTiming }) => {
       const firstExit = createDeferred<RunExit>();
       const secondExit = createDeferred<RunExit>();
       const releasePayload = createDeferred();
@@ -1238,7 +1244,8 @@ describe("buildGatewayCronService", () => {
         return { status: "ran", durationMs: 1 };
       });
       const state = loadCronService(createCronConfig("server-cron-on-exit-rearm"));
-      getCronDeps(state).nowMs = () => 1_700_000_000_000;
+      let nowMs = 1_700_000_000_000;
+      getCronDeps(state).nowMs = () => nowMs;
       const run = state.cron.run.bind(state.cron);
       vi.spyOn(state.cron, "run").mockImplementationOnce(async (...args) => {
         try {
@@ -1269,13 +1276,21 @@ describe("buildGatewayCronService", () => {
         await state.reconcileExitWatchers();
         expect(spawn).toHaveBeenCalledTimes(2);
 
+        if (exitTiming === "before") {
+          secondExit.resolve(runExit({ reason: "exit", exitCode: 0 }));
+          await setImmediate();
+          expect(state.cron.getJob(job.id)?.enabled).toBe(true);
+        }
+        nowMs += 1;
         releasePayload.resolve();
         await payloadFinished.promise;
-        await state.reconcileExitWatchers();
-        expect(state.cron.getJob(job.id)?.enabled).toBe(true);
-        expect(spawn).toHaveBeenCalledTimes(2);
-        secondExit.resolve(runExit({ reason: "exit", exitCode: 0 }));
+        if (exitTiming === "after") {
+          await state.reconcileExitWatchers();
+          expect(state.cron.getJob(job.id)?.enabled).toBe(true);
+          secondExit.resolve(runExit({ reason: "exit", exitCode: 0 }));
+        }
         await vi.waitFor(() => expect(requestHeartbeatAndWaitMock).toHaveBeenCalledTimes(2));
+        expect(spawn).toHaveBeenCalledTimes(2);
         expect(state.cron.getJob(job.id)?.enabled).toBe(false);
       } finally {
         releasePayload.resolve();
