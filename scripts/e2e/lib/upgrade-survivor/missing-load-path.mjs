@@ -82,7 +82,7 @@ function assertPreserved(stage) {
   assert(raw.includes(fixture.loadBytes), `${stage}: configured load path bytes changed`);
 }
 
-const [stage] = process.argv.slice(2);
+const stage = process.argv[3];
 if (stage === "seed") {
   seed();
 } else if (stage === "unavailable") {

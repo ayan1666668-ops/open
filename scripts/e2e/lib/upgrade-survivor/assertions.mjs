@@ -1920,6 +1920,8 @@ function assertMobilePairingEvidence(files) {
 
 if (command === "list-scenarios") {
   process.stdout.write(`${JSON.stringify([...SCENARIOS])}\n`);
+} else if (command === "missing-load-path") {
+  await import("./missing-load-path.mjs");
 } else if (command === "seed") {
   seedState();
 } else if (command === "seed-msteams-doctor") {

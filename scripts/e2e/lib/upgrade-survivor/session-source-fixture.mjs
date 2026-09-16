@@ -19,7 +19,7 @@ function captureLegacySessionSources(stateDir) {
 
 function usesMissingPathFixture() {
   return (
-    process.env.OPENCLAW_UPGRADE_SURVIVOR_SCENARIO === "base" &&
+    ["base", "missing-load-path"].includes(process.env.OPENCLAW_UPGRADE_SURVIVOR_SCENARIO) &&
     process.env.OPENCLAW_UPGRADE_SURVIVOR_UPDATE_RESTART_MODE === "manual"
   );
 }

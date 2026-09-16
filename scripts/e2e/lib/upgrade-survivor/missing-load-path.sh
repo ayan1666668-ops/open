@@ -11,9 +11,14 @@ capture_missing_load_path_lint() {
 }
 
 run_missing_load_path_fixture() {
-  [ "$SCENARIO" = "base" ] && [ "$UPDATE_RESTART_MODE" = "manual" ] || return 0
+  if [ "$SCENARIO" = "missing-load-path" ] && [ "$UPDATE_RESTART_MODE" != "manual" ]; then
+    echo "missing-load-path requires manual restart" >&2
+    return 2
+  fi
+  { [ "$SCENARIO" = "base" ] || [ "$SCENARIO" = "missing-load-path" ]; } &&
+    [ "$UPDATE_RESTART_MODE" = "manual" ] || return 0
   local stage="$1"
-  local helper="scripts/e2e/lib/upgrade-survivor/missing-load-path.mjs"
+  local helper="scripts/e2e/lib/upgrade-survivor/assertions.mjs"
   case "$stage" in
     baseline)
       local GATEWAY_LOG="$ARTIFACT_ROOT/missing-load-path/baseline-gateway.log"
@@ -25,10 +30,10 @@ run_missing_load_path_fixture() {
       ;;
     post-doctor)
       phase missing-load-path-doctor-lint capture_missing_load_path_lint
-      phase missing-load-path-post-doctor node "$helper" "$stage"
+      phase missing-load-path-post-doctor node "$helper" missing-load-path "$stage"
       ;;
     *)
-      phase "missing-load-path-$stage" node "$helper" "$stage"
+      phase "missing-load-path-$stage" node "$helper" missing-load-path "$stage"
       ;;
   esac
 }

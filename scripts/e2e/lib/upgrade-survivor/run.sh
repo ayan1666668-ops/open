@@ -84,7 +84,7 @@ if [ "$WORKER_CELL" = "1" ]; then
   export OPENCLAW_SKIP_STARTUP_MODEL_PREWARM=1
   mkdir -p "$XDG_CACHE_HOME"
 fi
-if [ "$SCENARIO" = "legacy-operator-state" ] || [ "$SCENARIO" = "base" ]; then
+if [ "$SCENARIO" = "legacy-operator-state" ] || [ "$SCENARIO" = "base" ] || [ "$SCENARIO" = "missing-load-path" ]; then
   export npm_config_prefix="$RUNTIME_ROOT/npm-prefix"
 else
   export npm_config_prefix="$ARTIFACT_ROOT/npm-prefix"
