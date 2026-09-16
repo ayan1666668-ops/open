@@ -11,7 +11,7 @@ function assertNoSystemdLineBreaks(value: string, label: string): void {
   }
 }
 
-function systemdEscapeArg(value: string): string {
+function systemdEscapeArgWithOptions(value: string, escapePercent: boolean): string {
   assertNoSystemdLineBreaks(value, "Systemd unit values");
   if (!/[\s"\\%]/.test(value)) {
     return value;
@@ -21,9 +21,26 @@ function systemdEscapeArg(value: string): string {
   // survive the round-trip byte-for-byte. Escaping only backslash pairs left a
   // lone backslash unescaped, and the reader then swallowed the byte after it.
   // The manager also expands % specifiers (%s, %n, ...) in inline directives, so
-  // each literal % must be doubled; the reader only reverses %% and %h.
-  const escaped = value.replaceAll("\\", "\\\\").replaceAll('"', '\\"').replaceAll("%", "%%");
+  // raw installation values must double each %; the reader only reverses %% and %h.
+  const escaped = value
+    .replaceAll("\\", "\\\\")
+    .replaceAll('"', '\\"')
+    .replaceAll("%", escapePercent ? "%%" : "%");
   return `"${escaped}"`;
+}
+
+function systemdEscapeArg(value: string): string {
+  return systemdEscapeArgWithOptions(value, true);
+}
+
+/**
+ * Re-renders a key/value pair parsed back from an existing unit line. The value
+ * is already in serialized form (%% encoded, intentional %h intact), so % must
+ * be preserved verbatim — re-escaping would corrupt preserved settings during
+ * metadata refresh and backup sanitization.
+ */
+export function renderSystemdEnvAssignment(key: string, value: string): string {
+  return systemdEscapeArgWithOptions(`${key}=${value}`, false);
 }
 
 function renderEnvLines(env: Record<string, string | undefined> | undefined): string[] {
@@ -154,8 +171,4 @@ export function splitSystemdLogicalLines(content: string): string[] {
     }
   }
   return continued ? [...lines, continued] : lines;
-}
-
-export function renderSystemdEnvAssignment(key: string, value: string): string {
-  return systemdEscapeArg(`${key}=${value}`);
 }

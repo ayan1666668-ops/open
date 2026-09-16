@@ -73,6 +73,13 @@ describe("systemd unit value round-trips", () => {
       value,
     ]);
   });
+
+  it.each([
+    { name: "already-encoded %% specifier", value: "100%%s" },
+    { name: "intentional %h expansion", value: "%h/cache" },
+  ])("rewrite re-render preserves $name verbatim", ({ value }) => {
+    expect(renderSystemdEnvAssignment("OTHER_SETTING", value)).toBe(`"OTHER_SETTING=${value}"`);
+  });
 });
 
 describe("buildSystemdUnit", () => {
