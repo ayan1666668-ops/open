@@ -507,12 +507,17 @@ export async function maybeOfferUpdateBeforeDoctor(params: {
             timeoutMs: UPDATE_RUNNER_TIMEOUT_MS,
           });
           assertCurrent();
-          if (activated !== "ok") {
+          if (activated !== "ok" && activated !== "readiness-pending") {
             throw new Error(
               "Gateway restart was not verified; run `openclaw gateway status --deep` before restarting manually.",
             );
           }
-          note("Restarted the running gateway service after updating OpenClaw.", "Update");
+          note(
+            activated === "readiness-pending"
+              ? "Gateway is still starting; readiness remains unverified. Keep recovery backups and check `openclaw gateway status --deep`."
+              : "Restarted the running gateway service after updating OpenClaw.",
+            "Update",
+          );
         } catch (err) {
           if (
             err instanceof UpdateCommandRecoveryPendingError ||

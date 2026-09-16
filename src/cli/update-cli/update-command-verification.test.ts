@@ -5,7 +5,6 @@ import { createDeferred } from "../../../test/helpers/promise.js";
 import type { GatewayServiceRuntime } from "../../daemon/service-runtime.js";
 import * as gatewayService from "../../daemon/service.js";
 import { gatewayHealthResponse } from "../../gateway/health-response.test-support.js";
-import { prepareUpdateFailureReport } from "../../infra/update-failure-report-prepare.js";
 import { recordUpdateRunVerification } from "../../infra/update-run-ledger.js";
 import type { UpdateRunResult } from "../../infra/update-runner.js";
 import { defaultRuntime } from "../../runtime.js";
@@ -124,9 +123,16 @@ describe("update readiness generation", () => {
     },
   );
 
-  it.each(["restart script", "service refresh", "child readiness timeout", "legacy update marker"])(
-    "lets a 90-second startup finish within the update budget (%s)",
-    async (activation) => {
+  it.each(
+    [
+      "restart script",
+      "service refresh",
+      "child readiness timeout",
+      "legacy update marker",
+    ].flatMap((activation) => [false, true].map((exhausted) => ({ activation, exhausted }))),
+  )(
+    "preserves a slow startup ($activation, exhausted=$exhausted)",
+    async ({ activation, exhausted }) => {
       const refreshServiceEnv = activation === "service refresh";
       const childTimeout = activation === "child readiness timeout";
       if (childTimeout) {
@@ -160,19 +166,16 @@ describe("update readiness generation", () => {
       }
       const result =
         activation === "legacy update marker"
-          ? (
-              await verifyUpdatedGateway({
-                result: { status: "ok", mode: "npm", steps: [], durationMs: 0 },
-                opts: { json: true },
-                serviceEnv: { HOME: "/synthetic-home", OPENCLAW_UPDATE_IN_PROGRESS: "1" },
-                gatewayPort: address.port,
-                expectedVersion: "2026.9.4",
-                expectedBuildId: "candidate-build",
-                requireRunningService: true,
-              })
-            ).ok
-            ? "ok"
-            : "restart-health-failed"
+          ? await verifyUpdatedGateway({
+              result: { status: "ok", mode: "npm", steps: [], durationMs: 0 },
+              opts: { json: true },
+              serviceEnv: { HOME: "/synthetic-home", OPENCLAW_UPDATE_IN_PROGRESS: "1" },
+              gatewayPort: address.port,
+              expectedVersion: "2026.9.4",
+              expectedBuildId: "candidate-build",
+              requireRunningService: true,
+              ...(exhausted ? { timeoutMs: 60_000 } : {}),
+            })
           : await maybeRestartService({
               shouldRestart: true,
               result: {
@@ -188,14 +191,26 @@ describe("update readiness generation", () => {
               gatewayPort: address.port,
               restartScriptPath: childTimeout ? undefined : "/synthetic-restart.sh",
               requireRunningServiceAfterRestart: true,
-              timeoutMs: 120_000,
+              timeoutMs: exhausted ? 60_000 : 120_000,
             });
-      expect(result, JSON.stringify(vi.mocked(defaultRuntime.error).mock.calls)).toBe("ok");
-      expect(monotonicClock.nowMs).toBe(95_500);
-      expect(callGateway).toHaveBeenCalledTimes(14);
+      const pending = exhausted && !childTimeout;
+      if (typeof result === "string") {
+        expect(result, JSON.stringify(vi.mocked(defaultRuntime.error).mock.calls)).toBe(
+          pending ? "readiness-pending" : "ok",
+        );
+      } else {
+        expect(result).toMatchObject(
+          pending ? { ok: false, stopReason: "gateway-readiness-pending" } : { ok: true },
+        );
+      }
+      expect(monotonicClock.nowMs).toBe(pending ? 65_500 : 95_500);
+      expect(callGateway).toHaveBeenCalledTimes(pending ? 0 : 14);
       const { runRestartScript } = await import("./restart-helper.js");
       expect(runRestartScript).toHaveBeenCalledTimes(
         refreshServiceEnv || childTimeout || activation === "legacy update marker" ? 0 : 1,
+      );
+      expect(runUpdatedInstallGatewayCommand).toHaveBeenCalledTimes(
+        refreshServiceEnv || childTimeout ? 1 : 0,
       );
     },
   );
@@ -316,21 +331,18 @@ describe("update readiness generation", () => {
       const result = await verification;
       expect(result.ok).toBe(unchanged);
       if (transition === "readyz-error") {
-        const report = await prepareUpdateFailureReport(
-          {
-            attemptId: "loopback-readyz-failure",
-            result: { ...updateResult, status: "error", reason: result.summary },
-          },
-          { env: {}, stateDir: "/synthetic-state" },
+        expect(result.stopReason).toBe("gateway-readiness-pending");
+        expect(updateResult.steps).toContainEqual(
+          expect.objectContaining({
+            name: "gateway verification",
+            exitCode: 0,
+            termination: "timeout",
+            advisory: {
+              kind: "recoverable-maintenance",
+              message: expect.stringContaining("Last HTTP readiness response: 503."),
+            },
+          }),
         );
-        const local = JSON.stringify(updateResult);
-        for (const output of [local, report.body]) {
-          expect(output).toContain("readyz-unhealthy");
-          expect(output).toContain(
-            "Gateway readiness endpoint returned HTTP 503; expected HTTP 200.",
-          );
-        }
-        expect(report.body).toContain("Failing check readyz (readyz-unhealthy)");
       }
       if (unchanged) {
         expect(onVerified).toHaveBeenCalledOnce();

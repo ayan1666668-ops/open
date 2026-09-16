@@ -235,6 +235,20 @@ A candidate can be running while verification fails. Recovery guidance uses the
 latest observed service state and names the running version when known; an
 earlier activation stop does not mean the service remains stopped.
 
+When the readiness allowance expires while the service still reports a running
+Gateway, the updater records the elapsed wait, startup phase, and available HTTP
+observation as a warning. It leaves the process starting, keeps readiness
+unconfirmed, and retains recovery backups. Check `openclaw gateway status --deep`
+before retiring those backups. A timeout alone does not authorize a recovery
+restart or rollback; a refused rollback also leaves the candidate untouched.
+Concrete version, build, channel, or stopped-service failures still receive their
+own diagnostics.
+
+This warning handling belongs to the updater already running. The published
+2026.9.3 and 2026.9.4 parents cannot distinguish pending readiness from verified
+success when completing a migrated update, so candidate-only updates cannot
+change their backup-retirement and Windows autostart decisions.
+
 Plugin packages download and sync against the installed target before the managed
 Gateway restarts. The service remains stopped through channel/config writes,
 plugin convergence, and any required full Doctor migrations. Downloads therefore

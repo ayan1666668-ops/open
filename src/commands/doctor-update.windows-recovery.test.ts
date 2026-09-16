@@ -20,6 +20,7 @@ describe("maybeOfferUpdateBeforeDoctor", () => {
     "restore-fails",
     "restart-fails",
     "verify-fails",
+    "readiness-pending",
   ] as const)("finishes Windows task recovery after a Doctor update: %s", async (outcome) => {
     mockGitCheckout();
     let taskEnabled = false;
@@ -94,6 +95,17 @@ describe("maybeOfferUpdateBeforeDoctor", () => {
         staleGatewayPids: [],
       });
     }
+    if (outcome === "readiness-pending") {
+      mocks.waitForHealthyRestart.mockResolvedValue({
+        healthy: false,
+        runtime: { status: "running", pid: 7376 },
+        portUsage: { status: "free", listeners: [], hints: [] },
+        staleGatewayPids: [],
+        waitOutcome: "timeout",
+        elapsedMs: 90_000,
+        startupPhase: "waiting for Gateway listener",
+      });
+    }
     const runtime = {
       log: vi.fn(),
       error: vi.fn(),
@@ -164,6 +176,24 @@ describe("maybeOfferUpdateBeforeDoctor", () => {
       expect(mocks.triageCommand.mock.calls[0]?.[1]?.recovery?.updateFailure).toMatchObject({
         result: { recovery: { serviceRestartSafe: true, service: "failed" } },
       });
+    }
+    if (outcome === "readiness-pending") {
+      expect(mocks.restartUpdatedGateway).toHaveBeenCalledOnce();
+      expect(mocks.maybeRestartServiceAfterFailedMutableUpdate).not.toHaveBeenCalled();
+      expect(mocks.note).toHaveBeenCalledWith(expect.stringContaining("still starting"), "Update");
+      expect(mocks.completeUpdateCommandRun).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: "ok",
+          steps: expect.arrayContaining([
+            expect.objectContaining({
+              name: "gateway verification",
+              termination: "timeout",
+              advisory: expect.objectContaining({ kind: "recoverable-maintenance" }),
+            }),
+          ]),
+        }),
+        expect.anything(),
+      );
     }
   });
 });

@@ -196,46 +196,56 @@ describe("maybeRestartService", () => {
         expectedBuildId: gateway.buildId,
         onVerified,
       });
+      const initialPending =
+        change === "initial-settle-error" || change === "initial-readyz-error" || rollback;
+      if (initialPending) {
+        await expect(verification).resolves.toMatchObject({
+          ok: false,
+          stopReason: "gateway-readiness-pending",
+        });
+        expect(onVerified).not.toHaveBeenCalled();
+        expect(updateResult.steps).toContainEqual(
+          expect.objectContaining({
+            exitCode: 0,
+            termination: "timeout",
+            advisory: expect.objectContaining({ kind: "recoverable-maintenance" }),
+          }),
+        );
+      }
       if (initialFailure) {
         await expect(verification).resolves.toMatchObject({ ok: false });
         expect(onVerified).not.toHaveBeenCalled();
         const failingCheck =
-          change === "initial-readyz-error" || rollback
-            ? {
-                check: "readyz",
-                code: "readyz-unhealthy",
-                message: "Gateway readiness endpoint returned HTTP 503; expected HTTP 200.",
-              }
-            : change === "initial-version-error"
-              ? { check: "versionMatch", code: "version-mismatch" }
-              : change === "initial-build-error"
-                ? { check: "versionMatch", code: "build-id-mismatch" }
-                : change === "initial-channel-error"
-                  ? {
-                      check: "channelsReady",
-                      code: "channel-errors",
-                      pluginId: "fixture-channel",
-                      message: "connection failed",
-                    }
-                  : change === "initial-settle-error"
-                    ? { check: "settled", code: "timeout", message: "Gateway did not settle" }
-                    : { check: "service", code: "service-not-running" };
-        expect(updateResult.steps).toContainEqual(
-          expect.objectContaining({
-            name: "gateway verification",
-            exitCode: 1,
-            failureFacts: expect.arrayContaining([expect.objectContaining(failingCheck)]),
-          }),
-        );
-        expect(recordUpdateRunStep).toHaveBeenCalledWith(
-          admitted.runId,
-          expect.objectContaining({
-            step: "gateway verification",
-            status: "failed",
-            failureFacts: expect.arrayContaining([expect.objectContaining(failingCheck)]),
-          }),
-          expect.anything(),
-        );
+          change === "initial-version-error"
+            ? { check: "versionMatch", code: "version-mismatch" }
+            : change === "initial-build-error"
+              ? { check: "versionMatch", code: "build-id-mismatch" }
+              : change === "initial-channel-error"
+                ? {
+                    check: "channelsReady",
+                    code: "channel-errors",
+                    pluginId: "fixture-channel",
+                    message: "connection failed",
+                  }
+                : { check: "service", code: "service-not-running" };
+        if (!initialPending) {
+          expect(updateResult.steps).toContainEqual(
+            expect.objectContaining({
+              name: "gateway verification",
+              exitCode: 1,
+              failureFacts: expect.arrayContaining([expect.objectContaining(failingCheck)]),
+            }),
+          );
+          expect(recordUpdateRunStep).toHaveBeenCalledWith(
+            admitted.runId,
+            expect.objectContaining({
+              step: "gateway verification",
+              status: "failed",
+              failureFacts: expect.arrayContaining([expect.objectContaining(failingCheck)]),
+            }),
+            expect.anything(),
+          );
+        }
         if (rollback) {
           updateResult.recovery = {
             serviceRestartSafe: true,
@@ -258,9 +268,10 @@ describe("maybeRestartService", () => {
           expect(updateResult.steps).toEqual([
             expect.objectContaining({
               name: "gateway verification",
-              exitCode: 1,
-              failureFacts: expect.arrayContaining([expect.objectContaining(failingCheck)]),
+              exitCode: 0,
+              advisory: expect.objectContaining({ kind: "recoverable-maintenance" }),
             }),
+            expect.objectContaining({ name: "rollback gateway verification", exitCode: 0 }),
           ]);
         } else {
           expect(updateResult.steps).toEqual([
@@ -268,6 +279,8 @@ describe("maybeRestartService", () => {
           ]);
           expect(updateResult.steps[0]?.failureFacts).toBeUndefined();
         }
+        expect(updateResult.steps.at(-1)?.advisory).toBeUndefined();
+        expect(updateResult.steps.at(-1)?.termination).toBeUndefined();
         expect(recordUpdateRunStep).toHaveBeenLastCalledWith(
           admitted.runId,
           expect.objectContaining({
@@ -489,20 +502,18 @@ describe("maybeRestartService", () => {
         onVerified,
         onVerificationFailure,
       });
-      expect(actual).toBe(verified ? "ok" : "restart-health-failed");
+      expect(actual).toBe(verified ? "ok" : "readiness-pending");
       expect(mocks.waitForGatewayHealthyRestart).toHaveBeenCalledTimes(1);
       expect(mocks.runRestartScript).toHaveBeenCalledTimes(refreshServiceEnv ? 0 : 1);
       expect(mocks.runUpdatedInstallGatewayCommand).toHaveBeenCalledTimes(
         refreshServiceEnv ? 1 : 0,
       );
       expect(onVerified).toHaveBeenCalledTimes(verified ? 1 : 0);
+      expect(onVerificationFailure).not.toHaveBeenCalled();
       if (verified) {
         const verifiedAtMs = onVerified.mock.calls[0]?.[0];
         expect(verifiedAtMs).toBeGreaterThanOrEqual(startedAtMs);
         expect(verifiedAtMs).toBeLessThanOrEqual(Date.now());
-        expect(onVerificationFailure).not.toHaveBeenCalled();
-      } else {
-        expect(onVerificationFailure).toHaveBeenCalledWith("readyz-unhealthy");
       }
     },
   );
