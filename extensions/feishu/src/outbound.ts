@@ -387,13 +387,13 @@ async function sendOutboundText(params: {
 
   // Core chunks raw text before channel rendering. Re-chunk after expansion
   // and keep each fenced-code chunk independently valid Markdown.
-  const postLimit = resolveTextChunkLimit(cfg, "feishu", accountId, {
+  const postLimit = resolveTextChunkLimit(cfg, "feishu", account.accountId, {
     fallbackLimit: FEISHU_TEXT_CHUNK_LIMIT,
   });
   const chunkOptions = {
     text: normalizedText,
     limit: postLimit,
-    mode: resolveChunkMode(cfg, "feishu", accountId),
+    mode: resolveChunkMode(cfg, "feishu", account.accountId),
   };
   const subChunks = useCard
     ? chunkFeishuCardMarkdown({ ...chunkOptions, header: params.header })

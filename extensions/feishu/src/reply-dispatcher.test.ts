@@ -304,16 +304,20 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
         },
       },
     });
-    resolveFeishuAccountMock.mockReturnValue({
+    // The real resolver answers with the account it selected, so a request naming
+    // `work` resolves to `work`. Mocking a fixed id instead would describe a state
+    // `resolveFeishuAccount` cannot produce.
+    resolveFeishuAccountMock.mockImplementation((params?: { accountId?: string }) => ({
       ...createReplyAccount("auto", "off", "feishu"),
+      accountId: params?.accountId ?? "work",
       config: { renderMode: "raw", streaming: { mode: "off" } },
-    });
+    }));
     const tableMarkdown = "| Name | Role |\n| --- | --- |\n| Ada | Lead |";
     const cfg: ClawdbotConfig = {
       channels: {
         feishu: {
           markdown: { tables: "bullets" },
-          accounts: { work: { markdown: { tables: "off" } } },
+          accounts: { work: { markdown: { tables: "off" } }, other: {} },
         },
       },
     };
@@ -326,7 +330,8 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
       ]),
     );
     try {
-      for (const accountId of ["work", undefined]) {
+      // `work` overrides the mode, `other` does not and falls to the channel value.
+      for (const accountId of ["work", "other"]) {
         const { result } = createDispatcherHarness({ accountId, cfg });
         const dispatcher = createReplyDispatcher(toTypingDispatcherOptions(result));
         dispatcher.sendFinalReply({ text: tableMarkdown });
@@ -5639,6 +5644,30 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
       { tables: "bullets" as const, converted: () => bulletsCard },
       { tables: "code" as const, converted: () => codeText },
     ];
+
+    // The account that sends is the one the resolver picked, which is not always the
+    // one the request named. A table mode configured on that account has to apply.
+    it("reads the table mode from the account the request resolves to", async () => {
+      resolveFeishuAccountMock.mockReturnValue({
+        accountId: "main",
+        appId: "app_id",
+        appSecret: "app_secret",
+        domain: "feishu",
+        config: {},
+        enabled: true,
+      });
+      const { result } = createDispatcherHarness({
+        accountId: undefined,
+        cfg: { channels: { feishu: { accounts: { main: { markdown: { tables: "code" } } } } } },
+      });
+
+      result.replyOptions.onPartialReply?.({ text: tableMarkdown });
+      await vi.waitFor(() => expect(streamingInstances).toHaveLength(1));
+      const instance = requireStreamingInstance(0);
+      await vi.waitFor(() => expect(instance.update).toHaveBeenCalled());
+
+      expect(instance.update.mock.calls.at(-1)?.[0]).toBe(codeText);
+    });
 
     it.each(convertingModes)(
       "projects a $tables table into the card while it is still streaming",

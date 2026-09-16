@@ -273,14 +273,18 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
       },
     });
 
-  const textChunkLimit = core.channel.text.resolveTextChunkLimit(cfg, "feishu", accountId, {
+  // Every lookup here describes the account that actually sends, which is the one
+  // `resolveFeishuRuntimeAccount` picked above. Passing the request's raw id instead
+  // skips an account-scoped limit, mode or table setting whenever the request omits
+  // it and a default or sole account supplies one.
+  const textChunkLimit = core.channel.text.resolveTextChunkLimit(cfg, "feishu", account.accountId, {
     fallbackLimit: 4000,
   });
-  const chunkMode = core.channel.text.resolveChunkMode(cfg, "feishu", accountId);
+  const chunkMode = core.channel.text.resolveChunkMode(cfg, "feishu", account.accountId);
   const tableMode = core.channel.text.resolveMarkdownTableMode({
     cfg,
     channel: "feishu",
-    accountId,
+    accountId: account.accountId,
     supportsBlockTables: true,
   });
   // Post rendering has no native tables, so block falls back to code there. An

@@ -46,12 +46,12 @@ export function createFeishuCommentReplyDispatcher(
   const textChunkLimit = core.channel.text.resolveTextChunkLimit(
     params.cfg,
     "feishu",
-    params.accountId,
+    account.accountId,
     {
       fallbackLimit: 4000,
     },
   );
-  const chunkMode = core.channel.text.resolveChunkMode(params.cfg, "feishu", params.accountId);
+  const chunkMode = core.channel.text.resolveChunkMode(params.cfg, "feishu", account.accountId);
   // Comments have no native table renderer, so block falls back to code here.
   const tableMode = core.channel.text.resolveMarkdownTableMode({
     cfg: params.cfg,

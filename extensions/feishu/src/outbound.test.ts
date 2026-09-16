@@ -3088,6 +3088,32 @@ describe("feishuOutbound.sendText replyToId forwarding", () => {
     expect(commentThreadParams()?.content).toBe("Looks good to me.");
   });
 
+  it("re-chunks expanded post-md text at the account the request resolves to", async () => {
+    await sendText({
+      cfg: {
+        channels: {
+          feishu: {
+            defaultAccount: "work",
+            accounts: {
+              work: { textChunkLimit: 10 },
+              other: {},
+            },
+          },
+        },
+      },
+      to: "chat_1",
+      text: Array.from({ length: 10 }, () => "a").join("\n"),
+      // No account id, so the limit has to come from the account the resolver picks,
+      // which is the account the table mode a few lines above already reads.
+      accountId: undefined,
+    });
+
+    expect(sendMessageFeishuMock.mock.calls.length).toBeGreaterThan(1);
+    for (const [params] of sendMessageFeishuMock.mock.calls) {
+      expect(params.text.length).toBeLessThanOrEqual(10);
+    }
+  });
+
   it("re-chunks expanded post-md text at the serialized byte envelope", async () => {
     await sendText({
       cfg: {
