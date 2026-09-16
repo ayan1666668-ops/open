@@ -1,4 +1,4 @@
-import { cpSync, mkdirSync, readFileSync, realpathSync, symlinkSync } from "node:fs";
+import { cpSync, lstatSync, mkdirSync, readFileSync, realpathSync, symlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 export function copyPrWrapperSources(destination: string): string[] {
@@ -17,10 +17,14 @@ export function copyPrWrapperSources(destination: string): string[] {
 }
 
 export function linkPrWrapperDependencies(destination: string): void {
-  mkdirSync(join(destination, "node_modules"));
+  // Fixture initialization may repeat; stale-base squash merges have reintroduced
+  // duplicate initialization twice.
+  const modulesDir = join(destination, "node_modules");
+  mkdirSync(modulesDir, { recursive: true });
   // Use installed third-party packages only, never workspace source or loader mocks.
   for (const dependency of [
     "@openclaw/fs-safe",
+    "@openclaw/proxyline",
     "acorn",
     "chalk",
     "commander",
@@ -35,6 +39,7 @@ export function linkPrWrapperDependencies(destination: string): void {
     "kysely",
     "minimatch",
     "ms",
+    "p-map",
     "semver",
     "string-width",
     "tsdown",
@@ -42,13 +47,18 @@ export function linkPrWrapperDependencies(destination: string): void {
     "tsx",
     "typebox",
     "typescript",
+    "undici",
     "yaml",
     "zod",
   ]) {
-    mkdirSync(dirname(join(destination, "node_modules", dependency)), { recursive: true });
+    const linkedDependency = join(modulesDir, dependency);
+    mkdirSync(dirname(linkedDependency), { recursive: true });
+    if (lstatSync(linkedDependency, { throwIfNoEntry: false })) {
+      continue;
+    }
     symlinkSync(
       realpathSync(join("node_modules", dependency)),
-      join(destination, "node_modules", dependency),
+      linkedDependency,
       process.platform === "win32" ? "junction" : "dir",
     );
   }

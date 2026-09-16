@@ -34,12 +34,14 @@ type GitPolicyReader = (args: string[]) => ReturnType<typeof executeGitCommand>;
 
 /** Preserve native PR hooks without enabling them in Gateway-owned Git. */
 async function needsNativeGit(git: GitPolicyReader, env: NodeJS.ProcessEnv): Promise<boolean> {
-  // Managed Git replaces command-scoped config. Never discard caller policy.
+  // Managed Git replaces GIT_CONFIG_COUNT, so keep those callers on native Git.
+  // GIT_CONFIG_PARAMETERS is preserved, including the supervisor's maintenance
+  // lifetime settings; effective hook/fsmonitor/include policy is checked below.
   if (
     Object.entries(env).some(
       ([name, value]) =>
         value !== undefined &&
-        /^(GIT_CONFIG_(COUNT|KEY_\d+|VALUE_\d+|PARAMETERS)|GIT_(DIR|WORK_TREE|COMMON_DIR|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES))$/i.test(
+        /^(GIT_CONFIG_(COUNT|KEY_\d+|VALUE_\d+)|GIT_(DIR|WORK_TREE|COMMON_DIR|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES))$/i.test(
           name,
         ),
     )

@@ -88,22 +88,31 @@ describePosix("native PR source provisioning", () => {
     },
   );
 
-  it("preserves command-scoped safe.directory through cold provisioning", () => {
-    const f = coldFixture(false);
-    // Git's own ownership fixture makes command-scope authorization necessary
-    // without changing filesystem ownership or global configuration.
-    f.env.GIT_TEST_ASSUME_DIFFERENT_OWNER = "1";
-    f.env.GIT_CONFIG_COUNT = "1";
-    f.env.GIT_CONFIG_KEY_0 = "safe.directory";
-    f.env.GIT_CONFIG_VALUE_0 = "*";
-    const result = f.run("review-init");
-    expect(result.status, result.stderr).toBe(0);
-    expectSeed(f);
-    expect(result.stderr).toContain("PR source checkout: Git checkout.");
-    expect(f.git(f.worktree, "rev-parse", "FETCH_HEAD")).toBe(f.main);
-    expect(f.git(f.canonical, "for-each-ref", "refs/openclaw/pr-operation-locks")).toBe("");
-    expect(existsSync(join(f.canonical, ".worktrees", ".templates"))).toBe(false);
-  });
+  it.each(["count", "parameters"] as const)(
+    "preserves command-scoped safe.directory through cold provisioning (%s transport)",
+    (transport) => {
+      const f = coldFixture(false);
+      // Git's ownership fixture requires actual command-scope authorization,
+      // without changing filesystem ownership or global configuration.
+      f.env.GIT_TEST_ASSUME_DIFFERENT_OWNER = "1";
+      if (transport === "count") {
+        f.env.GIT_CONFIG_COUNT = "1";
+        f.env.GIT_CONFIG_KEY_0 = "safe.directory";
+        f.env.GIT_CONFIG_VALUE_0 = "*";
+      } else {
+        f.env.GIT_CONFIG_PARAMETERS = "'safe.directory=*'";
+      }
+      const result = f.run("review-init");
+      expect(result.status, result.stderr).toBe(0);
+      expectSeed(f);
+      if (transport === "count") {
+        expect(result.stderr).toContain("PR source checkout: Git checkout.");
+        expect(existsSync(join(f.canonical, ".worktrees", ".templates"))).toBe(false);
+      }
+      expect(f.git(f.worktree, "rev-parse", "FETCH_HEAD")).toBe(f.main);
+      expect(f.git(f.canonical, "for-each-ref", "refs/openclaw/pr-operation-locks")).toBe("");
+    },
+  );
 
   it("lets Git execute the default checkout hook exactly once and preserves its tracked edit", () => {
     const f = coldFixture(false);
@@ -133,7 +142,7 @@ printf 'hook-owned edit\\n' > src/subject.ts
     expect(existsSync(join(f.canonical, ".worktrees", ".templates"))).toBe(false);
   });
 
-  it.each(["absolute", "relative", "command-scoped"] as const)(
+  it.each(["absolute", "relative", "command-scoped", "parameter-scoped"] as const)(
     "preserves %s core.hooksPath policy through native Git",
     (policy) => {
       const f = coldFixture(false);
@@ -153,6 +162,8 @@ printf 'configured hook edit\\n' > src/subject.ts
         f.env.GIT_CONFIG_COUNT = "1";
         f.env.GIT_CONFIG_KEY_0 = "core.hooksPath";
         f.env.GIT_CONFIG_VALUE_0 = hooks;
+      } else if (policy === "parameter-scoped") {
+        f.env.GIT_CONFIG_PARAMETERS = `'core.hooksPath=${hooks}'`;
       } else {
         // Relative hooks resolve from the checkout in which the hook runs,
         // not from the canonical repository where provisioning begins.
@@ -165,7 +176,13 @@ printf 'configured hook edit\\n' > src/subject.ts
       }
       const result = f.run("review-init");
       expect(result.status).not.toBe(0);
-      expect(result.stderr).toContain("foreign state blocks a new transition");
+      // Native Git resolves relative hooks only after entering the new checkout.
+      // The hook then dirties the explicitly journaled same-seed transition.
+      expect(result.stderr).toContain(
+        policy === "relative"
+          ? "the journaled transition did not complete cleanly"
+          : "foreign state blocks a new transition",
+      );
       expectSeed(f);
       expect(readFileSync(receipt, "utf8")).toBe(`${f.worktree}\n`);
       expect(readFileSync(join(f.worktree, "src", "subject.ts"), "utf8")).toBe(
@@ -201,7 +218,8 @@ printf 'branch hook edit\\n' > src/subject.ts
     expect(f.git(f.canonical, "config", "--get", "core.hooksPath")).toBe("/dev/null");
     const result = f.run("review-init");
     expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("foreign state blocks a new transition");
+    // The branch condition activates after native worktree registration.
+    expect(result.stderr).toContain("the journaled transition did not complete cleanly");
     expectSeed(f);
     expect(readFileSync(receipt, "utf8")).toBe(`${f.worktree}\n`);
     expect(readFileSync(join(f.worktree, "src", "subject.ts"), "utf8")).toBe("branch hook edit\n");

@@ -246,13 +246,11 @@ async function executeOperation(
         }
         const pending = Promise.all(
           value.input.requests.map((item) => request(item, context.signal)),
-        ).then(
-          (replies): WorkerTaskResponse => ({
-            input: replies.map((response) => response.input),
-            transferList: [...new Set(replies.flatMap((response) => response.transferList ?? []))],
-            timeoutMs: WORKER_PHASE_TIMEOUT_MS,
-          }),
-        );
+        ).then((replies): WorkerTaskResponse => ({
+          input: replies.map((response) => response.input),
+          transferList: [...new Set(replies.flatMap((response) => response.transferList ?? []))],
+          timeoutMs: WORKER_PHASE_TIMEOUT_MS,
+        }));
         hostWork.add(pending);
         void pending.then(
           () => hostWork.delete(pending),
