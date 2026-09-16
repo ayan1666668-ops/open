@@ -1,5 +1,6 @@
 // Maintenance command registration: doctor, triage, dashboard, reset, and uninstall.
 import type { Command } from "commander";
+import { detectCurrentSqliteCapabilities, nodeRuntimeFailure } from "../../../node-sqlite.mjs";
 import { formatDocsLink } from "../../../packages/terminal-core/src/links.js";
 import { theme } from "../../../packages/terminal-core/src/theme.js";
 import { defaultRuntime } from "../../runtime.js";
@@ -132,7 +133,11 @@ export function registerMaintenanceCommands(program: Command) {
         opts.postUpgrade !== true &&
         typeof opts.stateSqlite !== "string" &&
         typeof opts.sessionSqlite !== "string";
-      const lintMode = opts.lint === true ? "--lint" : jsonImpliesLint ? "--json" : undefined;
+      const unsupportedNode =
+        !process.versions.bun &&
+        Boolean(nodeRuntimeFailure(process.versions.node, await detectCurrentSqliteCapabilities()));
+      const lintMode =
+        opts.lint === true || unsupportedNode ? "--lint" : jsonImpliesLint ? "--json" : undefined;
       const mutationOption =
         opts.repair === true || opts.fix === true || opts.force === true
           ? "--repair, --fix, or --force"
@@ -147,6 +152,32 @@ export function registerMaintenanceCommands(program: Command) {
         return exitDoctorError(
           `doctor ${lintMode} runs read-only lint checks and cannot be combined with ${mutationOption}.`,
           opts.json === true || !process.stdout.isTTY,
+        );
+      }
+      const stateSqlite = parseDoctorStateSqliteMode(opts.stateSqlite, opts.json === true);
+      const sessionSqlite = parseDoctorSessionSqliteMode(opts.sessionSqlite, opts.json === true);
+      if (opts.githubIssue === true && sessionSqlite !== "recover") {
+        return exitDoctorError(
+          "--github-issue requires --session-sqlite recover.",
+          opts.json === true,
+        );
+      }
+      // Each handler completes one operation. Reject competing requests before
+      // importing a handler so its precedence cannot silently discard another.
+      const requestedOperationCount = [
+        opts.lint === true,
+        opts.postUpgrade === true,
+        stateSqlite !== undefined,
+        sessionSqlite !== undefined,
+        opts.repair === true ||
+          opts.fix === true ||
+          opts.force === true ||
+          opts.generateGatewayToken === true,
+      ].filter(Boolean).length;
+      if (requestedOperationCount > 1) {
+        return exitDoctorError(
+          "doctor operations are mutually exclusive: choose one of --lint, --fix/--repair, --post-upgrade, --state-sqlite, or --session-sqlite.",
+          opts.json === true || (opts.lint === true && !process.stdout.isTTY),
         );
       }
       if (opts.lint !== true && hasLintOnlyDoctorOptions(opts)) {
@@ -178,11 +209,6 @@ export function registerMaintenanceCommands(program: Command) {
         defaultRuntime,
         async () => {
           const { doctorCommand } = await import("../../commands/doctor.js");
-          const stateSqlite = parseDoctorStateSqliteMode(opts.stateSqlite, opts.json === true);
-          const sessionSqlite = parseDoctorSessionSqliteMode(
-            opts.sessionSqlite,
-            opts.json === true,
-          );
           await doctorCommand(defaultRuntime, {
             workspaceSuggestions: opts.workspaceSuggestions,
             yes: Boolean(opts.yes),
@@ -318,7 +344,7 @@ export function registerMaintenanceCommands(program: Command) {
 
   program
     .command("uninstall")
-    .description("Uninstall the gateway service + local data (CLI remains)")
+    .description("Uninstall the gateway service + local data")
     .addHelpText(
       "after",
       () =>

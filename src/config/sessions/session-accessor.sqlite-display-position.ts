@@ -6,18 +6,17 @@ import {
   createTranscriptDisplayPosition,
   createTranscriptDisplaySource,
 } from "../../sessions/transcript-display-position.js";
+import type { TranscriptEvent } from "./session-accessor.sqlite-contract.js";
 import {
   getActiveTranscriptKysely,
-  readTranscriptProjectionGeneration,
   type CurrentTranscriptProjection,
-} from "./session-accessor.sqlite-active-projection.js";
-import type { TranscriptEvent } from "./session-accessor.sqlite-contract.js";
+} from "./session-accessor.sqlite-projection-read.js";
 import { resolveSqliteSessionTranscriptReadFence } from "./session-transcript-read-fence.js";
 
 export function readTranscriptDisplaySource(
   projection: CurrentTranscriptProjection,
 ): string | undefined {
-  const generation = readTranscriptProjectionGeneration(projection);
+  const generation = projection.generation;
   return generation
     ? createTranscriptDisplaySource([
         "sqlite",

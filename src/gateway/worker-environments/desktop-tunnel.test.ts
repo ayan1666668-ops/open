@@ -90,6 +90,17 @@ function fakeRunner(
   return { runner, runs, starts };
 }
 
+function readyRunner() {
+  const fake = fakeRunner();
+  const start = fake.runner.start.bind(fake.runner);
+  fake.runner.start = (argv, options) => {
+    const child = start(argv, options);
+    fake.starts.at(-1)!.process.becomeReady();
+    return child;
+  };
+  return fake;
+}
+
 function launchApp(
   manager: ReturnType<typeof createWorkerDesktopTunnels>,
   app: "browser" | "terminal" = "browser",
@@ -184,7 +195,12 @@ describe("worker desktop tunnels", () => {
     expect(start.argv[start.argv.indexOf("-L") + 1]).toMatch(
       /openclaw-worker-desktop-.+\/desktop\.sock:127\.0\.0\.1:5900$/u,
     );
-    expect(start.options.input).toContain("OPENCLAW_WORKER_TUNNEL_READY");
+    expect(start.argv).toContain("-N");
+    expect(start.argv).toContain("-n");
+    expect(start.argv).toContain("PermitLocalCommand=yes");
+    expect(start.argv).toContain("LocalCommand=printf 'OPENCLAW_WORKER_TUNNEL_READY\\n'");
+    expect(start.argv.at(-1)).toBe("worker@worker.example.test");
+    expect(start.options.input).toBeUndefined();
     start.process.becomeReady();
     const result = await starting;
     expect(result).toMatchObject({ vncPassword: "vnc-secret" });
@@ -364,13 +380,7 @@ describe("worker desktop tunnels", () => {
   });
 
   it("does not cancel a same-epoch retry when its retained predecessor exits", async () => {
-    const fake = fakeRunner();
-    const start = fake.runner.start.bind(fake.runner);
-    fake.runner.start = (argv, options) => {
-      const child = start(argv, options);
-      fake.starts.at(-1)!.process.becomeReady();
-      return child;
-    };
+    const fake = readyRunner();
     const manager = createWorkerDesktopTunnels({ runner: fake.runner });
     await acquire(manager, 1, { protocol: "rfb", port: 5900 });
     const failure = new Error("transport still running");
@@ -449,13 +459,7 @@ describe("worker desktop tunnels", () => {
   });
 
   it("cancels a replacement while the previous desktop is stopping", async () => {
-    const fake = fakeRunner();
-    const start = fake.runner.start.bind(fake.runner);
-    fake.runner.start = (argv, options) => {
-      const child = start(argv, options);
-      fake.starts.at(-1)!.process.becomeReady();
-      return child;
-    };
+    const fake = readyRunner();
     const manager = createWorkerDesktopTunnels({ runner: fake.runner });
     await acquire(manager, 1, { protocol: "rfb", port: 5900 });
     const child = fake.starts[0]!.process;

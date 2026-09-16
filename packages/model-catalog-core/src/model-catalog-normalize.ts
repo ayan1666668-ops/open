@@ -1,4 +1,3 @@
-// Model Catalog Core helper module supports model catalog normalize behavior.
 import {
   asFiniteNumber as normalizeFiniteNumber,
   asNonNegativeFiniteNumber as normalizeNonNegativeNumber,
@@ -330,6 +329,7 @@ function normalizeModelCatalogCompat(value: unknown): ModelCatalogCompatConfig |
     "sendSessionIdHeader",
     "supportsEagerToolInputStreaming",
     "supportsLongCacheRetention",
+    "supportsResponsesContinuation",
     "requiresOpenAiAnthropicToolPayload",
   ] as const;
   for (const field of booleanFields) {

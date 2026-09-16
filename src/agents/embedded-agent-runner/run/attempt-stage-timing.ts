@@ -1,3 +1,4 @@
+import { isMainThread, threadId } from "node:worker_threads";
 import {
   createStageTimingTracker,
   formatStageTimings,
@@ -7,10 +8,7 @@ import {
 type EmbeddedRunStageSummary = StageTimingSummary;
 
 /** Lightweight monotonic-ish stage tracker used for embedded run startup diagnostics. */
-type EmbeddedRunStageTracker = {
-  mark: (name: string) => void;
-  snapshot: () => EmbeddedRunStageSummary;
-};
+type EmbeddedRunStageTracker = ReturnType<typeof createStageTimingTracker>;
 
 /** Canonical stage names for dispatch-time embedded attempt diagnostics. */
 export const EMBEDDED_RUN_ATTEMPT_DISPATCH_STAGE = {
@@ -25,14 +23,13 @@ const EMBEDDED_RUN_STAGE_WARN_STAGE_MS = 5_000;
 
 /**
  * Creates an append-only stage tracker. `mark` records time since the previous
- * mark while `snapshot` reports current total elapsed time without mutating the
- * recorded stage list.
+ * mark. Explicit spans do not advance that checkpoint; snapshots do not mutate
+ * the recorded stage list.
  */
 export function createEmbeddedRunStageTracker(options?: {
   now?: () => number;
 }): EmbeddedRunStageTracker {
-  const { mark, snapshot } = createStageTimingTracker(options?.now ?? Date.now);
-  return { mark, snapshot };
+  return createStageTimingTracker(options?.now ?? Date.now);
 }
 
 /** Returns true when either total runtime or any single stage exceeds warning thresholds. */
@@ -91,5 +88,5 @@ export function formatEmbeddedRunStageSummary(
   summary: EmbeddedRunStageSummary,
 ): string {
   const stages = formatStageTimings(summary.stages);
-  return `${prefix} totalMs=${summary.totalMs} stages=${stages}`;
+  return `${prefix} pid=${process.pid} threadId=${threadId} isMainThread=${isMainThread} totalMs=${summary.totalMs} stages=${stages}`;
 }

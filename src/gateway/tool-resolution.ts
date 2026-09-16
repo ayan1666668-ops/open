@@ -11,7 +11,14 @@ import { applyDelegationCapability } from "../agents/delegation-capability.js";
 import { resolveExecDefaults } from "../agents/exec-defaults.js";
 import { createLazyExecTool, resolveExecToolConfig } from "../agents/lazy-exec-tool.js";
 import { createOpenClawTools } from "../agents/openclaw-tools.js";
+import { filterRequesterYieldTools } from "../agents/openclaw-tools.requester-yield.js";
+import {
+  applySwarmCollectorToolContract,
+  createSwarmCollectorWriteAuthority,
+  resolveSwarmCollectorToolContext,
+} from "../agents/openclaw-tools.swarm.js";
 import { resolveRequesterToolPolicies } from "../agents/requester-tool-policy.js";
+import type { PreparedRootedExecutionCapability } from "../agents/rooted-run-params.js";
 import { resolveSandboxRuntimeStatus } from "../agents/sandbox/runtime-status.js";
 import { resolveScheduledToolCallerContext } from "../agents/scheduled-tool-policy.js";
 import { buildDeclaredToolAllowlistContext } from "../agents/tool-policy-declared-context.js";
@@ -38,6 +45,7 @@ import type { SourceReplyDeliveryMode } from "../auto-reply/get-reply-options.ty
 import type { ConversationReadInvocationOrigin } from "../channels/plugins/conversation-read-origin.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { resolveEventSessionRoutingPolicy } from "../infra/event-session-routing.js";
+import { resolveExactExecModeFromPolicy } from "../infra/exec-approvals.js";
 import { logWarn } from "../logger.js";
 import { getPluginToolMeta } from "../plugins/tool-metadata.js";
 import {
@@ -64,6 +72,8 @@ export function resolveGatewayScopedTools(
     | "cronCreatorCallerOrigin"
   > & {
     cfg: OpenClawConfig;
+    rootedExecution?: PreparedRootedExecutionCapability;
+    messageActionTurnCapability?: string;
     authProfileStore?: AuthProfileStore;
     agentDir?: string;
     onYield?: (message: string, acknowledgment?: string) => Promise<void> | void;
@@ -75,6 +85,11 @@ export function resolveGatewayScopedTools(
     allowGatewaySubagentBinding?: boolean;
     allowMediaInvokeCommands?: boolean;
     surface?: GatewayScopedToolSurface;
+    /**
+     * Liveness of the client grant this request authenticated with, supplied by
+     * the loopback server. Run-contract tools re-check it before they write.
+     */
+    isGrantCurrent?: () => boolean;
     excludeToolNames?: Iterable<string>;
     /** Server-minted coding tools that must be mediated through the loopback surface. */
     mediatedToolNames?: Iterable<string>;
@@ -86,6 +101,7 @@ export function resolveGatewayScopedTools(
     includeNodeExecTool?: boolean;
     /** Current node inventory predicate; evaluated with the resolved exec binding. */
     nodeExecAvailable?: (node?: string) => boolean;
+    pairedNodeComputerUse?: import("../agents/computer-use-node-capabilities.js").PreparedPairedComputerUse;
     skillWorkshop?: SkillWorkshopRunOptions;
   },
 ) {
@@ -115,6 +131,7 @@ export function resolveGatewayScopedTools(
     providerProfile,
     profileAlsoAllow,
     providerProfileAlsoAllow,
+    gatewayConfigReadAllowed,
   } = resolveEffectiveToolPolicy({
     config: params.cfg,
     sessionKey: runtimePolicySessionKey,
@@ -190,7 +207,14 @@ export function resolveGatewayScopedTools(
     classificationSessionKey: runtimePolicySessionKey,
     classificationAgentId: policyAgentId,
   });
-  const sandboxPolicy = sandboxRuntime.sandboxed ? sandboxRuntime.toolPolicy : undefined;
+  const sandboxed = params.rootedExecution
+    ? Boolean(params.rootedExecution.sandbox)
+    : sandboxRuntime.sandboxed;
+  const sandboxPolicy = params.rootedExecution
+    ? params.rootedExecution.sandbox?.tools
+    : sandboxRuntime.sandboxed
+      ? sandboxRuntime.toolPolicy
+      : undefined;
   const excludedToolNames = params.excludeToolNames ? Array.from(params.excludeToolNames) : [];
   const mediatedToolNames = new Set(
     Array.from(params.mediatedToolNames ?? [], (name) => normalizeToolPolicyName(name)).filter(
@@ -215,7 +239,8 @@ export function resolveGatewayScopedTools(
       : [];
   // HTTP callers start with additional surface denies because they cross auth only.
   const workspaceDir =
-    params.workspaceDir?.trim() || resolveAgentWorkspaceDir(params.cfg, sessionAgentId);
+    params.rootedExecution?.workspaceDir ??
+    (params.workspaceDir?.trim() || resolveAgentWorkspaceDir(params.cfg, sessionAgentId));
   const explicitDenylist = collectExplicitDenylist([
     profilePolicy,
     providerProfilePolicy,
@@ -252,9 +277,43 @@ export function resolveGatewayScopedTools(
     gatewayRequestedTools.length > 0 ? { allow: gatewayRequestedTools } : undefined,
   ].some(hasRestrictiveAllowPolicy);
 
+  // CLI backends reach OpenClaw tools through this resolver instead of the
+  // embedded runner, and the loopback grant carries no collector fields, so the
+  // subagent registry supplies the collector run contract for this child.
+  //
+  // Authority is the admitted collector run, not the transport. `params.runId`
+  // reaches this resolver only from `McpLoopbackRequestContext.runId`, which
+  // `resolveMcpRequestContext` copies out of a Gateway-minted, run-bound CLI
+  // client grant; the session-scoped `openclaw attach` branch and the
+  // header-derived branch never set it, and the `http` caller never passes one.
+  // Requiring that id to match the registry's collector record therefore admits
+  // the collector child's own run and nobody else, including an attach client
+  // bound to that same collector session.
+  const swarmCollectorAdmission = {
+    childSessionKey: params.sessionKey,
+    admittedRunId: surface === "loopback" ? params.runId : undefined,
+  };
+  const swarmCollectorContext = resolveSwarmCollectorToolContext(swarmCollectorAdmission);
   const openClawTools = createOpenClawTools({
+    gatewayConfigReadAllowed,
     agentSessionKey: params.sessionKey,
+    messageToolTurnCapability:
+      surface === "loopback" && params.messageActionTurnCapability
+        ? { token: params.messageActionTurnCapability, sessionKey: runtimePolicySessionKey }
+        : undefined,
     runId: params.runId,
+    ...(swarmCollectorContext
+      ? {
+          swarmCollector: true,
+          assertCollectorWriteAuthority: createSwarmCollectorWriteAuthority({
+            admission: swarmCollectorAdmission,
+            isGrantCurrent: params.isGrantCurrent,
+          }),
+          ...(swarmCollectorContext.swarmOutputSchema
+            ? { swarmOutputSchema: swarmCollectorContext.swarmOutputSchema }
+            : {}),
+        }
+      : {}),
     execSession: params.execSession,
     execOverrides: params.execOverrides,
     approvalReviewerDeviceIds: params.approvalReviewerDeviceId
@@ -288,6 +347,7 @@ export function resolveGatewayScopedTools(
     onYield: params.onYield,
     requireExplicitMessageTarget: params.requireExplicitMessageTarget,
     senderIsOwner: params.senderIsOwner,
+    requesterSenderId: senderId,
     conversationReadOrigin: params.conversationReadOrigin,
     allowGatewaySubagentBinding: params.allowGatewaySubagentBinding,
     skillWorkshop: params.skillWorkshop,
@@ -301,10 +361,26 @@ export function resolveGatewayScopedTools(
     modelProvider: params.modelProvider,
     modelId: params.modelId,
     modelHasVision: params.modelHasVision,
+    pairedNodeComputerUse: params.pairedNodeComputerUse,
     clientCaps: params.clientCaps,
+    gatewayUiCommandTarget: params.gatewayUiCommandTarget,
     pinnedWidgetAuthoring: surface === "loopback" ? params.pinnedWidgetAuthoring : undefined,
     workspaceDir,
-    sandboxed: sandboxRuntime.sandboxed,
+    sandboxed,
+    ...(params.rootedExecution
+      ? {
+          cwd: params.rootedExecution.cwd,
+          fsPolicy: { workspaceOnly: true, root: params.rootedExecution.root },
+          sessionPermissionPolicy: params.rootedExecution.sessionPermissionPolicy,
+          sandboxRoot: params.rootedExecution.sandbox?.workspaceDir,
+          sandboxContainerWorkdir: params.rootedExecution.sandbox?.containerWorkdir,
+          sandboxFsBridge: params.rootedExecution.sandbox?.fsBridge,
+          sandboxBrowserBridgeUrl: params.rootedExecution.sandbox?.browser?.bridgeUrl,
+          allowHostBrowserControl: params.rootedExecution.sandbox
+            ? params.rootedExecution.sandbox.browserAllowHostControl
+            : true,
+        }
+      : {}),
     pluginToolAllowlist: collectExplicitAllowlist([
       profilePolicy,
       providerProfilePolicy,
@@ -332,7 +408,7 @@ export function resolveGatewayScopedTools(
           execOverrides: params.execOverrides,
           agentId: policyAgentId,
           sessionKey: runtimePolicySessionKey,
-          sandboxAvailable: sandboxRuntime.sandboxed,
+          sandboxAvailable: sandboxed,
         })
       : undefined;
   const nodeExecDefaults =
@@ -360,12 +436,16 @@ export function resolveGatewayScopedTools(
           runId: params.runId,
           workspaceDir,
           cwd: params.cwd?.trim() || workspaceDir,
+          ...params.rootedExecution,
+          sandbox: params.rootedExecution?.sandbox ?? undefined,
           modelProvider: params.modelProvider,
           modelId: params.modelId,
           modelHasVision: params.modelHasVision,
+          pairedNodeComputerUse: params.pairedNodeComputerUse,
           messageProvider: params.messageProvider,
           messageChannel: params.messageProvider,
           clientCaps: params.clientCaps,
+          gatewayUiCommandTarget: params.gatewayUiCommandTarget,
           agentAccountId: params.accountId,
           currentChannelId: params.currentChannelId,
           currentThreadTs: params.currentThreadTs,
@@ -391,7 +471,11 @@ export function resolveGatewayScopedTools(
           exec: execDefaults
             ? {
                 host: execDefaults.host,
-                mode: execDefaults.mode,
+                // A display mode must not replace an unrepresentable exact policy.
+                mode:
+                  resolveExactExecModeFromPolicy(execDefaults) === null
+                    ? undefined
+                    : execDefaults.mode,
                 security: execDefaults.security,
                 ask: execDefaults.ask,
                 node: execDefaults.node,
@@ -517,11 +601,15 @@ export function resolveGatewayScopedTools(
       ...excludedToolNames,
     ].map(normalizeToolPolicyName),
   );
-  const tools = applyToolAvailabilityDescriptions(
+  const tools = applySwarmCollectorToolContract(
     applyDelegationCapability(
       policyFiltered.filter((tool) => !gatewayDenySet.has(normalizeToolPolicyName(tool.name))),
       params.delegationCapability,
     ),
+    {
+      swarmCollector: Boolean(swarmCollectorContext),
+      structuredOutputTool: openClawTools.find((tool) => tool.name === "structured_output"),
+    },
   );
   // The loopback exec tool is node-only. Do not let a raw `exec` capability get
   // reinterpreted as generic Gateway/sandbox exec by spawned sessions or cron jobs.
@@ -545,7 +633,7 @@ export function resolveGatewayScopedTools(
 
   return {
     agentId: sessionAgentId,
-    tools,
+    tools: applyToolAvailabilityDescriptions(filterRequesterYieldTools(tools, params.sessionKey)),
     workspaceDir,
   };
 }
