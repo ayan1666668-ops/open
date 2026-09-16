@@ -238,7 +238,10 @@ earlier activation stop does not mean the service remains stopped.
 When the readiness allowance expires while the service still reports a running
 Gateway, the updater records the elapsed wait, startup phase, and available HTTP
 observation as a warning. It leaves the process starting, keeps readiness
-unconfirmed, and retains recovery backups. Check `openclaw gateway status --deep`
+unconfirmed, and retains recovery backups. The run ends `skipped` with reason
+`gateway-readiness-unverified`, recording an intentional unverified outcome rather
+than success or an indefinite pending run. Observed PID or boot-generation changes
+remain failures and enter recovery. Check `openclaw gateway status --deep`
 before retiring those backups. A timeout alone does not authorize a recovery
 restart or rollback; a refused rollback also leaves the candidate untouched.
 Concrete version, build, channel, or stopped-service failures still receive their

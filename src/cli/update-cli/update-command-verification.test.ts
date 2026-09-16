@@ -123,6 +123,56 @@ describe("update readiness generation", () => {
     },
   );
 
+  it.each(["stable", "pid storm", "boot storm"])(
+    "only preserves stable startup at the deadline: %s",
+    async (startup) => {
+      mockProcessPlatform("linux");
+      const service = makeGatewayService({ status: "running", pid: 8000 });
+      vi.mocked(service.readRuntime).mockImplementation(async () => ({
+        status: "running",
+        pid: startup === "pid storm" ? 8000 + monotonicClock.nowMs / 500 : 8000,
+      }));
+      vi.spyOn(gatewayService, "resolveGatewayService").mockReturnValue(service);
+      if (startup === "boot storm") {
+        inspectPortUsage.mockImplementation(async (port) => ({
+          port,
+          status: "busy",
+          listeners: [{ pid: 8000 }],
+          hints: [],
+        }));
+        callGateway.mockImplementation((opts) =>
+          gatewayHealthResponse({
+            server: { version: "2026.9.4", bootId: `boot-${monotonicClock.nowMs}` },
+          })(opts),
+        );
+      }
+      const recoverHealth = vi.fn<
+        NonNullable<Parameters<typeof verifyUpdatedGateway>[0]["recoverHealth"]>
+      >(async (health) => ({ health, launchAgentRecovery: null }));
+      const updateResult: UpdateRunResult = { status: "ok", mode: "npm", steps: [], durationMs: 0 };
+      const result = await verifyUpdatedGateway({
+        result: updateResult,
+        opts: { json: true },
+        serviceEnv: { HOME: "/synthetic-home" },
+        gatewayPort: 18789,
+        expectedVersion: "2026.9.4",
+        requireRunningService: true,
+        timeoutMs: 1_000,
+        recoverHealth,
+      });
+      expect(result).toMatchObject(
+        startup === "stable"
+          ? { stopReason: "gateway-readiness-pending" }
+          : { ok: false, summary: "generation-changed" },
+      );
+      if (startup !== "stable") {
+        expect(result.stopReason).toBeUndefined();
+      }
+      expect(recoverHealth).toHaveBeenCalledTimes(startup === "stable" ? 0 : 1);
+      expect(updateResult.steps[0]?.exitCode).toBe(startup === "stable" ? 0 : 1);
+    },
+  );
+
   it.each(
     [
       "restart script",
@@ -218,6 +268,7 @@ describe("update readiness generation", () => {
   it.each([
     { transition: "unchanged", supplied: false },
     { transition: "replacement", supplied: false },
+    { transition: "replacement-at-deadline", supplied: false },
     { transition: "same-pid-new-boot", supplied: false },
     { transition: "replacement-during-final-health", supplied: false },
     { transition: "same-pid-new-boot-during-native", supplied: false },
@@ -323,13 +374,21 @@ describe("update readiness generation", () => {
         }),
       ]);
       expect(callGateway).toHaveBeenCalledTimes(12);
-      if (transition === "replacement" || transition === "same-pid-new-boot") {
+      if (transition.startsWith("replacement") || transition === "same-pid-new-boot") {
         bootId = "boot-b";
-        runtime = { status: "running", pid: transition === "replacement" ? 8001 : 8000 };
+        runtime = { status: "running", pid: transition.startsWith("replacement") ? 8001 : 8000 };
+      }
+      if (transition === "replacement-at-deadline") {
+        monotonicClock.nowMs = 305_500;
       }
       release.resolve();
       const result = await verification;
       expect(result.ok).toBe(unchanged);
+      if (transition === "replacement-at-deadline") {
+        expect(result).toMatchObject({ ok: false, summary: "generation-changed" });
+        expect(result.stopReason).toBeUndefined();
+        expect(updateResult.steps[0]?.exitCode).toBe(1);
+      }
       if (transition === "readyz-error") {
         expect(result.stopReason).toBe("gateway-readiness-pending");
         expect(updateResult.steps).toContainEqual(

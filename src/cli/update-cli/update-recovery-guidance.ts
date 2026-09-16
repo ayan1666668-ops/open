@@ -37,7 +37,7 @@ export function resolveUpdateResultNextAction(params: {
 }): string | undefined {
   const { result, env } = params;
   if (isUpdateGatewayReadinessPending(result)) {
-    return `Gateway readiness is pending. Leave it starting and keep recovery backups; check progress with \`${formatCliCommand("openclaw gateway status --deep", env)}\`.`;
+    return `The readiness observation ended without confirmation. Leave the Gateway starting and keep recovery backups; check current progress with \`${formatCliCommand("openclaw gateway status --deep", env)}\`.`;
   }
   if (result.reason === "dirty") {
     return `Local changes prevented this update before installation. Your checkout was preserved. Commit your changes and retry, or run \`${formatCliCommand("openclaw triage", env)}\` for help.`;

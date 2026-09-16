@@ -240,66 +240,92 @@ describe("post-activation repair after rollback refusal or failure", () => {
     vi.spyOn(defaultRuntime, "error").mockImplementation(() => undefined);
   });
 
-  it("preserves a starting Gateway, its autostart, and its package backup after readiness expires", async () => {
-    const params = fixture();
-    const run = params.opts.run!;
-    const { transaction, packageRoot } = await createRetainedPackageSwap(
-      dirs.make("update-readiness-pending-"),
-    );
-    params.root = packageRoot;
-    params.result.root = packageRoot;
-    params.packageTransaction = transaction;
-    const windowsRecovery = taskRecovery();
-    params.preManagedServiceStop!.windowsTaskAutoStartRecovery = windowsRecovery;
-    params.preManagedServiceStop!.stoppedAtMs = Date.now() - 90_000;
-    const complete = vi.spyOn(transaction, "complete");
-    const observation =
-      "Gateway readiness exceeded 90000ms; service running (PID 7376), waiting for Gateway listener. Gateway left starting.";
-    mocks.restart.mockImplementationOnce(async ({ result }) => {
-      recordUpdateRunVerification(
-        run.runId,
-        { serviceRunning: true, pid: 7376, settled: false, readyz: false, channelsReady: false },
-        { env: run.env },
+  it.each([false, true])(
+    "records the bounded readiness outcome and retains only unverified backups (ready=%s)",
+    async (ready) => {
+      const params = fixture();
+      const run = params.opts.run!;
+      const { transaction, packageRoot } = await createRetainedPackageSwap(
+        dirs.make("update-readiness-pending-"),
       );
-      result.steps.push({
-        name: "gateway verification",
-        command: "gateway verification",
-        cwd: packageRoot,
-        durationMs: 90_000,
-        exitCode: 0,
-        termination: "timeout",
-        advisory: { kind: "recoverable-maintenance", message: observation },
+      params.root = packageRoot;
+      params.result.root = packageRoot;
+      params.packageTransaction = transaction;
+      const windowsRecovery = taskRecovery();
+      params.preManagedServiceStop!.windowsTaskAutoStartRecovery = windowsRecovery;
+      params.preManagedServiceStop!.stoppedAtMs = Date.now() - 90_000;
+      const complete = vi.spyOn(transaction, "complete");
+      const observation =
+        "Gateway readiness exceeded 90000ms; service running (PID 7376), waiting for Gateway listener. Gateway left starting.";
+      mocks.restart.mockImplementationOnce(async ({ result, onVerified }) => {
+        recordUpdateRunVerification(
+          run.runId,
+          {
+            serviceRunning: true,
+            pid: 7376,
+            settled: ready,
+            readyz: ready,
+            channelsReady: ready,
+            versionMatch: true,
+            pluginErrors: [],
+          },
+          { env: run.env },
+        );
+        if (ready) {
+          onVerified?.(Date.now());
+          return "ok";
+        }
+        result.steps.push({
+          name: "gateway verification",
+          command: "gateway verification",
+          cwd: packageRoot,
+          durationMs: 90_000,
+          exitCode: 0,
+          termination: "timeout",
+          advisory: { kind: "recoverable-maintenance", message: observation },
+        });
+        return "readiness-pending";
       });
-      return "readiness-pending";
-    });
 
-    await expect(finishUpdate(params)).resolves.toMatchObject({ status: "ok" });
+      await expect(finishUpdate(params)).resolves.toMatchObject(
+        ready ? { status: "ok" } : { status: "skipped", reason: "gateway-readiness-unverified" },
+      );
 
-    expect(mocks.restart).toHaveBeenCalledOnce();
-    expect(mocks.rollback).not.toHaveBeenCalled();
-    expect(mocks.repair).not.toHaveBeenCalled();
-    expect(mocks.stop).not.toHaveBeenCalled();
-    expect(mocks.restartCommand).not.toHaveBeenCalled();
-    expect(windowsRecovery.complete).toHaveBeenCalledWith(true);
-    expect(windowsRecovery.complete).not.toHaveBeenCalledWith(false);
-    expect(complete).not.toHaveBeenCalled();
-    await expect(
-      fs.readFile(path.join(transaction.backupRoot, "package.json"), "utf8"),
-    ).resolves.toContain('"version":"1.0.0"');
-    await expect(fs.readFile(path.join(packageRoot, "package.json"), "utf8")).resolves.toContain(
-      '"version":"2.0.0"',
-    );
-    const recorded = getUpdateRun(run.runId, { env: run.env });
-    expect(recorded).toMatchObject({
-      status: "succeeded",
-      confirmedAtMs: null,
-      downtimeMs: null,
-      verification: { serviceRunning: true, pid: 7376, settled: false, readyz: false },
-      steps: expect.arrayContaining([
-        expect.objectContaining({ step: "warning:gateway verification", detail: observation }),
-      ]),
-    });
-  });
+      expect(mocks.restart).toHaveBeenCalledOnce();
+      expect(mocks.rollback).not.toHaveBeenCalled();
+      expect(mocks.repair).not.toHaveBeenCalled();
+      expect(mocks.stop).not.toHaveBeenCalled();
+      expect(mocks.restartCommand).not.toHaveBeenCalled();
+      expect(windowsRecovery.complete).toHaveBeenCalledWith(true);
+      expect(windowsRecovery.complete).not.toHaveBeenCalledWith(false);
+      expect(complete).toHaveBeenCalledTimes(ready ? 1 : 0);
+      if (ready) {
+        await expect(fs.stat(transaction.backupRoot)).rejects.toMatchObject({ code: "ENOENT" });
+      } else {
+        await expect(
+          fs.readFile(path.join(transaction.backupRoot, "package.json"), "utf8"),
+        ).resolves.toContain('"version":"1.0.0"');
+      }
+      await expect(fs.readFile(path.join(packageRoot, "package.json"), "utf8")).resolves.toContain(
+        '"version":"2.0.0"',
+      );
+      const recorded = getUpdateRun(run.runId, { env: run.env });
+      expect(recorded).toMatchObject({
+        status: ready ? "succeeded" : "skipped",
+        reason: ready ? null : "gateway-readiness-unverified",
+        phase: "finished",
+        finishedAtMs: expect.any(Number),
+        confirmedAtMs: ready ? expect.any(Number) : null,
+        downtimeMs: ready ? expect.any(Number) : null,
+        verification: { serviceRunning: true, pid: 7376, settled: ready, readyz: ready },
+      });
+      if (!ready) {
+        expect(recorded?.steps).toContainEqual(
+          expect.objectContaining({ step: "warning:gateway verification", detail: observation }),
+        );
+      }
+    },
+  );
 
   it("terminalizes a failed final native read after current-core plugin parking", async () => {
     const params = fixture();
@@ -495,7 +521,11 @@ describe("post-activation repair after rollback refusal or failure", () => {
         };
       });
       if ((repaired || pending) && rollback !== "restored") {
-        await expect(finishUpdate(params)).resolves.toMatchObject({ status: "ok" });
+        await expect(finishUpdate(params)).resolves.toMatchObject(
+          pending
+            ? { status: "skipped", reason: "gateway-readiness-unverified" }
+            : { status: "ok" },
+        );
       } else {
         const reason =
           rollback === "blocked"
@@ -552,9 +582,11 @@ describe("post-activation repair after rollback refusal or failure", () => {
             ? repaired
               ? "rolled-back"
               : "failed"
-            : repaired || pending
+            : repaired
               ? "succeeded"
-              : "failed",
+              : pending
+                ? "skipped"
+                : "failed",
         after: { version: rollback === "restored" ? "2026.9.1" : "2026.9.3" },
         ...(rollback === "restored" ? { reason: "readyz-unhealthy" } : {}),
         repair: [expect.objectContaining({ attempt: 1 })],
@@ -719,7 +751,11 @@ describe("post-activation repair after rollback refusal or failure", () => {
         );
 
         if (activated) {
-          await expect(finishUpdate(params)).resolves.toMatchObject({ status: "ok" });
+          await expect(finishUpdate(params)).resolves.toMatchObject(
+            finalProof
+              ? { status: "ok" }
+              : { status: "skipped", reason: "gateway-readiness-unverified" },
+          );
         } else {
           await expect(finishUpdate(params)).rejects.toMatchObject({
             exitCode: 1,

@@ -141,14 +141,14 @@ it.each([
 );
 
 it.each([
-  { pending: true, status: "ok" },
+  { pending: true, status: "skipped" },
   { pending: false, status: "error" },
   { pending: true, status: "error" },
 ] as const)(
   "retains the backup across migrated finalization (readiness pending=$pending, status=$status)",
   async ({ pending, status }) => {
-    const exitCode = status === "ok" ? 0 : 1;
-    const reason = status === "ok" ? undefined : "doctor-failed";
+    const exitCode = status === "skipped" ? 0 : 1;
+    const reason = status === "skipped" ? "gateway-readiness-unverified" : "doctor-failed";
     const base = dirs.make("migrated-readiness-pending-");
     const { transaction, packageRoot } = await createRetainedPackageSwap(base);
     const env = { OPENCLAW_STATE_DIR: path.join(base, "state") };
@@ -194,7 +194,7 @@ it.each([
         };
         finishUpdateRun(
           run.runId,
-          { status: status === "ok" ? "succeeded" : "failed", reason },
+          { status: status === "skipped" ? "skipped" : "failed", reason },
           { env },
         );
         await fs.writeFile(

@@ -5,6 +5,7 @@ import {
   buildControlPlaneUpdateRestartHealthPendingResult,
   resolveManagedServiceUpdateFailureExitCode,
 } from "../../infra/update-control-plane-sentinel.js";
+import { normalizeControlPlaneUpdateResult } from "../../infra/update-restart-sentinel-payload.js";
 import { recordUpdateRunStep } from "../../infra/update-run-ledger.js";
 import { isUpdateGatewayReadinessPending } from "../../infra/update-run-step.js";
 import type { UpdateRunResult } from "../../infra/update-runner.js";
@@ -112,15 +113,16 @@ export async function finishUpdate(params: FinishUpdateParams): Promise<UpdateRu
     }
   };
   // Finalization owns the complete outcome, including recovery, restart, and completion work.
-  const completedResult = (result: UpdateRunResult): UpdateRunResult => ({
-    ...result,
-    ...(result.status === "error" &&
-    result.reason !== UPDATE_ACTIVATION_TIMEOUT_REASON &&
-    params.rollbackBlockedReason
-      ? { reason: params.rollbackBlockedReason }
-      : {}),
-    durationMs: Math.max(0, Date.now() - params.startedAt),
-  });
+  const completedResult = (result: UpdateRunResult): UpdateRunResult =>
+    normalizeControlPlaneUpdateResult({
+      ...result,
+      ...(result.status === "error" &&
+      result.reason !== UPDATE_ACTIVATION_TIMEOUT_REASON &&
+      params.rollbackBlockedReason
+        ? { reason: params.rollbackBlockedReason }
+        : {}),
+      durationMs: Math.max(0, Date.now() - params.startedAt),
+    });
   const recordNextAction = (result: UpdateRunResult) => {
     assertCurrent();
     return recordUpdateResultNextAction(params, result);

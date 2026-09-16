@@ -295,11 +295,7 @@ async function observeUpdateGatewayReadiness(params: UpdateGatewayReadinessParam
   });
   assertCurrent();
   const readyz = http.readyz === 200;
-  if (
-    health.healthy &&
-    readyz &&
-    (!params.requireRunningService || health.runtime.status === "running")
-  ) {
+  if (health.healthy && (!params.requireRunningService || health.runtime.status === "running")) {
     // HTTP readiness cannot transfer an earlier settle to a replacement boot.
     const settled = health;
     const inspect = () =>
@@ -319,10 +315,11 @@ async function observeUpdateGatewayReadiness(params: UpdateGatewayReadinessParam
       isSameGatewayRestartGeneration(inspected, health);
     if (!sameGeneration) {
       health.healthy = false;
+      health.waitOutcome = "generation-changed";
       health.probeError = "Gateway process changed during final readiness verification.";
     }
   }
-  if (!readyz || remainingMs() === 0) {
+  if (health.waitOutcome !== "generation-changed" && (!readyz || remainingMs() === 0)) {
     health = {
       ...health,
       healthy: false,
