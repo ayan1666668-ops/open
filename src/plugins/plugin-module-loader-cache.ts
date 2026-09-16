@@ -10,6 +10,7 @@ import { toSafeImportPath } from "../shared/import-specifier.js";
 import { createJiti } from "./jiti-factory.js";
 import {
   clearPluginModuleRequireCache,
+  isPluginSourceModulePath,
   tryNativeRequireJavaScriptModule,
   tryNativeRequireModule,
 } from "./native-module-require.js";
@@ -282,6 +283,9 @@ function createPluginModuleLoader(
                 const target = typeof key === "string" ? params.resolveAlias(key) : undefined;
                 if (!target) {
                   return undefined;
+                }
+                if (isPluginSourceModulePath(target)) {
+                  return jitiLoader(target);
                 }
                 const native = tryNativeRequireModule(target, {
                   allowWindows: true,
