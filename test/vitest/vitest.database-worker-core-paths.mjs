@@ -59,8 +59,11 @@ export const databaseWorkerCoreTestFiles = [
   "src/agents/sessions/sdk.auth-migration.test.ts",
   "src/agents/subagents/completion/subagent-completion-admission.store.test.ts",
   "src/commands/doctor-maintenance.worker.test.ts",
+  "src/flows/doctor-health.dangling-workshop-index.test.ts",
   "src/entry.memory-json.test.ts",
   "src/gateway/server-methods/memory-search.test.ts",
+  "src/logging/diagnostic-session-context.test.ts",
+  "src/logging/diagnostic-stuck-session-recovery.runtime.test.ts",
   "src/memory/memory-artifact-provenance.test.ts",
   "src/plugin-sdk/memory-host-core.test.ts",
   "src/plugin-sdk/memory-host-event-export.test.ts",
@@ -97,6 +100,7 @@ const databaseWorkerCoreTestFileSet = new Set(databaseWorkerCoreTestFiles);
 
 // Preserve watch admission for consumers previously inferred into fast lanes.
 export const databaseWorkerCoreFormerFastKinds = new Map([
+  ["src/logging/diagnostic-stuck-session-recovery.runtime.test.ts", "unitFast"],
   ["src/flows/search-setup.test.ts", "unitFastIsolated"],
   ["src/security/audit-config-symlink.test.ts", "unitFastIsolated"],
   ["src/security/audit-filesystem-windows.test.ts", "unitFastIsolated"],
