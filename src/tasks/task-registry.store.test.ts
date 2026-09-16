@@ -53,6 +53,7 @@ import {
   markTaskTerminalById,
   publishTaskRecordAfterAtomicStore,
   reloadTaskRegistryFromStore,
+  setTaskCleanupAfterById,
   updateTaskNotifyPolicyById,
 } from "./task-registry.js";
 import {
@@ -448,6 +449,41 @@ describe("task-registry store runtime", () => {
       }),
     );
     expect(recovered.cleanupAfter).toBeGreaterThan(lostAt + 24 * 60 * 60_000);
+  });
+
+  it("preserves an explicit lost-task deadline on a cleanup-only update", () => {
+    const lostAt = 2_000_000;
+    const explicitCleanupAfter = lostAt + 12 * 60 * 60_000; // explicit deadline inside the 24h lost window
+    const lostTask: TaskRecord = {
+      ...createStoredTask(),
+      taskId: "task-lost-explicit-deadline",
+      runtime: "cron",
+      status: "lost",
+      endedAt: lostAt,
+      lastEventAt: lostAt,
+      cleanupAfter: explicitCleanupAfter,
+    };
+    configureTaskRegistryRuntime({
+      store: {
+        ...createInMemoryTaskRegistryStore({
+          tasks: new Map([[lostTask.taskId, lostTask]]),
+          deliveryStates: new Map(),
+        }),
+      },
+    });
+
+    // A still-lost record is terminal, but a cleanup-only update must not
+    // recompute the deadline: "lost" itself is not a recovery, so the explicit
+    // earlier lost-window deadline the retention owner honors must survive.
+    const preserved = expectDefined(
+      setTaskCleanupAfterById({
+        taskId: lostTask.taskId,
+        cleanupAfter: explicitCleanupAfter + 60_000,
+      }),
+      "expected cleanup-only update to succeed",
+    );
+    expect(preserved.status).toBe("lost");
+    expect(preserved.cleanupAfter).toBe(explicitCleanupAfter + 60_000);
   });
 
   it("uses scoped owner lookups for fresh owner task reads", async () => {

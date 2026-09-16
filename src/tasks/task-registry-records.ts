@@ -316,8 +316,12 @@ export function applyTaskRecordPatch(
   // A terminal status reached from "lost" (a recovered lost record) must drop
   // the short lost-window cleanupAfter: recovery restores the standard terminal
   // retention from the recovered endedAt, otherwise a recovered record keeps
-  // lostAt + 24h and is pruned almost immediately.
-  const recoversFromLost = current.status === "lost" && isTerminalTaskStatus(next.status);
+  // lostAt + 24h and is pruned almost immediately. The recovered status must be
+  // a *different* terminal status: "lost" itself is terminal, so a metadata-only
+  // or cleanup-only patch on a still-lost record must keep its existing deadline
+  // (the retention owner honors an explicit earlier lost-task deadline).
+  const recoversFromLost =
+    current.status === "lost" && next.status !== "lost" && isTerminalTaskStatus(next.status);
   if (
     isTerminalTaskStatus(next.status) &&
     (recoversFromLost || typeof next.cleanupAfter !== "number")
