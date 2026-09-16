@@ -4,6 +4,7 @@ import { retainLegacyDefaultAgentId } from "../config/legacy.default-agent-owner
 import { migratePersistedImplicitMainRoster } from "../config/legacy.roster.js";
 import { captureRuntimeConfig } from "../config/runtime-source-projection.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { freezeJsonSnapshot } from "../shared/immutable-data.js";
 import {
   AgentSelectionRequiredError,
   listAgentEntriesWithSource,
@@ -328,8 +329,9 @@ describe("agent roster resolution", () => {
     expect(unrelatedEntryReads).toBe(0);
   });
 
-  it("prepares one immutable fleet roster across separate agent batches", () => {
-    const config = captureRuntimeConfig({
+  it.each([false, true])("prepares one immutable fleet roster (captured: %s)", (captured) => {
+    const prepare = captured ? captureRuntimeConfig : freezeJsonSnapshot;
+    const config = prepare({
       agents: {
         ownership: "explicit" as const,
         defaults: { systemAgent: { agentId: "agent-0" } },

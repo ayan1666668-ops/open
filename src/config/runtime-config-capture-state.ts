@@ -1,10 +1,6 @@
 import type { OpenClawConfig } from "./types.openclaw.js";
 
-export type RuntimeConfigCapture = Readonly<{
-  source: OpenClawConfig;
-  origin: OpenClawConfig;
-  fingerprint: string;
-}>;
+type RuntimeConfigCapture = Readonly<{ source: OpenClawConfig; origin: OpenClawConfig }>;
 
 const captures = new WeakMap<OpenClawConfig, RuntimeConfigCapture>();
 

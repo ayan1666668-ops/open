@@ -1,5 +1,6 @@
 // Verifies runtime config snapshots preserve normalized public settings.
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { freezeJsonSnapshot } from "../shared/immutable-data.js";
 import {
   cloneConfigWithResolutionFacts,
   createConfigResolutionFacts,
@@ -142,7 +143,7 @@ describe("runtime snapshot state", () => {
     expect(hashRuntimeConfigValue({ logging: { level: "info" } })).toBe(first);
   });
 
-  it("hashes one captured fleet only once across repeated agent reads", () => {
+  it.each([false, true])("hashes one immutable fleet only once (captured: %s)", (captured) => {
     const source = {
       agents: {
         entries: Object.fromEntries(
@@ -152,7 +153,7 @@ describe("runtime snapshot state", () => {
     };
     const keys = vi.spyOn(Object, "keys");
     try {
-      const config = captureRuntimeConfig(source);
+      const config = captured ? captureRuntimeConfig(source) : freezeJsonSnapshot(source);
       const first = hashRuntimeConfigValue(config);
       for (let index = 0; index < 200; index += 1) {
         expect(hashRuntimeConfigValue(config)).toBe(first);

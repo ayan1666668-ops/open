@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { pinRuntimePaths } from "../../config/paths.js";
+import * as runtimeSnapshot from "../../config/runtime-snapshot.js";
 import type { ConfigFileSnapshot } from "../../config/types.js";
 import type { RuntimeEnv } from "../../runtime.js";
 import {
@@ -62,6 +63,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   clearGatewayRunConfigEnvironment();
   await state.cleanup();
   pinRuntimePaths();
@@ -78,7 +80,9 @@ describe("dev reset admission for invalid config", () => {
 
     // Reset bypasses mutation-capable bootstrap and keeps its own guarded admission.
     await expect(prepareGatewayRunBootstrap({ opts, runtime })).resolves.toBe(false);
+    const hash = vi.spyOn(runtimeSnapshot, "hashRuntimeConfigValue");
     await expect(recheckGatewayRunReset({ opts, runtime })).resolves.toBe(true);
+    expect(hash).not.toHaveBeenCalled();
 
     expect(runtime.error).not.toHaveBeenCalled();
     expect(runtime.exit).not.toHaveBeenCalled();

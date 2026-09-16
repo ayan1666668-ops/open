@@ -89,15 +89,29 @@ async function buildSnapshotBatch(
   onStage?: (stage: string) => void,
   registryResources?: PreparedModelRuntimeBuildResources,
 ): Promise<PreparedModelRuntimeBuildResult[]> {
-  const configs = new Map<OpenClawConfig, OpenClawConfig>();
+  const configs = new Map<
+    OpenClawConfig,
+    { config: OpenClawConfig; nativeConfigFingerprint: string }
+  >();
   const candidates = requestedCandidates.map((candidate) => {
     const source = candidate.input.config;
-    let config = configs.get(source);
-    if (!config) {
-      config = captureRuntimeConfig(source);
-      configs.set(source, config);
+    let shared = configs.get(source);
+    if (!shared) {
+      const config = captureRuntimeConfig(source);
+      shared = {
+        config,
+        nativeConfigFingerprint: fingerprintPreparedRuntimeFacts({
+          agents: config.agents,
+          plugins: config.plugins,
+        }),
+      };
+      configs.set(source, shared);
     }
-    return { ...candidate, input: { ...candidate.input, config } };
+    return {
+      ...candidate,
+      input: { ...candidate.input, config: shared.config },
+      nativeConfigFingerprint: shared.nativeConfigFingerprint,
+    };
   });
   const candidateByInput = new Map(candidates.map((candidate) => [candidate.input, candidate]));
   const assertBuildCurrent = (input: PreparedModelRuntimeInput) =>
@@ -346,6 +360,7 @@ async function buildSnapshotBatch(
         catalogFacts,
         createFullModelCatalogAccess({
           agentFacts,
+          nativeConfigFingerprint: candidate.nativeConfigFingerprint,
           catalogFacts,
           pluginGeneration,
           isCurrent: candidate.isGenerationCurrent ?? (() => false),
