@@ -39,11 +39,11 @@ export async function resolveConfigWriteRepair(
 ): Promise<string> {
   const notice = applied
     ? `⚠ openclaw.json failed validation after that write:\n${issuesText}`
-    : `The write was not applied; I am proposing a fix.\n${issuesText}`;
+    : `The config write failed; proposing a fix.\n${issuesText}`;
   let recovery: { text: string };
   try {
     recovery = await resolveRepair(
-      `[config-verify] ${applied ? "The config file is now invalid" : "The config write was not applied"}:\n${issuesText}\nPropose one corrective command from the allowed list.`,
+      `[config-verify] ${applied ? "The config file is now invalid" : "The config write failed"}:\n${issuesText}\n${applied ? "" : "If the report says the config was written, inspect the current value before correcting it. "}Propose one corrective command from the allowed list.`,
     );
   } catch (error) {
     if (!isSystemAgentInferenceUnavailableError(error)) {

@@ -321,6 +321,9 @@ export async function runConfigSetOperation(params: {
         const verifyInferenceConfig =
           ctx.deps?.verifyInferenceConfig ??
           (await import("./setup-inference.js")).verifySetupInferenceConfig;
+        // Route projection and the module import above yield; the approving
+        // run must still hold authority before the probe reaches the provider.
+        ctx.assertPersistentApply?.();
         const verification = await verifyInferenceConfig({
           config: sourceConfig,
           runtime: ctx.runtime,

@@ -300,14 +300,22 @@ export class ChatTurnRouter {
     const result = await this.executeOperation(operation, capture, true, beforePersistentApply);
     const configWrite = operation.kind === "config-set" || operation.kind === "config-set-ref";
     if (configWrite && result === undefined) {
+      // The writer's report says whether anything reached disk. A fault after
+      // publication can leave an invalid file, so the after-write check runs
+      // first; otherwise the report goes to the model for one repair proposal.
+      const verify = await this.callbacks.verifyConfigAfterWrite();
       return {
-        text: await resolveConfigWriteRepair(capture.read(), (message) =>
-          this.resolveAssistantTurn(message, false),
-        ),
+        text: verify
+          ? [capture.read(), verify].filter(Boolean).join("\n\n")
+          : await resolveConfigWriteRepair(capture.read(), (message) =>
+              this.resolveAssistantTurn(message, false),
+            ),
         action: "none",
         applied: false,
       };
     }
+    // Config writes validate before commit, so only other operations need the
+    // after-write check.
     const verify =
       result?.applied && !configWrite ? await this.callbacks.verifyConfigAfterWrite() : null;
     const followUp = this.armFollowUp(result?.followUp);

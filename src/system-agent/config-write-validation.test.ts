@@ -104,4 +104,35 @@ describe("executeSystemAgentOperation approved config writes", () => {
       agents: { defaults: { heartbeat: { every: "30m" } } },
     });
   });
+
+  it("rechecks the approving run's authority before the live probe", async () => {
+    const stateDir = tempDirs.make("openclaw-config-write-authority-");
+    const configPath = path.join(stateDir, "openclaw.json");
+    vi.stubEnv("OPENCLAW_STATE_DIR", stateDir);
+    vi.stubEnv("OPENCLAW_CONFIG_PATH", configPath);
+    const raw = JSON.stringify({ agents: { defaults: { model: { primary: "fixture/primary" } } } });
+    await fs.writeFile(configPath, raw);
+    const { runtime, lines } = createSystemAgentTestRuntime();
+    const verifyInferenceConfig =
+      vi.fn<NonNullable<SystemAgentCommandDeps["verifyInferenceConfig"]>>();
+    // Authority holds when the commit boundary opens, then lapses while the
+    // preflight is projecting the staged route.
+    let checks = 0;
+    const beforePersistentApply = () => {
+      checks += 1;
+      if (checks > 1) {
+        throw new Error("approving run closed");
+      }
+    };
+    await expect(
+      executeSystemAgentOperation(
+        { kind: "config-set", path: "agents.defaults.params.temperature", value: "0.5" },
+        runtime,
+        { approved: true, beforePersistentApply, deps: { verifyInferenceConfig } },
+      ),
+    ).rejects.toThrow("operation exited with code 1");
+    expect(lines.join("\n")).toContain("approving run closed");
+    expect(verifyInferenceConfig).not.toHaveBeenCalled();
+    expect(await fs.readFile(configPath, "utf8")).toBe(raw);
+  });
 });

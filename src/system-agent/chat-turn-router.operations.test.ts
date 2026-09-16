@@ -623,11 +623,45 @@ describe("SystemAgentChatEngine operations", () => {
     });
     const reply = await engine.handle("config set gateway.port banana");
     expect(reply.applied).toBe(false);
-    expect(reply.text).toContain("The write was not applied");
+    expect(reply.text).toContain("The config write failed");
     expect(runConfigSet).toHaveBeenCalledOnce();
     expect(runAgentTurn).toHaveBeenCalledOnce();
     expect(runAgentTurn.mock.calls[0]?.[0]?.input).toContain("fixture schema error");
     expect(runAgentTurn.mock.calls[0]?.[0]?.approvalArmed).toBe(false);
+  });
+
+  it("SystemAgentChatEngine.handle verifies the file when a config write fails after publishing", async () => {
+    useTempStateDir();
+    const runAgentTurn = vi.fn<SystemAgentTurnRunner>(async () => ({
+      text: "Proposed correction.",
+    }));
+    // The writer published a value that fails validation, then failed. The
+    // after-write check owns that state; the model sees the writer's report.
+    let published = false;
+    mocks.readConfigFileSnapshot.mockImplementation(
+      async () =>
+        ({
+          ...configSnapshot({}),
+          valid: !published,
+          issues: published ? [{ path: "gateway.port", message: "Expected number" }] : [],
+        }) as never,
+    );
+    const runConfigSet = vi.fn(async () => {
+      published = true;
+      throw new Error("Config was written, but post-write processing failed: refresh");
+    });
+    const engine = new SystemAgentChatEngine({
+      yes: true,
+      runAgentTurn,
+      deps: { runConfigSet, loadOverview: fakeOverviewLoader() },
+    });
+    const reply = await engine.handle("config set gateway.port 18789");
+    expect(reply.applied).toBe(false);
+    expect(reply.text).toContain("post-write processing failed");
+    expect(reply.text).toContain("failed validation after that write");
+    expect(reply.text).not.toContain("The config write failed;");
+    expect(runAgentTurn).toHaveBeenCalledOnce();
+    expect(runAgentTurn.mock.calls[0]?.[0]?.input).toContain("gateway.port: Expected number");
   });
 
   it("SystemAgentChatEngine.handle returns a rejected config write to the model for a repair proposal", async () => {
@@ -659,7 +693,7 @@ describe("SystemAgentChatEngine operations", () => {
 
     const reply = await engine.handle("yes");
 
-    expect(reply.text).toContain("The write was not applied");
+    expect(reply.text).toContain("The config write failed");
     expect(reply.text).toContain(validationError);
     expect(reply.text).toContain("That port was not a number");
     // The corrective write is proposed, not auto-applied.
@@ -712,7 +746,7 @@ describe("SystemAgentChatEngine operations", () => {
     expect(runAgentTurn.mock.calls[2]?.[0]?.input).toContain(validationError);
     expect(runAgentTurn.mock.calls[2]?.[0]?.approvalArmed).toBe(false);
     expect(reply.applied).toBe(false);
-    expect(reply.text).toContain("The write was not applied");
+    expect(reply.text).toContain("The config write failed");
     expect(engine.getPendingOperatorProposal()?.operation).toEqual({
       kind: "config-set",
       path: "agents.defaults.params.temperature",
