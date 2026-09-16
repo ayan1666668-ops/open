@@ -10,7 +10,7 @@ import type {
 import type { ManifestModelSuppressionResolver } from "./manifest-model-suppression.types.js";
 import type { PluginManifestRecord } from "./manifest-registry.types.js";
 import type { PluginMetadataSnapshot } from "./plugin-metadata-snapshot.types.js";
-import type { BundledProviderPolicySurface } from "./provider-policy-surface.js";
+import type { BundledProviderPolicySurface } from "./provider-policy-surface.types.js";
 
 type CurrentPluginMetadataCacheState = {
   snapshot: PluginMetadataSnapshot | undefined;
