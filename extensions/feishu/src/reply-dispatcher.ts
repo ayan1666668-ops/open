@@ -1036,6 +1036,10 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
             replyInThread: effectiveReplyInThread,
             allowTopLevelReplyFallback,
             accountId,
+            // The chunker above already converted, or deliberately did not when the
+            // generated markers would not survive the cut. Without this the sender
+            // converts a second time and rebuilds the table the guard just declined.
+            preparedPostText: true,
             ...(mentions ? { mentions } : {}),
           }),
       });

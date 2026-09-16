@@ -693,6 +693,36 @@ export function renderFeishuPresentationPayload({
   };
 }
 
+/**
+ * The shared adapter cuts an oversized block to the text limit before the plugin renders
+ * anything, and that cut lands on the authored table, so every fragment after the first
+ * starts on a data row and no longer parses as a table at all. Projecting here, and
+ * cutting the projected form with the chunker that closes and reopens a fence, hands the
+ * adapter blocks that already fit and that it therefore leaves alone.
+ */
+function projectPresentationBlocks(
+  presentation: NormalizedMessagePresentation,
+  renderText: (text: string) => string,
+): NormalizedMessagePresentation {
+  const blocks: MessagePresentationBlock[] = [];
+  for (const block of presentation.blocks) {
+    if (block.type !== "text" && block.type !== "context") {
+      blocks.push(block);
+      continue;
+    }
+    const reserve = block.type === "context" ? FEISHU_CARD_GREY_LENGTH : 0;
+    const parts = projectBlockText(block.text, renderText, reserve);
+    if (parts.length <= 1 && parts[0] === block.text) {
+      blocks.push(block);
+      continue;
+    }
+    for (const text of parts) {
+      blocks.push({ ...block, text });
+    }
+  }
+  return { ...presentation, blocks };
+}
+
 export async function renderFeishuReplyPayload(
   payload: ReplyPayload,
   ctx: FeishuPresentationContext,
@@ -717,7 +747,12 @@ export async function renderFeishuReplyPayload(
           ctx,
         }),
     },
-    { ...payload, presentation },
+    {
+      ...payload,
+      presentation: ctx.renderText
+        ? projectPresentationBlocks(presentation, ctx.renderText)
+        : presentation,
+    },
   );
   // Legacy controls have now been consumed too; a fallback must not render them again.
   const { interactive: _interactive, ...withoutInteractive } = rendered;

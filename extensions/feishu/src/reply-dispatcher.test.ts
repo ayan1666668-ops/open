@@ -5529,6 +5529,11 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
       for (const message of posted) {
         expect((message.match(/^>?\s*```/gmu) ?? []).length % 2).toBe(0);
       }
+      // The chunker already decided; the sender must not convert a second time and
+      // rebuild the table this guard just declined.
+      for (const [call] of sendMessageFeishuMock.mock.calls) {
+        expect(call.preparedPostText).toBe(true);
+      }
       const joined = posted.join("");
       expect(joined).toContain("Name");
       expect(joined).toContain("r11");

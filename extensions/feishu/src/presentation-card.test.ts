@@ -3,6 +3,7 @@ import { convertMarkdownTables } from "openclaw/plugin-sdk/text-chunking";
 import { describe, expect, it } from "vitest";
 import {
   buildFeishuPresentationCard,
+  renderFeishuReplyPayload,
   feishuCardWithinTableLimit,
   isFeishuCardWithinEnvelope,
   shouldUseCard,
@@ -138,6 +139,43 @@ describe("buildFeishuPresentationCard", () => {
       // This is the content the card sends, tag included.
       expect(element.content.length).toBeLessThanOrEqual(4000);
     }
+  });
+
+  // The shared adapter cuts an oversized block to the text limit before this plugin
+  // renders anything, and that cut lands on the authored table, so every fragment after
+  // the first starts on a data row and stops being a table. A builder test cannot see
+  // that, because the split happens before the builder is called.
+  it("projects a long presentation table before the adapter splits it", async () => {
+    const tableMarkdown = [
+      "| Name | Role |",
+      "| --- | --- |",
+      ...Array.from(
+        { length: 260 },
+        (_entry, i) => `| person-number-${i} | Regional Operations Lead |`,
+      ),
+    ].join("\n");
+    // Guard the fixture: the authored block is several times the per-element limit.
+    expect(tableMarkdown.length).toBeGreaterThan(4000);
+
+    const { card } = await renderFeishuReplyPayload(
+      { text: "", presentation: { blocks: [{ type: "text", text: tableMarkdown }] } } as never,
+      {
+        to: "chat_1",
+        renderText: (text: string) => convertMarkdownTables(text, "code"),
+      } as never,
+    );
+
+    const elements = (card?.body?.elements ?? []) as { tag: string; content?: string }[];
+    const markdown = elements.filter((element) => element.tag === "markdown");
+    expect(markdown.length).toBeGreaterThan(1);
+    // Every element carries its own marker pair, so no fragment arrives as raw pipes.
+    for (const element of markdown) {
+      expect((element.content?.match(/^```/gmu) ?? []).length).toBe(2);
+      expect(element.content?.length ?? 0).toBeLessThanOrEqual(4000);
+    }
+    const joined = markdown.map((element) => element.content).join("");
+    expect(joined).toContain("Name");
+    expect(joined).toContain("person-number-259");
   });
 
   // The element carries the escaped text, and escaping turns one ampersand into five

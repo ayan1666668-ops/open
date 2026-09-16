@@ -596,10 +596,13 @@ async function sendFeishuTtsSupplementPayload(params: {
     params.supplement.visibleTextAlreadyDelivered !== true
   ) {
     const text = params.payload.text?.trim() ? params.payload.text : params.supplement.spokenText;
-    for (const chunk of chunkFeishuMarkdown(text, FEISHU_TEXT_CHUNK_LIMIT)) {
+    if (text) {
+      // Whole text, one call. Cutting it here lands on the authored table, before the
+      // target converts it, so a table longer than a fragment would keep its header only
+      // in the first one. `sendText` chunks again for its own target, after converting.
       lastResult = await sendText({
         ...ctx,
-        text: chunk,
+        text,
         replyToId: nextReplyToId(),
       });
     }
