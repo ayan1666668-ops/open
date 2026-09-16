@@ -90,6 +90,7 @@ import {
 import { resolveContextTokens } from "./model-selection-context.js";
 import { readPostCompactionContext } from "./post-compaction-context.js";
 import { refreshQueuedFollowupSession, type FollowupRun } from "./queue.js";
+import { startFollowupRunPreAdoptionHeartbeat } from "./queue/lifecycle.js";
 import { isRenderablePayload } from "./reply-payloads-base.js";
 import type { ReplyOperation } from "./reply-run-registry.js";
 import { incrementCompactionCount } from "./session-updates.js";
@@ -1060,6 +1061,10 @@ export async function runSessionCompactionIfNeeded(params: {
       throw new Error("Session changed before compaction maintenance could be recorded");
     }
   };
+  const stopHeartbeat = startFollowupRunPreAdoptionHeartbeat(
+    params.followupRun.turnAdoptionLifecycle,
+    params.abortSignal,
+  );
   try {
     await notifyStartCompaction();
     assertActive();
@@ -1258,6 +1263,8 @@ export async function runSessionCompactionIfNeeded(params: {
       await notifyCompaction("incomplete");
     }
     throw err;
+  } finally {
+    stopHeartbeat?.();
   }
 }
 
