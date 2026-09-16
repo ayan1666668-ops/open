@@ -103,7 +103,7 @@ export type TelegramMessageContextSessionRuntimeOverrides = Partial<
 >;
 
 export type BuildTelegramMessageContextParams = {
-  nativeCommandNames?: ReadonlySet<string>;
+  nativeCommandNames?: ReadonlyMap<string, string>;
   primaryCtx: TelegramContext;
   allMedia: TelegramMediaRef[];
   replyMedia?: TelegramMediaRef[];

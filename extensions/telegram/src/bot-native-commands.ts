@@ -90,7 +90,7 @@ export const registerTelegramNativeCommands = ({
   telegramDeps = defaultTelegramNativeCommandDeps,
   opts,
 }: RegisterTelegramNativeCommandsParams): {
-  nativeCommandNames: ReadonlySet<string>;
+  nativeCommandNames: ReadonlyMap<string, string>;
   nativeCommandCallbackDispatcher?: TelegramNativeCommandCallbackDispatcher;
 } => {
   const boundRoute =
@@ -198,9 +198,12 @@ export const registerTelegramNativeCommands = ({
     : loginCommand
       ? [loginCommand]
       : [];
-  const nativeCommandNames = new Set(
+  const nativeCommandNames = new Map<string, string>(
     nativeEnabled
-      ? nativeCommandsToHandle.map((command) => normalizeTelegramCommandName(command.name))
+      ? nativeCommandsToHandle.map((command) => [
+          normalizeTelegramCommandName(command.name),
+          command.name,
+        ])
       : [],
   );
   const {

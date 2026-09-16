@@ -432,6 +432,7 @@ export function createTelegramBotCore(
   });
 
   const handlers = createTelegramHandlers({
+    nativeCommandNames,
     cfg,
     accountId: account.accountId,
     ownerAgentId,

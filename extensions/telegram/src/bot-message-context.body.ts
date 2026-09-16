@@ -65,7 +65,10 @@ import { resolveTelegramDirectPeerId } from "./dm-session-key.js";
 import { isTelegramForumServiceMessage } from "./forum-service-message.js";
 import { resolveTelegramGroupIngestEnabled } from "./group-config-helpers.js";
 import { recordTelegramGroupHistoryEntry } from "./group-history-window.js";
-import { resolveTelegramCommandIngressAuthorization } from "./ingress.js";
+import {
+  resolveTelegramCommandIngressAuthorization,
+  resolveTelegramNativeCommandBody,
+} from "./ingress.js";
 type TelegramMentionFacts = NonNullable<
   NonNullable<BuildChannelInboundEventContextParams["access"]>["mentions"]
 >;
@@ -90,6 +93,7 @@ type TelegramInboundBodyResult = {
   canDetectMention: boolean;
   shouldBypassMention: boolean;
   commandSource: "native" | "text" | undefined;
+  nativeCommandBody?: string;
   audioTranscribedMediaIndex?: number;
   stickerCacheHit: boolean;
   locationData?: NormalizedLocation;
@@ -139,7 +143,7 @@ async function resolveStickerVisionSupport(params: {
 }
 
 export async function resolveTelegramInboundBody(params: {
-  nativeCommandNames?: ReadonlySet<string>;
+  nativeCommandNames?: ReadonlyMap<string, string>;
   cfg: OpenClawConfig;
   primaryCtx: TelegramContext;
   msg: TelegramContext["message"];
@@ -225,7 +229,6 @@ export async function resolveTelegramInboundBody(params: {
     senderId,
     effectiveDmAllow,
     effectiveGroupAllow,
-    ownerAccess: { ownerList: [], senderIsOwner: false },
     eventKind: "message",
     allowTextCommands: true,
     hasControlCommand: hasControlCommandInMessage,
@@ -233,17 +236,14 @@ export async function resolveTelegramInboundBody(params: {
     includeDmAllowForGroupCommands: false,
   });
   const commandAuthorized = commandGate.authorized;
-  const commandEntity = msg.entities?.find(
-    (entity) => entity.type === "bot_command" && entity.offset === 0,
-  );
-  const [nativeCommandName, commandBotUsername] = commandEntity
-    ? (msg.text ?? "").slice(1, commandEntity.length).toLowerCase().split("@")
-    : [];
+  const nativeCommandBody = resolveTelegramNativeCommandBody({
+    msg,
+    nativeCommandNames: params.nativeCommandNames,
+    botUsername,
+  });
   const commandSource =
     options?.commandSource ??
-    (nativeCommandName &&
-    params.nativeCommandNames?.has(nativeCommandName) &&
-    (!commandBotUsername || commandBotUsername === botUsername?.toLowerCase())
+    (nativeCommandBody !== undefined
       ? "native"
       : commandAuthorized && hasControlCommandInMessage
         ? "text"
@@ -498,6 +498,7 @@ export async function resolveTelegramInboundBody(params: {
     canDetectMention,
     shouldBypassMention: mentionDecision.shouldBypassMention,
     commandSource,
+    nativeCommandBody,
     ...(audioTranscribedMediaIndex !== undefined && audioTranscribedMediaIndex >= 0
       ? { audioTranscribedMediaIndex }
       : {}),

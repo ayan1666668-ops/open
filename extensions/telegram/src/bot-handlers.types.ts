@@ -78,6 +78,7 @@ type TelegramHandlerLogger = {
 };
 
 export type RegisterTelegramHandlerParams = {
+  nativeCommandNames?: ReadonlyMap<string, string>;
   cfg: OpenClawConfig;
   accountId: string;
   ownerAgentId: string;

@@ -51,6 +51,7 @@ import {
 } from "./conversation-route.js";
 import { enforceTelegramDmAccess } from "./dm-access.js";
 import { evaluateTelegramGroupBaseAccess } from "./group-access.js";
+import { resolveTelegramNativeCommandAdmission } from "./ingress.js";
 import {
   buildTelegramStatusReactionVariants,
   type TelegramReactionEmoji,
@@ -292,6 +293,17 @@ export const buildTelegramMessageContext = async ({
   const effectiveGroupAllow = normalizeAllowFrom(expandedGroupAllowFrom);
   const hasGroupAllowOverride = groupAllowOverride !== undefined;
   const senderUsername = msg.from?.username ?? "";
+  const commandAuthorizedByConfig = await resolveTelegramNativeCommandAdmission({
+    msg,
+    nativeCommandNames,
+    botUsername: primaryCtx.me?.username,
+    cfg,
+    accountId: account.accountId,
+    dmPolicy: effectiveDmPolicy,
+    isGroup,
+    chatId,
+    senderId,
+  });
   const baseAccess = evaluateTelegramGroupBaseAccess({
     isGroup,
     groupConfig,
@@ -300,7 +312,7 @@ export const buildTelegramMessageContext = async ({
     effectiveGroupAllow,
     senderId,
     senderUsername,
-    enforceAllowOverride: true,
+    enforceAllowOverride: !commandAuthorizedByConfig,
     requireSenderForAllowOverride: false,
   });
   if (!baseAccess.allowed) {
@@ -364,6 +376,7 @@ export const buildTelegramMessageContext = async ({
   };
 
   if (
+    !commandAuthorizedByConfig &&
     !(await enforceTelegramDmAccess({
       isGroup,
       dmPolicy: effectiveDmPolicy,
@@ -538,6 +551,7 @@ export const buildTelegramMessageContext = async ({
     mentionFacts: bodyResult.mentionFacts,
     groupThread: bodyResult.groupThread,
     commandSource: bodyResult.commandSource,
+    nativeCommandBody: bodyResult.nativeCommandBody,
     stickerCacheHit: bodyResult.stickerCacheHit,
     ...(bodyResult.audioTranscribedMediaIndex !== undefined
       ? { audioTranscribedMediaIndex: bodyResult.audioTranscribedMediaIndex }

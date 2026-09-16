@@ -249,6 +249,7 @@ export async function buildTelegramInboundContextPayload(params: {
   mentionFacts: TelegramMentionFacts;
   groupThread?: GroupThreadMentionFacts;
   commandSource?: "native" | "text";
+  nativeCommandBody?: string;
   stickerCacheHit?: boolean;
   audioTranscribedMediaIndex?: number;
   commandAuthorized: boolean;
@@ -302,6 +303,7 @@ export async function buildTelegramInboundContextPayload(params: {
     groupRequireMention,
     mentionFacts,
     commandSource,
+    nativeCommandBody,
     stickerCacheHit,
     audioTranscribedMediaIndex,
     commandAuthorized,
@@ -568,7 +570,7 @@ export async function buildTelegramInboundContextPayload(params: {
     envelope: envelopeOptions,
   });
   const hasGroupHistoryContext = isGroup;
-  const commandBody = normalizeCommandBody(rawBody, {
+  const commandBody = normalizeCommandBody(nativeCommandBody ?? rawBody, {
     botUsername: normalizeOptionalLowercaseString(primaryCtx.me?.username),
     // Preserve multiline text-directive arguments for the core boundary (#138545);
     // native strictness is re-derived core-side from the same text.

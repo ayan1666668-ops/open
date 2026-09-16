@@ -5940,53 +5940,6 @@ describe("createTelegramBot", () => {
     expect(dispatchReplyWithBufferedBlockDispatcher).toHaveBeenCalledTimes(1);
   });
 
-  it("threads native command replies inside topics", async () => {
-    installTelegramTopicStateForTest();
-    try {
-      const chatId = nextForumCacheChatId();
-      commandSpy.mockClear();
-      sendMessageSpy.mockClear();
-      replySpy.mockResolvedValue({ text: "response" });
-
-      loadConfig.mockReturnValue({
-        commands: { native: true },
-        channels: {
-          telegram: {
-            dmPolicy: "open",
-            allowFrom: ["*"],
-            replyToMode: "first",
-            groups: { "*": { requireMention: false } },
-          },
-        },
-      });
-
-      createTelegramBot({ token: "tok" });
-      expect(commandSpy).toHaveBeenCalled();
-      const handler = requireValue(
-        commandSpy.mock.calls.find(([name]) => name === "status"),
-        "status command handler",
-      )[1] as (ctx: Record<string, unknown>) => Promise<void>;
-
-      const statusContext = makeForumGroupMessageCtx({ chatId, threadId: 99, text: "/status" });
-      await handler({
-        ...statusContext,
-        message: {
-          ...statusContext.message,
-          entities: [{ type: "bot_command", offset: 0, length: 7 }],
-        },
-        match: "",
-      });
-
-      const statusCall = requireValue(sendMessageSpy.mock.calls.at(0), "status reply call");
-      expect(String(statusCall[0])).toBe(String(chatId));
-      expect(statusCall[1]).toBe("response");
-      expect(statusCall[2]).toMatchObject({ message_thread_id: 99 });
-      expect(statusCall[2]).not.toHaveProperty("reply_parameters");
-    } finally {
-      clearTelegramRuntimeForTest();
-      resetTelegramTopicNameCacheForTest();
-    }
-  });
   it("reloads native command routing bindings between invocations without recreating the bot", async () => {
     commandSpy.mockClear();
     replySpy.mockClear();
@@ -6040,51 +5993,6 @@ describe("createTelegramBot", () => {
     await invokeStatus(402);
     expect(replySpy).toHaveBeenCalledTimes(2);
     expect(replySpy.mock.calls.at(1)?.[0].SessionKey).toContain("agent:agent-b:");
-  });
-  it("delivers progress for native slash commands through the message policy", async () => {
-    commandSpy.mockClear();
-    replySpy.mockImplementation(async (_ctx: MsgContext, opts?: GetReplyOptions) => {
-      await opts?.onToolResult?.({
-        text: "Fast mode enabled",
-        channelData: { openclawProgressKind: "fast-mode-auto" },
-      });
-      return { text: "final reply" };
-    });
-
-    loadConfig.mockReturnValue({
-      commands: { native: true },
-      channels: {
-        telegram: {
-          dmPolicy: "open",
-          allowFrom: ["*"],
-          streaming: { mode: "off" },
-        },
-      },
-    });
-
-    createTelegramBot({ token: "tok" });
-    const verboseHandler = commandSpy.mock.calls.find((call) => call[0] === "verbose")?.[1] as
-      | ((ctx: Record<string, unknown>) => Promise<void>)
-      | undefined;
-    if (!verboseHandler) {
-      throw new Error("verbose command handler missing");
-    }
-
-    await verboseHandler({
-      message: {
-        chat: { id: 12345, type: "private" },
-        from: { id: 12345, username: "testuser" },
-        text: "/verbose on",
-        entities: [{ type: "bot_command", offset: 0, length: 8 }],
-        date: 1736380800,
-        message_id: 42,
-      },
-      match: "on",
-    });
-
-    expect(sendMessageSpy).toHaveBeenCalledTimes(2);
-    expect(sendMessageSpy.mock.calls.at(0)?.[1]).toContain("Fast mode enabled");
-    expect(sendMessageSpy.mock.calls.at(1)?.[1]).toContain("final reply");
   });
   it("dedupes duplicate message updates by update_id", async () => {
     onSpy.mockReset();

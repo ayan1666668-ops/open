@@ -1,4 +1,5 @@
 // Telegram plugin module implements ingress behavior.
+import type { Message } from "grammy/types";
 import {
   createChannelIngressResolver,
   defineStableChannelIngressIdentity,
@@ -40,7 +41,25 @@ export function telegramAllowEntries(allow: NormalizedAllowFrom): string[] {
   return [...(allow.hasWildcard ? ["*"] : []), ...allow.entries];
 }
 
-type TelegramOwnerCommandAccess = { ownerList: string[]; senderIsOwner: boolean };
+export function resolveTelegramNativeCommandBody(params: {
+  msg: Pick<Message, "text" | "entities">;
+  nativeCommandNames?: ReadonlyMap<string, string>;
+  botUsername?: string;
+}): string | undefined {
+  const entity = params.msg.entities?.find(
+    (entry) => entry.type === "bot_command" && entry.offset === 0,
+  );
+  const text = params.msg.text;
+  if (!entity || !text) {
+    return undefined;
+  }
+  const [name, target] = text.slice(1, entity.length).toLowerCase().split("@");
+  if (!name || (target && target !== params.botUsername?.toLowerCase())) {
+    return undefined;
+  }
+  const commandName = params.nativeCommandNames?.get(name);
+  return commandName ? `/${commandName}${text.slice(entity.length)}` : undefined;
+}
 
 function telegramConversation(params: {
   isGroup: boolean;
@@ -62,42 +81,50 @@ export async function resolveTelegramCommandIngressAuthorization(params: {
   chatId: string | number;
   resolvedThreadId?: number;
   senderId: string;
-  effectiveDmAllow: NormalizedAllowFrom;
-  effectiveGroupAllow: NormalizedAllowFrom;
-  ownerAccess: TelegramOwnerCommandAccess;
+  effectiveDmAllow?: NormalizedAllowFrom;
+  effectiveGroupAllow?: NormalizedAllowFrom;
   eventKind?: ChannelIngressEventInput["kind"];
   allowTextCommands?: boolean;
   hasControlCommand?: boolean;
   modeWhenAccessGroupsOff?: "allow" | "deny" | "configured";
   includeDmAllowForGroupCommands?: boolean;
 }) {
-  if (isTelegramCommandsAllowFromConfigured(params.cfg)) {
-    const authorized = resolveCommandAuthorization({
-      cfg: params.cfg,
-      ctx: {
-        Provider: "telegram",
-        AccountId: params.accountId,
-        ChatType: params.isGroup ? "group" : "direct",
-        SenderId: params.senderId,
-      },
-      commandAuthorized: false,
-    }).isAuthorizedSender;
+  const ownerAccess = resolveCommandAuthorization({
+    cfg: params.cfg,
+    ctx: {
+      Provider: "telegram",
+      AccountId: params.accountId,
+      ChatType: params.isGroup ? "group" : "direct",
+      SenderId: params.senderId,
+    },
+    commandAuthorized: false,
+  });
+  const commandsAllowFromConfigured = isTelegramCommandsAllowFromConfigured(params.cfg);
+  const authorizedByConfig = commandsAllowFromConfigured
+    ? ownerAccess.isAuthorizedSender
+    : ownerAccess.senderIsOwner;
+  if (commandsAllowFromConfigured || authorizedByConfig) {
+    const authorized = authorizedByConfig;
     const shouldBlockControlCommand =
       params.allowTextCommands === true && params.hasControlCommand === true && !authorized;
     return {
       requested: true,
       authorized,
+      authorizedByConfig,
+      senderIsOwner: ownerAccess.senderIsOwner,
       shouldBlockControlCommand,
       reasonCode: shouldBlockControlCommand
         ? ("control_command_unauthorized" as const)
         : ("command_authorized" as const),
     };
   }
+  const effectiveDmAllow = params.effectiveDmAllow ?? normalizeAllowFrom([]);
+  const effectiveGroupAllow = params.effectiveGroupAllow ?? normalizeAllowFrom([]);
   const commandOwner = [
     ...(params.isGroup && params.includeDmAllowForGroupCommands === false
       ? []
-      : telegramAllowEntries(params.effectiveDmAllow)),
-    ...(params.ownerAccess.senderIsOwner ? [params.senderId || "*"] : params.ownerAccess.ownerList),
+      : telegramAllowEntries(effectiveDmAllow)),
+    ...ownerAccess.ownerList,
   ];
   const result = await createTelegramIngressResolver({
     accountId: params.accountId,
@@ -111,14 +138,27 @@ export async function resolveTelegramCommandIngressAuthorization(params: {
     dmPolicy: params.dmPolicy,
     groupPolicy: "allowlist",
     allowFrom: commandOwner,
-    groupAllowFrom: params.isGroup ? telegramAllowEntries(params.effectiveGroupAllow) : [],
+    groupAllowFrom: params.isGroup ? telegramAllowEntries(effectiveGroupAllow) : [],
     command: {
       allowTextCommands: params.allowTextCommands ?? false,
       hasControlCommand: params.hasControlCommand ?? false,
       modeWhenAccessGroupsOff: params.modeWhenAccessGroupsOff ?? "configured",
     },
   });
-  return result.commandAccess;
+  return { ...result.commandAccess, authorizedByConfig, senderIsOwner: ownerAccess.senderIsOwner };
+}
+
+export async function resolveTelegramNativeCommandAdmission(
+  params: Parameters<typeof resolveTelegramNativeCommandBody>[0] &
+    Pick<
+      Parameters<typeof resolveTelegramCommandIngressAuthorization>[0],
+      "accountId" | "cfg" | "dmPolicy" | "isGroup" | "chatId" | "senderId"
+    >,
+): Promise<boolean> {
+  if (resolveTelegramNativeCommandBody(params) === undefined) {
+    return false;
+  }
+  return (await resolveTelegramCommandIngressAuthorization(params)).authorizedByConfig;
 }
 
 export async function resolveTelegramEventIngressAuthorization(params: {

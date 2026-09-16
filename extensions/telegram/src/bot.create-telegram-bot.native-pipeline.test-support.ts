@@ -18,12 +18,23 @@ const { createTelegramBot } = await import("./bot.js");
 const bots: ReturnType<typeof createTelegramBot>[] = [];
 export const chat = { id: 42001, type: "private", first_name: "Alice" } as const;
 export const from = { id: 42001, is_bot: false, first_name: "Alice" } as const;
+export const groupChat = {
+  id: -10042001,
+  type: "supergroup",
+  title: "Test group",
+  is_forum: true,
+} as const;
 export const photo = [
   { file_id: "photo-1", file_unique_id: "photo-unique", width: 10, height: 10 },
 ];
 export const apiCalls = vi.fn<(method: string, payload: unknown) => void>();
 
-export function createBot(native = true, text = true, override?: OpenClawConfig) {
+export function createBot(
+  native = true,
+  text = true,
+  override?: OpenClawConfig,
+  dmTopicsEnabled = false,
+) {
   const cfg: OpenClawConfig = override ?? {
     commands: { native, text },
     channels: { telegram: { dmPolicy: "open", allowFrom: ["*"], streaming: { mode: "off" } } },
@@ -34,19 +45,27 @@ export function createBot(native = true, text = true, override?: OpenClawConfig)
       typeof input === "string" ? input : input instanceof URL ? input.href : input.url,
     );
     const method = url.pathname.slice(url.pathname.lastIndexOf("/") + 1);
-    const payload: unknown = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
+    const payload: Record<string, unknown> =
+      typeof init?.body === "string" ? JSON.parse(init.body) : {};
     apiCalls(method, payload);
     const result =
       method === "getFile"
         ? { file_id: "photo-1", file_unique_id: "photo-unique", file_path: "photo.jpg" }
-        : { message_id: 200, date: 1736380800, chat };
+        : {
+            message_id: 200,
+            date: 1736380800,
+            chat,
+            ...(typeof payload.message_thread_id === "number"
+              ? { message_thread_id: payload.message_thread_id }
+              : {}),
+          };
     return new Response(JSON.stringify({ ok: true, result }), {
       headers: { "content-type": "application/json" },
     });
   };
   const bot = createTelegramBot({
     token: "123:test-token",
-    botInfo: telegramBotInfoForTest,
+    botInfo: { ...telegramBotInfoForTest, has_topics_enabled: dmTopicsEnabled },
     config: cfg,
     telegramTransport: { fetch, sourceFetch: fetch, close: async () => {} },
     telegramDeps: {
@@ -72,6 +91,15 @@ export function commandMessage(text: string) {
       { type: "bot_command", offset: 0, length: commandEnd < 0 ? text.length : commandEnd },
     ],
   } satisfies Message.TextMessage;
+}
+
+export function groupCommand(text = "/status", threadId = 99) {
+  return {
+    ...commandMessage(text),
+    chat: groupChat,
+    message_thread_id: threadId,
+    is_topic_message: true,
+  };
 }
 
 let state: OpenClawTestState;
