@@ -636,6 +636,40 @@ describe("createFeishuCommentReplyDispatcher", () => {
       );
     });
 
+    // A CRLF source leaves the carriage return on the generated closing marker, because
+    // the line split is on the feed alone, and a closer that insisted on nothing but
+    // whitespace after the backticks read that as unbalanced and declined to convert.
+    it("converts a comment table written with CRLF line endings", async () => {
+      const chunking = await vi.importActual<typeof import("openclaw/plugin-sdk/reply-chunking")>(
+        "openclaw/plugin-sdk/reply-chunking",
+      );
+      const runtime = getFeishuRuntimeMock();
+      getFeishuRuntimeMock.mockReturnValue({
+        ...runtime,
+        channel: {
+          ...runtime.channel,
+          text: {
+            ...runtime.channel.text,
+            resolveTextChunkLimit: vi.fn(() => 4000),
+            resolveChunkMode: vi.fn(() => "length"),
+            chunkTextWithMode: chunking.chunkTextWithMode,
+            chunkMarkdownTextWithMode: chunking.chunkMarkdownTextWithMode,
+          },
+        },
+      });
+      const created = createTestCommentReplyDispatcher();
+      const authored = `${tableMarkdown.split("\n").join("\r\n")}\r\n\r\nAfter the table.`;
+      const converted = actual.convertMarkdownTables(authored, "code");
+      // Guard the fixture: the closing marker carries the carriage return.
+      expect(converted).toContain("```\r\n");
+
+      await replyDispatcherOptions(created).deliver({ text: authored }, { kind: "final" });
+
+      expect(deliverCommentThreadTextMock.mock.calls.map((call) => call[1].content)).toEqual(
+        chunking.chunkMarkdownTextWithMode(converted, 4000, "length"),
+      );
+    });
+
     it("converts a comment table that follows a language-tagged code block", async () => {
       const chunking = await vi.importActual<typeof import("openclaw/plugin-sdk/reply-chunking")>(
         "openclaw/plugin-sdk/reply-chunking",

@@ -9,10 +9,12 @@ import type { MentionTarget } from "./mention-target.types.js";
  * A fence opener may carry an info string, a closer may not, and both sit behind the
  * table's source prefix, which the IR restricts to spaces, tabs and quote markers.
  * Matching only those prefixes keeps an inline backtick run in ordinary prose from
- * reading as a marker and suppressing a table that would have converted safely.
+ * reading as a marker and suppressing a table that would have converted safely. A
+ * closer keeps the carriage return of a CRLF source, since the line split is on the
+ * feed alone.
  */
 const FEISHU_FENCE_OPENER = /^[ \t>]*(`{3,})[^`]*$/u;
-const FEISHU_FENCE_CLOSER = /^[ \t>]*(`{3,})[ \t]*$/u;
+const FEISHU_FENCE_CLOSER = /^[ \t>]*(`{3,})[ \t]*\r?$/u;
 
 /**
  * A chunk that opens a fence nothing closes renders worse than the table it replaced, so

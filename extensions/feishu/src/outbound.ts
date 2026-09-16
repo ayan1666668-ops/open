@@ -378,13 +378,32 @@ async function sendOutboundText(params: {
   // auto send carrying both a fence and a shape the card renderer cannot draw would
   // reach a card and lose those rows. Ask about drawability here too. An explicit
   // `card` render mode still wins, which is the direct-send behaviour this change keeps.
+  const postLimit = resolveTextChunkLimit(cfg, "feishu", account.accountId, {
+    fallbackLimit: FEISHU_TEXT_CHUNK_LIMIT,
+  });
+  const postChunkMode = resolveChunkMode(cfg, "feishu", account.accountId);
+  // A card carries a table as one component and the card chunker cuts on lines without
+  // repeating the header and its delimiter, so every card after the first shows those
+  // rows as raw pipes. A table that does not fit one card takes the post path instead,
+  // which renders it as a fenced block that survives the cut. This branch taught the
+  // promotion to recognise pipe-less tables, which used to miss it and land here anyway,
+  // and the same cut applies to the piped ones the promotion already accepted.
+  const cardCarriesWholeTable =
+    !hasCardMarkdownTable(tableText) ||
+    chunkFeishuCardMarkdown({
+      text: tableText,
+      limit: postLimit,
+      mode: postChunkMode,
+      header: params.header,
+    }).length <= 1;
   const useCard =
     (renderMode === "card" ||
       (renderMode === "auto" &&
         shouldUseCard(tableText, nativeTables) &&
         !hasUndrawableCardTable(tableText))) &&
     !(tableMode === "off" && hasCardMarkdownTable(tableText)) &&
-    withinCardTableLimit(tableText);
+    withinCardTableLimit(tableText) &&
+    cardCarriesWholeTable;
 
   // Post rendering has no native tables, so block falls back to code there.
   // Tables need contiguous source rows, so convert them before the parser
@@ -397,13 +416,10 @@ async function sendOutboundText(params: {
 
   // Core chunks raw text before channel rendering. Re-chunk after expansion
   // and keep each fenced-code chunk independently valid Markdown.
-  const postLimit = resolveTextChunkLimit(cfg, "feishu", account.accountId, {
-    fallbackLimit: FEISHU_TEXT_CHUNK_LIMIT,
-  });
   const chunkOptions = {
     text: normalizedText,
     limit: postLimit,
-    mode: resolveChunkMode(cfg, "feishu", account.accountId),
+    mode: postChunkMode,
   };
   const subChunks = useCard
     ? chunkFeishuCardMarkdown({ ...chunkOptions, header: params.header })

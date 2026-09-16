@@ -4198,6 +4198,40 @@ describe("feishuOutbound.sendText markdown table modes in auto mode", () => {
     expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
   });
 
+  // A card carries a table as one component and the card chunker cuts on lines without
+  // repeating the header and its delimiter, so a table that needs more than one card
+  // shows raw pipes from the second card on. It takes the post path instead, where the
+  // fenced block survives the cut. This branch taught the promotion to read pipe-less
+  // tables, which used to miss it and land on the post path anyway.
+  it.each([
+    { shape: "piped", row: "| r%d | Lead |", head: ["| Name | Role |", "| --- | --- |"] },
+    { shape: "pipe-less", row: "r%d | Lead", head: ["Name | Role", "--- | ---"] },
+  ])(
+    "posts an oversized $shape table instead of splitting it across cards",
+    async ({ row, head }) => {
+      const table = [
+        ...head,
+        ...Array.from({ length: 40 }, (_entry, i) => row.replace("%d", String(i))),
+      ].join("\n");
+      const cfg: ClawdbotConfig = {
+        channels: {
+          feishu: { accounts: { main: { textChunkLimit: 200, markdown: { tables: "block" } } } },
+        },
+      };
+      // Guard the fixture: one card could not hold it.
+      expect(table.length).toBeGreaterThan(200);
+
+      await sendText({ cfg, to: "chat_1", text: table, accountId: "main" });
+
+      expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
+      const posted = sendMessageFeishuMock.mock.calls.map(([call]) => String(call.text)).join("");
+      // The post path renders it as a fenced block, so the header survives every cut.
+      expect(posted).toContain("```");
+      expect(posted).toContain("Name");
+      expect(posted).toContain("r39");
+    },
+  );
+
   it("off keeps a fenced table sample on the card path", async () => {
     const cfg: ClawdbotConfig = {
       channels: { feishu: { renderMode: "card", markdown: { tables: "off" } } },
