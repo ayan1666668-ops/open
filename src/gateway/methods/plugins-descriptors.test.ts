@@ -1,7 +1,7 @@
 // Plugin management descriptor tests keep read/admin scopes and write budgets explicit.
 import { describe, expect, it } from "vitest";
 import type { GatewayRequestHandler } from "../server-methods/types.js";
-import { createCoreGatewayMethodDescriptors } from "./core-descriptors.js";
+import { createCoreGatewayMethodDescriptors } from "./core-method-policy.js";
 
 const handler: GatewayRequestHandler = ({ respond }) => respond(true, { ok: true });
 
