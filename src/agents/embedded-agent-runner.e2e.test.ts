@@ -967,7 +967,7 @@ describe("runEmbeddedAgent", () => {
       expect.objectContaining({
         skipAgentDiscovery: true,
         allowBundledStaticCatalogFallback: true,
-        staticCatalogTransportOwner: "harness",
+        preferBundledStaticCatalogTransport: true,
         preparedModelRuntime: expect.objectContaining({
           configuredRuntimeModels: expect.any(Array),
           inlineProviderModels: expect.any(Array),

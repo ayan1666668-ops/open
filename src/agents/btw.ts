@@ -516,8 +516,9 @@ async function resolveRuntimeModel(params: {
     workspaceDir,
     skipAgentDiscovery: true,
     allowBundledStaticCatalogFallback: true,
-    staticCatalogTransportOwner:
-      params.harnessId && params.harnessId !== "openclaw" ? "harness" : undefined,
+    preferBundledStaticCatalogTransport: Boolean(
+      params.harnessId && params.harnessId !== "openclaw",
+    ),
   });
   let model = resolution.model;
   if (!model) {
