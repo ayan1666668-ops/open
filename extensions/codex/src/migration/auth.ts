@@ -494,6 +494,7 @@ export async function buildCodexAuthItems(params: {
       details: {
         provider: credential.provider,
         profileId,
+        ...(matchedExisting ? { matchedExistingProfile: true } : {}),
         sourceProfileId: credential.profileId,
         sourceCredentialFingerprint: sourceCredentialFingerprint(credential),
         sourceKind: "codex-native-selected-storage",
@@ -599,9 +600,10 @@ async function applyCodexAuthItem(
     updater: (freshStore) => {
       ctx.signal?.throwIfAborted();
       const effectiveStore = loadAuthProfileStoreWithoutExternalProfiles(targets.agentDir);
+      const currentTarget = itemProfileTarget(credential, effectiveStore, ctx, source, freshStore);
       if (
-        itemProfileTarget(credential, effectiveStore, ctx, source, freshStore).profileId !==
-        profileId
+        currentTarget.profileId !== profileId ||
+        (currentTarget.matchedExisting && item.details?.matchedExistingProfile !== true)
       ) {
         conflicted = true;
         return false;

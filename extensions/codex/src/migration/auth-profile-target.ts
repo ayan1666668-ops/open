@@ -99,7 +99,8 @@ export function itemProfileTarget(
     const profile = credential.result.profiles[0];
     const matched =
       profile?.credential.type === "oauth"
-        ? findMatchingOAuthProfile(targetStore, profile.credential)
+        ? (findMatchingOAuthProfile(targetStore, profile.credential) ??
+          findMatchingOAuthProfile(store, profile.credential))
         : undefined;
     if (matched) {
       return { profileId: matched, matchedExisting: true };

@@ -500,6 +500,83 @@ describe("Codex migration auth identity and inherited profiles", () => {
     expect(await fs.readFile(path.join(fixture.codexHome, "auth.json"), "utf8")).toBe(nativeAuth);
   });
 
+  it("preserves an inherited OAuth refresh owner for a secondary agent import", async () => {
+    const fixture = await createCodexFixture();
+    credentialStorage.accountType = "chatgpt";
+    const claims = {
+      chatgpt_account_id: "shared-account",
+      chatgpt_user_id: "shared-user",
+    };
+    const access = fakeJwt({
+      exp: 2_100_000_000,
+      "https://api.openai.com/auth": claims,
+    });
+    const profileId = "openai:shared-owner";
+    const inherited = {
+      type: "oauth" as const,
+      provider: "openai",
+      access,
+      refresh: "shared-refresh",
+      expires: 2_100_000_000_000,
+      accountId: "shared-account",
+    };
+    upsertAuthProfile({ profileId, credential: inherited });
+    await writeFile(
+      path.join(fixture.codexHome, "auth.json"),
+      JSON.stringify({
+        auth_mode: "chatgpt",
+        tokens: {
+          access_token: access,
+          refresh_token: "shared-refresh",
+          account_id: "shared-account",
+        },
+      }),
+    );
+    const ctx = makeContext({
+      source: fixture.codexHome,
+      stateDir: fixture.stateDir,
+      workspaceDir: fixture.workspaceDir,
+      targetAgentId: "research",
+      includeSecrets: true,
+      itemKinds: ["auth"],
+      providerOptions: { credentialKind: "oauth", configPatchMode: "none" },
+      config: {
+        agents: {
+          defaults: { workspace: fixture.workspaceDir },
+          list: [{ id: "main", default: true }, { id: "research" }],
+        },
+      },
+    });
+    const provider = buildCodexMigrationProvider();
+
+    const plan = await provider.plan(ctx);
+    expect(findItem(plan.items, "auth:openai")).toMatchObject({
+      status: "planned",
+      details: { profileId, matchedExistingProfile: true },
+    });
+
+    const result = await provider.apply(ctx, plan);
+
+    expect(findItem(result.items, "auth:openai")).toMatchObject({
+      status: "migrated",
+      details: { profileId, wroteAuthProfile: false },
+    });
+    await updateAuthProfileStoreWithLock({
+      agentDir: targetAgentDir(fixture, "research"),
+      stateDir: fixture.stateDir,
+      updater: (localStore) => {
+        expect(localStore.profiles).toEqual({});
+        return false;
+      },
+    });
+    clearRuntimeAuthProfileStoreSnapshots();
+    expect(loadAuthProfileStoreForSecretsRuntime().profiles[profileId]).toEqual(inherited);
+    expect(loadTargetAuthStore(fixture, "research").profiles[profileId]).toEqual(inherited);
+    expect(loadTargetAuthStore(fixture, "research").profiles).not.toHaveProperty(
+      "openai:shared-owner-import",
+    );
+  });
+
   it.each([
     {
       state: "usable",
