@@ -4,6 +4,7 @@ import { i18n } from "../../i18n/index.ts";
 import {
   buildSessionPlacementBlockers,
   projectDevicePlacements,
+  resolveSessionPlacementPreflightWorkspacePath,
   sessionPlacementDisabledReason,
   stackDisabledReasons,
 } from "./device-placement.ts";
@@ -313,5 +314,28 @@ describe("device placement projection", () => {
   it("stackDisabledReasons deduplicates identical sentences", () => {
     expect(stackDisabledReasons(["A.", "A.", "B."])).toBe("A. B.");
     expect(stackDisabledReasons([undefined, "  ", undefined])).toBeUndefined();
+  });
+
+  it("omits local folder from empty / remote-repository New Session preflight", () => {
+    expect(
+      resolveSessionPlacementPreflightWorkspacePath({
+        freshWorkspace: true,
+        folder: "/Users/me/agent-workspace",
+        workspacePath: "/Users/me/agent-workspace",
+      }),
+    ).toBe("");
+    expect(
+      resolveSessionPlacementPreflightWorkspacePath({
+        remoteRepository: { url: "https://example.com/repo.git" },
+        folder: "/Users/me/agent-workspace",
+      }),
+    ).toBe("");
+    expect(
+      resolveSessionPlacementPreflightWorkspacePath({
+        freshWorkspace: false,
+        folder: "/Users/me/project",
+        workspacePath: "/Users/me/agent-workspace",
+      }),
+    ).toBe("/Users/me/project");
   });
 });

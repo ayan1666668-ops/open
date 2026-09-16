@@ -1,4 +1,5 @@
 import type { SessionMoveTarget } from "../../../../packages/gateway-protocol/src/index.js";
+import { splitTrailingAuthProfile } from "../../../../src/agents/model-ref-profile.js";
 import type { GatewayBrowserClient } from "../../api/gateway.ts";
 import type { GatewaySessionRow } from "../../api/types.ts";
 import type { ApplicationGatewaySnapshot } from "../../app/context.ts";
@@ -77,9 +78,14 @@ async function selectChatPanePlacementTarget(params: {
         params.row.sessionRoot?.trim() ||
         params.row.worktree?.repoRoot?.trim() ||
         "";
+      const agentId =
+        params.row.agentId?.trim() || parseAgentSessionKey(params.row.key)?.agentId || "";
+      const authProfileId = splitTrailingAuthProfile(params.row.model?.trim() || "").profile ?? "";
       const catalog = await requestPlaceCatalog(params.client, {
         runtimeId: runtime?.id,
         workspacePath,
+        agentId,
+        authProfileId,
       });
       const catalogDisabledReason = sessionPlacementDisabledReason(
         buildSessionPlacementBlockers({

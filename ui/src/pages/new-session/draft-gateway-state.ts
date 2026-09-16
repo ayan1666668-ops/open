@@ -51,6 +51,8 @@ type DraftGatewaySnapshot = Readonly<{
   agentsHydrated: boolean;
   runtimeId: string;
   workspacePath: string;
+  agentId: string;
+  authProfileId: string;
 }>;
 
 type DraftGatewayCallbacks = {
@@ -124,6 +126,8 @@ export class DraftGatewayState {
           this.gatewayRecoveryScopeValue,
           this.read().runtimeId,
           this.read().workspacePath,
+          this.read().agentId,
+          this.read().authProfileId,
         ] as const,
       task: async ([
         client,
@@ -133,6 +137,8 @@ export class DraftGatewayState {
         _recoveryScope,
         runtimeId,
         workspacePath,
+        agentId,
+        authProfileId,
       ]) => {
         if (!client) {
           return initialState;
@@ -140,7 +146,12 @@ export class DraftGatewayState {
         if (!canWrite) {
           return { profiles: [], environments: [] };
         }
-        const result = await requestPlaceCatalog(client, { runtimeId, workspacePath });
+        const result = await requestPlaceCatalog(client, {
+          runtimeId,
+          workspacePath,
+          agentId,
+          authProfileId,
+        });
         return { ...result, profiles: isAdmin ? result.profiles : [] };
       },
       onComplete: (placeCatalog) => {

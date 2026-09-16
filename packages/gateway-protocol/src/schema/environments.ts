@@ -159,6 +159,10 @@ export const EnvironmentsListParamsSchema = closedObject({
   runtimeId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
   /** Absolute workspace path used for symlink-portability preflight. */
   workspacePath: Type.Optional(Type.String({ minLength: 1, maxLength: 4096 })),
+  /** Selected session agent for prepared-auth placement eligibility. */
+  agentId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+  /** Selected auth profile / prepared route for placement eligibility. */
+  authProfileId: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })),
 });
 
 /** Provider-authored machine choice for one configured worker profile. */

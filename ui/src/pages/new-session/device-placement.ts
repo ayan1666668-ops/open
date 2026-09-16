@@ -86,6 +86,23 @@ export function buildSessionPlacementBlockers(params: {
   return blockers;
 }
 
+/**
+ * Workspace path for environments.list symlink preflight.
+ * Empty / remote-repository New Session sources do not copy local files, so the
+ * agent's local folder must not contribute escaping-symlink hard-disables.
+ */
+export function resolveSessionPlacementPreflightWorkspacePath(params: {
+  freshWorkspace?: boolean;
+  remoteRepository?: unknown;
+  folder?: string;
+  workspacePath?: string;
+}): string {
+  if (params.freshWorkspace || params.remoteRepository) {
+    return "";
+  }
+  return params.folder?.trim() || params.workspacePath?.trim() || "";
+}
+
 export function sessionPlacementDisabledReason(
   blockers: readonly SessionPlacementBlocker[],
 ): string | undefined {

@@ -67,6 +67,8 @@ function createBrowser(
       agentsHydrated: false,
       runtimeId: "",
       workspacePath: "",
+      agentId: "",
+      authProfileId: "",
     }),
     {
       requestUpdate: vi.fn(),

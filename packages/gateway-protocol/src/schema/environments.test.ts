@@ -294,6 +294,16 @@ describe("worker environment protocol schemas", () => {
         workspacePath: "/tmp/workspace",
       }),
     ).toBe(true);
+    expect(
+      validateEnvironmentsListParams({
+        runtimeId: "codex",
+        workspacePath: "/tmp/workspace",
+        agentId: "research",
+        authProfileId: "openai:research",
+      }),
+    ).toBe(true);
+    expect(validateEnvironmentsListParams({ agentId: "" })).toBe(false);
+    expect(validateEnvironmentsListParams({ authProfileId: "" })).toBe(false);
     expect(validateEnvironmentsListParams({ runtimeId: "" })).toBe(false);
     expect(validateEnvironmentsListParams({ runtimeId: "x".repeat(129) })).toBe(false);
     expect(validateEnvironmentsListParams({ workspacePath: "" })).toBe(false);

@@ -2,18 +2,26 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import type { EnvironmentSummary } from "../../../packages/gateway-protocol/src/index.js";
-import { resolveDefaultAgentDir } from "../../agents/agent-scope-config.js";
+import {
+  resolveAmbientOwnerAgentId,
+  resolveEffectiveAgentDir,
+} from "../../agents/agent-scope-config.js";
 import { getPreparedRuntimeAuthProfileStoreSnapshot } from "../../agents/auth-profiles/store.js";
+import { resolveLegacyInheritedAuthAgentId } from "../../agents/legacy-inherited-auth-dir.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { runCommandWithTimeout } from "../../process/exec.js";
+import { normalizeAgentId } from "../../routing/session-key.js";
 import {
   resolveSessionPlacementDisabledReason,
   type SessionPlacementPreflight,
 } from "./device-placement-eligibility.js";
 import { resolveWorkerPlacementCapabilities } from "./placement-capabilities.js";
 import { isPortableRootContainedSymlink } from "./workspace-actual-manifest.js";
+import { isDerivedWorkspacePath } from "./workspace-path-exclusions.js";
 
 /** Bound preflight walks so environments.list stays picker-responsive. */
 const MAX_SYMLINK_PREFLIGHT_ENTRIES = 4_096;
+const GIT_CHECK_IGNORE_TIMEOUT_MS = 1_500;
 
 function isOpenAiAuthProvider(provider: string | undefined): boolean {
   const normalized = provider?.trim().toLowerCase() ?? "";
@@ -25,18 +33,29 @@ function isOpenAiAuthProvider(provider: string | undefined): boolean {
   );
 }
 
-function configHasPreparedOpenAiAuth(config: OpenClawConfig): boolean {
+function configHasPreparedOpenAiAuth(config: OpenClawConfig, authProfileId?: string): boolean {
   const profiles = config.auth?.profiles;
   if (!profiles || typeof profiles !== "object") {
     return false;
   }
+  if (authProfileId) {
+    return isOpenAiAuthProvider(profiles[authProfileId]?.provider);
+  }
   return Object.values(profiles).some((profile) => isOpenAiAuthProvider(profile?.provider));
 }
 
-function storeHasPreparedOpenAiAuth(agentDir: string | undefined): boolean | undefined {
-  const store = getPreparedRuntimeAuthProfileStoreSnapshot(agentDir);
+function storeHasPreparedOpenAiAuth(
+  agentDir: string | undefined,
+  inheritedAuthDir: string | undefined,
+  authProfileId?: string,
+): boolean | undefined {
+  const store = getPreparedRuntimeAuthProfileStoreSnapshot(agentDir, inheritedAuthDir);
   if (!store) {
     return undefined;
+  }
+  if (authProfileId) {
+    const profile = store.profiles[authProfileId];
+    return profile ? isOpenAiAuthProvider(profile.provider) : false;
   }
   return Object.values(store.profiles).some((profile) => isOpenAiAuthProvider(profile.provider));
 }
@@ -59,10 +78,13 @@ export function resolveCodexAppServerHomeScopeFromConfig(
 /**
  * Remote-exec placement requires prepared OpenAI auth in an agent-scoped home.
  * Native Codex homeScope="user" and ambient credentials are never accepted.
+ * Eligibility follows the selected session agent / auth profile when provided.
  */
 export function resolveMissingPreparedAuthForPlacement(params: {
   config: OpenClawConfig;
   runtimeId?: string;
+  agentId?: string;
+  authProfileId?: string;
 }): boolean {
   const runtimeId = params.runtimeId?.trim();
   if (!runtimeId) {
@@ -75,20 +97,67 @@ export function resolveMissingPreparedAuthForPlacement(params: {
   if (resolveCodexAppServerHomeScopeFromConfig(params.config) === "user") {
     return true;
   }
-  const agentDir = resolveDefaultAgentDir(params.config);
-  const storeReady = storeHasPreparedOpenAiAuth(agentDir);
+  const authProfileId = params.authProfileId?.trim() || undefined;
+  const agentId = normalizeAgentId(
+    params.agentId?.trim() || resolveAmbientOwnerAgentId(params.config),
+  );
+  const agentDir = resolveEffectiveAgentDir(params.config, agentId);
+  const inheritedAuthDir = resolveEffectiveAgentDir(
+    params.config,
+    resolveLegacyInheritedAuthAgentId(params.config),
+  );
+  const storeReady = storeHasPreparedOpenAiAuth(agentDir, inheritedAuthDir, authProfileId);
   if (storeReady === true) {
     return false;
   }
   if (storeReady === false) {
     return true;
   }
-  return !configHasPreparedOpenAiAuth(params.config);
+  return !configHasPreparedOpenAiAuth(params.config, authProfileId);
 }
 
 /**
- * Early-exit walk: true when any workspace symlink is absolute or escapes the root.
- * Caps visited entries so picker catalog reads stay bounded.
+ * True when transfer inventory would consider this relative path (symlink check
+ * applies only after derived / Git-ignored exclusions).
+ */
+export async function isTransferEligibleSymlinkPath(
+  root: string,
+  relative: string,
+): Promise<boolean> {
+  if (!relative || relative.startsWith("..") || isDerivedWorkspacePath(relative)) {
+    return false;
+  }
+  let gitDir: Awaited<ReturnType<typeof fs.lstat>> | undefined;
+  try {
+    gitDir = await fs.lstat(path.join(root, ".git"));
+  } catch {
+    return true;
+  }
+  if (!gitDir.isDirectory() && !gitDir.isFile()) {
+    return true;
+  }
+  try {
+    const result = await runCommandWithTimeout(
+      ["git", "-C", root, "check-ignore", "-q", "--", relative],
+      { timeoutMs: GIT_CHECK_IGNORE_TIMEOUT_MS },
+    );
+    // Exit 0 => ignored (not transferred unless .worktreeinclude selects it;
+    // false-disable avoidance prefers omitting the hard block; dispatch stays
+    // authoritative for include-list edge cases).
+    if (result.code === 0) {
+      return false;
+    }
+  } catch {
+    // Missing git or check failure: keep the portable-symlink guard.
+  }
+  return true;
+}
+
+/**
+ * Early-exit walk: true when any *transfer-eligible* workspace symlink is
+ * absolute or escapes the root. Caps visited entries so picker catalog reads
+ * stay bounded. Skips derived paths (node_modules, caches) and Git-ignored
+ * paths the inventory owner would never sync.
  */
 export async function workspaceHasEscapingSymlinks(workspacePath: string): Promise<boolean> {
   const root = path.resolve(workspacePath.trim());
@@ -124,6 +193,10 @@ export async function workspaceHasEscapingSymlinks(workspacePath: string): Promi
       if (!relative || relative.startsWith("..")) {
         continue;
       }
+      // Match transfer inventory: derived caches / node_modules never sync.
+      if (isDerivedWorkspacePath(relative) || entry.name === ".git") {
+        continue;
+      }
       if (entry.isSymbolicLink()) {
         let target: string;
         try {
@@ -132,7 +205,9 @@ export async function workspaceHasEscapingSymlinks(workspacePath: string): Promi
           continue;
         }
         if (!isPortableRootContainedSymlink(root, relative, target)) {
-          return true;
+          if (await isTransferEligibleSymlinkPath(root, relative)) {
+            return true;
+          }
         }
         continue;
       }
@@ -149,10 +224,14 @@ export async function resolveSessionPlacementPreflight(params: {
   config: OpenClawConfig;
   runtimeId?: string;
   workspacePath?: string;
+  agentId?: string;
+  authProfileId?: string;
 }): Promise<SessionPlacementPreflight> {
   const missingPreparedAuth = resolveMissingPreparedAuthForPlacement({
     config: params.config,
     runtimeId: params.runtimeId,
+    agentId: params.agentId,
+    authProfileId: params.authProfileId,
   });
   const workspacePath = params.workspacePath?.trim();
   const escaping =
@@ -184,6 +263,8 @@ export async function resolveEnvironmentsListSessionPlacement(params: {
   config: OpenClawConfig;
   runtimeId?: string;
   workspacePath?: string;
+  agentId?: string;
+  authProfileId?: string;
 }) {
   const sessionPlacement = await resolveSessionPlacementPreflight(params);
   const sessionDisabledReason = resolveSessionPlacementDisabledReason(sessionPlacement);

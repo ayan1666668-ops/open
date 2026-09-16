@@ -47,7 +47,8 @@ export { summarizeWorkerEnvironment } from "./environments-summary.js";
  * Projects gateway-visible environments for the session host picker.
  * Runtime-scoped requiredNodeCommand authority is included when runtimeId is set.
  * Session-scoped symlink / prepared-auth blockers are stamped by environments.list
- * via resolveEnvironmentsListSessionPlacement when workspacePath / runtimeId are set.
+ * via resolveEnvironmentsListSessionPlacement when workspacePath / runtimeId /
+ * agentId / authProfileId are set.
  */
 export async function listGatewayEnvironments(
   context: GatewayRequestContext,
@@ -370,7 +371,15 @@ export const environmentsHandlers: GatewayRequestHandlers = {
       typeof params.workspacePath === "string" && params.workspacePath.trim()
         ? params.workspacePath.trim()
         : undefined;
-    if (runtimeId || workspacePath) {
+    const agentId =
+      typeof params.agentId === "string" && params.agentId.trim()
+        ? params.agentId.trim()
+        : undefined;
+    const authProfileId =
+      typeof params.authProfileId === "string" && params.authProfileId.trim()
+        ? params.authProfileId.trim()
+        : undefined;
+    if (runtimeId || workspacePath || agentId || authProfileId) {
       const scopes = Array.isArray(client?.connect.scopes) ? client.connect.scopes : [];
       const access = authorizeOperatorScopesForRequiredScope(WRITE_SCOPE, scopes);
       if (!access.allowed) {
@@ -391,6 +400,8 @@ export const environmentsHandlers: GatewayRequestHandlers = {
           config,
           runtimeId,
           workspacePath,
+          agentId,
+          authProfileId,
         }),
       ]);
       const { sessionPlacement, sessionDisabledReason, hasSessionPlacement } = placement;

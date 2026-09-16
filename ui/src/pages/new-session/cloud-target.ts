@@ -25,7 +25,12 @@ registerNewSessionSetupEnglish();
 
 export async function requestPlaceCatalog(
   client: Pick<GatewayBrowserClient, "request">,
-  options: { runtimeId?: string; workspacePath?: string } = {},
+  options: {
+    runtimeId?: string;
+    workspacePath?: string;
+    agentId?: string;
+    authProfileId?: string;
+  } = {},
 ): Promise<{
   profiles: DraftCloudProfile[];
   environments: DraftEnvironment[];
@@ -33,9 +38,13 @@ export async function requestPlaceCatalog(
 }> {
   const runtimeId = options.runtimeId?.trim();
   const workspacePath = options.workspacePath?.trim();
+  const agentId = options.agentId?.trim();
+  const authProfileId = options.authProfileId?.trim();
   const result = await client.request<EnvironmentsListResult>("environments.list", {
     ...(runtimeId ? { runtimeId } : {}),
     ...(workspacePath ? { workspacePath } : {}),
+    ...(agentId ? { agentId } : {}),
+    ...(authProfileId ? { authProfileId } : {}),
   });
   const sessionPlacement = readDraftSessionPlacement(result?.sessionPlacement);
   return {
