@@ -4,7 +4,7 @@ import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js"
 import * as sessionAccessor from "../../config/sessions/session-accessor.js";
 import { emitSessionLifecycleEvent } from "../../sessions/session-lifecycle-events.js";
 import { copyReplyPayloadMetadata, setReplyPayloadMetadata } from "../reply-payload.js";
-import { completeFollowupRunLifecycle, markFollowupRunEnqueued } from "./queue/types.js";
+import { completeFollowupRunLifecycle, markFollowupRunEnqueued } from "./queue/lifecycle.js";
 import {
   bindReplyReasoningVisibility,
   createReplyReasoningVisibility,

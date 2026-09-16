@@ -7,10 +7,7 @@ import { runAgentHarnessBeforeMessageWriteHook } from "../../../agents/harness/h
 import { runOutsidePreparedModelRuntimePluginGenerationScope } from "../../../agents/prepared-model-runtime-generation-scope.js";
 import { readToolAllowlistIntersection } from "../../../agents/tool-policy.js";
 import { normalizeChatType } from "../../../channels/chat-type.js";
-import {
-  combineChannelAdmissionEvidence,
-  compareChannelAdmissionParticipants,
-} from "../../../channels/message-access/admission-evidence.js";
+import { combineChannelAdmissionEvidence } from "../../../channels/message-access/admission-evidence.js";
 import { resolveSessionStorePathCore } from "../../../config/sessions.js";
 import { loadSessionEntryReadOnly } from "../../../config/sessions/session-accessor.js";
 // Drains queued follow-up runs while preserving route and session identity.
@@ -45,6 +42,7 @@ import {
 } from "../../../utils/queue-helpers.js";
 import { resolveReplyScreenToolTarget } from "../reply-tool-authority.js";
 import { isRoutableChannel } from "../route-reply.js";
+import { resolveCollectedRun, resolveFollowupAuthorizationKey } from "./collect-authorization.js";
 import {
   admitFollowupRunLifecycle,
   completeFollowupRunLifecycle,
@@ -286,61 +284,6 @@ function resolveOriginRoutingMetadata(items: FollowupRun[]): OriginRoutingMetada
     originatingReplyToId: source.originatingReplyToId,
     originatingReplyToMode: source.originatingReplyToMode,
     originatingChatType: source.originatingChatType,
-  };
-}
-
-// Keep this key aligned with the fields that affect per-message authorization or
-// exec-context propagation in collect-mode batching. Display-only sender fields
-// stay out of the key so profile/name drift does not force conservative splits.
-// Fields like authProfileId, elevatedLevel, ownerNumbers, and config are
-// intentionally excluded because they are session-level or not consulted in
-// per-message authorization checks.
-function hasVerifiedAdmissionParticipant(run: FollowupRun): boolean {
-  return compareChannelAdmissionParticipants([run.channelAdmissionEvidence]) === "same";
-}
-
-function resolveFollowupAuthorizationKey(run: FollowupRun): string {
-  const execution = run.run;
-  return JSON.stringify([
-    execution.senderId ?? "",
-    JSON.stringify(execution.channelContext ?? null),
-    stableStringify(execution.conversationToolPolicy ?? null),
-    execution.senderE164 ?? "",
-    execution.senderIsOwner === true,
-    execution.execOverrides?.host ?? "",
-    execution.execOverrides?.security ?? "",
-    execution.execOverrides?.ask ?? "",
-    execution.execOverrides?.node ?? "",
-    execution.execOverrides?.nodeCwd ?? "",
-    execution.bashElevated?.enabled === true,
-    execution.bashElevated?.allowed === true,
-    execution.bashElevated?.defaultLevel ?? "",
-    execution.approvalReviewerDeviceId ?? "",
-  ]);
-}
-
-function resolveCollectedRun(items: readonly FollowupRun[], source: FollowupRun["run"]) {
-  const participantComparison = compareChannelAdmissionParticipants(
-    items.map((item) => item.channelAdmissionEvidence),
-  );
-  if (
-    participantComparison === "same" ||
-    !items.every((item) => hasVerifiedAdmissionParticipant(item))
-  ) {
-    return source;
-  }
-  // Mixed or unverifiable people share no downstream sender authority. The
-  // opaque admission aggregate records unknown identity at the run boundary.
-  return {
-    ...source,
-    senderId: undefined,
-    senderName: undefined,
-    senderUsername: undefined,
-    senderE164: undefined,
-    senderIsOwner: false,
-    traceAuthorized: false,
-    reasoningVisibility: undefined,
-    ownerNumbers: [],
   };
 }
 

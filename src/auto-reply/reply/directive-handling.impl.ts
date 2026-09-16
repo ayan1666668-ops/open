@@ -31,7 +31,10 @@ import { applyModelRuntimeDirective } from "./directive-handling.model-runtime.j
 import { resolveModelSelectionFromDirective } from "./directive-handling.model-selection.js";
 import { maybeHandleModelDirectiveInfo } from "./directive-handling.model.js";
 import type { HandleDirectiveOnlyParams } from "./directive-handling.params.js";
-import { maybeHandleQueueDirective } from "./directive-handling.queue-validation.js";
+import {
+  formatQueueDirectiveAcknowledgements,
+  maybeHandleQueueDirective,
+} from "./directive-handling.queue-validation.js";
 import {
   acknowledgeIgnoredSessionDirective,
   applySessionDirectiveFields,
@@ -694,20 +697,7 @@ export async function handleDirectiveOnly(
       `Thinking level set to ${remappedUnsupportedThinkLevel} (${nextThinkLevel} not supported for ${resolvedProvider}/${resolvedModel}).`,
     );
   }
-  if (directives.hasQueueDirective && directives.queueMode) {
-    parts.push(formatDirectiveAck(`Queue mode set to ${directives.queueMode}.`));
-  } else if (directives.hasQueueDirective && directives.queueReset) {
-    parts.push(formatDirectiveAck("Queue mode reset to default."));
-  }
-  if (directives.hasQueueDirective && typeof directives.debounceMs === "number") {
-    parts.push(formatDirectiveAck(`Queue debounce set to ${directives.debounceMs}ms.`));
-  }
-  if (directives.hasQueueDirective && typeof directives.cap === "number") {
-    parts.push(formatDirectiveAck(`Queue cap set to ${directives.cap}.`));
-  }
-  if (directives.hasQueueDirective && directives.dropPolicy) {
-    parts.push(formatDirectiveAck(`Queue drop set to ${directives.dropPolicy}.`));
-  }
+  parts.push(...formatQueueDirectiveAcknowledgements(directives));
   if (fastModeChanged && !params.persistenceState) {
     const nextFastMode = directives.clearFastMode ? fastModeState.mode : sessionEntry.fastMode;
     const nextFastModeText =

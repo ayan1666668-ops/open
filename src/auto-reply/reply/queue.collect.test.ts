@@ -16,6 +16,16 @@ import {
 } from "../../config/sessions/session-accessor.js";
 import { createUserTurnTranscriptRecorder } from "../../sessions/user-turn-transcript.js";
 import { createTestUserTurnTranscriptTarget } from "../../sessions/user-turn-transcript.test-support.js";
+import {
+  createQueueSettings,
+  enqueueTestRun,
+  enqueueSlackRun,
+  createDrainRecorder,
+  createQueueCase,
+  enqueueTestRuns,
+  enqueueRoutedRuns,
+  drainRecordedQueue,
+} from "./queue.collect.test-support.js";
 import type { FollowupRun, QueueSettings } from "./queue.js";
 import {
   admitFollowupRunLifecycle,
@@ -42,90 +52,6 @@ type InternalFollowupRun = FollowupRun & {
 };
 
 installQueueRuntimeErrorSilencer();
-
-function createQueueSettings(overrides: Partial<QueueSettings> = {}): QueueSettings {
-  return {
-    mode: "collect",
-    debounceMs: 0,
-    cap: 50,
-    dropPolicy: "summarize",
-    ...overrides,
-  };
-}
-
-function enqueueTestRun(
-  key: string,
-  params: Parameters<typeof createRun>[0],
-  settings: QueueSettings,
-  runOverrides?: Partial<FollowupRun["run"]>,
-) {
-  const run = createRun(params);
-  if (runOverrides) {
-    run.run = { ...run.run, ...runOverrides };
-  }
-  return enqueueFollowupRun(key, run, settings);
-}
-
-function enqueueSlackRun(
-  key: string,
-  settings: QueueSettings,
-  prompt: string,
-  runOverrides: Partial<FollowupRun["run"]>,
-  routeOverrides: Partial<Parameters<typeof createRun>[0]> = {},
-) {
-  return enqueueTestRun(
-    key,
-    { prompt, originatingChannel: "slack", originatingTo: "channel:A", ...routeOverrides },
-    settings,
-    runOverrides,
-  );
-}
-
-function createDrainRecorder(expectedCalls = 1) {
-  const calls: Array<FollowupRun & { currentTurnImagesPrepared?: true }> = [];
-  const done = createDeferred();
-  const runFollowup = async (run: FollowupRun) => {
-    calls.push(run);
-    if (calls.length >= expectedCalls) {
-      done.resolve();
-    }
-  };
-  return { calls, done, runFollowup };
-}
-
-function createQueueCase(key: string, overrides: Partial<QueueSettings> = {}, expectedCalls = 1) {
-  return { key, ...createDrainRecorder(expectedCalls), settings: createQueueSettings(overrides) };
-}
-
-function enqueueTestRuns(
-  key: string,
-  settings: QueueSettings,
-  ...runs: Parameters<typeof createRun>[0][]
-) {
-  for (const run of runs) {
-    enqueueTestRun(key, run, settings);
-  }
-}
-
-function enqueueRoutedRuns(
-  key: string,
-  settings: QueueSettings,
-  route: Omit<Parameters<typeof createRun>[0], "prompt">,
-  ...prompts: string[]
-) {
-  for (const prompt of prompts) {
-    enqueueTestRun(key, { prompt, ...route }, settings);
-  }
-}
-
-async function drainRecordedQueue(
-  key: string,
-  runFollowup: ReturnType<typeof createDrainRecorder>["runFollowup"],
-  done: ReturnType<typeof createDrainRecorder>["done"],
-) {
-  scheduleFollowupDrain(key, runFollowup);
-  await done.promise;
-}
 
 describe("followup queue collect routing", () => {
   it("carries queued local cron-authority unavailability through a followup drain", async () => {

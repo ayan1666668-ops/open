@@ -18,6 +18,7 @@ import { createMatrixJsSdkClientLogger } from "../client/logging.js";
 import type { MatrixSnapshotStateRuntime } from "../crypto-state-store.js";
 import { awaitMatrixStartupWithAbort, throwIfMatrixStartupAborted } from "../startup-abort.js";
 import type { MatrixSyncState } from "../sync-state.js";
+import { createMatrixClientFetch } from "./client-fetch.js";
 import {
   MATRIX_AUTOMATIC_REPAIR_BOOTSTRAP_OPTIONS,
   MATRIX_INITIAL_CRYPTO_BOOTSTRAP_OPTIONS,
@@ -35,7 +36,6 @@ import { MATRIX_IDB_PERSIST_INTERVAL_MS } from "./idb-persistence-lock.js";
 import { LogService, noop } from "./logger.js";
 import { MatrixMessageWireDispatchGuards } from "./message-wire-dispatch.js";
 import { MatrixRecoveryKeyStore } from "./recovery-key-store.js";
-import { createMatrixGuardedFetch } from "./transport.js";
 import type { MatrixClientEventMap, MatrixCryptoBootstrapApi, MatrixRawEvent } from "./types.js";
 import type { MatrixVerificationSummary } from "./verification-manager.js";
 
@@ -200,20 +200,6 @@ export abstract class MatrixClientBase {
     const cryptoCallbacks = this.encryptionEnabled
       ? this.recoveryKeyStore.buildCryptoCallbacks()
       : undefined;
-    const guardedFetch = createMatrixGuardedFetch({
-      captureRequestSignal: () => this.cryptoRequestOwner.getStore()?.requestSignal,
-      ssrfPolicy: opts.ssrfPolicy,
-      dispatcherPolicy: opts.dispatcherPolicy,
-      captureRequestAuthority: this.captureRequestAuthority,
-      assertBeforeSend: (resource, init) =>
-        this.messageWireDispatchGuards.assertBeforeRequest(resource, init),
-      signal: this.requestAbortController.signal,
-      beforeRequest: async (resource, init) => {
-        // Complete admitted key persistence before checking live wire authority.
-        await this.recoveryKeyStore.drainPendingPersistence();
-        await this.messageWireDispatchGuards.beforeRequest(resource, init);
-      },
-    });
     this.client = createMatrixJsClient({
       baseUrl: homeserver,
       accessToken,
@@ -221,7 +207,15 @@ export abstract class MatrixClientBase {
       deviceId: opts.deviceId,
       logger: createMatrixJsSdkClientLogger("MatrixClient"),
       localTimeoutMs: this.localTimeoutMs,
-      fetchFn: guardedFetch,
+      fetchFn: createMatrixClientFetch({
+        captureRequestSignal: () => this.cryptoRequestOwner.getStore()?.requestSignal,
+        ssrfPolicy: opts.ssrfPolicy,
+        dispatcherPolicy: opts.dispatcherPolicy,
+        captureRequestAuthority: this.captureRequestAuthority,
+        signal: this.requestAbortController.signal,
+        recoveryKeyStore: this.recoveryKeyStore,
+        messageWireDispatchGuards: this.messageWireDispatchGuards,
+      }),
       store: this.syncStore,
       cryptoCallbacks: cryptoCallbacks as never,
       verificationMethods: [

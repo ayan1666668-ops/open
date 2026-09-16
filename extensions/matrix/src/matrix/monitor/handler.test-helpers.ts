@@ -5,6 +5,7 @@ import {
 } from "openclaw/plugin-sdk/channel-inbound";
 import type { RuntimeLogger } from "openclaw/plugin-sdk/plugin-runtime";
 import { finalizeInboundContext as finalizeCoreInboundContext } from "openclaw/plugin-sdk/reply-runtime";
+import type { GetReplyOptions } from "openclaw/plugin-sdk/reply-runtime";
 import type { RuntimeEnv } from "openclaw/plugin-sdk/runtime";
 import { vi, type Mock } from "vitest";
 import type {
@@ -22,7 +23,7 @@ type MatrixDispatchInboundMessage = (params: {
   ctx: unknown;
   cfg: unknown;
   dispatcher: unknown;
-  replyOptions?: Record<string, unknown>;
+  replyOptions?: GetReplyOptions;
 }) => Promise<{
   queuedFinal: boolean;
   counts: { final: number; block: number; tool: number };
@@ -100,7 +101,7 @@ type MatrixHandlerTestHarnessOptions = {
     onError?: (err: unknown, info: { kind: "tool" | "block" | "final" }) => void;
   }) => {
     dispatcher: Record<string, unknown>;
-    replyOptions: Record<string, unknown>;
+    replyOptions: GetReplyOptions;
     markDispatchIdle: () => void;
     markRunComplete: () => void;
   };
@@ -170,7 +171,7 @@ export function createMatrixHandlerTestHarness(
     ctx: unknown;
     cfg: unknown;
     dispatcherOptions: Record<string, unknown>;
-    replyOptions?: Record<string, unknown>;
+    replyOptions?: GetReplyOptions;
   }) => {
     const prepared = createReplyDispatcherWithTyping(dispatcherOptions);
     try {
