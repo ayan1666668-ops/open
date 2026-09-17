@@ -32,6 +32,7 @@ export async function sendCommentThreadReply(params: {
   signal?: AbortSignal;
   onPlatformSendDispatch?: FeishuSendTextContext["onPlatformSendDispatch"];
   assertDirectAdapterHandoff?: FeishuSendTextContext["assertDirectAdapterHandoff"];
+  formatting?: FeishuSendTextContext["formatting"];
 }) {
   const target = parseFeishuCommentTarget(params.to);
   if (!target) {
@@ -46,10 +47,16 @@ export async function sendCommentThreadReply(params: {
     accountId: account.accountId,
     supportsBlockTables: false,
   });
-  const commentLimit = resolveTextChunkLimit(params.cfg, "feishu", account.accountId, {
-    fallbackLimit: FEISHU_TEXT_CHUNK_LIMIT,
-  });
-  const commentChunkMode = resolveChunkMode(params.cfg, "feishu", account.accountId);
+  // A per-delivery cut takes precedence over the resolved account here too, the way core's
+  // planner reads the pair, because the replies this loop posts are the ones the delivery
+  // asked to be sized.
+  const commentLimit =
+    params.formatting?.textLimit ??
+    resolveTextChunkLimit(params.cfg, "feishu", account.accountId, {
+      fallbackLimit: FEISHU_TEXT_CHUNK_LIMIT,
+    });
+  const commentChunkMode =
+    params.formatting?.chunkMode ?? resolveChunkMode(params.cfg, "feishu", account.accountId);
   const requestedContent = convertMarkdownTables(params.text, requestedTableMode);
   // Comments this text cannot be cut into without stranding a fence would arrive as an
   // unterminated code block, so the table is left as it arrived instead.

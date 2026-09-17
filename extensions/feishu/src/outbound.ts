@@ -151,6 +151,7 @@ async function sendOutboundText(params: {
   signal?: AbortSignal;
   onPlatformSendDispatch?: FeishuSendTextContext["onPlatformSendDispatch"];
   assertDirectAdapterHandoff?: FeishuSendTextContext["assertDirectAdapterHandoff"];
+  formatting?: FeishuSendTextContext["formatting"];
   header?: CardHeaderConfig;
 }) {
   const {
@@ -164,6 +165,7 @@ async function sendOutboundText(params: {
     signal,
     onPlatformSendDispatch,
     assertDirectAdapterHandoff,
+    formatting,
   } = params;
   const commentResult = await sendCommentThreadReply({
     cfg,
@@ -175,6 +177,7 @@ async function sendOutboundText(params: {
     signal,
     onPlatformSendDispatch,
     assertDirectAdapterHandoff,
+    formatting,
   });
   if (commentResult) {
     return commentResult;
@@ -203,10 +206,17 @@ async function sendOutboundText(params: {
   // auto send carrying both a fence and a shape the card renderer cannot draw would
   // reach a card and lose those rows. Ask about drawability here too. An explicit
   // `card` render mode still wins, which is the direct-send behaviour this change keeps.
-  const postLimit = resolveTextChunkLimit(cfg, "feishu", account.accountId, {
-    fallbackLimit: FEISHU_TEXT_CHUNK_LIMIT,
-  });
-  const postChunkMode = resolveChunkMode(cfg, "feishu", account.accountId);
+  // Core plans its own text units against the delivery's formatting first and the resolved
+  // account only after it, and a delivery that asks for a 1,000-character cut means the
+  // messages the reader gets, not the units core would have cut. Registering
+  // `sendFormattedText` moved the cut here, so this side reads the same order: the
+  // per-delivery value wins, and the account setting stands when there is none.
+  const postLimit =
+    formatting?.textLimit ??
+    resolveTextChunkLimit(cfg, "feishu", account.accountId, {
+      fallbackLimit: FEISHU_TEXT_CHUNK_LIMIT,
+    });
+  const postChunkMode = formatting?.chunkMode ?? resolveChunkMode(cfg, "feishu", account.accountId);
   // A card carries a table as one component and the card chunker cuts on lines without
   // repeating the header and its delimiter, so every card after the first shows those
   // rows as raw pipes. A table that does not fit one card takes the post path instead,
@@ -507,6 +517,7 @@ async function deliverFeishuOutboundText({
   signal,
   onPlatformSendDispatch,
   assertDirectAdapterHandoff,
+  formatting,
 }: FeishuSendTextContext) {
   // Core asks the cancellation question before every text unit it cuts itself, but it hands
   // formatted text to this adapter whole and never cuts it, so the question is asked once on
@@ -524,6 +535,7 @@ async function deliverFeishuOutboundText({
     signal,
     onPlatformSendDispatch,
     assertDirectAdapterHandoff,
+    formatting,
   };
   // Scheme A compatibility shim:
   // when upstream accidentally returns a local image path as plain text,
@@ -846,6 +858,7 @@ export const feishuOutbound: ChannelOutboundAdapter = {
       signal,
       onPlatformSendDispatch,
       assertDirectAdapterHandoff,
+      formatting,
       propagateMediaUploadFailure = false,
     }: Parameters<NonNullable<ChannelOutboundAdapter["sendMedia"]>>[0] & {
       /** When true, a media-upload failure is re-thrown to the caller instead of
@@ -878,6 +891,7 @@ export const feishuOutbound: ChannelOutboundAdapter = {
         signal,
         onPlatformSendDispatch,
         assertDirectAdapterHandoff,
+        formatting,
       };
       if (parseFeishuCommentTarget(to)) {
         // Document comments deliver media as visible links; they never enter
