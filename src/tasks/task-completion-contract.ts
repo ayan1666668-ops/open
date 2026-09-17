@@ -24,6 +24,15 @@ const COMPLETION_RESULT_CLAUSE_PATTERN =
   /^(?:(?:(?:i|we)(?:\s+(?:have\s+)?|(?:'|\u2019)ve\s+)|(?:i(?:\s+am|(?:'|\u2019)m)|we(?:\s+are|(?:'|\u2019)re))\s+))?(?:done|completed|finished|fixed|patched|resolved|deployed|landed|merged|implemented|confirmed)\b|(?:^|,\s*|\band\s+)(?:(?:(?:i|we)(?:\s+(?:have\s+)?|(?:'|\u2019)ve\s+)|(?:i(?:\s+am|(?:'|\u2019)m)|we(?:\s+are|(?:'|\u2019)re))\s+)(?:done|completed|finished|fixed|patched|resolved|deployed|landed|merged|implemented|confirmed)\b|(?:(?:all|the)\s+)?(?:\d+\s+)?(?:(?!(?:why|whether|if|unless|when|once|after|will|would|could|should|might|may)\b)[\w-]+\s+){0,3}(?:tests?|build|lint|checks?|syntax)\s+(?:(?:have|has)\s+)?(?:passed|succeeded|green)\b)/gi;
 
 const CONDITIONAL_PROGRESS_PATTERN = /\b(?:whether|if|unless|once|when|after|as\s+soon\s+as)\b/i;
+const CONDITION_CLAUSE_PREFIX = String.raw`(?:^|[,;:]\s*|\b(?:and|but|or|so|then)\s+)(?:(?:and|but|or|so|then)\s+)*`;
+const FRONTED_CONDITIONAL_PATTERN = new RegExp(
+  String.raw`${CONDITION_CLAUSE_PREFIX}(?:if|unless)\b`,
+  "i",
+);
+const FRONTED_TEMPORAL_PATTERN = new RegExp(
+  String.raw`${CONDITION_CLAUSE_PREFIX}(when|once|after|as\s+soon\s+as)\b([^,]*)`,
+  "gi",
+);
 const FIRST_PERSON_PLAN_PATTERN =
   /^(?:(?:i|we)(?:'|\u2019)ll|(?:i(?:\s+am|(?:'|\u2019)m)|we(?:\s+are|(?:'|\u2019)re))\s+going\s+to|(?:i|we)\s+(?:will|would|could|should|might|may|plan\s+to|hope\s+to|need\s+to))\b/i;
 const COMPLETION_HEADING_PATTERN =
@@ -31,7 +40,7 @@ const COMPLETION_HEADING_PATTERN =
 
 // Shared subject/predicate grammar stays inside progress-result classification.
 // In particular, a subject cannot absorb a modal, negation, or new condition.
-const RESULT_SUBJECT_WORD = String.raw`(?!(?:if|unless|when|once|whether|before|after|while|and|or|that|which|will|would|could|should|might|may|can|must|have|has|had|did|is|are|was|were|not|to)\b|\w+(?:'|\u2019)(?:t|ll)\b)[\w'-]+`;
+const RESULT_SUBJECT_WORD = String.raw`(?!(?:if|unless|when|once|whether|before|after|while|and|or|that|which|will|would|could|should|might|may|can|must|have|has|had|did|is|are|was|were|not|never|to)\b|\w+(?:'|\u2019)(?:t|ll)\b)[\w'-]+`;
 const RESULT_SUBJECT = String.raw`(?:${RESULT_SUBJECT_WORD}\s+){0,6}(?!(?:the|a|an|all|both|our|already|just)\b|[\w'-]+ly\b)${RESULT_SUBJECT_WORD}`;
 const IRREGULAR_PAST_VERB =
   "arose|awoke|bore|beat|became|began|bent|bet|bit|bled|blew|broke|brought|built|burnt|burst|bought|caught|chose|came|cost|crept|cut|dealt|dug|did|drew|drank|drove|ate|fell|fed|felt|fought|found|fled|flew|forbade|forgot|forgave|froze|got|gave|went|grew|hung|heard|hid|hit|held|hurt|kept|knew|laid|led|leant|leapt|learnt|left|lent|let|lay|lit|lost|made|meant|met|paid|put|quit|read|rode|rang|rose|ran|said|saw|sought|sold|sent|set|shook|shone|shot|showed|shrank|shut|sang|sank|sat|slept|slid|smelt|spoke|spelt|spent|spilt|spun|split|spread|sprang|stood|stole|stuck|stung|stank|struck|swore|swept|swam|swung|took|taught|tore|told|thought|threw|understood|upset|woke|wore|wept|won|wound|wrote";
@@ -76,7 +85,7 @@ const PENDING_COMPLETION_PATTERN = new RegExp(
 
 function hasDeferredTemporalResult(prefix: string, resultClause: string): boolean {
   const temporalClauses = [
-    ...prefix.matchAll(/(?:^|,\s*)(when|once|after|as\s+soon\s+as)\b([^,]*)/gi),
+    ...prefix.matchAll(FRONTED_TEMPORAL_PATTERN),
     ...resultClause.matchAll(/\b(when|once|after|as\s+soon\s+as)\b([^,]*)/gi),
   ];
   // Check the temporal clause's subject/predicate, not past-looking modifiers
@@ -167,7 +176,7 @@ function isProgressOnlyCompletionText(value: string): boolean {
         return !(
           UNFINISHED_RESULT_PATTERN.test(remainder) ||
           /\b(?:whether|if|unless)\b/i.test(resultClause) ||
-          /(?:^|[,;:]\s*)(?:if|unless)\b/i.test(prefix) ||
+          FRONTED_CONDITIONAL_PATTERN.test(prefix) ||
           (/^and\b/i.test(result[0]) && CONDITIONAL_PROGRESS_PATTERN.test(prefix)) ||
           hasDeferredTemporalResult(prefix, resultClause)
         );

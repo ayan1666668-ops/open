@@ -18,6 +18,23 @@ describe("resolveRequiredCompletionTerminalResult", () => {
   // delivered result.
   it.each([
     ["pure progress", "Let me run the tests"],
+    ["never-completed action", "Reviewing the handler, I never fixed the regression."],
+    [
+      "coordinated premise if",
+      "I'll inspect the rollout, and if tests pass, I patched the handler.",
+    ],
+    [
+      "coordinated premise without punctuation",
+      "I'll inspect the rollout and if tests pass, I patched the handler.",
+    ],
+    [
+      "coordinated premise temporal",
+      "I'll inspect the rollout, and when tests pass, I patched the handler.",
+    ],
+    [
+      "coordinated premise chained unless",
+      "I'll inspect the rollout, and then unless tests fail, I patched the handler.",
+    ],
     ["clock adjunct comma plan", "I'll inspect the repo: Before 5:00, I will patch the handler."],
     ["clock adjunct colon plan", "I'll inspect the repo: Before 5:00: I will patch the handler."],
     ["present run prerequisite", "Reviewing the changes, I patched it when the tests run."],
@@ -256,6 +273,14 @@ describe("resolveRequiredCompletionTerminalResult", () => {
       "I'll inspect the repo now: the crash is a missing null check in src/foo.ts.",
     ],
     ["completed clause after narration", "Reviewing the changes, we fixed the regression."],
+    [
+      "coordinated premise past event",
+      "I'll inspect the rollout, and when the alert fired, I patched the handler.",
+    ],
+    [
+      "coordinated premise nominal adjunct",
+      "I'll inspect the rollout, and after midnight, I patched the handler.",
+    ],
     ["perfect irregular written", "Reviewing the changes, I have written the migration."],
     ["perfect irregular contracted rewrite", "Reviewing the changes, I've rewritten the handler."],
     ["perfect irregular run", "Reviewing the changes, I have run the migration."],
