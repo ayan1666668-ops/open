@@ -148,6 +148,8 @@ function createQuestionHarness(released?: Promise<void>) {
   return { client, resolveQuestion, ...attachChannelRest(client, released) };
 }
 
+const RETRY_REPLY = "Channel details are unavailable right now. Try this interaction again.";
+
 type ReplyBody = { content?: string; data?: { content?: string } };
 
 // Ephemeral text the user sees, whether sent as the initial callback or a follow-up webhook.
@@ -229,9 +231,7 @@ describe("Client.handleInteraction component channel identity", () => {
     );
 
     expect(harness.resolveQuestion).not.toHaveBeenCalled();
-    expect(replyContents(harness.post)).toEqual([
-      "Channel details are still loading. Try this interaction again.",
-    ]);
+    expect(replyContents(harness.post)).toEqual([RETRY_REPLY]);
 
     lookup.resolve();
     await vi.advanceTimersByTimeAsync(0);
@@ -349,10 +349,27 @@ describe("Client.handleInteraction component channel identity", () => {
       ),
     );
 
-    expect(replyContents(harness.post)).toEqual([
-      "Channel details are still loading. Try this interaction again.",
-    ]);
+    expect(replyContents(harness.post)).toEqual([RETRY_REPLY]);
     expect(harness.sessionEvents("group", OTHER_GROUP_DM)).toEqual([]);
     expect(harness.sessionEvents("direct", USER)).toEqual([]);
   });
+
+  it.each([
+    { name: "fails", lookup: async () => Promise.reject(new Error("Missing Access")) },
+    { name: "returns no channel", lookup: async () => undefined },
+  ])(
+    "asks for a retry instead of applying DM policy when a raw Group DM lookup $name",
+    async ({ lookup }) => {
+      const harness = createGroupDmHarness();
+      harness.get.mockImplementation(lookup);
+
+      await harness.client.handleInteraction(
+        groupDmPayload({ channelId: OTHER_GROUP_DM, hydrated: false }),
+      );
+
+      expect(replyContents(harness.post)).toEqual([RETRY_REPLY]);
+      expect(harness.sessionEvents("group", OTHER_GROUP_DM)).toEqual([]);
+      expect(harness.sessionEvents("direct", USER)).toEqual([]);
+    },
+  );
 });

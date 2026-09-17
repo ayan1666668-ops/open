@@ -98,9 +98,9 @@ function buildDiscordChannelContext(params: {
   };
 }
 
-// Resolves null only when a payload without a channel object timed out: its channel type
-// (DM, Group DM, or guild), allowlist, and routing facts are unknown, so the caller asks
-// for a retry instead.
+// Resolves null when a payload without a channel object has no verified channel type, because
+// the lookup timed out, failed, or returned no type: DM, Group DM, and guild policy, allowlist,
+// and routing facts are all unknown, so the caller asks for a retry instead.
 async function resolveDiscordChannelContext(
   interaction: AgentComponentInteraction,
 ): Promise<DiscordChannelContext | null> {
@@ -116,6 +116,10 @@ async function resolveDiscordChannelContext(
     const resolved = await withTimeout(lookup, COMPONENT_CHANNEL_CONTEXT_WAIT_MS, {
       createError: () => timeout,
     });
+    if (!channel && resolved.channelType === undefined) {
+      logVerbose(`discord component: channel lookup for ${channelId} returned no channel type`);
+      return null;
+    }
     return buildDiscordChannelContext({
       channelName: resolved.channelName,
       channelType: resolved.channelType,
@@ -180,7 +184,7 @@ export async function resolveComponentInteractionContext(params: {
   const channelCtx = await resolveDiscordChannelContext(interaction);
   if (!channelCtx) {
     await replySilently(interaction, {
-      content: "Channel details are still loading. Try this interaction again.",
+      content: "Channel details are unavailable right now. Try this interaction again.",
       ...replyOpts,
     });
     return null;
