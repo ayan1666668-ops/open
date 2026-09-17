@@ -505,7 +505,10 @@ async function discoverLegacyUpdateStateSchemaInspection(
   if (!(await fileExists(shared))) {
     return { files: [...files], sharedVersion: { path: shared, userVersion: null } };
   }
-  const stagingRoot = await createSqliteSnapshotStagingDirectory(params.stagingRoot);
+  const stagingRoot = await createSqliteSnapshotStagingDirectory(
+    params.stagingRoot,
+    params.root !== undefined,
+  );
   let outcome: { value: UpdateStateSchemaInspectionPlan } | { cause: unknown };
   try {
     // The selected candidate owns source access; the loaded parent only opens its private copy.
@@ -562,6 +565,7 @@ export async function readUpdateStateSchemaVersions({
   const sourceEnv = input.env ?? process.env;
   const stagingRoot = await createSqliteSnapshotStagingDirectory(
     resolvePrivateSqliteSnapshotStagingRoot(sourceEnv),
+    root !== undefined,
   );
   let outcome: { value: UpdateStateSchemaVersion[] } | { cause: unknown };
   try {

@@ -21,10 +21,7 @@ import {
   readSqliteSchemaHeader,
   readSqliteSchemaHeaderFromSnapshot,
 } from "./sqlite-schema-header.js";
-import {
-  allocateSqliteSnapshotStagingDirectory,
-  createSqliteSnapshotStagingDirectorySync,
-} from "./sqlite-snapshot-staging.js";
+import { createSqliteSnapshotStagingDirectorySync } from "./sqlite-snapshot-staging.js";
 import {
   withSqliteSourceHandle,
   withSqliteSourceHandleAsync,
@@ -402,9 +399,10 @@ function createStableReadOnlyCopyInTempDirectory(
 
 export async function createSqliteSnapshotStagingDirectory(
   stagingRoot = resolvePrivateSqliteSnapshotStagingRoot(),
+  allowLegacyWorker = false,
 ): Promise<string> {
   try {
-    return await allocateSqliteSnapshotStagingDirectory(stagingRoot);
+    return createSqliteSnapshotStagingDirectorySync(stagingRoot, allowLegacyWorker);
   } catch (error) {
     throw sqliteSnapshotStagingError(stagingRoot, error, true);
   }

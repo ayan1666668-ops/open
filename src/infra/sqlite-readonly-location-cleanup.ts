@@ -7,7 +7,14 @@ import type { PreparedSqliteReadOnlyLocation } from "./sqlite-readonly-location.
 
 export class SqliteSnapshotCleanupError extends Error {}
 
-const pendingTempDirectoryCleanup = new Set<string>();
+export const SQLITE_SNAPSHOT_CONTROL_FILES = [
+  "owner.sqlite",
+  "owner.sqlite-journal",
+  "owner.sqlite-wal",
+  "owner.sqlite-shm",
+] as const;
+
+const pendingTempDirectoryCleanup = new Map<string, ((retire: boolean) => void) | undefined>();
 let cleanupExitHandlerInstalled = false;
 const activeSnapshotWork = new Map<Promise<unknown>, () => void>();
 let pendingSignalCleanup: Promise<void> | undefined;
@@ -20,7 +27,7 @@ export function cleanupSnapshotOperations(): Promise<void> {
       }
       await Promise.allSettled(activeSnapshotWork.keys());
     }
-    for (const directory of pendingTempDirectoryCleanup) {
+    for (const directory of pendingTempDirectoryCleanup.keys()) {
       await removeTempDirectoryAsync(directory, (error) =>
         emitSnapshotCleanupFailure({
           cleanupRoot: directory,
@@ -44,13 +51,33 @@ export function retainSnapshotWork<T>(work: Promise<T>, stop: () => void = () =>
   return work;
 }
 
-export function registerSnapshotTempDirectory(directory: string): void {
-  recordTempDirectoryCleanup(directory, false);
+export function registerSnapshotTempDirectory(
+  directory: string,
+  release?: (retire: boolean) => void,
+): void {
+  if (release || !pendingTempDirectoryCleanup.has(directory)) {
+    pendingTempDirectoryCleanup.set(directory, release);
+  }
+  if (!cleanupExitHandlerInstalled) {
+    cleanupExitHandlerInstalled = true;
+    process.once("exit", () => {
+      for (const stop of activeSnapshotWork.values()) {
+        stop();
+      }
+      // A surviving child retains its kernel token; the next owner reclaims it.
+      if (activeSnapshotWork.size === 0) {
+        for (const pendingDir of pendingTempDirectoryCleanup.keys()) {
+          removeTempDirectory(pendingDir);
+        }
+      }
+    });
+  }
   registerSignalExitFinalizer(cleanupSnapshotOperations);
 }
 
 /** A successful child hands its files to the caller's enclosing staging owner. */
 export function releaseSnapshotTempDirectory(directory: string): void {
+  pendingTempDirectoryCleanup.get(directory)?.(false);
   pendingTempDirectoryCleanup.delete(directory);
 }
 const tempDirectoryRemovalOptions = {
@@ -91,28 +118,22 @@ function emitSnapshotCleanupFailure(
   }
 }
 
-function recordTempDirectoryCleanup(tempDir: string, removed: boolean): boolean {
-  if (removed) {
-    pendingTempDirectoryCleanup.delete(tempDir);
-    return true;
+function prepareSnapshotRemoval(directory: string): string[] {
+  pendingTempDirectoryCleanup.get(directory)?.(true);
+  pendingTempDirectoryCleanup.set(directory, undefined);
+  if (!fs.existsSync(path.join(directory, SQLITE_SNAPSHOT_CONTROL_FILES[0]))) {
+    return [directory];
   }
-  pendingTempDirectoryCleanup.add(tempDir);
-  if (!cleanupExitHandlerInstalled) {
-    cleanupExitHandlerInstalled = true;
-    process.once("exit", () => {
-      for (const stop of activeSnapshotWork.values()) {
-        stop();
-      }
-      for (const pendingDir of pendingTempDirectoryCleanup) {
-        try {
-          fs.rmSync(pendingDir, { force: true, recursive: true });
-        } catch {
-          // The directory is private and remains registered until process teardown completes.
-        }
-      }
-    });
-  }
-  return false;
+  // Keep every token until all copied data is gone. A partial recursive rm must
+  // not leave a large modern snapshot whose lifetime can no longer be verified.
+  return fs
+    .readdirSync(directory, { recursive: true, withFileTypes: true })
+    .filter(
+      (entry) =>
+        !entry.isDirectory() && !SQLITE_SNAPSHOT_CONTROL_FILES.some((file) => file === entry.name),
+    )
+    .map((entry) => path.join(entry.parentPath, entry.name))
+    .concat(directory);
 }
 
 export function removeTempDirectory(
@@ -120,11 +141,15 @@ export function removeTempDirectory(
   onFailure?: (error: unknown) => void,
 ): boolean {
   try {
-    fs.rmSync(tempDir, tempDirectoryRemovalOptions);
-    return recordTempDirectoryCleanup(tempDir, true);
+    for (const file of prepareSnapshotRemoval(tempDir)) {
+      fs.rmSync(file, tempDirectoryRemovalOptions);
+    }
+    pendingTempDirectoryCleanup.delete(tempDir);
+    return true;
   } catch (error) {
     onFailure?.(error);
-    return recordTempDirectoryCleanup(tempDir, false);
+    registerSnapshotTempDirectory(tempDir);
+    return false;
   }
 }
 
@@ -133,11 +158,15 @@ export async function removeTempDirectoryAsync(
   onFailure?: (error: unknown) => void,
 ): Promise<boolean> {
   try {
-    await retainSnapshotWork(fs.promises.rm(tempDir, tempDirectoryRemovalOptions));
-    return recordTempDirectoryCleanup(tempDir, true);
+    for (const file of prepareSnapshotRemoval(tempDir)) {
+      await retainSnapshotWork(fs.promises.rm(file, tempDirectoryRemovalOptions));
+    }
+    pendingTempDirectoryCleanup.delete(tempDir);
+    return true;
   } catch (error) {
     onFailure?.(error);
-    return recordTempDirectoryCleanup(tempDir, false);
+    registerSnapshotTempDirectory(tempDir);
+    return false;
   }
 }
 

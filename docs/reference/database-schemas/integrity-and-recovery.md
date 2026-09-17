@@ -38,12 +38,23 @@ Private snapshots remain necessary inside owner-held source-exclusion or canonic
 
 Private snapshot files remain temporary artifacts: the creator registers cleanup
 before copying and publishes the finished copy by rename. Graceful shutdown
-drains existing shutdown owners and joins snapshot workers before cleanup.
-Native termination and hard kills can skip that drain. After an unclean process exit, the next
-snapshot owner reclaims recognized staging directories in the private cache and
-logs the reclaimed byte count. Reclamation requires the recorded parent and child
-processes to have exited; live or uncertain owners, unknown contents, and symlinks
-are left alone. It does not use file age or remove canonical databases or backups.
+drains existing shutdown owners and joins snapshot workers before cleanup. Cleanup
+keeps every token until copied data is removed, so partial removal remains recoverable.
+Native termination and hard kills can skip that drain. Each staging directory holds
+an open SQLite transaction as its lifetime token. Reclamation obtains exclusive
+tokens for the parent and every nested worker before inspecting or removing the
+copy, independent of PID namespaces. Worker admission checks the parent's token;
+retirement is committed before handles close so a late worker cannot restart it.
+The next snapshot operation reclaims abandoned copies and logs the copied-data byte count.
+Legacy directories use a 24-hour age threshold, including legacy children under a
+current parent. Updaters also mark staging for a selected installation as legacy-compatible
+before launching workers that may predate tokens. Current workers fence admission
+inside an existing legacy parent, and reclamation understands both generations in
+one tree. A read-only scan checks all legacy activity before token I/O; validation
+repeats under locks before deletion. Copies that are still too recent keep their existing timestamps.
+Coordination files do not count as copied data or legacy activity. Live or unverified tokens, recent legacy copies,
+unknown contents, and symlinks are left alone with a warning. Canonical databases
+and backups are never reclaimed by this owner.
 
 Schema-only agent inspections during Doctor and restart checks read metadata in
 a child process, within one SQLite read transaction, without copying the whole

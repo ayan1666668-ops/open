@@ -59,9 +59,13 @@ it.skipIf(process.platform === "win32").each([
     expect(result.signal, result.stderr).toBe(signal);
     const abandoned = fs.readdirSync(cache).map((entry) => path.join(cache, entry));
     expect(abandoned).toHaveLength(1);
-    const retainedBytes = fs.statSync(
-      path.join(abandoned[0]!, relocated ? "openclaw-state/state/openclaw.sqlite" : "first"),
-    ).size;
+    const retainedBytes = fs
+      .readdirSync(abandoned[0]!, { recursive: true, withFileTypes: true })
+      .filter((entry) => entry.isFile() && !entry.name.startsWith("owner.sqlite"))
+      .reduce(
+        (bytes, entry) => bytes + fs.statSync(path.join(entry.parentPath, entry.name)).size,
+        0,
+      );
     expect(retainedBytes).toBeGreaterThan(0);
     const prepared = prepareSqliteReadOnlyLocationSyncInProcess(source, cache);
     try {
@@ -85,42 +89,40 @@ it.skipIf(process.platform === "win32").each([
 );
 
 it.skipIf(process.platform === "win32")(
-  "preserves live owners and unrecognized artifacts during reclamation",
+  "preserves unknown files and symlinks before opening reclamation tokens",
   () => {
-    const root = tempDirs.make("sqlite-reclaim-ownership-");
+    const root = tempDirs.make("sqlite-reclaim-artifacts-");
     const source = path.join(root, "source.sqlite");
     const cache = path.join(root, "cache");
     fs.mkdirSync(cache);
-    const database = new (requireNodeSqlite().DatabaseSync)(source);
+    const sqlite = requireNodeSqlite();
+    const database = new sqlite.DatabaseSync(source);
     database.exec("CREATE TABLE probe(value TEXT); INSERT INTO probe VALUES('preserved');");
     database.close();
     const before = fs.readFileSync(source);
-    const exited = spawnSync(process.execPath, ["-e", ""], { timeout: 30_000 });
-    expect(exited.status).toBe(0);
-    const markers = {
-      live: `openclaw-sqlite-readonly-${process.pid}-Alive1`,
-      child: `openclaw-sqlite-readonly-${exited.pid}-Nested`,
-      unknown: `openclaw-sqlite-readonly-${exited.pid}-Unknow`,
-      symlink: `openclaw-sqlite-readonly-${exited.pid}-Symlin`,
-      unmarked: "unrelated-cache",
-    };
-    for (const directory of Object.values(markers)) {
-      fs.mkdirSync(path.join(cache, directory));
-    }
-    fs.writeFileSync(path.join(cache, markers.live, "database.sqlite"), "active snapshot");
-    fs.mkdirSync(path.join(cache, markers.child, markers.live));
-    fs.writeFileSync(path.join(cache, markers.child, markers.live, "first"), "active child");
-    fs.writeFileSync(path.join(cache, markers.unknown, "operator.txt"), "retain");
-    fs.symlinkSync(source, path.join(cache, markers.symlink, "database.sqlite"));
+    const artifacts = ["operator.txt", "database.sqlite", "owner.sqlite", "owner.sqlite-journal"];
+    const directories = artifacts.map((artifact, index) => {
+      const directory = path.join(cache, `openclaw-sqlite-readonly-v2-Case0${index}`);
+      fs.mkdirSync(directory);
+      if (artifact !== "owner.sqlite") {
+        new sqlite.DatabaseSync(path.join(directory, "owner.sqlite")).close();
+      }
+      if (artifact === "operator.txt") {
+        fs.writeFileSync(path.join(directory, artifact), "retain");
+      } else {
+        fs.symlinkSync(source, path.join(directory, artifact));
+      }
+      return directory;
+    });
     const prepared = prepareSqliteReadOnlyLocationSyncInProcess(source, cache);
     prepared.cleanup();
-    expect(fs.readdirSync(cache).toSorted()).toEqual(Object.values(markers).toSorted());
-    expect(fs.readFileSync(path.join(cache, markers.live, "database.sqlite"), "utf8")).toBe(
-      "active snapshot",
+    expect(fs.readdirSync(cache).toSorted()).toEqual(
+      directories.map((directory) => path.basename(directory)).toSorted(),
     );
-    expect(fs.readFileSync(path.join(cache, markers.child, markers.live, "first"), "utf8")).toBe(
-      "active child",
-    );
+    for (const [index, artifact] of artifacts.entries()) {
+      const location = path.join(directories[index]!, artifact);
+      expect(fs.lstatSync(location).isSymbolicLink()).toBe(artifact !== "operator.txt");
+    }
     expect(fs.readFileSync(source)).toEqual(before);
   },
 );

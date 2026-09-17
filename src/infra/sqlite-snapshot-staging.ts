@@ -3,158 +3,218 @@ import fs from "node:fs";
 import path from "node:path";
 import { extractErrorCode } from "@openclaw/normalization-core/error-coercion";
 import { getChildLogger } from "../logging/logger.js";
+import { openNodeSqliteDatabase, resolveExistingSqliteFileUri } from "./node-sqlite.js";
 import {
-  createPrivateSqliteTempDirectory,
   createPrivateSqliteTempDirectorySync,
   resolvePrivateSqliteSnapshotStagingRoot,
 } from "./sqlite-private-directory.js";
 import {
   registerSnapshotTempDirectory,
   removeTempDirectory,
-  retainSnapshotWork,
+  SQLITE_SNAPSHOT_CONTROL_FILES,
 } from "./sqlite-readonly-location-cleanup.js";
 
-const SQLITE_SNAPSHOT_STAGING_PREFIX = `openclaw-sqlite-readonly-${process.pid}-`;
-const directoryMarker =
-  /^openclaw-sqlite-readonly-([1-9]\d*)-(?:[A-Za-z0-9]{6}|[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12})$/u;
-const snapshotFile = /^(?:first|database\.sqlite(?:\.partial)?(?:-wal|-shm|-journal)?)$/u;
+const prefix = "openclaw-sqlite-readonly-v2-";
+const suffix = "(?:[A-Za-z0-9]{6}|[\\da-f]{8}-[\\da-f]{4}-[\\da-f]{4}-[\\da-f]{4}-[\\da-f]{12})$";
+const legacyMarker = new RegExp(`^openclaw-sqlite-readonly-[1-9]\\d*-${suffix}`, "u");
+const tokenMarker = new RegExp(`^${prefix}${suffix}`, "u");
+const tokenName = SQLITE_SNAPSHOT_CONTROL_FILES[0];
 const scannedRoots = new Set<string>();
+const legacyAgeMs = 24 * 60 * 60 * 1000;
+const isStagingName = (name: string) => legacyMarker.test(name) || tokenMarker.test(name);
+type SnapshotToken = (retiring?: boolean) => void;
 
-function ownerPid(name: string): number | undefined {
-  const match = directoryMarker.exec(name);
-  const pid = match ? Number(match[1]) : undefined;
-  return pid !== undefined && Number.isSafeInteger(pid) ? pid : undefined;
-}
-
-function ownerExited(pid: number): boolean {
+function warn(message: string, error?: unknown): void {
   try {
-    process.kill(pid, 0);
-    return false;
-  } catch (error) {
-    // EPERM and reused PIDs are live/unknown, never permission to reclaim.
-    return extractErrorCode(error) === "ESRCH";
+    getChildLogger({ subsystem: "infra/sqlite-snapshot" }).warn(
+      { errorCode: extractErrorCode(error) },
+      message,
+    );
+  } catch {
+    // Cleanup diagnostics must not prevent inspection or startup.
   }
 }
 
-/** Older copies use the same PID directory marker and first/database.sqlite names. */
-function abandonedSnapshotBytes(
-  directory: string,
-  layout: "snapshot" | "doctor-root" | "doctor-state" = "snapshot",
-): number | undefined {
-  const pid = ownerPid(path.basename(directory));
-  const stat = fs.lstatSync(directory);
+function snapshotToken(directory: string, mode: "create" | "read" | "reclaim"): SnapshotToken {
+  const location = path.join(directory, tokenName);
+  // Check sidecars before SQLite may recover or remove a private journal.
+  const family = SQLITE_SNAPSHOT_CONTROL_FILES.map((file) =>
+    fs.lstatSync(path.join(directory, file), { throwIfNoEntry: false }),
+  );
+  const existing = family[0];
   if (
-    (layout === "snapshot" && (pid === undefined || !ownerExited(pid))) ||
-    !stat.isDirectory() ||
-    (process.getuid && stat.uid !== process.getuid())
+    family.some(
+      (file) => file && (!file.isFile() || (process.getuid && file.uid !== process.getuid())),
+    ) ||
+    (!existing && mode !== "create" && !legacyMarker.test(path.basename(directory)))
   ) {
-    return undefined;
+    throw new Error("SQLite snapshot token ownership is unknown");
+  }
+  // Shipped drivers may supply a legacy parent without a token. Cooperating
+  // workers/reclaimers create the same inode; SQLite arbitrates admission.
+  // CREATE never recreates a missing parent directory.
+  const db = openNodeSqliteDatabase(existing ? resolveExistingSqliteFileUri(location) : location);
+  const release: SnapshotToken = (retiring = false) => {
+    if (!db.isOpen) {
+      return;
+    }
+    if (retiring) {
+      // Windows handles omit FILE_SHARE_DELETE: commit retirement while fenced,
+      // then close for removal. Late workers reject the committed marker.
+      if (!db.isTransaction) {
+        db.exec("BEGIN IMMEDIATE");
+      }
+      db.exec("PRAGMA user_version=1; COMMIT");
+    }
+    db.close();
+  };
+  try {
+    db.exec(
+      `PRAGMA busy_timeout=0; ${mode === "create" ? "BEGIN IMMEDIATE" : mode === "reclaim" ? "BEGIN EXCLUSIVE" : "BEGIN; SELECT rootpage FROM sqlite_schema LIMIT 1"}`,
+    );
+    if (db.prepare("PRAGMA journal_mode").get()?.journal_mode !== "delete") {
+      throw new Error("SQLite snapshot token journal mode is unknown");
+    }
+    const version = db.prepare("PRAGMA user_version").get()?.user_version;
+    if (version !== 0 && (mode !== "reclaim" || version !== 1)) {
+      throw new Error("SQLite snapshot parent retired; aborting snapshot allocation");
+    }
+    return release;
+  } catch (error) {
+    release();
+    throw error;
+  }
+}
+
+function inspectSnapshot(
+  directory: string,
+  tokens: SnapshotToken[] | undefined,
+  cutoff: number,
+  layout = "",
+): { bytes: number; newest: number } {
+  const stat = fs.lstatSync(directory);
+  if (!stat.isDirectory() || (process.getuid && stat.uid !== process.getuid())) {
+    throw new Error("Snapshot directory ownership is unknown");
+  }
+  const legacy = !layout && legacyMarker.test(path.basename(directory));
+  // Check all legacy activity without creating tokens, then repeat under locks.
+  // Even creating an empty token would otherwise postpone a recent copy's expiry.
+  if (legacy && tokens) {
+    inspectSnapshot(directory, undefined, cutoff, layout);
+  }
+  if (!layout && tokens) {
+    tokens.push(snapshotToken(directory, "reclaim"));
   }
   let bytes = 0;
+  let newest = stat.mtimeMs;
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-    const pathname = path.join(directory, entry.name);
-    if (entry.isDirectory()) {
-      // Doctor relocates the private family before running isolated inspectors.
-      const childLayout =
-        layout === "snapshot"
-          ? entry.name === "openclaw-state"
-            ? "doctor-root"
-            : "snapshot"
-          : layout === "doctor-root" && entry.name === "state"
-            ? "doctor-state"
-            : undefined;
-      const childBytes = childLayout && abandonedSnapshotBytes(pathname, childLayout);
-      if (childBytes === undefined) {
-        return undefined;
-      }
-      bytes += childBytes;
-    } else if (
-      entry.isFile() &&
-      (layout === "snapshot"
-        ? snapshotFile.test(entry.name)
-        : layout === "doctor-state" &&
-          /^openclaw\.sqlite(?:-wal|-shm|-journal)?$/u.test(entry.name))
+    const location = path.join(directory, entry.name);
+    const item = fs.lstatSync(location);
+    if (process.getuid && item.uid !== process.getuid()) {
+      throw new Error("Snapshot file ownership is unknown");
+    }
+    // Coordination files are neither copied data nor evidence of legacy activity.
+    if (
+      !layout &&
+      item.isFile() &&
+      SQLITE_SNAPSHOT_CONTROL_FILES.some((file) => file === entry.name)
     ) {
-      const file = fs.lstatSync(pathname);
-      if (!file.isFile() || (process.getuid && file.uid !== process.getuid())) {
-        return undefined;
+      continue;
+    }
+    newest = Math.max(newest, item.mtimeMs);
+    if (item.isDirectory()) {
+      const nested = !layout && isStagingName(entry.name);
+      const childLayout = nested ? "" : [layout, entry.name].filter(Boolean).join("/");
+      if (!nested && !["openclaw-state", "openclaw-state/state"].includes(childLayout)) {
+        throw new Error("Unrecognized snapshot directory");
       }
-      bytes += file.size;
+      const child = inspectSnapshot(location, tokens, cutoff, childLayout);
+      bytes += child.bytes;
+      newest = Math.max(newest, child.newest);
+    } else if (
+      item.isFile() &&
+      (layout === "openclaw-state/state"
+        ? /^openclaw\.sqlite(?:-wal|-shm|-journal)?$/u.test(entry.name)
+        : !layout &&
+          /^(?:first|database\.sqlite(?:\.partial)?(?:-wal|-shm|-journal)?)$/u.test(entry.name))
+    ) {
+      bytes += item.size;
     } else {
-      // Unknown files, symlinks, and unrelated directories have no cleanup contract.
-      return undefined;
+      throw new Error("Unrecognized snapshot artifact");
     }
   }
-  return bytes;
+  // Also protects old selected workers nested below a current-generation parent.
+  if (legacy && newest >= cutoff) {
+    throw new Error("Legacy snapshot contains activity newer than 24 hours");
+  }
+  return { bytes, newest };
 }
 
 function reclaimAbandonedSnapshots(root: string): void {
-  // A worker's staging root still belongs to its parent, even after a previous
-  // child handed back a completed snapshot and exited.
-  if (ownerPid(path.basename(root)) !== undefined || scannedRoots.has(root)) {
+  if (scannedRoots.has(root)) {
     return;
   }
   scannedRoots.add(root);
   try {
     for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
-      if (!entry.isDirectory() || ownerPid(entry.name) === undefined) {
+      const legacy = legacyMarker.test(entry.name);
+      if (!entry.isDirectory() || !isStagingName(entry.name)) {
         continue;
       }
-      const original = path.join(root, entry.name);
+      const directory = path.join(root, entry.name);
+      const tokens: SnapshotToken[] = [];
       try {
-        const bytes = abandonedSnapshotBytes(original);
-        if (bytes === undefined) {
-          continue;
+        const { bytes } = inspectSnapshot(directory, tokens, Date.now() - legacyAgeMs);
+        for (const token of tokens) {
+          token(true);
         }
-        // Rename transfers this dead owner's artifact to exactly one reclaimer.
-        // A crash here leaves the same recognizable marker for the next start.
-        const claimed = path.join(root, `${SQLITE_SNAPSHOT_STAGING_PREFIX}${randomUUID()}`);
-        fs.renameSync(original, claimed);
-        registerSnapshotTempDirectory(claimed);
-        if (removeTempDirectory(claimed)) {
-          getChildLogger({ subsystem: "infra/sqlite-snapshot" }).warn(
-            { reclaimedBytes: bytes },
-            `Reclaimed ${bytes} bytes from an interrupted SQLite read-only snapshot.`,
-          );
-        } else {
-          getChildLogger({ subsystem: "infra/sqlite-snapshot" }).warn(
-            "Could not remove an interrupted SQLite snapshot; check cache directory permissions.",
-          );
+        const claimed = path.join(
+          root,
+          `${legacy ? `openclaw-sqlite-readonly-${process.pid}-` : prefix}${randomUUID()}`,
+        );
+        fs.renameSync(directory, claimed);
+        if (!removeTempDirectory(claimed)) {
+          throw new Error("Snapshot removal failed; check private cache permissions");
         }
+        warn(`Reclaimed ${bytes} bytes of interrupted SQLite snapshot data.`);
       } catch (error) {
-        if (extractErrorCode(error) !== "ENOENT") {
-          throw error;
+        warn("Skipped SQLite snapshot reclamation: owner live, recent, or unverified.", error);
+      } finally {
+        for (const token of tokens) {
+          token();
         }
       }
     }
   } catch (error) {
-    try {
-      getChildLogger({ subsystem: "infra/sqlite-snapshot" }).warn(
-        { errorCode: extractErrorCode(error) },
-        "Could not reclaim interrupted SQLite snapshots; check cache directory permissions.",
-      );
-    } catch {
-      // Reclamation must not prevent a new inspection from making progress.
-    }
+    warn("SQLite snapshot reclamation failed; check private cache permissions.", error);
   }
 }
 
 export function createSqliteSnapshotStagingDirectorySync(
   root = resolvePrivateSqliteSnapshotStagingRoot(),
+  allowLegacyWorker = false,
 ): string {
-  reclaimAbandonedSnapshots(root);
-  const directory = createPrivateSqliteTempDirectorySync(root, SQLITE_SNAPSHOT_STAGING_PREFIX);
-  registerSnapshotTempDirectory(directory);
-  return directory;
-}
-
-export async function allocateSqliteSnapshotStagingDirectory(
-  root = resolvePrivateSqliteSnapshotStagingRoot(),
-): Promise<string> {
-  reclaimAbandonedSnapshots(root);
-  const directory = await retainSnapshotWork(
-    createPrivateSqliteTempDirectory(root, SQLITE_SNAPSHOT_STAGING_PREFIX),
-  );
-  registerSnapshotTempDirectory(directory);
-  return directory;
+  // A shared parent token fences admission until the child's own token is held.
+  // No mkdir of root: a late orphan must abort if reclamation already won.
+  const parent = isStagingName(path.basename(root)) ? snapshotToken(root, "read") : undefined;
+  let directory: string | undefined;
+  try {
+    if (!parent) {
+      reclaimAbandonedSnapshots(root);
+    }
+    // A selected installation may launch a worker without token admission.
+    directory = createPrivateSqliteTempDirectorySync(
+      root,
+      allowLegacyWorker ? `openclaw-sqlite-readonly-${process.pid}-` : prefix,
+    );
+    registerSnapshotTempDirectory(directory, snapshotToken(directory, "create"));
+    return directory;
+  } catch (error) {
+    if (directory) {
+      removeTempDirectory(directory);
+    }
+    throw error;
+  } finally {
+    parent?.();
+  }
 }

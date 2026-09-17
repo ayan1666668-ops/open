@@ -1,5 +1,6 @@
 // Keep source lifetime pinned while the snapshot owner consumes live or private bytes.
 import fs, { type BigIntStats } from "node:fs";
+import { coerceErrorMessage } from "@openclaw/normalization-core/error-coercion";
 import {
   adoptPreparedLocation,
   removeTempDirectory,
@@ -58,9 +59,12 @@ export async function inspectSqliteSchemaHeader(
     options.signal?.throwIfAborted();
   } catch (error) {
     if (!(await removeTempDirectoryAsync(stagingRoot))) {
-      throw new Error(`SQLite read-only worker snapshot cleanup failed: ${stagingRoot}`, {
-        cause: error,
-      });
+      throw new Error(
+        `${coerceErrorMessage(error)}; SQLite snapshot cleanup failed: ${stagingRoot}`,
+        {
+          cause: error,
+        },
+      );
     }
     throw error;
   }
@@ -117,9 +121,12 @@ export async function prepareSqliteReadOnlyLocation(
     return adoptPreparedLocation(location, stagingRoot, options.signal !== undefined);
   } catch (error) {
     if (stagingRoot && !(await removeTempDirectoryAsync(stagingRoot))) {
-      throw new Error(`SQLite read-only worker snapshot cleanup failed: ${stagingRoot}`, {
-        cause: error,
-      });
+      throw new Error(
+        `${coerceErrorMessage(error)}; SQLite snapshot cleanup failed: ${stagingRoot}`,
+        {
+          cause: error,
+        },
+      );
     }
     options.signal?.throwIfAborted();
     throw error;
@@ -138,10 +145,8 @@ export function prepareSqliteReadOnlyLocationSync(
   } catch (error) {
     if (!removeTempDirectory(stagingRoot)) {
       throw new SqliteSnapshotCleanupError(
-        `SQLite read-only worker snapshot cleanup failed: ${stagingRoot}`,
-        {
-          cause: error,
-        },
+        `${coerceErrorMessage(error)}; SQLite snapshot cleanup failed: ${stagingRoot}`,
+        { cause: error },
       );
     }
     throw error;
