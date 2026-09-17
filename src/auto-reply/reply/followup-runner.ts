@@ -98,7 +98,10 @@ export function createFollowupRunner(
     let admittedRunId: string | undefined;
     let admittedTurn: AdmittedFollowupTurn | undefined;
     let terminalPayloads: ReplyPayload[] = [];
-    let terminalDeliveryFailed = false;
+    // Undefined until terminal delivery actually settles: accounting or notice
+    // failures before delivery must not confirm a draft deletion that delivery
+    // never earned.
+    let terminalDeliveryFailed: boolean | undefined;
     const admissionNotices: ReplyPayload[] = [];
     let completion: QueuedFollowupReplyBatch["completion"] = { kind: "completed" };
     let queuedFollowupAdmitted = false;
@@ -292,7 +295,8 @@ export function createFollowupRunner(
       }
       if (queuedFollowupAdmitted) {
         await settleQueuedFollowupPresentation(defaults, {
-          finalDeliveryFailed: terminalDeliveryFailed,
+          // Unconfirmed outcomes keep the draft, matching the failed-final retention.
+          finalDeliveryFailed: terminalDeliveryFailed ?? true,
         });
       }
       for (const end of endDeliveryCorrelations.toReversed()) {

@@ -441,7 +441,11 @@ async function sendFollowupPayloads(params: {
         logVerbose(
           `followup queue: route-reply remains pending: ${result.error ?? "unconfirmed delivery"}`,
         );
-        finalDeliveryFailed = true;
+        // Only unconfirmed terminal content unsettles the draft; a held status
+        // notice must not retain the draft after the answer was delivered.
+        if (isReplyPayloadTerminalContent(payload)) {
+          finalDeliveryFailed = true;
+        }
         continue;
       }
       if (!result.delivered && !result.suppressed) {
@@ -453,7 +457,11 @@ async function sendFollowupPayloads(params: {
           crossChannelFailures.push(payload);
         } else {
           defaultRuntime.error?.(`followup queue: route-reply failed: ${routeError}`);
-          finalDeliveryFailed = true;
+          // A failed supplement cannot undo a confirmed terminal reply; only
+          // terminal-content failures keep the progress draft unsettled.
+          if (isReplyPayloadTerminalContent(payload)) {
+            finalDeliveryFailed = true;
+          }
         }
       } else if (result.delivered) {
         if (!result.ok) {

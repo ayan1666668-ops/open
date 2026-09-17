@@ -232,6 +232,33 @@ describe("createFollowupRunner", () => {
     },
   );
 
+  it("retains the queued draft when accounting fails before final delivery", async () => {
+    const turn = createTurn();
+    const source = createChatSendLateFollowupDisposition({
+      runId: "source-run",
+      originatingChannel: "webchat",
+      logGateway: { info: vi.fn() } as never,
+      deliver: async () => ({ kind: "delivered" }),
+    });
+    source.recordQueued();
+    turn.queued.queuedFollowupReplyDisposition = { kind: "deliver", deliver: source.deliver };
+    const onQueuedFollowupSettled = vi.fn(async (_settlement?: QueuedFollowupSettlement) => {});
+    state.admit.mockResolvedValue({ kind: "admitted", turn });
+    state.execute.mockImplementation(async () => createSettledExecution());
+    state.account.mockRejectedValue(new Error("compaction accounting storage write failed"));
+    const run = createFollowupRunner({
+      typing: createTypingController(),
+      typingMode: "never",
+      defaultModel: "claude",
+      opts: { onQueuedFollowupSettled },
+    });
+    await run(turn.queued);
+    expect(state.deliver).not.toHaveBeenCalled();
+    // Accounting rejected before terminal delivery ran, so the outcome is
+    // unconfirmed: settlement must retain the draft, not clear it.
+    expect(onQueuedFollowupSettled).toHaveBeenCalledWith({ finalDeliveryFailed: true });
+  });
+
   it("delivers ordinary channel compaction-start while admission is still compacting", async () => {
     const turn = createTurn();
     turn.queued.originatingChannel = "discord";
