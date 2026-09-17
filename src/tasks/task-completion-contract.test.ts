@@ -17,6 +17,44 @@ describe("resolveRequiredCompletionTerminalResult", () => {
   // conditional clause ("whether the tests passed") is a pending outcome, not a
   // delivered result.
   it.each([
+    ["speaker-aspect keeps", "I'll inspect the code and the worker keeps reviewing failed tests."],
+    [
+      "speaker-aspect continues",
+      "I'll inspect the code and the worker continues reviewing failed tests.",
+    ],
+    [
+      "speaker-aspect starts",
+      "I'll inspect the code and the worker starts reviewing failed tests.",
+    ],
+    ["speaker-subject ongoing keep", "I'll inspect the code and I keep reviewing failed tests."],
+    ["speaker-subject present check", "I'll inspect the code and we check stored results."],
+    [
+      "speaker-subject verification keep",
+      "I'll inspect the code and I keep checking tests passed.",
+    ],
+    [
+      "speaker-actor third person verification",
+      "I'll inspect the code and she's checking all tests passed.",
+    ],
+    [
+      "speaker-actor noun verification",
+      "I'll inspect the code and the worker is checking tests passed.",
+    ],
+    [
+      "speaker-actor contracted noun",
+      "I'll inspect the code and the worker's reviewing failed tests.",
+    ],
+    ["speaker-intent contracted I", "I'll inspect the code and I'm reviewing failed tests."],
+    ["speaker-intent expanded I", "I'll inspect the code and I am reviewing failed tests."],
+    ["speaker-intent contracted we", "I'll inspect the code and we're reviewing failed tests."],
+    ["speaker-intent expanded we", "I'll inspect the code and we are reviewing failed tests."],
+    ["speaker-intent third person", "I'll inspect the code and she's reviewing failed tests."],
+    [
+      "speaker-intent ongoing verification",
+      "I'll inspect the code and I'm checking all tests passed.",
+    ],
+    ["speaker-intent own plan", "I'll inspect the code and I will verify all tests passed."],
+    ["speaker-intent own directive", "I'll inspect the code and let me verify all tests passed."],
     ["verification-tail planned check", "I will inspect the code and check passed tests."],
     [
       "verification-complement perfect tests",
@@ -306,6 +344,13 @@ describe("resolveRequiredCompletionTerminalResult", () => {
   // result/report/verification marker in a delivered-result sentence; those
   // must not be misclassified.
   it.each([
+    [
+      "speaker-intent later completed clause",
+      "I'll inspect the code and I'm reviewing failed tests, and I patched the regression.",
+    ],
+    ["speaker-intent contracted done", "I'll inspect the code and I'm done."],
+    ["speaker-intent contracted perfect", "I'll inspect the code and I've fixed the regression."],
+    ["speaker-intent possessive noun", "I'll inspect the code and the worker's tests passed."],
     ["verification-tail independent check", "I will inspect the code and check passed."],
     ["verification-object bare independent", "I'll inspect the code and tests passed."],
     ["verification-object marked qualified", "I'll inspect the code and all unit tests passed."],
