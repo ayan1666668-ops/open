@@ -116,13 +116,17 @@ describe.each(registrations)("Nextcloud Talk $name handoff", ({ send, media }) =
     const handoff = createHandoff();
     const requests: Array<{ method?: string; url?: string; body: string }> = [];
     await withServer(
-      async (request, response) => {
+      (request, response) => {
         let body = "";
-        for await (const chunk of request) {
-          body += String(chunk);
-        }
-        requests.push({ method: request.method, url: request.url, body });
-        acceptMessage(response);
+        request.setEncoding("utf8");
+        request.on("data", (chunk: string) => {
+          body += chunk;
+        });
+        request.once("end", () => {
+          requests.push({ method: request.method, url: request.url, body });
+          acceptMessage(response);
+        });
+        request.once("error", () => response.destroy());
       },
       async (baseUrl) => {
         await expect(
