@@ -1851,6 +1851,7 @@ describePosix("scripts/pr per-PR operation lock", () => {
       writeFileSync(
         mergeScript,
         `${readFileSync(mergeScript, "utf8")}\n` +
+          "review_artifact_preflight() { :; }\n" +
           "validate_review_artifact_data() { :; }\n" +
           "merge_verify() { MERGE_USE_CRABBOX_ADMIN_BYPASS=false; mark_pr_operation_side_effects_started; }\n",
       );

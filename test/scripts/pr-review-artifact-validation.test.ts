@@ -34,7 +34,7 @@ const REVIEW_SHELL_COMMAND_SURFACE = [
 it("runs dependency-free CLI and native lock regressions", () => {
   const result = spawnSync(
     process.execPath,
-    ["--test", join(process.cwd(), "test/scripts/pr-review-artifacts.node.test.mjs")],
+    ["--test", join(process.cwd(), "test/scripts/pr-review-artifacts.node.mjs")],
     { encoding: "utf8", timeout: 30000 },
   );
   expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);

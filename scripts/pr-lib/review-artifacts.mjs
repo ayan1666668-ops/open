@@ -40,10 +40,16 @@ function renderReviewMarkdown(review) {
     lines.push(`- ${branch.path}: ${branch.decision} → ${branch.outcome}`);
   }
   lines.push("", `Tests: ${review.tests.result}`);
-  for (const test of review.tests.ran) lines.push(`- ${test}`);
-  for (const gap of review.tests.gaps) lines.push(`- Gap: ${gap}`);
+  for (const test of review.tests.ran) {
+    lines.push(`- ${test}`);
+  }
+  for (const gap of review.tests.gaps) {
+    lines.push(`- Gap: ${gap}`);
+  }
   lines.push(`Docs: ${review.docs}`, `Changelog: ${review.changelog}`);
-  if (review.nitSweep) lines.push(`Optional nits: ${review.nitSweep.summary}`);
+  if (review.nitSweep) {
+    lines.push(`Optional nits: ${review.nitSweep.summary}`);
+  }
   return `${lines.join("\n")}\n`;
 }
 
