@@ -18,7 +18,7 @@ const FOLLOW_UP_PLANNING_PREFIX_PATTERN =
   /^(?:after(?:wards|\s+that)?|from\s+there|next|once\s+(?:done|that(?:'|\u2019)?s\s+done|that\s+is\s+done)|then)[,.\s]+/i;
 
 const COMPLETION_RESULT_CLAUSE_PATTERN =
-  /^(?:(?:(?:i|we)(?:\s+(?:have\s+)?|(?:'|\u2019)ve\s+)|(?:i(?:\s+am|(?:'|\u2019)m)|we(?:\s+are|(?:'|\u2019)re))\s+))?(?:done|completed|finished|fixed|patched|resolved|deployed|landed|merged|implemented|confirmed)\b|(?:^|,\s*|\band\s+)(?:(?:(?:i|we)(?:\s+(?:have\s+)?|(?:'|\u2019)ve\s+)|(?:i(?:\s+am|(?:'|\u2019)m)|we(?:\s+are|(?:'|\u2019)re))\s+)(?:done|completed|finished|fixed|patched|resolved|deployed|landed|merged|implemented|confirmed)\b|(?:all\s+)?(?:\d+\s+)?(?:tests?|build|lint|checks?|syntax)\s+(?:passed|succeeded|green)\b)/i;
+  /^(?:(?:(?:i|we)(?:\s+(?:have\s+)?|(?:'|\u2019)ve\s+)|(?:i(?:\s+am|(?:'|\u2019)m)|we(?:\s+are|(?:'|\u2019)re))\s+))?(?:done|completed|finished|fixed|patched|resolved|deployed|landed|merged|implemented|confirmed)\b|(?:^|,\s*|\band\s+)(?:(?:(?:i|we)(?:\s+(?:have\s+)?|(?:'|\u2019)ve\s+)|(?:i(?:\s+am|(?:'|\u2019)m)|we(?:\s+are|(?:'|\u2019)re))\s+)(?:done|completed|finished|fixed|patched|resolved|deployed|landed|merged|implemented|confirmed)\b|(?:(?:all|the)\s+)?(?:\d+\s+)?(?:tests?|build|lint|checks?|syntax)\s+(?:(?:have|has)\s+)?(?:passed|succeeded|green)\b)/i;
 
 const CONDITIONAL_PROGRESS_PATTERN = /\b(?:whether|if|unless|once|when)\b/i;
 const FIRST_PERSON_PLAN_PATTERN =
@@ -34,12 +34,14 @@ function hasDeferredTemporalResult(prefix: string, resultClause: string): boolea
     ...prefix.matchAll(/(?:^|,\s*)(?:when|once)\b([^,]*)/gi),
     ...resultClause.matchAll(/\b(?:when|once)\b([^,]*)/gi),
   ];
-  // A bounded past-event qualifier can explain completed work. A future or
-  // present-perfect prerequisite is still deferred, even after a verb's object.
+  // Check the temporal clause's subject/predicate, not past-looking modifiers
+  // such as "the failed tests pass". This exception is only for known result
+  // narration; generic replies are not subject to temporal parsing.
   return temporalClauses.some(
     ([, event = ""]) =>
-      !/\b(?:was|were|had|did|fired|failed|passed|succeeded|completed|finished)\b/i.test(event) ||
-      /\b(?:will|would|could|should|might|may|can|must|have|has)\b/i.test(event),
+      !/^(?:(?:the|all|both|our)\s+(?:(?!(?:if|unless|when|once|whether|before|after|while|and|or|that|which|will|would|could|should|might|may|can|must|have|has|is|are)\b)[\w'-]+\s+){1,4}|(?!(?:the|all|both|our)\b)[\w'-]+\s+)(?:was|were|had|did|fired|failed|passed|succeeded|completed|finished)\b/i.test(
+        event.trim(),
+      ),
   );
 }
 

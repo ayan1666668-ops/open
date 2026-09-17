@@ -19,6 +19,23 @@ describe("resolveRequiredCompletionTerminalResult", () => {
   it.each([
     ["pure progress", "Let me run the tests"],
     [
+      "past adjective in future prerequisite",
+      "Reviewing the rollout, we deployed the release when the failed tests pass.",
+    ],
+    [
+      "completed adjective in future prerequisite",
+      "Reviewing the rollout, we deployed it once the completed job is verified.",
+    ],
+    [
+      "future auxiliary in temporal prerequisite",
+      "Reviewing the changes, we fixed it when the tests will have passed.",
+    ],
+    [
+      "subordinate past event in future prerequisite",
+      "Reviewing the changes, we fixed it when the tests pass after the build finished.",
+    ],
+    ["conditional present-perfect result", "Reviewing whether all tests have passed."],
+    [
       "conditional object after heading",
       "I'll inspect the failure. Result: completed the repair when CI succeeds.",
     ],
@@ -140,6 +157,10 @@ describe("resolveRequiredCompletionTerminalResult", () => {
       "I'll inspect the repo now: the crash is a missing null check in src/foo.ts.",
     ],
     ["completed clause after narration", "Reviewing the changes, we fixed the regression."],
+    ["present-perfect test result", "Reviewing the changes, all tests have passed."],
+    ["present-perfect build result", "Reviewing the changes, the build has succeeded."],
+    ["past temporal action", "Reviewing the rollout, we deployed it when we finished the checks."],
+    ["past temporal auxiliary", "Reviewing the rollout, we deployed it when the tests had passed."],
     ["completed deployment state", "Reviewing the changes, the deployment is done."],
     ["completed repair state", "Reviewing the rollout, the repair is complete."],
     ["completed plural state", "Reviewing the changes, all migrations are complete."],
