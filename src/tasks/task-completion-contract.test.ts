@@ -18,6 +18,14 @@ describe("resolveRequiredCompletionTerminalResult", () => {
   // delivered result.
   it.each([
     ["pure progress", "Let me run the tests"],
+    ["unfulfilled past intention", "Reviewing the rollout, we planned to deploy the release."],
+    [
+      "past obligation without a result",
+      "Reviewing the rollout, we were supposed to deploy the release.",
+    ],
+    ["headed still-pending status", "Status: still pending."],
+    ["subject still-pending status", "Status: the deployment is still pending."],
+    ["future noun-subject completion", "Reviewing the changes, the migration will be completed."],
     [
       "adverbial past adjective in prerequisite",
       "Reviewing the rollout, we deployed it when the newly failed tests pass.",
@@ -169,6 +177,27 @@ describe("resolveRequiredCompletionTerminalResult", () => {
       "I'll inspect the repo now: the crash is a missing null check in src/foo.ts.",
     ],
     ["completed clause after narration", "Reviewing the changes, we fixed the regression."],
+    [
+      "noun-subject completed result",
+      "Reviewing the changes, the migration completed successfully.",
+    ],
+    ["qualified test suite result", "Reviewing the changes, the full test suite has passed."],
+    [
+      "irregular fell temporal result",
+      "Reviewing the rollout, we deployed it when the old worker fell over.",
+    ],
+    [
+      "irregular saw temporal result",
+      "Reviewing the rollout, we deployed it when we saw the green checks.",
+    ],
+    [
+      "irregular lost temporal result",
+      "Reviewing the rollout, we deployed it when the old worker lost connectivity.",
+    ],
+    [
+      "irregular began temporal result",
+      "Reviewing the rollout, we deployed it when the maintenance window began.",
+    ],
     [
       "past event with an adjectival subject",
       "Reviewing the rollout, we deployed it when the newly failed tests passed.",

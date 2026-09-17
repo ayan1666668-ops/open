@@ -26,8 +26,25 @@ const FIRST_PERSON_PLAN_PATTERN =
 const COMPLETION_HEADING_PATTERN =
   /^(?:result|results|report|summary|outcome|conclusion|findings?|verification|status)\s*:\s*/i;
 
-const COMPLETION_STATE_CLAUSE_PATTERN =
-  /(?:^|,\s*|\band\s+)(?:the\s+[\w'-]+(?:\s+[\w'-]+){0,3}|(?:all|both)\s+[\w'-]+|[\w'-]+)\s+(?:is|are|was|were|has\s+been|have\s+been)\s+(?:done|complete|completed|finished|fixed|resolved)\b/i;
+// Shared subject/predicate grammar stays inside progress-result classification.
+// In particular, a subject cannot absorb a modal, negation, or new condition.
+const RESULT_SUBJECT_WORD = String.raw`(?!(?:if|unless|when|once|whether|before|after|while|and|or|that|which|will|would|could|should|might|may|can|must|have|has|had|did|is|are|was|were|not|to)\b|\w+(?:'|\u2019)(?:t|ll)\b)[\w'-]+`;
+const RESULT_SUBJECT = String.raw`(?:${RESULT_SUBJECT_WORD}\s+){0,6}(?!(?:the|a|an|all|both|our|already|just)\b|[\w'-]+ly\b)${RESULT_SUBJECT_WORD}`;
+const IRREGULAR_PAST_VERB =
+  "arose|awoke|bore|beat|became|began|bent|bet|bit|bled|blew|broke|brought|built|burnt|burst|bought|caught|chose|came|cost|crept|cut|dealt|dug|drew|drank|drove|ate|fell|fed|felt|fought|found|fled|flew|forbade|forgot|forgave|froze|got|gave|went|grew|hung|heard|hid|hit|held|hurt|kept|knew|laid|led|leant|leapt|learnt|left|lent|let|lay|lit|lost|made|meant|met|paid|put|quit|read|rode|rang|rose|ran|said|saw|sought|sold|sent|set|shook|shone|shot|showed|shrank|shut|sang|sank|sat|slept|slid|smelt|spoke|spelt|spent|spilt|spun|split|spread|sprang|stood|stole|stuck|stung|stank|struck|swore|swept|swam|swung|took|taught|tore|told|thought|threw|understood|upset|woke|wore|wept|won|wound|wrote";
+const PAST_RESULT_VERB = String.raw`(?:${IRREGULAR_PAST_VERB}|(?!(?:need|feed|bleed|breed|heed|seed|weed|speed|succeed|exceed|proceed)\b)[a-z]+ed)`;
+const COMPLETION_STATE_CLAUSE_PATTERN = new RegExp(
+  String.raw`(?:^|,\s*|\band\s+)${RESULT_SUBJECT}\s+(?:(?:(?:has|have)\s+)?(?:${PAST_RESULT_VERB}|done)|(?:is|are|was|were|has\s+been|have\s+been)\s+(?:done|complete|completed|finished|fixed|resolved))\b`,
+  "i",
+);
+const INTENDED_RESULT_PATTERN = new RegExp(
+  String.raw`^${RESULT_SUBJECT}\s+(?:(?:had|has|have|was|were)\s+)?(?:planned|hoped|intended|expected|wanted|needed|aimed|supposed)\s+to\b`,
+  "i",
+);
+const PAST_TEMPORAL_EVENT_PATTERN = new RegExp(
+  String.raw`^${RESULT_SUBJECT}\s+(?:(?:just|already|recently|finally)\s+)?(?:was|were|had|did|${PAST_RESULT_VERB})\b`,
+  "i",
+);
 
 function hasDeferredTemporalResult(prefix: string, resultClause: string): boolean {
   const temporalClauses = [
@@ -37,12 +54,7 @@ function hasDeferredTemporalResult(prefix: string, resultClause: string): boolea
   // Check the temporal clause's subject/predicate, not past-looking modifiers
   // such as "the failed tests pass". This exception is only for known result
   // narration; generic replies are not subject to temporal parsing.
-  return temporalClauses.some(
-    ([, event = ""]) =>
-      !/^(?:(?:the|all|both|our)\s+(?:(?!(?:if|unless|when|once|whether|before|after|while|and|or|that|which|will|would|could|should|might|may|can|must|have|has|is|are)\b)[\w'-]+\s+){0,3}(?!(?:already|just)\b|[\w'-]+ly\b)(?!(?:if|unless|when|once|whether|before|after|while|and|or|that|which|will|would|could|should|might|may|can|must|have|has|is|are)\b)[\w'-]+\s+|(?!(?:the|all|both|our)\b)[\w'-]+\s+)(?:just\s+|already\s+|recently\s+|finally\s+)?(?:was|were|had|did|ran|went|broke|built|became|came|found|got|left|made|sent|shut|took|wrote|[a-z]+ed)\b/i.test(
-        event.trim(),
-      ),
-  );
+  return temporalClauses.some(([, event = ""]) => !PAST_TEMPORAL_EVENT_PATTERN.test(event.trim()));
 }
 
 function normalizeCompletionText(value: string | null | undefined): string {
@@ -97,13 +109,14 @@ function isProgressOnlyCompletionText(value: string): boolean {
       // end before an independent comma-delimited past-tense statement.
       const conditionalResult =
         result !== null &&
-        (/\b(?:whether|if|unless)\b/i.test(resultClause) ||
+        (INTENDED_RESULT_PATTERN.test(body.slice(resultIndex).replace(/^(?:,|and)\s*/i, "")) ||
+          /\b(?:whether|if|unless)\b/i.test(resultClause) ||
           /(?:^|[,;:]\s*)(?:if|unless)\b/i.test(prefix) ||
           (/^and\b/i.test(result[0]) && CONDITIONAL_PROGRESS_PATTERN.test(prefix)) ||
           hasDeferredTemporalResult(prefix, resultClause));
       const progress =
         narrativeProgress ||
-        /^(?:(?:the\s+)?(?:tests?|checks?|build|lint|deployment|verification)\s+(?:(?:is|are|remains?)\s+)?)?(?:pending|in\s+progress|not\s+yet)[.!?]?$/i.test(
+        /^(?:(?:the\s+)?(?:tests?|checks?|build|lint|deployment|verification)\s+(?:(?:is|are|remains?)\s+)?)?(?:still\s+)?(?:pending|in\s+progress|not\s+yet)[.!?]?$/i.test(
           body,
         ) ||
         (progressSeen && conditionalResult);
