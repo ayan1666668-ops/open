@@ -1179,6 +1179,8 @@ export class ConfigPage extends OpenClawLightDomElement {
       chatCollapseTaskProgress: this.settings.chatCollapseTaskProgress === true,
       setChatCollapseTaskProgress: (enabled) =>
         this.setSetting("chatCollapseTaskProgress", enabled),
+      disableUiTransitions: this.settings.disableUiTransitions === true,
+      setDisableUiTransitions: (enabled) => this.setSetting("disableUiTransitions", enabled),
       showAdvancedSettings: this.settings.showAdvancedSettings === true,
       setShowAdvancedSettings: (enabled) => this.setSetting("showAdvancedSettings", enabled),
       forceShowAdvanced: this.pageId === "advanced",
