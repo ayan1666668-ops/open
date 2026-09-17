@@ -29,7 +29,7 @@ import {
   slackIngressIdentity,
   SLACK_USER_NAME_KIND,
 } from "./ingress-identity.js";
-import { isTransientSlackThreadLookupError } from "./thread-resolution.js";
+import { isTransientSlackApiError } from "./web-api-errors.js";
 
 type SlackChannelMembersCacheEntry = {
   expiresAtMs: number;
@@ -438,7 +438,7 @@ async function decideSlackSystemIngress(params: {
     )
   ) {
     const lookup = await params.ctx.resolveUserName(params.senderId, params.eventScope);
-    if (lookup.error && isTransientSlackThreadLookupError(lookup.error)) {
+    if (lookup.error && isTransientSlackApiError(lookup.error)) {
       throw new SlackSystemEventAuthRetryError(formatErrorMessage(lookup.error));
     }
     if (lookup.name) {

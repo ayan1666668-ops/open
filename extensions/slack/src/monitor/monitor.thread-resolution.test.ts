@@ -9,10 +9,8 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SlackMessageEvent } from "../types.js";
 import type { SlackIngressTurnLifecycle } from "./ingress.js";
-import {
-  createSlackThreadTsResolver,
-  isTransientSlackThreadLookupError,
-} from "./thread-resolution.js";
+import { createSlackThreadTsResolver } from "./thread-resolution.js";
+import { isTransientSlackApiError } from "./web-api-errors.js";
 
 type SlackThreadClient = Parameters<typeof createSlackThreadTsResolver>[0]["client"];
 
@@ -108,7 +106,7 @@ describe("createSlackThreadTsResolver", () => {
     expect(error.original.message).toMatch(
       /^A rate limit was exceeded \(url: .+, retry-after: 0\)$/,
     );
-    expect(isTransientSlackThreadLookupError(error)).toBe(true);
+    expect(isTransientSlackApiError(error)).toBe(true);
     expect(fetch).toHaveBeenCalledOnce();
   });
 
@@ -129,7 +127,7 @@ describe("createSlackThreadTsResolver", () => {
         .catch((caught: unknown) => caught);
 
       expect(error).toBeInstanceOf(WebAPIPlatformError);
-      expect(isTransientSlackThreadLookupError(error)).toBe(true);
+      expect(isTransientSlackApiError(error)).toBe(true);
       expect(fetch).toHaveBeenCalledOnce();
     },
   );

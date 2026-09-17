@@ -16,7 +16,7 @@ import type { PluginJsonValue } from "openclaw/plugin-sdk/plugin-entry";
 import { asOptionalRecord } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { getSlackRuntime } from "../runtime.js";
 import { isNonRecoverableSlackAuthError } from "./reconnect-policy.js";
-import { isTransientSlackThreadLookupError } from "./thread-resolution.js";
+import { isTransientSlackApiError } from "./web-api-errors.js";
 
 const SLACK_INGRESS_PAYLOAD_VERSION = 1;
 const SLACK_INGRESS_POLL_INTERVAL_MS = 1_000;
@@ -200,7 +200,7 @@ function resolveSlackIngressNonRetryableFailure(error: unknown) {
   ]);
   // Bolt wraps auth.test outages in AuthorizationError too. Keep the durable
   // event retryable for those failures; dispatch still requires authorization.
-  const transientAuthorizationFailure = candidates.some(isTransientSlackThreadLookupError);
+  const transientAuthorizationFailure = candidates.some(isTransientSlackApiError);
   for (const candidate of candidates) {
     if (candidate instanceof SlackIngressPayloadError || candidate instanceof SyntaxError) {
       return { reason: "invalid-event", message: formatErrorMessage(candidate) };
