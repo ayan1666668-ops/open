@@ -51,17 +51,18 @@ describe.skipIf(process.platform === "win32")("spawn broker recovery budget", ()
       await host.close();
     }
   }, 20_000);
-  it("stops after bounded consecutive startup failures", async () => {
+  it("stops after bounded consecutive recovery failures following a healthy startup", async () => {
     const directory = tempDirs.make("openclaw-broker-restarts-");
     const marker = path.join(directory, "starts");
     const preload = path.join(directory, "fail-startup.mjs");
     await writeFile(
       preload,
       `
-      import {appendFileSync} from 'node:fs';
+      import {appendFileSync,existsSync} from 'node:fs';
       if (/\\/spawn-broker\\/worker\\.(?:ts|js)$/.test(process.argv[1] ?? '')) {
+        const recovering = existsSync(${JSON.stringify(marker)});
         appendFileSync(${JSON.stringify(marker)}, 'start\\n');
-        process.exit(1);
+        if (recovering) process.exit(1);
       }
     `,
     );
@@ -70,7 +71,8 @@ describe.skipIf(process.platform === "win32")("spawn broker recovery budget", ()
     const host = createSpawnBrokerHost();
     const starts = async () => (await readFile(marker, "utf8")).trim().split("\n").length;
     try {
-      await expect(host.ready()).rejects.toMatchObject({ code: "ERR_SPAWN_BROKER_UNAVAILABLE" });
+      await host.ready();
+      process.kill(host.pid!, "SIGKILL");
       await vi.waitFor(
         async () => {
           expect(await starts()).toBeGreaterThanOrEqual(6);

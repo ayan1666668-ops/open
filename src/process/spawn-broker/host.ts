@@ -71,6 +71,7 @@ export class SpawnBrokerHost {
   private sendMessage: ReturnType<typeof createBrokerSender> | undefined;
   private readiness = createDeferredCore();
   private available = false;
+  private hasBeenReady = false;
   private closing = false;
   private closePromise: Promise<void> | undefined;
   private restartTimer: NodeJS.Timeout | undefined;
@@ -92,9 +93,9 @@ export class SpawnBrokerHost {
   constructor(
     private readonly options: { onReady?: (pid: number, restarted: boolean) => void } = {},
   ) {
-    process.once("exit", this.onParentExit);
     void this.readiness.promise.catch(() => {});
     this.start();
+    process.once("exit", this.onParentExit);
   }
 
   get pid(): number | undefined {
@@ -213,7 +214,10 @@ export class SpawnBrokerHost {
     const receiver = createBrokerReceiver();
     const brokerExited = createDeferredCore();
     let ended = false;
-    const startupTimer = setTimeout(() => child.kill("SIGKILL"), 15_000);
+    const startupTimer = setTimeout(() => {
+      fail(new Error("readiness deadline exceeded after 15000ms"));
+      child.kill("SIGKILL");
+    }, 15_000);
     const fail = (cause?: Error) => {
       if (ended) {
         return;
@@ -223,9 +227,12 @@ export class SpawnBrokerHost {
       receiver.clear();
       this.available = false;
       this.sendMessage = undefined;
-      const error = new SpawnBrokerError("Spawn broker exited; command outcome is unavailable", {
-        cause,
-      });
+      const error = new SpawnBrokerError(
+        this.hasBeenReady
+          ? "Spawn broker exited; command outcome is unavailable"
+          : `Spawn broker failed before readiness: ${cause?.message ?? "channel lost"}`,
+        { cause },
+      );
       const previousReadiness = this.readiness;
       this.readiness = createDeferredCore();
       void this.readiness.promise.catch(() => {});
@@ -247,7 +254,7 @@ export class SpawnBrokerHost {
         // Individual detached-tree escalation is armed before the broker group can die.
         this.retainCleanup(terminateBrokerProcessGroup(child.pid));
       }
-      if (this.closing) {
+      if (this.closing || !this.hasBeenReady) {
         this.readiness.reject(error);
         return;
       }
@@ -259,11 +266,11 @@ export class SpawnBrokerHost {
       this.restartTimer = setTimeout(() => this.start(), delay);
     };
     child.once("error", fail);
-    child.once("exit", () => {
+    child.once("exit", (code, signal) => {
       brokerExited.resolve();
-      fail();
+      fail(new Error(`exited with code=${code ?? "null"} signal=${signal ?? "none"}`));
     });
-    child.once("disconnect", () => fail());
+    child.once("disconnect", () => fail(new Error("IPC channel disconnected")));
     child.on("message", (raw: unknown, handle: unknown) => {
       if (ended || this.closing) {
         if (handle instanceof Socket) {
@@ -290,6 +297,7 @@ export class SpawnBrokerHost {
       const message = decoded as BrokerResponse;
       if (message.type === "ready") {
         clearTimeout(startupTimer);
+        this.hasBeenReady = true;
         this.consecutiveFailures = 0;
         this.available = true;
         this.readiness.resolve();

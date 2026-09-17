@@ -41,20 +41,24 @@ export async function startGatewayServer(
   if (process.platform !== "linux" || process.versions.bun) {
     return await start();
   }
-  const [{ createSpawnBrokerHost }, { runWithSpawnBroker }] = await Promise.all([
-    import("../process/spawn-broker/host.js"),
-    import("../process/spawn-broker/context.js"),
-  ]);
+  const { startGatewaySpawnBroker, runWithSpawnBroker } =
+    await import("../process/spawn-broker/context.js");
   let logger: { info: (message: string) => void } | undefined;
-  const broker = createSpawnBrokerHost({
+  const broker = await startGatewaySpawnBroker({
     onReady(pid, restarted) {
       if (restarted) {
         logger?.info(`spawn broker restarted pid=${pid}`);
       }
     },
+    async onStartupFailure(message) {
+      const { createSubsystemLogger } = await import("../logging/subsystem.js");
+      createSubsystemLogger("gateway").error(message);
+    },
   });
+  if (!broker) {
+    return await start();
+  }
   try {
-    await broker.ready();
     const { createSubsystemLogger } = await import("../logging/subsystem.js");
     logger = createSubsystemLogger("gateway");
     logger.info(`spawn broker ready pid=${broker.pid}`);
