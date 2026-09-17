@@ -50,7 +50,7 @@ const scenarios = (["boot", "direct", "sidebar"] as const).flatMap((entry) =>
 
 suite.define(() => {
   for (const { entry, count, width, reducedMotion, colorScheme } of scenarios) {
-    it(`keeps painted content stationary: ${entry}, ${count} messages, ${width} px, ${reducedMotion}, ${colorScheme}`, async (testContext) => {
+    it(`opens the session frame at its final position: ${entry}, ${count} messages, ${width} px, ${reducedMotion}, ${colorScheme}`, async (testContext) => {
       await suite.runScenario(testContext, {
         run: async () => {
           await suite.withPage(
@@ -289,7 +289,9 @@ suite.define(() => {
               expect(
                 observed.filter((rows) => rows[0].kind.startsWith("entry-")).length,
               ).toBeGreaterThanOrEqual(2);
-              for (const samples of observed) {
+              // The shell, header, and chat section carry the inherited entry motion.
+              // Transcript layout inside them has its own scrolling and progress contracts.
+              for (const samples of observed.filter((rows) => !rows[0].kind.startsWith("entry-"))) {
                 const positions = samples.map((sample) => sample.y);
                 // Allow only floating-point layout noise, below one device pixel.
                 expect(

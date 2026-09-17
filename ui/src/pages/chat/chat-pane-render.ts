@@ -403,6 +403,7 @@ export class ChatPane extends ChatPaneLayoutRender {
       progressCard: progressPresentation?.card ?? null,
       progressCardIdentity: progressPresentation?.identity,
       gatewayScope: gatewayPresentationScope(this.context.gateway),
+      progressCardInitialLoading: this.progressCardInitialLoading,
       collapseTaskProgress: state.settings.chatCollapseTaskProgress === true,
       readingHistory: state.chatReadingHistory,
       onProgressManipulate: () => {
