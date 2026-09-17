@@ -223,14 +223,10 @@ function collectRepositoryMatches(
       }
       // Keep the reviewed lookup even if the publisher's cap removes every match.
       const upper = patchedUpperBound(range, vulnerability.patched_versions);
-      if (upper) {
-        range.push(upper);
-      }
       const match = matches.get(name) ?? { ranges: new Set<string>(), versions: new Set<string>() };
       match.ranges.add(range.map((bound) => bound.value).join(" "));
-      for (const version of affected.filter((candidate) =>
-        range.every((bound) => bound.test(candidate)),
-      )) {
+      // Evidence retains the publisher range; only installed-version matching is capped.
+      for (const version of affected.filter((candidate) => !upper || upper.test(candidate))) {
         match.versions.add(version);
       }
       matches.set(name, match);

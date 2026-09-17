@@ -250,7 +250,12 @@ describe("published upstream repository advisories", () => {
     const report = await scan(source.fetchImpl, { fixture: versions });
     expect(report.advisories.flatMap((entry) => entry.matchedVersions)).toEqual(matched);
     if (matched.length > 0 && !reviewed && !patched && !sibling) {
-      expect(report.advisories[0]?.vulnerable_versions).toBe(">=1.13.0 <1.20.0");
+      expect(report.advisories[0]?.vulnerable_versions).toBe(">=1.13.0");
+    }
+    if (reviewed) {
+      expect(report.coverage.reconciliations).toMatchObject([
+        { repositoryRange: ">=1.13.0", matchedVersions: ["1.20.0"] },
+      ]);
     }
     expect(report.coverage).toMatchObject({
       status: reviewed ? "checked" : "partial",
