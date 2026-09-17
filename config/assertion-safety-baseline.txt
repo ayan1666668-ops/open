@@ -710,7 +710,7 @@ extensions/memory-core/src/dreaming-phases.ts	2
 extensions/memory-core/src/dreaming.ts	1
 extensions/memory-core/src/memory/embeddings.ts	2
 extensions/memory-core/src/memory/hybrid.ts	1
-extensions/memory-core/src/memory/manager-db.ts	5
+extensions/memory-core/src/memory/manager-db.ts	2
 extensions/memory-core/src/memory/manager-embedding-errors.ts	2
 extensions/memory-core/src/memory/manager-embedding-ops.ts	1
 extensions/memory-core/src/memory/manager-keyword-retrieval.ts	1
@@ -1895,7 +1895,6 @@ src/agents/subagents/announce/subagent-announce-origin.ts	2
 src/agents/subagents/announce/subagent-announce-output.ts	8
 src/agents/subagents/completion/subagent-completion-admission.store.ts	2
 src/agents/subagents/registry/subagent-recovery-state.ts	1
-src/agents/subagents/registry/subagent-registry-helpers.ts	1
 src/agents/subagents/registry/subagent-registry-lifecycle-delivery.ts	2
 src/agents/subagents/registry/subagent-registry-restore.ts	1
 src/agents/subagents/registry/subagent-registry.store.sqlite.ts	3

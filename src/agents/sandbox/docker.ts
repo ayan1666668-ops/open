@@ -523,6 +523,7 @@ type EnsureSandboxContainerParams = {
   workspaceDir: string;
   agentWorkspaceDir: string;
   skillsWorkspaceDir?: string;
+  readOnlyResourceMounts?: Array<{ hostPath: string; containerPath: string }>;
   cfg: SandboxConfig;
   requireCurrentConfig?: boolean;
 };
@@ -592,6 +593,7 @@ async function ensureSandboxContainerLifecycle(
     workspaceAccess: params.cfg.workspaceAccess,
     binds: params.cfg.docker.binds,
     tmpfs: params.cfg.docker.tmpfs,
+    readOnlyResourceMounts: params.readOnlyResourceMounts,
   });
   const genericConfigHash = computeSandboxConfigHash({
     docker: params.cfg.docker,
