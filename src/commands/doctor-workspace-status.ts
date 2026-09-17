@@ -35,13 +35,15 @@ type WorkspacePluginDiagnostic = ReturnType<
 >["diagnostics"][number];
 
 function claimPluginDiagnostic(seen: Set<string>, diagnostic: WorkspacePluginDiagnostic): boolean {
-  const key = JSON.stringify([
+  const key = [
     diagnostic.level,
     diagnostic.pluginId ?? "",
     diagnostic.code ?? "",
     diagnostic.source ?? "",
     diagnostic.message,
-  ]);
+  ]
+    .map((value) => `${value.length}:${value}`)
+    .join("");
   if (seen.has(key)) {
     return false;
   }
