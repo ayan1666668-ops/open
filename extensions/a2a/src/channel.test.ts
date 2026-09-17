@@ -106,12 +106,18 @@ describe("A2A channel message adapter", () => {
     "checks authority after transport preparation through the %s registered send",
     async (surface) => {
       const guardedFetch = ssrfRuntime.fetchWithSsrFGuard;
-      const lookupStarted = Promise.withResolvers<void>();
-      const lookupFinished = Promise.withResolvers<Array<{ address: string; family: 4 }>>();
+      let markLookupStarted: (() => void) | undefined;
+      const lookupStarted = new Promise<void>((resolve) => {
+        markLookupStarted = resolve;
+      });
+      let finishLookup: ((addresses: Array<{ address: string; family: 4 }>) => void) | undefined;
+      const lookupFinished = new Promise<Array<{ address: string; family: 4 }>>((resolve) => {
+        finishLookup = resolve;
+      });
       const lookupFn: NonNullable<Parameters<typeof guardedFetch>[0]["lookupFn"]> = vi.fn(
         async () => {
-          lookupStarted.resolve();
-          return await lookupFinished.promise;
+          markLookupStarted?.();
+          return await lookupFinished;
         },
       );
       vi.spyOn(ssrfRuntime, "fetchWithSsrFGuard").mockImplementationOnce(
@@ -158,9 +164,9 @@ describe("A2A channel message adapter", () => {
         if (!send) {
           throw new Error(`expected ${surface} A2A text sender`);
         }
-        await lookupStarted.promise;
+        await lookupStarted;
         current = false;
-        lookupFinished.resolve([{ address: "93.184.216.34", family: 4 }]);
+        finishLookup?.([{ address: "93.184.216.34", family: 4 }]);
 
         await expect(send).rejects.toThrow("source authority revoked");
         expect(lookupFn).toHaveBeenCalledOnce();

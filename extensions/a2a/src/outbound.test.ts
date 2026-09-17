@@ -68,13 +68,16 @@ afterEach(async () => {
 describe("A2A outbound channel delivery", () => {
   it("rejects revoked handoff authority after asynchronous transport preparation", async () => {
     let resolveLookup: (() => void) | undefined;
-    const lookupStarted = Promise.withResolvers<void>();
+    let markLookupStarted: (() => void) | undefined;
+    const lookupStarted = new Promise<void>((resolve) => {
+      markLookupStarted = resolve;
+    });
     const lookupFinished = new Promise<Array<{ address: string; family: 4 }>>((resolve) => {
       resolveLookup = () => resolve([{ address: "93.184.216.34", family: 4 }]);
     });
     const lookupFn: NonNullable<Parameters<typeof guardedFetch>[0]["lookupFn"]> = vi.fn(
       async () => {
-        lookupStarted.resolve();
+        markLookupStarted?.();
         return await lookupFinished;
       },
     );
@@ -101,7 +104,7 @@ describe("A2A outbound channel delivery", () => {
       text: "hello",
       assertDirectAdapterHandoff,
     });
-    await lookupStarted.promise;
+    await lookupStarted;
     current = false;
     resolveLookup?.();
 
