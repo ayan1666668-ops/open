@@ -335,47 +335,55 @@ describe("profile-bound appearance preferences", () => {
     expect(loadSettings()[key]).toBe(fallback);
   });
 
-  it("cancels a queued profile edit when reset after disconnect", async () => {
-    const config = configWithPrefs({ accent: "#abcdef" });
-    const request = vi.fn(async (_method: string) => ({
-      status: "ok",
-      entries: { "ui.accent": "#123456" },
-    }));
-    const writer = createServerPrefsWriter(request, scope);
-    await refreshProfileAppearancePrefs({
-      client: writer.state.client!,
-      profileId,
-      configObject: config,
-      scope,
-      onApplied: vi.fn(),
-    });
-    Object.assign(writer.state, { connected: false });
-    patchSettings({ accent: "#654321" });
-    pushServerUiPrefs(writer, { accent: "#654321" }, { profileId, canWrite: true });
-    const previous = loadSettings();
-    const state = resolveServerUiPrefState(undefined, "accent", scope, previous, {
-      canSync: null,
-    });
-    const next = resetServerUiPref("accent", state, scope);
-    expect(next.accent).toBe("#123456");
-    expect(changedServerUiPrefs(previous, next)).toBeNull();
+  it.each([profileId, null])(
+    "cancels a queued profile edit when reset after disconnect (%s)",
+    async (profileIdAtEdit) => {
+      const config = configWithPrefs({ accent: "#abcdef" });
+      const request = vi.fn(async (_method: string) => ({
+        status: "ok",
+        entries: { "ui.accent": "#123456" },
+      }));
+      const writer = createServerPrefsWriter(request, scope);
+      await refreshProfileAppearancePrefs({
+        client: writer.state.client!,
+        profileId,
+        configObject: config,
+        scope,
+        onApplied: vi.fn(),
+      });
+      Object.assign(writer.state, { connected: false });
+      patchSettings({ accent: "#654321" });
+      pushServerUiPrefs(
+        writer,
+        { accent: "#654321" },
+        { profileId: profileIdAtEdit, canWrite: true },
+      );
+      const previous = loadSettings();
+      const state = resolveServerUiPrefState(undefined, "accent", scope, previous, {
+        canSync: null,
+      });
+      const next = resetServerUiPref("accent", state, scope);
+      expect(next.accent).toBe("#123456");
+      expect(changedServerUiPrefs(previous, next)).toBeNull();
 
-    resetServerUiPrefsSync();
-    const reconnected = createServerPrefsWriter(request, scope);
-    flushServerUiPrefs(reconnected, { profileId, canWrite: true });
-    await refreshProfileAppearancePrefs({
-      client: reconnected.state.client!,
-      profileId,
-      configObject: config,
-      scope,
-      onApplied: vi.fn(),
-    });
-    expect(request.mock.calls.map(([method]) => method)).toEqual([
-      "users.prefs.get",
-      "users.prefs.get",
-    ]);
-    expect(loadSettings().accent).toBe("#123456");
-  });
+      resetServerUiPrefsSync();
+      const reconnected = createServerPrefsWriter(request, scope);
+      flushServerUiPrefs(reconnected, { profileId: null, canWrite: true });
+      flushServerUiPrefs(reconnected, { profileId, canWrite: true });
+      await refreshProfileAppearancePrefs({
+        client: reconnected.state.client!,
+        profileId,
+        configObject: config,
+        scope,
+        onApplied: vi.fn(),
+      });
+      expect(request.mock.calls.map(([method]) => method)).toEqual([
+        "users.prefs.get",
+        "users.prefs.get",
+      ]);
+      expect(loadSettings().accent).toBe("#123456");
+    },
+  );
 
   it.each([
     ["theme", "knot", "dash", "claw", "synced"],

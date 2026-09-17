@@ -322,25 +322,27 @@ export function serverUiPrefsSnapshotDelta(
   const changed: ServerUiPrefs = {};
   // Apply per field: only keys whose server value changed since last seen. Reapplying unchanged
   // fields would revert unpushable local edits whenever any other server field moves.
-  for (const prefKey of Object.keys(prefs) as Array<keyof ServerUiPrefs>) {
+  for (const prefKey of SYNCED_PREF_KEYS) {
     if (
+      Object.hasOwn(prefs, prefKey) &&
       (appearanceReady || !isAppearancePref(prefKey)) &&
       !(shadowPrefs && prefKey in shadowPrefs) &&
       !retainedLocalKeys.has(prefKey) &&
       (scopeChanged || firstSnapshot || !prefValuesEqual(prefs[prefKey], lastSeen[prefKey]))
     ) {
-      (changed as Record<string, unknown>)[prefKey] = prefs[prefKey];
+      Object.assign(changed, { [prefKey]: prefs[prefKey] });
     }
   }
-  for (const prefKey of Object.keys(lastSeen) as Array<keyof ServerUiPrefs>) {
+  for (const prefKey of SYNCED_PREF_KEYS) {
     if (
+      Object.hasOwn(lastSeen, prefKey) &&
       (appearanceReady || !isAppearancePref(prefKey)) &&
       !(prefKey in prefs) &&
       !(shadowPrefs && prefKey in shadowPrefs) &&
       !retainedLocalKeys.has(prefKey) &&
       SYNCED_PREFS[prefKey]?.clearable
     ) {
-      (changed as Record<string, unknown>)[prefKey] = null;
+      changed[prefKey] = null;
     }
   }
   if (scopeChanged) {
@@ -355,7 +357,7 @@ export function serverUiPrefsSnapshotDelta(
         !retainedLocalKeys.has(prefKey) &&
         SYNCED_PREFS[prefKey].clearable
       ) {
-        (changed as Record<string, unknown>)[prefKey] = null;
+        changed[prefKey] = null;
       }
     }
   }

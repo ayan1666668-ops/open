@@ -308,6 +308,10 @@ export function resetServerUiPref<K extends ResettableServerUiPrefKey>(
       throw new Error(`Server UI preference cannot restore a retained local value: ${key}`);
     }
     cancelPendingKeys(effectiveScope, [key]);
+    // Edits made after disconnect lose the profile and queue in the Gateway scope.
+    if (effectiveScope !== scope) {
+      cancelPendingKeys(scope, [key]);
+    }
     updateRetainedLocalKeys(effectiveScope, [key], false);
     requestedDeviceLocalPrefResets.add(key);
     return patchSettings(write(state.resetValue));
