@@ -112,7 +112,7 @@ afterEach(() => {
 });
 
 describe("update candidate canary", () => {
-  readiness.registerCanaryReadinessBudgetTests(() => root);
+  readiness.registerCanaryReadinessBudgetTests(() => root, mocks);
   it("records a typed capacity refusal before notifying the snapshot failure", async () => {
     const capacity = vi.spyOn(diskSpace, "tryReadDiskSpace").mockImplementation((targetPath) => ({
       targetPath,
@@ -666,8 +666,8 @@ describe("update candidate canary", () => {
       env: {},
       timeoutMs: 3_000,
     });
+    const options = { ...canaryStateOptions(3_000), config, rehearsal };
     try {
-      const options = { ...canaryStateOptions(3_000), config, rehearsal };
       const first = await validateUpdateCandidateCanary(options);
       expect(first.status).toBe("ok");
       const copied = JSON.parse(await fs.readFile(rehearsal.configPath, "utf8")) as OpenClawConfig;
