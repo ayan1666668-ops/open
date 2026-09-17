@@ -324,12 +324,12 @@ describe("applyClawAddPlan workspace collision revalidation", () => {
     const env = stateEnv(root);
 
     // Between planning and applying, a different process configures "other" at the parent
-    // directory. loadConfig stands in for a fresh (unpinned) disk read of that race.
+    // directory. readConfigForApply supplies the fresh admission config for that race.
     await expect(
       applyClawAddPlan(plan, {
         consentPlanIntegrity: plan.planIntegrity,
         env,
-        loadConfig: async () => ({ agents: { entries: { other: { workspace: parent } } } }),
+        readConfigForApply: async () => ({ agents: { entries: { other: { workspace: parent } } } }),
       }),
     ).rejects.toMatchObject({ code: "workspace_collision" });
 

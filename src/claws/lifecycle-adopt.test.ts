@@ -791,7 +791,7 @@ describe("planWorkspaceAdoptionTargets resume ownership", () => {
     const result = await applyClawAddPlan(plan, {
       consentPlanIntegrity: plan.planIntegrity,
       env,
-      loadConfig: () => config,
+      readConfigForApply: () => config,
       // The plan-time overlap check passed. While the shared package install is awaited, another
       // add assigns the parent of this workspace to a different agent.
       installPackages: async () => {

@@ -70,7 +70,7 @@ type ClawAddApplyOptions = OpenClawStateDatabaseOptions & {
   cronGateway?: Pick<ClawCronGateway, "add" | "list" | "waitUntilAgentAvailable">;
   nowMs?: number;
   /** Overrides the source config inside canonical mutation exclusion for focused tests. */
-  loadConfig?: () => OpenClawConfig | Promise<OpenClawConfig>;
+  readConfigForApply?: () => OpenClawConfig | Promise<OpenClawConfig>;
 };
 
 type ClawAddResult = {
@@ -335,7 +335,9 @@ export async function applyClawAddPlan(
   // Plugin installation and downstream Gateway work stay outside this lock.
   const workspaceResult = await withConfigMutationExclusive(
     async (lockedConfig): Promise<ClawAddResult | undefined> => {
-      const currentConfig = options.loadConfig ? await options.loadConfig() : lockedConfig;
+      const currentConfig = options.readConfigForApply
+        ? await options.readConfigForApply()
+        : lockedConfig;
       try {
         // Reuse the commit owner's identity and resume rules before any file effects.
         commitClawAddAgentConfig({

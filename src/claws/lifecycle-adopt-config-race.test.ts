@@ -113,7 +113,9 @@ describe("applyClawAddPlan config admission exclusion", () => {
           const release = deferred();
           const queued = deferred();
           let observeAdoption = false;
-          const enqueue = KeyedAsyncQueue.prototype.enqueue;
+          // A restored call-through spy retains the original method and forwards its receiver.
+          const enqueue = vi.spyOn(KeyedAsyncQueue.prototype, "enqueue");
+          enqueue.mockRestore();
           const queueSpy = vi
             .spyOn(KeyedAsyncQueue.prototype, "enqueue")
             .mockImplementation(function (this: KeyedAsyncQueue, key, task, hooks) {
@@ -143,6 +145,7 @@ describe("applyClawAddPlan config admission exclusion", () => {
             }),
           );
           const operations: Promise<unknown>[] = [competitor];
+          const failures: unknown[] = [];
           try {
             await Promise.race([
               entered.promise,
@@ -184,22 +187,26 @@ describe("applyClawAddPlan config admission exclusion", () => {
               main: { workspace: mainWorkspace },
               [competitorId]: competitorEntry,
             });
+          } catch (error) {
+            failures.push(error);
           } finally {
             // Assertion failures must still release the real lock and join every writer
             // before the environment scope, database, or temporary directories disappear.
             release.resolve();
             try {
               const settled = await Promise.allSettled(operations);
-              const failures = settled.flatMap((result) =>
-                result.status === "rejected" ? [result.reason] : [],
+              failures.push(
+                ...settled.flatMap((result) =>
+                  result.status === "rejected" ? [result.reason] : [],
+                ),
               );
-              if (failures.length > 0) {
-                throw new AggregateError(failures, "Config race operations failed while settling");
-              }
             } finally {
               queueSpy.mockRestore();
               context.emitDestroy();
             }
+          }
+          if (failures.length > 0) {
+            throw new AggregateError(failures, "Config race assertions or operations failed");
           }
         },
       );
