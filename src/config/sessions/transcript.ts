@@ -455,7 +455,10 @@ export async function appendAssistantMessageToSessionTranscript(params: {
     config: params.config,
     ...(params.beforeMessageWrite ? { beforeMessageWrite: params.beforeMessageWrite } : {}),
     message: {
-      ...recordAssistantManagedMediaUrls({ role: "assistant" as const }, params.mediaUrls),
+      ...recordAssistantManagedMediaUrls(
+        { role: "assistant" as const, openclawDelivery: { mediaUrls: [] } },
+        params.mediaUrls,
+      ),
       content,
       ...(displayContent ? { [ASSISTANT_DISPLAY_CONTENT_FIELD]: displayContent } : {}),
       api: OPENCLAW_TRANSCRIPT_ARTIFACT_API,
