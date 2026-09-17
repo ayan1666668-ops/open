@@ -18,12 +18,12 @@ const plan = [
 let instance: OpenClawTestInstance;
 let artifactDir: string;
 
-async function waitForDashboardHandoff(instance: OpenClawTestInstance) {
+async function waitForDashboardHandoff(testInstance: OpenClawTestInstance) {
   let handoff: Awaited<ReturnType<OpenClawTestInstance["cli"]>> | undefined;
   await expect
     .poll(
       async () => {
-        handoff = await instance.cli(["dashboard", "--json"]);
+        handoff = await testInstance.cli(["dashboard", "--json"]);
         return handoff.code === 0 ? "ready" : handoff.stdout.trim();
       },
       { interval: 500, timeout: 120_000 },
