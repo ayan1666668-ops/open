@@ -1,6 +1,9 @@
 // Memory Core tests cover memory watcher liveness: a lost watcher must not leave
 // the index stale behind a clean dirty flag until someone reindexes by hand.
+import { AsyncLocalStorage } from "node:async_hooks";
+import nativeFs from "node:fs";
 import fs from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { FSWatcher } from "chokidar";
@@ -16,10 +19,16 @@ import { MemoryIndexManager } from "./manager.js";
 const CHOKIDAR_FACTORY_KEY = Symbol.for("openclaw.test.memoryWatchFactory");
 const NATIVE_FACTORY_KEY = Symbol.for("openclaw.test.memoryNativeWatchFactory");
 const WATCH_DEBOUNCE_MS = 1_500;
+const WATCH_PRESSURE_STARTUP_CHECK_MS = 10_000;
 const SEARCH_POLL_TIMEOUT_MS = 15_000;
 
 type FakeNativeWatcher = ReturnType<typeof createFakeNativeWatcher>;
 type FakeChokidarWatcher = ReturnType<typeof createFakeChokidarWatcher>;
+type ObservedAsyncContext = { turn?: string; pendingInput?: string };
+
+function activeFilesystemWatchers() {
+  return process.getActiveResourcesInfo().filter((resource) => resource === "FSEventWrap").length;
+}
 
 // A native fs.watch stand-in that never delivers events: the OS handle is dead
 // from the manager's point of view, but it still accepts error listeners.
@@ -258,6 +267,99 @@ describe("memory watch liveness", () => {
       await expectSearchHit(activeManager, laterText);
     } finally {
       await manager?.close();
+      await state.cleanup();
+    }
+  }, 60_000);
+
+  it("re-arms outside the requesting turn's async context and releases the replacement on close", async () => {
+    const state = await createOpenClawTestState({ label: "memory-watch-liveness-context" });
+    const memoryDir = path.join(state.workspaceDir, "memory");
+    const initialWatchers = activeFilesystemWatchers();
+    const openWatchers = new Set<nativeFs.FSWatcher>();
+    const turnContext = new AsyncLocalStorage<string>();
+    const pendingInputContext = new AsyncLocalStorage<string>();
+    const observeContext = (): ObservedAsyncContext => ({
+      turn: turnContext.getStore(),
+      pendingInput: pendingInputContext.getStore(),
+    });
+    const watcherContexts: ObservedAsyncContext[] = [];
+    const timerContexts: ObservedAsyncContext[] = [];
+    // Mirror the context-isolation probe of manager.watcher-filesystem.test.ts:
+    // record the turn/input stores visible when the manager creates native
+    // watchers and when its watch debounce or pressure-check timers are armed.
+    const originalWatch = nativeFs.watch;
+    const watchObserver = vi.spyOn(nativeFs, "watch").mockImplementation((...args) => {
+      watcherContexts.push(observeContext());
+      const watcher = originalWatch(...args);
+      openWatchers.add(watcher);
+      watcher.once("close", () => openWatchers.delete(watcher));
+      return watcher;
+    });
+    syncBuiltinESMExports();
+    const originalSetTimeout = globalThis.setTimeout;
+    const timerObserver = vi.spyOn(globalThis, "setTimeout").mockImplementation((...args) => {
+      if (args[1] === WATCH_DEBOUNCE_MS || args[1] === WATCH_PRESSURE_STARTUP_CHECK_MS) {
+        timerContexts.push(observeContext());
+      }
+      return originalSetTimeout(...args);
+    });
+    let manager: MemoryIndexManager | null = null;
+    try {
+      const created = await createLivenessManager(state);
+      manager = created.manager;
+      const activeManager = manager;
+      const original = currentChokidar(activeManager);
+      if (!original) {
+        throw new Error("expected a chokidar watcher for the workspace memory files");
+      }
+      await waitForChokidarReady(original, state.workspaceDir);
+      watcherContexts.length = 0;
+      timerContexts.length = 0;
+
+      // The held chokidar watcher dies silently; a later search runs inside an
+      // active turn with pending input, exactly where the loss is noticed.
+      await original.close();
+      expect(original.closed).toBe(true);
+      await turnContext.run("requesting turn", () =>
+        pendingInputContext.run("accepted input", async () => {
+          expect(turnContext.getStore()).toBe("requesting turn");
+          expect(pendingInputContext.getStore()).toBe("accepted input");
+          await expectSearchHit(activeManager, "Amber lantern baseline.");
+        }),
+      );
+      const rearmed = currentChokidar(activeManager);
+      if (!rearmed) {
+        throw new Error("expected the search to re-arm a chokidar watcher");
+      }
+      expect(rearmed).not.toBe(original);
+      expect(rearmed.closed).toBe(false);
+      expect(watcherContexts.length).toBeGreaterThan(0);
+
+      // The replacement watcher still drives watch sync, and neither its
+      // handles nor the debounce timers they arm retain the requesting turn.
+      const laterText = "Saffron otter returned.";
+      await fs.writeFile(path.join(memoryDir, "later.md"), laterText);
+      await expect
+        .poll(() => isDirty(activeManager), { timeout: SEARCH_POLL_TIMEOUT_MS })
+        .toBe(true);
+      await expectSearchHit(activeManager, laterText);
+      expect(timerContexts.length).toBeGreaterThan(0);
+      for (const context of [...watcherContexts, ...timerContexts]) {
+        expect(context).toEqual({ turn: undefined, pendingInput: undefined });
+      }
+
+      // Replacement handles belong to the manager: close releases every one.
+      await activeManager.close();
+      await expect.poll(() => openWatchers.size).toBe(0);
+      // Bun emits watcher close events but does not expose Node's FSEventWrap census.
+      if (!process.versions.bun) {
+        await expect.poll(activeFilesystemWatchers).toBe(initialWatchers);
+      }
+    } finally {
+      await manager?.close();
+      timerObserver.mockRestore();
+      watchObserver.mockRestore();
+      syncBuiltinESMExports();
       await state.cleanup();
     }
   }, 60_000);

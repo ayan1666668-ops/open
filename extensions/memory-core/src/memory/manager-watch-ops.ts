@@ -14,6 +14,7 @@ import {
 } from "openclaw/plugin-sdk/memory-core-host-engine-storage";
 import { resolveTimerTimeoutMs } from "openclaw/plugin-sdk/number-runtime";
 import { normalizeLowercaseStringOrEmpty } from "openclaw/plugin-sdk/string-coerce-runtime";
+import { runInMemoryBackgroundContext } from "./background-context.js";
 import {
   type LinuxMemoryDirectoryWatcher,
   MemoryManagerWatchResources,
@@ -698,14 +699,19 @@ export abstract class MemoryManagerWatchOps extends MemoryManagerWatchResources 
     this.closeMemoryWatchHandles();
     this.dirty = true;
     log.warn("memory watcher lost; reconciling memory files and re-arming the watcher");
-    try {
-      this.ensureWatcher();
-    } catch (err) {
-      // Search and the interval tick must stay usable when the rebuild fails;
-      // keep the loss recorded so the next boundary retries.
-      this.memoryWatchLost = true;
-      log.warn(`memory watcher re-arm failed: ${String(err)}`);
-    }
+    // Search reaches this boundary inside the requesting turn. Replacement
+    // watchers and their debounce timers outlive that turn, so re-arm through
+    // the same background boundary startup uses instead of the caller's context.
+    runInMemoryBackgroundContext(() => {
+      try {
+        this.ensureWatcher();
+      } catch (err) {
+        // Search and the interval tick must stay usable when the rebuild fails;
+        // keep the loss recorded so the next boundary retries.
+        this.memoryWatchLost = true;
+        log.warn(`memory watcher re-arm failed: ${String(err)}`);
+      }
+    });
     return true;
   }
 
