@@ -8,7 +8,9 @@ import type { GatewayService } from "../daemon/service.js";
 import { createMockGatewayService, mockSystemAccountHome } from "../daemon/service.test-helpers.js";
 import { readLoadedSystemdServiceRuntime } from "../daemon/systemd-loaded-runtime.js";
 import { openNodeSqliteDatabase } from "../infra/node-sqlite.js";
+import { tryAcquireExclusiveSqliteCoordinator } from "../infra/sqlite-coordinator.js";
 import * as sqliteSnapshotSource from "../infra/sqlite-snapshot-source.js";
+import { acquireGatewayLifecycleCoordinator } from "../infra/state-database-coordinator.js";
 import * as updateRunDriver from "../infra/update-run-driver.js";
 import { readUpdateRunDriver } from "../infra/update-run-driver.js";
 import {
@@ -100,7 +102,8 @@ type StoppedUnitState =
   | "changed-command"
   | "restart-failed"
   | "slow-admission"
-  | "competing-during-inspection";
+  | "competing-during-inspection"
+  | "lifecycle-contended";
 type Continuation =
   | "own"
   | "manual"
@@ -435,6 +438,18 @@ async function runDoctorFinishForStoppedUnit(
         }),
       );
       const logs: string[] = [];
+      const databasePath = path.join(home, ".openclaw", "state", "openclaw.sqlite");
+      const coordinator =
+        scenario === "lifecycle-contended"
+          ? acquireGatewayLifecycleCoordinator({
+              databasePath,
+              runtimeDirectory: mocks.coordinatorRuntimeDir,
+            })
+          : undefined;
+      coordinator?.release();
+      const otherOwner = coordinator
+        ? tryAcquireExclusiveSqliteCoordinator(coordinator.path, { busyTimeoutMs: 0 })
+        : undefined;
       const maintenance = await beginDoctorMaintenance({
         root: process.cwd(),
         options: { repair: true },
@@ -446,6 +461,7 @@ async function runDoctorFinishForStoppedUnit(
           exit: () => {},
         },
       }).finally(() => {
+        otherOwner?.release();
         if (!activateCompetingUpdate) {
           assertCatalogUnchanged();
           if (mocks.stops === 0) {
@@ -516,6 +532,13 @@ it("admits exact legacy catalog reads for an owned running service without repai
 it("preserves the existing malformed continuation writer refusal before stopping the service", async () => {
   await expect(runDoctorFinishForStoppedUnit("retained", "own", "exact")).rejects.toThrow(
     "schema migration required",
+  );
+  expect(mocks.stops).toBe(0);
+});
+
+it("refuses a foreign lifecycle holder before stopping the service", async () => {
+  await expect(runDoctorFinishForStoppedUnit("lifecycle-contended")).rejects.toThrow(
+    "another OpenClaw process owns gateway-lifecycle",
   );
   expect(mocks.stops).toBe(0);
 });
