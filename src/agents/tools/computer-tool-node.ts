@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { imageMimeFromFormat } from "@openclaw/media-core/mime";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { formatErrorMessage } from "../../infra/errors.js";
+import { logWarn } from "../../logger.js";
 import type {
   ComputerActParams,
   ComputerActResult,
@@ -634,7 +635,19 @@ export class ComputerToolSession {
             });
           }),
         );
-        // Ordinary paired nodes can disconnect during best-effort cleanup.
+        // Ordinary paired nodes can disconnect during best-effort cleanup; a failed
+        // close still leaves the node owned, so name the execution and the way out.
+        for (const [index, result] of results.entries()) {
+          const target = targets[index];
+          if (result.status === "rejected" && target && target[1].host.host !== "gateway") {
+            logWarn(
+              `computer: closing execution ${this.options.executionId} on ${target[0]} failed: ` +
+                `${formatErrorMessage(result.reason)}; if the node reports COMPUTER_HOST_BUSY, run ` +
+                `\`openclaw nodes invoke --node <node> --command computer.act --params ` +
+                `'{"action":"__close_execution","executionId":"${this.options.executionId}","reason":"unstick"}'\``,
+            );
+          }
+        }
         // A bound session owner must observe cleanup failure before acknowledging its turn.
         if (
           this.options.transport ||

@@ -13,6 +13,13 @@ import {
 } from "./mcp-http.runtime.js";
 import { resolveGatewayScopedTools } from "./tool-resolution.js";
 
+const createOpenClawTools = vi.hoisted(() => vi.fn());
+vi.mock("../agents/openclaw-tools.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../agents/openclaw-tools.js")>();
+  createOpenClawTools.mockImplementation(actual.createOpenClawTools);
+  return { ...actual, createOpenClawTools };
+});
+
 describe("resolveGatewayScopedTools", () => {
   beforeAll(() => {
     resolveGatewayScopedTools({
@@ -135,6 +142,29 @@ describe("resolveGatewayScopedTools", () => {
       catalogMode: "direct-only",
     });
     expect(imageTool?.description).toContain("private model context");
+  });
+
+  it("hands the computer tool the caller's cleanup registrar and execution id", () => {
+    const registerRunCleanup = vi.fn();
+    const result = resolveGatewayScopedTools({
+      cfg: { tools: { allow: ["computer"] } } as OpenClawConfig,
+      agentDir: "/agents/cli",
+      sessionKey: "agent:main:main",
+      senderIsOwner: true,
+      modelHasVision: true,
+      surface: "loopback",
+      registerRunCleanup,
+      computerExecutionId: "0f4a2a7c-2d0e-4c7d-9b41-8a1b6a4b9c11",
+    });
+
+    expect(result.tools.some((tool) => tool.name === "computer")).toBe(true);
+    expect(createOpenClawTools).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        registerRunCleanup,
+        computerExecutionId: "0f4a2a7c-2d0e-4c7d-9b41-8a1b6a4b9c11",
+      }),
+    );
+    expect(registerRunCleanup).toHaveBeenCalledWith(expect.any(Function));
   });
 
   it.each([

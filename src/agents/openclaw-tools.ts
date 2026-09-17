@@ -372,6 +372,7 @@ export function createOpenClawTools(options?: OpenClawToolsOptions): AnyAgentToo
                   idempotencyScope: options?.runId,
                   contextEpoch: options?.computerContextEpoch,
                   registerRunCleanup: options?.registerRunCleanup,
+                  executionId: options?.computerExecutionId,
                 }),
               ]),
           createCronTool({
