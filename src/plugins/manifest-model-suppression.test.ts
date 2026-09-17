@@ -5,6 +5,7 @@ import {
   normalizeModelCatalogProviderRows,
 } from "@openclaw/model-catalog-core/model-catalog-normalize";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { makeProviderModelFixture } from "../agents/test-helpers/provider-model-fixture.js";
 import { projectModelProviderConfig } from "../config/model-provider-config.js";
 
 const mocks = vi.hoisted(() => ({
@@ -361,7 +362,15 @@ describe("manifest model suppression", () => {
           personal: {
             api: "openai-responses" as const,
             baseUrl: scenario.name === "model override" ? native.baseUrl : scenario.baseUrl,
-            models: [{ id: scenario.id, name: scenario.id, baseUrl: scenario.baseUrl }],
+            models: [
+              makeProviderModelFixture<"openai-responses">({
+                id: scenario.id,
+                name: scenario.id,
+                provider: "personal",
+                api: "openai-responses",
+                baseUrl: scenario.baseUrl,
+              }),
+            ].map(({ provider: _provider, api: _api, ...model }) => model),
           },
         },
       },
@@ -410,7 +419,15 @@ describe("manifest model suppression", () => {
           personal: {
             api: "openai-completions" as const,
             baseUrl,
-            models: [{ id: "auto", name: "Auto", api: "openai-responses" as const }],
+            models: [
+              makeProviderModelFixture<"openai-responses">({
+                id: "auto",
+                name: "Auto",
+                provider: "personal",
+                api: "openai-responses",
+                baseUrl,
+              }),
+            ].map(({ provider: _provider, baseUrl: _baseUrl, ...model }) => model),
           },
         },
       },

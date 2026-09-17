@@ -50,7 +50,7 @@ it.each(["native", "custom"] as const)(
                 baseUrl,
                 apiKey: "synthetic-personal-key",
                 models: [
-                  makeProviderModelFixture({
+                  makeProviderModelFixture<"openai-responses">({
                     id: "auto",
                     name: "Authored auto",
                     provider: "personal",
