@@ -101,10 +101,15 @@ describe("telegram bot token runtime evidence", () => {
             accounts: { "qa-live": { botToken: leasedToken } },
           },
         },
+        plugins: {
+          allow: ["telegram"],
+          entries: { telegram: { enabled: true } },
+        },
       },
       env: {
         OPENCLAW_SKIP_CHANNELS: undefined,
         OPENCLAW_SKIP_PROVIDERS: undefined,
+        OPENCLAW_TEST_MINIMAL_GATEWAY: undefined,
       },
     });
     const log = await fs.readFile(
