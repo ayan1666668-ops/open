@@ -341,6 +341,8 @@ const rootDependencyOptions = withExternalPackageSubpaths({
     "jimp",
     "matrix-js-sdk",
     "prism-media",
+    // Extensions and external tool validation must share Format and Settings registries.
+    "typebox",
     "typescript",
     "vitest",
     // Selected plugin distributions install platform optionals beside bundled JavaScript.
