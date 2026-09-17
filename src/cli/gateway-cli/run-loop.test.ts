@@ -24,6 +24,7 @@ import {
   createActiveWorkSnapshot,
   createSignaledStart,
   expectRestartCloseCall,
+  shutdownBudgetCases,
 } from "./run-loop.test-support.js";
 
 const closeLogTempDirs = useAutoCleanupTempDirTracker(afterEach);
@@ -1674,23 +1675,7 @@ describe("runGatewayLoop", () => {
     });
   });
 
-  it.each<{
-    signal: "SIGTERM" | "SIGUSR1";
-    honorsAbort: boolean;
-    supervisor: "systemd" | "launchd" | "foreground";
-    waitMs?: number;
-    installedStopMs?: number;
-  }>([
-    { signal: "SIGTERM", honorsAbort: false, supervisor: "systemd", installedStopMs: 90_000 },
-    { signal: "SIGTERM", honorsAbort: false, supervisor: "systemd" },
-    { signal: "SIGTERM", honorsAbort: false, supervisor: "foreground" },
-    { signal: "SIGTERM", honorsAbort: true, supervisor: "systemd" },
-    { signal: "SIGUSR1", honorsAbort: false, supervisor: "systemd" },
-    { signal: "SIGTERM", honorsAbort: false, supervisor: "launchd" },
-    { signal: "SIGUSR1", honorsAbort: false, supervisor: "launchd" },
-    { signal: "SIGUSR1", honorsAbort: false, supervisor: "systemd", waitMs: 0 },
-    { signal: "SIGUSR1", honorsAbort: false, supervisor: "systemd", waitMs: 600_000 },
-  ])(
+  it.each(shutdownBudgetCases)(
     "bounds $supervisor $signal cleanup when a long provider call honors abort=$honorsAbort (wait=$waitMs, installedStop=$installedStopMs)",
     async ({ signal, honorsAbort, supervisor, waitMs, installedStopMs }) => {
       vi.clearAllMocks();
@@ -1703,8 +1688,11 @@ describe("runGatewayLoop", () => {
         .match(/^SuccessExitStatus=(.+)$/m)?.[1]
         ?.split(" ")
         .map(Number);
-      if (supervisor === "systemd") {
+      if (supervisor === "systemd" || supervisor === "external-systemd") {
         process.env.OPENCLAW_SYSTEMD_UNIT = "openclaw-gateway.service";
+        if (supervisor === "external-systemd") {
+          process.env.OPENCLAW_SUPERVISOR_MODE = "external";
+        }
         setPlatform("linux");
       } else if (supervisor === "launchd") {
         process.env.OPENCLAW_LAUNCHD_LABEL = "ai.openclaw.gateway";
