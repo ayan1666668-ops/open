@@ -149,6 +149,22 @@ function resolveCommand(command: string): string {
   throw new Error(`command not found in test PATH: ${command}`);
 }
 
+function seedReadyReview(fixture: ReturnType<typeof makeMismatchedWrapperRepo>) {
+  const reviewRoot = join(fixture.canonical, ".worktrees", "pr-123");
+  fixture.git(fixture.canonical, [
+    "worktree",
+    "add",
+    "--detach",
+    reviewRoot,
+    fixture.localRevision,
+  ]);
+  const review = validReview(fixture.localRevision);
+  review.pr.number = 123;
+  review.recommendation = "READY FOR /prepare-pr";
+  review.issueValidation.status = "valid";
+  writeReviewArtifacts(reviewRoot, review, { prNumber: 123, headSha: fixture.localRevision });
+}
+
 function parseSubcommandClassifications(script: string): Map<string, string> {
   const start = script.indexOf("# PR_SUBCOMMAND_CLASSIFICATIONS_BEGIN");
   const end = script.indexOf("# PR_SUBCOMMAND_CLASSIFICATIONS_END");
@@ -556,6 +572,9 @@ describe("scripts/pr wrappers", () => {
     "routes mismatched %s to the canonical wrapper despite opt-in",
     (command) => {
       const fixture = makeMismatchedWrapperRepo();
+      if (command === "prepare-run") {
+        seedReadyReview(fixture);
+      }
       const result = spawnSync(
         join(fixture.linked, "scripts", "pr"),
         [
@@ -1032,6 +1051,7 @@ exit 99
 
   it("routes a mismatched landing subcommand through the materialized anchor", () => {
     const fixture = makeMismatchedWrapperRepo();
+    seedReadyReview(fixture);
     parkCanonicalOffAnchor(fixture);
     const result = spawnSync(join(fixture.linked, "scripts", "pr"), ["prepare-run", "123"], {
       cwd: fixture.linked,
