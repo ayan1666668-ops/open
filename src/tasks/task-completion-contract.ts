@@ -17,12 +17,15 @@ const BARE_PROGRESS_ONLY_PATTERN =
 const FOLLOW_UP_PLANNING_PREFIX_PATTERN =
   /^(?:after(?:wards|\s+that)?|from\s+there|next|once\s+(?:done|that(?:'|\u2019)?s\s+done|that\s+is\s+done)|then)[,.\s]+/i;
 
+const PLANNING_TIME_PREFIX_PATTERN =
+  /^(?:(?:today|tomorrow|tonight|later|soon|eventually)|(?:next|this)\s+(?:week|month|morning|afternoon|evening|weekend)|in\s+\d+\s+(?:minutes?|hours?|days?|weeks?)|on\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday))[,\s]+/i;
+
 const COMPLETION_RESULT_CLAUSE_PATTERN =
   /^(?:(?:(?:i|we)(?:\s+(?:have\s+)?|(?:'|\u2019)ve\s+)|(?:i(?:\s+am|(?:'|\u2019)m)|we(?:\s+are|(?:'|\u2019)re))\s+))?(?:done|completed|finished|fixed|patched|resolved|deployed|landed|merged|implemented|confirmed)\b|(?:^|,\s*|\band\s+)(?:(?:(?:i|we)(?:\s+(?:have\s+)?|(?:'|\u2019)ve\s+)|(?:i(?:\s+am|(?:'|\u2019)m)|we(?:\s+are|(?:'|\u2019)re))\s+)(?:done|completed|finished|fixed|patched|resolved|deployed|landed|merged|implemented|confirmed)\b|(?:(?:all|the)\s+)?(?:\d+\s+)?(?:(?!(?:why|whether|if|unless|when|once|after|will|would|could|should|might|may)\b)[\w-]+\s+){0,3}(?:tests?|build|lint|checks?|syntax)\s+(?:(?:have|has)\s+)?(?:passed|succeeded|green)\b)/i;
 
 const CONDITIONAL_PROGRESS_PATTERN = /\b(?:whether|if|unless|once|when|after|as\s+soon\s+as)\b/i;
 const FIRST_PERSON_PLAN_PATTERN =
-  /^(?:(?:i|we)(?:'|\u2019)ll|(?:i|we)\s+(?:will|would|could|should|might|may|plan\s+to|hope\s+to|need\s+to))\b/i;
+  /^(?:(?:i|we)(?:'|\u2019)ll|(?:i(?:\s+am|(?:'|\u2019)m)|we(?:\s+are|(?:'|\u2019)re))\s+going\s+to|(?:i|we)\s+(?:will|would|could|should|might|may|plan\s+to|hope\s+to|need\s+to))\b/i;
 const COMPLETION_HEADING_PATTERN =
   /^(?:result|results|report|summary|outcome|conclusion|findings?|verification|status)\s*:\s*/i;
 
@@ -94,6 +97,7 @@ function isProgressOnlyCompletionText(value: string): boolean {
   let progressSeen = false;
   return value.split(/(?:[.!?;]|\s[-\u2013\u2014])\s+/).every((sentence) => {
     const text = sentence
+      .replace(PLANNING_TIME_PREFIX_PATTERN, "")
       .replace(FOLLOW_UP_PLANNING_PREFIX_PATTERN, "")
       .replace(COMPLETION_HEADING_PATTERN, "")
       .trim();
@@ -101,10 +105,9 @@ function isProgressOnlyCompletionText(value: string): boolean {
     const clauses = CONDITIONAL_PROGRESS_PATTERN.test(text) ? [text] : text.split(/:\s+/);
     return clauses.every((clause) => {
       const body = clause.trim();
-      const narration = body.replace(
-        /^(?:if|unless|when|once|after|as\s+soon\s+as)\b[^,]*,\s*/i,
-        "",
-      );
+      const narration = body
+        .replace(/^(?:if|unless|when|once|after|as\s+soon\s+as)\b[^,]*,\s*/i, "")
+        .replace(PLANNING_TIME_PREFIX_PATTERN, "");
       const narrativeProgress =
         PROGRESS_ONLY_PATTERN.test(narration) ||
         BARE_PROGRESS_ONLY_PATTERN.test(narration) ||
@@ -138,7 +141,7 @@ function isProgressOnlyCompletionText(value: string): boolean {
       const progress =
         narrativeProgress ||
         PENDING_COMPLETION_PATTERN.test(body) ||
-        (progressSeen && FUTURE_COMPLETION_PATTERN.test(body)) ||
+        (progressSeen && FUTURE_COMPLETION_PATTERN.test(narration)) ||
         (progressSeen && conditionalResult);
       progressSeen ||= progress;
       // Generic replies retain their existing behavior; only a known narrative

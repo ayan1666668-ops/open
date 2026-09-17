@@ -18,6 +18,21 @@ describe("resolveRequiredCompletionTerminalResult", () => {
   // delivered result.
   it.each([
     ["pure progress", "Let me run the tests"],
+    ["contracted plural going-to plan", "We're going to verify the fix."],
+    ["expanded plural going-to plan", "We are going to deploy the fix."],
+    ["singular going-to plan", "I'm going to deploy the fix."],
+    [
+      "tomorrow-prefixed future follow-up",
+      "I'll inspect the failure. Tomorrow, I will patch the handler.",
+    ],
+    [
+      "next-week future follow-up",
+      "I'll inspect the failure. Next week, the migration will be completed.",
+    ],
+    [
+      "weekday-prefixed future follow-up",
+      "I'll inspect the failure. On Friday, I will patch the handler.",
+    ],
     [
       "future-only follow-up sentence",
       "I'll inspect the failure. The migration will be completed tomorrow.",
@@ -191,6 +206,11 @@ describe("resolveRequiredCompletionTerminalResult", () => {
       "I'll inspect the repo now: the crash is a missing null check in src/foo.ts.",
     ],
     ["completed clause after narration", "Reviewing the changes, we fixed the regression."],
+    ["dated completed report", "On Friday, I patched the handler."],
+    [
+      "diagnosis before a future follow-up",
+      "I'll inspect the failure. The crash is a missing null check, I will patch the handler.",
+    ],
     ["temporal clock noun phrase", "Reviewing the rollout, we deployed after 5 p.m."],
     ["temporal deployment noun", "Reviewing the rollout, we deployed after deployment."],
     ["temporal midnight noun", "Reviewing the rollout, we deployed after midnight."],
