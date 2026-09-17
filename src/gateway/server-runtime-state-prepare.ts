@@ -471,7 +471,8 @@ export async function prepareGatewayKernelState(params: {
     isTerminalEnabled: terminalLaunchPolicy.isEnabled,
     gatewayTls,
     getResolvedAuth,
-    hooksConfig: () => runtimeStateRef.current?.hooksConfig ?? initialHooksConfig,
+    hooksConfig: () =>
+      runtimeStateRef.current === null ? initialHooksConfig : runtimeStateRef.current.hooksConfig,
     getHookClientIpConfig: () =>
       runtimeStateRef.current?.hookClientIpConfig ?? initialHookClientIpConfig,
     pluginRegistry: pluginRuntime.registry,
@@ -579,6 +580,8 @@ export async function prepareGatewayKernelState(params: {
     createHttpTransportOptions,
     transportBridge,
     connectionWork: connectionState.connectionWork,
+    getSessionRowProjection: connectionState.getSessionRowProjection,
+    attachSessionRowProjection: connectionState.attachSessionRowProjection,
     clients,
     mentionInbox,
     broadcast,
