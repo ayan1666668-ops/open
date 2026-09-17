@@ -61,8 +61,18 @@ describe("ManagedWorktreeService sparse isolation", () => {
       const targets = new Map<string, string>([["repository", repo]]);
       const backends: { name: string; actual: string; expected: string }[] = [];
       const trace: { phase: string; targets: unknown[] }[] = [];
-      const gitPath = (target: string, name: string) =>
-        git(target, "rev-parse", "--path-format=absolute", "--git-path", name);
+      // This fixture never moves its checkouts. Cache only their Git metadata
+      // paths; every observation below still rereads the live contents/config.
+      const gitPaths = new Map<string, Promise<string>>();
+      const gitPath = (target: string, name: string) => {
+        const key = JSON.stringify([target, name]);
+        let result = gitPaths.get(key);
+        if (!result) {
+          result = git(target, "rev-parse", "--path-format=absolute", "--git-path", name);
+          gitPaths.set(key, result);
+        }
+        return result;
+      };
       const optional = async (file: string) => {
         try {
           return await fs.readFile(file, "utf8");
