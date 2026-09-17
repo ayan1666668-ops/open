@@ -7,12 +7,12 @@ import {
   createMockGatewayService,
   mockSystemAccountHome,
 } from "../../daemon/service.test-helpers.js";
-import * as npmPrefix from "../../infra/update-npm-prefix.js";
 import * as processExec from "../../process/exec.js";
 import { defaultRuntime, ExitError } from "../../runtime.js";
 import { createCommandResult } from "../../test-utils/npm-spec-install-test-helpers.js";
 import { quoteCliArg, quotePowerShellArg } from "../quote-cli-arg.js";
 import { installFreshUpdateFixture } from "./update-command-fresh.test-support.js";
+import * as packageDestination from "./update-command-package-destination.js";
 import * as packageUpdate from "./update-command-package.js";
 import * as plugins from "./update-command-plugin-preflight.js";
 import {
@@ -26,10 +26,24 @@ import { updateCommand } from "./update-command.js";
 vi.mock("../../infra/container-environment.js", () => ({ isContainerEnvironment: () => false }));
 const { fixture } = installFreshUpdateFixture();
 
-it.each(["foreign", "unverified", "claimed", "foreign-launcher", "owned", "empty"] as const)(
+it.each([
+  "foreign",
+  "unverified",
+  "claimed",
+  "foreign-launcher",
+  "owned",
+  "empty",
+  "EACCES",
+  "EPERM",
+  "probe-failure",
+  "probe-empty",
+  "probe-relative",
+  "ENOTDIR",
+] as const)(
   "rechecks %s prefix ownership through the retained launcher after a runtime switch",
   async (destination) => {
-    vi.mocked(npmPrefix.inspectNpmGlobalDestination).mockRestore();
+    vi.mocked(packageDestination.inspectNpmGlobalDestination).mockRestore();
+    const inspection = vi.spyOn(packageDestination, "inspectNpmGlobalDestination");
     vi.stubEnv("OPENCLAW_PROFILE", undefined);
     const base = path.dirname(fixture.root);
     const oldRoot = fixture.root;
@@ -53,7 +67,18 @@ it.each(["foreign", "unverified", "claimed", "foreign-launcher", "owned", "empty
     } else if (destination === "owned" || destination === "foreign-launcher") {
       await fs.symlink(oldRoot, newRoot, process.platform === "win32" ? "junction" : "dir");
     }
-    if (destination !== "empty") {
+    const probeFailure = destination.startsWith("probe-");
+    const unknown =
+      destination === "EACCES" ||
+      destination === "EPERM" ||
+      destination === "ENOTDIR" ||
+      probeFailure;
+    const unknownCause = probeFailure
+      ? "probe-failure"
+      : destination === "ENOTDIR" || destination === "foreign-launcher"
+        ? "unreadable-layout"
+        : "permission";
+    if (destination !== "empty" && !unknown) {
       if (process.platform === "win32") {
         await fs.writeFile(
           path.join(bin, "openclaw.cmd"),
@@ -118,14 +143,35 @@ it.each(["foreign", "unverified", "claimed", "foreign-launcher", "owned", "empty
       },
     ]);
 
+    if (destination === "EACCES" || destination === "EPERM" || destination === "ENOTDIR") {
+      const lstat = fs.lstat;
+      vi.spyOn(fs, "lstat").mockImplementation((...args) =>
+        String(args[0]) === newRoot
+          ? Promise.reject(
+              Object.assign(new Error("Destination access denied"), {
+                code: destination,
+                path: newRoot,
+              }),
+            )
+          : lstat(...args),
+      );
+    }
     // The operator has selected the new runtime; only now can npm resolve its destination.
     vi.spyOn(processExec, "runCommandWithTimeout").mockImplementation(async (argv) =>
-      createCommandResult({ stdout: argv.includes("prefix") ? `${selected}\n` : "" }),
+      createCommandResult({
+        code: destination === "probe-failure" && argv.includes("prefix") ? 1 : 0,
+        stdout:
+          argv.includes("prefix") && destination !== "probe-empty"
+            ? destination === "probe-relative"
+              ? "relative/prefix\n"
+              : `${selected}\n`
+            : "",
+      }),
     );
     const writes = vi.spyOn(packageUpdate, "runPackageInstallUpdate");
     vi.spyOn(plugins, "preflightConfiguredNpmPluginTargets").mockResolvedValue([]);
     const continuation = updateCommand({ tag: "2026.9.2", json: true, yes: true, dryRun: true });
-    if (foreign) {
+    if (foreign || unknown) {
       await expect(continuation).rejects.toMatchObject({
         result: { reason: "global-install-foreign-destination" },
       });
@@ -133,7 +179,19 @@ it.each(["foreign", "unverified", "claimed", "foreign-launcher", "owned", "empty
       await continuation;
     }
     const result = vi.mocked(defaultRuntime.writeJson).mock.calls.at(-1)?.[0];
-    if (foreign) {
+    await expect(inspection.mock.results[0]?.value).resolves.toMatchObject({
+      kind:
+        unknown || destination === "foreign-launcher"
+          ? "unknown"
+          : foreign
+            ? "foreign"
+            : destination === "empty"
+              ? "empty"
+              : "owned",
+      prefix: probeFailure ? null : selected,
+      ...(unknown || destination === "foreign-launcher" ? { cause: unknownCause } : {}),
+    });
+    if (foreign || unknown) {
       expect(result).toMatchObject({
         status: "error",
         reason: "global-install-foreign-destination",
@@ -151,7 +209,15 @@ it.each(["foreign", "unverified", "claimed", "foreign-launcher", "owned", "empty
         },
       });
     }
-    if (foreign) {
+    if (unknown) {
+      const prefix = probeFailure ? "(unresolved; npm prefix -g)" : selected;
+      expect(result).toMatchObject({
+        failedStep: {
+          stderrTail: `Selected npm destination ${prefix} could not be inspected (${unknownCause}); ownership is unknown. No installation was attempted. Fix inspection permissions on this prefix for the service account, or make \`npm prefix -g\` succeed with the selected runtime, then run \`node ${quote(path.join(oldRoot, "openclaw.mjs"))} update\`. Alternatively, ask the deployment owner to verify the layout and explicitly select the intended installation using its existing deployment procedure.`,
+        },
+      });
+    }
+    if (foreign || unknown) {
       await expect(updateCommand({ tag: "2026.9.2", json: true, yes: true })).rejects.toEqual(
         new ExitError(1),
       );

@@ -103,12 +103,17 @@ the original package owner. Its normal runtime selection, service refresh,
 restart, and verification checks apply. Containers redeploy the target image
 with the same state/config mounts.
 
-`global-install-foreign-destination` means the selected prefix contains a package
-or launcher that this update does not own. The report names that destination
+`global-install-foreign-destination` means the selected prefix is foreign or its
+ownership could not be established. An inaccessible prefix, failed npm prefix
+probe, or unreadable layout stops the update before staging; an unknown
+destination is never treated as empty. Restore inspection access or make
+`npm prefix -g` succeed with the selected runtime. Ask the deployment owner to
+verify unreadable layouts and explicitly select the intended installation.
+The report names the destination (or says that npm could not resolve it), the cause,
 and the selected service's launcher when available. Switch the runtime back and
 retry through the retained absolute launcher. Alternatively, with the destination
 owner's agreement, explicitly select that installation for the intended service
-using the printed `gateway install --force` command, then update. This changes
+using a printed `gateway install --force` command when available, then update. This changes
 the service binding; it is not permission to overwrite another deployment's
 package. Dry-run returns the same refusal. Recorded attempts remain in update
 history and are shown by Doctor.

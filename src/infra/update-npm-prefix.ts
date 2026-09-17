@@ -1,7 +1,6 @@
 // npm owns effective prefix resolution; callers consume its layout and launcher facts.
 import fs from "node:fs/promises";
 import path from "node:path";
-import { hasErrnoCode } from "./errno.js";
 import { resolveExecutablePath } from "./executable-path.js";
 import { pathExists } from "./fs-safe.js";
 import { applyPathPrepend } from "./path-prepend.js";
@@ -116,7 +115,7 @@ export async function probeNpmGlobalPrefix(
   const result = await runCommand(argv, { timeoutMs, env }).catch(() => null);
   const prefix = result?.code === 0 ? readPackageManagerProbeValue(result.stdout) : "";
   diagnostics.push(`${argv.join(" ")}: ${prefix || "unavailable"}`);
-  return prefix ? resolveNpmGlobalPrefixLayoutFromPrefix(prefix) : null;
+  return prefix && path.isAbsolute(prefix) ? resolveNpmGlobalPrefixLayoutFromPrefix(prefix) : null;
 }
 
 export async function inspectNpmLauncher(layout: NpmGlobalPrefixLayout) {
@@ -136,50 +135,4 @@ export async function inspectNpmLauncher(layout: NpmGlobalPrefixLayout) {
       : null;
   }
   return { launcher, launcherTarget };
-}
-
-type NpmGlobalDestination = {
-  layout: NpmGlobalPrefixLayout;
-  packageRoot: string;
-  packageRootReal: string | null;
-  packagePresent: boolean;
-  launcher: string;
-  launcherTarget: string | null;
-  launcherPresent: boolean;
-};
-
-/** Inspect the selected runtime's npm destination without adopting its installed package. */
-export async function inspectNpmGlobalDestination(
-  runCommand: CommandRunner,
-  timeoutMs: number,
-): Promise<NpmGlobalDestination | null> {
-  const layout = await probeNpmGlobalPrefix(runCommand, timeoutMs);
-  if (!layout) {
-    return null;
-  }
-  const packageRoot = path.join(layout.globalRoot, "openclaw");
-  const launcher = await inspectNpmLauncher(layout);
-  // A dangling link still occupies the destination; an unreadable path is not empty.
-  const present = (target: string) =>
-    fs.lstat(target).then(
-      () => true,
-      (error: unknown) => {
-        if (hasErrnoCode(error, "ENOENT")) {
-          return false;
-        }
-        throw error;
-      },
-    );
-  try {
-    return {
-      layout,
-      packageRoot,
-      packageRootReal: await fs.realpath(packageRoot).catch(() => null),
-      packagePresent: await present(packageRoot),
-      ...launcher,
-      launcherPresent: await present(launcher.launcher),
-    };
-  } catch {
-    return null;
-  }
 }

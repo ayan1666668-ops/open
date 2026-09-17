@@ -7,7 +7,6 @@ import * as packageMetadata from "../../infra/update-check-package-target.js";
 import * as updateCheck from "../../infra/update-check.js";
 import { createFreeBsdPkgOwnershipInspection } from "../../infra/update-freebsd-pkg-ownership.js";
 import * as updateGlobal from "../../infra/update-global.js";
-import * as npmPrefix from "../../infra/update-npm-prefix.js";
 import { defaultRuntime } from "../../runtime.js";
 import * as processIdentity from "../../shared/pid-alive.js";
 import { closeOpenClawStateDatabaseForTest } from "../../state/openclaw-state-db.js";
@@ -15,6 +14,7 @@ import { resolveOpenClawStateSqlitePath } from "../../state/openclaw-state-db.pa
 import { captureTargetDatabaseSchemaContext } from "./schema-preflight.js";
 import * as shared from "./shared.js";
 import * as databaseContext from "./update-command-database-context.js";
+import * as packageDestination from "./update-command-package-destination.js";
 import * as packageUpdate from "./update-command-package.js";
 import * as commandRun from "./update-command-run.js";
 import * as servicePlan from "./update-command-service-plan.js";
@@ -82,7 +82,10 @@ export function installFreshUpdateFixture() {
     vi.spyOn(shared, "resolveGlobalManager").mockResolvedValue("npm");
     vi.spyOn(shared, "resolveTargetVersion").mockResolvedValue("2026.9.2");
     vi.spyOn(updateGlobal, "createGlobalInstallEnv").mockResolvedValue({ ...process.env });
-    vi.spyOn(npmPrefix, "inspectNpmGlobalDestination").mockResolvedValue(null);
+    vi.spyOn(packageDestination, "inspectNpmGlobalDestination").mockResolvedValue({
+      kind: "empty",
+      prefix: home,
+    });
     vi.spyOn(updateGlobal, "resolveGlobalInstallTarget").mockResolvedValue({
       manager: "npm",
       command: "npm",
