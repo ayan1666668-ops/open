@@ -7,9 +7,8 @@ import {
   debugEmbeddingsLog,
   EmbeddingBatchUnavailableError,
   formatBatchErrorDetail,
-  normalizeBatchBaseUrl,
   readEmbeddingBatchJsonl,
-  sanitizeAndNormalizeEmbedding,
+  resolveEmbeddingEndpointUrl,
   withRemoteHttpResponse,
   type EmbeddingBatchExecutionParams,
 } from "openclaw/plugin-sdk/memory-core-host-engine-embeddings";
@@ -23,6 +22,7 @@ import {
 } from "openclaw/plugin-sdk/provider-http";
 import {
   isValidGeminiEmbeddingValues,
+  sanitizeGeminiEmbedding,
   type GeminiEmbeddingClient,
   type GeminiTextEmbeddingRequest,
 } from "./embedding-provider.js";
@@ -49,7 +49,7 @@ type GeminiBatchOperation = {
 type GeminiBatchState = "pending" | "succeeded" | "failed" | "cancelled" | "expired" | "unknown";
 
 type GeminiBatchOutputLine = {
-  // Preserve shipped output aliases; provider JSON remains unknown until validated.
+  // Alternate ids and direct embeddings are shipped compatible-endpoint shapes.
   key?: string;
   custom_id?: string;
   request_id?: string;
@@ -83,30 +83,32 @@ function hashText(text: string): string {
   return crypto.createHash("sha256").update(text).digest("hex");
 }
 
-function getGeminiVersionedRouteBase(baseUrl: string, route: "upload" | "download"): string | null {
-  const trimmed = baseUrl.replace(/\/$/, "");
-  const match = trimmed.match(/^(.*)\/(v\d+(?:alpha|beta)?)$/);
-  return match ? `${match[1]}/${route}/${match[2]}` : null;
-}
-
-function getGeminiUploadUrl(baseUrl: string): string {
-  return getGeminiVersionedRouteBase(baseUrl, "upload") ?? `${baseUrl.replace(/\/$/, "")}/upload`;
-}
-
-function getGeminiDownloadUrl(baseUrl: string, fileId: string): string {
-  const file = fileId.startsWith("files/") ? fileId : `files/${fileId}`;
-  const trimmed = baseUrl.replace(/\/$/, "");
-  let officialGoogleOrigin = false;
-  try {
-    officialGoogleOrigin =
-      new URL(trimmed).origin.toLowerCase() === "https://generativelanguage.googleapis.com";
-  } catch {
-    // Custom base URLs are preserved below.
+function getGeminiBatchFileUrl(
+  baseUrl: string,
+  route: "upload" | "download",
+  fileId: string,
+): string {
+  const base = new URL(baseUrl);
+  const pathname = base.pathname.replace(/\/+$/, "");
+  // Google file routes precede the API version; custom download gateways own their prefix.
+  if (route === "upload" || base.origin === "https://generativelanguage.googleapis.com") {
+    const version = pathname.match(/^(.*)\/(v\d+(?:alpha|beta)?)$/);
+    base.pathname = version
+      ? `${version[1]}/${route}/${version[2]}`
+      : route === "upload"
+        ? `${pathname}/upload`
+        : pathname;
   }
-  const downloadBase = officialGoogleOrigin
-    ? (getGeminiVersionedRouteBase(trimmed, "download") ?? trimmed)
-    : trimmed;
-  return `${downloadBase}/${file}:download?alt=media`;
+  const endpoint =
+    route === "upload"
+      ? fileId
+      : `${fileId.startsWith("files/") ? fileId : `files/${fileId}`}:download`;
+  const url = new URL(resolveEmbeddingEndpointUrl(base.href, endpoint));
+  url.searchParams.set(
+    route === "upload" ? "uploadType" : "alt",
+    route === "upload" ? "multipart" : "media",
+  );
+  return url.href;
 }
 
 function getGeminiBatchState(operation: GeminiBatchOperation): GeminiBatchState {
@@ -181,7 +183,7 @@ async function submitGeminiBatch(params: {
   requests: GeminiBatchRequest[];
   agentId: string;
 }): Promise<GeminiBatchOperation> {
-  const baseUrl = normalizeBatchBaseUrl(params.gemini);
+  const baseUrl = params.gemini.baseUrl;
   const jsonl = params.requests
     .map((request) =>
       JSON.stringify({
@@ -193,7 +195,7 @@ async function submitGeminiBatch(params: {
   const displayName = `memory-embeddings-${hashText(String(Date.now()))}`;
   const uploadPayload = buildGeminiUploadBody({ jsonl, displayName });
 
-  const uploadUrl = `${getGeminiUploadUrl(baseUrl)}/files?uploadType=multipart`;
+  const uploadUrl = getGeminiBatchFileUrl(baseUrl, "upload", "files");
   debugEmbeddingsLog("memory embeddings: gemini batch upload", {
     uploadUrl,
     baseUrl,
@@ -231,7 +233,10 @@ async function submitGeminiBatch(params: {
     },
   };
 
-  const batchEndpoint = `${baseUrl}/${params.gemini.modelPath}:asyncBatchEmbedContent`;
+  const batchEndpoint = resolveEmbeddingEndpointUrl(
+    baseUrl,
+    `${params.gemini.modelPath}:asyncBatchEmbedContent`,
+  );
   debugEmbeddingsLog("memory embeddings: gemini batch create", {
     batchEndpoint,
     fileId,
@@ -266,11 +271,10 @@ async function fetchGeminiBatchStatus(params: {
   batchName: string;
   signal?: AbortSignal;
 }): Promise<GeminiBatchOperation> {
-  const baseUrl = normalizeBatchBaseUrl(params.gemini);
   const name = params.batchName.startsWith("batches/")
     ? params.batchName
     : `batches/${params.batchName}`;
-  const statusUrl = `${baseUrl}/${name}`;
+  const statusUrl = resolveEmbeddingEndpointUrl(params.gemini.baseUrl, name);
   debugEmbeddingsLog("memory embeddings: gemini batch status", { statusUrl });
   return await withRemoteHttpResponse({
     url: statusUrl,
@@ -294,6 +298,7 @@ function applyGeminiBatchOutputLine(params: {
   remaining: Set<string>;
   errors: string[];
   byCustomId: Map<string, number[]>;
+  expectedDimensions?: number;
 }): void {
   const customId = params.line.key ?? params.line.custom_id ?? params.line.request_id;
   // Only the first response for a submitted id may mutate results.
@@ -312,7 +317,7 @@ function applyGeminiBatchOutputLine(params: {
     params.errors.push(`${customId}: ${reason} embedding`);
     return;
   }
-  params.byCustomId.set(customId, sanitizeAndNormalizeEmbedding(values));
+  params.byCustomId.set(customId, sanitizeGeminiEmbedding(values, params.expectedDimensions));
 }
 
 async function fetchGeminiBatchOutput(params: {
@@ -322,8 +327,7 @@ async function fetchGeminiBatchOutput(params: {
   errors: string[];
   byCustomId: Map<string, number[]>;
 }): Promise<void> {
-  const baseUrl = normalizeBatchBaseUrl(params.gemini);
-  const downloadUrl = getGeminiDownloadUrl(baseUrl, params.fileId);
+  const downloadUrl = getGeminiBatchFileUrl(params.gemini.baseUrl, "download", params.fileId);
   debugEmbeddingsLog("memory embeddings: gemini batch download", { downloadUrl });
   await withRemoteHttpResponse({
     url: downloadUrl,
@@ -342,6 +346,7 @@ async function fetchGeminiBatchOutput(params: {
             remaining: params.remaining,
             errors: params.errors,
             byCustomId: params.byCustomId,
+            expectedDimensions: params.gemini.outputDimensionality,
           });
           return params.errors.length === 0 && params.remaining.size > 0;
         },

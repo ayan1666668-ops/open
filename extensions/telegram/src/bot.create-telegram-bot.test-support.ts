@@ -1,9 +1,5 @@
+import { setTimeout as delay } from "node:timers/promises";
 import type { TelegramBotInfo } from "./bot-info.js";
-
-type DispatchReplyWithBufferedBlockDispatcher =
-  typeof import("openclaw/plugin-sdk/reply-dispatch-runtime").dispatchReplyWithBufferedBlockDispatcher;
-type DispatchChannelInboundTurn =
-  typeof import("openclaw/plugin-sdk/channel-inbound").dispatchChannelInboundTurn;
 
 export const telegramBotInfoForTest = {
   id: 9_876_543_210,
@@ -21,31 +17,73 @@ export const telegramBotInfoForTest = {
   allows_users_to_create_topics: false,
 } satisfies TelegramBotInfo;
 
-export function createTelegramNativeCommandTestDeps(
-  dispatchReply: DispatchReplyWithBufferedBlockDispatcher,
-): { dispatchChannelInboundTurn: DispatchChannelInboundTurn } {
+export type TelegramMentionPolicyForTest = {
+  mode: "allow" | "deny";
+  allowIn?: string[];
+  denyIn?: string[];
+};
+
+export function createChannelPostContext(params: {
+  messageId: number;
+  date: number;
+  title?: string;
+  caption?: string;
+  text?: string;
+  mediaGroupId?: string;
+  photoFileId?: string;
+  getFileResult?: Record<string, unknown>;
+}) {
+  const photoFileId = params.photoFileId;
   return {
-    dispatchChannelInboundTurn: async (plan) => {
-      const dispatchResult = await dispatchReply({
-        ctx: plan.ctxPayload,
-        cfg: plan.cfg,
-        dispatcherOptions: {
-          ...plan.dispatcherOptions,
-          deliver:
-            "deliverWithProviderMessageSending" in plan.delivery
-              ? plan.delivery.deliverWithProviderMessageSending
-              : plan.delivery.deliver,
-          onError: plan.delivery.onError,
-        },
-        replyOptions: plan.replyOptions,
-      });
-      return {
-        admission: { kind: "dispatch" },
-        dispatched: true,
-        ctxPayload: plan.ctxPayload,
-        routeSessionKey: plan.route.sessionKey,
-        dispatchResult,
-      };
+    channelPost: {
+      chat: { id: -100777111222, type: "channel", title: params.title ?? "Wake Channel" },
+      message_id: params.messageId,
+      date: params.date,
+      ...(params.caption ? { caption: params.caption } : {}),
+      ...(params.text ? { text: params.text } : {}),
+      ...(params.mediaGroupId ? { media_group_id: params.mediaGroupId } : {}),
+      ...(photoFileId ? { photo: [{ file_id: photoFileId }] } : {}),
     },
+    me: { username: "openclaw_bot" },
+    getFile: async () =>
+      params.getFileResult ?? (photoFileId ? { file_path: `photos/${photoFileId}.jpg` } : {}),
   };
+}
+
+export type TelegramIngestGroupForTest = {
+  requireMention: boolean;
+  ingest?: boolean;
+  topics?: Record<string, { ingest: boolean }>;
+};
+
+export function telegramIngestGroupForTest(
+  ingest?: boolean,
+  topics?: Record<string, { ingest: boolean }>,
+): TelegramIngestGroupForTest {
+  return {
+    requireMention: true,
+    ...(ingest === undefined ? {} : { ingest }),
+    ...(topics ? { topics } : {}),
+  };
+}
+
+export type TelegramMentionCaseForTest = [
+  string,
+  TelegramMentionPolicyForTest,
+  TelegramMentionPolicyForTest | undefined,
+  number | undefined,
+  boolean,
+  number,
+];
+
+export async function waitForTelegramMockCalls(
+  mock: { mock: { calls: unknown[] } },
+  count: number,
+) {
+  for (let index = 0; index < 80; index++) {
+    if (mock.mock.calls.length >= count) {
+      return;
+    }
+    await delay(25);
+  }
 }
