@@ -2,6 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { isBlockedObjectKey } from "../infra/prototype-keys.js";
+import { getOrCreatePromise } from "./lazy-promise.js";
 
 /** Normalizes primitive config values into the truthiness rules used by requirements checks. */
 function isTruthy(value: unknown): boolean {
@@ -154,6 +155,9 @@ function windowsPathExtensions(raw: string | undefined): string[] {
   return ["", ...list.filter(Boolean)];
 }
 
+// Share pending I/O only so completed misses are checked again on the next preparation.
+const pendingBinaryAccess = new Map<string, Promise<boolean>>();
+
 // Installs can create binaries under unchanged PATH/PATHEXT, so cache only successful probes.
 let binaryCache: { path: string; pathExt: string; hits: Set<string> } | undefined;
 
@@ -235,12 +239,20 @@ export async function prepareBinaryAvailability(
         return;
       }
       assertCurrent?.();
-      const resolved = path.resolve(cwd, candidate);
       try {
         // access uses the filesystem's case, permission, and symlink semantics.
-        await fs.promises.access(resolved, fs.constants.X_OK);
-        // X_OK also succeeds for searchable directories; stat only hits so misses stay one call.
-        if (!(await fs.promises.stat(resolved)).isFile()) {
+        const resolvedCandidate = path.resolve(cwd, candidate);
+        const isFile = await getOrCreatePromise(
+          pendingBinaryAccess,
+          resolvedCandidate,
+          async () => {
+            await fs.promises.access(resolvedCandidate, fs.constants.X_OK);
+            // X_OK also succeeds for searchable directories; stat only hits so misses stay one call.
+            return (await fs.promises.stat(resolvedCandidate)).isFile();
+          },
+          { evictOnSettled: true },
+        );
+        if (!isFile) {
           continue;
         }
       } catch {
