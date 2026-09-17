@@ -270,6 +270,106 @@ describe("profile-bound appearance preferences", () => {
   });
 
   it.each([
+    ["accent", "#123456", "#abcdef"],
+    ["theme", "rose", "absolutely"],
+    ["fontUi", "geist", undefined],
+  ] as const)("persists a %s reset during profile loading", async (key, saved, fallback) => {
+    const preferenceKey = UI_APPEARANCE_PREFERENCE_KEYS[key];
+    const config = configWithPrefs({ [key]: fallback });
+    const savedEntries = { [preferenceKey]: saved };
+    let entries: Record<string, string> = { ...savedEntries };
+    const initial = createServerPrefsWriter(
+      vi.fn(async () => ({ status: "ok", entries })),
+      scope,
+    );
+    const options = {
+      profileId,
+      configObject: config,
+      scope,
+      onApplied: vi.fn(),
+    };
+    await refreshProfileAppearancePrefs({ ...options, client: initial.state.client! });
+    resetServerUiPrefsSync();
+
+    const delayed = createDeferred<unknown>();
+    let firstRead = true;
+    const request = vi.fn(async (method: string, params?: unknown) => {
+      if (method === "users.prefs.get") {
+        if (firstRead) {
+          firstRead = false;
+          return delayed.promise;
+        }
+        return { status: "ok", entries };
+      }
+      expect(method).toBe("users.prefs.set");
+      expect(params).toEqual({ entries: { [preferenceKey]: null } });
+      entries = {};
+      return { status: "ok" };
+    });
+    const writer = createServerPrefsWriter(request, scope, true, { ok: true }, false);
+    Object.assign(writer.state, { configSnapshot: { config } });
+    applyServerUiPrefs(config, options);
+    const pending = refreshProfileAppearancePrefs({ ...options, client: writer.state.client! });
+    await waitForFast(() => expect(request).toHaveBeenCalledOnce());
+
+    const previous = loadSettings();
+    const state = resolveServerUiPrefState(config, key, scope, previous, { profileId });
+    const next = resetServerUiPref(key, state, scope);
+    expect(next[key]).toBe(fallback);
+    const delta = changedServerUiPrefs(previous, next);
+    expect(delta).toEqual({ [key]: null });
+    const committed = vi.fn();
+    pushServerUiPrefs(writer, delta!, { profileId, canWrite: true, afterCommit: committed });
+    await waitForFast(() => expect(committed).toHaveBeenCalledOnce());
+
+    // users.prefs.changed forces a fresh read before an older response can publish.
+    await refreshProfileAppearancePrefs({ ...options, client: writer.state.client! });
+    delayed.resolve({ status: "ok", entries: savedEntries });
+    await pending;
+    expect(loadSettings()[key]).toBe(fallback);
+    expect(entries).toEqual({});
+
+    resetServerUiPrefsSync();
+    const reloaded = createServerPrefsWriter(request, scope);
+    await refreshProfileAppearancePrefs({ ...options, client: reloaded.state.client! });
+    expect(loadSettings()[key]).toBe(fallback);
+  });
+
+  it("restores a local accent to the known server value while the profile is loading", async () => {
+    const config = configWithPrefs({ accent: "#abcdef" });
+    const saved = { status: "ok", entries: { "ui.accent": "#123456" } };
+    const options = { profileId, configObject: config, scope, onApplied: vi.fn() };
+    const initial = createServerPrefsWriter(
+      vi.fn(async () => saved),
+      scope,
+    );
+    await refreshProfileAppearancePrefs({ ...options, client: initial.state.client! });
+    patchSettings({ accent: "#654321" });
+    pushServerUiPrefs(initial, { accent: "#654321" }, { profileId, canWrite: false });
+    resetServerUiPrefsSync();
+
+    const delayed = createDeferred<unknown>();
+    const request = vi.fn((_method: string) => delayed.promise);
+    const writer = createServerPrefsWriter(request, scope);
+    applyServerUiPrefs(config, options);
+    const pending = refreshProfileAppearancePrefs({ ...options, client: writer.state.client! });
+    const previous = loadSettings();
+    const state = resolveServerUiPrefState(config, "accent", scope, previous, {
+      profileId,
+      canSync: false,
+    });
+    expect(state).toMatchObject({ provenance: "device-local", resetValue: "#123456" });
+    const next = resetServerUiPref("accent", state, scope);
+    expect(next.accent).toBe("#123456");
+    expect(changedServerUiPrefs(previous, next)).toBeNull();
+
+    delayed.resolve(saved);
+    await pending;
+    expect(loadSettings().accent).toBe("#123456");
+    expect(request.mock.calls.every(([method]) => method === "users.prefs.get")).toBe(true);
+  });
+
+  it.each([
     ["theme", "knot", "dash", "claw", "synced"],
     ["fontUi", "lora", "system", undefined, "default"],
     ["fontChat", "lora", "system", undefined, "default"],

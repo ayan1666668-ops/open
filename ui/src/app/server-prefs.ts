@@ -73,14 +73,24 @@ export function resolveServerUiPrefState<K extends SyncedPrefKey>(
     effectiveScope === pendingScope
       ? pendingPrefs
       : parseStoredPrefs(readStorage(PENDING_KEY, effectiveScope));
-  return resolveServerUiPrefStateFromSnapshot(
+  const profilePrefs = resolveProfileAppearancePrefs(scope, options.profileId);
+  const pendingAppearance = options.profileId && isAppearancePref(key) && profilePrefs === null;
+  // The boot mirror is still compared with its last server appearance while
+  // loading. This merged baseline does not identify which values came from the profile.
+  const appearanceSnapshot = pendingAppearance
+    ? (parseStoredPrefs(readStorage(LAST_SEEN_KEY, effectiveScope)) ?? {})
+    : profilePrefs;
+  const state = resolveServerUiPrefStateFromSnapshot(
     configObject,
     key,
     shadowPrefs,
     settings,
     options.canSync,
-    resolveProfileAppearancePrefs(scope, options.profileId),
+    appearanceSnapshot,
   );
+  return pendingAppearance && state.provenance === "profile"
+    ? { ...state, provenance: "synced" }
+    : state;
 }
 /** Synced-key delta between two local settings snapshots, for the push path. */
 export function changedServerUiPrefs(previous: UiSettings, next: UiSettings): ServerUiPrefs | null {
@@ -293,10 +303,9 @@ export function resetServerUiPref<K extends ResettableServerUiPrefKey>(
     return patchSettings(write(state.resetValue));
   }
   requestedServerUiPrefResets.add(key);
-  // Profile-bound reset deletes the profile key and lands on the gateway value,
-  // so the local settings must move to state.resetValue (that fallback), not the
-  // product default the generic reset would apply.
-  if (activeProfile && state) {
+  // The resolved state owns the reset target, including the Gateway fallback
+  // while the profile is still loading. Config preferences use product defaults.
+  if (state) {
     // SAFETY: SYNCED_PREFS pairs each key's write() with that key's own value type.
     const write = specification.write as
       | ((value: SyncedPrefValue<K> | undefined) => Partial<UiSettings>)
