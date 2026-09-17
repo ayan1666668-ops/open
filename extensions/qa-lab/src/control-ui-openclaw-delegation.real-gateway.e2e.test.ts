@@ -528,6 +528,19 @@ fullAccessSuite.define(() => {
               expect(loggingLevel(savedConfig)).toBe("info");
               const configSnapshot = await gateway.call("config.get", {});
               expect(isRecord(configSnapshot) && loggingLevel(configSnapshot.config)).toBe("info");
+              const finalMessage =
+                isRecord(history) && Array.isArray(history.messages)
+                  ? history.messages.findLast(
+                      (message) => isRecord(message) && message.role === "assistant",
+                    )
+                  : undefined;
+              const finalEntryId =
+                isRecord(finalMessage) && isRecord(finalMessage.__openclaw)
+                  ? finalMessage.__openclaw.id
+                  : undefined;
+              expect(finalEntryId).toEqual(expect.any(String));
+              // History replaces the live final and its work-group key. Expand the persisted row.
+              await page.locator(`.chat-bubble[data-entry-id="${finalEntryId}"]`).waitFor();
               const workSummary = page
                 .locator(".chat-work-group > .chat-activity-group__summary")
                 .first();
