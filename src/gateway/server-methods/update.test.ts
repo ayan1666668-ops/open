@@ -43,7 +43,6 @@ import {
   captureUpdateRunPayload,
   mockGlobalInstallSurface,
   mockGitInstallSurface,
-  type UpdateRunPayload,
 } from "./update.test-harness.js";
 
 function readCapturedPayload(): RestartSentinelPayload {
