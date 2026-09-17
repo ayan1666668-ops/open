@@ -86,11 +86,13 @@ describe("Codex supervision actions", () => {
           } as OpenClawConfig;
           return { thread: idleThread({ source: "cli" }) };
         }
-        if (request.method === "thread/read") {
-          return { thread: idleThread({ source: "cli" }) };
-        }
         if (request.method === "thread/list") {
-          return { data: [] };
+          return {
+            data:
+              request.requestParams?.ancestorThreadId === undefined
+                ? [idleThread({ source: "cli" })]
+                : [],
+          };
         }
         if (request.method === "thread/archive") {
           return {};
@@ -121,6 +123,7 @@ describe("Codex supervision actions", () => {
     });
     expect(pinnedConnectionMocks.request.mock.calls.map(([request]) => request.method)).toEqual([
       "thread/read",
+      "thread/list",
       "thread/read",
       "thread/list",
       "thread/archive",
@@ -135,19 +138,26 @@ describe("Codex supervision actions", () => {
 
   it("finishes a pinned archive when supervision config changes", async () => {
     let pluginConfig: unknown = { supervision: { enabled: true } };
-    pinnedConnectionMocks.request.mockImplementation(async (request: { method: string }) => {
-      if (request.method === "thread/list") {
-        return { data: [] };
-      }
-      if (request.method === "thread/read") {
-        pluginConfig = { supervision: { enabled: false } };
-        return { thread: idleThread({ source: "cli" }) };
-      }
-      if (request.method === "thread/archive") {
-        return {};
-      }
-      throw new Error(`unexpected method: ${request.method}`);
-    });
+    pinnedConnectionMocks.request.mockImplementation(
+      async (request: { method: string; requestParams?: Record<string, unknown> }) => {
+        if (request.method === "thread/list") {
+          return {
+            data:
+              request.requestParams?.ancestorThreadId === undefined
+                ? [idleThread({ source: "cli" })]
+                : [],
+          };
+        }
+        if (request.method === "thread/read") {
+          pluginConfig = { supervision: { enabled: false } };
+          return { thread: idleThread({ source: "cli" }) };
+        }
+        if (request.method === "thread/archive") {
+          return {};
+        }
+        throw new Error(`unexpected method: ${request.method}`);
+      },
+    );
     const control = createCodexSessionCatalogControl({
       getPluginConfig: () => pluginConfig,
       getRuntimeConfig: () => config,
@@ -161,12 +171,63 @@ describe("Codex supervision actions", () => {
     await expect(archiveTestSession({ control })).resolves.toEqual({ archived: true });
     expect(pinnedConnectionMocks.request.mock.calls.map(([request]) => request.method)).toEqual([
       "thread/read",
+      "thread/list",
       "thread/read",
       "thread/list",
       "thread/archive",
     ]);
     expect(pinnedConnectionMocks.releaseClient).toHaveBeenCalledWith(pinnedConnectionMocks.client);
   });
+
+  it.each([
+    { membership: "empty", members: [] },
+    {
+      membership: "another thread only",
+      members: [idleThread({ id: "other-thread", source: "cli" })],
+    },
+  ])(
+    "refuses archive when current membership omits the cached thread ($membership)",
+    async ({ members }) => {
+      pinnedConnectionMocks.request.mockImplementation(async (request: { method: string }) => {
+        if (request.method === "thread/read") {
+          return { thread: idleThread({ source: "cli" }) };
+        }
+        if (request.method === "thread/list") {
+          return { data: members };
+        }
+        throw new Error(`unexpected method: ${request.method}`);
+      });
+      const pluginConfig = { supervision: { enabled: true } };
+      const control = createCodexSessionCatalogControl({
+        getPluginConfig: () => pluginConfig,
+        getRuntimeConfig: () => config,
+      });
+      commandRpcMocks.codexControlRequest.mockResolvedValue({
+        data: [idleThread({ source: "cli" })],
+      });
+      await control.initialize();
+      commandRpcMocks.codexControlRequest.mockClear();
+
+      await expect(archiveTestSession({ control })).rejects.toThrow(
+        "Codex session eligibility could not be verified",
+      );
+      expect(pinnedConnectionMocks.request.mock.calls.map(([request]) => request.method)).toEqual([
+        "thread/read",
+        "thread/list",
+      ]);
+      expect(pinnedConnectionMocks.request).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          method: "thread/list",
+          requestParams: expect.objectContaining({ archived: false }),
+        }),
+      );
+      expect(pinnedConnectionMocks.releaseClient).toHaveBeenCalledWith(
+        pinnedConnectionMocks.client,
+      );
+      expect(commandRpcMocks.codexControlRequest).not.toHaveBeenCalled();
+    },
+  );
 
   it("rejects archive while another OpenClaw session owns the native thread", async () => {
     const bindingStore = createCodexTestBindingStore();
