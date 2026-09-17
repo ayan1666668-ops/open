@@ -46,7 +46,7 @@ type SessionCompanionRunParams = {
   workspaceDir: string;
   systemPrompt: string;
   messages: SessionCompanionPromptMessage[];
-  authorize?: () => boolean;
+  assertSourceCurrent?: () => void;
   signal: AbortSignal;
 };
 
@@ -147,7 +147,7 @@ function toRunnerHistoryMessage(
 }
 
 async function defaultRun(params: SessionCompanionRunParams): Promise<string> {
-  assertReadAuthorized(params.authorize);
+  params.assertSourceCurrent?.();
   const selection = resolveSimpleCompletionSelectionForAgent({
     cfg: params.cfg,
     agentId: params.agentId,
@@ -183,7 +183,7 @@ async function defaultRun(params: SessionCompanionRunParams): Promise<string> {
     runId,
     params.agentId,
     "session-companion.ask",
-    () => assertReadAuthorized(params.authorize),
+    params.assertSourceCurrent,
   );
   try {
     const [{ SessionManager }, { runEmbeddedAgent }] = await Promise.all([
@@ -193,7 +193,7 @@ async function defaultRun(params: SessionCompanionRunParams): Promise<string> {
     const sessionManager = SessionManager.open(target);
     await withSessionManagerWrite(sessionManager, () => {
       params.signal.throwIfAborted();
-      assertReadAuthorized(params.authorize);
+      params.assertSourceCurrent?.();
       const currentEntry = loadExactSessionEntry(target)?.entry;
       if (
         !currentEntry ||
@@ -387,12 +387,6 @@ function contextError(
   return new SessionCompanionAskError(reason, message);
 }
 
-function assertReadAuthorized(authorize?: () => boolean): void {
-  if (authorize?.() === false) {
-    throw contextError("session-missing", "Side chat is unavailable.");
-  }
-}
-
 export function createSessionCompanionAskRuntime(params: SessionCompanionAskRuntimeParams) {
   const resolveUtilityModelRef = params.resolveUtilityModelRef ?? resolveUtilityModelRefForAgent;
   const contextReader = params.contextReader;
@@ -415,7 +409,7 @@ export function createSessionCompanionAskRuntime(params: SessionCompanionAskRunt
     sessionKey: string,
     agentId: string,
     signal: AbortSignal,
-    authorize?: () => boolean,
+    assertSourceCurrent?: () => void,
   ): Promise<SessionCompanionThread> => {
     const threadKey = sessionObserverScopeKey(sessionKey, agentId);
     const existing = params.threads.get(threadKey);
@@ -423,7 +417,7 @@ export function createSessionCompanionAskRuntime(params: SessionCompanionAskRunt
     if (signal.aborted) {
       throw new Error("session companion preparation was cancelled");
     }
-    assertReadAuthorized(authorize);
+    assertSourceCurrent?.();
     if (existing && currentSessionId(sessionKey, agentId) === existing.context.sessionId) {
       return existing;
     }
@@ -434,7 +428,7 @@ export function createSessionCompanionAskRuntime(params: SessionCompanionAskRunt
     if (signal.aborted || params.isDisposed()) {
       throw new Error("session companion preparation was cancelled");
     }
-    assertReadAuthorized(authorize);
+    assertSourceCurrent?.();
     if (result.kind === "missing") {
       throw contextError("session-missing", "The selected session is no longer available.");
     }
@@ -467,7 +461,7 @@ export function createSessionCompanionAskRuntime(params: SessionCompanionAskRunt
     sessionKey: string;
     question: string;
     connId: string;
-    authorize?: () => boolean;
+    assertSourceCurrent?: () => void;
     signal?: AbortSignal;
   }): Promise<{ answer: string; ts: number }> => {
     const sessionKey = request.sessionKey.trim();
@@ -476,7 +470,7 @@ export function createSessionCompanionAskRuntime(params: SessionCompanionAskRunt
     if (!sessionKey || !agentId || !question || params.isDisposed() || request.signal?.aborted) {
       throw new SessionCompanionAskError("unavailable", "Side chat is unavailable.");
     }
-    assertReadAuthorized(request.authorize);
+    request.assertSourceCurrent?.();
     const threadKey = sessionObserverScopeKey(sessionKey, agentId);
     const existing = params.threads.get(threadKey);
     if (existing?.busy || activeAsks.has(threadKey)) {
@@ -548,7 +542,12 @@ export function createSessionCompanionAskRuntime(params: SessionCompanionAskRunt
     // Preparation shares the model's cancellation race. Late completions must
     // still pass the ownership checks before dispatching or committing an answer.
     const execute = async () => {
-      const thread = await prepareThread(sessionKey, agentId, controller.signal, request.authorize);
+      const thread = await prepareThread(
+        sessionKey,
+        agentId,
+        controller.signal,
+        request.assertSourceCurrent,
+      );
       ownedThread = thread;
       if (controller.signal.aborted) {
         throw new Error("session companion preparation was cancelled");
@@ -587,7 +586,7 @@ export function createSessionCompanionAskRuntime(params: SessionCompanionAskRunt
         referenceContext,
         now: admittedAt,
       });
-      assertReadAuthorized(request.authorize);
+      request.assertSourceCurrent?.();
       const rawAnswer = await run({
         cfg,
         agentId,
@@ -596,13 +595,13 @@ export function createSessionCompanionAskRuntime(params: SessionCompanionAskRunt
         workspaceDir,
         systemPrompt: buildSystemPrompt(sessionKey),
         messages,
-        authorize: request.authorize,
+        assertSourceCurrent: request.assertSourceCurrent,
         signal: controller.signal,
       });
       if (activeAsk.cancellation || params.isDisposed()) {
         throw new Error("session companion ask was cancelled");
       }
-      assertReadAuthorized(request.authorize);
+      request.assertSourceCurrent?.();
       if (
         params.threads.get(threadKey) !== thread ||
         currentSessionId(sessionKey, agentId) !== thread.context.sessionId

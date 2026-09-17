@@ -20,7 +20,7 @@ export type SessionCompanionService = {
     sessionKey: string;
     question: string;
     connId: string;
-    authorize?: () => boolean;
+    assertSourceCurrent?: () => void;
     signal?: AbortSignal;
   }) => Promise<SessionsCompanionAskResult>;
   state: (target: SessionCompanionTarget) => SessionsCompanionStateResult;

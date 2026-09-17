@@ -105,13 +105,18 @@ export const sessionCompanionHandlers: GatewayRequestHandlers = {
       respond(false, undefined, hiddenSessionNotFound(target.sessionKey));
       return;
     }
+    const assertSourceCurrent = () => {
+      if (!companionTargetIsVisible(target, client, context)) {
+        throw new SessionCompanionAskError("session-missing", "Side chat is unavailable.");
+      }
+    };
     try {
       const result = await context.sessionCompanion.ask({
         sessionKey: target.sessionKey,
         agentId: target.agentId,
         question,
         connId: client.connId,
-        authorize: () => companionTargetIsVisible(target, client, context),
+        assertSourceCurrent,
         ...(signal ? { signal } : {}),
       });
       respond(true, result);

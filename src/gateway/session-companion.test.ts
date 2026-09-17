@@ -214,7 +214,11 @@ describe("session companion asks", () => {
         sessionKey: "agent:main:main",
         question: "What changed?",
         connId: "conn-1",
-        authorize: () => authorized,
+        assertSourceCurrent: () => {
+          if (!authorized) {
+            throw new SessionCompanionAskError("session-missing", "Side chat is unavailable.");
+          }
+        },
       }),
     ).rejects.toMatchObject({ reason: "session-missing" });
     expect(harness.run).not.toHaveBeenCalled();
