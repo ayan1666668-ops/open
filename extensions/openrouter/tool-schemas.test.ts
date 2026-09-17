@@ -29,7 +29,11 @@ function normalize(
   const tools = provider.normalizeToolSchemas?.(context);
   expect(tools).toHaveLength(1);
   expect(tools?.[0]?.execute).toBe(tool.execute);
-  return tools![0].parameters as Record<string, unknown>;
+  const normalizedTool = tools?.[0];
+  if (!normalizedTool) {
+    throw new Error("normalized tool missing");
+  }
+  return normalizedTool.parameters as Record<string, unknown>;
 }
 
 describe("OpenRouter tool schemas", () => {
@@ -64,10 +68,14 @@ describe("OpenRouter tool schemas", () => {
     }
   });
 
-  it("moves a parent type without losing parent or branch constraints", () => {
+  it.each([
+    "moonshotai/kimi-example",
+    "~moonshotai/kimi-example",
+    "openrouter/~moonshotai/kimi-example",
+  ])("moves a parent type without losing constraints for %s", (modelId) => {
     const value = { type: "string", maxLength: 4, anyOf: [{ enum: ["red"] }, { const: "blue" }] };
     const schema = { type: "object", properties: { value }, required: ["value"] };
-    const result = normalize(schema);
+    const result = normalize(schema, modelId);
     expect(result).toEqual({
       ...schema,
       properties: {
@@ -174,8 +182,13 @@ describe("OpenRouter tool schemas", () => {
   it.each([
     "deepseek/example",
     "openrouter/deepseek/example",
+    "openrouter/deepseek-v4-flash",
+    "~deepseek/example",
+    "openrouter/~deepseek/example",
     "google/example",
     "openrouter/google/example",
+    "~google/example",
+    "openrouter/~google/example",
   ])("uses the existing family policy for %s", (modelId) => {
     const schema = {
       type: "object",
@@ -187,7 +200,15 @@ describe("OpenRouter tool schemas", () => {
       provider.inspectToolSchemas?.({
         provider: "openrouter",
         modelId,
-        tools: [{ name: "example", parameters: schema } as AnyAgentTool],
+        tools: [
+          {
+            name: "example",
+            label: "Example",
+            description: "Example",
+            parameters: schema,
+            execute: async () => ({ content: [], details: {} }),
+          },
+        ],
       })?.length,
     ).toBeGreaterThan(0);
   });

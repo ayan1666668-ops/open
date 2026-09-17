@@ -1,7 +1,7 @@
 import type { ProviderNormalizeToolSchemasContext } from "openclaw/plugin-sdk/plugin-entry";
 import { buildProviderToolCompatFamilyHooks } from "openclaw/plugin-sdk/provider-tools";
 import { asOptionalRecord as readRecord } from "openclaw/plugin-sdk/string-coerce-runtime";
-import { normalizeOpenRouterApiModelId } from "./models.js";
+import { normalizeOpenRouterApiModelId, normalizeOpenRouterModelFamilyId } from "./models.js";
 
 const openAiTools = buildProviderToolCompatFamilyHooks("openai");
 const deepSeekTools = buildProviderToolCompatFamilyHooks("deepseek");
@@ -119,7 +119,8 @@ const moonshotTools = {
 };
 
 function resolveOpenRouterToolFamily(modelId: string) {
-  const normalized = normalizeOpenRouterApiModelId(modelId) ?? modelId;
+  const normalized =
+    normalizeOpenRouterModelFamilyId(normalizeOpenRouterApiModelId(modelId)) ?? modelId;
   if (normalized.startsWith("deepseek/")) {
     return deepSeekTools;
   }
