@@ -178,6 +178,17 @@ function toolResultMessage(payload: unknown, timestamp: number): AgentMessage {
   } as unknown as AgentMessage;
 }
 
+function senderAttributedUserMessage(
+  text: string,
+  timestamp: number,
+  sender: { senderId?: string; senderName?: string; senderUsername?: string },
+): AgentMessage {
+  return {
+    ...userMessage(text, timestamp),
+    __openclaw: sender,
+  } as unknown as AgentMessage;
+}
+
 function createStartedThreadHarness(
   requestImpl?: Parameters<typeof createSharedStartedThreadHarness>[0],
   options?: Parameters<typeof createSharedStartedThreadHarness>[1],
@@ -491,6 +502,48 @@ describe("runCodexAppServerAttempt context-engine lifecycle", () => {
     expect(inputText.length).toBeGreaterThan(30_000);
     expect(inputText).toContain("LARGE_CONTEXT_END");
     expect(inputText).not.toContain("[truncated ");
+
+    await harness.completeTurn();
+    await run;
+  });
+
+  it("sends stable sender provenance through an active context-engine projection", async () => {
+    const sessionFile = path.join(tempDir, "sender-provenance-context-engine.jsonl");
+    const workspaceDir = path.join(tempDir, "workspace-sender-provenance-context-engine");
+    const contextEngine = createContextEngine({
+      assemble: vi.fn(async () => ({
+        messages: [
+          senderAttributedUserMessage("Ada owns the deployment decision.", 10, {
+            senderId: "ada-id",
+            senderName: "Ada",
+          }),
+          senderAttributedUserMessage("Bea owns the rollback decision.", 11, {
+            senderId: "bea-id",
+            senderName: "Bea",
+          }),
+          senderAttributedUserMessage("Legacy context has no authenticated author.", 12, {
+            senderName: "Ada",
+          }),
+        ],
+        estimatedTokens: 42,
+        contextProjection: { mode: "thread_bootstrap" as const, epoch: "sender-provenance" },
+      })),
+    });
+    const harness = createStartedThreadHarness();
+    const params = createParams(sessionFile, workspaceDir);
+    params.contextEngine = contextEngine;
+
+    const run = runCodexAppServerAttempt(params);
+    await harness.waitForMethod("turn/start");
+
+    const inputText = getRequestInputText(harness);
+    expect(inputText).toContain(
+      '[user sender={"id":"ada-id","name":"Ada"}]\nAda owns the deployment decision.',
+    );
+    expect(inputText).toContain(
+      '[user sender={"id":"bea-id","name":"Bea"}]\nBea owns the rollback decision.',
+    );
+    expect(inputText).toContain("[user]\nLegacy context has no authenticated author.");
 
     await harness.completeTurn();
     await run;

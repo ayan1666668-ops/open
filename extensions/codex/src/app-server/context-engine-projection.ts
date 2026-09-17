@@ -56,6 +56,39 @@ const CODEX_TURN_START_TEXT_INPUT_MAX_CHARS = 1 << 20;
 const DEFAULT_CODEX_PROJECTION_RESERVE_TOKENS = 20_000;
 const MIN_PROMPT_BUDGET_RATIO = 0.5;
 const MIN_PROMPT_BUDGET_TOKENS = 8_000;
+const CODEX_CONTEXT_SENDER_FIELD_MAX_CHARS = 256;
+
+/**
+ * This projection has no access to agent-core's private compaction helper, but
+ * must keep the same attribution contract: a stable ID is identity; display
+ * labels are optional metadata, never provenance on their own.
+ */
+function formatCodexContextSenderSuffix(message: AgentMessage): string {
+  if (message.role !== "user") {
+    return "";
+  }
+  const metadata = Reflect.get(message, "__openclaw");
+  if (!metadata || typeof metadata !== "object") {
+    return "";
+  }
+  const normalize = (value: unknown): string | undefined => {
+    if (typeof value !== "string") {
+      return undefined;
+    }
+    const normalized = value.replaceAll("\0", "").trim();
+    return normalized
+      ? truncateUtf16Safe(normalized, CODEX_CONTEXT_SENDER_FIELD_MAX_CHARS)
+      : undefined;
+  };
+  const record = metadata as Record<string, unknown>;
+  const id = normalize(record.senderId);
+  if (!id) {
+    return "";
+  }
+  const name = normalize(record.senderName);
+  const username = normalize(record.senderUsername);
+  return ` sender=${JSON.stringify({ id, ...(name ? { name } : {}), ...(username ? { username } : {}) })}`;
+}
 
 // Codex scans every turn text input byte-for-byte for explicit `$name` skill
 // mentions and `[@name](plugin://…)` links (codex-rs/skills/src/mentions.rs);
@@ -452,7 +485,10 @@ async function renderMessagesForCodexContext(
       continue;
     }
     const separator = totalChars > 0 ? "\n\n" : "";
-    const chunk = `[${message.role}]\n${text}${separator}`;
+    // The context-engine path owns a second history projection. Keep its user
+    // labels aligned with generic compaction: only authenticated stable IDs
+    // establish speaker provenance; legacy/name-only rows remain anonymous.
+    const chunk = `[${message.role}${formatCodexContextSenderSuffix(message)}]\n${text}${separator}`;
     totalChars += chunk.length;
     if (remaining > 0) {
       // The final truncation below owns the surrogate-safe boundary after adding its marker.
