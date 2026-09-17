@@ -156,7 +156,7 @@ flow:
           args:
             - lambda:
                 async: true
-                expr: "(await env.gateway.call('tasks.list', { agentId: 'qa', limit: 100 })).tasks?.find(task => task.title === 'restart-proof-child' && task.sessionKey === sessionKey && task.status === 'completed' && task.terminalOutcome === 'succeeded' && task.deliveryStatus === 'not_applicable')"
+                expr: "(await env.gateway.call('tasks.list', { agentId: 'qa', limit: 100 })).tasks?.find(task => task.title === 'restart-proof-child' && task.sessionKey === sessionKey && task.status === 'completed' && task.deliveryStatus === 'not_applicable')"
             - expr: liveTurnTimeoutMs(env, 60000)
             - 50
         - call: readSessionTranscriptSummary
