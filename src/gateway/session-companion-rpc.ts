@@ -42,6 +42,9 @@ function companionTargetIsVisible(
   client: Parameters<GatewayRequestHandlers[string]>[0]["client"],
   context: Parameters<GatewayRequestHandlers[string]>[0]["context"],
 ): boolean {
+  if (client?.connId && context.isConnectionActive?.(client.connId) === false) {
+    return false;
+  }
   const cfg = context.getRuntimeConfig();
   const sharingTarget = resolveSessionSharingTarget({
     cfg,
@@ -108,6 +111,7 @@ export const sessionCompanionHandlers: GatewayRequestHandlers = {
         agentId: target.agentId,
         question,
         connId: client.connId,
+        authorize: () => companionTargetIsVisible(target, client, context),
         ...(signal ? { signal } : {}),
       });
       respond(true, result);
