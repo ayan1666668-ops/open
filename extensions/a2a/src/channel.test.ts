@@ -101,16 +101,17 @@ describe("A2A channel configuration", () => {
 });
 
 describe("A2A channel message adapter", () => {
-  it("backs its only declared capability with an authenticated JSON-RPC send and receipt", async () => {
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          jsonrpc: "2.0",
-          id: "response-id",
-          result: { task: { id: "task-42" } },
-        }),
-        { status: 200, headers: { "content-type": "application/json" } },
-      ),
+  it("keeps authority current through preferred and legacy registered sends", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: "response-id",
+            result: { task: { id: "task-42" } },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
     );
 
     try {
@@ -133,6 +134,7 @@ describe("A2A channel message adapter", () => {
         throw new Error("expected A2A channel message adapter with text sender");
       }
       expect(adapter.send?.media).toBeUndefined();
+      const assertDirectAdapterHandoff = vi.fn();
 
       await verifyChannelMessageAdapterCapabilityProofs({
         adapterName: "a2aChannelMessageAdapter",
@@ -144,6 +146,7 @@ describe("A2A channel message adapter", () => {
               accountId: "default",
               to: "hermes",
               text: "hello",
+              assertDirectAdapterHandoff,
             });
             expect(fetchSpy).toHaveBeenCalledOnce();
             const [url, request] = fetchSpy.mock.calls[0] ?? [];
@@ -171,9 +174,27 @@ describe("A2A channel message adapter", () => {
               kind: "text",
               platformMessageId: "task-42",
             });
+            expect(assertDirectAdapterHandoff).toHaveBeenCalledOnce();
           },
         },
       });
+
+      const legacySendText = a2aChannelPlugin.outbound?.sendText;
+      if (!legacySendText) {
+        throw new Error("expected A2A legacy outbound text sender");
+      }
+      const assertLegacyHandoff = vi.fn();
+      fetchSpy.mockClear();
+      await expect(
+        legacySendText({
+          cfg,
+          to: "hermes",
+          text: "legacy hello",
+          assertDirectAdapterHandoff: assertLegacyHandoff,
+        }),
+      ).resolves.toMatchObject({ channel: "a2a", messageId: "task-42" });
+      expect(fetchSpy).toHaveBeenCalledOnce();
+      expect(assertLegacyHandoff).toHaveBeenCalledOnce();
     } finally {
       fetchSpy.mockRestore();
     }
