@@ -29,6 +29,7 @@ import type {
   SessionStateNotice,
 } from "../sessions/session-state-events.kernel.js";
 import type { TaskRegistryWorkerOperations } from "../tasks/task-registry.worker-contract.js";
+import type { AgentProvenance } from "./agent-provenance.types.js";
 import type { PreparedBackupRunRecord } from "./backup-run-records.kernel.js";
 import type { OpenClawStateLeaseIdentity } from "./openclaw-state-lease-store.js";
 import type { UserPreferenceWorkerOperations } from "./user-preferences.types.js";
@@ -43,6 +44,11 @@ export type OpenClawStateWorkerOperations = NativeHookRelayStoreWorkerOperations
   SessionDeliveryWorkerOperations &
   DeliveryQueueWorkerOperations &
   TaskRegistryWorkerOperations & {
+    "agentProvenance.read": {
+      input: { agentId: string };
+      output: AgentProvenance | undefined;
+    };
+    "agentProvenance.list": { input: undefined; output: AgentProvenance[] };
     "promotions.markNotified": { input: { slugs: string[]; now: number }; output: true };
     "promotions.recordClaim": { input: PreparedPromotionClaim; output: void };
     "sessionState.recordGoalChange": {
