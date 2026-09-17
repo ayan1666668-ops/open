@@ -152,6 +152,32 @@ describe("computeSandboxConfigHash", () => {
 
     expect(withoutSkills).not.toBe(withSkills);
   });
+
+  it("keeps the hash unchanged for an omitted capAdd and invalidates for a real grant", () => {
+    const shared = {
+      workspaceAccess: "rw" as const,
+      workspaceDir: "/tmp/workspace",
+      agentWorkspaceDir: "/tmp/workspace",
+      mountFormatVersion: SANDBOX_MOUNT_FORMAT_VERSION,
+      createArgsEpoch: SANDBOX_DOCKER_CREATE_ARGS_EPOCH,
+    };
+    const withoutGrant = computeSandboxConfigHash({ ...shared, docker: createDockerConfig() });
+    // The resolver canonicalizes absent and empty capAdd to undefined, so a config
+    // that grants nothing hashes exactly as it did before capAdd existed: existing
+    // sandboxes are reused across the upgrade rather than recreated.
+    const withUndefinedGrant = computeSandboxConfigHash({
+      ...shared,
+      docker: createDockerConfig({ capAdd: undefined }),
+    });
+    expect(withUndefinedGrant).toBe(withoutGrant);
+
+    // A real grant changes container arguments and must invalidate reuse.
+    const withGrant = computeSandboxConfigHash({
+      ...shared,
+      docker: createDockerConfig({ capAdd: ["NET_RAW"] }),
+    });
+    expect(withGrant).not.toBe(withoutGrant);
+  });
 });
 
 describe("computeSandboxBrowserConfigHash", () => {
