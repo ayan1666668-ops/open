@@ -5,7 +5,12 @@ import { resolveContextConfigProviderForRuntime } from "../../agents/openai-rout
 import { resolveStickyModelSelectionScope } from "../../agents/sticky-model-selection.js";
 import type { SessionEntry, SessionScope } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
-import { getCommittedSessionExecutionSelection } from "../../model-picker/execution-selection.js";
+import {
+  getCommittedSessionExecutionSelection,
+  isModelExecutionSelection,
+  type ExecutionSelection,
+  type SessionExecutionSelection,
+} from "../../model-picker/execution-selection.js";
 import {
   isModelSelectionLocked,
   MODEL_SELECTION_LOCKED_MESSAGE,
@@ -80,6 +85,8 @@ type ApplyDirectiveResult =
     }
   | {
       kind: "continue";
+      executionSelection: ExecutionSelection | undefined;
+      sessionExecutionSelection: SessionExecutionSelection | undefined;
       directives: InlineDirectives;
       provider: string;
       model: string;
@@ -172,6 +179,8 @@ export async function applyInlineDirectiveOverrides(params: {
   let { directives } = params;
   let { provider, model } = params;
   let { contextTokens } = params;
+  let executionSelection = modelState.executionSelection;
+  let sessionExecutionSelection = modelState.sessionExecutionSelection;
   const directiveModelState = {
     modelPolicy: modelState.modelPolicy,
     allowedModelKeys: modelState.allowedModelKeys,
@@ -288,6 +297,8 @@ export async function applyInlineDirectiveOverrides(params: {
   if (!hasAnyDirective) {
     return {
       kind: "continue",
+      executionSelection,
+      sessionExecutionSelection,
       directives,
       provider,
       model,
@@ -507,7 +518,7 @@ export async function applyInlineDirectiveOverrides(params: {
 
   if (hasAnyDirective && command.isAuthorizedSender) {
     const persistenceState: NonNullable<HandleDirectiveOnlyParams["persistenceState"]> = {
-      outcome: { kind: "pending", provider, model },
+      outcome: { kind: "pending" },
     };
     directiveAck = (await handleDirectives(persistenceState)).reply;
     if (persistenceState.outcome.kind === "rejected") {
@@ -518,8 +529,17 @@ export async function applyInlineDirectiveOverrides(params: {
         preRunRejection: "session-directive-rejected",
       };
     }
-    ({ provider, model } = persistenceState.outcome);
-    selectionCatalog = persistenceState.outcome.modelCatalog ?? selectionCatalog;
+    if (persistenceState.outcome.kind === "applied") {
+      selectionCatalog = persistenceState.outcome.modelCatalog ?? selectionCatalog;
+      if (persistenceState.outcome.executionSelection) {
+        executionSelection = persistenceState.outcome.executionSelection;
+        sessionExecutionSelection = persistenceState.outcome.sessionExecutionSelection;
+        if (isModelExecutionSelection(executionSelection)) {
+          provider = executionSelection.model.provider;
+          model = executionSelection.model.id;
+        }
+      }
+    }
   }
 
   const selectedCatalogEntry = selectionCatalog.find(
@@ -556,6 +576,8 @@ export async function applyInlineDirectiveOverrides(params: {
 
   return {
     kind: "continue",
+    executionSelection,
+    sessionExecutionSelection,
     directives,
     provider,
     model,

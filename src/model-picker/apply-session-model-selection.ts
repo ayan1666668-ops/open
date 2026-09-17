@@ -15,6 +15,7 @@ import { resolveModelCandidateChain } from "../agents/model-fallback-candidates.
 import { modelKey, resolveDefaultModelForAgent } from "../agents/model-selection.js";
 import { resolveAgentModelFallbackValues } from "../config/model-input.js";
 import { loadSessionEntryReadOnly } from "../config/sessions/session-accessor.js";
+import type { AgentPatchedSessionModelFallback } from "../config/sessions/session-model-fallback.js";
 import type { InternalSessionEntry as SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { getCurrentPluginMetadataSnapshot } from "../plugins/current-plugin-metadata-snapshot.js";
@@ -51,8 +52,19 @@ import {
 import { sessionExecutionSelectionSchema } from "./execution-selection.schema.js";
 
 /** Explicit unfinished SDK intent suppresses channel defaults without supplying a route. */
-export function hasSessionModelSelection(entry: Pick<SessionEntry, "executionSelection"> | undefined): boolean {
-  return Boolean(getSessionExecutionSelection(entry) || entry?.executionSelection?.legacyRequest);
+export function hasSessionModelSelection(
+  entry: Pick<SessionEntry, "executionSelection"> | undefined,
+): boolean {
+  const stored = entry?.executionSelection;
+  return Boolean(
+    stored &&
+    (stored.state === "accepted" ||
+      stored.legacyRequest ||
+      stored.request.model ||
+      stored.request.defaultSelection ||
+      stored.request.runtime ||
+      stored.request.executor),
+  );
 }
 
 export function inheritSessionExecutionSelection(
@@ -68,6 +80,33 @@ export function commitStoredSessionExecutionSelection(
   fact: SessionExecutionSelection,
 ): void {
   entry.executionSelection = sessionExecutionSelectionSchema.parse(fact);
+}
+
+export function createAgentPatchedSessionModelFallback(params: {
+  model: string;
+  provider: string;
+  entry: Partial<SessionEntry>;
+  ts: number;
+}): AgentPatchedSessionModelFallback {
+  const { entry } = params;
+  return {
+    prevModel: params.model,
+    prevProvider: params.provider,
+    previous: entry.executionSelection
+      ? structuredClone(entry.executionSelection)
+      : {
+          state: "deferred",
+          request: { defaultSelection: "configured" },
+          fallbackPermission: "configured",
+        },
+    prevAuthProfileOverride: entry.authProfileOverride,
+    prevAuthProfileOverrideSource: entry.authProfileOverrideSource,
+    prevAuthProfileOverrideCompactionCount: entry.authProfileOverrideCompactionCount,
+    prevContextWindow: entry.contextWindow,
+    prevThinkingLevel: entry.thinkingLevel,
+    ts: params.ts,
+    source: "agent-patch",
+  };
 }
 
 /** Synchronous SDK intake records a request for the async owner; it makes no readiness claim. */
@@ -178,6 +217,21 @@ export function stageSessionExecutionSelection(params: {
   return { updated };
 }
 
+/** Released partial input restricts fallback even before it identifies a runnable model. */
+export function resolveLegacyExecutionFallbackPermission(params: {
+  model?: string;
+  provider?: string;
+  source?: unknown;
+  originProvider?: string;
+  originModel?: string;
+}): ExecutionFallbackPermission {
+  const automatic =
+    params.source === "auto" ||
+    params.source === "default" ||
+    (params.source !== "user" && Boolean(params.originProvider && params.originModel));
+  return (params.model || params.provider) && !automatic ? "explicit" : "configured";
+}
+
 /** Released store inputs stage requests at the owner without making a readiness claim. */
 export function reconcileSessionExecutionSelectionView(
   current: Partial<SessionEntry> | undefined,
@@ -192,6 +246,7 @@ export function reconcileSessionExecutionSelectionView(
     (patch.lifecycleRevision !== undefined &&
       patch.lifecycleRevision !== current?.lifecycleRevision);
   const next = replace ? patch : { ...projected, ...patch };
+  const modelCleared = Object.hasOwn(patch, "modelOverride") && !patch.modelOverride;
   const previous = before?.state === "accepted" ? before.selection : before?.previous;
   const changed = LEGACY_SELECTION_VIEW_FIELDS.some(
     (field) =>
@@ -216,7 +271,7 @@ export function reconcileSessionExecutionSelectionView(
       ...(proposed.legacyRequest ? { legacyRequest: proposed.legacyRequest } : {}),
       ...(previous ? { previous } : {}),
     });
-  } else if (changed || acpChanged) {
+  } else if (changed || modelCleared || acpChanged) {
     const normalizedRuntime = normalizeOptionalAgentRuntimeId(next.agentRuntimeOverride);
     const runtime = isDefaultAgentRuntimeId(normalizedRuntime) ? undefined : normalizedRuntime;
     const request: DeferredExecutionSelectionRequest =
@@ -237,7 +292,7 @@ export function reconcileSessionExecutionSelectionView(
                 }
               : {
                   defaultSelection:
-                    next.modelOverrideSource === "default"
+                    modelCleared || next.modelOverrideSource === "default"
                       ? ("configured" as const)
                       : ("inherit" as const),
                 }),
@@ -246,24 +301,40 @@ export function reconcileSessionExecutionSelectionView(
               ? { executor: previous.executor }
               : {}),
           };
-    const legacyRequest = !acpChanged && !next.modelOverride && next.providerOverride
-      ? { provider: next.providerOverride, ...(next.modelOverrideSource ? { source: next.modelOverrideSource } : {}) }
-      : undefined;
-    if (legacyRequest && before?.state === "accepted" && !replace &&
-        !Object.hasOwn(patch, "agentRuntimeOverride")) {
-      commitStoredSessionExecutionSelection(entry, { ...before, legacyRequest });
-    } else commitStoredSessionExecutionSelection(entry, {
-      state: "deferred",
-      request,
-      ...(legacyRequest ? { legacyRequest } : {}),
-      fallbackPermission:
-        next.modelOverrideSource === "user"
-          ? "explicit"
-          : next.modelOverrideSource || !next.modelOverride
-            ? "configured"
-            : "explicit",
-      ...(previous ? { previous } : {}),
+    const fallbackPermission = resolveLegacyExecutionFallbackPermission({
+      model: next.modelOverride,
+      provider: next.providerOverride,
+      source: next.modelOverrideSource,
+      originProvider: next.modelOverrideFallbackOriginProvider,
+      originModel: next.modelOverrideFallbackOriginModel,
     });
+    const legacyRequest =
+      !acpChanged && !next.modelOverride && next.providerOverride
+        ? {
+            provider: next.providerOverride,
+            ...(next.modelOverrideSource ? { source: next.modelOverrideSource } : {}),
+          }
+        : undefined;
+    if (
+      legacyRequest &&
+      before?.state === "accepted" &&
+      !replace &&
+      !modelCleared &&
+      !Object.hasOwn(patch, "agentRuntimeOverride")
+    ) {
+      commitStoredSessionExecutionSelection(entry, {
+        ...before,
+        fallbackPermission,
+        legacyRequest,
+      });
+    } else
+      commitStoredSessionExecutionSelection(entry, {
+        state: "deferred",
+        request,
+        ...(legacyRequest ? { legacyRequest } : {}),
+        fallbackPermission,
+        ...(previous ? { previous } : {}),
+      });
   } else if (before) {
     commitStoredSessionExecutionSelection(entry, before);
   }
@@ -280,14 +351,35 @@ export function reconcileSessionExecutionSelectionView(
         previous: {
           state: "deferred",
           request: {
-            model: {
-              provider: fallback.prevProviderOverride ?? fallback.prevProvider,
-              id: fallback.prevModelOverride ?? fallback.prevModel,
-            },
+            ...(fallback.prevModelOverride
+              ? {
+                  model: {
+                    provider: fallback.prevProviderOverride,
+                    id: fallback.prevModelOverride,
+                  },
+                }
+              : { defaultSelection: "configured" as const }),
           },
-          fallbackPermission:
-            fallback.prevModelOverrideSource === "user" ? "explicit" : "configured",
+          fallbackPermission: resolveLegacyExecutionFallbackPermission({
+            model: fallback.prevModelOverride,
+            provider: fallback.prevProviderOverride,
+            source: fallback.prevModelOverrideSource,
+            originProvider: fallback.prevModelOverrideFallbackOriginProvider,
+            originModel: fallback.prevModelOverrideFallbackOriginModel,
+          }),
+          ...(!fallback.prevModelOverride && fallback.prevProviderOverride
+            ? {
+                legacyRequest: {
+                  provider: fallback.prevProviderOverride,
+                  ...(fallback.prevModelOverrideSource
+                    ? { source: fallback.prevModelOverrideSource }
+                    : {}),
+                },
+              }
+            : {}),
         },
+        prevModel: fallback.prevModel,
+        prevProvider: fallback.prevProvider,
         prevAuthProfileOverride: fallback.prevAuthProfileOverride,
         prevAuthProfileOverrideSource: fallback.prevAuthProfileOverrideSource,
         prevAuthProfileOverrideCompactionCount: fallback.prevAuthProfileOverrideCompactionCount,
@@ -489,9 +581,13 @@ export function commitSessionExecutionSelection(
   const before = getSessionExecutionSelection(entry);
   const initial = { ...entry };
   const pairChanged = !isDeepStrictEqual(before, selection);
-  const legacyRequest = (options.cause?.kind === "inherit"
-    ? options.cause.entry
-    : options.cause?.kind === "initialize" ? entry : undefined)?.executionSelection?.legacyRequest;
+  const legacyRequest = (
+    options.cause?.kind === "inherit"
+      ? options.cause.entry
+      : options.cause?.kind === "initialize"
+        ? entry
+        : undefined
+  )?.executionSelection?.legacyRequest;
   commitStoredSessionExecutionSelection(entry, {
     state: "accepted",
     selection,

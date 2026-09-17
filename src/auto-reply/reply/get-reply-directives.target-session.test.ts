@@ -75,6 +75,14 @@ async function resolveHelloWithModelDefaults(params: {
     mocks.createModelSelectionState.mockResolvedValueOnce({
       provider: params.selectedProvider ?? "openai",
       model: params.selectedModel ?? "gpt-4o-mini",
+      executionSelection: {
+        model: {
+          provider: params.selectedProvider ?? "openai",
+          id: params.selectedModel ?? "gpt-4o-mini",
+        },
+        executor: { kind: "harness", id: "openclaw" },
+      },
+      sessionExecutionSelection: undefined,
       allowedModelKeys: new Set<string>(),
       allowedModelCatalog: [],
       resolveDefaultThinkingLevel,
@@ -260,6 +268,11 @@ describe("resolveReplyDirectives", () => {
     mocks.createModelSelectionState.mockResolvedValue({
       provider: "openai",
       model: "gpt-4o-mini",
+      executionSelection: {
+        model: { provider: "openai", id: "gpt-4o-mini" },
+        executor: { kind: "harness", id: "openclaw" },
+      },
+      sessionExecutionSelection: undefined,
       allowedModelKeys: new Set<string>(),
       allowedModelCatalog: [],
       resolveThinkingCatalog: vi.fn(async () => []),
@@ -268,6 +281,8 @@ describe("resolveReplyDirectives", () => {
     });
     mocks.applyInlineDirectiveOverrides.mockImplementation(async (params) => ({
       kind: "continue",
+      executionSelection: params.modelState.executionSelection,
+      sessionExecutionSelection: params.modelState.sessionExecutionSelection,
       directives: params.directives,
       provider: params.provider,
       model: params.model,
@@ -529,6 +544,11 @@ describe("resolveReplyDirectives", () => {
         directives: params.directives,
         provider: "openai",
         model: targetModel,
+        executionSelection: {
+          model: { provider: "openai", id: targetModel },
+          executor: { kind: "harness", id: "codex" },
+        },
+        sessionExecutionSelection: params.modelState.sessionExecutionSelection,
         contextTokens: params.contextTokens,
       }));
 
@@ -569,6 +589,11 @@ describe("resolveReplyDirectives", () => {
       directives: params.directives,
       provider: "openai",
       model: "gpt-5.6-sol",
+      executionSelection: {
+        model: { provider: "openai", id: "gpt-5.6-sol" },
+        executor: { kind: "harness", id: "codex" },
+      },
+      sessionExecutionSelection: params.modelState.sessionExecutionSelection,
       contextTokens: params.contextTokens,
     }));
 

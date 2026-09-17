@@ -462,6 +462,12 @@ function baseParams(
     ...defaults,
     ...overrides,
     modelState: {
+      sessionExecutionSelection: structuredClone(
+        (
+          overrides.sessionStore?.[overrides.sessionKey ?? defaults.sessionKey] ??
+          overrides.sessionEntry
+        )?.executionSelection,
+      ),
       executionSelection: {
         executor: { kind: "harness", id: "openclaw" },
         model: {

@@ -34,6 +34,7 @@ import {
 } from "../model-picker/execution-selection.js";
 import {
   getSessionEntry as getSdkSessionEntry,
+  patchSessionEntry as patchSdkSessionEntry,
   upsertSessionEntry as upsertSdkSessionEntry,
 } from "../plugin-sdk/session-store-runtime.js";
 import { createPluginMetadataSnapshotFixture } from "../plugins/plugin-metadata.test-support.js";
@@ -69,9 +70,8 @@ import {
   createCommandSessionEntry,
   createCommandSessionFixture,
   createConfiguredModelCompatRuntimeConfig,
-  createTestModelSelection,
-  createTestModelVisibilityPolicy,
 } from "./agent-command.live-model-switch.test-helpers.js";
+import { createTestModelVisibilityPolicy } from "./agent-command.model-selection.test-support.js";
 import { registerAgentCommandRecoveryCases } from "./agent-command.restart-recovery.test-harness.js";
 import { createApiKeyCredential } from "./auth-profiles/credential-fixtures.test-support.js";
 import type { FailoverReason } from "./failover/signal.js";
@@ -377,10 +377,14 @@ vi.mock("./harness/runtime-plugin.js", () => ({
 }));
 
 vi.mock("./runtime-plugins.js", async () => {
-  const { createEmptyPluginRegistry } = await import("../plugins/registry-empty.js");
+  const { getActivePluginRegistry } = await import("../plugins/runtime.js");
   const { createTestRuntimePlugins } =
     await import("./agent-command.live-model-switch.test-mocks.js");
-  return createTestRuntimePlugins(createEmptyPluginRegistry);
+  return createTestRuntimePlugins(() => {
+    const registry = getActivePluginRegistry();
+    if (!registry) throw new Error("Command fixture registry is not registered");
+    return registry;
+  });
 });
 
 // Harness selection has dedicated coverage; this command suite registers no auto harnesses.
@@ -713,7 +717,11 @@ vi.mock("./model-catalog.runtime.js", () => ({
   loadPreparedModelCatalogSnapshot: state.loadPreparedModelCatalogSnapshotMock,
 }));
 
-vi.mock("./model-selection.js", () => createTestModelSelection(state));
+vi.mock("./model-selection.js", async () => {
+  const { createTestModelSelection } =
+    await import("./agent-command.model-selection.test-support.js");
+  return createTestModelSelection(state);
+});
 
 vi.mock("./model-visibility-policy.js", () => ({
   createModelVisibilityPolicy: (...args: Parameters<typeof createTestModelVisibilityPolicy>) =>
@@ -1178,7 +1186,12 @@ describe("agentCommand – LiveSessionModelSwitchError retry", () => {
     state.resolveThinkingDefaultMock.mockReturnValue("low");
     state.resolveAgentSkillsFilterMock.mockReturnValue(undefined);
     state.loadManifestModelCatalogMock.mockReturnValue([]);
-    manifestMetadataSnapshot = createPluginMetadataSnapshotFixture();
+    manifestMetadataSnapshot = createPluginMetadataSnapshotFixture({
+      plugins: registry.agentHarnesses.map(({ pluginId, harness }) => ({
+        id: pluginId,
+        activation: { onAgentHarnesses: [harness.id] },
+      })),
+    });
     state.resolvePluginMetadataSnapshotMock.mockReturnValue(manifestMetadataSnapshot);
     state.loadProviderScopedThinkingCatalogMock.mockReset().mockResolvedValue(undefined);
     state.loadFullModelCatalogMock.mockClear();
@@ -2625,6 +2638,83 @@ describe("agentCommand – LiveSessionModelSwitchError retry", () => {
     expect(fallbackParams.provider).toBe("openai");
     expect(fallbackParams.model).toBe("channel-model");
   });
+
+  it.each([false, true])(
+    "keeps incomplete SDK intent across a command and completes it later; partial=%s",
+    async (partial) => {
+      await withOpenClawTestState({ label: "command-partial-selection" }, async (testState) => {
+        const sessionKey = "agent:default:discord:channel:channel-123";
+        const scope = {
+          agentId: "default",
+          sessionKey,
+          storePath: testState.path("alternate", "sessions.json"),
+        };
+        await upsertSdkSessionEntry({
+          ...scope,
+          entry: createCommandSessionEntry({
+            channel: "discord",
+            groupId: "channel-123",
+            skillsSnapshot: { prompt: "", skills: [], version: 0 },
+          }),
+        });
+        if (partial) {
+          await patchSdkSessionEntry({ ...scope, update: () => ({ providerOverride: "pending" }) });
+        }
+        state.runtimeConfigMock = {
+          agents: {
+            defaults: {
+              model: "fixture/default",
+              models: { "fixture/default": {}, "fixture/decoy": {}, "pending/replacement": {} },
+            },
+          },
+          channels: { modelByChannel: { discord: { "channel-123": "fixture/decoy" } } },
+        };
+        state.resolvedSessionKeyMock = sessionKey;
+        state.storePathMock = scope.storePath;
+        for (const phase of partial ? ["initial", "complete"] : ["initial"]) {
+          if (phase === "complete") {
+            await patchSdkSessionEntry({
+              ...scope,
+              update: () => ({ modelOverride: "replacement" }),
+            });
+          }
+          const entry = expectDefined(sessionAccessor.loadSessionEntryReadOnly(scope), "session");
+          state.sessionEntryMock = entry;
+          state.sessionStoreMock = { [sessionKey]: entry };
+          const provider = phase === "complete" ? "pending" : "fixture";
+          const model = phase === "complete" ? "replacement" : partial ? "default" : "decoy";
+          setupSuccessfulAttempt(provider, model);
+          state.runAgentAttemptMock.mockClear();
+
+          await agentCommand({ message: "Continue", sessionKey, channel: "discord" });
+
+          expect(state.runAgentAttemptMock).toHaveBeenCalledWith(
+            expect.objectContaining({
+              executionSelection: {
+                model: { provider, id: model },
+                executor: { kind: "harness", id: "openclaw" },
+              },
+            }),
+          );
+          if (partial && phase === "initial") {
+            await patchSdkSessionEntry({
+              ...scope,
+              update: () => ({ modelProvider: "observation", model: "observed" }),
+            });
+            const view = expectDefined(getSdkSessionEntry(scope), "public session view");
+            expect(view.providerOverride).toBe("pending");
+            expect(view.modelOverride).toBeUndefined();
+          }
+        }
+        if (partial) {
+          expect(getSdkSessionEntry(scope)).toMatchObject({
+            providerOverride: "pending",
+            modelOverride: "replacement",
+          });
+        }
+      });
+    },
+  );
 
   it.each(["explicit", "configured"] as const)(
     "inherits the threaded parent's model and %s fallback permission after an implicit SDK default",

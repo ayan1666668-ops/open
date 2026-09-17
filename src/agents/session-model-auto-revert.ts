@@ -6,12 +6,10 @@ import {
   loadSessionEntry,
   patchSessionEntryCore,
 } from "../config/sessions/session-accessor.js";
-import {
-  createAgentPatchedSessionModelFallback,
-  type AgentPatchedSessionModelFallback,
-} from "../config/sessions/session-model-fallback.js";
+import type { AgentPatchedSessionModelFallback } from "../config/sessions/session-model-fallback.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import {
+  createAgentPatchedSessionModelFallback,
   prepareSessionExecutionSelection,
   commitSessionExecutionSelection,
   executionSelectionTransactionChanged,
@@ -162,6 +160,8 @@ async function reconcileAgentPatchedSessionModel(params: {
         });
       return {
         ...next,
+        model: marker.prevModel,
+        modelProvider: marker.prevProvider,
         authProfileOverride: marker.prevAuthProfileOverride,
         authProfileOverrideSource: marker.prevAuthProfileOverrideSource,
         authProfileOverrideCompactionCount: marker.prevAuthProfileOverrideCompactionCount,

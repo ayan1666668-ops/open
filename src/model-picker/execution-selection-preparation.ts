@@ -282,7 +282,7 @@ export async function prepareSessionExecutionSelection(
       agentId: params.agentId,
       catalog: [...catalog],
       defaultProvider: configured.provider,
-      defaultModel: configured.model,
+      defaultModel: configured,
     });
     if (
       !(params.request.kind === "reset" && !params.request.model) &&

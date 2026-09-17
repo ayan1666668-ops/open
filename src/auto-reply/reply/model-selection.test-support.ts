@@ -1,4 +1,5 @@
 import { createModelVisibilityPolicy } from "../../agents/model-visibility-policy.js";
+import type { SessionEntry } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { ThinkLevel } from "../thinking.shared.js";
 import type { createModelSelectionState } from "./model-selection.js";
@@ -8,6 +9,7 @@ export function createModelSelectionStateFixture(params: {
   agentCfg: NonNullable<NonNullable<OpenClawConfig["agents"]>["defaults"]> | undefined;
   provider: string;
   model: string;
+  sessionEntry?: Pick<SessionEntry, "executionSelection">;
 }): Awaited<ReturnType<typeof createModelSelectionState>> {
   return {
     provider: params.provider,
@@ -16,12 +18,13 @@ export function createModelSelectionStateFixture(params: {
       model: { provider: params.provider, id: params.model },
       executor: { kind: "harness", id: "openclaw" },
     },
+    sessionExecutionSelection: structuredClone(params.sessionEntry?.executionSelection),
     requestedRouteResolution: "resolved",
     modelPolicy: createModelVisibilityPolicy({
       cfg: { agents: { defaults: params.agentCfg } },
       catalog: [],
       defaultProvider: params.provider,
-      defaultModel: params.model,
+      defaultModel: { provider: params.provider, model: params.model },
     }),
     allowedModelKeys: new Set<string>(),
     allowedModelCatalog: [],

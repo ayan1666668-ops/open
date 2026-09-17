@@ -9,11 +9,11 @@ import {
   resolvePersistedOverrideModelRef,
 } from "../../../agents/model-selection-persisted.js";
 import type { SessionEntry } from "../../../config/sessions/types.js";
-import { commitStoredSessionExecutionSelection } from "../../../model-picker/apply-session-model-selection.js";
-import type {
-  ExecutionFallbackPermission,
-  SessionExecutionSelection,
-} from "../../../model-picker/execution-selection.js";
+import {
+  commitStoredSessionExecutionSelection,
+  resolveLegacyExecutionFallbackPermission,
+} from "../../../model-picker/apply-session-model-selection.js";
+import type { SessionExecutionSelection } from "../../../model-picker/execution-selection.js";
 import { sessionExecutionSelectionSchema } from "../../../model-picker/execution-selection.schema.js";
 import { resolveSessionPinnedHarnessId } from "../../../sessions/agent-harness-session-key.js";
 
@@ -27,8 +27,6 @@ const RETIRED_SELECTION_FIELDS = [
   "modelOverrideFallbackOriginModel",
 ] as const;
 const RETIRED_FALLBACK_FIELDS = [
-  "prevModel",
-  "prevProvider",
   "prevModelOverride",
   "prevProviderOverride",
   "prevModelOverrideSource",
@@ -76,8 +74,13 @@ export function migrateSessionExecutionSelection(params: {
     entry.modelOverrideSource === "auto" ||
     entry.modelOverrideSource === "default" ||
     (entry.modelOverrideSource !== "user" && Boolean(originProvider && originModel));
-  const fallbackPermission: ExecutionFallbackPermission =
-    model && !automatic ? "explicit" : "configured";
+  const fallbackPermission = resolveLegacyExecutionFallbackPermission({
+    model,
+    provider,
+    source: entry.modelOverrideSource,
+    originProvider,
+    originModel,
+  });
   const request =
     automatic && originProvider && originModel
       ? { provider: originProvider, id: originModel }
@@ -104,6 +107,17 @@ export function migrateSessionExecutionSelection(params: {
         })
       : undefined;
   const requestedModel = ref ? { provider: ref.provider, id: ref.model } : request;
+  const legacyRequest =
+    provider && !model && !requestedModel
+      ? {
+          provider,
+          ...(entry.modelOverrideSource === "auto" ||
+          entry.modelOverrideSource === "user" ||
+          entry.modelOverrideSource === "default"
+            ? { source: entry.modelOverrideSource }
+            : {}),
+        }
+      : undefined;
   if (entry.executionSelection !== undefined) {
     // An interrupted retry must not replace a pair committed by the selection owner.
     selection = sessionExecutionSelectionSchema.parse(entry.executionSelection);
@@ -143,17 +157,17 @@ export function migrateSessionExecutionSelection(params: {
               fallbackPermission,
             };
     }
+    if (legacyRequest) selection = { ...selection, legacyRequest };
   }
   let fallbackChanged = false;
   if (isRecord(entry.modelFallback)) {
     const fallback = { ...entry.modelFallback };
     if (fallback.previous === undefined) {
-      const hadOverride = normalizeOptionalString(fallback.prevModelOverride) !== undefined;
       const previous = migrateSessionExecutionSelection({
         entry: {
-          modelOverride: hadOverride ? fallback.prevModelOverride : fallback.prevModel,
-          providerOverride: hadOverride ? fallback.prevProviderOverride : fallback.prevProvider,
-          modelOverrideSource: hadOverride ? fallback.prevModelOverrideSource : "auto",
+          modelOverride: fallback.prevModelOverride,
+          providerOverride: fallback.prevProviderOverride,
+          modelOverrideSource: fallback.prevModelOverrideSource,
           modelOverrideRouteResolution: fallback.prevModelOverrideRouteResolution,
           modelOverrideFallbackOriginProvider: fallback.prevModelOverrideFallbackOriginProvider,
           modelOverrideFallbackOriginModel: fallback.prevModelOverrideFallbackOriginModel,

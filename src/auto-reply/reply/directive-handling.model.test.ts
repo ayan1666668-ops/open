@@ -2941,7 +2941,7 @@ describe("handleDirectiveOnly model persist behavior (fixes #1435)", () => {
     await replaceSessionEntry({ sessionKey, storePath }, concurrentEntry);
     const sessionStore = { [sessionKey]: sessionEntry };
     const persistenceState: NonNullable<HandleDirectiveParams["persistenceState"]> = {
-      outcome: { kind: "pending", provider: "anthropic", model: "claude-opus-4-6" },
+      outcome: { kind: "pending" },
     };
 
     try {

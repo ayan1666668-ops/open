@@ -45,6 +45,94 @@ describe("Doctor execution selection conversion", () => {
     });
   });
 
+  it.each([undefined, "auto", "user", "default"])(
+    "retains provider-only input and its %s source without choosing a model",
+    (source) => {
+      const result = migrateSessionExecutionSelection({
+        entry: {
+          providerOverride: "provider-later",
+          modelOverrideSource: source,
+          modelProvider: "observed-provider",
+          model: "observed-model",
+        },
+        defaultProvider: "configured-provider",
+        classifyExecutor,
+      });
+      expect(result.entry).toEqual({
+        modelProvider: "observed-provider",
+        model: "observed-model",
+        executionSelection: {
+          state: "deferred",
+          request: {},
+          fallbackPermission: source === "auto" || source === "default" ? "configured" : "explicit",
+          legacyRequest: {
+            provider: "provider-later",
+            ...(source ? { source } : {}),
+          },
+        },
+      });
+      expect(migrateSessionExecutionSelection({ entry: result.entry, classifyExecutor })).toEqual({
+        entry: result.entry,
+        changed: false,
+      });
+    },
+  );
+
+  it.each([
+    { entry: { agentRuntimeOverride: "app-a" }, runtime: "app-a" },
+    { entry: { agentRuntimeOverride: "missing-app" }, runtime: "missing-app" },
+    { entry: { modelSelectionLocked: true, agentHarnessId: "app-a" }, runtime: "app-a" },
+  ])(
+    "keeps provider-only intent separate from the $runtime executor request",
+    ({ entry, runtime }) => {
+      const result = migrateSessionExecutionSelection({
+        entry: { ...entry, providerOverride: "provider-later" },
+        defaultProvider: "configured-provider",
+        classifyExecutor,
+      });
+      expect(result.entry.executionSelection).toEqual({
+        state: "deferred",
+        request: { runtime },
+        fallbackPermission: "explicit",
+        legacyRequest: { provider: "provider-later" },
+      });
+    },
+  );
+
+  it("retains the accepted ACP pair beside provider-only legacy input", () => {
+    const result = migrateSessionExecutionSelection({
+      entry: { providerOverride: "provider-later", modelOverrideSource: "user" },
+      acp: { backend: "backend-a", agent: "agent-a", model: "accepted-model" },
+      classifyExecutor,
+    });
+    expect(result.entry.executionSelection).toEqual({
+      state: "accepted",
+      selection: {
+        model: { id: "accepted-model" },
+        executor: { kind: "acp", backend: "backend-a", agent: "agent-a" },
+      },
+      fallbackPermission: "explicit",
+      legacyRequest: { provider: "provider-later", source: "user" },
+    });
+  });
+
+  it("recovers complete fallback-origin intent before classifying partial input", () => {
+    const result = migrateSessionExecutionSelection({
+      entry: {
+        providerOverride: "provider-temporary",
+        modelOverrideSource: "auto",
+        modelOverrideFallbackOriginProvider: "provider-original",
+        modelOverrideFallbackOriginModel: "model-original",
+      },
+      classifyExecutor,
+    });
+    expect(result.entry.executionSelection).toEqual({
+      state: "deferred",
+      request: { model: { provider: "provider-original", id: "model-original" } },
+      fallbackPermission: "configured",
+    });
+  });
+
   it.each([
     { provider: undefined, model: "provider-a/model-a", expected: "model-a" },
     { provider: "provider-a", model: "provider-a/model-a", expected: "model-a" },
@@ -160,7 +248,37 @@ describe("Doctor execution selection conversion", () => {
     expect(result.entry.agentHarnessId).toBe("app-a");
   });
 
-  it("converts rollback intent without borrowing the current executor", () => {
+  it("preserves a provider-only rollback request instead of completing it from observations", () => {
+    const result = migrateSessionExecutionSelection({
+      entry: {
+        modelOverride: "temporary",
+        providerOverride: "provider-current",
+        modelFallback: {
+          source: "agent-patch",
+          ts: 1,
+          prevModel: "observed-model",
+          prevProvider: "observed-provider",
+          prevProviderOverride: "provider-later",
+          prevModelOverrideSource: "user",
+        },
+      },
+      classifyExecutor,
+    });
+    expect(result.entry.modelFallback).toEqual({
+      source: "agent-patch",
+      ts: 1,
+      prevModel: "observed-model",
+      prevProvider: "observed-provider",
+      previous: {
+        state: "deferred",
+        request: {},
+        fallbackPermission: "explicit",
+        legacyRequest: { provider: "provider-later", source: "user" },
+      },
+    });
+  });
+
+  it("retains rollback observations without making them selection intent", () => {
     const result = migrateSessionExecutionSelection({
       entry: {
         providerOverride: "provider-b",
@@ -182,13 +300,15 @@ describe("Doctor execution selection conversion", () => {
     expect(result.entry.modelFallback).toEqual({
       source: "agent-patch",
       ts: 1,
+      prevModel: "previous",
+      prevProvider: "provider-a",
       prevAuthProfileOverride: "account-a",
       prevAuthProfileOverrideSource: "user",
       prevContextWindow: "64k",
       prevThinkingLevel: "high",
       previous: {
         state: "deferred",
-        request: { model: { provider: "provider-a", id: "previous" } },
+        request: {},
         fallbackPermission: "configured",
       },
     });

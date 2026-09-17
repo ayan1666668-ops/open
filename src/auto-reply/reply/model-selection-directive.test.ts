@@ -13,7 +13,7 @@ function resolveDirective(params: { cfg: OpenClawConfig; raw: string; agentId?: 
     cfg: params.cfg,
     catalog: [],
     defaultProvider,
-    defaultModel,
+    defaultModel: { provider: defaultProvider, model: defaultModel },
     agentId: params.agentId,
   });
   return {

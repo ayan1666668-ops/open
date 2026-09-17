@@ -14,12 +14,21 @@ const pair = z.union([
     .strict(),
 ]);
 const fallbackPermission = z.enum(["configured", "explicit"]);
+const legacyRequest = z
+  .object({
+    provider: identity,
+    source: z.enum(["auto", "user", "default"]).optional(),
+  })
+  .strict()
+  .optional();
 const deferredConstraints = {
   runtime: identity.optional(),
   executor: z.union([harness, cli, acp]).optional(),
 };
 export const sessionExecutionSelectionSchema = z.discriminatedUnion("state", [
-  z.object({ state: z.literal("accepted"), selection: pair, fallbackPermission }).strict(),
+  z
+    .object({ state: z.literal("accepted"), selection: pair, fallbackPermission, legacyRequest })
+    .strict(),
   z
     .object({
       state: z.literal("deferred"),
@@ -38,6 +47,7 @@ export const sessionExecutionSelectionSchema = z.discriminatedUnion("state", [
       ]),
       fallbackPermission,
       previous: pair.optional(),
+      legacyRequest,
     })
     .strict(),
 ]);

@@ -746,9 +746,11 @@ export async function handleDirectiveOnly(
   if (params.persistenceState) {
     params.persistenceState.outcome = {
       kind: "applied",
-      provider: resolvedProvider,
-      model: resolvedModel,
       modelCatalog: thinkingCatalog,
+      executionSelection: acceptedSelection,
+      sessionExecutionSelection: acceptedSelection
+        ? structuredClone(sessionEntry.executionSelection)
+        : undefined,
     };
   }
 

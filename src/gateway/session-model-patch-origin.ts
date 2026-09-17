@@ -1,8 +1,8 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { resolveSessionModelRefCore as resolveSessionModelRef } from "../agents/session-model-ref.js";
 import type { InternalSessionEntry as SessionEntry } from "../config/sessions.js";
-import { createAgentPatchedSessionModelFallback } from "../config/sessions/session-model-fallback.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { createAgentPatchedSessionModelFallback } from "../model-picker/apply-session-model-selection.js";
 
 const agentSessionModelPatch = new AsyncLocalStorage<boolean>();
 

@@ -98,7 +98,7 @@ async function applySelectionToSession(params: {
     throw new Error(prepared.message);
   }
   if (isAcpExecutionSelection(prepared.selection)) {
-    throw new Error("Change the model in its own request for this session");
+    throw new Error("ACP reset tails must be handled before host model selection.");
   }
   const previous = getSessionExecutionSelection(sessionEntry);
   commitSessionModelSelectionWithAuth({

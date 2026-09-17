@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { resolveAgentConfig, resolveAgentRunCwd } from "../../agents/agent-scope-config.js";
 import {
@@ -18,9 +19,8 @@ import { readChannelContextAdmissionEvidence } from "../../channels/message-acce
 import { getRuntimeConfig } from "../../config/config.js";
 import { conversationIdentityFromMsgContext } from "../../config/sessions/conversation-identity.js";
 import { resolveGroupSessionKey } from "../../config/sessions/group.js";
+import { loadSessionEntryReadOnly } from "../../config/sessions/session-accessor.js";
 import { normalizeMediaFacts } from "../../media/media-facts.js";
-import { prepareSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
-import { getSessionExecutionSelection } from "../../model-picker/execution-selection.js";
 import {
   isAcpExecutionSelection,
   isModelExecutionSelection,
@@ -36,6 +36,7 @@ import { isConfiguredCommandOwner } from "../command-auth.js";
 import { getGroupThreadTurn } from "../group-thread-context.js";
 import { resolveInternalTurnTranscript } from "../internal-turn-source.js";
 import type { OriginatingChannelType } from "../templating.js";
+import type { ReplyPayload } from "../types.js";
 import { resolveCurrentTurnImages } from "./current-turn-images.js";
 import { resolveEffectiveReplyRoute } from "./effective-reply-route.js";
 import type { PreparedReplyRunAdmission } from "./get-reply-run-admission.js";
@@ -146,28 +147,10 @@ export async function executePreparedReplyRun(state: PreparedReplyRunAdmission) 
     elevatedAllowed,
   } = params;
 
-  let runExecutionSelection = params.directives.hasModelDirective
-    ? getSessionExecutionSelection(preparedSessionState.sessionEntry)
-    : params.modelState.executionSelection;
-  if (
-    !runExecutionSelection ||
-    (isModelExecutionSelection(runExecutionSelection) &&
-      (runExecutionSelection.model.provider !== provider ||
-        runExecutionSelection.model.id !== model))
-  ) {
-    const selectionResult = await prepareSessionExecutionSelection({
-      cfg,
-      agentId,
-      sessionKey,
-      sessionEntry: preparedSessionState.sessionEntry,
-      modelCatalog: thinkingCatalog,
-      request: { kind: "model", model: { provider, id: model } },
-    });
-    if (selectionResult.status !== "ready") {
-      typing.cleanup();
-      return { text: selectionResult.message };
-    }
-    runExecutionSelection = selectionResult.selection;
+  const runExecutionSelection = params.modelState.executionSelection;
+  if (!runExecutionSelection) {
+    typing.cleanup();
+    return { text: "The session model is not ready. Please try again.", isError: true };
   }
   if (isAcpExecutionSelection(runExecutionSelection)) {
     typing.cleanup();
@@ -389,6 +372,22 @@ export async function executePreparedReplyRun(state: PreparedReplyRunAdmission) 
   }
   const admittedSessionSettings = opts?.admittedSessionSettings;
   const groupTurn = getGroupThreadTurn();
+  const validateExecutionSelection = (): ReplyPayload | undefined => {
+    const currentSessionEntry = storePath
+      ? loadSessionEntryReadOnly({ agentId, sessionKey, storePath })
+      : resolvePreparedSessionState().sessionEntry;
+    if (
+      !isDeepStrictEqual(
+        params.modelState.sessionExecutionSelection,
+        currentSessionEntry?.executionSelection,
+      )
+    ) {
+      return {
+        text: "Session settings changed while preparing this reply. Please try again.",
+        isError: true,
+      };
+    }
+  };
   const followupRun = {
     prompt: queuedBody,
     transcriptPrompt: transcriptCommandBody,
@@ -619,6 +618,7 @@ export async function executePreparedReplyRun(state: PreparedReplyRunAdmission) 
     inheritedCronCreatorAuthorityCapability ?? createdCronCreatorAuthorityCapability;
   const execute = () =>
     runReplyAgent({
+      validateExecutionSelection,
       commandBody: prefixedCommandBody,
       transcriptCommandBody,
       followupRun,

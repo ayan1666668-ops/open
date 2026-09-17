@@ -30,6 +30,7 @@ import { buildChannelSourceTurnId } from "./source-turn-id.js";
 import type { TypingSignaler } from "./typing-mode.js";
 
 type ActiveReplySteerParams = {
+  validateExecutionSelection?: RunReplyAgentParams["validateExecutionSelection"];
   followupRun: RunReplyAgentParams["followupRun"];
   opts: RunReplyAgentParams["opts"];
   providedReplyOperation: ReplyOperation | undefined;
@@ -123,7 +124,17 @@ export async function runActiveReplySteer(
   };
   scheduleParkedFallback();
   releaseAdmissionTicket();
-  const fallback = async (reason?: string): Promise<"handled"> => {
+  const rejectChangedSelection = (): ReplyPayload | undefined => {
+    const rejection = params.validateExecutionSelection?.();
+    if (rejection) {
+      parked.consume();
+      typing.cleanup();
+    }
+    return rejection;
+  };
+  const fallback = async (reason?: string): Promise<"handled" | ReplyPayload> => {
+    const rejection = rejectChangedSelection();
+    if (rejection) return rejection;
     parked.fallback();
     if (replyOperationRunState) {
       replyOperationRunState.admission = { status: "accepted", mode: "followup" };
@@ -174,6 +185,8 @@ export async function runActiveReplySteer(
     ) {
       return await fallback("terminal source-reply delivery is closed");
     }
+    const selectionRejection = rejectChangedSelection();
+    if (selectionRejection) return selectionRejection;
     const injectionAttempt = beginReplyMessageInjectionTarget(injectionTarget, followupRun.prompt, {
       steeringMode: "all",
       isInboundUserMessage: true,

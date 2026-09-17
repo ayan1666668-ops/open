@@ -130,6 +130,30 @@ function expectNoEffects() {
 }
 
 describe("applySessionExecutionSelection public operation", () => {
+  it("preserves unfinished SDK intent through initialization and consumes it on reset", async () => {
+    const params = createParams({
+      sessionEntry: createEntry({
+        executionSelection: {
+          state: "deferred",
+          request: { defaultSelection: "configured" },
+          fallbackPermission: "configured",
+          legacyRequest: { provider: "other" },
+        },
+      }),
+      request: { kind: "initialize" },
+    });
+    const initialized = await applySessionExecutionSelection(params);
+    expect(initialized).toMatchObject({ status: "applied", selection: pair() });
+    expect(params.sessionEntry.executionSelection).toMatchObject({
+      state: "accepted",
+      selection: pair(),
+      legacyRequest: { provider: "other" },
+    });
+    const reset = await applySessionExecutionSelection({ ...params, request: { kind: "reset" } });
+    expect(reset).toMatchObject({ status: "applied", selection: pair(), reason: "reset" });
+    expect(params.sessionEntry.executionSelection).not.toHaveProperty("legacyRequest");
+  });
+
   it("retains the executor, invalidates context, and publishes the accepted pair once", async () => {
     const params = createParams({
       sessionKey: "agent:main:channel:bound:thread:42",

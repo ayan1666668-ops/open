@@ -34,6 +34,7 @@ import {
   isAcpExecutionSelection,
   isModelExecutionSelection,
   type ExecutionSelection,
+  type SessionExecutionSelection,
 } from "../../model-picker/execution-selection.js";
 import { createLazyImportLoader } from "../../shared/lazy-promise.js";
 import { isUserModelAuthProfileId } from "../../state/user-model-account-id.js";
@@ -61,6 +62,7 @@ type ModelSelectionState = {
   provider: string;
   model: string;
   executionSelection?: ExecutionSelection;
+  sessionExecutionSelection: SessionExecutionSelection | undefined;
   requestedRouteResolution: ModelFallbackRouteResolution;
   modelPolicy: ModelVisibilityPolicy;
   allowedModelKeys: Set<string>;
@@ -255,7 +257,7 @@ export async function createModelSelectionState(params: {
       manifestPlugins: runtimeModelNormalization.manifestPlugins,
       request: turnLocalSelection
         ? { kind: "model", model: { provider, id: model } }
-        : { kind: "initialize" },
+        : { kind: "initialize", model: { provider, id: model } },
     });
     if (prepared.status !== "ready") {
       throw new Error(prepared.message);
@@ -301,6 +303,8 @@ export async function createModelSelectionState(params: {
     }
   }
 
+  // Admission may wait after this choice; later snapshots must not move the comparison baseline.
+  const sessionExecutionSelection = structuredClone(sessionEntry?.executionSelection);
   if (
     !params.skipStoredModelOverride &&
     executionSelection &&
@@ -464,6 +468,7 @@ export async function createModelSelectionState(params: {
     provider,
     model,
     executionSelection,
+    sessionExecutionSelection,
     requestedRouteResolution: "resolved",
     modelPolicy: visibilityPolicy,
     allowedModelKeys,

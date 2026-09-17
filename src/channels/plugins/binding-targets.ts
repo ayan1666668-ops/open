@@ -54,6 +54,8 @@ export async function resetConfiguredBindingTargetInPlace(params: {
   agentId?: string;
   reason: "new" | "reset";
   commandSource?: string;
+  expectedSessionId?: string;
+  assertCurrent?: () => void;
 }): Promise<StatefulBindingTargetResetResult> {
   let resolved = resolveStatefulBindingTargetBySessionKey({
     cfg: params.cfg,

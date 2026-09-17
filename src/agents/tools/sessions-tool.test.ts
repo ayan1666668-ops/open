@@ -667,6 +667,8 @@ describe("sessions tool", () => {
             thinkingLevel: "low",
             modelFallback: {
               previous: acceptedSelection("openai", "good", "configured"),
+              prevModel: "good",
+              prevProvider: "openai",
               prevAuthProfileOverride: "good-profile",
               prevAuthProfileOverrideSource: "user",
               prevThinkingLevel: "high",
@@ -704,6 +706,8 @@ describe("sessions tool", () => {
         label: "Research",
         modelFallback: {
           previous: acceptedSelection("openai", "good", "configured"),
+          prevModel: "good",
+          prevProvider: "openai",
           prevAuthProfileOverride: "good-profile",
           prevThinkingLevel: "high",
           source: "agent-patch",
@@ -777,6 +781,8 @@ describe("sessions tool", () => {
           updatedAt: 1,
           modelFallback: {
             previous: acceptedSelection("openai", "good", "configured"),
+            prevModel: "good",
+            prevProvider: "openai",
             ts: 1,
             source: "agent-patch",
           },
@@ -830,6 +836,8 @@ describe("sessions tool", () => {
           executionSelection: acceptedSelection("broken", "bad"),
           modelFallback: {
             previous: acceptedSelection("openai", "good", "configured"),
+            prevModel: "good",
+            prevProvider: "openai",
             ts: 1,
             source: "agent-patch",
           },
@@ -877,6 +885,8 @@ describe("sessions tool", () => {
           executionSelection: acceptedSelection("openai", "b"),
           modelFallback: {
             previous: acceptedSelection("openai", "a", "configured"),
+            prevModel: "a",
+            prevProvider: "openai",
             ts: 10,
             source: "agent-patch",
           },
@@ -893,6 +903,8 @@ describe("sessions tool", () => {
         executionSelection: acceptedSelection("openai", "c"),
         modelFallback: {
           previous: acceptedSelection("openai", "a", "configured"),
+          prevModel: "a",
+          prevProvider: "openai",
           ts: 20,
           source: "agent-patch",
         },
@@ -908,6 +920,8 @@ describe("sessions tool", () => {
         executionSelection: acceptedSelection("openai", "d"),
         modelFallback: {
           previous: acceptedSelection("openai", "a", "configured"),
+          prevModel: "a",
+          prevProvider: "openai",
           ts: 30,
           source: "agent-patch",
         },

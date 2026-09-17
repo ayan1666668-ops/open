@@ -433,9 +433,8 @@ export async function resolveReplyDirectives(params: {
     isFastTestEnv: isFastTestRuntimeEnv(),
   });
 
-  let modelState: Awaited<ReturnType<typeof createModelSelectionState>>;
-  try {
-    modelState = await createModelSelectionState({
+  const prepareModelState = (hasModelDirective: boolean) =>
+    createModelSelectionState({
       cfg,
       agentId,
       agentCfg,
@@ -451,13 +450,16 @@ export async function resolveReplyDirectives(params: {
       primaryModel,
       provider,
       model,
-      hasModelDirective: directives.hasModelDirective,
+      hasModelDirective,
       hasOneTurnModelOverride,
       skipStoredModelOverride,
       hasResolvedHeartbeatModelOverride,
       isHeartbeat: opts?.isHeartbeat === true,
       preparedModelCatalog: params.preparedModelCatalog,
     });
+  let modelState: Awaited<ReturnType<typeof createModelSelectionState>>;
+  try {
+    modelState = await prepareModelState(directives.hasModelDirective);
   } catch (error) {
     if (
       !(error instanceof ModelSelectionLockedError) &&
@@ -539,7 +541,21 @@ export async function resolveReplyDirectives(params: {
   directives = applyResult.directives;
   provider = applyResult.provider;
   model = applyResult.model;
+  modelState.executionSelection = applyResult.executionSelection;
+  modelState.sessionExecutionSelection = applyResult.sessionExecutionSelection;
   contextTokens = applyResult.contextTokens;
+  if (!modelState.executionSelection) {
+    modelState = await prepareModelState(false);
+    provider = modelState.provider;
+    model = modelState.model;
+    contextTokens = resolveContextTokens({
+      cfg,
+      provider,
+      model,
+      modelContextWindow: modelState.modelContextWindow,
+      modelContextTokens: modelState.modelContextTokens,
+    });
+  }
   const thinkingRuntime = resolveEffectiveAgentRuntime({
     cfg,
     provider,

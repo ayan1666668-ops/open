@@ -22,9 +22,10 @@ type SessionModelEntry = Partial<SessionEntry>;
 export function resolveSessionModelRef(
   cfg: OpenClawConfig,
   entry?:
-    | PublicSessionEntry
+    | (PublicSessionEntry & Pick<SessionEntry, "executionSelection">)
     | Pick<
-        PublicSessionEntry,
+        PublicSessionEntry & Pick<SessionEntry, "executionSelection">,
+        | "executionSelection"
         | "model"
         | "modelProvider"
         | "modelOverride"
@@ -36,6 +37,14 @@ export function resolveSessionModelRef(
   agentId?: string,
   options?: { allowPluginNormalization?: boolean },
 ): { provider: string; model: string } {
+  if (entry?.executionSelection) {
+    return resolveSessionModelRefCore(
+      cfg,
+      { executionSelection: entry.executionSelection },
+      agentId,
+      options,
+    );
+  }
   const hasOrigin = Boolean(
     (entry?.providerOverride?.trim() || entry?.modelOverride?.trim()) &&
     entry?.modelOverrideFallbackOriginProvider?.trim() &&

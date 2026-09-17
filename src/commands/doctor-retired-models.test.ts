@@ -433,8 +433,11 @@ describe("doctor retired model references", () => {
           {
             sessionId: "blocked-legacy",
             updatedAt: 1,
-            providerOverride: "openai-codex",
-            modelOverride: retiredModel,
+            executionSelection: {
+              state: "deferred",
+              request: { model: { provider: "openai-codex", id: retiredModel } },
+              fallbackPermission: "explicit",
+            },
             authProfileOverride: "chatgpt",
             authProfileOverrideSource: "user",
           },
@@ -447,8 +450,11 @@ describe("doctor retired model references", () => {
         });
         expect(loadSessionEntry({ storePath: sessions, sessionKey, env: state.env })).toMatchObject(
           {
-            providerOverride: "openai-codex",
-            modelOverride: retiredModel,
+            executionSelection: {
+              state: "deferred",
+              request: { model: { provider: "openai-codex", id: retiredModel } },
+              fallbackPermission: "explicit",
+            },
             authProfileOverride: "chatgpt",
           },
         );
@@ -476,8 +482,11 @@ describe("doctor retired model references", () => {
           {
             sessionId: modelOverride,
             updatedAt: 1,
-            modelOverride,
-            modelOverrideSource: "user",
+            executionSelection: {
+              state: "deferred",
+              request: { model: { id: modelOverride } },
+              fallbackPermission: "explicit",
+            },
             authProfileOverride: "chatgpt",
             authProfileOverrideSource: "user",
           },
@@ -495,11 +504,59 @@ describe("doctor retired model references", () => {
           sessionKey: `agent:main:${modelOverride}`,
           env: state.env,
         });
-        expect(entry?.modelOverride).toBe(action === "replace" ? "current-model" : undefined);
-        expect(entry?.providerOverride).toBe(action === "replace" ? "openai" : undefined);
+        expect(entry?.executionSelection).toEqual({
+          state: "deferred",
+          request: { model: { provider, id: "current-model" } },
+          fallbackPermission: action === "replace" ? "explicit" : "configured",
+        });
         expect(entry?.authProfileOverride).toBe(provider === "openai" ? "chatgpt" : undefined);
         expect(entry?.authProfileOverrideSource).toBe(provider === "openai" ? "user" : undefined);
       }
+    },
+  );
+
+  it.each([
+    { model: "retired-with-successor", keepsRequest: true },
+    { model: "retired-without-successor", keepsRequest: false },
+  ])(
+    "preserves partial intent during repair and clears it on reset of $model",
+    async ({ model, keepsRequest }) => {
+      const { cfg, state } = await fixture();
+      const storePath = path.join(state.sessionsDir(), "sessions.json");
+      const sessionKey = "agent:main:partial-request-repair";
+      const legacyRequest = { provider: "provider-later", source: "user" as const };
+      await replaceSessionEntry(
+        { storePath, sessionKey, env: state.env },
+        {
+          sessionId: "partial-request-repair",
+          updatedAt: 1,
+          authProfileOverride: "chatgpt",
+          authProfileOverrideSource: "user",
+          executionSelection: {
+            state: "accepted",
+            selection: {
+              model: { provider: "openai", id: model },
+              executor: { kind: "harness", id: "openclaw" },
+            },
+            fallbackPermission: "explicit",
+            legacyRequest,
+          },
+        },
+      );
+      const result = await maybeRepairCodexSessionRoutes({
+        cfg,
+        env: state.env,
+        shouldRepair: true,
+      });
+      expect(result.repairedSessions).toBe(1);
+      const entry = loadSessionEntry({ storePath, sessionKey, env: state.env });
+      expect(entry?.executionSelection).toMatchObject({
+        state: "deferred",
+        request: { model: { provider: "openai", id: "current-model" } },
+      });
+      expect(entry?.executionSelection?.legacyRequest).toEqual(
+        keepsRequest ? legacyRequest : undefined,
+      );
     },
   );
 
@@ -511,9 +568,11 @@ describe("doctor retired model references", () => {
     const entry = {
       sessionId: "restricted-successor",
       updatedAt: 1,
-      providerOverride: "openai",
-      modelOverride: "retired-with-successor",
-      modelOverrideSource: "user" as const,
+      executionSelection: {
+        state: "deferred" as const,
+        request: { model: { provider: "openai", id: "retired-with-successor" } },
+        fallbackPermission: "explicit" as const,
+      },
       authProfileOverride: "chatgpt",
       authProfileOverrideSource: "user" as const,
     };
@@ -556,10 +615,19 @@ describe("doctor retired model references", () => {
         {
           sessionId: suffix,
           updatedAt: 1,
-          modelOverride:
-            suffix === "clear-personal" ? "retired-without-successor" : "retired-with-successor",
-          providerOverride: "openai",
-          modelOverrideSource: "user",
+          executionSelection: {
+            state: "deferred",
+            request: {
+              model: {
+                provider: "openai",
+                id:
+                  suffix === "clear-personal"
+                    ? "retired-without-successor"
+                    : "retired-with-successor",
+              },
+            },
+            fallbackPermission: "explicit",
+          },
           authProfileOverride: profile,
           authProfileOverrideSource: source,
           contextTokens: 123,
@@ -576,8 +644,12 @@ describe("doctor retired model references", () => {
     expect(preview.warnings.join("\n")).toContain("doctor --fix");
     expect(
       loadSessionEntry({ storePath, sessionKey: "agent:main:chatgpt", env: state.env })
-        ?.modelOverride,
-    ).toBe("retired-with-successor");
+        ?.executionSelection,
+    ).toEqual({
+      state: "deferred",
+      request: { model: { provider: "openai", id: "retired-with-successor" } },
+      fallbackPermission: "explicit",
+    });
     const result = await maybeRepairCodexSessionRoutes({ cfg, env: state.env, shouldRepair: true });
     expect(result.repairedSessions).toBe(3);
     const repaired = loadSessionEntry({
@@ -585,13 +657,21 @@ describe("doctor retired model references", () => {
       sessionKey: "agent:main:chatgpt",
       env: state.env,
     });
-    expect(repaired?.modelOverride).toBe("current-model");
+    expect(repaired?.executionSelection).toEqual({
+      state: "deferred",
+      request: { model: { provider: "openai", id: "current-model" } },
+      fallbackPermission: "explicit",
+    });
     expect(repaired?.authProfileOverride).toBe("chatgpt");
     expect(repaired?.contextTokens).toBeUndefined();
     expect(
       loadSessionEntry({ storePath, sessionKey: "agent:main:personal", env: state.env }),
     ).toMatchObject({
-      modelOverride: "current-model",
+      executionSelection: {
+        state: "deferred",
+        request: { model: { provider: "openai", id: "current-model" } },
+        fallbackPermission: "explicit",
+      },
       authProfileOverride: personal,
       authProfileOverrideSource: "user-link",
     });
@@ -601,24 +681,40 @@ describe("doctor retired model references", () => {
       sessionKey: "agent:main:clear-personal",
       env: state.env,
     });
-    expect(cleared?.modelOverride).toBeUndefined();
+    expect(cleared?.executionSelection).toEqual({
+      state: "deferred",
+      request: { model: { provider: "openai", id: "current-model" } },
+      fallbackPermission: "configured",
+    });
     expect(cleared?.authProfileOverride).toBe(personal);
     expect(cleared?.authProfileOverrideSource).toBe("user-link");
     expect(
-      loadSessionEntry({ storePath, sessionKey: "agent:main:auto", env: state.env })?.modelOverride,
-    ).toBe("retired-with-successor");
+      loadSessionEntry({ storePath, sessionKey: "agent:main:auto", env: state.env })
+        ?.executionSelection,
+    ).toEqual({
+      state: "deferred",
+      request: { model: { provider: "openai", id: "retired-with-successor" } },
+      fallbackPermission: "explicit",
+    });
     expect(
       loadSessionEntry({ storePath, sessionKey: "agent:main:platform", env: state.env })
-        ?.modelOverride,
-    ).toBe("retired-with-successor");
+        ?.executionSelection,
+    ).toEqual({
+      state: "deferred",
+      request: { model: { provider: "openai", id: "retired-with-successor" } },
+      fallbackPermission: "explicit",
+    });
     cfg.models!.providers!.openai!.baseUrl = "https://chatgpt.com/backend-api/codex";
     await replaceSessionEntry(
       { storePath, sessionKey: "agent:main:missing-pin", env: state.env },
       {
         sessionId: "missing-pin",
         updatedAt: 1,
-        modelOverride: "retired-with-successor",
-        providerOverride: "openai",
+        executionSelection: {
+          state: "deferred",
+          request: { model: { provider: "openai", id: "retired-with-successor" } },
+          fallbackPermission: "explicit",
+        },
         authProfileOverride: "missing-account",
         authProfileOverrideSource: "user",
       },
@@ -626,7 +722,11 @@ describe("doctor retired model references", () => {
     await maybeRepairCodexSessionRoutes({ cfg, env: state.env, shouldRepair: true });
     expect(
       loadSessionEntry({ storePath, sessionKey: "agent:main:missing-pin", env: state.env })
-        ?.modelOverride,
-    ).toBe("retired-with-successor");
+        ?.executionSelection,
+    ).toEqual({
+      state: "deferred",
+      request: { model: { provider: "openai", id: "retired-with-successor" } },
+      fallbackPermission: "explicit",
+    });
   });
 });

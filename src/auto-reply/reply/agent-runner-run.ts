@@ -255,6 +255,22 @@ export async function runReplyAgent(
     return questionInput.payload;
   }
 
+  if (messageInjectionDisposition === "accepted") {
+    if (replyOperationRunState) {
+      replyOperationRunState.admission = { status: "accepted", mode: "steer" };
+    }
+    releaseAdmissionTicket();
+    typing.cleanup();
+    return undefined;
+  }
+
+  const selectionRejection = params.validateExecutionSelection?.();
+  if (selectionRejection) {
+    releaseAdmissionTicket();
+    typing.cleanup();
+    return selectionRejection;
+  }
+
   const baseShouldEmitToolResult = createShouldEmitToolResult({
     sessionKey,
     storePath,
@@ -303,15 +319,6 @@ export async function runReplyAgent(
     toolProgressDetail,
   });
 
-  if (messageInjectionDisposition === "accepted") {
-    if (replyOperationRunState) {
-      replyOperationRunState.admission = { status: "accepted", mode: "steer" };
-    }
-    releaseAdmissionTicket();
-    typing.cleanup();
-    return undefined;
-  }
-
   const bindQueueDisposition = () => {
     const observe = followupRun.onQueueDisposition;
     followupRun.onQueueDisposition = (disposition) => {
@@ -331,6 +338,7 @@ export async function runReplyAgent(
   ) {
     bindQueueDisposition();
     const result = await runActiveReplySteer({
+      validateExecutionSelection: params.validateExecutionSelection,
       followupRun,
       opts,
       providedReplyOperation,
@@ -419,6 +427,12 @@ export async function runReplyAgent(
     originatingAccountId: followupRun.originatingAccountId,
     agentAccountId: followupRun.run.agentAccountId,
   });
+  const configSelectionRejection = params.validateExecutionSelection?.();
+  if (configSelectionRejection) {
+    releaseAdmissionTicket();
+    typing.cleanup();
+    return configSelectionRejection;
+  }
   followupRun.run.agentId ??= resolveDefaultAgentId(followupRun.run.config);
 
   const replyToChannel = resolveOriginMessageProvider({
@@ -624,6 +638,8 @@ export async function runReplyAgent(
       },
     });
   try {
+    const selectionRejection = params.validateExecutionSelection?.();
+    if (selectionRejection) return selectionRejection;
     return await executePreparedReplyAgentRun({
       activeSessionStore,
       admitUserTurn,

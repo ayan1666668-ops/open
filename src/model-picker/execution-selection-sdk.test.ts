@@ -22,6 +22,7 @@ import {
 } from "../plugin-sdk/session-store-runtime.js";
 import { getActivePluginRegistryVersion } from "../plugins/runtime.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
+import { createAgentPatchedSessionModelFallback } from "./apply-session-model-selection.js";
 import type { AcpExecutionSelection } from "./execution-selection.js";
 
 vi.mock("../agents/model-runtime-choice.js", async (importOriginal) => ({
@@ -569,6 +570,201 @@ describe("released model-selection SDK entry points", () => {
         message: "The parent session selection changed. Retry the turn.",
       });
       expect(loadSessionEntryReadOnly(scope)?.executionSelection).toEqual(before);
+    });
+  });
+
+  it.each([false, true])(
+    "round-trips fallback observations separately from a previous provider-only request; edited=%s",
+    async (edited) => {
+      await withOpenClawTestState({ label: "sdk-fallback-partial-request" }, async (testState) => {
+        const scope = {
+          agentId: "main",
+          sessionKey: "agent:main:sdk-fallback",
+          storePath: testState.path("alternate", "sessions.json"),
+        };
+        await upsertSessionEntry({ ...scope, entry: entry(false) });
+        await patchSessionEntry({
+          ...scope,
+          update: () => ({
+            providerOverride: "pending",
+            modelProvider: "observed-provider",
+            model: "observed-model",
+          }),
+        });
+        const staged = loadSessionEntryReadOnly(scope);
+        if (!staged) throw new Error("Expected the staged session");
+        const applied = await applySessionExecutionSelection({
+          cfg: { agents: { defaults: { model: "fixture/default" } } },
+          ...scope,
+          sessionEntry: staged,
+          sessionStore: { [scope.sessionKey]: staged },
+          modelCatalog: [{ provider: "fixture", id: "default", name: "Default" }],
+          request: { kind: "initialize" },
+        });
+        expect(applied.status).toBe("applied");
+        const previous = loadSessionEntryReadOnly(scope);
+        if (!previous?.model || !previous.modelProvider) {
+          throw new Error("Expected the recorded observation at the fallback boundary");
+        }
+        const snapshot = createAgentPatchedSessionModelFallback({
+          entry: previous,
+          provider: previous.modelProvider,
+          model: previous.model,
+          ts: 10,
+        });
+        await replaceSessionEntry(scope, { ...previous, modelFallback: snapshot });
+        const view = getSessionEntry(scope);
+        if (!view?.modelFallback) throw new Error("Expected the released fallback view");
+        expect(view.modelFallback).toMatchObject({
+          prevProvider: "observed-provider",
+          prevModel: "observed-model",
+          prevProviderOverride: "pending",
+        });
+        expect(view.modelFallback.prevModelOverride).toBeUndefined();
+        const publicFallback = view.modelFallback;
+        if (edited) {
+          await patchSessionEntry({
+            ...scope,
+            update: () => ({ modelFallback: { ...publicFallback, lastValidatedPatchTs: 20 } }),
+          });
+        } else {
+          await upsertSessionEntry({ ...scope, entry: view });
+        }
+        const after = getSessionEntry(scope);
+        expect(after?.modelFallback).toEqual({
+          ...view.modelFallback,
+          ...(edited ? { lastValidatedPatchTs: 20 } : {}),
+        });
+        const stored = loadSessionEntryReadOnly(scope);
+        expect(stored?.executionSelection).toEqual(previous.executionSelection);
+        const restored = stored?.modelFallback?.previous;
+        expect(restored?.legacyRequest).toEqual({ provider: "pending" });
+        if (edited) {
+          expect(restored).toMatchObject({
+            state: "deferred",
+            request: { defaultSelection: "configured" },
+          });
+          expect(restored?.state === "deferred" && restored.request.model).toBeUndefined();
+        } else {
+          expect(restored).toEqual(previous.executionSelection);
+        }
+      });
+    },
+  );
+
+  it.each([false, true])(
+    "keeps provider-only input incomplete after configured preparation; explicit=%s",
+    async (explicit) => {
+      await withOpenClawTestState(
+        { label: "sdk-provider-after-preparation" },
+        async (testState) => {
+          const scope = {
+            agentId: "main",
+            sessionKey: "agent:main:sdk",
+            storePath: testState.path("sessions.json"),
+          };
+          const cfg = { agents: { defaults: { model: "fixture/default" } } };
+          await upsertSessionEntry({
+            ...scope,
+            entry: {
+              ...entry(false),
+              ...(explicit ? { providerOverride: "fixture", modelOverride: "default" } : {}),
+            },
+          });
+          const prepare = async () => {
+            const current = loadSessionEntryReadOnly(scope);
+            if (!current) throw new Error("Expected the stored session");
+            const result = await applySessionExecutionSelection({
+              ...scope,
+              cfg,
+              sessionEntry: current,
+              sessionStore: { [scope.sessionKey]: current },
+              modelCatalog: [
+                { provider: "fixture", id: "default", name: "Default" },
+                { provider: "pending", id: "default", name: "Other" },
+                { provider: "pending", id: "later", name: "Later" },
+              ],
+              request: { kind: "initialize" },
+            });
+            expect(result.status).toBe("applied");
+          };
+          await prepare();
+          const configuredView = getSessionEntry(scope);
+          const changedConfig = { agents: { defaults: { model: "fixture/changed" } } };
+          expect(resolveSessionModelRef(changedConfig, configuredView, "main")).toEqual({
+            provider: "fixture",
+            model: "default",
+          });
+          expect(
+            resolveStoredModelOverride({
+              sessionEntry: configuredView,
+              defaultProvider: "fixture",
+              sessionKey: scope.sessionKey,
+              parentSessionKey: "agent:main:parent",
+              sessionStore: { "agent:main:parent": entry() },
+            }),
+          ).toMatchObject({ provider: "fixture", model: "default", source: "session" });
+          await patchSessionEntry({ ...scope, update: () => ({ providerOverride: "pending" }) });
+          await prepare();
+          await patchSessionEntry({
+            ...scope,
+            update: () => ({ modelProvider: "observed", model: "observed-model" }),
+          });
+          const partial = getSessionEntry(scope);
+          expect(partial?.providerOverride).toBe("pending");
+          expect(partial?.modelOverride).toBe(explicit ? "default" : undefined);
+          expect(resolveSessionModelRef(cfg, partial, "main")).toEqual({
+            provider: explicit ? "pending" : "fixture",
+            model: "default",
+          });
+          await patchSessionEntry({ ...scope, update: () => ({ modelOverride: "later" }) });
+          await prepare();
+          expect(resolveSessionModelRef(cfg, getSessionEntry(scope), "main")).toEqual({
+            provider: "pending",
+            model: "later",
+          });
+          expect(
+            loadSessionEntryReadOnly(scope)?.executionSelection?.legacyRequest,
+          ).toBeUndefined();
+        },
+      );
+    },
+  );
+
+  it("clears an accepted model through configured initialization while preserving the provider and runtime", async () => {
+    await withOpenClawTestState({ label: "sdk-clear-accepted-model" }, async (testState) => {
+      const scope = {
+        agentId: "main",
+        sessionKey: "agent:main:sdk",
+        storePath: testState.path("sessions.json"),
+      };
+      const cfg = { agents: { defaults: { model: "fixture/default" } } };
+      await upsertSessionEntry({ ...scope, entry: entry() });
+      await patchSessionEntry({ ...scope, update: () => ({ modelOverride: undefined }) });
+      const current = loadSessionEntryReadOnly(scope);
+      expect(current?.executionSelection).toMatchObject({
+        state: "deferred",
+        request: { defaultSelection: "configured", runtime: "openclaw" },
+        legacyRequest: { provider: "fixture" },
+      });
+      if (!current) throw new Error("Expected the reset session");
+      const result = await applySessionExecutionSelection({
+        ...scope,
+        cfg,
+        sessionEntry: current,
+        sessionStore: { [scope.sessionKey]: current },
+        modelCatalog: [{ provider: "fixture", id: "default", name: "Default" }],
+        request: { kind: "initialize" },
+      });
+      expect(result.status).toBe("applied");
+      const view = getSessionEntry(scope);
+      expect(resolveSessionModelRef(cfg, view, "main")).toEqual({
+        provider: "fixture",
+        model: "default",
+      });
+      expect(view?.modelOverride).toBeUndefined();
+      expect(view?.providerOverride).toBe("fixture");
+      expect(view?.agentRuntimeOverride).toBe("openclaw");
     });
   });
 

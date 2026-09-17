@@ -66,13 +66,15 @@ export function createTestAgentScope(
 }
 
 export function createTestRuntimePlugins(
-  createEmptyPluginRegistry: typeof import("../plugins/registry-empty.js").createEmptyPluginRegistry,
+  getRegistry: () => ReturnType<
+    typeof import("../plugins/registry-empty.js").createEmptyPluginRegistry
+  >,
 ) {
   return {
     withAgentPluginRegistry: ({ run }: { run: () => unknown }) => run(),
-    loadAgentRuntimePluginRegistryHandle: () => createEmptyPluginRegistry(),
+    loadAgentRuntimePluginRegistryHandle: getRegistry,
     acquireAgentRuntimePluginRegistry: async () => {
-      const registry = createEmptyPluginRegistry();
+      const registry = getRegistry();
       return { registry, primaryRegistry: registry };
     },
   };

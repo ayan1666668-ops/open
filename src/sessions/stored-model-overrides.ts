@@ -7,9 +7,12 @@ import {
   resolvePersistedOverrideModelRef,
 } from "../agents/model-selection-persisted.js";
 import { resolveSessionParentSessionKey } from "../channels/plugins/session-conversation.js";
+import type { SessionEntry } from "../config/sessions/types.js";
 import type { PublicSessionEntry } from "../model-picker/execution-selection-projection.js";
 import { getSessionExecutionSelection } from "../model-picker/execution-selection.js";
 import { isModelExecutionSelection } from "../model-picker/execution-selection.js";
+
+type SessionModelView = PublicSessionEntry & Pick<SessionEntry, "executionSelection">;
 
 function legacyViewMetadata(entry: PublicSessionEntry | undefined) {
   const originProvider = normalizeOptionalString(entry?.modelOverrideFallbackOriginProvider);
@@ -26,8 +29,6 @@ function legacyViewMetadata(entry: PublicSessionEntry | undefined) {
       ((provider ?? originProvider) !== originProvider || (model ?? originModel) !== originModel),
   };
 }
-import type { SessionEntry } from "../config/sessions/types.js";
-
 /** Model override loaded from the current session or its parent session. */
 export type StoredModelOverride = {
   provider?: string;
@@ -38,12 +39,19 @@ export type StoredModelOverride = {
 
 function resolveStoredOverrideFromEntry(
   params: {
-    entry?: PublicSessionEntry;
+    entry?: SessionModelView;
     defaultProvider: string;
     source: StoredModelOverride["source"];
     allowPluginNormalization?: boolean;
   } & ModelManifestNormalizationContext,
 ): StoredModelOverride | null {
+  if (params.entry?.executionSelection) {
+    const resolved = resolveStoredModelOverrideCore({
+      sessionEntry: { executionSelection: params.entry.executionSelection },
+      defaultProvider: params.defaultProvider,
+    });
+    return resolved ? { ...resolved, source: params.source } : null;
+  }
   if (params.entry?.modelOverrideSource === "default") {
     return null;
   }
@@ -73,7 +81,7 @@ function resolveStoredOverrideFromEntry(
 /** Resolves only the current session's persisted model override. */
 export function resolveDirectStoredModelOverride(
   params: {
-    sessionEntry?: PublicSessionEntry;
+    sessionEntry?: SessionModelView;
     defaultProvider: string;
     allowPluginNormalization?: boolean;
   } & ModelManifestNormalizationContext,
@@ -104,9 +112,9 @@ function resolveParentSessionKeyCandidate(params: {
 
 /** Released SDK-only reader for public legacy views; core uses the canonical reader below. */
 export function resolveStoredModelOverride(params: {
-  loadSessionEntry?: (sessionKey: string) => PublicSessionEntry | undefined;
-  sessionEntry?: PublicSessionEntry;
-  sessionStore?: Record<string, PublicSessionEntry>;
+  loadSessionEntry?: (sessionKey: string) => SessionModelView | undefined;
+  sessionEntry?: SessionModelView;
+  sessionStore?: Record<string, SessionModelView>;
   sessionKey?: string;
   parentSessionKey?: string;
   defaultProvider: string;
@@ -114,7 +122,12 @@ export function resolveStoredModelOverride(params: {
 }): StoredModelOverride | null {
   if (params.sessionEntry?.modelOverrideSource === "default") return null;
   const direct = resolveDirectStoredModelOverride(params);
-  if (direct) return direct;
+  const stored = params.sessionEntry?.executionSelection;
+  if (
+    direct ||
+    (stored && !(stored.state === "deferred" && stored.request.defaultSelection === "inherit"))
+  )
+    return direct;
   const parentKey = resolveParentSessionKeyCandidate(params);
   if (!parentKey) return null;
   const entry = params.loadSessionEntry?.(parentKey) ?? params.sessionStore?.[parentKey];
@@ -125,14 +138,14 @@ export function resolveStoredModelOverride(params: {
 /** Canonical session intent for core views; observed output never supplies selection. */
 export function resolveStoredModelOverrideCore(params: {
   loadSessionEntry?: (sessionKey: string) => SessionEntry | undefined;
-  sessionEntry?: SessionEntry;
+  sessionEntry?: Pick<SessionEntry, "executionSelection">;
   sessionStore?: Record<string, SessionEntry>;
   sessionKey?: string;
   parentSessionKey?: string;
   defaultProvider: string;
 }): StoredModelOverride | null {
   const project = (
-    entry: SessionEntry | undefined,
+    entry: Pick<SessionEntry, "executionSelection"> | undefined,
     source: StoredModelOverride["source"],
   ): StoredModelOverride | null => {
     const stored = entry?.executionSelection;

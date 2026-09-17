@@ -1,19 +1,31 @@
 /** Handles /new and /reset command flows, including soft reset and ACP-bound sessions. */
+import { getAcpSessionManager } from "../../acp/control-plane/manager.js";
 import { clearBootstrapSnapshot } from "../../agents/bootstrap-cache.js";
 import { clearAllCliSessions } from "../../agents/cli-session.js";
+import { normalizeChatType } from "../../channels/chat-type.js";
 import { resetConfiguredBindingTargetInPlace } from "../../channels/plugins/binding-targets.js";
-import { updateSessionEntry } from "../../config/sessions/session-accessor.js";
+import { resolveGroupSessionKey } from "../../config/sessions/group.js";
+import {
+  resolveSessionEntryAccessTarget,
+  updateSessionEntry,
+} from "../../config/sessions/session-accessor.js";
 import { logVerbose } from "../../globals.js";
-import { isAcpSessionKey } from "../../routing/session-key.js";
+import { isAcpSessionKey, resolveAgentIdFromSessionKey } from "../../routing/session-key.js";
+import {
+  isModelSelectionLocked,
+  MODEL_SELECTION_LOCKED_RESET_MESSAGE,
+} from "../../sessions/model-overrides.js";
 import { isInternalMessageChannel } from "../../utils/message-channel.js";
 import { isResetAuthorizedForContext } from "../command-auth.js";
 import { applyCommandTextToContext } from "./command-context-rewrite.js";
 import { commandReply } from "./command-gates.js";
 import { resolveBoundAcpThreadSessionKey } from "./commands-acp/targets.js";
+import { buildCommandContext } from "./commands-context.js";
 import { emitResetCommandHooks, type ResetCommandAction } from "./commands-reset-hooks.js";
 import { parseSoftResetCommand } from "./commands-reset-mode.js";
 import type { CommandHandlerResult, HandleCommandsParams } from "./commands-types.js";
 import type { ReplySessionBinding } from "./get-reply.types.js";
+import { resolveAuthorizedSessionResetCommand } from "./session-reset-command.js";
 
 type ResetCommandParams = Omit<
   HandleCommandsParams,
@@ -142,43 +154,13 @@ export async function maybeHandleResetCommand(
       ? boundAcpSessionKey.trim()
       : undefined;
   if (boundAcpKey) {
-    const resetResult = await resetConfiguredBindingTargetInPlace({
-      cfg: params.cfg,
+    return resetAcpSessionForCommand({
+      ...params,
       sessionKey: boundAcpKey,
-      reason: commandAction,
-      commandSource: `${params.command.surface}:${params.ctx.CommandSource ?? "text"}`,
+      agentId: resolveAgentIdFromSessionKey(boundAcpKey),
+      action: commandAction,
+      tail: resetTail,
     });
-    if (!resetResult.ok) {
-      logVerbose(`acp reset failed for ${boundAcpKey}: ${resetResult.error ?? "unknown error"}`);
-    }
-    if (resetResult.ok) {
-      if (resetResult.sessionId) {
-        (params.opts as InternalResetCommandOptions | undefined)?.onSessionPrepared?.({
-          sessionKey: resetResult.sessionKey ?? boundAcpKey,
-          sessionId: resetResult.sessionId,
-          storePath: resetResult.storePath,
-        });
-      }
-      params.command.resetHookTriggered = true;
-      if (resetTail) {
-        applyAcpResetTailContext(params.ctx, resetTail);
-        if (params.rootCtx && params.rootCtx !== params.ctx) {
-          applyAcpResetTailContext(params.rootCtx, resetTail);
-        }
-        return { shouldContinue: false };
-      }
-      return {
-        shouldContinue: false,
-        reply: { text: "✅ ACP session reset in place.", isStatusNotice: true },
-      };
-    }
-    return {
-      shouldContinue: false,
-      reply: {
-        text: "⚠️ ACP session reset failed. Check /acp status and try again.",
-        isStatusNotice: true,
-      },
-    };
   }
 
   const targetSessionEntry = params.sessionStore?.[params.sessionKey] ?? params.sessionEntry;
@@ -212,4 +194,124 @@ export async function maybeHandleResetCommand(
     };
   }
   return null;
+}
+
+async function resetAcpSessionForCommand(
+  params: Pick<ResetCommandParams, "cfg" | "ctx" | "rootCtx" | "opts"> & {
+    command: Pick<ResetCommandParams["command"], "surface" | "resetHookTriggered">;
+    sessionKey: string;
+    agentId: string;
+    action: ResetCommandAction;
+    tail: string;
+    expectedSessionId?: string;
+  },
+): Promise<CommandHandlerResult> {
+  const resetResult = await resetConfiguredBindingTargetInPlace({
+    cfg: params.cfg,
+    sessionKey: params.sessionKey,
+    agentId: params.agentId,
+    reason: params.action,
+    ...(params.expectedSessionId ? { expectedSessionId: params.expectedSessionId } : {}),
+    ...(params.opts?.abortSignal
+      ? { assertCurrent: () => params.opts?.abortSignal?.throwIfAborted() }
+      : {}),
+    commandSource: `${params.command.surface}:${params.ctx.CommandSource ?? "text"}`,
+  });
+  if (!resetResult.ok) {
+    logVerbose(
+      `acp reset failed for ${params.sessionKey}: ${resetResult.error ?? "unknown error"}`,
+    );
+  }
+  if (resetResult.ok) {
+    if (resetResult.sessionId) {
+      (params.opts as InternalResetCommandOptions | undefined)?.onSessionPrepared?.({
+        sessionKey: resetResult.sessionKey ?? params.sessionKey,
+        sessionId: resetResult.sessionId,
+        storePath: resetResult.storePath,
+      });
+    }
+    params.command.resetHookTriggered = true;
+    if (params.tail) {
+      applyAcpResetTailContext(params.ctx, params.tail);
+      if (params.rootCtx && params.rootCtx !== params.ctx) {
+        applyAcpResetTailContext(params.rootCtx, params.tail);
+      }
+      return { shouldContinue: false };
+    }
+    return {
+      shouldContinue: false,
+      reply: { text: "✅ ACP session reset in place.", isStatusNotice: true },
+    };
+  }
+  return {
+    shouldContinue: false,
+    reply: {
+      text: "⚠️ ACP session reset failed. Check /acp status and try again.",
+      isStatusNotice: true,
+    },
+  };
+}
+
+/** ACP reset tails belong to the app, before core initialization can parse model hints. */
+export async function maybeHandleExplicitAcpResetCommand(params: {
+  cfg: ResetCommandParams["cfg"];
+  ctx: ResetCommandParams["ctx"];
+  rootCtx?: ResetCommandParams["rootCtx"];
+  opts?: ResetCommandParams["opts"];
+  agentId: string;
+  sessionKey: string;
+}): Promise<CommandHandlerResult | null> {
+  const chatType = normalizeChatType(params.ctx.ChatType);
+  const isGroup =
+    chatType != null && chatType !== "direct" ? true : Boolean(resolveGroupSessionKey(params.ctx));
+  const { resetAuthorized, resetCommand } = resolveAuthorizedSessionResetCommand({
+    cfg: params.cfg,
+    ctx: params.ctx,
+    agentId: params.agentId,
+    commandAuthorized: params.ctx.CommandAuthorized === true,
+    isGroup,
+  });
+  if (!resetAuthorized || resetCommand.softResetMatched || !resetCommand.matchedResetTriggerLower)
+    return null;
+  const command = buildCommandContext({
+    cfg: params.cfg,
+    ctx: params.ctx,
+    agentId: params.agentId,
+    sessionKey: params.sessionKey,
+    commandAuthorized: true,
+    isGroup,
+    triggerBodyNormalized: resetCommand.triggerBodyNormalized,
+  });
+  const resetMatch = command.commandBodyNormalized.match(/^\/(new|reset)(?:\s|$)/i);
+  if (!resetMatch) return null;
+  params.opts?.abortSignal?.throwIfAborted();
+  const resolved = getAcpSessionManager().resolveSession({
+    cfg: params.cfg,
+    agentId: params.agentId,
+    sessionKey: params.sessionKey,
+  });
+  if (resolved.kind === "none") return null;
+  const entry =
+    resolved.kind === "ready"
+      ? resolved.entry
+      : resolveSessionEntryAccessTarget({
+          cfg: params.cfg,
+          agentId: resolved.agentId,
+          sessionKey: resolved.sessionKey,
+        }).entry;
+  if (isModelSelectionLocked(entry)) {
+    return {
+      shouldContinue: false,
+      reply: { text: MODEL_SELECTION_LOCKED_RESET_MESSAGE, isError: true },
+    };
+  }
+  return resetAcpSessionForCommand({
+    ...params,
+    agentId: resolved.agentId,
+    sessionKey: resolved.sessionKey,
+    command,
+    expectedSessionId: params.opts?.expectedExistingSessionId ?? entry?.sessionId,
+    action: resetMatch[1]?.toLowerCase() === "reset" ? "reset" : "new",
+    tail: command.commandBodyNormalized.slice(resetMatch[0].length).trimStart(),
+  });
 }

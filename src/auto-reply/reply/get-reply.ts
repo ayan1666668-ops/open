@@ -36,6 +36,7 @@ import { createSubsystemLogger } from "../../logging/subsystem.js";
 import type { ApplyMediaUnderstandingResult } from "../../media-understanding/apply.js";
 import type { ExtractedFileImage } from "../../media-understanding/extracted-file-images.js";
 import { hasStagedMediaFacts, normalizeMediaFacts } from "../../media/media-facts.js";
+import { hasSessionModelSelection } from "../../model-picker/apply-session-model-selection.js";
 import { getSessionExecutionSelection } from "../../model-picker/execution-selection.js";
 import { isModelExecutionSelection } from "../../model-picker/execution-selection.js";
 import { defaultRuntime } from "../../runtime.js";
@@ -357,6 +358,18 @@ export async function getReplyFromConfig(
     throw new Error(
       `reply model catalog owner changed from ${agentId} to ${preparedReplyDispatchRuntime.agentId}`,
     );
+  }
+  if (agentSessionKey && !finalized.InternalTurnSource) {
+    const { maybeHandleExplicitAcpResetCommand } = await import("./commands-reset.js");
+    const reset = await maybeHandleExplicitAcpResetCommand({
+      cfg,
+      ctx: finalized,
+      rootCtx: ctx,
+      opts,
+      agentId,
+      sessionKey: agentSessionKey,
+    });
+    if (reset) return reset.reply;
   }
   const preparedAgentDir = preparedReplyDispatchRuntime?.agentDir;
   const preparedWorkspaceDir = preparedReplyDispatchRuntime?.workspaceDir;
@@ -860,7 +873,7 @@ export async function getReplyFromConfig(
   const primaryProvider = resolvedChannelModelOverride?.ref.provider ?? defaultProvider;
   const primaryModel = resolvedChannelModelOverride?.ref.model ?? defaultModel;
   const acceptedSelection = getSessionExecutionSelection(sessionEntry);
-  const hasEffectiveStoredModelOverride = acceptedSelection !== undefined;
+  const hasEffectiveStoredModelOverride = hasSessionModelSelection(sessionEntry);
   if (
     !hasResolvedHeartbeatModelOverride &&
     acceptedSelection &&

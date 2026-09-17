@@ -92,6 +92,7 @@ export function repairSessionExecutionSelection(params: {
       ...(executor ? { executor } : runtime ? { runtime } : {}),
     },
     fallbackPermission: params.reset ? "configured" : (fact?.fallbackPermission ?? "configured"),
+    ...(!params.reset && fact?.legacyRequest ? { legacyRequest: fact.legacyRequest } : {}),
     ...(fact?.state === "accepted"
       ? { previous: fact.selection }
       : fact?.previous

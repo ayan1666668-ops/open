@@ -28,8 +28,6 @@ export type LegacySelectionView = {
   modelOverrideFallbackOriginModel?: string;
 };
 export type PublicModelFallback = Omit<AgentPatchedSessionModelFallback, "previous"> & {
-  prevModel: string;
-  prevProvider: string;
   prevModelOverride?: string;
   prevProviderOverride?: string;
   prevModelOverrideSource?: "auto" | "user" | "default";
@@ -66,6 +64,16 @@ export function projectLegacyExecutionSelection(
     executor?.kind === "acp"
       ? undefined
       : (executor?.id ?? (stored.state === "deferred" ? stored.request.runtime : undefined));
+  if (stored.legacyRequest) {
+    return {
+      providerOverride: stored.legacyRequest.provider,
+      ...(stored.legacyRequest.source ? { modelOverrideSource: stored.legacyRequest.source } : {}),
+      ...(runtime ? { agentRuntimeOverride: runtime } : {}),
+    };
+  }
+  if (stored.state === "accepted" && stored.fallbackPermission === "configured") {
+    return runtime ? { agentRuntimeOverride: runtime } : {};
+  }
   if (!model || model === "native-managed")
     return {
       ...(runtime ? { agentRuntimeOverride: runtime } : {}),
@@ -128,11 +136,11 @@ export function projectExecutionSelectionEntry(
           },
         }
       : {}),
-    ...(modelFallback && fallback?.modelOverride && fallback.providerOverride
+    ...(modelFallback && fallback
       ? {
           modelFallback: {
-            prevModel: fallback.modelOverride,
-            prevProvider: fallback.providerOverride,
+            prevModel: modelFallback.prevModel,
+            prevProvider: modelFallback.prevProvider,
             prevModelOverride: fallback.modelOverride,
             prevProviderOverride: fallback.providerOverride,
             prevModelOverrideSource: fallback.modelOverrideSource,

@@ -48,16 +48,23 @@ export type DeferredExecutionSelectionRequest = {
   | { model?: never; defaultSelection: "inherit" | "configured" }
 );
 
+export type LegacyExecutionRequest = {
+  provider: string;
+  source?: "auto" | "user" | "default";
+};
+
 export type SessionExecutionSelection =
   | {
       state: "accepted";
       selection: ExecutionSelection;
       fallbackPermission: ExecutionFallbackPermission;
+      legacyRequest?: LegacyExecutionRequest;
     }
   | {
       state: "deferred";
       request: DeferredExecutionSelectionRequest;
       fallbackPermission: ExecutionFallbackPermission;
+      legacyRequest?: LegacyExecutionRequest;
       previous?: ExecutionSelection;
     };
 

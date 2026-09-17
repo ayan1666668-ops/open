@@ -40,6 +40,8 @@ export type StatefulBindingTargetDriver = {
     bindingTarget: StatefulBindingTargetDescriptor;
     reason: "new" | "reset";
     commandSource?: string;
+    expectedSessionId?: string;
+    assertCurrent?: () => void;
   }) => Promise<StatefulBindingTargetResetResult>;
 };
 

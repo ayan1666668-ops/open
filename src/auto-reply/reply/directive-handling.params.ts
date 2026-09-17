@@ -6,6 +6,10 @@ import type { ModelAliasIndex } from "../../agents/model-selection.js";
 import type { ModelVisibilityPolicy } from "../../agents/model-visibility-policy.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import type {
+  ExecutionSelection,
+  SessionExecutionSelection,
+} from "../../model-picker/execution-selection.js";
 import type { MsgContext } from "../templating.js";
 import type { InlineDirectives } from "./directive-handling.parse.js";
 import type { ElevatedLevel, ReasoningLevel, ThinkLevel, VerboseLevel } from "./directives.js";
@@ -60,11 +64,12 @@ export type HandleDirectiveOnlyParams = HandleDirectiveOnlyCoreParams & {
   persistenceState?: {
     outcome:
       | {
-          kind: "pending" | "applied";
-          provider: string;
-          model: string;
+          kind: "applied";
           modelCatalog?: ModelCatalogEntry[];
+          executionSelection?: ExecutionSelection;
+          sessionExecutionSelection?: SessionExecutionSelection;
         }
+      | { kind: "pending" }
       | { kind: "rejected"; errorText: string };
   };
 };

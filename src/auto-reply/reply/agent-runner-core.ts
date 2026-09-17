@@ -441,6 +441,7 @@ export async function cleanupReplyAgentRun(context: {
 }
 
 export type RunReplyAgentParams = {
+  validateExecutionSelection?: () => ReplyPayload | undefined;
   commandBody: string;
   transcriptCommandBody?: string;
   followupRun: FollowupRun;

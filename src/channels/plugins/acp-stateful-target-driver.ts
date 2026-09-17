@@ -117,6 +117,8 @@ async function resetAcpTargetInPlace(params: {
   bindingTarget: StatefulBindingTargetDescriptor;
   reason: "new" | "reset";
   commandSource?: string;
+  expectedSessionId?: string;
+  assertCurrent?: () => void;
 }): Promise<StatefulBindingTargetResetResult> {
   if (
     resolveSessionEntryAccessTarget({
@@ -134,6 +136,8 @@ async function resetAcpTargetInPlace(params: {
     reason: params.reason,
     commandSource: params.commandSource ?? "stateful-target:acp-reset-in-place",
     armSessionDiffBaselineCapture: true,
+    ...(params.expectedSessionId ? { expectedSessionId: params.expectedSessionId } : {}),
+    ...(params.assertCurrent ? { assertCurrent: params.assertCurrent } : {}),
   });
   if (result.ok) {
     if ("incognitoDeleted" in result) {
