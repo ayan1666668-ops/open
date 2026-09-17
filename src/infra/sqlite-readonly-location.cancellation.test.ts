@@ -71,7 +71,7 @@ const reclaimFixture = `
   }
 `;
 
-function isWorkerMode(args: readonly string[] | undefined, mode: string): boolean {
+function isWorkerMode(args: readonly string[] | null | undefined, mode: string): boolean {
   const marker = args?.indexOf(SQLITE_READONLY_CHILD_ARG) ?? -1;
   return marker >= 0 && args?.[marker + 1] === mode;
 }
