@@ -23,7 +23,10 @@ export async function startGatewayServer(
 ): ReturnType<typeof import("./server-start.js").startGatewayServerCore> {
   const startupStartedAt = opts.startupStartedAt ?? Date.now();
   const mod = await loadServerStart();
-  return await mod.startGatewayServerCore(port, { ...opts, startupStartedAt });
+  const { withAgentDatabaseStartupAdmission } = await import("../state/agent-database-startup.js");
+  return await withAgentDatabaseStartupAdmission(() =>
+    mod.startGatewayServerCore(port, { ...opts, startupStartedAt }),
+  );
 }
 
 /** Clears prepared model-catalog generations between tests. */
