@@ -3,7 +3,6 @@ import {
   extractAllRequestTexts,
   extractLastUserText,
   extractLastMatchingUserTurn,
-  extractToolOutput,
   parseToolOutputJson,
   resolveMockSubagentTurn,
   splitMockConversationContext,
@@ -67,11 +66,12 @@ export function resolveMockSubagentHandoff(params: {
   input: ResponsesInputItem[];
   body: Record<string, unknown>;
   state: MockScenarioState;
+  toolOutput: string;
   canSpawn: boolean;
   canYield: boolean;
   task: string;
 }): HandoffPlan | undefined {
-  const { input } = params;
+  const { input, toolOutput } = params;
   const completion = readMockSubagentCompletion(input, "qa-sidecar");
   if (completion) {
     const result = completion.result.trim();
@@ -92,9 +92,8 @@ export function resolveMockSubagentHandoff(params: {
   ) {
     return undefined;
   }
-  const toolOutput = extractToolOutput(input);
   const toolResult = parseToolOutputJson(toolOutput);
-  if (toolResult?.status === "error") {
+  if (toolResult?.status === "error" || toolResult?.status === "forbidden") {
     return {
       text: `Failed to delegate: ${typeof toolResult.error === "string" ? toolResult.error : "spawn failed"}`,
     };

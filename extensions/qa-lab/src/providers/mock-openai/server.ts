@@ -2587,6 +2587,7 @@ async function buildResponsesPayload(
     input,
     body,
     state: scenarioState,
+    toolOutput,
     canSpawn: canCallSessionsSpawn,
     canYield: canCallSessionsYield,
     task: subagentHandoffTaskForProvider(providerVariant),

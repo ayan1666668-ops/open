@@ -52,6 +52,47 @@ const settleProvenance = [
 ].join("\n");
 
 describe("mock subagent handoff completion", () => {
+  it.each(["error", "forbidden"])(
+    "reports %s admission without waiting for a child",
+    async (status) => {
+      const server = await startQaMockOpenAiServer({ host: "127.0.0.1", port: 0 });
+      try {
+        const response = await fetch(`${server.baseUrl}/v1/responses`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            model: "gpt-5.6-luna",
+            stream: false,
+            tools,
+            input: [
+              user(kickoff),
+              { type: "function_call", name: "sessions_spawn", call_id: "spawn", arguments: "{}" },
+              {
+                type: "function_call_output",
+                call_id: "spawn",
+                output: JSON.stringify({ status, error: "Child admission denied" }),
+              },
+            ],
+          }),
+        });
+        expect(response.status).toBe(200);
+        const body = await response.json();
+        expect(body).toMatchObject({
+          output: [
+            {
+              type: "message",
+              content: [
+                { type: "output_text", text: "Failed to delegate: Child admission denied" },
+              ],
+            },
+          ],
+        });
+      } finally {
+        await server.stop();
+      }
+    },
+  );
+
   it.each([
     { name: "protected event", completion: carrier, ok: true },
     { name: "settled wake", completion: settled, ok: true },
