@@ -296,7 +296,7 @@ export function deleteStaleCronJobFamilyRows(
     getCronStoreKysely(db)
       .selectFrom("cron_jobs")
       .select(["store_key", "job_id", "declaration_key", "name"])
-      .select((eb) =>
+      .select((eb) => [
         // Native UTF-8 decoding can replace malformed bytes; only ASCII names
         // admit an exact SQL comparison before the existing JavaScript filter.
         /^[\x00-\x7f]*$/u.test(family.name)
@@ -308,7 +308,7 @@ export function deleteStaleCronJobFamilyRows(
               .end()
               .as("description")
           : "description",
-      )
+      ])
       .where("store_key", "!=", activeStoreKey),
   ).rows.filter(
     (row) =>
