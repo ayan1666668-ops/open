@@ -3,7 +3,11 @@ import { expectDefined } from "@openclaw/normalization-core";
 import { afterEach, describe, expect, test } from "vitest";
 import type { WebSocket } from "ws";
 import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
-import { appendTranscriptMessageSync } from "../../config/sessions/session-accessor.js";
+import {
+  appendTranscriptMessage,
+  appendTranscriptMessageSync,
+} from "../../config/sessions/session-accessor.js";
+import { createNestedToolActivity } from "../../sessions/nested-tool-activity.js";
 import { installGatewayTestHooks, rpcReq, testState, writeSessionStore } from "../test-helpers.js";
 import { installConnectedControlUiServerSuite } from "../test-with-server.js";
 
@@ -89,6 +93,107 @@ describe("chat history inline media redaction (real WS gateway)", () => {
       console.log(
         `chat.message.get real-request redaction: ${JSON.stringify(full.payload?.message?.content ?? null)}`,
       );
+    } finally {
+      testState.sessionStorePath = undefined;
+    }
+  });
+
+  test.each([
+    {
+      name: "Responses inline images",
+      imageUrl: DATA_URL,
+      message: {
+        role: "assistant",
+        content: [{ type: "input_image", image_url: DATA_URL }],
+        timestamp: 1,
+      },
+      expectedContent: [
+        {
+          type: "input_image",
+          omitted: true,
+          bytes: Buffer.byteLength(DATA_URL, "utf8"),
+        },
+      ],
+    },
+    {
+      name: "nested tool activity inline images",
+      imageUrl: "DATA:image/png;BASE64,bmVzdGVk",
+      message: createNestedToolActivity({
+        runId: "nested-image-run",
+        scopeId: "nested-image-scope",
+        afterEntryId: "cached",
+        startOrder: 0,
+        parentToolCallId: "cached",
+        toolCallId: "nested-image-call",
+        toolName: "image",
+        input: {},
+        result: {
+          content: [{ type: "input_image", image_url: "DATA:image/png;BASE64,bmVzdGVk" }],
+        },
+        isError: false,
+        startedAt: 1,
+        timestamp: 2,
+      }),
+      expectedContent: [
+        { type: "toolCall", id: "nested-image-call" },
+        {
+          type: "toolResult",
+          content: [
+            {
+              type: "input_image",
+              omitted: true,
+              bytes: Buffer.byteLength("DATA:image/png;BASE64,bmVzdGVk", "utf8"),
+            },
+          ],
+        },
+      ],
+    },
+  ])("redacts $name from cursor deltas", async ({ expectedContent, imageUrl, message }) => {
+    const dir = tempDirs.make("openclaw-chat-history-cursor-redact-");
+    testState.sessionStorePath = path.join(dir, "sessions.json");
+    try {
+      await writeSessionStore({
+        entries: {
+          [SESSION_KEY]: { sessionId: SESSION_ID, updatedAt: Date.now() },
+        },
+      });
+      await appendTranscriptMessage(
+        {
+          agentId: "main",
+          sessionId: SESSION_ID,
+          sessionKey: SESSION_KEY,
+          storePath: testState.sessionStorePath,
+        },
+        {
+          eventId: "cached",
+          parentId: null,
+          message: { role: "user", content: "cached", timestamp: 0 },
+        },
+      );
+      const page = await rpcReq<{ deltaCursor?: string }>(ws, "chat.history", {
+        sessionKey: SESSION_KEY,
+      });
+      await appendTranscriptMessage(
+        {
+          agentId: "main",
+          sessionId: SESSION_ID,
+          sessionKey: SESSION_KEY,
+          storePath: testState.sessionStorePath,
+        },
+        { eventId: "redacted", parentId: "cached", message },
+      );
+
+      const delta = await rpcReq<{
+        kind?: string;
+        messages?: Array<{ message?: { content?: unknown } }>;
+      }>(ws, "chat.history", {
+        sessionKey: SESSION_KEY,
+        cursor: page.payload?.deltaCursor,
+      });
+      expect(delta.ok).toBe(true);
+      expect(delta.payload?.kind).toBe("delta");
+      expect(JSON.stringify(delta.payload?.messages)).not.toContain(imageUrl);
+      expect(delta.payload?.messages?.[0]?.message?.content).toMatchObject(expectedContent);
     } finally {
       testState.sessionStorePath = undefined;
     }
