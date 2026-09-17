@@ -19,9 +19,10 @@ it.each(
   [1440, 390].flatMap((width) => [
     { width, name: "legacy source", agentId: undefined, sessionKey: "legacy-checklist" },
     { width, name: "unlisted agent", agentId: "removed", sessionKey: "agent:removed:notes" },
+    { width, name: "known agent", agentId: "research", sessionKey: "agent:research:notes" },
   ]),
 )(
-  "keeps empty forwarded gutters aligned at $width px for $name",
+  "keeps forwarded identities and message alignment at $width px for $name",
   async ({ width, agentId, sessionKey }) => {
     await page.viewport(width, 1000);
     container = document.body.appendChild(document.createElement("section"));
@@ -69,13 +70,24 @@ it.each(
       expect(content.x).toBeCloseTo(reference.x, 1);
       expect(content.width).toBeCloseTo(reference.width, 1);
       expect(content.x - group.getBoundingClientRect().x).toBeCloseTo(expectedGutter, 1);
-      expect(group.querySelector(":scope > .chat-avatar, :scope > .chat-avatar-slot")).toBeNull();
+      const hasAvatar = agentId === "research";
+      const gutterAvatar = group.querySelector(":scope > .chat-avatar, :scope > .chat-avatar-slot");
+      expect(Boolean(gutterAvatar)).toBe(hasAvatar);
       const attribution = group.querySelector(".chat-reply-attribution")!;
+      const inlineAvatar = attribution.querySelector(".chat-reply-attribution__agent-avatar");
+      expect(Boolean(inlineAvatar)).toBe(hasAvatar);
       if (agentId) {
         expect(attribution.textContent?.replace(/\s+/gu, " ").trim()).toBe(
-          "From removed · agent:removed:notes",
+          `From ${agentId} · ${sessionKey}`,
         );
         expect(attribution.querySelector("a")?.dataset.sessionKey).toBe(sessionKey);
+        const from = attribution.children[1]!.getBoundingClientRect();
+        const agent = attribution.querySelector(".chat-reply-attribution__agent")!;
+        const name = agent.lastElementChild!.getBoundingClientRect();
+        expect(name.x - from.right).toBeCloseTo(hasAvatar ? 6 + 18 + 4 : 6, 1);
+        if (inlineAvatar) {
+          expect(inlineAvatar.querySelector(".chat-avatar")).not.toBeNull();
+        }
       } else {
         expect(attribution.textContent?.replace(/\s+/gu, " ").trim()).toBe("From legacy-checklist");
         expect(attribution.querySelector("a")).toBeNull();
