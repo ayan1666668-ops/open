@@ -5,6 +5,7 @@ import type { SecretRef } from "../config/types.secrets.js";
 import type { PluginManifestRegistry } from "../plugins/manifest-registry.js";
 import { secretRefKey } from "./ref-contract.js";
 import type { SecretRefResolveCache } from "./resolve-types.js";
+import { lookupResolvedAssignmentValue } from "./runtime-assignment-provenance.js";
 import type { SecretAssignmentDisposition, SecretOwnerKind } from "./runtime-degraded-state.js";
 import {
   canonicalizeSecretRefsForOwnerContract,
@@ -85,6 +86,12 @@ export type SecretAssignmentOwner = Pick<
 export type ResolverContext = {
   sourceConfig: OpenClawConfig;
   env: NodeJS.ProcessEnv;
+  /** True on degrade-capable paths (Gateway); collection stays wide when set. */
+  allowOwnerIsolation?: boolean;
+  /** Session auth-profile pin; profiles pinned here are never excluded by auth.order. */
+  pinnedProfileId?: string;
+  /** Extra config-bound auth profiles that stay materialized despite explicit auth.order. */
+  configBoundProfileIds?: ReadonlySet<string>;
   cache: SecretRefResolveCache;
   manifestRegistry?: Pick<PluginManifestRegistry, "plugins">;
   warnings: SecretResolverWarning[];
@@ -100,11 +107,21 @@ export type SecretDefaults = NonNullable<OpenClawConfig["secrets"]>["defaults"];
 export function createResolverContext(params: {
   sourceConfig: OpenClawConfig;
   env: NodeJS.ProcessEnv;
+  allowOwnerIsolation?: boolean;
+  pinnedProfileId?: string;
+  configBoundProfileIds?: ReadonlySet<string>;
   manifestRegistry?: Pick<PluginManifestRegistry, "plugins">;
 }): ResolverContext {
   return {
     sourceConfig: params.sourceConfig,
     env: params.env,
+    ...(params.allowOwnerIsolation !== undefined
+      ? { allowOwnerIsolation: params.allowOwnerIsolation }
+      : {}),
+    ...(params.pinnedProfileId ? { pinnedProfileId: params.pinnedProfileId } : {}),
+    ...(params.configBoundProfileIds
+      ? { configBoundProfileIds: params.configBoundProfileIds }
+      : {}),
     cache: {},
     ...(params.manifestRegistry ? { manifestRegistry: params.manifestRegistry } : {}),
     warnings: [],
@@ -230,10 +247,10 @@ export function applyResolvedAssignments(params: {
   let firstValidationError: Error | undefined;
   for (const assignment of params.assignments) {
     const key = secretRefKey(assignment.ref);
-    if (!params.resolved.has(key)) {
+    const value = lookupResolvedAssignmentValue(assignment, params.resolved);
+    if (value === undefined && !params.resolved.has(key)) {
       throw new Error(`Secret reference "${key}" resolved to no value.`);
     }
-    const value = params.resolved.get(key);
     try {
       assertExpectedResolvedSecretValue({
         value,

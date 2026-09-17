@@ -11,7 +11,10 @@ import {
   isSecretResolutionError,
 } from "./resolve-errors.js";
 import { resolveSecretRefValues, resolveSecretRefValuesSettledByProvider } from "./resolve.js";
-import { getSecretAssignmentSource } from "./runtime-assignment-provenance.js";
+import {
+  getSecretAssignmentSource,
+  lookupResolvedAssignmentValue,
+} from "./runtime-assignment-provenance.js";
 import { resolveAuthProfileSecretOwnerId } from "./runtime-auth-profile-owner.js";
 import type {
   DegradedSecretOwner,
@@ -500,7 +503,10 @@ export async function resolveAndApplySecretAssignments(params: {
       .filter(
         (assignments) =>
           !failedOwners.has(assignments) &&
-          assignments.every((assignment) => resolution.resolved.has(secretRefKey(assignment.ref))),
+          assignments.every(
+            (assignment) =>
+              lookupResolvedAssignmentValue(assignment, resolution.resolved) !== undefined,
+          ),
       )
       .flat();
     if (readyAssignments.length > 0) {
@@ -510,7 +516,10 @@ export async function resolveAndApplySecretAssignments(params: {
         applyResolvedAssignments({ assignments: readyAssignments, resolved: resolution.resolved });
         for (const assignment of readyAssignments) {
           const refKey = secretRefKey(assignment.ref);
-          resolvedValues.set(refKey, structuredClone(resolution.resolved.get(refKey)));
+          const value = lookupResolvedAssignmentValue(assignment, resolution.resolved);
+          if (value !== undefined) {
+            resolvedValues.set(refKey, structuredClone(value));
+          }
         }
       } catch (error) {
         associateAssignmentFailureOwners({
@@ -581,7 +590,10 @@ export async function resolveAndApplySecretAssignments(params: {
         continue;
       }
       if (
-        assignments.every((assignment) => resolution.resolved.has(secretRefKey(assignment.ref)))
+        assignments.every(
+          (assignment) =>
+            lookupResolvedAssignmentValue(assignment, resolution.resolved) !== undefined,
+        )
       ) {
         continue;
       }

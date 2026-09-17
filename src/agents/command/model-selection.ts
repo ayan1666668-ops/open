@@ -33,7 +33,6 @@ import {
   resolveAutoFallbackPrimaryProbe,
   resolveAgentConfig,
   resolveAgentDir,
-  resolveAgentEffectiveModelPrimary,
 } from "../agent-scope.js";
 import { isStoredCredentialCompatibleWithAuthProvider } from "../auth-profiles/order.js";
 import { clearSessionAuthProfileOverride } from "../auth-profiles/session-override.js";
@@ -44,7 +43,6 @@ import { resolveModelProviderAuthConfig } from "../model-auth-provider-route.js"
 import { findModelInCatalog } from "../model-catalog-lookup.js";
 import { loadManifestModelCatalog } from "../model-catalog.js";
 import type { ModelFallbackRouteResolution } from "../model-fallback.types.js";
-import { splitTrailingAuthProfile } from "../model-ref-profile.js";
 import type { ModelManifestNormalizationContext } from "../model-ref-shared.js";
 import { dedupeModelCatalogEntries } from "../model-selection-shared.js";
 import {
@@ -64,12 +62,13 @@ import {
   resolveEffectiveAgentRuntime,
 } from "../thinking-runtime.js";
 import { persistAgentSession } from "./attempt-execution.shared.js";
+import { normalizeExplicitOverrideInput } from "./model-override-input.js";
 import {
   normalizeAgentCommandDefaultModelRef,
   normalizeAgentCommandModelRef,
   parseAgentCommandModelRef,
 } from "./model-ref.js";
-import { normalizeExplicitOverrideInput } from "./prepare.js";
+import { resolveConfiguredDefaultAuthProfileId } from "./model-selection-owner.js";
 import type { resolveAgentRunContext } from "./run-context.js";
 import { loadTranscriptResolveRuntime } from "./runtime-loaders.js";
 import type { AgentCommandOpts } from "./types.js";
@@ -103,9 +102,10 @@ export async function resolveEmbeddedModelSelection(params: {
     allowPluginNormalization: params.pluginsEnabled,
     ...params.modelManifestContext,
   });
-  const configuredDefaultAuthProfileId = splitTrailingAuthProfile(
-    resolveAgentEffectiveModelPrimary(params.cfg, params.sessionAgentId) ?? "",
-  ).profile;
+  const configuredDefaultAuthProfileId = resolveConfiguredDefaultAuthProfileId(
+    params.cfg,
+    params.sessionAgentId,
+  );
   const { provider: defaultProvider, model: defaultModel } = normalizeAgentCommandDefaultModelRef(
     params.cfg,
     configuredDefaultRef.provider,
