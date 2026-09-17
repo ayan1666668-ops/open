@@ -253,6 +253,9 @@ export abstract class MemorySearchOrchestration extends MemoryKeywordRetrieval {
       if (this.memoryWatchCapacityDegraded) {
         this.dirty = true;
       }
+      // A watcher lost for any other reason leaves the flag just as stale, but
+      // that loss is recoverable: rebuild coverage and reconcile once here.
+      this.reconcileLostMemoryWatch();
       const capacitySyncInFlight =
         this.memoryWatchCapacityDegraded && this.activeBackgroundSearchSyncs.size > 0;
       if (searchSyncEnabled && !capacitySyncInFlight && (this.dirty || this.sessionsDirty)) {
