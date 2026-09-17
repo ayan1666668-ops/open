@@ -244,6 +244,15 @@ describe("prepared binary availability", () => {
     );
   });
 
+  it("reports a PATH directory named like the binary as missing", async () => {
+    const binDir = tempDirs.make("openclaw-prepared-dir-");
+    fs.mkdirSync(path.join(binDir, "fixture-tool"));
+    vi.stubEnv("PATH", binDir);
+    expect((await prepareBinaryAvailability(["fixture-tool"])).hasBinary("fixture-tool")).toBe(
+      false,
+    );
+  });
+
   it("keeps filesystem lookup semantics for nested binary names", async () => {
     const binDir = tempDirs.make("openclaw-prepared-nested-");
     fs.mkdirSync(path.join(binDir, "nested"));

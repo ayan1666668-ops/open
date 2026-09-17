@@ -1,7 +1,6 @@
 // Config evaluation helpers load dynamic config modules with guarded evaluation.
 import fs from "node:fs";
 import path from "node:path";
-import { isRegularFile } from "../infra/executable-path.js";
 import { isBlockedObjectKey } from "../infra/prototype-keys.js";
 
 /** Normalizes primitive config values into the truthiness rules used by requirements checks. */
@@ -198,7 +197,8 @@ export function hasBinary(bin: string): boolean {
     try {
       // X_OK also succeeds for searchable directories, so a PATH entry holding a
       // directory named like the binary would otherwise be reported available.
-      if (!isRegularFile(candidate)) {
+      // throwIfNoEntry keeps missing candidates free of thrown errors.
+      if (!fs.statSync(candidate, { throwIfNoEntry: false })?.isFile()) {
         continue;
       }
       fs.accessSync(candidate, fs.constants.X_OK);
@@ -235,9 +235,14 @@ export async function prepareBinaryAvailability(
         return;
       }
       assertCurrent?.();
+      const resolved = path.resolve(cwd, candidate);
       try {
         // access uses the filesystem's case, permission, and symlink semantics.
-        await fs.promises.access(path.resolve(cwd, candidate), fs.constants.X_OK);
+        await fs.promises.access(resolved, fs.constants.X_OK);
+        // X_OK also succeeds for searchable directories; stat only hits so misses stay one call.
+        if (!(await fs.promises.stat(resolved)).isFile()) {
+          continue;
+        }
       } catch {
         continue;
       }
