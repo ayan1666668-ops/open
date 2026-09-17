@@ -596,6 +596,9 @@ export function createSessionActivitySummaries(deps: {
   return {
     ensure(requested) {
       const target = eventTarget(requested.key, requested.agentId)!;
+      if (isCronSessionKey(target.key)) {
+        return { state: "unavailable" };
+      }
       const state = request(target, true);
       const projected = projectSessionActivitySummary({
         ...target,

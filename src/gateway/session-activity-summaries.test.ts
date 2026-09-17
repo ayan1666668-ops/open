@@ -2,6 +2,7 @@ import { mkdir } from "node:fs/promises";
 import { backup } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../test/helpers/promise.js";
+import { ACTIVITY_SUMMARY_FORMAT_REVISION } from "../config/sessions/activity-summary.js";
 import { resolveSessionStorePathCore } from "../config/sessions/paths.js";
 import {
   loadSessionEntryReadOnly,
@@ -163,6 +164,20 @@ describe("Activity recap lifecycle with the canonical session store", () => {
         sessionId: "cron-run",
         lifecycleRevision: "lifecycle-1",
         updatedAt: 1,
+        activitySummary: {
+          version: 1,
+          formatRevision: ACTIVITY_SUMMARY_FORMAT_REVISION,
+          text: "A cached Cron recap must not be exposed.",
+          updatedAt: 1,
+          sessionId: "cron-run",
+          lifecycleRevision: "lifecycle-1",
+          generation: null,
+          maxSeq: 0,
+          leafEntryId: null,
+          coveredMessages: 0,
+          totalMessages: 0,
+          omittedContent: false,
+        },
       },
     );
 
