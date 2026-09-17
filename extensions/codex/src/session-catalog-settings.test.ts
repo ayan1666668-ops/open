@@ -59,7 +59,7 @@ function resumeResponse(thread: ReturnType<typeof nativeThread>) {
   };
 }
 
-async function fixture(sameSecond = false) {
+async function fixture(sameSecond = false, overflow = false) {
   const options: CodexAppServerStartOptions = {
     transport: "websocket",
     command: "codex",
@@ -72,6 +72,11 @@ async function fixture(sameSecond = false) {
     nativeThread({ recencyAt: sameSecond ? 200 : 100 }),
     nativeThread({ id: "other", recencyAt: 200 }),
   ];
+  if (overflow) {
+    for (let i = inventory.length; i < 20_001; i++) {
+      inventory.push(nativeThread({ id: `stored-${i}`, recencyAt: 1 }));
+    }
+  }
   const methods: string[] = [];
   const create = () =>
     createClientHarness({
@@ -79,9 +84,19 @@ async function fixture(sameSecond = false) {
         const request = JSON.parse(line);
         methods.push(request.method);
         if (request.method === "thread/list") {
+          const matching = (sameSecond ? inventory.toReversed() : inventory).filter(
+            (thread) => !request.params.cwd || thread.cwd === request.params.cwd,
+          );
+          const offset = Number(request.params.cursor ?? 0);
+          const data = matching.slice(offset, offset + request.params.limit);
           send({
             id: request.id,
-            result: { data: sameSecond ? inventory.toReversed() : inventory },
+            result: {
+              data,
+              ...(offset + data.length < matching.length
+                ? { nextCursor: String(offset + data.length) }
+                : {}),
+            },
           });
         } else if (request.method === "thread/read") {
           send({
@@ -102,7 +117,11 @@ async function fixture(sameSecond = false) {
     homeId,
     readNative: async (params: CodexThreadListParams) =>
       projectCodexCatalogPage(
-        await a.client.request("thread/list", params, { timeoutMs: 1_000, catalogPreview: true }),
+        // Overflow queries still have a native reader after the live settings source closes.
+        await (overflow ? b.client : a.client).request("thread/list", params, {
+          timeoutMs: 1_000,
+          catalogPreview: true,
+        }),
         { sanitize: sanitizeTerminalText },
       ),
     assertCurrent: () => {},
@@ -124,6 +143,33 @@ afterEach(async () => {
 });
 
 describe("Codex catalog live settings", () => {
+  it("keeps live resume settings authoritative for overflow cwd queries", async () => {
+    const { a, index } = await fixture(false, true);
+    await resumeCodexAppServerThread({
+      client: a.client,
+      abandonClient: vi.fn(async () => {}),
+      request: { threadId: "thread-1", excludeTurns: true },
+      timeoutMs: 1_000,
+    });
+    expect((await index.list({ cwd: "/workspace/runtime" })).sessions).toEqual([
+      expect.objectContaining({
+        threadId: "thread-1",
+        cwd: "/workspace/runtime",
+        modelProvider: "runtime-provider",
+      }),
+    ]);
+    expect(
+      (await index.list({ cwd: "/workspace/persisted" })).sessions.some(
+        (session) => session.threadId === "thread-1",
+      ),
+    ).toBe(false);
+    a.client.close();
+    expect((await index.list({ cwd: "/workspace/runtime" })).sessions).toEqual([]);
+    expect((await index.list({ cwd: "/workspace/persisted" })).sessions).toContainEqual(
+      expect.objectContaining({ threadId: "thread-1", modelProvider: "openai" }),
+    );
+  });
+
   it("publishes acknowledged resume settings before returning and keeps stale native metadata behind the live overlay", async () => {
     const { a, index, inventory, methods } = await fixture();
     const abandonClient = vi.fn(async () => {});

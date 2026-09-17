@@ -58,6 +58,19 @@ export class CodexCatalogSettingsIndex {
     return undefined;
   }
 
+  hasLiveCwd(): boolean {
+    return this.values.some(({ settings, sources }) => {
+      if (settings.cwd) {
+        for (const source of sources) {
+          if (!source.closed) {
+            return true;
+          }
+        }
+      }
+      return false;
+    });
+  }
+
   delete(threadId: string): void {
     this.values.delete(threadId);
   }

@@ -34,6 +34,15 @@ export class CodexCatalogField<T> {
     return this.entries.get(threadId)?.value;
   }
 
+  some(predicate: (value: T) => boolean): boolean {
+    for (const entry of this.entries.values()) {
+      if (entry.value !== undefined && predicate(entry.value)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   delete(threadId: string): void {
     this.put(threadId, { revision: ++this.revision });
   }

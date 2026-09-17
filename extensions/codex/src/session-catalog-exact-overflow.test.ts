@@ -67,6 +67,9 @@ async function remoteFixture(count: number) {
     clearActiveRows: () => {
       activeRows = [];
     },
+    restoreActiveRows: () => {
+      activeRows = [target];
+    },
   };
 }
 
@@ -95,12 +98,29 @@ describe("exact Codex lookup beyond resident retention", () => {
     ).toBe(true);
   });
 
-  it("does not treat a readable uncached thread as proof of non-archived membership", async () => {
-    const f = await remoteFixture(0);
-    f.clearActiveRows();
-    await expect(f.control.requireEligibleThread(f.target.id)).rejects.toThrow(
-      "eligibility could not be verified",
-    );
+  it.each([0, 1])(
+    "requires native non-archived membership even when thread/read succeeds (cached rows: %i)",
+    async (count) => {
+      const f = await remoteFixture(count);
+      expect(
+        [...f.stored.values()].some(
+          (entry) => entry.kind === "row" && entry.row.threadId === f.target.id,
+        ),
+      ).toBe(count === 1);
+      f.clearActiveRows();
+      await expect(f.control.requireEligibleThread(f.target.id)).rejects.toThrow(
+        "eligibility could not be verified",
+      );
+    },
+  );
+
+  it("uses fresh native membership after a remote resident row was archived", async () => {
+    const f = await remoteFixture(1);
+    await f.control.archiveThread(f.target.id);
+    f.restoreActiveRows();
+    await expect(f.control.requireEligibleThread(f.target.id)).resolves.toMatchObject({
+      id: f.target.id,
+    });
   });
 
   it("finds a paired-node thread after more than 100 catalog pages", async () => {

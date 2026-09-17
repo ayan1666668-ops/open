@@ -37,7 +37,7 @@ describe("catalog list completion ownership", () => {
       const root = tryBeginGatewayRootWorkAdmission("catalog-deferred-subscriber");
       expect(root).not.toBeNull();
       const owner = new GatewayConnectionWork();
-      const lifetime = new SessionCatalogListLifetime(() => true, []);
+      const lifetime = new SessionCatalogListLifetime(() => true, [], [catalog.id]);
       const release = createDeferredCore();
       const delivered = vi.fn();
       let ready = false;
@@ -86,7 +86,7 @@ describe("catalog list completion ownership", () => {
   );
 
   it("coalesces a blocked subscriber's progress to one latest publication", async () => {
-    const lifetime = new SessionCatalogListLifetime(() => true, []);
+    const lifetime = new SessionCatalogListLifetime(() => true, [], [catalog.id]);
     const release = createDeferredCore();
     const received = createDeferredCore();
     let ready = false;
@@ -117,11 +117,72 @@ describe("catalog list completion ownership", () => {
     }
   });
 
+  it("retains each catalog host's latest late publication while subscriber preparation waits", async () => {
+    const catalogIds = ["alpha", "beta"];
+    const hostIds = ["node:first", "node:second"];
+    const lifetime = new SessionCatalogListLifetime(() => true, [], catalogIds);
+    const owner = new GatewayConnectionWork();
+    const publish = createDeferredCore();
+    const release = createDeferredCore();
+    const publications: Promise<void>[] = [];
+    let ready = false;
+    const preparation = release.promise.then(() => {
+      ready = true;
+    });
+    const prepare = vi.fn(() => (ready ? undefined : preparation));
+    const delivered = vi.fn();
+    try {
+      await owner.track(async () => {
+        lifetime.subscribe("active", delivered, () => true, undefined, prepare);
+        await Promise.all(
+          catalogIds.map((id) =>
+            lifetime.runProvider(
+              (updated) => lifetime.publish({ ...catalog, id, hosts: [updated] }, new Map()),
+              async (params) => {
+                const publication = publish.promise.then(() => {
+                  for (let index = 0; index < 100; index++) {
+                    for (const hostId of hostIds) {
+                      params.onHost({ ...host, hostId, label: `${id}/${hostId} ${index}` });
+                    }
+                  }
+                });
+                publications.push(publication);
+                params.waitUntil(publication);
+              },
+            ),
+          ),
+        );
+      });
+      lifetime.finishListing();
+      publish.resolve();
+      await Promise.all(publications);
+      expect(delivered).not.toHaveBeenCalled();
+      expect(prepare).toHaveBeenCalledOnce();
+      release.resolve();
+      await owner.drain();
+      expect(delivered.mock.calls.map(([value]) => ({ id: value.id, hosts: value.hosts }))).toEqual(
+        catalogIds.flatMap((id) =>
+          hostIds.map((hostId) => ({
+            id,
+            hosts: [{ ...host, hostId, label: `${id}/${hostId} 99` }],
+          })),
+        ),
+      );
+    } finally {
+      publish.resolve();
+      release.resolve();
+      await Promise.allSettled(publications);
+      await owner.drain();
+      lifetime.retire();
+      lifetime.finishListing();
+    }
+  });
+
   it("keeps work started before retirement owned when registration follows an await", async () => {
     const before = getActiveGatewayRootWorkCount();
     const root = tryBeginGatewayRootWorkAdmission("catalog-register-after-retirement");
     expect(root).not.toBeNull();
-    const lifetime = new SessionCatalogListLifetime(() => true, []);
+    const lifetime = new SessionCatalogListLifetime(() => true, [], [catalog.id]);
     const releaseListing = createDeferredCore();
     const releaseWork = createDeferredCore();
     const publish = vi.fn();
@@ -162,7 +223,7 @@ describe("catalog list completion ownership", () => {
       const before = getActiveGatewayRootWorkHolders();
       const root = tryBeginGatewayRootWorkAdmission("catalog-zero-background");
       expect(root).not.toBeNull();
-      const lifetime = new SessionCatalogListLifetime(() => true, []);
+      const lifetime = new SessionCatalogListLifetime(() => true, [], [catalog.id]);
       const publish = vi.fn();
       let retained: SessionCatalogListProviderParams | undefined;
       try {
@@ -205,7 +266,7 @@ describe("catalog list completion ownership", () => {
     expect(foreignRoot).not.toBeNull();
     const owner = new GatewayConnectionWork();
     const foreign = new GatewayConnectionWork();
-    const lifetime = new SessionCatalogListLifetime(() => true, [owner.signal]);
+    const lifetime = new SessionCatalogListLifetime(() => true, [owner.signal], [catalog.id]);
     lifetime.subscribe(
       "active",
       () => undefined,
@@ -277,7 +338,7 @@ describe("catalog list completion ownership", () => {
       const before = getActiveGatewayRootWorkCount();
       const root = tryBeginGatewayRootWorkAdmission("catalog-test");
       expect(root).not.toBeNull();
-      const lifetime = new SessionCatalogListLifetime(() => true, []);
+      const lifetime = new SessionCatalogListLifetime(() => true, [], [catalog.id]);
       lifetime.subscribe(
         "active",
         () => undefined,
@@ -321,7 +382,7 @@ describe("catalog list completion ownership", () => {
   );
 
   it("disconnects subscribers without cancelling the native discovery", async () => {
-    const lifetime = new SessionCatalogListLifetime(() => true, []);
+    const lifetime = new SessionCatalogListLifetime(() => true, [], [catalog.id]);
     const connection = new AbortController();
     const disconnected = vi.fn();
     const live = vi.fn();
@@ -356,7 +417,11 @@ describe("catalog list completion ownership", () => {
   it("joins native completion when the Gateway starts draining", async () => {
     const root = tryBeginGatewayRootWorkAdmission("catalog-drain-test");
     expect(root).not.toBeNull();
-    const lifetime = new SessionCatalogListLifetime(() => true, [getGatewayRestartDrainSignal()]);
+    const lifetime = new SessionCatalogListLifetime(
+      () => true,
+      [getGatewayRestartDrainSignal()],
+      [catalog.id],
+    );
     lifetime.subscribe(
       "active",
       () => undefined,
@@ -394,7 +459,7 @@ describe("catalog list completion ownership", () => {
     const before = getActiveGatewayRootWorkCount();
     const root = tryBeginGatewayRootWorkAdmission("catalog-last-subscriber");
     expect(root).not.toBeNull();
-    const lifetime = new SessionCatalogListLifetime(() => true, []);
+    const lifetime = new SessionCatalogListLifetime(() => true, [], [catalog.id]);
     const connection = new AbortController();
     const listener = vi.fn();
     lifetime.subscribe("only", listener, () => true, connection.signal);
@@ -435,7 +500,11 @@ describe("catalog list completion ownership", () => {
       const root = tryBeginGatewayRootWorkAdmission("catalog-retirement-test");
       expect(root).not.toBeNull();
       const controller = new AbortController();
-      const lifetime = new SessionCatalogListLifetime(() => true, [controller.signal]);
+      const lifetime = new SessionCatalogListLifetime(
+        () => true,
+        [controller.signal],
+        [catalog.id],
+      );
       lifetime.subscribe(
         "active",
         () => undefined,

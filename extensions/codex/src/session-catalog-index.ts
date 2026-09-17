@@ -28,7 +28,7 @@ import {
   CodexCatalogPersistence,
 } from "./session-catalog-index-state.js";
 import { CODEX_CATALOG_MAX_ROWS } from "./session-catalog-limits.js";
-import { listCodexNativeCatalogPage } from "./session-catalog-native-page.js";
+import { CodexCatalogNativePages } from "./session-catalog-native-page.js";
 import {
   CODEX_CATALOG_NATIVE_PAGE_LIMIT,
   projectCodexCatalogNativeThread,
@@ -62,6 +62,7 @@ export class CodexCatalogIndex {
   private readonly availability = new CodexCatalogAvailability();
   private readonly liveStatus = new CodexCatalogStatusIndex();
   private readonly liveSettings = new CodexCatalogSettingsIndex();
+  private readonly nativePages = new CodexCatalogNativePages(this.liveSettings);
   private readonly names = new CodexCatalogField<string | null>();
   private initializing: Promise<void> | undefined;
   private initialized = false;
@@ -701,7 +702,7 @@ export class CodexCatalogIndex {
         cursor.kind === "native" ||
         (this.overflow && (params.cwd || params.searchTerm || (page && !page.nextCursor)))
       ) {
-        return await listCodexNativeCatalogPage(params, cursor, this.options, deadline);
+        return await this.nativePages.list(params, cursor, this.options, deadline);
       }
       if (page) {
         return page;

@@ -633,8 +633,8 @@ budget and do not scan the full catalog. Missing, unreadable, inconsistent, or
 OpenClaw-managed metadata is not accepted. Refresh the catalog, verify the session
 in its native Codex home, and retry. This error does not prove that the thread
 does not exist. Ordinary discovery keeps its existing behavior. Remote sources
-continue to use native catalog verification, including when the requested ID was
-evicted from memory. Neither remote nor paired-node verification stops at a fixed
+continue to use fresh native catalog verification, including when the requested ID
+is still resident or was evicted. Neither remote nor paired-node verification stops at a fixed
 catalog page count; the existing request deadline still bounds the operation.
 
 **Archive is disabled:** archive is available for stored/activity-unknown and

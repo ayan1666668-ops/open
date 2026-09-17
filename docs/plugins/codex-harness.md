@@ -94,7 +94,9 @@ No native rollouts or transcripts are copied into the state database.
 Live workspace and model-provider settings also stay in memory, with at most
 64 supporting native connections per row. Settings notifications and successful
 resume acknowledgements update this overlay immediately; both cwd filtering and
-display use it. Native metadata refreshes cannot overwrite it, and closing its
+display use it, including overflow pages. When live cwd settings are present,
+overflow discovery filters after applying them instead of relying on stored native
+cwd. Native metadata refreshes cannot overwrite the overlay, and closing its
 last supporting connection or receiving that connection's `notLoaded` event
 restores the stored metadata. Resume publication uses
 the response's current cwd, which can differ from the thread's persisted cwd.
@@ -152,12 +154,15 @@ change. A snapshot read failure invalidates durable completeness for that index
 lifetime; native hydration remains available in memory, and the next successful
 restart enumerates and prunes unread stale keys. The cache does not
 alter native session files, update migrations, or rollback.
-An exact-thread cache miss uses fresh native metadata. Remote eligibility additionally
-checks authoritative non-archived membership because native `thread/read` can return
+Exact-thread requests use fresh native metadata. Every remote eligibility check,
+including a resident cache hit, verifies authoritative non-archived membership because native `thread/read` can return
 archived threads. These checks use the existing request deadline, without a retained-row
 or page-count cutoff; paired-node exact lookup follows continuations under its existing deadline.
 Gateway aggregation only coalesces concurrent requests, so completed aggregate
 responses cannot delay the next poll's view of resident changes.
+While delivery waits for fresh identity facts, progress keeps the latest update
+for each selected catalog and observed host. It emits separate one-host frames;
+retained progress scales with distinct hosts, not with the number of updates.
 
 The row and bookkeeping limits are independent per home. Thread identifiers are
 limited to 256 UTF-16 code units, paths and working directories to 4,096, display

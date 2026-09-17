@@ -602,7 +602,7 @@ describe("Codex exact local eligibility", () => {
     );
   });
 
-  it("uses resident membership and a fresh exact read for a remote pathless source", async () => {
+  it("uses fresh native membership and an exact read for a remote pathless source", async () => {
     const f = await localEligibilityFixture();
     const { localSessionsRoot: _root, ...remoteSource } = f.source;
     f.thread.path = null;
@@ -612,8 +612,21 @@ describe("Codex exact local eligibility", () => {
     commandRpcMocks.codexControlRequest.mockClear();
     await expect(remote.requireEligibleThread(f.thread.id)).resolves.toBe(f.thread);
     expect(commandRpcMocks.codexControlRequest).not.toHaveBeenCalled();
-    expect(pinnedConnectionMocks.request.mock.calls.map(([r]) => r.method)).toEqual([
-      "thread/read",
+    expect(
+      pinnedConnectionMocks.request.mock.calls.map(([r]) => [r.method, r.requestParams]),
+    ).toEqual([
+      ["thread/read", { threadId: f.thread.id, includeTurns: false }],
+      [
+        "thread/list",
+        {
+          archived: false,
+          limit: 64,
+          modelProviders: [],
+          sortKey: "recency_at",
+          sortDirection: "desc",
+          cwd: f.thread.cwd,
+        },
+      ],
     ]);
   });
 });

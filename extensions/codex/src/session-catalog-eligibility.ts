@@ -47,8 +47,7 @@ export async function requireEligibleCodexThread(params: {
     remaining();
     const index = await requests.index();
     const root = params.localSessionsRoot;
-    const candidate = index.get(threadId);
-    if (candidate?.archived) {
+    if (root && index.get(threadId)?.archived) {
       throw unverified();
     }
     const thread = await requests.readThread(threadId, false, remaining());
@@ -60,9 +59,9 @@ export async function requireEligibleCodexThread(params: {
     ) {
       throw unverified();
     }
-    if (!root && !candidate?.page.sessions.length) {
-      // A retained-row miss says nothing about native membership. thread/read
-      // also returns archived threads, so confirm membership on the captured home.
+    if (!root) {
+      // Remote thread/read includes archived threads, so every action needs
+      // fresh non-archived membership on the captured home.
       const { CODEX_CATALOG_NATIVE_PAGE_LIMIT } =
         await import("./session-catalog-native-projection.js");
       const { CODEX_CATALOG_MAX_ROWS } = await import("./session-catalog-limits.js");
