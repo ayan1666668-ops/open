@@ -13,6 +13,7 @@ import {
 import { resolveVitestNodeArgs } from "../../scripts/lib/vitest-process-env.mts";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { DEFAULT_VITEST_TEST_TIMEOUT_MS } from "../../test/vitest/vitest.timeouts.js";
+import { createDeferredCore } from "../shared/deferred.js";
 
 const OUTPUT_TAIL_CHARS = 8_000;
 const DIAGNOSTIC_GRACE_MS = 200;
@@ -131,12 +132,15 @@ export function waitForCliProcessStderrMarker(
 export async function runCliProcessChild(params: {
   nodeArgs: string[];
   nodeExecutable?: string;
+  /** Preserve the launch policy of fixtures migrated from direct child_process calls. */
+  nodeArgsPolicy?: "vitest" | "caller";
   env: NodeJS.ProcessEnv;
   cwd?: string;
   input?: string;
   interact?: (child: ChildProcessWithoutNullStreams) => Promise<void> | void;
   onStdout?: (stdout: string) => void;
   timeoutMs?: number;
+  maxBuffer?: number;
 }): Promise<CliProcessChildResult> {
   const timeoutMs = params.timeoutMs ?? CLI_PROCESS_DEADLOCK_GUARD_MS;
   const executable = params.nodeExecutable ?? process.execPath;
@@ -147,7 +151,7 @@ export async function runCliProcessChild(params: {
     process.versions.bun && params.nodeExecutable === undefined
       ? params.nodeArgs
       : [
-          ...resolveVitestNodeArgs(params.env),
+          ...(params.nodeArgsPolicy === "caller" ? [] : resolveVitestNodeArgs(params.env)),
           ...(reportDir
             ? [
                 "--require",
@@ -171,12 +175,32 @@ export async function runCliProcessChild(params: {
   child.stderr.setEncoding("utf8");
   let stdout = "";
   let stderr = "";
+  const outputFailure = createDeferredCore<never>();
+  const checkOutputLimit = () => {
+    if (
+      params.maxBuffer !== undefined &&
+      Buffer.byteLength(stdout) + Buffer.byteLength(withoutDiagnosticReadiness(stderr)) >
+        params.maxBuffer
+    ) {
+      outputFailure.reject(
+        new Error(
+          formatCliProcessFailure({
+            reason: `CLI process exceeded maxBuffer (${params.maxBuffer} bytes)`,
+            stdout,
+            stderr: withoutDiagnosticReadiness(stderr),
+          }),
+        ),
+      );
+    }
+  };
   child.stdout.on("data", (chunk: string) => {
     stdout += chunk;
+    checkOutputLimit();
     params.onStdout?.(stdout);
   });
   child.stderr.on("data", (chunk: string) => {
     stderr += chunk;
+    checkOutputLimit();
   });
 
   // Wait for stream EOF alongside exit: a respawning entrypoint hands its pipes
@@ -196,7 +220,10 @@ export async function runCliProcessChild(params: {
     }
     child.stdin.end(params.input);
   })();
-  const completed = Promise.all([closed, interaction]).then(([exit]) => exit);
+  const completed = Promise.race([
+    Promise.all([closed, interaction]).then(([exit]) => exit),
+    outputFailure.promise,
+  ]);
   let guard: NodeJS.Timeout | undefined;
   const exit = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
     (resolve, reject) => {
