@@ -300,7 +300,7 @@ describe("active-memory escalation", () => {
             id: "unused",
             decide: async () => {
               calls += 1;
-              return "skip";
+              return "skip" as const;
             },
           },
           signal: new AbortController().signal,
@@ -366,7 +366,7 @@ describe("active-memory escalation", () => {
           id: "abstaining-provider",
           decide: async ({ message }) => {
             observedMessage = message;
-            return "abstain";
+            return "abstain" as const;
           },
         },
         signal: new AbortController().signal,

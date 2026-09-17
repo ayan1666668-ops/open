@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { expectDefined } from "@openclaw/normalization-core";
+import type { ActiveMemoryEscalationProvider } from "openclaw/plugin-sdk/active-memory-escalation-runtime";
 import { toErrorObject as toLintErrorObject } from "openclaw/plugin-sdk/error-runtime";
 import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
@@ -1955,7 +1956,7 @@ describe("active-memory plugin", () => {
   });
 
   it("passes only bounded normalized text to an escalation provider", async () => {
-    const decide = vi.fn(async () => "skip" as const);
+    const decide = vi.fn<ActiveMemoryEscalationProvider["decide"]>(async () => "skip" as const);
     hoisted.getActiveMemoryEscalationProvider.mockReturnValue({
       id: "local-memory-intent",
       decide,
