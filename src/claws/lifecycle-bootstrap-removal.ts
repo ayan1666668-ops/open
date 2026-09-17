@@ -1,4 +1,7 @@
+import fs from "node:fs";
+import path from "node:path";
 import { MAX_WORKSPACE_BOOTSTRAP_FILE_BYTES } from "../agents/workspace-bootstrap-read.js";
+import { openRootFileSync } from "../infra/boundary-file-read.js";
 import { removeClawWorkspaceFile, type RemovedWorkspaceFile } from "./lifecycle-delete-support.js";
 import type { ClawRemovePlanAction } from "./lifecycle-remove-contract.js";
 import type { ClawStatusRecord } from "./lifecycle-status.js";
@@ -49,26 +52,67 @@ export async function removeClawBootstrap(
     return undefined;
   }
   if (record.bootstrap.state === "pending") {
-    return removeClawWorkspaceFile(
-      {
-        workspace: record.bootstrap.workspace,
-        path: record.bootstrap.path,
-        contentDigest: record.install.bootstrap.contentDigest,
-        state: "unchanged",
-      },
-      assertCurrent,
-      MAX_WORKSPACE_BOOTSTRAP_FILE_BYTES,
-      record.workspaceOrigin.adopted
-        ? (relativePath) =>
-            clawBootstrapPublicationMatches(
-              record.install.workspace,
-              record.workspaceOrigin.adopted
-                ? record.workspaceOrigin.bootstrapPublication
-                : undefined,
-              relativePath,
-            )
-        : undefined,
-    );
+    let fd: number | undefined;
+    try {
+      let ownsFile: ((relativePath: string) => boolean) | undefined;
+      if (record.workspaceOrigin.adopted) {
+        const publication = record.workspaceOrigin.bootstrapPublication;
+        assertCurrent();
+        const opened = openRootFileSync({
+          absolutePath: path.join(record.install.workspace, record.bootstrap.path),
+          rootPath: record.install.workspace,
+          boundaryLabel: "Claw bootstrap removal",
+          symlinks: "reject",
+          maxBytes: MAX_WORKSPACE_BOOTSTRAP_FILE_BYTES,
+        });
+        if (!opened.ok) {
+          return { path: record.bootstrap.path, action: "retainedUnowned" };
+        }
+        fd = opened.fd;
+        const pinnedFd = fd;
+        const original = fs.fstatSync(pinnedFd, { bigint: true });
+        if (
+          !publication ||
+          !clawBootstrapPublicationMatches(
+            record.install.workspace,
+            publication,
+            record.bootstrap.path,
+            original,
+          )
+        ) {
+          return { path: record.bootstrap.path, action: "retainedUnowned" };
+        }
+        // Check durable ownership before rename, then retain the live object through removal
+        // and restoration. Namespace changes need not preserve a fallback birth timestamp.
+        ownsFile = (relativePath) => {
+          const current = fs.fstatSync(pinnedFd, { bigint: true });
+          if (current.size !== original.size || current.mtimeNs !== original.mtimeNs) {
+            return false;
+          }
+          return clawBootstrapPublicationMatches(
+            record.install.workspace,
+            { ...publication, birthtimeNs: current.birthtimeNs.toString() },
+            relativePath,
+            current,
+          );
+        };
+      }
+      return await removeClawWorkspaceFile(
+        {
+          workspace: record.bootstrap.workspace,
+          path: record.bootstrap.path,
+          contentDigest: record.install.bootstrap.contentDigest,
+          state: "unchanged",
+        },
+        assertCurrent,
+        MAX_WORKSPACE_BOOTSTRAP_FILE_BYTES,
+        ownsFile,
+      );
+    } finally {
+      if (fd !== undefined) {
+        fs.closeSync(fd);
+      }
+    }
   }
   if (record.bootstrap.state === "modified") {
     return { path: record.bootstrap.path, action: "retainedModified" };

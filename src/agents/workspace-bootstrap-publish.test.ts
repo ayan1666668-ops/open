@@ -5,6 +5,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { configureFsSafeNative, getFsSafeNativeConfig } from "@openclaw/fs-safe/config";
 import { describe, expect, it, vi } from "vitest";
+import * as fsSafe from "../infra/fs-safe.js";
 import { makeTempWorkspace } from "../test-helpers/workspace.js";
 import { nodeFilePath } from "../test-utils/node-file-path.js";
 import { injectPartialPublicationFailure } from "./workspace-bootstrap-publish.test-support.js";
@@ -29,6 +30,205 @@ async function listTempSiblings(dir: string): Promise<string[]> {
 }
 
 describe("bootstrap publication atomicity", () => {
+  it("checkpoints the pinned published object after link metadata changes", async () => {
+    const tempDir = await makeTempWorkspace("openclaw-bootstrap-checkpoint-");
+    const target = path.join(tempDir, DEFAULT_BOOTSTRAP_FILENAME);
+    const calls: string[] = [];
+    let birthtimeNs = 101n;
+    const realFstat = syncFs.fstatSync.bind(syncFs);
+    const realUnlink = syncFs.unlinkSync.bind(syncFs);
+    // Emulate libuv's creation-time fallback without changing any identity or content fields.
+    const statSpy = vi.spyOn(syncFs, "fstatSync").mockImplementation((fd, options) => {
+      if (options?.bigint) {
+        const observed = realFstat(fd, { bigint: true });
+        if (observed.isFile()) {
+          observed.birthtimeNs = birthtimeNs;
+        }
+        return observed;
+      }
+      return realFstat(fd, options);
+    });
+    const unlinkSpy = vi.spyOn(syncFs, "unlinkSync").mockImplementation((filePath) => {
+      realUnlink(filePath);
+      if (syncFs.existsSync(target) && String(filePath) !== target) {
+        birthtimeNs = 202n;
+        calls.push("published");
+      }
+    });
+    try {
+      await expect(
+        workspace.publishBootstrapFile(
+          target,
+          "complete\n",
+          undefined,
+          (identity) => {
+            expect(syncFs.existsSync(target)).toBe(false);
+            expect(identity.birthtimeNs).toBe("101");
+            calls.push("before");
+          },
+          undefined,
+          (identity) => {
+            expect(syncFs.readFileSync(target, "utf8")).toBe("complete\n");
+            expect(syncFs.lstatSync(target).nlink).toBe(1);
+            expect(identity.birthtimeNs).toBe("202");
+            calls.push("after");
+          },
+        ),
+      ).resolves.toBe(true);
+      expect(calls).toEqual(["before", "published", "after"]);
+      expect(await listTempSiblings(tempDir)).toEqual([]);
+    } finally {
+      unlinkSpy.mockRestore();
+      statSpy.mockRestore();
+    }
+  });
+
+  it.runIf(process.platform !== "win32")(
+    "checkpoints fallback birthtime after native no-replace rename",
+    async () => {
+      const tempDir = await makeTempWorkspace("openclaw-bootstrap-rename-checkpoint-");
+      const target = path.join(syncFs.realpathSync(tempDir), DEFAULT_BOOTSTRAP_FILENAME);
+      let birthtimeNs = 101n;
+      let renamed = false;
+      const realFstat = syncFs.fstatSync.bind(syncFs);
+      const statSpy = vi.spyOn(syncFs, "fstatSync").mockImplementation((fd, options) => {
+        if (options?.bigint) {
+          const observed = realFstat(fd, { bigint: true });
+          if (observed.isFile()) {
+            observed.birthtimeNs = birthtimeNs;
+          }
+          return observed;
+        }
+        return realFstat(fd, options);
+      });
+      const realLink = syncFs.linkSync.bind(syncFs);
+      const linkSpy = vi.spyOn(syncFs, "linkSync").mockImplementation((source, destination) => {
+        if (String(destination) === target) {
+          throw Object.assign(new Error("hardlinks unavailable"), { code: "ENOTSUP" });
+        }
+        return realLink(source, destination);
+      });
+      const realRoot = fsSafe.root;
+      const restoreMoves: (() => void)[] = [];
+      const rootSpy = vi.spyOn(fsSafe, "root").mockImplementation(async (...args) => {
+        const opened = await realRoot(...args);
+        const move = opened.move.bind(opened);
+        const moveSpy = vi.spyOn(opened, "move").mockImplementation(async (...moveArgs) => {
+          const result = await move(...moveArgs);
+          if (path.join(opened.rootReal, String(moveArgs[1])) === target) {
+            renamed = true;
+            birthtimeNs = 202n;
+          }
+          return result;
+        });
+        restoreMoves.push(() => moveSpy.mockRestore());
+        return opened;
+      });
+      const afterPublish = vi.fn((identity: workspace.BootstrapPublicationIdentity) => {
+        expect(renamed).toBe(true);
+        expect(identity.birthtimeNs).toBe("202");
+        expect(syncFs.readFileSync(target, "utf8")).toBe("complete\n");
+      });
+      try {
+        await expect(
+          workspace.publishBootstrapFile(
+            target,
+            "complete\n",
+            undefined,
+            (identity) => {
+              expect(identity.birthtimeNs).toBe("101");
+              expect(syncFs.existsSync(target)).toBe(false);
+            },
+            undefined,
+            afterPublish,
+          ),
+        ).resolves.toBe(true);
+        expect(afterPublish).toHaveBeenCalledTimes(1);
+        expect(await listTempSiblings(tempDir)).toEqual([]);
+      } finally {
+        rootSpy.mockRestore();
+        for (const restore of restoreMoves) {
+          restore();
+        }
+        linkSpy.mockRestore();
+        statSpy.mockRestore();
+      }
+    },
+  );
+
+  it.each(["existing", "racing", "failed"] as const)(
+    "does not checkpoint a %s publication",
+    async (boundary) => {
+      const tempDir = await makeTempWorkspace("openclaw-bootstrap-no-checkpoint-");
+      const target = path.join(tempDir, DEFAULT_BOOTSTRAP_FILENAME);
+      const afterPublish = vi.fn();
+      if (boundary === "existing") {
+        await fs.writeFile(target, "winner\n");
+      }
+      const beforePublish = vi.fn(() => {
+        if (boundary === "racing") {
+          syncFs.writeFileSync(target, "winner\n");
+        } else if (boundary === "failed") {
+          throw new Error("write-ahead unavailable");
+        }
+      });
+      const publication = workspace.publishBootstrapFile(
+        target,
+        "complete\n",
+        undefined,
+        beforePublish,
+        undefined,
+        afterPublish,
+      );
+      if (boundary === "failed") {
+        await expect(publication).rejects.toThrow("write-ahead unavailable");
+        await expectPathMissing(target);
+      } else {
+        await expect(publication).resolves.toBe(false);
+        expect(await fs.readFile(target, "utf8")).toBe("winner\n");
+      }
+      expect(beforePublish).toHaveBeenCalledTimes(boundary === "existing" ? 0 : 1);
+      expect(afterPublish).not.toHaveBeenCalled();
+      expect(await listTempSiblings(tempDir)).toEqual([]);
+    },
+  );
+
+  it("rejects a byte-identical replacement before completion without checkpointing it", async () => {
+    const tempDir = await makeTempWorkspace("openclaw-bootstrap-replaced-");
+    const target = path.join(tempDir, DEFAULT_BOOTSTRAP_FILENAME);
+    const original = path.join(tempDir, "original.md");
+    const afterPublish = vi.fn();
+    const realUnlink = syncFs.unlinkSync.bind(syncFs);
+    let replaced = false;
+    const unlinkSpy = vi.spyOn(syncFs, "unlinkSync").mockImplementation((filePath) => {
+      realUnlink(filePath);
+      if (!replaced && syncFs.existsSync(target)) {
+        replaced = true;
+        syncFs.renameSync(target, original);
+        syncFs.writeFileSync(target, "complete\n");
+      }
+    });
+    try {
+      await expect(
+        workspace.publishBootstrapFile(
+          target,
+          "complete\n",
+          undefined,
+          undefined,
+          undefined,
+          afterPublish,
+        ),
+      ).rejects.toThrow("identity changed during publication");
+      expect(replaced).toBe(true);
+      expect(afterPublish).not.toHaveBeenCalled();
+      expect(await fs.readFile(target, "utf8")).toBe("complete\n");
+      expect((await fs.stat(target)).ino).not.toBe((await fs.stat(original)).ino);
+      expect(await listTempSiblings(tempDir)).toEqual([]);
+    } finally {
+      unlinkSpy.mockRestore();
+    }
+  });
+
   it("does not publish a partial AGENTS.md when the first write fails", async () => {
     const tempDir = await makeTempWorkspace("openclaw-workspace-");
     const agentsPath = path.join(tempDir, DEFAULT_AGENTS_FILENAME);

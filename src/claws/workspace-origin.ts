@@ -291,6 +291,7 @@ export function prepareClawBootstrapPublication(
 ):
   | {
       beforePublish: (publication: BootstrapPublicationIdentity) => void;
+      afterPublish: (publication: BootstrapPublicationIdentity) => void;
       ownsExisting: (file: fs.BigIntStats) => boolean;
       assertCurrent: () => void;
     }
@@ -326,27 +327,31 @@ export function prepareClawBootstrapPublication(
     }
     return { current, marker };
   };
+  const recordPublication = (publication: BootstrapPublicationIdentity) => {
+    runOpenClawStateWriteTransaction(({ db: transactionDb }) => {
+      const { current, marker } = currentMarker(transactionDb);
+      const updated = executeSqliteQuerySync(
+        transactionDb,
+        kyselyFor(transactionDb)
+          .updateTable("claw_workspace_files")
+          .set({
+            source_path: JSON.stringify({ ...marker, bootstrapPublication: publication }),
+            updated_at_ms: options.nowMs ?? Date.now(),
+          })
+          .where("agent_id", "=", plan.agent.finalId)
+          .where("target_path", "=", CLAW_ADOPTED_WORKSPACE_MARKER_PATH)
+          .where("source_path", "=", current.source_path),
+      );
+      if (updated.numAffectedRows !== 1n) {
+        throw new Error("Claw bootstrap preparation did not update its exact owner.");
+      }
+    }, options);
+  };
   return {
-    beforePublish: (publication) => {
-      runOpenClawStateWriteTransaction(({ db: transactionDb }) => {
-        const { current, marker } = currentMarker(transactionDb);
-        const updated = executeSqliteQuerySync(
-          transactionDb,
-          kyselyFor(transactionDb)
-            .updateTable("claw_workspace_files")
-            .set({
-              source_path: JSON.stringify({ ...marker, bootstrapPublication: publication }),
-              updated_at_ms: options.nowMs ?? Date.now(),
-            })
-            .where("agent_id", "=", plan.agent.finalId)
-            .where("target_path", "=", CLAW_ADOPTED_WORKSPACE_MARKER_PATH)
-            .where("source_path", "=", current.source_path),
-        );
-        if (updated.numAffectedRows !== 1n) {
-          throw new Error("Claw bootstrap preparation did not update its exact owner.");
-        }
-      }, options);
-    },
+    beforePublish: recordPublication,
+    // The producer still holds the original descriptor and validates the final path.
+    // A failed completion keeps the write-ahead receipt; resume never guesses ownership.
+    afterPublish: recordPublication,
     // Native state commits recheck DB authority only; filesystem inspection stays outside BEGIN.
     assertCurrent: () => {
       currentMarker(db);

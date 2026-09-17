@@ -678,6 +678,7 @@ export async function seedWorkspaceBootstrap(params: {
    * pre-existing file before the seed marker is written, for a caller that never wrote one. */
   existingFile?: "claim" | "conflict";
   beforePublish?: (identity: BootstrapPublicationIdentity) => void;
+  afterPublish?: (identity: BootstrapPublicationIdentity) => void;
   ownsExisting?: (file: syncFs.BigIntStats) => boolean;
   assertCurrent?: () => void;
 }): Promise<"seeded" | "already-seeded" | "consumed"> {
@@ -719,6 +720,7 @@ export async function seedWorkspaceBootstrap(params: {
       params.assertCurrent,
       params.beforePublish,
       0o600,
+      params.afterPublish,
     ));
   if (!created || params.ownsExisting) {
     const opened = await openRootFile({

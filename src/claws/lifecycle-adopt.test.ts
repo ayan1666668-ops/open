@@ -24,6 +24,21 @@ import { readClawWorkspaceFiles } from "./workspace.js";
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 
+// Substitute only descriptor birth metadata; all directory, inode, link and content checks stay real.
+function substituteBirthtime(current: () => bigint) {
+  const realFstat = syncFs.fstatSync.bind(syncFs);
+  return vi.spyOn(syncFs, "fstatSync").mockImplementation((fd, options) => {
+    if (options?.bigint) {
+      const observed = realFstat(fd, { bigint: true });
+      if (observed.isFile()) {
+        observed.birthtimeNs = current();
+      }
+      return observed;
+    }
+    return realFstat(fd, options);
+  });
+}
+
 afterEach(() => closeOpenClawStateDatabaseForTest());
 
 function requireManifest(): ClawManifest {
@@ -545,112 +560,144 @@ describe("planWorkspaceAdoptionTargets resume ownership", () => {
     });
   });
 
-  it("rebuilds an identical plan on resume after a config-commit failure leaves files written", async () => {
-    const { root, source, manifest, packageBootstrap, workspace, bootstrapContent } =
-      await buildResumeManifestAndSource();
-    await mkdir(workspace, { recursive: true });
-    await writeFile(join(workspace, "SOUL.md"), "# Soul\n", "utf8");
-
-    const plan = await buildClawAddPlan({
-      manifest,
-      source,
-      packageBootstrap,
-      context: { workspace, adoptExistingWorkspace: true },
+  it("rebuilds and completes an adopted add after publication changes fallback birthtime and config fails", async () => {
+    let birthtimeNs = 101n;
+    const statSpy = substituteBirthtime(() => birthtimeNs);
+    const realUnlink = syncFs.unlinkSync.bind(syncFs);
+    let published = false;
+    const unlinkSpy = vi.spyOn(syncFs, "unlinkSync").mockImplementation((filePath) => {
+      realUnlink(filePath);
+      if (String(filePath).endsWith("BOOTSTRAP.md")) {
+        published = true;
+        birthtimeNs = 202n;
+      }
     });
-    expect(plan.blockers).toEqual([]);
-    expect(plan.actions).toContainEqual(
-      expect.objectContaining({ kind: "workspaceFile", id: "SOUL.md", action: "adopt" }),
-    );
-    expect(plan.actions).toContainEqual(
-      expect.objectContaining({ kind: "workspaceFile", id: "HEARTBEAT.md", action: "write" }),
-    );
+    try {
+      const { root, source, manifest, packageBootstrap, workspace, bootstrapContent } =
+        await buildResumeManifestAndSource();
+      await mkdir(workspace, { recursive: true });
+      await writeFile(join(workspace, "SOUL.md"), "# Soul\n", "utf8");
 
-    const env = stateEnv(root);
-    const first = await applyClawAddPlan(plan, {
-      consentPlanIntegrity: plan.planIntegrity,
-      env,
-      commitConfig: async () => {
-        throw new Error("config unavailable");
-      },
-    });
+      const plan = await buildClawAddPlan({
+        manifest,
+        source,
+        packageBootstrap,
+        context: { workspace, adoptExistingWorkspace: true },
+      });
+      expect(plan.blockers).toEqual([]);
+      expect(plan.actions).toContainEqual(
+        expect.objectContaining({ kind: "workspaceFile", id: "SOUL.md", action: "adopt" }),
+      );
+      expect(plan.actions).toContainEqual(
+        expect.objectContaining({ kind: "workspaceFile", id: "HEARTBEAT.md", action: "write" }),
+      );
 
-    expect(first).toMatchObject({
-      status: "partial",
-      installRecord: { status: "workspace_ready" },
-      error: { code: "config_commit_failed" },
-    });
-    if (!first.installRecord) {
-      throw new Error("expected a partial install record");
-    }
-    expect(readInstallRow("worker", root)?.status).toBe("workspace_ready");
-    await expect(readFile(join(workspace, "HEARTBEAT.md"), "utf8")).resolves.toBe("# Heartbeat\n");
-    await expect(readFile(join(workspace, "BOOTSTRAP.md"))).resolves.toEqual(bootstrapContent);
-
-    const workspaceOrigin = readClawWorkspaceAdoption("worker", workspace, { env });
-    // The seed producer records identity before publication; the later config failure
-    // cannot erase this install's ownership of its still-present bootstrap.
-    expect(workspaceOrigin).toMatchObject({
-      adopted: true,
-      adoptedFiles: ["SOUL.md"],
-      bootstrapSeeded: true,
-    });
-    if (!workspaceOrigin.adopted) {
-      throw new Error("expected the workspace to be recorded as adopted");
-    }
-    const ownedFiles = readClawWorkspaceFiles("worker", { env });
-
-    // The CLI resume rebuilds the plan with the consented adopted set and this install's owned
-    // files; the previously-missing HEARTBEAT.md and the seeded BOOTSTRAP.md now exist on disk,
-    // but the rebuilt plan must still match the original.
-    const resumedPlan = await buildClawAddPlan({
-      manifest,
-      source,
-      packageBootstrap,
-      context: {
-        workspace,
-        adoptExistingWorkspace: true,
-        resumableWorkspace: workspace,
-        resumableWorkspaceOwnership: {
-          adoptedFiles: workspaceOrigin.adoptedFiles,
-          ownedFiles,
-          bootstrapPublication: workspaceOrigin.bootstrapPublication,
+      const env = stateEnv(root);
+      const first = await applyClawAddPlan(plan, {
+        consentPlanIntegrity: plan.planIntegrity,
+        env,
+        commitConfig: async () => {
+          throw new Error("config unavailable");
         },
-      },
-    });
+      });
 
-    expect(resumedPlan.blockers).toEqual([]);
-    expect(resumedPlan.planIntegrity).toBe(plan.planIntegrity);
-    expect(resumedPlan.actions).toContainEqual(
-      expect.objectContaining({ kind: "bootstrap", id: "BOOTSTRAP.md", blocked: false }),
-    );
-    expect(resumedPlan.actions).toContainEqual(
-      expect.objectContaining({ kind: "workspaceFile", id: "HEARTBEAT.md", action: "write" }),
-    );
+      expect(first).toMatchObject({
+        status: "partial",
+        installRecord: { status: "workspace_ready" },
+        error: { code: "config_commit_failed" },
+      });
+      if (!first.installRecord) {
+        throw new Error("expected a partial install record");
+      }
+      expect(readInstallRow("worker", root)?.status).toBe("workspace_ready");
+      await expect(readFile(join(workspace, "HEARTBEAT.md"), "utf8")).resolves.toBe(
+        "# Heartbeat\n",
+      );
+      await expect(readFile(join(workspace, "BOOTSTRAP.md"))).resolves.toEqual(bootstrapContent);
 
-    // A declared file that merely looks identical, with no ownership row for it, was never
-    // consented or written by this install; adoption must still block it, even mid-resume.
-    const unownedFiles = ownedFiles.filter((file) => file.path !== "HEARTBEAT.md");
-    const collisionPlan = await buildClawAddPlan({
-      manifest,
-      source,
-      packageBootstrap,
-      context: {
-        workspace,
-        adoptExistingWorkspace: true,
-        resumableWorkspace: workspace,
-        resumableWorkspaceOwnership: {
-          adoptedFiles: workspaceOrigin.adoptedFiles,
-          ownedFiles: unownedFiles,
-          bootstrapPublication: workspaceOrigin.bootstrapPublication,
+      expect(published).toBe(true);
+      const workspaceOrigin = readClawWorkspaceAdoption("worker", workspace, { env });
+      // The completed producer refreshes the pinned object's metadata before config can fail.
+      expect(workspaceOrigin).toMatchObject({
+        adopted: true,
+        adoptedFiles: ["SOUL.md"],
+        bootstrapSeeded: true,
+        bootstrapPublication: { birthtimeNs: "202" },
+      });
+      if (!workspaceOrigin.adopted) {
+        throw new Error("expected the workspace to be recorded as adopted");
+      }
+      const ownedFiles = readClawWorkspaceFiles("worker", { env });
+
+      // The CLI resume rebuilds the plan with the consented adopted set and this install's owned
+      // files; the previously-missing HEARTBEAT.md and the seeded BOOTSTRAP.md now exist on disk,
+      // but the rebuilt plan must still match the original.
+      const resumedPlan = await buildClawAddPlan({
+        manifest,
+        source,
+        packageBootstrap,
+        context: {
+          workspace,
+          adoptExistingWorkspace: true,
+          resumableWorkspace: workspace,
+          resumableWorkspaceOwnership: {
+            adoptedFiles: workspaceOrigin.adoptedFiles,
+            ownedFiles,
+            bootstrapPublication: workspaceOrigin.bootstrapPublication,
+          },
         },
-      },
-    });
-    expect(collisionPlan.blockers).toContainEqual(
-      expect.objectContaining({ code: "workspace_file_conflict" }),
-    );
-    expect(collisionPlan.actions).toContainEqual(
-      expect.objectContaining({ kind: "workspaceFile", id: "HEARTBEAT.md", blocked: true }),
-    );
+      });
+
+      expect(resumedPlan.blockers).toEqual([]);
+      expect(resumedPlan.planIntegrity).toBe(plan.planIntegrity);
+      expect(resumedPlan.actions).toContainEqual(
+        expect.objectContaining({ kind: "bootstrap", id: "BOOTSTRAP.md", blocked: false }),
+      );
+      expect(resumedPlan.actions).toContainEqual(
+        expect.objectContaining({ kind: "workspaceFile", id: "HEARTBEAT.md", action: "write" }),
+      );
+
+      // A declared file that merely looks identical, with no ownership row for it, was never
+      // consented or written by this install; adoption must still block it, even mid-resume.
+      const unownedFiles = ownedFiles.filter((file) => file.path !== "HEARTBEAT.md");
+      const collisionPlan = await buildClawAddPlan({
+        manifest,
+        source,
+        packageBootstrap,
+        context: {
+          workspace,
+          adoptExistingWorkspace: true,
+          resumableWorkspace: workspace,
+          resumableWorkspaceOwnership: {
+            adoptedFiles: workspaceOrigin.adoptedFiles,
+            ownedFiles: unownedFiles,
+            bootstrapPublication: workspaceOrigin.bootstrapPublication,
+          },
+        },
+      });
+      expect(collisionPlan.blockers).toContainEqual(
+        expect.objectContaining({ code: "workspace_file_conflict" }),
+      );
+      expect(collisionPlan.actions).toContainEqual(
+        expect.objectContaining({ kind: "workspaceFile", id: "HEARTBEAT.md", blocked: true }),
+      );
+      let config: OpenClawConfig = {};
+      const resumed = await applyClawAddPlan(resumedPlan, {
+        consentPlanIntegrity: plan.planIntegrity,
+        env,
+        resumeRecord: first.installRecord,
+        resumePlan: plan,
+        commitConfig: async (transform) => {
+          config = transform(config);
+        },
+      });
+      expect(resumed.status).toBe("complete");
+      expect(config.agents?.entries?.worker).toBeDefined();
+      expect(readClawWorkspaceAdoption("worker", workspace, { env })).toEqual(workspaceOrigin);
+    } finally {
+      unlinkSpy.mockRestore();
+      statSpy.mockRestore();
+    }
   });
 
   it("blocks an operator-created bootstrap that only looks identical when this install never seeded it", async () => {

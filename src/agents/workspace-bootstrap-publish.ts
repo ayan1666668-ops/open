@@ -9,7 +9,7 @@ import { hasErrnoCode } from "../infra/errno.js";
 import { tempFile } from "../infra/fs-safe-advanced.js";
 import { FsSafeError, root as fsSafeRoot } from "../infra/fs-safe.js";
 
-/** Exact stage identity, persisted by the caller before the final name can appear. */
+/** Exact file identity, recorded before publication and refreshed while the object is pinned. */
 export type BootstrapPublicationIdentity = {
   directoryPath: string;
   directoryDev: string;
@@ -26,6 +26,7 @@ export async function publishBootstrapFile(
   beforePersistentApply?: () => void,
   beforePublish?: (identity: BootstrapPublicationIdentity) => void,
   mode = 0o666 & ~process.umask(),
+  afterPublish?: (identity: BootstrapPublicationIdentity) => void,
 ): Promise<boolean> {
   const dir = await fs.realpath(path.dirname(filePath));
   const targetPath = path.join(dir, path.basename(filePath));
@@ -62,10 +63,10 @@ export async function publishBootstrapFile(
     });
     stagedFile = await workspaceRoot.open(path.relative(dir, staging.path));
     const identity = syncFs.fstatSync(stagedFile.handle.fd, { bigint: true });
-    const assertStage = () => {
+    const assertIdentity = (observedPath: string) => {
       beforePersistentApply?.();
       const currentDirectory = syncFs.lstatSync(dir, { bigint: true });
-      const currentFile = syncFs.lstatSync(staging.path, { bigint: true });
+      const currentFile = syncFs.lstatSync(observedPath, { bigint: true });
       if (
         !currentDirectory.isDirectory() ||
         currentDirectory.dev !== directory.dev ||
@@ -77,7 +78,7 @@ export async function publishBootstrapFile(
         currentFile.size !== identity.size ||
         currentFile.mtimeNs !== identity.mtimeNs
       ) {
-        throw new Error("Workspace bootstrap staging identity changed before publication.");
+        throw new Error("Workspace bootstrap file identity changed during publication.");
       }
     };
     const publication: BootstrapPublicationIdentity = {
@@ -89,9 +90,9 @@ export async function publishBootstrapFile(
       birthtimeNs: identity.birthtimeNs.toString(),
     };
     const assertPublication = () => {
-      assertStage();
+      assertIdentity(staging.path);
       beforePublish?.(publication);
-      assertStage();
+      assertIdentity(staging.path);
     };
     assertPublication();
     let linked = false;
@@ -117,6 +118,14 @@ export async function publishBootstrapFile(
       } else {
         outcome = { kind: "failed", error };
       }
+    }
+    if (outcome.kind === "created" && afterPublish) {
+      // Some filesystems report change-time as birth-time. The retained descriptor prevents
+      // inode reuse while we bind the final name and refreshed receipt to our original file.
+      assertIdentity(targetPath);
+      const published = syncFs.fstatSync(stagedFile.handle.fd, { bigint: true });
+      afterPublish({ ...publication, birthtimeNs: published.birthtimeNs.toString() });
+      assertIdentity(targetPath);
     }
   } catch (error) {
     outcome =
