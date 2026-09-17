@@ -1,3 +1,4 @@
+import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 // Tlon tests cover tlon api plugin behavior.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { authenticate } from "./urbit/auth.js";
@@ -529,8 +530,8 @@ describe("uploadFile send authority", () => {
   it("blocks the S3 upload when authority closes during signing", async () => {
     configureTestClient("https://ship.example.com");
     mockStorageScry(CUSTOM_STORAGE);
-    const signingStarted = Promise.withResolvers<void>();
-    const signedUrl = Promise.withResolvers<string>();
+    const signingStarted = createDeferred<void>();
+    const signedUrl = createDeferred<string>();
     const authorityError = new Error("Tlon send authority revoked");
     let revoked = false;
     const assertDirectAdapterHandoff = () => {
