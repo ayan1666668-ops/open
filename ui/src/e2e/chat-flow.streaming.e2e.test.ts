@@ -35,6 +35,7 @@ suite.define(() => {
     const gateway = await installMockGateway(page, {
       historyMessages: [
         { role: "assistant", content: "Earlier completed reply.", timestamp: Date.now() - 60_000 },
+        { role: "assistant", content: "Earlier final summary.", timestamp: Date.now() - 59_000 },
       ],
     });
 
@@ -52,18 +53,27 @@ suite.define(() => {
           .locator(".chat-group-footer-actions button")
           .evaluateAll((buttons) => buttons.map((button) => getComputedStyle(button).opacity));
       await page.mouse.move(0, 0);
-      await expect.poll(() => actionOpacities(earlierAssistant)).toEqual(["0", "0"]);
+      await expect
+        .poll(() => actionOpacities(earlierAssistant))
+        .toEqual(mobile ? ["1", "1"] : ["0", "0"]);
       await expect
         .poll(() => footerPresentation(earlierAssistant))
         .toEqual(
           mobile
-            ? { opacity: "0", pointerEvents: "none" }
-            : { opacity: "1", pointerEvents: "auto" },
+            ? { opacity: "1", pointerEvents: "auto" }
+            : { opacity: "0", pointerEvents: "none" },
         );
+      await expect
+        .poll(() =>
+          earlierAssistant
+            .locator(".chat-message-actions-row button")
+            .evaluateAll((buttons) => buttons.map((button) => getComputedStyle(button).opacity)),
+        )
+        .toEqual(["0", "0"]);
       if (artifactDir && !mobile) {
         await page.screenshot({
           fullPage: true,
-          path: path.join(artifactDir, "before-user-follow-up-metadata-visible.png"),
+          path: path.join(artifactDir, "before-user-follow-up-metadata-hidden.png"),
         });
       }
       await page.locator(".agent-chat__composer-combobox textarea").fill("show turn metadata");
@@ -171,10 +181,24 @@ suite.define(() => {
         .poll(() => footerPresentation(activeGroup))
         .toEqual(
           mobile
-            ? { opacity: "0", pointerEvents: "none" }
-            : { opacity: "1", pointerEvents: "auto" },
+            ? { opacity: "1", pointerEvents: "auto" }
+            : { opacity: "0", pointerEvents: "none" },
         );
-      await expect.poll(() => actionOpacities(activeGroup)).toEqual(["0", "0"]);
+      await expect
+        .poll(() => actionOpacities(activeGroup))
+        .toEqual(mobile ? ["1", "1"] : ["0", "0"]);
+      expect(await footer.locator(".chat-sender-name").textContent()).toBe("OpenClaw");
+      const timestamp = requireString(
+        await footer.locator(".chat-group-timestamp").textContent(),
+        "assistant timestamp",
+      ).trim();
+      expect(timestamp).toBeTruthy();
+      const accessibleFooter = await footer.ariaSnapshot();
+      expect(accessibleFooter).toContain("OpenClaw");
+      expect(accessibleFooter).toContain(timestamp);
+      expect(
+        await footer.evaluate((element) => element.getBoundingClientRect().height),
+      ).toBeGreaterThan(0);
       await reveal();
       await expect
         .poll(async () =>
@@ -184,9 +208,8 @@ suite.define(() => {
       await expect
         .poll(() => footer.evaluate((element) => getComputedStyle(element).opacity))
         .toBe("1");
-      expect(await footer.locator(".chat-sender-name").textContent()).toBe("OpenClaw");
-      expect(await footer.locator(".chat-group-timestamp").count()).toBe(1);
       for (const group of [earlierAssistant, activeGroup]) {
+        const height = await group.evaluate((element) => element.getBoundingClientRect().height);
         if (mobile) {
           await group.locator(".chat-bubble").last().tap();
         } else {
@@ -195,6 +218,12 @@ suite.define(() => {
         await expect
           .poll(async () => (await actionOpacities(group)).map((opacity) => Number(opacity) > 0))
           .toEqual([true, true]);
+        await expect
+          .poll(() => footerPresentation(group))
+          .toEqual({ opacity: "1", pointerEvents: "auto" });
+        expect(await group.evaluate((element) => element.getBoundingClientRect().height)).toBe(
+          height,
+        );
         await page.mouse.move(0, 0);
         const actions = group.locator(".chat-group-footer-actions button");
         await actions.first().focus();
@@ -212,6 +241,12 @@ suite.define(() => {
         await expect
           .poll(() => actions.first().evaluate((button) => getComputedStyle(button).opacity))
           .toBe(mobile ? "1" : "0.6");
+        await expect
+          .poll(() => footerPresentation(group))
+          .toEqual({ opacity: "1", pointerEvents: "auto" });
+        expect(await group.evaluate((element) => element.getBoundingClientRect().height)).toBe(
+          height,
+        );
         await page.locator(".agent-chat__composer-combobox textarea").focus();
       }
     } finally {
