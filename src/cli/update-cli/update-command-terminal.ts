@@ -309,6 +309,9 @@ export async function reportPreMutationUpdateResult(
         }
       : {}),
   }));
+  if (!params.opts.run && params.opts.dryRun && params.reason === "invalid-dev-target") {
+    return exitCliAfterOutput(defaultRuntime, 1);
+  }
   throw new UpdateCommandFailure(
     result,
     params.status === "skipped" ? 0 : resolveManagedServiceUpdateFailureExitCode(result),
@@ -370,8 +373,8 @@ async function publishPreMutationUpdateOutcome(
       env: run?.env,
     });
   }
-  // The shipped inferred-target refusal emits only stderr, including with --json.
-  if (params.reason === "invalid-dev-target" && params.message) {
+  // Existing runs and dry runs keep the legacy stderr-only target refusal.
+  if ((run || params.opts.dryRun) && params.reason === "invalid-dev-target" && params.message) {
     defaultRuntime.error(params.message);
     return result;
   }
