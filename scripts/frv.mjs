@@ -363,7 +363,7 @@ async function recheckArtifactProducers(producers, status, client) {
       observed.status !== expected.status ||
       observed.conclusion !== expected.conclusion
     ) {
-      throw new Error(`Artifact producer changed before rerun dispatch: ${observed.runId}`);
+      throw new Error(`Artifact producer changed during recovery: ${observed.runId}`);
     }
   }
 }
@@ -886,8 +886,13 @@ function exactTerminalRunState(run, runId) {
 }
 
 async function freezeVerificationAttempts(plan, rootRunId, status, client) {
+  // Artifact producers are checked independently around verification; the
+  // manifest verifier consumes only parent and selected diagnostic run IDs.
+  const diagnosticRunIds = new Set(selectedChildren(plan).map((child) => child.runId));
   const expectedRunAttempts = new Map(
-    status.children.map((child) => [child.runId, child.effectiveRunAttempt]),
+    status.children
+      .filter((child) => diagnosticRunIds.has(child.runId))
+      .map((child) => [child.runId, child.effectiveRunAttempt]),
   );
   // Reuse verification rereads its root and selected parent manifests too.
   const parentRunIds = new Set([
@@ -1030,12 +1035,14 @@ export async function continueFailed(plan, rootRunId, client, options = {}) {
     client.verifySeal !== undefined
   ) {
     verificationAttempts = await freezeVerificationAttempts(plan, rootRunId, status, client);
+    await recheckArtifactProducers(artifactProducers, status, client);
     parentSealed = await client.verifySeal(
       rootRunId,
       plan,
       operationDeadline,
       verificationAttempts,
     );
+    await recheckArtifactProducers(artifactProducers, status, client);
     if (!parentSealed) {
       const verifiedParent = exactTerminalRunState(completedParent, rootRunId);
       completedParent = await client.getRun(rootRunId);
@@ -1064,7 +1071,9 @@ export async function continueFailed(plan, rootRunId, client, options = {}) {
   if (!parentSealed) {
     await waitForTerminal([...ownedAttempts.keys()], client, operationDeadline, ownedAttempts);
     verificationAttempts = await freezeVerificationAttempts(plan, rootRunId, status, client);
+    await recheckArtifactProducers(artifactProducers, status, client);
     await client.verify(rootRunId, plan, operationDeadline, verificationAttempts);
+    await recheckArtifactProducers(artifactProducers, status, client);
   }
   return {
     action: ownedAttempts.has(rootRunId) ? "reran-parent" : "verified-parent",

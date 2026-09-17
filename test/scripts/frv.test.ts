@@ -522,7 +522,6 @@ describe("FRV continuation preflight", () => {
     expect(fixture.client.rerunParent).toHaveBeenCalledExactlyOnceWith("77");
     expect(verify).toHaveBeenCalledWith("77", fixture.plan, expect.any(Number), {
       "77": 2,
-      "81": 2,
       "101": 1,
     });
   });
@@ -540,6 +539,57 @@ describe("FRV continuation preflight", () => {
       });
       expect(fixture.client.rerunFailed).not.toHaveBeenCalled();
       expect(fixture.client.rerunParent).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["before-verify", "after-verify", "after-seal"])(
+    "does not accept changed npm producer evidence %s",
+    async (boundary) => {
+      for (const update of [
+        { run_attempt: 3 },
+        { conclusion: "failure" },
+        { head_sha: "c".repeat(40) },
+      ]) {
+        const fixture = artifactFixture();
+        fixture.producer.run_attempt = 2;
+        let parentAttempt = boundary === "after-seal" ? 2 : 1;
+        const read = fixture.client.getRun.getMockImplementation()!;
+        fixture.client.getRun.mockImplementation(async (id) =>
+          id === "77"
+            ? rootRun(parentAttempt, parentAttempt === 1 ? "failure" : "success")
+            : structuredClone(await read(id)),
+        );
+        const changeProducer = () => Object.assign(fixture.producer, update);
+        fixture.client.rerunParent.mockImplementation(async () => {
+          parentAttempt = 2;
+          if (boundary === "before-verify") {
+            changeProducer();
+          }
+        });
+        const verify = vi.fn(async () => {
+          changeProducer();
+        });
+        const verifySeal = vi.fn(async () => {
+          changeProducer();
+          return true;
+        });
+        await expect(
+          continueFailed(fixture.plan, "77", {
+            ...fixture.client,
+            verify,
+            ...(boundary === "after-seal" ? { verifySeal } : {}),
+          }),
+        ).rejects.toThrow(/Artifact producer (?:run identity changed|changed during recovery)/u);
+        expect(fixture.client.rerunFailed).not.toHaveBeenCalled();
+        if (boundary === "before-verify") {
+          expect(verify).not.toHaveBeenCalled();
+        } else if (boundary === "after-verify") {
+          expect(verify).toHaveBeenCalledOnce();
+        } else {
+          expect(verifySeal).toHaveBeenCalledOnce();
+          expect(fixture.client.rerunParent).not.toHaveBeenCalled();
+        }
+      }
     },
   );
 
