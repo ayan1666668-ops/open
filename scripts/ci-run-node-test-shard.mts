@@ -443,10 +443,8 @@ async function runChild(
 
 export async function runShardPlans(plans: ShardPlan[], options: RunShardOptions = {}) {
   const inheritedEnv = options.env ?? process.env;
-  const baseEnv = mergePlanEnv(
-    inheritedEnv,
-    parseJsonEnv(inheritedEnv, "OPENCLAW_NODE_TEST_ENV_JSON"),
-  );
+  const jobEnv = mergePlanEnv({}, parseJsonEnv(inheritedEnv, "OPENCLAW_NODE_TEST_ENV_JSON"));
+  const baseEnv = mergePlanEnv(inheritedEnv, jobEnv);
   // Respect serial timing-sensitive bins and never clone cache slots that
   // cannot receive a plan.
   const requestedConcurrency =
@@ -524,11 +522,13 @@ export async function runShardPlans(plans: ShardPlan[], options: RunShardOptions
             }
             continue;
           }
+          // A standalone plan already projects the job environment. Resolve its
+          // scoped override once, then append it to the inherited global flags.
           const vitestExtraArgs = [
-            baseEnv,
-            entry.kind === "group" ? entry.plan.env : undefined,
+            inheritedEnv,
+            mergePlanEnv(jobEnv, entry.kind === "group" ? entry.plan.env : undefined),
           ].flatMap((env) => {
-            const value = parseJsonEnv(env ?? {}, VITEST_EXTRA_ARGS_ENV_KEY, []);
+            const value = parseJsonEnv(env, VITEST_EXTRA_ARGS_ENV_KEY, []);
             return isStringArray(value) ? value : [];
           });
           const args =

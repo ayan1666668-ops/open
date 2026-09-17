@@ -509,43 +509,58 @@ describe("scripts/ci-run-node-test-shard.mts", () => {
     );
   });
 
-  it("forwards job and group Vitest arguments without leaking them to sibling plans", async () => {
-    const scratchDir = makeScratchDir();
-    const seen: string[][] = [];
-    const exitCode = await runShardPlans(
-      resolveShardPlans({
-        OPENCLAW_NODE_TEST_GROUPS_JSON: JSON.stringify([
-          {
-            configs: ["test/vitest/vitest.extensions.config.ts"],
-            env: { OPENCLAW_NODE_TEST_VITEST_ARGS_JSON: JSON.stringify(["--shard=1/6"]) },
+  it.each([undefined, "--shard=3/6"])(
+    "resolves job and group Vitest arguments once (job partition %s)",
+    async (jobPartition) => {
+      const scratchDir = makeScratchDir();
+      const seen: string[][] = [];
+      const exitCode = await runShardPlans(
+        resolveShardPlans({
+          OPENCLAW_NODE_TEST_GROUPS_JSON: JSON.stringify([
+            {
+              configs: ["test/vitest/vitest.extensions.config.ts"],
+              env: { OPENCLAW_NODE_TEST_VITEST_ARGS_JSON: JSON.stringify(["--shard=1/6"]) },
+            },
+            {
+              configs: ["test/vitest/vitest.extensions.config.ts"],
+              env: { OPENCLAW_NODE_TEST_VITEST_ARGS_JSON: JSON.stringify(["--shard=2/6"]) },
+            },
+            { configs: ["test/vitest/vitest.unit.config.ts"] },
+          ]),
+        }),
+        {
+          concurrency: 1,
+          env: {
+            OPENCLAW_NODE_TEST_VITEST_ARGS_JSON: JSON.stringify(["--hookTimeout=300000"]),
+            OPENCLAW_NODE_TEST_ENV_JSON: JSON.stringify(
+              jobPartition
+                ? {
+                    OPENCLAW_NODE_TEST_VITEST_ARGS_JSON: JSON.stringify([jobPartition]),
+                  }
+                : {},
+            ),
           },
-          {
-            configs: ["test/vitest/vitest.extensions.config.ts"],
-            env: { OPENCLAW_NODE_TEST_VITEST_ARGS_JSON: JSON.stringify(["--shard=2/6"]) },
+          runChild: async (args: string[]) => {
+            seen.push(args);
+            return 0;
           },
-          { configs: ["test/vitest/vitest.unit.config.ts"] },
-        ]),
-      }),
-      {
-        concurrency: 1,
-        env: {
-          OPENCLAW_NODE_TEST_VITEST_ARGS_JSON: JSON.stringify(["--hookTimeout=300000"]),
+          scratchDir,
         },
-        runChild: async (args: string[]) => {
-          seen.push(args);
-          return 0;
-        },
-        scratchDir,
-      },
-    );
+      );
 
-    expect(exitCode).toBe(0);
-    expect(seen).toEqual([
-      ["test/vitest/vitest.extensions.config.ts", "--", "--hookTimeout=300000", "--shard=1/6"],
-      ["test/vitest/vitest.extensions.config.ts", "--", "--hookTimeout=300000", "--shard=2/6"],
-      ["test/vitest/vitest.unit.config.ts", "--", "--hookTimeout=300000"],
-    ]);
-  });
+      expect(exitCode).toBe(0);
+      expect(seen).toEqual([
+        ["test/vitest/vitest.extensions.config.ts", "--", "--hookTimeout=300000", "--shard=1/6"],
+        ["test/vitest/vitest.extensions.config.ts", "--", "--hookTimeout=300000", "--shard=2/6"],
+        [
+          "test/vitest/vitest.unit.config.ts",
+          "--",
+          "--hookTimeout=300000",
+          ...(jobPartition ? [jobPartition] : []),
+        ],
+      ]);
+    },
+  );
 
   it("reuses isolated persistent cache slots across serial work", async () => {
     const scratchDir = makeScratchDir();
