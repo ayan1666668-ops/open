@@ -10,6 +10,7 @@ import {
 import {
   defineFinalizableLivePreviewAdapter,
   deliverWithFinalizableLivePreviewAdapter,
+  isChannelProgressDraftWorkToolName,
 } from "openclaw/plugin-sdk/channel-outbound";
 import { toErrorObject } from "openclaw/plugin-sdk/error-runtime";
 import { resolveMarkdownTableMode } from "openclaw/plugin-sdk/markdown-table-runtime";
@@ -562,11 +563,13 @@ async function dispatchSlackMessageWithSetup(
           if (payload.phase === "start") {
             progress.progressWorkCounter.noteToolCall(payload.name);
           }
-          // Admission belongs here, before the shared compositor can accumulate
-          // file statistics or promote an intermediate failure into attention.
-          // Approvals and terminal replies have their own delivery paths below.
+          // Work still opens the delayed preview gate, but must not accumulate
+          // file statistics or replace the preamble with intermediate failures.
+          // Approvals and terminal replies retain their separate delivery paths.
           if (progress.preambleOnlyProgress) {
-            return false;
+            return isChannelProgressDraftWorkToolName(payload.name)
+              ? await progress.progressDraft.noteActivity()
+              : false;
           }
           return await progress.progressDraft.pushToolEvent(payload);
         },
@@ -604,7 +607,7 @@ async function dispatchSlackMessageWithSetup(
             return headlineVisible;
           }
           return progress.preambleOnlyProgress
-            ? false
+            ? await progress.progressDraft.noteActivity()
             : await progress.progressDraft.pushItemEvent(payload);
         },
         onPlanUpdate: async (payload) => {
@@ -617,19 +620,15 @@ async function dispatchSlackMessageWithSetup(
             payload.explanationFormat,
           );
         },
-        onApprovalEvent: async (payload) => {
-          return await progress.progressDraft.pushApprovalEvent(payload);
-        },
-        onCommandOutput: async (payload) => {
-          return progress.preambleOnlyProgress
-            ? false
-            : await progress.progressDraft.pushCommandOutputEvent(payload);
-        },
-        onPatchSummary: async (payload) => {
-          return progress.preambleOnlyProgress
-            ? false
-            : await progress.progressDraft.pushPatchEvent(payload);
-        },
+        onApprovalEvent: progress.progressDraft.pushApprovalEvent,
+        onCommandOutput: async (payload) =>
+          progress.preambleOnlyProgress
+            ? await progress.progressDraft.noteActivity()
+            : await progress.progressDraft.pushCommandOutputEvent(payload),
+        onPatchSummary: async (payload) =>
+          progress.preambleOnlyProgress
+            ? await progress.progressDraft.noteActivity()
+            : await progress.progressDraft.pushPatchEvent(payload),
       },
     });
     if (turnResult.dispatched) {
