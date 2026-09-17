@@ -63,6 +63,7 @@ export async function loadWorkspaceTemplate(name: string): Promise<string> {
         const content = await fs.readFile(templatePath, "utf-8");
         return stripFrontMatter(content);
       } catch (error) {
+        // SAFETY: Node filesystem errors expose code; other failures lack ENOENT and are rethrown.
         if ((error as NodeJS.ErrnoException | undefined)?.code !== "ENOENT") {
           throw error;
         }
