@@ -106,23 +106,19 @@ async function expectPartialRuntimeCleanup(params: {
 }
 
 describe("fresh sandbox container cleanup", () => {
-  it("removes the runtime when setup fails before registry publication", async () => {
+  it("removes a newly allocated runtime when setup fails before publication", async () => {
     const workspaceDir = tempDirs.make("openclaw-docker-partial-start-");
     await expectPartialRuntimeCleanup({
       workspaceDir,
       cfg: config(workspaceDir, "exit 1"),
       expectedError: "setup failed",
     });
-    expect(registryMocks.updateRegistry).toHaveBeenCalledWith(
-      expect.objectContaining({ containerName: "oc-test-shared", sessionKey: "partial-create" }),
-    );
+    expect(registryMocks.updateRegistry).not.toHaveBeenCalled();
   });
 
   it("removes the runtime when registry publication fails", async () => {
     const workspaceDir = tempDirs.make("openclaw-docker-registry-failure-");
-    registryMocks.updateRegistry
-      .mockResolvedValueOnce(undefined)
-      .mockRejectedValueOnce(new Error("registry publication failed"));
+    registryMocks.updateRegistry.mockRejectedValueOnce(new Error("registry publication failed"));
     await expectPartialRuntimeCleanup({
       workspaceDir,
       cfg: config(workspaceDir),
@@ -130,9 +126,17 @@ describe("fresh sandbox container cleanup", () => {
     });
   });
 
-  it("does not create a runtime when the recovery reservation fails", async () => {
-    const workspaceDir = tempDirs.make("openclaw-docker-reservation-failure-");
-    registryMocks.updateRegistry.mockRejectedValueOnce(new Error("reservation failed"));
+  it("does not remove an existing runtime when allocation fails", async () => {
+    const workspaceDir = tempDirs.make("openclaw-docker-name-conflict-");
+    containerMocks.execContainer.mockImplementation(async (_engine, args: string[]) => {
+      if (args[0] === "inspect") {
+        return { code: 1, stdout: "", stderr: "inspection failed" };
+      }
+      if (args[0] === "create") {
+        throw new Error("container name already in use");
+      }
+      return { code: 0, stdout: "", stderr: "" };
+    });
 
     await expect(
       ensureSandboxContainer({
@@ -141,15 +145,15 @@ describe("fresh sandbox container cleanup", () => {
         agentWorkspaceDir: workspaceDir,
         cfg: config(workspaceDir),
       }),
-    ).rejects.toThrow("reservation failed");
+    ).rejects.toThrow("container name already in use");
 
-    expect(containerMocks.execContainer.mock.calls.some(([, args]) => args[0] === "create")).toBe(
+    expect(containerMocks.execContainer.mock.calls.some(([, args]) => args[0] === "rm")).toBe(
       false,
     );
     expect(registryMocks.removeRegistryEntry).not.toHaveBeenCalled();
   });
 
-  it("persists exact recovery identity when partial runtime removal fails", async () => {
+  it("surfaces a partial-runtime removal failure", async () => {
     const workspaceDir = tempDirs.make("openclaw-docker-partial-recovery-");
     containerMocks.execContainer.mockImplementation(async (_engine, args: string[]) => {
       if (args[0] === "inspect") {
@@ -174,12 +178,6 @@ describe("fresh sandbox container cleanup", () => {
     ).rejects.toThrow("creation and cleanup both failed");
 
     expect(registryMocks.removeRegistryEntry).not.toHaveBeenCalled();
-    expect(registryMocks.updateRegistry).toHaveBeenCalledWith(
-      expect.objectContaining({
-        containerName: "oc-test-shared",
-        backendId: "docker",
-        sessionKey: "partial-create",
-      }),
-    );
+    expect(registryMocks.updateRegistry).not.toHaveBeenCalled();
   });
 });

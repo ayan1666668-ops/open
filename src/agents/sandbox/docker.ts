@@ -461,6 +461,7 @@ async function createSandboxContainer(params: {
   configHash?: string;
   mountPlan: SandboxMountPlan;
   podmanRuntimeInfo?: PodmanSandboxRuntimeInfo;
+  onAllocated?: () => void;
 }) {
   const { engine, name, cfg, workspaceDir, scopeKey } = params;
   const podmanPolicy =
@@ -500,6 +501,7 @@ async function createSandboxContainer(params: {
     args.push("--env-file", envFile, cfg.image, "sleep", "infinity");
     await execContainer(engine, args);
   });
+  params.onAllocated?.();
   await execContainer(engine, ["start", name]);
 
   if (cfg.setupCommand?.trim()) {
@@ -648,7 +650,7 @@ async function ensureSandboxContainerLifecycle(
     }
   }
   if (!hasContainer) {
-    const recoveryEntry = {
+    const readyEntry = {
       containerName,
       backendId: engine.id,
       ...(podmanRuntimeInfo ? { backendTarget: podmanRuntimeInfo.target } : {}),
@@ -660,10 +662,7 @@ async function ensureSandboxContainerLifecycle(
       configLabelKind: "Image" as const,
       configHash: expectedHash,
     };
-    // Reserve the exact runtime identity before granting writable mounts. If
-    // allocation fails after this point, recovery can revoke the runtime before
-    // any competing operation proceeds.
-    await updateRegistry(recoveryEntry);
+    let allocated = false;
     try {
       await createSandboxContainer({
         engine,
@@ -678,10 +677,16 @@ async function ensureSandboxContainerLifecycle(
         configHash: expectedHash,
         mountPlan,
         podmanRuntimeInfo,
+        onAllocated: () => {
+          allocated = true;
+        },
       });
-      await updateRegistry(recoveryEntry);
+      await updateRegistry(readyEntry);
       return containerName;
     } catch (creationError) {
+      if (!allocated) {
+        throw creationError;
+      }
       await throwAfterPartialSandboxCleanup({
         engine,
         containerName,
