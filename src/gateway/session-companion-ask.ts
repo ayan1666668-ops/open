@@ -183,7 +183,6 @@ async function defaultRun(params: SessionCompanionRunParams): Promise<string> {
     runId,
     params.agentId,
     "session-companion.ask",
-    params.assertSourceCurrent,
   );
   try {
     const [{ SessionManager }, { runEmbeddedAgent }] = await Promise.all([
