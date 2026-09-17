@@ -1,3 +1,5 @@
+import { getPluginInstance } from "../plugins/plugin-instance-scope.js";
+import type { PluginRegistry } from "../plugins/registry-types.js";
 import type { PluginServicesHandle } from "../plugins/services.js";
 import { createDeferredCore } from "../shared/deferred.js";
 
@@ -22,6 +24,7 @@ type GatewayPluginRuntimeReservation = Readonly<{
   finishReload: (
     outcome: "applied" | "restored" | "failed" | "unchanged",
     pluginIds: ReadonlySet<string>,
+    registry: PluginRegistry,
     reportFailure?: (reason: string) => void,
   ) => void;
 }>;
@@ -98,7 +101,7 @@ export function createGatewayPluginRuntimeGeneration(params: {
             reloadStatus = status;
           }
         },
-        finishReload: (outcome, pluginIds, reportFailure) => {
+        finishReload: (outcome, pluginIds, registry, reportFailure) => {
           if (latestReservation !== reservation.claim) {
             return;
           }
@@ -106,9 +109,24 @@ export function createGatewayPluginRuntimeGeneration(params: {
             reloadStatus = previousReloadStatus;
             return;
           }
+          // Recovery can omit previously retired owners whose captured code is gone.
+          const restoredIds =
+            outcome === "restored"
+              ? new Set(
+                  registry.plugins
+                    .filter(
+                      (record) =>
+                        record.status === "loaded" &&
+                        (record.format === "bundle" || getPluginInstance(record)?.acceptingCalls),
+                    )
+                    .map((record) => record.id),
+                )
+              : pluginIds;
           const failedIds = new Set(
             previousReloadStatus?.phase === "failed"
-              ? previousReloadStatus.pluginIds.filter((id) => !pluginIds.has(id))
+              ? previousReloadStatus.pluginIds.filter(
+                  (id) => !pluginIds.has(id) || !restoredIds.has(id),
+                )
               : [],
           );
           if (outcome === "failed") {

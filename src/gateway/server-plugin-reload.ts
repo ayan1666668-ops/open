@@ -716,6 +716,7 @@ export async function reloadGatewayPlugins(
     replacement.finishReload(
       activated ? "applied" : restored ? "restored" : phase === "prepare" ? "unchanged" : "failed",
       changedPluginIds,
+      pluginRuntime.registry,
       restartDrainSignal.aborted ? undefined : log.error,
     );
     recovery.dispose();
