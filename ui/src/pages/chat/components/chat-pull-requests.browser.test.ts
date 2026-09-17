@@ -1,8 +1,10 @@
 import { html, render } from "lit";
 import { afterEach, assert, expect, it } from "vitest";
 import { page, userEvent } from "vitest/browser";
-import "../../../test-helpers/load-styles.ts";
 import { renderChatPullRequests } from "./chat-pull-requests.ts";
+import baseStyles from "../../../styles/base.css?inline";
+import layoutStyles from "../../../styles/chat/layout.css?inline";
+import textStyles from "../../../styles/chat/text.css?inline";
 
 const container = document.createElement("div");
 afterEach(() => {
@@ -16,6 +18,9 @@ it("keeps disclosure geometry and surrounding message spacing through keyboard t
   const draw = () =>
     render(
       html`
+        <style>
+          ${baseStyles}${layoutStyles}${textStyles}
+        </style>
         <div class="chat-text">
           <p>Pull requests for this change:</p>
           ${renderChatPullRequests({
