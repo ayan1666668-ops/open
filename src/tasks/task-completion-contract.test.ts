@@ -17,6 +17,20 @@ describe("resolveRequiredCompletionTerminalResult", () => {
   // conditional clause ("whether the tests passed") is a pending outcome, not a
   // delivered result.
   it.each([
+    ["structural ongoing reviewing", "I'm inspecting the code and reviewing failed tests."],
+    [
+      "structural ongoing expanded",
+      "We are inspecting the code and installing selected dependencies.",
+    ],
+    ["structural bare ongoing", "Inspecting the code and reviewing failed tests."],
+    ["structural future install", "I'll inspect the code and install selected dependencies."],
+    [
+      "structural future chained",
+      "I'll inspect the code and install selected dependencies and examine cached files.",
+    ],
+    ["structural directive unknown action", "Let me inspect the code and delete generated files."],
+    ["structural comma planned", "I'll inspect the code, install selected dependencies."],
+    ["structural ongoing elided read", "I'm inspecting the code and read the logs."],
     ["noun-plan run targeted", "I'll inspect the code and run targeted tests."],
     ["noun-plan review failed", "I'll inspect the code and review failed jobs."],
     ["noun-plan open scheduled", "Let me inspect the code and open scheduled tasks."],
@@ -272,6 +286,29 @@ describe("resolveRequiredCompletionTerminalResult", () => {
   // result/report/verification marker in a delivered-result sentence; those
   // must not be misclassified.
   it.each([
+    ["structural ongoing explicit subject", "I'm inspecting the code and the failed tests passed."],
+    [
+      "structural future explicit subject",
+      "I'll inspect the code and the selected dependencies installed.",
+    ],
+    [
+      "structural ongoing finite auxiliary",
+      "I'm inspecting the code and deployment has completed.",
+    ],
+    ["structural future finite state", "I'll inspect the code and deployment is complete."],
+    [
+      "structural ongoing new actor",
+      "I'm inspecting the code and she installed the selected dependencies.",
+    ],
+    [
+      "structural planned new actor",
+      "I'll inspect the code and they installed the selected dependencies.",
+    ],
+    ["structural own result", "I'll inspect the code and our migration completed."],
+    [
+      "structural subject reset",
+      "I'm inspecting the code, I attempted the repair and rewrote the handler.",
+    ],
     ["noun-plan independent test subject", "I'll inspect the code and the targeted tests passed."],
     ["noun-plan explicit past subject", "I'll inspect the code and I ran targeted tests."],
     ["noun-plan independent review subject", "I'll inspect the code and the review finished."],

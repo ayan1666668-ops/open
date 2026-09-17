@@ -9,7 +9,6 @@ export type RequiredCompletionTerminalResult = {
 };
 
 const PROGRESS_ACTION = String.raw`(?:analyz(?:e|ing)|apply|check(?:ing)?|confirm(?:ing)?|continue|debug(?:ging)?|figur(?:e|ing)\s+out|find(?:ing)?\s+out|follow(?:ing)?\s+up|get(?:ting)?|inspect(?:ing)?|investigat(?:e|ing)|look(?:ing)?(?:\s+into)?|map(?:ping)?|open(?:ing)?|read(?:ing)?|report(?:ing)?(?:\s+back)?|review(?:ing)?|run(?:ning)?|see(?:ing)?|start(?:ing)?|test(?:ing)?|trace|trac(?:e|ing)|try(?:ing)?|update|verify(?:ing)?|work(?:ing)?)`;
-const PROGRESS_ACTION_PATTERN = new RegExp(String.raw`^${PROGRESS_ACTION}`, "i");
 const PROGRESS_ONLY_PATTERN = new RegExp(
   String.raw`^(?:i(?:'|\u2019)ll|i will|i(?:'|\u2019)m|i am|i(?:'|\u2019)m going to|i am going to|let me|i need to)\s+(?:now\s+)?${PROGRESS_ACTION}`,
   "i",
@@ -46,6 +45,14 @@ const FRONTED_TEMPORAL_PATTERN = new RegExp(
 );
 const FIRST_PERSON_PLAN_PATTERN =
   /^(?:let\s+me|(?:i|we)(?:'|\u2019)ll|(?:i(?:\s+am|(?:'|\u2019)m)|we(?:\s+are|(?:'|\u2019)re))\s+going\s+to|(?:i|we)\s+(?:will|would|could|should|might|may|plan\s+to|hope\s+to|need\s+to))\b/i;
+const ONGOING_NARRATION_PATTERN =
+  /^(?:i(?:\s+am|(?:'|\u2019)m)|we(?:\s+are|(?:'|\u2019)re))\s+(?:(?:[a-z]+ly|now)\s+)*[a-z]+ing\b/i;
+// In inherited narration, an arbitrary bare word may be an action, not a
+// subject ("install selected dependencies"). Require a grammatical subject
+// marker for simple-past noun candidates; finite auxiliaries establish their
+// own clause without this restriction.
+const EXPLICIT_RESULT_SUBJECT_PATTERN =
+  /^(?:i|we|you|he|she|it|they|the|a|an|all|both|each|every|some|any|no|my|our|your|his|her|its|their|this|that|these|those|\d+)\b|^[\w-]+(?:'|\u2019)s\s/i;
 const COMPLETION_HEADING_PATTERN =
   /^(?:(?:result|results|report|summary|outcome|conclusion|findings?|verification|status)\s*:\s*)+/i;
 
@@ -61,7 +68,7 @@ const PAST_RESULT_VERB = String.raw`(?:(?:(?:re|un|over|under|mis|out|fore|with)
 const PERFECT_RESULT_VERB = String.raw`(?:(?:re|un|over|under|mis|out|fore|with)-?)?(?:arisen|awoken|borne|beaten|become|begun|bitten|blown|broken|chosen|drunk|driven|eaten|fallen|flown|forbidden|forgotten|forgiven|frozen|gotten|given|gone|grown|hidden|known|lain|ridden|rung|risen|run|seen|shaken|shown|shrunk|sung|sunk|spoken|sprung|stolen|stunk|stricken|sworn|swum|taken|torn|thrown|woken|worn|written)`;
 const RESULT_ADVERBS = String.raw`(?:(?:[a-z]+ly|already|just)\s+){0,3}`;
 const COMPLETION_STATE_CLAUSE_PATTERN = new RegExp(
-  String.raw`(?:^|,\s*|\band\s+)${RESULT_SUBJECT}\s+${RESULT_ADVERBS}(?:(?:(?:has|have)\s+)?${RESULT_ADVERBS}(?:${PAST_RESULT_VERB}|done)|(?:is|are|was|were|has\s+been|have\s+been)\s+${RESULT_ADVERBS}(?:done|complete|completed|finished|fixed|resolved))\b`,
+  String.raw`(?:^|,\s*|\band\s+)(?<subject>${RESULT_SUBJECT})\s+${RESULT_ADVERBS}(?:(?<perfectAuxiliary>(?:has|have)\s+)?${RESULT_ADVERBS}(?:${PAST_RESULT_VERB}|done)|(?<stateAuxiliary>is|are|was|were|has\s+been|have\s+been)\s+${RESULT_ADVERBS}(?:done|complete|completed|finished|fixed|resolved))\b`,
   "gi",
 );
 const PERFECT_RESULT_CLAUSE_PATTERN = new RegExp(
@@ -166,6 +173,7 @@ function isProgressOnlyCompletionText(value: string): boolean {
       const narrativeProgress =
         PROGRESS_ONLY_PATTERN.test(narration) ||
         BARE_PROGRESS_ONLY_PATTERN.test(narration) ||
+        ONGOING_NARRATION_PATTERN.test(narration) ||
         FIRST_PERSON_PLAN_PATTERN.test(narration);
       // A progress prefix must reach a clause boundary before a result can be
       // independent; qualified test subjects must not absorb that prefix.
@@ -180,9 +188,14 @@ function isProgressOnlyCompletionText(value: string): boolean {
         [...resultText.matchAll(pattern)].map((result) => ({
           result,
           elidedSubject: pattern === COORDINATED_RESULT_CLAUSE_PATTERN,
+          ambiguousSubject:
+            pattern === COMPLETION_STATE_CLAUSE_PATTERN &&
+            !result.groups?.perfectAuxiliary &&
+            !result.groups?.stateAuxiliary &&
+            !EXPLICIT_RESULT_SUBJECT_PATTERN.test(result.groups?.subject ?? ""),
         })),
       );
-      const completedResult = results.some(({ result, elidedSubject }) => {
+      const completedResult = results.some(({ result, elidedSubject, ambiguousSubject }) => {
         const resultIndex = resultOffset + result.index;
         const prefix = body.slice(0, resultIndex);
         const remainder = body.slice(resultIndex).replace(/^(?:,|and)\s*/i, "");
@@ -190,19 +203,22 @@ function isProgressOnlyCompletionText(value: string): boolean {
           remainder.split(
             /,(?!\s*(?:if|unless|whether|once|when|after|as\s+soon\s+as)\b)|\s+(?:and|but|so|because|to)\s+/i,
           )[0] ?? "";
-        // An elided subject inherits its plan: "I'll run and read" is not
-        // past tense. The same action cannot masquerade as a noun subject in
-        // "and run targeted tests". A new subject can introduce an actual result.
+        // Elided and ambiguous noun subjects inherit the preceding intent,
+        // including ongoing narration. A new explicit subject or finite
+        // completed-state clause can establish an independent result.
         const subjectClause = prefix
-          .split(/(?:,|\b(?:and|but|so)\b)\s*(?=(?:i|we)\b)/i)
+          .split(/(?:,|\b(?:and|but|so)\b)\s*(?=(?:i|we|you|he|she|it|they)\b)/i)
           .at(-1)
           ?.trim()
           .replace(LEADING_CONTEXT_PATTERN, "");
         // Reject each deferred candidate, not a later independent completed
         // action merely because the first clause only described an attempt.
         return !(
-          ((elidedSubject || PROGRESS_ACTION_PATTERN.test(remainder)) &&
-            FIRST_PERSON_PLAN_PATTERN.test(subjectClause ?? "")) ||
+          ((elidedSubject || ambiguousSubject) &&
+            (FIRST_PERSON_PLAN_PATTERN.test(subjectClause ?? "") ||
+              PROGRESS_ONLY_PATTERN.test(subjectClause ?? "") ||
+              BARE_PROGRESS_ONLY_PATTERN.test(subjectClause ?? "") ||
+              ONGOING_NARRATION_PATTERN.test(subjectClause ?? ""))) ||
           UNFINISHED_RESULT_PATTERN.test(remainder) ||
           /\b(?:whether|if|unless)\b/i.test(resultClause) ||
           FRONTED_CONDITIONAL_PATTERN.test(prefix) ||
