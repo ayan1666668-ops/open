@@ -27,38 +27,8 @@ import { normalizeResolvedProviderModel } from "./model.provider-normalization.j
 export type { ProviderRuntimeHooks } from "./model.provider-hooks.types.js";
 export { resolveProviderTransport } from "./model.provider-transport.js";
 
-const TARGET_PROVIDER_RUNTIME_HOOKS: ProviderRuntimeHooks = {
-  resolveToolSearchMode: (context) => {
-    const metadataSnapshot = getCurrentPluginMetadataSnapshot({
-      allowScopedSnapshot: true,
-      allowWorkspaceScopedSnapshot: true,
-    });
-    const metadata = {
-      manifestRegistry: metadataSnapshot?.manifestRegistry,
-    };
-    const policy =
-      resolveProviderPolicySurface(context.provider, metadata)?.resolveToolSearchMode ??
-      (context.api !== context.provider
-        ? resolveProviderPolicySurface(context.api, metadata)?.resolveToolSearchMode
-        : undefined);
-    return policy?.(context);
-  },
-  buildProviderUnknownModelHintWithPlugin,
-  prepareProviderDynamicModel,
-  runProviderDynamicModel,
-  shouldPreferProviderRuntimeResolvedModel,
-  normalizeProviderResolvedModelWithPlugin,
-  // Target-provider resolution keeps owner hooks, but avoids broad
-  // cross-provider hooks that can load unrelated bundled provider runtimes.
-  applyProviderResolvedTransportWithPlugin: () => undefined,
-  normalizeProviderTransportWithPlugin: () => undefined,
-};
-
-export const DEFAULT_PROVIDER_RUNTIME_HOOKS: ProviderRuntimeHooks = {
-  ...TARGET_PROVIDER_RUNTIME_HOOKS,
-  applyProviderResolvedTransportWithPlugin,
-  normalizeProviderTransportWithPlugin,
-};
+let targetProviderRuntimeHooks: ProviderRuntimeHooks | undefined;
+let defaultProviderRuntimeHooks: ProviderRuntimeHooks | undefined;
 
 const STATIC_PROVIDER_RUNTIME_HOOKS: ProviderRuntimeHooks = {
   applyProviderResolvedTransportWithPlugin: () => undefined,
@@ -67,11 +37,6 @@ const STATIC_PROVIDER_RUNTIME_HOOKS: ProviderRuntimeHooks = {
   runProviderDynamicModel: () => undefined,
   normalizeProviderResolvedModelWithPlugin: () => undefined,
   normalizeProviderTransportWithPlugin: () => undefined,
-};
-
-const SKIP_AGENT_DISCOVERY_PROVIDER_RUNTIME_HOOKS: ProviderRuntimeHooks = {
-  // skipAgentDiscovery is the lean path used before agent discovery/models.json has run.
-  ...TARGET_PROVIDER_RUNTIME_HOOKS,
 };
 
 export function resolveRuntimeHooks(params?: {
@@ -85,10 +50,41 @@ export function resolveRuntimeHooks(params?: {
   if (params?.runtimeHooks) {
     return params.runtimeHooks;
   }
+  // Bind provider hooks only when model resolution requests them.
+  targetProviderRuntimeHooks ??= {
+    resolveToolSearchMode: (context) => {
+      const metadataSnapshot = getCurrentPluginMetadataSnapshot({
+        allowScopedSnapshot: true,
+        allowWorkspaceScopedSnapshot: true,
+      });
+      const metadata = {
+        manifestRegistry: metadataSnapshot?.manifestRegistry,
+      };
+      const policy =
+        resolveProviderPolicySurface(context.provider, metadata)?.resolveToolSearchMode ??
+        (context.api !== context.provider
+          ? resolveProviderPolicySurface(context.api, metadata)?.resolveToolSearchMode
+          : undefined);
+      return policy?.(context);
+    },
+    buildProviderUnknownModelHintWithPlugin,
+    prepareProviderDynamicModel,
+    runProviderDynamicModel,
+    shouldPreferProviderRuntimeResolvedModel,
+    normalizeProviderResolvedModelWithPlugin,
+    // Target-provider resolution keeps owner hooks, but avoids broad
+    // cross-provider hooks that can load unrelated bundled provider runtimes.
+    applyProviderResolvedTransportWithPlugin: () => undefined,
+    normalizeProviderTransportWithPlugin: () => undefined,
+  };
   if (params?.skipAgentDiscovery) {
-    return SKIP_AGENT_DISCOVERY_PROVIDER_RUNTIME_HOOKS;
+    return targetProviderRuntimeHooks;
   }
-  return DEFAULT_PROVIDER_RUNTIME_HOOKS;
+  return (defaultProviderRuntimeHooks ??= {
+    ...targetProviderRuntimeHooks,
+    applyProviderResolvedTransportWithPlugin,
+    normalizeProviderTransportWithPlugin,
+  });
 }
 
 function canonicalizeLegacyResolvedModel(params: { provider: string; model: Model }): Model {
@@ -188,7 +184,7 @@ export function normalizeResolvedModel(params: {
     }),
     cost: normalizeModelCost((params.model as { cost?: unknown }).cost),
   } as Model & ProviderRuntimeModel;
-  const runtimeHooks = params.runtimeHooks ?? DEFAULT_PROVIDER_RUNTIME_HOOKS;
+  const runtimeHooks = params.runtimeHooks ?? resolveRuntimeHooks();
   const pluginNormalized = runtimeHooks.normalizeProviderResolvedModelWithPlugin({
     provider: params.provider,
     config: params.cfg,

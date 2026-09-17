@@ -26,7 +26,7 @@ import {
 } from "./model.configured-overrides.js";
 import type { InlineModelEntry } from "./model.inline-provider.js";
 import {
-  DEFAULT_PROVIDER_RUNTIME_HOOKS,
+  resolveRuntimeHooks,
   normalizeResolvedModel,
   type ProviderRuntimeHooks,
 } from "./model.provider-hooks.js";
@@ -230,7 +230,7 @@ function resolvePluginDynamicModelWithRegistry(
   params: ResolveModelWithPreparedRegistryParams,
 ): Model | undefined {
   const { provider, modelId, modelRegistry, cfg, agentDir, workspaceDir } = params;
-  const runtimeHooks = params.runtimeHooks ?? DEFAULT_PROVIDER_RUNTIME_HOOKS;
+  const runtimeHooks = params.runtimeHooks ?? resolveRuntimeHooks();
   const providerConfig = resolveConfiguredProviderConfig(cfg, provider);
   let pluginDynamicModel = params.preparedDynamicModel;
   if (!pluginDynamicModel) {
@@ -294,7 +294,7 @@ function resolvePluginDynamicModelWithRegistry(
 export function resolveRuntimePreferredSuppressedModel(
   params: ResolveModelWithPreparedRegistryParams,
 ): Model | undefined {
-  const runtimeHooks = params.runtimeHooks ?? DEFAULT_PROVIDER_RUNTIME_HOOKS;
+  const runtimeHooks = params.runtimeHooks ?? resolveRuntimeHooks();
   if (!shouldCompareProviderRuntimeResolvedModel({ ...params, runtimeHooks })) {
     return undefined;
   }
@@ -391,7 +391,7 @@ type ResolveModelWithPreparedRegistryParams = ResolveModelWithRegistryParams & {
 export function resolveModelWithPreparedRegistry(
   params: ResolveModelWithPreparedRegistryParams,
 ): Model | undefined {
-  const runtimeHooks = params.runtimeHooks ?? DEFAULT_PROVIDER_RUNTIME_HOOKS;
+  const runtimeHooks = params.runtimeHooks ?? resolveRuntimeHooks();
   const explicitModel = resolveExplicitModelWithRegistry(params);
   if (explicitModel?.kind === "unavailable") {
     return undefined;

@@ -24,7 +24,6 @@ import {
   type StaticCatalogFallbackModel,
 } from "./model.configured-overrides.js";
 import {
-  DEFAULT_PROVIDER_RUNTIME_HOOKS,
   normalizeResolvedModel,
   type ProviderRuntimeHooks,
   resolveRuntimeHooks,
@@ -460,7 +459,7 @@ function buildUnknownModelError(params: {
   if (registrationHint) {
     return `${base}. ${registrationHint}`;
   }
-  const runtimeHooks = params.runtimeHooks ?? DEFAULT_PROVIDER_RUNTIME_HOOKS;
+  const runtimeHooks = params.runtimeHooks ?? resolveRuntimeHooks();
   const hint = runtimeHooks.buildProviderUnknownModelHintWithPlugin({
     provider: params.provider,
     config: params.cfg,
