@@ -29,11 +29,59 @@ describe("public test diagnostic redaction", () => {
       [`${key}: "synthetic"`, `${key}: "<redacted len=9>"`],
       [`"${key}": "synthetic"`, `"${key}": "<redacted len=9>"`],
       [`${key}=synthetic\nNORMAL=visible`, `${key}=<redacted len=9>\nNORMAL=visible`],
+      [`["${key}", "synthetic"]`, `["${key}", "<redacted len=9>"]`],
+      [`[ '${key}', 'synthetic' ]`, `[ '${key}', '<redacted len=9>' ]`],
     ];
     for (const [input, expected] of cases) {
       expect(redactCredentialText(input)).toBe(expected);
       expect(redactCredentialText(expected)).toBe(expected);
     }
+  });
+
+  it("scrubs nested credential entry pairs while preserving keys and ordinary entries", () => {
+    const diagnostic = {
+      actual: { env: Object.entries({ EXAMPLE_TOKEN: "synthetic", NORMAL: "visible" }) },
+      cause: {
+        entries: [
+          ["apiKey", "synthetic", "retained"],
+          ["NORMAL", "visible"],
+        ],
+      },
+    };
+    redactDiagnostic(diagnostic);
+    const expected = {
+      actual: {
+        env: [
+          ["EXAMPLE_TOKEN", "<redacted len=9>"],
+          ["NORMAL", "visible"],
+        ],
+      },
+      cause: {
+        entries: [
+          ["apiKey", "<redacted len=9>", "retained"],
+          ["NORMAL", "visible"],
+        ],
+      },
+    };
+    expect(diagnostic).toEqual(expected);
+    redactDiagnostic(diagnostic);
+    expect(diagnostic).toEqual(expected);
+  });
+
+  it("redacts multiline and JSON-encoded credential entry pairs", () => {
+    const text = `+ [\n+   "EXAMPLE_TOKEN",\n+   "one\\ntwo",\n+ ],\n  ["NORMAL", "visible"]`;
+    const clean = `+ [\n+   "EXAMPLE_TOKEN",\n+   "<redacted len=7>",\n+ ],\n  ["NORMAL", "visible"]`;
+    expect(redactCredentialText(text)).toBe(clean);
+    expect(redactCredentialText(clean)).toBe(clean);
+    expect(redactCredentialText(`@@ -3,8 +3,8 @@\n  "EXAMPLE_TOKEN",\n  "synthetic",\n],`)).toBe(
+      `@@ -3,8 +3,8 @@\n  "EXAMPLE_TOKEN",\n  "<redacted len=9>",\n],`,
+    );
+    const encoded = JSON.stringify({
+      message: `[["EXAMPLE_TOKEN", "synthetic"], ["NORMAL", "visible"]]`,
+    });
+    expect(JSON.parse(redactCredentialText(encoded))).toEqual({
+      message: `[["EXAMPLE_TOKEN", "<redacted len=9>"], ["NORMAL", "visible"]]`,
+    });
   });
 
   it("handles escaped quotes, newlines, ANSI colors and repeated fields", () => {

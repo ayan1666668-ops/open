@@ -11,7 +11,7 @@ const synthetic = "not-a-real-secret-value-1234567890";
 describe("Vitest public reporter output", () => {
   const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 
-  it.each(["deep-equality", "spy-call", "node-multiline"])(
+  it.each(["deep-equality", "spy-call", "node-multiline", "entries-array"])(
     "redacts %s failures through the shard runner",
     (kind) => {
       const credential = kind === "node-multiline" ? "PRIVATE_KEY" : "EXAMPLE_TOKEN";
@@ -51,9 +51,9 @@ import { chai, expect, it, vi } from "vitest";
 chai.config.truncateThreshold = 0;
 it("synthetic ${kind} failure", async ({ annotate }) => {
   await annotate(${JSON.stringify(`AUTHORIZATION=Bearer ${synthetic}\nretained % detail`)}, ${JSON.stringify(`EXAMPLE_TOKEN=${synthetic}`)});
-  const actual = { nested: { env: { ${credential}: ${JSON.stringify(value)} } }, visible: "received" };
-  const expected = { nested: { env: { ${kind === "node-multiline" ? "" : `${credential}: ${JSON.stringify(value)}`} } }, visible: "expected" };
-  ${kind === "node-multiline" ? "assert.deepStrictEqual(actual, expected);" : kind === "deep-equality" ? "expect(actual).toEqual(expected);" : "const spy = vi.fn(); spy(actual); expect(spy).toHaveBeenCalledWith(expected);"}
+  const actual = ${kind === "entries-array" ? `Object.entries({ ${credential}: ${JSON.stringify(value)}, NORMAL: "received" })` : `{ nested: { env: { ${credential}: ${JSON.stringify(value)} } }, visible: "received" }`};
+  const expected = ${kind === "entries-array" ? `Object.entries({ ${credential}: ${JSON.stringify(value)}, NORMAL: "expected" })` : `{ nested: { env: { ${kind === "node-multiline" ? "" : `${credential}: ${JSON.stringify(value)}`} } }, visible: "expected" }`};
+  ${kind === "node-multiline" ? "assert.deepStrictEqual(actual, expected);" : kind === "spy-call" ? "const spy = vi.fn(); spy(actual); expect(spy).toHaveBeenCalledWith(expected);" : "expect(actual).toEqual(expected);"}
 });
 `,
       );
@@ -95,7 +95,9 @@ it("synthetic ${kind} failure", async ({ annotate }) => {
       expect(child.status).toBe(1);
       const output = child.stdout + child.stderr;
       expect(output.includes(marker), output.replaceAll(synthetic, "[synthetic value]")).toBe(true);
-      expect(output.includes(synthetic)).toBe(false);
+      expect(output.includes(synthetic), output.replaceAll(synthetic, "[synthetic value]")).toBe(
+        false,
+      );
       expect(output).toContain(`synthetic ${kind} failure`);
       expect(output).toContain("::error ");
       const notice = output.split("\n").find((line) => line.startsWith("::notice "));

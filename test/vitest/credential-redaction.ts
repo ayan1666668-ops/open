@@ -4,6 +4,9 @@ import { inspect, stripVTControlCharacters } from "node:util";
 const credentialKey =
   /TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|APIKEY|PRIVATE_KEY|AUTHORIZATION|COOKIE|SESSION/iu;
 const assignment = /(?<![\w.-])(["']?)([\w.-]+)\1[\t ]*([:=])/gu;
+// A diff hunk can retain the entry's key/value rows while omitting its opening bracket.
+const entryPair =
+  /(?:\[(?:\s|^[+-][\t ]+)*|^[\t ]*(?:[+-][\t ]+)?)(["'])([\w.-]+)\1(?:\s|^[+-][\t ]+)*,(?:\s|^[+-][\t ]+)*(?=["'])/gmu;
 const redacted = /^<redacted len=\d+>$/u;
 const closingDelimiter: Record<string, string> = { "{": "}", "[": "]", "(": ")" };
 const escapedCharacter: Record<string, string> = {
@@ -148,6 +151,30 @@ function redactQuotedContent(text: string): string {
   return output + text.slice(consumed);
 }
 
+function redactEntryPairs(text: string): string {
+  const quotes = [...quotedValues(text)];
+  let output = "";
+  let consumed = 0;
+  for (const match of text.matchAll(entryPair)) {
+    if (
+      match.index < consumed ||
+      !credentialKey.test(match[2] ?? "") ||
+      quotes.some((quoted) => match.index > quoted.start && match.index < quoted.end)
+    ) {
+      continue;
+    }
+    const start = match.index + match[0].length;
+    const quoted = quotedValue(text, start);
+    if (redacted.test(quoted.value)) {
+      continue;
+    }
+    const quote = text.charAt(start);
+    output += `${text.slice(consumed, start)}${quote}<redacted len=${quoted.value.length}>${quote}`;
+    consumed = quoted.end;
+  }
+  return output + text.slice(consumed);
+}
+
 export function redactCredentialText(text: string): string {
   const uncolored = stripVTControlCharacters(text);
   if (!credentialKey.test(uncolored)) {
@@ -203,7 +230,7 @@ export function redactCredentialText(text: string): string {
     output += `${plain.slice(consumed, start)}${wrapped ? quote : ""}<redacted len=${length}>${wrapped ? quote : ""}`;
     consumed = end;
   }
-  return redactQuotedContent(output + plain.slice(consumed));
+  return redactQuotedContent(redactEntryPairs(output + plain.slice(consumed)));
 }
 
 export function redactDiagnostic(value: unknown, seen = new WeakSet<object>()): unknown {
@@ -214,14 +241,23 @@ export function redactDiagnostic(value: unknown, seen = new WeakSet<object>()): 
     return value;
   }
   seen.add(value);
+  const entryKey: unknown = Array.isArray(value)
+    ? Object.getOwnPropertyDescriptor(value, "0")?.value
+    : undefined;
   for (const key of Object.getOwnPropertyNames(value)) {
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
     if (!descriptor || !("value" in descriptor) || !descriptor.writable) {
       continue;
     }
     const content: unknown = descriptor.value;
+    const credential =
+      credentialKey.test(key) ||
+      (key === "1" &&
+        typeof entryKey === "string" &&
+        credentialKey.test(entryKey) &&
+        typeof content === "string");
     const replacement =
-      credentialKey.test(key) && !(typeof content === "string" && redacted.test(content))
+      credential && !(typeof content === "string" && redacted.test(content))
         ? `<redacted len=${typeof content === "string" ? content.length : inspect(content, { customInspect: false, getters: false }).length}>`
         : redactDiagnostic(content, seen);
     Reflect.set(value, key, replacement);
