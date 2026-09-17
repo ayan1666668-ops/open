@@ -437,6 +437,50 @@ describe("createSubsystemLogger().isEnabled", () => {
     },
   );
 
+  it("appends warn/error structured fields as compact key=value pairs in plain console styles", () => {
+    setLoggerOverride({ level: "silent", consoleLevel: "warn", consoleStyle: "pretty" });
+    const warn = vi.fn();
+    const error = vi.fn();
+    loggingState.rawConsole = { log: vi.fn(), info: vi.fn(), warn, error };
+    const log = createSubsystemLogger("session-catalog");
+
+    log.warn("slow Codex catalog list phases", {
+      elapsedMs: 12345,
+      admissionWaitMs: 0,
+      admitted: true,
+      phaseDurationsMs: { open: 3, validation: 8 },
+      note: "two words",
+      skipped: undefined,
+      error: new Error("boom"),
+    });
+    log.error("catalog failed", { reason: "timeout" });
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    const warnLine = String(mockCall(warn)[0]);
+    expect(warnLine).toContain("slow Codex catalog list phases");
+    expect(warnLine).toContain(
+      'elapsedMs=12345 admissionWaitMs=0 admitted=true phaseDurationsMs={"open":3,"validation":8} note="two words" error="boom"',
+    );
+    expect(warnLine).not.toContain("skipped=");
+    expect(String(mockCall(error)[0])).toContain("catalog failed reason=timeout");
+  });
+
+  it("keeps info console lines and explicit consoleMessage overrides free of structured fields", () => {
+    setLoggerOverride({ level: "silent", consoleLevel: "info" });
+    const logSpy = vi.fn();
+    const warn = vi.fn();
+    loggingState.rawConsole = { log: logSpy, info: vi.fn(), warn, error: vi.fn() };
+    const log = createSubsystemLogger("gateway");
+
+    log.info("listing sessions", { elapsedMs: 5 });
+    log.warn("slow list", { elapsedMs: 5000, consoleMessage: "slow list (see file log)" });
+
+    expect(String(mockCall(logSpy)[0])).not.toContain("elapsedMs=");
+    const warnLine = String(mockCall(warn)[0]);
+    expect(warnLine).toContain("slow list (see file log)");
+    expect(warnLine).not.toContain("elapsedMs=");
+  });
+
   it("preserves structured subsystem fields through the shared JSON formatter", () => {
     setLoggerOverride({ level: "silent", consoleLevel: "warn", consoleStyle: "json" });
     const warn = installConsoleMethodSpy("warn");

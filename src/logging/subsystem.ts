@@ -322,6 +322,54 @@ function shouldSuppressProbeConsoleLine(params: {
   return /(sessionId|runId)=probe-/.test(message);
 }
 
+const CONSOLE_META_LEVELS = new Set<LogLevel>(["warn", "error", "fatal"]);
+const CONSOLE_META_MAX_CHARS = 2048;
+
+function formatConsoleMetaValue(value: unknown): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value === "string") {
+    return /\s|=/.test(value) || value.length === 0 ? JSON.stringify(value) : value;
+  }
+  if (
+    value === null ||
+    typeof value === "number" ||
+    typeof value === "boolean" ||
+    typeof value === "bigint"
+  ) {
+    return String(value);
+  }
+  if (value instanceof Error) {
+    return JSON.stringify(value.message);
+  }
+  try {
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    return String(value);
+  }
+}
+
+/**
+ * Renders structured fields as one compact `key=value` tail so warn/error/fatal
+ * records keep their diagnostics in plain-text sinks such as journald, which only
+ * see the console line. The JSON console style and the file sink carry the same
+ * fields natively.
+ */
+function formatConsoleMeta(meta: Record<string, unknown>): string {
+  const parts: string[] = [];
+  for (const [key, value] of Object.entries(meta)) {
+    const rendered = formatConsoleMetaValue(value);
+    if (rendered !== undefined) {
+      parts.push(`${key}=${rendered}`);
+    }
+  }
+  const joined = parts.join(" ");
+  return joined.length > CONSOLE_META_MAX_CHARS
+    ? `${joined.slice(0, CONSOLE_META_MAX_CHARS)}...(truncated)`
+    : joined;
+}
+
 function logToFile(
   fileLogger: TsLogger<LogObj>,
   level: LogLevel,
@@ -377,7 +425,14 @@ export function createSubsystemLogger(subsystem: string): SubsystemLogger {
     if (!consoleEnabled) {
       return;
     }
-    const consoleMessage = consoleMessageOverride ?? message;
+    // An explicit consoleMessage is the owner's chosen console text; only default
+    // warn/error/fatal console lines carry the structured fields.
+    const consoleMeta =
+      consoleMessageOverride === undefined && fileMeta && CONSOLE_META_LEVELS.has(level)
+        ? formatConsoleMeta(fileMeta)
+        : "";
+    const consoleMessage =
+      consoleMessageOverride ?? (consoleMeta ? `${message} ${consoleMeta}` : message);
     if (
       shouldSuppressProbeConsoleLine({
         level,
