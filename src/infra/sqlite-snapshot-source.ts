@@ -90,7 +90,7 @@ export async function prepareSqliteReadOnlyLocation(
   let stagingRoot: string | undefined;
   try {
     signal?.throwIfAborted();
-    const ownedSnapshot = prepareStateDatabaseMutationSnapshot(pathname);
+    const ownedSnapshot = prepareStateDatabaseMutationSnapshot(pathname, signal);
     if (ownedSnapshot) {
       const prepared = await ownedSnapshot;
       try {

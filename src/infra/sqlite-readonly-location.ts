@@ -674,13 +674,16 @@ export function prepareSqliteReadOnlyLocationSyncInProcess(pathname: string, sta
 export async function prepareSqliteReadOnlyLocationFromOwnedDatabase(
   database: DatabaseSync,
   assertCurrent: () => void,
+  signal?: AbortSignal,
 ): Promise<PreparedSqliteReadOnlyLocation> {
+  signal?.throwIfAborted();
   assertCurrent();
   if (!database.isOpen || database.isTransaction) {
     throw new Error("SQLite inspection requires an open owner outside a transaction");
   }
-  const directory = await createSqliteSnapshotStagingDirectory();
+  const directory = await createSqliteSnapshotStagingDirectory(undefined, false, signal);
   try {
+    signal?.throwIfAborted();
     assertCurrent();
     if (!database.isOpen || database.isTransaction) {
       throw new Error("SQLite inspection requires an open owner outside a transaction");
@@ -689,6 +692,7 @@ export async function prepareSqliteReadOnlyLocationFromOwnedDatabase(
     await retainSnapshotWork(
       requireNodeSqlite().backup(database, resolveSqliteFilesystemPath(location)),
     );
+    signal?.throwIfAborted();
     assertCurrent();
     return publishPreparedCopy(directory);
   } catch (error) {

@@ -4,6 +4,11 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
+import { acquireOpenClawStateDatabaseFileExclusion } from "../state/openclaw-state-db-cache.js";
+import {
+  closeOpenClawStateDatabaseForTest,
+  openOpenClawStateDatabase,
+} from "../state/openclaw-state-db.js";
 import { requireNodeSqlite } from "./node-sqlite.js";
 import { SQLITE_READONLY_CHILD_ARG } from "./runtime-process-entrypoints.js";
 import * as workerUrls from "./runtime-worker-url.js";
@@ -29,6 +34,7 @@ const workers = new Map<string, Worker>();
 const tempDirs = useAutoCleanupTempDirTracker((cleanup) => {
   afterEach(async () => {
     await Promise.all([...workers.values()].map((worker) => worker.closed));
+    closeOpenClawStateDatabaseForTest();
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
     cleanup();
@@ -184,8 +190,23 @@ async function readSnapshot(source: string, signal?: AbortSignal): Promise<void>
   }
 }
 
+function createOwnedDatabase() {
+  const stateDir = tempDirs.make("sqlite-reclaim-owned-state-");
+  const bootstrapCache = path.join(stateDir, "bootstrap-cache");
+  vi.stubEnv("XDG_CACHE_HOME", bootstrapCache);
+  const options = {
+    env: { OPENCLAW_STATE_DIR: stateDir, OPENCLAW_TEST_FAST: "1" },
+    path: path.join(stateDir, "state", "openclaw.sqlite"),
+  };
+  openOpenClawStateDatabase(options).db.exec(
+    "CREATE TABLE probe(value TEXT); INSERT INTO probe VALUES('preserved');",
+  );
+  return { options, bootstrapCache };
+}
+
 it("detaches a cancelled snapshot caller while reclamation finishes its directory", async () => {
-  for (const mode of ["snapshot", "header", "update"] as const) {
+  for (const mode of ["snapshot", "header", "update", "owned"] as const) {
+    const owned = mode === "owned" ? createOwnedDatabase() : undefined;
     const f = mode === "snapshot" ? fixture(64, 4 * 1024 * 1024) : fixture();
     const controller = new AbortController();
     const reason = new DOMException(`${mode} caller stopped`, "AbortError");
@@ -194,12 +215,28 @@ it("detaches a cancelled snapshot caller while reclamation finishes its director
         await readSnapshot(f.source, controller.signal);
       } else if (mode === "header") {
         await inspectSqliteSchemaHeader(f.source, { signal: controller.signal });
-      } else {
+      } else if (mode === "update") {
         await readUpdateStateSchemaVersions({
           stateDir: path.dirname(f.source),
           config: {},
           signal: controller.signal,
         });
+      } else {
+        if (!owned) {
+          throw new Error("Owned database fixture is unavailable");
+        }
+        // Cold-open repair must not consume the backlog reserved for the owned snapshot.
+        vi.stubEnv("XDG_CACHE_HOME", owned.bootstrapCache);
+        const owner = await acquireOpenClawStateDatabaseFileExclusion(owned.options.path);
+        try {
+          await owner.mutate(owner.assertCurrent, async () => {
+            openOpenClawStateDatabase(owned.options);
+            vi.stubEnv("XDG_CACHE_HOME", path.dirname(f.cache));
+            await readSnapshot(owned.options.path, controller.signal);
+          });
+        } finally {
+          owner.release();
+        }
       }
     }).then(
       () => undefined,
