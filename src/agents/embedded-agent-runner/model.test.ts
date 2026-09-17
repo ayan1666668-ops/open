@@ -22,6 +22,7 @@ import {
 } from "../plugin-model-catalog.js";
 import type { PreparedModelRuntimeSnapshot } from "../prepared-model-runtime.owner.js";
 import { guardModelFixtureAuth } from "./model.fixture.test-support.js";
+import { expectUnknownModelErrorResult } from "./model.forward-compat.test-support.js";
 import { createProviderRuntimeTestMock } from "./model.provider-runtime.test-support.js";
 
 let state: OpenClawTestState;
@@ -1844,10 +1845,7 @@ describe("resolveModel", () => {
       },
     );
 
-    expect(result.model).toBeUndefined();
-    expect(result.error).toBe(
-      "Unknown model: mistral/mistral-medium-3-5. Run `openclaw models list --refresh --provider mistral` to inspect this provider's model choices, then retry with a model supported by your account.",
-    );
+    expectUnknownModelErrorResult(result, "mistral", "mistral-medium-3-5");
     expect(resolveBundledStaticCatalogModelMock).not.toHaveBeenCalled();
     expect(resolveBundledProviderStaticCatalogModelMock).not.toHaveBeenCalled();
     expect(discoverAuthStorage).not.toHaveBeenCalled();
@@ -2342,10 +2340,7 @@ describe("resolveModel", () => {
 
     const result = await resolveModelForTest("openai", "typo-model", state.agentDir(), cfg);
 
-    expect(result.model).toBeUndefined();
-    expect(result.error).toBe(
-      "Unknown model: openai/typo-model. Run `openclaw models list --refresh --provider openai` to inspect this provider's model choices, then retry with a model supported by your account.",
-    );
+    expectUnknownModelErrorResult(result, "openai", "typo-model");
   });
 
   it("does not create fallback models from provider overlays alone", async () => {
@@ -2366,10 +2361,7 @@ describe("resolveModel", () => {
       makeOpenClawConfigFixture(cfg),
     );
 
-    expect(result.model).toBeUndefined();
-    expect(result.error).toBe(
-      "Unknown model: typoProvider/typoed-model. Run `openclaw models list --refresh --provider typoProvider` to inspect this provider's model choices, then retry with a model supported by your account.",
-    );
+    expectUnknownModelErrorResult(result, "typoProvider", "typoed-model");
   });
 
   it("does not create fallback models from built-in provider api overlays", async () => {
@@ -2390,10 +2382,7 @@ describe("resolveModel", () => {
       makeOpenClawConfigFixture(cfg),
     );
 
-    expect(result.model).toBeUndefined();
-    expect(result.error).toBe(
-      "Unknown model: openai/typoed-model. Run `openclaw models list --refresh --provider openai` to inspect this provider's model choices, then retry with a model supported by your account.",
-    );
+    expectUnknownModelErrorResult(result, "openai", "typoed-model");
   });
 
   it("resolves per-model api and baseUrl override in fallback model", async () => {
@@ -3459,10 +3448,7 @@ describe("resolveModel", () => {
               cfg,
             );
 
-      expect(result.model).toBeUndefined();
-      expect(result.error).toBe(
-        "Unknown model: azure-openai-responses/gpt-5.5. Run `openclaw models list --refresh --provider azure-openai-responses` to inspect this provider's model choices, then retry with a model supported by your account.",
-      );
+      expectUnknownModelErrorResult(result, "azure-openai-responses", "gpt-5.5");
       expect(resolveBundledStaticCatalogModelMock).not.toHaveBeenCalled();
       expect(resolveBundledProviderStaticCatalogModelMock).not.toHaveBeenCalled();
     },

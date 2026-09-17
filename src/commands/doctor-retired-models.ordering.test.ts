@@ -16,13 +16,14 @@ import { runCodexSessionRouteHealth } from "../flows/doctor-health-contribution-
 import type { DoctorHealthFlowContext } from "../flows/doctor-health-contribution-types.js";
 import { loadManifestMetadataSnapshot } from "../plugins/manifest-contract-eligibility.js";
 import { createDoctorPrompter } from "./doctor-prompter.js";
-import { createRetiredModelFixture as fixture } from "./doctor-retired-models.test-support.js";
+import {
+  createNativeXaiRetirementFixture as nativeFixture,
+  createRetiredModelFixture as fixture,
+} from "./doctor-retired-models.test-support.js";
 import { repairCronCodexModelRefsAfterConfigWrite } from "./doctor/cron/legacy-repair.js";
 import { maybeRepairCodexSessionRoutes } from "./doctor/shared/codex-route-session-repair.js";
-import {
-  createRetiredModelRefRepairResolver,
-  repairRetiredSessionModelRef,
-} from "./doctor/shared/retired-model-ref-repair.js";
+import { createRetiredModelRefRepairResolver } from "./doctor/shared/retired-model-ref-repair.js";
+import { repairRetiredSessionModelRef } from "./doctor/shared/retired-session-model-repair.js";
 import { repairStaleAgentModelRefs } from "./doctor/shared/stale-agent-model-ref-repair.js";
 
 describe("doctor retirement repair ordering", () => {
@@ -374,47 +375,73 @@ describe("doctor retirement repair ordering", () => {
 });
 
 describe("doctor retirement owner scope", () => {
-  async function nativeFixture() {
-    vi.stubEnv("OPENCLAW_BUNDLED_PLUGINS_DIR", path.resolve("extensions"));
-    const { state } = await fixture();
-    vi.stubEnv("XAI_API_KEY", undefined);
-    await state.writeAuthProfiles({
-      version: 1,
-      profiles: {
-        "xai:fixture": { provider: "xai", type: "api_key", key: "synthetic-xai-key" },
-      },
-    });
-    const cfg: OpenClawConfig = {
-      agents: {
-        entries: { main: {} },
-        defaults: {
-          workspace: state.workspaceDir,
-          model: { primary: "Grok", fallbacks: ["xai/grok-4.3"] },
-          models: { "xai/auto": { alias: "Grok", params: { temperature: 0.25 } } },
-          modelPolicy: { allow: ["xai/auto", "xai/grok-4.3"] },
-        },
-      },
-      auth: { order: { xai: ["xai:fixture"] } },
-      models: {
-        providers: {
-          xai: {
-            baseUrl: "https://api.x.ai/v1",
-            api: "openai-responses",
-            auth: "api-key",
-            models: [],
+  it.each(["native", "model override", "private ID"] as const)(
+    "preserves the logical account while checking authored %s model retirement",
+    async (scenario) => {
+      const { cfg, state, repair } = await nativeFixture();
+      await state.writeAuthProfiles({
+        version: 1,
+        profiles: {
+          "personal:fixture": {
+            provider: "personal",
+            type: "api_key",
+            key: "synthetic-personal-key",
           },
         },
-      },
-      plugins: { allow: ["xai"], entries: { xai: { enabled: true } } },
-    };
-    const repair = (config: OpenClawConfig) =>
-      repairStaleAgentModelRefs(config, {
-        env: state.env,
-        pluginProviderIds: new Set(["xai"]),
-        persistedProviderIdsByAgentId: new Map(),
       });
-    return { cfg, state, repair };
-  }
+      const id = scenario === "private ID" ? "private-model" : "auto";
+      const ref = `personal/${id}`;
+      const config: OpenClawConfig = {
+        ...cfg,
+        auth: { order: { personal: ["personal:fixture"] } },
+        agents: {
+          ...cfg.agents,
+          defaults: {
+            workspace: state.workspaceDir,
+            model: { primary: `${ref}@personal:fixture` },
+            subagents: { model: `${ref}@personal:fixture` },
+            models: { [ref]: { alias: "Personal", params: { temperature: 0.25 } } },
+            modelPolicy: { allow: [ref] },
+          },
+        },
+        models: {
+          providers: {
+            personal: {
+              api: "openai-responses",
+              baseUrl: "https://api.x.ai/v1",
+              auth: "api-key",
+              models: [
+                {
+                  id,
+                  name: id,
+                  ...(scenario === "model override"
+                    ? { baseUrl: "https://custom.invalid/v1" }
+                    : {}),
+                },
+              ],
+            },
+          },
+        },
+      };
+      const result = repair(config);
+      const expected = scenario === "native" ? "personal/grok-4.6" : ref;
+      expect(result.config.agents?.defaults?.model).toEqual({
+        primary: `${expected}@personal:fixture`,
+      });
+      expect(result.config.agents?.defaults?.subagents?.model).toBe(`${expected}@personal:fixture`);
+      expect(result.config.agents?.defaults?.models).toEqual({
+        [expected]: { alias: "Personal", params: { temperature: 0.25 } },
+      });
+      expect(result.config.agents?.defaults?.modelPolicy?.allow).toEqual([expected]);
+      expect(result.config.auth).toEqual(config.auth);
+      expect(result.config.models).toEqual(config.models);
+      expect(result.warnings).toEqual([]);
+      const repeated = repair(result.config);
+      expect(repeated.config).toEqual(result.config);
+      expect(repeated.changes).toEqual([]);
+      expect(repeated.warnings).toEqual([]);
+    },
+  );
 
   it("repairs native defaults and subagents with only an environment API key", async () => {
     const { cfg, state } = await nativeFixture();

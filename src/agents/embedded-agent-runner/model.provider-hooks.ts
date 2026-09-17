@@ -3,7 +3,6 @@ import { finiteSecondsToTimerSafeMilliseconds } from "@openclaw/normalization-co
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { Api, Model } from "../../llm/types.js";
-import type { ProviderToolSearchPolicyContext } from "../../plugin-sdk/provider-model-types.js";
 import { getCurrentPluginMetadataSnapshot } from "../../plugins/current-plugin-metadata-snapshot.js";
 import { resolveProviderPolicySurface } from "../../plugins/provider-public-artifacts.js";
 import type { ProviderRuntimeModel } from "../../plugins/provider-runtime-model.types.js";
@@ -23,28 +22,10 @@ import {
   normalizeResolvedTransportApi,
   resolveProviderModelInput,
 } from "./model.inline-provider.js";
+import type { ProviderRuntimeHooks } from "./model.provider-hooks.types.js";
 import { normalizeResolvedProviderModel } from "./model.provider-normalization.js";
-
-export type ProviderRuntimeHooks = {
-  resolveToolSearchMode?: (context: ProviderToolSearchPolicyContext) => "tools" | false | undefined;
-  applyProviderResolvedTransportWithPlugin?: (
-    params: Parameters<typeof applyProviderResolvedTransportWithPlugin>[0],
-  ) => unknown;
-  buildProviderUnknownModelHintWithPlugin: (
-    params: Parameters<typeof buildProviderUnknownModelHintWithPlugin>[0],
-  ) => string | undefined;
-  prepareProviderDynamicModel: (
-    params: Parameters<typeof prepareProviderDynamicModel>[0],
-  ) => ReturnType<typeof prepareProviderDynamicModel>;
-  runProviderDynamicModel: (params: Parameters<typeof runProviderDynamicModel>[0]) => unknown;
-  shouldPreferProviderRuntimeResolvedModel?: (
-    params: Parameters<typeof shouldPreferProviderRuntimeResolvedModel>[0],
-  ) => boolean;
-  normalizeProviderResolvedModelWithPlugin: (
-    params: Parameters<typeof normalizeProviderResolvedModelWithPlugin>[0],
-  ) => unknown;
-  normalizeProviderTransportWithPlugin: typeof normalizeProviderTransportWithPlugin;
-};
+export type { ProviderRuntimeHooks } from "./model.provider-hooks.types.js";
+export { resolveProviderTransport } from "./model.provider-transport.js";
 
 const TARGET_PROVIDER_RUNTIME_HOOKS: ProviderRuntimeHooks = {
   resolveToolSearchMode: (context) => {
@@ -281,36 +262,6 @@ export function normalizeResolvedModel(params: {
       model: modelWithToolSearch,
     }),
   );
-}
-
-export function resolveProviderTransport(params: {
-  provider: string;
-  modelId?: string;
-  api?: Api | null;
-  baseUrl?: string;
-  cfg?: OpenClawConfig;
-  workspaceDir?: string;
-  runtimeHooks?: ProviderRuntimeHooks;
-}): { api?: Api; baseUrl?: string } {
-  const runtimeHooks = params.runtimeHooks ?? DEFAULT_PROVIDER_RUNTIME_HOOKS;
-  const normalized = runtimeHooks.normalizeProviderTransportWithPlugin({
-    provider: params.provider,
-    ...(params.modelId ? { modelId: params.modelId } : {}),
-    config: params.cfg,
-    workspaceDir: params.workspaceDir,
-    context: {
-      config: params.cfg,
-      workspaceDir: params.workspaceDir,
-      provider: params.provider,
-      ...(params.modelId ? { modelId: params.modelId } : {}),
-      api: params.api,
-      baseUrl: params.baseUrl,
-    },
-  }) as { api?: Api | null; baseUrl?: string } | undefined;
-  return {
-    api: normalizeResolvedTransportApi(normalized?.api ?? params.api),
-    baseUrl: normalized?.baseUrl ?? params.baseUrl,
-  };
 }
 
 export function normalizeTransportBaseUrl(baseUrl: unknown): string | undefined {

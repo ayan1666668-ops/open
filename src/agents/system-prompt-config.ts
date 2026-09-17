@@ -7,7 +7,6 @@
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { buildTtsSystemPromptHint } from "../tts/tts-settings.js";
 import { resolveMainSessionDelegationMode } from "./delegation-guidance.js";
-import { getPreparedModelCatalogOwnerSnapshot } from "./prepared-model-catalog.js";
 import type { PreparedModelRuntimeSnapshot } from "./prepared-model-runtime.types.js";
 import { buildAgentSystemPrompt } from "./system-prompt.js";
 import { resolveEffectiveToolFsWorkspaceOnly } from "./tool-fs-policy.js";
@@ -29,29 +28,14 @@ type ResolvedAgentSystemPromptConfig = Pick<
 type ConfiguredAgentSystemPromptParams = AgentSystemPromptRenderParams & {
   config?: OpenClawConfig;
   agentId?: string;
-  preparedModelRuntime?: PreparedModelRuntimeSnapshot;
+  preparedModelRuntime?: Pick<PreparedModelRuntimeSnapshot, "configuredModelAliases" | "isCurrent">;
 };
 
-function buildModelAliasLines(params: {
-  config?: OpenClawConfig;
-  agentId?: string;
-  workspaceDir?: string;
-  preparedModelRuntime?: PreparedModelRuntimeSnapshot;
-}) {
-  const owner =
-    params.preparedModelRuntime ??
-    getPreparedModelCatalogOwnerSnapshot({
-      config: params.config,
-      agentId: params.agentId,
-      workspaceDir: params.workspaceDir,
-    });
+function buildModelAliasLines(owner: ConfiguredAgentSystemPromptParams["preparedModelRuntime"]) {
   if (!owner?.isCurrent()) {
     return [];
   }
-  return owner.configuredRuntimeModels
-    .flatMap(({ provider, modelId, selectionAlias }) =>
-      selectionAlias ? [{ alias: selectionAlias, provider, model: modelId }] : [],
-    )
+  return (owner.configuredModelAliases ?? [])
     .toSorted((a, b) => a.alias.localeCompare(b.alias))
     .map(({ alias, provider, model }) => `- ${alias}: ${provider}/${model}`);
 }
@@ -63,8 +47,7 @@ function resolveAgentSystemPromptConfig(params: {
   sessionKey?: string;
   promptMode?: AgentSystemPromptRenderParams["promptMode"];
   sourceReplyDeliveryMode?: AgentSystemPromptRenderParams["sourceReplyDeliveryMode"];
-  workspaceDir?: string;
-  preparedModelRuntime?: PreparedModelRuntimeSnapshot;
+  preparedModelRuntime?: ConfiguredAgentSystemPromptParams["preparedModelRuntime"];
 }): ResolvedAgentSystemPromptConfig {
   const { config, agentId, sessionKey, sourceReplyDeliveryMode } = params;
   const includeFullSections = params.promptMode !== "minimal" && params.promptMode !== "none";
@@ -78,7 +61,7 @@ function resolveAgentSystemPromptConfig(params: {
             messageToolOnly: sourceReplyDeliveryMode === "message_tool_only",
           })
         : undefined,
-    modelAliasLines: includeFullSections ? buildModelAliasLines(params) : [],
+    modelAliasLines: includeFullSections ? buildModelAliasLines(params.preparedModelRuntime) : [],
     memoryCitationsMode: config?.memory?.citations,
     fsWorkspaceOnly: resolveEffectiveToolFsWorkspaceOnly({ cfg: config, agentId }),
   };
@@ -91,7 +74,6 @@ export function buildConfiguredAgentSystemPrompt(params: ConfiguredAgentSystemPr
     ? resolveAgentSystemPromptConfig({
         config,
         agentId,
-        workspaceDir: params.workspaceDir,
         preparedModelRuntime,
         sessionKey: renderParams.runtimeInfo?.sessionKey,
         promptMode: renderParams.promptMode,

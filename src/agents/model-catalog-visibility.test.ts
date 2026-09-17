@@ -4,6 +4,7 @@
  */
 import { describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { createPluginMetadataSnapshotFixture } from "../plugins/plugin-metadata.test-support.js";
 import * as providerPolicySurface from "../plugins/provider-policy-surface.js";
 import {
   prepareLogicalVisibleModelCatalog,
@@ -15,6 +16,100 @@ import { createModelVisibilityPolicy } from "./model-visibility-policy.js";
 import { openAIModelCatalogRoutePolicy } from "./openai-model-routes.js";
 
 describe("resolveLogicalVisibleModelCatalog", () => {
+  it.each([
+    "native",
+    "custom",
+    "opaque runtime",
+    "native donor with host route",
+    "projected custom",
+    "projected API",
+  ] as const)("applies retirement to effective browse routes: %s", async (scenario) => {
+    const baseUrl = "https://api.x.ai/v1";
+    const metadataSnapshot = createPluginMetadataSnapshotFixture({
+      plugins: [
+        {
+          id: "xai",
+          providers: ["xai"],
+          providerEndpoints: [{ endpointClass: "xai-native", hosts: ["api.x.ai"] }],
+          modelCatalog: {
+            providers: { xai: { api: "openai-responses", baseUrl, models: [] } },
+            suppressions: [
+              {
+                provider: "xai",
+                model: "auto",
+                retirement: { replacedBy: "current" },
+                when: { baseUrlHosts: ["api.x.ai"], providerConfigApiIn: ["openai-responses"] },
+              },
+            ],
+          },
+        },
+      ],
+    });
+    const rowBaseUrl = scenario === "custom" ? "https://custom.invalid/v1" : baseUrl;
+    const row: ModelCatalogEntry = {
+      provider: "personal",
+      id: "auto",
+      name: "Auto",
+      api: scenario === "projected API" ? "openai-completions" : "openai-responses",
+      baseUrl: rowBaseUrl,
+      ...(scenario === "opaque runtime" || scenario === "native donor with host route"
+        ? { nativeRuntime: "native-owner" }
+        : {}),
+    };
+    const cfg: OpenClawConfig = {
+      agents: {
+        defaults: {
+          model: "personal/auto",
+          models: { "personal/auto": {} },
+          modelPolicy: { allow: [] },
+        },
+      },
+      ...(scenario === "opaque runtime"
+        ? {}
+        : {
+            models: {
+              providers: {
+                personal: {
+                  api: row.api,
+                  baseUrl: rowBaseUrl,
+                  models: [{ id: "auto", name: "Auto" }],
+                },
+              },
+            },
+          }),
+    };
+    const route = {
+      api: "openai-responses" as const,
+      baseUrl: scenario === "projected custom" ? "https://custom.invalid/v1" : baseUrl,
+      authRequirement: "api-key" as const,
+      requestTransportOverrides: "none" as const,
+    };
+    const projected = scenario === "projected custom" || scenario === "projected API";
+    const result = await resolveLogicalVisibleModelCatalog({
+      cfg,
+      catalog: [row],
+      defaultProvider: "personal",
+      view: "all",
+      metadataSnapshot,
+      routePolicy: openAIModelCatalogRoutePolicy,
+      evaluateEntry: async () =>
+        resolveLogicalModelCatalogEntryState({
+          evaluation: {
+            availability: true,
+            routeResolution: projected ? { kind: "routes", routes: [route] } : null,
+            ...(projected ? { selectedRoute: route } : {}),
+            ...(scenario === "opaque runtime"
+              ? { runtimeAuth: { id: "native-owner", source: "native" as const } }
+              : {}),
+          },
+          routePolicy: openAIModelCatalogRoutePolicy,
+        }),
+    });
+    const visible =
+      scenario === "custom" || scenario === "opaque runtime" || scenario === "projected custom";
+    expect(result.map((entry) => entry.id)).toEqual(visible ? ["auto"] : []);
+  });
+
   it("bounds identity discovery before asynchronous entry preparation", async () => {
     const catalog = Array.from({ length: 64 }, (_, index) => ({
       provider: "fixture",
@@ -237,6 +332,7 @@ describe("resolveLogicalVisibleModelCatalog", () => {
     ];
 
     const result = await resolveLogicalVisibleModelCatalog({
+      metadataSnapshot: createPluginMetadataSnapshotFixture(),
       cfg: {} as OpenClawConfig,
       catalog,
       defaultProvider: "openai",

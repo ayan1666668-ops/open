@@ -10,8 +10,8 @@ import {
 import {
   createRetiredModelRefRepairResolver,
   repairRetiredConfigModelRefs,
-  repairRetiredSessionModelRef,
 } from "./retired-model-ref-repair.js";
+import { repairRetiredSessionModelRef } from "./retired-session-model-repair.js";
 
 let state: OpenClawTestState;
 beforeEach(async () => {

@@ -2,53 +2,24 @@
 // lifecycle events race gateway waits or transient announce failures.
 import { expectDefined } from "@openclaw/normalization-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { SessionDeliveryState } from "../../../config/sessions/types.js";
-import type { CallGatewayOptions } from "../../../gateway/call.js";
-import type { AgentEventPayload } from "../../../infra/agent-events.js";
-import type { AgentRunTerminalReplySnapshot } from "../../agent-run-terminal-reply.types.js";
-import "../spawn/subagent-spawn-model.mocks.shared.js";
 import { maybeSpawnVisibleSession } from "../../tools/sessions-spawn-visible.js";
+import "../spawn/subagent-spawn-model.mocks.shared.js";
 import { createSessionsYieldTool } from "../../tools/sessions-yield-tool.js";
 import { testing as subagentAnnounceDeliveryTesting } from "../announce/subagent-announce-delivery.test-support.js";
 import { testing as subagentAnnounceOutputTesting } from "../announce/subagent-announce-output.test-support.js";
 import { testing as subagentAnnounceTesting } from "../announce/subagent-announce.js";
 import { maybeWakeRequesterAfterAllChildrenSettled } from "../announce/subagent-announce.requester-settle-wake.js";
+import type {
+  LifecycleData,
+  LifecycleEvent,
+  SessionStoreEntry,
+  GatewayRequest,
+} from "./subagent-registry.lifecycle-fixture.test-support.js";
 import { createLifecycleWaits } from "./subagent-registry.lifecycle-waits.test-support.js";
 import * as mod from "./subagent-registry.test-helpers.js";
 
 const noop = () => {};
 const MAIN_REQUESTER_SESSION_KEY = "agent:main:main";
-
-type LifecycleData = {
-  phase?: string;
-  startedAt?: number;
-  endedAt?: number;
-  aborted?: boolean;
-  error?: string;
-  stopReason?: string;
-  terminalReply?: AgentRunTerminalReplySnapshot;
-  status?: string;
-  timeoutPhase?: string;
-  providerStarted?: boolean;
-};
-type LifecycleEvent = Pick<AgentEventPayload, "runId"> &
-  Partial<Omit<AgentEventPayload, "runId" | "data">> & { data?: LifecycleData };
-
-type SessionStoreEntry = {
-  sessionId: string;
-  updatedAt: number;
-  delivery?: SessionDeliveryState;
-};
-
-type GatewayAgentRequestParams = {
-  sessionKey?: string;
-  inputProvenance?: {
-    sourceSessionKey?: string;
-  };
-  internalEvents?: Array<{ status?: string; statusLabel?: string; result?: string }>;
-};
-
-type GatewayRequest = Omit<CallGatewayOptions, "params"> & { params?: GatewayAgentRequestParams };
 
 let lifecycleHandler: ((evt: LifecycleEvent) => void) | undefined;
 let agentCallPlan: Array<"ok" | "throw"> = [];

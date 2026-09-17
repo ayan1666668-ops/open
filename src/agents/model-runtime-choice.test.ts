@@ -10,7 +10,7 @@ import {
   getPreparedModelRuntimeAuthStore,
   setPreparedModelRuntimeAuthStore,
 } from "./prepared-model-runtime-auth.js";
-import { completeConfiguredRuntimeModels } from "./prepared-model-runtime.configured-completion.js";
+import { prepareConfiguredModelAliases } from "./prepared-model-runtime.configured-completion.js";
 import type { PreparedModelRuntimeSnapshot } from "./prepared-model-runtime.types.js";
 import { AuthStorage, ModelRegistry } from "./sessions/index.js";
 import { buildConfiguredAgentSystemPrompt } from "./system-prompt-config.js";
@@ -96,7 +96,7 @@ function renderPublishedAliases(owner: PreparedModelRuntimeSnapshot) {
     throw new Error("Expected prepared fixture accounts");
   }
   const { authStorage, modelRegistry } = owner.createStores();
-  const configuredRuntimeModels = completeConfiguredRuntimeModels(
+  const configuredModelAliases = prepareConfiguredModelAliases(
     {
       input: {
         config: owner.config,
@@ -124,12 +124,13 @@ function renderPublishedAliases(owner: PreparedModelRuntimeSnapshot) {
       configuredCatalogEntries: owner.modelCatalog.entries,
     },
     modelRegistry,
+    owner.configuredRuntimeModels,
   );
   return buildConfiguredAgentSystemPrompt({
     config: owner.config,
     agentId: owner.agentId,
     workspaceDir: owner.workspaceDir ?? "/tmp/runtime-choice",
-    preparedModelRuntime: { ...owner, configuredRuntimeModels },
+    preparedModelRuntime: { ...owner, configuredModelAliases },
   });
 }
 
@@ -223,13 +224,17 @@ describe("prepared model support admission", () => {
   });
 
   it.each([
-    { model: "current", ambiguous: false, admitted: true, authored: false },
-    { model: "current", ambiguous: false, admitted: true, authored: true },
-    { model: "unknown", ambiguous: false, admitted: false, authored: false },
-    { model: "auto", ambiguous: false, admitted: false, authored: false },
-    { model: "current", ambiguous: true, admitted: false, authored: false },
+    { model: "current", ambiguous: false, admitted: true, authored: false, route: "native" },
+    { model: "current", ambiguous: false, admitted: true, authored: true, route: "native" },
+    { model: "unknown", ambiguous: false, admitted: false, authored: false, route: "native" },
+    { model: "auto", ambiguous: false, admitted: false, authored: false, route: "native" },
+    { model: "auto", ambiguous: false, admitted: false, authored: true, route: "native" },
+    { model: "auto", ambiguous: false, admitted: true, authored: true, route: "custom" },
+    { model: "auto", ambiguous: true, admitted: true, authored: true, route: "native" },
+    { model: "private-model", ambiguous: false, admitted: true, authored: true, route: "native" },
+    { model: "current", ambiguous: true, admitted: false, authored: false, route: "native" },
   ])(
-    "checks the native donor before visible alias creation: $model/$ambiguous/$authored",
+    "checks the native donor before visible alias creation: $model/$ambiguous/$authored/$route",
     async (testCase) => {
       await withTestDir({ prefix: "openclaw-native-alias-" }, async (dir) => {
         const config: OpenClawConfig = {
@@ -242,11 +247,12 @@ describe("prepared model support admission", () => {
             providers: {
               personal: {
                 api: "openai-responses",
-                baseUrl: "https://api.x.ai/v1",
+                baseUrl:
+                  testCase.route === "custom" ? "https://custom.invalid/v1" : "https://api.x.ai/v1",
                 models: testCase.authored
                   ? [
                       {
-                        id: "current",
+                        id: testCase.model,
                         name: "Authored model",
                         reasoning: false,
                         input: ["text"],
@@ -321,7 +327,7 @@ describe("prepared model support admission", () => {
           countActiveRuns: () => 0,
         });
         const model = `personal/${testCase.model}`;
-        if (testCase.authored) {
+        if (testCase.authored && testCase.admitted) {
           expect(
             await prepareModelChoice({
               cfg: config,

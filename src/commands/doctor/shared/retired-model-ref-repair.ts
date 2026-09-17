@@ -39,10 +39,6 @@ import {
 } from "../../../plugins/manifest-contract-eligibility.js";
 import { buildManifestBuiltInModelSuppressionResolver } from "../../../plugins/manifest-model-suppression.js";
 import type { PluginMetadataSnapshot } from "../../../plugins/plugin-metadata-snapshot.types.js";
-import {
-  applyModelOverrideToSessionEntry,
-  isModelSelectionLocked,
-} from "../../../sessions/model-overrides.js";
 import { listMutableCodexRouteAgentEntries } from "./codex-route-agent-entries.js";
 import { readModelConfigPrimaryRef } from "./codex-route-model-ref.js";
 import { rewriteModelReferenceSlot } from "./codex-route-model-slots.js";
@@ -111,13 +107,6 @@ export function createRetiredModelRefRepairResolver(params: {
           config: params.cfg,
         }),
       );
-      const retirementCandidates = new Set(
-        eligiblePlugins.flatMap((plugin) =>
-          (plugin.modelCatalog?.suppressions ?? [])
-            .filter((rule) => rule.retirement)
-            .map((rule) => `${rule.provider}/${rule.model}`.toLowerCase()),
-        ),
-      );
       const authViews = new Map<
         string | undefined,
         ReturnType<typeof createModelAuthAvailabilityResolver>
@@ -149,7 +138,6 @@ export function createRetiredModelRefRepairResolver(params: {
       return [
         agentId,
         {
-          retirementCandidates,
           nativeApiKeyRoute(provider: string) {
             const pluginId = resolvePluginModelCatalogOwnerPluginId({
               providerId: provider,
@@ -243,7 +231,7 @@ export function createRetiredModelRefRepairResolver(params: {
             modelRef: parsed.profile ? `${canonical}@${parsed.profile}` : canonical,
             reason: "reference-preservation",
           };
-    if (!owner.retirementCandidates.has(`${provider}/${id}`.toLowerCase())) {
+    if (!owner.suppression().hasRetirementCandidate({ provider, id })) {
       return validatePolicy(preserved);
     }
     let rule = owner.suppression()({ provider, id, unconditionalOnly: true });
@@ -697,56 +685,4 @@ export function repairRetiredConfigModelRefs(
     rewriteVoice(asOptionalRecord(settings)?.voice, `channels.discord.accounts.${account}.voice`);
   }
   return { config: changes.length ? config : cfg, changes };
-}
-
-/** Session selection owns invalidation of context/fallback metadata and profile preservation. */
-export function repairRetiredSessionModelRef(
-  entry: SessionEntry,
-  agentId: string,
-  resolve: ModelRefRepairResolver,
-  defaultModelRef: string | undefined,
-  warnings: string[],
-): boolean {
-  if (!entry.modelOverride || isModelSelectionLocked(entry)) {
-    return false;
-  }
-  const modelRef = entry.providerOverride
-    ? `${entry.providerOverride}/${entry.modelOverride}`
-    : entry.modelOverride;
-  const decision = resolve({
-    modelRef,
-    agentId,
-    authProfileId: entry.authProfileOverride,
-    authProfileSource: entry.authProfileOverrideSource,
-  });
-  if (decision.kind === "unchanged") {
-    return false;
-  }
-  const replacement = splitTrailingAuthProfile(
-    decision.kind === "replace" ? decision.modelRef : (defaultModelRef ?? ""),
-  ).model;
-  if (
-    decision.kind === "clear" &&
-    replacement === decision.modelRef &&
-    entry.authProfileOverride &&
-    (entry.authProfileOverrideSource === "user" || entry.authProfileOverrideSource === "user-link")
-  ) {
-    const warning = `Retained retired ${decision.modelRef} for agent "${agentId}": clearing this session override would still select it with the same pinned account. Choose a supported default or an allowed model override, then rerun openclaw doctor --fix.`;
-    if (!warnings.includes(warning)) {
-      warnings.push(warning);
-    }
-    return false;
-  }
-  const slash = replacement.indexOf("/");
-  return applyModelOverrideToSessionEntry({
-    entry,
-    selection: {
-      provider: replacement.slice(0, slash),
-      model: replacement.slice(slash + 1),
-      isDefault: decision.kind === "clear",
-    },
-    preserveAuthProfileOverride:
-      decision.kind === "replace" || replacement.slice(0, slash) === decision.provider,
-    selectionSource: entry.modelOverrideSource === "auto" ? "auto" : "user",
-  }).updated;
 }

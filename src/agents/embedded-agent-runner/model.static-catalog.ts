@@ -1,7 +1,6 @@
 /**
  * Resolves bundled static catalog rows for embedded-agent model selection.
  */
-import { normalizeResolvedPricing } from "@openclaw/llm-core";
 import type { NormalizedModelCatalogRow } from "@openclaw/model-catalog-core/model-catalog-types";
 import {
   findNormalizedProviderValue,
@@ -37,11 +36,11 @@ import {
 } from "../../plugins/providers.js";
 import type { PluginRegistry } from "../../plugins/registry-types.js";
 import { dedupeByKey } from "../../shared/dedupe-by-key.js";
-import { DEFAULT_CONTEXT_TOKENS } from "../defaults.js";
 import { modelTransportRoutesMatch } from "../model-compat-catalog.js";
 import { resolveBuiltInModelSuppressionFromManifest } from "../model-suppression.js";
 import { buildInlineProviderModels, completeInlineProviderModel } from "./model.inline-provider.js";
-import { resolveProviderTransport } from "./model.provider-hooks.js";
+import { resolveProviderTransport } from "./model.provider-transport.js";
+import { modelFromStaticCatalogRow } from "./model.static-catalog-row.js";
 import type { BundledStaticCatalogState } from "./model.static-catalog.types.js";
 import {
   createStaticModelIdMatcher,
@@ -67,38 +66,6 @@ function rowMatchesModel(params: {
     modelId: params.modelId,
     rowProvider: params.row.provider,
   });
-}
-
-function normalizeStaticCatalogInput(
-  input: readonly unknown[] | undefined,
-): ProviderRuntimeModel["input"] {
-  const normalizedInput = (input ?? []).filter(
-    (item): item is "text" | "image" => item === "text" || item === "image",
-  );
-  return normalizedInput.length > 0 ? normalizedInput : ["text"];
-}
-
-/** Converts a normalized catalog row into the provider runtime model shape. */
-function modelFromStaticCatalogRow(row: NormalizedModelCatalogRow): ProviderRuntimeModel {
-  return {
-    id: row.id,
-    name: row.name || row.id,
-    provider: row.provider,
-    api: row.api ?? "openai-responses",
-    baseUrl: row.baseUrl ?? "",
-    reasoning: row.reasoning,
-    input: normalizeStaticCatalogInput(row.input),
-    cost: normalizeResolvedPricing(row.cost ?? {}),
-    contextWindow: row.contextWindow ?? DEFAULT_CONTEXT_TOKENS,
-    contextWindows: row.contextWindows?.map((option) => ({ ...option })),
-    contextWindowDefault: row.contextWindowDefault,
-    contextTokens: row.contextTokens,
-    maxTokens: row.maxTokens ?? DEFAULT_CONTEXT_TOKENS,
-    thinkingLevelMap: row.thinkingLevelMap ? { ...row.thinkingLevelMap } : undefined,
-    headers: row.headers,
-    compat: row.compat,
-    mediaInput: row.mediaInput,
-  };
 }
 
 type StaticCatalogPlugin = Parameters<

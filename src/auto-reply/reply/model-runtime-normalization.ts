@@ -1,4 +1,5 @@
 /** Prepared plugin metadata handoff for runtime model normalization. */
+import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core";
 import type { ModelCatalogEntry } from "../../agents/model-catalog.js";
 import {
   findNormalizedProviderKey,
@@ -15,6 +16,14 @@ import {
   loadManifestMetadataSnapshot,
 } from "../../plugins/manifest-contract-eligibility.js";
 import { resolveModelRuntimeDirective } from "./directive-handling.model-runtime.js";
+
+export function normalizeRuntimeChoiceId(runtime: string | undefined): string {
+  const normalized = normalizeLowercaseStringOrEmpty(runtime);
+  if (!normalized || normalized === "auto" || normalized === "default") {
+    return "openclaw";
+  }
+  return normalized;
+}
 
 export type RuntimeModelNormalization = NonNullable<Parameters<typeof normalizeModelRef>[2]>;
 

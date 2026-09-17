@@ -5,7 +5,7 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { createPluginMetadataSnapshotFixture } from "../plugins/plugin-metadata.test-support.js";
 import * as ttsSettings from "../tts/tts-settings.js";
 import * as preparedModelCatalog from "./prepared-model-catalog.js";
-import { completeConfiguredRuntimeModels } from "./prepared-model-runtime.configured-completion.js";
+import { prepareConfiguredModelAliases } from "./prepared-model-runtime.configured-completion.js";
 import type { PreparedModelRuntimeSnapshot } from "./prepared-model-runtime.types.js";
 import { AuthStorage, ModelRegistry } from "./sessions/index.js";
 import { buildConfiguredAgentSystemPrompt } from "./system-prompt-config.js";
@@ -20,12 +20,18 @@ vi.mock("../tts/tts-settings.js", () => ({
 
 afterEach(() => vi.restoreAllMocks());
 
-function preparedOwner(config: OpenClawConfig, modelIds: string[], agentId = "main") {
+function preparedOwner(
+  config: OpenClawConfig,
+  modelIds: string[],
+  agentId = "main",
+  metadataSnapshot = createPluginMetadataSnapshotFixture(),
+  provider = "fixture",
+) {
   const configuredRuntimeModels = modelIds.map((modelId) => ({
-    provider: "fixture",
+    provider,
     modelId,
     model: makeProviderModelFixture({
-      provider: "fixture",
+      provider,
       id: modelId,
       api: "openai-responses",
       baseUrl: "https://models.example.test/v1",
@@ -36,17 +42,16 @@ function preparedOwner(config: OpenClawConfig, modelIds: string[], agentId = "ma
     id: modelId,
     name: model.name,
   }));
-  const metadataSnapshot = createPluginMetadataSnapshotFixture();
   const templateAuthStorage = AuthStorage.inMemory({});
-  const publishedModels = completeConfiguredRuntimeModels(
+  const configuredModelAliases = prepareConfiguredModelAliases(
     {
       input: { config, agentId, agentDir: `/tmp/openclaw/${agentId}/agent` },
       env: {},
       authStore: { version: 1, profiles: {} },
       templateAuthStorage,
       credentials: {},
-      providerIds: ["fixture"],
-      configuredModelRefs: modelIds.map((modelId) => ({ provider: "fixture", modelId })),
+      providerIds: [provider],
+      configuredModelRefs: modelIds.map((modelId) => ({ provider, modelId })),
       configuredRuntimeModels,
       runtimeCapabilityModels: [],
       configuredGeneratedCatalogPluginIds: [],
@@ -57,6 +62,7 @@ function preparedOwner(config: OpenClawConfig, modelIds: string[], agentId = "ma
       configuredCatalogEntries: entries,
     },
     ModelRegistry.inMemory(templateAuthStorage),
+    configuredRuntimeModels,
   );
   const owner = {
     config,
@@ -71,7 +77,8 @@ function preparedOwner(config: OpenClawConfig, modelIds: string[], agentId = "ma
     isCurrent: vi.fn(() => true),
     allowGatewaySubagentBinding: false,
     modelCatalog: { entries, routeVariants: entries },
-    configuredRuntimeModels: publishedModels,
+    configuredRuntimeModels,
+    configuredModelAliases,
     inlineProviderModels: [],
     createStores: vi.fn<PreparedModelRuntimeSnapshot["createStores"]>(() => {
       throw new Error("Prompt rendering must not create runtime stores");
@@ -182,6 +189,70 @@ describe("buildConfiguredAgentSystemPrompt", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it.each(["model", "provider"] as const)(
+    "advertises an authored %s alias using its captured manifest",
+    (kind) => {
+      const metadataSnapshot = createPluginMetadataSnapshotFixture({
+        plugins: [
+          {
+            id: "fixture",
+            providers: ["fixture"],
+            ...(kind === "model"
+              ? {
+                  modelIdNormalization: {
+                    providers: { fixture: { aliases: { legacy: "current" } } },
+                  },
+                }
+              : { modelCatalog: { aliases: { "legacy-fixture": { provider: "fixture" } } } }),
+          },
+        ],
+      });
+      const authoredRef = kind === "model" ? "fixture/legacy" : "legacy-fixture/current";
+      const provider = kind === "model" ? "fixture" : "legacy-fixture";
+      const config: OpenClawConfig = {
+        agents: {
+          defaults: {
+            model: `${provider}/current`,
+            modelPolicy: { allow: ["Friendly"] },
+            models: { [authoredRef]: { alias: "Friendly" } },
+          },
+        },
+      };
+      const owner = preparedOwner(config, ["current"], "main", metadataSnapshot, provider);
+      const prompt = buildConfiguredAgentSystemPrompt({
+        config,
+        agentId: "main",
+        workspaceDir: "/tmp/openclaw",
+        preparedModelRuntime: owner,
+      });
+      expect(prompt).toContain(`- Friendly: ${provider}/current`);
+      expect(owner.configuredModelAliases).toEqual([
+        { provider, model: "current", alias: "Friendly" },
+      ]);
+    },
+  );
+
+  it("advertises an unlisted custom alias without publishing an invented catalog descriptor", () => {
+    const config: OpenClawConfig = {
+      plugins: { enabled: false },
+      agents: { defaults: { models: { "fixture/unlisted": { alias: "Custom" } } } },
+      models: {
+        providers: {
+          fixture: { api: "openai-completions", baseUrl: "https://custom.invalid/v1", models: [] },
+        },
+      },
+    };
+    const owner = preparedOwner(config, []);
+    const prompt = buildConfiguredAgentSystemPrompt({
+      config,
+      workspaceDir: "/tmp/openclaw",
+      preparedModelRuntime: owner,
+    });
+    expect(prompt).toContain("- Custom: fixture/unlisted");
+    expect(owner.configuredRuntimeModels).toEqual([]);
+    expect(owner.modelCatalog.entries).toEqual([]);
+  });
+
   it.each(["agent-owned", "inherited"] as const)(
     "applies per-agent aliases with %s manual model policy",
     (policyOwner) => {
@@ -241,6 +312,18 @@ describe("buildConfiguredAgentSystemPrompt", () => {
     owner.isCurrent.mockReturnValue(false);
     expect(buildConfiguredAgentSystemPrompt(params)).not.toContain("## Model Aliases");
     expect(owner.loadFullModelCatalog).not.toHaveBeenCalled();
+    const replacementConfig: OpenClawConfig = {
+      ...config,
+      agents: { defaults: { models: { "fixture/current": { alias: "Replacement" } } } },
+    };
+    const replacement = preparedOwner(replacementConfig, ["current"]);
+    expect(
+      buildConfiguredAgentSystemPrompt({
+        ...params,
+        config: replacementConfig,
+        preparedModelRuntime: replacement,
+      }),
+    ).toContain("- Replacement: fixture/current");
   });
 
   it("advertises only the selected target when configured models share a bare alias", () => {
@@ -266,24 +349,23 @@ describe("buildConfiguredAgentSystemPrompt", () => {
     expect(prompt).not.toContain("- Shared: fixture/current");
   });
 
-  it("uses the published owner scoped to the render's config, agent, and workspace", () => {
+  it("renders supplied aliases without looking up an ambient model owner", () => {
     const config: OpenClawConfig = {
       plugins: { enabled: false },
       agents: { defaults: { models: { "fixture/current": { alias: "Current" } } } },
     };
+    const owner = preparedOwner(config, ["current"], "writer");
     const lookup = vi
       .spyOn(preparedModelCatalog, "getPreparedModelCatalogOwnerSnapshot")
-      .mockReturnValue(preparedOwner(config, ["current"], "writer"));
-    const prompt = buildConfiguredAgentSystemPrompt({
+      .mockReturnValue(owner);
+    const params = {
       config,
       agentId: "writer",
       workspaceDir: "/tmp/openclaw",
-    });
-    expect(lookup).toHaveBeenCalledWith({
-      config,
-      agentId: "writer",
-      workspaceDir: "/tmp/openclaw",
-    });
+    };
+    expect(buildConfiguredAgentSystemPrompt(params)).not.toContain("## Model Aliases");
+    const prompt = buildConfiguredAgentSystemPrompt({ ...params, preparedModelRuntime: owner });
+    expect(lookup).not.toHaveBeenCalled();
     expect(prompt).toContain("- Current: fixture/current");
   });
 
