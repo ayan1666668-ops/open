@@ -118,6 +118,20 @@ const BLOCKED_WORKSPACE_DOTENV_KEYS = new Set([
   "DISCORD_API_URL",
   "HTTP_PROXY",
   "HTTPS_PROXY",
+  "HOMEBREW_API_DOMAIN",
+  "HOMEBREW_ARTIFACT_DOMAIN",
+  "HOMEBREW_AUTO_UPDATE_SECS",
+  "HOMEBREW_BOTTLE_DOMAIN",
+  "HOMEBREW_BREW_FILE",
+  "HOMEBREW_BREW_GIT_REMOTE",
+  "HOMEBREW_CORE_GIT_REMOTE",
+  "HOMEBREW_CURL_PATH",
+  "HOMEBREW_CURLRC",
+  "HOMEBREW_GIT_PATH",
+  "HOMEBREW_NO_INSTALL_FROM_API",
+  "HOMEBREW_PREFIX",
+  "HOMEBREW_SSH_CONFIG_PATH",
+  "HOMEBREW_XDG_CONFIG_HOME",
   "IRC_HOST",
   "APPDATA",
   "LOCALAPPDATA",
@@ -232,8 +246,6 @@ const BLOCKED_WORKSPACE_DOTENV_PREFIXES = [
   "AWS_CONTAINER_",
   // AWS SDK endpoint overrides redirect signed provider traffic by service id.
   "AWS_ENDPOINT_URL_",
-  // Workspace .env must not steer Homebrew installers, downloads, or runtime controls.
-  "HOMEBREW_",
   "OPENAI_API_KEY_",
   // Workspace .env is untrusted; reserve the full OpenClaw runtime namespace
   // for shell/global config so new OPENCLAW_* controls are fail-closed by default.

@@ -8,7 +8,7 @@ import { loadDotEnv } from "./dotenv.js";
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 
-const HOMEBREW_CONTROL_KEYS = [
+const BLOCKED_HOMEBREW_CONTROL_KEYS = [
   "HOMEBREW_API_DOMAIN",
   "HOMEBREW_ARTIFACT_DOMAIN",
   "HOMEBREW_AUTO_UPDATE_SECS",
@@ -23,11 +23,11 @@ const HOMEBREW_CONTROL_KEYS = [
   "HOMEBREW_PREFIX",
   "HOMEBREW_SSH_CONFIG_PATH",
   "HOMEBREW_XDG_CONFIG_HOME",
-  "HOMEBREW_FUTURE_CONTROL",
 ] as const;
+const ALLOWED_HOMEBREW_PREFERENCE_KEY = "HOMEBREW_NO_ANALYTICS";
 
 describe("workspace .env Homebrew controls", () => {
-  it("keeps workspace controls out of installer child environments", async () => {
+  it("blocks dangerous controls while preserving benign Homebrew preferences", async () => {
     const envSnapshot = captureFullEnv();
     try {
       const rootDir = tempDirs.make("openclaw-dotenv-homebrew-");
@@ -41,7 +41,8 @@ describe("workspace .env Homebrew controls", () => {
       await fs.writeFile(
         path.join(workspaceDir, ".env"),
         [
-          ...HOMEBREW_CONTROL_KEYS.map((key) => `${key}=workspace-${key}`),
+          ...BLOCKED_HOMEBREW_CONTROL_KEYS.map((key) => `${key}=workspace-${key}`),
+          `${ALLOWED_HOMEBREW_PREFERENCE_KEY}=1`,
           "WORKSPACE_BUILD_LABEL=allowed",
         ].join("\n"),
         "utf8",
@@ -52,7 +53,11 @@ describe("workspace .env Homebrew controls", () => {
         "utf8",
       );
 
-      for (const key of [...HOMEBREW_CONTROL_KEYS, "WORKSPACE_BUILD_LABEL"]) {
+      for (const key of [
+        ...BLOCKED_HOMEBREW_CONTROL_KEYS,
+        ALLOWED_HOMEBREW_PREFERENCE_KEY,
+        "WORKSPACE_BUILD_LABEL",
+      ]) {
         deleteTestEnvValue(key);
       }
       setTestEnvValue("OPENCLAW_STATE_DIR", stateDir);
@@ -64,11 +69,12 @@ describe("workspace .env Homebrew controls", () => {
 
       expect(childEnv[shellKey]).toBe("https://shell.example/api");
       expect(childEnv[globalKey]).toBe("https://trusted.example/bottles");
-      for (const key of HOMEBREW_CONTROL_KEYS) {
+      for (const key of BLOCKED_HOMEBREW_CONTROL_KEYS) {
         if (key !== shellKey && key !== globalKey) {
           expect(childEnv[key], `${key} should not reach brew from workspace .env`).toBeUndefined();
         }
       }
+      expect(childEnv[ALLOWED_HOMEBREW_PREFERENCE_KEY]).toBe("1");
       expect(childEnv.WORKSPACE_BUILD_LABEL).toBe("allowed");
     } finally {
       vi.restoreAllMocks();
