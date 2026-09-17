@@ -6,6 +6,7 @@ import { Worker } from "node:worker_threads";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkerTaskPool } from "../../infra/worker-task-pool.js";
 import { createDeferredCore } from "../../shared/deferred.js";
+import { drainGlobalSingletonLifecycleState } from "../../shared/global-singleton.js";
 import { withTestDir } from "../../test-helpers/temp-dir.js";
 import {
   hasRetainedSessionTranscriptArchives,
@@ -32,7 +33,7 @@ async function addSessionArtifacts(directory: string, index: number): Promise<vo
 }
 
 describe("physical session disk usage", () => {
-  it("reports scan overload before pruning archives and recovers after queued scans drain", async () => {
+  it("reports scan overload and retires queued scans before reusing workers", async () => {
     await withTestDir({ prefix: "openclaw-disk-usage-pressure-" }, async (directory) => {
       const storePath = path.join(directory, "openclaw-agent.sqlite");
       const archivePath = path.join(directory, "old.jsonl.deleted.2026-01-01T00-00-00.000Z.zst");
@@ -49,9 +50,14 @@ describe("physical session disk usage", () => {
             return input;
           }, options);
         });
+      let settledScans = 0;
       const accepted = Array.from({ length: 128 }, () =>
-        measureSessionPhysicalDiskUsage(storePath),
+        measureSessionPhysicalDiskUsage(storePath).then((usage) => {
+          settledScans++;
+          return usage;
+        }),
       );
+      let drainage: Promise<void> | undefined;
       let reported: unknown;
       const excess = measureSessionPhysicalDiskUsage(storePath).catch((error: unknown) => {
         reported = error;
@@ -65,7 +71,19 @@ describe("physical session disk usage", () => {
           pruneSessionTranscriptArchivesToHighWater({ storePath, highWaterBytes: 321 }),
         ).rejects.toMatchObject({ code: "overloaded" });
         expect((await fs.stat(archivePath)).size).toBe(100);
+        let drained = false;
+        drainage = drainGlobalSingletonLifecycleState().then(() => {
+          drained = true;
+        });
+        await new Promise<void>((resolve) => {
+          setImmediate(resolve);
+        });
+        expect(drained).toBe(false);
         release.resolve();
+        await drainage;
+        expect(settledScans).toBe(128);
+        expect(workers).toHaveLength(1);
+        expect(workers[0]?.threadId).toBe(-1);
         const usage = {
           databaseMainBytes: 321,
           databaseWalBytes: 0,
@@ -77,11 +95,13 @@ describe("physical session disk usage", () => {
           pruneSessionTranscriptArchivesToHighWater({ storePath, highWaterBytes: 321 }),
         ).resolves.toMatchObject({ removedFiles: 1, usage: { totalBytes: 321 } });
         await expect(fs.stat(archivePath)).rejects.toMatchObject({ code: "ENOENT" });
-        expect(workers).toHaveLength(1);
+        expect(workers).toHaveLength(2);
+        expect(workers[1]?.threadId).toBeGreaterThan(0);
       } finally {
         release.resolve();
         spy.mockRestore();
         await Promise.allSettled([...accepted, excess]);
+        await drainage;
       }
     });
   });
