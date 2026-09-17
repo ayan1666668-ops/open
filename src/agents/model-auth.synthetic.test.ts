@@ -1,8 +1,51 @@
 // Protects scoped synthetic credentials independently of stored-profile discovery.
+import { fileURLToPath } from "node:url";
 import "./model-auth.synthetic.test-support.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createApiKeyCredential } from "./auth-profiles/credential-fixtures.test-support.js";
 import type { RuntimeProviderAuthLookup } from "./model-auth-runtime.js";
+
+vi.mock("../plugins/plugin-registry.js", () => ({
+  loadPluginRegistrySnapshotWithMetadata: () => {
+    const rootDir = fileURLToPath(new URL("../../extensions/ollama/", import.meta.url));
+    return {
+      source: "derived",
+      snapshot: {
+        plugins: [
+          {
+            pluginId: "ollama",
+            manifestPath: fileURLToPath(
+              new URL("../../extensions/ollama/openclaw.plugin.json", import.meta.url),
+            ),
+            manifestHash: "ollama-model-auth-fixture",
+            rootDir,
+            origin: "bundled",
+            enabled: true,
+            startup: {
+              sidecar: false,
+              memory: false,
+              agentHarnesses: [],
+            },
+            compat: [],
+          },
+        ],
+      },
+      diagnostics: [],
+    };
+  },
+  loadPluginManifestRegistryForPluginRegistry: () => ({
+    diagnostics: [],
+    plugins: [
+      {
+        origin: "bundled",
+        nonSecretAuthMarkers: ["gcp-vertex-credentials", "ollama-local"],
+        setup: {
+          providers: [{ id: "ollama", envVars: ["OLLAMA_API_KEY"] }],
+        },
+      },
+    ],
+  }),
+}));
 
 const {
   createRuntimeProviderAuthLookup,

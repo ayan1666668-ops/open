@@ -1,48 +1,5 @@
-import { fileURLToPath } from "node:url";
 import { vi } from "vitest";
 import { NON_ENV_SECRETREF_MARKER } from "../secrets/provider-credential-values.js";
-
-vi.mock("../plugins/plugin-registry.js", () => ({
-  loadPluginRegistrySnapshotWithMetadata: () => {
-    const rootDir = fileURLToPath(new URL("../../extensions/ollama/", import.meta.url));
-    return {
-      source: "derived",
-      snapshot: {
-        plugins: [
-          {
-            pluginId: "ollama",
-            manifestPath: fileURLToPath(
-              new URL("../../extensions/ollama/openclaw.plugin.json", import.meta.url),
-            ),
-            manifestHash: "ollama-model-auth-fixture",
-            rootDir,
-            origin: "bundled",
-            enabled: true,
-            startup: {
-              sidecar: false,
-              memory: false,
-              agentHarnesses: [],
-            },
-            compat: [],
-          },
-        ],
-      },
-      diagnostics: [],
-    };
-  },
-  loadPluginManifestRegistryForPluginRegistry: () => ({
-    diagnostics: [],
-    plugins: [
-      {
-        origin: "bundled",
-        nonSecretAuthMarkers: ["gcp-vertex-credentials", "ollama-local"],
-        setup: {
-          providers: [{ id: "ollama", envVars: ["OLLAMA_API_KEY"] }],
-        },
-      },
-    ],
-  }),
-}));
 
 vi.mock("../plugins/manifest-metadata-scan.js", () => ({
   listOpenClawPluginManifestMetadata: () => [
