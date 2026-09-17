@@ -21,6 +21,7 @@ import { AsyncWorkScope } from "../../../shared/async-work-scope.js";
 import { closeOpenClawAgentDatabasesForTest } from "../../../state/openclaw-agent-db.js";
 import { resolveOpenClawAgentSqlitePath } from "../../../state/openclaw-agent-db.paths.js";
 import { runOpenClawAgentWorkerWrite } from "../../../state/openclaw-agent-write-admission.js";
+import { prepareSystemAgentRunAdmission } from "../../admitted-run-context.js";
 import { createAgentCleanupScope } from "../../run-cleanup-timeout.js";
 import type { StreamFn } from "../../runtime/index.js";
 import { guardSessionManager } from "../../session-tool-result-guard-wrapper.js";
@@ -81,6 +82,7 @@ async function createFixture(
     >["withSessionWriteSettlement"];
     toolNames?: string[];
     thinkingRecovery?: boolean;
+    assertSourceCurrent?: () => void;
   } = {},
 ) {
   const model = options.thinkingRecovery
@@ -162,6 +164,16 @@ async function createFixture(
   activeSession.agent.streamFn = provider;
   const repaired = vi.fn();
   const previousNotification = vi.fn();
+  const admission = options.assertSourceCurrent
+    ? prepareSystemAgentRunAdmission(
+        {},
+        "stream-custody-run",
+        "main",
+        "stream-custody-test",
+        options.assertSourceCurrent,
+      )
+    : undefined;
+  const admittedRunContext = await admission?.admit("embedded");
   // Only preparation facts are supplied here; the installed stream, persistence,
   // cancellation, and work owners remain the production implementations.
   const input = {
@@ -174,6 +186,7 @@ async function createFixture(
       sessionId: target.sessionId,
       sessionKey: target.sessionKey,
       timeoutMs: 120_000,
+      ...(admittedRunContext ? { admittedRunContext } : {}),
     },
     runAbortController: controller,
     prepared: {
@@ -225,6 +238,7 @@ async function createFixture(
       ),
     checkpointPresent,
     thinkingPresent,
+    closeAdmission: () => admission?.close(),
     async holdWriter() {
       const entered = createDeferred();
       const release = createDeferred();
@@ -251,6 +265,25 @@ async function createFixture(
 }
 
 describe("installed replay repair ownership", () => {
+  it("blocks provider I/O after an admitted source loses authority", async () => {
+    let active = true;
+    const provider = vi.fn(() => createAssistantMessageEventStream());
+    const fixture = await createFixture(provider, {
+      assertSourceCurrent: () => {
+        if (!active) {
+          throw new Error("source authority revoked");
+        }
+      },
+    });
+    try {
+      active = false;
+      await expect(fixture.open()).rejects.toThrow("admitted run authority is no longer active");
+      expect(provider).not.toHaveBeenCalled();
+    } finally {
+      fixture.closeAdmission();
+    }
+  });
+
   it("closes a partial-only thinking stream without waiting for ordinary provider completion", async () => {
     const source = createAssistantMessageEventStream();
     const fixture = await createFixture(
