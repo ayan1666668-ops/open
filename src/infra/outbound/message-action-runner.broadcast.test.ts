@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { projectEmbeddedMessageDeliveryFact } from "../../agents/embedded-agent-message-delivery.js";
 import { jsonResult } from "../../agents/tools/common.js";
 import { createMessageTool } from "../../agents/tools/message-tool-execution.js";
+import { chunkText } from "../../auto-reply/chunk.js";
 import type { ChannelPlugin } from "../../channels/plugins/types.public.js";
 import { formatMessageCliText } from "../../commands/message-format.js";
 import {
@@ -451,9 +452,13 @@ describe("broadcast send outcomes through native actions", () => {
     });
   });
 
-  it.each([undefined, true])(
-    "stops core delivery after a rejected handoff (bestEffort: %s)",
-    async (bestEffort) => {
+  it.each(
+    [undefined, true].flatMap((bestEffort) =>
+      [false, true].map((sentBeforeCurrent) => ({ bestEffort, sentBeforeCurrent })),
+    ),
+  )(
+    "stops core delivery after a rejected handoff (bestEffort: $bestEffort, current may have sent: $sentBeforeCurrent)",
+    async ({ bestEffort, sentBeforeCurrent }) => {
       let actionCurrent = true;
       let releaseHandoff: () => void = () => undefined;
       const handoffWait = new Promise<void>((resolve) => {
@@ -470,12 +475,21 @@ describe("broadcast send outcomes through native actions", () => {
         messaging: { targetResolver: { looksLikeId: () => true } },
         outbound: {
           deliveryMode: "direct",
+          ...(sentBeforeCurrent
+            ? { chunker: chunkText, chunkerMode: "text" as const, textChunkLimit: 2 }
+            : {}),
           sendText: async (context) => {
             insideAdapter = true;
             try {
               await context.onPlatformSendDispatch?.();
               transported.push(context.to);
-              return { channel: "broadcast-test", messageId: `sent-${context.to}` };
+              return {
+                channel: "broadcast-test",
+                messageId:
+                  sentBeforeCurrent && context.to === "second"
+                    ? "unknown"
+                    : `sent-${context.to}-${context.text}`,
+              };
             } finally {
               insideAdapter = false;
             }
@@ -492,11 +506,16 @@ describe("broadcast send outcomes through native actions", () => {
         params: {
           channel: plugin.id,
           targets: ["first", "second", "third"],
-          message: "hello",
+          message: sentBeforeCurrent ? "abcd" : "hello",
           ...(bestEffort === undefined ? {} : { bestEffort }),
         },
         onPlatformSendDispatch: async () => {
-          if (transported.length > 0 && !insideAdapter) {
+          if (
+            (sentBeforeCurrent
+              ? transported.filter((target) => target === "second").length === 1
+              : transported.length > 0) &&
+            !insideAdapter
+          ) {
             enterHandoff();
             await handoffWait;
           }
@@ -512,13 +531,17 @@ describe("broadcast send outcomes through native actions", () => {
       releaseHandoff();
       const result = await pending;
 
-      expect(transported).toEqual(["first"]);
+      expect(transported).toEqual(sentBeforeCurrent ? ["first", "first", "second"] : ["first"]);
       expect(result).toMatchObject({
         kind: "broadcast",
         payload: {
           results: [
             { to: "first", ok: true },
-            { to: "second", ok: false, attempted: false },
+            {
+              to: "second",
+              ok: false,
+              ...(sentBeforeCurrent ? { sentBeforeError: true } : { attempted: false }),
+            },
             { to: "third", ok: false, attempted: false },
           ],
         },
