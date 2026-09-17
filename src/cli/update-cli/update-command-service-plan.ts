@@ -206,7 +206,12 @@ export async function inspectManagedGatewayServiceBeforeUpdate(params: {
   ) {
     return unavailable();
   }
-  const serialized = stableStringify(command);
+  // Stable updaters through 2026.9.4 omit known-empty systemd override metadata.
+  // Keep their fingerprint while the full snapshot retains authored defaults for runtime pinning.
+  const { managedDefinition: _managedDefinition, managedOverrides, ...effectiveCommand } = command;
+  const serialized = stableStringify(
+    managedOverrides && Object.keys(managedOverrides).length === 0 ? effectiveCommand : command,
+  );
   if (Buffer.byteLength(serialized) > 4 * 1024 * 1024) {
     return unavailable();
   }
