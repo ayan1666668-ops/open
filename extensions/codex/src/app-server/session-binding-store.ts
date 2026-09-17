@@ -1,5 +1,8 @@
 /** Synchronous binding reads with lazy mutation, lease, and auth machinery. */
-import type { PluginStateSyncKeyedStore } from "openclaw/plugin-sdk/plugin-state-runtime";
+import type {
+  PluginStateKeyedStore,
+  PluginStateSyncKeyedStore,
+} from "openclaw/plugin-sdk/plugin-state-runtime";
 import {
   createCodexManagedThreadStore,
   type CodexManagedThreadStore,
@@ -22,7 +25,7 @@ export function createLazyCodexAppServerBindingStore(
     "deleteIf" | "entries" | "lookup" | "registerIfAbsent" | "update"
   >,
   managedThreadState?: Pick<
-    PluginStateSyncKeyedStore<StoredCodexManagedThread>,
+    PluginStateKeyedStore<StoredCodexManagedThread>,
     "entries" | "lookup" | "registerIfAbsent"
   >,
 ): CodexAppServerBindingStore {
@@ -43,8 +46,8 @@ export function createLazyCodexAppServerBindingStore(
       (await store()).mutate(identity, mutation, assertCurrent),
     prepareSessionGenerationReclaim: async (identity) =>
       (await store()).prepareSessionGenerationReclaim(identity),
-    adoptSessionGeneration: async (identity, previousSessionId) =>
-      (await store()).adoptSessionGeneration(identity, previousSessionId),
+    adoptSessionGeneration: async (identity, previousSessionId, assertCurrent) =>
+      (await store()).adoptSessionGeneration(identity, previousSessionId, assertCurrent),
     resetSessionGeneration: async (identity) => (await store()).resetSessionGeneration(identity),
     retireSessionGeneration: async (identity) => (await store()).retireSessionGeneration(identity),
     withSessionDeletion: async (identity, assertCurrent, run) =>

@@ -6,7 +6,10 @@ import { normalizeAgentId, resolveAgentIdFromSessionKey } from "../../routing/se
 import { deliveryContextFromSession } from "../../utils/delivery-context.shared.js";
 import type { DeliveryContext } from "../../utils/delivery-context.types.js";
 import type { CronActiveJobMarker } from "../active-jobs.js";
-import type { CronRunReceiptHandle } from "../store/run-receipt-store.js";
+import type {
+  CronRunReceiptHandle,
+  CronRunReceiptSettlementDisposition,
+} from "../store/run-receipt-store.js";
 import type {
   CronAgentExecutionPhaseUpdate,
   CronAgentExecutionStarted,
@@ -19,7 +22,6 @@ import type {
   CronRunStatus,
   CronRunTelemetry,
 } from "../types.js";
-import type { CronRunReceiptSettlementDisposition } from "./run-receipts.js";
 import type { CronServiceState } from "./state.js";
 
 export const MAX_CRON_TIMER_DELAY_MS = 60_000;
@@ -130,10 +132,16 @@ export type StartupCatchupExecution =
 export type ExecuteJobCoreOptions = {
   activeJobMarker?: CronActiveJobMarker;
   owningCronLaneTaskMarker?: CommandLaneTaskMarker;
+  onPayloadExecutionStarted?: () => void;
   onExecutionStarted?: (info?: CronAgentExecutionStarted) => void;
   onExecutionPhase?: (info: CronAgentExecutionPhaseUpdate) => void;
   onLaneWait?: (info?: { waiting?: boolean }) => void;
-  onHeartbeatExecutionStarted?: (opts: HeartbeatWakeRequest & { agentId: string }) => void;
+  onHeartbeatExecutionStarted?: (opts: HeartbeatWakeRequest & { agentId: string }) =>
+    | {
+        onAttemptStarted?: () => void;
+        onQueued?: () => void;
+      }
+    | undefined;
   executionIdentity?: import("./state.js").CronExecutionIdentityAdmission;
   /** Revalidates the durable run fence after awaited planning and before effects. */
   assertRunCurrent?: () => void;
@@ -146,11 +154,7 @@ export type ExecuteJobCoreOptions = {
 
 /** Payloads that execute outside the main session own cancellable task-run state. */
 export function runsDetachedFromMainSession(job: CronJob): boolean {
-  return (
-    job.sessionTarget !== "main" ||
-    job.payload.kind === "script" ||
-    job.payload.kind === "skillCollectionReview"
-  );
+  return job.sessionTarget !== "main" || job.payload.kind === "script";
 }
 
 export function resolveMainSessionCronDeliveryContext(
