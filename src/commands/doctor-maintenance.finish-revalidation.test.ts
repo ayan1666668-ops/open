@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import { hostname } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
@@ -21,6 +22,7 @@ import {
   recordUpdateRunStep,
   finishUpdateRun,
 } from "../infra/update-run-ledger.js";
+import { getFileLockProcessStartTime } from "../shared/pid-alive.js";
 import { OPENCLAW_STATE_SCHEMA_VERSION } from "../state/openclaw-state-db-contract.js";
 import {
   closeOpenClawStateDatabaseForTest,
@@ -103,7 +105,8 @@ type StoppedUnitState =
   | "restart-failed"
   | "slow-admission"
   | "competing-during-inspection"
-  | "lifecycle-contended";
+  | "lifecycle-contended"
+  | "gateway-lifecycle-contended";
 type Continuation =
   | "own"
   | "manual"
@@ -291,6 +294,29 @@ async function runDoctorFinishForStoppedUnit(
             `CREATE INDEX idx_skill_workshop_collection_reviews_workspace_time ON skill_workshop_collection_reviews(${legacyCatalog === "unknown" ? "unexpected_column" : "workspace_dir"}, create_time DESC, review_id DESC)`,
             "idx_skill_workshop_collection_reviews_workspace_time",
           );
+          if (scenario === "gateway-lifecycle-contended") {
+            const startedAt = getFileLockProcessStartTime(process.pid);
+            if (startedAt === null) {
+              throw new Error("Current process start identity is unavailable");
+            }
+            const now = Date.now();
+            db.prepare(
+              `INSERT INTO state_leases
+                 (scope, lease_key, owner, expires_at, heartbeat_at, payload_json, created_at, updated_at)
+               VALUES ('gateway-owner', 'global', 'test-gateway', ?, ?, ?, ?, ?)`,
+            ).run(
+              now + 60_000,
+              now,
+              JSON.stringify({
+                owner: { pid: process.pid, host: hostname(), startedAt },
+                port: 18789,
+                mode: "supervised",
+                supervisor: { kind: "systemd", name: "openclaw-gateway.service" },
+              }),
+              now,
+              now,
+            );
+          }
           const schema = db.prepare("PRAGMA schema_version").get() as { schema_version: number };
           db.exec(
             `PRAGMA writable_schema = OFF; PRAGMA schema_version = ${schema.schema_version + 1}`,
@@ -343,6 +369,7 @@ async function runDoctorFinishForStoppedUnit(
       let inspectionElapsedMs: number | undefined;
       let inspectionClock = 0;
       let competingUpdateStarted = false;
+      let otherOwner: ReturnType<typeof tryAcquireExclusiveSqliteCoordinator> | undefined;
       const command = {
         programArguments: [
           process.execPath,
@@ -433,6 +460,10 @@ async function runDoctorFinishForStoppedUnit(
             mocks.stops += 1;
             running = false;
             stopObserved = true;
+            if (scenario === "gateway-lifecycle-contended") {
+              otherOwner?.release();
+              otherOwner = undefined;
+            }
           }),
           restart,
         }),
@@ -440,14 +471,14 @@ async function runDoctorFinishForStoppedUnit(
       const logs: string[] = [];
       const databasePath = path.join(home, ".openclaw", "state", "openclaw.sqlite");
       const coordinator =
-        scenario === "lifecycle-contended"
+        scenario === "lifecycle-contended" || scenario === "gateway-lifecycle-contended"
           ? acquireGatewayLifecycleCoordinator({
               databasePath,
               runtimeDirectory: mocks.coordinatorRuntimeDir,
             })
           : undefined;
       coordinator?.release();
-      const otherOwner = coordinator
+      otherOwner = coordinator
         ? tryAcquireExclusiveSqliteCoordinator(coordinator.path, { busyTimeoutMs: 0 })
         : undefined;
       const maintenance = await beginDoctorMaintenance({
@@ -524,6 +555,17 @@ async function runDoctorFinishForStoppedUnit(
 
 it("admits exact legacy catalog reads for an owned running service without repairing it", async () => {
   const result = await runDoctorFinishForStoppedUnit("retained", undefined, "exact");
+  expect(result.finishError).toBeUndefined();
+  expect(mocks.stops).toBe(1);
+  expect(result.restartCalls).toBe(1);
+});
+
+it("admits the exact legacy catalog while a live supervised Gateway owns lifecycle", async () => {
+  const result = await runDoctorFinishForStoppedUnit(
+    "gateway-lifecycle-contended",
+    undefined,
+    "exact",
+  );
   expect(result.finishError).toBeUndefined();
   expect(mocks.stops).toBe(1);
   expect(result.restartCalls).toBe(1);

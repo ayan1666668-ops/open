@@ -190,7 +190,11 @@ export async function beginDoctorMaintenance(params: {
       } catch (error) {
         // A running managed Gateway legitimately owns this coordinator until its
         // service is stopped. Any other holder is knowable before that mutation.
-        const gatewayOwner = readGatewayOwnerLease({ env, current: true });
+        const gatewayOwner = readGatewayOwnerLease({
+          env,
+          current: true,
+          openStateSchemaReadAdmission: openDoctorStateSchemaReadAdmission,
+        });
         if (
           !inspection.running ||
           gatewayOwner?.state !== "live" ||
