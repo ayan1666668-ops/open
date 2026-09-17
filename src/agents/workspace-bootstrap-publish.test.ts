@@ -5,9 +5,9 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { configureFsSafeNative, getFsSafeNativeConfig } from "@openclaw/fs-safe/config";
 import { describe, expect, it, vi } from "vitest";
-import * as fsSafe from "../infra/fs-safe.js";
 import { makeTempWorkspace } from "../test-helpers/workspace.js";
 import { nodeFilePath } from "../test-utils/node-file-path.js";
+import { injectPartialPublicationFailure } from "./workspace-bootstrap-publish.test-support.js";
 import { readWorkspaceStateSnapshot } from "./workspace-state-store.js";
 import * as workspace from "./workspace.js";
 
@@ -23,32 +23,6 @@ async function expectPathMissing(filePath: string): Promise<void> {
   await expect(fs.access(filePath)).rejects.toHaveProperty("code", "ENOENT");
 }
 
-async function injectPartialPublicationFailure(dir: string, fileName: string) {
-  const realRoot = fsSafe.root;
-  const resolvedDir = await fs.realpath(dir);
-  let injected = true;
-  const rootSpy = vi.spyOn(fsSafe, "root").mockImplementation(async (...args) => {
-    const root = await realRoot(...args);
-    const write = root.write.bind(root);
-    vi.spyOn(root, "write").mockImplementation(async (relativePath, data, options) => {
-      const target = path.join(root.rootReal, relativePath);
-      const parent = path.dirname(target);
-      const staged =
-        path.dirname(parent) === resolvedDir &&
-        path.basename(parent).startsWith("openclaw-bootstrap-") &&
-        path.basename(target) === fileName;
-      if (injected && staged) {
-        injected = false;
-        await write(relativePath, "# PARTIAL\n", options);
-        throw Object.assign(new Error("ENOSPC"), { code: "ENOSPC" });
-      }
-      return write(relativePath, data, options);
-    });
-    return root;
-  });
-  return () => rootSpy.mockRestore();
-}
-
 async function listTempSiblings(dir: string): Promise<string[]> {
   const names = await fs.readdir(dir);
   return names.filter((name) => name.startsWith("openclaw-bootstrap-")).toSorted();
@@ -58,16 +32,17 @@ describe("bootstrap publication atomicity", () => {
   it("does not publish a partial AGENTS.md when the first write fails", async () => {
     const tempDir = await makeTempWorkspace("openclaw-workspace-");
     const agentsPath = path.join(tempDir, DEFAULT_AGENTS_FILENAME);
-    const restore = await injectPartialPublicationFailure(tempDir, DEFAULT_AGENTS_FILENAME);
+    const injection = await injectPartialPublicationFailure(tempDir, DEFAULT_AGENTS_FILENAME);
 
     try {
       await expect(
         ensureAgentWorkspace({ dir: tempDir, ensureBootstrapFiles: true }),
       ).rejects.toMatchObject({ code: "ENOSPC" });
+      injection.assertInjected();
       await expectPathMissing(agentsPath);
       expect(await listTempSiblings(tempDir)).toEqual([]);
     } finally {
-      restore();
+      injection.restore();
     }
 
     await ensureAgentWorkspace({ dir: tempDir, ensureBootstrapFiles: true });
@@ -186,7 +161,7 @@ describe("bootstrap publication atomicity", () => {
   it("reports a staging cleanup failure with the publication error", async () => {
     const tempDir = await makeTempWorkspace("openclaw-workspace-");
     const agentsPath = path.join(tempDir, DEFAULT_AGENTS_FILENAME);
-    const restore = await injectPartialPublicationFailure(tempDir, DEFAULT_AGENTS_FILENAME);
+    const injection = await injectPartialPublicationFailure(tempDir, DEFAULT_AGENTS_FILENAME);
     const realRm = fs.rm.bind(fs);
     const rmSpy = vi.spyOn(fs, "rm").mockImplementation(async (filePath, options) => {
       const target = nodeFilePath(filePath);
@@ -200,6 +175,7 @@ describe("bootstrap publication atomicity", () => {
       const error = await workspace
         .publishBootstrapFile(agentsPath, "complete\n")
         .catch((caught: unknown) => caught);
+      injection.assertInjected();
       expect(error).toBeInstanceOf(AggregateError);
       expect((error as AggregateError).errors).toMatchObject([
         { code: "ENOSPC" },
@@ -211,7 +187,7 @@ describe("bootstrap publication atomicity", () => {
       await expectPathMissing(agentsPath);
       expect(await listTempSiblings(tempDir)).toHaveLength(1);
     } finally {
-      restore();
+      injection.restore();
       rmSpy.mockRestore();
     }
   });
