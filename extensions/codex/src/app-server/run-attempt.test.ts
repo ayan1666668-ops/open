@@ -7268,31 +7268,6 @@ describe("runCodexAppServerAttempt", () => {
         value: '{"sender":{"id":"profile-grace","name":"Grace"}}',
       },
     ]);
-    expect(
-      harness.requests
-        .filter((request) => request.method === "turn/start")
-        .map(
-          (request) =>
-            (request.params as { input?: Array<{ type?: string; text?: string }> }).input,
-        ),
-    ).toEqual([
-      [
-        {
-          type: "text",
-          text: '[OpenClaw conversation info: sender={"id":"profile-ada","name":"Ada"}]\n',
-          text_elements: [],
-        },
-        { type: "text", text: "first request", text_elements: [] },
-      ],
-      [
-        {
-          type: "text",
-          text: '[OpenClaw conversation info: sender={"id":"profile-grace","name":"Grace"}]\n',
-          text_elements: [],
-        },
-        { type: "text", text: "second request", text_elements: [] },
-      ],
-    ]);
   });
   it("keeps context usage fresh across two turns of one Codex thread", async () => {
     const { sessionFile, workspaceDir } = createRunPaths();

@@ -144,10 +144,9 @@ describe("buildTurnStartParams native history provenance", () => {
     expect(buildTurnStartParams(params, options).input).toEqual([
       {
         type: "text",
-        text: '[OpenClaw conversation info: sender={"id":"profile-alex","name":"Alex"}]\n',
+        text: '[OpenClaw conversation info: sender={"id":"profile-alex","name":"Alex"}]\napprove the rollout',
         text_elements: [],
       },
-      { type: "text", text: "approve the rollout", text_elements: [] },
     ]);
   });
 
@@ -159,6 +158,22 @@ describe("buildTurnStartParams native history provenance", () => {
 
     expect(buildTurnStartParams(params, options).input).toEqual([
       { type: "text", text: "approve the rollout", text_elements: [] },
+    ]);
+  });
+
+  it("neutralizes native skill mentions in sender metadata without changing the request", () => {
+    const params = createParams("/tmp/session.jsonl", "/repo");
+    params.trigger = "user";
+    params.prompt = "$intentional-skill remain selectable";
+    params.senderId = "$metadata-id";
+    params.senderName = "$metadata-skill";
+
+    expect(buildTurnStartParams(params, options).input).toEqual([
+      {
+        type: "text",
+        text: '[OpenClaw conversation info: sender={"id":"＄metadata-id","name":"＄metadata-skill"}]\n$intentional-skill remain selectable',
+        text_elements: [],
+      },
     ]);
   });
 });

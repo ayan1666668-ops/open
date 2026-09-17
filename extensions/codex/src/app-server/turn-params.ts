@@ -9,7 +9,10 @@ import {
 } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { truncateUtf16Safe } from "openclaw/plugin-sdk/text-utility-runtime";
 import { codexSandboxPolicyForTurn, type CodexAppServerRuntimeOptions } from "./config.js";
-import type { CodexProjectedImageGroup } from "./context-engine-projection.js";
+import {
+  neutralizeCodexExplicitMentionSigils,
+  type CodexProjectedImageGroup,
+} from "./context-engine-projection.js";
 import type {
   CodexSandboxPolicy,
   CodexTurnEnvironmentParams,
@@ -66,12 +69,16 @@ function buildCodexCurrentSenderContextValue(params: EmbeddedRunAttemptParams): 
   return sender ? JSON.stringify({ sender }) : undefined;
 }
 
-function buildCodexHistoryProvenancePrefix(params: EmbeddedRunAttemptParams): string | undefined {
+export function buildCodexHistoryProvenancePrefix(
+  params: EmbeddedRunAttemptParams,
+): string | undefined {
   const sender = readCodexCurrentSender(params);
   // A label is not identity. Native thread history must only attach provenance
   // when OpenClaw supplied a stable sender id, matching generic compaction.
   return sender?.id
-    ? `[OpenClaw conversation info: sender=${JSON.stringify(sender)}]\n`
+    ? neutralizeCodexExplicitMentionSigils(
+        `[OpenClaw conversation info: sender=${JSON.stringify(sender)}]\n`,
+      )
     : undefined;
 }
 
@@ -97,6 +104,7 @@ export function buildTurnStartParams(
     sessionStatusAvailable?: boolean;
     messageToolAvailable?: boolean;
     requireExplicitMessageTarget?: boolean;
+    historyProvenancePrefix?: string;
   },
 ): CodexTurnStartParams {
   const modelSelection = options.preserveNativeTurnSettings
@@ -171,7 +179,8 @@ export function buildTurnStartParams(
         options.promptText ?? params.prompt,
         params.images,
         options.contextImageGroups,
-        params.trigger === "user" ? buildCodexHistoryProvenancePrefix(params) : undefined,
+        options.historyProvenancePrefix ??
+          (params.trigger === "user" ? buildCodexHistoryProvenancePrefix(params) : undefined),
       ),
       ...(options.explicitSkillInputs ?? []),
     ],
