@@ -11,6 +11,7 @@ import {
 } from "../config/sessions/session-accessor.js";
 import { readTranscriptEventMessage } from "../config/sessions/session-accessor.sqlite-read.js";
 import { withOwnedSessionTranscriptWrites } from "../config/sessions/transcript-write-context.js";
+import { onSessionTranscriptUpdate } from "../sessions/transcript-events.js";
 import { setTestEnvValue } from "../test-utils/env.js";
 import { getLastHeartbeatEvent, resetHeartbeatEventsForTest } from "./heartbeat-events.js";
 import { runHeartbeatOnce } from "./heartbeat-runner.js";
@@ -341,6 +342,68 @@ it("preserves explicit target:none before target:last delivers in the same WebCh
         expect(JSON.stringify(messages[0]?.content)).toContain(marker);
         expect(context?.Body).toContain("Please relay the command output to the user");
       }
+    }
+  });
+});
+
+// Suppression is the delivery resolver's verdict, not the configured string.
+// `target: "none"` and an explicit target that never resolves to a route both
+// report `reason: "target-none"` (src/infra/outbound/targets.ts), so neither may
+// publish into the WebChat session. These arms assert the two consumers the
+// prompt/row test above does not reach: the settlement event operators read and
+// the transcript update the gateway fans out as `session.message`.
+it.each([
+  { target: "last", publishes: true, label: "routeless target:last" },
+  { target: "none", publishes: false, label: "explicit target:none" },
+  { target: "pagerduty", publishes: false, label: "explicit target with no resolvable route" },
+])("$label leaves the completion published: $publishes", async ({ target, publishes }) => {
+  await withProjectionScenario(async (scenario) => {
+    const heartbeat = scenario.cfg.agents?.defaults?.heartbeat;
+    if (!heartbeat) {
+      throw new Error("projection scenario heartbeat is missing");
+    }
+    heartbeat.target = target;
+    const marker = `RESOLVER_TARGET_${target.toUpperCase()}`;
+    enqueueSystemEvent(`Exec completed (resolver-proof, code 0) :: ${marker}`, {
+      sessionKey: scenario.sessionKey,
+    });
+    const broadcastMessages: unknown[] = [];
+    const unsubscribe = onSessionTranscriptUpdate((update) => {
+      if (update.sessionKey === scenario.sessionKey && update.message !== undefined) {
+        broadcastMessages.push(update.message);
+      }
+    });
+    try {
+      const reply = vi.fn<NonNullable<HeartbeatDeps["getReplyFromConfig"]>>().mockResolvedValue(
+        createHeartbeatToolResponsePayload({
+          outcome: "done",
+          notify: true,
+          summary: "private",
+          notificationText: marker,
+        }),
+      );
+      const result = await runProjectionWake(scenario, reply);
+
+      // The model runs and the completion is consumed in every arm; only the
+      // user-visible publication differs.
+      expect(result.status).toBe("ran");
+      expect(reply).toHaveBeenCalledOnce();
+      expect(peekSystemEventEntries(scenario.sessionKey)).toEqual([]);
+
+      const messages = await readProjectionMessages(scenario);
+      const event = getLastHeartbeatEvent();
+      expect(messages).toHaveLength(publishes ? 1 : 0);
+      expect(broadcastMessages).toHaveLength(publishes ? 1 : 0);
+      if (publishes) {
+        expect(JSON.stringify(messages[0]?.content)).toContain(marker);
+        expect(event?.status).toBe("sent");
+        expect(event?.reason).toBeUndefined();
+      } else {
+        expect(event?.status).toBe("skipped");
+        expect(event?.reason).toBe("target-none");
+      }
+    } finally {
+      unsubscribe();
     }
   });
 });

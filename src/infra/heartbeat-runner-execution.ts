@@ -337,8 +337,7 @@ export async function prepareHeartbeatRunStage(wake: ReadyHeartbeatWake) {
   const projectionSessionKey = run.kind === "isolated" ? run.baseSessionKey : sessionKey;
   // Capture the client-owned generation before routing can await. The inspected
   // completion queue owns publication eligibility, not the coalesced wake source.
-  const internalProjection =
-    heartbeat?.target !== "none" &&
+  const projectionCandidate =
     scheduledTasks.length === 0 &&
     preflight.shouldInspectPendingEvents &&
     preflight.pendingEventEntries.some((event) => isExecCompletionEvent(event.text)) &&
@@ -374,6 +373,11 @@ export async function prepareHeartbeatRunStage(wake: ReadyHeartbeatWake) {
       ? preflight.turnSourceDeliveryContext
       : undefined,
   });
+  // Operator-chosen suppression is the resolver's verdict, not a config string:
+  // an explicit target that never resolves to a route also reports `target-none`.
+  // Gate here so neither the relay prompt nor the session publication path can
+  // see a projection target the resolver already declined to deliver to.
+  const internalProjection = delivery.reason === "target-none" ? undefined : projectionCandidate;
   // Routeless ambient polls are pure model burn, but only they may skip:
   // triggered wakes (hook/manual/cron/exec), polls with queued events, and
   // scheduled-task wakes must still run to process their payloads even when
