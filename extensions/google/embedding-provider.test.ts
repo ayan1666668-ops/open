@@ -640,11 +640,12 @@ describe("Gemini embedding provider", () => {
     { label: "array-like", values: { 0: 1, length: 1 } },
     { label: "mixed", values: [1, "bad"] },
   ])("rejects $label vectors from direct and synchronous requests", async ({ values }) => {
-    installFetchMock((url) =>
-      String(url).includes(":batchEmbedContents")
+    installFetchMock((input) => {
+      const url = input instanceof URL ? input.href : typeof input === "string" ? input : input.url;
+      return url.endsWith(":batchEmbedContents")
         ? { embeddings: [{ values }] }
-        : { embedding: { values } },
-    );
+        : { embedding: { values } };
+    });
     const { provider } = await createGeminiEmbeddingProvider({
       config: {},
       provider: "gemini",
