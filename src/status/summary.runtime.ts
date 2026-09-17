@@ -11,13 +11,13 @@ import {
 // Kept behind a lazy surface because status summary imports model/session/runtime metadata helpers.
 import { resolveCurrentSessionAgentRuntimeMetadata } from "../agents/agent-runtime-metadata.js";
 import { resolveAgentConfig } from "../agents/agent-scope-config.js";
-import { resolveConfiguredProviderFallback } from "../agents/configured-provider-fallback.js";
 import {
   resolveAuthoredModelContextTokens,
   resolveContextTokensForModelFromCache as resolveContextTokensForModel,
 } from "../agents/context-resolution.js";
 import { waitForContextWindowCacheLoad } from "../agents/context.js";
 import { DEFAULT_PROVIDER } from "../agents/defaults.js";
+import { resolveConfiguredPrimaryProviderFallback } from "../agents/model-selection-shared.js";
 import { parseModelRef } from "../agents/model-selection.js";
 import { resolveAgentModelPrimaryValue } from "../config/model-input.js";
 import type { SessionEntry } from "../config/sessions/types.js";
@@ -96,10 +96,13 @@ function resolveConfiguredStatusModelRef(params: {
     }
   }
 
-  const fallbackProvider = resolveConfiguredProviderFallback({
+  const fallbackProvider = resolveConfiguredPrimaryProviderFallback({
     cfg: params.cfg,
+    agentId: params.agentId,
     defaultProvider: params.defaultProvider,
     defaultModel: params.defaultModel,
+    allowManifestNormalization: false,
+    allowPluginNormalization: false,
   });
   if (fallbackProvider) {
     return fallbackProvider;

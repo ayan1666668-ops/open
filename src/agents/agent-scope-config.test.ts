@@ -7,6 +7,7 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { freezeJsonSnapshot } from "../shared/immutable-data.js";
 import {
   AgentSelectionRequiredError,
+  listAgentEntries,
   listAgentEntriesWithSource,
   listAgentIds,
   resolveConfiguredAgentId,
@@ -436,18 +437,22 @@ describe("agent roster resolution", () => {
 
   it("copies own __proto__ fields without changing the listed entry prototype", () => {
     const entry = JSON.parse('{"__proto__":{"tools":{"allow":["*"]}}}') as Record<string, unknown>;
-    const [listed] = listAgentEntriesWithSource({
+    const cfg = {
       agents: { entries: { ops: entry } },
-    } as OpenClawConfig);
+    } as OpenClawConfig;
+    const [listed] = listAgentEntriesWithSource(cfg);
     expect(listed).toBeDefined();
-    const listedEntry = listed!.entry;
+    const [plainEntry] = listAgentEntries(cfg);
+    expect(plainEntry).toBeDefined();
 
-    expect(Object.getPrototypeOf(listedEntry)).toBe(Object.prototype);
-    expect(Object.hasOwn(listedEntry, "__proto__")).toBe(true);
-    expect(Object.getOwnPropertyDescriptor(listedEntry, "__proto__")?.value).toEqual({
-      tools: { allow: ["*"] },
-    });
-    expect(listedEntry.tools).toBeUndefined();
+    for (const listedEntry of [listed!.entry, plainEntry!]) {
+      expect(Object.getPrototypeOf(listedEntry)).toBe(Object.prototype);
+      expect(Object.hasOwn(listedEntry, "__proto__")).toBe(true);
+      expect(Object.getOwnPropertyDescriptor(listedEntry, "__proto__")?.value).toEqual({
+        tools: { allow: ["*"] },
+      });
+      expect(listedEntry.tools).toBeUndefined();
+    }
   });
 });
 

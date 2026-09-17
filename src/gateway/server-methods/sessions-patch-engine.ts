@@ -45,8 +45,6 @@ import {
   prepareSessionPatchArchive,
   prepareSessionPatchArchiveTransition,
   releaseSessionPatchArchive,
-  type SessionPatchArchivePreparation,
-  type SessionPatchArchiveTarget,
   validateSessionPatchArchiveProjection,
 } from "./sessions-patch-archive.js";
 import {
@@ -65,7 +63,14 @@ import {
   prepareSessionPatchRuntimeSelection,
   refreshSessionPatchQueuedSelection,
 } from "./sessions-patch-model-selection.js";
-import type { ActiveSessionPermissionChange } from "./sessions-patch-permissions.runtime.js";
+import type {
+  GroupAdmissionResult,
+  GroupMutationOperation,
+  MutationCoreResult,
+  MutationOutcome,
+  MutationTarget,
+  PreparedPatchTarget,
+} from "./sessions-patch-types.js";
 import { resolveSessionWorkerPlacementPatchError } from "./sessions-shared.js";
 import type { GatewayClient, GatewayRequestContext } from "./types.js";
 import { preparePersonalModelSelection } from "./users-model-account-access.js";
@@ -73,40 +78,7 @@ import { preparePersonalModelSelection } from "./users-model-account-access.js";
 type PatchTargetIdentity = sessionUnreadAck.SessionPatchTargetIdentity;
 const { resolveSessionUnreadAck, validateSessionUnreadAck } = sessionUnreadAck;
 
-type MutationTarget = PatchTargetIdentity & {
-  commitGuard: () => ErrorShape | undefined;
-};
-
-type PreparedPatchTarget = SessionPatchArchiveTarget & {
-  archivePreparation?: SessionPatchArchivePreparation;
-  index: number;
-  targetAgentId: string;
-  permissionChange?: ActiveSessionPermissionChange;
-};
-
-type MutationOutcome =
-  | {
-      ok: true;
-      applied: boolean;
-      accessChanged: boolean;
-      entry: SessionEntry;
-    }
-  | { ok: false; error: ErrorShape };
-
 type ArchiveTransition = Awaited<ReturnType<typeof prepareSessionPatchArchiveTransition>>;
-type GroupMutationResult =
-  | { kind: "model-catalog" }
-  | { kind: "complete"; outcomes: MutationOutcome[] };
-
-type MutationCoreResult =
-  | { ok: false; error: ErrorShape }
-  | {
-      ok: true;
-      cfg: ReturnType<GatewayRequestContext["getRuntimeConfig"]>;
-      outcomes: MutationOutcome[];
-      preparedByIndex: Array<PreparedPatchTarget | undefined>;
-      catalogs: ReturnType<typeof createSessionPatchCatalogPreparation>;
-    };
 
 export async function executeSessionPatchMutations(params: {
   client: GatewayClient | null;
@@ -351,8 +323,9 @@ export async function executeSessionPatchMutations(params: {
                   const commitGuards = new Set<() => ErrorShape | undefined>();
                   const projectGroup = async (
                     entries: SqliteLifecycleTargetSnapshot,
+                    admission: "admitted" | "detached",
                     catalogPreparation?: SessionPatchCatalogResult,
-                  ): Promise<GroupMutationResult> => {
+                  ): Promise<GroupMutationOperation> => {
                     const workingStore = Object.fromEntries(
                       entries.flatMap(({ entry, sessionKey }) =>
                         isInternalSessionEffectsKey(sessionKey)
@@ -366,7 +339,7 @@ export async function executeSessionPatchMutations(params: {
                     let committedGroupOutcomes: MutationOutcome[] | undefined;
                     const projectTargets = async (
                       startIndex: number,
-                    ): Promise<GroupMutationResult> => {
+                    ): Promise<GroupMutationOperation> => {
                       for (let groupIndex = startIndex; groupIndex < group.length; groupIndex++) {
                         const target = group[groupIndex]!;
                         let continuationStarted = false;
@@ -511,8 +484,12 @@ export async function executeSessionPatchMutations(params: {
                           }
                           const projectionParams = {
                             agentId: target.targetAgentId,
-                            // Multi-target groups retain ordered effects and label claims.
-                            mode: group.length === 1 ? "prepare" : "ordered",
+                            // Detached preparation must not replay earlier controls or restoration
+                            // when a later target needs the catalog.
+                            mode:
+                              admission === "admitted" || group.length === 1
+                                ? "prepare"
+                                : "ordered",
                             catalog: catalogPreparation,
                             projection: {
                               cfg,
@@ -532,7 +509,7 @@ export async function executeSessionPatchMutations(params: {
                           if (projection.kind === "model-catalog") {
                             // No replacements or runtime effects exist yet. Release this
                             // writer snapshot; completed preparation must use fresh rows.
-                            return projection;
+                            return { result: projection };
                           }
                           const projected = projection.result;
                           if (!projected.ok) {
@@ -684,8 +661,7 @@ export async function executeSessionPatchMutations(params: {
                                 if (committedGroupOutcomes) {
                                   applicationErrors.set(target.index, applied.error);
                                   return {
-                                    kind: "complete",
-                                    outcomes: committedGroupOutcomes,
+                                    result: { kind: "complete", outcomes: committedGroupOutcomes },
                                   };
                                 }
                                 throw new SessionMutationAuthorizationChangedError(applied.error);
@@ -704,6 +680,14 @@ export async function executeSessionPatchMutations(params: {
                           });
                         }
                       }
+                      if (admission === "admitted") {
+                        return {
+                          replacements,
+                          result: { kind: "complete", outcomes: projectedOutcomes },
+                        };
+                      }
+                      // Detached ACP actors must enclose the physical combined commit,
+                      // not only projection of the accepted backend result.
                       groupTiming?.mark("commit");
                       committedGroupOutcomes = replacements.length
                         ? await applySessionEntryCanonicalReplacements({
@@ -718,7 +702,7 @@ export async function executeSessionPatchMutations(params: {
                             },
                           })
                         : projectedOutcomes;
-                      return { kind: "complete", outcomes: committedGroupOutcomes };
+                      return { result: { kind: "complete", outcomes: committedGroupOutcomes } };
                     };
                     return await projectTargets(0);
                   };
@@ -743,23 +727,50 @@ export async function executeSessionPatchMutations(params: {
                     storePath: first.storePath,
                     skipMaintenance: true,
                   };
-                  const readGroup = () =>
-                    applySessionEntryCanonicalReplacements({
-                      ...groupStore,
-                      update: (entries) => ({ result: entries }),
-                    });
-                  let snapshot = await readGroup();
-                  // Preserve ordered label and runtime decisions without holding the
-                  // agent writer across catalog, allocation, or filesystem preparation.
-                  groupTiming?.mark("projection");
-                  let result = await projectGroup(snapshot);
+                  const targetKeys = new Set(selectedSessionKeys);
+                  const applyGroup = async (catalog?: SessionPatchCatalogResult) => {
+                    groupTiming?.mark("snapshot");
+                    const admitted =
+                      await applySessionEntryCanonicalReplacements<GroupAdmissionResult>({
+                        ...groupStore,
+                        update: (entries) => {
+                          // Model and reset requests prepare live execution ownership,
+                          // including ACP controls for ordinary-looking session keys.
+                          const needsExternalPreparation =
+                            first.fullPatch.model !== undefined ||
+                            first.fullPatch.agentRuntime !== undefined ||
+                            (typeof first.fullPatch.archived === "boolean" &&
+                              entries.some(
+                                ({ sessionKey, entry }) =>
+                                  targetKeys.has(sessionKey) && entry.worktree,
+                              ));
+                          if (needsExternalPreparation) {
+                            return { result: { kind: "detached", snapshot: entries } };
+                          }
+                          // Ordinary metadata projection and commit retain one writer admission.
+                          groupTiming?.mark("projection");
+                          return projectGroup(entries, "admitted", catalog).then((operation) => {
+                            groupTiming?.mark("commit");
+                            return operation;
+                          });
+                        },
+                      });
+                    if (admitted.kind !== "detached") return admitted;
+                    groupTiming?.mark("projection");
+                    const operation = await projectGroup(admitted.snapshot, "detached", catalog);
+                    return operation.result;
+                  };
+                  let result = await applyGroup();
                   if (result.kind === "model-catalog") {
+                    for (const target of group) {
+                      target.permissionChange?.finish();
+                      target.permissionChange = undefined;
+                    }
+                    commitGuards.clear();
+                    archiveTransitions.clear();
                     groupTiming?.mark();
                     const catalog = await catalogs.prepare(first.targetAgentId);
-                    groupTiming?.mark("snapshot");
-                    snapshot = await readGroup();
-                    groupTiming?.mark("projection");
-                    result = await projectGroup(snapshot, catalog);
+                    result = await applyGroup(catalog);
                   }
                   if (result.kind !== "complete")
                     throw new Error("Session patch catalog preparation did not complete");
