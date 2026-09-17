@@ -1,10 +1,16 @@
 // Cross-boundary regression: core reply inheritance must reach Slack's outbound adapter.
 import { describe, expect, it, vi } from "vitest";
-import { slackPlugin } from "../../../extensions/slack/channel-plugin-api.js";
+import type { ChannelPlugin } from "../../channels/plugins/types.js";
+import { loadBundledPluginFacade } from "../../test-utils/bundled-plugin-public-surface.js";
 import {
   resolveAndApplyOutboundReplyToId,
   resolveAndApplyOutboundThreadId,
 } from "./message-action-threading.js";
+
+const { slackPlugin } = await loadBundledPluginFacade<{ slackPlugin: ChannelPlugin }>({
+  pluginId: "slack",
+  artifactBasename: "channel-plugin-api.js",
+});
 
 describe("message action Slack threading", () => {
   const cfg = {
