@@ -75,6 +75,10 @@ describe("production OpenAI binary transport", () => {
         { header: `${type}; charset=utf-8, text/html`, body: "hidden error", valid: false },
         { header: [type, "application/json"], body: "repeated header", valid: false },
         { header: type, body: "", valid: false },
+        { header: "application/ogg", body: "Ogg container bytes", valid: kind === "audio" },
+        { header: "application/octet-stream", body: "opaque bytes", valid: true },
+        { header: "binary/octet-stream", body: "opaque alias bytes", valid: true },
+        { header: undefined, body: "missing header bytes", valid: true },
         { header: `${type}; codecs="one, two"`, body: "codec bytes", valid: true },
         { header: `${type};; codecs="one, two";`, body: "empty parameter slots", valid: true },
       ];
@@ -86,7 +90,9 @@ describe("production OpenAI binary transport", () => {
               response.setHeader("Content-Type", "application/json");
               response.end(JSON.stringify({ id: "local-video", status: "completed" }));
             } else {
-              response.setHeader("Content-Type", fixture.header);
+              if (fixture.header !== undefined) {
+                response.setHeader("Content-Type", fixture.header);
+              }
               response.end(fixture.body);
             }
           },

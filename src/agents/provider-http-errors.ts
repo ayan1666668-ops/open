@@ -488,6 +488,12 @@ export function assertProviderBinaryResponseContent(
   }
   const contentType = rawContentType.split(";")[0]?.trim().toLowerCase();
   const requiresMediaFamily = kind === "audio" || kind === "video";
+  // Ogg may be declared without an audio family; generic binary aliases also
+  // leave the media family to the provider endpoint's existing contract.
+  const unspecifiedMedia =
+    contentType === "application/octet-stream" ||
+    contentType === "binary/octet-stream" ||
+    (kind === "audio" && contentType === "application/ogg");
   if (!contentType && !requiresMediaFamily) {
     return;
   }
@@ -498,7 +504,7 @@ export function assertProviderBinaryResponseContent(
     contentType.startsWith("text/") ||
     (requiresMediaFamily &&
       (!providerMediaContentTypePattern.test(rawContentType.trim()) ||
-        (contentType !== "application/octet-stream" && mediaKindFromMime(contentType) !== kind)))
+        (!unspecifiedMedia && mediaKindFromMime(contentType) !== kind)))
   ) {
     throw new Error(`${label}: malformed ${kind} response`);
   }
