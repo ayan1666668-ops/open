@@ -5,16 +5,11 @@ import { StringDecoder } from "node:string_decoder";
 import { setTimeout as delay } from "node:timers/promises";
 import { toErrorObject } from "../../infra/errors.js";
 import { runtimeProcessEntrypoints } from "../../infra/runtime-process-entrypoints.js";
-import {
-  resolveRuntimeWorkerArgv,
-  resolveRuntimeWorkerUrl,
-} from "../../infra/runtime-worker-url.js";
 import { createDeferredCore } from "../../shared/deferred.js";
 import { joinProcessCompletionAndOutput } from "../decoded-output.js";
 import { pipeProcessOutput } from "../pipe-output.js";
-import { BrokerChild } from "../spawn-broker/child.js";
+import { spawnServiceChildRelay } from "../spawn-broker/relay-integration.js";
 import { prepareSecretInputStdio } from "../spawn-secret-input.js";
-import { spawnProcess } from "../spawn-utils.js";
 import { createManagedChildStdin } from "./adapters/child-stdin.js";
 import { toStringEnv } from "./adapters/env.js";
 import { createProcessAdapterEvents } from "./adapters/process-events.js";
@@ -81,11 +76,6 @@ export async function createServiceChildRelayAdapter(
   if (useWindowsJobAnchor && params.stdoutConsumption === "awaited") {
     throw new Error("Windows Job output does not support awaited stdout consumption");
   }
-  const workerUrl = resolveRuntimeWorkerUrl(
-    useWindowsJobAnchor
-      ? runtimeProcessEntrypoints.serviceChildWindowsJobAnchor
-      : runtimeProcessEntrypoints.serviceChildRelay,
-  );
   const stdio: StdioEntry[] = useWindowsJobAnchor
     ? ["ignore", "ignore", "ignore"]
     : [params.stdinMode === "inherit" ? "inherit" : "pipe", "pipe", "pipe"];
@@ -114,25 +104,16 @@ export async function createServiceChildRelayAdapter(
   }
   params.assertCurrent?.();
   params.beforeSpawn?.();
-  const child = spawnProcess(process.execPath, resolveRuntimeWorkerArgv(workerUrl), {
+  const { child, extinctionCompletion, transportReady } = spawnServiceChildRelay({
+    entrypoint: useWindowsJobAnchor
+      ? runtimeProcessEntrypoints.serviceChildWindowsJobAnchor
+      : runtimeProcessEntrypoints.serviceChildRelay,
     stdio,
-    // A detached Windows Job owner survives host loss long enough to clean up.
-    // Keep its child handle referenced so an idle host can finish admission and lineage cleanup.
-    detached: useWindowsJobAnchor,
-    windowsHide: true,
-    env: process.env,
+    useWindowsJobAnchor,
+    onSpawnCleanup: params.onSpawnCleanup,
   });
-  const extinctionCompletion = createDeferredCore();
-  void extinctionCompletion.promise.catch(() => {});
-  params.onSpawnCleanup?.(extinctionCompletion.promise);
-  const transportReady = child instanceof BrokerChild ? child.ready() : undefined;
   if (transportReady) {
-    try {
-      await transportReady;
-    } catch (error) {
-      extinctionCompletion.reject(error);
-      throw error;
-    }
+    await transportReady;
   }
 
   // SAFETY: a defined controlFd was reserved as a pipe in this exact spawn stdio array.
