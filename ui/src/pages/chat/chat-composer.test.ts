@@ -843,6 +843,94 @@ describe("renderChatComposer controls", () => {
     expect(rerenderedButton?.hasPointerCapture(9)).toBe(false);
   });
 
+  it("keeps one copy of the transcript when the release click and a second stop both dispatch", async () => {
+    vi.useFakeTimers();
+    openMicrophoneMock.mockResolvedValue({ getTracks: () => [{ stop: vi.fn() }] });
+    vi.stubGlobal("AudioContext", DictationAudioContext);
+    const listeners = new Set<(frame: { event: string; payload: unknown }) => void>();
+    const request = vi.fn(async (method: string) => {
+      if (method === "talk.catalog") {
+        return { transcription: { ready: true } };
+      }
+      if (method === "talk.session.create") {
+        return {
+          sessionId: "dictation-1",
+          transcriptionSessionId: "dictation-1",
+          audio: { inputEncoding: "g711_ulaw", inputSampleRateHz: 8000 },
+        };
+      }
+      return { ok: true };
+    });
+    const gatewayClient = {
+      addEventListener: vi.fn((listener: (frame: { event: string; payload: unknown }) => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      }),
+      request,
+    } as unknown as GatewayBrowserClient;
+    const container = document.createElement("div");
+    document.body.append(container);
+    const onDraftChange = vi.fn();
+    const composerProps = props({
+      draft: "",
+      gatewayClient,
+      onDraftChange,
+      onToggleRealtimeTalk: vi.fn(),
+    });
+    // The page mirrors committed drafts back into the composer props.
+    onDraftChange.mockImplementation((value: string) => {
+      composerProps.draft = value;
+    });
+    const draw = () => render(renderChatComposer(composerProps), container);
+    composerProps.onRequestUpdate = draw;
+    draw();
+    await vi.waitFor(() => expect(request).toHaveBeenCalledWith("talk.catalog", {}));
+
+    const textarea = container.querySelector<HTMLTextAreaElement>("textarea");
+    if (!textarea) {
+      throw new Error("expected composer textarea");
+    }
+    textarea.value = "ship it";
+    textarea.setSelectionRange(5, 5);
+
+    const microphone = container.querySelector<HTMLButtonElement>(
+      ".chat-talk-control > openclaw-tooltip > button",
+    );
+    if (!microphone) {
+      throw new Error("expected dictation microphone");
+    }
+    Object.defineProperties(microphone, {
+      setPointerCapture: { value: () => undefined },
+      hasPointerCapture: { value: () => false },
+      releasePointerCapture: { value: () => undefined },
+    });
+    microphone.dispatchEvent(dictationPointer("pointerdown", 33));
+    await vi.advanceTimersByTimeAsync(500);
+    expect(request).toHaveBeenCalledWith("talk.session.create", expect.anything());
+    for (const listener of listeners) {
+      listener({
+        event: "talk.event",
+        payload: {
+          transcriptionSessionId: "dictation-1",
+          type: "transcript",
+          text: "please",
+          final: true,
+        },
+      });
+    }
+    // iOS Safari dispatches the compatibility click once the release has passed
+    // the suppression window, which stops the dictation and commits the snapshot.
+    document.dispatchEvent(dictationPointer("pointerup", 33));
+    await vi.advanceTimersByTimeAsync(0);
+    microphone.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(onDraftChange).toHaveBeenCalledWith("ship please it", undefined));
+    await vi.advanceTimersByTimeAsync(0);
+
+    const drafts = onDraftChange.mock.calls.map(([value]) => value);
+    expect(drafts).toEqual(["ship please it"]);
+    expect(textarea.value).toBe("ship please it");
+  });
+
   it("keeps the microphone picker open without leaking an unavailable hold into Talk", async () => {
     vi.useFakeTimers();
     discoverRealtimeTalkInputsMock.mockResolvedValue({ devices: [], issue: "none-found" });

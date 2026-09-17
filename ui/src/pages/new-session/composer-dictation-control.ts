@@ -34,6 +34,11 @@ export class NewSessionDictationControl {
   private readonly devicePicker: ComposerMicrophonePicker;
   private dictation: ComposerDictationController | null = null;
   private owner: { key: string } | null = null;
+  // iOS Safari can deliver the release click that ends a hold and the explicit
+  // Stop as two commits of one dictation. The first insert spends the caret
+  // captured when dictation started, so a repeated commit would land the same
+  // snapshot a second time; one dictation spends one commit.
+  private committedDictation = false;
 
   constructor(private readonly options: NewSessionDictationOptions) {
     this.devicePicker = new ComposerMicrophonePicker(options.requestUpdate);
@@ -85,6 +90,10 @@ export class NewSessionDictationControl {
         if (!ownsDraft() || !this.options.canCommit()) {
           return;
         }
+        if (this.committedDictation) {
+          return;
+        }
+        this.committedDictation = true;
         const next = this.options.textarea.insertTranscript(transcript, late);
         if (next !== null) {
           this.options.onMessage(next);
@@ -131,7 +140,10 @@ export class NewSessionDictationControl {
             this.devicePicker.handleClose();
           },
         }),
-        onDirectDictationStart: () => this.options.textarea.captureSelection(),
+        onDirectDictationStart: () => {
+          this.committedDictation = false;
+          this.options.textarea.captureSelection();
+        },
       })}
       ${renderComposerDictationSendAction(dictation, () => {
         if (ownsDraft() && this.options.canCommit()) {

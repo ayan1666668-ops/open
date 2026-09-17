@@ -505,6 +505,14 @@ export function renderChatComposer(props: ChatComposerProps) {
     dictationAvailable: devicePicker.dictationStatus === "ready",
     realtimeTalkActive: props.realtimeTalkActive === true,
     onCommit: (transcript: string, late?: true) => {
+      // iOS Safari can dispatch the release click that ends a hold and an
+      // explicit Stop as two commits of the same dictation. The first insert
+      // spends the draft captured when the gesture started, so repeating the
+      // commit would append the same snapshot again.
+      if (state.dictationCommitted) {
+        return;
+      }
+      state.dictationCommitted = true;
       const target = state.composerTextarea;
       const captured = state.dictationSelection;
       const liveValue = target?.value ?? props.getDraft?.() ?? props.draft;
@@ -590,6 +598,7 @@ export function renderChatComposer(props: ChatComposerProps) {
     if (dictation?.handlePointerDown(event)) {
       // Stop also emits pointerdown; only a new gesture owns a draft snapshot.
       state.dictationSelection = selection;
+      state.dictationCommitted = false;
       if (target) {
         target.readOnly = true;
       }

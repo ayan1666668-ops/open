@@ -193,6 +193,48 @@ describe("NewSessionDictationControl", () => {
     expect(controller.finishActive).toHaveBeenCalledTimes(2);
   });
 
+  it("commits one transcript when the iOS release dispatch reaches the commit twice", () => {
+    const insertTranscript = vi.fn(() => "spoken task");
+    const onMessage = vi.fn();
+    const control = new NewSessionDictationControl({
+      textarea: { captureSelection: vi.fn(), insertTranscript } as never,
+      getClient: () => ({}) as never,
+      isConnected: () => true,
+      canCommit: () => true,
+      onMessage,
+      onError: vi.fn(),
+      onSubmit: vi.fn(),
+      requestUpdate: vi.fn(),
+    });
+    const container = document.createElement("div");
+    render(control.render("agent-a"), container);
+    container.querySelector<HTMLButtonElement>(".chat-send-btn--voice")?.click();
+    const controller = dictationHarness.controllers[0];
+    if (!controller) {
+      throw new Error("expected dictation controller");
+    }
+    const commit = dictationHarness.options?.onCommit;
+
+    // iOS Safari delivers the release click that ends a hold and the explicit
+    // Stop as two commits of the same dictation.
+    commit?.("spoken task");
+    commit?.("spoken task");
+
+    expect(insertTranscript).toHaveBeenCalledOnce();
+    expect(onMessage).toHaveBeenCalledOnce();
+    expect(onMessage).toHaveBeenCalledWith("spoken task");
+
+    // The next dictation owns a fresh commit.
+    controller.active = false;
+    render(control.render("agent-a"), container);
+    container.querySelector<HTMLButtonElement>(".chat-send-btn--voice")?.click();
+    commit?.("second task");
+
+    expect(insertTranscript).toHaveBeenCalledTimes(2);
+    expect(onMessage).toHaveBeenCalledTimes(2);
+    control.dispose();
+  });
+
   it("cancels active dictation and drops its late transcript when the route owner changes", () => {
     const insertTranscript = vi.fn(() => "route B draft");
     const onMessage = vi.fn();
