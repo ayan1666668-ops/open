@@ -376,11 +376,12 @@ failed closes available for joined lifecycle recovery. Final reads reject an
 uncommitted transaction on the retained handle. Bun keeps its existing native
 read path until native statement retirement supports this observer lifetime.
 
-The history worker retains one read-only connection across requests, rechecking
+The history worker retains up to 64 read-only connections across requests, rechecking
 schema, agent owner, and physical file identity before reuse. Every request keeps
-its own snapshot and current admission checks. Switching databases closes the
-previous connection. The parent retires the worker after 30 minutes without
-pending history reads; database cleanup revokes admission and joins native worker
+its own snapshot and current admission checks. Switching databases reuses their
+connections; admitting another retained connection evicts the least recently used
+one. Missing databases consume no retained slot. The parent keeps custody of all
+retained targets and retires the worker after 30 minutes without pending history reads; database cleanup revokes admission and joins native worker
 exit before closing the database. Cold restoration carries the request's same
 authority through queue waits and its native commit, so a revoked read cannot
 restore rows after database cleanup. These lifetimes change no schema or
