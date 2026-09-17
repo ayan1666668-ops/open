@@ -26,8 +26,22 @@ const FIRST_PERSON_PLAN_PATTERN =
 const COMPLETION_HEADING_PATTERN =
   /^(?:result|results|report|summary|outcome|conclusion|findings?|verification|status)\s*:\s*/i;
 
-const DEFERRED_COMPLETION_STATUS_PATTERN =
-  /^(?:(?:i(?:\s+am|(?:'|\u2019)m)|we(?:\s+are|(?:'|\u2019)re))\s+)?(?:done|completed|finished|fixed|patched|resolved|deployed|landed|merged|implemented|confirmed)\s+(?:if|unless|once|when)\b/i;
+const COMPLETION_STATE_CLAUSE_PATTERN =
+  /(?:^|,\s*|\band\s+)(?:the\s+[\w'-]+(?:\s+[\w'-]+){0,3}|(?:all|both)\s+[\w'-]+|[\w'-]+)\s+(?:is|are|was|were|has\s+been|have\s+been)\s+(?:done|complete|completed|finished|fixed|resolved)\b/i;
+
+function hasDeferredTemporalResult(prefix: string, resultClause: string): boolean {
+  const temporalClauses = [
+    ...prefix.matchAll(/(?:^|,\s*)(?:when|once)\b([^,]*)/gi),
+    ...resultClause.matchAll(/\b(?:when|once)\b([^,]*)/gi),
+  ];
+  // A bounded past-event qualifier can explain completed work. A future or
+  // present-perfect prerequisite is still deferred, even after a verb's object.
+  return temporalClauses.some(
+    ([, event = ""]) =>
+      !/\b(?:was|were|had|did|fired|failed|passed|succeeded|completed|finished)\b/i.test(event) ||
+      /\b(?:will|would|could|should|might|may|can|must|have|has)\b/i.test(event),
+  );
+}
 
 function normalizeCompletionText(value: string | null | undefined): string {
   return value?.replace(/\s+/g, " ").trim() ?? "";
@@ -53,7 +67,8 @@ function isProgressOnlyCompletionText(value: string): boolean {
     return clauses.every((clause) => {
       const body = clause.trim();
       const narration = body.replace(/^(?:if|unless|when|once)\b[^,]*,\s*/i, "");
-      const result = COMPLETION_RESULT_CLAUSE_PATTERN.exec(body);
+      const result =
+        COMPLETION_RESULT_CLAUSE_PATTERN.exec(body) ?? COMPLETION_STATE_CLAUSE_PATTERN.exec(body);
       const prefix = result ? body.slice(0, result.index) : "";
       const resultClause = result
         ? (body
@@ -70,7 +85,7 @@ function isProgressOnlyCompletionText(value: string): boolean {
         (/\b(?:whether|if|unless)\b/i.test(resultClause) ||
           /(?:^|[,;:]\s*)(?:if|unless)\b/i.test(prefix) ||
           (/^and\b/i.test(result[0]) && CONDITIONAL_PROGRESS_PATTERN.test(prefix)) ||
-          DEFERRED_COMPLETION_STATUS_PATTERN.test(resultClause));
+          hasDeferredTemporalResult(prefix, resultClause));
       const progress =
         PROGRESS_ONLY_PATTERN.test(narration) ||
         BARE_PROGRESS_ONLY_PATTERN.test(narration) ||

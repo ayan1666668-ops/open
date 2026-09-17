@@ -19,6 +19,21 @@ describe("resolveRequiredCompletionTerminalResult", () => {
   it.each([
     ["pure progress", "Let me run the tests"],
     [
+      "conditional object after heading",
+      "I'll inspect the failure. Result: completed the repair when CI succeeds.",
+    ],
+    [
+      "once condition after object",
+      "Reviewing the handler, we completed the repair once CI succeeds.",
+    ],
+    ["future temporal state", "Reviewing the rollout, the deployment is done when checks pass."],
+    [
+      "future perfect temporal condition",
+      "Reviewing the handler, we fixed it when tests have passed.",
+    ],
+    ["future completed state", "Reviewing the rollout, the deployment will be done."],
+    ["state inside an indirect question", "Reviewing whether the deployment is done."],
+    [
       "deferred result heading after progress",
       "I'll inspect the failure. Result: completed when CI succeeds.",
     ],
@@ -125,6 +140,11 @@ describe("resolveRequiredCompletionTerminalResult", () => {
       "I'll inspect the repo now: the crash is a missing null check in src/foo.ts.",
     ],
     ["completed clause after narration", "Reviewing the changes, we fixed the regression."],
+    ["completed deployment state", "Reviewing the changes, the deployment is done."],
+    ["completed repair state", "Reviewing the rollout, the repair is complete."],
+    ["completed plural state", "Reviewing the changes, all migrations are complete."],
+    ["completed noun phrase", "Reviewing the changes, the cache migration has been completed."],
+    ["past temporal tests", "Reviewing the handler, we fixed it when the tests failed."],
     ["conditional operator guidance", "Use the rollback script if necessary."],
     ["completed action using done", "Reviewing the changes, we have done the repair."],
     ["completed singular state", "Reviewing the changes, I am done."],
