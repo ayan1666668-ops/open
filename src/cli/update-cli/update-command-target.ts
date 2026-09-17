@@ -284,7 +284,7 @@ export async function resolveUpdateCommandTarget(
       // Read-only native/root admission is complete. Own interruption settlement
       // before metadata can block, but defer mutable housekeeping until target admission.
       if (updateInstallKind === "package" && !opts.dryRun) {
-        assertUpdatePackageActivationAdmission(root);
+        assertUpdatePackageActivationAdmission(root, { serviceRoot: managedServiceRoot });
         const fence = await executor.enter(root, {
           preflight: true,
           serviceRoot: managedServiceRoot,
@@ -295,6 +295,7 @@ export async function resolveUpdateCommandTarget(
         fence.assertCurrent();
         assertUpdatePackageActivationAdmission(
           captureUpdateCommandExecutorAuthority(fence).installKey,
+          { serviceRoot: managedServiceRoot },
         );
       }
 

@@ -667,11 +667,7 @@ export async function resolveManagedServicePackageUpdatePlan(params: {
     return {
       serviceUnitTarget,
       ...(canRebind
-        ? {
-            rootRedirect: null,
-            serviceRoot,
-            installationDrift: await inspectGatewayServiceInstallationDrift(layout, params.root),
-          }
+        ? { rootRedirect: null, serviceRoot }
         : { rootRedirect: { root: serviceRoot, previousRoot: params.root } }),
       ...(serviceNode ? { nodeRunner: serviceNode } : {}),
     };
@@ -742,9 +738,6 @@ export function formatManagedServicePackageUpdatePlan(params: {
   nodeRunner?: string;
   installationDrift?: string;
 }): Array<{ level: "muted" | "warn"; message: string }> {
-  if (params.installationDrift) {
-    return [{ level: "warn", message: params.installationDrift }];
-  }
   const { rootRedirect, nodeRunner } = params;
   if (rootRedirect) {
     return [

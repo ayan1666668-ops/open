@@ -78,6 +78,8 @@ export async function updateCommand(inputOpts: UpdateCommandOptions): Promise<vo
     );
   }
   return await withUpdateAdmissionReporting(inputOpts, async () => {
+    const root = prepared.servicePlan?.rootRedirect?.root ?? prepared.discoveredRoot;
+    const serviceRoot = prepared.servicePlan?.serviceRoot;
     const env = await resolveUpdateCommandAdmissionEnv({
       opts: inputOpts,
       root: resolveUpdateCommandAdmissionRoot(prepared),
@@ -85,6 +87,7 @@ export async function updateCommand(inputOpts: UpdateCommandOptions): Promise<vo
       pkgOwnership: prepared.pkgOwnership,
     });
     const { updateStateNeedsInitialization } = await import("./update-command-initialization.js");
+    assertUpdatePackageActivationAdmission(root, { serviceRoot });
     if (await updateStateNeedsInitialization(env)) {
       return await initializeAndRunUpdate(inputOpts, prepared, recoveryState, invocationCwd, env);
     }
@@ -102,6 +105,7 @@ async function runAdmittedUpdate(
   const run = await admitUpdateCommandRun({
     opts: inputOpts,
     root: resolveUpdateCommandAdmissionRoot(prepared),
+    serviceRoot: initialization?.target.managedServiceRoot ?? prepared.servicePlan?.serviceRoot,
     invocationCwd,
     initialization,
     pkgOwnership: prepared.pkgOwnership,
@@ -122,6 +126,7 @@ async function runAdmittedUpdate(
         preflight: true,
         serviceRoot: initialization.target.managedServiceRoot,
       });
+      assertUpdatePackageActivationAdmission(initialization.target.root, { serviceRoot: initialization.target.managedServiceRoot });
     }
     const presentation = createUpdateProgress(!opts.json, run);
     disposePresentation = presentation.dispose;
@@ -190,6 +195,7 @@ async function initializeAndRunUpdate(
             if (!target) {
               return;
             }
+            const packageAdmission = { serviceRoot: target.managedServiceRoot };
             const initialization: InitializedUpdate = {
               env,
               runId,
@@ -244,6 +250,7 @@ async function initializeAndRunUpdate(
               requirePackageReplacement: target.managedServiceRoot !== undefined,
             });
             const runSelectedTarget = async () => {
+              assertUpdatePackageActivationAdmission(target.root, packageAdmission);
               if (target.updateInstallKind !== "package") {
                 return await runInitialized();
               }
@@ -313,8 +320,12 @@ async function initializeAndRunUpdate(
                 preflight: true,
                 serviceRoot: target.managedServiceRoot,
               });
-              fence.assertCurrent();
+              const assertCurrent = () => {
+                fence.assertCurrent();
+                assertUpdatePackageActivationAdmission(target.root, packageAdmission);
+              };
               const { stagePackageInstallUpdate } = await import("./update-command-package.js");
+              assertCurrent();
               const legacyFence = initializationRuntime.acquireLegacyUpdateInitializationFence({
                 env,
                 targetVersion,
@@ -327,13 +338,13 @@ async function initializeAndRunUpdate(
                       const presentation = createUpdateProgress(!opts.json);
                       try {
                         await checkSchemas();
-                        fence.assertCurrent();
+                        assertCurrent();
                         if (!target.packageAlreadyCurrent && !initialization.stagedPackage) {
                           initialization.stagedPackage = await stagePackageInstallUpdate(
                             stageParams(presentation.progress),
                           );
                         }
-                        fence.assertCurrent();
+                        assertCurrent();
                         await initializationRuntime.initializeUpdateStateFromTarget({
                           root: initialization.stagedPackage?.root ?? target.root,
                           env,
@@ -341,7 +352,7 @@ async function initializeAndRunUpdate(
                           nodeRunner: target.packageUpdateNodeRunner,
                           invocationCwd,
                           progress: presentation.progress,
-                          assertCurrent: fence.assertCurrent,
+                          assertCurrent,
                           checkSchemas: async () => void (await checkSchemas()),
                         });
                       } finally {
@@ -593,7 +604,7 @@ async function updateCommandInternal(
     typeof executeMutableUpdate
   >[0]["prepareMutableUpdate"] = async (env, activationTimeoutMs, admitExecutor) => {
     if (!mutableUpdatePrepared) {
-      assertUpdatePackageActivationAdmission(root);
+      assertUpdatePackageActivationAdmission(root, { serviceRoot: managedServiceRoot });
     }
     const fence = await executor.enter(root, {
       serviceRoot: managedServiceRoot,
@@ -603,9 +614,13 @@ async function updateCommandInternal(
     run.activationTimeoutMs ??= activationTimeoutMs;
     fence.assertCurrent();
     if (mutableUpdatePrepared) {
+      if (managedServiceRoot) {
+        assertUpdatePackageActivationAdmission(managedServiceRoot);
+      }
       return;
     }
-    assertUpdatePackageActivationAdmission(captureUpdateCommandExecutorAuthority(fence).installKey);
+    const installKey = captureUpdateCommandExecutorAuthority(fence).installKey;
+    assertUpdatePackageActivationAdmission(installKey, { serviceRoot: managedServiceRoot });
     preUpdatePluginInstallRecords = await prepareMutableUpdateRuntime(env, fence);
     mutableUpdatePrepared = true;
   };
