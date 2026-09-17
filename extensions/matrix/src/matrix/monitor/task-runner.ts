@@ -2,10 +2,16 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { RuntimeLogger } from "openclaw/plugin-sdk/plugin-runtime";
 
-const monitorTaskSignal = new AsyncLocalStorage<AbortSignal>();
+type MatrixMonitorTaskContext = {
+  settled: boolean;
+  signal: AbortSignal;
+};
+
+const monitorTaskContext = new AsyncLocalStorage<MatrixMonitorTaskContext>();
 
 export function getMatrixMonitorTaskSignal(): AbortSignal | undefined {
-  return monitorTaskSignal.getStore();
+  const context = monitorTaskContext.getStore();
+  return context?.settled ? undefined : context?.signal;
 }
 
 export function createMatrixMonitorTaskRunner(params: {
@@ -20,8 +26,9 @@ export function createMatrixMonitorTaskRunner(params: {
       return Promise.resolve();
     }
     const controller = new AbortController();
-    const trackedTask: Promise<void> = monitorTaskSignal
-      .run(controller.signal, () => Promise.resolve().then(task))
+    const context: MatrixMonitorTaskContext = { settled: false, signal: controller.signal };
+    const trackedTask: Promise<void> = monitorTaskContext
+      .run(context, () => Promise.resolve().then(task))
       .catch((error: unknown) => {
         const message = String(error);
         params.logVerboseMessage(`matrix: ${label} failed (${message})`);
@@ -31,7 +38,8 @@ export function createMatrixMonitorTaskRunner(params: {
         });
       })
       .finally(() => {
-        // Async descendants retain the signal, but cannot acquire after their owner settles.
+        // Descendants retain the context, but no longer belong to a settled owner.
+        context.settled = true;
         controller.abort();
         inFlight.delete(trackedTask);
       });

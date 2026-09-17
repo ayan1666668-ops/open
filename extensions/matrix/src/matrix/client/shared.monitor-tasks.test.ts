@@ -128,7 +128,7 @@ describe("shared Matrix monitor task ownership", () => {
     },
   );
 
-  it("rejects retained async acquisitions after the owning monitor task settles", async () => {
+  it("allows retained async acquisitions after the owning monitor task settles", async () => {
     const client = createMockClient("main");
     createMatrixClientMock.mockResolvedValue(client);
     const auth = authFor("main");
@@ -142,23 +142,47 @@ describe("shared Matrix monitor task ownership", () => {
     let retainedLease: Awaited<ReturnType<typeof acquireSharedMatrixClient>> | undefined;
     await tasks.runDetachedTask("retained continuation", async () => {
       retained = resume.promise.then(async () => {
-        try {
-          retainedLease = await acquireSharedMatrixClient({ auth, startClient: false });
-          return null;
-        } catch (error) {
-          return error;
-        }
+        retainedLease = await acquireSharedMatrixClient({ auth, startClient: false });
+        return retainedLease;
       });
     });
     resume.resolve();
     try {
-      await expect(retained).resolves.toMatchObject({ name: "AbortError" });
+      await expect(retained).resolves.toMatchObject({ client });
+      expect(retainedLease?.client).toBe(client);
       const unrelated = await acquireSharedMatrixClient({ auth, startClient: false });
       expect(unrelated.client).toBe(client);
       await unrelated.release();
     } finally {
       await retained;
       await retainedLease?.release();
+      await monitor.release();
+    }
+  });
+
+  it("preserves explicit cancellation for retained async acquisitions", async () => {
+    const client = createMockClient("main");
+    createMatrixClientMock.mockResolvedValue(client);
+    const auth = authFor("main");
+    const monitor = await acquireSharedMatrixClient({ auth, role: "monitor", startClient: false });
+    const tasks = createMatrixMonitorTaskRunner({
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      logVerboseMessage: vi.fn(),
+    });
+    const resume = createDeferred<void>();
+    const caller = new AbortController();
+    let retained: Promise<unknown> | undefined;
+    await tasks.runDetachedTask("retained continuation", async () => {
+      retained = resume.promise.then(() =>
+        acquireSharedMatrixClient({ auth, startClient: false, abortSignal: caller.signal }),
+      );
+    });
+    caller.abort();
+    resume.resolve();
+    try {
+      await expect(retained).rejects.toMatchObject({ name: "AbortError" });
+    } finally {
+      await retained?.catch(() => undefined);
       await monitor.release();
     }
   });
