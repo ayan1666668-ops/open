@@ -14,12 +14,7 @@ import { loadMutableCronStoreInWorker } from "../cron/store/load.worker.js";
 import { executeCronStoreSaveCommand } from "../cron/store/save.worker.js";
 import { readDeferredPluginMigrations } from "../infra/deferred-plugin-migrations.js";
 import { countFailedDeliveryQueueEntriesInDatabase } from "../infra/delivery-queue-sqlite.kernel.js";
-import {
-  markPromotionSlugsNotifiedInDatabase,
-  PROMOTIONS_FEED_STATE_KEY,
-  recordPromotionClaimInDatabase,
-  type StoredPromotionsFeedState,
-} from "../infra/promotions-feed.kernel.js";
+import { executePromotionCommand } from "../infra/promotions-feed.worker.js";
 import { executeSessionDeliveryCommand } from "../infra/session-delivery-queue.worker.js";
 import { createSqliteAuditRecordKernel } from "../infra/sqlite-audit-record.kernel.js";
 import {
@@ -88,7 +83,6 @@ import {
 } from "./agent-provenance.kernel.js";
 import { ensureAgentProvenanceSchema } from "./agent-provenance.schema.js";
 import { recordBackupRunInDatabase } from "./backup-run-records.kernel.js";
-import { readConfigMachineState } from "./config-machine-state.js";
 import {
   openClawStateDatabaseCache,
   retainOpenClawStateDatabase,
@@ -174,25 +168,12 @@ function createSharedStateWorkerBackend(
       if (closed) {
         throw new Error("Shared-state worker is closed");
       }
-      if (command.type === "promotions.markNotified") {
-        const options = {
-          path: context.databasePath,
-          env: getSqliteWorkerStateContext().environment,
-        };
-        const stored = readConfigMachineState<StoredPromotionsFeedState>(
-          PROMOTIONS_FEED_STATE_KEY,
-          options,
+      if (command.type === "promotions.markNotified" || command.type === "promotions.recordClaim") {
+        return executePromotionCommand(
+          command,
+          { path: context.databasePath, env: getSqliteWorkerStateContext().environment },
+          open,
         );
-        const known = new Set(stored?.notifiedSlugs ?? []);
-        const incoming = command.input.slugs.filter((slug) => !known.has(slug));
-        if (incoming.length > 0) {
-          runOpenClawStateWriteTransaction(
-            ({ db }) => markPromotionSlugsNotifiedInDatabase(db, incoming, command.input.now),
-            { ...options, database: open() },
-            { operationLabel: "config-machine-state.update" },
-          );
-        }
-        return true;
       }
       if (command.type === "doctor.databaseBloat") {
         return readSqliteDatabaseBloat({
@@ -454,12 +435,6 @@ function createSharedStateWorkerBackend(
         return command.type === "agentProvenance.read"
           ? readAgentProvenanceInDatabase(database.db, command.input.agentId)
           : listAgentProvenanceInDatabase(database.db);
-      }
-      if (command.type === "promotions.recordClaim") {
-        return runOpenClawStateWriteTransaction(
-          ({ db }) => recordPromotionClaimInDatabase(db, command.input),
-          writeOptions,
-        );
       }
       if (command.type === "sessionState.recordGoalChange") {
         return runOpenClawStateWriteTransaction(
