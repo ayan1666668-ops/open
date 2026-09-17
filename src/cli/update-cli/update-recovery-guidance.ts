@@ -8,6 +8,7 @@ import {
   UPDATE_ACTIVATION_TIMEOUT_REASON,
   UPDATE_INSTALL_SKIP_GUIDANCE,
   UPDATE_ENVIRONMENT_FAILURE_REASONS,
+  UPDATE_GLOBAL_PERMISSION_REASON,
 } from "../../shared/update-outcome.js";
 import { formatCliCommand } from "../command-format.js";
 
@@ -51,14 +52,6 @@ export function resolveUpdateResultNextAction(params: {
     return UPDATE_INSTALL_SKIP_GUIDANCE[result.reason];
   }
   if (result.status === "error") {
-    if (result.reason && UPDATE_ENVIRONMENT_FAILURE_REASONS.has(result.reason)) {
-      const detail = result.failedStep?.stderrTail;
-      if (detail) {
-        return result.recovery?.serviceRestartSafe === false
-          ? `${detail} ${resolveUnsafeUpdateRecoveryGuidance(result.recovery.reason, env)}`
-          : detail;
-      }
-    }
     if (result.reason === UPDATE_ACTIVATION_TIMEOUT_REASON) {
       return formatUpdateActivationTimeoutGuidance((command) => formatCliCommand(command, env));
     }
@@ -74,28 +67,41 @@ export function resolveUpdateResultNextAction(params: {
     const runningVersion = truncateUtf16Safe(params.runningVersion ?? "", 120);
     const state = reason
       ? params.serviceRunning === true
-        ? `The gateway is running${runningVersion ? ` ${runningVersion}` : ""} but did not pass verification (${failure}). `
-        : `${params.serviceRunning === false ? "Managed gateway remains stopped because update recovery" : "Update recovery"} could not prove a runnable installation (${failure}). ${params.serviceRunning === false ? "Keep the gateway stopped until the update succeeds. " : ""}`
+        ? `The gateway is running${runningVersion ? ` ${runningVersion}` : ""} but did not pass verification (${failure}).`
+        : `${params.serviceRunning === false ? "Managed gateway remains stopped because update recovery" : "Update recovery"} could not prove a runnable installation (${failure}).${params.serviceRunning === false ? " Keep the gateway stopped until the update succeeds." : ""}`
       : "";
     const configRefusal = result.steps.findLast(
       (step) => step.name === "config rollback",
     )?.stderrTail;
     const failedStep = result.failedStep;
+    const detail =
+      result.reason && UPDATE_ENVIRONMENT_FAILURE_REASONS.has(result.reason)
+        ? failedStep?.stderrTail
+        : undefined;
     const containerPermissionFailure =
       (result.mode === "npm" || result.mode === "pnpm" || result.mode === "bun") &&
-      failedStep !== undefined &&
-      failedStep.exitCode !== 0 &&
-      !failedStep.advisory &&
-      (failedStep.name.startsWith("global update") ||
-        failedStep.name.startsWith("global install")) &&
-      /\beacces\b/i.test(failedStep.stderrTail ?? "") &&
+      (result.reason === UPDATE_GLOBAL_PERMISSION_REASON ||
+        (failedStep !== undefined &&
+          failedStep.exitCode !== 0 &&
+          !failedStep.advisory &&
+          (failedStep.name.startsWith("global update") ||
+            failedStep.name.startsWith("global install")) &&
+          /\beacces\b/i.test(failedStep.stderrTail ?? ""))) &&
       isContainerEnvironment();
     // Record deployment-specific advice here so CLI output and later reports agree.
     // Keep the recovery constraints: an image change must not roll back migrated state.
     const deployment = containerPermissionFailure
-      ? "Detected package update permission failure (EACCES) inside a container. Pull or build an OpenClaw image with the target version, then recreate or redeploy the container with the same state/config mounts. In-container package changes are not durable. "
+      ? "Detected package update permission failure inside a container. Pull or build an OpenClaw image with the target version, then recreate or redeploy the container with the same state/config mounts. In-container package changes are not durable."
       : "";
-    return `${configRefusal ? `${configRefusal} ` : ""}${state}${deployment}${resolveUnsafeUpdateRecoveryGuidance(reason, env)}`;
+    return [
+      detail,
+      deployment,
+      configRefusal,
+      state,
+      reason || !detail ? resolveUnsafeUpdateRecoveryGuidance(reason, env) : undefined,
+    ]
+      .filter(Boolean)
+      .join(" ");
   }
   const command = (value: string) => formatCliCommand(value, env);
   if (result.reason === "not-git-install") {

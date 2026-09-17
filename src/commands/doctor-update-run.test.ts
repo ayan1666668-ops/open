@@ -18,7 +18,7 @@ it.each([
   {
     reason: "global-install-permission-denied",
     nextAction:
-      "Cannot write /opt/openclaw-prefix/lib/node_modules (owned by root); run `openclaw update` as root, the installation owner.",
+      "Cannot write /opt/openclaw-prefix/lib/node_modules (owned by root); run the package update as the directory's owning account. Pull or build an OpenClaw image with the target version, then recreate or redeploy the container with the same state/config mounts.",
   },
 ])("keeps $reason remediation visible until a later successful update", async (failure) => {
   let latest: UpdateRunRecord = {

@@ -102,6 +102,9 @@ shared system prefix. A personal install can instead use a
 
 Permission errors discovered after admission carry the same reason. The report's
 rollback and service-recovery constraints still apply if activation had begun.
+Inside a container, the same next action also directs you to pull or build the
+target OpenClaw image and redeploy with the same state/config mounts. Package
+changes inside a running container are not durable.
 
 ## Plugin repair warnings
 

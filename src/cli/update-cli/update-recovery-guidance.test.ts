@@ -16,6 +16,8 @@ const dirs = useAutoCleanupTempDirTracker(afterEach);
 const hostGuidance =
   "Run `openclaw triage` on this machine to open a coding agent that can diagnose and repair the installation.";
 const redeploy = "recreate or redeploy the container";
+const permissionDetail =
+  "Package update cannot write /usr/lib/node_modules (EACCES; owner UID 0 (root), GID 0). Run the package update as the directory's owning account, keeping the Gateway's existing state/configuration.";
 function failure(overrides: Partial<UpdateRunResult> = {}): UpdateRunResult {
   const failedStep = {
     name: "global install stage",
@@ -23,7 +25,10 @@ function failure(overrides: Partial<UpdateRunResult> = {}): UpdateRunResult {
     cwd: "/fixture",
     durationMs: 0,
     exitCode: 1,
-    stderrTail: "EACCES: permission denied",
+    stderrTail:
+      overrides.reason === "global-install-permission-denied"
+        ? permissionDetail
+        : "EACCES: permission denied",
   };
   return {
     status: "error",
@@ -51,6 +56,7 @@ describe("update recovery reporting", () => {
   it.each(["node-runtime-preflight", "global-install-permission-denied"])(
     "retains the actionable %s outcome in history",
     (reason) => {
+      vi.mocked(isContainerEnvironment).mockReturnValue(false);
       const state = dirs.make("update-environment-report-");
       const env = {
         OPENCLAW_STATE_DIR: state,
@@ -146,15 +152,15 @@ describe("update recovery reporting", () => {
   });
 
   it.each([
-    ["npm", false, true],
-    ["npm", true, true],
-    ["pnpm", false, true],
-    ["bun", true, true],
-    ["npm", false, false],
-    ["npm", true, false],
+    ["npm", false, true, "global-install-permission-denied"],
+    ["npm", true, true, "global-install-permission-denied"],
+    ["pnpm", false, true, "global-install-failed"],
+    ["bun", true, true, "global-install-failed"],
+    ["npm", false, false, "global-install-permission-denied"],
+    ["npm", true, false, "global-install-failed"],
   ] as const)(
-    "publishes consistent %s recovery (json=%s, container=%s)",
-    (mode, json, container) => {
+    "publishes consistent %s recovery (json=%s, container=%s, reason=%s)",
+    (mode, json, container, reason) => {
       vi.mocked(isContainerEnvironment).mockReturnValue(container);
       const state = dirs.make("container-update-report-");
       const env = {
@@ -166,13 +172,16 @@ describe("update recovery reporting", () => {
       const output = vi.spyOn(defaultRuntime, "writeJson").mockImplementation(() => {});
       const result = publishUpdateCommandTerminalResult(
         { opts: { json, run }, coreAlreadyCurrent: false },
-        failure({ mode }),
+        failure({ mode, reason }),
         { rolledBack: false },
       );
       const stored = getUpdateRun(run.runId, { env });
       expect(result.status).toBe("error");
       expect(stored?.status).toBe("failed");
       const action = stored?.origin.nextAction;
+      if (reason === "global-install-permission-denied") {
+        expect(action?.startsWith(permissionDetail)).toBe(true);
+      }
       if (container) {
         expect(action).toContain("inside a container");
         expect(action).toContain("Pull or build an OpenClaw image");
@@ -180,7 +189,9 @@ describe("update recovery reporting", () => {
         expect(action).toContain("same state/config mounts");
         expect(action).not.toMatch(/sudo|npm config set prefix/);
       } else {
-        expect(action).toBe(hostGuidance);
+        expect(action).toBe(
+          reason === "global-install-permission-denied" ? permissionDetail : hostGuidance,
+        );
       }
       expect(stored && renderUpdateRunReport(stored).markdown).toContain(action);
       if (json) {
@@ -195,15 +206,24 @@ describe("update recovery reporting", () => {
     },
   );
 
-  it.each(["global update", "global update (omit optional)", "global install swap"])(
-    "covers the %s permission failure",
-    (name) => {
-      const result = failure();
-      result.failedStep = { ...result.steps[0]!, name };
-      result.steps = [result.failedStep];
-      expect(resolveUpdateResultNextAction({ result, env: {} })).toContain(redeploy);
-    },
-  );
+  it.each([
+    ["global update", "global-install-failed"],
+    ["global update (omit optional)", "global-install-failed"],
+    ["global install swap", "global-install-failed"],
+    ["global-install-permission-denied", "global-install-permission-denied"],
+  ])("covers the %s permission failure", (name, reason) => {
+    const result = failure({ reason });
+    result.failedStep = {
+      ...result.steps[0]!,
+      name,
+      stderrTail:
+        reason === "global-install-failed"
+          ? permissionDetail
+          : permissionDetail.replace("EACCES", "EPERM"),
+    };
+    result.steps = [result.failedStep];
+    expect(resolveUpdateResultNextAction({ result, env: {} })).toContain(redeploy);
+  });
 
   it.each([
     ["success", { status: "ok" }],
@@ -252,6 +272,7 @@ describe("update recovery reporting", () => {
     "preserves migrated-state and service safety (running=%s)",
     (serviceRunning) => {
       const result = failure({
+        reason: "global-install-permission-denied",
         recovery: { serviceRestartSafe: false, reason: "state-migration-started" },
       });
       const action = resolveUpdateResultNextAction({
@@ -260,6 +281,7 @@ describe("update recovery reporting", () => {
         runningVersion: "2.0.0",
         env: {},
       });
+      expect(action?.startsWith(permissionDetail)).toBe(true);
       expect(action).toContain(redeploy);
       expect(action).toContain("Update Doctor may have migrated state");
       expect(action).toContain("keep the update installed and do not roll back code alone");
