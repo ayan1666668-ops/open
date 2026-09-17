@@ -17,8 +17,9 @@ import {
   DEFAULT_CHAT_HISTORY_TEXT_MAX_CHARS,
   extractAssistantTextForSilentCheck,
   hasAssistantDisplayableNonTextContent,
+  hasTranscriptMediaFacts,
   isAssistantTextContentType,
-  isProjectedSessionsSendForwardedMessage,
+  isProjectedForwardedMessage,
   shouldPreserveAssistantControlReplyText,
   stripAssistantMediaDirectivesForDisplay,
   stripPrivateToolCallContextForDisplay,
@@ -632,7 +633,7 @@ export function shouldDropAssistantHistoryMessage(message: unknown): boolean {
   if (entry.role !== "assistant") {
     return false;
   }
-  if (isProjectedSessionsSendForwardedMessage(entry)) {
+  if (isProjectedForwardedMessage(entry)) {
     return false;
   }
   if (resolveAssistantMessagePhase(message) === "commentary") {
@@ -662,9 +663,15 @@ export function sanitizeChatHistoryMessages(
       message = projection.message;
       changed ||= message !== original;
       for (const commentary of projection.fallbacks) {
-        const projected = sanitizeChatHistoryMessage(commentary, maxChars, opts);
-        next.push(projected.message);
         changed = true;
+        const hasMediaFacts = hasTranscriptMediaFacts(readRecord(commentary) ?? {});
+        if (!hasMediaFacts && shouldDropAssistantHistoryMessage(commentary)) {
+          continue;
+        }
+        const projected = sanitizeChatHistoryMessage(commentary, maxChars, opts);
+        if (hasMediaFacts || !shouldDropAssistantHistoryMessage(projected.message)) {
+          next.push(projected.message);
+        }
       }
     }
     if (shouldDropAssistantHistoryMessage(message)) {

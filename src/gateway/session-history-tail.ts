@@ -6,6 +6,7 @@ import { resolveTranscriptPageEnd } from "../sessions/transcript-anchor-page.js"
 import type { TranscriptReadWindow } from "../sessions/transcript-read-window.js";
 import {
   projectChatDisplayMessagesWithState,
+  type ChatDisplayProjectionOptions,
   createChatHistoryRecoveryProjection,
 } from "./chat-display-projection.core.js";
 import {
@@ -180,6 +181,7 @@ export async function readIncrementalChatHistoryTail(params: {
   readOnly?: boolean;
   deferProfileDisplay?: boolean;
   resolveCurrentUserProfileDisplay?: CurrentUserProfileDisplayResolver;
+  resolveCronJobName?: ChatDisplayProjectionOptions["resolveCronJobName"];
 }): Promise<IncrementalChatHistoryTail> {
   const { resolveCurrentUserProfileDisplay } = params;
   let offset = params.offset ?? 0;
@@ -270,9 +272,11 @@ export async function readIncrementalChatHistoryTail(params: {
     const projection = projectChatDisplayMessagesWithState(
       newerContext.length > 0 ? [...filteredRawMessages, ...newerContext] : filteredRawMessages,
       {
+        subagentCoordination: params.readers.subagentCoordination,
         includeCommentaryFallbacks: true,
         maxChars: params.effectiveMaxChars,
         redactInlineMedia: true,
+        resolveCronJobName: params.resolveCronJobName,
         ...(resolveProfileDisplay && !params.deferProfileDisplay
           ? { resolveCurrentUserProfileDisplay }
           : {}),
@@ -305,6 +309,7 @@ export async function readIncrementalChatHistoryTail(params: {
       messages: result.filteredRawMessages,
       createRecovery: (messages) => {
         const recovery = createChatHistoryRecoveryProjection({
+          subagentCoordination: params.readers.subagentCoordination,
           maxChars: params.effectiveMaxChars,
         });
         if (sessionStartedAt === undefined) {
@@ -426,6 +431,7 @@ export async function readIncrementalChatHistoryTail(params: {
   if (projectionDirty) {
     result = await projectWindow();
   }
+  params.readers.subagentCoordination?.assertCurrent?.();
   return {
     overreadContextMessage,
     projected: result.projected,

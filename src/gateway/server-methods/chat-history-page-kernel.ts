@@ -8,6 +8,7 @@ import { augmentChatHistoryWithCanvasBlocks } from "../chat-display-projection.c
 import {
   projectChatDisplayMessagesWithState,
   createChatHistoryRecoveryProjection,
+  type ChatDisplayProjectionOptions,
 } from "../chat-display-projection.core.js";
 import {
   dropPreSessionStartAnnouncePairs,
@@ -40,6 +41,7 @@ export type ChatHistoryPageKernelOptions = {
   readOnly?: boolean;
   deferProfileDisplay?: boolean;
   resolveCurrentUserProfileDisplay?: CurrentUserProfileDisplayResolver;
+  resolveCronJobName?: ChatDisplayProjectionOptions["resolveCronJobName"];
   cliSessionId?: string;
   readCliTailPage?: (tail: ChatHistoryCliTail) => Promise<ChatHistoryPage>;
 };
@@ -308,9 +310,11 @@ export async function readChatHistoryPageKernel(
         );
     const project = (messages: unknown[]) =>
       projectChatDisplayMessagesWithState(messages, {
+        subagentCoordination: options.readers.subagentCoordination,
         includeCommentaryFallbacks: true,
         maxChars: effectiveMaxChars,
         redactInlineMedia: true,
+        resolveCronJobName: options.resolveCronJobName,
         ...(options.deferProfileDisplay
           ? {}
           : { resolveCurrentUserProfileDisplay: options.resolveCurrentUserProfileDisplay }),
@@ -328,7 +332,10 @@ export async function readChatHistoryPageKernel(
       const recoveryContext = await readChatHistoryRecoveryContext({
         messages: localMessages,
         createRecovery: (messages) => {
-          const recovery = createChatHistoryRecoveryProjection({ maxChars: effectiveMaxChars });
+          const recovery = createChatHistoryRecoveryProjection({
+            maxChars: effectiveMaxChars,
+            subagentCoordination: options.readers.subagentCoordination,
+          });
           recovery.append(messages);
           return recovery;
         },

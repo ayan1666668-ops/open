@@ -10,6 +10,7 @@ import {
   isAssistantTtsSupplementMessage,
 } from "../chat-display-projection.js";
 import { resolveCurrentUserProfileDisplay } from "../current-user-profile-display.js";
+import { createSessionHistorySubagentProjection } from "../session-history-subagent-projection.js";
 import { projectTranscriptEntryMessage } from "../session-transcript-entry-message.js";
 import {
   projectSessionMessagePayload,
@@ -66,6 +67,7 @@ export function readChatHistoryDelta(params: {
   const projectCurrentUserProfile = createCurrentUserProfileMessageProjector(
     resolveCurrentUserProfileDisplay,
   );
+  const subagentCoordination = createSessionHistorySubagentProjection(params.scope);
   const messages: Record<string, unknown>[] = [];
   // Include array brackets and separators without serializing the whole page.
   let messagesBytes = 2;
@@ -104,6 +106,7 @@ export function readChatHistoryDelta(params: {
       projectionState,
       projectCurrentUserProfile,
       redactInlineMedia: true,
+      subagentCoordination,
       sessionKey: params.sessionKey,
       sessionSnapshot: params.sessionSnapshot,
     });
@@ -124,6 +127,7 @@ export function readChatHistoryDelta(params: {
       messages.push(projected.payload);
     }
   }
+  subagentCoordination.assertCurrent?.();
   return {
     activeLeafEntryId: result.activeLeafEntryId,
     deltaCursor: result.cursor,
