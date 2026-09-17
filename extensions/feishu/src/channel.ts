@@ -2067,6 +2067,11 @@ export const feishuPlugin: ChannelPlugin<ResolvedFeishuAccount, FeishuProbeResul
           unavailableMessage: "Feishu payload sending is not available.",
         },
         sendText: { resolve: (runtime) => runtime.feishuOutbound.sendText },
+        // The adapter implements this entry so the whole reply arrives before this
+        // channel converts it. Core reads it from the registered surface, so leaving
+        // it out of the forwarded set keeps core cutting the text first and the
+        // implementation unreachable.
+        sendFormattedText: { resolve: (runtime) => runtime.feishuOutbound.sendFormattedText },
         sendMedia: { resolve: (runtime) => runtime.feishuOutbound.sendMedia },
       }),
     },

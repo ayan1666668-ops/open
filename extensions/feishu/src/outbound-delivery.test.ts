@@ -234,15 +234,19 @@ describe("Feishu outbound shared delivery", () => {
 
   it("replays a queued direct message after Feishu runtime availability is restored", async () => {
     const originalSendText = feishuChannelRuntime.feishuOutbound.sendText;
-    if (!originalSendText) {
-      throw new Error("Expected Feishu runtime sendText");
+    const originalSendFormattedText = feishuChannelRuntime.feishuOutbound.sendFormattedText;
+    if (!originalSendText || !originalSendFormattedText) {
+      throw new Error("Expected Feishu runtime text senders");
     }
     const deliveryIntentId = "feishu-direct-runtime-availability";
 
     setActivePluginRegistry(
       createTestRegistry([{ pluginId: "feishu", plugin: feishuPlugin, source: "test" }]),
     );
+    // An unavailable runtime takes down every text sender the channel advertises. Leaving
+    // one of them resolvable is a runtime that works, and core would route to it.
     feishuChannelRuntime.feishuOutbound.sendText = undefined;
+    feishuChannelRuntime.feishuOutbound.sendFormattedText = undefined;
 
     try {
       await withStateDirEnv("openclaw-feishu-runtime-availability-", async ({ stateDir }) => {
@@ -267,6 +271,7 @@ describe("Feishu outbound shared delivery", () => {
         });
 
         feishuChannelRuntime.feishuOutbound.sendText = originalSendText;
+        feishuChannelRuntime.feishuOutbound.sendFormattedText = originalSendFormattedText;
         await drainPendingDeliveries({
           drainKey: "feishu:default",
           logLabel: "Feishu runtime availability recovery",
@@ -289,6 +294,7 @@ describe("Feishu outbound shared delivery", () => {
       });
     } finally {
       feishuChannelRuntime.feishuOutbound.sendText = originalSendText;
+      feishuChannelRuntime.feishuOutbound.sendFormattedText = originalSendFormattedText;
     }
   });
 
