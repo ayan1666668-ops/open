@@ -89,7 +89,9 @@ or receiving its `notLoaded` status withdraws only that connection's observation
 an unrelated helper cannot clear activity observed by another open connection.
 Status resets to **Stored / activity unknown** after restart or when its final
 observing connection closes, until fresh native events or metadata supply current
-status. Late responses from a closed connection cannot restore its active status.
+status. Overflow pages use this same source-owned status, and their native reads
+cannot overwrite a newer observation received while the request was pending.
+Late responses from a closed connection cannot restore its active status.
 No native rollouts or transcripts are copied into the state database.
 Live workspace and model-provider settings also stay in memory, with at most
 64 supporting native connections per row. Settings notifications and successful
@@ -140,7 +142,8 @@ cannot replace the current session's path or metadata during a filesystem scan.
 Each home retains at most 20,000 display rows, 20,000 live-status records,
 20,000 live-settings records, 20,000 name records, and 20,000 scan fingerprints, matching the existing Codex
 managed-thread ceiling; eviction drops the oldest archived rows first, then the
-oldest remaining rows. Eviction removes only cached metadata: older sessions remain
+oldest remaining rows. Row eviction preserves independently bounded live status and
+settings while their supporting native connections remain open. Eviction removes only cached metadata: older sessions remain
 discoverable through native paging/search and readable by ID. Background native walks finish pagination, but rows beyond the
 resident limit are discarded before native-response metadata projection or preview
 sanitization. The native page size stays 64, and pagination continues to completion.

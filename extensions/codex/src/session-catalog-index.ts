@@ -47,7 +47,7 @@ import {
   readCodexCatalogRollout,
 } from "./session-catalog-rollouts.js";
 import { CodexCatalogSettingsIndex } from "./session-catalog-settings.js";
-import { getCodexCatalogSource, setCodexCatalogSource } from "./session-catalog-source.js";
+import { setCodexCatalogSource } from "./session-catalog-source.js";
 import { CodexCatalogStatusIndex } from "./session-catalog-status.js";
 import type {
   CodexSessionCatalogPage,
@@ -62,7 +62,7 @@ export class CodexCatalogIndex {
   private readonly availability = new CodexCatalogAvailability();
   private readonly liveStatus = new CodexCatalogStatusIndex();
   private readonly liveSettings = new CodexCatalogSettingsIndex();
-  private readonly nativePages = new CodexCatalogNativePages(this.liveSettings);
+  private readonly nativePages = new CodexCatalogNativePages(this.liveSettings, this.liveStatus);
   private readonly names = new CodexCatalogField<string | null>();
   private initializing: Promise<void> | undefined;
   private initialized = false;
@@ -190,25 +190,27 @@ export class CodexCatalogIndex {
     this.overflow ||= this.rows.size >= CODEX_CATALOG_MAX_ROWS;
     this.ordering.invalidate();
     if (oldest?.threadId === row.threadId) {
-      this.liveStatus.delete(row.threadId);
-      this.liveSettings.delete(row.threadId);
-      this.names.delete(row.threadId);
       return;
     }
     if (oldest) {
-      this.remove(oldest.threadId);
+      this.evict(oldest.threadId);
     }
     this.persistence.put(row);
   }
 
+  private evict(threadId: string): void {
+    // Retention does not withdraw observations supported by an open native connection.
+    this.rows.delete(threadId);
+    this.ordering.invalidate();
+    this.persistence.remove(threadId);
+  }
+
   private remove(threadId: string): void {
     this.observations.mark(threadId);
-    this.rows.delete(threadId);
+    this.evict(threadId);
     this.liveStatus.delete(threadId);
     this.liveSettings.delete(threadId);
     this.names.delete(threadId);
-    this.ordering.invalidate();
-    this.persistence.remove(threadId);
   }
 
   async initialize(): Promise<void> {
@@ -287,7 +289,7 @@ export class CodexCatalogIndex {
             }
             const evicted = retainCodexCatalogRow(this.rows, patched);
             if (evicted) {
-              this.remove(evicted.threadId);
+              this.evict(evicted.threadId);
             }
             this.ordering.restore(row);
           }
@@ -336,15 +338,7 @@ export class CodexCatalogIndex {
     if (!session) {
       return;
     }
-    this.liveStatus.observe(
-      row.threadId,
-      {
-        status: session.status,
-        ...(session.activeFlags ? { activeFlags: session.activeFlags } : {}),
-      },
-      revision.status,
-      getCodexCatalogSource(row),
-    );
+    this.liveStatus.observe(row, revision.status);
     if (
       session.name !== undefined &&
       this.names.observe(row.threadId, session.name, revision.name)

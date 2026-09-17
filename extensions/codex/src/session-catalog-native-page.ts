@@ -13,6 +13,7 @@ import {
   normalizeLimit,
 } from "./session-catalog-parsing.js";
 import type { CodexCatalogSettingsIndex } from "./session-catalog-settings.js";
+import type { CodexCatalogStatusIndex } from "./session-catalog-status.js";
 import type {
   CodexSessionCatalogPage,
   CodexSessionCatalogPageParams,
@@ -20,7 +21,10 @@ import type {
 
 /** The resident limit bounds storage, never authoritative discovery. */
 export class CodexCatalogNativePages {
-  constructor(private readonly settings: CodexCatalogSettingsIndex) {}
+  constructor(
+    private readonly settings: CodexCatalogSettingsIndex,
+    private readonly status: CodexCatalogStatusIndex,
+  ) {}
 
   async list(
     params: CodexSessionCatalogPageParams,
@@ -61,6 +65,7 @@ export class CodexCatalogNativePages {
       const filterCwdLocally = Boolean(cwd && this.settings.hasLiveCwd());
       const ascending = position.backwards && !position.anchorThreadId;
       const pageLimit = position.anchorThreadId ? 64 : limit;
+      const statusRevision = this.status.capture();
       const page = await withTimeout(
         options.readNative(
           {
@@ -81,6 +86,9 @@ export class CodexCatalogNativePages {
         () => new CodexCatalogLoadingError(),
       );
       options.assertCurrent();
+      for (const row of page.rows) {
+        this.status.observe(row, statusRevision);
+      }
       if (cwd && !filterCwdLocally && this.settings.hasLiveCwd()) {
         continue;
       }
@@ -126,7 +134,13 @@ export class CodexCatalogNativePages {
         {
           sessions: rows
             .flatMap((row) => row.page.sessions)
-            .map((session) => Object.assign({}, session, this.settings.get(session.threadId)))
+            .map(({ status: _storedStatus, activeFlags: _storedFlags, ...session }) => {
+              const live = this.status.get(session.threadId);
+              return Object.assign(session, this.settings.get(session.threadId), {
+                status: live?.status ?? "notLoaded",
+                ...(live?.activeFlags ? { activeFlags: [...live.activeFlags] } : {}),
+              });
+            })
             .filter((session) => !cwd || session.cwd === cwd),
         },
         params.searchTerm,

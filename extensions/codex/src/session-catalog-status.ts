@@ -1,5 +1,6 @@
 import { CodexCatalogField, type CodexCatalogStatus } from "./session-catalog-index-field.js";
-import type { CodexCatalogSource } from "./session-catalog-source.js";
+import type { CodexCatalogIndexRow } from "./session-catalog-index-row.js";
+import { getCodexCatalogSource, type CodexCatalogSource } from "./session-catalog-source.js";
 
 type SourcedStatus = { status: CodexCatalogStatus; sources: Set<CodexCatalogSource> };
 const MAX_STATUS_SOURCE_WITNESSES = 64;
@@ -19,15 +20,21 @@ export class CodexCatalogStatusIndex {
     }
   }
 
-  observe(
-    threadId: string,
-    status: CodexCatalogStatus,
-    revision: number,
-    source: CodexCatalogSource | undefined,
-  ): void {
-    const next = source ? this.next(threadId, status, source) : undefined;
-    if (next) {
-      this.values.observe(threadId, next, revision);
+  observe(row: CodexCatalogIndexRow, revision: number): void {
+    const session = row.page.sessions[0];
+    const source = getCodexCatalogSource(row);
+    if (session && source) {
+      const next = this.next(
+        row.threadId,
+        {
+          status: session.status,
+          ...(session.activeFlags ? { activeFlags: session.activeFlags } : {}),
+        },
+        source,
+      );
+      if (next) {
+        this.values.observe(row.threadId, next, revision);
+      }
     }
   }
 
