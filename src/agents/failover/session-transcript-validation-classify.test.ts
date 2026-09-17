@@ -3,7 +3,6 @@ import { formatUserFacingAssistantErrorText } from "../embedded-agent-helpers/er
 import { resolveAuthProfileFailureReason } from "../embedded-agent-runner/run/auth-profile-failure-policy.js";
 import { SessionManager } from "../sessions/session-manager.js";
 import { makeAssistantMessageFixture } from "../test-helpers/assistant-message-fixtures.js";
-import { GATEWAY_SESSION_TRANSCRIPT_VALIDATION_USER_TEXT } from "./assistant-request-failure-copy.js";
 import { classifyFailoverReason } from "./classify.js";
 
 function thrownTranscriptValidationMessage(): string {
@@ -37,7 +36,9 @@ describe("Gateway transcript validation failure classification", () => {
           errorMessage: message,
         }),
       ),
-    ).toBe(GATEWAY_SESSION_TRANSCRIPT_VALIDATION_USER_TEXT);
+    ).toBe(
+      "LLM request failed: the Gateway rejected a session transcript entry. Compact or reset this session and try again.",
+    );
   });
 
   it("still cools credentials and names provider session expiry for genuine invalid-session copy", () => {
