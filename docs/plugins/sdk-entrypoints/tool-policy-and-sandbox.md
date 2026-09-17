@@ -43,6 +43,15 @@ matching. A harness that exposes a tool under another name can supply
 can match the original name or an alias; the result retains the original tool
 objects and their execution wrappers.
 
+`buildEmbeddedAttemptToolRunContext({ forceHeartbeatTool: true })` treats
+`heartbeat_respond` as a host-required result tool while preparing a runtime
+allowlist. It adds that tool to every defined restriction, including an explicit
+empty list. When `forceHeartbeatTool` is unset, allowlist behavior is unchanged;
+an undefined list remains unrestricted, and passing an empty list directly to
+`applyEmbeddedAttemptToolsAllow` still removes every tool. Heartbeat retention
+does not bypass construction requirements or independent conversation,
+sandbox, inherited, or runtime policy denials.
+
 ## Sandbox bind parsing
 
 `openclaw/plugin-sdk/agent-harness-runtime` exports

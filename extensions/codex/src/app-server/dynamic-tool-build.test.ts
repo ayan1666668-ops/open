@@ -54,7 +54,7 @@ import {
   flattenCodexDynamicToolFunctions,
 } from "./protocol.js";
 import { resolveCodexDynamicToolDirectNames } from "./run-attempt-tools.js";
-import { createCodexTestModel } from "./test-support.js";
+import { createCodexTestModel, directTool } from "./test-support.js";
 
 const hoisted = vi.hoisted(() => ({
   normalizeAgentRuntimeTools: vi.fn(),
@@ -2603,7 +2603,7 @@ describe("Codex app-server dynamic tool build", () => {
     runtimePlan.tools.normalize = planNormalize as typeof runtimePlan.tools.normalize;
     params.runtimePlan = runtimePlan;
     const messageTool = createRuntimeDynamicTool("message");
-    const heartbeatTool = createRuntimeDynamicTool("heartbeat_respond");
+    const heartbeatTool = directTool(createRuntimeDynamicTool("heartbeat_respond"));
     const invalidTool = {
       ...createRuntimeDynamicTool("invalid_registered_tool"),
       parameters: { type: "array", items: { type: "string" } },

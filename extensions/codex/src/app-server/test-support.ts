@@ -4,6 +4,7 @@
  */
 import { EventEmitter } from "node:events";
 import { PassThrough, Writable } from "node:stream";
+import type { AnyAgentTool } from "openclaw/plugin-sdk/agent-harness";
 import type { EmbeddedRunAttemptParamsV2 as EmbeddedRunAttemptParams } from "openclaw/plugin-sdk/agent-harness-runtime";
 import type { Model } from "openclaw/plugin-sdk/llm";
 import { expect, vi } from "vitest";
@@ -110,6 +111,29 @@ export function createCodexTestModel(provider = "openai", input = ["text"]): Mod
     contextWindow: 128_000,
     maxTokens: 8_000,
   } as Model;
+}
+
+/** Builds a minimal executable dynamic tool for Codex app-server tests. */
+export function createRuntimeDynamicTool(name: string): AnyAgentTool {
+  return {
+    name,
+    label: name,
+    description: `${name} test tool`,
+    parameters: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
+    execute: vi.fn(async () => ({
+      content: [{ type: "text" as const, text: `${name} done` }],
+      details: {},
+    })),
+  };
+}
+
+/** Marks a runtime tool as part of Codex's always-direct registered catalog. */
+export function directTool<T extends object>(tool: T): T & { catalogMode: "direct-only" } {
+  return { ...tool, catalogMode: "direct-only" };
 }
 
 export async function waitForHarnessRequest(
