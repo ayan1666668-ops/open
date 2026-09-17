@@ -855,7 +855,6 @@ src/plugins/package-manifest.ts
 src/plugins/path-safety.ts
 src/plugins/plugin-cache-artifacts.ts
 src/plugins/plugin-cache-files.ts
-src/plugins/runtime-degraded-state.ts
 src/plugins/plugin-cache-sdk.ts
 src/plugins/plugin-cache.ts
 src/plugins/plugin-config-trust.ts
@@ -916,6 +915,7 @@ src/plugins/root-artifact-path.ts
 src/plugins/roots.ts
 src/plugins/runtime-close-error.ts
 src/plugins/runtime-context.ts
+src/plugins/runtime-degraded-state.ts
 src/plugins/runtime-state-key.ts
 src/plugins/runtime-state.ts
 src/plugins/runtime-workspace-state.ts
