@@ -24,10 +24,20 @@ import {
   createActiveWorkSnapshot,
   createSignaledStart,
   expectRestartCloseCall,
+  originalPlatformDescriptor,
+  setPlatform,
   shutdownBudgetCases,
 } from "./run-loop.test-support.js";
 
 const closeLogTempDirs = useAutoCleanupTempDirTracker(afterEach);
+
+vi.mock("node:fs/promises", async (original) => {
+  const actual = await original<typeof import("node:fs/promises")>();
+  // Foreground fixtures must not inherit the CI runner's systemd service or filesystem timing.
+  const readFile = (...args: Parameters<typeof actual.readFile>) =>
+    args[0] === "/proc/self/cgroup" ? Promise.resolve("0::/\n") : actual.readFile(...args);
+  return { ...actual, readFile, default: { ...actual, readFile } };
+});
 
 const systemctl = vi.fn(async () => ({
   code: 0,
@@ -314,17 +324,6 @@ vi.mock("./shutdown-hard-exit.js", () => ({
 
 const LOOP_SIGNALS = ["SIGTERM", "SIGINT", "SIGUSR1"] as const;
 type LoopSignal = (typeof LOOP_SIGNALS)[number];
-const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
-
-function setPlatform(platform: string) {
-  if (!originalPlatformDescriptor) {
-    return;
-  }
-  Object.defineProperty(process, "platform", {
-    ...originalPlatformDescriptor,
-    value: platform,
-  });
-}
 
 function removeNewSignalListeners(signal: LoopSignal, existing: Set<(...args: unknown[]) => void>) {
   for (const listener of process.listeners(signal)) {
@@ -490,6 +489,7 @@ let supervisorEnvSnapshot: ReturnType<typeof captureEnv> | undefined;
 
 beforeEach(async () => {
   vi.useRealTimers();
+  setPlatform("linux");
   systemctl.mockReset().mockResolvedValue({
     code: 0,
     stdout: "LoadState=loaded\nTimeoutStopUSec=5min 30s",

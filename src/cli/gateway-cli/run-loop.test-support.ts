@@ -92,3 +92,15 @@ export const shutdownBudgetCases: {
   { signal: "SIGUSR1", honorsAbort: false, supervisor: "systemd", waitMs: 0 },
   { signal: "SIGUSR1", honorsAbort: false, supervisor: "systemd", waitMs: 600_000 },
 ];
+
+export const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
+
+export function setPlatform(platform: string) {
+  if (!originalPlatformDescriptor) {
+    return;
+  }
+  Object.defineProperty(process, "platform", {
+    ...originalPlatformDescriptor,
+    value: platform,
+  });
+}
