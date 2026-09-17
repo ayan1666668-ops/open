@@ -11,7 +11,6 @@ const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 const BLOCKED_HOMEBREW_CONTROL_KEYS = [
   "HOMEBREW_API_DOMAIN",
   "HOMEBREW_ARTIFACT_DOMAIN",
-  "HOMEBREW_AUTO_UPDATE_SECS",
   "HOMEBREW_BOTTLE_DOMAIN",
   "HOMEBREW_BREW_FILE",
   "HOMEBREW_BREW_GIT_REMOTE",
@@ -19,12 +18,15 @@ const BLOCKED_HOMEBREW_CONTROL_KEYS = [
   "HOMEBREW_CURL_PATH",
   "HOMEBREW_CURLRC",
   "HOMEBREW_GIT_PATH",
-  "HOMEBREW_NO_INSTALL_FROM_API",
   "HOMEBREW_PREFIX",
   "HOMEBREW_SSH_CONFIG_PATH",
   "HOMEBREW_XDG_CONFIG_HOME",
 ] as const;
-const ALLOWED_HOMEBREW_PREFERENCE_KEY = "HOMEBREW_NO_ANALYTICS";
+const ALLOWED_HOMEBREW_SETTINGS = {
+  HOMEBREW_AUTO_UPDATE_SECS: "86400",
+  HOMEBREW_NO_ANALYTICS: "1",
+  HOMEBREW_NO_INSTALL_FROM_API: "1",
+} as const;
 
 describe("workspace .env Homebrew controls", () => {
   it("blocks dangerous controls while preserving benign Homebrew preferences", async () => {
@@ -42,7 +44,7 @@ describe("workspace .env Homebrew controls", () => {
         path.join(workspaceDir, ".env"),
         [
           ...BLOCKED_HOMEBREW_CONTROL_KEYS.map((key) => `${key}=workspace-${key}`),
-          `${ALLOWED_HOMEBREW_PREFERENCE_KEY}=1`,
+          ...Object.entries(ALLOWED_HOMEBREW_SETTINGS).map(([key, value]) => `${key}=${value}`),
           "WORKSPACE_BUILD_LABEL=allowed",
         ].join("\n"),
         "utf8",
@@ -55,7 +57,7 @@ describe("workspace .env Homebrew controls", () => {
 
       for (const key of [
         ...BLOCKED_HOMEBREW_CONTROL_KEYS,
-        ALLOWED_HOMEBREW_PREFERENCE_KEY,
+        ...Object.keys(ALLOWED_HOMEBREW_SETTINGS),
         "WORKSPACE_BUILD_LABEL",
       ]) {
         deleteTestEnvValue(key);
@@ -74,7 +76,9 @@ describe("workspace .env Homebrew controls", () => {
           expect(childEnv[key], `${key} should not reach brew from workspace .env`).toBeUndefined();
         }
       }
-      expect(childEnv[ALLOWED_HOMEBREW_PREFERENCE_KEY]).toBe("1");
+      for (const [key, value] of Object.entries(ALLOWED_HOMEBREW_SETTINGS)) {
+        expect(childEnv[key]).toBe(value);
+      }
       expect(childEnv.WORKSPACE_BUILD_LABEL).toBe("allowed");
     } finally {
       vi.restoreAllMocks();
