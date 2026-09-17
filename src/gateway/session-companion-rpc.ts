@@ -13,6 +13,8 @@ import {
 import type { GatewayRequestHandlers } from "./server-methods/types.js";
 import { SessionCompanionAskError } from "./session-companion-ask.js";
 import { resolveRequestedSessionAgentId } from "./session-request-agent.js";
+import { hiddenSessionNotFound } from "./session-sharing-policy.js";
+import { prepareSessionSharing, resolveSessionSharingTarget } from "./session-sharing.js";
 import { resolveSessionStoreKey } from "./session-store-key.js";
 
 function resolveCompanionTarget(
@@ -33,6 +35,28 @@ function resolveCompanionTarget(
       storeAgentId: requested.agentId,
     }),
   };
+}
+
+function companionTargetIsVisible(
+  target: { sessionKey: string; agentId: string },
+  client: Parameters<GatewayRequestHandlers[string]>[0]["client"],
+  context: Parameters<GatewayRequestHandlers[string]>[0]["context"],
+): boolean {
+  const cfg = context.getRuntimeConfig();
+  const sharingTarget = resolveSessionSharingTarget({
+    cfg,
+    sessionKey: target.sessionKey,
+    agentId: target.agentId,
+  });
+  if (!sharingTarget) {
+    return cfg.gateway?.roles === undefined;
+  }
+  return (
+    prepareSessionSharing({ client, cfg }).entryFilter?.(
+      sharingTarget.storeKey,
+      sharingTarget.entry,
+    ) !== false
+  );
 }
 
 export const sessionCompanionHandlers: GatewayRequestHandlers = {
@@ -72,6 +96,10 @@ export const sessionCompanionHandlers: GatewayRequestHandlers = {
     const target = resolveCompanionTarget({ sessionKey, agentId }, context);
     if (!target.ok) {
       respond(false, undefined, target.error);
+      return;
+    }
+    if (!companionTargetIsVisible(target, client, context)) {
+      respond(false, undefined, hiddenSessionNotFound(target.sessionKey));
       return;
     }
     try {
@@ -115,7 +143,7 @@ export const sessionCompanionHandlers: GatewayRequestHandlers = {
       );
     }
   },
-  "sessions.companion.state": ({ params, respond, context }) => {
+  "sessions.companion.state": ({ params, respond, client, context }) => {
     if (!validateSessionsCompanionStateParams(params)) {
       respond(
         false,
@@ -135,6 +163,10 @@ export const sessionCompanionHandlers: GatewayRequestHandlers = {
     const target = resolveCompanionTarget({ sessionKey, agentId }, context);
     if (!target.ok) {
       respond(false, undefined, target.error);
+      return;
+    }
+    if (!companionTargetIsVisible(target, client, context)) {
+      respond(false, undefined, hiddenSessionNotFound(target.sessionKey));
       return;
     }
     respond(
