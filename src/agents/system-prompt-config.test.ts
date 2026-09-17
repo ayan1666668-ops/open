@@ -37,8 +37,8 @@ function preparedOwner(
       baseUrl: "https://models.example.test/v1",
     }),
   }));
-  const entries = configuredRuntimeModels.map(({ provider, modelId, model }) => ({
-    provider,
+  const entries = configuredRuntimeModels.map(({ provider: modelProvider, modelId, model }) => ({
+    provider: modelProvider,
     id: modelId,
     name: model.name,
   }));

@@ -22,7 +22,6 @@ import {
 } from "../plugin-model-catalog.js";
 import type { PreparedModelRuntimeSnapshot } from "../prepared-model-runtime.owner.js";
 import { guardModelFixtureAuth } from "./model.fixture.test-support.js";
-import { expectUnknownModelErrorResult } from "./model.forward-compat.test-support.js";
 import { createProviderRuntimeTestMock } from "./model.provider-runtime.test-support.js";
 
 let state: OpenClawTestState;
@@ -293,7 +292,10 @@ import {
   applyConfiguredProviderOverrides,
   findInlineModelMatch,
 } from "./model.configured-overrides.js";
-import { buildForwardCompatTemplate } from "./model.forward-compat.test-support.js";
+import {
+  buildForwardCompatTemplate,
+  expectUnknownModelErrorResult,
+} from "./model.forward-compat.test-support.js";
 import { buildInlineProviderModels } from "./model.inline-provider.js";
 import {
   createEmptyAgentDiscoveryStores,

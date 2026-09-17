@@ -14,6 +14,7 @@ import {
 import type { ModelCatalogEntry } from "./model-catalog.types.js";
 import { createModelVisibilityPolicy } from "./model-visibility-policy.js";
 import { openAIModelCatalogRoutePolicy } from "./openai-model-routes.js";
+import { makeProviderModelFixture } from "./test-helpers/provider-model-fixture.js";
 
 describe("resolveLogicalVisibleModelCatalog", () => {
   it.each([
@@ -46,11 +47,12 @@ describe("resolveLogicalVisibleModelCatalog", () => {
       ],
     });
     const rowBaseUrl = scenario === "custom" ? "https://custom.invalid/v1" : baseUrl;
+    const api = scenario === "projected API" ? "openai-completions" : "openai-responses";
     const row: ModelCatalogEntry = {
       provider: "personal",
       id: "auto",
       name: "Auto",
-      api: scenario === "projected API" ? "openai-completions" : "openai-responses",
+      api,
       baseUrl: rowBaseUrl,
       ...(scenario === "opaque runtime" || scenario === "native donor with host route"
         ? { nativeRuntime: "native-owner" }
@@ -70,9 +72,17 @@ describe("resolveLogicalVisibleModelCatalog", () => {
             models: {
               providers: {
                 personal: {
-                  api: row.api,
+                  api,
                   baseUrl: rowBaseUrl,
-                  models: [{ id: "auto", name: "Auto" }],
+                  models: [
+                    makeProviderModelFixture({
+                      id: "auto",
+                      name: "Auto",
+                      provider: "personal",
+                      api,
+                      baseUrl: rowBaseUrl,
+                    }),
+                  ].map(({ provider: _provider, ...model }) => model),
                 },
               },
             },

@@ -3,6 +3,7 @@ import path from "node:path";
 import { expect, it } from "vitest";
 import { runQaGatewayFixture } from "../../test/helpers/qa-gateway-cleanup.js";
 import { getPublishedPreparedModelCatalogOwnerSnapshot } from "../agents/prepared-model-catalog.js";
+import { makeProviderModelFixture } from "../agents/test-helpers/provider-model-fixture.js";
 import { getRuntimeConfig } from "../config/config.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { deleteTestEnvValue, setTestEnvValue } from "../test-utils/env.js";
@@ -31,6 +32,7 @@ it.each(["native", "custom"] as const)(
         const token = randomUUID();
         const port = await getGatewayE2ePortBlock();
         setTestEnvValue("OPENCLAW_GATEWAY_TOKEN", token);
+        const baseUrl = endpoint === "native" ? "https://api.x.ai/v1" : "https://custom.invalid/v1";
         const cfg: OpenClawConfig = {
           agents: {
             defaults: {
@@ -45,12 +47,19 @@ it.each(["native", "custom"] as const)(
             providers: {
               personal: {
                 api: "openai-responses",
-                baseUrl:
-                  endpoint === "native" ? "https://api.x.ai/v1" : "https://custom.invalid/v1",
+                baseUrl,
                 apiKey: "synthetic-personal-key",
                 models: [
-                  { id: "auto", name: "Authored auto", contextWindow: 128000, maxTokens: 8192 },
-                ],
+                  makeProviderModelFixture({
+                    id: "auto",
+                    name: "Authored auto",
+                    provider: "personal",
+                    api: "openai-responses",
+                    baseUrl,
+                    contextWindow: 128000,
+                    maxTokens: 8192,
+                  }),
+                ].map(({ provider: _provider, ...model }) => model),
               },
             },
           },
@@ -97,8 +106,11 @@ it.each(["native", "custom"] as const)(
         );
         expect(adminModel?.id).toBe("auto");
         for (const result of observed) {
-          if (endpoint === "native") expect(result.model, JSON.stringify(result)).toBeUndefined();
-          else expect(result.model?.available, JSON.stringify(result)).toBe(true);
+          if (endpoint === "native") {
+            expect(result.model, JSON.stringify(result)).toBeUndefined();
+          } else {
+            expect(result.model?.available, JSON.stringify(result)).toBe(true);
+          }
         }
       },
       () => gateway && disconnectGatewayClient(gateway.client),
