@@ -1951,12 +1951,6 @@ importers:
         specifier: workspace:*
         version: link:../..
 
-  extensions/railway-sandbox:
-    devDependencies:
-      '@openclaw/plugin-sdk':
-        specifier: workspace:*
-        version: link:../../packages/plugin-sdk
-
   extensions/reef:
     dependencies:
       '@noble/ciphers':

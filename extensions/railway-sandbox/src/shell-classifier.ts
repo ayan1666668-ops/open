@@ -8,9 +8,16 @@ export type HeavyCommandClassification = {
   segments: ParsedCommandSegment[];
 };
 
+export type LocalCommandAssessment = {
+  allowed: boolean;
+  reason?: string;
+  segments: ParsedCommandSegment[];
+};
+
 const SEGMENT_OPERATORS = new Set([";", "&&", "||", "|", "&", "\n"]);
 const SHELL_WRAPPERS = new Set(["sh", "bash", "zsh", "dash", "ksh"]);
 const PACKAGE_MANAGERS = new Set(["npm", "pnpm", "yarn", "bun"]);
+const WRAPPER_BINS = new Set(["command", "nice", "nohup", "sudo", "timeout"]);
 const HEAVY_PACKAGE_MANAGER_SUBCOMMANDS = new Set([
   "add",
   "build",
@@ -25,6 +32,7 @@ const HEAVY_PACKAGE_MANAGER_SUBCOMMANDS = new Set([
   "remove",
   "run",
   "test",
+  "t",
   "update",
   "upgrade",
 ]);
@@ -48,6 +56,32 @@ const HEAVY_GO_SUBCOMMANDS = new Set(["build", "get", "install", "run", "test"])
 const HEAVY_PIP_SUBCOMMANDS = new Set(["install", "uninstall", "download", "wheel"]);
 const HEAVY_SWIFT_SUBCOMMANDS = new Set(["build", "test", "run", "package"]);
 const COREPACK_PACKAGE_MANAGERS = new Set(["npm", "pnpm", "yarn"]);
+const SAFE_GIT_SUBCOMMANDS = new Set([
+  "branch",
+  "diff",
+  "grep",
+  "log",
+  "ls-files",
+  "rev-parse",
+  "show",
+  "status",
+]);
+const SAFE_READ_BINS = new Set([
+  "cat",
+  "find",
+  "grep",
+  "head",
+  "less",
+  "ls",
+  "pwd",
+  "sed",
+  "tail",
+  "test",
+  "true",
+  "wc",
+  "which",
+]);
+const SAFE_VERSION_BINS = new Set(["node", "python", "python3", "npm", "pnpm", "yarn", "bun", "openclaw", "gh", "railway"]);
 
 function executableBase(raw: string | undefined): string {
   if (!raw) {
@@ -59,6 +93,10 @@ function executableBase(raw: string | undefined): string {
 
 function isAssignment(token: string): boolean {
   return /^[A-Za-z_][A-Za-z0-9_]*=.*/.test(token);
+}
+
+function hasDynamicShellSyntax(command: string): boolean {
+  return /[`]|\$\(|\$\{|<\(|>\(|\$\[|\$'/u.test(command);
 }
 
 function tokenize(command: string): Array<string | "\n"> | null {
@@ -172,15 +210,19 @@ function stripEnvironmentPrefix(argv: readonly string[]): string[] {
   return argv.slice(index);
 }
 
+function firstNonOption(tokens: readonly string[]): string | undefined {
+  return tokens.find((token) => !token.startsWith("-"));
+}
+
 function classifyArgv(argvInput: readonly string[], depth = 0): string | undefined {
   if (depth > 3) {
     return "nested shell wrapper";
   }
-  let argv = stripEnvironmentPrefix(argvInput);
+  const argv = stripEnvironmentPrefix(argvInput);
   if (argv.length === 0) {
     return undefined;
   }
-  let bin = executableBase(argv[0]);
+  const bin = executableBase(argv[0]);
   if (bin === "env") {
     let commandIndex = 1;
     while (commandIndex < argv.length) {
@@ -245,6 +287,112 @@ function classifyArgv(argvInput: readonly string[], depth = 0): string | undefin
     return bin;
   }
   return undefined;
+}
+
+function isSafeVersionCommand(argv: readonly string[]): boolean {
+  const bin = executableBase(argv[0]);
+  return SAFE_VERSION_BINS.has(bin) && argv.length === 2 && ["--version", "-v", "version"].includes(argv[1] ?? "");
+}
+
+function gitSubcommand(argv: readonly string[]): string | undefined {
+  for (let index = 1; index < argv.length; index += 1) {
+    const token = argv[index]!;
+    if (token === "-C") {
+      index += 1;
+      continue;
+    }
+    if (token.startsWith("-")) {
+      continue;
+    }
+    return token.toLowerCase();
+  }
+  return undefined;
+}
+
+function unsafeFindArgs(argv: readonly string[]): string | undefined {
+  return argv.find((token) => ["-delete", "-exec", "-execdir", "-ok", "-okdir"].includes(token));
+}
+
+function assessArgvSafe(argvInput: readonly string[], depth = 0): string | undefined {
+  if (depth > 3) {
+    return "nested wrapper depth is not an approved local route";
+  }
+  const argv = stripEnvironmentPrefix(argvInput);
+  if (argv.length === 0) {
+    return undefined;
+  }
+  const bin = executableBase(argv[0]);
+  if (WRAPPER_BINS.has(bin)) {
+    return `${bin} wrapper is not an approved local route`;
+  }
+  if (bin === "env") {
+    let commandIndex = 1;
+    while (commandIndex < argv.length) {
+      const token = argv[commandIndex]!;
+      if (token === "--") {
+        commandIndex += 1;
+        break;
+      }
+      if (isAssignment(token) || token === "-i" || token === "-0" || token.startsWith("-u")) {
+        commandIndex += 1;
+        continue;
+      }
+      if (token.startsWith("-")) {
+        return `env option ${token} is not an approved local route`;
+      }
+      break;
+    }
+    return assessArgvSafe(argv.slice(commandIndex), depth + 1);
+  }
+  if (SHELL_WRAPPERS.has(bin)) {
+    const cIndex = argv.findIndex(
+      (token) => token === "/c" || token === "-c" || (/^-[A-Za-z]*c[A-Za-z]*$/.test(token) && token !== "--"),
+    );
+    const script = cIndex >= 0 ? argv[cIndex + 1] : undefined;
+    if (!script) {
+      return `${bin} without an explicit safe script is not an approved local route`;
+    }
+    return assessLocalCommand(script, depth + 1).reason;
+  }
+  if (bin === "git") {
+    const subcommand = gitSubcommand(argv);
+    if (subcommand && SAFE_GIT_SUBCOMMANDS.has(subcommand)) {
+      return undefined;
+    }
+    return `git ${subcommand ?? "command"} is not an approved local read/maintenance route`;
+  }
+  if (bin === "find") {
+    const unsafe = unsafeFindArgs(argv);
+    return unsafe ? `find ${unsafe} is not an approved local read route` : undefined;
+  }
+  if (SAFE_READ_BINS.has(bin)) {
+    return undefined;
+  }
+  if (isSafeVersionCommand(argv)) {
+    return undefined;
+  }
+  const heavyReason = classifyArgv(argv);
+  if (heavyReason) {
+    return `${heavyReason} requires remote execution`;
+  }
+  return `${bin || firstNonOption(argv) || "command"} is not an approved local read/maintenance route`;
+}
+
+export function assessLocalCommand(command: string, depth = 0): LocalCommandAssessment {
+  if (hasDynamicShellSyntax(command)) {
+    return { allowed: false, reason: "dynamic shell substitution is not an approved local route", segments: [] };
+  }
+  const segments = parseCommandSegments(command);
+  if (segments.length === 0 && command.trim()) {
+    return { allowed: false, reason: "command could not be parsed safely", segments };
+  }
+  for (const segment of segments) {
+    const reason = assessArgvSafe(segment.argv, depth);
+    if (reason) {
+      return { allowed: false, reason, segments };
+    }
+  }
+  return { allowed: true, segments };
 }
 
 export function classifyHeavyCommand(command: string): HeavyCommandClassification {

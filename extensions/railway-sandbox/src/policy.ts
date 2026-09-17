@@ -1,6 +1,7 @@
+import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-runtime";
 import { resolveRailwaySandboxConfig } from "./config.js";
-import { classifyHeavyCommand } from "./shell-classifier.js";
+import { assessLocalCommand } from "./shell-classifier.js";
 
 const LOCAL_EXEC_HOSTS = new Set(["", "auto", "gateway", "sandbox"]);
 const GENERATED_PATH_SEGMENTS = new Set([
@@ -37,10 +38,6 @@ function isEnforcedAgent(agentId: string | undefined, agents: readonly string[])
   return Boolean(agentId && agents.includes(agentId));
 }
 
-function readString(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined;
-}
-
 function isLocalExecHost(value: unknown): boolean {
   return LOCAL_EXEC_HOSTS.has((typeof value === "string" ? value.trim().toLowerCase() : "") || "");
 }
@@ -58,12 +55,12 @@ function pathsForTool(event: PluginHookBeforeToolCallEvent): string[] {
     return [...event.derivedPaths];
   }
   const params = event.params;
-  const path = readString(params.path) ?? readString(params.file_path) ?? readString(params.destination);
+  const path = normalizeOptionalString(params.path) ?? normalizeOptionalString(params.file_path) ?? normalizeOptionalString(params.destination);
   return path ? [path] : [];
 }
 
 export function evaluateHeavyLocalWorkBoundary(
-  api: Pick<OpenClawPluginApi, "config">,
+  api: Pick<OpenClawPluginApi, "pluginConfig">,
   event: PluginHookBeforeToolCallEvent,
   ctx: PluginHookToolContext,
 ): PolicyDecision {
@@ -76,17 +73,20 @@ export function evaluateHeavyLocalWorkBoundary(
     if (!cfg.enforceHeavyLocalExec || !isLocalExecHost(event.params.host)) {
       return undefined;
     }
-    const command = readString(event.params.command);
+    const command = normalizeOptionalString(event.params.command);
     if (!command) {
-      return undefined;
+      return {
+        block: true,
+        blockReason: `Local exec blocked for ${ctx.agentId}: empty or non-string commands are not approved local routes. Use railway_sandbox plus railway_exec instead; no command was run locally.`,
+      };
     }
-    const classification = classifyHeavyCommand(command);
-    if (!classification.heavy) {
+    const assessment = assessLocalCommand(command);
+    if (assessment.allowed) {
       return undefined;
     }
     return {
       block: true,
-      blockReason: `Heavy local command blocked for ${ctx.agentId}: ${classification.reason}. Use railway_sandbox plus railway_exec instead; this command was not run locally.`,
+      blockReason: `Local exec blocked for ${ctx.agentId}: ${assessment.reason ?? "not an approved local route"}. Use railway_sandbox plus railway_exec instead; this command was not run locally.`,
     };
   }
 

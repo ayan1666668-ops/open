@@ -1,68 +1,83 @@
 {
   "id": "railway-sandbox",
+  "name": "Railway Sandbox",
+  "description": "Railway sandbox execution tools with Gateway local-exec boundary enforcement.",
   "categories": ["tools", "automation"],
   "activation": {
     "onStartup": false
   },
   "uiHints": {
-    "railwaySandbox.environmentId": {
+    "environmentId": {
       "label": "Railway environment ID",
       "help": "Environment that owns per-operation Railway sandboxes."
     },
-    "railwaySandbox.cliCommand": {
-      "label": "Railway CLI command",
-      "help": "Executable used for `railway api`; defaults to railway."
+    "apiToken": {
+      "label": "Railway API token",
+      "help": "Railway token resolved through a plugin SecretRef; never read from ambient process env.",
+      "sensitive": true,
+      "placeholder": "railway_..."
     },
-    "railwaySandbox.enforceAgents": {
-      "label": "Agents with heavy local exec enforcement",
-      "help": "Agent ids whose local dependency/build commands must use Railway instead."
+    "apiEndpoint": {
+      "label": "Railway GraphQL endpoint",
+      "help": "Defaults to https://backboard.railway.com/graphql/v2."
     },
-    "railwaySandbox.enforceHeavyLocalExec": {
-      "label": "Block heavy local exec",
-      "help": "When true, dependency/build/test commands for configured agents are blocked on Gateway/local sandbox hosts."
+    "enforceAgents": {
+      "label": "Agents with local exec enforcement",
+      "help": "Agent ids whose arbitrary local exec/build commands must use Railway instead."
+    },
+    "enforceHeavyLocalExec": {
+      "label": "Block arbitrary local exec",
+      "help": "When true, configured agents get only explicit safe local read/maintenance exec routes."
     }
   },
   "contracts": {
     "tools": ["railway_sandbox", "railway_exec", "railway_file"],
     "trustedToolPolicies": ["heavy-local-work-boundary"]
   },
+  "configContracts": {
+    "secretInputs": {
+      "bundledDefaultEnabled": false,
+      "paths": [
+        {
+          "path": "apiToken",
+          "expected": "string",
+          "ownerKind": "capability"
+        }
+      ]
+    }
+  },
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
     "properties": {
-      "railwaySandbox": {
+      "environmentId": { "type": "string" },
+      "apiToken": { "type": ["string", "object"] },
+      "apiEndpoint": { "type": "string" },
+      "defaultIdleTimeoutMinutes": { "type": "integer", "minimum": 1, "maximum": 10 },
+      "maxIdleTimeoutMinutes": { "type": "integer", "minimum": 1, "maximum": 10 },
+      "defaultResources": {
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "environmentId": { "type": "string" },
-          "cliCommand": { "type": "string" },
-          "defaultIdleTimeoutMinutes": { "type": "integer", "minimum": 1, "maximum": 10 },
-          "maxIdleTimeoutMinutes": { "type": "integer", "minimum": 1, "maximum": 10 },
-          "defaultResources": {
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-              "cpu": { "type": "number", "exclusiveMinimum": 0, "maximum": 4 },
-              "memoryGB": { "type": "number", "exclusiveMinimum": 0, "maximum": 8 }
-            }
-          },
-          "maxResources": {
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-              "cpu": { "type": "number", "exclusiveMinimum": 0, "maximum": 4 },
-              "memoryGB": { "type": "number", "exclusiveMinimum": 0, "maximum": 8 }
-            }
-          },
-          "enforceAgents": {
-            "type": "array",
-            "items": { "type": "string" },
-            "uniqueItems": true
-          },
-          "enforceHeavyLocalExec": { "type": "boolean" },
-          "protectGeneratedPaths": { "type": "boolean" }
+          "cpu": { "type": "number", "exclusiveMinimum": 0, "maximum": 4 },
+          "memoryGB": { "type": "number", "exclusiveMinimum": 0, "maximum": 8 }
         }
-      }
+      },
+      "maxResources": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "cpu": { "type": "number", "exclusiveMinimum": 0, "maximum": 4 },
+          "memoryGB": { "type": "number", "exclusiveMinimum": 0, "maximum": 8 }
+        }
+      },
+      "enforceAgents": {
+        "type": "array",
+        "items": { "type": "string" },
+        "uniqueItems": true
+      },
+      "enforceHeavyLocalExec": { "type": "boolean" },
+      "protectGeneratedPaths": { "type": "boolean" }
     }
   }
 }
