@@ -18,6 +18,7 @@ export function collectEagerRuntimeImportClosure(
   const { options } = ts.convertCompilerOptionsFromJson(config.compilerOptions, root);
   const runtimeHost = {
     ...ts.sys,
+    getCurrentDirectory: () => root,
     fileExists: (file: string) => !/\.d\.[cm]?ts$/.test(file) && ts.sys.fileExists(file),
   };
   const resolutionCache = ts.createModuleResolutionCache(root, (file) => file, options);
@@ -48,10 +49,8 @@ export function collectEagerRuntimeImportClosure(
         runtimeHost,
         resolutionCache,
       ).resolvedModule;
-      if (!dependency) {
-        if (specifier.startsWith(".")) {
-          throw new Error(`${file}: unresolved ${specifier}`);
-        }
+      if (!dependency && specifier.startsWith(".")) {
+        throw new Error(`${file}: unresolved ${specifier}`);
       }
       if (dependency && !dependency.isExternalLibraryImport) {
         closure.add(relative(root, dependency.resolvedFileName).split(sep).join("/"));
