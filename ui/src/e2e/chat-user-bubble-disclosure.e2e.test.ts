@@ -214,10 +214,13 @@ suite.define(() => {
             ],
             timestamp: 1,
           },
-          // Source exceeds the disclosure threshold; its rendered link fits on one line.
+          // Source exceeds the threshold, but all five rendered lines fit the full preview.
           {
             role: "user",
-            content: `[Short link](https://example.com/${"a".repeat(1_300)})`,
+            content: Array.from(
+              { length: 5 },
+              (_, index) => `[Short link ${index + 1}](https://example.com/${"a".repeat(300)})`,
+            ).join("\n"),
             timestamp: 2,
           },
         ],
@@ -332,6 +335,80 @@ suite.define(() => {
       await suite.closeBrowserContext(context);
     }
   });
+
+  it.each(["paragraphs", "escaped HTML", "native summary"])(
+    "measures visible lines when authored details with %s close and reopen",
+    async (body) => {
+      const context = await suite.newBrowserContext({ viewport: { width: 1440, height: 844 } });
+      const page = await context.newPage();
+      try {
+        await installMockGateway(page, {
+          historyMessages: [
+            {
+              role: "user",
+              content:
+                (body === "native summary"
+                  ? "<details>\n\n"
+                  : "<details><summary>Hidden reference</summary>\n\n") +
+                (body === "escaped HTML"
+                  ? `<div>${"Hidden row with reference text. ".repeat(20)}</div>\n`
+                  : "Hidden row with reference text.\n".repeat(20)) +
+                "\n</details>\n\n" +
+                "Visible project notes continue here and explain the next useful step. ".repeat(28),
+              timestamp: 1,
+            },
+          ],
+        });
+        await page.goto(`${suite.server.baseUrl}chat`);
+        const content = page.locator(".chat-message-disclosure__content");
+        const details = content.locator("details");
+        const summary = details.locator("summary");
+        await details.waitFor();
+        await page.evaluate(() => document.fonts.ready);
+        const expectFourthProseLineCut = async (paragraph: Locator) => {
+          const fraction = () =>
+            paragraph.evaluate((element) => {
+              const range = document.createRange();
+              const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+              const lines: DOMRect[] = [];
+              for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+                if (!node.textContent?.trim() || node.parentElement?.closest("summary")) {
+                  continue;
+                }
+                range.selectNodeContents(node);
+                for (const rect of range.getClientRects()) {
+                  if (rect.width > 0 && !lines.some((line) => line.top === rect.top)) {
+                    lines.push(rect);
+                  }
+                }
+              }
+              const fourthLine = lines[3]!;
+              const lineHeight = Number.parseFloat(getComputedStyle(element).lineHeight);
+              const lineTop = fourthLine.top - Math.floor((lineHeight - fourthLine.height) / 2);
+              const bottom = element
+                .closest(".chat-message-disclosure__content")!
+                .getBoundingClientRect().bottom;
+              return (bottom - lineTop) / lineHeight;
+            });
+          // The visible summary owns the first preview line; prose supplies the next four.
+          await expect.poll(fraction).toBeGreaterThanOrEqual(0.66);
+          expect(await fraction()).toBeLessThanOrEqual(0.75);
+        };
+        const outside = content.locator(".chat-text > p");
+        const toggleDetails = () =>
+          body === "native summary"
+            ? details.click({ position: { x: 30, y: 10 } })
+            : summary.click();
+        await expectFourthProseLineCut(outside);
+        await toggleDetails();
+        await expectFourthProseLineCut(details);
+        await toggleDetails();
+        await expectFourthProseLineCut(outside);
+      } finally {
+        await suite.closeBrowserContext(context);
+      }
+    },
+  );
 
   it("keeps densely spaced block art within five preview rows", async () => {
     const context = await suite.newBrowserContext({ viewport: { width: 1440, height: 844 } });

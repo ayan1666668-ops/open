@@ -107,14 +107,22 @@ function userMessageOverflowRef(expanded: boolean) {
       let clamp: string | undefined;
       let fadeSize: string | undefined;
       const text = element.querySelector<HTMLElement>(":scope > .chat-text");
-      if (!expanded && text && element.clientWidth > 0) {
+      // Test the full preview before a partial-line cut can create its own overflow.
+      element.style.removeProperty("--chat-disclosure-clamp");
+      const overflows = element.scrollHeight > element.clientHeight + 1;
+      if (!expanded && overflows && text && element.clientWidth > 0) {
         const origin = element.getBoundingClientRect().top - element.scrollTop;
         const defaultLineHeight = Number.parseFloat(getComputedStyle(text).lineHeight);
         const walker = document.createTreeWalker(text, NodeFilter.SHOW_TEXT);
         const range = document.createRange();
         const rects: MessageTextRect[] = [];
         for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-          if (!node.textContent?.trim() || !node.parentElement) {
+          if (
+            !node.textContent?.trim() ||
+            !node.parentElement?.checkVisibility() ||
+            // Escaped HTML can be direct body text; the closed details itself stays visible.
+            node.parentElement.matches("details:not([open])")
+          ) {
             continue;
           }
           const lineHeight =
@@ -131,6 +139,27 @@ function userMessageOverflowRef(expanded: boolean) {
               lineHeight,
             });
           }
+        }
+        // Native fallback summaries live in a closed shadow tree, outside the text walker.
+        for (const details of text.querySelectorAll("details:not(:has(> summary))")) {
+          if (!details.checkVisibility()) {
+            continue;
+          }
+          const style = getComputedStyle(details);
+          const lineHeight = Number.parseFloat(style.lineHeight) || defaultLineHeight;
+          const bounds = details.getBoundingClientRect();
+          const top =
+            bounds.top -
+            origin +
+            Number.parseFloat(style.borderTopWidth) +
+            Number.parseFloat(style.paddingTop);
+          rects.push({
+            top,
+            glyphTop: top,
+            bottom: top + lineHeight,
+            width: bounds.width,
+            lineHeight,
+          });
         }
         const lastLine = findMessageDisclosureLine(rects, USER_MESSAGE_PREVIEW_LINES);
         if (lastLine) {
