@@ -45,6 +45,7 @@ import {
   isProviderCompletedErrorFinishReasonMessage,
   isRateLimitErrorMessage,
   isServerErrorMessage,
+  isSessionTranscriptValidationErrorMessage,
   isTimeoutErrorMessage,
   matchesFormatErrorPattern,
 } from "./message-patterns.js";
@@ -99,7 +100,7 @@ function classifyFailoverClassificationFromMessage(
   if (isClaudeCliAuthError(raw, provider)) {
     return toReasonClassification("auth");
   }
-  if (isGatewaySessionTranscriptValidationErrorMessage(raw)) {
+  if (isSessionTranscriptValidationErrorMessage(raw)) {
     return toReasonClassification("format");
   }
   if (isCliSessionExpiredErrorMessage(raw)) {
@@ -396,12 +397,8 @@ function isStructuredServerErrorMessage(raw: string): boolean {
   );
 }
 
-function isGatewaySessionTranscriptValidationErrorMessage(raw: string): boolean {
-  return /\binvalid session transcript entry\b/.test(normalizeLowercaseStringOrEmpty(raw));
-}
-
 function isCliSessionExpiredErrorMessage(raw: string): boolean {
-  return /\b(?:session (?:not found|does not exist|expired|invalid)|conversation (?:not found|does not exist|expired|invalid)|no conversation found|no such session|invalid session(?! transcript)|(?:session|conversation) id not found)\b/.test(
+  return /\b(?:session (?:not found|does not exist|expired|invalid)|conversation (?:not found|does not exist|expired|invalid)|no conversation found|no such session|invalid session|(?:session|conversation) id not found)\b/.test(
     normalizeLowercaseStringOrEmpty(raw),
   );
 }

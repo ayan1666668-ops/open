@@ -1,5 +1,6 @@
 import { CompactionReplayRefreshRequiredError } from "@openclaw/ai/transports";
 import { describe, expect, it, vi } from "vitest";
+import { buildKnownAgentRunFailureReplyPayload } from "../../../auto-reply/reply/agent-runner-failure-reply.js";
 import { buildAgentRunTerminalOutcomeFromLifecycleEvent } from "../../agent-run-terminal-outcome.js";
 import { FailoverError } from "../../failover-error.js";
 import { resolveAgentRunErrorLifecycleFields } from "../../run-termination.js";
@@ -332,19 +333,14 @@ describe("handleEmbeddedPromptFailure", () => {
   });
 
   it("keeps a live SessionManager transcript-validation error off shared credential health", async () => {
-    let promptError: Error;
+    let promptError: unknown;
     try {
       SessionManager.inMemory("/tmp").appendModelChange("", "");
-      throw new Error("expected SessionManager.appendModelChange to reject the invalid entry");
     } catch (error) {
-      if (
-        !(error instanceof Error) ||
-        error.message === "expected SessionManager.appendModelChange to reject the invalid entry"
-      ) {
-        throw error;
-      }
       promptError = error;
     }
+    expect(promptError).toBeInstanceOf(Error);
+    expect(promptError).toHaveProperty("message", "Invalid session transcript entry: model_change");
 
     const params = makeParams({
       promptError,
@@ -365,7 +361,6 @@ describe("handleEmbeddedPromptFailure", () => {
 
     const error = await handleEmbeddedPromptFailure(params).catch((failure: unknown) => failure);
 
-    expect(promptError.message).toMatch(/^Invalid session transcript entry:/);
     expect(error).toBe(promptError);
     expect(params.failover.maybeMarkAuthProfileFailure).not.toHaveBeenCalled();
     expect(params.failover.advanceAuthProfile).not.toHaveBeenCalled();
@@ -378,5 +373,15 @@ describe("handleEmbeddedPromptFailure", () => {
         stage: "prompt",
       }),
     ]);
+    expect(
+      buildKnownAgentRunFailureReplyPayload({
+        err: error,
+        sessionCtx: { ChatType: "direct" },
+        resolvedVerboseLevel: "off",
+      }),
+    ).toMatchObject({
+      text: "LLM request failed: the Gateway rejected a session transcript entry. Compact or reset this session and try again.",
+      isError: true,
+    });
   });
 });

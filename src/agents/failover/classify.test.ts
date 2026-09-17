@@ -94,9 +94,9 @@ describe("OAuth session expiry", () => {
 
 describe("Gateway transcript validation vs provider session expiry", () => {
   it("keeps Gateway transcript validation local instead of session_expired", () => {
-    expect(classifyFailoverReason("Invalid session transcript entry: hookMessage")).toBe("format");
+    expect(classifyFailoverReason("Invalid session transcript entry: model_change")).toBe("format");
     expect(
-      classifyFailoverReason("Invalid session transcript entry: hookMessage", {
+      classifyFailoverReason("Invalid session transcript entry: model_change", {
         provider: "openrouter",
       }),
     ).toBe("format");
