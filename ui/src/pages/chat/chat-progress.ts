@@ -232,11 +232,21 @@ export function resolveWorkingProgress(
       )
       // Send performance fields use performance.now(); the elapsed timer renders against Date.now().
       .map((item) => item.createdAt),
+    // Retained segments and tool receipts may only seed the timer when this run
+    // owns them. Without a run identity they cannot be correlated with the work
+    // being timed, so they are a base only while this run has no start of its
+    // own; once that start is known, a fact recorded earlier than it describes
+    // prior work. A fact that genuinely belongs to this run cannot precede its
+    // own start, so this drops only earlier runs.
     ...streamSegments
-      .filter((segment) => !explicitRunId || segment.runId === explicitRunId)
+      .filter((segment) =>
+        explicitRunId ? segment.runId === explicitRunId : streamStartedAt === null,
+      )
       .map((segment) => segment.ts),
     ...toolProgress
-      .filter((message) => !explicitRunId || message?.runId === explicitRunId)
+      .filter((message) =>
+        explicitRunId ? message?.runId === explicitRunId : streamStartedAt === null,
+      )
       .map((message) => message?.["__openclawToolStreamReceivedAt"]),
   ].filter((value): value is number => typeof value === "number" && Number.isFinite(value));
   const startedAt = candidates.length > 0 ? Math.min(...candidates) : Date.now();

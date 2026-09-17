@@ -39,6 +39,23 @@ describe("resolveWorkingProgress", () => {
     },
   );
 
+  it("does not backdate an unidentified run from retained prior-run activity", () => {
+    // An externally started run has no run identity in the pane, so retained
+    // segments and tool receipts from an earlier run cannot be correlated with
+    // it. Taking their minimum would report the older run's start.
+    const progress = resolveWorkingProgress(
+      SESSION,
+      null,
+      2_000,
+      [],
+      [{ ts: 1_100 }],
+      [{ role: "tool", __openclawToolStreamReceivedAt: 900 }],
+    );
+
+    expect(progress.runId).toBeNull();
+    expect(progress.startedAt).toBe(2_000);
+  });
+
   it("uses only the matching reconnect send when restoring an active turn", () => {
     const queue = ["other-run", "active-run"].map((sendRunId, index) => ({
       id: sendRunId,
