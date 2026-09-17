@@ -1,6 +1,7 @@
 import http from "node:http";
 import { MatrixClient as MatrixJsClient, MatrixEvent } from "matrix-js-sdk/lib/matrix.js";
 import type { ChannelOutboundContext } from "openclaw/plugin-sdk/channel-contract";
+import { toErrorObject } from "openclaw/plugin-sdk/error-runtime";
 import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import { createPluginRuntimeMock } from "openclaw/plugin-sdk/plugin-test-runtime";
 import { describe, expect, it, vi } from "vitest";
@@ -62,7 +63,7 @@ async function waitForBoundary<T>(
   await Promise.race([
     boundary,
     result.then(({ error }) => {
-      throw error ?? new Error(`send settled before ${label}`);
+      throw toErrorObject(error, `send settled before ${label}`);
     }),
   ]);
 }
@@ -142,7 +143,9 @@ async function withMatrixFixture(
   });
   let client: MatrixClient | undefined;
   try {
-    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", resolve);
+    });
     const address = server.address();
     if (!address || typeof address === "string") {
       throw new Error("missing loopback address");

@@ -1,4 +1,5 @@
 import http from "node:http";
+import { toErrorObject } from "openclaw/plugin-sdk/error-runtime";
 import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import { expect, it, vi } from "vitest";
 import { MatrixClient } from "../sdk.js";
@@ -41,7 +42,7 @@ async function waitForBoundary(
   await Promise.race([
     boundary,
     result.then(({ error }) => {
-      throw error ?? new Error(`send settled before ${label}`);
+      throw toErrorObject(error, `send settled before ${label}`);
     }),
   ]);
 }
@@ -83,7 +84,9 @@ it("keeps a shared transaction identity lookup alive when its first sender cance
   let first: Promise<Outcome> | undefined;
   let second: Promise<Outcome> | undefined;
   try {
-    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", resolve);
+    });
     const address = server.address();
     if (!address || typeof address === "string") {
       throw new Error("missing loopback address");
