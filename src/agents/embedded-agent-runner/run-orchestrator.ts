@@ -259,6 +259,7 @@ async function runEmbeddedAgentInternal(
       let assistantErrorTranscript: ReturnType<typeof createAssistantErrorTranscript> | undefined;
       const ownsAssistantErrorTranscript = params.assistantErrorTranscript === undefined;
       const onAgentEvent = params.onAgentEvent;
+      const onAttemptStart = params.onAttemptStart;
       const runGeneration = async (): Promise<EmbeddedAgentRunResult> => {
         throwIfAborted();
         // Subscription-scoped claude-cli auth executes via the CLI backend;
@@ -548,6 +549,10 @@ async function runEmbeddedAgentInternal(
                   ...params,
                   assistantErrorTranscript,
                   deferTerminalLifecycle: true,
+                  onAttemptStart: () => {
+                    runTerminal?.beginAttempt();
+                    onAttemptStart?.();
+                  },
                   onAgentEvent: runTerminal
                     ? (event) => {
                         runTerminal.note(event);
@@ -678,11 +683,15 @@ async function runEmbeddedAgentInternal(
         }
         refresh.mergeTerminalReceipt(result);
         const error = result.meta.error?.message ?? terminal?.getDeferredError();
-        terminal?.emit(
-          error ? "error" : "end",
-          error ? new Error(error) : result,
-          resolveAgentLifecycleTerminalMetadata(result.meta),
-        );
+        terminal?.emit(error ? "error" : "end", error ? new Error(error) : result, {
+          ...resolveAgentLifecycleTerminalMetadata(result.meta),
+          ...(result.meta.agentMeta?.terminalReceipt
+            ? {
+                assistantTranscriptIdempotencyKey:
+                  result.meta.agentMeta.terminalReceipt.assistantTranscriptIdempotencyKey,
+              }
+            : {}),
+        });
         return result;
       } catch (error) {
         terminal?.emit("error", error);

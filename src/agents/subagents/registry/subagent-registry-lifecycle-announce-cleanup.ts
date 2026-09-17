@@ -484,10 +484,6 @@ export const startSubagentAnnounceCleanupFlow = (
             // a successor that reused this child session after cleanup yielded.
             suppressChildSessionEffects();
           } else {
-            // This durable boundary prevents a late yield from reviving a run
-            // after deletion may already have reached the gateway.
-            entry.deleteCleanupDispatchedAt ??= Date.now();
-            params.persist(runId);
             const sessionCleanup = await deleteSubagentSessionForCleanup({
               callGateway: params.callGateway,
               gatewayBinding: { resolveGatewayContext: getGatewayContextResolver(entry) },
@@ -496,6 +492,12 @@ export const startSubagentAnnounceCleanupFlow = (
               spawnMode: entry.spawnMode,
               expectedSessionId: cleanupSessionIdentity.sessionId,
               expectedLifecycleRevision: cleanupSessionIdentity.lifecycleRevision,
+              // Fence late yields only after continuation guards settle, at the
+              // exact handoff to sessions.delete.
+              onBeforeDispatch: () => {
+                entry.deleteCleanupDispatchedAt ??= Date.now();
+                params.persist(runId);
+              },
               onError: (error) =>
                 params.warn("sessions.delete failed during subagent cleanup", {
                   error: buildSafeLifecycleErrorMeta(error),

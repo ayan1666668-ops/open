@@ -65,7 +65,8 @@ import {
 } from "./subagent-announce-origin.js";
 import {
   applySubagentWaitOutcome,
-  buildChildCompletionFindings,
+  readChildCompletionFindings,
+  readSubagentRunAnnounceResult,
   buildCompactAnnounceStatsLine,
   dedupeLatestChildCompletionRows,
   filterCurrentDirectChildCompletionRows,
@@ -176,7 +177,14 @@ async function runSubagentAnnounceFlowBound(
   const childSessionEffectsAllowed = () =>
     params.suppressChildSessionEffects !== true &&
     params.isChildSessionEffectsAllowed?.() !== false;
-  const completionDeliveryAllowed = () => params.isCompletionDeliveryAllowed?.() !== false;
+  // Upstream result-currency gating: a result that changed mid-announce must
+  // not be delivered. Both closures are replaced by prepared reads below.
+  let isOwnResultCurrent = () => true;
+  let isChildResultsCurrent = () => true;
+  const completionDeliveryAllowed = () =>
+    params.isCompletionDeliveryAllowed?.() !== false &&
+    isOwnResultCurrent() &&
+    isChildResultsCurrent();
   let childSessionId: string | undefined;
   let childSessionLifecycleRevision: string | undefined;
   try {
@@ -254,7 +262,7 @@ async function runSubagentAnnounceFlowBound(
     );
 
     let childCompletionFindings: string | undefined;
-    let hasPrivateChildCompletion = false;
+    let childCompletionRows: Parameters<typeof readChildCompletionFindings>[0] | undefined;
     let subagentRegistryRuntime:
       | Awaited<ReturnType<typeof subagentAnnounceDeps.loadSubagentRegistryRuntime>>
       | undefined;
@@ -305,7 +313,7 @@ async function runSubagentAnnounceFlowBound(
         return "retryable";
       }
 
-      if (childSessionEffectsAllowed()) {
+      if (childSessionEffectsAllowed() && params.wakeOnDescendantSettle === true) {
         const directChildren = listSubagentRunsForRequester(params.childSessionKey, {
           requesterRunId: params.childRunId,
         });
@@ -316,14 +324,17 @@ async function runSubagentAnnounceFlowBound(
               getLatestSubagentRunByChildSessionKey,
             }),
           );
-          hasPrivateChildCompletion = completionRows.some(
-            (entry) => entry.completionTarget === "parent",
-          );
-          childCompletionFindings = buildChildCompletionFindings(completionRows);
+          childCompletionRows = completionRows;
         }
       }
     } catch {
       // Best-effort only.
+    }
+
+    if (childCompletionRows) {
+      const prepared = await readChildCompletionFindings(childCompletionRows);
+      childCompletionFindings = prepared.text;
+      isChildResultsCurrent = prepared.isCurrent;
     }
 
     const announceId = buildAnnounceIdFromChildRun({
@@ -379,95 +390,100 @@ async function runSubagentAnnounceFlowBound(
       ? (normalizeSubagentAnnounceReply(fallbackReply ?? "") ?? undefined)
       : undefined;
 
-    if (!childCompletionFindings || hasPrivateChildCompletion) {
-      if (params.terminalReply?.disposition === "silent") {
-        if (!hasVisibleFallback && (isAnnounceSkip(fallbackReply) || !expectsCompletionMessage)) {
-          return "delivered";
-        }
-        reply = cleanedFallbackReply;
+    const childRun = getLatestSubagentRunByChildSessionKey(params.childSessionKey);
+    if (childSessionEffectsAllowed() && childRun?.runId === params.childRunId) {
+      const prepared = await readSubagentRunAnnounceResult(childRun);
+      reply = prepared.text;
+      isOwnResultCurrent = prepared.isCurrent;
+    }
+
+    if (params.terminalReply?.disposition === "silent") {
+      if (!hasVisibleFallback && (isAnnounceSkip(fallbackReply) || !expectsCompletionMessage)) {
+        return "delivered";
       }
-      if (params.terminalReply?.disposition === "empty" && outcome.status === "timeout") {
-        const timeoutProgress = await readSubagentTimeoutProgress(
-          params.childSessionKey,
-          params.timeoutMs,
+      reply = cleanedFallbackReply;
+    }
+    if (params.terminalReply?.disposition === "empty" && outcome.status === "timeout") {
+      const timeoutProgress = await readSubagentTimeoutProgress(
+        params.childSessionKey,
+        params.timeoutMs,
+        outcome,
+      );
+      // Empty remains the authoritative terminal fact. Transcript text is a
+      // timeout-only progress hint and must never reclassify silence as output.
+      if (timeoutProgress) {
+        reply = normalizeSubagentAnnounceReply(timeoutProgress) ?? undefined;
+      }
+    }
+    if (!params.terminalReply) {
+      if (childSessionEffectsAllowed() && !reply && allowFailedOutputCapture) {
+        reply = await readSubagentOutput(params.childSessionKey, outcome);
+      }
+
+      if (childSessionEffectsAllowed() && !reply?.trim() && allowFailedOutputCapture) {
+        reply = await readLatestSubagentOutputWithRetry({
+          sessionKey: params.childSessionKey,
+          maxWaitMs: params.timeoutMs,
           outcome,
-        );
-        // Empty remains the authoritative terminal fact. Transcript text is a
-        // timeout-only progress hint and must never reclassify silence as output.
-        if (timeoutProgress) {
-          reply = normalizeSubagentAnnounceReply(timeoutProgress) ?? undefined;
+        });
+      }
+
+      if (!reply?.trim() && hasVisibleFallback) {
+        reply = fallbackReply;
+      }
+
+      // A worker can finish just after the first wait request timed out.
+      // If we already have real completion content, do one cached recheck so
+      // the final completion event prefers the authoritative terminal state.
+      // This is best-effort; if the recheck fails, keep the known timeout
+      // outcome instead of dropping the announcement entirely.
+      if (outcome?.status === "timeout" && reply?.trim() && params.waitForCompletion !== false) {
+        try {
+          const rechecked = await waitForSubagentRunOutcome(params.childRunId, 0);
+          const applied = applySubagentWaitOutcome({
+            wait: rechecked,
+            outcome,
+            startedAt: params.startedAt,
+            endedAt: params.endedAt,
+          });
+          outcome = applied.outcome;
+          params.startedAt = applied.startedAt;
+          params.endedAt = applied.endedAt;
+        } catch {
+          // Best-effort recheck; keep the existing timeout outcome on failure.
         }
       }
-      if (!params.terminalReply) {
-        if (childSessionEffectsAllowed() && !reply && allowFailedOutputCapture) {
-          reply = await readSubagentOutput(params.childSessionKey, outcome);
-        }
 
-        if (childSessionEffectsAllowed() && !reply?.trim() && allowFailedOutputCapture) {
-          reply = await readLatestSubagentOutputWithRetry({
-            sessionKey: params.childSessionKey,
-            maxWaitMs: params.timeoutMs,
-            outcome,
+      const replyIsAnnounceSkip = isAnnounceSkip(reply);
+      if (replyIsAnnounceSkip || isSilentReplyText(reply, SILENT_REPLY_TOKEN)) {
+        if (hasVisibleFallback && cleanedFallbackReply) {
+          reply = cleanedFallbackReply;
+        } else {
+          warnIfCronAnnounceSkipped({
+            reply,
+            requesterSessionKey: targetRequesterSessionKey,
+            childRunId: params.childRunId,
           });
-        }
-
-        if (!reply?.trim() && hasVisibleFallback) {
-          reply = fallbackReply;
-        }
-
-        // A worker can finish just after the first wait request timed out.
-        // If we already have real completion content, do one cached recheck so
-        // the final completion event prefers the authoritative terminal state.
-        // This is best-effort; if the recheck fails, keep the known timeout
-        // outcome instead of dropping the announcement entirely.
-        if (outcome?.status === "timeout" && reply?.trim() && params.waitForCompletion !== false) {
-          try {
-            const rechecked = await waitForSubagentRunOutcome(params.childRunId, 0);
-            const applied = applySubagentWaitOutcome({
-              wait: rechecked,
-              outcome,
-              startedAt: params.startedAt,
-              endedAt: params.endedAt,
-            });
-            outcome = applied.outcome;
-            params.startedAt = applied.startedAt;
-            params.endedAt = applied.endedAt;
-          } catch {
-            // Best-effort recheck; keep the existing timeout outcome on failure.
-          }
-        }
-
-        const replyIsAnnounceSkip = isAnnounceSkip(reply);
-        if (replyIsAnnounceSkip || isSilentReplyText(reply, SILENT_REPLY_TOKEN)) {
-          if (hasVisibleFallback && cleanedFallbackReply) {
-            reply = cleanedFallbackReply;
+          const suppressCompletion =
+            replyIsAnnounceSkip ||
+            isAnnounceSkip(fallbackReply) ||
+            !expectsCompletionMessage ||
+            hasVisibleFallback;
+          if (managedArtifactReturn && suppressCompletion) {
+            reply = "(no output)";
+          } else if (suppressCompletion) {
+            skipAnnounceDelivery = true;
           } else {
-            warnIfCronAnnounceSkipped({
-              reply,
-              requesterSessionKey: targetRequesterSessionKey,
-              childRunId: params.childRunId,
-            });
-            const suppressCompletion =
-              replyIsAnnounceSkip ||
-              isAnnounceSkip(fallbackReply) ||
-              !expectsCompletionMessage ||
-              hasVisibleFallback;
-            if (managedArtifactReturn && suppressCompletion) {
-              reply = "(no output)";
-            } else if (suppressCompletion) {
-              skipAnnounceDelivery = true;
-            } else {
-              reply = undefined;
-            }
+            reply = undefined;
           }
-        } else if (reply) {
-          reply = normalizeSubagentAnnounceReply(reply) ?? cleanedFallbackReply;
-          if (!reply) {
-            if (managedArtifactReturn) {
-              reply = "(no output)";
-            } else {
-              skipAnnounceDelivery = true;
-            }
+        }
+      } else if (reply) {
+        reply = normalizeSubagentAnnounceReply(reply) ?? cleanedFallbackReply;
+        if (!reply) {
+          if (managedArtifactReturn) {
+            reply = "(no output)";
+          } else {
+            skipAnnounceDelivery = true;
           }
         }
       }
@@ -478,7 +494,6 @@ async function runSubagentAnnounceFlowBound(
     }
 
     if (!childSessionEffectsAllowed()) {
-      childCompletionFindings = undefined;
       reply = params.roundOneReply ?? params.fallbackReply;
       if (
         expectsCompletionMessage &&
@@ -521,9 +536,9 @@ async function runSubagentAnnounceFlowBound(
     }
 
     const taskLabel = params.label || params.task || "task";
-    // Private descendants belong to this parent. Only its own authored result
-    // may travel onward; raw descendant findings remain internal wake context.
-    const childResultText = hasPrivateChildCompletion ? reply : childCompletionFindings || reply;
+    // Descendant findings are wake input; only this child's own answer travels
+    // onward, so private descendants can never leak through the parent result.
+    const childResultText = reply;
     let findings = childResultText || "(no output)";
     const continuationRuntime = await loadSubagentContinuationRuntime();
     failureStage = "terminal-token-admission";
@@ -739,6 +754,7 @@ async function runSubagentAnnounceFlowBound(
       );
     }
   } catch (err) {
+    shouldDeleteChildSession = false;
     defaultRuntime.error?.(
       formatSubagentAnnounceOwnerFailure({
         childSessionKey: params.childSessionKey,

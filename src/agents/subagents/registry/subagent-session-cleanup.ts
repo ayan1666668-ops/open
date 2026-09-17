@@ -48,6 +48,8 @@ type DeleteSubagentSessionForCleanupParams = {
   expectedSessionId?: string;
   expectedLifecycleRevision?: string;
   timeoutMs?: number;
+  /** Runs after continuation guards settle, immediately before gateway dispatch. */
+  onBeforeDispatch?: () => void;
   onError?: (error: unknown) => void;
   deleteFailureRetries?: number;
 };
@@ -134,6 +136,7 @@ export async function deleteSubagentSessionForCleanup(
 
   clearDeferredCleanupRetry(params.childSessionKey);
   try {
+    params.onBeforeDispatch?.();
     const run = () =>
       params.callGateway({
         method: "sessions.delete",

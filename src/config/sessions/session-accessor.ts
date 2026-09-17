@@ -172,6 +172,7 @@ export {
   resolveSessionEntrySelection,
   updateResolvedSessionEntry,
   upsertSessionEntryCore,
+  withSessionEntryReadOnlyScope,
 } from "./session-accessor.entry.js";
 export {
   readSessionIdentityEvidenceBatch,

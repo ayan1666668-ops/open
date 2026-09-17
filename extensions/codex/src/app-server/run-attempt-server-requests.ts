@@ -115,6 +115,7 @@ export function createCodexAttemptServerRequestController(
     request: CodexAppServerServerRequest,
     scope: CodexThreadRouteScope,
     requestSignal: AbortSignal = new AbortController().signal,
+    setExecutionTimeoutMs?: (timeoutMs: number) => void,
   ) => {
     const signal = AbortSignal.any([runAbortController.signal, requestSignal]);
     const turnId = turnIdRef.current;
@@ -236,7 +237,12 @@ export function createCodexAttemptServerRequestController(
           },
         });
       }
-      const dynamicToolTimeoutMs = resolveDynamicToolCallTimeoutMs({ call, config: params.config });
+      const dynamicToolTimeoutMs = resolveDynamicToolCallTimeoutMs({
+        call,
+        config: params.config,
+        toolBridge,
+      });
+      setExecutionTimeoutMs?.(dynamicToolTimeoutMs);
       const toolStartedAt = Date.now();
       const dynamicToolDiagnosticContext = {
         call,
