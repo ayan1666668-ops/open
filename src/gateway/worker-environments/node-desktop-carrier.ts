@@ -345,7 +345,12 @@ export function createWorkerNodeDesktopCarrier(options: WorkerNodeDesktopCarrier
         Math.max(0, minted.expiresAtMs - Date.now()),
       );
       active.unclaimedTimer.unref?.();
-      void active.invocation.finally(() => stopStream(active)).catch(() => undefined);
+      void active.invocation
+        .finally(() => {
+          retireStream(active);
+          activeStreams.delete(active);
+        })
+        .catch(() => undefined);
       return {
         transport: "rfb",
         wsPath: `${DESKTOP_OBSERVE_PATH}?token=${minted.token}`,

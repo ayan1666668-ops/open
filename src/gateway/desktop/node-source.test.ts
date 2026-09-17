@@ -1,4 +1,5 @@
 import { PassThrough } from "node:stream";
+import { setImmediate } from "node:timers/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GATEWAY_CLIENT_IDS } from "../../../packages/gateway-protocol/src/client-info.js";
 import { createDeferred } from "../../../test/helpers/promise.js";
@@ -163,7 +164,7 @@ describe("node desktop runtime policy", () => {
       const stopping = fixture.service.stopNode("node").then(() => {
         completionOrder.push("stop");
       });
-      await new Promise<void>((resolve) => setImmediate(resolve));
+      await setImmediate();
       finishInvocation.resolve();
       expect(await releasing).toBe(true);
       await stopping;

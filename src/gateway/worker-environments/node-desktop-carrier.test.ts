@@ -1,4 +1,5 @@
 import { PassThrough } from "node:stream";
+import { setImmediate } from "node:timers/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GATEWAY_CLIENT_IDS } from "../../../packages/gateway-protocol/src/client-info.js";
 import { NODE_WORKER_SUPERVISOR_PROTOCOL_FEATURE } from "../../infra/node-runner-inventory.js";
@@ -237,7 +238,7 @@ describe("worker node desktop carrier", () => {
       const stopping = carrier.stop(record.environmentId, record.ownerEpoch).then(() => {
         completionOrder.push("stop");
       });
-      await new Promise<void>((resolve) => setImmediate(resolve));
+      await setImmediate();
       invocation.resolve(canceledResult);
       expect(await releasing).toBe(true);
       await stopping;
