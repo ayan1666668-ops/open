@@ -233,13 +233,19 @@ describe("agent database open timings", () => {
         integrity_check: "ok",
       });
       expect(logger.warn).toHaveBeenCalledTimes(2);
-      expect(logger.warn).toHaveBeenNthCalledWith(1, "Rebuilt canonical agent SQLite indexes", {
-        agentId: options.agentId,
-        path: pathname,
-        indexes:
-          drift === "physical" ? canonicalIndexNames : ["idx_agent_session_nodes_updated_at"],
-        elapsedMs: 1_000,
-      });
+      expect(logger.warn).toHaveBeenNthCalledWith(
+        1,
+        expect.stringContaining(
+          `Rebuilt canonical agent SQLite indexes for ${options.agentId} (${pathname}):`,
+        ),
+        {
+          agentId: options.agentId,
+          path: pathname,
+          indexes:
+            drift === "physical" ? canonicalIndexNames : ["idx_agent_session_nodes_updated_at"],
+          elapsedMs: 1_000,
+        },
+      );
       expect(logger.warn).toHaveBeenNthCalledWith(
         2,
         "slow OpenClaw agent database open",

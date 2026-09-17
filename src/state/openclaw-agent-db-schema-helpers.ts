@@ -153,11 +153,13 @@ export function assertOpenClawAgentSchemaContains(
   const repairableIndexes = new Set(
     getCanonicalSqliteNamedIndexContracts(schemaSql).map((index) => index.name),
   );
-  const issues = collectSqliteSchemaIssues(database, schemaSql, compatibility).filter(
-    (issue) =>
-      issue.code !== "missing-or-drifted-index" || !repairableIndexes.has(issue.objectName),
-  );
-  if (issues.length > 0) {
+  const issues = collectSqliteSchemaIssues(database, schemaSql, compatibility);
+  if (
+    issues.some(
+      (issue) =>
+        issue.code !== "missing-or-drifted-index" || !repairableIndexes.has(issue.objectName),
+    )
+  ) {
     throwSqliteSchemaMismatches(pathname, legacySqliteSchemaIssueMessages(issues));
   }
 }

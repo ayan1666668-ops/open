@@ -463,12 +463,15 @@ export function* agentDatabaseIntegrityBeforeMutationSteps(
       },
     );
     if (rebuiltIndexes.length > 0) {
-      agentDbLog.warn("Rebuilt canonical agent SQLite indexes", {
-        agentId,
-        path: pathname,
-        indexes: rebuiltIndexes,
-        elapsedMs: Math.floor(performance.now() - startedAt),
-      });
+      agentDbLog.warn(
+        `Rebuilt canonical agent SQLite indexes for ${agentId} (${pathname}): ${rebuiltIndexes.join(", ")}`,
+        {
+          agentId,
+          path: pathname,
+          indexes: rebuiltIndexes,
+          elapsedMs: Math.floor(performance.now() - startedAt),
+        },
+      );
     }
     assertOpenClawAgentCurrentRuntimeSchema(database, { agentId, pathname });
   } else if (

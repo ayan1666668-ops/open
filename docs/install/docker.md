@@ -233,9 +233,10 @@ readiness. Routine image upgrades should not require a separate
 `openclaw doctor --fix` pass.
 
 Missing or drifted canonical SQLite indexes are rebuilt by the schema migration
-owner before session startup completes. The warning log records the rebuilt
-indexes and elapsed time. Missing required tables, incompatible columns, and
-other changes that cannot be reconstructed safely still require Doctor; startup
+owner before session startup completes. Repair warnings identify the agent,
+database path, rebuilt indexes, and elapsed time. Current-schema shape refusal
+reports list all affected databases in stable path order. Missing required tables,
+incompatible columns, and other changes that cannot be reconstructed safely still require Doctor; startup
 does not recreate a missing data table as an empty one.
 
 If startup cannot complete those repairs safely, the Gateway exits instead of
