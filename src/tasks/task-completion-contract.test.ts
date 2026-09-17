@@ -17,6 +17,10 @@ describe("resolveRequiredCompletionTerminalResult", () => {
   // conditional clause ("whether the tests passed") is a pending outcome, not a
   // delivered result.
   it.each([
+    ["directive-plan read", "Let me run the tests and read the logs."],
+    ["directive-plan complete", "Let me run the tests and complete the report."],
+    ["directive-plan chained", "Let me run the tests and inspect the output and read the logs."],
+    ["directive-plan comma", "Let me run the tests, complete the report."],
     ["coordinated-plan bare complete", "I'll run the tests and complete the report."],
     ["coordinated-plan bare read", "I'll run the tests and read the logs."],
     [
@@ -261,6 +265,14 @@ describe("resolveRequiredCompletionTerminalResult", () => {
   // result/report/verification marker in a delivered-result sentence; those
   // must not be misclassified.
   it.each([
+    [
+      "directive-plan independent completed subject",
+      "Let me run the tests and I have read the logs.",
+    ],
+    [
+      "directive-plan reset subject",
+      "Let me inspect the handler, I attempted the repair and read the logs.",
+    ],
     ["coordinated-plan independent result", "I'll run the tests and I have read the logs."],
     [
       "coordinated-plan reset subject",
