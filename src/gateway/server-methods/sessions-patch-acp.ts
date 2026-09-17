@@ -5,7 +5,6 @@ import {
   type ErrorShape,
   type SessionsPatchParams,
 } from "../../../packages/gateway-protocol/src/index.js";
-import type { AcpSessionManager } from "../../acp/control-plane/manager.core.js";
 import { requireReadySession } from "../../acp/control-plane/manager.utils.js";
 import { splitTrailingAuthProfile } from "../../agents/model-ref-profile.js";
 import type { SessionEntry } from "../../config/sessions/types.js";
@@ -13,11 +12,13 @@ import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import {
   prepareSessionExecutionSelection,
   resolveSessionExecutionControlFailure,
+  withPreparedSessionExecutionSelection,
   type PreparedSessionExecutionSelection,
 } from "../../model-picker/apply-session-model-selection.js";
 import {
   isAcpExecutionSelection,
   type AcpExecutionSelection,
+  type ExecutionSelection,
 } from "../../model-picker/execution-selection.js";
 import {
   isModelSelectionLocked,
@@ -39,7 +40,6 @@ export function isAcpModelSelectionPatch(
 }
 
 export type PreparedAcpSessionPatch = {
-  manager: AcpSessionManager;
   cfg: OpenClawConfig;
   sessionKey: string;
   agentId: string;
@@ -146,7 +146,6 @@ export async function prepareAcpSessionPatch(params: {
       ok: true,
       prepared: {
         ...target,
-        manager,
         execution: { ...prepared, selection: prepared.selection },
         assertActive,
         assertSelectionCurrent,
@@ -160,14 +159,14 @@ export async function prepareAcpSessionPatch(params: {
 /** Hold the native actor through the caller's atomic agent-row commit. */
 export async function applyAcpSessionPatch<T extends { ok: true }>(params: {
   prepared: PreparedAcpSessionPatch;
-  commitAccepted: (selection: AcpExecutionSelection) => Promise<T>;
+  commitAccepted: (selection: ExecutionSelection) => Promise<T>;
   selectionCommitted: () => boolean;
 }): Promise<T | { ok: false; error: ErrorShape }> {
-  const { manager, execution, ...target } = params.prepared;
+  const { execution, ...target } = params.prepared;
   try {
-    return await manager.withExecutionSelection({
+    return await withPreparedSessionExecutionSelection({
       ...target,
-      selection: execution.selection,
+      prepared: execution,
       commitAccepted: params.commitAccepted,
     });
   } catch (error) {
