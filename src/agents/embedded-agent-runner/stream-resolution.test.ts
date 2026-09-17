@@ -734,6 +734,40 @@ describe("resolveEmbeddedAgentStream", () => {
     expect(providerStreamFn).toHaveBeenCalledTimes(1);
   });
 
+  it("revalidates run authority after deferred credential resolution", async () => {
+    let resolveKey: ((value: string) => void) | undefined;
+    let current = true;
+    const providerStreamFn = vi.fn(async () => ({}));
+    const authStorage = {
+      getApiKey: vi.fn(() => new Promise<string>((resolve) => (resolveKey = resolve))),
+    };
+    const { streamFn } = resolveEmbeddedAgentStreamImpl({
+      llmRuntime,
+      currentStreamFn: undefined,
+      providerStreamFn,
+      sessionId: "session-1",
+      model: {
+        api: "openai-completions",
+        provider: "openai",
+        id: "gpt-5.4",
+      } as never,
+      authStorage,
+      assertCurrent: () => {
+        if (!current) {
+          throw new Error("source authority revoked");
+        }
+      },
+    } as Parameters<typeof resolveEmbeddedAgentStreamImpl>[0]);
+
+    const pending = streamFn({ provider: "openai", id: "gpt-5.4" } as never, {} as never, {});
+    expect(resolveKey).toBeTypeOf("function");
+    current = false;
+    resolveKey?.("stored-key");
+
+    await expect(pending).rejects.toThrow("source authority revoked");
+    expect(providerStreamFn).not.toHaveBeenCalled();
+  });
+
   it("propagates prompt cache identity separately from the session id", async () => {
     // Cron and shared runs can use a stable prompt cache key while keeping each
     // run's session id distinct for transcripts and aborts.

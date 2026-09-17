@@ -7,7 +7,6 @@ import { DEFAULT_UNDICI_STREAM_TIMEOUT_MS } from "../../../infra/net/undici-glob
 import type { DiagnosticEmbeddedRunOwner } from "../../../logging/diagnostic-run-activity.js";
 import { resolveToolCallArgumentsEncoding } from "../../../plugins/provider-model-compat.js";
 import { captureAsyncWorkTracker } from "../../../shared/async-work-scope.js";
-import { resolveAdmittedRunActiveAssertion } from "../../admitted-run-context.js";
 import { wrapStreamFnTextTransforms } from "../../plugin-text-transforms.js";
 import type { StreamFn } from "../../runtime/index.js";
 import { withSessionManagerWrite } from "../../sessions/session-manager-write-admission.js";
@@ -171,18 +170,6 @@ export function installEmbeddedAttemptStreamGuards(
     }
   };
   const cacheObservabilityEnabled = Boolean(cacheTrace) || log.isEnabled("debug");
-  const assertRunActive = resolveAdmittedRunActiveAssertion(
-    attempt.admittedRunContext,
-    abortSignal,
-  );
-  if (assertRunActive) {
-    const streamFn = session.agent.streamFn;
-    // Every retry and continuation must retain the exact authority admitted for this run.
-    session.agent.streamFn = (model, context, options) => {
-      assertRunActive();
-      return streamFn(model, context, options);
-    };
-  }
   const cacheObserver = cacheObservabilityEnabled
     ? createPromptCacheRequestObserver(
         {

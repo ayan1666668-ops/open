@@ -117,6 +117,7 @@ export function resolveEmbeddedAgentStream(
     transportAuthAvailable?: boolean;
     authProfileId?: string;
     authStorage?: { getApiKey(provider: string): Promise<string | undefined> };
+    assertCurrent?: () => void;
   },
 ): { streamFn: StreamFn; strategy: string } {
   const llmRuntime = resolveEmbeddedStreamRuntime(params);
@@ -127,6 +128,7 @@ export function resolveEmbeddedAgentStream(
     authStorage: params.authStorage,
     providerId: params.model.provider,
     promptCacheKey: params.promptCacheKey,
+    assertCurrent: params.assertCurrent,
   };
   const stripCacheBoundary = (context: Parameters<StreamFn>[1]) =>
     context.systemPrompt
@@ -198,7 +200,7 @@ export function resolveEmbeddedAgentStream(
   const promptCacheKey = params.promptCacheKey?.trim();
   return {
     streamFn:
-      !promptCacheKey && !params.signal
+      !promptCacheKey && !params.signal && !params.assertCurrent
         ? currentStreamFn
         : wrapEmbeddedAgentStreamFn(currentStreamFn, {
             runSignal: params.signal,
@@ -233,6 +235,7 @@ function wrapEmbeddedAgentStreamFn(
     sessionId?: string;
     promptCacheKey?: string;
     transformContext?: (context: Parameters<StreamFn>[1]) => Parameters<StreamFn>[1];
+    assertCurrent?: () => void;
   },
 ): StreamFn {
   const transformContext =
@@ -258,15 +261,20 @@ function wrapEmbeddedAgentStreamFn(
     return signal ? { ...merged, signal } : merged;
   };
   if (!params.authStorage && !params.resolvedApiKey) {
-    return (m, context, options) => inner(m, transformContext(context), mergeRunSignal(options));
+    return (m, context, options) => {
+      params.assertCurrent?.();
+      return inner(m, transformContext(context), mergeRunSignal(options));
+    };
   }
   const { authStorage, providerId, resolvedApiKey } = params;
   return async (m, context, options) => {
+    params.assertCurrent?.();
     const apiKey = await resolveEmbeddedAgentApiKey({
       provider: providerId,
       resolvedApiKey,
       authStorage,
     });
+    params.assertCurrent?.();
     const selectedApiKey = apiKey ?? options?.apiKey;
     return inner(m, transformContext(context), {
       ...mergeRunSignal(options),
