@@ -14,9 +14,11 @@ import {
   createTestRegistry,
 } from "../../test-utils/channel-plugins.js";
 import { createTempHomeEnv, type TempHomeEnv } from "../../test-utils/temp-home.js";
+import { GATEWAY_CLIENT_MODES, GATEWAY_CLIENT_NAMES } from "../../utils/message-channel.js";
 import { resolveMessageActionOutcome } from "./message-action-contracts.js";
 import { MessageActionDeniedError } from "./message-action-denial.js";
 import { runMessageAction } from "./message-action-runner.js";
+import type { OutboundGatewayRequest } from "./message-gateway-options.js";
 
 describe("broadcast send outcomes through native actions", () => {
   let tempHome: TempHomeEnv;
@@ -348,7 +350,10 @@ describe("broadcast send outcomes through native actions", () => {
       action: "broadcast",
       params: { channel: plugin.id, targets: ["first", "second", "third"], message: "hello" },
       gateway: {
-        request: async <T>({ params }): Promise<T> => {
+        clientName: GATEWAY_CLIENT_NAMES.GATEWAY_CLIENT,
+        mode: GATEWAY_CLIENT_MODES.BACKEND,
+        request: async <T>(request: OutboundGatewayRequest): Promise<T> => {
+          const params = request.params;
           const target = String(
             params && typeof params === "object" && "to" in params ? params.to : "",
           );
@@ -419,6 +424,8 @@ describe("broadcast send outcomes through native actions", () => {
       action: "broadcast",
       params: { channel: plugin.id, targets: ["first", "second", "third"], message: "hello" },
       gateway: {
+        clientName: GATEWAY_CLIENT_NAMES.GATEWAY_CLIENT,
+        mode: GATEWAY_CLIENT_MODES.BACKEND,
         request: async <T>(): Promise<T> => {
           gatewayRequests += 1;
           return { ok: true, messageId: `sent-${gatewayRequests}` } as T;
