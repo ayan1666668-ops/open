@@ -221,7 +221,11 @@ function expectAccountRequests(requests: HttpRequest[], account: Account) {
 }
 
 function jsonBody(request: HttpRequest | undefined): unknown {
-  return JSON.parse(String(request?.init?.body));
+  const body = request?.init?.body;
+  if (typeof body !== "string") {
+    throw new Error("Expected a JSON ClickClack request body");
+  }
+  return JSON.parse(body);
 }
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
