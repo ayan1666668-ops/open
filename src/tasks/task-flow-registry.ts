@@ -140,6 +140,23 @@ function getTaskFlowRegistryRestoreState(admission: OpenClawStateDatabaseReadAdm
   return taskFlowRegistryRestoreState;
 }
 
+function installTaskFlowRegistrySnapshot(
+  snapshot: TaskFlowRegistryStoreSnapshot,
+  admission: OpenClawStateDatabaseReadAdmission,
+): void {
+  const restoredFlows = new Map(
+    [...snapshot.flows].map(([id, flow]) => [id, normalizeRestoredFlowRecord(flow)]),
+  );
+  flows = restoredFlows;
+  projectionEpoch += 1;
+  projectionDirty = false;
+  dirtyFlowIds.clear();
+  for (const flowId of pendingFlowWrites.keys()) {
+    dirtyFlowIds.add(flowId);
+  }
+  taskFlowRegistryRestoreState = { status: "ready", admission };
+}
+
 function restoreTaskFlowRegistryOnce(): void {
   const databasePath = resolveOpenClawStateSqlitePath();
   const admission = captureOpenClawStateDatabaseReadAdmission(databasePath);
@@ -173,13 +190,7 @@ function restoreTaskFlowRegistryOnce(): void {
   try {
     const restored = reader.loadSnapshot();
     installing = true;
-    const restoredFlows = new Map<string, TaskFlowRecord>();
-    for (const [flowId, flow] of restored.flows) {
-      restoredFlows.set(flowId, normalizeRestoredFlowRecord(flow));
-    }
-    flows = restoredFlows;
-    projectionEpoch += 1;
-    taskFlowRegistryRestoreState = { status: "ready", admission: reader.admission };
+    installTaskFlowRegistrySnapshot(restored, reader.admission);
   } catch (error) {
     if (!installing && (reader.invalidated || !ownsRestore())) {
       if (taskFlowRegistryRestoreState === restoring) {
@@ -247,16 +258,7 @@ export const ensureTaskFlowRegistryReadyAsync = createAsyncRegistryRestore<
   getRevision: () => projectionEpoch,
   getStore: getTaskFlowRegistryStore,
   install(snapshot, { admission }) {
-    flows = new Map(
-      [...snapshot.flows].map(([id, flow]) => [id, normalizeRestoredFlowRecord(flow)]),
-    );
-    projectionEpoch += 1;
-    projectionDirty = false;
-    dirtyFlowIds.clear();
-    for (const flowId of pendingFlowWrites.keys()) {
-      dirtyFlowIds.add(flowId);
-    }
-    taskFlowRegistryRestoreState = { status: "ready", admission };
+    installTaskFlowRegistrySnapshot(snapshot, admission);
     return () => emitFlowRegistryObserverEvent(() => ({ kind: "restored", flows }));
   },
   fail(error, admission) {

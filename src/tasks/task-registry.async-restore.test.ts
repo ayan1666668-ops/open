@@ -1,11 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../test/helpers/promise.js";
+import { trackSqliteStatementExecutions } from "../../test/helpers/sqlite-statement-execution-counter.js";
 import { requireNodeSqlite } from "../infra/node-sqlite.js";
 import { SqliteWorkerError } from "../infra/sqlite-worker-contract.js";
 import * as stateDatabaseCache from "../state/openclaw-state-db-cache.js";
 import {
   closeOpenClawStateDatabase,
   closeOpenClawStateDatabaseAsync,
+  openOpenClawStateDatabase,
 } from "../state/openclaw-state-db.js";
 import { captureOpenClawStateWorkerContext } from "../state/openclaw-state-worker-context.js";
 import type { OpenClawStateWorkerContext } from "../state/openclaw-state-worker-context.types.js";
@@ -18,9 +20,11 @@ import {
   createInMemoryTaskFlowRegistryStore,
 } from "../test-utils/task-registry-store.js";
 import { ensureTaskRuntimeStateReady } from "./runtime-internal.js";
+import { createAcpTaskBackingDetail } from "./task-backing-records.js";
 import {
   ensureTaskFlowRegistryReadyAsync,
   reloadTaskFlowRegistryFromStoreAsync,
+  runTaskFlowRegistryWorkerMutation,
   getTaskFlowById,
   setFlowWaiting,
 } from "./task-flow-registry.js";
@@ -201,6 +205,87 @@ function identityRestoreFixture(kind: "task" | "flow", options?: { sameIdentity?
 }
 
 describe("asynchronous registry restoration", () => {
+  it("reads one complete flow snapshot for a synchronous run lookup after close", async () => {
+    upsertTaskFlowRegistryRecordToSqlite({
+      ...flow,
+      syncMode: "task_mirrored",
+      controllerId: undefined,
+      status: "succeeded",
+      endedAt: 20,
+    });
+    upsertTaskWithDeliveryStateToSqlite({
+      task: {
+        ...task,
+        runtime: "acp",
+        childSessionKey: "agent:main:restored-child",
+        parentFlowId: flow.flowId,
+        detail: createAcpTaskBackingDetail("restored-instance", 1),
+        status: "succeeded",
+        endedAt: 20,
+      },
+    });
+    expect(findTaskByRunId("restored-run")?.taskId).toBe(task.taskId);
+    await closeOpenClawStateDatabaseAsync();
+    const tracker = trackSqliteStatementExecutions(
+      openOpenClawStateDatabase().db,
+      ["flows"],
+      (sql) => (/^\s*select\b/i.test(sql) && /\bfrom\s+"?flow_runs\b/i.test(sql) ? "flows" : null),
+    );
+    try {
+      expect(findTaskByRunId("restored-run")?.taskId).toBe(task.taskId);
+      expect(tracker.counts.flows).toBe(1);
+      expect(tracker.rowCounts.flows).toBe(1);
+    } finally {
+      tracker.restore();
+    }
+  });
+
+  it.each(["before restore", "from restore observer"] as const)(
+    "refreshes a flow write pending %s after synchronous snapshot installation",
+    async (when) => {
+      const store = createInMemoryTaskFlowRegistryStore({ flows: new Map([[flow.flowId, flow]]) });
+      const loadSnapshot = vi.fn(() => store.loadSnapshot());
+      const release = createDeferred();
+      const context = captureOpenClawStateWorkerContext();
+      let pending: Promise<void> | undefined;
+      const start = () => {
+        pending = runTaskFlowRegistryWorkerMutation(
+          { flowId: flow.flowId, admission: context.admission },
+          async () => {
+            store.upsertFlow({ ...flow, revision: 1, currentStep: "pending mutation" });
+            await release.promise;
+          },
+          () => store.readFlowAsync(context, flow.flowId),
+        );
+      };
+      configureTaskFlowRegistryRuntime({
+        store: { ...store, loadSnapshot },
+        observers: {
+          onEvent(event) {
+            if (when === "from restore observer" && event.kind === "restored") {
+              start();
+            }
+          },
+        },
+      });
+      try {
+        if (when === "before restore") {
+          start();
+        }
+        expect(getTaskFlowById(flow.flowId)).toMatchObject({
+          revision: 1,
+          currentStep: "pending mutation",
+        });
+        expect(loadSnapshot).toHaveBeenCalledTimes(2);
+      } finally {
+        release.resolve();
+        await pending;
+      }
+      expect(getTaskFlowById(flow.flowId)?.revision).toBe(1);
+      expect(loadSnapshot).toHaveBeenCalledTimes(2);
+    },
+  );
+
   it("restores complete task and flow state before observers without parent SQLite through close", async () => {
     upsertTaskFlowRegistryRecordToSqlite({ ...flow, flowId: "flow-a", stateJson: { cursor: 3 } });
     upsertTaskWithDeliveryStateToSqlite({
