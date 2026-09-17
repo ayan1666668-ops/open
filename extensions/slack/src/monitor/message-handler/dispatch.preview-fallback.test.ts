@@ -16,6 +16,21 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import { slackSetupPlugin } from "../../channel.setup.js";
 import { getSlackSessionRuns } from "../session-run-targets.js";
 import { emitCompactProgressScenario } from "./dispatch.compact-progress.test-support.js";
+import {
+  contentTaskId,
+  createDeliverReplyCallAsserter,
+  createDraftStreamStub,
+  createSlackPlatformError,
+  draftUpdateTexts,
+  expectLastDraftUpdateText,
+  expectMockCallArgFields,
+  expectRecordFields,
+  expectStreamText,
+  planUpdate,
+  noopAsync,
+  requireMockCall,
+  taskUpdate,
+} from "./dispatch.preview-fallback.test-support.js";
 
 const FINAL_REPLY_TEXT = "final answer";
 const THREAD_TS = "thread-1";
@@ -192,14 +207,6 @@ function requireCapturedTyping() {
   return capturedTyping;
 }
 
-function createSlackPlatformError(error: string, details?: { needed?: string; provided?: string }) {
-  // Mirrors @slack/web-api 7.18.0 platformErrorFromResult: message plus structured result data.
-  return Object.assign(new Error(`An API error occurred: ${error}`), {
-    code: "slack_webapi_platform_error",
-    data: { ok: false, error, ...details },
-  });
-}
-
 function requireCapturedItemEventHandler() {
   const handler = capturedReplyOptions?.onItemEvent;
   if (!handler) {
@@ -209,29 +216,6 @@ function requireCapturedItemEventHandler() {
 }
 
 const requireRecord = createRequireRecord("object", "label-not-object");
-
-function expectRecordFields(record: Record<string, unknown>, fields: Record<string, unknown>) {
-  for (const [key, value] of Object.entries(fields)) {
-    expect(record[key]).toEqual(value);
-  }
-}
-
-function requireMockCall(mock: unknown, index: number, label: string): unknown[] {
-  const call = (mock as { mock?: { calls?: unknown[][] } }).mock?.calls?.[index];
-  if (!call) {
-    throw new Error(`missing ${label} call ${index + 1}`);
-  }
-  return call;
-}
-
-function expectMockCallArgFields(
-  mock: unknown,
-  index: number,
-  label: string,
-  fields: Record<string, unknown>,
-) {
-  expectRecordFields(requireRecord(requireMockCall(mock, index, label)[0], label), fields);
-}
 
 function expectNativeProgressStart(chunks: unknown[]) {
   expect(postMessageMock).not.toHaveBeenCalled();
@@ -251,30 +235,7 @@ function expectNativeProgressAppend(index: number, chunks: unknown[]) {
 }
 
 function expectNativeStreamText(text: string, count = 1) {
-  const matches = [...startSlackStreamMock.mock.calls, ...appendSlackStreamMock.mock.calls].filter(
-    (call) => {
-      const params = requireRecord(call[0], "native stream text append");
-      return params.text === text;
-    },
-  );
-  expect(matches).toHaveLength(count);
-}
-
-function planUpdate(title: string) {
-  return { type: "plan_update", title };
-}
-
-function taskUpdate(
-  id: unknown,
-  title: string,
-  status: "pending" | "in_progress" | "complete" | "error",
-  extra?: Record<string, unknown>,
-) {
-  return { type: "task_update", id, title, status, ...extra };
-}
-
-function contentTaskId(prefix: string) {
-  return expect.stringMatching(new RegExp(`^${prefix}_[a-f0-9]{8}_1$`, "u"));
+  expectStreamText(startSlackStreamMock, appendSlackStreamMock, text, count);
 }
 
 function collectNativeTaskUpdates() {
@@ -300,51 +261,7 @@ function collectNativeTaskUpdates() {
   });
 }
 
-function expectDeliverReplyCall(index: number, text: string, fields?: Record<string, unknown>) {
-  const params = requireRecord(
-    requireMockCall(deliverRepliesMock, index, "deliver replies")[0],
-    "deliver replies params",
-  );
-  expectRecordFields(params, { replyThreadTs: THREAD_TS, ...fields });
-  expect(params.replies).toEqual([{ text }]);
-}
-
-const noop = () => {};
-const noopAsync = async () => {};
-function createDraftStreamStub() {
-  return {
-    update: vi.fn(),
-    flush: vi.fn(noopAsync),
-    clear: vi.fn(noopAsync),
-    discardPending: vi.fn(noopAsync),
-    seal: vi.fn(noopAsync),
-    stop: vi.fn(noop),
-    forceNewMessage: vi.fn(),
-    dropDetachedMessages: vi.fn(noopAsync),
-    finalizeMessage: vi.fn(async (_messageId: string, editFinal: () => Promise<void>) => {
-      await editFinal();
-      return true;
-    }),
-    messageId: (): string | undefined => "171234.567",
-    channelId: () => "C123",
-  };
-}
-
-function draftUpdateTexts(draftStream: ReturnType<typeof createDraftStreamStub>): string[] {
-  return draftStream.update.mock.calls.map(([update]) => {
-    if (typeof update === "string") {
-      return update;
-    }
-    return requireRecord(update, "draft update").text as string;
-  });
-}
-
-function expectLastDraftUpdateText(
-  draftStream: ReturnType<typeof createDraftStreamStub>,
-  expected: string,
-) {
-  expect(draftUpdateTexts(draftStream).at(-1)).toBe(expected);
-}
+const expectDeliverReplyCall = createDeliverReplyCallAsserter(deliverRepliesMock, THREAD_TS);
 
 function createPreparedSlackMessage(params?: {
   cfg?: Record<string, unknown>;
@@ -456,6 +373,15 @@ function createPreparedSlackMessage(params?: {
 async function dispatchNativeProgressScenario(params: {
   events: typeof mockedReplyOptionEvents;
   finalPayload?: TestReplyPayload;
+  cfg?: Record<string, unknown>;
+  ctxPayload?: Record<string, unknown>;
+  route?: Partial<{
+    agentId: string;
+    accountId: string;
+    mainSessionKey: string;
+    sessionKey: string;
+    lastRoutePolicy: "main" | "session";
+  }>;
   progress?: {
     style?: "card" | "compact";
     label?: string | false;
@@ -480,6 +406,9 @@ async function dispatchNativeProgressScenario(params: {
 
   await dispatchPreparedSlackMessage(
     createPreparedSlackMessage({
+      cfg: params.cfg,
+      ctxPayload: params.ctxPayload,
+      route: params.route,
       replyToMode: params.replyToMode,
       eventScope: params.eventScope,
       accountConfig: {
@@ -2704,6 +2633,43 @@ describe("dispatchPreparedSlackMessage preview fallback", () => {
     expect(draftStream.clear).not.toHaveBeenCalled();
   });
 
+  it("links a threaded Slack DM progress card to the effective dispatch session", async () => {
+    const draftStream = createDraftStreamStub();
+    createSlackDraftStreamMock.mockReturnValueOnce(draftStream);
+    mockedSlackStreamingMode = "progress";
+    mockedSlackDraftMode = "status_final";
+    mockedDispatchSequence = [{ kind: "final", payload: { text: FINAL_REPLY_TEXT } }];
+    mockedReplyOptionEvents = [{ kind: "item", progressText: "tool one" }];
+
+    await dispatchPreparedSlackMessage(
+      createPreparedSlackMessage({
+        cfg: {
+          gateway: {
+            publicOrigin: "https://team.openclaw.ai",
+            controlUi: { basePath: "/openclaw" },
+          },
+        },
+        accountConfig: { streaming: { progress: { toolProgress: true } } },
+        isDirectMessage: true,
+        route: { sessionKey: "agent:agent-1:slack:direct:U123" },
+        ctxPayload: {
+          SessionKey: "agent:agent-1:slack:direct:U123:thread:1789651571.830909",
+        },
+      }),
+    );
+
+    const finalEdit = requireRecord(
+      requireMockCall(finalizeSlackPreviewEditMock, 0, "thread session card final edit")[0],
+      "thread session card final edit",
+    );
+    expect(JSON.stringify(finalEdit.blocks)).toContain(
+      "https://team.openclaw.ai/openclaw/chat/agent-1/slack/direct/U123/thread/1789651571%2E830909",
+    );
+    expect(JSON.stringify(finalEdit.blocks)).not.toContain(
+      '"url":"https://team.openclaw.ai/openclaw/chat/agent-1/slack/direct/U123"',
+    );
+  });
+
   it("clears the stale session card when the terminal edit fails after final delivery", async () => {
     const draftStream = createDraftStreamStub();
     createSlackDraftStreamMock.mockReturnValueOnce(draftStream);
@@ -3863,6 +3829,31 @@ describe("dispatchPreparedSlackMessage preview fallback", () => {
     expect(deliverRepliesMock).not.toHaveBeenCalled();
     expect(finalizeSlackPreviewEditMock).not.toHaveBeenCalled();
     expectNativeStreamText(`\n${FINAL_REPLY_TEXT}`);
+  });
+
+  it("links native progress to the effective threaded Slack DM session", async () => {
+    await dispatchNativeProgressScenario({
+      cfg: {
+        gateway: {
+          publicOrigin: "https://team.openclaw.ai",
+          controlUi: { basePath: "/openclaw" },
+        },
+      },
+      route: { sessionKey: "agent:agent-1:slack:direct:U123" },
+      ctxPayload: {
+        SessionKey: "agent:agent-1:slack:direct:U123:thread:1789651571.830909",
+      },
+      finalPayload: { text: FINAL_REPLY_TEXT },
+      events: [{ kind: "item", progressText: "slow tool" }],
+    });
+
+    expect(collectNativeTaskUpdates().at(-1)?.sources).toEqual([
+      {
+        type: "url_source",
+        url: "https://team.openclaw.ai/openclaw/chat/agent-1/slack/direct/U123/thread/1789651571%2E830909",
+        text: "Open in OpenClaw",
+      },
+    ]);
   });
 
   it("acknowledges a rotated native progress stream before the queued turn", async () => {

@@ -50,7 +50,7 @@ export function createSlackDraftProgressCardRuntime(params: {
     const url = new URL(publicOrigin);
     const path = buildControlUiSessionPath({
       namespace: "chat",
-      sessionKey: prepared.route.sessionKey,
+      sessionKey: prepared.ctxPayload.SessionKey ?? prepared.route.sessionKey,
       fallbackAgentId: prepared.route.agentId,
       basePath: cfg.gateway?.controlUi?.basePath,
     });
