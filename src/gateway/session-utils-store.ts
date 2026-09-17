@@ -12,7 +12,6 @@ import {
   listAgentEntries,
   listAgentIds,
   resolveAgentModelFallbacksOverride,
-  resolveAgentEffectiveModelPrimary,
   resolveAgentWorkspaceDir,
 } from "../agents/agent-scope.js";
 import { resolveExecDefaults } from "../agents/exec-defaults.js";
@@ -27,6 +26,7 @@ import {
 import { resolveSandboxConfigForAgent } from "../agents/sandbox/config.js";
 import { SESSION_PERMISSION_BY_EXEC_MODE } from "../agents/session-permission-exec-mode.js";
 import { readUtilityModelSetting } from "../agents/utility-model-setting.js";
+import { resolveConfiguredPrimaryModelForAgent } from "../agents/utility-model.js";
 import { insideGitCheckout } from "../agents/worktrees/git.js";
 import { getRuntimeConfig } from "../config/io.js";
 import { resolveAgentModelFallbackValues } from "../config/model-input.js";
@@ -319,7 +319,7 @@ function resolveGatewayAgentModel(
   // canonical config and is consumed only by execution-time model selection.
   const primary = `${resolvedModel.provider}/${resolvedModel.model}`;
   const utilityOnly =
-    !resolveAgentEffectiveModelPrimary(cfg, agentId) &&
+    !resolveConfiguredPrimaryModelForAgent({ cfg, agentId }) &&
     readUtilityModelSetting(cfg, agentId).kind === "explicit";
   const fallbackOverride = resolveAgentModelFallbacksOverride(cfg, agentId);
   const defaultFallbacks = resolveAgentModelFallbackValues(cfg.agents?.defaults?.model);

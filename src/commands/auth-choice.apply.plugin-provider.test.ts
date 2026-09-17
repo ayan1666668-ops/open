@@ -186,40 +186,23 @@ function buildProvider(): ProviderPlugin {
 }
 
 function buildProviderWithDefaultModelPatch(): ProviderPlugin {
-  return {
-    id: LOCAL_PROVIDER_ID,
-    label: LOCAL_PROVIDER_LABEL,
-    auth: [
-      {
-        id: LOCAL_AUTH_METHOD_ID,
-        label: LOCAL_PROVIDER_LABEL,
-        kind: "custom",
-        run: async () => ({
-          profiles: [
-            {
-              profileId: LOCAL_PROFILE_ID,
-              credential: {
-                type: "api_key",
-                provider: LOCAL_PROVIDER_ID,
-                key: LOCAL_API_KEY,
-              },
-            },
-          ],
-          configPatch: {
-            agents: {
-              defaults: {
-                model: { primary: LOCAL_DEFAULT_MODEL },
-                models: {
-                  [LOCAL_DEFAULT_MODEL]: { alias: "Local default" },
-                },
-              },
-            },
+  const provider = buildProvider();
+  const method = expectDefined(provider.auth[0], "auth method");
+  const run = method.run;
+  method.run = async (ctx) => ({
+    ...(await run(ctx)),
+    configPatch: {
+      agents: {
+        defaults: {
+          model: { primary: LOCAL_DEFAULT_MODEL },
+          models: {
+            [LOCAL_DEFAULT_MODEL]: { alias: "Local default" },
           },
-          defaultModel: LOCAL_DEFAULT_MODEL,
-        }),
+        },
       },
-    ],
-  };
+    },
+  });
+  return provider;
 }
 
 function buildParams(overrides: Partial<ApplyAuthChoiceParams> = {}): ApplyAuthChoiceParams {
@@ -413,6 +396,36 @@ describe("applyAuthChoiceLoadedPluginProvider", () => {
       agentModelOverride: LOCAL_DEFAULT_MODEL,
     });
     expect(runProviderModelSelectedHook).not.toHaveBeenCalled();
+  });
+
+  it("rejects a utility choice before provider preparation when legacy primary conversion is pending", async () => {
+    const provider = { ...buildProvider(), pluginId: "local-provider-plugin" };
+    const method = expectDefined(provider.auth[0], "auth method");
+    const run = vi.fn(method.run);
+    method.run = run;
+    resolveManifestProviderAuthChoice.mockReturnValue({
+      pluginId: provider.pluginId,
+      providerId: provider.id,
+      methodId: method.id,
+      choiceId: provider.id,
+      choiceLabel: provider.label,
+      modelTarget: "utility",
+    });
+    resolvePluginSetupProvider.mockReturnValue(provider);
+    const config = { agents: { defaults: { utilityModel: "previous/utility" } } };
+    const original = structuredClone(config);
+    const beforePersistentEffect = vi.fn();
+    await expect(
+      applyAuthChoiceLoadedPluginProvider({
+        ...buildParams({ config }),
+        beforePersistentEffect,
+      }),
+    ).rejects.toThrow("openclaw doctor --fix");
+    expect(run).not.toHaveBeenCalled();
+    expect(persistAuthProfileBatch).not.toHaveBeenCalled();
+    expect(ensureOnboardingPluginInstalled).not.toHaveBeenCalled();
+    expect(beforePersistentEffect).not.toHaveBeenCalled();
+    expect(config).toEqual(original);
   });
 
   it.each(

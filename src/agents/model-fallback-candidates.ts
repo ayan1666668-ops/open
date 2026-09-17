@@ -6,6 +6,7 @@ import {
   resolveAgentModelPrimaryValue,
 } from "../config/model-input.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { hasUtilityModelSeparationMigrationMarker } from "../config/utility-model-separation-migration.js";
 import { pruneMapToMaxSize } from "../infra/map-size.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { getCurrentPluginMetadataSnapshot } from "../plugins/current-plugin-metadata-snapshot.js";
@@ -225,6 +226,7 @@ function resolveFallbackCandidateContext(params: ModelCandidateChainParams) {
     agentsDefaultsModel: params.cfg?.agents?.defaults?.model,
     agentsDefaultsModels: params.cfg?.agents?.defaults?.models,
     utilityModel: params.cfg ? readUtilityModelSetting(params.cfg, params.agentId) : undefined,
+    utilityModelSeparation: hasUtilityModelSeparationMigrationMarker(params.cfg),
     modelProviders: resolveFallbackCandidateModelProviderCacheParts(params.cfg),
     pluginControlPlane: resolvePluginControlPlaneFingerprint({
       config: params.cfg,

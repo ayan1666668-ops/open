@@ -1,9 +1,12 @@
 import { html, nothing } from "lit";
 import type { SystemAgentSetupDetectResult } from "../../api/types.ts";
 import { t } from "../../i18n/index.ts";
+import { registerModelSetupEnglish } from "../../i18n/locales/en-model-setup.ts";
 import { formatUiExternalText } from "../../lib/format-error.ts";
 import { renderProviderIcon } from "./model-setup-icon-loader.ts";
 import { activationTargetId, type ModelSetupActivationState } from "./state.ts";
+
+registerModelSetupEnglish();
 
 type Candidate = SystemAgentSetupDetectResult["candidates"][number];
 type CandidateRowsProps = Parameters<typeof renderProviderIcon>[0] & {

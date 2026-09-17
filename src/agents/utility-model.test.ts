@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
+import { makeProviderModelFixture } from "./test-helpers/provider-model-fixture.js";
 import { readUtilityModelSetting } from "./utility-model-setting.js";
 import {
   resolveConfiguredSetupModelForAgent,
@@ -71,6 +72,7 @@ describe("resolveConfiguredSetupModelForAgent", () => {
     },
   ])("uses only an explicitly enabled utility model for first-run setup: %j", (scenario) => {
     const cfg: OpenClawConfig = {
+      meta: { migrations: { utilityModelSeparation: true } },
       agents: { defaults: { utilityModel: scenario.utilityModel } },
     };
 
@@ -112,6 +114,7 @@ describe("resolveConfiguredSetupModelForAgent", () => {
 
   it("honors an agent's utility override and opt-out over the shared setup model", () => {
     const cfg: OpenClawConfig = {
+      meta: { migrations: { utilityModelSeparation: true } },
       agents: {
         defaults: { utilityModel: "local-utility/shared" },
         entries: { ops: { utilityModel: "local-utility/ops" }, disabled: { utilityModel: "" } },
@@ -124,6 +127,45 @@ describe("resolveConfiguredSetupModelForAgent", () => {
     });
     expect(resolveConfiguredSetupModelForAgent({ cfg, agentId: "disabled" })).toBeUndefined();
   });
+
+  it.each(["local-utility/tiny@local:utility", "helper@local:utility"])(
+    "keeps the legacy implicit primary for setup alongside utility ref %s",
+    (utilityModel) => {
+      const cfg: OpenClawConfig = {
+        agents: {
+          defaults: {
+            utilityModel,
+            models: { "local-utility/tiny": { alias: "helper" } },
+          },
+        },
+        models: {
+          providers: {
+            "local-utility": {
+              baseUrl: "http://127.0.0.1:9/v1",
+              models: [
+                makeProviderModelFixture({
+                  id: "tiny",
+                  provider: "local-utility",
+                  api: "openai-completions",
+                  baseUrl: "http://127.0.0.1:9/v1",
+                }),
+              ],
+            },
+          },
+        },
+      };
+      const original = structuredClone(cfg);
+
+      expect(resolveConfiguredSetupModelForAgent({ cfg, agentId: "main" })).toEqual({
+        modelRef: "local-utility/tiny",
+        implicitPrimary: true,
+      });
+      expect(
+        resolveConfiguredSetupModelForAgent({ cfg, agentId: "main", modelTarget: "utility" }),
+      ).toEqual({ modelRef: utilityModel, modelTarget: "utility" });
+      expect(cfg).toEqual(original);
+    },
+  );
 });
 
 describe("resolveUtilityModelRefForAgent", () => {

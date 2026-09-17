@@ -35,7 +35,7 @@ import {
 } from "./verified-inference.test-support.js";
 
 export const tempDirs = createTempDirTracker();
-export const modelRef = "openai/gpt-4.1-mini";
+export const modelRef = "openai/gpt-5.4-mini";
 export const credential = {
   type: "api_key",
   provider: "openai",
@@ -90,6 +90,7 @@ export async function fixture(
         }
       : credential;
   const config: OpenClawConfig = {
+    meta: { migrations: { utilityModelSeparation: true } },
     gateway: { mode: "local" },
     plugins: { slots: { memory: "none" } },
     agents: {
@@ -112,7 +113,7 @@ export async function fixture(
           api: options.subscription ? "openai-chatgpt-responses" : "openai-responses",
           models: [
             {
-              id: "gpt-4.1-mini",
+              id: "gpt-5.4-mini",
               name: "Fixture model",
               reasoning: false,
               input: ["text"],
@@ -241,14 +242,14 @@ export async function fixture(
             ...codexRuntimeArtifactAuth,
           }
         : {}),
-      modelId: "gpt-4.1-mini",
+      modelId: "gpt-5.4-mini",
       modelApi: options.subscription ? "openai-chatgpt-responses" : "openai-responses",
     });
     return {
       payloads: [{ text: "OK" }],
       meta: {
         durationMs: 1,
-        executionTrace: { winnerProvider: "openai", winnerModel: "gpt-4.1-mini" },
+        executionTrace: { winnerProvider: "openai", winnerModel: "gpt-5.4-mini" },
       },
     };
   };

@@ -1,13 +1,16 @@
 import { resolveAmbientOwnerAgentId } from "../agents/agent-scope-config.js";
 // OpenClaw overview gathers config, agent, tool, docs, source, and gateway status.
-import { listAgentEntries, resolveAgentEffectiveModelPrimary } from "../agents/agent-scope.js";
+import { listAgentEntries } from "../agents/agent-scope.js";
 import {
   OPENCLAW_DOCS_URL,
   OPENCLAW_SOURCE_URL,
   resolveOpenClawReferencePaths,
 } from "../agents/docs-path.js";
 import { readUtilityModelSetting } from "../agents/utility-model-setting.js";
-import { resolveConfiguredSetupModelForAgent } from "../agents/utility-model.js";
+import {
+  resolveConfiguredPrimaryModelForAgent,
+  resolveConfiguredSetupModelForAgent,
+} from "../agents/utility-model.js";
 import {
   readConfigFileSnapshot,
   resolveConfigPath,
@@ -102,7 +105,7 @@ function buildAgentSummaries(cfg: OpenClawConfig, defaultAgentId: string): Syste
       {
         id: defaultAgentId,
         isDefault: true,
-        model: resolveAgentEffectiveModelPrimary(cfg, defaultAgentId),
+        model: resolveConfiguredPrimaryModelForAgent({ cfg, agentId: defaultAgentId }),
         ...(utility.kind === "explicit" ? { utilityModel: utility.modelRef } : {}),
       },
     ];
@@ -123,7 +126,7 @@ function buildAgentSummaries(cfg: OpenClawConfig, defaultAgentId: string): Syste
     if (typeof entry.name === "string") {
       summary.name = entry.name;
     }
-    const model = resolveAgentEffectiveModelPrimary(cfg, id);
+    const model = resolveConfiguredPrimaryModelForAgent({ cfg, agentId: id });
     if (model) {
       summary.model = model;
     }
@@ -160,7 +163,7 @@ export async function loadSystemAgentOverview(
   const cfg = snapshot.runtimeConfig ?? snapshot.sourceConfig ?? {};
   const defaultAgentId = resolveAmbientOwnerAgentId(cfg, opts.agentId);
   const defaultModel =
-    resolveAgentEffectiveModelPrimary(cfg, defaultAgentId) ??
+    resolveConfiguredPrimaryModelForAgent({ cfg, agentId: defaultAgentId }) ??
     resolveAgentModelPrimaryValue(cfg.agents?.defaults?.model);
   const setupSelection = resolveConfiguredSetupModelForAgent({ cfg, agentId: defaultAgentId });
   const utility = readUtilityModelSetting(cfg, defaultAgentId);

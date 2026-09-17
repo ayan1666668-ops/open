@@ -133,7 +133,9 @@ export async function resolveSystemAgentConfiguredRouteFromConfig(
   const selection = simpleCompletion.resolveSimpleCompletionSelectionForAgent({
     cfg: runConfig,
     agentId: modelOwnerAgentId,
-    modelRef: configuredSelection.modelRef,
+    // Catalog IDs can contain @ without naming an auth profile. Keep implicit
+    // selection on the completion resolver's structured provider/model path.
+    modelRef: configuredSelection.implicitPrimary ? undefined : configuredSelection.modelRef,
     manifestPlugins: deps.pluginMetadataPlugins,
   });
   if (!selection) {

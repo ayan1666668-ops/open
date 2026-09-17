@@ -20,7 +20,7 @@ describe("fallback candidates across provider generations", () => {
   afterEach(() => resetPluginRuntimeStateForTest());
 
   it.each(["defaults", "agent"])(
-    "refreshes cached primary candidates when %s utility selection changes",
+    "refreshes cached primary candidates when %s utility selection or separation changes",
     (scope) => {
       const provider = `utility-cache-${scope}`;
       const cfg: OpenClawConfig = {
@@ -56,12 +56,17 @@ describe("fallback candidates across provider generations", () => {
           allowPluginNormalization: false,
         });
       withPluginRuntimeGenerationScope({ metadataSnapshot }, () => {
-        for (const [utilityModel, primaryModel] of [
-          [undefined, "small"],
-          [`${provider}/small`, "large"],
-          ["", "small"],
+        for (const [utilityModel, utilityModelSeparation, primaryModel] of [
+          [undefined, undefined, "small"],
+          [`${provider}/small`, undefined, "small"],
+          [`${provider}/small`, true, "large"],
+          [`${provider}/small`, undefined, "small"],
+          ["", true, "small"],
         ] as const) {
           owner.utilityModel = utilityModel;
+          cfg.meta = utilityModelSeparation
+            ? { migrations: { utilityModelSeparation } }
+            : undefined;
           expect(
             resolve().map(({ provider: selectedProvider, model, routeOrigin }) => ({
               provider: selectedProvider,

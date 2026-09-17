@@ -9,6 +9,7 @@ import { applyMergePatch } from "../config/merge-patch.js";
 import { normalizeAgentModelRefForConfig } from "../config/model-input.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { PluginInstallRecord } from "../config/types.plugins.js";
+import { resolveUtilityModelSeparationError } from "../config/utility-model-separation-migration.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import {
   applyProviderPluginAuthMethodResultConfig,
@@ -46,6 +47,16 @@ import {
   withSetupProviderAuthMethod,
   type SetupProviderAuthMethod,
 } from "./setup-provider-method.js";
+
+function assertUtilitySeparation(ctx: StageContext, modelTarget: "utility" | undefined): void {
+  if (modelTarget !== "utility") {
+    return;
+  }
+  const error = resolveUtilityModelSeparationError(ctx.cfg);
+  if (error) {
+    throw new Error(error);
+  }
+}
 
 export function selectSetupCredential(
   profiles: ProviderAuthResult["profiles"],
@@ -192,6 +203,7 @@ async function stagePreparedCandidate(
   if (roleError) {
     return roleError;
   }
+  assertUtilitySeparation(ctx, modelTarget);
   const resolvedModel = resolveSetupModel({
     label: params.provider?.label ?? params.choice?.choiceLabel ?? "Custom provider",
     providerId:
@@ -227,7 +239,10 @@ async function stagePreparedCandidate(
       authChoice: params.choice?.choiceId,
       agentRuntimeId: params.agentRuntimeId,
       agentDir: ctx.agentDir,
-      beforePersistentEffect: () => ctx.beforePersistentEffect("credential"),
+      beforePersistentEffect: () => {
+        assertUtilitySeparation(ctx, modelTarget);
+        return ctx.beforePersistentEffect("credential");
+      },
     });
     ctx.credentialsSaved = true;
     profile = saved.profile;
@@ -296,6 +311,7 @@ export async function stageSavedAuthCandidate(
   if (roleError) {
     return roleError;
   }
+  assertUtilitySeparation(ctx, choice?.modelTarget);
   const materialize = async (
     loaded?: SetupProviderAuthMethod,
   ): Promise<StagedCandidate | StageFailure> => {
@@ -368,6 +384,7 @@ export async function stageProviderAutoCandidate(
   if (roleError) {
     return roleError;
   }
+  assertUtilitySeparation(ctx, choice.modelTarget);
   return await withSetupProviderAuthMethod(
     { ...ctx, choice, activation: ctx.params },
     async (loaded) => {
@@ -482,6 +499,7 @@ export async function stageProviderAuthCandidate(
   if (roleError) {
     return roleError;
   }
+  assertUtilitySeparation(ctx, choice?.modelTarget ?? installEntry?.modelTarget);
   if (interactive && authChoice && managedWizardChoice) {
     if (!params.prompter) {
       return { error: "Installing this provider requires an interactive setup session." };

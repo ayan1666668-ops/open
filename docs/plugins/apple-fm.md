@@ -64,9 +64,13 @@ regular agent setup incomplete until you choose and verify a primary model in
 **Model Setup** or by rerunning `openclaw onboard`. Afterward, Apple remains the
 utility model; the system assistant follows the primary model normally.
 
-On an existing installation, choosing Apple changes only the utility selection
-and its provider configuration. Your primary model, fallbacks, and credentials
-are preserved. Explicit utility-model configuration can also be set per agent
+On an existing installation, choosing Apple preserves your primary model,
+fallbacks, and credentials. If an older config relied on an implicit primary,
+setup records that existing route before adding the Apple provider. Doctor and
+normal config writes apply the same [utility-model migration](/gateway/config-agents/models#agentsdefaultsmodel).
+If that migration is still pending, setup asks you to run `openclaw doctor --fix`
+or choose an explicit primary before connecting Apple.
+Explicit utility-model configuration can also be set per agent
 with `agents.entries.<id>.utilityModel`.
 
 Later discovery reuses the prepared helper and checks the current model again.

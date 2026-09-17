@@ -95,7 +95,7 @@ describe("setup activation credentials and configuration", () => {
         expect(saved.sourceConfig.agents?.defaults?.utilityModel).toContain(modelRef);
         expect(setup.run.mock.calls[0]?.[0]).toMatchObject({
           provider: "openai",
-          model: "gpt-4.1-mini",
+          model: "gpt-5.4-mini",
         });
       }
     },
@@ -141,7 +141,7 @@ describe("setup activation credentials and configuration", () => {
       params.onSuccessfulAuthBinding?.({
         agentHarnessId: "codex",
         authFingerprint: fingerprintResolvedProviderAuth(nativeAuth),
-        modelId: "gpt-4.1-mini",
+        modelId: "gpt-5.4-mini",
         modelApi: "openai-responses",
         runtimeOwnerKind: "plugin-harness",
         runtimeOwnerId: "codex",
@@ -151,7 +151,7 @@ describe("setup activation credentials and configuration", () => {
         payloads: [{ text: "OK" }],
         meta: {
           durationMs: 1,
-          executionTrace: { winnerProvider: "openai", winnerModel: "gpt-4.1-mini" },
+          executionTrace: { winnerProvider: "openai", winnerModel: "gpt-5.4-mini" },
         },
       };
     });
@@ -627,7 +627,7 @@ describe("setup activation credentials and configuration", () => {
           openai: {
             baseUrl: "https://provider.example/v1",
             api: "openai-responses",
-            models: [{ id: "gpt-4.1-mini", name: "Sparse saved model" }],
+            models: [{ id: "gpt-5.4-mini", name: "Sparse saved model" }],
           },
         },
       },
@@ -652,7 +652,7 @@ describe("setup activation credentials and configuration", () => {
     expect(setup.readProfile()).toEqual([saved.profile.profileId, credential]);
     const snapshot = await readConfigFileSnapshot();
     expect(snapshot.sourceConfig.models?.providers?.openai?.models).toEqual([
-      { id: "gpt-4.1-mini", name: "Sparse saved model" },
+      { id: "gpt-5.4-mini", name: "Sparse saved model" },
     ]);
   });
 

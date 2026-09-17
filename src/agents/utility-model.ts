@@ -2,6 +2,10 @@
 // narration). Unset config derives the provider-declared small model from the
 // agent's primary provider; an explicit empty string disables utility routing.
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import {
+  hasUtilityModelSeparationMigrationMarker,
+  resolveLegacyImplicitPrimaryModelRef,
+} from "../config/utility-model-separation-migration.js";
 import { getCurrentPluginMetadataSnapshot } from "../plugins/current-plugin-metadata-snapshot.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
 import { resolveAgentEffectiveModelPrimary } from "./agent-scope.js";
@@ -9,16 +13,36 @@ import { splitTrailingAuthProfile } from "./model-ref-profile.js";
 import { resolveDefaultModelForAgent } from "./model-selection.js";
 import { readUtilityModelSetting } from "./utility-model-setting.js";
 
+/** Legacy utility settings did not remove the ordinary implicit primary route. */
+export function resolveConfiguredPrimaryModelForAgent(params: {
+  cfg: OpenClawConfig;
+  agentId: string;
+}): string | undefined {
+  const primary = resolveAgentEffectiveModelPrimary(params.cfg, params.agentId)?.trim();
+  if (primary) {
+    return primary;
+  }
+  return !hasUtilityModelSeparationMigrationMarker(params.cfg) &&
+    readUtilityModelSetting(params.cfg, params.agentId).kind === "explicit"
+    ? resolveLegacyImplicitPrimaryModelRef(params.cfg)
+    : undefined;
+}
+
 /** Setup can use an explicit utility model until the agent has its own primary. */
 export function resolveConfiguredSetupModelForAgent(params: {
   cfg: OpenClawConfig;
   agentId: string;
   /** An explicit utility selection is used only to verify that configuration role. */
   modelTarget?: "utility";
-}): { modelRef: string; modelTarget?: "utility" } | undefined {
-  const primary = resolveAgentEffectiveModelPrimary(params.cfg, params.agentId)?.trim();
+}): { modelRef: string; modelTarget?: "utility"; implicitPrimary?: true } | undefined {
+  const primary = resolveConfiguredPrimaryModelForAgent(params);
   if (primary && params.modelTarget !== "utility") {
-    return { modelRef: primary };
+    return {
+      modelRef: primary,
+      ...(!resolveAgentEffectiveModelPrimary(params.cfg, params.agentId)?.trim()
+        ? { implicitPrimary: true as const }
+        : {}),
+    };
   }
   const utility = readUtilityModelSetting(params.cfg, params.agentId);
   return utility.kind === "explicit"

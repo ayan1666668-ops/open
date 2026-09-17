@@ -93,7 +93,11 @@ describe("applySystemAgentModelSelection", () => {
       modelTarget: "utility",
     });
 
-    expect(result).toEqual({ agents: { defaults: { utilityModel: "local-utility/tiny" } } });
+    expect(result.agents?.defaults?.utilityModel).toBe("local-utility/tiny");
+    expect(result.agents?.defaults?.model).toBeUndefined();
+    expect(result.agents?.entries).toBeUndefined();
+    expect(result.agents?.list).toBeUndefined();
+    expect(result.meta?.migrations?.utilityModelSeparation).toBe(true);
   });
 
   it("keeps a newly approved model allowed when migrating a first-run legacy model map", async () => {

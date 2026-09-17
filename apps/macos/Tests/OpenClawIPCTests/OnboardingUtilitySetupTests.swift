@@ -1,7 +1,7 @@
 import Foundation
-@testable import OpenClaw
 import OpenClawProtocol
 import Testing
+@testable import OpenClaw
 
 @MainActor
 struct OnboardingUtilitySetupTests {

@@ -13,6 +13,7 @@ import {
 } from "../config/model-policy-allowlist-migration.js";
 import { parseModelPolicyWildcardRef } from "../config/model-policy-ref.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { hasUtilityModelSeparationMigrationMarker } from "../config/utility-model-separation-migration.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { getCurrentPluginMetadataSnapshot } from "../plugins/current-plugin-metadata-snapshot.js";
 import { loadManifestMetadataSnapshot } from "../plugins/manifest-contract-eligibility.js";
@@ -728,7 +729,7 @@ export function resolveConfiguredPrimaryProviderFallback(
 ): ModelRef | null {
   const utility = readUtilityModelSetting(params.cfg, params.agentId);
   const excludedModel =
-    utility.kind === "explicit"
+    utility.kind === "explicit" && hasUtilityModelSeparationMigrationMarker(params.cfg)
       ? resolveModelRefFromString({
           ...params,
           raw: utility.modelRef,

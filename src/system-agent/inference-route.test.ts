@@ -46,6 +46,7 @@ function utilityConfig(primary?: string): OpenClawConfig {
   const config = devConfig();
   return {
     ...config,
+    meta: { migrations: { utilityModelSeparation: true } },
     agents: {
       ...config.agents,
       defaults: { ...(primary ? { model: primary } : {}), utilityModel: "local-utility/tiny" },
@@ -78,6 +79,54 @@ afterEach(() => {
 });
 
 describe("resolveSystemAgentConfiguredRouteFromConfig", () => {
+  it("retains a literal catalog @ suffix on a legacy implicit primary route", async () => {
+    const config = utilityConfig();
+    delete config.meta;
+    delete config.models?.providers?.openai;
+    const provider = config.models?.providers?.["local-utility"];
+    if (!provider?.models[0]) {
+      throw new Error("Missing local utility fixture");
+    }
+    provider.models[0].id = "tiny@experimental";
+
+    const route = await resolveSystemAgentConfiguredRouteFromConfig(config);
+
+    expect(route).toMatchObject({
+      provider: "local-utility",
+      model: "tiny@experimental",
+      modelLabel: "local-utility/tiny@experimental",
+    });
+    expect(route?.authProfileId).toBeUndefined();
+    expect(route?.modelTarget).toBeUndefined();
+  });
+
+  it("invalidates the inherited primary verification when only utility separation changes", async () => {
+    const legacy = utilityConfig();
+    legacy.meta = undefined;
+    delete legacy.models?.providers?.openai;
+    const separated: OpenClawConfig = {
+      ...legacy,
+      meta: { migrations: { utilityModelSeparation: true } },
+    };
+
+    const primary = await projectDefaultInferenceRoute(legacy);
+    const utility = await projectDefaultInferenceRoute(separated);
+
+    expect(primary.route).toMatchObject({ modelLabel: "local-utility/tiny", agentId: "dev" });
+    expect(primary.route).not.toHaveProperty("modelTarget");
+    expect(utility.route).toMatchObject({
+      modelLabel: "local-utility/tiny",
+      modelTarget: "utility",
+    });
+    expect(sameDefaultInferenceRoute(primary, utility)).toBe(false);
+    expect(
+      sameDefaultInferenceRoute(
+        await projectDefaultInferenceRoute(legacy, { modelTarget: "utility" }),
+        await projectDefaultInferenceRoute(separated, { modelTarget: "utility" }),
+      ),
+    ).toBe(true);
+  });
+
   it("uses the explicit utility during first-run setup without manufacturing a primary", async () => {
     const config = utilityConfig();
     const original = structuredClone(config);

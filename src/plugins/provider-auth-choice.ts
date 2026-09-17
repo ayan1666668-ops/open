@@ -10,6 +10,10 @@ import { resolveDefaultAgentWorkspaceDir } from "../agents/workspace.js";
 import { normalizeAgentModelRefForConfig } from "../config/model-input.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { PluginInstallRecord } from "../config/types.plugins.js";
+import {
+  materializeUtilityModelSeparation,
+  resolveUtilityModelSeparationError,
+} from "../config/utility-model-separation-migration.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { t } from "../wizard/i18n/index.js";
 import { createPluginCapabilityConsentPrompter } from "../wizard/plugin-capability-consent.js";
@@ -410,6 +414,12 @@ export async function prepareAuthChoiceLoadedPluginProvider<T>(
         env: params.env,
         includeUntrustedWorkspacePlugins: false,
       });
+      if ((manifestAuthChoice ?? installCatalogEntry)?.modelTarget === "utility") {
+        const error = resolveUtilityModelSeparationError(params.config);
+        if (error) {
+          throw new Error(error);
+        }
+      }
       const resolveChoice = (providers: ProviderPlugin[], config: OpenClawConfig) =>
         resolveProviderPluginChoice({
           providers,
@@ -534,6 +544,12 @@ export async function prepareAuthChoiceLoadedPluginProvider<T>(
           ? null
           : preparedWithoutAuthProfiles({ config: nextConfig, retrySelection: true });
       }
+      if (resolved.wizard?.modelTarget === "utility") {
+        const error = resolveUtilityModelSeparationError(params.config);
+        if (error) {
+          throw new Error(error);
+        }
+      }
       if (nextConfig === params.config && enabledConfig !== params.config) {
         nextConfig = enabledConfig;
       }
@@ -559,9 +575,15 @@ export async function prepareAuthChoiceLoadedPluginProvider<T>(
       workspaceDir,
       ...(params.signal ? { signal: params.signal } : {}),
       ...(params.isRemote !== undefined ? { isRemote: params.isRemote } : {}),
-      ...(params.beforePersistentEffect
-        ? { beforePersistentEffect: params.beforePersistentEffect }
-        : {}),
+      beforePersistentEffect: async () => {
+        if (resolved.wizard?.modelTarget === "utility") {
+          const error = resolveUtilityModelSeparationError(params.config);
+          if (error) {
+            throw new Error(error);
+          }
+        }
+        await params.beforePersistentEffect?.();
+      },
       secretInputMode: params.opts?.secretInputMode,
       allowSecretRefPrompt: false,
       opts: params.opts,
@@ -574,7 +596,10 @@ export async function prepareAuthChoiceLoadedPluginProvider<T>(
       if (resolved.wizard?.modelTarget === "utility") {
         return await consume(
           {
-            config: restoreConfiguredPrimaryModel(nextConfig, params.config),
+            config: materializeUtilityModelSeparation(
+              restoreConfiguredPrimaryModel(nextConfig, params.config),
+              params.config,
+            ).config,
             modelTarget: "utility",
             utilityModelOverride: selectedModel,
             ...(prepared.pendingPluginInstalls

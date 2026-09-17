@@ -354,7 +354,7 @@ async function verifyAndActivateCandidate(
           workspaceDir: ctx.workspace,
         });
   const providerPatch = createMergePatch(cfg, stripPendingPluginInstallRecords(prepared));
-  const selectModel =
+  const selectModel: (config: OpenClawConfig, previousConfig: OpenClawConfig) => OpenClawConfig =
     params.kind === "existing-model"
       ? (config: OpenClawConfig) => config
       : await createSystemAgentModelSelectionUpdater({
@@ -371,7 +371,7 @@ async function verifyAndActivateCandidate(
       // SAFETY: The patch is derived from typed configs and preserves their config shape.
       patched = applyMergePatch(base, providerPatch) as OpenClawConfig;
     }
-    const selected = selectModel(patched);
+    const selected = selectModel(patched, base);
     return staged.pendingPluginInstalls
       ? { ...selected, plugins: { ...selected.plugins, installs: staged.pendingPluginInstalls } }
       : selected;

@@ -13,6 +13,10 @@ import { formatCliCommand } from "../../../cli/command-format.js";
 import { quoteCliArg } from "../../../cli/quote-cli-arg.js";
 import { resolveAgentModelPrimaryValue } from "../../../config/model-input.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
+import {
+  materializeUtilityModelSeparation,
+  resolveUtilityModelSeparationError,
+} from "../../../config/utility-model-separation-migration.js";
 import { enablePluginWithCapabilityConsent } from "../../../plugins/enable.js";
 import { resolvePreferredProviderForAuthChoice } from "../../../plugins/provider-auth-choice-preference.js";
 import { resolveManifestProviderAuthChoice } from "../../../plugins/provider-auth-choices.js";
@@ -97,6 +101,12 @@ export async function applyNonInteractivePluginProviderChoice(params: {
     includeUntrustedWorkspacePlugins: false,
   });
   if (trustedManifestMatch) {
+    if (trustedManifestMatch.modelTarget === "utility") {
+      const error = resolveUtilityModelSeparationError(params.baseConfig);
+      if (error) {
+        return reject(error);
+      }
+    }
     const enabled = await enablePluginWithCapabilityConsent(
       nextConfig,
       trustedManifestMatch.pluginId,
@@ -197,6 +207,12 @@ export async function applyNonInteractivePluginProviderChoice(params: {
     if (!installCatalogEntry) {
       return undefined;
     }
+    if (installCatalogEntry.modelTarget === "utility") {
+      const error = resolveUtilityModelSeparationError(params.baseConfig);
+      if (error) {
+        return reject(error);
+      }
+    }
     const { ensureOnboardingPluginInstalled } = await import("../../onboarding-plugin-install.js");
     const installResult = await ensureOnboardingPluginInstalled({
       cfg: nextConfig,
@@ -242,6 +258,12 @@ export async function applyNonInteractivePluginProviderChoice(params: {
     }
   }
 
+  if (providerChoice.wizard?.modelTarget === "utility") {
+    const error = resolveUtilityModelSeparationError(params.baseConfig);
+    if (error) {
+      return reject(error);
+    }
+  }
   const enableResult = await enablePluginWithCapabilityConsent(
     nextConfig,
     providerChoice.provider.pluginId ?? providerChoice.provider.id,
@@ -270,10 +292,14 @@ export async function applyNonInteractivePluginProviderChoice(params: {
   const providerConfig = agentScopedModels
     ? prepareAgentModelDefaults(enableResult.config, params.target)
     : enableResult.config;
-  const projectProviderResult = (updated: OpenClawConfig) =>
-    agentScopedModels
+  const projectProviderResult = (updated: OpenClawConfig) => {
+    const projected = agentScopedModels
       ? projectAgentModelDefaults(enableResult.config, params.target, updated)
       : updated;
+    return modelTarget === "utility"
+      ? materializeUtilityModelSeparation(projected, params.baseConfig).config
+      : projected;
+  };
   const runNonInteractive = method.runNonInteractive;
   const context = {
     authChoice: params.authChoice,

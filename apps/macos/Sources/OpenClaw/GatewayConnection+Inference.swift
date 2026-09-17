@@ -7,7 +7,9 @@ extension GatewayConnection {
         let primaryModel: String?
         let utilityModel: String?
 
-        var setupModel: String? { self.primaryModel ?? self.utilityModel }
+        var setupModel: String? {
+            self.primaryModel ?? self.utilityModel
+        }
 
         var setupModelTarget: OnboardingAISetupModel.ModelTarget? {
             self.primaryModel == nil && self.utilityModel != nil ? .utility : nil

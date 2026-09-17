@@ -2,12 +2,15 @@ import { parseProviderModelRef } from "@openclaw/model-catalog-core/model-catalo
 import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
 import { normalizeOptionalAgentRuntimeId } from "../agents/agent-runtime-id.js";
 import { resolveAmbientOwnerAgentId } from "../agents/agent-scope-config.js";
-import { resolveAgentDir, resolveAgentEffectiveModelPrimary } from "../agents/agent-scope.js";
+import { resolveAgentDir } from "../agents/agent-scope.js";
 import { loadAuthProfileStoreWithoutExternalProfiles } from "../agents/auth-profiles/store-runtime.js";
 import { areRuntimeModelRefsEquivalent } from "../agents/model-runtime-aliases.js";
 import { resolveModelRuntimePolicy } from "../agents/model-runtime-policy.js";
 import { readUtilityModelSetting } from "../agents/utility-model-setting.js";
-import { resolveConfiguredSetupModelForAgent } from "../agents/utility-model.js";
+import {
+  resolveConfiguredPrimaryModelForAgent,
+  resolveConfiguredSetupModelForAgent,
+} from "../agents/utility-model.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { formatErrorMessage, toErrorObject } from "../infra/errors.js";
 import { enablePluginInConfig } from "../plugins/enable.js";
@@ -165,7 +168,9 @@ async function prepareSetupInferenceOptions(deps: DetectSetupInferenceDeps, agen
   const disabledAuthChoices = supportedAuthChoices.filter(
     (choice) => !authChoices.includes(choice),
   );
-  const setupComplete = Boolean(resolveAgentEffectiveModelPrimary(cfg, targetAgentId));
+  const setupComplete = Boolean(
+    resolveConfiguredPrimaryModelForAgent({ cfg, agentId: targetAgentId }),
+  );
   const setupSelection = resolveConfiguredSetupModelForAgent({ cfg, agentId: targetAgentId });
   const utilitySetting = readUtilityModelSetting(cfg, targetAgentId);
   let utilityModel: string | undefined;

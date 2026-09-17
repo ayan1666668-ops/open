@@ -1,4 +1,5 @@
 import { afterAll, beforeEach, describe, expect, test, vi } from "vitest";
+import { makeProviderModelFixture } from "../agents/test-helpers/provider-model-fixture.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { clearPluginMetadataLifecycleCaches } from "../plugins/plugin-metadata-lifecycle.js";
 import { closeOpenClawAgentDatabasesForTest } from "../state/openclaw-agent-db.js";
@@ -38,6 +39,7 @@ describe("listAgentsForGateway model identity", () => {
     { shared: "helper", ops: "helper" },
   ])("separates canonical utility availability from primary readiness: $shared", (utility) => {
     const cfg: OpenClawConfig = {
+      meta: { migrations: { utilityModelSeparation: true } },
       agents: {
         defaults: {
           utilityModel: utility.shared,
@@ -75,6 +77,53 @@ describe("listAgentsForGateway model identity", () => {
     expect(disabled?.model?.primary).toBeTruthy();
     expect(cfg).toEqual(original);
   });
+
+  test.each(["local-utility/small@local:utility", "helper@local:utility"])(
+    "preserves the legacy Gateway primary for a sole provider matching utility %s",
+    (utilityModel) => {
+      const cfg: OpenClawConfig = {
+        agents: {
+          defaults: {
+            utilityModel,
+            models: { "local-utility/small": { alias: "helper" } },
+          },
+          entries: {
+            main: { default: true },
+            ops: {
+              utilityModel: "worker-helper@local:ops",
+              models: { "local-utility/small": { alias: "worker-helper" } },
+            },
+            disabled: { utilityModel: "" },
+          },
+        },
+        models: {
+          providers: {
+            "local-utility": {
+              baseUrl: "http://127.0.0.1:9/v1",
+              models: [
+                makeProviderModelFixture({
+                  id: "small",
+                  provider: "local-utility",
+                  api: "openai-completions",
+                  baseUrl: "http://127.0.0.1:9/v1",
+                }),
+              ],
+            },
+          },
+        },
+      };
+      const original = structuredClone(cfg);
+      const { agents } = listAgentsForGateway(cfg);
+
+      for (const id of ["main", "ops", "disabled"]) {
+        expect(agents.find((agent) => agent.id === id)?.model?.primary).toBe("local-utility/small");
+      }
+      expect(agents.find((agent) => agent.id === "main")?.utilityModel).toBe("local-utility/small");
+      expect(agents.find((agent) => agent.id === "ops")?.utilityModel).toBe("local-utility/small");
+      expect(agents.find((agent) => agent.id === "disabled")?.utilityModel).toBeUndefined();
+      expect(cfg).toEqual(original);
+    },
+  );
 
   test("listAgentsForGateway projects a profile-qualified default as canonical model identity", () => {
     const cfg = {

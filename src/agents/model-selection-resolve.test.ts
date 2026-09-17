@@ -12,6 +12,7 @@ describe("implicit primary selection with an explicit utility model", () => {
   const provider = "local-utility";
   function config(): OpenClawConfig {
     return {
+      meta: { migrations: { utilityModelSeparation: true } },
       agents: {
         defaults: {
           utilityModel: `${provider}/small`,
@@ -48,10 +49,15 @@ describe("implicit primary selection with an explicit utility model", () => {
   }
 
   it.each(["local-utility/small", " Local-Utility/small@utility:setup ", "helper@utility:setup"])(
-    "does not promote the explicit utility ref %s to primary",
+    "separates migrated utility ref %s while preserving the legacy implicit primary",
     (utilityModel) => {
       const cfg = config();
       expectDefined(cfg.agents?.defaults, "default agent config").utilityModel = utilityModel;
+      cfg.meta = undefined;
+      expect(resolve(cfg)).toEqual({ provider, model: "small" });
+      expect(resolve(cfg, "worker")).toEqual({ provider, model: "small" });
+
+      cfg.meta = { migrations: { utilityModelSeparation: true } };
       expect(resolve(cfg)).toEqual({ provider: "ordinary", model: "primary" });
       expect(resolve(cfg, "worker")).toEqual({ provider: "ordinary", model: "primary" });
     },
@@ -65,6 +71,11 @@ describe("implicit primary selection with an explicit utility model", () => {
     const cfg = config();
     expectDefined(cfg.agents?.entries?.worker, "worker config").utilityModel =
       scenario.utilityModel;
+    cfg.meta = undefined;
+    expect(resolve(cfg, "worker")).toEqual({ provider, model: "small" });
+    expect(resolve(cfg)).toEqual({ provider, model: "small" });
+
+    cfg.meta = { migrations: { utilityModelSeparation: true } };
     expect(resolve(cfg, "worker")).toEqual({
       provider: scenario.expectedProvider,
       model: scenario.expectedModel,
