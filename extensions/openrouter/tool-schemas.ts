@@ -101,10 +101,14 @@ function normalizeMoonshotSchemaObject(record: Record<string, unknown>): Record<
   // when every typed branch is already a subset; retain all other parent constraints.
   // oneOf has no evidenced rewrite here. Never apply DeepSeek's first-branch reduction.
   const { type, ...result } = next;
-  result.anyOf = branches.map((branch) => {
-    const record = readRecord(branch);
-    return record && !("type" in record) ? { type, ...record } : branch;
-  });
+  const typedBranches: unknown[] = [];
+  for (const branch of branches) {
+    const branchRecord = readRecord(branch);
+    typedBranches.push(
+      branchRecord && !("type" in branchRecord) ? { type, ...branchRecord } : branch,
+    );
+  }
+  result.anyOf = typedBranches;
   return result;
 }
 
