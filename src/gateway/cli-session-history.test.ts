@@ -4,6 +4,11 @@ import rawFs from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import {
+  REDACTION_PROVENANCE_END,
+  REDACTION_PROVENANCE_START,
+  stripRedactionProvenance,
+} from "@openclaw/normalization-core/redaction-provenance";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../test/helpers/promise.js";
 import {
@@ -15,7 +20,10 @@ import type { AgentMessage } from "../agents/runtime/index.js";
 import { redactTranscriptMessage } from "../agents/transcript-redact.js";
 import type { SessionEntry } from "../config/sessions.js";
 import { withEnvAsync } from "../test-utils/env.js";
-import { readClaudeCliSessionMessages } from "./cli-session-history.claude.js";
+import {
+  readClaudeCliSessionMessages,
+  redactClaudeCliHistoryMessage,
+} from "./cli-session-history.claude.js";
 import {
   readClaudeCliFallbackSeed,
   readChatHistoryCliSessionImportSnapshot,
@@ -3404,6 +3412,27 @@ describe("readClaudeCliFallbackSeed", () => {
 
     const seed = readFallbackSeed();
     expect(seed?.summaryText).toBe("trailing summary without boundary");
+  });
+});
+describe("redactClaudeCliHistoryMessage", () => {
+  it("keeps raw external history out of the stored-text decoder", () => {
+    // A Claude project row is external history, not our storage: a literal marker in its text
+    // is data, so decoding it would drop the original bytes before redaction sees them
+    // (#143937 review).
+    const literal = `${REDACTION_PROVENANCE_START}***${REDACTION_PROVENANCE_END}`;
+    const text = `the doc quotes ${literal} verbatim`;
+    const message = {
+      role: "assistant",
+      content: [{ type: "text", text }],
+    } as unknown as Parameters<typeof redactClaudeCliHistoryMessage>[0];
+
+    const redacted = redactClaudeCliHistoryMessage(message) as unknown as {
+      content: Array<{ text: string }>;
+    };
+    const stored = String(redacted.content[0]?.text);
+    expect(stored).not.toContain("the doc quotes *** verbatim");
+    // Decoding restores exactly what the imported row held, marker bytes included.
+    expect(stripRedactionProvenance(stored)).toBe(text);
   });
 });
 /* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

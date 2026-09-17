@@ -1,3 +1,4 @@
+import { escapeRawRedactionProvenanceLiterals } from "@openclaw/normalization-core/redaction-provenance";
 import { pruneMapToMaxSize } from "../infra/map-size.js";
 import { resolveGlobalSingleton } from "../shared/global-singleton.js";
 import { escapeRegExp } from "../shared/regexp.js";
@@ -52,6 +53,14 @@ export function registerSecretValueForRedaction(value: string): void {
   const jsonEscaped = JSON.stringify(value).slice(1, -1);
   if (jsonEscaped !== value) {
     registerOneSecretValue(jsonEscaped);
+  }
+  // Transcript persistence escapes raw escape bytes before exact-value matching, so a
+  // credential containing the encoding's discriminator reaches that matcher in this
+  // surface form (#143937 review). Register it too, before the raw value: a derived form
+  // must be the first thing bounded eviction drops, never the active credential.
+  const provenanceEscaped = escapeRawRedactionProvenanceLiterals(value);
+  if (provenanceEscaped !== value) {
+    registerOneSecretValue(provenanceEscaped);
   }
   // Keep the raw value newest so bounded-registry eviction cannot drop the
   // active credential while retaining only a transformed representation.

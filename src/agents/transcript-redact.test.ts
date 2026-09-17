@@ -2,6 +2,10 @@
 // secrets do not persist in logs or replay artifacts.
 
 import { expectDefined } from "@openclaw/normalization-core";
+import {
+  REDACTION_PROVENANCE_STORAGE_MARK,
+  markRedactionProvenance,
+} from "@openclaw/normalization-core/redaction-provenance";
 import type { AgentMessage } from "openclaw/plugin-sdk/agent-core";
 import { describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
@@ -46,6 +50,12 @@ function googleCompatCfg(): OpenClawConfig {
   } satisfies OpenClawConfig;
 }
 
+/** Stored form of one masked value: the producer mask behind the encoding's storage mark.
+ *  Persistence records that a string uses the encoding, so every marked span it writes is
+ *  stored inside that mark (#143937 review). */
+function storedRedactionValue(mask: string): string {
+  return `${REDACTION_PROVENANCE_STORAGE_MARK}${markRedactionProvenance(mask)}`;
+}
 const EMAIL_PATTERN = String.raw`([\w]|[-.])+@([\w]|[-.])+\.\w+`;
 const IMAGE_BASE64_WITH_SECRET_TOKEN_SUBSTRING =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAARcnVOZAAAAKIDABCDEFGHIJKLMNOP8JJRuAAAAABJRU5ErkJggg==";
@@ -467,8 +477,8 @@ describe("redactTranscriptMessage", () => {
     expect(args.next_page_token).toBe("NXTpage456");
     expect(args.page_cursor).toBe("PC789");
     // Genuine credentials stay masked.
-    expect(args.doc_token).toBe("***");
-    expect(args.app_secret).toBe("***");
+    expect(args.doc_token).toBe(storedRedactionValue("***"));
+    expect(args.app_secret).toBe(storedRedactionValue("***"));
   });
 
   it("still masks a secret-shaped value even under an exempt pagination key (#104992)", () => {
@@ -1218,7 +1228,7 @@ describe("redactTranscriptMessage", () => {
     );
     expect(block.thoughtSignature).toBe(GOOGLE_THOUGHT_SIGNATURE);
     expect(JSON.stringify(block.arguments)).not.toContain("sk-abcdef1234567890xyz");
-    expect(block.arguments.apiKey).toBe("plains…e123");
+    expect(block.arguments.apiKey).toBe(storedRedactionValue("plains…e123"));
   });
 
   it("preserves Google text and legacy thinking signatures", () => {
@@ -1350,7 +1360,7 @@ describe("redactTranscriptMessage", () => {
     expect(redactedBlock.data).toBe(CIPHERTEXT_WITH_TOKEN_SHAPED_BYTES);
     expect(redactedBlock.signature).toBe(CIPHERTEXT_WITH_TOKEN_SHAPED_BYTES);
     expect(redactedBlock.thinkingSignature).toBe(CIPHERTEXT_WITH_TOKEN_SHAPED_BYTES);
-    expect(redactedBlock.metadata.accessToken).toBe("nested…t123");
+    expect(redactedBlock.metadata.accessToken).toBe(storedRedactionValue("nested…t123"));
   });
 
   it("preserves credential-shaped bytes in recognized provider replay fields", () => {
@@ -1764,8 +1774,13 @@ describe("redactTranscriptMessage", () => {
     };
     const serializedArguments = JSON.stringify(block.arguments);
     expect(serializedArguments).not.toContain("sk-abcdef1234567890xyz");
-    expect(argumentsValue.command).toBe("OPENAI_API_KEY=sk-abc…0xyz openclaw health");
-    expect(argumentsValue.env.nested[0]).toBe("token sk-abc…0xyz");
+    // The whole value opens with the encoding's storage mark; the masked span keeps its own.
+    expect(argumentsValue.command).toBe(
+      `${REDACTION_PROVENANCE_STORAGE_MARK}OPENAI_API_KEY=${markRedactionProvenance("sk-abc…0xyz")} openclaw health`,
+    );
+    expect(argumentsValue.env.nested[0]).toBe(
+      `${REDACTION_PROVENANCE_STORAGE_MARK}token ${markRedactionProvenance("sk-abc…0xyz")}`,
+    );
     expect(argumentsValue.count).toBe(1);
     expect(serializedArguments).toContain("openclaw health");
     expect(block.arguments).not.toBe(
@@ -1809,9 +1824,9 @@ describe("redactTranscriptMessage", () => {
     expect(serializedArguments).not.toContain("plainsecretvalue123");
     expect(serializedArguments).not.toContain("hunter2");
     expect(serializedArguments).not.toContain("nestedplainsecret123");
-    expect(argumentsValue.apiKey).toBe("plains…e123");
-    expect(argumentsValue.password).toBe("***");
-    expect(argumentsValue.nested.accessToken[0]).toBe("nested…t123");
+    expect(argumentsValue.apiKey).toBe(storedRedactionValue("plains…e123"));
+    expect(argumentsValue.password).toBe(storedRedactionValue("***"));
+    expect(argumentsValue.nested.accessToken[0]).toBe(storedRedactionValue("nested…t123"));
     expect(serializedArguments).toContain("visible");
   });
 
@@ -1848,9 +1863,11 @@ describe("redactTranscriptMessage", () => {
     expect(serializedInput).not.toContain("plainsecretvalue123");
     expect(serializedInput).not.toContain("nestedplainsecret123");
     expect(serializedInput).not.toContain("sk-abcdef1234567890xyz");
-    expect(inputValue.apiKey).toBe("plains…e123");
-    expect(inputValue.nested.accessToken[0]).toBe("nested…t123");
-    expect(inputValue.command).toBe("OPENAI_API_KEY=sk-abc…0xyz openclaw health");
+    expect(inputValue.apiKey).toBe(storedRedactionValue("plains…e123"));
+    expect(inputValue.nested.accessToken[0]).toBe(storedRedactionValue("nested…t123"));
+    expect(inputValue.command).toBe(
+      `${REDACTION_PROVENANCE_STORAGE_MARK}OPENAI_API_KEY=${markRedactionProvenance("sk-abc…0xyz")} openclaw health`,
+    );
     expect(serializedInput).toContain("visible");
   });
 
@@ -1882,8 +1899,8 @@ describe("redactTranscriptMessage", () => {
     const serializedInput = JSON.stringify(block.input);
     expect(serializedInput).not.toContain("hunter2");
     expect(serializedInput).not.toContain("nestedplainsecret123");
-    expect(inputValue.password).toBe("***");
-    expect(inputValue.nested.accessToken[0]).toBe("nested…t123");
+    expect(inputValue.password).toBe(storedRedactionValue("***"));
+    expect(inputValue.nested.accessToken[0]).toBe(storedRedactionValue("nested…t123"));
   });
 
   it("redacts arbitrary gateway/custom content-block fields recursively", () => {
@@ -1935,7 +1952,7 @@ describe("redactTranscriptMessage", () => {
     const result = redactTranscriptMessage(msg, cfg("tools")) as unknown as {
       details: Record<string, unknown>;
     };
-    expect(result.details.apiKey).toBe("plains…e123");
+    expect(result.details.apiKey).toBe(storedRedactionValue("plains…e123"));
     expect(result.details.self).toBe("[Circular]");
   });
 
@@ -1972,9 +1989,9 @@ describe("redactTranscriptMessage", () => {
     expect(serializedDetails).not.toContain("plainsecretvalue123");
     expect(serializedDetails).not.toContain("hunter2");
     expect(serializedDetails).not.toContain("nestedplainsecret123");
-    expect(details.apiKey).toBe("plains…e123");
-    expect(details.password).toBe("***");
-    expect(details.nested.accessToken[0]).toBe("nested…t123");
+    expect(details.apiKey).toBe(storedRedactionValue("plains…e123"));
+    expect(details.password).toBe(storedRedactionValue("***"));
+    expect(details.nested.accessToken[0]).toBe(storedRedactionValue("nested…t123"));
     expect(serializedDetails).toContain("visible");
   });
 
@@ -2025,7 +2042,9 @@ describe("redactTranscriptMessage", () => {
 
     const result = redactTranscriptMessage(msg, cfg("tools"));
     const content = msgContent(result) as Array<{ data: string }>;
-    expect(expectDefined(content[0], "content[0] test invariant").data).toBe("sk-abc…0xyz");
+    expect(expectDefined(content[0], "content[0] test invariant").data).toBe(
+      storedRedactionValue("sk-abc…0xyz"),
+    );
   });
 
   it("preserves valid BMP image base64 while redacting adjacent text", () => {
@@ -2073,7 +2092,7 @@ describe("redactTranscriptMessage", () => {
       "(msgContent(result) as Array<{ source: { data: string }; apiKey: stri... test invariant",
     );
     expect(block.source.data).toBe(IMAGE_BASE64_WITH_SECRET_TOKEN_SUBSTRING);
-    expect(block.apiKey).toBe("plains…e123");
+    expect(block.apiKey).toBe(storedRedactionValue("plains…e123"));
   });
 
   it("canonicalizes preserved image MIME from sniffed base64 bytes", () => {
@@ -2119,7 +2138,7 @@ describe("redactTranscriptMessage", () => {
       "(msgContent(result) as Array<{ image_url: string; data: string }>)[0] test invariant",
     );
     expect(block.image_url).toBe(dataUrl);
-    expect(block.data).toBe("AKIDAB…MNOP");
+    expect(block.data).toBe(storedRedactionValue("AKIDAB…MNOP"));
   });
 
   it("preserves valid non-browser image data URLs in transcripts", () => {

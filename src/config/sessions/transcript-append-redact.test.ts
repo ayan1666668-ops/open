@@ -2,8 +2,13 @@
 import fs from "node:fs";
 import path from "node:path";
 import { expectDefined } from "@openclaw/normalization-core";
+import {
+  REDACTION_PROVENANCE_STORAGE_MARK,
+  markRedactionProvenance,
+} from "@openclaw/normalization-core/redaction-provenance";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { serializeRedactionMarker } from "../../logging/redaction-provenance.test-support.js";
 import {
   onInternalSessionTranscriptUpdate,
   onSessionTranscriptUpdate,
@@ -32,6 +37,13 @@ const IMAGE_BASE64_WITH_SECRET_TOKEN_SUBSTRING =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAARcnVOZAAAAKIDABCDEFGHIJKLMNOP8JJRuAAAAABJRU5ErkJggg==";
 const OPAQUE_COMPACTION =
   "gAAAAABpQnQrXzzZqcAfo3unbAY-ku84xgsvB0fpLkbDvSh3WS5qzfSCmcgwr8_abcdefghijvK2RyV2GQ4ohzcfYwhRwTvY76TvR7Tvr_";
+
+/** Stored form of one masked value: the producer mask behind the encoding's storage mark.
+ *  Persistence records that a string uses the encoding, so every marked span it writes is
+ *  stored inside that mark (#143937 review). */
+function storedRedactionValue(mask: string): string {
+  return `${REDACTION_PROVENANCE_STORAGE_MARK}${markRedactionProvenance(mask)}`;
+}
 
 function readMessages(sessionFile: string) {
   return fs
@@ -293,10 +305,15 @@ describe("appendSessionTranscriptMessage - redaction", () => {
     });
 
     const raw = fs.readFileSync(sessionFile, "utf-8");
-    expect(raw).not.toContain("sk-abcdef1234567890xyz");
+    expect(raw).not.toContain("sk-abc...0xyz");
     expect(raw).not.toContain("plainsecretvalue123");
     expect(raw).not.toContain("hunter2");
-    expect(raw).toContain("OPENAI_API_KEY=sk-abc…0xyz openclaw health");
+    // JSON lines escape the marker's escape byte, so compare the serialized form.
+    expect(raw).toContain(
+      // The stored value opens with the encoding's storage mark, then the assignment prefix
+      // and the masked span inside it (#143937 review).
+      `${serializeRedactionMarker(REDACTION_PROVENANCE_STORAGE_MARK)}OPENAI_API_KEY=${serializeRedactionMarker(markRedactionProvenance("sk-abc…0xyz"))} openclaw health`,
+    );
     expect(raw).toContain("openclaw health");
 
     const [msg] = readMessages(sessionFile) as Array<{
@@ -322,25 +339,27 @@ describe("appendSessionTranscriptMessage - redaction", () => {
         expectDefined(msg, "msg test invariant").content[0],
         "msg.content[0] test invariant",
       ).arguments.command,
-    ).toBe("OPENAI_API_KEY=sk-abc…0xyz openclaw health");
+    ).toBe(
+      `${REDACTION_PROVENANCE_STORAGE_MARK}OPENAI_API_KEY=${markRedactionProvenance("sk-abc…0xyz")} openclaw health`,
+    );
     expect(
       expectDefined(
         expectDefined(msg, "msg test invariant").content[0],
         "msg.content[0] test invariant",
       ).arguments.env.nested[0],
-    ).toBe("token sk-abc…0xyz");
+    ).toBe(`${REDACTION_PROVENANCE_STORAGE_MARK}token ${markRedactionProvenance("sk-abc…0xyz")}`);
     expect(
       expectDefined(
         expectDefined(msg, "msg test invariant").content[0],
         "msg.content[0] test invariant",
       ).arguments.apiKey,
-    ).toBe("plains…e123");
+    ).toBe(storedRedactionValue("plains…e123"));
     expect(
       expectDefined(
         expectDefined(msg, "msg test invariant").content[0],
         "msg.content[0] test invariant",
       ).arguments.password,
-    ).toBe("***");
+    ).toBe(storedRedactionValue("***"));
   });
 
   it("masks secrets in tool-result details before writing to disk", async () => {
@@ -394,14 +413,18 @@ describe("appendSessionTranscriptMessage - redaction", () => {
     expect(JSON.stringify(expectDefined(msg, "msg test invariant").details)).not.toContain(
       "plainsecretvalue123",
     );
-    expect(expectDefined(msg, "msg test invariant").details.apiKey).toBe("plains…e123");
-    expect(expectDefined(msg, "msg test invariant").details.password).toBe("***");
+    expect(expectDefined(msg, "msg test invariant").details.apiKey).toBe(
+      storedRedactionValue("plains…e123"),
+    );
+    expect(expectDefined(msg, "msg test invariant").details.password).toBe(
+      storedRedactionValue("***"),
+    );
     expect(
       expectDefined(
         expectDefined(msg, "msg test invariant").details.nested.accessToken[0],
         "msg.details.nested.accessToken[0] test invariant",
       ),
-    ).toBe("nested…t123");
+    ).toBe(storedRedactionValue("nested…t123"));
   });
 
   it("preserves env placeholders in persisted tool results", async () => {
@@ -705,6 +728,48 @@ describe("appendExactAssistantMessageToSessionTranscript - redaction", () => {
 
     const events = await loadTranscriptEvents({ sessionId, sessionKey, storePath });
     expect(JSON.stringify(events)).not.toContain(fakeApiKey);
+    expect(events.filter((event) => (event as { type?: unknown }).type === "message")).toHaveLength(
+      1,
+    );
+  });
+
+  it("canonicalizes a re-redacted legacy mirror candidate before comparing", async () => {
+    const sessionsDir = fixture.sessionsDir();
+    const storePath = path.join(sessionsDir, "sessions.json");
+    const sessionId = "test-session-redact-legacy-candidate";
+    const sessionKey = "test-channel:test-redact-legacy-candidate";
+    await seedSessionEntry({ sessionId, sessionKey, storePath });
+
+    // The row was stored with no extra pattern configured, so its bytes carry no marker.
+    const legacyText = "the diagnostic value is xyz-123";
+    // The retry applies a pattern the storing release did not have, which masks part of the
+    // very same text and adds a fresh marker while re-redacting the stored row.
+    const patternConfig: OpenClawConfig = {
+      logging: { redactPatterns: [String.raw`diagnostic value ([^\s]+)`] },
+    };
+
+    const stored = await appendAssistantMessageToSessionTranscript({
+      sessionKey,
+      storePath,
+      config: {},
+      text: legacyText,
+    });
+    const retried = await appendAssistantMessageToSessionTranscript({
+      sessionKey,
+      storePath,
+      config: patternConfig,
+      text: legacyText,
+    });
+
+    expect(stored.ok).toBe(true);
+    expect(retried.ok).toBe(true);
+    if (!stored.ok || !retried.ok) {
+      return;
+    }
+    // Both sides compare canonical bytes, so the fresh marker of that pass cannot make an
+    // equivalent delivery append a second mirror (#143937 review).
+    expect(retried.messageId).toBe(stored.messageId);
+    const events = await loadTranscriptEvents({ sessionId, sessionKey, storePath });
     expect(events.filter((event) => (event as { type?: unknown }).type === "message")).toHaveLength(
       1,
     );

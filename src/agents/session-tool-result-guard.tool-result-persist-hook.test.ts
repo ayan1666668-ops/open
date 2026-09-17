@@ -2,9 +2,21 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import {
+  hasRedactionProvenance,
+  isEncodedRedactionProvenance,
+  markRedactionProvenance,
+  REDACTION_PROVENANCE_END,
+  REDACTION_PROVENANCE_START,
+  replaceRedactionProvenance,
+  stripEncodedRedactionProvenance,
+} from "@openclaw/normalization-core/redaction-provenance";
 import type { AgentMessage } from "openclaw/plugin-sdk/agent-core";
 import { SessionManager } from "openclaw/plugin-sdk/agent-sessions";
 import { describe, expect, it, afterEach, vi } from "vitest";
+import { serializeRedactionMarker } from "../logging/redaction-provenance.test-support.js";
+import { registerSecretValueForRedaction } from "../logging/secret-redaction-registry.js";
+import { resetSecretRedactionRegistryForTest } from "../logging/secret-redaction-registry.test-support.js";
 import {
   initializeGlobalHookRunner,
   resetGlobalHookRunner,
@@ -19,6 +31,8 @@ type PersistedToolResultMessage = ToolResultMessage & { details: Record<string, 
 const EMPTY_PLUGIN_SCHEMA = { type: "object", additionalProperties: false, properties: {} };
 const originalBundledPluginsDir = process.env.OPENCLAW_BUNDLED_PLUGINS_DIR;
 const originalConfigPath = process.env.OPENCLAW_CONFIG_PATH;
+/** What replay substitutes for a marked span (see `packages/agent-core` session replay). */
+const REPLAY_PLACEHOLDER = "[redacted: re-derive this value, do not reuse]";
 const LONE_SURROGATE_RE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u;
 let tempDirs: string[] = [];
 
@@ -298,7 +312,13 @@ describe("tool_result_persist hook", () => {
 
     const toolResult = requirePersistedToolResult(sm);
     const serialized = JSON.stringify(toolResult);
-    expect(serialized).toContain("customsecret=abcdef…ghij");
+    // Model-visible tool content keeps the delivery dialect (bare hint), while persisted
+    // details carry provenance. Re-redacting those stored detail bytes masks the hint body
+    // whole, so the detail keeps a marked placeholder rather than the hint (#142821 review).
+    expect(requireToolResultText(toolResult)).toBe("customsecret=abcdef…ghij");
+    expect(serialized).toContain(
+      `customsecret=${serializeRedactionMarker(markRedactionProvenance("***"))}`,
+    );
     expect(serialized).not.toContain(customSecret);
   });
 
@@ -366,7 +386,10 @@ describe("tool_result_persist hook", () => {
     const toolResult = requirePersistedToolResult(sm);
     const serialized = JSON.stringify(toolResult.details);
     expect(serialized).toContain("token=");
-    expect(serialized).toContain("***");
+    // Longer values keep their hint bytes, wrapped in provenance so replay can tell
+    // them from literal text; the raw value must never survive (#142821).
+    expect(serialized).toContain(serializeRedactionMarker(REDACTION_PROVENANCE_START));
+    expect(serialized).toContain(serializeRedactionMarker(REDACTION_PROVENANCE_END));
     expect(serialized).toContain("max depth exceeded");
     expect(serialized).not.toContain(tokenValue);
   });
@@ -475,13 +498,125 @@ describe("tool_result_persist hook", () => {
     const serialized = JSON.stringify(toolResult.details);
     expect(requireToolResultText(toolResult)).toBe("visible output stays small");
     expect(toolResult.details.persistedDetailsTruncated).toBe(true);
-    expect(serialized).toContain("token=***");
+    expect(serialized).toContain(
+      `token=${serializeRedactionMarker(markRedactionProvenance("***"))}`,
+    );
     expect(serialized).toContain("partial secret span omitted");
     expect(serialized).toContain("boundary overlap omitted");
     expect(serialized).not.toContain(tokenValue);
     expect(serialized).not.toContain(boundaryGhToken.slice(0, 12));
     expect(serialized).not.toContain("a".repeat(100));
     expect(serialized).not.toContain("b".repeat(100));
+  });
+
+  it("keeps truncation and partial-secret omission when the summary produced no mask", () => {
+    const sm = guardSessionManager(SessionManager.inMemory(), {
+      agentId: "main",
+      sessionKey: "main",
+    });
+    const appendMessage = sm.appendMessage.bind(sm) as unknown as (message: AgentMessage) => void;
+    appendMessage({
+      role: "assistant",
+      content: [{ type: "toolCall", id: "call_1", name: "exec", arguments: {} }],
+    } as AgentMessage);
+    // Unterminated private-key block: ordinary PEM redaction needs a closing delimiter,
+    // so only this guard's omission path can drop the fragment.
+    const privateKeyFragment = `-----BEGIN RSA PRIVATE KEY-----\n${"MIIBOgIBAAJBAK".repeat(90)}`;
+    appendMessage({
+      role: "toolResult",
+      toolCallId: "call_1",
+      isError: false,
+      content: [{ type: "text", text: "visible output stays small" }],
+      details: {
+        status: "completed",
+        sessionId: "exec-1",
+        aggregated: "x".repeat(120_000),
+        tail: `${privateKeyFragment}${"z".repeat(2_100)}`,
+      },
+    } as ToolResultMessage);
+
+    const toolResult = requirePersistedToolResult(sm);
+    const serialized = JSON.stringify(toolResult.details);
+    const persistedTail = toolResult.details.tail as string;
+    expect(requireToolResultText(toolResult)).toBe("visible output stays small");
+    expect(toolResult.details.persistedDetailsTruncated).toBe(true);
+    // Sanitized output without a mask is still sanitized output (#142821 review).
+    expect(persistedTail).toContain("partial secret span omitted");
+    expect(persistedTail).toContain("boundary overlap omitted");
+    expect(persistedTail).toContain("original chars omitted");
+    expect(serialized).not.toContain("BEGIN RSA PRIVATE KEY");
+    expect(serialized).not.toContain("MIIBOgIBAAJBAK");
+    expect(persistedTail.length).toBeLessThan(400);
+  });
+
+  it("stores a literal complete mark in details as literal bytes, not as provenance", () => {
+    const sm = guardSessionManager(SessionManager.inMemory(), {
+      agentId: "main",
+      sessionKey: "main",
+    });
+    const appendMessage = sm.appendMessage.bind(sm) as unknown as (message: AgentMessage) => void;
+    const literal = `${REDACTION_PROVENANCE_START}***${REDACTION_PROVENANCE_END}`;
+    const note = `quoted ${literal} verbatim`;
+    appendMessage({
+      role: "assistant",
+      content: [{ type: "toolCall", id: "call_1", name: "exec", arguments: {} }],
+    } as AgentMessage);
+    appendMessage({
+      role: "toolResult",
+      toolCallId: "call_1",
+      isError: false,
+      content: [{ type: "text", text: "visible output stays small" }],
+      details: { status: "completed", note },
+    } as ToolResultMessage);
+
+    const persistedNote = requirePersistedToolResult(sm).details.note as string;
+    // Nothing was redacted, so the stored bytes are the escaped literal form, marked as
+    // encoded: decoding restores exactly what was typed and never reads a user-typed mark as
+    // generated provenance (#142821, #143937 review).
+    expect(hasRedactionProvenance(persistedNote)).toBe(false);
+    expect(isEncodedRedactionProvenance(persistedNote)).toBe(true);
+    expect(persistedNote).not.toBe(note);
+    expect(replaceRedactionProvenance(persistedNote, REPLAY_PLACEHOLDER)).toBe(note);
+  });
+
+  it("keeps producer provenance across the repeated detail pass", () => {
+    // The guard sanitizes details before and after its persistence hooks, so the second pass
+    // reads this encoder's own prepared bytes. A registered value under a non-sensitive key
+    // becomes a marked hint on the first pass; the second must reuse those bytes instead of
+    // escaping the mark into literal text, or replay would keep the mask rather than replace
+    // it (#143937 review).
+    const registeredValue = "registeredopaquedetailvalue123456";
+    registerSecretValueForRedaction(registeredValue);
+    try {
+      const sm = guardSessionManager(SessionManager.inMemory(), {
+        agentId: "main",
+        sessionKey: "main",
+      });
+      const appendMessage = sm.appendMessage.bind(sm) as unknown as (message: AgentMessage) => void;
+      appendMessage({
+        role: "assistant",
+        content: [{ type: "toolCall", id: "call_1", name: "exec", arguments: {} }],
+      } as AgentMessage);
+      appendMessage({
+        role: "toolResult",
+        toolCallId: "call_1",
+        isError: false,
+        content: [{ type: "text", text: "visible output stays small" }],
+        details: { status: "completed", diagnostic: registeredValue },
+      } as ToolResultMessage);
+
+      const stored = requirePersistedToolResult(sm).details.diagnostic as string;
+      expect(isEncodedRedactionProvenance(stored)).toBe(true);
+      expect(hasRedactionProvenance(stored)).toBe(true);
+      expect(stored).not.toContain(registeredValue);
+      // Replay still rewrites the span: the mask never reaches the model as literal bytes.
+      expect(replaceRedactionProvenance(stored, REPLAY_PLACEHOLDER)).toBe(REPLAY_PLACEHOLDER);
+      expect(replaceRedactionProvenance(stored, REPLAY_PLACEHOLDER)).not.toContain(
+        "registeredopaquedetailvalue",
+      );
+    } finally {
+      resetSecretRedactionRegistryForTest();
+    }
   });
 
   it("redacts retained structured fields in fallback oversized details summaries", () => {
@@ -528,7 +663,11 @@ describe("tool_result_persist hook", () => {
     const serialized = JSON.stringify(details);
     expect(details.persistedDetailsTruncated).toBe(true);
     expect(details.finalDetailsTruncated).toBe(true);
-    expect(details.status).toMatchObject({ token: "***" });
+    const persistedToken = (details.status as { token: string }).token;
+    expect(isEncodedRedactionProvenance(persistedToken)).toBe(true);
+    const markedToken = stripEncodedRedactionProvenance(persistedToken);
+    expect(markedToken.startsWith(REDACTION_PROVENANCE_START)).toBe(true);
+    expect(markedToken.endsWith(REDACTION_PROVENANCE_END)).toBe(true);
     expect(details.spilledChars).toBe(2_000_000);
     expect(details.spillTruncated).toBe(true);
     expect(details.spill).toEqual({
@@ -970,3 +1109,4 @@ describe("before_message_write hook", () => {
     expectPersistedToolResultTextCapped(sm);
   });
 });
+/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

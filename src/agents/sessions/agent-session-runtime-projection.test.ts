@@ -1,6 +1,10 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { expectDefined } from "@openclaw/normalization-core";
+import {
+  REDACTION_PROVENANCE_STORAGE_MARK,
+  markRedactionProvenance,
+} from "@openclaw/normalization-core/redaction-provenance";
 import type { AgentTool } from "openclaw/plugin-sdk/agent-core";
 import type { Model } from "openclaw/plugin-sdk/llm";
 import { Type } from "typebox";
@@ -462,7 +466,14 @@ describe("AgentSession runtime and transcript projections", () => {
             { type: "text", text: "Extension: Looking up both records." },
             ...values.map((value) => ({
               type: "toolCall",
-              arguments: { [field]: field === "account" ? value : "***" },
+              // Stored values that carry reserved bytes open with the encoding's storage mark
+              // (#143937 review); the `account` field keeps the live value.
+              arguments: {
+                [field]:
+                  field === "account"
+                    ? value
+                    : `${REDACTION_PROVENANCE_STORAGE_MARK}${markRedactionProvenance("***")}`,
+              },
             })),
           ],
           openclawDelivery: { replyToCurrent: true },
