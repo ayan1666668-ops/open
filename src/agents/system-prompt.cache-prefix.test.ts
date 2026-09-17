@@ -1,4 +1,5 @@
 import type { Model } from "@openclaw/ai";
+import { SYSTEM_PROMPT_CACHE_BOUNDARY } from "@openclaw/ai/internal/shared";
 import { buildOpenAICompletionsParams } from "@openclaw/ai/transports";
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
@@ -116,5 +117,56 @@ describe("system prompt through local Completions", () => {
     }
     expect(JSON.stringify(request.messages)).not.toContain("OPENCLAW_CACHE_BOUNDARY");
     expect(JSON.stringify(request.messages)).not.toContain("OPENCLAW-RELOCATABLE-BOUNDARY");
+  });
+});
+
+describe("system prompt elevated guidance cache prefix", () => {
+  type SandboxInfo = NonNullable<Parameters<typeof buildAgentSystemPrompt>[0]["sandboxInfo"]>;
+  const build = (elevated: NonNullable<SandboxInfo["elevated"]>) => {
+    const rendered = buildAgentSystemPrompt({
+      workspaceDir: "/tmp/openclaw",
+      contextFiles: [{ path: "AGENTS.md", content: "Stable project instructions." }],
+      toolNames: ["exec"],
+      sandboxInfo: { enabled: true, elevated },
+    });
+    expect(rendered).toContain(SYSTEM_PROMPT_CACHE_BOUNDARY);
+    const [prefix, suffix] = rendered.split(SYSTEM_PROMPT_CACHE_BOUNDARY);
+    return { prefix, suffix };
+  };
+  const allowed = build({ allowed: true, defaultLevel: "ask", fullAccessAvailable: true });
+  const unavailable = build({ allowed: false, defaultLevel: "off", fullAccessAvailable: false });
+  const noFull = build({
+    allowed: true,
+    defaultLevel: "full",
+    fullAccessAvailable: false,
+    fullAccessBlockedReason: "runtime",
+  });
+
+  it("keeps elevated-availability changes below the stable sandbox prefix", () => {
+    // Elevated availability is a per-run fact: a normal parent turn and a
+    // sessions_yield/announce turn can disagree. It must not perturb the stable
+    // prefix before workspace context, or provider-side literal prefix caches
+    // re-evaluate the whole prompt.
+    expect(unavailable.prefix).toBe(allowed.prefix);
+    expect(noFull.prefix).toBe(allowed.prefix);
+    expect(allowed.prefix).toContain("Subagents remain sandboxed; no elevated/host access.");
+    expect(allowed.prefix).toContain("Stable project instructions.");
+    expect(allowed.prefix).not.toContain("/elevated");
+    expect(allowed.prefix).not.toContain("Elevated exec is");
+  });
+
+  it("retains every elevated guidance line below the boundary", () => {
+    expect(allowed.suffix).toContain("Elevated exec is available for this session.");
+    expect(allowed.suffix).toContain("User can toggle with /elevated on|off|ask|full.");
+    expect(allowed.suffix).toContain("You may also send /elevated on|off|ask|full when needed.");
+    expect(unavailable.suffix).toContain("Elevated exec is unavailable for this session.");
+    expect(unavailable.suffix).toContain(
+      "Do not tell the user to switch to /elevated full in this session.",
+    );
+    expect(noFull.suffix).toContain("User can toggle with /elevated on|off|ask.");
+    expect(noFull.suffix).toContain(
+      "Auto-approved /elevated full is unavailable here (runtime constraints).",
+    );
+    expect(noFull.suffix).not.toContain("You may also send /elevated on|off|ask|full when needed.");
   });
 });

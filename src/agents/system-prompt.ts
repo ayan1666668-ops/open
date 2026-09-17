@@ -50,10 +50,7 @@ import { buildCredentialSafetyPrompt } from "./credential-safety-prompt.js";
 import { buildTemporalContextSection } from "./date-time.js";
 import { buildDelegationGuidanceSection } from "./delegation-guidance.js";
 import type { EmbeddedContextFile } from "./embedded-agent-helpers.js";
-import type {
-  EmbeddedFullAccessBlockedReason,
-  EmbeddedSandboxInfo,
-} from "./embedded-agent-runner/types.js";
+import type { EmbeddedSandboxInfo } from "./embedded-agent-runner/types.js";
 import { MAX_OWNER_PROMPT_CONTENT_BYTES, resolveOwnerPromptNumbers } from "./owner-display.js";
 import { filterProjectScopedCuratedContextFiles } from "./project-memory-bootstrap.js";
 import { buildPromisedWorkPromptSection } from "./promised-work-prompt.js";
@@ -70,6 +67,7 @@ import type {
   ProviderSystemPromptContribution,
   ProviderSystemPromptSectionId,
 } from "./system-prompt-contribution.js";
+import { buildElevatedGuidanceLines } from "./system-prompt-elevated-guidance.js";
 import type { PromptMode, SilentReplyPromptMode } from "./system-prompt.types.js";
 import { AUTOMATIONS_TOOL_NAME } from "./tools/automations-tool-name.js";
 import { buildUiPresentationPrompt } from "./ui-presentation-prompt.js";
@@ -706,19 +704,6 @@ function buildDocsSection(params: {
   return lines.filter((line): line is string => line !== undefined);
 }
 
-function formatFullAccessBlockedReason(reason?: EmbeddedFullAccessBlockedReason): string {
-  if (reason === "host-policy") {
-    return "host policy";
-  }
-  if (reason === "channel") {
-    return "channel constraints";
-  }
-  if (reason === "sandbox") {
-    return "sandbox constraints";
-  }
-  return "runtime constraints";
-}
-
 const MODEL_IDENTITY_PREFIX = "Current model identity:";
 
 export function buildModelIdentityPromptLine(model?: string): string | undefined {
@@ -1060,10 +1045,6 @@ export function buildAgentSystemPrompt(params: {
     ? sanitizeForPromptLiteral(sandboxContainerWorkspace)
     : "";
   const elevated = hasExec ? params.sandboxInfo?.elevated : undefined;
-  const fullAccessBlockedReasonLabel =
-    elevated?.fullAccessAvailable === false
-      ? formatFullAccessBlockedReason(elevated.fullAccessBlockedReason)
-      : undefined;
   const displayWorkspaceDir =
     params.sandboxInfo?.enabled && sanitizedSandboxContainerWorkspace
       ? sanitizedSandboxContainerWorkspace
@@ -1371,29 +1352,6 @@ export function buildAgentSystemPrompt(params: {
               : params.sandboxInfo.hostBrowserAllowed === false
                 ? "Host browser control: blocked."
                 : "",
-            elevated?.allowed
-              ? "Elevated exec is available for this session."
-              : elevated
-                ? "Elevated exec is unavailable for this session."
-                : "",
-            elevated?.allowed && elevated.fullAccessAvailable
-              ? "User can toggle with /elevated on|off|ask|full."
-              : "",
-            elevated?.allowed && !elevated.fullAccessAvailable
-              ? "User can toggle with /elevated on|off|ask."
-              : "",
-            elevated?.allowed && elevated.fullAccessAvailable
-              ? "You may also send /elevated on|off|ask|full when needed."
-              : "",
-            elevated?.allowed && !elevated.fullAccessAvailable
-              ? "You may also send /elevated on|off|ask when needed."
-              : "",
-            elevated?.fullAccessAvailable === false
-              ? `Auto-approved /elevated full is unavailable here (${fullAccessBlockedReasonLabel}).`
-              : "",
-            elevated && !elevated.allowed
-              ? "Do not tell the user to switch to /elevated full in this session."
-              : "",
           ]
             .filter(Boolean)
             .join("\n")
@@ -1446,6 +1404,12 @@ export function buildAgentSystemPrompt(params: {
       hasSessionsSpawn,
     }),
     ...subagentDelegationPreferenceSection,
+    // Per-run elevated facts change between run types, so their guidance renders
+    // below the cache boundary; see buildElevatedGuidanceLines.
+    ...buildElevatedGuidanceLines({
+      sandboxEnabled: params.sandboxInfo?.enabled === true,
+      elevated,
+    }),
     params.sandboxInfo?.enabled && elevated
       ? elevated.allowed && elevated.fullAccessAvailable
         ? `Current elevated level: ${elevated.defaultLevel} (ask runs exec on host with approvals; full auto-approves).`

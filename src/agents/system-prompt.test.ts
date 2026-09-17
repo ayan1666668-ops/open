@@ -2745,8 +2745,8 @@ describe("system prompt runtime cache boundary", () => {
 
     expect(next.prefix).toBe(first.prefix);
     expect(first.prefix).toContain("Subagents remain sandboxed; no elevated/host access.");
-    expect(first.prefix).toContain("User can toggle with /elevated on|off|ask|full.");
     expect(first.prefix).not.toContain("Current elevated level:");
+    expect(first.suffix).toContain("User can toggle with /elevated on|off|ask|full.");
     expect(first.suffix).toContain("Current elevated level: ask");
     expect(next.suffix).toContain("Current elevated level: full");
   });
