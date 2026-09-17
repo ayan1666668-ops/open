@@ -168,12 +168,17 @@ function isProgressOnlyCompletionText(value: string): boolean {
       const resultOffset = narrativeProgress ? body.search(/,|\band\s+/i) : 0;
       const resultText = resultOffset < 0 ? "" : body.slice(resultOffset);
       const results = [
-        ...resultText.matchAll(COMPLETION_RESULT_CLAUSE_PATTERN),
-        ...resultText.matchAll(COMPLETION_STATE_CLAUSE_PATTERN),
-        ...resultText.matchAll(PERFECT_RESULT_CLAUSE_PATTERN),
-        ...resultText.matchAll(COORDINATED_RESULT_CLAUSE_PATTERN),
-      ];
-      const completedResult = results.some((result) => {
+        COMPLETION_RESULT_CLAUSE_PATTERN,
+        COMPLETION_STATE_CLAUSE_PATTERN,
+        PERFECT_RESULT_CLAUSE_PATTERN,
+        COORDINATED_RESULT_CLAUSE_PATTERN,
+      ].flatMap((pattern) =>
+        [...resultText.matchAll(pattern)].map((result) => ({
+          result,
+          elidedSubject: pattern === COORDINATED_RESULT_CLAUSE_PATTERN,
+        })),
+      );
+      const completedResult = results.some(({ result, elidedSubject }) => {
         const resultIndex = resultOffset + result.index;
         const prefix = body.slice(0, resultIndex);
         const remainder = body.slice(resultIndex).replace(/^(?:,|and)\s*/i, "");
@@ -181,9 +186,17 @@ function isProgressOnlyCompletionText(value: string): boolean {
           remainder.split(
             /,(?!\s*(?:if|unless|whether|once|when|after|as\s+soon\s+as)\b)|\s+(?:and|but|so|because|to)\s+/i,
           )[0] ?? "";
+        // An elided subject inherits its plan: "I'll run and read" is not
+        // past tense. A new explicit subject can introduce an actual result.
+        const subjectClause = prefix
+          .split(/(?:,|\b(?:and|but|so)\b)\s*(?=(?:i|we)\b)/i)
+          .at(-1)
+          ?.trim()
+          .replace(LEADING_CONTEXT_PATTERN, "");
         // Reject each deferred candidate, not a later independent completed
         // action merely because the first clause only described an attempt.
         return !(
+          (elidedSubject && FIRST_PERSON_PLAN_PATTERN.test(subjectClause ?? "")) ||
           UNFINISHED_RESULT_PATTERN.test(remainder) ||
           /\b(?:whether|if|unless)\b/i.test(resultClause) ||
           FRONTED_CONDITIONAL_PATTERN.test(prefix) ||

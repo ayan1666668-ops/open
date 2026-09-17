@@ -17,6 +17,19 @@ describe("resolveRequiredCompletionTerminalResult", () => {
   // conditional clause ("whether the tests passed") is a pending outcome, not a
   // delivered result.
   it.each([
+    ["coordinated-plan bare complete", "I'll run the tests and complete the report."],
+    ["coordinated-plan bare read", "I'll run the tests and read the logs."],
+    [
+      "coordinated-plan chained verbs",
+      "I'll run the tests and inspect the output and read the logs.",
+    ],
+    ["coordinated-plan comma", "I will run the tests, complete the report."],
+    [
+      "coordinated-plan inner subject",
+      "Reviewing the changes, I will run the tests and read the logs.",
+    ],
+    ["coordinated-plan going to", "We're going to inspect the handler and read the logs."],
+    ["coordinated-plan modal", "We should inspect the handler and complete the report."],
     ["pure progress", "Let me run the tests"],
     [
       "unpunctuated conditional coordination",
@@ -248,6 +261,15 @@ describe("resolveRequiredCompletionTerminalResult", () => {
   // result/report/verification marker in a delivered-result sentence; those
   // must not be misclassified.
   it.each([
+    ["coordinated-plan independent result", "I'll run the tests and I have read the logs."],
+    [
+      "coordinated-plan reset subject",
+      "I'll inspect the handler, I attempted the repair and read the logs.",
+    ],
+    [
+      "coordinated-plan past elided result",
+      "Reviewing the handler, I attempted the repair and read the logs.",
+    ],
     [
       "single-sentence narration that lands a result",
       "Investigating the gateway logs revealed the crash and I patched the handler, tests passed",
