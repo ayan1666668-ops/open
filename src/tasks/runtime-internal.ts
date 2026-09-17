@@ -8,6 +8,30 @@ import {
   ensureTaskRegistryReadyAsync,
   reloadTaskRegistryFromStoreAsync,
 } from "./task-registry-state.js";
+import type { TaskRecord } from "./task-registry.types.js";
+
+/** Read a task view without creating state or refreshing the synchronous projections. */
+export async function findTaskViewByRunIdAsync(
+  runId: string,
+  assertCurrent: () => void,
+): Promise<TaskRecord | undefined> {
+  assertCurrent();
+  const lookup = runId.trim();
+  if (!lookup) {
+    return undefined;
+  }
+  const context = captureOpenClawStateWorkerContext();
+  const { runOpenClawStateWorkerOperation } =
+    await import("../state/openclaw-state-worker-store.js");
+  const task = await runOpenClawStateWorkerOperation(
+    context,
+    (scope) => scope.execute({ type: "tasks.findByRunId", input: { runId: lookup } }),
+    { existingOnly: true, assertCurrent },
+  );
+  context.admission.assertCurrent();
+  assertCurrent();
+  return task;
+}
 
 export async function ensureTaskRuntimeStateReady(): Promise<void> {
   const context = captureOpenClawStateWorkerContext();
