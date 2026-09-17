@@ -313,9 +313,13 @@ describe("Feishu outbound shared delivery", () => {
 
       expect(initial.status).toBe("failed");
       expect(sendMessageFeishuMock).toHaveBeenCalledOnce();
+      // The send path refreshes the durable timing immediately before each message it puts
+      // on the wire, so a lost provider result is recorded as the ambiguous outcome it is.
+      // Nothing replays either way: this channel declares no unknown-send reconciliation, so
+      // both states refuse a blind replay, which the drain below still checks.
       expect(readDeliveryQueueRow(stateDir, deliveryIntentId)).toMatchObject({
         status: "pending",
-        recovery_state: "send_attempt_started",
+        recovery_state: "unknown_after_send",
       });
       expect(readDeliveryQueueRow(stateDir, deliveryIntentId)?.platform_send_started_at).toEqual(
         expect.any(Number),

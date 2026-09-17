@@ -149,10 +149,22 @@ async function sendOutboundText(params: {
   replyToMode?: FeishuSendTextContext["replyToMode"];
   onDeliveryResult?: FeishuSendTextContext["onDeliveryResult"];
   signal?: AbortSignal;
+  onPlatformSendDispatch?: FeishuSendTextContext["onPlatformSendDispatch"];
+  assertDirectAdapterHandoff?: FeishuSendTextContext["assertDirectAdapterHandoff"];
   header?: CardHeaderConfig;
 }) {
-  const { cfg, to, text, accountId, replyToMessageId, replyInThread, onDeliveryResult, signal } =
-    params;
+  const {
+    cfg,
+    to,
+    text,
+    accountId,
+    replyToMessageId,
+    replyInThread,
+    onDeliveryResult,
+    signal,
+    onPlatformSendDispatch,
+    assertDirectAdapterHandoff,
+  } = params;
   const commentResult = await sendCommentThreadReply({
     cfg,
     to,
@@ -161,6 +173,8 @@ async function sendOutboundText(params: {
     accountId,
     onDeliveryResult,
     signal,
+    onPlatformSendDispatch,
+    assertDirectAdapterHandoff,
   });
   if (commentResult) {
     return commentResult;
@@ -271,6 +285,14 @@ async function sendOutboundText(params: {
         replyToMessageId: preserveThread ? replyToMessageId : nextReplyToMessageId(),
         replyInThread: preserveThread ? true : i === 0 ? replyInThread : undefined,
       };
+      // Core refreshes the durable timing and fences custody before every text unit it cuts
+      // and sends itself; it runs that pair once around an adapter that takes the fanout
+      // over, so each message this loop adds has to ask again or a handoff that was current
+      // for the first one keeps emitting after custody changed. The fence stays synchronous
+      // and immediately precedes the transport call, because an awaited step in between
+      // leaves a microtask gap where custody can change after the check.
+      await onPlatformSendDispatch?.();
+      assertDirectAdapterHandoff?.();
       const result = useCard
         ? await sendStructuredCardFeishu({ ...sendParams, header: params.header })
         : await sendMessageFeishu({ ...sendParams, preparedPostText: true });
@@ -483,6 +505,8 @@ async function deliverFeishuOutboundText({
   identity,
   onDeliveryResult,
   signal,
+  onPlatformSendDispatch,
+  assertDirectAdapterHandoff,
 }: FeishuSendTextContext) {
   // Core asks the cancellation question before every text unit it cuts itself, but it hands
   // formatted text to this adapter whole and never cuts it, so the question is asked once on
@@ -493,7 +517,14 @@ async function deliverFeishuOutboundText({
     replyToId,
     threadId,
   });
-  const deliveryOptions = { replyToIdSource, replyToMode, onDeliveryResult, signal };
+  const deliveryOptions = {
+    replyToIdSource,
+    replyToMode,
+    onDeliveryResult,
+    signal,
+    onPlatformSendDispatch,
+    assertDirectAdapterHandoff,
+  };
   // Scheme A compatibility shim:
   // when upstream accidentally returns a local image path as plain text,
   // auto-upload and send as Feishu image message instead of leaking path text.
@@ -758,6 +789,10 @@ export const feishuOutbound: ChannelOutboundAdapter = {
           },
           send: async ({ mediaUrl }) => {
             const { replyToMessageId, replyInThread } = nextReplyMode();
+            // Media and the card are separate physical messages behind the one handoff core
+            // made around this call, so each of them asks again before it goes out.
+            await ctx.onPlatformSendDispatch?.();
+            ctx.assertDirectAdapterHandoff?.();
             return await sendMediaFeishu({
               cfg: ctx.cfg,
               to: ctx.to,
@@ -775,6 +810,8 @@ export const feishuOutbound: ChannelOutboundAdapter = {
           },
           finalize: async () => {
             const { replyToMessageId, replyInThread } = nextReplyMode();
+            await ctx.onPlatformSendDispatch?.();
+            ctx.assertDirectAdapterHandoff?.();
             return await sendCardFeishu({
               cfg: ctx.cfg,
               to: ctx.to,
@@ -807,6 +844,8 @@ export const feishuOutbound: ChannelOutboundAdapter = {
       threadId,
       onDeliveryResult,
       signal,
+      onPlatformSendDispatch,
+      assertDirectAdapterHandoff,
       propagateMediaUploadFailure = false,
     }: Parameters<NonNullable<ChannelOutboundAdapter["sendMedia"]>>[0] & {
       /** When true, a media-upload failure is re-thrown to the caller instead of
@@ -832,7 +871,14 @@ export const feishuOutbound: ChannelOutboundAdapter = {
         });
         return { replyToMessageId, replyInThread };
       };
-      const deliveryOptions = { replyToIdSource, replyToMode, onDeliveryResult, signal };
+      const deliveryOptions = {
+        replyToIdSource,
+        replyToMode,
+        onDeliveryResult,
+        signal,
+        onPlatformSendDispatch,
+        assertDirectAdapterHandoff,
+      };
       if (parseFeishuCommentTarget(to)) {
         // Document comments deliver media as visible links; they never enter
         // the upload path or use its failure-propagation policy.
@@ -888,8 +934,18 @@ export const feishuOutbound: ChannelOutboundAdapter = {
 
       const results: FeishuReplyDeliverySource[] = captionResult ? [captionResult] : [];
       let mediaResult: Awaited<ReturnType<typeof sendMediaFeishu>>;
-      // The caption above is its own physical send, so the attachment asks again.
+      // The caption above is its own physical send, so the attachment asks again. This sits
+      // ahead of the upload's own catch on purpose: a rejected handoff is not an upload
+      // failure, and the fallback text there would be one more message the turn no longer
+      // owns. The caption that already reached the reader keeps its receipt, the way the
+      // chunk loop reports the messages it accepted before a later one was refused.
       signal?.throwIfAborted();
+      try {
+        await onPlatformSendDispatch?.();
+        assertDirectAdapterHandoff?.();
+      } catch (error) {
+        throw partialFeishuSendError(error, results);
+      }
       const mediaReplyMode = nextReplyMode();
       try {
         mediaResult = await sendMediaFeishu({
