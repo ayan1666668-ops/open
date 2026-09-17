@@ -1,4 +1,8 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import {
+  createCronMutationCompletion,
+  type CronMutationCompletion,
+} from "../../cron/mutation-completion.js";
 import type { AgentRuntimeIdentity } from "../../gateway/agent-runtime-identity-token.js";
 /** In-process Gateway calls for built-in agent tools. */
 import type { CallGatewayOptions } from "../../gateway/call.js";
@@ -132,16 +136,19 @@ async function runBoundInProcessGatewayCall<T>(
   run: (resolveGatewayContext?: GatewayContextResolver) => Promise<T>,
   assertCallerCurrent?: () => void,
   revalidateOnCompletion = true,
+  completion?: CronMutationCompletion,
 ): Promise<T> {
   const assertCurrent = (afterDispatch = false) => {
     boundGateway?.assertCurrent();
-    if (!afterDispatch || revalidateOnCompletion) {
+    if (!afterDispatch || (completion ? !completion.isCommitted() : revalidateOnCompletion)) {
       assertCallerCurrent?.();
     }
   };
   try {
     assertCurrent();
-    const result = await run(boundGateway?.resolve);
+    const result = completion
+      ? await completion.run(() => run(boundGateway?.resolve))
+      : await run(boundGateway?.resolve);
     assertCurrent(true);
     return result;
   } catch (error) {
@@ -186,12 +193,15 @@ async function callAgentToolGatewayRequestBound<T>(
   revalidateOnCompletion = true,
 ): Promise<T> {
   const assertDispatchCurrent = request.assertDispatchCurrent;
+  const completion = createCronMutationCompletion(request.method);
   const assertCurrent =
-    assertCallerCurrent || assertDispatchCurrent || (!revalidateOnCompletion && request.signal)
+    assertCallerCurrent ||
+    assertDispatchCurrent ||
+    ((!revalidateOnCompletion || completion) && request.signal)
       ? () => {
           assertCallerCurrent?.();
           assertDispatchCurrent?.();
-          if (!revalidateOnCompletion) {
+          if (!revalidateOnCompletion || completion) {
             request.signal?.throwIfAborted();
           }
         }
@@ -254,8 +264,8 @@ async function callAgentToolGatewayRequestBound<T>(
             ),
         }
       : {}),
-    // Submitted writes settle; their original signal still fences every handoff above.
-    ...(request.signal && revalidateOnCompletion ? { signal: request.signal } : {}),
+    // A commit receipt owns settlement; cancellation still fences dispatch, commit, and uncommitted results.
+    ...(request.signal && revalidateOnCompletion && !completion ? { signal: request.signal } : {}),
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),
     ...(boundGateway ? { resolveGatewayContext: boundGateway.resolve } : {}),
     ...(assertCurrent ? { sessionMutationCommitGuard: assertCurrent } : {}),
@@ -273,6 +283,7 @@ async function callAgentToolGatewayRequestBound<T>(
       ),
     assertCurrent,
     revalidateOnCompletion,
+    completion,
   );
 }
 
