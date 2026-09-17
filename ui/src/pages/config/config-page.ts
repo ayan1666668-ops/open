@@ -117,6 +117,7 @@ type ConfigPageSetting =
   | "sidebarLiveActivity"
   | "chatMessageMaxWidth"
   | "chatCollapseTaskProgress"
+  | "disableUiTransitions"
   | "showAdvancedSettings"
   | "chatSendShortcut"
   | "chatFollowUpMode"
