@@ -12,28 +12,25 @@ import { cleanupAmbientCommentTypingReaction } from "./comment-reaction.js";
 import { parseFeishuCommentTarget } from "./comment-target.js";
 import { deliverCommentThreadText } from "./drive.js";
 import { chunkedFencesBalance } from "./markdown.js";
+import type { FeishuOutboundDeliveryOptions } from "./outbound-delivery-options.js";
 import {
   FEISHU_TEXT_CHUNK_LIMIT,
   aggregateFeishuSendResult,
   partialFeishuSendError,
   reportFeishuOutboundDelivery,
-  type FeishuSendTextContext,
 } from "./outbound-send-result.js";
 import type { FeishuReplyDeliverySource } from "./reply-delivery-result.js";
 import { sendMessageFeishu } from "./send.js";
 
-export async function sendCommentThreadReply(params: {
-  cfg: Parameters<typeof sendMessageFeishu>[0]["cfg"];
-  to: string;
-  text: string;
-  replyId?: string;
-  accountId?: string;
-  onDeliveryResult?: FeishuSendTextContext["onDeliveryResult"];
-  signal?: AbortSignal;
-  onPlatformSendDispatch?: FeishuSendTextContext["onPlatformSendDispatch"];
-  assertDirectAdapterHandoff?: FeishuSendTextContext["assertDirectAdapterHandoff"];
-  formatting?: FeishuSendTextContext["formatting"];
-}) {
+export async function sendCommentThreadReply(
+  params: FeishuOutboundDeliveryOptions & {
+    cfg: Parameters<typeof sendMessageFeishu>[0]["cfg"];
+    to: string;
+    text: string;
+    replyId?: string;
+    accountId?: string;
+  },
+) {
   const target = parseFeishuCommentTarget(params.to);
   if (!target) {
     return null;

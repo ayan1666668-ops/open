@@ -38,6 +38,10 @@ import {
 } from "./media.js";
 import { readNativeFeishuCardJson } from "./native-card.js";
 import {
+  feishuOutboundDeliveryOptions,
+  type FeishuOutboundDeliveryOptions,
+} from "./outbound-delivery-options.js";
+import {
   aggregateFeishuSendResult,
   FEISHU_TEXT_CHUNK_LIMIT,
   partialFeishuSendError,
@@ -138,22 +142,17 @@ export function resolveFeishuReplyMode(params: {
       };
 }
 
-async function sendOutboundText(params: {
-  cfg: Parameters<typeof sendMessageFeishu>[0]["cfg"];
-  to: string;
-  text: string;
-  replyToMessageId?: string;
-  replyInThread?: boolean;
-  accountId?: string;
-  replyToIdSource?: FeishuSendTextContext["replyToIdSource"];
-  replyToMode?: FeishuSendTextContext["replyToMode"];
-  onDeliveryResult?: FeishuSendTextContext["onDeliveryResult"];
-  signal?: AbortSignal;
-  onPlatformSendDispatch?: FeishuSendTextContext["onPlatformSendDispatch"];
-  assertDirectAdapterHandoff?: FeishuSendTextContext["assertDirectAdapterHandoff"];
-  formatting?: FeishuSendTextContext["formatting"];
-  header?: CardHeaderConfig;
-}) {
+async function sendOutboundText(
+  params: FeishuOutboundDeliveryOptions & {
+    cfg: Parameters<typeof sendMessageFeishu>[0]["cfg"];
+    to: string;
+    text: string;
+    replyToMessageId?: string;
+    replyInThread?: boolean;
+    accountId?: string;
+    header?: CardHeaderConfig;
+  },
+) {
   const {
     cfg,
     to,
@@ -168,16 +167,12 @@ async function sendOutboundText(params: {
     formatting,
   } = params;
   const commentResult = await sendCommentThreadReply({
+    ...feishuOutboundDeliveryOptions(params),
     cfg,
     to,
     text,
     replyId: replyToMessageId,
     accountId,
-    onDeliveryResult,
-    signal,
-    onPlatformSendDispatch,
-    assertDirectAdapterHandoff,
-    formatting,
   });
   if (commentResult) {
     return commentResult;
@@ -500,25 +495,9 @@ export function presentationTextRenderer(ctx: Pick<FeishuSendPayloadContext, "cf
 // optional `sendMedia` to `FeishuOutboundSendMedia` at the use site
 // (channel.ts direct-send branch, sendFeishuFallbackPayload) instead of
 // forcing a required property here (ClawSweeper P1).
-async function deliverFeishuOutboundText({
-  cfg,
-  to,
-  text,
-  accountId,
-  replyToId,
-  replyToIdSource,
-  replyToMode,
-  threadId,
-  mediaAccess,
-  mediaLocalRoots,
-  mediaReadFile,
-  identity,
-  onDeliveryResult,
-  signal,
-  onPlatformSendDispatch,
-  assertDirectAdapterHandoff,
-  formatting,
-}: FeishuSendTextContext) {
+async function deliverFeishuOutboundText(ctx: FeishuSendTextContext) {
+  const { cfg, to, text, accountId, replyToId, threadId, identity, onDeliveryResult, signal } = ctx;
+  const { mediaAccess, mediaLocalRoots, mediaReadFile } = ctx;
   // Core asks the cancellation question before every text unit it cuts itself, but it hands
   // formatted text to this adapter whole and never cuts it, so the question is asked once on
   // the way in. The chunked send below asks it again before each message it fans out; the
@@ -528,15 +507,7 @@ async function deliverFeishuOutboundText({
     replyToId,
     threadId,
   });
-  const deliveryOptions = {
-    replyToIdSource,
-    replyToMode,
-    onDeliveryResult,
-    signal,
-    onPlatformSendDispatch,
-    assertDirectAdapterHandoff,
-    formatting,
-  };
+  const deliveryOptions = feishuOutboundDeliveryOptions(ctx);
   // Scheme A compatibility shim:
   // when upstream accidentally returns a local image path as plain text,
   // auto-upload and send as Feishu image message instead of leaking path text.
@@ -840,34 +811,20 @@ export const feishuOutbound: ChannelOutboundAdapter = {
   ...createAttachedChannelResultAdapter({
     channel: "feishu",
     sendText: async (ctx) => await deliverFeishuOutboundText(ctx),
-    sendMedia: async ({
-      cfg,
-      to,
-      text,
-      mediaUrl,
-      audioAsVoice,
-      accountId,
-      mediaAccess,
-      mediaLocalRoots,
-      mediaReadFile,
-      replyToId,
-      replyToIdSource,
-      replyToMode,
-      threadId,
-      onDeliveryResult,
-      signal,
-      onPlatformSendDispatch,
-      assertDirectAdapterHandoff,
-      formatting,
-      propagateMediaUploadFailure = false,
-    }: Parameters<NonNullable<ChannelOutboundAdapter["sendMedia"]>>[0] & {
-      /** When true, a media-upload failure is re-thrown to the caller instead of
-       * being converted to a fallback text success. The direct `send` action
-       * sets this so an agent that requested an attachment receives a visible
-       * failure when the attachment cannot be delivered, rather than an `ok:true`
-       * receipt for a text-only fallback (issue #112244). */
-      propagateMediaUploadFailure?: boolean;
-    }) => {
+    sendMedia: async (
+      ctx: Parameters<NonNullable<ChannelOutboundAdapter["sendMedia"]>>[0] & {
+        /** When true, a media-upload failure is re-thrown to the caller instead of
+         * being converted to a fallback text success. The direct `send` action
+         * sets this so an agent that requested an attachment receives a visible
+         * failure when the attachment cannot be delivered, rather than an `ok:true`
+         * receipt for a text-only fallback (issue #112244). */
+        propagateMediaUploadFailure?: boolean;
+      },
+    ) => {
+      const { cfg, to, text, mediaUrl, audioAsVoice, accountId, replyToId, threadId } = ctx;
+      const { mediaAccess, mediaLocalRoots, mediaReadFile, onDeliveryResult, signal } = ctx;
+      const { replyToIdSource, replyToMode, propagateMediaUploadFailure = false } = ctx;
+      const { onPlatformSendDispatch, assertDirectAdapterHandoff } = ctx;
       const { normalizedReplyToId } = resolveFeishuReplyMode({
         replyToId,
         threadId,
@@ -884,15 +841,7 @@ export const feishuOutbound: ChannelOutboundAdapter = {
         });
         return { replyToMessageId, replyInThread };
       };
-      const deliveryOptions = {
-        replyToIdSource,
-        replyToMode,
-        onDeliveryResult,
-        signal,
-        onPlatformSendDispatch,
-        assertDirectAdapterHandoff,
-        formatting,
-      };
+      const deliveryOptions = feishuOutboundDeliveryOptions(ctx);
       if (parseFeishuCommentTarget(to)) {
         // Document comments deliver media as visible links; they never enter
         // the upload path or use its failure-propagation policy.

@@ -990,6 +990,46 @@ describe("createFeishuReplyDispatcher markdown table modes", () => {
     expect(sendMessageFeishuMock.mock.calls[0]?.[0]?.text).toContain(quoteReasoning(tableMarkdown));
   });
 
+  // The preview gives way to the authored table when its own conversion outgrows the limit,
+  // and that authored table is what the close then finds stored. A card blockquotes what it
+  // is handed and Feishu draws no rows from a quoted table, so the close has to ask the same
+  // projection question the preview asked, in every mode and not only the native one.
+  it("re-projects a reasoning table the preview left authored when the close commits", async () => {
+    const convert = getFeishuRuntimeMock().channel.text.convertMarkdownTables;
+    const outgrows = [
+      "| name | detail |",
+      "| --- | --- |",
+      ...Array.from({ length: 40 }, (_entry, index) => `| row${index} | d |`),
+      `| wide | ${"w".repeat(220)} |`,
+    ].join("\n");
+    // Guard the fixture: authored inside the limit, so nothing but the projection decides,
+    // and the answer carries no table of its own, so this is the reasoning-only case.
+    expect(outgrows.length).toBeLessThanOrEqual(4000);
+    expect(convert(outgrows, "code").length).toBeGreaterThan(4000);
+    const answer = "Here is the summary.";
+    expect(convert(answer, "code")).toBe(answer);
+
+    const harness = createBlockTableHarness(tableCfg("code"), true);
+    harness.result.replyOptions.onReasoningStream?.({ text: outgrows });
+    await vi.waitFor(() => expect(streamingInstances).toHaveLength(1));
+    harness.result.replyOptions.onPartialReply?.({ text: answer });
+    await harness.options.onIdle?.();
+
+    const closed = requireStreamingInstance(0);
+    const cardBodies = closed.closeWithResult.mock.calls.map((call) => call[0] ?? "");
+    // Counts rather than two walls of rows: the defect is a card that carries any raw row.
+    expect(cardBodies.filter((body) => body.includes("| row0 |")).length).toBe(0);
+    expect([closed.closeWithResult.mock.calls.length, closed.discard.mock.calls.length]).toEqual([
+      0, 1,
+    ]);
+    const posts = sendMessageFeishuMock.mock.calls.map((call) => String(call[0]?.text ?? ""));
+    expect(posts.length).toBeGreaterThan(0);
+    // The rows reach the reader in the post, and the configured mode is not swapped for the
+    // native one's list on the way.
+    expect(posts.join("")).toContain("| row0 |");
+    expect(posts.join("")).not.toContain("\u2022");
+  });
+
   // block keeps native tables, and the reasoning half must not diverge from it.
   // This used to assert the quoted native table reached the card, which is the shape
   // a card cannot draw, so what it pinned was the rows disappearing. The card now
