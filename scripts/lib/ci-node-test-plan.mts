@@ -720,6 +720,7 @@ const EXCLUSIVE_COMPACT_GROUP_RE =
 // An indivisible file above this budget must not acquire additional work.
 const COMPACT_EXCLUSIVE_JOB_SECONDS = 150;
 const COMPACT_HYBRID_SERIAL_CLI_JOB_SECONDS = 250;
+const COMPACT_SINGLETON_TEST_FILE = "test/scripts/ci-workflow-guards.test.ts";
 
 export function isExclusiveCompactShardName(shardName: string): boolean {
   return EXCLUSIVE_COMPACT_GROUP_RE.test(shardName);
@@ -727,6 +728,16 @@ export function isExclusiveCompactShardName(shardName: string): boolean {
 
 function isExclusiveCompactGroup(group: NodeTestShardGroup): boolean {
   return isExclusiveCompactShardName(group.shard_name);
+}
+
+// These owners contain long, indivisible process/watchdog tests whose synthetic
+// estimates can lag their wall clock substantially. Giving either a packing
+// partner turns two bounded jobs into one 15-minute critical-path job.
+function requiresSingletonCompactJob(group: NodeTestShardGroup): boolean {
+  return (
+    /^agentic-gateway-server-isolated(?:-hosted-\d+)?$/u.test(group.shard_name) ||
+    group.includePatterns?.includes(COMPACT_SINGLETON_TEST_FILE) === true
+  );
 }
 
 function isParallelCompactGroup(group: NodeTestShardGroup): boolean {
@@ -3192,6 +3203,12 @@ function createCompactNodeTestShardBundles(
       candidate: readonly [NodeTestShardGroup, ...NodeTestShardGroup[]],
       group: NodeTestShardGroup,
     ) => {
+      if (
+        isBlacksmithProfile &&
+        (requiresSingletonCompactJob(group) || candidate.some(requiresSingletonCompactJob))
+      ) {
+        return false;
+      }
       const exclusive = isExclusiveCompactGroup(group);
       // Keep ordinary work off serial runtime hosts. Hybrid exclusive/dist bins
       // retain their existing prerequisite sharing and admission policy.

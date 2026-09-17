@@ -1265,6 +1265,7 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
       "src/cli/gateway-backed-exit.process.test.ts",
       "src/cli/gateway-backed-exit-health.process.test.ts",
     ];
+    const singletonToolingFile = "test/scripts/ci-workflow-guards.test.ts";
 
     for (const profile of [
       {
@@ -1441,6 +1442,19 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
         expect(new Set(plan.map((shard) => shard.checkName)).size).toBe(plan.length);
         expect(new Set(plan.map((shard) => shard.shardName)).size).toBe(plan.length);
         expect(plan.length, `${profile.name} row budget`).toBeLessThanOrEqual(80);
+      }
+      const singletonPlan = profile.name === "Blacksmith" ? profile.pullRequest : [];
+      for (const group of singletonPlan.flatMap((shard) => shard.groups)) {
+        if (
+          !group.shard_name.startsWith("agentic-gateway-server-isolated") &&
+          !group.includePatterns?.includes(singletonToolingFile)
+        ) {
+          continue;
+        }
+        expect(
+          singletonPlan.find((shard) => shard.groups.includes(group))?.groups,
+          `${profile.name}: ${group.shard_name}`,
+        ).toEqual([group]);
       }
     }
     expect(compact.every((shard) => Array.isArray(shard.groups))).toBe(true);
