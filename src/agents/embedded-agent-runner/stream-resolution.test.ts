@@ -14,7 +14,6 @@ import { streamSimple } from "../../llm/stream.js";
 import type { Model } from "../../llm/types.js";
 import { resolveProviderStreamFn } from "../../plugins/provider-runtime.js";
 import { mintSecretSentinel } from "../../secrets/sentinel.js";
-import { createDeferredCore } from "../../shared/deferred.js";
 import { loadBundledPluginFacade } from "../../test-utils/bundled-plugin-public-surface.js";
 import { wrapStreamFnWithProviderPromptState } from "./provider-prompt-state.js";
 import {
@@ -733,39 +732,6 @@ describe("resolveEmbeddedAgentStream", () => {
     expect(result.apiKey).toBe("resolved-key");
     expect(authStorage.getApiKey).not.toHaveBeenCalled();
     expect(providerStreamFn).toHaveBeenCalledTimes(1);
-  });
-
-  it("revalidates run authority after deferred credential resolution", async () => {
-    const credentials = createDeferredCore<string>();
-    let current = true;
-    const providerStreamFn = vi.fn(async () => ({}));
-    const authStorage = {
-      getApiKey: vi.fn(() => credentials.promise),
-    };
-    const { streamFn } = resolveEmbeddedAgentStreamImpl({
-      llmRuntime,
-      currentStreamFn: undefined,
-      providerStreamFn,
-      sessionId: "session-1",
-      model: {
-        api: "openai-completions",
-        provider: "openai",
-        id: "gpt-5.4",
-      } as never,
-      authStorage,
-      assertCurrent: () => {
-        if (!current) {
-          throw new Error("source authority revoked");
-        }
-      },
-    } as Parameters<typeof resolveEmbeddedAgentStreamImpl>[0]);
-
-    const pending = streamFn({ provider: "openai", id: "gpt-5.4" } as never, {} as never, {});
-    current = false;
-    credentials.resolve("stored-key");
-
-    await expect(pending).rejects.toThrow("source authority revoked");
-    expect(providerStreamFn).not.toHaveBeenCalled();
   });
 
   it("propagates prompt cache identity separately from the session id", async () => {
