@@ -2549,6 +2549,7 @@
                           "gateway/cloud-workers/troubleshooting"
                         ]
                       },
+                      "gateway/enterprise-deployment",
                       "gateway/multiple-gateways",
                       "gateway/multi-tenant-hosting"
                     ]
