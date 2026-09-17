@@ -30,6 +30,7 @@ import {
   type FreeBsdPkgOwnershipInspection,
 } from "./update-freebsd-pkg-ownership.js";
 import { collectGitRuntimeErrors, type GitRuntimeIdentity } from "./update-git-runtime.js";
+import type { CommandRunner } from "./update-global-command-runner.js";
 import {
   inspectNpmLauncher,
   probeNpmGlobalPrefix,
@@ -40,19 +41,6 @@ import type { UpdateRecovery } from "./update-recovery.js";
 
 /** Supported package managers for OpenClaw global install and update flows. */
 export type GlobalInstallManager = "npm" | "pnpm" | "bun";
-
-/** Runs package-manager commands with timeout and environment control. */
-export type CommandRunner = (
-  argv: string[],
-  options: { timeoutMs: number; cwd?: string; env?: NodeJS.ProcessEnv },
-) => Promise<{
-  stdout: string;
-  stderr: string;
-  code: number | null;
-  signal?: NodeJS.Signals | null;
-  killed?: boolean;
-  termination?: "exit" | "timeout" | "no-output-timeout" | "signal";
-}>;
 
 type ResolvedGlobalInstallCommand = {
   manager: GlobalInstallManager;

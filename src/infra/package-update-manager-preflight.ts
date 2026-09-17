@@ -5,10 +5,10 @@ import { UPDATE_GLOBAL_PERMISSION_REASON } from "../shared/update-outcome.js";
 import { hasErrnoCode, isErrno } from "./errno.js";
 import { formatErrorMessage } from "./errors.js";
 import { createUpdateFailureFact } from "./update-failure-facts.js";
+import type { CommandRunner } from "./update-global-command-runner.js";
 import {
   listActivePnpmIsolatedGlobalPackages,
   resolvePnpmIsolatedInstallOwner,
-  type CommandRunner,
   type ResolvedGlobalInstallTarget,
 } from "./update-global.js";
 import {

@@ -5,7 +5,7 @@ import { hasErrnoCode } from "./errno.js";
 import { resolveExecutablePath } from "./executable-path.js";
 import { pathExists } from "./fs-safe.js";
 import { applyPathPrepend } from "./path-prepend.js";
-import type { CommandRunner } from "./update-global.js";
+import type { CommandRunner } from "./update-global-command-runner.js";
 
 /** npm prefix layout paths needed to install, stage, and expose global bins. */
 export type NpmGlobalPrefixLayout = {

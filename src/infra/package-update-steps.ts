@@ -42,6 +42,7 @@ import {
   FreeBsdPkgOwnershipError,
 } from "./update-freebsd-pkg-ownership.js";
 import { readBuiltGatewayBuildId, type GitRuntimeIdentity } from "./update-git-runtime.js";
+import type { CommandRunner } from "./update-global-command-runner.js";
 import {
   collectInstalledGlobalPackageErrors,
   cleanupGlobalRenameDirs,
@@ -54,7 +55,6 @@ import {
   resolveExpectedInstalledVersionFromSpec,
   resolveGlobalInstallTarget,
   verifyPackageUpdateRecovery,
-  type CommandRunner,
   type ResolvedGlobalInstallTarget,
 } from "./update-global.js";
 import { prepareNativePackageStage } from "./update-native-package-stage.js";

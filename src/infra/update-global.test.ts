@@ -17,6 +17,7 @@ import {
   withRestoredMocks,
 } from "../test-utils/vitest-spies.js";
 import { PACKAGE_DIST_INVENTORY_RELATIVE_PATH } from "./package-dist-inventory.js";
+import type { CommandRunner } from "./update-global-command-runner.js";
 import {
   canResolveRegistryVersionForPackageTarget,
   collectInstalledGlobalPackageErrors,
@@ -31,7 +32,6 @@ import {
   resolveGlobalInstallTarget,
   resolveGlobalInstallSpec,
   resolvePnpmGlobalDirFromGlobalRoot,
-  type CommandRunner,
 } from "./update-global.js";
 import {
   resolveNpmGlobalPrefixLayoutFromGlobalRoot,
