@@ -23,6 +23,7 @@ import { UpdateRequesterRevokedError } from "../../infra/update-requester-author
 import { UpdateRunAdmissionBusyError } from "../../infra/update-run-admission.js";
 import { getUpdateRun, recordUpdateRunPhase } from "../../infra/update-run-ledger.js";
 import type { UpdateRunResult } from "../../infra/update-runner.js";
+import { hasCommandProcessCleanupError } from "../../process/exec-result.js";
 import { defaultRuntime } from "../../runtime.js";
 import type { OpenClawSchemaVersions } from "../../state/openclaw-schema-versions.js";
 import { exitCliAfterOutput } from "../one-shot-exit.js";
@@ -64,7 +65,7 @@ export type MutableUpdateExecutionResult = {
   activationConfig?: UpdateConfigSnapshot;
 };
 
-export function createUpdateCommandFailureResult(
+function createUpdateCommandFailureResult(
   params: Pick<UpdateRunResult, "mode" | "root" | "recovery" | "durationMs"> & {
     failure: { cause: unknown; detail?: string };
     admission?: true;
@@ -103,6 +104,34 @@ export function createUpdateCommandFailureResult(
           : {}),
       },
     ],
+  };
+}
+
+/** Mutable exceptions cannot authorize recovery while command cleanup is unknown. */
+export async function resolveMutableUpdateFailure(params: {
+  cause: unknown;
+  durationMs: number;
+  mode: UpdateRunResult["mode"];
+  root: string;
+  originalRecovery: () => Promise<UpdateRunResult["recovery"]>;
+}): Promise<{ result: UpdateRunResult; failure: { cause: unknown; detail: string } }> {
+  if (hasCommandProcessCleanupError(params.cause)) {
+    throw params.cause;
+  }
+  const failure = { cause: params.cause, detail: formatErrorMessage(params.cause) };
+  defaultRuntime.error(failure.detail);
+  return {
+    failure,
+    result: createUpdateCommandFailureResult({
+      durationMs: params.durationMs,
+      mode: params.mode,
+      root: params.root,
+      recovery:
+        params.cause instanceof UpdatePreMutationError
+          ? await params.originalRecovery()
+          : { serviceRestartSafe: false, reason: "runtime-verification-failed" },
+      failure,
+    }),
   };
 }
 

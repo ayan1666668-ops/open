@@ -37,6 +37,8 @@ import {
   type FreeBsdPkgOwnershipInspection,
 } from "../../infra/update-freebsd-pkg-ownership.js";
 import { UPDATE_RUNNER_TIMEOUT_MS } from "../../infra/update-run-timeouts.js";
+import { hasCommandProcessCleanupError } from "../../process/exec-result.js";
+import { withCommandProcessScope } from "../../process/exec-spawn.js";
 import { CLI_NAME } from "../cli-name.js";
 import { resolveNodeRunner } from "./shared.js";
 import type {
@@ -239,33 +241,43 @@ export async function inspectManagedGatewayServiceBeforeUpdate(params: {
 export async function readManagedGatewayServiceCommandForUpdate(
   env: NodeJS.ProcessEnv,
 ): Promise<GatewayServiceCommandConfig | null> {
-  let service: ReturnType<typeof resolveGatewayService> | undefined;
-  try {
-    service = resolveGatewayService();
-    const state = await readGatewayServiceState(service, {
-      env,
-      requireEffective: true,
-      requireLoadedCommand: true,
-      validateEnvBeforeStatusRead: assertGatewayServiceManagementAllowedForUpdate,
-    });
-    if (!state.command) {
-      return null;
-    }
-    const inspection = await inspectManagedGatewayServiceBeforeUpdate({ state });
-    return inspection.kind === "owned" ? state.command : null;
-  } catch (error) {
-    if (error instanceof GatewayServiceUpdateOwnershipError && service) {
-      // Probe only the invoker's manager; rejected record selectors must not route it.
-      const available = await service.isLoaded({ env }).then(
-        () => true,
-        () => false,
-      );
-      if (available) {
+  return await withCommandProcessScope(async () => {
+    let service: ReturnType<typeof resolveGatewayService> | undefined;
+    try {
+      service = resolveGatewayService();
+      const state = await readGatewayServiceState(service, {
+        env,
+        requireEffective: true,
+        requireLoadedCommand: true,
+        validateEnvBeforeStatusRead: assertGatewayServiceManagementAllowedForUpdate,
+      });
+      if (!state.command) {
+        return null;
+      }
+      const inspection = await inspectManagedGatewayServiceBeforeUpdate({ state });
+      return inspection.kind === "owned" ? state.command : null;
+    } catch (error) {
+      if (hasCommandProcessCleanupError(error)) {
         throw error;
       }
+      if (error instanceof GatewayServiceUpdateOwnershipError && service) {
+        // Probe only the invoker's manager; rejected record selectors must not route it.
+        const available = await service.isLoaded({ env }).then(
+          () => true,
+          (probeError: unknown) => {
+            if (hasCommandProcessCleanupError(probeError)) {
+              throw probeError;
+            }
+            return false;
+          },
+        );
+        if (available) {
+          throw error;
+        }
+      }
+      return null;
     }
-    return null;
-  }
+  });
 }
 
 type PackageRuntimePreflight = {
@@ -284,101 +296,105 @@ export async function resolvePackageRuntimePreflight(params: {
   alreadyCurrent?: boolean;
   service?: PreManagedServiceStop;
 }): Promise<Result<PackageRuntimePreflight, string> & { failureFacts?: UpdateFailureFact[] }> {
-  const nodeRunner = normalizeOptionalString(
-    params.alreadyCurrent
-      ? (params.service?.serviceNodeRunner ?? params.nodeRunner)
-      : params.nodeRunner,
-  );
-  const unchanged = (): PackageRuntimePreflight => (nodeRunner ? { nodeRunner } : {});
-  let target = params.target;
-  if (!target && params.installedRoot) {
-    const manifest = asNullableRecord(
-      await tryReadJson<unknown>(path.join(params.installedRoot, "package.json"), {
-        maxBytes: 1024 * 1024,
-      }),
+  return await withCommandProcessScope(async () => {
+    const nodeRunner = normalizeOptionalString(
+      params.alreadyCurrent
+        ? (params.service?.serviceNodeRunner ?? params.nodeRunner)
+        : params.nodeRunner,
     );
-    const version = normalizeOptionalString(manifest?.version);
-    if (!version) {
-      return resultError(
-        "Cannot inspect the installed OpenClaw runtime requirement; repair its package.json before retrying openclaw update.",
+    const unchanged = (): PackageRuntimePreflight => (nodeRunner ? { nodeRunner } : {});
+    let target = params.target;
+    if (!target && params.installedRoot) {
+      const manifest = asNullableRecord(
+        await tryReadJson<unknown>(path.join(params.installedRoot, "package.json"), {
+          maxBytes: 1024 * 1024,
+        }),
       );
+      const version = normalizeOptionalString(manifest?.version);
+      if (!version) {
+        return resultError(
+          "Cannot inspect the installed OpenClaw runtime requirement; repair its package.json before retrying openclaw update.",
+        );
+      }
+      target = {
+        version,
+        nodeEngine: normalizeOptionalString(asNullableRecord(manifest?.engines)?.node) ?? null,
+      };
     }
-    target = {
-      version,
-      nodeEngine: normalizeOptionalString(asNullableRecord(manifest?.engines)?.node) ?? null,
-    };
-  }
-  if (!target) {
-    return ok(unchanged());
-  }
-  const runtime = await resolvePackageRuntimeForPreflight({
-    nodeRunner,
-    timeoutMs: params.timeoutMs,
-  });
-  const satisfies = runtime.failure
-    ? false
-    : nodeVersionSatisfiesEngine(runtime.version, target.nodeEngine);
-  const targetVersion = target.version;
-  const unchangedRuntime = { ...unchanged(), targetVersion };
-  if (satisfies === true) {
-    return ok(unchangedRuntime);
-  }
-  const fallbackNodeRunner =
-    params.shouldRestart &&
-    nodeRunner &&
-    (params.alreadyCurrent
-      ? params.service?.running &&
-        params.service.serviceUpdateVerdict?.kind === "owned" &&
-        params.service.serviceUpdateVerdict.refreshDefinition
-      : await gatewayServiceCommandUsesRoot({ root: params.root }))
-      ? resolveNodeRunner()
-      : undefined;
-  if (nodeRunner && fallbackNodeRunner && fallbackNodeRunner !== nodeRunner) {
-    const fallbackRuntime = await resolvePackageRuntimeForPreflight({
-      nodeRunner: fallbackNodeRunner,
+    if (!target) {
+      return ok(unchanged());
+    }
+    const runtime = await resolvePackageRuntimeForPreflight({
+      nodeRunner,
       timeoutMs: params.timeoutMs,
     });
-    const fallbackSatisfies = fallbackRuntime.failure
+    const satisfies = runtime.failure
       ? false
-      : nodeVersionSatisfiesEngine(fallbackRuntime.version, target.nodeEngine);
-    if (fallbackSatisfies === true) {
-      return ok({
-        nodeRunner: fallbackNodeRunner,
-        replacedNodeRunner: nodeRunner,
-        targetVersion,
-      });
+      : nodeVersionSatisfiesEngine(runtime.version, target.nodeEngine);
+    const targetVersion = target.version;
+    const unchangedRuntime = { ...unchanged(), targetVersion };
+    if (satisfies === true) {
+      return ok(unchangedRuntime);
     }
-  }
-  if (satisfies !== false) {
-    return ok(unchangedRuntime);
-  }
-  const runtimeLabel = runtime.nodeRunner
-    ? `Node ${runtime.version ?? "unknown"} at ${runtime.nodeRunner}`
-    : `Node ${runtime.version ?? "unknown"}`;
-  const engineRange = target.nodeEngine ? validRange(target.nodeEngine) : null;
-  const minimum = engineRange ? (minVersion(engineRange)?.version ?? "unspecified") : "unspecified";
-  return {
-    ...resultError<PackageRuntimePreflight, string>(
-      [
-        `${runtimeLabel} is incompatible with openclaw@${targetVersion}.`,
-        ...(runtime.failure ? [runtime.failure] : []),
-        `The requested package requires ${target.nodeEngine}.`,
-        runtime.nodeRunner
-          ? "Use a compatible version of the Node runtime that owns the managed Gateway service, then rerun `openclaw update`."
-          : "Use a Node runtime that satisfies the engine range above, then rerun `openclaw update`.",
-        "Bare `npm i -g openclaw` can silently install an older compatible release.",
-        "After switching Node versions, use `npm i -g openclaw@latest`.",
-      ].join("\n"),
-    ),
-    failureFacts: [
-      createUpdateFailureFact({
-        check: "node-runtime",
-        code: "node-runtime-preflight",
-        affectedKey: "engines.node",
-        message: `Target package: openclaw@${valid(targetVersion) ?? "unknown"}; Minimum Node engine: ${minimum}; Running Node: ${valid(runtime.version ?? "") ?? "unknown"}`,
-      }),
-    ],
-  };
+    const fallbackNodeRunner =
+      params.shouldRestart &&
+      nodeRunner &&
+      (params.alreadyCurrent
+        ? params.service?.running &&
+          params.service.serviceUpdateVerdict?.kind === "owned" &&
+          params.service.serviceUpdateVerdict.refreshDefinition
+        : await gatewayServiceCommandUsesRoot({ root: params.root }))
+        ? resolveNodeRunner()
+        : undefined;
+    if (nodeRunner && fallbackNodeRunner && fallbackNodeRunner !== nodeRunner) {
+      const fallbackRuntime = await resolvePackageRuntimeForPreflight({
+        nodeRunner: fallbackNodeRunner,
+        timeoutMs: params.timeoutMs,
+      });
+      const fallbackSatisfies = fallbackRuntime.failure
+        ? false
+        : nodeVersionSatisfiesEngine(fallbackRuntime.version, target.nodeEngine);
+      if (fallbackSatisfies === true) {
+        return ok({
+          nodeRunner: fallbackNodeRunner,
+          replacedNodeRunner: nodeRunner,
+          targetVersion,
+        });
+      }
+    }
+    if (satisfies !== false) {
+      return ok(unchangedRuntime);
+    }
+    const runtimeLabel = runtime.nodeRunner
+      ? `Node ${runtime.version ?? "unknown"} at ${runtime.nodeRunner}`
+      : `Node ${runtime.version ?? "unknown"}`;
+    const engineRange = target.nodeEngine ? validRange(target.nodeEngine) : null;
+    const minimum = engineRange
+      ? (minVersion(engineRange)?.version ?? "unspecified")
+      : "unspecified";
+    return {
+      ...resultError<PackageRuntimePreflight, string>(
+        [
+          `${runtimeLabel} is incompatible with openclaw@${targetVersion}.`,
+          ...(runtime.failure ? [runtime.failure] : []),
+          `The requested package requires ${target.nodeEngine}.`,
+          runtime.nodeRunner
+            ? "Use a compatible version of the Node runtime that owns the managed Gateway service, then rerun `openclaw update`."
+            : "Use a Node runtime that satisfies the engine range above, then rerun `openclaw update`.",
+          "Bare `npm i -g openclaw` can silently install an older compatible release.",
+          "After switching Node versions, use `npm i -g openclaw@latest`.",
+        ].join("\n"),
+      ),
+      failureFacts: [
+        createUpdateFailureFact({
+          check: "node-runtime",
+          code: "node-runtime-preflight",
+          affectedKey: "engines.node",
+          message: `Target package: openclaw@${valid(targetVersion) ?? "unknown"}; Minimum Node engine: ${minimum}; Running Node: ${valid(runtime.version ?? "") ?? "unknown"}`,
+        }),
+      ],
+    };
+  });
 }
 
 async function resolvePackageRuntimeForPreflight(params: {

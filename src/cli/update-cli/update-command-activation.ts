@@ -1,3 +1,4 @@
+import { hasCommandProcessCleanupError } from "../../process/exec-result.js";
 import { UPDATE_ACTIVATION_TIMEOUT_REASON } from "../../shared/update-outcome.js";
 import {
   ABSOLUTE_DEADLINE_EXPIRED,
@@ -74,6 +75,24 @@ export function createUpdateActivationDeadline() {
             joined === ABSOLUTE_DEADLINE_EXPIRED
               ? " Cancellation did not settle within the same budget; outstanding writers retain update ownership."
               : " The update operation returned after cancellation; any unconfirmed ownership remains retained.";
+          if (
+            joined !== ABSOLUTE_DEADLINE_EXPIRED &&
+            "error" in joined &&
+            hasCommandProcessCleanupError(joined.error)
+          ) {
+            // Joined cleanup may already reference the signal's original timeout.
+            // A new timeout preserves both failures without creating a cause cycle.
+            throw Object.assign(new UpdateActivationTimeoutError(timeout.root, timeout.timeoutMs), {
+              message: timeout.message,
+              cause: new AggregateError(
+                [timeout, joined.error],
+                "Update activation cleanup failed",
+                {
+                  cause: joined.error,
+                },
+              ),
+            });
+          }
           throw timeout;
         }
         if (outcome instanceof UpdateActivationTimeoutError) {

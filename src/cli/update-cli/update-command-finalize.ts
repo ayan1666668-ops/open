@@ -86,30 +86,36 @@ export async function updateFinalizeCommand(
       const { root, installKind, runId } = await withUpdateAdmissionReporting(
         opts,
         () =>
-          withUpdateInProgressEnv(invocationCwd, () =>
-            lifecycle.run("preflight", async () => {
-              // Refused invocations cannot create a ledger or write failure-triage artifacts.
-              // A missing canonical path can be an interrupted publication, not a
-              // fresh installation. Only the recovery executor may reconcile it.
-              await assertUpdateRecoveryAdmission({ env: process.env });
-              assertConfigWriteAllowedInCurrentMode();
-              await assertOpenClawStateWriteAllowedAtPath({
-                databasePath: resolveOpenClawStateSqlitePath(process.env),
-                recoverOrphanedSidecars: false,
-              });
-              await retainCliProcessJobUntilExit();
-              // Public repair supplies a recovery selection, even when it is empty.
-              const admittedRunId = lifecycle.attachLedger(recoveryRunIds !== undefined);
-              const resolvedRoot = await resolveUpdateRoot();
-              const resolvedInstallKind = await resolveUpdateInstallKind(resolvedRoot, {
-                timeoutMs: lifecycle.budget("preflight"),
-              });
-              lifecycle.recordInstallKind(
-                resolvedInstallKind,
-                await readPackageVersion(resolvedRoot),
-              );
-              return { root: resolvedRoot, installKind: resolvedInstallKind, runId: admittedRunId };
-            }),
+          withCommandProcessScope(() =>
+            withUpdateInProgressEnv(invocationCwd, () =>
+              lifecycle.run("preflight", async () => {
+                // Refused invocations cannot create a ledger or write failure-triage artifacts.
+                // A missing canonical path can be an interrupted publication, not a
+                // fresh installation. Only the recovery executor may reconcile it.
+                await assertUpdateRecoveryAdmission({ env: process.env });
+                assertConfigWriteAllowedInCurrentMode();
+                await assertOpenClawStateWriteAllowedAtPath({
+                  databasePath: resolveOpenClawStateSqlitePath(process.env),
+                  recoverOrphanedSidecars: false,
+                });
+                await retainCliProcessJobUntilExit();
+                // Public repair supplies a recovery selection, even when it is empty.
+                const admittedRunId = lifecycle.attachLedger(recoveryRunIds !== undefined);
+                const resolvedRoot = await resolveUpdateRoot();
+                const resolvedInstallKind = await resolveUpdateInstallKind(resolvedRoot, {
+                  timeoutMs: lifecycle.budget("preflight"),
+                });
+                lifecycle.recordInstallKind(
+                  resolvedInstallKind,
+                  await readPackageVersion(resolvedRoot),
+                );
+                return {
+                  root: resolvedRoot,
+                  installKind: resolvedInstallKind,
+                  runId: admittedRunId,
+                };
+              }),
+            ),
           ),
         recoveryRunIds === undefined ? "finalize" : "unknown",
       );
@@ -127,16 +133,19 @@ export async function updateFinalizeCommand(
         () =>
           withUpdateInProgressEnv(invocationCwd, async () => {
             try {
-              const prepared = await lifecycle.run("targetConfigValidation", () =>
-                prepareUpdateFinalization(opts, root, installKind, requestedChannel),
-              );
-              await updateFinalizeCommandInternal(
-                opts,
-                prepared,
-                lifecycle,
-                recoveryRunIds ?? [],
-                runId,
-              );
+              const complete = await withCommandProcessScope(async () => {
+                const prepared = await lifecycle.run("targetConfigValidation", () =>
+                  prepareUpdateFinalization(opts, root, installKind, requestedChannel),
+                );
+                return await updateFinalizeCommandInternal(
+                  opts,
+                  prepared,
+                  lifecycle,
+                  recoveryRunIds ?? [],
+                  runId,
+                );
+              });
+              complete();
             } catch (error) {
               if (error instanceof UpdateCommandFailure) {
                 lifecycle.complete(error.exitCode);
@@ -225,7 +234,7 @@ async function updateFinalizeCommandInternal(
   lifecycle: UpdateFinalizationLifecycle,
   recoveryRunIds: readonly string[],
   invokingRunId: string,
-): Promise<void> {
+): Promise<() => void> {
   const { root, preFinalizeConfig, requestedChannel, storedChannel, effectiveChannel, channel } =
     prepared;
   let { configSnapshot } = prepared;
@@ -357,44 +366,46 @@ async function updateFinalizeCommandInternal(
       plugins: pluginUpdate,
     },
   };
-  if (result.status !== "error" && recoveryRunIds.length) {
-    // Publish successful recovery only after convergence and the ledger's
-    // transactional inactivity/driver check both finish.
-    reconciledRuns.push(
-      ...reconcileAbandonedUpdateRuns({ explicit: true, runIds: recoveryRunIds }).map(
-        (run) => run.runId,
-      ),
-    );
-    if (recoveryRunIds.some((runId) => getUpdateRun(runId)?.status === "running")) {
-      throw new Error(
-        "An update resumed while repair was running; wait for that update before retrying repair.",
+  return () => {
+    if (result.status !== "error" && recoveryRunIds.length) {
+      // Publish successful recovery only after convergence and the ledger's
+      // transactional inactivity/driver check both finish.
+      reconciledRuns.push(
+        ...reconcileAbandonedUpdateRuns({ explicit: true, runIds: recoveryRunIds }).map(
+          (run) => run.runId,
+        ),
       );
+      if (recoveryRunIds.some((runId) => getUpdateRun(runId)?.status === "running")) {
+        throw new Error(
+          "An update resumed while repair was running; wait for that update before retrying repair.",
+        );
+      }
+      for (const runId of recoveryRunIds) {
+        acknowledgeAbandonedUpdateRun(runId);
+      }
     }
-    for (const runId of recoveryRunIds) {
-      acknowledgeAbandonedUpdateRun(runId);
+    if (opts.json) {
+      defaultRuntime.writeJson(result);
+    } else if (result.status === "ok") {
+      defaultRuntime.log(theme.muted("Update finalization completed."));
+    } else if (result.status === "warning") {
+      defaultRuntime.log(theme.warn("Update finalization completed with warnings."));
+    } else {
+      defaultRuntime.log(theme.error("Update finalization failed."));
     }
-  }
-  if (opts.json) {
-    defaultRuntime.writeJson(result);
-  } else if (result.status === "ok") {
-    defaultRuntime.log(theme.muted("Update finalization completed."));
-  } else if (result.status === "warning") {
-    defaultRuntime.log(theme.warn("Update finalization completed with warnings."));
-  } else {
-    defaultRuntime.log(theme.error("Update finalization failed."));
-  }
-  lifecycle.complete(result.status === "error" ? 1 : 0);
-  if (result.status === "error") {
-    throw new UpdateCommandFailure({
-      status: "error",
-      mode: "unknown",
-      root,
-      reason: "post-update-plugins",
-      postUpdate: { plugins: pluginUpdate },
-      steps: [],
-      durationMs: Math.round(performance.now() - lifecycle.startedAt),
-    });
-  }
+    lifecycle.complete(result.status === "error" ? 1 : 0);
+    if (result.status === "error") {
+      throw new UpdateCommandFailure({
+        status: "error",
+        mode: "unknown",
+        root,
+        reason: "post-update-plugins",
+        postUpdate: { plugins: pluginUpdate },
+        steps: [],
+        durationMs: Math.round(performance.now() - lifecycle.startedAt),
+      });
+    }
+  };
 }
 
 function pluginOutcome(result: PostCorePluginUpdateResult): {

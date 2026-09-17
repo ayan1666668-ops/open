@@ -13,6 +13,7 @@ import {
 } from "../../infra/update-managed-service-handoff-lease.js";
 import { isCurrentManagedServiceUpdateHandoffProcess } from "../../infra/update-managed-service-handoff.js";
 import type { UpdateRecoveryFence } from "../../infra/update-run-recovery.js";
+import { hasCommandProcessCleanupError } from "../../process/exec-result.js";
 import { withCommandProcessScope } from "../../process/exec-spawn.js";
 import { createUpdateActivationDeadline } from "./update-command-activation.js";
 import {
@@ -238,7 +239,7 @@ export async function withDelegatedUpdateCommandExecutor<T>(
         if (options) {
           activation.start(root, options.activationTimeoutMs);
         }
-        outcome = { result: await operation(fence) };
+        outcome = { result: await withCommandProcessScope(() => operation(fence)) };
       } catch (error) {
         outcome = { error };
       }
@@ -511,7 +512,7 @@ export async function withUpdateCommandExecutor<T>(
       };
       let outcome: { result: T } | { error: Error };
       try {
-        const result = await operation(executor);
+        const result = await withCommandProcessScope(() => operation(executor));
         children.close();
         await children.settle();
         if (lease) {
@@ -543,6 +544,12 @@ export async function withUpdateCommandExecutor<T>(
       preflightReleases.delete(fence);
       childOwners.delete(fence);
       admittedAuthorities.delete(fence);
+      if ("error" in outcome && hasCommandProcessCleanupError(outcome.error)) {
+        throw new UpdateCommandRecoveryPendingError(
+          "Command cleanup is unconfirmed; update ownership remains retained.",
+          { cause: outcome.error },
+        );
+      }
       try {
         if (legacyChild && store && !store.release(legacyChild)) {
           throw new UpdateCommandRecoveryPendingError("Legacy finalizer has not settled.");
