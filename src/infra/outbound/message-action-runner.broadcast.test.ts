@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { projectEmbeddedMessageDeliveryFact } from "../../agents/embedded-agent-message-delivery.js";
 import { jsonResult } from "../../agents/tools/common.js";
 import type { ChannelPlugin } from "../../channels/plugins/types.public.js";
 import { formatMessageCliText } from "../../commands/message-format.js";
@@ -104,4 +105,169 @@ describe("broadcast send outcomes through native actions", () => {
     expect(result.payload.results[0]?.sentBeforeError).toBe(sentBeforeError);
     expect(result.payload.results[0]?.payload).toBe(payload);
   });
+
+  it.each([
+    {
+      name: "before the in-flight target dispatches",
+      dispatchBeforeWait: false,
+      failed: 0,
+      notAttempted: 2,
+    },
+    {
+      name: "after the in-flight target starts dispatching",
+      dispatchBeforeWait: true,
+      failed: 1,
+      notAttempted: 1,
+    },
+  ])("keeps completed results when cancellation arrives $name", async (scenario) => {
+    let actionCurrent = true;
+    let releaseSecond: () => void = () => undefined;
+    const secondStarted = new Promise<void>((resolve) => {
+      releaseSecond = resolve;
+    });
+    let enteredSecond: () => void = () => undefined;
+    const secondEntered = new Promise<void>((resolve) => {
+      enteredSecond = resolve;
+    });
+    const handled: string[] = [];
+    const dispatched: string[] = [];
+    const plugin: ChannelPlugin = {
+      ...createChannelTestPluginBase({ id: "broadcast-test" }),
+      messaging: { targetResolver: { looksLikeId: () => true } },
+      outbound: {
+        deliveryMode: "direct",
+        sendText: async () => {
+          throw new Error("native action bypassed");
+        },
+      },
+      actions: {
+        describeMessageTool: () => ({ actions: ["send"] }),
+        supportsAction: ({ action }) => action === "send",
+        handleAction: async ({ params, assertDirectAdapterHandoff, onPlatformSendDispatch }) => {
+          const target = String(params.to);
+          handled.push(target);
+          const dispatch = async () => {
+            await onPlatformSendDispatch?.();
+            dispatched.push(target);
+          };
+          if (target === "first") {
+            await dispatch();
+            return jsonResult({ ok: true, messageId: "sent-first" });
+          }
+          if (scenario.dispatchBeforeWait) {
+            await dispatch();
+          }
+          enteredSecond();
+          await secondStarted;
+          assertDirectAdapterHandoff?.();
+          await dispatch();
+          return jsonResult({ ok: true, messageId: `sent-${target}` });
+        },
+      },
+    };
+    setActivePluginRegistry(createTestRegistry([{ pluginId: plugin.id, plugin, source: "test" }]));
+
+    const pending = runMessageAction({
+      cfg: {},
+      action: "broadcast",
+      params: { channel: plugin.id, targets: ["first", "second", "third"], message: "hello" },
+      assertDirectAdapterHandoff: () => {
+        if (!actionCurrent) {
+          throw Object.assign(new Error("current action canceled"), { name: "AbortError" });
+        }
+      },
+    });
+    await secondEntered;
+    actionCurrent = false;
+    releaseSecond();
+    const result = await pending;
+
+    expect(handled).toEqual(["first", "second"]);
+    expect(dispatched).toEqual(scenario.dispatchBeforeWait ? ["first", "second"] : ["first"]);
+    expect(result).toMatchObject({
+      kind: "broadcast",
+      payload: {
+        results: [
+          { to: "first", ok: true, payload: { ok: true, messageId: "sent-first" } },
+          { to: "second", ok: false },
+          { to: "third", ok: false, attempted: false },
+        ],
+      },
+    });
+    if (result.kind !== "broadcast") {
+      throw new Error("Expected broadcast result");
+    }
+    expect(result.payload.results.filter((entry) => entry.attempted === false)).toHaveLength(
+      scenario.notAttempted,
+    );
+    expect(projectEmbeddedMessageDeliveryFact(result)).toMatchObject({
+      status: "settled",
+      partialDelivery: true,
+    });
+    const cliOutput = formatMessageCliText(result).join("\n");
+    expect(cliOutput).toContain(
+      `Broadcast incomplete (1/3 succeeded, ${scenario.failed} failed, ${scenario.notAttempted} not attempted)`,
+    );
+    expect(cliOutput).toContain("not attempted");
+  });
+
+  it.each([false, true])(
+    "still rejects cancellation when the first destination dispatch started: %s",
+    async (dispatchBeforeWait) => {
+      let actionCurrent = true;
+      let release: () => void = () => undefined;
+      const pendingDispatch = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let entered: () => void = () => undefined;
+      const enteredDispatch = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const dispatched: string[] = [];
+      const plugin: ChannelPlugin = {
+        ...createChannelTestPluginBase({ id: "broadcast-test" }),
+        messaging: { targetResolver: { looksLikeId: () => true } },
+        outbound: {
+          deliveryMode: "direct",
+          sendText: async () => {
+            throw new Error("native action bypassed");
+          },
+        },
+        actions: {
+          describeMessageTool: () => ({ actions: ["send"] }),
+          supportsAction: ({ action }) => action === "send",
+          handleAction: async ({ assertDirectAdapterHandoff, onPlatformSendDispatch }) => {
+            if (dispatchBeforeWait) {
+              await onPlatformSendDispatch?.();
+              dispatched.push("only");
+            }
+            entered();
+            await pendingDispatch;
+            assertDirectAdapterHandoff?.();
+            return jsonResult({ ok: true });
+          },
+        },
+      };
+      setActivePluginRegistry(
+        createTestRegistry([{ pluginId: plugin.id, plugin, source: "test" }]),
+      );
+
+      const pending = runMessageAction({
+        cfg: {},
+        action: "broadcast",
+        params: { channel: plugin.id, targets: ["only"], message: "hello" },
+        assertDirectAdapterHandoff: () => {
+          if (!actionCurrent) {
+            throw Object.assign(new Error("current action canceled"), { name: "AbortError" });
+          }
+        },
+      });
+      await enteredDispatch;
+      actionCurrent = false;
+      release();
+
+      await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+      expect(dispatched).toEqual(dispatchBeforeWait ? ["only"] : []);
+    },
+  );
 });

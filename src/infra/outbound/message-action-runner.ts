@@ -127,18 +127,31 @@ async function handleBroadcastAction(
     to: string;
     ok: boolean;
     error?: string;
+    attempted?: false;
     sentBeforeError?: true;
     payload?: unknown;
     result?: MessageSendResult;
   }> = [];
   const isAbortError = (err: unknown): boolean => err instanceof Error && err.name === "AbortError";
+  const hasAcceptedResult = () => results.some((result) => result.ok || result.sentBeforeError);
   let attemptIndex = 0;
+  let interrupted = false;
   for (const { channel: targetChannel, plugin: targetChannelPlugin } of targetChannels) {
-    throwIfAborted(input.abortSignal);
     for (const target of rawTargets) {
-      throwIfAborted(input.abortSignal);
       const receiptDiscriminator = `broadcast:${attemptIndex++}`;
+      if (interrupted) {
+        results.push({
+          channel: targetChannel,
+          to: target,
+          ok: false,
+          attempted: false,
+          error: "Broadcast canceled before this target was attempted.",
+        });
+        continue;
+      }
+      let platformDispatchStarted = false;
       try {
+        throwIfAborted(input.abortSignal);
         const targetAccountId = validateExplicitMessageAccountSelection({
           cfg: input.cfg,
           channel: targetChannel,
@@ -158,6 +171,10 @@ async function handleBroadcastAction(
         }
         const sendResult = await runMessageAction({
           ...input,
+          onPlatformSendDispatch: async () => {
+            await input.onPlatformSendDispatch?.();
+            platformDispatchStarted = true;
+          },
           action: "send",
           params: {
             ...params,
@@ -174,7 +191,20 @@ async function handleBroadcastAction(
         });
       } catch (err) {
         if (isAbortError(err)) {
-          throw err;
+          if (!hasAcceptedResult()) {
+            throw err;
+          }
+          interrupted = true;
+          results.push({
+            channel: targetChannel,
+            to: target,
+            ok: false,
+            ...(!platformDispatchStarted ? { attempted: false as const } : {}),
+            error: platformDispatchStarted
+              ? formatErrorMessage(err)
+              : "Broadcast canceled before this target was attempted.",
+          });
+          continue;
         }
         if (err instanceof MessageActionDeniedError) {
           // Preserve the owner fact before broadcast converts the failure to result text;

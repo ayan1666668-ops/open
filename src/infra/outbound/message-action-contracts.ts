@@ -159,6 +159,7 @@ export type MessageActionResult =
           to: string;
           ok: boolean;
           error?: string;
+          attempted?: false;
           sentBeforeError?: true;
           payload?: unknown;
           result?: MessageSendResult;
