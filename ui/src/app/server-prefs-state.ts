@@ -247,6 +247,11 @@ export function resolveServerUiPrefStateFromSnapshot<K extends SyncedPrefKey>(
         settings,
       ));
   const applicableServerValue = canApplyServerValue ? serverValue : productDefault;
+  if (canSync === null && profilePrefs != null && isAppearancePref(key)) {
+    // Offline profile snapshots supply a local reset baseline. Cancel queued
+    // edits without creating a new remote write while identity is disconnected.
+    return { ...localState(applicableServerValue), provenance: "device-local" };
+  }
   if (shadowPrefs && key in shadowPrefs) {
     if (canSync === false) {
       return {

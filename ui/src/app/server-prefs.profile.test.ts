@@ -314,7 +314,7 @@ describe("profile-bound appearance preferences", () => {
 
     const previous = loadSettings();
     const state = resolveServerUiPrefState(config, key, scope, previous, { profileId });
-    const next = resetServerUiPref(key, state, scope);
+    const next = resetServerUiPref(key, state, scope, profileId);
     expect(next[key]).toBe(fallback);
     const delta = changedServerUiPrefs(previous, next);
     expect(delta).toEqual({ [key]: null });
@@ -335,38 +335,46 @@ describe("profile-bound appearance preferences", () => {
     expect(loadSettings()[key]).toBe(fallback);
   });
 
-  it("restores a local accent to the known server value while the profile is loading", async () => {
+  it("cancels a queued profile edit when reset after disconnect", async () => {
     const config = configWithPrefs({ accent: "#abcdef" });
-    const saved = { status: "ok", entries: { "ui.accent": "#123456" } };
-    const options = { profileId, configObject: config, scope, onApplied: vi.fn() };
-    const initial = createServerPrefsWriter(
-      vi.fn(async () => saved),
-      scope,
-    );
-    await refreshProfileAppearancePrefs({ ...options, client: initial.state.client! });
-    patchSettings({ accent: "#654321" });
-    pushServerUiPrefs(initial, { accent: "#654321" }, { profileId, canWrite: false });
-    resetServerUiPrefsSync();
-
-    const delayed = createDeferred<unknown>();
-    const request = vi.fn((_method: string) => delayed.promise);
+    const request = vi.fn(async (_method: string) => ({
+      status: "ok",
+      entries: { "ui.accent": "#123456" },
+    }));
     const writer = createServerPrefsWriter(request, scope);
-    applyServerUiPrefs(config, options);
-    const pending = refreshProfileAppearancePrefs({ ...options, client: writer.state.client! });
-    const previous = loadSettings();
-    const state = resolveServerUiPrefState(config, "accent", scope, previous, {
+    await refreshProfileAppearancePrefs({
+      client: writer.state.client!,
       profileId,
-      canSync: false,
+      configObject: config,
+      scope,
+      onApplied: vi.fn(),
     });
-    expect(state).toMatchObject({ provenance: "device-local", resetValue: "#123456" });
+    Object.assign(writer.state, { connected: false });
+    patchSettings({ accent: "#654321" });
+    pushServerUiPrefs(writer, { accent: "#654321" }, { profileId, canWrite: true });
+    const previous = loadSettings();
+    const state = resolveServerUiPrefState(undefined, "accent", scope, previous, {
+      canSync: null,
+    });
     const next = resetServerUiPref("accent", state, scope);
     expect(next.accent).toBe("#123456");
     expect(changedServerUiPrefs(previous, next)).toBeNull();
 
-    delayed.resolve(saved);
-    await pending;
+    resetServerUiPrefsSync();
+    const reconnected = createServerPrefsWriter(request, scope);
+    flushServerUiPrefs(reconnected, { profileId, canWrite: true });
+    await refreshProfileAppearancePrefs({
+      client: reconnected.state.client!,
+      profileId,
+      configObject: config,
+      scope,
+      onApplied: vi.fn(),
+    });
+    expect(request.mock.calls.map(([method]) => method)).toEqual([
+      "users.prefs.get",
+      "users.prefs.get",
+    ]);
     expect(loadSettings().accent).toBe("#123456");
-    expect(request.mock.calls.every(([method]) => method === "users.prefs.get")).toBe(true);
   });
 
   it.each([
@@ -404,7 +412,7 @@ describe("profile-bound appearance preferences", () => {
 
       const previous = loadSettings();
       const state = resolveServerUiPrefState(config, key, scope, previous, { profileId });
-      const next = resetServerUiPref(key, state, scope);
+      const next = resetServerUiPref(key, state, scope, profileId);
       expect(next[key]).toBe(resetValue);
       expect(changedServerUiPrefs(previous, next)).toEqual({ [key]: null });
       const afterCommit = vi.fn();
@@ -532,7 +540,7 @@ describe("profile-bound appearance preferences", () => {
 
     // Resetting from synced provenance with a profile bound lands on the
     // gateway value locally, matching what the profile-key deletion resolves to.
-    const reset = resetServerUiPref("theme", state, scope);
+    const reset = resetServerUiPref("theme", state, scope, profileId);
     expect(reset.theme).toBe("dash");
   });
 

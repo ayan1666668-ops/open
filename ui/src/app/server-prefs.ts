@@ -9,6 +9,7 @@ import type { ApplicationGatewaySnapshot } from "./gateway.ts";
 import { hasOperatorWriteAccess } from "./operator-access.ts";
 import {
   loadProfileAppearancePrefs,
+  rememberProfileAppearanceIdentity,
   resetProfileAppearancePrefs,
   resolveProfileAppearanceProfileId,
   resolveProfileAppearancePrefs,
@@ -68,13 +69,17 @@ export function resolveServerUiPrefState<K extends SyncedPrefKey>(
   settings = loadSettings(scope || undefined),
   options: { canSync?: boolean | null; profileId?: string | null } = {},
 ): ServerUiPrefState<SyncedPrefValue<K>> {
-  const effectiveScope = resolveProfilePreferenceScope(scope, options.profileId);
+  const disconnectedProfile =
+    !options.profileId && isAppearancePref(key) && options.canSync === null;
+  const profileId =
+    options.profileId ?? (disconnectedProfile ? resolveProfileAppearanceProfileId(scope) : null);
+  const effectiveScope = resolveProfilePreferenceScope(scope, profileId);
   const shadowPrefs =
     effectiveScope === pendingScope
       ? pendingPrefs
       : parseStoredPrefs(readStorage(PENDING_KEY, effectiveScope));
-  const profilePrefs = resolveProfileAppearancePrefs(scope, options.profileId);
-  const pendingAppearance = options.profileId && isAppearancePref(key) && profilePrefs === null;
+  const profilePrefs = resolveProfileAppearancePrefs(scope, profileId);
+  const pendingAppearance = profileId && isAppearancePref(key) && profilePrefs === null;
   // The boot mirror is still compared with its last server appearance while
   // loading. This merged baseline does not identify which values came from the profile.
   const appearanceSnapshot = pendingAppearance
@@ -282,9 +287,13 @@ export function resetServerUiPref<K extends ResettableServerUiPrefKey>(
   key: K,
   state?: ServerUiPrefState<SyncedPrefValue<K>>,
   scope = pendingScope,
+  profileId?: string | null,
 ): UiSettings {
   const specification = SYNCED_PREFS[key];
-  const activeProfile = isAppearancePref(key) ? resolveProfileAppearanceProfileId(scope) : null;
+  // Disconnected clients retain their last known profile for local cancellation.
+  const activeProfile = isAppearancePref(key)
+    ? (profileId ?? resolveProfileAppearanceProfileId(scope))
+    : null;
   const effectiveScope = resolveProfilePreferenceScope(scope, activeProfile);
   const reset = specification.reset;
   if (!reset) {
@@ -454,7 +463,11 @@ export function isApplyingServerUiPrefs(): boolean {
 }
 function adoptPushWriter(writer: ServerUiPrefsWriter, hooks: ServerUiPrefsPushHooks): void {
   const profileId = hooks.profileId ?? hooks.profile?.selfUser?.id ?? null;
-  const scope = resolveProfilePreferenceScope(writer.state.client?.gatewayUrl ?? "", profileId);
+  const gatewayScope = writer.state.client?.gatewayUrl ?? "";
+  if (profileId) {
+    rememberProfileAppearanceIdentity(gatewayScope, profileId);
+  }
+  const scope = resolveProfilePreferenceScope(gatewayScope, profileId);
   pushCanWrite = hooks.canWrite ?? hasOperatorWriteAccess(hooks.profile?.hello?.auth ?? null);
   if (pushWriter === writer && pushScope === scope && pushProfileId === profileId) {
     return;
