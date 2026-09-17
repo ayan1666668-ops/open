@@ -75,7 +75,7 @@ describe("resolveLogicalVisibleModelCatalog", () => {
                   api,
                   baseUrl: rowBaseUrl,
                   models: [
-                    makeProviderModelFixture({
+                    makeProviderModelFixture<typeof api>({
                       id: "auto",
                       name: "Auto",
                       provider: "personal",
