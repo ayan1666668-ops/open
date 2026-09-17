@@ -89,7 +89,9 @@ async function withFamilyStore(
         "INSERT INTO cron_job_scratch (store_key, job_id, content, revision, updated_at_ms) VALUES (?, ?, ?, 1, 1800000000000)",
       );
       insert.run(activeStore, active.id, "active scratch");
-      for (const job of stale) insert.run(staleStore, job.id, `scratch:${job.id}`);
+      for (const job of stale) {
+        insert.run(staleStore, job.id, `scratch:${job.id}`);
+      }
     });
     const cron = new CronService({
       storePath: activeStore,
@@ -322,7 +324,9 @@ describe("Cron stale-family cleanup", () => {
         await Promise.race([entered.promise, blocker]);
         let active = true;
         const guard = vi.fn(() => {
-          if (!active) throw new Error("family owner retired");
+          if (!active) {
+            throw new Error("family owner retired");
+          }
         });
         pruning = cron.removeStaleJobFamily(family, { commitGuard: guard });
         rejected = expect(pruning).rejects.toThrow("family owner retired");

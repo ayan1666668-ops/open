@@ -299,7 +299,7 @@ export function deleteStaleCronJobFamilyRows(
       .select((eb) => [
         // Native UTF-8 decoding can replace malformed bytes; only ASCII names
         // admit an exact SQL comparison before the existing JavaScript filter.
-        /^[\x00-\x7f]*$/u.test(family.name)
+        /^\p{ASCII}*$/u.test(family.name)
           ? eb
               .case()
               .when("name", "=", family.name)
