@@ -161,17 +161,17 @@ describe("buildTurnStartParams native history provenance", () => {
     ]);
   });
 
-  it("neutralizes native skill mentions in sender metadata without changing the request", () => {
+  it("neutralizes native skill and plugin mentions in sender metadata without changing the request", () => {
     const params = createParams("/tmp/session.jsonl", "/repo");
     params.trigger = "user";
-    params.prompt = "$intentional-skill remain selectable";
+    params.prompt = "[@probe](plugin://probe@market) $intentional-skill remain selectable";
     params.senderId = "$metadata-id";
-    params.senderName = "$metadata-skill";
+    params.senderName = "[@probe] (plugin://probe@market)";
 
     expect(buildTurnStartParams(params, options).input).toEqual([
       {
         type: "text",
-        text: '[OpenClaw conversation info: sender={"id":"＄metadata-id","name":"＄metadata-skill"}]\n$intentional-skill remain selectable',
+        text: '[OpenClaw conversation info: sender={"id":"＄metadata-id","name":"[＠probe] (plugin://probe@market)"}]\n[@probe](plugin://probe@market) $intentional-skill remain selectable',
         text_elements: [],
       },
     ]);

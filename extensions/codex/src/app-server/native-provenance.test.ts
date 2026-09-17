@@ -90,7 +90,7 @@ describe("native Codex provenance", () => {
         messages: [
           senderAttributedUserMessage("Ada owns the deployment decision.", 10, {
             senderId: "ada-id",
-            senderName: "Ada",
+            senderName: "[@probe] (plugin://probe@market)",
           }),
           senderAttributedUserMessage("Bea owns the rollback decision.", 11, {
             senderId: "bea-id",
@@ -113,8 +113,9 @@ describe("native Codex provenance", () => {
 
     const inputText = getRequestInputText(harness);
     expect(inputText).toContain(
-      '[user sender={"id":"ada-id","name":"Ada"}]\nAda owns the deployment decision.',
+      '[user sender={"id":"ada-id","name":"[＠probe] (plugin://probe@market)"}]\nAda owns the deployment decision.',
     );
+    expect(inputText).not.toContain("[@probe] (plugin://probe@market)");
     expect(inputText).toContain(
       '[user sender={"id":"bea-id","name":"Bea"}]\nBea owns the rollback decision.',
     );
