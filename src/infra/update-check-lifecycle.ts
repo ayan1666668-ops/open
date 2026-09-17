@@ -1,7 +1,7 @@
 import { sleepWithAbort } from "@openclaw/retry";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { UpdateCampaignController } from "./update-campaign.js";
-import type { resolveStartupInstallStatus } from "./update-startup.js";
+import type { resolveStartupInstallStatus } from "./update-install-status.js";
 
 export type UpdateCheckLifecycle = {
   signal: AbortSignal;
@@ -40,7 +40,7 @@ export function createGatewayUpdateLifecycle(): UpdateCheckLifecycle {
     signal.throwIfAborted();
     if (!initialization) {
       const task = run(async () => {
-        const { resolveStartupInstallStatus } = await import("./update-startup.js");
+        const { resolveStartupInstallStatus } = await import("./update-install-status.js");
         signal.throwIfAborted();
         return resolveStartupInstallStatus(false, signal);
       });

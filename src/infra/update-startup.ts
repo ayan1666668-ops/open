@@ -29,10 +29,8 @@ import {
 } from "./gateway-supervision.js";
 import { gitCommitPrefixesMatch } from "./git-commit.js";
 import { executeGitCommand } from "./git-exec.js";
-import { resolveOpenClawPackageRoot } from "./openclaw-root.js";
 import {
   readRestartSentinelSnapshot,
-  readVerifiedGitUpdateReceipt,
   writeRestartSentinelIfUnchanged,
   type VerifiedGitUpdateReceipt,
 } from "./restart-sentinel.js";
@@ -55,12 +53,12 @@ import {
 import {
   compareSemverStrings,
   resolveNpmChannelTag,
-  checkUpdateStatus,
   type UpdateCheckResult,
 } from "./update-check.js";
 import { isPendingControlPlaneUpdateRestartSentinel } from "./update-control-plane-sentinel.js";
 import { devUpdateTargetFromGitTarget, type TrackedDevUpdateTarget } from "./update-dev-target.js";
 import { updateInstallRootsMatch } from "./update-install-root.js";
+import { resolveStartupInstallStatus } from "./update-install-status.js";
 import { buildUpdateRestartSentinelPayload } from "./update-restart-sentinel-payload.js";
 import {
   createUpdateRun,
@@ -267,32 +265,6 @@ function clearAutoState(nextState: UpdateCheckState): void {
   delete nextState.autoFirstSeenVersion;
   delete nextState.autoFirstSeenTag;
   delete nextState.autoFirstSeenAt;
-}
-
-export async function resolveStartupInstallStatus(fetchRemoteGit: boolean, signal: AbortSignal) {
-  const [root, installReceipt] = await Promise.all([
-    resolveOpenClawPackageRoot({
-      moduleUrl: import.meta.url,
-      argv1: process.argv[1],
-      cwd: process.cwd(),
-    }),
-    readVerifiedGitUpdateReceipt(),
-  ]);
-  const gitUpstreamFallback =
-    installReceipt?.upstreamRef && root && updateInstallRootsMatch(root, installReceipt.root)
-      ? { currentSha: installReceipt.sha, upstreamRef: installReceipt.upstreamRef }
-      : undefined;
-  const status = await checkUpdateStatus({
-    root,
-    signal,
-    ...(fetchRemoteGit ? {} : { timeoutMs: 2500 }),
-    fetchGit: fetchRemoteGit,
-    includeRegistry: false,
-    ...(fetchRemoteGit ? { useDetachedDevUpstream: true } : {}),
-    ...(gitUpstreamFallback ? { gitUpstreamFallback } : {}),
-  });
-  signal.throwIfAborted();
-  return { root, status, installReceipt };
 }
 
 /** Caches only the fast local install probe; remote Git refresh remains post-ready. */
