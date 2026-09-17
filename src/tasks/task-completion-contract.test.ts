@@ -19,6 +19,20 @@ describe("resolveRequiredCompletionTerminalResult", () => {
   it.each([
     ["pure progress", "Let me run the tests"],
     [
+      "deferred result heading after progress",
+      "I'll inspect the failure. Result: completed when CI succeeds.",
+    ],
+    [
+      "fronted conditional result",
+      "Reviewing the rollout, if validation succeeded, we deployed the release.",
+    ],
+    [
+      "fronted unless result",
+      "Reviewing the rollout, unless validation failed, we deployed the release.",
+    ],
+    ["future perfect done predicate", "Reviewing the changes, we will have done the repair."],
+    ["future copular done predicate", "Reviewing the changes, I am going to be done."],
+    [
       "conditional coordinated result",
       "Investigating whether docs changed and we fixed the timeout.",
     ],
@@ -112,6 +126,22 @@ describe("resolveRequiredCompletionTerminalResult", () => {
     ],
     ["completed clause after narration", "Reviewing the changes, we fixed the regression."],
     ["conditional operator guidance", "Use the rollback script if necessary."],
+    ["completed action using done", "Reviewing the changes, we have done the repair."],
+    ["completed singular state", "Reviewing the changes, I am done."],
+    ["contracted done action", "Reviewing the changes, we've done the repair."],
+    ["contracted plural state", "Reviewing the changes, we're done."],
+    [
+      "past headed result after progress",
+      "I'll inspect the failure. Result: I patched the handler when the alert fired.",
+    ],
+    [
+      "fronted past temporal result",
+      "Reviewing the logs, when the alert fired, we patched the handler.",
+    ],
+    [
+      "past temporal result explanation",
+      "Reviewing the logs, we patched the handler when the alert fired.",
+    ],
     [
       "independent result after conditional narration",
       "Investigating whether checks passed, we fixed the timeout.",
