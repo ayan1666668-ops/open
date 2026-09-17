@@ -1,6 +1,7 @@
 // Keep provider/model dependencies controlled while exercising the real config reloader.
 // oxfmt-ignore
 import { cleanupPreparedModelRuntimeHarness, getPreparedModelRuntimeMocks, resetPreparedModelRuntimeHarness } from "../agents/prepared-model-runtime.test-harness.js";
+import chokidar from "chokidar";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../test/helpers/promise.js";
 import { resolveApiKeyForProfile } from "../agents/auth-profiles/oauth.js";
@@ -112,6 +113,7 @@ describe("setup activation reload ownership", () => {
       await refreshPreparedModelRuntimeSnapshots(previous);
       const initial = await readConfigFileSnapshot();
       const reloadError = vi.fn();
+      const watch = vi.spyOn(chokidar, "watch");
       const reloader = startGatewayConfigReloader({
         initialConfig: initial.config,
         initialCompareConfig: initial.sourceConfig,
@@ -149,25 +151,39 @@ describe("setup activation reload ownership", () => {
           return { runtimeConfig, compareConfig: sourceConfig };
         },
         onHotReload: async (plan, config, ownership) => {
-          await refreshPreparedModelRuntimeSnapshots(config, {
-            isPublicationCurrent: ownership.isCurrent,
-          });
+          // Match the Gateway: commit before refreshing, then let the reloader
+          // checkpoint reconcile filesystem echoes against the committed source.
+          await ownership.checkpoint();
           ownership.markRuntimeCommitted(config, plan);
+          await refreshPreparedModelRuntimeSnapshots(config);
           return "applied";
         },
-        onNoopConfigCommit: async (_plan, config, ownership) => {
-          await refreshPreparedModelRuntimeSnapshots(config, {
-            isPublicationCurrent: ownership.isCurrent,
-          });
+        onNoopConfigCommit: async (plan, config, ownership) => {
+          await ownership.checkpoint();
+          ownership.markRuntimeCommitted(config, plan);
+          await refreshPreparedModelRuntimeSnapshots(config);
         },
         onRestart: () => {
           throw new Error("fixture route must hot reload");
         },
         log: { info: vi.fn(), warn: vi.fn(), error: reloadError },
       });
+      let echoObserved = false;
       const completion = createDeferred<() => Promise<boolean>>();
       const applied = createDeferred<ReturnType<typeof createRuntimeConfigWriteApplication>>();
       try {
+        await reloader.ready;
+        if (outcome === "superseded") {
+          const [watched] = watch.mock.results;
+          if (watched?.type !== "return") {
+            throw new Error("config watcher was not created");
+          }
+          // Deliver the writer's filesystem echo during model preparation.
+          getPreparedModelRuntimeMocks().discoverModels.mockImplementationOnce(() => {
+            watched.value.emit("change", state.configPath);
+            echoObserved = true;
+          });
+        }
         const configTarget: SetupInferenceConfigTarget = {
           read: async () => ({
             config: (await readConfigFileSnapshot()).sourceConfig,
@@ -244,7 +260,9 @@ describe("setup activation reload ownership", () => {
           );
           return;
         }
-        await expect((await applied.promise).result).resolves.toBe("applied");
+        const applicationStatus = await (await applied.promise).result;
+        expect(applicationStatus, JSON.stringify(reloadError.mock.calls)).toBe("applied");
+        expect(echoObserved).toBe(true);
         const newerApplication = createRuntimeConfigWriteApplication();
         await transformConfigFileWithRetry({
           base: "source",
