@@ -99,9 +99,10 @@ function buildDiscordChannelContext(params: {
 }
 
 // Resolves null when a payload without a channel object timed out, or when a guildless one
-// has no verified channel type because its lookup failed or returned no type. Either way DM or
-// Group DM policy, allowlist, and routing facts are unknown, so the caller asks for a retry
-// instead. A guild payload with an unknown type still resolves: guild policy matches its id.
+// has no verified channel type (failed or typeless lookup, or a typeless channel object). Either
+// way DM or Group DM policy, allowlist, and routing facts are unknown, so the caller asks for a
+// retry instead. A guild payload with an unknown type still resolves: guild policy matches its id.
+// Only a thread's parent lookup can time out for a channel object, and its type is verified.
 async function resolveDiscordChannelContext(
   interaction: AgentComponentInteraction,
 ): Promise<DiscordChannelContext | null> {
@@ -117,7 +118,7 @@ async function resolveDiscordChannelContext(
     const resolved = await withTimeout(lookup, COMPONENT_CHANNEL_CONTEXT_WAIT_MS, {
       createError: () => timeout,
     });
-    if (!channel && !interaction.rawData.guild_id && resolved.channelType === undefined) {
+    if (!interaction.rawData.guild_id && resolved.channelType === undefined) {
       logVerbose(`discord component: channel lookup for ${channelId} returned no channel type`);
       return null;
     }
@@ -192,8 +193,7 @@ export async function resolveComponentInteractionContext(params: {
   }
   const channelType = channelCtx.channelType;
   const isGroupDm = channelType === ChannelType.GroupDM;
-  const isDirectMessage =
-    channelType === ChannelType.DM || (!rawGuildId && !isGroupDm && channelType == null);
+  const isDirectMessage = channelType === ChannelType.DM;
   const memberRoleIds = Array.isArray(interaction.rawData.member?.roles)
     ? interaction.rawData.member.roles.map((roleId: string) => roleId)
     : [];
