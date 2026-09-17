@@ -78,7 +78,7 @@ export function renderMessageJson(
 const USER_MESSAGE_COLLAPSED_CHAR_LIMIT = 1_200;
 const USER_MESSAGE_COLLAPSED_LINE_LIMIT = 40;
 const USER_MESSAGE_PREVIEW_LINES = 5;
-const MESSAGE_PREVIEW_LAST_LINE_FRACTION = 2 / 3;
+const MESSAGE_PREVIEW_FADE_START_FRACTION = 0.5;
 
 function shouldCollapseUserMessage(markdown: string): boolean {
   return (
@@ -105,7 +105,7 @@ function userMessageOverflowRef(expanded: boolean) {
         return;
       }
       let clamp: string | undefined;
-      let lastLineHeight: string | undefined;
+      let fadeSize: string | undefined;
       const text = element.querySelector<HTMLElement>(":scope > .chat-text");
       if (!expanded && text && element.clientWidth > 0) {
         const origin = element.getBoundingClientRect().top - element.scrollTop;
@@ -121,9 +121,12 @@ function userMessageOverflowRef(expanded: boolean) {
             Number.parseFloat(getComputedStyle(node.parentElement).lineHeight) || defaultLineHeight;
           range.selectNodeContents(node);
           for (const rect of range.getClientRects()) {
+            // Range bounds cover glyphs; account for the line's rounded half-leading.
+            const leading = Math.floor((lineHeight - rect.height) / 2);
             rects.push({
-              top: rect.top - origin,
-              bottom: rect.bottom - origin,
+              top: rect.top - origin - leading,
+              glyphTop: rect.top - origin,
+              bottom: rect.bottom - origin - leading,
               width: rect.width,
               lineHeight,
             });
@@ -131,13 +134,13 @@ function userMessageOverflowRef(expanded: boolean) {
         }
         const lastLine = findMessageDisclosureLine(rects, USER_MESSAGE_PREVIEW_LINES);
         if (lastLine) {
-          clamp = `${lastLine.top + lastLine.lineHeight * MESSAGE_PREVIEW_LAST_LINE_FRACTION}px`;
-          lastLineHeight = `${lastLine.lineHeight}px`;
+          clamp = `${lastLine.clamp}px`;
+          fadeSize = `${lastLine.clamp - lastLine.top - lastLine.lineHeight * MESSAGE_PREVIEW_FADE_START_FRACTION}px`;
         }
       }
       for (const [property, value] of [
         ["--chat-disclosure-clamp", clamp],
-        ["--chat-disclosure-line-height", lastLineHeight],
+        ["--chat-disclosure-fade-size", fadeSize],
       ] as const) {
         if (value === undefined) {
           element.style.removeProperty(property);
@@ -156,6 +159,12 @@ function userMessageOverflowRef(expanded: boolean) {
       if (text) {
         resizeObserver?.observe(text);
       }
+      // Font metrics can change without resizing tightly spaced text.
+      void document.fonts?.ready.then(() => {
+        if (resizeObserver) {
+          update();
+        }
+      });
     });
     if (typeof ResizeObserver === "function") {
       resizeObserver = new ResizeObserver(update);

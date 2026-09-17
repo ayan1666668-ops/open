@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { findMessageDisclosureLine, type MessageTextRect } from "./chat-message-disclosure.ts";
 
 function textRect(top: number, height = 18, lineHeight = 21): MessageTextRect {
-  return { top, bottom: top + height, width: 80, lineHeight };
+  return { top, glyphTop: top, bottom: top + height, width: 80, lineHeight };
 }
 
 describe("findMessageDisclosureLine", () => {
@@ -44,5 +44,24 @@ describe("findMessageDisclosureLine", () => {
       bottom: 19,
       lineHeight: 24,
     });
+  });
+
+  it("clips before the next block-art glyph even when it overhangs its line box", () => {
+    const rects = Array.from({ length: 8 }, (_, index) => ({
+      ...textRect(index * 10.3125 + 3, 16, 10.32),
+      glyphTop: index * 10.3125,
+    }));
+    expect(findMessageDisclosureLine(rects, 5)).toMatchObject({
+      top: 44.25,
+      clamp: 51.5625,
+    });
+  });
+
+  it("backs up when excluding the next glyph would hide too much of the selected line", () => {
+    const rects = Array.from({ length: 6 }, (_, index) => textRect(index * 21));
+    rects[5] = { ...textRect(105, 37), glyphTop: 97 };
+    const line = findMessageDisclosureLine(rects, 5);
+    expect(line?.top).toBe(63);
+    expect(line?.clamp).toBeCloseTo(78.54, 6);
   });
 });

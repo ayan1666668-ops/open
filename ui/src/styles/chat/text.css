@@ -32,9 +32,7 @@
   > .chat-message-disclosure__content {
   mask-image: linear-gradient(
     to bottom,
-    black calc(100% - var(--chat-disclosure-line-height, var(--chat-text-size) * 1.5)),
-    rgb(0 0 0 / 90%)
-      calc(100% - var(--chat-disclosure-line-height, var(--chat-text-size) * 1.5) * 0.25),
+    black calc(100% - var(--chat-disclosure-fade-size, var(--chat-text-size) * 1.5 * 0.24)),
     rgb(0 0 0 / 35%)
   );
 }

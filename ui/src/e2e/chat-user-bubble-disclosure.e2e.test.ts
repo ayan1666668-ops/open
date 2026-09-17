@@ -32,7 +32,7 @@ async function expectCenteredToggle(bubble: Locator) {
 
 async function expectReadableLastLine(content: Locator) {
   const geometry = await content.evaluate((element) => {
-    const paragraph = element.querySelector("p")!;
+    const paragraph = element.querySelector("p, li")!;
     const style = getComputedStyle(paragraph);
     const lineHeight = Number.parseFloat(style.lineHeight);
     const clip = element.getBoundingClientRect();
@@ -62,13 +62,13 @@ async function expectReadableLastLine(content: Locator) {
     return {
       visibleLines: visible.length,
       fraction: (clip.bottom - lineTop) / lineHeight,
-      baselineVisible: clip.bottom >= baseline,
-      upperRow: Math.ceil(baseline - metrics.actualBoundingBoxAscent - clip.top),
+      baselineVisible: clip.bottom > baseline,
+      upperRow: Math.floor(lineTop + lineHeight / 2 - clip.top) - 1,
       lowerRow: Math.floor(baseline - clip.top - 1),
     };
   });
   expect(geometry.visibleLines).toBe(5);
-  expect(geometry.fraction).toBeGreaterThanOrEqual(0.55);
+  expect(geometry.fraction).toBeGreaterThanOrEqual(0.66);
   expect(geometry.fraction).toBeLessThanOrEqual(0.75);
   expect(geometry.baselineVisible, "the x-height fits above the cut").toBe(true);
 
@@ -115,7 +115,7 @@ async function expectReadableLastLine(content: Locator) {
   );
   const upperAlpha = rows[0].upper / rows[1].upper;
   const lowerAlpha = rows[0].lower / rows[1].lower;
-  expect(upperAlpha, "the top of the x-height retains contrast").toBeGreaterThan(0.8);
+  expect(upperAlpha, "the upper half of the line stays fully opaque").toBeGreaterThan(0.99);
   expect(lowerAlpha, "the bottom of the line visibly fades").toBeLessThan(upperAlpha - 0.2);
 }
 
@@ -161,19 +161,32 @@ suite.define(() => {
     (["light", "dark"] as const).flatMap((theme) =>
       [1440, 390].flatMap((width) =>
         [false, true].flatMap((withImage) =>
-          [false, true].map((paragraphs) => ({ theme, width, withImage, paragraphs })),
+          ["continuous", "paragraphs", "list"].map((layout) => ({
+            theme,
+            width,
+            withImage,
+            layout,
+          })),
         ),
       ),
     ),
   )(
-    "clamps and centers a long prompt in $theme at $width px (image: $withImage, paragraphs: $paragraphs)",
-    async ({ theme, width, withImage, paragraphs }) => {
-      const text =
-        (paragraphs ? "Opening context.\nReview the sample notes.\n\n" : "") +
+    "clamps and centers a long prompt in $theme at $width px (image: $withImage, layout: $layout)",
+    async ({ theme, width, withImage, layout }) => {
+      const prose =
+        (layout === "paragraphs" ? "Opening context.\nReview the sample notes.\n\n" : "") +
         `${"This long prompt stays mounted while its preview is clamped. ".repeat(22)}Final prompt tail.`.slice(
           0,
           1_300,
         );
+      const text =
+        layout === "list"
+          ? Array.from(
+              { length: 18 },
+              (_, index) =>
+                `- Review sample item ${index + 1}: keep the project notes clear and explain the next useful step.`,
+            ).join("\n")
+          : prose;
       const context = await suite.newBrowserContext({
         locale: "en-US",
         serviceWorkers: "block",
@@ -229,7 +242,13 @@ suite.define(() => {
             .evaluate((element) => getComputedStyle(element).maskImage),
         ).toBe("none");
         expect(await toggle.getAttribute("aria-expanded")).toBe("false");
-        expect(await content.locator(".chat-text p").allTextContents()).toEqual(text.split("\n\n"));
+        expect(
+          await content
+            .locator(layout === "list" ? ".chat-text li" : ".chat-text p")
+            .allTextContents(),
+        ).toEqual(
+          layout === "list" ? text.split("\n").map((item) => item.slice(2)) : text.split("\n\n"),
+        );
         const collapsedHeight = await content.evaluate((element) => element.clientHeight);
         expect(
           await content.evaluate((element) => element.scrollHeight > element.clientHeight),
@@ -239,7 +258,7 @@ suite.define(() => {
             path: path.join(
               suite.artifactDir,
               "user-bubble-clamp",
-              `${theme}-${width}-${withImage ? "image" : "text"}-${paragraphs ? "paragraphs" : "continuous"}-collapsed.png`,
+              `${theme}-${width}-${withImage ? "image" : "text"}-${layout}-collapsed.png`,
             ),
           });
         }
