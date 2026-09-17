@@ -10,6 +10,7 @@ import {
   setActivePluginRegistry,
 } from "openclaw/plugin-sdk/channel-test-helpers";
 import { drainPendingDeliveries } from "openclaw/plugin-sdk/delivery-queue-runtime";
+import { PlatformMessageNotDispatchedError } from "openclaw/plugin-sdk/error-runtime";
 import { withStateDirEnv } from "openclaw/plugin-sdk/test-env";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -289,6 +290,51 @@ describe("Feishu outbound shared delivery", () => {
     } finally {
       feishuChannelRuntime.feishuOutbound.sendText = originalSendText;
     }
+  });
+
+  // A formatted reply this channel cuts itself is several platform messages behind one
+  // durable attempt, so the custody the adapter revalidates per message has to land on the
+  // queue as a send that partly happened: the remaining messages are not sent, and what the
+  // reader already has is not replayable.
+  it("records a mid-fanout custody rejection as failed after a platform send", async () => {
+    const deliveryIntentId = "feishu-direct-custody-mid-fanout";
+    const body = Array.from(
+      { length: 300 },
+      (_entry, index) => `Line ${index} of a long outbound reply.`,
+    ).join("\n");
+    // The case only means anything while the reply needs more than one message.
+    expect(body.length).toBeGreaterThan(8000);
+
+    await withStateDirEnv("openclaw-feishu-custody-fanout-", async ({ stateDir }) => {
+      const outcome = await sendDurableMessageBatch({
+        cfg: {},
+        channel: "feishu",
+        to: "chat_1",
+        accountId: "default",
+        durability: "required",
+        deliveryIntentId,
+        completionRetention,
+        maxRetries: 2,
+        payloads: [{ text: body }],
+        // Keyed on messages already sent rather than on a count of handoffs, so a handoff
+        // core adds elsewhere cannot quietly move where this revocation lands.
+        assertDirectAdapterHandoff: () => {
+          if (sendMessageFeishuMock.mock.calls.length === 1) {
+            throw new PlatformMessageNotDispatchedError("writer replaced mid-answer", {
+              cause: undefined,
+              retryable: false,
+            });
+          }
+        },
+      });
+
+      expect(sendMessageFeishuMock.mock.calls).toHaveLength(1);
+      expect(outcome.status).toBe("partial_failed");
+      expect(readDeliveryQueueRow(stateDir, deliveryIntentId)).toMatchObject({
+        status: "pending",
+        recovery_state: "unknown_after_send",
+      });
+    });
   });
 
   it("does not replay a Feishu provider call after dispatch may have begun", async () => {
