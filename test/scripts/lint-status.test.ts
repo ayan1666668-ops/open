@@ -273,6 +273,64 @@ async function runLintFixture(
 }
 
 describe.skipIf(process.platform === "win32")("lint failure reporting boundary", () => {
+  it.for(
+    entries.flatMap((entry) => [
+      { entry, githubActions: false },
+      { entry, githubActions: true },
+    ]),
+  )(
+    "$entry preserves real oxlint warning/error exits (GitHub Actions: $githubActions)",
+    ({ entry, githubActions }, { signal }) =>
+      fixture.run(async () => {
+        const { root, env } = createLintFixture("success", "oxlint", false);
+        for (const name of ["oxlint", "tsgolint"]) {
+          const bin = path.join(root, "node_modules/.bin", name);
+          fs.rmSync(bin, { force: true });
+          fs.symlinkSync(path.resolve("node_modules/.bin", name), bin);
+        }
+        fs.copyFileSync(".oxlintrc.json", path.join(root, ".oxlintrc.json"));
+        fs.mkdirSync(path.join(root, "extensions/sample"), { recursive: true });
+        fs.writeFileSync(
+          path.join(root, "extensions/tsconfig.json"),
+          JSON.stringify({ compilerOptions: { strict: true }, include: ["**/*.ts"] }),
+        );
+        const source = path.join(root, "extensions/sample/oversized.ts");
+        const warningSource = `export const values = [\n${"  0,\n".repeat(700)}];\n`;
+        const args =
+          entry === "run-oxlint.mjs"
+            ? ["--tsconfig", "extensions/tsconfig.json", "extensions"]
+            : ["--only=extensions", "--extension-stripe=1/1"];
+        for (const hasError of [false, true]) {
+          fs.writeFileSync(source, warningSource + (hasError ? "export var legacy = 1;\n" : ""));
+          const result = await fixture.track(
+            runNodeScript(
+              [path.join(root, "scripts", entry), ...args, "--threads=1"],
+              { ...env, CI: String(githubActions), GITHUB_ACTIONS: String(githubActions) },
+              10_000,
+              { cwd: root, signal, requireProcessTreeExit: true },
+            ),
+          );
+          const details = formatShimResult(result);
+          expect(result.error, details).toBeUndefined();
+          expect(result.status, details).toBe(hasError ? 1 : 0);
+          expect(result.stdout, details).toContain("eslint(max-lines)");
+          expect(result.stdout, details).toContain("warning");
+          if (githubActions) {
+            expect(result.stdout, details).toContain(hasError ? "1 error" : "0 errors");
+            expect(result.stdout, details).toContain("1 warning");
+          }
+          if (hasError) {
+            expect(result.stdout, details).toContain("eslint(no-var)");
+          }
+          if (entry === "run-lint.mts") {
+            expect(
+              readRows<Step>(root, "steps.jsonl").filter((step) => step.step === "stylelint"),
+            ).toHaveLength(1);
+          }
+        }
+      }),
+  );
+
   it.for(["exited", "failed"] as const)(
     "reports signal readiness when the command %s before its receipt",
     async (outcome, { signal }) => {
