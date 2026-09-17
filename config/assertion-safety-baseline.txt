@@ -2413,7 +2413,6 @@ src/commands/setup.ts	1
 src/commands/status-all/channels.ts	2
 src/commands/status-all/gateway.ts	1
 src/commands/status.scan.bootstrap-shared.ts	1
-src/commands/status.scan.shared.ts	1
 src/commands/system-agent-with-inference.ts	2
 src/commands/tasks-json.ts	2
 src/commands/tasks.ts	2

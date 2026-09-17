@@ -205,6 +205,14 @@ Only pending reads coalesce; completed results are not cached. Physical integrit
 verification remains with full registry restoration and Doctor, while known
 database failures and quarantine still refuse summary reads.
 
+Offline `status --json --all` checks for existing built-in memory data through
+memory-core's retrieval worker before constructing a memory manager. The check
+retains current and shipped table recognition, missing-store behavior, and
+best-effort read failures without creating or migrating a database. Custom memory
+slots and explicitly configured memory retain their existing selection paths.
+This moves only the presence check; memory-manager diagnostics keep their own
+lifecycle and execution contracts.
+
 `sessions.list` and `sessions.describe` load complete persisted subagent metadata
 in the shared-state worker through a read-only connection. The existing cache coalesces pending fills
 and applies intervening named updates and deletions before publishing its first
