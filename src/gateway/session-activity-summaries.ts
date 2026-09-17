@@ -29,6 +29,7 @@ import { pruneMapToMaxSize } from "../infra/map-size.js";
 import { redactToolPayloadText } from "../logging/redact.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import {
+  isCronSessionKey,
   isIncognitoSessionKey,
   isSubagentSessionKey,
   parseAgentSessionKey,
@@ -165,6 +166,7 @@ export function createSessionActivitySummaries(deps: {
   const admit = (target: ActivitySummaryTarget): Tracked | undefined => {
     if (
       disposed ||
+      isCronSessionKey(target.key) ||
       isSubagentSessionKey(target.key) ||
       isIncognitoSessionKey(target.key) ||
       !modelRef(target)

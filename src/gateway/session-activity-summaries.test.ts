@@ -149,6 +149,28 @@ describe("Activity recap lifecycle with the canonical session store", () => {
     await testState.cleanup();
   });
 
+  it("does not generate conversation recaps for Cron runs", async () => {
+    const cronTarget = {
+      key: "agent:main:cron:job-1:run:run-1",
+      agentId: "main",
+    };
+    await upsertSessionEntryCore(
+      {
+        agentId: cronTarget.agentId,
+        sessionKey: cronTarget.key,
+      },
+      {
+        sessionId: "cron-run",
+        lifecycleRevision: "lifecycle-1",
+        updatedAt: 1,
+      },
+    );
+
+    expect(service.ensure(cronTarget)).toEqual({ state: "unavailable" });
+    expect(prepare).not.toHaveBeenCalled();
+    expect(complete).not.toHaveBeenCalled();
+  });
+
   it("backfills chronological chunks cumulatively and shares the durable result across viewers and restart", async () => {
     await messages(70);
     await persistSessionTranscriptTurn(scope, {
