@@ -30,7 +30,10 @@ import {
   toMediaProbeResult,
   type MediaProbeResult,
 } from "../media/media-probe.js";
-import { resolveMediaReferenceLocalPathInfo } from "../media/media-reference.js";
+import {
+  parseInboundMediaUri,
+  resolveMediaReferenceLocalPathInfo,
+} from "../media/media-reference.js";
 import {
   replacePlaybackFileExtension,
   resolvePlaybackModeForSource,
@@ -480,6 +483,14 @@ async function openAssistantMedia(
   }
 }
 
+function isManagedInboundSource(source: string): boolean {
+  try {
+    return parseInboundMediaUri(source) !== null;
+  } catch {
+    return false;
+  }
+}
+
 async function resolveAssistantMediaAvailability(
   source: string,
   policy: AssistantMediaPolicy,
@@ -522,7 +533,16 @@ async function resolveAssistantMediaAvailability(
       await opened.handle.close().catch(() => {});
     }
   } catch (error) {
-    return classifyAssistantMediaError(error);
+    const classified = classifyAssistantMediaError(error);
+    // A managed inbound reference names one file in our own store, so a path or
+    // containment failure on one means the store no longer holds it. Reporting that as a
+    // blocked local file sends the reader after a policy they cannot change, so name the
+    // file as gone instead; both answers are definitive, only the copy differs.
+    return !classified.available &&
+      classified.code === "blocked-local-file" &&
+      isManagedInboundSource(source)
+      ? { available: false, code: "file-not-found", reason: "File not found" }
+      : classified;
   }
 }
 
@@ -653,12 +673,22 @@ export async function handleControlUiAssistantMediaRequest(
       respondControlUiNotFound(res);
       return true;
     }
+    const outsideAllowed =
+      !availability.available && availability.code === "outside-allowed-folders";
+    // A managed inbound reference lives in our own store, so nothing recreates the file
+    // the media-store pruner deleted. A retry can never succeed there, and offering one
+    // turns an honest "gone" state into a button that lies; a local path may simply be
+    // mid-write, so it keeps its retry.
+    const prunedFromStore =
+      !availability.available && !outsideAllowed && isManagedInboundSource(source);
     sendJson(
       res,
       200,
-      !availability.available && availability.code === "outside-allowed-folders"
+      outsideAllowed
         ? { ...availability, retryable: false, ...(current.canAllow ? { canAllow: true } : {}) }
-        : availability,
+        : prunedFromStore
+          ? { ...availability, retryable: false }
+          : availability,
     );
     return true;
   }

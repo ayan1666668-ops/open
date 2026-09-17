@@ -10,6 +10,58 @@ installGatewayTestHooks({ scope: "suite" });
 const CONTROL_UI_E2E_TOKEN = "test-gateway-token-1234567890";
 
 describe("Control UI assistant media e2e", () => {
+  test("reports a pruned inbound reference as definitively unavailable", async () => {
+    const stateDir = process.env.OPENCLAW_STATE_DIR;
+    if (!stateDir) {
+      throw new Error("OPENCLAW_STATE_DIR is required for gateway e2e media fixtures");
+    }
+    testState.gatewayAuth = { mode: "token", token: CONTROL_UI_E2E_TOKEN };
+
+    const inboundDir = path.join(stateDir, "media", "inbound");
+    await fs.mkdir(inboundDir, { recursive: true });
+    await fs.writeFile(path.join(inboundDir, "pruned-inline-image.png"), "inbound bytes\n", "utf8");
+
+    await withGatewayServer(async ({ port }) => {
+      const route = "http://127.0.0.1:" + port + "/__openclaw__/assistant-media";
+      const headers = { Authorization: "Bearer " + CONTROL_UI_E2E_TOKEN };
+      const missingId = "pruned-inline-image.png";
+
+      // A managed inbound reference resolves while its file is present, which is what
+      // lets this case repeat the same request after the store has deleted it. The
+      // display projection keeps serving that reference, and nothing recreates the bytes.
+      const inboundRef = "media://inbound/" + missingId;
+      const prunedUrl = route + "?meta=1&source=" + encodeURIComponent(inboundRef);
+      const present = await fetch(prunedUrl, { headers });
+      expect(present.status).toBe(200);
+      expect(((await present.json()) as { available?: boolean }).available).toBe(true);
+
+      // The media-store TTL pruner runs; the reference outlives its file.
+      await fs.rm(path.join(stateDir, "media", "inbound", missingId), { force: true });
+      const pruned = await fetch(prunedUrl, { headers });
+      expect(pruned.status).toBe(200);
+      expect(await pruned.json()).toEqual({
+        available: false,
+        code: "file-not-found",
+        reason: "File not found",
+        retryable: false,
+      });
+
+      // The same absent bytes addressed as a local path can simply be mid-write, so the
+      // control is its retryability rather than its code, which reports the path failure
+      // this build produces for any missing file.
+      const localPath = path.join(stateDir, "media", "inbound", missingId);
+      const localUrl = route + "?meta=1&source=" + encodeURIComponent(localPath);
+      const localMissing = await fetch(localUrl, { headers });
+      expect(localMissing.status).toBe(200);
+      const localPayload = (await localMissing.json()) as {
+        available?: boolean;
+        retryable?: boolean;
+      };
+      expect(localPayload.available).toBe(false);
+      expect(localPayload.retryable).not.toBe(false);
+    });
+  });
+
   test("serves local assistant media through scoped tickets over the gateway HTTP route", async () => {
     const stateDir = process.env.OPENCLAW_STATE_DIR;
     if (!stateDir) {
