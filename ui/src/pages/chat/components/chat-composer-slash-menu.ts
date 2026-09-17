@@ -553,7 +553,9 @@ function renderSlashCommandOption(params: {
         : cmd.icon
           ? renderSlashIcon(cmd.icon)
           : icons.terminal,
-    name: html`/${renderSlashMatchedName(cmd.name, query)}${cmd.args ? html`<span class="slash-menu-args"> ${cmd.args}</span>` : nothing}`,
+    name: html`/${renderSlashMatchedName(cmd.name, query)}${cmd.args
+      ? html`<span class="slash-menu-args"> ${cmd.args}</span>`
+      : nothing}`,
     description: getSlashCommandDescription(cmd),
   });
 }
@@ -580,6 +582,7 @@ export function renderSlashMenu(
       renderComposerMenu({
         id: listboxId,
         label: t("chat.commands.arguments"),
+        activeId: getActiveSlashMenuOptionId(state, host.paneId),
         content: html` <div class="slash-menu-group">
           <div class="slash-menu-group__label">
             /${state.slashMenuCommand.name} ${getSlashCommandDescription(state.slashMenuCommand)}
@@ -631,6 +634,7 @@ export function renderSlashMenu(
     renderComposerMenu({
       id: listboxId,
       label: t("chat.commands.menu"),
+      activeId: getActiveSlashMenuOptionId(state, host.paneId),
       content: html`
         ${groups.map(
           ([category, entries]) => html`<div class="slash-menu-group">
@@ -647,23 +651,21 @@ export function renderSlashMenu(
             )}
           </div>`,
         )}
-        ${
-          skills.length > 0
-            ? html`<div class="slash-menu-group slash-menu-group--skills">
-                <div class="slash-menu-group__label">${t("chat.skills.label")}</div>
-                ${skills.map((cmd, index) =>
-                  renderSlashCommandOption({
-                    cmd,
-                    index: commands.length + index,
-                    query,
-                    requestUpdate,
-                    host,
-                    state,
-                  }),
-                )}
-              </div>`
-            : nothing
-        }
+        ${skills.length > 0
+          ? html`<div class="slash-menu-group slash-menu-group--skills">
+              <div class="slash-menu-group__label">${t("chat.skills.label")}</div>
+              ${skills.map((cmd, index) =>
+                renderSlashCommandOption({
+                  cmd,
+                  index: commands.length + index,
+                  query,
+                  requestUpdate,
+                  host,
+                  state,
+                }),
+              )}
+            </div>`
+          : nothing}
       `,
     }),
   );
