@@ -6,7 +6,7 @@ import {
   type AssistantMessageEvent,
   type AssistantMessageEventStream,
 } from "openclaw/plugin-sdk/llm";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { createDeferred } from "../../../../test/helpers/promise.js";
 import { useAutoCleanupTempDirTracker } from "../../../../test/helpers/temp-dir.js";
 import { CliPluginInvocationResources } from "../../../cli/plugin-invocation-resources.js";
@@ -164,16 +164,15 @@ async function createFixture(
   activeSession.agent.streamFn = provider;
   const repaired = vi.fn();
   const previousNotification = vi.fn();
-  const admission = options.assertSourceCurrent
-    ? prepareSystemAgentRunAdmission(
-        {},
-        "stream-custody-run",
-        "main",
-        "stream-custody-test",
-        options.assertSourceCurrent,
-      )
-    : undefined;
-  const admittedRunContext = await admission?.admit("embedded");
+  const admission = prepareSystemAgentRunAdmission(
+    {},
+    "stream-custody-run",
+    "main",
+    "stream-custody-test",
+    options.assertSourceCurrent,
+  );
+  onTestFinished(admission.close);
+  const admittedRunContext = await admission.admit("embedded");
   // Only preparation facts are supplied here; the installed stream, persistence,
   // cancellation, and work owners remain the production implementations.
   const input = {
@@ -186,7 +185,7 @@ async function createFixture(
       sessionId: target.sessionId,
       sessionKey: target.sessionKey,
       timeoutMs: 120_000,
-      ...(admittedRunContext ? { admittedRunContext } : {}),
+      admittedRunContext,
     },
     runAbortController: controller,
     prepared: {
@@ -238,7 +237,6 @@ async function createFixture(
       ),
     checkpointPresent,
     thinkingPresent,
-    closeAdmission: () => admission?.close(),
     async holdWriter() {
       const entered = createDeferred();
       const release = createDeferred();
@@ -275,13 +273,9 @@ describe("installed replay repair ownership", () => {
         }
       },
     });
-    try {
-      active = false;
-      await expect(fixture.open()).rejects.toThrow("admitted run authority is no longer active");
-      expect(provider).not.toHaveBeenCalled();
-    } finally {
-      fixture.closeAdmission();
-    }
+    active = false;
+    await expect(fixture.open()).rejects.toThrow("admitted run authority is no longer active");
+    expect(provider).not.toHaveBeenCalled();
   });
 
   it("closes a partial-only thinking stream without waiting for ordinary provider completion", async () => {
