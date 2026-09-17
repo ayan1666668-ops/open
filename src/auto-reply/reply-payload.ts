@@ -197,6 +197,8 @@ export type SessionWriterDeliveryAuthority = {
 };
 
 export type ReplyPayloadMetadata = {
+  /** Opaque, process-local reasoning policy issued by the producing core turn. */
+  reasoningVisibilityOwner?: object;
   /** The model failed after a committed recovery compaction in the same turn. */
   postCompactionModelFailure?: true;
   assistantMessageIndex?: number;

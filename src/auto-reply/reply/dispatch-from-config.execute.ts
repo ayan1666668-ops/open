@@ -8,6 +8,7 @@ import { settleProgressVisibilityCallbackResult } from "../../channels/progress-
 import { normalizeAgentPlanSteps } from "../../channels/streaming.js";
 import { logVerbose } from "../../globals.js";
 import { formatErrorMessage } from "../../infra/errors.js";
+import { registerReplyDispatcherSettledTask } from "../dispatch-dispatcher.js";
 import { isCommandReplyForDelivery, readAskUserQuestionId } from "../reply-payload.js";
 import { buildTerminalAgentRunFailureReplyPayload } from "./agent-runner-failure-reply.js";
 import { takeCommandSessionMetadataChanges } from "./command-session-metadata.js";
@@ -105,6 +106,8 @@ export async function executeDispatch(state: PrepareDispatchExecutionReadyState)
                 sessionPromptSourceReplyDeliveryMode: state.sessionStableSourceReplyDeliveryMode,
                 ...state.sourceReplyDeliveryRuntimeOptions,
                 ...({
+                  registerReasoningVisibilityCleanup: (cleanup) =>
+                    registerReplyDispatcherSettledTask(dispatcher, cleanup),
                   onDeliberateSilentTerminalReply: () => {
                     deliberateSilentTerminalReply = true;
                   },

@@ -36,6 +36,7 @@ import {
   createTypingCallbacks,
   getAgentScopedMediaLocalRoots,
   logTypingFailure,
+  type ReplyPayload,
 } from "./runtime-api.js";
 import { createMatrixThreadContextResolver } from "./thread-context.js";
 import type { MatrixRawEvent, RoomMessageEventContent } from "./types.js";
@@ -359,6 +360,7 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
       });
       const { draftStream } = draftController;
       draftControllerRef = draftController;
+      let isReasoningVisible: (payload: ReplyPayload) => boolean = () => false;
       const replyDispatcher = createMatrixReplyDispatcher({
         cfg,
         prefixOptions,
@@ -376,6 +378,7 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
         accountId: _route.accountId,
         mediaLocalRoots,
         logVerboseMessage,
+        shouldDeliverReasoning: (payload) => isReasoningVisible(payload),
       });
       const { deliverReply, onReplyError, turnDispatcherOptions } = replyDispatcher;
       const pinnedMainDmOwner = isDirectMessage
@@ -502,6 +505,10 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
             },
             replyOptions: {
               skillFilter: roomConfig?.skills,
+              reasoningPayloadsEnabled: true,
+              onReasoningVisibility: (isVisible) => {
+                isReasoningVisible = isVisible;
+              },
               // Preserve explicit block streaming with draft previews: drafts update the live
               // block, while block deliveries finalize completed blocks as separate events.
               disableBlockStreaming: !blockStreamingEnabled,
@@ -510,7 +517,7 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
                 : undefined,
               onBlockReplyQueued: draftStream
                 ? (payload, context) => {
-                    if (payload.isCompactionNotice === true) {
+                    if (payload.isCompactionNotice === true || payload.isReasoning === true) {
                       return false;
                     }
                     draftController.queueDraftBlockBoundary(payload, context);

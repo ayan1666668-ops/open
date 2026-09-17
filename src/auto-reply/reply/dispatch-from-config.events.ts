@@ -12,6 +12,7 @@ export type InternalReplyResolverOptions = {
   onSessionMetadataChanges?: (changes: CommandSessionMetadataChange[]) => void;
   onSessionPrepared?: (binding: ReplySessionBinding) => void;
   onRunVerbosityResolved?: InternalGetReplyOptions["onRunVerbosityResolved"];
+  registerReasoningVisibilityCleanup?: InternalGetReplyOptions["registerReasoningVisibilityCleanup"];
 };
 
 export type PluginBindingTranscriptOwner = {

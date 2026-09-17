@@ -69,6 +69,7 @@ import {
 import { clearPendingFinalDeliveryAfterSuccess } from "./dispatch-from-config.pending-final.js";
 import type { FollowupRun } from "./queue.js";
 import { enqueueFollowupRun, scheduleFollowupDrain } from "./queue.js";
+import { createReplyReasoningVisibility } from "./reasoning-visibility.js";
 import { REPLY_OPERATION_RUN_STATE } from "./reply-operation-run-state.js";
 import { createReplyOperation, replyRunRegistry } from "./reply-run-registry.js";
 import { testing as replyRunRegistryTesting } from "./reply-run-registry.test-support.js";
@@ -291,95 +292,15 @@ vi.mock("./private-message-tool-final.js", async (importOriginal) => {
 });
 
 import { runReplyAgent } from "./agent-runner.js";
+import {
+  createRunReplyAgentTestCase,
+  type BaseRunOptions,
+} from "./agent-runner.runreplyagent.test-support.js";
 
 type RunWithModelFallbackParams = TestModelFallbackRunnerParams;
 
-type BaseRunOptions = {
-  context?: Parameters<typeof createTestTemplateContext>[0];
-  followup?: Partial<Omit<Parameters<typeof createTestQueuedFollowupRun>[0], "run">>;
-  run?: Parameters<typeof createTestQueuedFollowupRun>[0]["run"];
-  reply?: Partial<
-    Omit<
-      Parameters<typeof runReplyAgent>[0],
-      "followupRun" | "resolvedQueue" | "sessionCtx" | "typing"
-    >
-  >;
-};
-
 function createBaseRun(options: BaseRunOptions = {}) {
-  const sessionKey = options.run?.sessionKey ?? "main";
-  const messageProvider = options.run?.messageProvider ?? "whatsapp";
-  const typing = createMockTypingController();
-  const sessionCtx = createTestTemplateContext(
-    options.context ?? {
-      Provider: "whatsapp",
-      OriginatingTo: "+15550001111",
-      AccountId: "primary",
-      MessageSid: "msg",
-    },
-  );
-  const resolvedQueue = createTestQueueSettings({ mode: "interrupt" });
-  const followupRun = createTestQueuedFollowupRun({
-    prompt: "hello",
-    summaryLine: "hello",
-    enqueuedAt: Date.now(),
-    ...options.followup,
-    run: {
-      sessionId: "session",
-      sessionKey,
-      messageProvider,
-      sessionFile: path.join(rootDir, "session.jsonl"),
-      workspaceDir: rootDir,
-      config: {},
-      skillsSnapshot: {},
-      provider: "anthropic",
-      model: "claude",
-      thinkingCatalog: [
-        { provider: "anthropic", id: "claude", input: ["text"] },
-        { provider: "claude-cli", id: "opus-4.5", input: ["text", "image"] },
-        { provider: "anthropic", id: "claude-opus-4-7", input: ["text", "image"] },
-        { provider: "google", id: "gemini-2.5-pro", input: ["text", "image"] },
-        { provider: "google-gemini-cli", id: "gemini-3", input: ["text", "image"] },
-        {
-          provider: "amazon-bedrock",
-          id: "us.anthropic.claude-sonnet-4-6",
-          input: ["text", "image"],
-        },
-      ],
-      verboseLevel: "off",
-      elevatedLevel: "off",
-      bashElevated: { enabled: false, allowed: false, defaultLevel: "off" },
-      timeoutMs: 1_000,
-      blockReplyBreak: "message_end",
-      ...options.run,
-    },
-  });
-  const replyParams = {
-    commandBody: "hello",
-    followupRun,
-    queueKey: "main",
-    resolvedQueue,
-    shouldSteer: false,
-    shouldFollowup: false,
-    isActive: false,
-    typing,
-    sessionCtx,
-    defaultModel: "anthropic/claude-opus-4-6",
-    resolvedVerboseLevel: "off",
-    isNewSession: false,
-    blockStreamingEnabled: false,
-    resolvedBlockStreamingBreak: "message_end",
-    shouldInjectGroupIntro: false,
-    typingMode: "instant",
-    ...options.reply,
-  } satisfies Parameters<typeof runReplyAgent>[0];
-  return {
-    typing,
-    sessionCtx,
-    resolvedQueue,
-    followupRun,
-    run: () => runReplyAgent(replyParams),
-  };
+  return createRunReplyAgentTestCase(rootDir, options);
 }
 
 const requireRecord = createRequireRecord("record", "expected-label-object");
@@ -1585,6 +1506,66 @@ describe("runReplyAgent block streaming", () => {
 });
 
 describe("runReplyAgent inline tool verbosity", () => {
+  it.each([false, true])(
+    "binds the executing turn's reasoning visibility (block streaming: %s)",
+    async (blockStreamingEnabled) => {
+      const storePath = path.join(rootDir, "sessions.json");
+      const sessionKey = "main";
+      const sessionEntry = { sessionId: "session", updatedAt: Date.now(), reasoningLevel: "on" };
+      await replaceSessionEntry({ storePath, sessionKey }, sessionEntry);
+      const owner = createReplyReasoningVisibility({
+        agentId: "main",
+        storePath,
+        sessionKey,
+        sessionEntry: loadSessionEntry({ storePath, sessionKey }),
+        authorized: true,
+        resolvedLevel: "on",
+      });
+      let isVisible: (payload: ReplyPayload) => boolean = () => false;
+      const onReasoningVisibility = vi.fn((predicate: typeof isVisible) => {
+        isVisible = predicate;
+      });
+      const onBlockReply = vi.fn((payload: ReplyPayload) => {
+        expect(isVisible(payload)).toBe(true);
+      });
+      runEmbeddedAgentMock.mockImplementationOnce(
+        async (params: RunEmbeddedAgentInternalParams) => {
+          expect(onReasoningVisibility).toHaveBeenCalledOnce();
+          await params.onBlockReply?.({ text: "Streamed reasoning", isReasoning: true });
+          return {
+            payloads: [{ text: "Reasoning", isReasoning: true }, { text: "Done" }],
+            meta: {},
+          };
+        },
+      );
+      try {
+        const result = await createBaseRun({
+          run: { sessionKey, reasoningLevel: "on", reasoningVisibility: owner },
+          reply: {
+            sessionKey,
+            storePath,
+            sessionEntry,
+            sessionStore: { [sessionKey]: sessionEntry },
+            blockStreamingEnabled,
+            blockReplyChunking: { minChars: 1, maxChars: 200, breakPreference: "paragraph" },
+            opts: { onReasoningVisibility, onBlockReply, reasoningPayloadsEnabled: true },
+          },
+        }).run();
+        const payloads = Array.isArray(result) ? result : [result];
+        const reasoning = expectDefined(
+          payloads.find((payload) => payload?.isReasoning),
+          "final reasoning payload",
+        );
+        expect(isVisible(reasoning)).toBe(true);
+        expect(onBlockReply).toHaveBeenCalledOnce();
+        owner.close();
+        expect(isVisible(reasoning)).toBe(false);
+      } finally {
+        owner.close();
+      }
+    },
+  );
+
   it.each([
     { stored: "off", override: "full", expected: ["Tool summary", "Tool output"] },
     { stored: "full", override: "off", expected: [] },

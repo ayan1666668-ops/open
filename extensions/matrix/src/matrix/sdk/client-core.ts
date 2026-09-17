@@ -189,16 +189,19 @@ export abstract class MatrixClientCore extends MatrixClientBase {
   async sendMessage(
     roomId: string,
     content: MessageEventContent,
-    transactionId?: string,
+    suppliedTransactionId?: string,
     beforeWireDispatch?: (dispatch: MatrixMessageWireDispatch) => Promise<void>,
+    assertBeforeSend?: () => void,
   ): Promise<string> {
     // Keep ephemeral sends on the same per-wire guard as durable transaction IDs.
     const wireTransactionId =
-      transactionId ?? (beforeWireDispatch ? this.client.makeTxnId() : undefined);
+      suppliedTransactionId ??
+      (beforeWireDispatch || assertBeforeSend ? this.client.makeTxnId() : undefined);
     return await this.runSerializedRoomSend(roomId, async () => {
       return await this.messageWireDispatchGuards.run({
         transactionId: wireTransactionId,
         guard: beforeWireDispatch,
+        assertBeforeSend,
         run: async () => {
           if (wireTransactionId) {
             const room = this.client.getRoom(roomId);

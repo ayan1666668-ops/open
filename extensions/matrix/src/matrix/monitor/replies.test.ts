@@ -5,7 +5,8 @@ import type { MatrixClient } from "../sdk.js";
 
 const sendMessageMatrixMock = vi.hoisted(() => vi.fn());
 
-vi.mock("../send.js", () => ({
+vi.mock("../send.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../send.js")>()),
   sendMessageMatrix: (to: string, message: string, opts?: unknown) =>
     sendMessageMatrixMock(to, message, opts),
 }));
@@ -396,6 +397,47 @@ describe("deliverMatrixReplies", () => {
     expect(sendCall(0)[0]).toBe("room:5");
     expect(sendCall(0)[1]).toBe("Visible answer");
     expect(sendOptions(0).cfg).toBe(cfg);
+  });
+
+  it("delivers explicit reasoning as quiet notices without consuming the answer reply target", async () => {
+    const actualSend = await vi.importActual<typeof import("../send.js")>("../send.js");
+    sendMessageMatrixMock.mockImplementation(actualSend.sendMessageMatrix);
+    const sendMessage = vi.fn(
+      async (_roomId: string, _content: Record<string, unknown>) => "$sent",
+    );
+    const client = {
+      sendMessage,
+      prepareRoomForMessageSend: async () => "m.room.message",
+      getJoinedRoomMembers: async () => ["@alice:example.org"],
+      getUserId: async () => "@bot:example.org",
+    } as unknown as MatrixClient;
+    const result = await deliverMatrixReplies({
+      cfg,
+      replies: [
+        { text: "Reasoning: consider @room and @alice:example.org", isReasoning: true },
+        { text: "Visible answer" },
+      ],
+      roomId: "!room:example.org",
+      client,
+      runtime: runtimeEnv,
+      replyToMode: "first",
+      replyToId: "$question",
+      shouldDeliverReasoning: () => true,
+    });
+
+    expect(result.visibleReplySent).toBe(true);
+    expect(sendMessage.mock.calls.map((call) => call[1])).toEqual([
+      expect.objectContaining({
+        body: "Reasoning: consider @room and @alice:example.org",
+        msgtype: "m.notice",
+        "m.mentions": {},
+      }),
+      expect.objectContaining({
+        body: "Visible answer",
+        msgtype: "m.text",
+        "m.relates_to": { "m.in_reply_to": { event_id: "$question" } },
+      }),
+    ]);
   });
 
   it("delivers literal reasoning tags inside Markdown code", async () => {

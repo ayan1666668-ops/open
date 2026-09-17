@@ -3,6 +3,7 @@ import type { SessionEntry } from "../../config/sessions.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { disableCronJobsBoundToSessions } from "../../cron/job-session-bindings.js";
 import { formatErrorMessage } from "../../infra/errors.js";
+import { emitSessionLifecycleEvent } from "../../sessions/session-lifecycle-events.js";
 import { ensureSessionGroupRegistered } from "../session-groups.js";
 import { triggerSessionPatchHook } from "../session-patch-hooks.js";
 import { emitSessionsChanged } from "./session-change-event.js";
@@ -30,6 +31,14 @@ export async function publishSessionPatchEffects(params: {
 }): Promise<void> {
   const archivedSessionKeys = new Set<string>();
   for (const { target, entry, accessChanged } of params.targets) {
+    if (target.fullPatch.reasoningLevel !== undefined) {
+      emitSessionLifecycleEvent({
+        sessionKey: target.canonicalKey,
+        agentId: target.targetAgentId,
+        reason: "patch",
+        reasoningLevel: target.fullPatch.reasoningLevel,
+      });
+    }
     triggerSessionPatchHook({
       cfg: params.cfg,
       sessionEntry: entry,

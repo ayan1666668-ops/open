@@ -44,6 +44,7 @@ import type {
   TraceLevel,
   VerboseLevel,
 } from "../directives.js";
+import type { ReplyReasoningVisibility } from "../reasoning-visibility.js";
 import type { ReplyOperationRunState } from "../reply-operation-run-state.js";
 
 export type QueueDropPolicy = "old" | "new" | "summarize";
@@ -253,6 +254,8 @@ export type FollowupRun = {
     /** Explicit turn choice; absent queued replies follow live session verbosity. */
     verboseLevelOverride?: VerboseLevel;
     reasoningLevel?: ReasoningLevel;
+    /** Producing turn policy retained until queued delivery or abandonment settles. */
+    reasoningVisibility?: ReplyReasoningVisibility;
     elevatedLevel?: ElevatedLevel;
     execOverrides?: Pick<ExecToolDefaults, "host" | "security" | "ask" | "node" | "nodeCwd">;
     bashElevated?: {

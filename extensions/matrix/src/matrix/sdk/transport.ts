@@ -152,6 +152,7 @@ async function fetchWithMatrixDispatcher(params: {
   init: MatrixDispatcherRequestInit;
   assertCurrent?: () => void;
   onDispatch?: () => void;
+  assertBeforeSend?: () => void;
 }): Promise<Response> {
   // Keep this dispatcher-routing logic local to Matrix transport. Shared SSRF
   // fetches must stay fail-closed unless a retry path can preserve the
@@ -159,6 +160,7 @@ async function fetchWithMatrixDispatcher(params: {
   // through undici runtime fetch so the pinned dispatcher is preserved.
   params.assertCurrent?.();
   params.init.signal?.throwIfAborted();
+  params.assertBeforeSend?.();
   params.onDispatch?.();
   return await fetchWithRuntimeDispatcherOrMockedGlobal(params.url, params.init);
 }
@@ -172,6 +174,7 @@ async function fetchWithMatrixGuardedRedirects(params: {
   dispatcherPolicy?: PinnedDispatcherPolicy;
   assertCurrent?: () => void;
   beforeDispatch?: () => Promise<void> | undefined;
+  assertBeforeSend?: () => void;
 }): Promise<{ response: Response; release: () => Promise<void>; finalUrl: string }> {
   params.assertCurrent?.();
   let currentUrl = new URL(params.url);
@@ -208,6 +211,7 @@ async function fetchWithMatrixGuardedRedirects(params: {
         onDispatch: () => {
           dispatched = true;
         },
+        assertBeforeSend: params.assertBeforeSend,
         init: {
           ...params.init,
           method,
@@ -310,6 +314,7 @@ export function createMatrixGuardedFetch(params: {
   ssrfPolicy?: SsrFPolicy;
   dispatcherPolicy?: PinnedDispatcherPolicy;
   captureRequestAuthority?: () => (() => void) | undefined;
+  assertBeforeSend?: (resource: RequestInfo | URL, init?: RequestInit) => void;
   signal?: AbortSignal;
   captureRequestSignal?: () => AbortSignal | undefined;
   beforeRequest?: (resource: RequestInfo | URL, init?: RequestInit) => Promise<void> | undefined;
@@ -329,6 +334,7 @@ export function createMatrixGuardedFetch(params: {
       init: requestInit,
       signal: requestSignal,
       assertCurrent,
+      assertBeforeSend: () => params.assertBeforeSend?.(resource, init),
       ssrfPolicy: params.ssrfPolicy,
       dispatcherPolicy: params.dispatcherPolicy,
       // Redirects belong to the same original timeline operation and task owner.
