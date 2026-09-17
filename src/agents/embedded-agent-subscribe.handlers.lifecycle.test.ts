@@ -4,11 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createInlineCodeState } from "../../packages/markdown-core/src/code-spans.js";
 import { createHookRunner } from "../plugins/hooks.js";
 import { createMockPluginRegistry, TEST_PLUGIN_AGENT_CTX } from "../plugins/hooks.test-fixtures.js";
-import {
-  __testing,
-  handleAgentEnd,
-  handleAgentStart,
-} from "./embedded-agent-subscribe.handlers.lifecycle.js";
+import { handleAgentEnd, handleAgentStart } from "./embedded-agent-subscribe.handlers.lifecycle.js";
 import type { EmbeddedAgentSubscribeContext } from "./embedded-agent-subscribe.handlers.types.js";
 import { createReplyDelivery } from "./embedded-agent-subscribe.reply-delivery.js";
 
@@ -28,7 +24,6 @@ const BEFORE_AGENT_FINALIZE_EVENT = {
   stopHookActive: false,
   lastAssistantMessage: "done",
 };
-const { resolveTerminalToolMediaTrust } = __testing;
 
 vi.mock("../infra/agent-events.js", () => ({
   emitAgentEvent: emitAgentEventMock,
@@ -89,9 +84,9 @@ function createContext(
     flushBlockReplyBuffer: vi.fn(),
     emitBlockReply,
     emitAssistantStreamData: vi.fn(),
-    flushDeferredAssistantEvents: vi.fn(),
-    flushDeferredBlockReplies: vi.fn(),
-    clearDeferredAssistantEvents: vi.fn(),
+    flushAssistantStream: vi.fn(),
+    releaseDeferredReplies: vi.fn(),
+    clearAssistantStream: vi.fn(),
     clearDeferredBlockReplies: vi.fn(),
     resolveCompactionRetry: vi.fn(),
     maybeResolveCompactionWait: vi.fn(),
@@ -127,53 +122,6 @@ function firstMockCall(mock: { mock: { calls: ReadonlyArray<ReadonlyArray<unknow
 function firstWarnMeta(ctx: EmbeddedAgentSubscribeContext): Record<string, unknown> {
   return readRecord(firstMockCall(vi.mocked(ctx.log.warn))[1]);
 }
-
-describe("resolveTerminalToolMediaTrust", () => {
-  it.each([
-    {
-      name: "mixed pending batch",
-      pendingMediaUrls: ["/tmp/trusted.mp3", "/tmp/untrusted.mp3"],
-      pendingTrustByUrl: new Map([
-        ["/tmp/trusted.mp3", true],
-        ["/tmp/untrusted.mp3", false],
-      ]),
-      deferredReplies: [],
-      expected: false,
-    },
-    {
-      name: "all-trusted pending batch",
-      pendingMediaUrls: ["/tmp/first.mp3", "/tmp/second.mp3"],
-      pendingTrustByUrl: new Map([
-        ["/tmp/first.mp3", true],
-        ["/tmp/second.mp3", true],
-      ]),
-      deferredReplies: [],
-      expected: true,
-    },
-    {
-      name: "mixed deferred batch",
-      pendingMediaUrls: [],
-      pendingTrustByUrl: new Map<string, boolean>(),
-      deferredReplies: [
-        { mediaUrls: ["/tmp/trusted.mp3"], trustedLocalMedia: true },
-        { mediaUrls: ["/tmp/untrusted.mp3"] },
-      ],
-      expected: false,
-    },
-    {
-      name: "all-trusted deferred batch",
-      pendingMediaUrls: [],
-      pendingTrustByUrl: new Map<string, boolean>(),
-      deferredReplies: [
-        { mediaUrls: ["/tmp/first.mp3"], trustedLocalMedia: true },
-        { mediaUrls: ["/tmp/second.mp3"], trustedLocalMedia: true },
-      ],
-      expected: true,
-    },
-  ])("returns $expected for $name", ({ expected, ...params }) => {
-    expect(resolveTerminalToolMediaTrust(params)).toBe(expected);
-  });
-});
 
 describe("handleAgentEnd", () => {
   it("contains rejected lifecycle start event callbacks", async () => {
@@ -230,6 +178,22 @@ describe("handleAgentEnd", () => {
       lifecycleGeneration: "pre-restart-generation",
       stream: "lifecycle",
       data: expect.objectContaining({ phase: "end" }),
+    });
+  });
+
+  it("names storage errors in the terminal event and run log", async () => {
+    const onAgentEvent = vi.fn();
+    const ctx = createContext(
+      { role: "assistant", stopReason: "error", errorMessage: "database is locked", content: [] },
+      { onAgentEvent },
+    );
+    await handleAgentEnd(ctx);
+    const error =
+      "⚠️ Agent run failed: the Gateway state database was busy (SQLite: database is locked). Retry; if it repeats, check Gateway storage health.";
+    expect(firstWarnMeta(ctx)).toMatchObject({ error, rawErrorPreview: "database is locked" });
+    expect(onAgentEvent).toHaveBeenCalledWith({
+      stream: "lifecycle",
+      data: expect.objectContaining({ phase: "error", error }),
     });
   });
 
@@ -1096,10 +1060,9 @@ describe("handleAgentEnd", () => {
       expect(logger.error).toHaveBeenCalledWith(
         "[hooks] before_agent_finalize handler from test-plugin failed: timed out after 15000ms",
       );
-      expect(ctx.clearDeferredAssistantEvents).not.toHaveBeenCalled();
+      expect(ctx.clearAssistantStream).not.toHaveBeenCalled();
       expect(ctx.clearDeferredBlockReplies).not.toHaveBeenCalled();
-      expect(ctx.flushDeferredAssistantEvents).toHaveBeenCalledTimes(1);
-      expect(ctx.flushDeferredBlockReplies).toHaveBeenCalledTimes(1);
+      expect(ctx.releaseDeferredReplies).toHaveBeenCalledTimes(1);
       expect(ctx.flushBlockReplyBuffer).toHaveBeenCalledWith({ final: true });
       expect(ctx.resolveCompactionRetry).toHaveBeenCalledTimes(1);
       expect(ctx.maybeResolveCompactionWait).not.toHaveBeenCalled();

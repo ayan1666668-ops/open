@@ -4,22 +4,54 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { promisify } from "node:util";
 import { ensureOpenClawAgentDatabaseSchema } from "../state/openclaw-agent-db.js";
+import { removeCanonicalValidationFromHistoricalAgentFixture } from "../state/openclaw-agent-db.test-support.js";
+import { resolveTestNodeExecPath } from "../test-utils/node-process.js";
 
 const execFileAsync = promisify(execFile);
+const isolatedRuntimeNodeExecPath = resolveTestNodeExecPath();
 // The fixture owns its package assets; resolving linked source back to the checkout
 // makes Doctor repair that checkout instead, including building its Control UI.
-const ISOLATED_RUNTIME_NODE_ARGS = ["--preserve-symlinks", "--preserve-symlinks-main"];
+// Dependency realpaths still own their transitive packages under isolated installs.
+const ISOLATED_RUNTIME_NODE_ARGS = [
+  "--preserve-symlinks",
+  "--preserve-symlinks-main",
+  "--import",
+  `data:text/javascript,${encodeURIComponent(`
+    import fs from "node:fs";
+    import { registerHooks } from "node:module";
+    import path from "node:path";
+    import { fileURLToPath, pathToFileURL } from "node:url";
+    registerHooks({
+      resolve(specifier, context, nextResolve) {
+        const resolved = nextResolve(specifier, context);
+        if (!resolved.url.startsWith("file:")) return resolved;
+        const filename = fileURLToPath(resolved.url);
+        if (!filename.split(path.sep).includes("node_modules")) return resolved;
+        const url = new URL(resolved.url);
+        url.pathname = pathToFileURL(fs.realpathSync(filename)).pathname;
+        return { ...resolved, url: url.href };
+      }
+    });
+  `)}`,
+];
 
 export function runBuiltRuntime(
   runtimeRoot: string,
   env: NodeJS.ProcessEnv,
   args: string[],
   timeout: number,
+  maxBuffer?: number,
 ) {
   return spawnSync(
-    process.execPath,
+    isolatedRuntimeNodeExecPath,
     [...ISOLATED_RUNTIME_NODE_ARGS, path.join(runtimeRoot, "dist", "entry.js"), ...args],
-    { cwd: runtimeRoot, encoding: "utf8", env, timeout },
+    {
+      cwd: runtimeRoot,
+      encoding: "utf8",
+      env,
+      timeout,
+      ...(maxBuffer === undefined ? {} : { maxBuffer }),
+    },
   );
 }
 
@@ -28,13 +60,19 @@ export function runSourceRuntime(
   env: NodeJS.ProcessEnv,
   args: string[],
   timeout: number,
+  maxBuffer?: number,
 ) {
-  return spawnSync(process.execPath, [...ISOLATED_RUNTIME_NODE_ARGS, "--import", "tsx", ...args], {
-    cwd: runtimeRoot,
-    encoding: "utf8",
-    env,
-    timeout,
-  });
+  return spawnSync(
+    isolatedRuntimeNodeExecPath,
+    [...ISOLATED_RUNTIME_NODE_ARGS, "--import", "tsx", ...args],
+    {
+      cwd: runtimeRoot,
+      encoding: "utf8",
+      env,
+      timeout,
+      ...(maxBuffer === undefined ? {} : { maxBuffer }),
+    },
+  );
 }
 
 export function runIsolatedModuleScript(
@@ -43,7 +81,7 @@ export function runIsolatedModuleScript(
   options: { runtimeRoot?: string; timeoutMs?: number } = {},
 ) {
   return execFileAsync(
-    process.execPath,
+    isolatedRuntimeNodeExecPath,
     [
       ...(options.runtimeRoot ? ISOLATED_RUNTIME_NODE_ARGS : []),
       "--import",
@@ -72,7 +110,14 @@ export function createSourceRuntime(root: string): string {
       process.platform === "win32" ? "junction" : "dir",
     );
   }
-  for (const filename of ["node-version.mjs", "package.json", "tsconfig.json"]) {
+  for (const filename of [
+    "node-version.mjs",
+    "node-sqlite.mjs",
+    "node-runtime-update.mjs",
+    "node-runtime-recovery.mjs",
+    "package.json",
+    "tsconfig.json",
+  ]) {
     fs.copyFileSync(path.resolve(filename), path.join(runtimeRoot, filename));
   }
   fs.writeFileSync(
@@ -85,9 +130,12 @@ export function createSourceRuntime(root: string): string {
   return runtimeRoot;
 }
 
-export function createBuiltRuntime(root: string): string {
+export function createBuiltRuntime(
+  root: string,
+  sourceDist = path.resolve("dist"),
+  options: { copyDirectories?: boolean } = {},
+): string {
   const runtimeRoot = createSourceRuntime(root);
-  const sourceDist = path.resolve("dist");
   // The pretest owner supplies immutable built modules once; mutable package
   // metadata and Control UI assets remain private to each fixture.
   for (const entry of fs.readdirSync(sourceDist, { withFileTypes: true })) {
@@ -96,7 +144,10 @@ export function createBuiltRuntime(root: string): string {
     }
     const source = path.join(sourceDist, entry.name);
     const target = path.join(runtimeRoot, "dist", entry.name);
-    if (entry.isDirectory()) {
+    if (entry.isDirectory() && options.copyDirectories) {
+      // Direct package entry invocations do not pass --preserve-symlinks.
+      fs.cpSync(source, target, { recursive: true, mode: fs.constants.COPYFILE_FICLONE });
+    } else if (entry.isDirectory()) {
       fs.symlinkSync(source, target, process.platform === "win32" ? "junction" : "dir");
     } else {
       fs.copyFileSync(source, target, fs.constants.COPYFILE_FICLONE);
@@ -122,6 +173,7 @@ export function seedV17AdditiveRepairDatabase(
       path: databasePath,
       register: false,
     });
+    removeCanonicalValidationFromHistoricalAgentFixture(database);
     database.exec(`
       DROP TABLE session_participants;
       DROP TRIGGER session_conversations_route_context_invalidate_after_update;

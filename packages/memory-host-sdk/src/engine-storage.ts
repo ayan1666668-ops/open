@@ -38,16 +38,28 @@ export {
 } from "./host/read-file-shared.js";
 export { resolveMemoryBackendConfig } from "./host/backend-config.js";
 export {
+  formatMemoryIndexRebuildGuidance,
   isAutomaticMemoryEntryEligible,
   isMemoryOriginEligibleForAutomaticInjection,
+  resolveMemoryIndexIdentityDiagnostic,
   resolveMemoryIndexIdentityReason,
+  resolveMemoryIndexSearchDiagnostic,
   resolveMemorySearchStaleness,
 } from "./host/types.js";
 export type { ResolvedMemoryBackendConfig } from "./host/backend-config.js";
+export {
+  createMemorySearchDeadlineControl,
+  MEMORY_SEARCH_DEADLINE_CONTROL,
+  type MemorySearchDeadlineControl,
+  type MemorySearchDeadlineControlAction,
+  type MemorySearchDeadlineControlOptions,
+} from "./host/search-deadline-control.js";
 export type {
   MemoryEmbeddingProbeResult,
   MemoryEntryProvenance,
   MemoryExtraPath,
+  MemoryIndexIdentityDiagnostic,
+  MemoryIndexIdentityState,
   MemoryOriginClass,
   MemoryProviderStatus,
   MemorySearchManager,

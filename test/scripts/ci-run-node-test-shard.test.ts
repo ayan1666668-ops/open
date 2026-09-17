@@ -10,9 +10,10 @@ import {
   utimesSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import os, { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { setImmediate as nextTurn } from "node:timers/promises";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildChildEnv,
   clonePersistentCacheSlots,
@@ -22,7 +23,11 @@ import {
   resolveTestProjectsEntrypoint,
   runShardPlans,
 } from "../../scripts/ci-run-node-test-shard.mts";
+import { encodeNodeTestGroups } from "../../scripts/lib/ci-node-test-groups-codec.mts";
 import { refitTestTimings } from "../../scripts/lib/ci-test-timings-refit.mts";
+import { resolveLocalVitestScheduling } from "../../scripts/lib/vitest-local-scheduling.mts";
+import * as groupOwner from "../../scripts/vitest-process-group.mts";
+import { createDeferred } from "../helpers/promise.js";
 
 const scratchDirs: string[] = [];
 
@@ -33,6 +38,7 @@ function makeScratchDir(): string {
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const dir of scratchDirs.splice(0)) {
     rmSync(dir, { force: true, recursive: true });
   }
@@ -93,6 +99,32 @@ describe("scripts/ci-run-node-test-shard.mts", () => {
     expect(singlePlans[0]).toMatchObject({ kind: "group", name: "solo" });
   });
 
+  it("unpacks the manifest's packed groups ahead of plain JSON groups", () => {
+    const groups = [
+      {
+        configs: ["one.config.ts"],
+        includePatterns: ["src/one.test.ts", "src/two.test.ts"],
+        shard_name: "one",
+        timing_key: "one#include-2-abcd",
+      },
+      { configs: ["two.config.ts"], env: { OPENCLAW_VITEST_MAX_WORKERS: "2" }, shard_name: "two" },
+    ];
+    const plans = resolveShardPlans({
+      OPENCLAW_NODE_TEST_GROUPS_GZIP_BASE64: encodeNodeTestGroups(groups),
+      OPENCLAW_NODE_TEST_GROUPS_JSON: JSON.stringify([{ configs: ["stale.config.ts"] }]),
+    });
+    expect(plans).toEqual([
+      { kind: "group", name: "one", plan: groups[0], timingKey: "one#include-2-abcd" },
+      { kind: "group", name: "two", plan: groups[1], timingKey: "two" },
+    ]);
+    // A corrupt envelope must fail the job rather than silently run whole configs.
+    expect(() =>
+      resolveShardPlans({
+        OPENCLAW_NODE_TEST_GROUPS_GZIP_BASE64: "bm90LWd6aXA=",
+      }),
+    ).toThrow();
+  });
+
   it("builds child env with per-plan cache isolation, includes, and env overlays", () => {
     const scratchDir = makeScratchDir();
     const entry = {
@@ -135,42 +167,136 @@ describe("scripts/ci-run-node-test-shard.mts", () => {
     expect(bare.OPENCLAW_VITEST_INCLUDE_FILE).toBeUndefined();
   });
 
-  it("runs plans with bounded concurrency and distinct cache paths", async () => {
-    const scratchDir = makeScratchDir();
-    const seen: Array<{ args: string[]; cache: string | undefined; label: string }> = [];
-    let active = 0;
-    let peakActive = 0;
-    const exitCode = await runShardPlans(
-      resolveShardPlans({
+  it.each([
+    { job: "1", group: "2", expected: 1 },
+    { job: "1", group: "", expected: 1 },
+    { job: "1", group: "  ", expected: 1 },
+    { job: "2", group: "2", expected: 2 },
+    { job: "3", group: "2", expected: 2 },
+    { job: "4", group: "2", expected: 2 },
+    { job: "6", group: "2", expected: 2 },
+    { job: "6", group: "1", expected: 1 },
+    { job: undefined, group: "2", expected: 2 },
+    { job: "6", group: undefined, expected: 6 },
+    { job: "1", group: undefined, expected: 1, target: true },
+  ])(
+    "intersects inherited worker ceiling $job with group cap $group (target=$target)",
+    ({ job, group, expected, target }) => {
+      const childEnv = buildChildEnv(
+        target
+          ? { kind: "target", name: "one", target: "one.test.ts" }
+          : {
+              kind: "group",
+              name: "one",
+              plan: {
+                configs: ["one.config.ts"],
+                env: { OPENCLAW_VITEST_MAX_WORKERS: group, EXTRA: "group" },
+              },
+            },
+        { CI: "true", OPENCLAW_VITEST_MAX_WORKERS: job, EXTRA: "job" },
+        makeScratchDir(),
+        0,
+      );
+      expect(childEnv.OPENCLAW_VITEST_MAX_WORKERS).toBe(String(expected));
+      expect(childEnv.EXTRA).toBe(target ? "job" : "group");
+      expect(resolveLocalVitestScheduling(childEnv, { cpuCount: Number(job) || 8 })).toEqual({
+        maxWorkers: expected,
+        fileParallelism: expected > 1,
+        throttledBySystem: false,
+      });
+    },
+  );
+
+  it.each([
+    { key: "NODE_OPTIONS", shared: true },
+    { key: "NODE_OPTIONS", shared: false },
+    { key: "NODE_PATH", shared: true },
+    { key: "NODE_PATH", shared: false },
+  ])(
+    "reconciles compiler $key only for shared ownership (shared=$shared)",
+    async ({ key, shared }) => {
+      vi.spyOn(groupOwner, "shouldUseDetachedVitestProcessGroup").mockReturnValue(shared);
+      const scratchDir = makeScratchDir();
+      const runChild = vi.fn(async (_args: string[], _env: NodeJS.ProcessEnv) => 0);
+      const plans = resolveShardPlans({
         OPENCLAW_NODE_TEST_GROUPS_JSON: JSON.stringify([
-          { configs: ["a.config.ts"], shard_name: "a" },
-          { configs: ["b.config.ts"], shard_name: "b" },
-          { configs: ["c.config.ts"], shard_name: "c" },
+          { configs: ["one.config.ts"], includePatterns: ["src/one.test.ts"] },
+          { configs: ["two.config.ts"], env: { [key]: "different-loader" } },
         ]),
-      }),
-      {
-        concurrency: 2,
-        env: {},
-        runChild: async (
-          args: string[],
-          childEnv: Record<string, string | undefined>,
-          label: string,
-        ) => {
-          active += 1;
-          peakActive = Math.max(peakActive, active);
-          await Promise.resolve();
-          seen.push({ args, cache: childEnv.OPENCLAW_VITEST_FS_MODULE_CACHE_PATH, label });
-          active -= 1;
-          return 0;
+      });
+      const pending = runShardPlans(plans, { env: {}, scratchDir, runChild });
+      if (shared) {
+        await expect(pending).rejects.toThrow(
+          `CI groups cannot share a compiler with differing ${key}`,
+        );
+        expect(runChild).not.toHaveBeenCalled();
+        expect(readdirSync(scratchDir)).toEqual([]);
+      } else {
+        await expect(pending).resolves.toBe(0);
+        const childEnvs = runChild.mock.calls.map(([, env]) => env);
+        expect(childEnvs.map((env) => env[key])).toEqual([undefined, "different-loader"]);
+        expect(
+          JSON.parse(readFileSync(childEnvs[0]!.OPENCLAW_VITEST_INCLUDE_FILE!, "utf8")),
+        ).toEqual(["src/one.test.ts"]);
+        expect(childEnvs[1]!.OPENCLAW_VITEST_INCLUDE_FILE).toBeUndefined();
+      }
+    },
+  );
+
+  it.each([
+    ["local explicit concurrency", 2, 16, undefined, undefined, 3, 3],
+    ["CI capacity boundary", 8, 24, "true", undefined, 2, 2],
+    ["CPU-constrained CI", 4, 32, "true", undefined, 2, 1],
+    ["memory-constrained CI", 8, 16, "true", undefined, 2, 1],
+    ["unknown CI CPUs", Number.NaN, 32, "true", undefined, 2, 1],
+    ["unknown CI memory", 8, Number.NaN, "true", undefined, 2, 1],
+    ["CI two-plan ceiling", 16, 64, "true", undefined, 3, 2],
+    ["GitHub Actions capacity", 4, 32, undefined, "true", 2, 1],
+  ])(
+    "runs plans with bounded concurrency and cache isolation for %s",
+    async (_name, cpus, gib, ci, actions, requested, expected) => {
+      vi.spyOn(os, "availableParallelism").mockReturnValue(cpus);
+      vi.spyOn(os, "totalmem").mockReturnValue(gib * 1024 ** 3);
+      const scratchDir = makeScratchDir();
+      const seen: Array<{ args: string[]; cache: string | undefined; label: string }> = [];
+      let active = 0;
+      let peakActive = 0;
+      const exitCode = await runShardPlans(
+        resolveShardPlans({
+          OPENCLAW_NODE_TEST_GROUPS_JSON: JSON.stringify([
+            { configs: ["a.config.ts"], shard_name: "a" },
+            { configs: ["b.config.ts"], shard_name: "b" },
+            { configs: ["c.config.ts"], shard_name: "c" },
+          ]),
+        }),
+        {
+          concurrency: ci || actions ? undefined : requested,
+          env: {
+            CI: ci,
+            GITHUB_ACTIONS: actions,
+            OPENCLAW_NODE_TEST_PLAN_CONCURRENCY: String(requested),
+          },
+          runChild: async (
+            args: string[],
+            childEnv: Record<string, string | undefined>,
+            label: string,
+          ) => {
+            active += 1;
+            peakActive = Math.max(peakActive, active);
+            await Promise.resolve();
+            seen.push({ args, cache: childEnv.OPENCLAW_VITEST_FS_MODULE_CACHE_PATH, label });
+            active -= 1;
+            return 0;
+          },
+          scratchDir,
         },
-        scratchDir,
-      },
-    );
-    expect(exitCode).toBe(0);
-    expect(peakActive).toBe(2);
-    expect(seen.map((run) => run.label).toSorted()).toEqual(["a", "b", "c"]);
-    expect(new Set(seen.map((run) => run.cache)).size).toBe(3);
-  });
+      );
+      expect(exitCode).toBe(0);
+      expect(peakActive).toBe(expected);
+      expect(seen.map((run) => run.label).toSorted()).toEqual(["a", "b", "c"]);
+      expect(new Set(seen.map((run) => run.cache)).size).toBe(expected === 1 ? 1 : 3);
+    },
+  );
 
   it("keeps readable child output separate from membership timing spans", async () => {
     const timingKey =
@@ -262,20 +388,26 @@ describe("scripts/ci-run-node-test-shard.mts", () => {
     },
   );
 
-  it("runs per-config groups serially through one persistent cache slot", async () => {
+  it("runs same-config envelopes serially through one persistent cache slot", async () => {
     const scratchDir = makeScratchDir();
     const persistentRoot = path.join(makeScratchDir(), "persistent");
     mkdirSync(persistentRoot, { recursive: true });
-    const seen: Array<{ args: string[]; cache: string | undefined; label: string }> = [];
-    let active = 0;
-    let peakActive = 0;
+    const seen: Array<{
+      args: string[];
+      cache: string | undefined;
+      label: string;
+      includeFile: string | undefined;
+    }> = [];
+    const started = createDeferred();
+    const held = createDeferred();
 
-    const exitCode = await runShardPlans(
+    const pending = runShardPlans(
       resolveShardPlans({
         OPENCLAW_NODE_TEST_GROUPS_JSON: JSON.stringify(
           ["a", "b", "c"].map((name) => ({
-            configs: [`${name}.config.ts`],
-            shard_name: `cache-warm:${name}`,
+            configs: ["plugin.config.ts"],
+            includePatterns: [`extensions/fixture/${name}.test.ts`],
+            shard_name: `envelope:${name}`,
           })),
         ),
       }),
@@ -287,28 +419,42 @@ describe("scripts/ci-run-node-test-shard.mts", () => {
           childEnv: Record<string, string | undefined>,
           label: string,
         ) => {
-          active += 1;
-          peakActive = Math.max(peakActive, active);
           seen.push({
             args,
             cache: childEnv.OPENCLAW_VITEST_FS_MODULE_CACHE_PATH,
             label,
+            includeFile: childEnv.OPENCLAW_VITEST_INCLUDE_FILE,
           });
-          active -= 1;
+          if (label === "envelope:a") {
+            started.resolve();
+            await held.promise;
+          }
           return 0;
         },
         scratchDir,
       },
     );
 
-    expect(exitCode).toBe(0);
-    expect(peakActive).toBe(1);
+    try {
+      await started.promise;
+      await nextTurn();
+      expect(seen.map((run) => run.label)).toEqual(["envelope:a"]);
+    } finally {
+      held.resolve();
+      await expect(pending).resolves.toBe(0);
+    }
     expect(seen.map((run) => run.args)).toEqual([
-      ["a.config.ts"],
-      ["b.config.ts"],
-      ["c.config.ts"],
+      ["plugin.config.ts"],
+      ["plugin.config.ts"],
+      ["plugin.config.ts"],
     ]);
-    expect(seen.map((run) => run.label)).toEqual(["cache-warm:a", "cache-warm:b", "cache-warm:c"]);
+    expect(seen.map((run) => run.label)).toEqual(["envelope:a", "envelope:b", "envelope:c"]);
+    expect(new Set(seen.map((run) => run.includeFile)).size).toBe(3);
+    expect(seen.map((run) => JSON.parse(readFileSync(run.includeFile ?? "", "utf8")))).toEqual([
+      ["extensions/fixture/a.test.ts"],
+      ["extensions/fixture/b.test.ts"],
+      ["extensions/fixture/c.test.ts"],
+    ]);
     expect(new Set(seen.map((run) => run.cache))).toEqual(
       new Set([path.join(persistentRoot, "vitest-cache-0")]),
     );
@@ -323,6 +469,10 @@ describe("scripts/ci-run-node-test-shard.mts", () => {
           {
             configs: ["test/vitest/vitest.extensions.config.ts"],
             env: { OPENCLAW_NODE_TEST_VITEST_ARGS_JSON: JSON.stringify(["--shard=1/6"]) },
+          },
+          {
+            configs: ["test/vitest/vitest.extensions.config.ts"],
+            env: { OPENCLAW_NODE_TEST_VITEST_ARGS_JSON: JSON.stringify(["--shard=2/6"]) },
           },
           { configs: ["test/vitest/vitest.unit.config.ts"] },
         ]),
@@ -343,6 +493,7 @@ describe("scripts/ci-run-node-test-shard.mts", () => {
     expect(exitCode).toBe(0);
     expect(seen).toEqual([
       ["test/vitest/vitest.extensions.config.ts", "--", "--hookTimeout=300000", "--shard=1/6"],
+      ["test/vitest/vitest.extensions.config.ts", "--", "--hookTimeout=300000", "--shard=2/6"],
       ["test/vitest/vitest.unit.config.ts", "--", "--hookTimeout=300000"],
     ]);
   });
@@ -459,35 +610,75 @@ describe("scripts/ci-run-node-test-shard.mts", () => {
     expect(existsSync(transform)).toBe(false);
   });
 
-  it("stops scheduling new plans after a failure and reports the first failing code", async () => {
-    const scratchDir = makeScratchDir();
-    const started: string[] = [];
-    const exitCode = await runShardPlans(
-      resolveShardPlans({
-        OPENCLAW_NODE_TEST_GROUPS_JSON: JSON.stringify([
-          { configs: ["a.config.ts"], shard_name: "a" },
-          { configs: ["b.config.ts"], shard_name: "b" },
-          { configs: ["c.config.ts"], shard_name: "c" },
-          { configs: ["d.config.ts"], shard_name: "d" },
-        ]),
-      }),
-      {
-        concurrency: 1,
-        env: {},
-        runChild: async (
-          _args: string[],
-          _env: Record<string, string | undefined>,
-          label: string,
-        ) => {
-          started.push(label);
-          return label === "b" ? 7 : 0;
+  it.each(["exit", "rejection"] as const)(
+    "joins admitted plans and stops scheduling after a %s failure",
+    async (failure) => {
+      const started: string[] = [];
+      const held = createDeferred();
+      const failed = createDeferred();
+      const children: Promise<number>[] = [];
+      const error = new Error("second child rejected");
+      let settled = false;
+      const pending = runShardPlans(
+        resolveShardPlans({
+          OPENCLAW_NODE_TEST_GROUPS_JSON: JSON.stringify(
+            ["a", "b", "c", "d"].map((name) => ({
+              configs: [`${name}.config.ts`],
+              shard_name: name,
+            })),
+          ),
+        }),
+        {
+          concurrency: 2,
+          env: {},
+          scratchDir: makeScratchDir(),
+          runChild: (_args, _env, label) => {
+            const child = (async () => {
+              started.push(label);
+              if (label === "a") {
+                await held.promise;
+              }
+              if (label === "b") {
+                failed.resolve();
+                if (failure === "rejection") {
+                  throw error;
+                }
+                return 7;
+              }
+              return 0;
+            })();
+            children.push(child);
+            return child;
+          },
         },
-        scratchDir,
-      },
-    );
-    expect(exitCode).toBe(7);
-    expect(started).toEqual(["a", "b"]);
-  });
+      )
+        .then(
+          (exitCode) => ({ exitCode, error: undefined }),
+          (cause: unknown) => ({ exitCode: undefined, error: cause }),
+        )
+        .finally(() => {
+          settled = true;
+        });
+      try {
+        await failed.promise;
+        await nextTurn();
+        expect(settled).toBe(false);
+        expect(started).toEqual(["a", "b"]);
+      } finally {
+        held.resolve();
+        await nextTurn();
+        await Promise.allSettled(children);
+        await pending;
+      }
+      const outcome = await pending;
+      if (failure === "rejection") {
+        expect(outcome.error).toBe(error);
+      } else {
+        expect(outcome.exitCode).toBe(7);
+      }
+      expect(started).toEqual(["a", "b"]);
+    },
+  );
 
   it("continues through failed plans only when explicitly requested", async () => {
     const started: string[] = [];

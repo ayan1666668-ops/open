@@ -9,6 +9,7 @@ import {
   refreshGitHubOAuthToken,
   type GitHubOAuthTokenPair,
 } from "../agents/github-oauth-client.js";
+import { clearNativeGitHubTokenCache } from "../agents/github-read-identity.js";
 import {
   createManagedGitHubProfileId,
   installManagedGitHubProfile,
@@ -34,6 +35,7 @@ import {
   type UserGitHubConnected,
   type UserGitHubDevice,
 } from "../state/user-github-connections.js";
+import { assertGitHubCliAvailable } from "./github-cli-preflight.js";
 import { pollGitHubDeviceFlow, startGitHubDeviceFlow } from "./github-oauth-device-flow.js";
 
 export type PersonalGitHubAction = { owner: string; assertCurrent: () => void };
@@ -579,6 +581,7 @@ export function createPersonalGitHubOAuthLifecycle() {
       action: PersonalGitHubAction,
     ): Promise<UsersGitHubAuthorizeStartResult> {
       guard(action);
+      assertGitHubCliAvailable();
       const requestId = randomUUID();
       const createdAtMs = Date.now();
       const initial = updateUserGitHubConnection(
@@ -647,6 +650,7 @@ export function createPersonalGitHubOAuthLifecycle() {
     disconnect(action: PersonalGitHubAction): void {
       guard(action);
       disconnectUserGitHubConnection(action.owner, () => guard(action));
+      clearNativeGitHubTokenCache();
     },
     refresh,
     maintain(): Promise<void> {

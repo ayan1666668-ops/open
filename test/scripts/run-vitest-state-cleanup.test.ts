@@ -3,26 +3,49 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, expect, it, vi } from "vitest";
-import type { JsonTestResults } from "vitest/reporters";
+import type { JsonTestResults } from "vitest/node";
 import packageJson from "../../package.json" with { type: "json" };
+import { runManagedCommand } from "../../scripts/lib/managed-child-process.mts";
 import { resolveVitestHomeSelection } from "../../scripts/lib/vitest-home-selection.mts";
 import { spawnOwnedVitestProcess } from "../../scripts/lib/vitest-process.mts";
+import { createVitestResourceOwner } from "../../scripts/lib/vitest-resource-ownership.mts";
+import { resolveTestNodeExecPath } from "../../src/test-utils/node-process.js";
+import { createFixtureLifetime } from "../helpers/fixture-lifetime.js";
 import { useAutoCleanupTempDirTracker } from "../helpers/temp-dir.js";
+import { proveNestedRetention } from "./nested-retention.test-support.js";
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
+const nestedLifetime = createFixtureLifetime();
+afterEach(() => nestedLifetime.cleanup());
 const repoRoot = path.resolve(import.meta.dirname, "../..");
 const posixIt = process.platform === "win32" ? it.skip : it;
+const testNodeExecPath = resolveTestNodeExecPath();
+
+function prepareVitestFixture(root: string, homeName = "home") {
+  const tmp = path.join(root, "tmp");
+  const home = path.join(root, homeName);
+  fs.mkdirSync(tmp);
+  fs.mkdirSync(home);
+  fs.writeFileSync(
+    path.join(root, "package.json"),
+    JSON.stringify({ private: true, type: "module", packageManager: packageJson.packageManager }),
+  );
+  // Keep pnpm's pinned toolchain record without sharing lockfile writes.
+  fs.copyFileSync(path.join(repoRoot, "pnpm-lock.yaml"), path.join(root, "pnpm-lock.yaml"));
+  fs.symlinkSync(path.join(repoRoot, "node_modules"), path.join(root, "node_modules"), "junction");
+  return { tmp, home };
+}
 
 const intentionalFailure = "intentional failure after SQLite allocation";
 const counterfactualFailure = "counterfactual first-file failure after allocation receipt";
 const fixtureTests = [
   [
     "tui-pty-harness.e2e.test.ts",
-    "opens actual fallback SQLite and retains it until the worker finishes",
+    "opens actual fallback SQLite and retains it until file drainage",
   ],
   [
     "tui-pty-local.e2e.test.ts",
-    "keeps the same worker namespace alive across files and module resets",
+    "keeps the worker namespace and stored rows across file drainage and module resets",
   ],
 ] as const;
 
@@ -46,16 +69,23 @@ function expectFixtureResults(
           ? intentionalFailure
           : undefined;
     const expectedStatus = failure ? "failed" : "passed";
-    expect(file.status, file.name).toBe(expectedStatus);
+    const childFailureMessages = file.assertionResults
+      .flatMap(({ failureMessages }) => failureMessages ?? [])
+      .join("\n");
+    expect(file.status, `${file.name}\n${file.message}\n${childFailureMessages}`).toBe(
+      expectedStatus,
+    );
     expect(file.message, file.name).toBe("");
     expect(
-      file.assertionResults.map(({ ancestorTitles, fullName, title, status, failureMessages }) => ({
-        ancestorTitles,
-        fullName,
-        title,
-        status,
-        failureMessages: failureMessages?.map((message) => message.split("\n")[0]),
-      })),
+      file.assertionResults.map(
+        ({ ancestorTitles, fullName, title: caseTitle, status, failureMessages }) => ({
+          ancestorTitles,
+          fullName,
+          title: caseTitle,
+          status,
+          failureMessages: failureMessages?.map((message) => message.split("\n")[0]),
+        }),
+      ),
       file.name,
     ).toEqual([
       {
@@ -141,11 +171,8 @@ posixIt.each([
   "$route cleans its namespace after $pool completion ($homePolicy, failed run: $failRun, paused after acknowledgement: $pauseAfterAck, first-file failure: $failFirstFile)",
   async ({ route, pool, failRun, pauseAfterAck, failFirstFile, homePolicy }) => {
     const root = tempDirs.make("oc-vt-state-");
-    const tmp = path.join(root, "tmp");
     const profileOnly = homePolicy === "profile-only" || homePolicy === "profile-only-parent-shell";
-    const home = path.join(root, profileOnly ? "home-$source" : "home");
-    fs.mkdirSync(tmp);
-    fs.mkdirSync(home);
+    const { tmp, home } = prepareVitestFixture(root, profileOnly ? "home-$source" : "home");
     const realHome = homePolicy === "real-home";
     const hermetic = homePolicy === "hermetic-ambient";
     const profileLoaded = profileOnly || ["staged-live", "real-home"].includes(homePolicy);
@@ -158,18 +185,6 @@ posixIt.each([
     fs.writeFileSync(
       path.join(home, ".profile"),
       'export VITEST_HOME_SOURCE_MARKER=$(cat "$HOME/profile-marker")\n',
-    );
-    fs.writeFileSync(
-      path.join(root, "package.json"),
-      JSON.stringify({ private: true, type: "module", packageManager: packageJson.packageManager }),
-    );
-    // pnpm records the pinned toolchain in its lockfile even for exec. Keep that
-    // dependency record with the installed modules without sharing lockfile writes.
-    fs.copyFileSync(path.join(repoRoot, "pnpm-lock.yaml"), path.join(root, "pnpm-lock.yaml"));
-    fs.symlinkSync(
-      path.join(repoRoot, "node_modules"),
-      path.join(root, "node_modules"),
-      "junction",
     );
 
     // These namespaces belong to callers, not the child invocation. Keep an open
@@ -263,6 +278,7 @@ it(${JSON.stringify(fixtureTests[0][1])}, () => {
   closeOpenClawStateDatabaseForTest();
   expect(first.db.isOpen).toBe(false);
   const reopened = openOpenClawStateDatabase();
+  reopened.db.exec("CREATE TABLE worker_lifetime_sentinel(value TEXT); INSERT INTO worker_lifetime_sentinel VALUES ('retained')");
   const fallback = openOpenClawStateDatabase({ env: {} });
   expect(fallback.path).toBe(fallbackPath);
   const explicit = openOpenClawStateDatabase({ env: { OPENCLAW_STATE_DIR: ${JSON.stringify(path.dirname(path.dirname(explicitPath)))} } });
@@ -286,12 +302,14 @@ const { openOpenClawStateDatabase } = await import(${databaseModule});
 const resources = await allocateResources();
 it(${JSON.stringify(fixtureTests[1][1])}, () => {
   expect(process.pid).toBe(previous.pid);
-  expect(previous.reopened.db.isOpen).toBe(true);
-  expect(previous.explicit.db.isOpen).toBe(true);
-  expect(previous.fallback.db.isOpen).toBe(true);
+  expect(previous.reopened.db.isOpen).toBe(false);
+  expect(previous.explicit.db.isOpen).toBe(false);
+  expect(previous.fallback.db.isOpen).toBe(false);
   expect(assertHomeBoundary()).toBe(previous.fallback.path);
   const current = openOpenClawStateDatabase();
   expect(current.path).toBe(previous.reopened.path);
+  expect(current.db === previous.reopened.db).toBe(false);
+  expect(current.db.prepare("SELECT value FROM worker_lifetime_sentinel").get().value).toBe("retained");
   expect(current.db.prepare("SELECT count(*) AS count FROM sqlite_schema").get().count).toBeGreaterThan(0);
   expect(fs.existsSync(current.path)).toBe(true);
   expect(resources.home).toBe(previous.resources.home);
@@ -382,6 +400,18 @@ export default {
         `
 const { subscribe } = require("node:diagnostics_channel");
 const fs = require("node:fs");
+const { execFileSync } = require("node:child_process");
+const schedule = globalThis.setTimeout;
+const cancel = globalThis.clearTimeout;
+const deadlines = new Map();
+globalThis.setTimeout = (callback, delay, ...args) => {
+  if (delay !== 60000) return schedule(callback, delay, ...args);
+  const invoke = () => callback(...args);
+  const timer = schedule(() => { deadlines.delete(timer); invoke(); }, delay);
+  deadlines.set(timer, invoke);
+  return timer;
+};
+globalThis.clearTimeout = timer => { deadlines.delete(timer); return cancel(timer); };
 const isVitestFork = arg => typeof arg === "string" && arg.replaceAll("\\\\", "/").endsWith("/vitest/dist/workers/forks.js");
 if (isVitestFork(process.argv[1]) && process.send) {
   const send = process.send;
@@ -402,14 +432,41 @@ if (isVitestFork(process.argv[1]) && process.send) {
 subscribe("child_process", ({ process: child }) => {
   let selected = false;
   let acknowledged = false;
+  let poll;
+  const deadline = { delay: 60000, liveTimers: 0, stopped: false, advanced: 0, error: null };
   child.once("spawn", () => {
     selected = child.spawnargs.some(isVitestFork);
   });
   child.on("message", message => {
-    if (selected && message?.__vitest_worker_response__ === true && message.type === "stopped") acknowledged = true;
+    if (!selected || message?.__vitest_worker_response__ !== true || message.type !== "stopped" || message.willExit !== true) return;
+    acknowledged = true;
+    // Let Vitest consume the acknowledgement before observing the child stopped in send's callback.
+    setImmediate(() => {
+      if (child.exitCode !== null || child.signalCode !== null) return;
+      poll = setInterval(() => {
+        try {
+          const state = execFileSync("ps", ["-o", "stat=", "-p", String(child.pid)], { encoding: "utf8", timeout: 1000, maxBuffer: 1024 }).trim();
+          if (!state.startsWith("T")) return;
+          clearInterval(poll);
+          deadline.stopped = true;
+          deadline.liveTimers = deadlines.size;
+          if (deadlines.size !== 1) { deadline.error = "expected one live stop deadline"; return; }
+          const [timer, invoke] = deadlines.entries().next().value;
+          cancel(timer);
+          deadlines.delete(timer);
+          deadline.advanced++;
+          invoke();
+        } catch (error) {
+          clearInterval(poll);
+          deadline.error = String(error);
+        }
+      }, 5);
+      poll.unref();
+    });
   });
   child.once("exit", (code, signal) => {
-    if (selected) fs.writeFileSync(${JSON.stringify(pauseReceipt)}, JSON.stringify({ acknowledged, code, signal }));
+    clearInterval(poll);
+    if (selected) fs.writeFileSync(${JSON.stringify(pauseReceipt)}, JSON.stringify({ acknowledged, code, signal, deadline }));
   });
 });
 `,
@@ -476,7 +533,7 @@ process.exitCode = (await completion).code ?? 1;`,
     try {
       const result = await new Promise<{ code: ExecException["code"]; output: string }>(
         (resolve) => {
-          execFile(process.execPath, args, { cwd: root, env }, (error, stdout, stderr) => {
+          execFile(testNodeExecPath, args, { cwd: root, env }, (error, stdout, stderr) => {
             resolve({ code: error ? error.code : 0, output: stdout + stderr });
           });
         },
@@ -490,6 +547,7 @@ process.exitCode = (await completion).code ?? 1;`,
           acknowledged: true,
           code: null,
           signal: "SIGKILL",
+          deadline: { delay: 60_000, liveTimers: 1, stopped: true, advanced: 1, error: null },
         });
       }
       const receipt = JSON.parse(fs.readFileSync(receiptPath, "utf8")) as {
@@ -587,6 +645,10 @@ it.each([
   { args: ["run", "--project=unit"], expected: "live-aware" },
   { args: ["run", "--config", "test/vitest/vitest.live.config.ts"], expected: "live-aware" },
   {
+    args: ["run", "--config", "test/vitest/vitest.package-contract.config.ts"],
+    expected: "live-aware",
+  },
+  {
     args: ["run", "--config", "test/vitest/vitest.full-core-runtime.config.ts", "--project=*"],
     expected: "live-aware",
   },
@@ -682,7 +744,7 @@ it.each([
     });
     expect(homeMode).toBe(expected);
     const spec = {
-      command: process.execPath,
+      command: testNodeExecPath,
       args: [
         "--input-type=module",
         "-e",
@@ -728,9 +790,10 @@ console.log(JSON.stringify({ namespace: os.tmpdir(), homes: [os.homedir(), homed
 
 it("retains native home after child and pipes close when descendants cannot be verified", async () => {
   const root = tempDirs.make("oc-vt-home-retained-");
+  const parent = createVitestResourceOwner(root);
   const log = vi.spyOn(console, "error").mockImplementation(() => {});
   const { child, completion } = spawnOwnedVitestProcess({
-    command: process.execPath,
+    command: testNodeExecPath,
     args: [
       "--input-type=module",
       "-e",
@@ -750,6 +813,7 @@ it("retains native home after child and pipes close when descendants cannot be v
     expect(observed.home).toBe(path.join(observed.namespace, "home"));
     expect(path.dirname(observed.namespace)).toBe(root);
     expect(fs.existsSync(observed.home)).toBe(true);
+    expect(() => parent.assertReleased()).toThrow("Unreleased Vitest resource claim");
     expect(log).toHaveBeenCalledWith(
       expect.stringContaining(`retained temporary namespace ${observed.namespace}`),
     );
@@ -761,6 +825,26 @@ it("retains native home after child and pipes close when descendants cannot be v
   }
 });
 
+posixIt.for([
+  { pool: "threads", mode: "failure" },
+  { pool: "forks", mode: "failure" },
+  { pool: "threads", mode: "swallowed" },
+  { pool: "threads", mode: "crash" },
+  { pool: "forks", mode: "crash" },
+] as const)(
+  "preserves nested managed-child retention after outer $pool completion ($mode)",
+  { timeout: 80_000 },
+  async ({ pool, mode }, { signal }) =>
+    nestedLifetime.run(async () => {
+      const evidence = path.join(repoRoot, ".artifacts/nested-retention");
+      fs.mkdirSync(evidence, { recursive: true });
+      const root = fs.mkdtempSync(path.join(evidence, `${pool}-${mode}-`));
+      prepareVitestFixture(root);
+      await proveNestedRetention(root, pool, signal, mode);
+      expect(fs.existsSync(root), "successful joined fixture must be removed").toBe(false);
+    }),
+);
+
 it("removes only its namespace when spawning fails before acquiring a PID", async () => {
   const root = tempDirs.make("oc-vt-spawn-");
   const sentinel = path.join(root, "caller");
@@ -768,7 +852,7 @@ it("removes only its namespace when spawning fails before acquiring a PID", asyn
   const options = { env: { TMPDIR: root }, stdio: "ignore" as const };
   expect(() => spawnOwnedVitestProcess({ command: "", args: [], options })).toThrow();
   const { child, completion } = spawnOwnedVitestProcess({
-    command: process.execPath,
+    command: testNodeExecPath,
     args: [],
     options: { ...options, cwd: path.join(root, "missing") },
   });
@@ -778,13 +862,100 @@ it("removes only its namespace when spawning fails before acquiring a PID", asyn
   expect(fs.readFileSync(sentinel, "utf8")).toBe("keep");
 });
 
+posixIt.each([
+  "released",
+  "pending",
+  "missing receipt",
+  "corrupt receipt",
+  "unreadable receipt",
+  "missing owner",
+  "missing registry",
+  "missing parent registry",
+])("requires positive nested release evidence: %s", async (mode) => {
+  const root = tempDirs.make("oc-vt-receipt-");
+  const parent = createVitestResourceOwner(root);
+  const receipt = path.join(root, "namespace");
+  const { completion } = spawnOwnedVitestProcess({
+    command: testNodeExecPath,
+    args: [
+      "--input-type=module",
+      "-e",
+      `
+      import fs from 'node:fs';
+      import path from 'node:path';
+      import os from 'node:os';
+      import { findVitestResourceOwner } from ${JSON.stringify(path.join(repoRoot, "scripts/lib/vitest-resource-ownership.mts"))};
+      const root = os.tmpdir(), mode = ${JSON.stringify(mode)};
+      fs.writeFileSync(${JSON.stringify(receipt)}, root);
+      const release = findVitestResourceOwner().claim();
+      const metadata = path.join(root, '.vitest-resource-owner');
+      const claims = path.join(metadata, 'claims');
+      const released = path.join(claims, fs.readdirSync(claims)[0], 'released');
+      if (mode !== 'pending') release();
+      if (mode === 'missing receipt' || mode === 'unreadable receipt') fs.unlinkSync(released);
+      if (mode === 'unreadable receipt') fs.mkdirSync(released);
+      if (mode === 'corrupt receipt') fs.writeFileSync(released, 'not a completion receipt');
+      if (mode === 'missing owner') fs.unlinkSync(path.join(metadata, 'owner'));
+      if (mode === 'missing registry') fs.rmSync(claims, { recursive: true });
+      if (mode === 'missing parent registry') fs.rmSync(path.join(path.dirname(root), '.vitest-resource-owner', 'claims'), { recursive: true });
+    `,
+    ],
+    options: { env: { TMPDIR: root }, stdio: "ignore" },
+  });
+  if (mode === "released") {
+    await expect(completion).resolves.toMatchObject({ code: 0 });
+    expect(() => parent.assertReleased()).not.toThrow();
+  } else {
+    await expect(completion).rejects.toThrow("retained temporary namespace");
+    if (mode === "missing parent registry") {
+      await expect(completion).rejects.toThrow(`retained temporary namespace ${root};`);
+      expect(() => parent.assertReleased()).toThrow(/ENOENT/);
+    } else {
+      expect(() => parent.assertReleased()).toThrow("Unreleased Vitest resource claim");
+    }
+  }
+  const namespace = fs.readFileSync(receipt, "utf8");
+  expect(fs.existsSync(namespace)).toBe(!["released", "missing parent registry"].includes(mode));
+});
+
+posixIt("rejects resource registration before allocating inputs or launching work", async () => {
+  const root = tempDirs.make("oc-vt-admission-");
+  createVitestResourceOwner(root);
+  const claims = path.join(root, ".vitest-resource-owner", "claims");
+  fs.rmdirSync(claims);
+  fs.writeFileSync(claims, "registry unavailable");
+  const launched = path.join(root, "launched");
+  const args = ["-e", `require('node:fs').writeFileSync(${JSON.stringify(launched)}, 'launched')`];
+  const env = { TMPDIR: root, TMP: root, TEMP: root };
+  expect(() =>
+    spawnOwnedVitestProcess({ command: testNodeExecPath, args, options: { env } }),
+  ).toThrow();
+  await expect(runManagedCommand({ bin: testNodeExecPath, args, env })).rejects.toThrow();
+  for (const [key, value] of Object.entries(env)) {
+    vi.stubEnv(key, value);
+  }
+  try {
+    const lifetime = createFixtureLifetime();
+    const body = vi.fn(async () => {});
+    expect(() => lifetime.run(body)).toThrow();
+    expect(() => lifetime.createTempDir("unadmitted-")).toThrow();
+    await Promise.resolve();
+    expect(body).not.toHaveBeenCalled();
+    expect(fs.existsSync(launched)).toBe(false);
+    expect(fs.readdirSync(root)).toEqual([".vitest-resource-owner"]);
+  } finally {
+    vi.unstubAllEnvs();
+  }
+});
+
 posixIt(
   "retains the exact namespace with recovery guidance when group verification fails",
   async () => {
     const root = tempDirs.make("oc-vt-unverified-");
+    createVitestResourceOwner(root);
     const receipt = path.join(root, "namespace");
     const { child, completion } = spawnOwnedVitestProcess({
-      command: process.execPath,
+      command: testNodeExecPath,
       args: [
         "-e",
         `require("node:fs").writeFileSync(${JSON.stringify(receipt)}, require("node:os").tmpdir())`,
