@@ -6,11 +6,14 @@ import {
 } from "./sqlite-private-directory.js";
 import {
   adoptPreparedLocation,
+  removeTempDirectory,
+  removeTempDirectoryAsync,
+  SqliteSnapshotCleanupError,
+} from "./sqlite-readonly-location-cleanup.js";
+import {
   createSqliteSnapshotStagingDirectory,
   prepareSqliteReadOnlyLocationInProcess,
   prepareSqliteReadOnlyLocationSyncInProcess,
-  removeTempDirectory,
-  removeTempDirectoryAsync,
   SQLITE_SNAPSHOT_STAGING_PREFIX,
 } from "./sqlite-readonly-location.js";
 import type { PreparedSqliteReadOnlyLocation } from "./sqlite-readonly-location.types.js";
@@ -141,9 +144,12 @@ export function prepareSqliteReadOnlyLocationSync(
     return adoptPreparedLocation(runSqliteReadOnlyWorkerSync(pathname, stagingRoot), stagingRoot);
   } catch (error) {
     if (!removeTempDirectory(stagingRoot)) {
-      throw new Error(`SQLite read-only worker snapshot cleanup failed: ${stagingRoot}`, {
-        cause: error,
-      });
+      throw new SqliteSnapshotCleanupError(
+        `SQLite read-only worker snapshot cleanup failed: ${stagingRoot}`,
+        {
+          cause: error,
+        },
+      );
     }
     throw error;
   }

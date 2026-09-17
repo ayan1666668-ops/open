@@ -10,7 +10,6 @@ import { listBundledPluginPackArtifacts } from "../scripts/lib/bundled-plugin-bu
 import { resolveNpmJsonEntries } from "../scripts/lib/npm-json-output.mts";
 import { collectPackUnpackedSizeErrors } from "../scripts/lib/npm-pack-budget.mts";
 import { PACKAGE_DIST_INVENTORY_RELATIVE_PATH } from "../scripts/lib/package-dist-inventory-contract.mts";
-import { RUNTIME_DEPENDENCY_OWNERSHIP_RELATIVE_PATH } from "../scripts/lib/runtime-dependency-ownership-contract.mts";
 import { createWorkspaceBootstrapSmokeEnv } from "../scripts/lib/workspace-bootstrap-smoke.mts";
 import {
   collectInstalledBundledRuntimeSidecarPaths,
@@ -36,6 +35,7 @@ import {
 } from "../scripts/release-check.ts";
 import { COMPLETION_SKIP_PLUGIN_COMMANDS_ENV } from "../src/cli/completion-runtime.ts";
 import { resolveNpmJsonEntries as resolveRuntimeNpmJsonEntries } from "../src/infra/npm-registry-spec.js";
+import { RUNTIME_DEPENDENCY_OWNERSHIP_RELATIVE_PATH } from "../src/infra/runtime-dependency-ownership.js";
 import { withEnv } from "../src/test-utils/env.js";
 
 function makeItem(shortVersion: string, sparkleVersion: string, channel?: string): string {
@@ -620,6 +620,13 @@ describe("packed install verification", () => {
 });
 
 describe("createPackedPluginSdkTypescriptSmokeProject", () => {
+  it("limits setupSurface omission to the recorded frozen target", async () => {
+    const { packedPluginSdkMayOmitSetupSurface } = await import("../scripts/release-check.js");
+    expect(packedPluginSdkMayOmitSetupSurface("2026.7.33")).toBe(true);
+    expect(packedPluginSdkMayOmitSetupSurface("2026.9.4")).toBe(false);
+    expect(packedPluginSdkMayOmitSetupSurface("2026.10.1")).toBe(false);
+  });
+
   it("writes a consumer project that imports representative public SDK subpaths", () => {
     const root = mkdtempSync(join(tmpdir(), "release-check-plugin-sdk-types-"));
     try {
