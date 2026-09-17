@@ -3,11 +3,6 @@ import { getPluginInstance } from "./plugin-instance-scope.js";
 import type { ActiveMemoryEscalationProvider } from "./registry-contribution-types.js";
 import { requireActivePluginRegistry } from "./runtime.js";
 
-export type {
-  ActiveMemoryEscalationProvider,
-  ActiveMemoryEscalationProviderDecision,
-} from "./registry-contribution-types.js";
-
 /** Resolves a provider from the active plugin generation. */
 export function getActiveMemoryEscalationProvider(
   id: string,

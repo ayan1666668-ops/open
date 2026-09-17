@@ -1,13 +1,11 @@
 import { expectDefined } from "@openclaw/normalization-core";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { createPluginRuntimeStore } from "../plugin-sdk/runtime-store.js";
-import {
-  getActiveMemoryEscalationProvider,
-  type ActiveMemoryEscalationProvider,
-} from "./active-memory-escalation-provider.js";
+import { getActiveMemoryEscalationProvider } from "./active-memory-escalation-provider.js";
 import { runPluginRegisterSyncInRegistry } from "./loader-module-runtime.js";
 import { createPluginRecord } from "./loader-records.js";
 import { getPluginInstance } from "./plugin-instance-scope.js";
+import type { ActiveMemoryEscalationProvider } from "./registry-contribution-types.js";
 import { createTestPluginRegistry as createTestRegistry } from "./registry-runtime.test-helpers.js";
 import { resetPluginRuntimeStateForTest, setActivePluginRegistry } from "./runtime.js";
 import { getPluginRuntimeGatewayRequestScope } from "./runtime/gateway-request-scope.js";
@@ -148,7 +146,7 @@ describe("active memory escalation provider registry", () => {
     const pluginRegistry = createTestRegistry();
     registerProvider(pluginRegistry, "missing-id", {
       id: "",
-      decide: async () => "recall",
+      decide: () => "recall",
     });
     registerProvider(pluginRegistry, "missing-decide", {
       id: "broken",
