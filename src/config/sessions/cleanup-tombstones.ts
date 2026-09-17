@@ -5,7 +5,7 @@ import fs from "node:fs";
  * Eligibility follows `cron.sessionRetention`. Transcript state is archived
  * before deletion; archive lifetime remains owned by existing archive policy.
  */
-import { executeSqliteQuerySync } from "../../infra/kysely-sync.js";
+import { executeSqliteQuerySync, sqliteStringSet } from "../../infra/kysely-sync.js";
 import { normalizeAgentId, parseAgentSessionKey } from "../../routing/session-key.js";
 import { isCronRunSessionKey } from "../../sessions/session-key-utils.js";
 import { runExclusiveSessionLifecycleMutation } from "../../sessions/session-lifecycle-admission.js";
@@ -32,7 +32,7 @@ import {
   toDatabaseOptions,
 } from "./session-accessor.sqlite-scope.js";
 import { isCanonicalSqliteRetainedHistoryPlaceholder } from "./session-canonical-key.js";
-import { collectAdmissionProtectedSessionIds } from "./session-history-eviction.js";
+import { collectAdmissionProtectedCandidateSessionIds } from "./session-history-eviction.admission-scope.js";
 import { resolveSqliteTargetFromSessionStorePath } from "./session-sqlite-target.js";
 import type { SessionStoreTarget } from "./targets-collision.js";
 
@@ -59,11 +59,17 @@ type TombstoneCandidate = {
  * Only canonical retained-history placeholders qualify. Live sessions,
  * unidentified rows, non-cron rows, and anything inside the retention window
  * stay untouched.
+ *
+ * `sessionKeys` restricts both reads to named keys. The scan that builds the
+ * candidate list omits it and enumerates the store once; per-candidate
+ * revalidation passes the one key it is about to act on, so apply work stays
+ * proportional to the candidates instead of to the store size per candidate.
  */
 function listCanonicalCronRunTombstones(
   database: Pick<OpenClawAgentDatabase, "db">,
   cutoffMs: number,
   requestedOwners: ReadonlySet<string>,
+  sessionKeys?: readonly string[],
 ): TombstoneCandidate[] {
   const db = getSessionKysely(database.db);
   const nodes = executeSqliteQuerySync(
@@ -82,11 +88,19 @@ function listCanonicalCronRunTombstones(
         "session_nodes.entry_valid",
         "session_nodes.updated_at",
         "retained_window.session_id as retained_window_id",
-      ]),
+      ])
+      .$if(sessionKeys !== undefined, (builder) =>
+        builder.where("session_nodes.session_key", "in", sqliteStringSet(sessionKeys ?? [])),
+      ),
   ).rows;
   const windows = executeSqliteQuerySync(
     database.db,
-    db.selectFrom("session_windows").select(["session_id", "session_key", "updated_at"]),
+    db
+      .selectFrom("session_windows")
+      .select(["session_id", "session_key", "updated_at"])
+      .$if(sessionKeys !== undefined, (builder) =>
+        builder.where("session_key", "in", sqliteStringSet(sessionKeys ?? [])),
+      ),
   ).rows;
   const windowsByKey = new Map<string, Array<{ sessionId: string; updatedAt: number }>>();
   for (const window of windows) {
@@ -118,6 +132,25 @@ function listCanonicalCronRunTombstones(
   });
 }
 
+/**
+ * Re-reads one candidate's current state with key-narrowed queries.
+ *
+ * The `find` stays so membership is decided by exact JS key equality rather than
+ * by SQLite text comparison. A key SQLite does not match therefore yields
+ * `undefined`, which `sameCandidate` rejects and the caller treats as "skip this
+ * candidate" — narrowing can only abandon a delete, never authorize one.
+ */
+function findCanonicalCronRunTombstone(
+  database: Pick<OpenClawAgentDatabase, "db">,
+  cutoffMs: number,
+  requestedOwners: ReadonlySet<string>,
+  sessionKey: string,
+): TombstoneCandidate | undefined {
+  return listCanonicalCronRunTombstones(database, cutoffMs, requestedOwners, [sessionKey]).find(
+    (entry) => entry.sessionKey === sessionKey,
+  );
+}
+
 function sameCandidate(left: TombstoneCandidate, right: TombstoneCandidate | undefined): boolean {
   return (
     right !== undefined &&
@@ -129,16 +162,34 @@ function sameCandidate(left: TombstoneCandidate, right: TombstoneCandidate | und
   );
 }
 
+/**
+ * Ids still held by something other than this placeholder, narrowed to the
+ * generations the placeholder owns.
+ *
+ * Both consumers only ask about those generations —
+ * `planSessionStateDeleteIfUnreferenced` tests `plan.sessionId`, and
+ * `deleteMaterializedSessionStatePlans` tests the same ids — so restricting the
+ * set cannot change a decision, and it lets every read be bounded. The reference
+ * scan runs once per generation because its single-id form pushes an `instr`
+ * predicate into SQLite; the admission probe uses its candidate-scoped form.
+ */
 function readProtectedSessionIds(params: {
   candidate: TombstoneCandidate;
   database: OpenClawAgentDatabase;
   storePath: string;
 }): Set<string> {
-  const protectedSessionIds = readReferencedSessionIds(
-    params.database,
-    new Set([params.candidate.sessionKey]),
-  );
-  for (const sessionId of collectAdmissionProtectedSessionIds({
+  const excludedSessionKeys = new Set([params.candidate.sessionKey]);
+  const protectedSessionIds = new Set<string>();
+  for (const sessionId of params.candidate.generationIds) {
+    for (const referenced of readReferencedSessionIds(params.database, excludedSessionKeys, [
+      sessionId,
+    ])) {
+      protectedSessionIds.add(referenced);
+    }
+  }
+  for (const sessionId of collectAdmissionProtectedCandidateSessionIds({
+    candidateSessionIds: params.candidate.generationIds,
+    candidateSessionKey: params.candidate.sessionKey,
     database: params.database,
     storePath: params.storePath,
   })) {
@@ -194,11 +245,12 @@ async function sweepTombstonedCronRunRemnants(params: {
           scope,
           async () => {
             const database = openOpenClawAgentDatabase(toDatabaseOptions(scope));
-            const authoritative = listCanonicalCronRunTombstones(
+            const authoritative = findCanonicalCronRunTombstone(
               database,
               cutoffMs,
               params.requestedOwners,
-            ).find((current) => current.sessionKey === candidate.sessionKey);
+              candidate.sessionKey,
+            );
             if (!sameCandidate(candidate, authoritative)) {
               return null;
             }
@@ -230,11 +282,12 @@ async function sweepTombstonedCronRunRemnants(params: {
             let removed = false;
             runOpenClawAgentWriteTransaction(
               (transactionDb) => {
-                const current = listCanonicalCronRunTombstones(
+                const current = findCanonicalCronRunTombstone(
                   transactionDb,
                   cutoffMs,
                   params.requestedOwners,
-                ).find((entry) => entry.sessionKey === candidate.sessionKey);
+                  candidate.sessionKey,
+                );
                 if (!sameCandidate(candidate, current)) {
                   return;
                 }

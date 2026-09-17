@@ -1,8 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
+import { StatementSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
 import { executeSqliteQuerySync } from "../../infra/kysely-sync.js";
+import { beginSessionWorkAdmission } from "../../sessions/session-lifecycle-admission.js";
 import {
   closeOpenClawAgentDatabasesForTest,
   openOpenClawAgentDatabase,
@@ -40,6 +42,63 @@ vi.mock("./session-accessor.sqlite-archive.js", async (importOriginal) => {
 const DAY_MS = 24 * 60 * 60 * 1000;
 const NOW_MS = Date.UTC(2026, 7, 1, 0, 0, 0);
 const CRON_RUN_KEY = "agent:main:cron:job-1:run:run-1";
+
+type SessionStoreReadMetrics = { rows: number; statements: number };
+
+type InstrumentedStatement = {
+  sourceSQL?: string;
+  all: (...parameters: never[]) => unknown[];
+  iterate: (...parameters: never[]) => IterableIterator<unknown>;
+};
+
+/**
+ * Counts the session-store rows real SQLite statements return while `run`
+ * executes.
+ *
+ * Nothing in the production path is replaced: `node:sqlite` still prepares,
+ * binds and steps every statement the sweep issues, and this only observes the
+ * rows leaving the driver. That keeps the measurement a property of the queries
+ * themselves rather than of a stand-in store.
+ */
+async function measureSessionStoreReads<T>(
+  run: () => Promise<T>,
+): Promise<{ result: T; metrics: SessionStoreReadMetrics }> {
+  const metrics: SessionStoreReadMetrics = { rows: 0, statements: 0 };
+  const prototype = StatementSync.prototype as unknown as InstrumentedStatement;
+  const originalAll = prototype.all;
+  const originalIterate = prototype.iterate;
+  const readsSessionStore = (statement: InstrumentedStatement) =>
+    /session_nodes|session_windows/.test(statement.sourceSQL ?? "");
+  prototype.all = function all(this: InstrumentedStatement, ...parameters: never[]) {
+    const rows = originalAll.apply(this, parameters);
+    if (readsSessionStore(this)) {
+      metrics.statements += 1;
+      metrics.rows += rows.length;
+    }
+    return rows;
+  };
+  prototype.iterate = function iterate(this: InstrumentedStatement, ...parameters: never[]) {
+    const iterator = originalIterate.apply(this, parameters);
+    if (!readsSessionStore(this)) {
+      return iterator;
+    }
+    metrics.statements += 1;
+    // `yield*` forwards return()/throw() to the driver iterator, so the
+    // production error and early-exit paths keep their cleanup.
+    return (function* counted() {
+      for (const row of iterator) {
+        metrics.rows += 1;
+        yield row;
+      }
+    })();
+  };
+  try {
+    return { result: await run(), metrics };
+  } finally {
+    prototype.all = originalAll;
+    prototype.iterate = originalIterate;
+  }
+}
 
 describe("sweepTombstonedCronRunRemnants", () => {
   let tempDir: string;
@@ -511,5 +570,86 @@ describe("sweepTombstonedCronRunRemnants", () => {
 
     expect(result).toMatchObject({ candidates: 0 });
     expect(countRows("session_nodes", "session_key", CRON_RUN_KEY)).toBe(1);
+  });
+
+  async function seedBacklog(placeholders: number, label: string): Promise<void> {
+    storePath = path.join(tempDir, `${label}.sqlite`);
+    for (let index = 0; index < placeholders; index += 1) {
+      await seedCanonicalPlaceholder({
+        key: `agent:main:cron:job-${index}:run:run-${index}`,
+        sessionId: `cron-session-${index}`,
+      });
+    }
+  }
+
+  it("keeps per-placeholder store reads flat as the backlog grows", async () => {
+    // Apply used to re-list every node and window per candidate, so the reads a
+    // sweep performed grew with candidates x store size. Measure the real driver
+    // at two backlog sizes and require the per-candidate cost to stay flat.
+    const measure = async (placeholders: number, label: string) => {
+      await seedBacklog(placeholders, label);
+      const { result, metrics } = await measureSessionStoreReads(() => sweep({ dryRun: false }));
+      expect(result).toMatchObject({
+        candidates: placeholders,
+        removedNodes: placeholders,
+        sweptTranscriptStates: placeholders,
+      });
+      return metrics.rows / placeholders;
+    };
+
+    const smallBacklog = await measure(3, "backlog-small");
+    const largeBacklog = await measure(12, "backlog-large");
+
+    // Quadratic revalidation put the 12-placeholder store far above the
+    // 3-placeholder per-candidate cost; bounded queries keep the ratio ~1.
+    expect(largeBacklog).toBeLessThanOrEqual(smallBacklog * 1.5);
+  });
+
+  it("keeps a placeholder whose own key holds a work admission", async () => {
+    const sessionId = await seedCanonicalPlaceholder({});
+    const admission = await beginSessionWorkAdmission({
+      scope: storePath,
+      identities: [CRON_RUN_KEY],
+      assertAllowed: () => {},
+    });
+
+    try {
+      await expect(sweep({ dryRun: false })).resolves.toMatchObject({
+        candidates: 1,
+        removedNodes: 0,
+        sweptTranscriptStates: 0,
+      });
+    } finally {
+      admission.release();
+    }
+    expect(countRows("session_nodes", "session_key", CRON_RUN_KEY)).toBe(1);
+    expect(countRows("session_windows", "session_key", CRON_RUN_KEY)).toBe(1);
+    expect(countRows("transcript_events", "session_id", sessionId)).toBe(1);
+    expect(archiveNames(sessionId)).toEqual([]);
+  });
+
+  it("keeps a placeholder whose generation id holds a work admission", async () => {
+    const sessionId = await seedCanonicalPlaceholder({});
+    // Admissions carry either the live session key or the backing generation id;
+    // this is the id-shaped half, which the narrowed probe answers in memory.
+    const admission = await beginSessionWorkAdmission({
+      scope: storePath,
+      identities: [sessionId],
+      assertAllowed: () => {},
+    });
+
+    try {
+      await expect(sweep({ dryRun: false })).resolves.toMatchObject({
+        candidates: 1,
+        removedNodes: 0,
+        sweptTranscriptStates: 0,
+      });
+    } finally {
+      admission.release();
+    }
+    expect(countRows("session_nodes", "session_key", CRON_RUN_KEY)).toBe(1);
+    expect(countRows("session_windows", "session_key", CRON_RUN_KEY)).toBe(1);
+    expect(countRows("transcript_events", "session_id", sessionId)).toBe(1);
+    expect(archiveNames(sessionId)).toEqual([]);
   });
 });
