@@ -420,6 +420,7 @@ src/config/validation-core.ts
 src/config/validation-issues.ts
 src/config/validation-plugin-config.ts
 src/config/validation-plugin-rules.ts
+src/config/validation-plugin-registry.ts
 src/config/validation.ts
 src/config/version.ts
 src/config/web-search-legacy-provider-keys.ts
@@ -779,6 +780,7 @@ src/plugins/current-plugin-metadata-snapshot.ts
 src/plugins/current-plugin-metadata-state.ts
 src/plugins/default-enablement.ts
 src/plugins/dev-source-root.ts
+src/plugins/discovery-availability.ts
 src/plugins/discovery.ts
 src/plugins/doctor-contract-artifact.ts
 src/plugins/doctor-contract-module.ts
@@ -853,6 +855,7 @@ src/plugins/package-manifest.ts
 src/plugins/path-safety.ts
 src/plugins/plugin-cache-artifacts.ts
 src/plugins/plugin-cache-files.ts
+src/plugins/runtime-degraded-state.ts
 src/plugins/plugin-cache-sdk.ts
 src/plugins/plugin-cache.ts
 src/plugins/plugin-config-trust.ts
