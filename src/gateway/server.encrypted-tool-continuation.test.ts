@@ -79,7 +79,11 @@ it(
         const toolResults = body.messages.filter((message) => message.role === "tool");
         const continuation = toolResults.length > 0;
         const assistant = body.messages.findLast((message) => message.tool_calls?.length);
-        if (continuation && !isDeepStrictEqual(assistant?.reasoning_details, details)) {
+        if (
+          continuation &&
+          !arrival.startsWith("renamed-") &&
+          !isDeepStrictEqual(assistant?.reasoning_details, details)
+        ) {
           response.writeHead(400, { "content-type": "application/json" });
           response.end(
             JSON.stringify({
@@ -141,6 +145,27 @@ it(
         if (continuation) {
           send({ content: answer });
           send({}, "stop");
+        } else if (arrival.startsWith("renamed-")) {
+          const oldDetail = { ...detail, id: "callA", data: "synthetic-old-identity" };
+          if (arrival === "renamed-unsigned") {
+            send({ reasoning_details: [oldDetail] });
+          }
+          send({
+            tool_calls: [
+              {
+                index: 0,
+                id: "callA",
+                type: "function",
+                function: { name: "read", arguments: JSON.stringify({ path: fixture }) },
+              },
+            ],
+          });
+          send({ tool_calls: [{ index: 0, id: "callB" }] });
+          if (arrival === "renamed-signed") {
+            send({ reasoning_details: details });
+            send({ reasoning_details: [oldDetail] });
+          }
+          send({}, "tool_calls");
         } else {
           send({ reasoning: visibleReasoning });
           const reasoning = {
@@ -229,16 +254,23 @@ it(
         "after",
         "multiple",
         "visible",
+        "renamed-unsigned",
+        "renamed-signed",
         "malformed",
         "missing-terminal",
         "abort",
       ]) {
         arrival = order;
-        details = order === "multiple" ? [detail, secondDetail] : [detail];
-        callIds =
-          order === "multiple"
-            ? ["callsigned", "callunsigned", "callsecond"]
-            : ["callsigned", "callunsigned"];
+        if (order.startsWith("renamed-")) {
+          details = order === "renamed-signed" ? [{ ...detail, id: "callB" }] : [];
+          callIds = ["callB"];
+        } else {
+          details = order === "multiple" ? [detail, secondDetail] : [detail];
+          callIds =
+            order === "multiple"
+              ? ["callsigned", "callunsigned", "callsecond"]
+              : ["callsigned", "callunsigned"];
+        }
         requests.length = 0;
         events.length = 0;
         const sessionKey = `agent:main:encrypted-${arrival}`;
@@ -312,45 +344,39 @@ it(
             }),
           ),
         );
-        expect(
+        const associationExpect = order.startsWith("renamed-") ? expect.soft : expect;
+        associationExpect(
           continuation?.messages.findLast((message) => message.tool_calls?.length)
             ?.reasoning_details,
-        ).toEqual(details);
-        expect(
+          `${order}: actual continuation encrypted details`,
+        ).toEqual(details.length > 0 ? details : undefined);
+        associationExpect(
           history.messages.find(
             (message) => message.role === "assistant" && message.stopReason === "toolUse",
           )?.content,
+          `${order}: persisted tool identity and encrypted state`,
         ).toEqual([
           ...(order === "visible"
             ? [expect.objectContaining({ type: "thinking", thinking: visibleReasoning })]
             : []),
-          {
-            type: "toolCall",
-            id: "callsigned",
-            name: "read",
-            arguments: { path: fixture },
-            thoughtSignature: JSON.stringify({
-              type: detail.type,
-              data: detail.data,
-              id: detail.id,
-            }),
-          },
-          { type: "toolCall", id: "callunsigned", name: "read", arguments: { path: fixture } },
-          ...(order === "multiple"
-            ? [
-                {
-                  type: "toolCall",
-                  id: "callsecond",
-                  name: "read",
-                  arguments: { path: fixture },
-                  thoughtSignature: JSON.stringify({
-                    type: secondDetail.type,
-                    data: secondDetail.data,
-                    id: secondDetail.id,
-                  }),
-                },
-              ]
-            : []),
+          ...callIds.map((id) => {
+            const expectedDetail = details.find((candidate) => candidate.id === id);
+            return {
+              type: "toolCall",
+              id,
+              name: "read",
+              arguments: { path: fixture },
+              ...(expectedDetail
+                ? {
+                    thoughtSignature: JSON.stringify({
+                      type: expectedDetail.type,
+                      data: expectedDetail.data,
+                      id: expectedDetail.id,
+                    }),
+                  }
+                : {}),
+            };
+          }),
         ]);
         expect(
           JSON.stringify(

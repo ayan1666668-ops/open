@@ -604,12 +604,13 @@ export async function processCompletionsStream(
             toolCallBlocksByIndex.set(streamIndex, block);
           }
           if (toolCall.id) {
+            const previousId = block.id;
             if (!directMode || !block.id) {
               block.id = toolCall.id;
             }
             toolCallBlocksById.set(toolCall.id, block);
             if (block.id === toolCall.id) {
-              encryptedReasoning.rememberToolCall(toolCall.id, block);
+              encryptedReasoning.rememberToolCall(toolCall.id, block, previousId);
             }
           }
           currentBlock = block;
