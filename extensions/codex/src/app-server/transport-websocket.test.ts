@@ -97,7 +97,9 @@ describe("Codex app-server websocket transport", () => {
 
     const disposedExitHandler = vi.fn();
     client.addTransportExitHandler(disposedExitHandler)();
-    const exited = new Promise<void>((resolve) => client.addTransportExitHandler(() => resolve()));
+    const exited = new Promise<void>((resolve) => {
+      client.addTransportExitHandler(() => resolve());
+    });
     for (const socket of server.clients) {
       socket.close(1001, "server restarting");
     }
@@ -120,7 +122,9 @@ describe("Codex app-server websocket transport", () => {
         socket.send(JSON.stringify({ method: "probe/ready" }));
       });
     });
-    await new Promise<void>((resolve) => server.once("listening", resolve));
+    await new Promise<void>((resolve) => {
+      server.once("listening", resolve);
+    });
     const address = server.address();
     if (!address || typeof address === "string") {
       throw new Error("expected websocket test server port");
@@ -130,7 +134,9 @@ describe("Codex app-server websocket transport", () => {
       url: `ws://127.0.0.1:${address.port}`,
     });
     clients.push(client);
-    const received = new Promise<void>((resolve) => client.addNotificationHandler(() => resolve()));
+    const received = new Promise<void>((resolve) => {
+      client.addNotificationHandler(() => resolve());
+    });
     client.notify("probe");
     await received;
     await expect(
