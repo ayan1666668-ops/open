@@ -57,31 +57,56 @@ const EXPLICIT_RESULT_SUBJECT_PATTERN =
 // Arbitrary leading words cannot turn a verification object into its subject.
 const BARE_VERIFICATION_SUBJECT_PATTERN =
   /^(?:(?:unit|integration|regression|smoke|e2e|end-to-end)\s+)?(?:tests?|build|lint|checks?|syntax)$/i;
-// Do not let a noun subject consume a present action and its object. Reuse
-// the existing narration vocabulary for bare actions and regular third-person
-// inflection for noun actors. A final plural noun can still be a subject when
-// its completed predicate closes the clause ("the failed tests passed").
-const NOMINAL_ACTION_WORD_PATTERN = new RegExp(String.raw`^(?:${PROGRESS_ACTION}|[a-z]+s)$`, "i");
+const NOMINAL_ACTION_WORD_PATTERN = new RegExp(String.raw`^${PROGRESS_ACTION}$`, "i");
+// These forms identify noun heads, not additional completion markers. Once a
+// subject has a noun head, an unclassified word can be a present verb ("workers
+// examine"); it cannot establish an independent result inside narration.
+// Plurals remain nouns here, including modifiers in "core services team".
+const NOMINAL_HEAD_PATTERN =
+  /(?:s|er|or|ist|ion|ment|ance|ence|ity|ness|ship|hood|ee)$|^(?:team|group|suite|window|cache|gateway|pipeline|build|lint|check|test|syntax)$/i;
+const NOMINAL_MODIFIER_PATTERN = /(?:ed|ly|al|ive|ous|ful|less)$/i;
+const NOMINAL_COMPOUND_HEAD_PATTERN =
+  /^(?:teams?|groups?|suites?|windows?|caches?|gateways?|pipelines?)$/i;
 const RESULT_TAIL_PATTERN =
   /^(?:[.!?,;:]|$|(?:and|but|so|because|after|when|once|if|unless|with|without|on|in|at|for|during|already|just|[a-z]+ly)\b)/i;
 
-function hasNarratedNominalSubject(subject: string, tail: string, finite: boolean): boolean {
+function hasAmbiguousNominalSubject(subject: string, tail: string, finite: boolean): boolean {
   const words = subject
     .replace(
       /^(?:the|a|an|all|both|each|every|some|any|no|my|our|your|his|her|its|their|this|that|these|those|\d+)\s+/i,
       "",
     )
     .split(/\s+/);
-  return words.some((word, index) => {
-    if (index === 0 || !NOMINAL_ACTION_WORD_PATTERN.test(word)) {
-      return false;
+  if (words.length < 2) {
+    return false;
+  }
+  let nounSeen = false;
+  for (const [index, rawWord] of words.entries()) {
+    const word = rawWord.replace(/(?:'|\u2019)s$/i, "");
+    const action = [word, word.replace(/s$/i, ""), word.replace(/ies$/i, "y")].some((form) =>
+      NOMINAL_ACTION_WORD_PATTERN.test(form),
+    );
+    const compoundTest = /^test$/i.test(word) && /^suite$/i.test(words[index + 1] ?? "");
+    const finalVerification =
+      index === words.length - 1 &&
+      BARE_VERIFICATION_SUBJECT_PATTERN.test(word) &&
+      (finite || RESULT_TAIL_PATTERN.test(tail));
+    // After a noun head, -s is also a present-verb inflection, including verbs
+    // outside the progress vocabulary. Do not reinterpret "worker examines"
+    // or "worker delivers" as a compound noun. Collective compound heads and
+    // a closing verification predicate still give independent subject forms.
+    const ambiguousInflection =
+      nounSeen && /s$/i.test(word) && !NOMINAL_COMPOUND_HEAD_PATTERN.test(word);
+    if (((index > 0 && action && !compoundTest) || ambiguousInflection) && !finalVerification) {
+      return true;
     }
-    // "test suite" is a compound verification noun, not an action/complement.
-    if (/^test$/i.test(word) && /^suite$/i.test(words[index + 1] ?? "")) {
-      return false;
+    if (NOMINAL_HEAD_PATTERN.test(word)) {
+      nounSeen = true;
+    } else if (nounSeen && !NOMINAL_MODIFIER_PATTERN.test(word)) {
+      return true;
     }
-    return index < words.length - 1 || (!finite && !RESULT_TAIL_PATTERN.test(tail));
-  });
+  }
+  return !nounSeen;
 }
 
 const COMPLETION_HEADING_PATTERN =
@@ -154,7 +179,7 @@ function hasDeferredTemporalResult(prefix: string, resultClause: string): boolea
     const pastEvent = PAST_TEMPORAL_EVENT_PATTERN.exec(temporal);
     const completedPastEvent =
       pastEvent !== null &&
-      !hasNarratedNominalSubject(
+      !hasAmbiguousNominalSubject(
         pastEvent.groups?.subject ?? "",
         temporal.slice(pastEvent[0].length).trimStart(),
         Boolean(pastEvent.groups?.auxiliary),
@@ -253,9 +278,9 @@ function isProgressOnlyCompletionText(value: string): boolean {
           return {
             result,
             elidedSubject: pattern === COORDINATED_RESULT_CLAUSE_PATTERN,
-            narratedSubject:
+            ambiguousNominalSubject:
               subject !== undefined &&
-              hasNarratedNominalSubject(subject, verificationTail, Boolean(finite)),
+              hasAmbiguousNominalSubject(subject, verificationTail, Boolean(finite)),
             ambiguousSubject:
               subject !== undefined &&
               !EXPLICIT_RESULT_SUBJECT_PATTERN.test(subject) &&
@@ -265,7 +290,7 @@ function isProgressOnlyCompletionText(value: string): boolean {
         }),
       );
       const completedResult = results.some(
-        ({ result, elidedSubject, ambiguousSubject, narratedSubject }) => {
+        ({ result, elidedSubject, ambiguousSubject, ambiguousNominalSubject }) => {
           const resultIndex = resultOffset + result.index;
           const prefix = body.slice(0, resultIndex);
           const remainder = body.slice(resultIndex).replace(/^(?:,|and)\s*/i, "");
@@ -284,10 +309,9 @@ function isProgressOnlyCompletionText(value: string): boolean {
           // Reject each deferred candidate, not a later independent completed
           // action merely because the first clause only described an attempt.
           return !(
-            narratedSubject ||
             FIRST_PERSON_PLAN_PATTERN.test(remainder) ||
             ONGOING_RESULT_CLAUSE_PATTERN.test(result[0].replace(/^(?:,|and)\s*/i, "")) ||
-            ((elidedSubject || ambiguousSubject) &&
+            ((elidedSubject || ambiguousSubject || ambiguousNominalSubject) &&
               (FIRST_PERSON_PLAN_PATTERN.test(subjectClause ?? "") ||
                 PROGRESS_ONLY_PATTERN.test(subjectClause ?? "") ||
                 BARE_PROGRESS_ONLY_PATTERN.test(subjectClause ?? "") ||

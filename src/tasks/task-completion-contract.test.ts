@@ -17,6 +17,43 @@ describe("resolveRequiredCompletionTerminalResult", () => {
   // conditional clause ("whether the tests passed") is a pending outcome, not a
   // delivered result.
   it.each([
+    ["nominal-inflection examines", "I'll inspect the code and the worker examines failed tests."],
+    [
+      "nominal-inflection delivers",
+      "I'll inspect the code and the worker delivers completed jobs.",
+    ],
+    [
+      "nominal-inflection complement",
+      "I'll inspect the code and the worker examines tests have passed.",
+    ],
+    [
+      "nominal-inflection temporal",
+      "Reviewing the change, I patched it when the worker examines failed tests.",
+    ],
+    [
+      "nominal-boundary unknown examine",
+      "I'll inspect the code and the workers examine failed tests.",
+    ],
+    [
+      "nominal-boundary unknown audit",
+      "I'll inspect the code and the workers audit selected files.",
+    ],
+    [
+      "nominal-boundary unknown watch",
+      "I'll inspect the code and the workers watch completed jobs.",
+    ],
+    [
+      "nominal-boundary perfect complement",
+      "I'll inspect the code and the workers examine tests have passed.",
+    ],
+    [
+      "nominal-boundary state complement",
+      "I'll inspect the code and the workers ensure deployment is complete.",
+    ],
+    [
+      "nominal-boundary temporal action",
+      "Reviewing the change, I patched it when the workers examine failed tests.",
+    ],
     [
       "nominal prerequisite when action",
       "Reviewing the changes, I patched it when the worker reviews failed tests.",
@@ -379,6 +416,34 @@ describe("resolveRequiredCompletionTerminalResult", () => {
   // result/report/verification marker in a delivered-result sentence; those
   // must not be misclassified.
   it.each([
+    [
+      "nominal-inflection plural compound",
+      "I'll inspect the code and the core services teams have fixed the regression.",
+    ],
+    [
+      "nominal-inflection generic compound",
+      "I'll inspect the code. The security platform team has fixed the regression.",
+    ],
+    [
+      "nominal-inflection generic unknown head",
+      "I'll inspect the code. The blue bird completed its flight.",
+    ],
+    [
+      "nominal-boundary compound follow-up",
+      "I'll inspect the code. The core services team has fixed the regression.",
+    ],
+    [
+      "nominal-boundary compound joined",
+      "I'll inspect the code and the core services team has fixed the regression.",
+    ],
+    [
+      "nominal-boundary compound past",
+      "I'll inspect the code and the core services team reviewed failed tests.",
+    ],
+    [
+      "nominal-boundary generic follow-up",
+      "I'll inspect the code. The regional operations group has fixed the regression.",
+    ],
     [
       "nominal prerequisite completed actor",
       "Reviewing the changes, I patched it when the worker reviewed failed tests.",
