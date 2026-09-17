@@ -1,4 +1,5 @@
 import path from "node:path";
+import { setImmediate } from "node:timers/promises";
 import { coerceErrorMessage } from "@openclaw/normalization-core/error-coercion";
 import { SQLITE_READONLY_CHILD_ARG } from "./runtime-process-entrypoints.js";
 import { formatSqliteErrorCodeSuffix } from "./sqlite-error-diagnostics.js";
@@ -34,9 +35,34 @@ async function inspect(args: string[]): Promise<SqliteReadOnlyWorkerResult> {
   try {
     if (mode === "reclaim") {
       const warnings: string[] = [];
-      reclaimAbandonedSqliteSnapshots(pathname, (message, error) => {
+      const directories = reclaimAbandonedSqliteSnapshots(pathname, (message, error) => {
         warnings.push(`${message}${formatSqliteErrorCodeSuffix(error)}`);
       });
+      let stopped = false;
+      const stop = () => {
+        stopped = true;
+      };
+      // EOF also handles a vanished parent. Never interrupt a directory's delete.
+      process.stdin.once("end", stop);
+      process.stdin.once("error", stop);
+      process.stdin.resume();
+      try {
+        while (true) {
+          await setImmediate();
+          if (stopped) {
+            warnings.push("Stopped SQLite snapshot reclamation at a directory boundary.");
+            break;
+          }
+          if (directories.next().done) {
+            break;
+          }
+        }
+      } finally {
+        directories.return(undefined);
+        process.stdin.off("end", stop);
+        process.stdin.off("error", stop);
+        process.stdin.destroy();
+      }
       return { ok: true, warnings };
     }
     if (mode === "schema-header") {

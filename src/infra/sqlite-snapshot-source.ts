@@ -13,7 +13,11 @@ import {
   prepareSqliteReadOnlyLocationSyncInProcess,
 } from "./sqlite-readonly-location.js";
 import type { PreparedSqliteReadOnlyLocation } from "./sqlite-readonly-location.types.js";
-import { runSqliteReadOnlyWorker, runSqliteReadOnlyWorkerSync } from "./sqlite-readonly-worker.js";
+import {
+  resolveSqliteInspectionSignal,
+  runSqliteReadOnlyWorker,
+  runSqliteReadOnlyWorkerSync,
+} from "./sqlite-readonly-worker.js";
 import {
   readSqliteSchemaHeaderFromSnapshotAsync,
   type SqliteSchemaHeader,
@@ -32,31 +36,33 @@ export async function inspectSqliteSchemaHeader(
   pathname: string,
   options: { signal?: AbortSignal; agentSchemaVersionForOwnership?: number } = {},
 ) {
-  options.signal?.throwIfAborted();
+  const signal = resolveSqliteInspectionSignal(options.signal);
+  signal?.throwIfAborted();
   if (
     prepareStateDatabaseCanonicalMutation(pathname) ||
     hasStateDatabaseSourceExclusion(pathname)
   ) {
-    const prepared = await prepareSqliteReadOnlyLocation(pathname, options);
+    const prepared = await prepareSqliteReadOnlyLocation(pathname, { ...options, signal });
     return readSqliteSchemaHeaderFromSnapshotAsync(
       prepared,
-      options.signal,
+      signal,
       options.agentSchemaVersionForOwnership,
     );
   }
   // Reserve cleanup ownership before launch even if only journal recovery will
   // need a copy. Cancellation joins the child before deleting unpublished bytes.
-  const stagingRoot = await createSqliteSnapshotStagingDirectory();
+  signal?.throwIfAborted();
+  const stagingRoot = await createSqliteSnapshotStagingDirectory(undefined, false, signal);
   let header: SqliteSchemaHeader;
   try {
-    options.signal?.throwIfAborted();
+    signal?.throwIfAborted();
     header = await runSqliteReadOnlyWorker(pathname, {
       mode: "schema-header",
       stagingRoot,
-      signal: options.signal,
+      signal,
       agentSchemaVersionForOwnership: options.agentSchemaVersionForOwnership,
     });
-    options.signal?.throwIfAborted();
+    signal?.throwIfAborted();
   } catch (error) {
     if (!(await removeTempDirectoryAsync(stagingRoot))) {
       throw new Error(
@@ -71,7 +77,7 @@ export async function inspectSqliteSchemaHeader(
   if (!(await removeTempDirectoryAsync(stagingRoot))) {
     throw new Error(`SQLite read-only worker snapshot cleanup failed: ${stagingRoot}`);
   }
-  options.signal?.throwIfAborted();
+  signal?.throwIfAborted();
   return header;
 }
 
@@ -80,14 +86,15 @@ export async function prepareSqliteReadOnlyLocation(
   pathname: string,
   options: { preserveSourceArtifacts?: boolean; signal?: AbortSignal } = {},
 ): Promise<PreparedSqliteReadOnlyLocation> {
+  const signal = resolveSqliteInspectionSignal(options.signal);
   let stagingRoot: string | undefined;
   try {
-    options.signal?.throwIfAborted();
+    signal?.throwIfAborted();
     const ownedSnapshot = prepareStateDatabaseMutationSnapshot(pathname);
     if (ownedSnapshot) {
       const prepared = await ownedSnapshot;
       try {
-        options.signal?.throwIfAborted();
+        signal?.throwIfAborted();
         return prepared;
       } catch (error) {
         await prepared.cleanupAsync();
@@ -97,9 +104,9 @@ export async function prepareSqliteReadOnlyLocation(
     if (hasStateDatabaseSourceExclusion(pathname)) {
       const prepared = options.preserveSourceArtifacts
         ? prepareSqliteReadOnlyLocationSyncInProcess(pathname)
-        : await prepareSqliteReadOnlyLocationInProcess(pathname);
+        : await prepareSqliteReadOnlyLocationInProcess(pathname, undefined, signal);
       try {
-        options.signal?.throwIfAborted();
+        signal?.throwIfAborted();
         return prepared;
       } catch (error) {
         await prepared.cleanupAsync();
@@ -108,14 +115,15 @@ export async function prepareSqliteReadOnlyLocation(
     }
     // A stopped worker may never publish its random snapshot path. Allocate its
     // private parent first so cancellation can join the child and remove all copies.
-    stagingRoot = await createSqliteSnapshotStagingDirectory();
-    options.signal?.throwIfAborted();
+    signal?.throwIfAborted();
+    stagingRoot = await createSqliteSnapshotStagingDirectory(undefined, false, signal);
+    signal?.throwIfAborted();
     const location = await runSqliteReadOnlyWorker(pathname, {
       mode: options.preserveSourceArtifacts ? "sync" : "async",
-      signal: options.signal,
+      signal,
       stagingRoot,
     });
-    options.signal?.throwIfAborted();
+    signal?.throwIfAborted();
     // Cancellable maintenance must retain its fence on cleanup failure; ordinary
     // read-only handles report false so their owner can retry close.
     return adoptPreparedLocation(location, stagingRoot, options.signal !== undefined);
@@ -128,7 +136,7 @@ export async function prepareSqliteReadOnlyLocation(
         },
       );
     }
-    options.signal?.throwIfAborted();
+    signal?.throwIfAborted();
     throw error;
   }
 }

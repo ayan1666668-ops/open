@@ -534,6 +534,10 @@ export function runSqliteReadOnlyWorker(
   pathname: string,
   options: SqliteReadOnlyWorkerOptions,
 ): Promise<SqliteReadOnlyWorkerValue> {
+  if (options.mode === "reclaim") {
+    // Shared reclamation belongs to the allocation owner, not its first caller's scope.
+    return readOnlyWorkerScope.exit(() => runSqliteReadOnlyWorkerOnce(pathname, options));
+  }
   const scope = readOnlyWorkerScope.getStore();
   if (!scope) {
     return runSqliteReadOnlyWorkerOnce(pathname, options);
@@ -585,6 +589,8 @@ function runSqliteReadOnlyWorkerOnce(
     const { timeoutMs, size } = readSqliteInspectionBudget("read-only snapshot", pathname);
     let output: SqliteReadOnlyWorkerOutput = { stderr: "", stdout: "" };
     let stopped = false;
+    let reclamationDeadline = false;
+    const reclaim = options.mode === "reclaim";
     const child = execFile(
       process.execPath,
       sqliteReadOnlyWorkerArgv(pathname, options),
@@ -592,7 +598,7 @@ function runSqliteReadOnlyWorkerOnce(
         encoding: "utf8",
         env: sqliteReadOnlyWorkerEnv(),
         maxBuffer: SQLITE_READONLY_WORKER_MAX_BUFFER,
-        timeout: isSqliteInspectionDeadlineOwnedByCaller() ? undefined : timeoutMs,
+        timeout: reclaim || isSqliteInspectionDeadlineOwnedByCaller() ? undefined : timeoutMs,
         killSignal: "SIGKILL",
       },
       (error, stdout, stderr) => {
@@ -612,9 +618,23 @@ function runSqliteReadOnlyWorkerOnce(
     );
     // execFile does not forward killSignal for AbortSignal cancellation.
     const abort = () => {
+      if (stopped) {
+        return;
+      }
       stopped = true;
-      child.kill("SIGKILL");
+      if (reclaim) {
+        child.stdin?.end();
+      } else {
+        child.kill("SIGKILL");
+      }
     };
+    // Keep the existing budget, but settle reclamation at a directory boundary.
+    const timer = reclaim
+      ? setTimeout(() => {
+          reclamationDeadline = true;
+          abort();
+        }, timeoutMs)
+      : undefined;
     void retainSnapshotWork(
       new Promise<void>((resolveClosed) => {
         child.once("close", () => resolveClosed());
@@ -628,8 +648,19 @@ function runSqliteReadOnlyWorkerOnce(
     // execFile can report an abort/error before close. Ownership ends only
     // after the process and its pipes have closed, including failed launches.
     child.once("close", () => {
+      clearTimeout(timer);
       options.signal?.removeEventListener("abort", abort);
       try {
+        if (options.mode === "reclaim") {
+          const warnings = readSqliteReadOnlyWorkerValue(output, "reclaim");
+          if (reclamationDeadline) {
+            warnings.push(
+              sqliteInspectionTimeoutError("reclamation", pathname, timeoutMs, size).message,
+            );
+          }
+          resolve(warnings);
+          return;
+        }
         options.signal?.throwIfAborted();
         resolve(readSqliteReadOnlyWorkerValue(output, options.mode));
       } catch (workerError) {

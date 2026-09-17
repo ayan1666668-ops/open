@@ -48,9 +48,13 @@ retirement is committed before handles close so a late worker cannot restart it.
 The first snapshot operation in a process reclaims abandoned copies and logs the
 copied-data byte count. Asynchronous callers run that same reclamation pass in the
 SQLite worker, keeping directory traversal and removal off their event loop.
-Concurrent callers share the pass; allocation and token registration follow it
-atomically. Synchronous callers retain the inline pass. Reclamation worker failures
-warn and allow allocation to continue.
+Concurrent callers share the pass but can cancel their own waits independently.
+The last departing caller requests a stop after the current directory is fully
+removed; a later allocation resumes the remaining backlog. The worker owns its
+own lifetime, so one caller’s scope cannot terminate another caller’s reclamation.
+Shutdown and the existing reclamation deadline also stop at directory boundaries.
+Allocation and token registration follow the pass atomically. Synchronous callers
+retain the inline pass. Reclamation worker failures warn and allow allocation to continue.
 Legacy directories use a 24-hour age threshold, including legacy children under a
 current parent. Updaters also mark staging for a selected installation as legacy-compatible
 before launching workers that may predate tokens. Current workers fence admission

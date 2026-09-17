@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { extractErrorCode } from "@openclaw/normalization-core/error-coercion";
 import { getChildLogger } from "../logging/logger.js";
+import { racePromiseWithAbortSignal } from "./abort-signal.js";
 import { openNodeSqliteDatabase, resolveExistingSqliteFileUri } from "./node-sqlite.js";
 import {
   createPrivateSqliteTempDirectorySync,
@@ -20,7 +21,8 @@ const legacyMarker = new RegExp(`^openclaw-sqlite-readonly-[1-9]\\d*-${suffix}`,
 const tokenMarker = new RegExp(`^${prefix}${suffix}`, "u");
 const tokenName = SQLITE_SNAPSHOT_CONTROL_FILES[0];
 const scannedRoots = new Set<string>();
-const pendingReclamations = new Map<string, Promise<void>>();
+type ReclamationPass = { controller: AbortController; callers: number; done: Promise<void> };
+const pendingReclamations = new Map<string, ReclamationPass>();
 const legacyAgeMs = 24 * 60 * 60 * 1000;
 const isStagingName = (name: string) => legacyMarker.test(name) || tokenMarker.test(name);
 type SnapshotToken = (retiring?: boolean) => void;
@@ -159,11 +161,10 @@ function inspectSnapshot(
   return { bytes, newest };
 }
 
-export function reclaimAbandonedSqliteSnapshots(root: string, report = warn): void {
+export function* reclaimAbandonedSqliteSnapshots(root: string, report = warn): Generator<void> {
   if (stagingParent(root) || scannedRoots.has(root)) {
     return;
   }
-  scannedRoots.add(root);
   try {
     for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
       const legacy = legacyMarker.test(entry.name);
@@ -193,40 +194,74 @@ export function reclaimAbandonedSqliteSnapshots(root: string, report = warn): vo
           token();
         }
       }
+      // Yield only after retirement, removal, and token release settle together.
+      yield;
     }
   } catch (error) {
     report("SQLite snapshot reclamation failed; check private cache permissions.", error);
   }
+  scannedRoots.add(root);
 }
 
 export async function allocateSqliteSnapshotStagingDirectory(
   root = resolvePrivateSqliteSnapshotStagingRoot(),
   allowLegacyWorker = false,
+  signal?: AbortSignal,
 ): Promise<string> {
+  signal?.throwIfAborted();
   if (!stagingParent(root)) {
-    let pending = pendingReclamations.get(root);
-    if (!pending && !scannedRoots.has(root)) {
-      pending = (async () => {
-        try {
-          const { runSqliteReadOnlyWorker } = await import("./sqlite-readonly-worker.js");
-          for (const message of await runSqliteReadOnlyWorker(root, { mode: "reclaim" })) {
-            warn(message);
-          }
-        } catch (error) {
-          warn(
-            "SQLite snapshot reclamation worker failed; continuing without cache cleanup.",
-            error,
-          );
-        } finally {
-          // Do not fall back to a blocking scan when the best-effort worker fails.
-          scannedRoots.add(root);
-          pendingReclamations.delete(root);
+    while (!scannedRoots.has(root)) {
+      signal?.throwIfAborted();
+      let pass = pendingReclamations.get(root);
+      if (!pass) {
+        const controller = new AbortController();
+        pass = {
+          controller,
+          callers: 0,
+          done: (async () => {
+            try {
+              const { runSqliteReadOnlyWorker } = await import("./sqlite-readonly-worker.js");
+              if (!controller.signal.aborted) {
+                for (const message of await runSqliteReadOnlyWorker(root, {
+                  mode: "reclaim",
+                  signal: controller.signal,
+                })) {
+                  warn(message);
+                }
+              }
+            } catch (error) {
+              warn(
+                "SQLite snapshot reclamation worker failed; continuing without cache cleanup.",
+                error,
+              );
+            } finally {
+              // Cancellation leaves unvisited directories for the next allocation.
+              // Other failures remain best effort, without a blocking sync fallback.
+              if (!controller.signal.aborted) {
+                scannedRoots.add(root);
+              }
+              pendingReclamations.delete(root);
+            }
+          })(),
+        };
+        pendingReclamations.set(root, pass);
+      }
+      // A stopping pass cannot accept new callers; wait for its directory to
+      // settle, then start a fresh pass. Both waits remain caller-cancellable.
+      const joined = !pass.controller.signal.aborted;
+      if (joined) {
+        pass.callers++;
+      }
+      try {
+        await racePromiseWithAbortSignal(pass.done, signal);
+      } finally {
+        if (joined && --pass.callers === 0 && signal?.aborted) {
+          pass.controller.abort();
         }
-      })();
-      pendingReclamations.set(root, pending);
+      }
     }
-    await pending;
   }
+  signal?.throwIfAborted();
   // Allocation and token registration stay atomic after the shared scan settles.
   return createSqliteSnapshotStagingDirectorySync(root, allowLegacyWorker);
 }
@@ -242,7 +277,9 @@ export function createSqliteSnapshotStagingDirectorySync(
   let directory: string | undefined;
   try {
     if (!parent) {
-      reclaimAbandonedSqliteSnapshots(root);
+      for (const _ of reclaimAbandonedSqliteSnapshots(root)) {
+        // Synchronous callers drain the same directory-boundary iterator.
+      }
     }
     // A selected installation may launch a worker without token admission.
     directory = createPrivateSqliteTempDirectorySync(
