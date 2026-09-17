@@ -14,6 +14,7 @@ import { streamSimple } from "../../llm/stream.js";
 import type { Model } from "../../llm/types.js";
 import { resolveProviderStreamFn } from "../../plugins/provider-runtime.js";
 import { mintSecretSentinel } from "../../secrets/sentinel.js";
+import { createDeferredCore } from "../../shared/deferred.js";
 import { loadBundledPluginFacade } from "../../test-utils/bundled-plugin-public-surface.js";
 import { wrapStreamFnWithProviderPromptState } from "./provider-prompt-state.js";
 import {
@@ -735,11 +736,11 @@ describe("resolveEmbeddedAgentStream", () => {
   });
 
   it("revalidates run authority after deferred credential resolution", async () => {
-    let resolveKey: ((value: string) => void) | undefined;
+    const credentials = createDeferredCore<string>();
     let current = true;
     const providerStreamFn = vi.fn(async () => ({}));
     const authStorage = {
-      getApiKey: vi.fn(() => new Promise<string>((resolve) => (resolveKey = resolve))),
+      getApiKey: vi.fn(() => credentials.promise),
     };
     const { streamFn } = resolveEmbeddedAgentStreamImpl({
       llmRuntime,
@@ -760,9 +761,8 @@ describe("resolveEmbeddedAgentStream", () => {
     } as Parameters<typeof resolveEmbeddedAgentStreamImpl>[0]);
 
     const pending = streamFn({ provider: "openai", id: "gpt-5.4" } as never, {} as never, {});
-    expect(resolveKey).toBeTypeOf("function");
     current = false;
-    resolveKey?.("stored-key");
+    credentials.resolve("stored-key");
 
     await expect(pending).rejects.toThrow("source authority revoked");
     expect(providerStreamFn).not.toHaveBeenCalled();
