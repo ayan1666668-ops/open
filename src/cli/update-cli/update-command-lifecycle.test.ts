@@ -242,7 +242,7 @@ describe("update plugin lifecycle lease boundaries", () => {
     mocks.leaseActive = false;
     mocks.doctorWarnings = [];
     mocks.interactive = false;
-    mocks.triage.mockResolvedValue({ status: "completed", hint: "fixture" });
+    mocks.triage.mockReset().mockResolvedValue({ status: "completed", hint: "fixture" });
     vi.mocked(readPackageVersion).mockResolvedValue(VERSION);
     vi.mocked(continuePostCoreUpdateInFreshProcess).mockImplementation(async () => {
       record("target-convergence");

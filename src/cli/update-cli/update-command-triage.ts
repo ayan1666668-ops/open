@@ -84,6 +84,9 @@ export async function prepareUpdateCommandFailureTriage(
       return reportUpdateCommandPendingRecovery(error, opts);
     }
     const reportedFailure = error instanceof UpdateCommandFailure;
+    if (reportedFailure && error.result.reason === "invalid-dev-target") {
+      return exitCliAfterOutput(defaultRuntime, error.exitCode);
+    }
     const rollbackCompleted = reportedFailure && isVerifiedUpdateRollback(error.result);
     // A healthy restored installation needs only an explicit terminal choice,
     // never automatic diagnostics or a second managed-helper report.
