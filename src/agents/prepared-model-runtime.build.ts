@@ -34,6 +34,7 @@ import {
   createPreparedInboundRegistryLoader,
   preparedModelRuntimeWorkspaceFactsKey,
 } from "./prepared-model-runtime.inbound-registry.js";
+import { registerPreparedModelRuntimeClose } from "./prepared-model-runtime.lifecycle.js";
 import {
   discardPreparedPluginGeneration,
   registerPreparedPluginLifetime,
@@ -90,6 +91,7 @@ async function buildSnapshotBatch(
   onStage?: (stage: string) => void,
   registryResources?: PreparedModelRuntimeBuildResources,
   onPrepared?: (input: PreparedModelRuntimeInput, result: PreparedModelRuntimeBuildResult) => void,
+  signal?: AbortSignal,
 ): Promise<PreparedModelRuntimeBuildResult[]> {
   const configs = new Map<
     OpenClawConfig,
@@ -226,6 +228,7 @@ async function buildSnapshotBatch(
           assertCurrent: assertBuildCurrent,
           onBeforeAuthCapture: (input) => candidateByInput.get(input)!.onBeforeAuthCapture?.(),
           onStage,
+          signal,
           ...(groupCandidates.some((candidate) => candidate.ownsRegistryResources)
             ? { registryResources }
             : {}),
@@ -426,10 +429,20 @@ export function startSerializedSnapshotBuildBatch(
     onStage: (stage: string) => void;
     onPrepared: (input: PreparedModelRuntimeInput, result: PreparedModelRuntimeBuildResult) => void;
   },
+  acquisitionSignal?: AbortSignal,
 ): {
   pending: Promise<PreparedModelRuntimeBuildResult[]>;
   completion: Promise<void>;
 } {
+  const cancellation = new AbortController();
+  const signal = acquisitionSignal
+    ? AbortSignal.any([acquisitionSignal, cancellation.signal])
+    : cancellation.signal;
+  const finished = createDeferredCore();
+  const unregisterClose = registerPreparedModelRuntimeClose(async (error) => {
+    cancellation.abort(error);
+    await finished.promise;
+  });
   const agentDirs = [...new Set(candidates.map(({ input }) => input.agentDir))];
   let stage = "previous generation completion";
   const previousBuildCompletions = agentDirs
@@ -456,6 +469,7 @@ export function startSerializedSnapshotBuildBatch(
       // retired owner cannot start expensive workspace preparation ahead of its replacement.
       assertPreparedModelRuntimeCandidatesCurrent(candidates);
     }
+    signal.throwIfAborted();
     return await buildSnapshotBatch(
       candidates,
       catalogMode,
@@ -478,6 +492,7 @@ export function startSerializedSnapshotBuildBatch(
             }
           }
         : undefined,
+      signal,
     );
   })();
   let abandoned = false;
@@ -521,5 +536,9 @@ export function startSerializedSnapshotBuildBatch(
       }
     });
   }
+  void completion.then(() => {
+    unregisterClose();
+    finished.resolve();
+  });
   return { pending, completion };
 }

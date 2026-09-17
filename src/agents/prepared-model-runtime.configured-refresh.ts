@@ -27,6 +27,7 @@ export async function refreshPreparedModelRuntimeSnapshotsNow(
     buildTimeoutMs: number;
     gatewayLifecycleActive: boolean;
     isPublicationCurrent: () => boolean;
+    acquisitionSignal: AbortSignal;
     progress?: Parameters<typeof publishPreparedModelRuntimeOwnerBatch>[0]["progress"];
   },
 ): Promise<void> {
@@ -89,5 +90,6 @@ export async function refreshPreparedModelRuntimeSnapshotsNow(
     pluginMetadataSnapshot: options.pluginMetadataSnapshot,
     registerEntriesAfterBuildStart: true,
     progress,
+    acquisitionSignal: context.acquisitionSignal,
   });
 }

@@ -102,6 +102,7 @@ export async function prepareWorkspaceBuildGroup(
     getConfiguredHarnessRuntimes?: () => readonly string[];
     basePluginIds?: readonly string[];
     onStage?: (stage: string) => void;
+    signal?: AbortSignal;
     assertCurrent?: (input: PreparedModelRuntimeInput) => void;
     onBeforeAuthCapture?: (input: PreparedModelRuntimeInput) => void;
     registryResources?: PreparedModelRuntimeBuildResources;
@@ -266,6 +267,7 @@ export async function prepareWorkspaceBuildGroup(
       ? reusablePluginGeneration.preparedStaticProviderCatalog
       : catalogMode === "static"
         ? await prepareImplicitProviderStaticCatalog({
+            signal: options.signal,
             config: input.config,
             env,
             pluginMetadataSnapshot,
@@ -304,6 +306,7 @@ export async function prepareWorkspaceBuildGroup(
     const ambientCredentialsStartedAt = performance.now();
     reportStage("ambient credentials");
     const ambientCredentials = await prepareAmbientAgentCredentialsForDiscovery({
+      signal: options.signal,
       config: input.config,
       env,
       authoritativeSyntheticAuthProviderRefs: pluginMetadataSnapshot.owners.cliBackends.keys(),
@@ -327,6 +330,7 @@ export async function prepareWorkspaceBuildGroup(
         ? {
             resolveSyntheticAuth: (provider: string) =>
               prepareSyntheticAuth({
+                signal: options.signal,
                 config: input.config,
                 env,
                 workspaceDir: input.workspaceDir,

@@ -437,6 +437,7 @@ export async function publishPreparedModelRuntimeOwnerBatch(params: {
   reusePluginGenerations?: boolean;
   pluginMetadataSnapshot?: PreparedModelRuntimePluginGeneration["pluginMetadataSnapshot"];
   progress?: { onStage: (stage: string) => void; onPublished: () => void };
+  acquisitionSignal?: AbortSignal;
 }): Promise<void> {
   const candidates = params.entries.map(({ owner }) => {
     const input = owner.input;
@@ -564,6 +565,7 @@ export async function publishPreparedModelRuntimeOwnerBatch(params: {
                     },
                   }
                 : undefined,
+              params.acquisitionSignal,
             );
             for (const candidate of currentGroup) {
               if (params.registerEntriesAfterBuildStart === true) {

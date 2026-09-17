@@ -99,6 +99,7 @@ const retainedGatewayRunOwners = new PreparedModelRuntimeOwnerRetention(8);
 let gatewayLifecycleActive = false;
 const publicationQueue = new PreparedModelRuntimePublicationQueue();
 let refreshRequestEpoch = 0;
+let refreshCancellation = new AbortController();
 let pendingModelRuntimeReplacement: PreparedModelRuntimeReplacement | undefined;
 const authPublication = new PreparedModelRuntimeAuthPublicationOwner();
 const getBlockingReplacement = () =>
@@ -137,6 +138,7 @@ async function closeModelRuntime(error: Error): Promise<void> {
   retainedGatewayRunOwners.clear(owners);
   gatewayLifecycleActive = false;
   replyDispatchPublication.clear();
+  refreshCancellation.abort(error);
   const results = await Promise.allSettled([
     publicationQueue.settle(),
     ...agentBuildCompletions.values(),
@@ -457,6 +459,8 @@ export function markPreparedModelRuntimeSnapshotsStale(
   } = {},
 ): PreparedModelRuntimeReplacementGateId | undefined {
   captureModelRuntimeLifetime();
+  const previousCancellation = refreshCancellation;
+  refreshCancellation = new AbortController();
   setPreparedModelRuntimeStartupStatus(undefined);
   replyDispatchPublication.clear();
   if (options.waitForReplacement) {
@@ -476,6 +480,8 @@ export function markPreparedModelRuntimeSnapshotsStale(
     retireStandalone: true,
     resetPluginGeneration: true,
   });
+  // Fence epochs and admission before cancellation can reenter a plugin callback.
+  previousCancellation.abort(new PreparedModelRuntimePublicationSupersededError(reason));
   notifyPreparedModelRuntimePublication({ phase: "invalidated" });
   if (!pendingModelRuntimeReplacement) {
     notifyPreparedModelRuntimePublication({ phase: "failed", error: staleError });
@@ -522,6 +528,7 @@ export function refreshPreparedModelRuntimeSnapshots(
     agentIds: initialAgentIds,
   });
   const requestEpoch = refreshRequestEpoch;
+  const acquisitionSignal = refreshCancellation.signal;
   const replacement = pendingModelRuntimeReplacement;
   let publicationAgentIds = initialAgentIds;
   const isPublicationCurrent = () =>
@@ -609,6 +616,7 @@ export function refreshPreparedModelRuntimeSnapshots(
           isPublicationCurrent,
           buildTimeoutMs: modelRuntimeBuildTimeoutMs,
           progress: startup?.progress,
+          acquisitionSignal,
         },
       );
       if (!isPublicationCurrent()) {
