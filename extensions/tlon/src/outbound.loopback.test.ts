@@ -2,7 +2,7 @@
 // urbit ship: authenticate then one bounded poke per chunked text unit.
 import { once } from "node:events";
 import * as http from "node:http";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { tlonPlugin } from "./channel.js";
 
 const TEXT_LIMIT = 10_000;
@@ -66,6 +66,55 @@ describe("tlon outbound chunking loopback", () => {
       });
       server = undefined;
     }
+  });
+
+  it("stops a preferred-adapter send revoked while authentication is pending", async () => {
+    const login = Promise.withResolvers<http.ServerResponse>();
+    const pokes: string[] = [];
+    const port = await listenLoopback((req, res) => {
+      if (req.url === "/~/login") {
+        login.resolve(res);
+        return;
+      }
+      pokes.push(req.url ?? "");
+      res.writeHead(204);
+      res.end();
+    });
+    const cfg = {
+      channels: {
+        tlon: {
+          ship: "~zod",
+          url: `http://127.0.0.1:${port}`,
+          code: "mock-code",
+          network: { dangerouslyAllowPrivateNetwork: true },
+        },
+      },
+    };
+    const send = tlonPlugin.message?.send?.text;
+    if (!send) {
+      throw new Error("expected preferred Tlon text sender");
+    }
+    const controller = new AbortController();
+    const revoked = new Error("Tlon delivery authority revoked");
+    const onPlatformSendDispatch = vi.fn(async () => {});
+    const result = send({
+      cfg,
+      to: "~nec",
+      text: "cancelled message",
+      assertDirectAdapterHandoff: () => controller.signal.throwIfAborted(),
+      onPlatformSendDispatch,
+    }).then(
+      (value) => ({ value }),
+      (error: unknown) => ({ error }),
+    );
+    const response = await login.promise;
+    controller.abort(revoked);
+    response.writeHead(200, { "set-cookie": "urbauth-~zod=mock-cookie" });
+    response.end("ok");
+
+    expect(await result).toEqual({ error: revoked });
+    expect(pokes).toEqual([]);
+    expect(onPlatformSendDispatch).not.toHaveBeenCalled();
   });
 
   it("delivers each chunked unit as a bounded independent poke the urbit transport accepts", async () => {
