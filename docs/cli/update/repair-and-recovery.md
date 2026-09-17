@@ -289,6 +289,8 @@ An empty raw archive without a checkpoint is also quarantined when its sanitized
 companion still contains history. Doctor keeps the sanitized records and existing
 SQLite rows, continues later repairs, and does not repeat the warning on subsequent
 runs. Quarantine does not import the changed bytes or delete the archive or backups.
+Quarantined raw archives remain local and are excluded from portable backups;
+sanitized companions and retained SQLite audit history are backed up normally.
 
 Doctor can leave other legacy audit sources in place when a raw archive has no
 checkpoint and begins with ambiguous whitespace, or cannot obtain another durable
