@@ -6,6 +6,7 @@ import type { ChatType } from "../../channels/chat-type.js";
 import type { InboundEventKind } from "../../channels/inbound-event/kind.js";
 import { deriveDurableFinalDeliveryRequirementsForBatch } from "../../channels/message/capabilities.js";
 import {
+  durableMessageBatchMayHaveReachedRecipient,
   sendDurableMessageBatchCore,
   serializeDurableMessagePayloadOutcomes,
   type DurableMessageBatchSendResult,
@@ -497,8 +498,9 @@ export async function sendMessage(params: MessageSendParams): Promise<MessageSen
       },
       params.conversationDeliveryTarget,
     );
+    const sendMayHaveReachedRecipient = durableMessageBatchMayHaveReachedRecipient(send);
     const handoffRejection =
-      send.status === "failed"
+      send.status === "failed" && !sendMayHaveReachedRecipient
         ? (send.payloadOutcomes
             ?.map((outcome) =>
               outcome.status === "failed"
@@ -519,6 +521,7 @@ export async function sendMessage(params: MessageSendParams): Promise<MessageSen
     }
     const results = send.status === "sent" || send.status === "partial_failed" ? send.results : [];
     const payloadOutcomes = serializeDurableMessagePayloadOutcomes(send.payloadOutcomes);
+    const sentBeforeError = send.status !== "sent" && sendMayHaveReachedRecipient;
 
     return {
       channel,
@@ -532,7 +535,7 @@ export async function sendMessage(params: MessageSendParams): Promise<MessageSen
       ...(send.status === "failed" || send.status === "partial_failed"
         ? { error: formatErrorMessage(send.error) }
         : {}),
-      ...(send.status === "partial_failed" ? { sentBeforeError: true as const } : {}),
+      ...(sentBeforeError ? { sentBeforeError: true as const } : {}),
       ...(payloadOutcomes ? { payloadOutcomes } : {}),
     };
   }

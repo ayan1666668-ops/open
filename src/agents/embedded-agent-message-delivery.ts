@@ -312,6 +312,14 @@ export function projectEmbeddedMessageDeliveryFact(
   );
 }
 
+export function hasAcceptedBroadcastDelivery(result: MessageActionResult): boolean {
+  return (
+    !result.dryRun &&
+    result.kind === "broadcast" &&
+    result.payload.results.some((entry) => entry.ok || entry.sentBeforeError)
+  );
+}
+
 export function attachEmbeddedMessageDeliveryFact(
   result: AgentToolResult<unknown>,
   fact: EmbeddedMessageDeliveryFact | undefined,

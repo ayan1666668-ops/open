@@ -20,7 +20,7 @@ export function findOutboundHandoffRejectedError(
       return current;
     }
     seen.add(current);
-    current = (current as { cause?: unknown }).cause;
+    current = "cause" in current ? current.cause : undefined;
   }
   return undefined;
 }

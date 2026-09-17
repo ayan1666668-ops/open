@@ -348,10 +348,12 @@ describe("broadcast send outcomes through native actions", () => {
       action: "broadcast",
       params: { channel: plugin.id, targets: ["first", "second", "third"], message: "hello" },
       gateway: {
-        request: async ({ params }) => {
-          const target = String(params.to);
+        request: async <T>({ params }): Promise<T> => {
+          const target = String(
+            params && typeof params === "object" && "to" in params ? params.to : "",
+          );
           gatewayTargets.push(target);
-          return { messageId: `sent-${target}` };
+          return { messageId: `sent-${target}` } as T;
         },
       },
       onPlatformSendDispatch: async () => {
@@ -372,6 +374,64 @@ describe("broadcast send outcomes through native actions", () => {
     const result = await pending;
 
     expect(gatewayTargets).toEqual(["first"]);
+    expect(result).toMatchObject({
+      kind: "broadcast",
+      payload: {
+        results: [
+          { to: "first", ok: true },
+          { to: "second", ok: false, attempted: false },
+          { to: "third", ok: false, attempted: false },
+        ],
+      },
+    });
+  });
+
+  it("marks a Gateway-executed action unattempted when its final host handoff rejects", async () => {
+    let actionCurrent = true;
+    let gatewayRequests = 0;
+    const plugin: ChannelPlugin = {
+      ...createChannelTestPluginBase({ id: "broadcast-test" }),
+      messaging: { targetResolver: { looksLikeId: () => true } },
+      outbound: {
+        deliveryMode: "direct",
+        sendText: async () => {
+          throw new Error("Gateway action used core delivery");
+        },
+      },
+      actions: {
+        describeMessageTool: () => ({ actions: ["send"] }),
+        supportsAction: ({ action }) => action === "send",
+        resolveExecutionMode: ({ action }) => {
+          if (gatewayRequests === 1) {
+            actionCurrent = false;
+          }
+          return action === "send" ? "gateway" : "local";
+        },
+        handleAction: async () => {
+          throw new Error("Gateway action ran locally");
+        },
+      },
+    };
+    setActivePluginRegistry(createTestRegistry([{ pluginId: plugin.id, plugin, source: "test" }]));
+
+    const result = await runMessageAction({
+      cfg: {},
+      action: "broadcast",
+      params: { channel: plugin.id, targets: ["first", "second", "third"], message: "hello" },
+      gateway: {
+        request: async <T>(): Promise<T> => {
+          gatewayRequests += 1;
+          return { ok: true, messageId: `sent-${gatewayRequests}` } as T;
+        },
+      },
+      assertDirectAdapterHandoff: () => {
+        if (!actionCurrent) {
+          throw Object.assign(new Error("current action canceled"), { name: "AbortError" });
+        }
+      },
+    });
+
+    expect(gatewayRequests).toBe(1);
     expect(result).toMatchObject({
       kind: "broadcast",
       payload: {
@@ -408,7 +468,7 @@ describe("broadcast send outcomes through native actions", () => {
             try {
               await context.onPlatformSendDispatch?.();
               transported.push(context.to);
-              return { messageId: `sent-${context.to}` };
+              return { channel: "broadcast-test", messageId: `sent-${context.to}` };
             } finally {
               insideAdapter = false;
             }
@@ -458,6 +518,121 @@ describe("broadcast send outcomes through native actions", () => {
       });
     },
   );
+
+  it.each([undefined, true])(
+    "keeps a failed first core target after its platform dispatch (bestEffort: %s)",
+    async (bestEffort) => {
+      let actionCurrent = true;
+      let releaseProvider: () => void = () => undefined;
+      const providerWait = new Promise<void>((resolve) => {
+        releaseProvider = resolve;
+      });
+      let enterProvider: () => void = () => undefined;
+      const providerEntered = new Promise<void>((resolve) => {
+        enterProvider = resolve;
+      });
+      const attempted: string[] = [];
+      const plugin: ChannelPlugin = {
+        ...createChannelTestPluginBase({ id: "broadcast-test" }),
+        messaging: { targetResolver: { looksLikeId: () => true } },
+        outbound: {
+          deliveryMode: "direct",
+          sendText: async (context) => {
+            attempted.push(context.to);
+            await context.onPlatformSendDispatch?.();
+            enterProvider();
+            await providerWait;
+            throw new Error("provider result unknown");
+          },
+        },
+      };
+      setActivePluginRegistry(
+        createTestRegistry([{ pluginId: plugin.id, plugin, source: "test" }]),
+      );
+
+      const pending = runMessageAction({
+        cfg: {},
+        action: "broadcast",
+        params: {
+          channel: plugin.id,
+          targets: ["first", "second"],
+          message: "hello",
+          ...(bestEffort === undefined ? {} : { bestEffort }),
+        },
+        assertDirectAdapterHandoff: () => {
+          if (!actionCurrent) {
+            throw Object.assign(new Error("current action canceled"), { name: "AbortError" });
+          }
+        },
+      });
+      await providerEntered;
+      actionCurrent = false;
+      releaseProvider();
+      const result = await pending;
+
+      expect(attempted).toEqual(["first"]);
+      expect(result).toMatchObject({
+        kind: "broadcast",
+        payload: {
+          results: [
+            { to: "first", ok: false, error: "provider result unknown", sentBeforeError: true },
+            { to: "second", ok: false, attempted: false },
+          ],
+        },
+      });
+    },
+  );
+
+  it("still rejects cancellation after a normalized first-target failure", async () => {
+    let actionCurrent = true;
+    let releaseFailure: () => void = () => undefined;
+    const failureWait = new Promise<void>((resolve) => {
+      releaseFailure = resolve;
+    });
+    let enterFailure: () => void = () => undefined;
+    const failureEntered = new Promise<void>((resolve) => {
+      enterFailure = resolve;
+    });
+    const handled: string[] = [];
+    const plugin: ChannelPlugin = {
+      ...createChannelTestPluginBase({ id: "broadcast-test" }),
+      messaging: { targetResolver: { looksLikeId: () => true } },
+      outbound: {
+        deliveryMode: "direct",
+        sendText: async () => {
+          throw new Error("native action bypassed");
+        },
+      },
+      actions: {
+        describeMessageTool: () => ({ actions: ["send"] }),
+        supportsAction: ({ action }) => action === "send",
+        handleAction: async ({ params }) => {
+          handled.push(String(params.to));
+          enterFailure();
+          await failureWait;
+          return jsonResult({ ok: false, error: "provider rejected message" });
+        },
+      },
+    };
+    setActivePluginRegistry(createTestRegistry([{ pluginId: plugin.id, plugin, source: "test" }]));
+
+    const pending = runMessageAction({
+      cfg: {},
+      action: "broadcast",
+      params: { channel: plugin.id, targets: ["first", "second"], message: "hello" },
+      assertDirectAdapterHandoff: () => {
+        if (!actionCurrent) {
+          throw Object.assign(new Error("current action canceled"), { name: "AbortError" });
+        }
+      },
+    });
+    await failureEntered;
+    actionCurrent = false;
+    releaseFailure();
+
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect(handled).toEqual(["first"]);
+  });
 
   it("returns accepted rows through the message tool after turn cancellation", async () => {
     let releaseSecond: () => void = () => undefined;

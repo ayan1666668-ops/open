@@ -139,7 +139,7 @@ async function handleBroadcastAction(
     error !== null &&
     typeof error === "object" &&
     (error as { sentBeforeError?: unknown }).sentBeforeError === true;
-  const captureInterruption = (): unknown | undefined => {
+  const captureInterruption = (): unknown => {
     try {
       throwIfAborted(input.abortSignal);
       input.assertDirectAdapterHandoff?.();
@@ -218,6 +218,9 @@ async function handleBroadcastAction(
         };
         const interruption = outcome.ok ? undefined : captureInterruption();
         if (interruption) {
+          if (!hadAcceptedResult && !outcome.sentBeforeError) {
+            throw interruption;
+          }
           interrupted = true;
         }
         results.push(entry);
@@ -230,11 +233,11 @@ async function handleBroadcastAction(
         const interruption =
           err instanceof OutboundHandoffRejectedError ? err : captureInterruption();
         if (interruption) {
-          if (!hadAcceptedResult) {
+          const sentBeforeError = errorSentBefore(err);
+          if (!hadAcceptedResult && !sentBeforeError) {
             throw err;
           }
           interrupted = true;
-          const sentBeforeError = errorSentBefore(err);
           results.push({
             channel: targetChannel,
             to: target,
