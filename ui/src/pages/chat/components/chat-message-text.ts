@@ -8,6 +8,7 @@ import { toSanitizedMarkdownHtml, toStreamingMarkdownParts } from "../../../comp
 import { t } from "../../../i18n/index.ts";
 import { registerChatMessageMetadataEnglish } from "../../../i18n/locales/en-chat-message-metadata.ts";
 import { detectTextDirection } from "../../../lib/text-direction.ts";
+import { findMessageDisclosureLine, type MessageTextRect } from "./chat-message-disclosure.ts";
 import { renderMarkdownMedia, type MarkdownMedia } from "./chat-message-media-markdown.ts";
 
 registerChatMessageMetadataEnglish();
@@ -76,6 +77,8 @@ export function renderMessageJson(
 // Character length owns normal disclosure; this high line cap only bounds newline-heavy prompts.
 const USER_MESSAGE_COLLAPSED_CHAR_LIMIT = 1_200;
 const USER_MESSAGE_COLLAPSED_LINE_LIMIT = 40;
+const USER_MESSAGE_PREVIEW_LINES = 5;
+const MESSAGE_PREVIEW_LAST_LINE_FRACTION = 2 / 3;
 
 function shouldCollapseUserMessage(markdown: string): boolean {
   return (
@@ -101,12 +104,59 @@ function userMessageOverflowRef(expanded: boolean) {
       if (!disclosure || !toggle) {
         return;
       }
+      let clamp: string | undefined;
+      let lastLineHeight: string | undefined;
+      const text = element.querySelector<HTMLElement>(":scope > .chat-text");
+      if (!expanded && text && element.clientWidth > 0) {
+        const origin = element.getBoundingClientRect().top - element.scrollTop;
+        const defaultLineHeight = Number.parseFloat(getComputedStyle(text).lineHeight);
+        const walker = document.createTreeWalker(text, NodeFilter.SHOW_TEXT);
+        const range = document.createRange();
+        const rects: MessageTextRect[] = [];
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+          if (!node.textContent?.trim() || !node.parentElement) {
+            continue;
+          }
+          const lineHeight =
+            Number.parseFloat(getComputedStyle(node.parentElement).lineHeight) || defaultLineHeight;
+          range.selectNodeContents(node);
+          for (const rect of range.getClientRects()) {
+            rects.push({
+              top: rect.top - origin,
+              bottom: rect.bottom - origin,
+              width: rect.width,
+              lineHeight,
+            });
+          }
+        }
+        const lastLine = findMessageDisclosureLine(rects, USER_MESSAGE_PREVIEW_LINES);
+        if (lastLine) {
+          clamp = `${lastLine.top + lastLine.lineHeight * MESSAGE_PREVIEW_LAST_LINE_FRACTION}px`;
+          lastLineHeight = `${lastLine.lineHeight}px`;
+        }
+      }
+      for (const [property, value] of [
+        ["--chat-disclosure-clamp", clamp],
+        ["--chat-disclosure-line-height", lastLineHeight],
+      ] as const) {
+        if (value === undefined) {
+          element.style.removeProperty(property);
+        } else if (element.style.getPropertyValue(property) !== value) {
+          element.style.setProperty(property, value);
+        }
+      }
       toggle.hidden = !expanded && element.scrollHeight <= element.clientHeight + 1;
     };
     // Lit resolves refs while siblings are still committing. Measure after the
     // toggle exists; it renders visible so collapsing never shifts row height,
     // and only content that fits the clamp hides it.
-    queueMicrotask(update);
+    queueMicrotask(() => {
+      update();
+      const text = element.querySelector(":scope > .chat-text");
+      if (text) {
+        resizeObserver?.observe(text);
+      }
+    });
     if (typeof ResizeObserver === "function") {
       resizeObserver = new ResizeObserver(update);
       resizeObserver.observe(element);
