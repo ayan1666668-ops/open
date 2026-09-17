@@ -553,6 +553,10 @@ async function prepareCliRunContextWithinReadFence(
         },
       } satisfies OpenClawConfig);
   const started = Date.now();
+  // Recovery retry budgets measure elapsed time; keep a monotonic anchor so a
+  // wall-clock step (NTP sync, VM suspend, manual clock change) cannot shorten
+  // or extend an operator-configured timeout.
+  const startedMonotonicMs = performance.now();
   const executionMode = params.executionMode ?? "agent";
   const isSideQuestion = executionMode === "side-question";
   const isControlOperation = params.controlOperation !== undefined;
@@ -2237,6 +2241,7 @@ async function prepareCliRunContextWithinReadFence(
       ...(authStore ? { authProfileStore: authStore } : {}),
       agentDir,
       started,
+      startedMonotonicMs,
       workspaceDir,
       cwd,
       backendResolved,
