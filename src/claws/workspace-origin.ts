@@ -1,6 +1,12 @@
 // Durable record of which Claw workspaces were adopted rather than created by the install.
+import { randomUUID } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
+import { MAX_WORKSPACE_BOOTSTRAP_FILE_BYTES } from "../agents/workspace-bootstrap-read.js";
+import type { BootstrapPublicationIdentity } from "../agents/workspace.js";
+import { openRootFileSync } from "../infra/boundary-file-read.js";
 import {
   executeSqliteQuerySync,
   executeSqliteQueryTakeFirstSync,
@@ -15,7 +21,16 @@ import {
 } from "../state/openclaw-state-db.js";
 import type { ClawAddPlan } from "./types.js";
 
-type WorkspaceOriginDatabase = Pick<OpenClawStateKyselyDatabase, "claw_workspace_files">;
+type WorkspaceOriginDatabase = Pick<
+  OpenClawStateKyselyDatabase,
+  "claw_workspace_files" | "claw_installs"
+>;
+
+type WorkspaceOriginMarker = {
+  adoptedFiles: string[];
+  installId: string;
+  bootstrapPublication?: BootstrapPublicationIdentity;
+};
 
 // Older releases treat every workspace-file row as a removable file. Pointing the reserved row at
 // the directory itself makes those releases fail closed during file inspection instead of
@@ -52,9 +67,11 @@ function recordAdoptedWorkspaceRow(params: {
   // The consented adopted set is stored here, not derived from ownership rows: adopted and
   // written files persist identically shaped rows, so a retried adoption plan (rebuilt after a
   // later-phase failure) needs this to tell which declared destinations it may re-label "adopt".
-  // bootstrapSeeded starts false: only a successful seed by *this* install may flip it, so an
-  // operator-created identical BOOTSTRAP.md can never be mistaken for an already-seeded one.
-  const sourcePath = JSON.stringify({ adoptedFiles: params.adoptedFiles, bootstrapSeeded: false });
+  // A fresh install gets a fresh generation even when its plan, agent and workspace repeat.
+  const sourcePath = JSON.stringify({
+    adoptedFiles: params.adoptedFiles,
+    installId: randomUUID(),
+  });
   executeSqliteQuerySync(
     params.db,
     kyselyFor(params.db)
@@ -116,7 +133,12 @@ export function deleteAdoptedWorkspaceRow(db: DatabaseSync, agentId: string): vo
 
 export type ClawWorkspaceAdoption =
   | { adopted: false }
-  | { adopted: true; adoptedFiles: readonly string[]; bootstrapSeeded: boolean };
+  | {
+      adopted: true;
+      adoptedFiles: readonly string[];
+      bootstrapSeeded: boolean;
+      bootstrapPublication?: BootstrapPublicationIdentity;
+    };
 
 function selectWorkspaceOriginRow(
   db: DatabaseSync,
@@ -136,10 +158,7 @@ function selectWorkspaceOriginRow(
 }
 
 /** The marker's stored shape is unshipped: a non-object or malformed value fails closed, no compat. */
-function parseWorkspaceOriginMarker(
-  agentId: string,
-  sourcePath: string,
-): { adoptedFiles: string[]; bootstrapSeeded: boolean } {
+function parseWorkspaceOriginMarker(agentId: string, sourcePath: string): WorkspaceOriginMarker {
   let parsed: unknown;
   try {
     parsed = JSON.parse(sourcePath);
@@ -152,13 +171,20 @@ function parseWorkspaceOriginMarker(
     !isRecord(parsed) ||
     !Array.isArray(parsed.adoptedFiles) ||
     parsed.adoptedFiles.some((value) => typeof value !== "string") ||
-    typeof parsed.bootstrapSeeded !== "boolean"
+    typeof parsed.installId !== "string" ||
+    !parsed.installId ||
+    (parsed.bootstrapPublication !== undefined &&
+      !isBootstrapPublication(parsed.bootstrapPublication))
   ) {
     throw new Error(
       `Claw adopted-workspace marker for agent ${JSON.stringify(agentId)} has a malformed consented record.`,
     );
   }
-  return { adoptedFiles: parsed.adoptedFiles, bootstrapSeeded: parsed.bootstrapSeeded };
+  return {
+    adoptedFiles: parsed.adoptedFiles,
+    installId: parsed.installId,
+    ...(parsed.bootstrapPublication ? { bootstrapPublication: parsed.bootstrapPublication } : {}),
+  };
 }
 
 /**
@@ -180,7 +206,13 @@ export function readClawWorkspaceAdoptionFromDatabase(
   if (!row) {
     return { adopted: false };
   }
-  return { adopted: true, ...parseWorkspaceOriginMarker(agentId, row.source_path) };
+  const marker = parseWorkspaceOriginMarker(agentId, row.source_path);
+  return {
+    adopted: true,
+    adoptedFiles: marker.adoptedFiles,
+    bootstrapSeeded: clawBootstrapPublicationMatches(workspace, marker.bootstrapPublication),
+    ...(marker.bootstrapPublication ? { bootstrapPublication: marker.bootstrapPublication } : {}),
+  };
 }
 
 export function readClawWorkspaceAdoption(
@@ -192,50 +224,148 @@ export function readClawWorkspaceAdoption(
   return readClawWorkspaceAdoptionFromDatabase(db, agentId, workspace);
 }
 
-/**
- * Flips the marker's bootstrapSeeded flag once this install actually writes BOOTSTRAP.md, so a
- * later resume can tell its own seed apart from an operator-created file with the same content.
- * Must affect exactly the one marker row created for this agent/workspace, or it throws.
- */
-export function recordClawBootstrapSeeded(
-  agentId: string,
+/** Validate the exact, JSON-safe prepublication identity; missing evidence never grants ownership. */
+function isBootstrapPublication(value: unknown): value is BootstrapPublicationIdentity {
+  return (
+    isRecord(value) &&
+    typeof value.directoryPath === "string" &&
+    ["directoryDev", "directoryIno", "dev", "ino", "birthtimeNs"].every(
+      (key) => typeof value[key] === "string" && /^\d+$/.test(value[key]),
+    )
+  );
+}
+
+/** Compare a safe, pinned final entry with the prepublication receipt, never just its bytes. */
+export function clawBootstrapPublicationMatches(
   workspace: string,
-  options: OpenClawStateDatabaseOptions & { nowMs?: number } = {},
-): void {
-  runOpenClawStateWriteTransaction(({ db }) => {
-    const row = selectWorkspaceOriginRow(db, agentId, workspace);
-    if (!row) {
-      throw new Error(
-        `Claw adopted-workspace marker for agent ${JSON.stringify(agentId)} is missing; cannot record the bootstrap seed.`,
-      );
+  publication: BootstrapPublicationIdentity | undefined,
+  relativePath = "BOOTSTRAP.md",
+  observedFile?: fs.BigIntStats,
+): boolean {
+  if (!publication) {
+    return false;
+  }
+  let fd: number | undefined;
+  try {
+    const directoryPath = fs.realpathSync(workspace);
+    const opened = openRootFileSync({
+      absolutePath: path.join(workspace, relativePath),
+      maxBytes: MAX_WORKSPACE_BOOTSTRAP_FILE_BYTES,
+      rootPath: workspace,
+      boundaryLabel: "Claw bootstrap",
+      symlinks: "reject",
+    });
+    if (!opened.ok) {
+      return false;
     }
-    const marker = parseWorkspaceOriginMarker(agentId, row.source_path);
-    const result = executeSqliteQuerySync(
-      db,
-      kyselyFor(db)
-        .updateTable("claw_workspace_files")
-        .set({
-          source_path: JSON.stringify({ adoptedFiles: marker.adoptedFiles, bootstrapSeeded: true }),
-          updated_at_ms: options.nowMs ?? Date.now(),
-        })
-        .where("agent_id", "=", agentId)
-        .where("target_path", "=", CLAW_ADOPTED_WORKSPACE_MARKER_PATH)
-        .where("workspace", "=", workspace)
-        .where("content_digest", "=", CLAW_ADOPTED_WORKSPACE_MARKER_DIGEST),
+    fd = opened.fd;
+    const file = fs.fstatSync(fd, { bigint: true });
+    const directory = fs.lstatSync(directoryPath, { bigint: true });
+    return (
+      (!observedFile ||
+        (observedFile.dev === file.dev &&
+          observedFile.ino === file.ino &&
+          observedFile.birthtimeNs === file.birthtimeNs)) &&
+      directory.isDirectory() &&
+      directoryPath === publication.directoryPath &&
+      directory.dev.toString() === publication.directoryDev &&
+      directory.ino.toString() === publication.directoryIno &&
+      file.dev.toString() === publication.dev &&
+      file.ino.toString() === publication.ino &&
+      file.birthtimeNs.toString() === publication.birthtimeNs &&
+      file.nlink === 1n
     );
-    if (result.numAffectedRows !== 1n) {
-      throw new Error(
-        `Claw adopted-workspace marker for agent ${JSON.stringify(agentId)} did not update exactly one row.`,
-      );
+  } catch {
+    return false;
+  } finally {
+    if (fd !== undefined) {
+      fs.closeSync(fd);
     }
-  }, options);
+  }
+}
+
+/** Bind the producer to this exact active install before asynchronous filesystem preparation. */
+export function prepareClawBootstrapPublication(
+  plan: ClawAddPlan,
+  options: OpenClawStateDatabaseOptions & { nowMs?: number } = {},
+):
+  | {
+      beforePublish: (publication: BootstrapPublicationIdentity) => void;
+      ownsExisting: (file: fs.BigIntStats) => boolean;
+      assertCurrent: () => void;
+    }
+  | undefined {
+  if (!planAdoptsWorkspace(plan)) {
+    return undefined;
+  }
+  const { db } = openOpenClawStateDatabase(options);
+  const row = selectWorkspaceOriginRow(db, plan.agent.finalId, plan.agent.workspace);
+  if (!row) {
+    throw new Error("Claw workspace adoption disappeared before bootstrap preparation.");
+  }
+  const generation = parseWorkspaceOriginMarker(plan.agent.finalId, row.source_path).installId;
+  const currentMarker = (database: DatabaseSync) => {
+    const current = selectWorkspaceOriginRow(database, plan.agent.finalId, plan.agent.workspace);
+    const marker = current && parseWorkspaceOriginMarker(plan.agent.finalId, current.source_path);
+    const install = executeSqliteQueryTakeFirstSync(
+      database,
+      kyselyFor(database)
+        .selectFrom("claw_installs")
+        .select("plan_integrity")
+        .where("agent_id", "=", plan.agent.finalId)
+        .where("workspace", "=", plan.agent.workspace)
+        .where("status", "in", ["workspace_ready", "config_committed"]),
+    );
+    if (
+      !current ||
+      !marker ||
+      marker.installId !== generation ||
+      install?.plan_integrity !== plan.planIntegrity
+    ) {
+      throw new Error("Claw install changed before bootstrap publication.");
+    }
+    return { current, marker };
+  };
+  return {
+    beforePublish: (publication) => {
+      runOpenClawStateWriteTransaction(({ db: transactionDb }) => {
+        const { current, marker } = currentMarker(transactionDb);
+        const updated = executeSqliteQuerySync(
+          transactionDb,
+          kyselyFor(transactionDb)
+            .updateTable("claw_workspace_files")
+            .set({
+              source_path: JSON.stringify({ ...marker, bootstrapPublication: publication }),
+              updated_at_ms: options.nowMs ?? Date.now(),
+            })
+            .where("agent_id", "=", plan.agent.finalId)
+            .where("target_path", "=", CLAW_ADOPTED_WORKSPACE_MARKER_PATH)
+            .where("source_path", "=", current.source_path),
+        );
+        if (updated.numAffectedRows !== 1n) {
+          throw new Error("Claw bootstrap preparation did not update its exact owner.");
+        }
+      }, options);
+    },
+    // Native state commits recheck DB authority only; filesystem inspection stays outside BEGIN.
+    assertCurrent: () => {
+      currentMarker(db);
+    },
+    ownsExisting: (file) =>
+      clawBootstrapPublicationMatches(
+        plan.agent.workspace,
+        currentMarker(db).marker.bootstrapPublication,
+        "BOOTSTRAP.md",
+        file,
+      ),
+  };
 }
 
 /**
  * Whether BOOTSTRAP.md in this workspace may be treated as this install's own seed. A created
  * workspace holds only this install's writes until its config commits; an adopted one holds only
- * what the recorded receipt says this install seeded, whatever the file's bytes.
+ * the exact file identified before this install published it.
  */
-export function clawBootstrapSeedOwned(origin: ClawWorkspaceAdoption): boolean {
-  return !origin.adopted || origin.bootstrapSeeded;
+export function clawBootstrapSeedOwned(origin: ClawWorkspaceAdoption, workspace: string): boolean {
+  return !origin.adopted || clawBootstrapPublicationMatches(workspace, origin.bootstrapPublication);
 }

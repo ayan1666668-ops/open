@@ -31,6 +31,15 @@ export function commitClawAddAgentConfig(params: {
       entries: Object.fromEntries(agentsToPreserve.map(({ id, ...entry }) => [id, entry])),
     },
   };
+  if (
+    findOverlappingWorkspaceAgentIds(configWithPreservedAgents, plan.agent.finalId, workspace)
+      .length > 0
+  ) {
+    throw new ClawAddMutationError(
+      "workspace_collision",
+      "Workspace " + JSON.stringify(workspace) + " is already assigned to an agent.",
+    );
+  }
   const normalizedAgentId = normalizeAgentId(plan.agent.finalId);
   const existingAgent = agentsToPreserve.find(
     (agent) => normalizeAgentId(agent.id) === normalizedAgentId,
@@ -56,15 +65,7 @@ export function commitClawAddAgentConfig(params: {
       "Agent " + JSON.stringify(plan.agent.finalId) + " was created after planning.",
     );
   }
-  if (
-    findOverlappingWorkspaceAgentIds(configWithPreservedAgents, plan.agent.finalId, workspace)
-      .length > 0
-  ) {
-    throw new ClawAddMutationError(
-      "workspace_collision",
-      "Workspace " + JSON.stringify(workspace) + " is already assigned to an agent.",
-    );
-  }
+
   return {
     ...config,
     agents: {

@@ -1,19 +1,25 @@
 // Tests for planning Claw adds that adopt an existing workspace directory.
 import { createHash } from "node:crypto";
+import syncFs from "node:fs";
 import { link, mkdir, readFile, rmdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { __setFsSafeTestHooksForTest } from "@openclaw/fs-safe/test-hooks";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { readWorkspaceStateSnapshot } from "../agents/workspace-state-store.js";
+import { seedWorkspaceBootstrap } from "../agents/workspace.js";
 import type { OpenClawConfig } from "../config/config.js";
+import * as fsSafe from "../infra/fs-safe.js";
 import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
 import { applyClawAddPlan } from "./add.js";
+import { seedClawPackageBootstrap } from "./bootstrap.js";
 import { buildClawAddPlan } from "./lifecycle.js";
 import { ClawPackageInstallError } from "./packages.js";
+import { deleteClawInstallRecord, persistClawInstallRecord } from "./provenance.js";
 import { makeProvenancePlan, readInstallRow, stateEnv } from "./provenance.test-helpers.js";
 import { parseClawManifest } from "./schema.js";
 import type { ClawManifest, ClawSourceIdentity } from "./types.js";
-import { readClawWorkspaceAdoption } from "./workspace-origin.js";
+import { prepareClawBootstrapPublication, readClawWorkspaceAdoption } from "./workspace-origin.js";
 import { readClawWorkspaceFiles } from "./workspace.js";
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
@@ -421,6 +427,124 @@ describe("planWorkspaceAdoptionTargets resume ownership", () => {
     };
   }
 
+  it.each(["source-read", "native-admission"] as const)(
+    "revokes the direct publisher when its install is replaced during %s",
+    async (boundary) => {
+      // The native-admission case intentionally requires fs-safe's supported native backend.
+      if (boundary === "native-admission" && process.platform === "win32") {
+        return;
+      }
+      const { root, source, manifest, packageBootstrap, workspace } =
+        await buildResumeManifestAndSource();
+      await mkdir(workspace);
+      const plan = await buildClawAddPlan({
+        manifest,
+        source,
+        packageBootstrap,
+        context: { workspace, adoptExistingWorkspace: true },
+      });
+      const env = stateEnv(root);
+      persistClawInstallRecord(plan, { env, status: "workspace_ready", nowMs: 1_000 });
+      let rotated = false;
+      const replaceInstall = () => {
+        if (rotated) {
+          return;
+        }
+        rotated = true;
+        deleteClawInstallRecord(plan.agent.finalId, { env });
+        persistClawInstallRecord(plan, { env, status: "workspace_ready", nowMs: 1_000 });
+      };
+      const realRoot = fsSafe.root;
+      const realLink = syncFs.linkSync.bind(syncFs);
+      const rootSpy = vi.spyOn(fsSafe, "root").mockImplementation(async (...args) => {
+        const openedRoot = await realRoot(...args);
+        if (
+          boundary === "source-read" &&
+          openedRoot.rootReal === syncFs.realpathSync(source.packageRoot)
+        ) {
+          const read = openedRoot.read.bind(openedRoot);
+          vi.spyOn(openedRoot, "read").mockImplementation(async (...readArgs) => {
+            const result = await read(...readArgs);
+            replaceInstall();
+            return result;
+          });
+        }
+        return openedRoot;
+      });
+      const linkSpy = vi.spyOn(syncFs, "linkSync").mockImplementation((from, to) => {
+        if (
+          boundary === "native-admission" &&
+          String(to) === join(syncFs.realpathSync(workspace), "BOOTSTRAP.md")
+        ) {
+          throw Object.assign(new Error("hardlinks unavailable"), { code: "ENOTSUP" });
+        }
+        return realLink(from, to);
+      });
+      if (boundary === "native-admission") {
+        __setFsSafeTestHooksForTest({
+          beforeRootFallbackMutation: (operation, target) => {
+            if (
+              operation === "move" &&
+              target === join(syncFs.realpathSync(workspace), "BOOTSTRAP.md")
+            ) {
+              replaceInstall();
+            }
+          },
+        });
+      }
+      try {
+        await expect(seedClawPackageBootstrap(plan, { env })).rejects.toThrow(
+          "Claw install changed before bootstrap publication",
+        );
+        expect(rotated).toBe(true);
+        await expect(readFile(join(workspace, "BOOTSTRAP.md"))).rejects.toMatchObject({
+          code: "ENOENT",
+        });
+      } finally {
+        __setFsSafeTestHooksForTest();
+        linkSpy.mockRestore();
+        rootSpy.mockRestore();
+      }
+    },
+  );
+
+  it("refuses a prepared publisher after the same plan receives a new install generation", async () => {
+    const { root, source, manifest, packageBootstrap, workspace, bootstrapContent } =
+      await buildResumeManifestAndSource();
+    await mkdir(workspace);
+    const plan = await buildClawAddPlan({
+      manifest,
+      source,
+      packageBootstrap,
+      context: { workspace, adoptExistingWorkspace: true },
+    });
+    const env = stateEnv(root);
+    persistClawInstallRecord(plan, { env, status: "workspace_ready", nowMs: 1_000 });
+    const publication = prepareClawBootstrapPublication(plan, { env });
+    if (!publication) {
+      throw new Error("expected an adopted workspace publisher");
+    }
+    deleteClawInstallRecord(plan.agent.finalId, { env });
+    // Identical plan and timestamp deliberately cannot substitute for generation identity.
+    persistClawInstallRecord(plan, { env, status: "workspace_ready", nowMs: 1_000 });
+    await expect(
+      seedWorkspaceBootstrap({
+        dir: workspace,
+        content: bootstrapContent,
+        stateOptions: { env },
+        existingFile: "conflict",
+        ...publication,
+      }),
+    ).rejects.toThrow("Claw install changed before bootstrap publication");
+    await expect(readFile(join(workspace, "BOOTSTRAP.md"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    expect(readClawWorkspaceAdoption(plan.agent.finalId, workspace, { env })).toMatchObject({
+      adopted: true,
+      bootstrapSeeded: false,
+    });
+  });
+
   it("rebuilds an identical plan on resume after a config-commit failure leaves files written", async () => {
     const { root, source, manifest, packageBootstrap, workspace, bootstrapContent } =
       await buildResumeManifestAndSource();
@@ -463,9 +587,9 @@ describe("planWorkspaceAdoptionTargets resume ownership", () => {
     await expect(readFile(join(workspace, "BOOTSTRAP.md"))).resolves.toEqual(bootstrapContent);
 
     const workspaceOrigin = readClawWorkspaceAdoption("worker", workspace, { env });
-    // The seed step ran before the config-commit failure, so this install's own
-    // recordClawBootstrapSeeded call already flipped the marker's bootstrapSeeded flag.
-    expect(workspaceOrigin).toEqual({
+    // The seed producer records identity before publication; the later config failure
+    // cannot erase this install's ownership of its still-present bootstrap.
+    expect(workspaceOrigin).toMatchObject({
       adopted: true,
       adoptedFiles: ["SOUL.md"],
       bootstrapSeeded: true,
@@ -489,7 +613,7 @@ describe("planWorkspaceAdoptionTargets resume ownership", () => {
         resumableWorkspaceOwnership: {
           adoptedFiles: workspaceOrigin.adoptedFiles,
           ownedFiles,
-          bootstrapSeeded: workspaceOrigin.bootstrapSeeded,
+          bootstrapPublication: workspaceOrigin.bootstrapPublication,
         },
       },
     });
@@ -517,7 +641,7 @@ describe("planWorkspaceAdoptionTargets resume ownership", () => {
         resumableWorkspaceOwnership: {
           adoptedFiles: workspaceOrigin.adoptedFiles,
           ownedFiles: unownedFiles,
-          bootstrapSeeded: workspaceOrigin.bootstrapSeeded,
+          bootstrapPublication: workspaceOrigin.bootstrapPublication,
         },
       },
     });
@@ -627,7 +751,7 @@ describe("planWorkspaceAdoptionTargets resume ownership", () => {
         resumableWorkspaceOwnership: {
           adoptedFiles: workspaceOrigin.adoptedFiles,
           ownedFiles,
-          bootstrapSeeded: workspaceOrigin.bootstrapSeeded,
+          bootstrapPublication: workspaceOrigin.bootstrapPublication,
         },
       },
     });

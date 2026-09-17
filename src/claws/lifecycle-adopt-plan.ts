@@ -1,9 +1,11 @@
 // Decides which existing workspace files an adopting Claw add may claim without rewriting them.
 import { createHash } from "node:crypto";
 import { lstat } from "node:fs/promises";
+import type { BootstrapPublicationIdentity } from "../agents/workspace.js";
 import { FsSafeError, root as fsSafeRoot, type Root } from "../infra/fs-safe.js";
 import { MAX_MANAGED_FILE_BYTES } from "./source-limits.js";
 import type { ClawAddCapabilityChange, ClawAddPlanAction, ClawDiagnostic } from "./types.js";
+import { clawBootstrapPublicationMatches } from "./workspace-origin.js";
 import type { PersistedClawWorkspaceFile } from "./workspace.js";
 
 type AdoptionPendingFile = {
@@ -171,7 +173,7 @@ async function readAdoptableTarget(
 export type WorkspaceAdoptionOwnership = {
   adoptedFiles: readonly string[];
   ownedFiles: readonly PersistedClawWorkspaceFile[];
-  bootstrapSeeded: boolean;
+  bootstrapPublication?: BootstrapPublicationIdentity;
 };
 
 /**
@@ -196,7 +198,7 @@ export async function planWorkspaceAdoptionTargets(params: {
     // BOOTSTRAP.md that happens to match byte-for-byte must still block, never adopt silently.
     const alreadySeeded =
       existing.state === "adoptable" &&
-      params.ownership?.bootstrapSeeded === true &&
+      clawBootstrapPublicationMatches(params.workspace, params.ownership?.bootstrapPublication) &&
       existing.digest === params.packageBootstrap.digest;
     if (existing.state !== "absent" && !alreadySeeded) {
       const diagnostic = adoptionBlocker(
@@ -239,7 +241,10 @@ export async function planWorkspaceAdoptionTargets(params: {
       }
       if (identical) {
         pending.action.action = "adopt";
-        pending.action.details = { ...pending.action.details, expectedState: "existing-identical" };
+        pending.action.details = {
+          ...pending.action.details,
+          expectedState: "existing-identical",
+        };
         continue;
       }
       block(

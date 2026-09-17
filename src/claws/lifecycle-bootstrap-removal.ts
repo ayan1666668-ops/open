@@ -2,6 +2,7 @@ import { MAX_WORKSPACE_BOOTSTRAP_FILE_BYTES } from "../agents/workspace-bootstra
 import { removeClawWorkspaceFile, type RemovedWorkspaceFile } from "./lifecycle-delete-support.js";
 import type { ClawRemovePlanAction } from "./lifecycle-remove-contract.js";
 import type { ClawStatusRecord } from "./lifecycle-status.js";
+import { clawBootstrapPublicationMatches } from "./workspace-origin.js";
 
 const BOOTSTRAP_RETAIN_REASONS: Partial<Record<ClawStatusRecord["bootstrapState"], string>> = {
   modified: "Local bootstrap content changed; preserve the file.",
@@ -57,6 +58,16 @@ export async function removeClawBootstrap(
       },
       assertCurrent,
       MAX_WORKSPACE_BOOTSTRAP_FILE_BYTES,
+      record.workspaceOrigin.adopted
+        ? (relativePath) =>
+            clawBootstrapPublicationMatches(
+              record.install.workspace,
+              record.workspaceOrigin.adopted
+                ? record.workspaceOrigin.bootstrapPublication
+                : undefined,
+              relativePath,
+            )
+        : undefined,
     );
   }
   if (record.bootstrap.state === "modified") {

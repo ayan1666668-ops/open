@@ -389,6 +389,9 @@ export async function runClawsAddCommand(
     const workspaceOrigin = canResumeWorkspace ? resumeWorkspaceAdoption : undefined;
     const resumePlanContext = {
       ...basePlanContext,
+      // A directory created by this install stays a create plan despite now existing on disk.
+      adoptExistingWorkspace:
+        basePlanContext.adoptExistingWorkspace && workspaceOrigin?.adopted !== false,
       packagePreflight,
       existingAgentIds: canResumeAgent
         ? existingAgentIds.filter((agentId) => agentId !== resumeRecord.agentId)
@@ -404,7 +407,7 @@ export async function runClawsAddCommand(
             resumableWorkspaceOwnership: {
               adoptedFiles: workspaceOrigin.adoptedFiles,
               ownedFiles: resumeWorkspaceFiles,
-              bootstrapSeeded: workspaceOrigin.bootstrapSeeded,
+              bootstrapPublication: workspaceOrigin.bootstrapPublication,
             },
           }
         : {}),

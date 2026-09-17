@@ -470,7 +470,10 @@ export async function inspectClawBootstrap(
   );
   // The recorded seed receipt, not the digest, decides whether an adopted workspace's
   // BOOTSTRAP.md is this install's: a file it never seeded is never a deletion candidate.
-  if (inspected.state !== "missing" && !clawBootstrapSeedOwned(workspaceOrigin)) {
+  if (
+    inspected.state !== "missing" &&
+    !clawBootstrapSeedOwned(workspaceOrigin, install.workspace)
+  ) {
     return {
       ...base,
       state: "unowned",
@@ -497,6 +500,7 @@ export async function removeClawWorkspaceFile(
   record: ClawRemovableWorkspaceFile,
   assertCurrent: () => void,
   maxBytes = 1024 * 1024,
+  ownsFile?: (relativePath: string) => boolean,
 ): Promise<RemovedWorkspaceFile> {
   if (record.state === "missing") {
     return { path: record.path, action: "missing" };
@@ -514,15 +518,24 @@ export async function removeClawWorkspaceFile(
       return { path: record.path, action: "missing" };
     }
     const stagedPath = `${record.path}.openclaw-claw-remove-${randomUUID()}`;
-    assertCurrent();
-    await workspace.move(record.path, stagedPath, { overwrite: false });
+    await workspace.move(record.path, stagedPath, {
+      overwrite: false,
+      assertBeforeMutation: assertCurrent,
+    });
     let outcome: Result<void, unknown>;
     try {
       const content = await workspace.readBytes(stagedPath, { maxBytes });
       assertCurrent();
       const digest = `sha256:${createHash("sha256").update(content).digest("hex")}`;
-      if (digest === record.contentDigest) {
-        await workspace.remove(stagedPath);
+      if (digest === record.contentDigest && (!ownsFile || ownsFile(stagedPath))) {
+        await workspace.remove(stagedPath, {
+          assertBeforeMutation: () => {
+            assertCurrent();
+            if (ownsFile && !ownsFile(stagedPath)) {
+              throw new Error("Claw bootstrap identity changed before removal.");
+            }
+          },
+        });
         return { path: record.path, action: "deleted" };
       }
       outcome = ok(undefined);
@@ -542,7 +555,10 @@ export async function removeClawWorkspaceFile(
     if (!outcome.ok) {
       throw outcome.error;
     }
-    return { path: record.path, action: "retainedModified" };
+    return {
+      path: record.path,
+      action: ownsFile && !ownsFile(record.path) ? "retainedUnowned" : "retainedModified",
+    };
   } catch (error) {
     return {
       path: record.path,

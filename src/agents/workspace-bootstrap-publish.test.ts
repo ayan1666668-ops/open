@@ -3,7 +3,9 @@
 import syncFs from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { configureFsSafeNative, getFsSafeNativeConfig } from "@openclaw/fs-safe/config";
 import { describe, expect, it, vi } from "vitest";
+import * as fsSafe from "../infra/fs-safe.js";
 import { makeTempWorkspace } from "../test-helpers/workspace.js";
 import { nodeFilePath } from "../test-utils/node-file-path.js";
 import { readWorkspaceStateSnapshot } from "./workspace-state-store.js";
@@ -22,36 +24,29 @@ async function expectPathMissing(filePath: string): Promise<void> {
 }
 
 async function injectPartialPublicationFailure(dir: string, fileName: string) {
-  const realWriteFile = fs.writeFile.bind(fs);
+  const realRoot = fsSafe.root;
   const resolvedDir = await fs.realpath(dir);
-  const targetPath = path.join(resolvedDir, fileName);
   let injected = true;
-  const writeFileSpy = vi
-    .spyOn(fs, "writeFile")
-    .mockImplementation(async (filePath, data, options) => {
-      const rawPath = nodeFilePath(filePath);
-      if (!rawPath) {
-        return await realWriteFile(filePath, data, options);
-      }
-      const target = path.resolve(rawPath);
+  const rootSpy = vi.spyOn(fsSafe, "root").mockImplementation(async (...args) => {
+    const root = await realRoot(...args);
+    const write = root.write.bind(root);
+    vi.spyOn(root, "write").mockImplementation(async (relativePath, data, options) => {
+      const target = path.join(root.rootReal, relativePath);
       const parent = path.dirname(target);
-      const isFinalTarget = target === targetPath;
-      const isStagedTarget =
+      const staged =
         path.dirname(parent) === resolvedDir &&
         path.basename(parent).startsWith("openclaw-bootstrap-") &&
         path.basename(target) === fileName;
-      if (injected && (isFinalTarget || isStagedTarget)) {
+      if (injected && staged) {
         injected = false;
-        await realWriteFile(filePath, "# PARTIAL\n", options);
-        const err = new Error("ENOSPC") as NodeJS.ErrnoException;
-        err.code = "ENOSPC";
-        throw err;
+        await write(relativePath, "# PARTIAL\n", options);
+        throw Object.assign(new Error("ENOSPC"), { code: "ENOSPC" });
       }
-      return await realWriteFile(filePath, data, options);
+      return write(relativePath, data, options);
     });
-  return () => {
-    writeFileSpy.mockRestore();
-  };
+    return root;
+  });
+  return () => rootSpy.mockRestore();
 }
 
 async function listTempSiblings(dir: string): Promise<string[]> {
@@ -221,20 +216,27 @@ describe("bootstrap publication atomicity", () => {
     }
   });
 
-  it("fails closed when the workspace does not support hard links", async () => {
+  it("fails closed without hardlinks or native no-replace publication", async () => {
+    const nativeConfig = getFsSafeNativeConfig();
+    configureFsSafeNative({ mode: "off" });
     const tempDir = await makeTempWorkspace("openclaw-workspace-");
     const agentsPath = path.join(tempDir, DEFAULT_AGENTS_FILENAME);
-    const linkSpy = vi.spyOn(syncFs, "linkSync").mockImplementation(() => {
-      throw Object.assign(new Error("not supported"), { code: "ENOTSUP" });
+    const realLink = syncFs.linkSync.bind(syncFs);
+    const linkSpy = vi.spyOn(syncFs, "linkSync").mockImplementation((source, target) => {
+      if (String(target) === path.join(syncFs.realpathSync(tempDir), DEFAULT_AGENTS_FILENAME)) {
+        throw Object.assign(new Error("not supported"), { code: "ENOTSUP" });
+      }
+      return realLink(source, target);
     });
 
     try {
-      await expect(workspace.publishBootstrapFile(agentsPath, "complete\n")).rejects.toThrow(
-        /filesystem does not support atomic bootstrap publication/u,
-      );
+      await expect(workspace.publishBootstrapFile(agentsPath, "complete\n")).rejects.toMatchObject({
+        code: "helper-unavailable",
+      });
       await expectPathMissing(agentsPath);
     } finally {
       linkSpy.mockRestore();
+      configureFsSafeNative(nativeConfig);
     }
   });
 
@@ -267,7 +269,12 @@ describe("bootstrap publication atomicity", () => {
     // A caller that never wrote the file must not adopt it as its seed, and the identical bytes
     // must not turn into a bootstrapSeededAt stamp that a later seed would read as consumed.
     await expect(
-      seedWorkspaceBootstrap({ dir: tempDir, content, existingFile: "conflict", stateOptions }),
+      seedWorkspaceBootstrap({
+        dir: tempDir,
+        content,
+        existingFile: "conflict",
+        stateOptions,
+      }),
     ).rejects.toBeInstanceOf(WorkspaceBootstrapSeedConflictError);
     expect(
       // readWorkspaceStateSnapshot is synchronous on this base and awaited on newer ones; resolve both.
