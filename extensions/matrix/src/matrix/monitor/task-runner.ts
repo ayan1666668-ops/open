@@ -2,7 +2,12 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { RuntimeLogger } from "openclaw/plugin-sdk/plugin-runtime";
 
+type MatrixMonitorTaskRunnerState = {
+  shutdownRequested: boolean;
+};
+
 type MatrixMonitorTaskContext = {
+  runner: MatrixMonitorTaskRunnerState;
   settled: boolean;
   signal: AbortSignal;
 };
@@ -11,7 +16,7 @@ const monitorTaskContext = new AsyncLocalStorage<MatrixMonitorTaskContext>();
 
 export function getMatrixMonitorTaskSignal(): AbortSignal | undefined {
   const context = monitorTaskContext.getStore();
-  return context?.settled ? undefined : context?.signal;
+  return context?.settled && !context.runner.shutdownRequested ? undefined : context?.signal;
 }
 
 export function createMatrixMonitorTaskRunner(params: {
@@ -19,6 +24,7 @@ export function createMatrixMonitorTaskRunner(params: {
   logVerboseMessage: (message: string) => void;
 }) {
   const inFlight = new Map<Promise<void>, AbortController>();
+  const runner: MatrixMonitorTaskRunnerState = { shutdownRequested: false };
   let closed = false;
 
   const runDetachedTask = (label: string, task: () => Promise<void>): Promise<void> => {
@@ -26,7 +32,11 @@ export function createMatrixMonitorTaskRunner(params: {
       return Promise.resolve();
     }
     const controller = new AbortController();
-    const context: MatrixMonitorTaskContext = { settled: false, signal: controller.signal };
+    const context: MatrixMonitorTaskContext = {
+      runner,
+      settled: false,
+      signal: controller.signal,
+    };
     const trackedTask: Promise<void> = monitorTaskContext
       .run(context, () => Promise.resolve().then(task))
       .catch((error: unknown) => {
@@ -56,6 +66,7 @@ export function createMatrixMonitorTaskRunner(params: {
   return {
     close: () => {
       closed = true;
+      runner.shutdownRequested = true;
       for (const controller of inFlight.values()) {
         controller.abort();
       }

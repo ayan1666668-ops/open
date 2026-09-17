@@ -160,6 +160,82 @@ describe("shared Matrix monitor task ownership", () => {
     }
   });
 
+  it("keeps shutdown cancellation after the task settles for a retained continuation", async () => {
+    const client = createMockClient("main");
+    createMatrixClientMock.mockResolvedValue(client);
+    const auth = authFor("main");
+    const monitor = await acquireSharedMatrixClient({ auth, role: "monitor", startClient: false });
+    const tasks = createMatrixMonitorTaskRunner({
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      logVerboseMessage: vi.fn(),
+    });
+    const taskEntered = createDeferred<void>();
+    const allowTaskToSettle = createDeferred<void>();
+    const resumeRetainedContinuation = createDeferred<void>();
+    const taskAdmissionClosed = createDeferred<void>();
+    let retained: Promise<unknown> | undefined;
+    const task = tasks.runDetachedTask("retained continuation", async () => {
+      retained = resumeRetainedContinuation.promise.then(() =>
+        acquireSharedMatrixClient({ auth, startClient: false }),
+      );
+      taskEntered.resolve();
+      await allowTaskToSettle.promise;
+    });
+    monitor.registerMonitorRetirement({
+      closeTaskAdmission: () => {
+        tasks.close();
+        taskAdmissionClosed.resolve();
+      },
+      detachListeners: vi.fn(),
+      waitForTasks: tasks.waitForIdle,
+      cleanup: vi.fn(),
+    });
+
+    await taskEntered.promise;
+    const retirement = stopSharedClientForAccount(auth);
+    await taskAdmissionClosed.promise;
+    allowTaskToSettle.resolve();
+    await Promise.all([task, retirement]);
+
+    const retainedExpectation = expect(retained).rejects.toMatchObject({ name: "AbortError" });
+    resumeRetainedContinuation.resolve();
+    await retainedExpectation;
+    expect(createMatrixClientMock).toHaveBeenCalledOnce();
+    expect(client.stopAndPersist).toHaveBeenCalledOnce();
+  });
+
+  it("keeps shutdown cancellation when retirement starts after the task settles", async () => {
+    const client = createMockClient("main");
+    createMatrixClientMock.mockResolvedValue(client);
+    const auth = authFor("main");
+    const monitor = await acquireSharedMatrixClient({ auth, role: "monitor", startClient: false });
+    const tasks = createMatrixMonitorTaskRunner({
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      logVerboseMessage: vi.fn(),
+    });
+    const resumeRetainedContinuation = createDeferred<void>();
+    let retained: Promise<unknown> | undefined;
+    await tasks.runDetachedTask("retained continuation", async () => {
+      retained = resumeRetainedContinuation.promise.then(() =>
+        acquireSharedMatrixClient({ auth, startClient: false }),
+      );
+    });
+    monitor.registerMonitorRetirement({
+      closeTaskAdmission: tasks.close,
+      detachListeners: vi.fn(),
+      waitForTasks: tasks.waitForIdle,
+      cleanup: vi.fn(),
+    });
+
+    await stopSharedClientForAccount(auth);
+
+    const retainedExpectation = expect(retained).rejects.toMatchObject({ name: "AbortError" });
+    resumeRetainedContinuation.resolve();
+    await retainedExpectation;
+    expect(createMatrixClientMock).toHaveBeenCalledOnce();
+    expect(client.stopAndPersist).toHaveBeenCalledOnce();
+  });
+
   it("preserves explicit cancellation for retained async acquisitions", async () => {
     const client = createMockClient("main");
     createMatrixClientMock.mockResolvedValue(client);
