@@ -44,8 +44,10 @@ The retained window is not a discovery limit. Once a home reaches 20,000 retaine
 rows, recent unfiltered pages still use memory. Paging at the retained boundary,
 working-directory queries, and title searches use authoritative native database-only
 pages, including sessions absent from memory. Those requests can be slower. Each
-fallback page request retains at most one 64-row native page and scans at most 20 native pages,
-and return an opaque continuation when more work remains. Continue paging even
+fallback request retains at most one 64-row native page. Search, exclusion filling,
+and any nested membership, status, or descendant reads share one 20-read budget
+and the existing request deadline, including across scheduler pauses. The request
+returns an opaque continuation when more discovery remains. Continue paging even
 when a partial search page is empty. Native cursors preserve native ordering and
 backward navigation. If a resident-to-native transition loses its anchor to a
 concurrent native mutation, it reports a refresh error instead of silently ending
@@ -55,6 +57,13 @@ Search and managed-session exclusion filling examine at most 20 resident pages
 per request. If that limit is reached, the result retains an opaque continuation
 cursor so the next request can find later visible matches. Queries served entirely
 from the resident window perform no native reads; overflow discovery is the explicit exception.
+
+Source backoff settles when the whole foreground fallback request completes,
+including a bounded partial result with a continuation. Successful intermediate
+pages do not clear earlier failures. A failed recovery probe advances the existing
+backoff schedule; abandoning a request releases its probe without recording a new
+host failure. Background hydration keeps its separate grouped attempt and can
+walk the home to completion without consuming a foreground request's budget.
 
 Explicit homes hydrate in the background when the plugin activates. An implicit
 process home waits for an authorized catalog request. A home without a valid,

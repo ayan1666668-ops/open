@@ -1,15 +1,13 @@
-import { withTimeout } from "./app-server/timeout.js";
-import { CodexCatalogLoadingError } from "./session-catalog-availability.js";
 import type { CodexCatalogIndexOptions } from "./session-catalog-index-contract.js";
 import {
   encodeCodexNativeCursor,
   type CodexNativeCatalogCursor,
   type CodexResidentCatalogCursor,
 } from "./session-catalog-index-cursor.js";
+import type { CodexCatalogListRequest } from "./session-catalog-list-request.js";
 import {
   CatalogParamsError,
   filterCatalogPageByTitle,
-  MAX_TITLE_SEARCH_CATALOG_PAGES,
   normalizeLimit,
 } from "./session-catalog-parsing.js";
 import type { CodexCatalogSettingsIndex } from "./session-catalog-settings.js";
@@ -30,7 +28,7 @@ export class CodexCatalogNativePages {
     params: CodexSessionCatalogPageParams,
     prepared: CodexResidentCatalogCursor | CodexNativeCatalogCursor,
     options: Pick<CodexCatalogIndexOptions, "readNative" | "assertCurrent">,
-    deadline: number,
+    request: CodexCatalogListRequest,
   ): Promise<CodexSessionCatalogPage> {
     const limit = Math.min(normalizeLimit(params.limit, "limit"), 64);
     const cwd = params.cwd?.trim();
@@ -54,19 +52,15 @@ export class CodexCatalogNativePages {
       ...(cursor ? { cursor } : {}),
       ...(anchorThreadId ? { anchorThreadId } : {}),
     });
-    for (let scanned = 0; scanned < MAX_TITLE_SEARCH_CATALOG_PAGES; scanned++) {
+    while (request.hasPages) {
       options.assertCurrent();
-      const remaining = deadline - performance.now();
-      if (remaining <= 0) {
-        throw new CodexCatalogLoadingError();
-      }
       // Native backwards cursors reverse sortDirection. A transition inside a page
       // instead refetches that descending page and locates its frozen thread identity.
       const filterCwdLocally = Boolean(cwd && this.settings.hasLiveCwd());
       const ascending = position.backwards && !position.anchorThreadId;
       const pageLimit = position.anchorThreadId ? 64 : limit;
       const statusRevision = this.status.capture();
-      const page = await withTimeout(
+      const page = await request.read(Number.POSITIVE_INFINITY, () =>
         options.readNative(
           {
             archived: false,
@@ -79,11 +73,8 @@ export class CodexCatalogNativePages {
             ...(position.cursor ? { cursor: position.cursor } : {}),
           },
           pageLimit,
-          true,
+          request,
         ),
-        remaining,
-        "Codex session catalog is still loading",
-        () => new CodexCatalogLoadingError(),
       );
       options.assertCurrent();
       for (const row of page.rows) {

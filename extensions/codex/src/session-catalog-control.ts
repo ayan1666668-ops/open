@@ -36,6 +36,11 @@ import { codexCatalogResidentHomeKey } from "./session-catalog-events.js";
 import { createCodexCatalogHomeResolver, type CodexCatalogHome } from "./session-catalog-homes.js";
 import type { CodexCatalogState } from "./session-catalog-index-state.js";
 import type { CodexCatalogIndex } from "./session-catalog-index.js";
+import {
+  currentCodexCatalogListRequest,
+  withCodexCatalogListRequest,
+  type CodexCatalogListRequest,
+} from "./session-catalog-list-request.js";
 import type { CodexCatalogPreviewCache } from "./session-catalog-native-projection.js";
 import { readControlCursor, readPageParams } from "./session-catalog-parsing.js";
 import { CodexCatalogSourceBackoff } from "./session-catalog-source-backoff.js";
@@ -57,7 +62,7 @@ type CodexCatalogControlSource = Pick<
 > & { agentDir?: string };
 
 type CodexSessionCatalogRequestSnapshot = {
-  beginList: () => ReturnType<CodexCatalogSourceBackoff["begin"]>;
+  beginList: (request?: CodexCatalogListRequest) => ReturnType<CodexCatalogSourceBackoff["begin"]>;
   index: () => Promise<CodexCatalogIndex>;
   requestTimeoutMs: number;
   listThreads(
@@ -96,15 +101,39 @@ function createCodexCatalogRequestSnapshot(
   request: CodexCatalogRequest,
   index: () => Promise<CodexCatalogIndex>,
   beginList: CodexSessionCatalogRequestSnapshot["beginList"],
+  catalogRead = false,
 ): CodexSessionCatalogRequestSnapshot {
+  const read = <M extends CodexCatalogRequestMethod>(
+    method: M,
+    params: CodexAppServerRequestParams<M>,
+    timeoutMs = requestTimeoutMs,
+    observation?: CodexControlRequestObservation,
+  ): Promise<CodexAppServerRequestResult<M>> => {
+    // Index reads are charged by NativePages; hydration never borrows a caller's scope.
+    const scope = catalogRead ? undefined : currentCodexCatalogListRequest();
+    if (!scope) {
+      return request(method, params, timeoutMs, undefined, observation);
+    }
+    return scope.read(timeoutMs, async (remaining) => {
+      const attempt = beginList(scope);
+      if (!attempt.allowed) {
+        throw attempt.error;
+      }
+      return await request(method, params, remaining, undefined, observation);
+    });
+  };
   return {
     index,
     beginList,
-    requestTimeoutMs,
+    get requestTimeoutMs() {
+      return catalogRead
+        ? requestTimeoutMs
+        : (currentCodexCatalogListRequest()?.remaining(requestTimeoutMs) ?? requestTimeoutMs);
+    },
     listThreads: (params, timeoutMs, observation) =>
-      request(CODEX_CONTROL_METHODS.listThreads, params, timeoutMs, undefined, observation),
-    listThreadTurns: (params) => request(CODEX_CONTROL_METHODS.listThreadTurns, params),
-    listThreadItems: (params) => request(CODEX_CONTROL_METHODS.listThreadItems, params),
+      read(CODEX_CONTROL_METHODS.listThreads, params, timeoutMs, observation),
+    listThreadTurns: (params) => read(CODEX_CONTROL_METHODS.listThreadTurns, params),
+    listThreadItems: (params) => read(CODEX_CONTROL_METHODS.listThreadItems, params),
     forkThread: (params, assertCurrent) =>
       request(
         CODEX_CONTROL_METHODS.forkThread,
@@ -113,8 +142,7 @@ function createCodexCatalogRequestSnapshot(
         assertCurrent,
       ),
     readThread: async (threadId, includeTurns, timeoutMs) =>
-      (await request(CODEX_CONTROL_METHODS.readThread, { threadId, includeTurns }, timeoutMs))
-        .thread,
+      (await read(CODEX_CONTROL_METHODS.readThread, { threadId, includeTurns }, timeoutMs)).thread,
     archiveThread: async (threadId, assertCurrent) => {
       await request(CODEX_CONTROL_METHODS.archiveThread, { threadId }, undefined, assertCurrent);
     },
@@ -156,15 +184,17 @@ function createCodexSessionCatalogControlFromRequests(params: {
     async listPage(pageParams) {
       readControlCursor(pageParams.cursor, "request");
       const query = readPageParams(pageParams);
-      const requests = params.createRequestSnapshot();
-      const deadline = performance.now() + requests.requestTimeoutMs;
-      const index = await withTimeout(
-        requests.index(),
-        requests.requestTimeoutMs,
-        "Codex session catalog is still loading",
-        () => new CodexCatalogLoadingError(),
-      );
-      return await index.list(query, deadline);
+      return await withCodexCatalogListRequest(async (request) => {
+        const requests = params.createRequestSnapshot();
+        const deadline = request.deadline(requests.requestTimeoutMs);
+        const index = await withTimeout(
+          requests.index(),
+          request.remaining(requests.requestTimeoutMs),
+          "Codex session catalog is still loading",
+          () => new CodexCatalogLoadingError(),
+        );
+        return await index.list(query, deadline);
+      });
     },
     async listDescendantPage(listParams) {
       const requests = params.createRequestSnapshot();
@@ -312,7 +342,7 @@ export function createCodexSessionCatalogControl(params: {
           response: CodexThreadListResponse,
           diagnostics: CodexCatalogPageDiagnostics | undefined,
         ) => T | Promise<T>,
-        standalone = false,
+        foreground?: CodexCatalogListRequest,
       ): Promise<T> => {
         const requests = createRequestSnapshot(
           agentId,
@@ -326,9 +356,12 @@ export function createCodexSessionCatalogControl(params: {
             : undefined,
           remainingRows,
         );
-        const attempt =
-          !standalone && query.cursor && nativeAttempt ? nativeAttempt : requests.beginList();
-        if (!standalone) {
+        const attempt = foreground
+          ? requests.beginList(foreground)
+          : query.cursor && nativeAttempt
+            ? nativeAttempt
+            : requests.beginList();
+        if (!foreground) {
           nativeAttempt = attempt;
         }
         if (!attempt.allowed) {
@@ -344,7 +377,11 @@ export function createCodexSessionCatalogControl(params: {
           const started = performance.now();
           let response: CodexThreadListResponse;
           try {
-            response = await requests.listThreads(query, requests.requestTimeoutMs, observation);
+            response = await requests.listThreads(
+              query,
+              foreground?.remaining(requests.requestTimeoutMs) ?? requests.requestTimeoutMs,
+              observation,
+            );
           } finally {
             if (diagnostics) {
               const elapsed = performance.now() - started;
@@ -352,19 +389,19 @@ export function createCodexSessionCatalogControl(params: {
               diagnostics.fields.inclusiveControlRequestWaitMaxMs = elapsed;
             }
           }
+          foreground?.assertActive();
           const page = await project(response, diagnostics);
+          foreground?.assertActive();
           outcome = "resolved";
-          if (standalone || !page.nextCursor) {
+          if (!foreground && !page.nextCursor) {
             attempt.resolved();
-            if (!standalone) {
-              nativeAttempt = undefined;
-            }
+            nativeAttempt = undefined;
           }
           return page;
         } catch (error) {
           observation?.rejected();
-          attempt.rejected(error);
-          if (!standalone) {
+          if (!foreground) {
+            attempt.rejected(error);
             nativeAttempt = undefined;
           }
           throw error;
@@ -385,7 +422,7 @@ export function createCodexSessionCatalogControl(params: {
             throw new Error("Codex catalog configuration changed");
           }
         },
-        readNative: (query, remainingRows, standalone) =>
+        readNative: (query, remainingRows, foreground) =>
           readNativePage(
             query,
             Math.min(64, remainingRows),
@@ -404,7 +441,7 @@ export function createCodexSessionCatalogControl(params: {
                   })
                 : await projectCodexCatalogPage(bounded, projection);
             },
-            standalone,
+            foreground,
           ),
       });
       indexes.set(homeId, index);
@@ -478,7 +515,14 @@ export function createCodexSessionCatalogControl(params: {
         });
       },
       () => residentFor(agentId, source),
-      () => sourceBackoff.begin(requestOptions.config ?? noConfig, agentId, source?.sourceHomeId),
+      (request) =>
+        sourceBackoff.begin(
+          requestOptions.config ?? noConfig,
+          agentId,
+          source?.sourceHomeId,
+          request,
+        ),
+      catalogPreview === true,
     );
   };
 
@@ -512,7 +556,9 @@ export function createCodexSessionCatalogControl(params: {
         config: runtimeConfig,
         startOptions,
         authProfileId: null,
-        timeoutMs: runtime.requestTimeoutMs,
+        timeoutMs:
+          currentCodexCatalogListRequest()?.remaining(runtime.requestTimeoutMs) ??
+          runtime.requestTimeoutMs,
       });
       try {
         const requests = createCodexCatalogRequestSnapshot(
@@ -534,7 +580,8 @@ export function createCodexSessionCatalogControl(params: {
               ...(observation ? { controlObservation: observation } : {}),
             }),
           () => (catalogIndex ??= residentFor(agentId, source)),
-          () => sourceBackoff.begin(runtimeConfig ?? noConfig, agentId, source?.sourceHomeId),
+          (request) =>
+            sourceBackoff.begin(runtimeConfig ?? noConfig, agentId, source?.sourceHomeId, request),
         );
         const pinnedControl: CodexSessionCatalogControl =
           createCodexSessionCatalogControlFromRequests({

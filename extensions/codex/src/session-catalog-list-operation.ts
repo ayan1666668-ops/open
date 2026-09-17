@@ -496,6 +496,7 @@ class CodexCatalogListDriver {
       new Error("Codex catalog list operation closed");
     this.params = undefined;
     for (const host of this.locals) {
+      host.page.close();
       if (!host.value) {
         host.completion.reject(reason);
       }

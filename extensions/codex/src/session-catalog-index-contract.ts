@@ -1,12 +1,13 @@
 import type { CodexThreadListParams } from "./app-server/protocol.js";
 import type { CodexCatalogIndexRow } from "./session-catalog-index-row.js";
 import type { CodexCatalogState } from "./session-catalog-index-state.js";
+import type { CodexCatalogListRequest } from "./session-catalog-list-request.js";
 
 type CodexCatalogIndexRead = (
   params: CodexThreadListParams,
   remainingRows: number,
-  /** Foreground pages must not settle a background hydration attempt. */
-  standalone?: true,
+  /** Foreground accounting is separate from the background hydration attempt. */
+  request?: CodexCatalogListRequest,
 ) => Promise<{
   rows: CodexCatalogIndexRow[];
   excludedThreadIds?: string[];

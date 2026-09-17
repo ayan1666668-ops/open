@@ -28,6 +28,7 @@ import {
   CodexCatalogPersistence,
 } from "./session-catalog-index-state.js";
 import { CODEX_CATALOG_MAX_ROWS } from "./session-catalog-limits.js";
+import { withCodexCatalogListRequest } from "./session-catalog-list-request.js";
 import { CodexCatalogNativePages } from "./session-catalog-native-page.js";
 import {
   CODEX_CATALOG_NATIVE_PAGE_LIMIT,
@@ -683,26 +684,30 @@ export class CodexCatalogIndex {
     params: CodexSessionCatalogPageParams,
     deadline = performance.now() + (this.options.requestTimeoutMs ?? 60_000),
   ): Promise<CodexSessionCatalogPage> {
-    const cursor = readCodexCatalogCursor(this.options.homeId, params);
-    const query = cursor.kind === "resident" ? prepareCodexCatalogQuery(params, cursor) : undefined;
-    await this.availability.until(this.restore(), deadline);
-    this.assertCurrent();
-    this.scheduleHydration();
-    for (;;) {
+    return await withCodexCatalogListRequest(async (request) => {
+      const expiresAt = request.constrainDeadline(deadline);
+      const cursor = readCodexCatalogCursor(this.options.homeId, params);
+      const query =
+        cursor.kind === "resident" ? prepareCodexCatalogQuery(params, cursor) : undefined;
+      await this.availability.until(this.restore(), expiresAt);
       this.assertCurrent();
-      const ordered = this.ordering.read(this.rows);
-      const page = query?.(ordered, this.liveStatus, this.liveSettings, this.availability);
-      if (
-        cursor.kind === "native" ||
-        (this.overflow && (params.cwd || params.searchTerm || (page && !page.nextCursor)))
-      ) {
-        return await this.nativePages.list(params, cursor, this.options, deadline);
+      this.scheduleHydration();
+      for (;;) {
+        this.assertCurrent();
+        const ordered = this.ordering.read(this.rows);
+        const page = query?.(ordered, this.liveStatus, this.liveSettings, this.availability);
+        if (
+          cursor.kind === "native" ||
+          (this.overflow && (params.cwd || params.searchTerm || (page && !page.nextCursor)))
+        ) {
+          return await this.nativePages.list(params, cursor, this.options, request);
+        }
+        if (page) {
+          return page;
+        }
+        await this.availability.next(expiresAt);
       }
-      if (page) {
-        return page;
-      }
-      await this.availability.next(deadline);
-    }
+    });
   }
 
   /** Fence future publications before a replacement opens the same persisted home. */
