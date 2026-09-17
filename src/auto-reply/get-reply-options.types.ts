@@ -94,11 +94,11 @@ export type TurnAdoptionLifecycle = {
   onAdopted: () => void | Promise<void>;
   /** Return false to reject followup enqueue. */
   onDeferred?: () => boolean | void;
-  /** Reports that a deferred turn is still queued behind an active turn. */
+  /** Pre-adoption liveness while waiting for reply-lane admission or preflight compaction. */
   onDeferredHeartbeat?: () => void;
   /** Explicit cancellation before adoption; releases without consuming retry budget. */
   onCancelled?: () => void | Promise<void>;
-  /** Requested cadence for queue-owned deferred heartbeats. */
+  /** Requested cadence for pre-adoption heartbeats. */
   deferredHeartbeatIntervalMs?: number;
   /** Deferred turn finished without owning the reply lane. */
   onAbandoned?: () => void;

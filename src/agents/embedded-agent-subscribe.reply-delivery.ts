@@ -69,7 +69,6 @@ export function createReplyDelivery({ params, state, log }: ReplyDeliveryParams)
     shouldSkipAssistantText,
   } = createAssistantTextAccumulator({ params, state });
   const deferredAssistantScopes: AssistantStreamScope[] = [];
-  const provisionalAssistantBlocks = new Set<number>();
   const lastEmittedCommentaryByItem = new Map<string, string>();
   const pendingBlockReplyTasks = new Map<Promise<void>, number>();
   const pendingPartialReplyTasks = new Set<Promise<void>>();
@@ -273,26 +272,10 @@ export function createReplyDelivery({ params, state, log }: ReplyDeliveryParams)
     streamScope.delivery = undefined;
     streamScope = {};
     deferredAssistantScopes.length = 0;
-    provisionalAssistantBlocks.clear();
   };
-  const noteLastAssistant = (msg: AgentMessage, options?: { hasToolResults: boolean }) => {
-    if (msg.role !== "assistant") {
-      return;
-    }
-    state.lastAssistant = msg;
-    if (
-      state.deferBlockReplyDelivery &&
-      (msg.stopReason === "toolUse" || options?.hasToolResults)
-    ) {
-      // Async tools can leave a normal-stop tail after their tool-use fragment.
-      // The response's tool results, not its text phase, establish continuation.
-      for (
-        let index = state.assistantMessageStartIndex;
-        index <= state.assistantMessageIndex;
-        index++
-      ) {
-        provisionalAssistantBlocks.add(index);
-      }
+  const noteLastAssistant = (msg: AgentMessage) => {
+    if (msg.role === "assistant") {
+      state.lastAssistant = msg;
     }
   };
   const deferredToolMediaReplies = new WeakMap<
@@ -544,10 +527,16 @@ export function createReplyDelivery({ params, state, log }: ReplyDeliveryParams)
   };
   const releaseDeferredReplies = (): void | Promise<void> => {
     const deliveryGeneration = blockReplyDeliveryGeneration;
-    // Later answers supersede deferred tool-turn text, not media or reasoning.
-    const messageStartIndex = state.assistantMessageStartIndex;
-    const isSuperseded = (index: number | undefined) =>
-      index !== undefined && index < messageStartIndex && provisionalAssistantBlocks.has(index);
+    // A later answer supersedes deferred tool-turn text, not completed answers
+    // to earlier user inputs, media, or reasoning. Reconcile both presentation
+    // lanes before callbacks can advance the current message boundary.
+    const isSuperseded = (index: number | undefined) => {
+      if (index === undefined) {
+        return false;
+      }
+      const segment = state.answerSegments.find((candidate) => index <= candidate.messageEnd);
+      return index < (segment?.finalMessageStart ?? state.assistantMessageStartIndex);
+    };
     for (const scope of deferredAssistantScopes) {
       const delivery = scope.delivery;
       if (delivery && isSuperseded(delivery.blockIndex)) {
@@ -571,7 +560,6 @@ export function createReplyDelivery({ params, state, log }: ReplyDeliveryParams)
         payload.text = undefined;
       }
     }
-    provisionalAssistantBlocks.clear();
     state.deferBlockReplyDelivery = false;
     flushAssistantStream();
     const released = emitInSettlementOrder({

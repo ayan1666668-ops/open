@@ -7,14 +7,12 @@ import {
   validateSessionsCompactParams,
 } from "../../../packages/gateway-protocol/src/index.js";
 import { resolveAgentWorkspaceDir } from "../../agents/agent-scope.js";
-import { clearAllCliSessions } from "../../agents/cli-session.js";
 import { resolveEmbeddedSessionLane } from "../../agents/embedded-agent-runner/lanes.js";
 import { stagedPostCompactionDelegateCount } from "../../auto-reply/continuation/delegate-store-post-compaction.js";
 import type { FollowupRun } from "../../auto-reply/reply/queue.js";
 import { hasPendingFollowupQueueWork } from "../../auto-reply/reply/queue/state.js";
 import {
   resolveSessionWorkStartError,
-  SESSION_TOTAL_TOKENS_VERSION,
   SESSION_LIFECYCLE_CHANGED_ERROR_REASON,
   type SessionEntry,
 } from "../../config/sessions.js";
@@ -25,7 +23,7 @@ import {
   readTranscriptStatsSync,
   trimSessionTranscriptForManualCompact,
 } from "../../config/sessions/session-accessor.js";
-import { COMPACTION_RUN_USAGE_CLEAR_PATCH } from "../../config/sessions/session-entry-projection.js";
+import { projectCompactionAccountingPatch } from "../../config/sessions/session-entry-projection.js";
 import type { InternalSessionEntry } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { formatErrorMessage } from "../../infra/errors.js";
@@ -554,28 +552,16 @@ export const sessionCompactHandlers: GatewayRequestHandlers = {
                   ) {
                     return { ok: false };
                   }
-                  const entryToUpdate = existingEntry;
-                  entryToUpdate.updatedAt = Date.now();
-                  entryToUpdate.compactionCount =
-                    Math.max(0, entryToUpdate.compactionCount ?? 0) + 1;
-                  if (result.compactionKind === "context-engine") {
-                    clearAllCliSessions(entryToUpdate);
-                  }
-                  Object.assign(entryToUpdate, COMPACTION_RUN_USAGE_CLEAR_PATCH);
-                  delete entryToUpdate.contextBudgetStatus;
-                  if (
-                    typeof result.result?.tokensAfter === "number" &&
-                    Number.isFinite(result.result.tokensAfter)
-                  ) {
-                    entryToUpdate.totalTokens = result.result.tokensAfter;
-                    entryToUpdate.totalTokensFresh = true;
-                    entryToUpdate.totalTokensVersion = SESSION_TOTAL_TOKENS_VERSION;
-                  } else {
-                    delete entryToUpdate.totalTokens;
-                    delete entryToUpdate.totalTokensFresh;
-                    delete entryToUpdate.totalTokensVersion;
-                  }
-                  return { ok: true, entry: entryToUpdate };
+                  return {
+                    ok: true,
+                    entry: {
+                      ...existingEntry,
+                      ...projectCompactionAccountingPatch(existingEntry, {
+                        compactionKind: result.compactionKind,
+                        tokensAfter: result.result?.tokensAfter,
+                      }),
+                    },
+                  };
                 },
               });
               persisted = persistProjection.ok;

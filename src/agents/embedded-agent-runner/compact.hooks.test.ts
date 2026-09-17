@@ -438,7 +438,7 @@ describe("compactEmbeddedAgentSessionDirect hooks", () => {
   it("returns a summaryless xAI manual endpoint result", async () => {
     mockResolvedModel();
     attemptServerEndpointCompactionMock.mockImplementationOnce(async (input) => {
-      input.onCompactionCommitted?.();
+      input.onCompactionCommitted?.(1_000);
       return {
         item: { type: "compaction", encrypted_content: "opaque" },
         usage: { input_tokens: 1_000, output_tokens: 200 },
@@ -532,7 +532,7 @@ describe("compactEmbeddedAgentSessionDirect hooks", () => {
       let endpointSystemPrompt: string | undefined;
       attemptServerEndpointCompactionMock.mockImplementationOnce(async (input) => {
         endpointSystemPrompt = input.context.systemPrompt;
-        input.onCompactionCommitted?.();
+        input.onCompactionCommitted?.(1_000);
         return {
           item: { type: "compaction", encrypted_content: "opaque" },
           usage: { input_tokens: 1_000, output_tokens: 200 },
@@ -632,7 +632,7 @@ describe("compactEmbeddedAgentSessionDirect hooks", () => {
     getHistoryLimitFromSessionKeyMock.mockImplementationOnce(history.getHistoryLimitFromSessionKey);
     limitHistoryTurnsMock.mockImplementationOnce(history.limitHistoryTurns);
     attemptServerEndpointCompactionMock.mockImplementationOnce(async (input) => {
-      input.onCompactionCommitted?.();
+      input.onCompactionCommitted?.(1_000);
       return {
         item: { type: "compaction", encrypted_content: "opaque" },
         usage: { input_tokens: 1_000, output_tokens: 200 },
@@ -1531,7 +1531,7 @@ describe("compactEmbeddedAgentSessionDirect hooks", () => {
         activeSnapshot = diagnosticRunActivity.getDiagnosticSessionActivitySnapshot(ref);
         providerRequest.resolve(undefined);
         await result;
-        input.onCompactionCommitted?.();
+        input.onCompactionCommitted?.(120);
         return {
           item: { type: "compaction", encrypted_content: "opaque" },
           usage: { input_tokens: 120, output_tokens: 50, dropped_message_count: 0 },

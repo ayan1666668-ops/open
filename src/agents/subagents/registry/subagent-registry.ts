@@ -47,7 +47,10 @@ import type {
   SubagentRegistrationOwnership,
 } from "./subagent-registry-run-launch.js";
 import { createSubagentRunManager } from "./subagent-registry-run-manager.js";
-import { clearSubagentRunsReadCacheForTest } from "./subagent-registry-state.js";
+import {
+  clearSubagentRunsReadCacheForTest,
+  invalidateSubagentSessionListReadCache,
+} from "./subagent-registry-state.js";
 import { callGatewayForSweep } from "./subagent-registry-sweep-gateway.js";
 import { hasContinuationWorkForSweepEntry } from "./subagent-registry-sweep-guards.js";
 import { resolveSubagentTaskForRun } from "./subagent-registry-sweep-kill.js";
@@ -403,6 +406,7 @@ const subagentRestorer = createSubagentRegistryRestorer({
     if (!lifecycleGatewayContextResolver?.()) {
       return false;
     }
+    let rebound = false;
     for (let entry of subagentRuns.values()) {
       const resolver = getGatewayContextResolver(entry);
       if (resolver) {
@@ -413,6 +417,10 @@ const subagentRestorer = createSubagentRegistryRestorer({
         // Claim a fresh owner; never revive a retained row or an active child turn.
         entry = structuredClone(entry);
         subagentRuns.set(entry.runId, entry);
+      }
+      if (!rebound) {
+        invalidateSubagentSessionListReadCache();
+        rebound = true;
       }
       bindGatewayContextResolver(entry, lifecycleGatewayContextResolver);
       subagentRuns.commitOwnership(entry);

@@ -17,6 +17,7 @@ import {
   shouldPreferActiveRuntimeAliasAuthLabel,
 } from "../agents/model-runtime-aliases.js";
 import { resolveDefaultModelForAgent } from "../agents/model-selection.js";
+import { resolveConfiguredThinkingDefault } from "../agents/model-thinking-default.js";
 import { listOpenAIAuthProfileProvidersForAgentRuntime } from "../agents/openai-routing.js";
 import { resolveSessionRuntimeOverrideForProvider } from "../agents/session-runtime-compat.js";
 import { getVolitionalCompactionCount } from "../agents/tools/request-compaction-tool.js";
@@ -29,7 +30,7 @@ import { stagedPostCompactionDelegateCount } from "../auto-reply/continuation/de
 import { pendingDelegateCount } from "../auto-reply/continuation/delegate-store.js";
 import { normalizeGroupActivation } from "../auto-reply/group-activation.js";
 import { resolveSelectedAndActiveModel } from "../auto-reply/model-runtime.js";
-import type { ThinkLevel } from "../auto-reply/thinking.js";
+import { normalizeThinkLevel } from "../auto-reply/thinking.shared.js";
 import { toAgentModelListLike } from "../config/model-input.js";
 import type { SessionEntry } from "../config/sessions.js";
 import { hasSessionAutoModelFallbackProvenance } from "../config/sessions/model-override-provenance.js";
@@ -573,9 +574,12 @@ export async function buildStatusReplyParts(
   });
   const { buildStatusMessageParts } = await loadStatusMessageRuntime();
   await waitForContextWindowCacheLoad();
-  const explicitThinkingDefault =
-    (agentConfig?.thinkingDefault as ThinkLevel | undefined) ??
-    (agentDefaults.thinkingDefault as ThinkLevel | undefined);
+  const configuredThinkingDefault = resolveConfiguredThinkingDefault({
+    cfg,
+    agentId: statusAgentId,
+    provider: selectedLookupProvider,
+    model: selectedLookupModel,
+  });
   const preparedContextTokens =
     typeof contextTokens === "number" && contextTokens > 0 ? contextTokens : undefined;
   const selectedCatalogEntry = findModelInCatalog(
@@ -590,9 +594,13 @@ export async function buildStatusReplyParts(
   );
   const requestedThinkLevel =
     resolvedThinkLevel ??
-    explicitThinkingDefault ??
-    (await resolveDefaultThinkingLevel()) ??
-    (sessionEntry?.thinkingLevel as ThinkLevel | undefined) ??
+    normalizeThinkLevel(sessionEntry?.thinkingLevel) ??
+    configuredThinkingDefault ??
+    (await resolveDefaultThinkingLevel({
+      provider: selectedLookupProvider,
+      model: selectedLookupModel,
+      agentRuntime: effectiveHarness,
+    })) ??
     "off";
   // Active profiles can forbid `off` (for example, always-thinking models). Absence means
   // there is no prepared policy fact, so status must not fall back to manifest discovery.
@@ -638,7 +646,7 @@ export async function buildStatusReplyParts(
         primary: params.primaryModelLabelOverride ?? `${provider}/${model}`,
         ...(agentFallbacksOverride === undefined ? {} : { fallbacks: agentFallbacksOverride }),
       },
-      thinkingDefault: explicitThinkingDefault,
+      thinkingDefault: configuredThinkingDefault,
       verboseDefault: agentDefaults.verboseDefault,
       reasoningDefault: agentConfig?.reasoningDefault ?? agentDefaults.reasoningDefault,
       elevatedDefault: agentDefaults.elevatedDefault,

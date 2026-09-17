@@ -1,10 +1,8 @@
 import {
   executeSqliteQuerySync,
   executeSqliteQueryTakeFirstSync,
-  getNodeSqliteKysely,
 } from "../../infra/kysely-sync.js";
 import { withOpenClawAgentDatabaseReadOnly } from "../../state/openclaw-agent-db-readonly.js";
-import type { DB as OpenClawAgentKyselyDatabase } from "../../state/openclaw-agent-db.generated.js";
 import {
   runOpenClawAgentWriteTransaction,
   type OpenClawAgentDatabase,
@@ -14,8 +12,10 @@ import type { SessionAccessScope } from "./session-accessor.sqlite-contract.js";
 import { readSessionEntryInstanceId } from "./session-accessor.sqlite-entry-identity.js";
 import { advanceSessionRecipientAuthorityInTransaction } from "./session-accessor.sqlite-recipient-authority.js";
 import { resolveSqliteScope, toDatabaseOptions } from "./session-accessor.sqlite-scope.js";
-
-type SessionMemberDatabase = Pick<OpenClawAgentKyselyDatabase, "session_members">;
+import {
+  getSessionMemberKysely,
+  hasSessionMemberInDatabase,
+} from "./session-sharing-store.kernel.js";
 
 type SessionMember = {
   identityId: string;
@@ -27,10 +27,6 @@ const SESSION_MEMBERSHIP_QUERY_CHUNK_SIZE = 400;
 
 function resolveDatabaseOptions(scope: SessionAccessScope): OpenClawAgentDatabaseOptions {
   return toDatabaseOptions(resolveSqliteScope(scope));
-}
-
-function getSessionMemberKysely(database: Pick<OpenClawAgentDatabase, "db">) {
-  return getNodeSqliteKysely<SessionMemberDatabase>(database.db);
 }
 
 function readSessionMembers<T>(
@@ -105,19 +101,13 @@ export function isSessionMember(scope: SessionAccessScope, identityId: string): 
   if (!normalizedIdentityId) {
     return false;
   }
-  return readSessionMembers(scope, false, (database) => {
-    const db = getSessionMemberKysely(database);
-    return Boolean(
-      executeSqliteQueryTakeFirstSync(
-        database.db,
-        db
-          .selectFrom("session_members")
-          .select("identity_id")
-          .where("session_key", "=", resolveSqliteScope(scope).sessionKey)
-          .where("identity_id", "=", normalizedIdentityId),
-      ),
-    );
-  });
+  return readSessionMembers(scope, false, (database) =>
+    hasSessionMemberInDatabase(
+      database,
+      resolveSqliteScope(scope).sessionKey,
+      normalizedIdentityId,
+    ),
+  );
 }
 
 // Membership is bound to a live session entry, never a transcript placeholder.

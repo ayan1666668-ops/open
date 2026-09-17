@@ -20,7 +20,7 @@ import {
   getProviderPromptState,
   markLastProviderPromptContextRejected,
 } from "../provider-prompt-state.js";
-import type { ToolResultPromptProjectionState } from "../session-prompt-state.js";
+import { getEmbeddedSessionPromptState } from "../session-prompt-state.js";
 import {
   resolveLiveToolResultMaxChars,
   sessionLikelyHasOversizedToolResults,
@@ -77,7 +77,6 @@ export async function recoverEmbeddedRunOverflow(
       message: AssistantMessage;
       classification: FailoverClassification | null;
     };
-    toolResultPromptProjectionState: ToolResultPromptProjectionState;
     attemptCompactionCount: number;
     prepareCurrentTranscriptRetry: () => void;
     markOwnedTranscriptRetry: () => void;
@@ -173,7 +172,7 @@ export async function recoverEmbeddedRunOverflow(
           contextWindowTokens: contextTokenBudget,
         }),
         protectTrailingToolResults: preflightRecovery?.route === "compact_then_truncate",
-        projectionState: input.toolResultPromptProjectionState,
+        projectionState: getEmbeddedSessionPromptState(input.getActiveSession().id).toolResults,
         ...target,
       });
       assertActive();

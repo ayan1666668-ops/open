@@ -377,7 +377,8 @@ export function readPluginSdkSurfaceBudgets(env: NodeJS.ProcessEnv = process.env
       // +2: approved process-diagnostics predicate and lightweight subsystem logger.
       // +17: continuation runtime, task-flow, trace, and channel-ingress contracts.
       // +5: final continuation system-event and diagnostic runtime contracts.
-      4499,
+      // +1: approved shared native-command argument-menu applicability predicate.
+      4500,
       env,
     ),
     publicFunctionExports: readPluginSdkSurfaceBudgetEnv(
@@ -518,7 +519,8 @@ export function readPluginSdkSurfaceBudgets(env: NodeJS.ProcessEnv = process.env
       // +2: approved process-diagnostics predicate and lightweight subsystem logger.
       // +5: callable continuation and channel-ingress runtime helpers.
       // +2: plugin-safe system-event alias and diagnostic trace scope runner.
-      2651,
+      // +1: approved shared native-command argument-menu applicability predicate.
+      2652,
       env,
     ),
     publicDeprecatedExports: readPluginSdkSurfaceBudgetEnv(

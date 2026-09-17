@@ -1,8 +1,8 @@
 import {
   publishTranscriptUpdate,
   rewriteTranscriptMessageAtAnchor,
-  type TranscriptEntryAnchor,
 } from "../config/sessions/session-accessor.js";
+import type { TranscriptEntryAnchor } from "../config/sessions/transcript-entry-anchor.js";
 import { isUserMessage } from "./user-turn-transcript.message.js";
 import {
   normalizePersistedSteerTargetRunId,

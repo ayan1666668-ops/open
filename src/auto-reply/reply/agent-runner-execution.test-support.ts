@@ -21,7 +21,10 @@ import { createTestUserTurnTranscriptTarget } from "../../sessions/user-turn-tra
 import type { TemplateContext } from "../templating.js";
 import type { GetReplyOptions, ReplyPayload } from "../types.js";
 import type { AgentTurnParams } from "./agent-runner-execution.types.js";
-import type { buildEmbeddedRunExecutionParams } from "./agent-runner-utils.js";
+import type {
+  buildEmbeddedRunExecutionParams,
+  mintReplyMessageActionTurnCapability,
+} from "./agent-runner-utils.js";
 import type { FollowupRun } from "./queue.js";
 import type { ReplyOperation } from "./reply-run-registry.js";
 import type { TypingSignaler } from "./typing-mode.js";
@@ -72,6 +75,7 @@ const state = vi.hoisted(() => ({
   resolveCurrentTurnImagesMock: vi.fn(),
   peekSessionMcpRuntimeMock: vi.fn(),
   recordMessageToolRunOutcomeMock: vi.fn(),
+  mintReplyMessageActionTurnCapabilityMock: vi.fn<typeof mintReplyMessageActionTurnCapability>(),
   productionBuildEmbeddedRunExecutionParams: undefined as
     | typeof buildEmbeddedRunExecutionParams
     | undefined,
@@ -254,9 +258,8 @@ vi.mock("./current-turn-images.js", () => ({
 }));
 
 vi.mock("./agent-runner-utils.js", async () => ({
-  resolveRunThinkingLevelForFallbackCandidate: (
-    await vi.importActual<typeof import("./agent-runner-utils.js")>("./agent-runner-utils.js")
-  ).resolveRunThinkingLevelForFallbackCandidate,
+  ...(await vi.importActual<typeof import("./agent-runner-utils.js")>("./agent-runner-utils.js")),
+  mintReplyMessageActionTurnCapability: state.mintReplyMessageActionTurnCapabilityMock,
   buildEmbeddedRunExecutionParams: (
     params: Parameters<typeof buildEmbeddedRunExecutionParams>[0],
   ) =>
@@ -646,7 +649,7 @@ export function createMinimalRunAgentTurnParams(overrides?: {
   replyOperation?: ReplyOperation;
   sessionCtx?: TemplateContext;
   typingSignals?: TypingSignaler;
-}) {
+}): AgentTurnParams {
   return {
     commandBody: "fix it",
     followupRun: overrides?.followupRun ?? createFollowupRun(),
@@ -659,18 +662,7 @@ export function createMinimalRunAgentTurnParams(overrides?: {
     opts: overrides?.opts ?? ({} satisfies GetReplyOptions),
     replyOperation: overrides?.replyOperation,
     typingSignals: overrides?.typingSignals ?? createMockTypingSignaler(),
-    blockReplyPipeline: null,
-    blockStreamingEnabled: false,
-    resolvedBlockStreamingBreak: "message_end" as const,
-    applyReplyToMode: (payload: ReplyPayload) => payload,
-    shouldEmitToolResult: () => true,
-    shouldEmitToolOutput: () => false,
-    pendingToolTasks: new Set<Promise<void>>(),
-    resetSessionAfterRoleOrderingConflict: async () => false,
-    isHeartbeat: false,
-    sessionKey: "main",
-    getActiveSessionEntry: () => undefined,
-    resolvedVerboseLevel: "off" as const,
+    ...createAgentTurnExecutionDefaults(),
   };
 }
 
@@ -725,6 +717,7 @@ export async function setupAgentRunnerExecutionTestState() {
     state.resolveCurrentTurnImagesMock.mockReset();
     state.peekSessionMcpRuntimeMock.mockReset();
     state.recordMessageToolRunOutcomeMock.mockReset();
+    state.mintReplyMessageActionTurnCapabilityMock.mockReset();
     state.productionBuildEmbeddedRunExecutionParams = undefined;
     state.peekSessionMcpRuntimeMock.mockReturnValue(undefined);
     state.resolveCurrentTurnImagesMock.mockImplementation(

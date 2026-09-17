@@ -275,6 +275,7 @@ vi.mock("../../../sessions/session-lifecycle-events.js", () => ({
 
 vi.mock("./subagent-registry-state.js", () => ({
   clearSubagentRunsReadCacheForTest: mocks.clearSubagentRunsReadCacheForTest,
+  invalidateSubagentSessionListReadCache: vi.fn(),
   getSubagentRunsSnapshotForChildSession: mocks.getSubagentRunsSnapshotForChildSession,
   getSubagentRunsSnapshotForController: mocks.getSubagentRunsSnapshotForController,
   getSubagentRunsSnapshotForRead: mocks.getSubagentRunsSnapshotForRead,
@@ -1291,6 +1292,13 @@ describe("subagent registry seam flow", () => {
   });
 
   it("retries registry restore after a transient partial-merge failure", () => {
+    // This seam verifies the subagent listener latch. Keep detached-task lookup
+    // opaque so the independently lazy task-registry listener does not share
+    // this test's global onAgentEvent mock and inflate the subscription count.
+    setDetachedTaskLifecycleRuntime({
+      ...getDetachedTaskLifecycleRuntime(),
+      findTaskRun: () => undefined,
+    });
     const runId = "run-restore-retry";
     const restored = createSubagentRunRecord({
       runId,
@@ -1315,7 +1323,10 @@ describe("subagent registry seam flow", () => {
     expect(mocks.restoreSubagentRunsFromDisk).toHaveBeenCalledTimes(2);
     expect(mod.getSubagentRunByRunId(runId)?.runId).toBe(runId);
     expect(mocks.onAgentEvent).toHaveBeenCalledOnce();
-    expect(vi.getTimerCount()).toBe(1);
+    // Successful restore must retire its retry timer. Other restored-run
+    // lifecycle/sweeper timers are legitimate and should not be counted here.
+    vi.advanceTimersByTime(2_000);
+    expect(mocks.restoreSubagentRunsFromDisk).toHaveBeenCalledTimes(2);
   });
 
   it("latches registry restore only after success", () => {

@@ -26,6 +26,7 @@ import { FIRST_USE_ADDITIVE_AGENT_COLUMN_DEFINITIONS } from "./openclaw-agent-db
 import {
   AGENT_PARTICIPANT_IDENTITY_SCHEMA_VERSION,
   OPENCLAW_AGENT_SCHEMA_VERSION,
+  SESSION_PARTICIPANTS_TABLE,
 } from "./openclaw-agent-db-contract.js";
 import {
   assertExistingAgentSchemaOwner,
@@ -48,7 +49,6 @@ import {
   SESSION_PROGRESS_CARDS_TABLE,
 } from "./openclaw-agent-progress-card-schema.js";
 import { OPENCLAW_AGENT_SCHEMA_SQL } from "./openclaw-agent-schema.js";
-import { SESSION_PARTICIPANTS_TABLE } from "./openclaw-agent-session-participants-schema.js";
 import {
   AGENT_V14_ADDITIVE_SCHEMA_SQL,
   AGENT_V14_CORE_SCHEMA_SQL,

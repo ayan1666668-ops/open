@@ -1,11 +1,13 @@
 // Subagent spawn attachment tests cover strict base64 decoding, attachment name
 // validation, materialization paths, and cleanup after spawn failures.
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { expectDefined } from "@openclaw/normalization-core";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { withEnvAsync } from "../../../test-utils/env.js";
+import { cleanupSessionStateForTest } from "../../../test-utils/session-state-cleanup.js";
 import {
   createSubagentSpawnTestConfig,
   loadSubagentSpawnModuleForTest,
@@ -158,9 +160,16 @@ describe("spawnSubagentDirect filename validation", () => {
   });
 
   it("rejects a raw-valid path list whose wrapped prompt exceeds the budget", async () => {
-    // Raw path stays under 4096; wrapper label/tags push the rendered block over.
-    const nearCapName = `${"n".repeat(4000)}.bin`;
-    const result = await spawnWithName(nearCapName);
+    // Each basename stays portable while the complete rendered path block exceeds 4096.
+    const attachments = Array.from({ length: 17 }, (_, index) => ({
+      name: `${String(index).padStart(2, "0")}-${"n".repeat(236)}.bin`,
+      content: validContent,
+      encoding: "base64" as const,
+    }));
+    const result = await subagentSpawnModule.spawnSubagentDirect(
+      { task: "test", attachments },
+      ctx,
+    );
     expect(result.status).toBe("error");
     expect(result.error).toMatch(/attachments_prompt_paths_exceeded/);
     expect(result.error).toContain("maxChars=4096");
@@ -553,6 +562,7 @@ describe("spawnSubagentDirect filename validation", () => {
         expect(persistedStore?.[childSessionKey]?.spawnedCwd).toBe(expectedCwd);
       });
     } finally {
+      await cleanupSessionStateForTest({ stateDir: path.join(homeDir, ".openclaw") });
       fs.rmSync(homeDir, { recursive: true, force: true });
     }
   });

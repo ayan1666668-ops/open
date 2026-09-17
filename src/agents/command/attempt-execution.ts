@@ -75,7 +75,7 @@ import {
   classifyAgentRunTerminalOutcome,
   type AgentRunTerminalOutcome,
 } from "../agent-run-terminal-outcome.js";
-import type { AgentRunTerminalReplySnapshot } from "../agent-run-terminal-reply.js";
+import type { AgentRunTerminalReplySnapshot } from "../agent-run-terminal-reply.types.js";
 import { resolveAuthProfileOrder } from "../auth-profiles/order.js";
 import { ensureAuthProfileStore } from "../auth-profiles/store-runtime.js";
 import {
@@ -1106,6 +1106,7 @@ export async function runAgentAttempt(params: {
             prompt: cliPrompt,
             transcriptPrompt: cliTranscriptPrompt,
             modelProvider: params.providerOverride,
+            requesterModel: { provider: params.providerOverride, model: params.modelOverride },
             modelHasVision: params.modelHasVision,
             provider: cliExecutionProvider,
             model: params.modelOverride,

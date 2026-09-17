@@ -2714,7 +2714,7 @@ describe("Codex app-server dynamic tool build", () => {
   );
 
   it.each(["ultra", "off"] as const)(
-    "passes active %s thinking into shared OpenClaw tool construction",
+    "passes active %s thinking and prepared model into shared OpenClaw tool construction",
     async (thinkLevel) => {
       const sessionFile = path.join(tempDir, "session.jsonl");
       const workspaceDir = path.join(tempDir, "workspace");
@@ -2722,6 +2722,8 @@ describe("Codex app-server dynamic tool build", () => {
       params.disableTools = false;
       params.delegationCapability = "report_only";
       params.thinkLevel = thinkLevel;
+      params.modelId = "configured-alias";
+      params.model = { ...params.model, provider: "openai", id: "gpt-5.6-sol" };
       params.runtimePlan = createCodexRuntimePlanFixture();
       const factoryOptions: unknown[] = [];
       setOpenClawCodingToolsFactoryForTests((options) => {
@@ -2735,6 +2737,7 @@ describe("Codex app-server dynamic tool build", () => {
       expect(factoryOptions[0]).toMatchObject({
         delegationCapability: "report_only",
         requesterThinkingLevel: thinkLevel,
+        requesterModel: { provider: "openai", model: "gpt-5.6-sol" },
       });
     },
   );

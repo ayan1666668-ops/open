@@ -195,8 +195,9 @@ describe("startGatewayMaintenanceTimers", () => {
     });
   });
 
-  it("defers a thaw restart behind active work and retries a failed idle pass", async () => {
+  it("leaves admission untouched on busy thaw ticks and retries a failed idle pass", async () => {
     vi.useFakeTimers();
+    vi.spyOn(process, "cpuUsage").mockReturnValue({ user: 0, system: 0 });
     vi.setSystemTime(new Date("2026-03-22T00:00:00Z"));
     resetGatewayWorkAdmission();
     let activeChatRuns = 1;
@@ -225,6 +226,8 @@ describe("startGatewayMaintenanceTimers", () => {
       await vi.advanceTimersByTimeAsync(TICK_INTERVAL_MS);
       expect(restartRunningChannels).not.toHaveBeenCalled();
       expect(isGatewayWorkAdmissionClosed()).toBe(false);
+      await vi.advanceTimersByTimeAsync(TICK_INTERVAL_MS);
+      expect(phases).toEqual([]);
 
       activeChatRuns = 0;
       await vi.advanceTimersByTimeAsync(TICK_INTERVAL_MS);
@@ -242,8 +245,6 @@ describe("startGatewayMaintenanceTimers", () => {
 
       expect(phases).toEqual([
         "preparing",
-        "accepting",
-        "preparing",
         "prepared",
         "accepting",
         "preparing",
@@ -257,8 +258,9 @@ describe("startGatewayMaintenanceTimers", () => {
     }
   });
 
-  it("reopens admission when thaw active-work inspection fails", async () => {
+  it("leaves admission open when thaw active-work inspection fails", async () => {
     vi.useFakeTimers();
+    vi.spyOn(process, "cpuUsage").mockReturnValue({ user: 0, system: 0 });
     vi.setSystemTime(new Date("2026-03-22T00:00:00Z"));
     const restartRunningChannels = vi.fn(async () => true);
     const logHealth = { info: vi.fn(), error: vi.fn() };

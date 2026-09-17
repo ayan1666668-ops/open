@@ -37,6 +37,7 @@ import {
   type CanonicalSessionCandidate,
   type CanonicalSessionCandidateFact,
 } from "./doctor-session-canonical-candidates.js";
+import { resolveTargetSqliteOptions } from "./doctor-session-sqlite-readers.js";
 
 function createCanonicalRepairRemoval(
   candidate: CanonicalSessionCandidate,
@@ -462,7 +463,7 @@ async function repairCanonicalSessionGroup(
     }
   }
   setCanonicalSqliteSessionMainKey(
-    openOpenClawAgentDatabase({ agentId: destination.agentId, path: destination.sqlitePath }),
+    openOpenClawAgentDatabase(resolveTargetSqliteOptions(destination, params.env)),
     params.cfg.session?.mainKey,
   );
   const winnerResult = await applySessionEntryLifecycleMutation({
@@ -570,7 +571,7 @@ export async function repairCanonicalSessionKeys(params: {
   if (params.apply) {
     for (const store of stores) {
       setCanonicalSqliteSessionMainKey(
-        openOpenClawAgentDatabase({ agentId: store.agentId, path: store.sqlitePath }),
+        openOpenClawAgentDatabase(resolveTargetSqliteOptions(store, env)),
         params.cfg.session?.mainKey,
       );
     }
