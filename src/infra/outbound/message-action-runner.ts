@@ -218,7 +218,7 @@ async function handleBroadcastAction(
         };
         const interruption = outcome.ok ? undefined : captureInterruption();
         if (interruption) {
-          if (!hadAcceptedResult && !outcome.sentBeforeError) {
+          if (!hadAcceptedResult && !outcome.ok && !outcome.sentBeforeError) {
             throw interruption;
           }
           interrupted = true;
