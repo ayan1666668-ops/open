@@ -186,7 +186,9 @@ function classifyArgv(argvInput: readonly string[], depth = 0): string | undefin
     return classifyArgv(rest, depth + 1);
   }
   if (SHELL_WRAPPERS.has(bin)) {
-    const cIndex = argv.findIndex((token) => token === "-c" || token === "/c");
+    const cIndex = argv.findIndex(
+      (token) => token === "/c" || token === "-c" || (/^-[A-Za-z]*c[A-Za-z]*$/.test(token) && token !== "--"),
+    );
     const script = cIndex >= 0 ? argv[cIndex + 1] : undefined;
     if (script) {
       const nested = classifyHeavyCommand(script);
