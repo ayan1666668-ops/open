@@ -87,12 +87,12 @@ suite.define(() => {
     },
   );
 
-  it.each(["light", "dark"] as const)("fades only unread overflow in %s mode", async (theme) => {
+  it.each(["light", "dark"] as const)("fades only unread overflow in %s mode", async (mode) => {
     const context = await suite.newBrowserContext({ viewport: { width: 1440, height: 900 } });
     try {
       await context.addInitScript(
         ({ key, theme }) => localStorage.setItem(key, JSON.stringify({ theme, themeMode: theme })),
-        { key: controlUiBundledSettingsStorageKey(suite.server.baseUrl), theme },
+        { key: controlUiBundledSettingsStorageKey(suite.server.baseUrl), theme: mode },
       );
       const page = await context.newPage();
       const { gateway, card } = await openProgress(page);
