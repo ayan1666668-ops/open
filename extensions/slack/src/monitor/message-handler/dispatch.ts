@@ -562,6 +562,12 @@ async function dispatchSlackMessageWithSetup(
           if (payload.phase === "start") {
             progress.progressWorkCounter.noteToolCall(payload.name);
           }
+          // Admission belongs here, before the shared compositor can accumulate
+          // file statistics or promote an intermediate failure into attention.
+          // Approvals and terminal replies have their own delivery paths below.
+          if (progress.preambleOnlyProgress) {
+            return false;
+          }
           return await progress.progressDraft.pushToolEvent(payload);
         },
         onItemEvent: async (payload) => {
@@ -597,7 +603,9 @@ async function dispatchSlackMessageWithSetup(
             }
             return headlineVisible;
           }
-          return await progress.progressDraft.pushItemEvent(payload);
+          return progress.preambleOnlyProgress
+            ? false
+            : await progress.progressDraft.pushItemEvent(payload);
         },
         onPlanUpdate: async (payload) => {
           if (payload.phase !== "update") {
@@ -613,10 +621,14 @@ async function dispatchSlackMessageWithSetup(
           return await progress.progressDraft.pushApprovalEvent(payload);
         },
         onCommandOutput: async (payload) => {
-          return await progress.progressDraft.pushCommandOutputEvent(payload);
+          return progress.preambleOnlyProgress
+            ? false
+            : await progress.progressDraft.pushCommandOutputEvent(payload);
         },
         onPatchSummary: async (payload) => {
-          return await progress.progressDraft.pushPatchEvent(payload);
+          return progress.preambleOnlyProgress
+            ? false
+            : await progress.progressDraft.pushPatchEvent(payload);
         },
       },
     });

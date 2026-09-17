@@ -4833,7 +4833,7 @@ describe("dispatchPreparedSlackMessage preview fallback", () => {
     [undefined, false],
     [undefined, true],
   ] as const)(
-    "keeps compact progress authored text without tool diagnostics (style=%s, native=%s)",
+    "keeps compact progress to the latest preamble through reasoning and failed tools (style=%s, native=%s)",
     async (style, native) => {
       const draftStream = createDraftStreamStub();
       createSlackDraftStreamMock.mockReturnValueOnce(draftStream);
@@ -4873,6 +4873,15 @@ describe("dispatchPreparedSlackMessage preview fallback", () => {
           exitCode: 0,
         },
         { kind: "reasoning", text: "Considering the transport choice." },
+        {
+          kind: "tool_start",
+          toolCallId: "write-1",
+          name: "write",
+          phase: "start",
+          args: { path: "result.txt", content: "fixed\n" },
+        },
+        { kind: "item", toolCallId: "write-1", phase: "end", status: "completed" },
+        { kind: "patch", phase: "end", title: "Apply patch", added: 1, modified: 0, deleted: 0 },
         {
           kind: "plan",
           phase: "update",
@@ -4928,7 +4937,6 @@ describe("dispatchPreparedSlackMessage preview fallback", () => {
       );
       expect(draftUpdateTexts(draftStream)).toEqual([
         "_Checking the current Slack behavior._",
-        "🧠 _Considering the transport choice._",
         "_The fix is ready; I’m checking the result._",
       ]);
       expect(finalizeSlackPreviewEditMock).not.toHaveBeenCalled();
