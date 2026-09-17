@@ -31,12 +31,6 @@ function getPathModule(platform: NodeJS.Platform) {
   return platform === "win32" ? path.win32 : path.posix;
 }
 
-function isNodeExecPath(execPath: string, platform: NodeJS.Platform): boolean {
-  const pathModule = getPathModule(platform);
-  const base = normalizeLowercaseStringOrEmpty(pathModule.basename(execPath));
-  return base === "node" || base === "node.exe";
-}
-
 function buildSystemNodeCandidates(
   env: Record<string, string | undefined>,
   platform: NodeJS.Platform,
@@ -443,7 +437,7 @@ export async function resolvePreferredNodePath(
   const platform = params.platform ?? process.platform;
   const currentExecPath = params.execPath ?? process.execPath;
   const execFileImpl = params.execFile ?? execFileAsync;
-  const currentNode = isNodeExecPath(currentExecPath, platform)
+  const currentNode = isNodeRuntime(currentExecPath)
     ? await resolveRuntimeInfo(currentExecPath, "node", execFileImpl, env)
     : null;
   if (
