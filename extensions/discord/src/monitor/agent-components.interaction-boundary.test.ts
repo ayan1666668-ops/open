@@ -1,5 +1,6 @@
 import { ChannelType, GuildMemberFlags } from "discord-api-types/v10";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
+import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import { buildAgentSessionKey } from "openclaw/plugin-sdk/routing";
 import { peekSystemEvents, resetSystemEventsForTest } from "openclaw/plugin-sdk/test-fixtures";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -46,19 +47,22 @@ const CHANNELS = {
 } as const;
 type ChannelId = keyof typeof CHANNELS;
 
-function attachChannelRest(client: ReturnType<typeof createInternalTestClient>) {
+// `released` holds every channel lookup until it settles, to model slow Discord REST.
+function attachChannelRest(
+  client: ReturnType<typeof createInternalTestClient>,
+  released?: Promise<void>,
+) {
   const post = vi.fn(async (_path: string, _request?: unknown) => undefined);
-  attachRestMock(client, {
-    get: vi.fn(async (path: string) => {
-      const channel = CHANNELS[path.replace("/channels/", "") as ChannelId];
-      if (!channel) {
-        throw new Error(`Unexpected Discord GET ${path}`);
-      }
-      return channel;
-    }),
-    post,
+  const get = vi.fn(async (path: string) => {
+    await released;
+    const channel = CHANNELS[path.replace("/channels/", "") as ChannelId];
+    if (!channel) {
+      throw new Error(`Unexpected Discord GET ${path}`);
+    }
+    return channel;
   });
-  return post;
+  attachRestMock(client, { get, post });
+  return { get, post };
 }
 
 // hydrated=false is the payload shape Discord can send: channel_id without a channel object.
@@ -82,7 +86,7 @@ function componentPayload(params: { channelId: ChannelId; hydrated: boolean; cus
   });
 }
 
-function createQuestionHarness() {
+function createQuestionHarness(released?: Promise<void>) {
   const guildEntries = {
     [GUILD]: { channels: { [CHANNEL]: { enabled: true }, [CATEGORY]: { enabled: true } } },
   };
@@ -102,13 +106,13 @@ function createQuestionHarness() {
       resolveQuestion,
     }),
   );
-  return { client, resolveQuestion, post: attachChannelRest(client) };
+  return { client, resolveQuestion, ...attachChannelRest(client, released) };
 }
 
 type ReplyBody = { content?: string; data?: { content?: string } };
 
 // Ephemeral text the user sees, whether sent as the initial callback or a follow-up webhook.
-function replyContents(post: ReturnType<typeof attachChannelRest>) {
+function replyContents(post: ReturnType<typeof attachChannelRest>["post"]) {
   return post.mock.calls.flatMap(([, request]) => {
     const body = (request as { body?: ReplyBody } | undefined)?.body;
     const content = body?.data?.content ?? body?.content;
@@ -116,12 +120,29 @@ function replyContents(post: ReturnType<typeof attachChannelRest>) {
   });
 }
 
+// Discord fails a component click that gets no response within 3 seconds; component
+// callbacks cannot defer before authorization, so a stalled lookup must not hold them.
+async function expectSettledWithinLookupBound(handled: Promise<unknown>) {
+  let settled = false;
+  const observed = handled.then(
+    () => (settled = true),
+    () => (settled = true),
+  );
+  await vi.advanceTimersByTimeAsync(1_000);
+  await vi.waitFor(() => expect(settled).toBe(true), { timeout: 1_000, interval: 10 });
+  await observed;
+  await handled;
+}
+
 describe("Client.handleInteraction component channel identity", () => {
   beforeEach(() => {
     clearDiscordChannelInfoCacheForTest();
     resetSystemEventsForTest();
   });
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
 
   if (!QUESTION_CUSTOM_ID) {
     throw new Error("question custom id fixture is invalid");
@@ -141,6 +162,47 @@ describe("Client.handleInteraction component channel identity", () => {
       expect(replyContents(harness.post)).toEqual(["Answer submitted."]);
     },
   );
+
+  it("answers a hydrated thread question without waiting for a stalled parent lookup", async () => {
+    vi.useFakeTimers();
+    const harness = createQuestionHarness(new Promise(() => {}));
+
+    await expectSettledWithinLookupBound(
+      harness.client.handleInteraction(
+        componentPayload({ channelId: THREAD, hydrated: true, customId }),
+      ),
+    );
+
+    expect(harness.get.mock.calls.map(([path]) => path)).toEqual([`/channels/${CHANNEL}`]);
+    expect(harness.resolveQuestion).toHaveBeenCalledOnce();
+    expect(replyContents(harness.post)).toEqual(["Answer submitted."]);
+  });
+
+  it("asks for a retry when a raw thread id lookup stalls, then answers once it lands", async () => {
+    vi.useFakeTimers();
+    const lookup = createDeferred<void>();
+    const harness = createQuestionHarness(lookup.promise);
+
+    await expectSettledWithinLookupBound(
+      harness.client.handleInteraction(
+        componentPayload({ channelId: THREAD, hydrated: false, customId }),
+      ),
+    );
+
+    expect(harness.resolveQuestion).not.toHaveBeenCalled();
+    expect(replyContents(harness.post)).toEqual([
+      "Channel details are still loading. Try this interaction again.",
+    ]);
+
+    lookup.resolve();
+    await vi.advanceTimersByTimeAsync(0);
+    await harness.client.handleInteraction(
+      componentPayload({ channelId: THREAD, hydrated: false, customId }),
+    );
+
+    expect(harness.resolveQuestion).toHaveBeenCalledOnce();
+    expect(replyContents(harness.post).at(-1)).toBe("Answer submitted.");
+  });
 
   it.each([
     { name: "thread whose parent is not allowlisted", channelId: OTHER_THREAD, hydrated: true },

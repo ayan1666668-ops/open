@@ -2,6 +2,10 @@
 import { ChannelType } from "discord-api-types/v10";
 import { logError } from "openclaw/plugin-sdk/logging-core";
 import { resolveAgentRoute } from "openclaw/plugin-sdk/routing";
+import { logVerbose } from "openclaw/plugin-sdk/runtime-env";
+import { withTimeout } from "openclaw/plugin-sdk/text-utility-runtime";
+import { isDiscordThreadChannelType } from "../channel-type.js";
+import { replySilently } from "./agent-components-reply.js";
 import type {
   AgentComponentContext,
   AgentComponentInteraction,
@@ -9,8 +13,17 @@ import type {
   ComponentInteractionContext,
   DiscordChannelContext,
 } from "./agent-components.types.js";
-import { normalizeDiscordDisplaySlug } from "./allow-list.js";
-import { resolveDiscordThreadLikeChannelContext } from "./thread-channel-context.js";
+import { normalizeDiscordDisplaySlug, normalizeDiscordSlug } from "./allow-list.js";
+import { resolveDiscordChannelInfoSafe } from "./channel-access.js";
+import {
+  resolveDiscordThreadLikeChannelContext,
+  resolveFetchedDiscordThreadLikeChannelContext,
+} from "./thread-channel-context.js";
+
+// Component callbacks send their first response only after authorization, and modal
+// triggers cannot defer at all. Bound channel metadata lookups like the live-policy wait;
+// a late lookup still fills the channel cache for the next click.
+const COMPONENT_CHANNEL_CONTEXT_WAIT_MS = 1_000;
 
 function formatUsername(user: { username: string; discriminator?: string | null }): string {
   if (user.discriminator && user.discriminator !== "0") {
@@ -69,28 +82,65 @@ export async function replyUnavailableComponentInteraction(
   }
 }
 
+function buildDiscordChannelContext(params: {
+  channelName: string | undefined;
+  channelType: number | undefined;
+  isThread: boolean;
+  parentId: string | undefined;
+  parentName: string | undefined;
+}): DiscordChannelContext {
+  const { channelName, parentName } = params;
+  return {
+    ...params,
+    channelSlug: channelName ? normalizeDiscordSlug(channelName) : "",
+    displayChannelSlug: channelName ? normalizeDiscordDisplaySlug(channelName) : "",
+    parentSlug: parentName ? normalizeDiscordSlug(parentName) : "",
+  };
+}
+
+// Resolves null only when a guild payload without a channel object timed out: its
+// allowlist and routing facts are unknown, so the caller asks for a retry instead.
 async function resolveDiscordChannelContext(
   interaction: AgentComponentInteraction,
-): Promise<DiscordChannelContext> {
-  // Discord can send channel_id without a hydrated channel object; the raw id still
-  // resolves the channel type and thread parent used for allowlists and routing.
-  const channelContext = await resolveDiscordThreadLikeChannelContext({
-    client: interaction.client,
-    channel: interaction.channel,
-    channelIdFallback: interaction.rawData.channel_id,
+): Promise<DiscordChannelContext | null> {
+  const { channel, client } = interaction;
+  const channelId = interaction.rawData.channel_id;
+  // A hydrated channel already carries its type, name, and thread parent id. Discord can
+  // also send channel_id without a channel object; only then is the channel fetched.
+  const lookup = channel
+    ? resolveFetchedDiscordThreadLikeChannelContext({ client, channel })
+    : resolveDiscordThreadLikeChannelContext({ client, channel, channelIdFallback: channelId });
+  const timeout = new Error("Discord component channel lookup timed out");
+  try {
+    const resolved = await withTimeout(lookup, COMPONENT_CHANNEL_CONTEXT_WAIT_MS, {
+      createError: () => timeout,
+    });
+    return buildDiscordChannelContext({
+      channelName: resolved.channelName,
+      channelType: resolved.channelType,
+      isThread: resolved.isThreadChannel,
+      parentId: resolved.threadParentId,
+      parentName: resolved.threadParentName,
+    });
+  } catch (error) {
+    if (error !== timeout) {
+      throw error;
+    }
+  }
+  logVerbose(`discord component: channel lookup for ${channelId} timed out`);
+  if (!channel && interaction.rawData.guild_id) {
+    return null;
+  }
+  // A hydrated thread still carries its parent id; only parent-name matching is lost.
+  const info = resolveDiscordChannelInfoSafe(channel);
+  const isThread = isDiscordThreadChannelType(info.type);
+  return buildDiscordChannelContext({
+    channelName: info.name,
+    channelType: info.type,
+    isThread,
+    parentId: isThread ? info.parentId : undefined,
+    parentName: isThread ? info.parentName : undefined,
   });
-  const { channelName, channelSlug, channelType, isThreadChannel } = channelContext;
-
-  return {
-    channelName,
-    channelSlug,
-    displayChannelSlug: channelName ? normalizeDiscordDisplaySlug(channelName) : "",
-    channelType,
-    isThread: isThreadChannel,
-    parentId: channelContext.threadParentId,
-    parentName: channelContext.threadParentName,
-    parentSlug: channelContext.threadParentSlug,
-  };
 }
 
 export async function resolveComponentInteractionContext(params: {
@@ -127,6 +177,13 @@ export async function resolveComponentInteractionContext(params: {
   const userId = user.id;
   const rawGuildId = interaction.rawData.guild_id;
   const channelCtx = await resolveDiscordChannelContext(interaction);
+  if (!channelCtx) {
+    await replySilently(interaction, {
+      content: "Channel details are still loading. Try this interaction again.",
+      ...replyOpts,
+    });
+    return null;
+  }
   const channelType = channelCtx.channelType;
   const isGroupDm = channelType === ChannelType.GroupDM;
   const isDirectMessage =
