@@ -284,14 +284,16 @@ export function workerProbe(
     import { vitestWorkerBuildEntries } from ${JSON.stringify(path.join(root, "scripts/lib/vitest-worker-build-entries.mts"))};
     import { tuiPtyRuntimeEntrypoints } from ${JSON.stringify(path.join(root, "src/tui/tui-pty-runtime-test-support.ts"))};
     import { cliCompactionBackendEntrypoints } from ${JSON.stringify(path.join(root, "src/agents/command/cli-compaction-runtime.test-support.ts"))};
+    import { pluginRuntimeRetentionEntrypoint } from ${JSON.stringify(path.join(root, "src/plugins/runtime-retention-entrypoint.test-support.ts"))};
     import { resolveRuntimeWorkerUrl } from ${JSON.stringify(path.join(root, "src/infra/runtime-worker-url.ts"))};
     import { prepareSqliteReadOnlyLocation } from ${JSON.stringify(path.join(root, "src/infra/sqlite-snapshot-source.ts"))};
     import { openNodeSqliteDatabase } from ${JSON.stringify(path.join(root, "src/infra/node-sqlite.ts"))};
     import { runSqliteTranscriptArchivePublishWorker } from ${JSON.stringify(path.join(root, "src/config/sessions/session-accessor.sqlite-archive.ts"))};
     const tuiUrls = Object.values(tuiPtyRuntimeEntrypoints).map(entry => resolveRuntimeWorkerUrl(entry).href);
     const setupUrls = cliCompactionBackendEntrypoints.map(entry => resolveRuntimeWorkerUrl(entry).href);
+    const retentionUrl = resolveRuntimeWorkerUrl(pluginRuntimeRetentionEntrypoint).href;
     // Import acquisition must finish during collection, before any fixture hook starts.
-    const entriesPresentAtCollection = [...tuiUrls,...setupUrls].every(url => fs.existsSync(new URL(url)));
+    const entriesPresentAtCollection = [...tuiUrls,...setupUrls,retentionUrl].every(url => fs.existsSync(new URL(url)));
     vi.mock('node:child_process', async (original) => {
       const actual = await original();
       return {...actual, execFile: vi.fn(actual.execFile)};
@@ -311,7 +313,7 @@ export function workerProbe(
         expect(fs.existsSync(source)).toBe(true);
       }
       expect(entriesPresentAtCollection).toBe(true);
-      for (const entry of [...Object.values(tuiPtyRuntimeEntrypoints),...cliCompactionBackendEntrypoints]) {
+      for (const entry of [...Object.values(tuiPtyRuntimeEntrypoints),...cliCompactionBackendEntrypoints,pluginRuntimeRetentionEntrypoint]) {
         const source = vitestWorkerBuildEntries[entry.distWorkerPath.replace(/\\.js$/, '')];
         expect(source).not.toContain('/dist/');
         expect(source).toMatch(/\\.ts$/);
@@ -338,7 +340,7 @@ export function workerProbe(
           if (!sourceMode) expect(fileURLToPath(archiveUrl).startsWith(fileURLToPath(new URL('../', generation)))).toBe(true);
           expect(tuiUrls).toHaveLength(4);
           expect(setupUrls).toHaveLength(2);
-          for (const url of [...tuiUrls,...setupUrls]) {
+          for (const url of [...tuiUrls,...setupUrls,retentionUrl]) {
             expect(url.endsWith(sourceMode ? '.ts' : '.js')).toBe(true);
             if (!sourceMode) expect(fileURLToPath(url).startsWith(fileURLToPath(new URL('../', generation)))).toBe(true);
           }
@@ -346,7 +348,7 @@ export function workerProbe(
           expect(args.includes('--import')).toBe(sourceLoader);
           if (sourceLoader) expect(args[1].startsWith('file:')).toBe(true);
           expect(args[sourceLoader ? 2 : 0]).toMatch(sourceMode ? /\\.ts$/ : /\\.js$/);
-          fs.appendFileSync(${JSON.stringify(path.join(directory, "observations.jsonl"))}, JSON.stringify({args, tuiUrls, setupUrls, value, configValue:inject('configValue'), knn:resolveRuntimeWorkerUrl(vectorKnnProcessEntrypoint).href})+'\\n');
+          fs.appendFileSync(${JSON.stringify(path.join(directory, "observations.jsonl"))}, JSON.stringify({args, tuiUrls, setupUrls, retentionUrl, value, configValue:inject('configValue'), knn:resolveRuntimeWorkerUrl(vectorKnnProcessEntrypoint).href})+'\\n');
           fs.appendFileSync(${JSON.stringify(path.join(directory, "generations.jsonl"))}, JSON.stringify(generation)+'\\n');
           const release = inject('releaseFile');
           if (release) await new Promise(resolve => {

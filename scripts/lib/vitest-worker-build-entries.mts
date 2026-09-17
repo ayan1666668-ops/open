@@ -8,6 +8,7 @@ import {
   codeModeRetentionEntrypoint,
 } from "../../src/agents/code-mode-retention-entrypoint.test-support.ts";
 import { cliCompactionBackendEntrypoints } from "../../src/agents/command/cli-compaction-runtime.test-support.ts";
+import { bashOutputSpillEntrypoints } from "../../src/agents/sessions/bash-output-spill-entrypoints.test-support.ts";
 import {
   cliRecoveryEntrypoints,
   gatewayDirectStopEntrypoints,
@@ -27,6 +28,7 @@ import {
   mcpProviderCatalogEntrypoint,
   publishedSdkBridgeEntrypoints,
 } from "../../src/plugins/loader-sdk-bridge-artifacts.test-support.ts";
+import { pluginRuntimeRetentionEntrypoint } from "../../src/plugins/runtime-retention-entrypoint.test-support.ts";
 import { persistenceRuntimeEntrypoint } from "../../src/skills/library/persistence-runtime.test-support.ts";
 import { agentDatabaseModuleIdentityEntrypoints } from "../../src/state/openclaw-agent-db-module-identity-runtime.test-support.ts";
 import { agentWorkerStoreFixtureEntrypoint } from "../../src/state/openclaw-agent-worker-store.runtime.test-support.ts";
@@ -69,8 +71,10 @@ export const vitestWorkerBuildEntries = {
     codeModeRetentionEntrypoint,
     codeModeDescriptionRetentionEntrypoint,
     ...cliCompactionBackendEntrypoints,
+    ...Object.values(bashOutputSpillEntrypoints),
     ...publishedSdkBridgeEntrypoints,
     mcpProviderCatalogEntrypoint,
+    pluginRuntimeRetentionEntrypoint,
     ...groqSetupSdkEntrypoints,
     ...Object.values(cliRecoveryEntrypoints),
     ...Object.values(updateExecutorNativeEntrypoints),
