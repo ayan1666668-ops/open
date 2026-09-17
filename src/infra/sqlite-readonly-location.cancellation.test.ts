@@ -53,7 +53,9 @@ beforeEach(async () => {
     const child = actual.execFile(file, args, options, callback);
     if (isWorkerMode(args, "reclaim")) {
       reclamationChildren.push(
-        new Promise<ChildProcess>((resolve) => child.once("close", () => resolve(child))),
+        new Promise<ChildProcess>((resolve) => {
+          child.once("close", () => resolve(child));
+        }),
       );
     }
     return child;
