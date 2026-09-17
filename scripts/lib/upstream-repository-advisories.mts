@@ -40,6 +40,17 @@ type AdvisoryReconciliation = {
   reviewedRanges: string[];
   matchedVersions: string[];
 };
+type PatchedRangeReconciliation = {
+  id: string;
+  packageName: string;
+  repositoryRange: string;
+  patchedRanges: string[];
+  effectiveRanges: string[];
+  matchedVersions: string[];
+};
+type RepositoryAdvisory = PublishedRepositoryAdvisory & {
+  patchedRangeEvidence: PatchedRangeReconciliation | null;
+};
 type JsonResponse = { data: unknown; link: string | null };
 
 export type PublishedRepositoryAdvisory = {
@@ -107,6 +118,27 @@ function githubRange(value: unknown) {
   }
 }
 
+function patchedUpperBound(range: semver.Comparator[], value: unknown) {
+  // Some publishers leave an open vulnerable lower bound alongside a patched
+  // suffix. Only this unambiguous shape supplies the missing upper bound; prose,
+  // unions, partial versions, prereleases, and already-bounded ranges do not.
+  const lower = range[0];
+  if (
+    range.length !== 1 ||
+    !lower ||
+    ![">", ">="].includes(lower.operator) ||
+    typeof value !== "string"
+  ) {
+    return null;
+  }
+  const match = /^>=\s*(\d+\.\d+\.\d+)$/u.exec(value);
+  const version = match?.[1];
+  if (!version || !semver.valid(version) || !semver.gt(version, lower.semver)) {
+    return null;
+  }
+  return new semver.Comparator(`<${version}`);
+}
+
 function nextCursor(
   link: string | null,
   repository: string,
@@ -144,7 +176,7 @@ function collectRepositoryMatches(
   rows: unknown[],
   repository: string,
   packages: RepositoryPackages,
-  advisories: PublishedRepositoryAdvisory[],
+  advisories: RepositoryAdvisory[],
   issues: CoverageIssue[],
 ) {
   for (const row of rows) {
@@ -171,7 +203,16 @@ function collectRepositoryMatches(
       issues.push({ subject: repository, reason: "invalid-advisory" });
       continue;
     }
-    const matches = new Map<string, { ranges: Set<string>; versions: Set<string> }>();
+    const matches = new Map<
+      string,
+      {
+        ranges: Set<string>;
+        versions: Set<string>;
+        patchedRanges: Set<string>;
+        effectiveRanges: Set<string>;
+        effectiveVersions: Set<string>;
+      }
+    >();
     for (const vulnerability of row.vulnerabilities) {
       if (!isRecord(vulnerability) || !isRecord(vulnerability.package)) {
         issues.push({ subject: `${repository}#${row.ghsa_id}`, reason: "invalid-advisory" });
@@ -200,7 +241,24 @@ function collectRepositoryMatches(
       if (affected.length === 0) {
         continue;
       }
-      const match = matches.get(name) ?? { ranges: new Set<string>(), versions: new Set<string>() };
+      const match = matches.get(name) ?? {
+        ranges: new Set<string>(),
+        versions: new Set<string>(),
+        patchedRanges: new Set<string>(),
+        effectiveRanges: new Set<string>(),
+        effectiveVersions: new Set<string>(),
+      };
+      const upper = patchedUpperBound(range, vulnerability.patched_versions);
+      const effective = upper ? [...range, upper] : range;
+      if (upper) {
+        match.patchedRanges.add(`>=${upper.semver.version}`);
+      }
+      match.effectiveRanges.add(effective.map((bound) => bound.value).join(" "));
+      for (const version of affected.filter((candidate) =>
+        effective.every((bound) => bound.test(candidate)),
+      )) {
+        match.effectiveVersions.add(version);
+      }
       match.ranges.add(range.map((bound) => bound.value).join(" "));
       for (const version of affected) {
         match.versions.add(version);
@@ -216,6 +274,17 @@ function collectRepositoryMatches(
         url: `https://github.com/${repository}/security/advisories/${row.ghsa_id}`,
         vulnerable_versions: [...match.ranges].toSorted().join(" || "),
         matchedVersions: [...match.versions].toSorted(),
+        patchedRangeEvidence:
+          match.patchedRanges.size > 0
+            ? {
+                id: row.ghsa_id,
+                packageName,
+                repositoryRange: [...match.ranges].toSorted().join(" || "),
+                patchedRanges: [...match.patchedRanges].toSorted(),
+                effectiveRanges: [...match.effectiveRanges].toSorted(),
+                matchedVersions: [...match.effectiveVersions].toSorted(),
+              }
+            : null,
       });
     }
   }
@@ -264,7 +333,7 @@ export async function fetchPublishedRepositoryAdvisories({
   fetchImpl: typeof fetch;
 }) {
   const issues: CoverageIssue[] = [];
-  const advisories: PublishedRepositoryAdvisory[] = [];
+  const advisories: RepositoryAdvisory[] = [];
   const repositories = new Map<string, RepositoryPackages>();
   const deadline = performance.now() + RUN_TIMEOUT_MS;
   const token = process.env.GH_TOKEN;
@@ -479,10 +548,12 @@ export async function fetchPublishedRepositoryAdvisories({
   });
 
   const reconciliations: AdvisoryReconciliation[] = [];
+  const patchedRangeReconciliations: PatchedRangeReconciliation[] = [];
   const reconciled = await runTasksWithConcurrency({
     limit: CONCURRENCY,
     throwOnError: true,
-    tasks: advisories.map((advisory) => async () => {
+    tasks: advisories.map((collected) => async (): Promise<PublishedRepositoryAdvisory | null> => {
+      const { patchedRangeEvidence, ...advisory } = collected;
       // Repository ranges can remain stale after GitHub reviews the same GHSA.
       // Only exact reviewed package ranges may replace them; missing proof retains the blocker.
       const response = await request(`${GITHUB_API}/advisories/${advisory.id}`, "github");
@@ -492,6 +563,18 @@ export async function fetchPublishedRepositoryAdvisories({
           subject: `${advisory.packageName}#${advisory.id}`,
           reason: response.ok ? "invalid-advisory" : response.error,
         });
+        if (patchedRangeEvidence) {
+          // Missing aggregate data does not erase the publisher's explicit fix
+          // boundary. Preserve both ranges and incomplete reviewed coverage.
+          patchedRangeReconciliations.push(patchedRangeEvidence);
+          return patchedRangeEvidence.matchedVersions.length > 0
+            ? {
+                ...advisory,
+                vulnerable_versions: patchedRangeEvidence.effectiveRanges.join(" || "),
+                matchedVersions: patchedRangeEvidence.matchedVersions,
+              }
+            : null;
+        }
         return advisory;
       }
       const reviewedRanges = ranges.map((range) => range.map((bound) => bound.value).join(" "));
@@ -521,6 +604,10 @@ export async function fetchPublishedRepositoryAdvisories({
     coverage: {
       source: "github-public-repository-advisories" as const,
       reconciliations: reconciliations.toSorted(
+        (left, right) =>
+          left.packageName.localeCompare(right.packageName) || left.id.localeCompare(right.id),
+      ),
+      patchedRangeReconciliations: patchedRangeReconciliations.toSorted(
         (left, right) =>
           left.packageName.localeCompare(right.packageName) || left.id.localeCompare(right.id),
       ),

@@ -205,6 +205,99 @@ describe("published upstream repository advisories", () => {
     },
   );
 
+  it("uses the publisher's explicit patched suffix when a new GHSA is not aggregated yet", async () => {
+    const source = createSourceFetch({
+      page: () =>
+        Response.json([
+          advisory(">= 1.13.0", {
+            vulnerabilities: [{ ...vulnerability(">= 1.13.0"), patched_versions: ">=1.20.0" }],
+          }),
+        ]),
+      reviewed: () => new Response(null, { status: 404 }),
+    });
+    const report = await scan(source.fetchImpl, { fixture: ["1.19.0", "1.20.0", "1.21.0"] });
+    expect(report.advisories).toMatchObject([
+      {
+        id: ADVISORY_ID,
+        vulnerable_versions: ">=1.13.0 <1.20.0",
+        matchedVersions: ["1.19.0"],
+      },
+    ]);
+    expect(report.coverage).toMatchObject({
+      status: "partial",
+      reconciliations: [],
+      patchedRangeReconciliations: [
+        {
+          id: ADVISORY_ID,
+          packageName: "fixture",
+          repositoryRange: ">=1.13.0",
+          patchedRanges: [">=1.20.0"],
+          effectiveRanges: [">=1.13.0 <1.20.0"],
+          matchedVersions: ["1.19.0"],
+        },
+      ],
+      issues: [{ subject: `fixture#${ADVISORY_ID}`, reason: "request-failed" }],
+    });
+  });
+
+  it.each([
+    undefined,
+    null,
+    "",
+    "1.20.0",
+    ">=1.20",
+    ">=1.20.0-beta.1",
+    ">=1.20.0 || >=2.0.0",
+    ">=1.13.0",
+    ">=1.12.0",
+    "patched in 1.20.0",
+  ])("retains the blocker for ambiguous patched metadata %s", async (patched_versions) => {
+    const source = createSourceFetch({
+      page: () =>
+        Response.json([
+          advisory(">= 1.13.0", {
+            vulnerabilities: [{ ...vulnerability(">= 1.13.0"), patched_versions }],
+          }),
+        ]),
+      reviewed: () => new Response(null, { status: 404 }),
+    });
+    const report = await scan(source.fetchImpl, { fixture: ["1.20.0"] });
+    expect(report.advisories).toMatchObject([{ matchedVersions: ["1.20.0"] }]);
+    expect(report.coverage.patchedRangeReconciliations).toEqual([]);
+  });
+
+  it("does not let one patched row erase an affected sibling for the same package", async () => {
+    const source = createSourceFetch({
+      page: () =>
+        Response.json([
+          advisory(">= 1.13.0", {
+            vulnerabilities: [
+              { ...vulnerability(">= 1.13.0"), patched_versions: ">=1.20.0" },
+              vulnerability(">= 1.19.0, < 1.21.0"),
+            ],
+          }),
+        ]),
+      reviewed: () => new Response(null, { status: 404 }),
+    });
+    expect((await scan(source.fetchImpl, { fixture: ["1.20.0"] })).advisories).toMatchObject([
+      { matchedVersions: ["1.20.0"] },
+    ]);
+  });
+
+  it("keeps reviewed affected ranges authoritative over publisher patched metadata", async () => {
+    const source = createSourceFetch({
+      page: () =>
+        Response.json([
+          advisory(">= 1.13.0", {
+            vulnerabilities: [{ ...vulnerability(">= 1.13.0"), patched_versions: ">=1.20.0" }],
+          }),
+        ]),
+    });
+    const report = await scan(source.fetchImpl, { fixture: ["1.20.0"] });
+    expect(report.advisories).toMatchObject([{ matchedVersions: ["1.20.0"] }]);
+    expect(report.coverage.patchedRangeReconciliations).toEqual([]);
+  });
+
   it.each([
     { name: "unavailable", response: null },
     { name: "wrong identity", response: { ghsa_id: "GHSA-5555-6666-7777" } },
