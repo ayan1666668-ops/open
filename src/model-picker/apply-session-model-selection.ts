@@ -39,7 +39,6 @@ import {
   type PreparedSessionExecutionCommitParams,
   getSessionExecutionSelection,
   getCommittedSessionExecutionSelection,
-  isAcpExecutionSelection,
   isModelExecutionSelection,
   SESSION_EXECUTION_SELECTION_TRANSACTION_FIELDS,
   type SessionExecutionSelection,

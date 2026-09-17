@@ -243,7 +243,7 @@ export async function resolveEmbeddedModelSelection(params: {
     sessionKey: params.sessionKey,
     storePath: params.storePath,
     sessionEntry,
-    modelCatalog: modelCatalog ?? allowedModelCatalog,
+    modelCatalog,
     request:
       params.opts.modelRun === true || params.opts.promptMode === "none"
         ? {

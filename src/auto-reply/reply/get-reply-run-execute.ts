@@ -387,6 +387,7 @@ export async function executePreparedReplyRun(state: PreparedReplyRunAdmission) 
         isError: true,
       };
     }
+    return undefined;
   };
   const followupRun = {
     prompt: queuedBody,

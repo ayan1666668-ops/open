@@ -683,7 +683,7 @@ export function projectSessionPatchResult(params: {
     cfg: params.cfg,
     agentId,
     sessionKey: params.canonicalKey,
-    source: { entry: params.entry, loadSessionEntry: () => undefined },
+    source: { entry: params.entry, readSourceEntry: () => undefined },
   });
   const displayModel = resolveSessionDisplayModelIdentityRef({
     cfg: params.cfg,

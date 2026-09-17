@@ -337,6 +337,7 @@ export async function executeSessionPatchMutations(params: {
                     const replacements: SessionEntryCanonicalReplacement[] = [];
                     const projectedOutcomes: MutationOutcome[] = [];
                     let committedGroupOutcomes: MutationOutcome[] | undefined;
+                    let externalPreparationStarted = false;
                     const projectTargets = async (
                       startIndex: number,
                     ): Promise<GroupMutationOperation> => {
@@ -486,10 +487,7 @@ export async function executeSessionPatchMutations(params: {
                             agentId: target.targetAgentId,
                             // Detached preparation must not replay earlier controls or restoration
                             // when a later target needs the catalog.
-                            mode:
-                              admission === "admitted" || group.length === 1
-                                ? "prepare"
-                                : "ordered",
+                            mode: externalPreparationStarted ? "ordered" : "prepare",
                             catalog: catalogPreparation,
                             projection: {
                               cfg,
@@ -507,8 +505,8 @@ export async function executeSessionPatchMutations(params: {
                           } satisfies Parameters<typeof catalogs.project>[0];
                           const projection = await catalogs.project(projectionParams);
                           if (projection.kind === "model-catalog") {
-                            // No replacements or runtime effects exist yet. Release this
-                            // writer snapshot; completed preparation must use fresh rows.
+                            // No external work has started. Discard this provisional
+                            // projection and read fresh rows after catalog preparation.
                             return { result: projection };
                           }
                           const projected = projection.result;
@@ -543,6 +541,7 @@ export async function executeSessionPatchMutations(params: {
                             const worktreeTiming = params.diagnostics?.scope("worktree");
                             let transition: ArchiveTransition;
                             try {
+                              externalPreparationStarted = true;
                               transition = await prepareSessionPatchArchiveTransition({
                                 archived: target.fullPatch.archived,
                                 entry: existingEntry,
@@ -610,6 +609,7 @@ export async function executeSessionPatchMutations(params: {
                           };
                           if (acpPatch) {
                             const preparedExecution = acpPatch.execution;
+                            externalPreparationStarted = true;
                             const applied = await applyAcpSessionPatch({
                               prepared: acpPatch,
                               selectionCommitted: () => {

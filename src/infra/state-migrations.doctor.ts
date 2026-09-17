@@ -1163,13 +1163,16 @@ function buildUnresolvedBlockedPreludeSteps(
   }));
 }
 
-function createStateSchemaMigrationStep(params: {
-  config: OpenClawConfig;
-  stateDir: string;
-  env: NodeJS.ProcessEnv;
-  mode: LegacyStateMigrationMode;
-  requiredness: PreparedLegacyStateMigrationStep["requiredness"];
-}): LegacyStateMigrationStep {
+function createStateSchemaMigrationStep(
+  params: {
+    stateDir: string;
+    env: NodeJS.ProcessEnv;
+    requiredness: PreparedLegacyStateMigrationStep["requiredness"];
+  } & (
+    | { mode: LegacyStateMigrationMode; config: OpenClawConfig }
+    | { mode: "automatic"; config?: never }
+  ),
+): LegacyStateMigrationStep {
   const stateEnv = { ...params.env, OPENCLAW_STATE_DIR: params.stateDir };
   const database: LegacyStateMigrationEndpoint = {
     kind: "sqlite",
@@ -3071,14 +3074,17 @@ function completedPluginMigrationFields(
 }
 
 /** Admit preflight's shared-state writers through the same schema step as later migrations. */
-export async function prepareLegacyStateDatabaseSchema(
-  env: NodeJS.ProcessEnv,
-): Promise<LegacyStateMigrationStepReceipt> {
+export async function prepareLegacyStateDatabaseSchema(params: {
+  config?: OpenClawConfig;
+  env: NodeJS.ProcessEnv;
+}): Promise<LegacyStateMigrationStepReceipt> {
   const { receipts } = await runLegacyStateMigrationSteps([
     createStateSchemaMigrationStep({
-      stateDir: resolveStateDir(env),
-      env,
-      mode: "automatic",
+      stateDir: resolveStateDir(params.env),
+      env: params.env,
+      ...(params.config
+        ? { mode: "doctor" as const, config: params.config }
+        : { mode: "automatic" as const }),
       requiredness: "conditional",
     }),
   ]);

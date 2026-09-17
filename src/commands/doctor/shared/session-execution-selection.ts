@@ -13,7 +13,10 @@ import {
   commitStoredSessionExecutionSelection,
   resolveLegacyExecutionFallbackPermission,
 } from "../../../model-picker/apply-session-model-selection.js";
-import type { SessionExecutionSelection } from "../../../model-picker/execution-selection.js";
+import type {
+  LegacyExecutionRequest,
+  SessionExecutionSelection,
+} from "../../../model-picker/execution-selection.js";
 import { sessionExecutionSelectionSchema } from "../../../model-picker/execution-selection.schema.js";
 import { resolveSessionPinnedHarnessId } from "../../../sessions/agent-harness-session-key.js";
 
@@ -107,7 +110,7 @@ export function migrateSessionExecutionSelection(params: {
         })
       : undefined;
   const requestedModel = ref ? { provider: ref.provider, id: ref.model } : request;
-  const legacyRequest =
+  const legacyRequest: LegacyExecutionRequest | undefined =
     provider && !model && !requestedModel
       ? {
           provider,

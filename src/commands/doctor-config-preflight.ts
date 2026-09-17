@@ -380,8 +380,16 @@ async function runDoctorConfigPreflightOperation(
       // Plugin obligations must survive later repair failures, but their writer needs current SQL.
       const { prepareLegacyStateDatabaseSchema } =
         await import("../infra/state-migrations.doctor.js");
+      const migrationConfig = resolveStateMigrationConfigInput({
+        snapshot,
+        baseConfig: automaticConfigRepair?.config ?? baseConfig,
+      })?.cfg;
+      const prepareSchema = () =>
+        prepareLegacyStateDatabaseSchema({ config: migrationConfig, env: startupMigrationEnv });
       const receipt = await measurePreflightStep("state-schema", () =>
-        prepareLegacyStateDatabaseSchema(startupMigrationEnv),
+        migrationConfig
+          ? pluginMetadata.run({ config: migrationConfig }, prepareSchema)
+          : prepareSchema(),
       );
       if (receipt.outcome !== "skipped") {
         stateMigrationStepReceipts.push(receipt);

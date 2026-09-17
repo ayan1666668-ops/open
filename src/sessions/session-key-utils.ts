@@ -8,7 +8,9 @@ import {
   parseAgentSessionKeyParts,
   type ParsedAgentSessionKey,
 } from "@openclaw/session-url-contract";
+import type { SessionEntry } from "../config/sessions/types.js";
 import { pruneMapToMaxSize } from "../infra/map-size.js";
+import { getSessionExecutionSelection } from "../model-picker/execution-selection.js";
 import { escapeRegExp } from "../shared/regexp.js";
 
 export type { ParsedAgentSessionKey };
@@ -341,9 +343,11 @@ export function isAcpSessionKey(sessionKey: string | undefined | null): boolean 
 /** Stored ACP bindings and stale ACP keys both belong to ACP dispatch, never local fallback. */
 export function resolveSessionDispatchKind(
   sessionKey: string | undefined | null,
-  entry?: { acp?: unknown },
+  entry?: Pick<SessionEntry, "executionSelection">,
 ): "agent" | "acp" {
-  return entry?.acp || isAcpSessionKey(sessionKey) ? "acp" : "agent";
+  return getSessionExecutionSelection(entry)?.executor.kind === "acp" || isAcpSessionKey(sessionKey)
+    ? "acp"
+    : "agent";
 }
 
 export function parseThreadSessionSuffix(

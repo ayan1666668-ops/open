@@ -9,7 +9,7 @@ import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { logVerbose } from "../../globals.js";
 import { toErrorObject } from "../../infra/errors.js";
 import type { AcpExecutionSelection } from "../../model-picker/execution-selection.js";
-import { isAcpSessionKey } from "../../sessions/session-key-utils.js";
+import { resolveSessionDispatchKind } from "../../sessions/session-key-utils.js";
 import { AcpRuntimeError } from "../runtime/errors.js";
 import {
   runAcceptedManagerTurn,
@@ -137,7 +137,7 @@ export class AcpSessionManager {
         selection: requireAcpExecutionSelection(stored.entry),
       };
     }
-    if (isAcpSessionKey(sessionKey)) {
+    if (resolveSessionDispatchKind(sessionKey, stored?.entry) === "acp") {
       return {
         kind: "stale",
         ...target,

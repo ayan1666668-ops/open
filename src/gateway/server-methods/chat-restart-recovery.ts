@@ -27,7 +27,7 @@ import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { findRestartRecoveryUnsafeChatAdmissionHook } from "../../plugins/restart-recovery-hook-safety.js";
 import { isCronSessionKey, isSubagentSessionKey } from "../../routing/session-key.js";
 import { isAgentHarnessSessionKey } from "../../sessions/agent-harness-session-key.js";
-import { isAcpSessionKey, resolveSessionDispatchKind } from "../../sessions/session-key-utils.js";
+import { resolveSessionDispatchKind } from "../../sessions/session-key-utils.js";
 import { recordGatewaySessionRunFailure } from "../../sessions/session-run-error.js";
 import { sessionDeliveryChannel } from "../../utils/delivery-context.shared.js";
 import { parseInlineDirectives } from "../../utils/directive-tags.js";
@@ -253,11 +253,10 @@ function isRestartSafeChatSession(params: {
     entry.spawnedBy === undefined &&
     entry.subagentRole === undefined &&
     (entry.spawnDepth ?? 0) === 0 &&
-    entry.acp === undefined &&
+    resolveSessionDispatchKind(params.sessionKey, entry) !== "acp" &&
     entry.cronRunContinuation === undefined &&
     !isSubagentSessionKey(params.sessionKey) &&
     !isCronSessionKey(params.sessionKey) &&
-    !isAcpSessionKey(params.sessionKey) &&
     !isAgentHarnessSessionKey(params.sessionKey) &&
     (params.requestedSessionId === undefined || params.requestedSessionId === entry.sessionId),
   );

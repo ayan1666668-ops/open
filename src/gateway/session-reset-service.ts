@@ -39,6 +39,8 @@ import { clearAllCliSessions } from "../agents/cli-session.js";
 import { resetRegisteredAgentHarnessSessions } from "../agents/harness/registry.js";
 import { resolveSessionModelRefCore as resolveSessionModelRef } from "../agents/session-model-ref.js";
 import { managedWorktrees } from "../agents/worktrees/service.js";
+import { resolveActiveReplyOperationForSessionId } from "../auto-reply/reply/reply-run-registry.js";
+import { isReplyOperationPreBackendPhase } from "../auto-reply/reply/reply-run-registry.state.js";
 import {
   buildSessionEndHookPayload,
   buildSessionStartHookPayload,
@@ -503,21 +505,31 @@ async function ensureSessionRuntimeCleanup(params: {
       { evictOnSettled: true },
     );
   };
-  // Register against the run being stopped before abort or any await allows a
-  // later embedded or reply-backed run to replace it in the active registry.
-  const mcpRetirementWatcher = ensureMcpRetirementWatcher();
-  embeddedAgent.abortEmbeddedAgentRun(sessionId);
-  // Mark cleanup before waiting so the timeout path cannot strand MCP children.
-  // Active tool/app leases keep in-flight work alive until their final release.
-  await retireMcpRuntime(true);
-  const ended = await embeddedAgent.waitForEmbeddedAgentRunEnd(sessionId, 15_000);
-  assertCurrent();
-  // A stopping run can create or reuse its runtime while we wait. Retire again
-  // after a clean stop; otherwise keep the required marker armed for late work.
-  await retireMcpRuntime(!ended);
+  // Competing admissions have drained. A surviving pre-backend reply is the
+  // reset command itself; generic Stop would cancel that command and its tail.
+  const reply = resolveActiveReplyOperationForSessionId(sessionId);
+  const preparingReset =
+    reply !== undefined &&
+    isReplyOperationPreBackendPhase(reply.phase) &&
+    !embeddedAgent.isEmbeddedAgentRunHandleActive(sessionId);
+  let mcpRetirementWatcher: Promise<void> | undefined;
+  let ended = true;
+  if (preparingReset) {
+    mcpRetirementWatcher = mcpRunEndWatchers.get(sessionId);
+    await retireMcpRuntime(false);
+  } else {
+    // Capture the run before cancellation can replace its registry entry.
+    mcpRetirementWatcher = ensureMcpRetirementWatcher();
+    embeddedAgent.abortEmbeddedAgentRun(sessionId);
+    // Active leases retain in-flight tools; the marker covers late runtime reuse.
+    await retireMcpRuntime(true);
+    ended = await embeddedAgent.waitForEmbeddedAgentRunEnd(sessionId, 15_000);
+    assertCurrent();
+    await retireMcpRuntime(!ended);
+  }
   assertCurrent();
   clearBootstrapSnapshot(params.target.canonicalKey);
-  if (ended && !embeddedAgent.isEmbeddedAgentRunActive(sessionId)) {
+  if (ended && (preparingReset || !embeddedAgent.isEmbeddedAgentRunActive(sessionId))) {
     assertCurrent();
     mcpRunEndWatcherState.cancellations.get(sessionId)?.();
     await mcpRetirementWatcher;
@@ -723,27 +735,22 @@ async function ensureFreshAcpResetState(params: {
       agentId: params.agentId,
       cfg: params.cfg,
     }) ?? params.acpMeta;
-  if (
-    !latestMeta?.identity ||
-    latestMeta.identity.state !== "resolved" ||
-    (!latestMeta.identity.acpxSessionId && !latestMeta.identity.agentSessionId)
-  ) {
-    return undefined;
-  }
-
   if (params.shouldApply && !params.shouldApply()) {
     return undefined;
   }
   params.assertCurrent?.();
-  // Ownership repair failures must reach the caller before metadata is cleared.
-  await tryPrepareFreshManagerRuntimeSession({
-    deps: { getRuntimeBackend: getAcpRuntimeBackend },
-    cfg: params.cfg,
-    meta: latestMeta,
-    selection: requireAcpExecutionSelection(readSessionEntryFromStore(params).entry),
-    ...resolveAcpSessionTarget(params),
-    logPrefix: `sessions.${params.reason}`,
-  });
+  const identity = latestMeta.identity;
+  if (identity?.state === "resolved" && (identity.acpxSessionId || identity.agentSessionId)) {
+    // Close handles identities without stable resume ids. Only resolved ids need preparation here.
+    await tryPrepareFreshManagerRuntimeSession({
+      deps: { getRuntimeBackend: getAcpRuntimeBackend },
+      cfg: params.cfg,
+      meta: latestMeta,
+      selection: requireAcpExecutionSelection(readSessionEntryFromStore(params).entry),
+      ...resolveAcpSessionTarget(params),
+      logPrefix: `sessions.${params.reason}`,
+    });
+  }
   if (params.shouldApply && !params.shouldApply()) {
     return undefined;
   }
@@ -1865,31 +1872,29 @@ export async function performGatewaySessionReset(params: {
           }
           let committedAcpResetState: { sessionKey: string; meta: SessionAcpLifecycle } | undefined;
           if (deferredAcpResetState) {
-            const identity = deferredAcpResetState.meta.identity;
-            if (
-              identity?.state === "resolved" &&
-              (identity.acpxSessionId || identity.agentSessionId)
-            ) {
-              committedAcpResetState = {
-                sessionKey: deferredAcpResetState.sessionKey,
-                meta: buildPendingAcpMeta(deferredAcpResetState.meta, Date.now()),
-              };
-              // Session row rotation and ACP metadata cannot share a transaction.
-              // Bind captured ACP state before acknowledging the committed reset so the
-              // new session never observes an unreadable old-session row.
-              writeAcpSessionMetaForMigration({
-                sessionKey: buildAcpDatabaseSessionKey(committedAcpResetState.sessionKey, agentId),
-                sessionId: mutation.nextEntry.sessionId,
-                lifecycleRevision: mutation.nextEntry.lifecycleRevision,
-                meta: committedAcpResetState.meta,
-              });
-            }
+            committedAcpResetState = {
+              sessionKey: deferredAcpResetState.sessionKey,
+              meta: buildPendingAcpMeta(deferredAcpResetState.meta, Date.now()),
+            };
+            // Bind captured metadata to the committed lifecycle before acknowledging reset.
+            writeAcpSessionMetaForMigration({
+              sessionKey: buildAcpDatabaseSessionKey(committedAcpResetState.sessionKey, agentId),
+              sessionId: mutation.nextEntry.sessionId,
+              lifecycleRevision: mutation.nextEntry.lifecycleRevision,
+              meta: committedAcpResetState.meta,
+            });
           }
           params.onCommitted?.({
             key: target.canonicalKey,
             sessionId: mutation.nextEntry.sessionId,
           });
-          if (committedAcpResetState && isResetLifecycleCurrent()) {
+          const priorAcpIdentity = deferredAcpResetState?.meta.identity;
+          if (
+            committedAcpResetState &&
+            priorAcpIdentity?.state === "resolved" &&
+            (priorAcpIdentity.acpxSessionId || priorAcpIdentity.agentSessionId) &&
+            isResetLifecycleCurrent()
+          ) {
             // The helper records skipped/failed preparation instead of silently
             // resuming the old backend conversation after an apparently
             // successful reset.
