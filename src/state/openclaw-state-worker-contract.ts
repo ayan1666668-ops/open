@@ -11,6 +11,7 @@ import type { CronStoreWorkerOperations } from "../cron/store/load-worker.types.
 import type { CronStoreSaveWorkerOperations } from "../cron/store/save-worker.types.js";
 import type { DeferredPluginMigration } from "../infra/deferred-plugin-migrations.js";
 import type { DeliveryQueueWorkerOperations } from "../infra/delivery-queue.worker-contract.js";
+import type { PreparedPromotionClaim } from "../infra/promotions-feed.kernel.js";
 import type { SessionDeliveryWorkerOperations } from "../infra/session-delivery-queue.worker-contract.js";
 import type { PreparedSqliteAuditRecord } from "../infra/sqlite-audit-record.kernel.js";
 import type { SqliteFileGeneration } from "../infra/sqlite-file-generation.js";
@@ -25,6 +26,10 @@ import type {
   ProjectRegistryInsert,
   ProjectRegistryRecord,
 } from "../projects/project-registry.kernel.js";
+import type {
+  SessionStateEventInput,
+  SessionStateNotice,
+} from "../sessions/session-state-events.kernel.js";
 import type { ManagedTaskInFlowInput } from "../tasks/task-flow-managed-run-task.kernel.js";
 import type { RunTaskInFlowResult } from "../tasks/task-flow-managed-run-task.types.js";
 import type {
@@ -68,6 +73,13 @@ export type OpenClawStateWorkerOperations = NativeHookRelayStoreWorkerOperations
   CronStoreSaveWorkerOperations &
   SessionDeliveryWorkerOperations &
   DeliveryQueueWorkerOperations & {
+    "promotions.markNotified": { input: { slugs: string[]; now: number }; output: true };
+    "promotions.recordClaim": { input: PreparedPromotionClaim; output: void };
+    "sessionState.recordGoalChange": {
+      input: { event: SessionStateEventInput & { kind: "goal_changed" }; now: number };
+      output: SessionStateNotice[];
+    };
+    "sessionState.prune": { input: { now: number }; output: void };
     "doctor.databaseBloat": {
       input: undefined;
       output: ReturnType<typeof readSqliteDatabaseBloat>;
