@@ -14,6 +14,8 @@ import { defaultRuntime } from "../../runtime.js";
 import { closeOpenClawStateDatabaseForTest } from "../../state/openclaw-state-db.js";
 import {
   createManagedServiceIdentityFixture,
+  expectUpdateFailure,
+  registerServiceInstallationConvergenceTests,
   finishSuccessfulPackageSwitch,
   managedServiceState,
   programArguments,
@@ -177,6 +179,8 @@ describe("successful update finalization ordering", () => {
     vi.spyOn(defaultRuntime, "error").mockImplementation(() => undefined);
     vi.spyOn(defaultRuntime, "log").mockImplementation(() => undefined);
   });
+
+  registerServiceInstallationConvergenceTests(() => tempDirs.make("update-install-drift-"), mocks);
 
   it("does not finalize or clean an active durable run without its live executor", async () => {
     const home = tempDirs.make("finalizer-pending-recovery-");
