@@ -13253,7 +13253,9 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
       mkdirSync(bin);
       writeExecutable(path.join(bin, "node"), [
         "#!/bin/sh",
-        'printf "%s\\n" "$@" > "$STARTUP_CORPUS_ARGS"',
+        'label="${OPENCLAW_TEST_STARTUP_CORPUS_SHARD:-config}"',
+        'case "$label" in */*) label="${label%/*}-${label#*/}" ;; esac',
+        'printf "%s\\n" "$@" > "$STARTUP_CORPUS_ARGS.$label"',
       ]);
       const script = expectDefined(selected[0]?.run, "startup corpus command").replace(
         /\$\{\{[\s\S]*?\}\}/gu,
@@ -13275,7 +13277,11 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
         },
       });
       expect(result.status, result.stdout + result.stderr).toBe(0);
-      expect(readFileSync(argsPath, "utf8").trim().split("\n")).toEqual([
+      const readArgs = (label: string) =>
+        readFileSync(`${argsPath}.${label.replace("/", "-")}`, "utf8")
+          .trim()
+          .split("\n");
+      const commonArgs = [
         "scripts/run-vitest.mjs",
         "run",
         "--config",
@@ -13290,9 +13296,17 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
               "--reporter",
               "./scripts/lib/vitest-resource-reporter.mts",
             ]),
+      ];
+      expect(readArgs("config")).toEqual([
+        ...commonArgs,
         "src/config/config-startup-corpus.test.ts",
-        "src/config/state-startup-corpus.test.ts",
       ]);
+      for (const shard of ["1/4", "2/4", "3/4", "4/4"]) {
+        expect(readArgs(shard), shard).toEqual([
+          ...commonArgs,
+          "src/config/state-startup-corpus.test.ts",
+        ]);
+      }
     }
   });
 
