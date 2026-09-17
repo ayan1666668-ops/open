@@ -25,30 +25,42 @@ vi.mock("../runtime-api.js", async (original) => {
   };
 });
 
+type SendContext = Pick<
+  ChannelMessageSendMediaContext,
+  | "cfg"
+  | "to"
+  | "text"
+  | "mediaUrl"
+  | "accountId"
+  | "replyToId"
+  | "onPlatformSendDispatch"
+  | "assertDirectAdapterHandoff"
+>;
+
 const registrations = [
   {
     name: "message text",
     media: false,
-    send: (ctx: ChannelMessageSendMediaContext) => nextcloudTalkPlugin.message?.send.text?.(ctx),
+    send: (ctx: SendContext) => nextcloudTalkPlugin.message?.send?.text?.(ctx),
   },
   {
     name: "message media",
     media: true,
-    send: (ctx: ChannelMessageSendMediaContext) => nextcloudTalkPlugin.message?.send.media?.(ctx),
+    send: (ctx: SendContext) => nextcloudTalkPlugin.message?.send?.media?.(ctx),
   },
   {
     name: "outbound text",
     media: false,
-    send: (ctx: ChannelMessageSendMediaContext) => nextcloudTalkPlugin.outbound?.sendText?.(ctx),
+    send: (ctx: SendContext) => nextcloudTalkPlugin.outbound?.sendText?.(ctx),
   },
   {
     name: "outbound media",
     media: true,
-    send: (ctx: ChannelMessageSendMediaContext) => nextcloudTalkPlugin.outbound?.sendMedia?.(ctx),
+    send: (ctx: SendContext) => nextcloudTalkPlugin.outbound?.sendMedia?.(ctx),
   },
 ];
 
-function sendContext(baseUrl: string): ChannelMessageSendMediaContext {
+function sendContext(baseUrl: string): SendContext {
   return {
     cfg: {
       channels: {
@@ -245,7 +257,7 @@ it.each(["reject", "cancel"])(
         acceptMessage(response);
       },
       async (baseUrl) => {
-        const pending = nextcloudTalkPlugin.message?.send.text?.({
+        const pending = nextcloudTalkPlugin.message?.send?.text?.({
           ...sendContext(baseUrl),
           ...handoff.callbacks,
         });
@@ -285,7 +297,7 @@ it("keeps a cancelled send's authority separate from a concurrent delivery", asy
       acceptMessage(response);
     },
     async (baseUrl) => {
-      const held = nextcloudTalkPlugin.message?.send.text?.({
+      const held = nextcloudTalkPlugin.message?.send?.text?.({
         ...sendContext(baseUrl),
         ...cancelled.callbacks,
         to: "room:held",
