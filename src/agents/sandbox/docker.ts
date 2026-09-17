@@ -19,6 +19,7 @@ import {
   type SandboxContainerEngineTarget,
 } from "./container-engine.js";
 import { handleHotSandboxConfigMismatch } from "./current-config.js";
+import { throwAfterPartialSandboxCleanup } from "./docker-partial-cleanup.js";
 import {
   prepareSandboxMountPlan,
   sandboxMountPlanMatchesContainer,
@@ -647,20 +648,46 @@ async function ensureSandboxContainerLifecycle(
     }
   }
   if (!hasContainer) {
-    await createSandboxContainer({
-      engine,
-      name: containerName,
-      cfg: params.cfg.docker,
-      dockerTmpfsSource: params.cfg.dockerTmpfsSource,
-      workspaceDir: params.workspaceDir,
-      workspaceAccess: params.cfg.workspaceAccess,
-      agentWorkspaceDir: params.agentWorkspaceDir,
-      skillsWorkspaceDir: params.skillsWorkspaceDir,
-      scopeKey: params.scopeKey,
+    const recoveryEntry = {
+      containerName,
+      backendId: engine.id,
+      ...(podmanRuntimeInfo ? { backendTarget: podmanRuntimeInfo.target } : {}),
+      runtimeLabel: containerName,
+      sessionKey: params.scopeKey,
+      createdAtMs: now,
+      lastUsedAtMs: now,
+      image: params.cfg.docker.image,
+      configLabelKind: "Image" as const,
       configHash: expectedHash,
-      mountPlan,
-      podmanRuntimeInfo,
-    });
+    };
+    // Reserve the exact runtime identity before granting writable mounts. If
+    // allocation fails after this point, recovery can revoke the runtime before
+    // any competing operation proceeds.
+    await updateRegistry(recoveryEntry);
+    try {
+      await createSandboxContainer({
+        engine,
+        name: containerName,
+        cfg: params.cfg.docker,
+        dockerTmpfsSource: params.cfg.dockerTmpfsSource,
+        workspaceDir: params.workspaceDir,
+        workspaceAccess: params.cfg.workspaceAccess,
+        agentWorkspaceDir: params.agentWorkspaceDir,
+        skillsWorkspaceDir: params.skillsWorkspaceDir,
+        scopeKey: params.scopeKey,
+        configHash: expectedHash,
+        mountPlan,
+        podmanRuntimeInfo,
+      });
+      await updateRegistry(recoveryEntry);
+      return containerName;
+    } catch (creationError) {
+      await throwAfterPartialSandboxCleanup({
+        engine,
+        containerName,
+        creationError,
+      });
+    }
   } else if (!running) {
     await execContainer(engine, ["start", containerName]);
   }
