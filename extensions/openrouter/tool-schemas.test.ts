@@ -189,13 +189,16 @@ describe("OpenRouter tool schemas", () => {
     "openrouter/google/example",
     "~google/example",
     "openrouter/~google/example",
-  ])("uses the existing family policy for %s", (modelId) => {
+  ])("preserves existing OpenRouter schemas for %s", (modelId) => {
     const schema = {
       type: "object",
       properties: { value: { anyOf: [{ type: "string" }, { type: "integer" }] } },
       additionalProperties: false,
     };
-    expect(normalize(schema, modelId).properties).toEqual({ value: { type: "string" } });
+    const result = normalize(schema, modelId);
+    expect(result).toBe(schema);
+    expect(Check(result, { value: "ok" })).toBe(true);
+    expect(Check(result, { value: 3 })).toBe(true);
     expect(
       provider.inspectToolSchemas?.({
         provider: "openrouter",
@@ -209,8 +212,8 @@ describe("OpenRouter tool schemas", () => {
             execute: async () => ({ content: [], details: {} }),
           },
         ],
-      })?.length,
-    ).toBeGreaterThan(0);
+      }),
+    ).toEqual([]);
   });
 
   it.each(["openai/example", "anthropic/example", "unknown/example", "openrouter/auto"])(

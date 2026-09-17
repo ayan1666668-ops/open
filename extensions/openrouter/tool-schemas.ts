@@ -4,8 +4,6 @@ import { asOptionalRecord as readRecord } from "openclaw/plugin-sdk/string-coerc
 import { normalizeOpenRouterApiModelId, normalizeOpenRouterModelFamilyId } from "./models.js";
 
 const openAiTools = buildProviderToolCompatFamilyHooks("openai");
-const deepSeekTools = buildProviderToolCompatFamilyHooks("deepseek");
-const geminiTools = buildProviderToolCompatFamilyHooks("gemini");
 const schemaTypes = new Set(["null", "boolean", "object", "array", "number", "integer", "string"]);
 const schemaMapKeys = new Set([
   "properties",
@@ -125,12 +123,6 @@ const moonshotTools = {
 function resolveOpenRouterToolFamily(modelId: string) {
   const normalized =
     normalizeOpenRouterModelFamilyId(normalizeOpenRouterApiModelId(modelId)) ?? modelId;
-  if (normalized.startsWith("deepseek/")) {
-    return deepSeekTools;
-  }
-  if (normalized.startsWith("google/")) {
-    return geminiTools;
-  }
   if (normalized.startsWith("moonshot/") || normalized.startsWith("moonshotai/")) {
     return moonshotTools;
   }
