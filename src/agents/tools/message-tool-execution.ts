@@ -696,9 +696,13 @@ export function createMessageTool(options?: MessageToolOptions): AnyAgentTool {
           const currentSourceReply =
             result.handledBy !== "internal-source" &&
             (await isDeliveredCurrentSourceReplyAsync(sourceReply));
+          const acceptedBroadcastResult =
+            !result.dryRun &&
+            result.kind === "broadcast" &&
+            result.payload.results.some((entry) => entry.ok || entry.sentBeforeError);
           // A completed provider write must settle even if its caller was revoked
           // while awaiting the accepted response. Its next request stays fenced.
-          if (!scheduledWrite) {
+          if (!scheduledWrite && !acceptedBroadcastResult) {
             assertActionCurrent();
           }
           const messageDelivery = projectEmbeddedMessageDeliveryFact(result, currentSourceReply);

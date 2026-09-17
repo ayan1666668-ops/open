@@ -20,6 +20,7 @@ import {
 } from "../../shared/clawhub-recommendations.js";
 import { createLazyRuntimeModule } from "../../shared/lazy-runtime.js";
 import { INTERNAL_MESSAGE_CHANNEL, normalizeMessageChannel } from "../../utils/message-channel.js";
+import { isProvenDeliveryNotSentError } from "../delivery-recovery.shared.js";
 import { formatErrorMessage } from "../errors.js";
 import { throwIfAborted } from "./abort.js";
 import {
@@ -133,7 +134,31 @@ async function handleBroadcastAction(
     result?: MessageSendResult;
   }> = [];
   const isAbortError = (err: unknown): boolean => err instanceof Error && err.name === "AbortError";
-  const hasAcceptedResult = () => results.some((result) => result.ok || result.sentBeforeError);
+  const hasAcceptedResult = () =>
+    !input.dryRun && results.some((result) => result.ok || result.sentBeforeError);
+  const captureInterruption = (error?: unknown): unknown | undefined => {
+    if (isAbortError(error)) {
+      return error;
+    }
+    try {
+      throwIfAborted(input.abortSignal);
+      input.assertDirectAdapterHandoff?.();
+    } catch (interruption) {
+      return interruption;
+    }
+    return undefined;
+  };
+  const sendResultProvesNotDispatched = (result: MessageSendResult | undefined): boolean => {
+    const outcomes = result?.payloadOutcomes;
+    if (result?.deliveryStatus !== "failed" || !outcomes?.length) {
+      return false;
+    }
+    return outcomes.every((outcome) =>
+      outcome.status === "failed"
+        ? !outcome.sentBeforeError
+        : outcome.status === "suppressed" && outcome.reason !== "adapter_returned_no_identity",
+    );
+  };
   let attemptIndex = 0;
   let interrupted = false;
   for (const { channel: targetChannel, plugin: targetChannelPlugin } of targetChannels) {
@@ -149,9 +174,11 @@ async function handleBroadcastAction(
         });
         continue;
       }
+      const hadAcceptedResult = hasAcceptedResult();
       let platformDispatchStarted = false;
       try {
         throwIfAborted(input.abortSignal);
+        input.assertDirectAdapterHandoff?.();
         const targetAccountId = validateExplicitMessageAccountSelection({
           cfg: input.cfg,
           channel: targetChannel,
@@ -182,16 +209,36 @@ async function handleBroadcastAction(
             target: resolved.to,
           },
         });
-        results.push({
+        const outcome = resolveMessageActionOutcome(sendResult, "Broadcast");
+        let entry: (typeof results)[number] = {
           channel: targetChannel,
           to: resolved.to,
-          ...resolveMessageActionOutcome(sendResult, "Broadcast"),
+          ...outcome,
           payload: sendResult.kind === "send" ? sendResult.payload : undefined,
           result: sendResult.kind === "send" ? sendResult.sendResult : undefined,
-        });
+        };
+        const interruption = outcome.ok ? undefined : captureInterruption();
+        if (interruption) {
+          if (!hadAcceptedResult) {
+            throw interruption;
+          }
+          interrupted = true;
+          if (
+            !platformDispatchStarted ||
+            (sendResult.kind === "send" && sendResultProvesNotDispatched(sendResult.sendResult))
+          ) {
+            entry = {
+              ...entry,
+              attempted: false as const,
+              error: "Broadcast canceled before this target was attempted.",
+            };
+          }
+        }
+        results.push(entry);
       } catch (err) {
-        if (isAbortError(err)) {
-          if (!hasAcceptedResult()) {
+        const interruption = captureInterruption(err);
+        if (interruption) {
+          if (!hadAcceptedResult) {
             throw err;
           }
           interrupted = true;
@@ -199,10 +246,12 @@ async function handleBroadcastAction(
             channel: targetChannel,
             to: target,
             ok: false,
-            ...(!platformDispatchStarted ? { attempted: false as const } : {}),
-            error: platformDispatchStarted
-              ? formatErrorMessage(err)
-              : "Broadcast canceled before this target was attempted.",
+            ...(!platformDispatchStarted || isProvenDeliveryNotSentError(err)
+              ? {
+                  attempted: false as const,
+                  error: "Broadcast canceled before this target was attempted.",
+                }
+              : { error: formatErrorMessage(err) }),
           });
           continue;
         }

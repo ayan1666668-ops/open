@@ -1,8 +1,13 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { projectEmbeddedMessageDeliveryFact } from "../../agents/embedded-agent-message-delivery.js";
 import { jsonResult } from "../../agents/tools/common.js";
+import { createMessageTool } from "../../agents/tools/message-tool-execution.js";
 import type { ChannelPlugin } from "../../channels/plugins/types.public.js";
 import { formatMessageCliText } from "../../commands/message-format.js";
+import {
+  mintMessageActionTurnCapability,
+  revokeMessageActionTurnCapability,
+} from "../../gateway/message-action-turn-capability.js";
 import { resetPluginRuntimeStateForTest, setActivePluginRegistry } from "../../plugins/runtime.js";
 import {
   createChannelTestPluginBase,
@@ -209,6 +214,160 @@ describe("broadcast send outcomes through native actions", () => {
       `Broadcast incomplete (1/3 succeeded, ${scenario.failed} failed, ${scenario.notAttempted} not attempted)`,
     );
     expect(cliOutput).toContain("not attempted");
+  });
+
+  it.each([undefined, true])(
+    "stops core delivery after a rejected handoff (bestEffort: %s)",
+    async (bestEffort) => {
+      let actionCurrent = true;
+      let releaseHandoff: () => void = () => undefined;
+      const handoffWait = new Promise<void>((resolve) => {
+        releaseHandoff = resolve;
+      });
+      let enterHandoff: () => void = () => undefined;
+      const handoffEntered = new Promise<void>((resolve) => {
+        enterHandoff = resolve;
+      });
+      let insideAdapter = false;
+      const transported: string[] = [];
+      const plugin: ChannelPlugin = {
+        ...createChannelTestPluginBase({ id: "broadcast-test" }),
+        messaging: { targetResolver: { looksLikeId: () => true } },
+        outbound: {
+          deliveryMode: "direct",
+          sendText: async (context) => {
+            insideAdapter = true;
+            try {
+              await context.onPlatformSendDispatch?.();
+              transported.push(context.to);
+              return { messageId: `sent-${context.to}` };
+            } finally {
+              insideAdapter = false;
+            }
+          },
+        },
+      };
+      setActivePluginRegistry(
+        createTestRegistry([{ pluginId: plugin.id, plugin, source: "test" }]),
+      );
+
+      const pending = runMessageAction({
+        cfg: {},
+        action: "broadcast",
+        params: {
+          channel: plugin.id,
+          targets: ["first", "second", "third"],
+          message: "hello",
+          ...(bestEffort === undefined ? {} : { bestEffort }),
+        },
+        onPlatformSendDispatch: async () => {
+          if (transported.length > 0 && !insideAdapter) {
+            enterHandoff();
+            await handoffWait;
+          }
+        },
+        assertDirectAdapterHandoff: () => {
+          if (!actionCurrent) {
+            throw Object.assign(new Error("current action canceled"), { name: "AbortError" });
+          }
+        },
+      });
+      await handoffEntered;
+      actionCurrent = false;
+      releaseHandoff();
+      const result = await pending;
+
+      expect(transported).toEqual(["first"]);
+      expect(result).toMatchObject({
+        kind: "broadcast",
+        payload: {
+          results: [
+            { to: "first", ok: true },
+            { to: "second", ok: false, attempted: false },
+            { to: "third", ok: false, attempted: false },
+          ],
+        },
+      });
+    },
+  );
+
+  it("returns accepted rows through the message tool after turn cancellation", async () => {
+    let releaseSecond: () => void = () => undefined;
+    const secondWait = new Promise<void>((resolve) => {
+      releaseSecond = resolve;
+    });
+    let enterSecond: () => void = () => undefined;
+    const secondEntered = new Promise<void>((resolve) => {
+      enterSecond = resolve;
+    });
+    const plugin: ChannelPlugin = {
+      ...createChannelTestPluginBase({ id: "broadcast-test" }),
+      messaging: { targetResolver: { looksLikeId: () => true } },
+      outbound: {
+        deliveryMode: "direct",
+        sendText: async () => {
+          throw new Error("native action bypassed");
+        },
+      },
+      actions: {
+        describeMessageTool: () => ({ actions: ["send"] }),
+        supportsAction: ({ action }) => action === "send",
+        handleAction: async ({ params, onPlatformSendDispatch, assertDirectAdapterHandoff }) => {
+          const target = String(params.to);
+          if (target === "second") {
+            enterSecond();
+            await secondWait;
+            assertDirectAdapterHandoff?.();
+          }
+          await onPlatformSendDispatch?.();
+          return jsonResult({ ok: true, messageId: `sent-${target}` });
+        },
+      },
+    };
+    setActivePluginRegistry(createTestRegistry([{ pluginId: plugin.id, plugin, source: "test" }]));
+    const runId = "broadcast-cancel-tool";
+    const sessionKey = "agent:main:broadcast-cancel-tool";
+    const sessionId = "broadcast-cancel-tool-session";
+    const capability = mintMessageActionTurnCapability({
+      agentId: "main",
+      runId,
+      sessionKey,
+      sessionId,
+    });
+    try {
+      const tool = createMessageTool({
+        agentId: "main",
+        runId,
+        agentSessionKey: sessionKey,
+        sessionId,
+        messageActionTurnCapability: capability,
+        config: {},
+      });
+      const pending = tool.execute("broadcast-cancel-call", {
+        action: "broadcast",
+        channel: plugin.id,
+        targets: ["first", "second", "third"],
+        message: "hello",
+      });
+      await secondEntered;
+      revokeMessageActionTurnCapability(capability);
+      releaseSecond();
+      const result = await pending;
+
+      expect(result.details).toMatchObject({
+        results: [
+          { to: "first", ok: true },
+          { to: "second", ok: false, attempted: false },
+          { to: "third", ok: false, attempted: false },
+        ],
+        messageDelivery: {
+          status: "settled",
+          partialDelivery: true,
+        },
+      });
+    } finally {
+      revokeMessageActionTurnCapability(capability);
+    }
   });
 
   it.each([false, true])(
