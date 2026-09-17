@@ -22,6 +22,7 @@ import {
   prefValuesEqual,
   resolveServerUiPrefStateFromSnapshot,
   serverPrefsLocalPatch,
+  serverUiPrefsSnapshotDelta,
   SYNCED_PREF_KEYS,
   SYNCED_PREFS,
   type ResettableServerUiPrefKey,
@@ -381,46 +382,13 @@ export function applyServerUiPrefs(
     recordReconciledObject();
     return false;
   }
-  const changed: ServerUiPrefs = {};
-  // Apply per field: only keys whose server value changed since last seen. Reapplying unchanged
-  // fields would revert unpushable local edits whenever any other server field moves.
-  for (const prefKey of Object.keys(prefs) as Array<keyof ServerUiPrefs>) {
-    if (
-      (appearanceReady || !isAppearancePref(prefKey)) &&
-      !(shadowPrefs && prefKey in shadowPrefs) &&
-      !retainedLocalKeys.has(prefKey) &&
-      (scopeChanged || lastSeenRaw === null || !prefValuesEqual(prefs[prefKey], lastSeen[prefKey]))
-    ) {
-      (changed as Record<string, unknown>)[prefKey] = prefs[prefKey];
-    }
-  }
-  for (const prefKey of Object.keys(lastSeen) as Array<keyof ServerUiPrefs>) {
-    if (
-      (appearanceReady || !isAppearancePref(prefKey)) &&
-      !(prefKey in prefs) &&
-      !(shadowPrefs && prefKey in shadowPrefs) &&
-      !retainedLocalKeys.has(prefKey) &&
-      SYNCED_PREFS[prefKey]?.clearable
-    ) {
-      (changed as Record<string, unknown>)[prefKey] = null;
-    }
-  }
-  if (scopeChanged) {
-    // The previous identity may have rendered appearance values this scope has
-    // never seen (absent from both prefs and this scope's last-seen); clear
-    // them back to defaults so the new identity never wears the old one's look.
-    for (const prefKey of SYNCED_PREF_KEYS) {
-      if (
-        isAppearancePref(prefKey) &&
-        !(prefKey in prefs) &&
-        !(shadowPrefs && prefKey in shadowPrefs) &&
-        !retainedLocalKeys.has(prefKey) &&
-        SYNCED_PREFS[prefKey].clearable
-      ) {
-        (changed as Record<string, unknown>)[prefKey] = null;
-      }
-    }
-  }
+  const changed = serverUiPrefsSnapshotDelta(prefs, lastSeen, {
+    appearanceReady,
+    scopeChanged,
+    firstSnapshot: lastSeenRaw === null,
+    shadowPrefs,
+    retainedLocalKeys,
+  });
   writeStorage(LAST_SEEN_KEY, scope, key);
   if (reconciledRetainedKeys.length) {
     updateRetainedLocalKeys(scope, reconciledRetainedKeys, false);
