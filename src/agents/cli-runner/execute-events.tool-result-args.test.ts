@@ -214,4 +214,92 @@ describe("cli tool result events", () => {
       dispose();
     }
   });
+
+  it("emits a plan event for a successful MCP-prefixed progress_card result", () => {
+    const runId = "run-plan-event";
+    const handlers = createCliEventHandlers({
+      context: buildContext(runId),
+      toolTracking: buildToolTracking(),
+      getRunState: () => ({ failed: false, error: undefined }),
+    });
+    const events: AgentEventRuntimePayload[] = [];
+    const dispose = onAgentEvent((event) => {
+      if (event.runId === runId && event.stream === "plan") {
+        events.push(event);
+      }
+    });
+
+    try {
+      // CLI tool calls arrive MCP-prefixed; the embedded runner never sees this prefix.
+      handlers.emitCliToolUseStart({
+        toolCallId: "call-1",
+        name: "mcp__openclaw__progress_card",
+        kind: "mcp_tool_use",
+        args: {
+          plan: [
+            { step: "one", status: "completed" },
+            { step: "two", status: "in_progress" },
+          ],
+        },
+      });
+      handlers.emitCliToolResult({
+        toolCallId: "call-1",
+        name: "mcp__openclaw__progress_card",
+        isError: false,
+        result: "Progress card updated (rev 1, 1/2 done)",
+      });
+
+      expect(events).toMatchObject([
+        {
+          stream: "plan",
+          data: {
+            phase: "update",
+            title: "Plan updated",
+            source: "openclaw",
+            explanation: "1/2 complete",
+            steps: [
+              { step: "one", status: "completed" },
+              { step: "two", status: "in_progress" },
+            ],
+          },
+        },
+      ]);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("does not emit a plan event for a failed progress_card result", () => {
+    const runId = "run-plan-event-error";
+    const handlers = createCliEventHandlers({
+      context: buildContext(runId),
+      toolTracking: buildToolTracking(),
+      getRunState: () => ({ failed: false, error: undefined }),
+    });
+    const events: AgentEventRuntimePayload[] = [];
+    const dispose = onAgentEvent((event) => {
+      if (event.runId === runId && event.stream === "plan") {
+        events.push(event);
+      }
+    });
+
+    try {
+      handlers.emitCliToolUseStart({
+        toolCallId: "call-1",
+        name: "mcp__openclaw__progress_card",
+        kind: "mcp_tool_use",
+        args: { plan: [{ step: "one", status: "in_progress" }] },
+      });
+      handlers.emitCliToolResult({
+        toolCallId: "call-1",
+        name: "mcp__openclaw__progress_card",
+        isError: true,
+        result: "boom",
+      });
+
+      expect(events).toEqual([]);
+    } finally {
+      dispose();
+    }
+  });
 });

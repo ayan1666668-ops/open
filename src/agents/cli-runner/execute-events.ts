@@ -1,5 +1,9 @@
 import { emitAgentEvent } from "../../infra/agent-events.js";
 import { emitTrustedDiagnosticEvent } from "../../infra/diagnostic-events.js";
+import {
+  isAgentPlanProgressToolName,
+  projectProgressCardChannelUpdate,
+} from "../../session-cards/progress-card-channel-summary.js";
 import type {
   CliCompactionDelta,
   CliStreamingDelta,
@@ -115,11 +119,26 @@ export function createCliEventHandlers(params: {
     recordToolResult(event);
     params.toolTracking.handleCliToolResult(event);
     if (emitLiveEvents) {
-      const resultContentSource = context.resultContentSourceByToolName?.get(
-        stripOpenClawMcpToolPrefix(event.name),
-      );
+      const strippedName = stripOpenClawMcpToolPrefix(event.name);
+      const resultContentSource = context.resultContentSourceByToolName?.get(strippedName);
       const startedArgs = toolArgsByCallId.get(event.toolCallId);
       toolArgsByCallId.delete(event.toolCallId);
+      const planUpdate =
+        !event.isError && isAgentPlanProgressToolName(strippedName)
+          ? projectProgressCardChannelUpdate(startedArgs)
+          : undefined;
+      if (planUpdate) {
+        emitAgentEvent({
+          runId: runParams.runId,
+          stream: "plan",
+          data: {
+            phase: "update",
+            title: "Plan updated",
+            source: "openclaw",
+            ...planUpdate,
+          },
+        });
+      }
       emitAgentEvent({
         runId: runParams.runId,
         stream: "tool",
