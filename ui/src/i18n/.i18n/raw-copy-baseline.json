@@ -290,6 +290,1623 @@
     },
     {
       "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "8 Ball"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Abacus"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Airplane"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Alien"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Alien Monster"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Ant"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Antenna"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Apple"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Atom"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Avocado"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Banana"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Baseball"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Basketball"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Bat"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Battery"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Beaming Face"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Bear"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Bee"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Beer"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Bicycle"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Bird"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Birds & Sea"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Birthday Cake"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Black Heart"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Blue Heart"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Blue Whale"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Blushing Face"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Bow and Arrow"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Bowling"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Boxing Glove"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Brain"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Brown Heart"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Bugs & Reptiles"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Burger"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Butterfly"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Cactus"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Cake"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Candle"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Car"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Castle"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Cat"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Caterpillar"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Cherry Blossom"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Clover"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Clown"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Club Suit"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Coffee"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Compass"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Computer Mouse"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Cookie"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Cow"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Cowboy Face"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Crab"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Cricket"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Crocodile"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Croissant"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Deer"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Desert Island"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Desktop Computer"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Detective"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Diamond Suit"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Dice"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Disguise Face"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Dizzy Star"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "DNA"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Dog"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Dolphin"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Donut"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Dragon"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Duck"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Eagle"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Elephant"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Faces & People"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Fairy"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Fantasy & Robots"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Ferris Wheel"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Fire"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Fish"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Fishing Pole"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Flamingo"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Floppy Disk"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Flying Saucer"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Food & Drink"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Football"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Fox"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Fries"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Frog"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Gear"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Gem"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Genie"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Ghost"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Globe Americas"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Globe Asia-Australia"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Globe Europe-Africa"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Glowing Star"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Goblin"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Grapes"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Green Heart"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Grinning Face"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Growing Heart"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Halo Face"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Hammer"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Hamster"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Hearts & Shapes"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Hedgehog"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Helicopter"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Hibiscus"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Horse"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Joker"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Key"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Keyboard"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Koala"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Ladybug"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Laptop"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Laughing Face"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Light Bulb"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Lightning"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Lion"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Lizard"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Lobster"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Locked"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Magnet"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Magnifying Glass"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Mammals"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Merperson"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Microscope"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Mobile Phone"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Monocle Face"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Moon"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Mountain"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Mouse"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Nature & Weather"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Nerd Face"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Ninja"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Objects & Tools"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Octopus"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Ogre"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Orange Heart"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Owl"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Palm Tree"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Panda"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Paperclip"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Parrot"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Party Face"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Peace Symbol"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Penguin"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Pick"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Pig"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Ping Pong"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Pizza"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Popcorn"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Pufferfish"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Purple Heart"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Pushpin"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Rabbit"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Raccoon"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Rainbow"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Recycling"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Red Heart"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Robot"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Rocket"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Sailboat"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Santa"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Satellite"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Sauropod"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Scales"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Scooter"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Scorpion"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Shark"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Shield"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Ship"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Skateboard"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Skull"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Skull and Crossbones"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Smile"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Snail"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Snake"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Snowflake"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Snowman"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Soccer Ball"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Spade Suit"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Sparkles"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Sparkling Heart"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Spider"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Sports & Games"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Squid"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Star"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Strawberry"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Sun"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Sunflower"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Sunglasses"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Sushi"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Swan"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "T-Rex"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Taco"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Target"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Tech & Science"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Telephone"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Telescope"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Tennis"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Tent"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Test Tube"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Tiger"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Tornado"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Tower"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Train"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Travel & Places"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Tree"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Trophy"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Turtle"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Unicorn"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Unlocked"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Upside-Down Face"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Vampire"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Video Game"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Volcano"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Volleyball"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Watermelon"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Wave"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Whale"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "White Heart"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Wine"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Winking Face"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Wizard"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Wolf"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "World Map"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Wrench"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Yellow Heart"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Yin Yang"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Zebra"
+    },
+    {
+      "count": 1,
+      "kind": "object-property",
+      "name": "label",
+      "path": "ui/src/pages/agents/emoji-catalog.ts",
+      "text": "Zombie"
+    },
+    {
+      "count": 1,
       "kind": "html-text",
       "name": "text",
       "path": "ui/src/pages/agents/memory/view.ts",
