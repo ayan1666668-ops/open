@@ -1021,9 +1021,7 @@ describe("serveAcpGateway startup", () => {
       mockState.closeAcpInput?.();
       await readCapturedAcpMessages();
 
-      const gateway = mockState.gateways[0];
-      expect(gateway).toBeDefined();
-      const stopAndWait = vi.spyOn(gateway, "stopAndWait");
+      const stopAndWait = vi.spyOn(getMockGateway(), "stopAndWait");
       expect(mockState.closeOpenClawStateDatabaseAsync).not.toHaveBeenCalled();
 
       // Break the NDJSON sink the way a closed or erroring stdout would. The write

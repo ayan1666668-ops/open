@@ -298,8 +298,13 @@ describe("AcpSessionNewOrdering", () => {
     // The agent admits well over a hundred creations in its default rate window, so
     // a cap below that would let ordinary accepted traffic disable ordering. Every
     // result must still precede its own session's update.
-    for (let i = 0; i < BURST; i += 1) {
-      expect(output.indexOf(results[i])).toBeLessThan(output.indexOf(updates[i]));
+    for (const [i, result] of results.entries()) {
+      const update = updates[i];
+      if (!update) {
+        throw new Error(`Missing update for result ${i}`);
+      }
+      expect(output.indexOf(result)).toBeGreaterThanOrEqual(0);
+      expect(output.indexOf(result)).toBeLessThan(output.indexOf(update));
     }
   });
 

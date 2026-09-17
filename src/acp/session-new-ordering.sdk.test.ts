@@ -7,6 +7,7 @@ import {
 } from "@agentclientprotocol/sdk";
 import { createInMemorySessionStore } from "@openclaw/acp-core/session";
 import { afterEach, describe, expect, it } from "vitest";
+import { createDeferred } from "../../test/helpers/promise.js";
 import { AcpSessionNewOrdering } from "./session-new-ordering.js";
 
 const cleanups: Array<() => Promise<void>> = [];
@@ -24,7 +25,7 @@ function createWireHarness(maxSessions = 10) {
   });
   const frames: AnyMessage[] = [];
   const entered: string[] = [];
-  const slow = Promise.withResolvers<void>();
+  const slow = createDeferred();
   let input!: ReadableStreamDefaultController<Uint8Array>;
   let outputFailure: Error | undefined;
   let inputCancelled = false;
