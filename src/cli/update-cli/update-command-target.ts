@@ -85,13 +85,14 @@ export async function resolveUpdateCommandTarget(
   let { devTarget } = prepared;
   let root = discoveredRoot;
   let updateInstallKind = installKind;
-  const refuseUpdate: RefuseUpdate = async (reason, message, failureFacts) => {
+  const refuseUpdate: RefuseUpdate = async (reason, message, failureFacts, recoverySteps) => {
     const report = {
       root,
       installKind: updateInstallKind,
       reason,
       message,
       failureFacts,
+      recoverySteps,
       opts,
       controlPlaneUpdateSentinelMeta,
     };

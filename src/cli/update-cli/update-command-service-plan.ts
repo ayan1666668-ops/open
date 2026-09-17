@@ -22,6 +22,7 @@ import type {
   GatewayServiceState,
 } from "../../daemon/service-types.js";
 import { readGatewayServiceState, resolveGatewayService } from "../../daemon/service.js";
+import { isContainerEnvironment } from "../../infra/container-environment.js";
 import { sha256Hex } from "../../infra/crypto-digest.js";
 import { readActiveGatewayLockIdentity } from "../../infra/gateway-lock.js";
 import { assertGatewayServiceMutationAllowed } from "../../infra/gateway-supervision.js";
@@ -38,12 +39,21 @@ import {
   type FreeBsdPkgOwnershipInspection,
 } from "../../infra/update-freebsd-pkg-ownership.js";
 import { UPDATE_RUNNER_TIMEOUT_MS } from "../../infra/update-run-timeouts.js";
+import {
+  createRuntimeUpdateRecoverySteps,
+  formatUpdateRecoverySteps,
+  type UpdateRecoveryStep,
+} from "../../shared/update-outcome.js";
+import { resolveNodeVersionManager } from "../../shared/version-manager-path.js";
 import { CLI_NAME } from "../cli-name.js";
+import { formatCliCommand } from "../command-format.js";
+import { quoteCliArg, quotePowerShellArg } from "../quote-cli-arg.js";
 import { resolveNodeRunner } from "./shared.js";
 import type {
   ManagedGatewayUpdateVerdict,
   PreManagedServiceStop,
 } from "./update-command-service-context-types.js";
+import { resolveServiceRecoveryContext } from "./update-command-service-env.js";
 
 export type ManagedServiceRootRedirect = {
   root: string;
@@ -284,7 +294,15 @@ export async function resolvePackageRuntimePreflight(params: {
   shouldRestart?: boolean;
   alreadyCurrent?: boolean;
   service?: PreManagedServiceStop;
-}): Promise<Result<PackageRuntimePreflight, string> & { failureFacts?: UpdateFailureFact[] }> {
+  invocationCwd?: string;
+  /** An already-current source checkout retains its launcher across a global-prefix switch. */
+  sourceRoot?: string;
+}): Promise<
+  Result<PackageRuntimePreflight, string> & {
+    failureFacts?: UpdateFailureFact[];
+    recoverySteps?: UpdateRecoveryStep[];
+  }
+> {
   const nodeRunner = normalizeOptionalString(
     params.alreadyCurrent
       ? (params.service?.serviceNodeRunner ?? params.nodeRunner)
@@ -358,21 +376,65 @@ export async function resolvePackageRuntimePreflight(params: {
     : `Node ${runtime.version ?? "unknown"}`;
   const engineRange = target.nodeEngine ? validRange(target.nodeEngine) : null;
   const minimum = engineRange ? (minVersion(engineRange)?.version ?? "unspecified") : "unspecified";
-  const recommendation = engineRange ? minimumSupportedNodeVersion(engineRange) : undefined;
+  const recommendation = minimumSupportedNodeVersion(engineRange ?? "*");
   const requirement = target.nodeEngine ? `Node ${target.nodeEngine}` : "a working Node runtime";
-  const upgrade = recommendation
-    ? `with nvm, run \`nvm install ${recommendation} && nvm use ${recommendation}\`, then rerun \`openclaw update\``
-    : engineRange
-      ? `no Node version satisfies both this range and this updater's supported range (${SUPPORTED_NODE_VERSION_RANGE}). This candidate version cannot be run by this updater with a supported Node release; install a supported Node and select a compatible OpenClaw target before rerunning \`openclaw update\``
-      : `install a supported Node build (${SUPPORTED_NODE_VERSION_RANGE}) from https://nodejs.org/en/download, then rerun \`openclaw update\``;
+  const verdict = params.service?.serviceUpdateVerdict;
+  const context =
+    verdict?.kind === "owned" && params.service?.serviceEnv
+      ? resolveServiceRecoveryContext({
+          serviceEnv: params.service.serviceEnv,
+          serviceDefinitionEnv: params.service.serviceDefinitionEnv,
+          invocationCwd: params.invocationCwd,
+        })
+      : undefined;
+  const env = context?.env ?? params.service?.serviceEnv ?? process.env;
+  const recoveryVersion = valid(targetVersion);
+  const sourceEntry = params.sourceRoot ? path.join(params.sourceRoot, "openclaw.mjs") : undefined;
+  const sourceLauncher = sourceEntry
+    ? `node ${process.platform === "win32" ? quotePowerShellArg(sourceEntry) : quoteCliArg(sourceEntry)}`
+    : undefined;
+  const recoverySteps =
+    recommendation && recoveryVersion
+      ? createRuntimeUpdateRecoverySteps({
+          nodeVersion: recommendation,
+          targetVersion: recoveryVersion,
+          manager: resolveNodeVersionManager(
+            await tryRealpathOrResolve(runtime.nodeRunner ?? resolveNodeRunner()),
+            env,
+          ),
+          service:
+            verdict?.kind === "owned" &&
+            verdict.refreshDefinition &&
+            !env.OPENCLAW_WRAPPER?.trim() &&
+            !params.service?.serviceDefinitionEnv?.OPENCLAW_WRAPPER?.trim() &&
+            params.service?.serviceMutationAllowed !== false
+              ? "refresh"
+              : verdict?.kind === "absent"
+                ? "absent"
+                : "owner",
+          container: isContainerEnvironment(),
+          contextCommand: context?.command,
+          installPackage: !params.sourceRoot,
+          command: (value) => {
+            const formatted = formatCliCommand(value, env);
+            return sourceLauncher
+              ? formatted.replace(/^openclaw\b/, () => sourceLauncher)
+              : formatted;
+          },
+        })
+      : undefined;
+  const upgrade = recoverySteps
+    ? `Recovery:\n${formatUpdateRecoverySteps(recoverySteps)}`
+    : recommendation
+      ? "Select a published OpenClaw version before installing it under a supported Node runtime."
+      : `No Node version satisfies both this range and this updater's supported range (${SUPPORTED_NODE_VERSION_RANGE}). This candidate version cannot be run by this updater with a supported Node release; install a supported Node and select a compatible OpenClaw target.`;
   return {
+    ...(recoverySteps ? { recoverySteps } : {}),
     ...resultError<PackageRuntimePreflight, string>(
       [
-        `openclaw@${targetVersion} requires ${requirement}; selected runtime is ${runtimeLabel}; ${upgrade}.`,
+        `openclaw@${targetVersion} requires ${requirement}; selected runtime is ${runtimeLabel}.`,
         ...(runtime.failure ? [runtime.failure] : []),
-        ...(runtime.nodeRunner
-          ? ["The managed Gateway service must also use the compatible Node runtime."]
-          : []),
+        upgrade,
       ].join("\n"),
     ),
     failureFacts: [

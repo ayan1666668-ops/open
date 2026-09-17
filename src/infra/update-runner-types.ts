@@ -1,5 +1,6 @@
 import type { PluginUpdateOutcome } from "../plugins/update.js";
 import type { CommandOptions } from "../process/exec.js";
+import type { UpdateRecoveryStep } from "../shared/update-outcome.js";
 import type { OpenClawSchemaVersions } from "../state/openclaw-schema-versions.js";
 import type { LocalPackageOverridesResult } from "./package-local-overrides.js";
 import type { UpdateChannel } from "./update-channels.js";
@@ -32,6 +33,8 @@ export type UpdateStepResult = {
   advisory?: UpdateStepAdvisory;
   /** Complete owner-classified warnings when one step reports several outcomes. */
   warnings?: string[];
+  /** Suggested operator actions, distinct from executed update steps. */
+  recoverySteps?: readonly UpdateRecoveryStep[];
   failureFacts?: UpdateFailureFact[];
   configChanges?: UpdateDoctorConfigChange[];
   configWriteRefusal?: UpdateDoctorConfigWriteRefusal;

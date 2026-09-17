@@ -24,6 +24,7 @@ import { UpdateRunAdmissionBusyError } from "../../infra/update-run-admission.js
 import { getUpdateRun, recordUpdateRunPhase } from "../../infra/update-run-ledger.js";
 import type { UpdateRunResult, UpdateStepResult } from "../../infra/update-runner.js";
 import { defaultRuntime } from "../../runtime.js";
+import type { UpdateRecoveryStep } from "../../shared/update-outcome.js";
 import type { OpenClawSchemaVersions } from "../../state/openclaw-schema-versions.js";
 import { exitCliAfterOutput } from "../one-shot-exit.js";
 import { printResult } from "./progress.js";
@@ -92,6 +93,7 @@ export function createUpdateCommandFailureResult(
     exitCode: 1,
     ...(isAbortError(cause) ? { termination: "signal" as const } : {}),
     ...(detail !== undefined ? { stderrTail: detail } : {}),
+    ...(preMutationFailure && cause.recoverySteps ? { recoverySteps: cause.recoverySteps } : {}),
     // Recorded diagnostics do not change post-mutation recovery eligibility.
     ...(preMutationFailure || cause instanceof GatewayServiceUpdateOwnershipError
       ? { failureFacts: cause.failureFacts }
@@ -294,6 +296,7 @@ export function resolveAutomaticUpdateTriage(
 }
 
 export type UpdateAdmissionReportParams = {
+  recoverySteps?: readonly UpdateRecoveryStep[];
   failureFacts?: readonly UpdateFailureFact[];
   root: string;
   installKind: "git" | "package" | "unknown";
@@ -307,6 +310,7 @@ export type RefuseUpdate = (
   reason: string,
   message?: string,
   failureFacts?: readonly UpdateFailureFact[],
+  recoverySteps?: readonly UpdateRecoveryStep[],
 ) => Promise<void>;
 
 /** A fresh admission decision is data until its staging and executor owners settle. */

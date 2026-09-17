@@ -33,6 +33,9 @@ candidate's engine range and this updater's supported range above. For example,
 an older candidate requiring `>=22.19.0` still needs a recommendation of 24.16.0
 so the updater can run. If the ranges have no common supported release, the
 message identifies both ranges and asks you to select a compatible target.
+After selecting the runtime, install the candidate in its global prefix and
+refresh an owned managed service before verification; follow the complete
+[recovery sequence](/install/update-troubleshooting#node-and-global-install-permissions).
 
 ## Why the floors exist
 

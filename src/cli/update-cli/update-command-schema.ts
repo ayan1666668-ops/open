@@ -23,6 +23,7 @@ import {
   type UpdateDryRunFailure,
 } from "./update-command-dry-run.js";
 import type { RefuseUpdate } from "./update-command-result.js";
+import type { PreManagedServiceStop } from "./update-command-service-context-types.js";
 import {
   resolvePackageRuntimePreflight,
   type ManagedServiceRootRedirect,
@@ -111,6 +112,7 @@ export async function preflightUpdateCommandSchemas(params: {
       packageSchemaPreflight: OpenClawDatabaseSchemaPreflight;
       preflightNotes: string[];
       preflightFailures: UpdateDryRunFailure[];
+      service?: PreManagedServiceStop;
     }
   | undefined
 > {
@@ -138,6 +140,7 @@ export async function preflightUpdateCommandSchemas(params: {
   };
   const preflightNotes: string[] = [];
   const preflightFailures: UpdateDryRunFailure[] = [];
+  let service: PreManagedServiceStop | undefined;
   if ((opts.dryRun || updateInstallKind === "package") && updateInstallKind !== "unknown") {
     try {
       const { inspectUpdateDatabaseContexts } =
@@ -153,9 +156,10 @@ export async function preflightUpdateCommandSchemas(params: {
         managedServiceRootRedirect,
         legacyConfigPlan: params.legacyConfigPlan,
       });
-      for (const service of admission.services.values()) {
-        if (service.serviceUpdateVerdict?.kind === "unavailable") {
-          preflightNotes.push(service.serviceUpdateVerdict.message);
+      service = admission.service ?? admission.services.get(root);
+      for (const inspectedService of admission.services.values()) {
+        if (inspectedService.serviceUpdateVerdict?.kind === "unavailable") {
+          preflightNotes.push(inspectedService.serviceUpdateVerdict.message);
         }
       }
       const target =
@@ -184,7 +188,7 @@ export async function preflightUpdateCommandSchemas(params: {
           nodeRunner: params.managedServiceNodeRunner,
           timeoutMs: updateStepTimeoutMs,
           alreadyCurrent: params.packageAlreadyCurrent,
-          service: admission.service,
+          service,
           installedRoot: params.packageAlreadyCurrent ? root : undefined,
         });
         if (!runtime.ok) {
@@ -193,6 +197,7 @@ export async function preflightUpdateCommandSchemas(params: {
             reason: "node-runtime-preflight",
             message: runtime.error,
             failureFacts: runtime.failureFacts,
+            recoverySteps: runtime.recoverySteps,
           });
         } else if (runtime.value.replacedNodeRunner) {
           preflightNotes.push(
@@ -223,7 +228,7 @@ export async function preflightUpdateCommandSchemas(params: {
     } catch (error) {
       if (!opts.dryRun) {
         if (error instanceof UpdatePreMutationError) {
-          await refuseUpdate(error.reason, error.message, error.failureFacts);
+          await refuseUpdate(error.reason, error.message, error.failureFacts, error.recoverySteps);
           return undefined;
         }
         throw error;
@@ -242,5 +247,5 @@ export async function preflightUpdateCommandSchemas(params: {
     );
     return undefined;
   }
-  return { packageSchemaPreflight, preflightNotes, preflightFailures };
+  return { packageSchemaPreflight, preflightNotes, preflightFailures, service };
 }

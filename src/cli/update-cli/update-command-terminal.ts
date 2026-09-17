@@ -341,6 +341,7 @@ async function publishPreMutationUpdateOutcome(
           durationMs: 0,
           exitCode: 1,
           stderrTail: params.message,
+          ...(params.recoverySteps ? { recoverySteps: params.recoverySteps } : {}),
           failureFacts: normalizeUpdateFailureFacts(
             params.failureFacts ?? [
               { check: params.reason, code: params.reason, message: params.message },

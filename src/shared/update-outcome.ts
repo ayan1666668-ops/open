@@ -1,3 +1,109 @@
+import type { NodeVersionManager } from "./version-manager-path.js";
+
+export type UpdateRecoveryStep =
+  | {
+      kind:
+        | "preserve-context"
+        | "select-runtime"
+        | "install-package"
+        | "refresh-service"
+        | "restart-service"
+        | "verify";
+      command: string;
+    }
+  | {
+      kind: "select-runtime" | "preserve-context" | "service-owner" | "deployment";
+      instruction: string;
+    };
+
+export function formatUpdateRecoverySteps(steps: readonly UpdateRecoveryStep[]): string {
+  return steps
+    .map(
+      (step, index) =>
+        `${index + 1}. ${"command" in step ? `Run \`${step.command}\`.` : step.instruction}`,
+    )
+    .join("\n");
+}
+
+export function createRuntimeUpdateRecoverySteps(params: {
+  nodeVersion: string;
+  targetVersion: string;
+  manager: NodeVersionManager;
+  service: "refresh" | "absent" | "owner";
+  container: boolean;
+  contextCommand?: string;
+  installPackage?: boolean;
+  command: (value: string) => string;
+}): UpdateRecoveryStep[] {
+  const { nodeVersion, targetVersion, manager, command } = params;
+  const underNode = (value: string) =>
+    manager === "volta" ? `volta run --node ${nodeVersion} ${value}` : value;
+  const cli = (value: string) => underNode(command(value));
+  if (params.container) {
+    return [
+      {
+        kind: "deployment",
+        instruction: `Pull or build an OpenClaw image with version ${targetVersion} and Node ${nodeVersion}, then recreate or redeploy the container with the same state/config mounts. In-container package changes are not durable.`,
+      },
+    ];
+  }
+  const runtimeCommand =
+    manager === "nvm"
+      ? `nvm install ${nodeVersion} && nvm use ${nodeVersion}`
+      : manager === "fnm"
+        ? `fnm install ${nodeVersion} && fnm use ${nodeVersion}`
+        : manager === "volta"
+          ? `volta install node@${nodeVersion}`
+          : undefined;
+  return [
+    {
+      kind: "preserve-context",
+      instruction:
+        "Use the same service account and keep the existing OPENCLAW_STATE_DIR and OPENCLAW_CONFIG_PATH overrides throughout recovery.",
+    },
+    ...(params.contextCommand
+      ? [{ kind: "preserve-context" as const, command: params.contextCommand }]
+      : []),
+    runtimeCommand
+      ? { kind: "select-runtime", command: runtimeCommand }
+      : {
+          kind: "select-runtime",
+          instruction: `Install and select Node ${nodeVersion} using ${manager === "other" ? "your version manager" : "your system package manager or https://nodejs.org/en/download"}.`,
+        },
+    ...(params.installPackage === false
+      ? []
+      : [
+          {
+            kind: "install-package" as const,
+            command: underNode(`npm install -g openclaw@${targetVersion}`),
+          },
+        ]),
+    ...(params.service === "refresh"
+      ? [
+          {
+            kind: "refresh-service" as const,
+            command: cli(
+              `openclaw gateway install --force --runtime-path "$(${underNode("node")} -p 'process.execPath')"`,
+            ),
+          },
+          { kind: "restart-service" as const, command: cli("openclaw gateway restart") },
+        ]
+      : params.service === "owner"
+        ? [
+            {
+              kind: "service-owner" as const,
+              instruction:
+                "Have the existing Gateway service or deployment owner select the new Node runtime and OpenClaw install, then restart it with the same account, state, and configuration. Service ownership or permission to rewrite its definition was not established.",
+            },
+          ]
+        : []),
+    {
+      kind: "verify",
+      command: `${cli("openclaw --version")} && ${cli("openclaw status")}`,
+    },
+  ];
+}
+
 export const UPDATE_ACTIVATION_TIMEOUT_REASON = "update-activation-timeout";
 export const UPDATE_GLOBAL_PERMISSION_REASON = "global-install-permission-denied";
 export const UPDATE_ENVIRONMENT_FAILURE_REASONS: ReadonlySet<string> = new Set([

@@ -88,12 +88,31 @@ the CLI fallback on the Gateway host.
 
 For `node-runtime-preflight`, upgrade the runtime named in the message to a
 version satisfying both the candidate's full engine range and the updater's
-supported Node range, then rerun the same `openclaw update` command. The suggested
-version is the lowest supported release in that intersection. If the ranges do
-not overlap, install a supported Node and select a compatible OpenClaw target;
-that candidate cannot run through this updater on a supported Node release.
-If the Gateway uses a different Node executable from
-your shell, its runtime must also be compatible. See [Node.js](/install/node).
+supported Node range. The suggested version is the lowest supported release in
+that intersection. Follow the recovery steps for the detected runtime manager
+(nvm, fnm, Volta, or system Node). For a package install, install the displayed candidate with
+`npm install -g openclaw@<candidate>`. That command performs the package update;
+a version-manager switch can remove the old global `openclaw` command from PATH,
+so do not rely on it to perform a second update. An already-current Git checkout
+keeps its built source launcher; the message uses its explicit
+`node <checkout>/openclaw.mjs` commands for recovery.
+
+Keep the same service account, profile, and state/config overrides. The recovery
+steps restore the recorded service selectors, including overrides that were not
+present in your shell. They include only the known state/service selectors, not
+service credentials. For an owned,
+writable managed service, the recovery sequence runs
+`openclaw gateway install --force --runtime-path "$(node -p 'process.execPath')"`
+and `openclaw gateway restart` so the service uses the selected runtime and new
+installation. Existing explicit runtime pins otherwise survive `--force`.
+For a wrapper-managed service, or one whose ownership or write permission cannot
+be established, have its deployment owner make that change. Verify with `openclaw --version` and
+`openclaw status`. Containers must redeploy the target image with the same
+state/config mounts instead of changing packages inside the container.
+
+If the ranges do not overlap, install a supported Node and select a compatible
+OpenClaw target; that candidate cannot run through this updater on a supported
+Node release. See [Node.js](/install/node).
 
 For `global-install-permission-denied`, check the named directory and owner.
 If you own the directory, the message gives a scoped `chmod u+rwx` command.

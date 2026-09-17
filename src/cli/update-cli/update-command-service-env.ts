@@ -4,6 +4,7 @@ import {
   GATEWAY_SERVICE_SELECTOR_ENV_KEYS,
 } from "../../daemon/constants.js";
 import { mergeProcessEnv, resolveEnvironmentValue } from "../../infra/process-env.js";
+import { quoteCliArg, quotePowerShellArg } from "../quote-cli-arg.js";
 
 const SERVICE_REFRESH_PATH_ENV_KEYS = [
   "OPENCLAW_HOME",
@@ -15,6 +16,41 @@ const MANAGED_UPDATE_SELECTOR_ENV_KEYS = [
   "OPENCLAW_HOME",
   ...GATEWAY_SERVICE_SELECTOR_ENV_KEYS,
 ] as const;
+
+/** Recovery can be printed inside an owned-env scope that the operator's shell never had. */
+export function resolveServiceRecoveryContext(
+  params: Parameters<typeof resolveOwnedManagedUpdateEnv>[0],
+): { env: NodeJS.ProcessEnv; command: string } {
+  const env = resolveOwnedManagedUpdateEnv(params);
+  const keys = [
+    ...new Set([...MANAGED_UPDATE_SELECTOR_ENV_KEYS, ...SERVICE_REFRESH_PATH_ENV_KEYS]),
+  ];
+  if (process.platform === "win32") {
+    return {
+      env,
+      command: keys
+        .map((key) =>
+          env[key] === undefined
+            ? `Remove-Item Env:${key} -ErrorAction SilentlyContinue`
+            : `$env:${key} = ${quotePowerShellArg(env[key])}`,
+        )
+        .join("; "),
+    };
+  }
+  const assigned = keys.flatMap((key) =>
+    env[key] === undefined ? [] : [`${key}=${quoteCliArg(env[key])}`],
+  );
+  const unset = keys.filter((key) => env[key] === undefined);
+  return {
+    env,
+    command: [
+      assigned.length ? `export ${assigned.join(" ")}` : "",
+      unset.length ? `unset ${unset.join(" ")}` : "",
+    ]
+      .filter(Boolean)
+      .join("; "),
+  };
+}
 
 function applyManagedServiceSelectorEnv(params: {
   baseEnv: NodeJS.ProcessEnv;

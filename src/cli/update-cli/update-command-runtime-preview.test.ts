@@ -14,6 +14,8 @@ import { installFreshUpdateFixture, targetMetadata } from "./update-command-fres
 import * as packageUpdate from "./update-command-package.js";
 import { updateCommand } from "./update-command.js";
 
+vi.mock("../../infra/container-environment.js", () => ({ isContainerEnvironment: () => false }));
+
 const { fixture } = installFreshUpdateFixture();
 const cases = [
   { name: "no restart", restart: false, compatible: false, current: false, refresh: true },
@@ -119,23 +121,66 @@ it.each(cases.flatMap((entry) => [true, false].map((json) => Object.assign({}, e
     const notes = json ? JSON.stringify(preview) : log.mock.calls.flat().join("\n");
     const replacement = !compatible && restart && owned && (!current || (running && refresh));
     if (!compatible && !replacement) {
-      expect(notes).toContain(
-        `Would refuse update: openclaw@${targetMetadata.version} requires Node >=26.1.0; selected runtime is Node 24.16.0 at /service/node; with nvm, run`,
-      );
-      expect(notes).toContain("nvm install 26.1.0 && nvm use 26.1.0");
-      expect(notes).toContain("then rerun `openclaw update`");
-      expect(notes).not.toContain("openclaw@latest");
+      const recoverySteps = [
+        {
+          kind: "preserve-context",
+          instruction:
+            "Use the same service account and keep the existing OPENCLAW_STATE_DIR and OPENCLAW_CONFIG_PATH overrides throughout recovery.",
+        },
+        {
+          kind: "select-runtime",
+          instruction:
+            "Install and select Node 26.1.0 using your system package manager or https://nodejs.org/en/download.",
+        },
+        { kind: "install-package", command: "npm install -g openclaw@2026.9.2" },
+        ...(current && refresh
+          ? [
+              {
+                kind: "refresh-service",
+                command:
+                  "openclaw gateway install --force --runtime-path \"$(node -p 'process.execPath')\"",
+              },
+              { kind: "restart-service", command: "openclaw gateway restart" },
+            ]
+          : [
+              {
+                kind: "service-owner",
+                instruction:
+                  "Have the existing Gateway service or deployment owner select the new Node runtime and OpenClaw install, then restart it with the same account, state, and configuration. Service ownership or permission to rewrite its definition was not established.",
+              },
+            ]),
+        { kind: "verify", command: "openclaw --version && openclaw status" },
+      ];
+      const message = [
+        "openclaw@2026.9.2 requires Node >=26.1.0; selected runtime is Node 24.16.0 at /service/node.",
+        "Recovery:",
+        ...recoverySteps.map(
+          (step, index) =>
+            `${index + 1}. ${"command" in step ? `Run \`${step.command}\`.` : step.instruction}`,
+        ),
+      ].join("\n");
       if (json) {
         expect(preview).toMatchObject({
+          notes: [`Would refuse update: ${message}`],
           failures: [
             {
               reason: "node-runtime-preflight",
+              message,
+              recoverySteps,
               failureFacts: [
-                { code: "node-runtime-preflight", message: expect.stringContaining("24.16.0") },
+                {
+                  check: "node-runtime",
+                  code: "node-runtime-preflight",
+                  affectedKey: "engines.node",
+                  message:
+                    "Target package: openclaw@2026.9.2; Minimum Node engine: 26.1.0; Running Node: 24.16.0",
+                },
               ],
             },
           ],
         });
+      } else {
+        expect(log).toHaveBeenCalledWith(`  - Would refuse update: ${message}`);
       }
     } else if (replacement) {
       expect(notes).toContain("/service/node");
@@ -164,7 +209,7 @@ it.each(cases.flatMap((entry) => [true, false].map((json) => Object.assign({}, e
             reason: "node-runtime-preflight",
             steps: expect.arrayContaining([
               expect.objectContaining({
-                stderrTail: expect.stringContaining("nvm install 26.1.0 && nvm use 26.1.0"),
+                stderrTail: expect.stringContaining("npm install -g openclaw@2026.9.2"),
                 failureFacts: [
                   expect.objectContaining({
                     code: "node-runtime-preflight",

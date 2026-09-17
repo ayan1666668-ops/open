@@ -7,6 +7,11 @@ import { isSupportedOpenClawNodeVersion } from "../../../node-version.mjs";
 import { resolveNodeRuntimeInfo } from "../../daemon/runtime-paths.js";
 import { prepareUpdateFailureReport } from "../../infra/update-failure-report-prepare.js";
 import { withTempDir } from "../../test-utils/temp-dir.js";
+import { quoteCliArg, quotePowerShellArg } from "../quote-cli-arg.js";
+import {
+  expectedPlainRecovery,
+  unsupportedServiceRuntimeFixture,
+} from "./update-command-runtime-recovery.test-support.js";
 import type { PreManagedServiceStop } from "./update-command-service-context-types.js";
 import { resolvePackageRuntimePreflight } from "./update-command-service-plan.js";
 
@@ -23,7 +28,10 @@ const refreshableService: PreManagedServiceStop = {
   },
 };
 
-const probeState = vi.hoisted(() => ({ text: true }));
+const probeState = vi.hoisted(() => ({ text: true, container: false }));
+vi.mock("../../infra/container-environment.js", () => ({
+  isContainerEnvironment: () => probeState.container,
+}));
 vi.mock("../../daemon/runtime-paths.js", () => ({ resolveNodeRuntimeInfo: vi.fn() }));
 vi.mock("../../../node-sqlite.mjs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../../node-sqlite.mjs")>();
@@ -44,6 +52,7 @@ describe("package runtime compatibility guidance", () => {
     vi.unstubAllGlobals();
     vi.useRealTimers();
     probeState.text = true;
+    probeState.container = false;
     vi.mocked(resolveNodeRuntimeInfo).mockReset();
   });
 
@@ -96,6 +105,199 @@ describe("package runtime compatibility guidance", () => {
       expect(report.body).not.toContain("/fixture/private");
     },
   );
+
+  it.each([
+    [
+      "/home/operator/.nvm/versions/node/v22.23.2/bin/node",
+      "nvm install 24.16.0 && nvm use 24.16.0",
+    ],
+    ["/usr/bin/node", null],
+    ["/source/node", null, "/fixture"],
+    ["/home/operator/.nvm/../system/bin/node", null],
+    [
+      "/home/operator/.local/share/fnm/node-versions/v22.23.2/installation/bin/node",
+      "fnm install 24.16.0 && fnm use 24.16.0",
+    ],
+    ["/home/operator/.volta/tools/image/node/22.23.2/bin/node", "volta install node@24.16.0"],
+    [
+      "/custom/node-manager/versions/node/v22.23.2/bin/node",
+      "nvm install 24.16.0 && nvm use 24.16.0",
+    ],
+  ])(
+    "keeps the CLI and owned service reachable after switching %s",
+    async (nodeRunner, command, sourceRoot?: string) => {
+      vi.mocked(resolveNodeRuntimeInfo).mockResolvedValue({
+        status: "unsupported",
+        version: "22.23.2",
+        sqliteVersion: "3.51.3",
+        nodeSharedSqlite: false,
+        sqliteProbe: { available: true, version: "3.51.3", text: true, blob: true, json: true },
+      });
+      const result = await resolvePackageRuntimePreflight({
+        target: { version: "2026.9.4", nodeEngine: ">=24.16.0" },
+        nodeRunner,
+        sourceRoot,
+        root: sourceRoot,
+        alreadyCurrent: Boolean(sourceRoot),
+        service: {
+          ...refreshableService,
+          serviceEnv: { OPENCLAW_PROFILE: "work", NVM_DIR: "/custom/node-manager" },
+        },
+      });
+      const prefix = command === "volta install node@24.16.0" ? "volta run --node 24.16.0 " : "";
+      const sourceEntry = sourceRoot ? path.join(sourceRoot, "openclaw.mjs") : undefined;
+      const cli = sourceEntry
+        ? `node ${process.platform === "win32" ? quotePowerShellArg(sourceEntry) : quoteCliArg(sourceEntry)}`
+        : "openclaw";
+      expect(result).toMatchObject({
+        ok: false,
+        failureFacts: [{ check: "node-runtime", code: "node-runtime-preflight" }],
+        recoverySteps: [
+          {
+            kind: "preserve-context",
+            instruction:
+              "Use the same service account and keep the existing OPENCLAW_STATE_DIR and OPENCLAW_CONFIG_PATH overrides throughout recovery.",
+          },
+          {
+            kind: "preserve-context",
+            command:
+              "export OPENCLAW_PROFILE=work; unset OPENCLAW_HOME OPENCLAW_STATE_DIR OPENCLAW_CONFIG_PATH OPENCLAW_GATEWAY_PORT OPENCLAW_LAUNCHD_LABEL OPENCLAW_SYSTEMD_UNIT OPENCLAW_WINDOWS_TASK_NAME OPENCLAW_WORKSPACE_DIR",
+          },
+          command
+            ? { kind: "select-runtime", command }
+            : {
+                kind: "select-runtime",
+                instruction:
+                  "Install and select Node 24.16.0 using your system package manager or https://nodejs.org/en/download.",
+              },
+          ...(sourceRoot
+            ? []
+            : [{ kind: "install-package", command: `${prefix}npm install -g openclaw@2026.9.4` }]),
+          {
+            kind: "refresh-service",
+            command: `${prefix}${cli} --profile work gateway install --force --runtime-path "$(${prefix}node -p 'process.execPath')"`,
+          },
+          { kind: "restart-service", command: `${prefix}${cli} --profile work gateway restart` },
+          {
+            kind: "verify",
+            command: `${prefix}${cli} --profile work --version && ${prefix}${cli} --profile work status`,
+          },
+        ],
+      });
+    },
+  );
+
+  it.each([false, true])(
+    "preserves recorded selectors and wrapper ownership (wrapper=%s)",
+    async (wrapper) => {
+      vi.mocked(resolveNodeRuntimeInfo).mockResolvedValue({
+        status: "unsupported",
+        version: "22.23.2",
+        sqliteVersion: "3.51.3",
+        nodeSharedSqlite: false,
+        sqliteProbe: { available: true, version: "3.51.3", text: true, blob: true, json: true },
+      });
+      const result = await resolvePackageRuntimePreflight({
+        target: { version: "2026.9.4", nodeEngine: ">=24.16.0" },
+        nodeRunner: "/usr/bin/node",
+        invocationCwd: "/service-launch",
+        service: {
+          ...refreshableService,
+          serviceEnv: {
+            OPENCLAW_STATE_DIR: "/service state",
+            OPENCLAW_CONFIG_PATH: "config.json",
+            OPENCLAW_SYSTEMD_UNIT: "custom-gateway.service",
+            ...(wrapper ? { OPENCLAW_WRAPPER: "/operator/wrapper" } : {}),
+            OPENCLAW_GATEWAY_TOKEN: "fixture-sensitive-value",
+          },
+        },
+      });
+      expect(result.ok).toBe(false);
+      expect(result.recoverySteps?.[1]).toEqual({
+        kind: "preserve-context",
+        command:
+          "export OPENCLAW_STATE_DIR='/service state' OPENCLAW_CONFIG_PATH=/service-launch/config.json OPENCLAW_SYSTEMD_UNIT=custom-gateway.service; unset OPENCLAW_HOME OPENCLAW_PROFILE OPENCLAW_GATEWAY_PORT OPENCLAW_LAUNCHD_LABEL OPENCLAW_WINDOWS_TASK_NAME OPENCLAW_WORKSPACE_DIR",
+      });
+      expect(
+        result.recoverySteps?.filter(
+          (step) => step.kind === "refresh-service" || step.kind === "restart-service",
+        ),
+      ).toEqual(
+        wrapper
+          ? []
+          : [
+              {
+                kind: "refresh-service",
+                command:
+                  "openclaw gateway install --force --runtime-path \"$(node -p 'process.execPath')\"",
+              },
+              { kind: "restart-service", command: "openclaw gateway restart" },
+            ],
+      );
+      expect(JSON.stringify(result)).not.toContain("fixture-sensitive-value");
+    },
+  );
+
+  it("detects a version manager behind the selected runtime symlink", async () => {
+    await withTempDir("openclaw-node-manager-", async (root) => {
+      const node = path.join(root, ".fnm", "node-versions", "v22.18.0", "bin", "node");
+      await fs.mkdir(path.dirname(node), { recursive: true });
+      await fs.writeFile(node, "fixture");
+      const alias = path.join(root, "node-alias");
+      await fs.symlink(
+        path.dirname(node),
+        alias,
+        process.platform === "win32" ? "junction" : "dir",
+      );
+      const launcher = path.join(alias, "node");
+      vi.mocked(resolveNodeRuntimeInfo).mockResolvedValue(unsupportedServiceRuntimeFixture);
+      const result = await resolvePackageRuntimePreflight({
+        target: { version: "2026.9.4", nodeEngine: ">=24.16.0" },
+        nodeRunner: launcher,
+      });
+      expect(result.recoverySteps?.[1]).toEqual({
+        kind: "select-runtime",
+        command: "fnm install 24.16.0 && fnm use 24.16.0",
+      });
+    });
+  });
+
+  it("keeps container recovery on the image owner", async () => {
+    probeState.container = true;
+    const result = await resolvePackageRuntimePreflight({
+      target: { version: "2026.9.4", nodeEngine: ">=90.0.0" },
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      failureFacts: [{ code: "node-runtime-preflight" }],
+      recoverySteps: [
+        {
+          kind: "deployment",
+          instruction:
+            "Pull or build an OpenClaw image with version 2026.9.4 and Node 90.0.0, then recreate or redeploy the container with the same state/config mounts. In-container package changes are not durable.",
+        },
+      ],
+    });
+  });
+
+  it("renders service-only selectors for PowerShell without shell interpolation", async () => {
+    vi.stubGlobal("process", { ...process, platform: "win32" });
+    const result = await resolvePackageRuntimePreflight({
+      target: { version: "2026.9.4", nodeEngine: ">=90.0.0" },
+      service: {
+        ...refreshableService,
+        serviceEnv: {
+          OPENCLAW_STATE_DIR: "C:/service 'state'",
+          OPENCLAW_CONFIG_PATH: "C:/service/config.json",
+        },
+      },
+    });
+    expect(result.recoverySteps?.[1]).toEqual({
+      kind: "preserve-context",
+      command:
+        "Remove-Item Env:OPENCLAW_HOME -ErrorAction SilentlyContinue; $env:OPENCLAW_STATE_DIR = 'C:/service ''state'''; $env:OPENCLAW_CONFIG_PATH = 'C:/service/config.json'; Remove-Item Env:OPENCLAW_PROFILE -ErrorAction SilentlyContinue; Remove-Item Env:OPENCLAW_GATEWAY_PORT -ErrorAction SilentlyContinue; Remove-Item Env:OPENCLAW_LAUNCHD_LABEL -ErrorAction SilentlyContinue; Remove-Item Env:OPENCLAW_SYSTEMD_UNIT -ErrorAction SilentlyContinue; Remove-Item Env:OPENCLAW_WINDOWS_TASK_NAME -ErrorAction SilentlyContinue; Remove-Item Env:OPENCLAW_WORKSPACE_DIR -ErrorAction SilentlyContinue",
+    });
+  });
 
   it.each([false, true])(
     "admits only a compatible explicit replacement (fallback=%s)",
@@ -160,7 +362,7 @@ describe("package runtime compatibility guidance", () => {
       const result = await resolvePackageRuntimePreflight({
         target: { version: "2026.9.3", nodeEngine: engine },
       });
-      expect(result).toEqual({
+      expect(result).toMatchObject({
         ok: false,
         failureFacts: [
           {
@@ -171,8 +373,9 @@ describe("package runtime compatibility guidance", () => {
           },
         ],
         error: [
-          `openclaw@2026.9.3 requires Node ${engine}; selected runtime is Node ${node}; with nvm, run \`nvm install 24.16.0 && nvm use 24.16.0\`, then rerun \`openclaw update\`.`,
+          `openclaw@2026.9.3 requires Node ${engine}; selected runtime is Node ${node}.`,
           `Node ${node}: node:sqlite truncates TEXT at embedded NUL (nodejs/node#61954); use 24.16+/26.1+ or a build with the fix`,
+          expectedPlainRecovery("2026.9.3", "24.16.0"),
         ].join("\n"),
       });
     },
@@ -193,8 +396,9 @@ describe("package runtime compatibility guidance", () => {
       ok: false,
       failureFacts: [{ check: "node-runtime", code: "node-runtime-preflight" }],
       error: [
-        `openclaw@2027.1.0 requires Node ${engine}; selected runtime is Node ${node}; with nvm, run \`nvm install ${minimum} && nvm use ${minimum}\`, then rerun \`openclaw update\`.`,
+        `openclaw@2027.1.0 requires Node ${engine}; selected runtime is Node ${node}.`,
         `Node ${node}: openclaw requires Node >=24.16.0 <25, or >=26.1.0.`,
+        expectedPlainRecovery("2027.1.0", minimum),
       ].join("\n"),
     });
     expect(satisfies(minimum, engine)).toBe(true);
@@ -236,11 +440,11 @@ describe("package runtime compatibility guidance", () => {
         throw new Error("Expected an incompatible Node runtime to be refused");
       }
       expect(result.error, "Node compatibility guidance must describe the target range").toBe(
-        `openclaw@${version} requires Node ${engine}; selected runtime is Node ${process.versions.node}; ${
+        `openclaw@${version} requires Node ${engine}; selected runtime is Node ${process.versions.node}.\n${
           minimum
-            ? `with nvm, run \`nvm install ${minimum} && nvm use ${minimum}\`, then rerun \`openclaw update\``
-            : "no Node version satisfies both this range and this updater's supported range (>=24.16.0 <25 || >=26.1.0). This candidate version cannot be run by this updater with a supported Node release; install a supported Node and select a compatible OpenClaw target before rerunning `openclaw update`"
-        }.`,
+            ? expectedPlainRecovery(version, minimum)
+            : "No Node version satisfies both this range and this updater's supported range (>=24.16.0 <25 || >=26.1.0). This candidate version cannot be run by this updater with a supported Node release; install a supported Node and select a compatible OpenClaw target."
+        }`,
       );
     });
   }
