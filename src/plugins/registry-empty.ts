@@ -8,6 +8,7 @@ export const pluginArrays = [
   "channels",
   "channelSetups",
   "providers",
+  "providerDecorators",
   "modelCatalogProviders",
   "sessionCatalogs",
   "cliBackends",

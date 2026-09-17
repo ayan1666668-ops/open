@@ -43,6 +43,7 @@ const noops = {
   registerMigrationProvider: () => {},
   registerAutoEnableProbe: () => {},
   registerProvider: () => {},
+  registerProviderDecorator: () => {},
   registerWorkerProvider: () => {},
   registerModelCatalogProvider: () => {},
   registerEmbeddingProvider: () => {},

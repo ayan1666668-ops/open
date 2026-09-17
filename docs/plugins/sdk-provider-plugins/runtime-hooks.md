@@ -166,6 +166,31 @@ additive fields on the existing contract; they add no hook or user setting.
   </Tab>
 </Tabs>
 
+### Decorating an existing provider
+
+Use `api.registerProviderDecorator(...)` when a feature plugin needs to wrap
+requests for a provider it does not own. A decorator receives the resolved
+`streamFn`, returns a replacement stream function, and leaves provider
+authentication, model catalogs, and provider runtime preparation with the
+provider that registered them.
+
+```typescript
+api.registerProviderDecorator({
+  id: "request-audit",
+  providers: ["openai"],
+  wrapStreamFn: ({ streamFn }) => {
+    return async (model, context, options) => {
+      recordRequestMetadata(model, context);
+      return streamFn(model, context, options);
+    };
+  },
+});
+```
+
+Use a unique decorator id within the plugin. Decorators compose around the
+provider's resolved stream, after the owning provider's own stream wrapper.
+They must not read or replace provider credentials.
+
 Set `supportsSystemPromptCacheBoundary: true` on a provider registration
 only when its `createStreamFn` transport understands the stable/dynamic
 system-prompt boundary. Use `splitSystemPromptCacheBoundary` from

@@ -664,6 +664,13 @@ export type ProviderPlugin = {
   onModelSelected?: (ctx: ProviderModelSelectedContext) => Promise<void>;
 };
 
+/** A feature plugin may decorate an existing provider without owning its auth. */
+export type ProviderDecoratorPlugin = {
+  id: string;
+  providers: readonly string[];
+  wrapStreamFn: (ctx: ProviderWrapStreamFnContext) => StreamFn | null | undefined;
+};
+
 /** Provider runtime registered with its owning plugin and source. */
 export type PluginProviderRegistration = {
   pluginId: string;

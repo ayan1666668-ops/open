@@ -16,6 +16,7 @@ import {
   type ProviderRuntimePluginHandle,
 } from "../plugins/provider-hook-runtime.js";
 import { resolveProviderStreamFn } from "../plugins/provider-runtime.js";
+import { getActivePluginRegistry } from "../plugins/runtime.js";
 import { ensureCustomApiRegistered } from "./custom-api-registry.js";
 import {
   unwrapHeaderSentinelsForProviderEgress,
@@ -103,9 +104,24 @@ export function registerProviderStreamForModel<TApi extends Api>(params: {
           streamFn,
         }) ?? streamFn)
       : streamFn;
+  const decoratedStreamFn = (getActivePluginRegistry()?.providerDecorators ?? []).reduce(
+    (current, registration) =>
+      registration.provider.providers.includes(runtimeModel.provider)
+        ? (registration.provider.wrapStreamFn({
+            config: params.cfg,
+            agentDir: params.agentDir,
+            workspaceDir: params.workspaceDir,
+            provider: runtimeModel.provider,
+            modelId: runtimeModel.id,
+            model: runtimeModel,
+            streamFn: current,
+          }) ?? current)
+        : current,
+    providerWrappedStreamFn,
+  );
   const preparedStreamFn = runtimeHandle
-    ? bindProviderRuntimeHandle(providerWrappedStreamFn, runtimeHandle)
-    : providerWrappedStreamFn;
+    ? bindProviderRuntimeHandle(decoratedStreamFn, runtimeHandle)
+    : decoratedStreamFn;
   // Register custom APIs only after a concrete stream exists, so later callers
   // can route by model.api without reloading provider runtime hooks.
   if (apiRegistry) {

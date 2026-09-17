@@ -46,7 +46,10 @@ import type {
   OpenClawPluginHttpRouteAuth,
   OpenClawPluginHttpRouteUpgradeHandler,
 } from "./plugin-registration.types.js";
-import type { PluginProviderRegistration } from "./provider-plugin.types.js";
+import type {
+  PluginProviderRegistration,
+  ProviderDecoratorPlugin,
+} from "./provider-plugin.types.js";
 import type {
   ContextEngineRegistration,
   MemoryCorpusSupplementRegistration,
@@ -395,6 +398,7 @@ export type PluginRegistry = {
   channels: PluginChannelRegistration[];
   channelSetups: PluginChannelSetupRegistration[];
   providers: PluginProviderRegistration[];
+  providerDecorators: PluginOwnedProviderRegistration<ProviderDecoratorPlugin>[];
   modelCatalogProviders: PluginOwnedProviderRegistration<UnifiedModelCatalogProviderPlugin>[];
   sessionCatalogs: PluginOwnedProviderRegistration<SessionCatalogProvider>[];
   cliBackends: PluginCliBackendRegistration[];

@@ -10,7 +10,12 @@ import type {
   PluginRecord,
   PluginTextTransformsRegistration,
 } from "./registry-types.js";
-import type { CliBackendPlugin, ProviderPlugin, WorkerProvider } from "./types.js";
+import type {
+  CliBackendPlugin,
+  ProviderDecoratorPlugin,
+  ProviderPlugin,
+  WorkerProvider,
+} from "./types.js";
 import { validateWorkerProviderContract } from "./worker-provider-registry.js";
 
 export function createProviderRegistrars(state: PluginRegistryState) {
@@ -55,6 +60,29 @@ export function createProviderRegistrars(state: PluginRegistryState) {
         kinds: ["text"],
       });
     }
+  };
+
+  const registerProviderDecorator = (record: PluginRecord, decorator: ProviderDecoratorPlugin) => {
+    const id = decorator.id.trim();
+    const providers = decorator.providers.map((provider) => provider.trim()).filter(Boolean);
+    if (!id || providers.length === 0 || typeof decorator.wrapStreamFn !== "function") {
+      reportRegistrationError(
+        record,
+        "provider decorator requires id, providers, and wrapStreamFn",
+      );
+      return;
+    }
+    if (
+      registry.providerDecorators.some(
+        (entry) => entry.pluginId === record.id && entry.provider.id === id,
+      )
+    ) {
+      reportRegistrationError(record, `provider decorator already registered: ${id}`);
+      return;
+    }
+    registry.providerDecorators.push(
+      createRegistration(record, { provider: { ...decorator, id, providers } }),
+    );
   };
 
   const registerAgentHarness = (
@@ -327,6 +355,7 @@ export function createProviderRegistrars(state: PluginRegistryState) {
 
   return {
     registerProvider,
+    registerProviderDecorator,
     registerAgentHarness,
     registerCliBackend,
     registerTextTransforms,

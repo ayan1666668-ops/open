@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { bindModelLlmRuntime } from "../llm/model-runtime-binding.js";
 import { createAssistantMessageEventStream } from "../llm/utils/event-stream.js";
 import { resolveProviderStreamFn } from "../plugins/provider-runtime.js";
+import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
+import { resetPluginRuntimeStateForTest, setActivePluginRegistry } from "../plugins/runtime.js";
 import { resolveCompactionProviderStream } from "./embedded-agent-runner/compaction-diagnostics.js";
 import { getModelProviderLocalServiceReconciler } from "./provider-local-service-reconcile.js";
 import {
@@ -74,6 +76,7 @@ describe("provider stream lifecycle registration", () => {
 
   afterEach(async () => {
     vi.unstubAllGlobals();
+    resetPluginRuntimeStateForTest();
     await stopManagedProviderLocalServices();
   });
 
@@ -108,6 +111,43 @@ describe("provider stream lifecycle registration", () => {
     expect(prepare.mock.invocationCallOrder[0]).toBeLessThan(
       providerStream.mock.invocationCallOrder[0]!,
     );
+  });
+
+  it("composes registered provider decorators around the resolved provider stream", async () => {
+    providerStream.mockReturnValue(createAssistantMessageEventStream());
+    const registry = createEmptyPluginRegistry();
+    const calls: string[] = [];
+    registry.providerDecorators.push({
+      pluginId: "privacy",
+      source: "test",
+      provider: {
+        id: "privacy-egress",
+        providers: ["test-provider"],
+        wrapStreamFn:
+          ({ streamFn }) =>
+          async (...args) => {
+            calls.push("decorator");
+            return streamFn(...args);
+          },
+      },
+    });
+    setActivePluginRegistry(registry);
+    const model = {
+      api: "test-lifecycle-provider",
+      provider: "test-provider",
+      id: "test-model",
+      name: "Test Model",
+      baseUrl: "https://example.test",
+      reasoning: false,
+      input: ["text"],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 1024,
+      maxTokens: 512,
+    } as const;
+    const streamFn = registerProviderStreamForModel({ model });
+    await streamFn?.(model, {} as never, {});
+    expect(calls).toEqual(["decorator"]);
+    expect(providerStream).toHaveBeenCalledOnce();
   });
 
   it.each([

@@ -11,6 +11,45 @@ import type {
 } from "./types.js";
 
 describe("plugin registry provider-like registrations", () => {
+  it("captures provider decorators without claiming provider auth ownership", () => {
+    const pluginRegistry = createTestRegistry();
+    const record = createPluginRecord({
+      id: "privacy-owner",
+      name: "Privacy Owner",
+      source: "/tmp/privacy-owner/index.js",
+      origin: "global",
+      enabled: true,
+      configSchema: false,
+    });
+    const wrapStreamFn = vi.fn(({ streamFn }) => streamFn);
+
+    pluginRegistry.registerProviderDecorator(record, {
+      id: " privacy-egress ",
+      providers: [" openai "],
+      wrapStreamFn,
+    });
+
+    expect(pluginRegistry.registry.providerDecorators).toHaveLength(1);
+    expect(pluginRegistry.registry.providers).toHaveLength(0);
+    expect(pluginRegistry.registry.providerDecorators[0]).toMatchObject({
+      pluginId: "privacy-owner",
+      provider: { id: "privacy-egress", providers: ["openai"], wrapStreamFn },
+    });
+
+    pluginRegistry.registerProviderDecorator(record, {
+      id: "privacy-egress",
+      providers: ["openai"],
+      wrapStreamFn,
+    });
+    expect(pluginRegistry.registry.providerDecorators).toHaveLength(1);
+    expect(pluginRegistry.registry.diagnostics).toContainEqual(
+      expect.objectContaining({
+        level: "error",
+        message: "provider decorator already registered: privacy-egress",
+      }),
+    );
+  });
+
   it("captures unified model catalog provider registrations", () => {
     const pluginRegistry = createTestRegistry();
     const record = createPluginRecord({

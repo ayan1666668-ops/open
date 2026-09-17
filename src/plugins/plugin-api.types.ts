@@ -77,7 +77,7 @@ import type {
   WidgetPresenter,
 } from "./plugin-registration.types.js";
 import type { UnifiedModelCatalogProviderPlugin } from "./provider-catalog.types.js";
-import type { ProviderPlugin } from "./provider-plugin.types.js";
+import type { ProviderDecoratorPlugin, ProviderPlugin } from "./provider-plugin.types.js";
 import type {
   ContextEngineFactory,
   MemoryCorpusSupplement,
@@ -281,6 +281,8 @@ export type OpenClawPluginApi = {
   registerAutoEnableProbe: (probe: PluginSetupAutoEnableProbe) => void;
   /** Register a native model/provider plugin (text inference capability). */
   registerProvider: (provider: ProviderPlugin) => void;
+  /** Decorate an already registered provider while leaving its auth ownership intact. */
+  registerProviderDecorator: (decorator: ProviderDecoratorPlugin) => void;
   /** Register a cloud-worker lifecycle provider. */
   registerWorkerProvider: (provider: WorkerProvider) => void;
   /** Register provider-owned model catalog rows for text and media generation. */
