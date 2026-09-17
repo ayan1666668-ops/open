@@ -556,5 +556,17 @@ describe("shouldRelocateRuntimeContextCarrierToTail", () => {
         },
       }),
     ).toBe(false);
+
+    // Synthetic test-fixture provider representing cloud models in integration suites preserves tail relocation
+    expect(
+      shouldRelocateRuntimeContextCarrierToTail({
+        provider: "test-provider",
+        model: {
+          id: "owner-model",
+          api: "openai-completions",
+          baseUrl: "http://127.0.0.1:54321/v1",
+        },
+      }),
+    ).toBe(true);
   });
 });

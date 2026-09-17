@@ -13,8 +13,8 @@ import { areDiagnosticsEnabledForProcess } from "../../../infra/diagnostic-event
 import { toErrorObject } from "../../../infra/errors.js";
 import type { AssistantMessageEvent } from "../../../llm/types.js";
 import { markDiagnosticRunProgress } from "../../../logging/diagnostic-run-activity.js";
-import { isSelfHostedProviderId } from "../../model-provider-local.js";
 import { captureAsyncWorkTracker } from "../../../shared/async-work-scope.js";
+import { isSelfHostedProviderId } from "../../model-provider-local.js";
 import { recordAgentCleanupFailure } from "../../run-cleanup-timeout.js";
 import type { StreamFn } from "../../runtime/index.js";
 import type { MutableAssistantMessageEventStream } from "../../stream-compat.js";

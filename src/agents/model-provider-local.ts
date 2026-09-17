@@ -24,7 +24,7 @@ export function isLocalProviderBaseUrl(
   }
 }
 
-export const SELF_HOSTED_PROVIDER_ID_PREFIXES = [
+const SELF_HOSTED_PROVIDER_ID_PREFIXES = [
   "ollama",
   "lmstudio",
   "vllm",

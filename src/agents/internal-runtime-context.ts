@@ -445,6 +445,8 @@ const CLOUD_PROVIDER_ID_PREFIXES = [
   "xai",
   "cohere",
   "deepseek",
+  // Synthetic test-fixture provider representing cloud models in integration suites
+  "test-provider",
 ];
 
 function isKnownCloudProvider(provider: string | undefined): boolean {
