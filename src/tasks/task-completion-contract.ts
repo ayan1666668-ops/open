@@ -8,8 +8,12 @@ export type RequiredCompletionTerminalResult = {
   terminalSummary?: string;
 };
 
-const PROGRESS_ONLY_PATTERN =
-  /^(?:i(?:'|\u2019)ll|i will|i(?:'|\u2019)m|i am|i(?:'|\u2019)m going to|i am going to|let me|i need to)\s+(?:now\s+)?(?:analyz(?:e|ing)|apply|check(?:ing)?|confirm(?:ing)?|continue|debug(?:ging)?|figur(?:e|ing)\s+out|find(?:ing)?\s+out|follow(?:ing)?\s+up|get(?:ting)?|inspect(?:ing)?|investigat(?:e|ing)|look(?:ing)?(?:\s+into)?|map(?:ping)?|open(?:ing)?|read(?:ing)?|report(?:ing)?(?:\s+back)?|review(?:ing)?|run(?:ning)?|see(?:ing)?|start(?:ing)?|test(?:ing)?|trace|trac(?:e|ing)|try(?:ing)?|update|verify(?:ing)?|work(?:ing)?)/i;
+const PROGRESS_ACTION = String.raw`(?:analyz(?:e|ing)|apply|check(?:ing)?|confirm(?:ing)?|continue|debug(?:ging)?|figur(?:e|ing)\s+out|find(?:ing)?\s+out|follow(?:ing)?\s+up|get(?:ting)?|inspect(?:ing)?|investigat(?:e|ing)|look(?:ing)?(?:\s+into)?|map(?:ping)?|open(?:ing)?|read(?:ing)?|report(?:ing)?(?:\s+back)?|review(?:ing)?|run(?:ning)?|see(?:ing)?|start(?:ing)?|test(?:ing)?|trace|trac(?:e|ing)|try(?:ing)?|update|verify(?:ing)?|work(?:ing)?)`;
+const PROGRESS_ACTION_PATTERN = new RegExp(String.raw`^${PROGRESS_ACTION}`, "i");
+const PROGRESS_ONLY_PATTERN = new RegExp(
+  String.raw`^(?:i(?:'|\u2019)ll|i will|i(?:'|\u2019)m|i am|i(?:'|\u2019)m going to|i am going to|let me|i need to)\s+(?:now\s+)?${PROGRESS_ACTION}`,
+  "i",
+);
 
 const BARE_PROGRESS_ONLY_PATTERN =
   /^(?:analyz(?:e|ing)|check(?:ing)?|debug(?:ging)?|inspect(?:ing)?|investigat(?:e|ing)|look(?:ing)?\s+into|map(?:ping)?|read(?:ing)?|report(?:ing)?\s+back|review(?:ing)?|run(?:ning)?|test(?:ing)?|trac(?:e|ing)|verify(?:ing)?|work(?:ing)?\s+on)\b/i;
@@ -187,7 +191,8 @@ function isProgressOnlyCompletionText(value: string): boolean {
             /,(?!\s*(?:if|unless|whether|once|when|after|as\s+soon\s+as)\b)|\s+(?:and|but|so|because|to)\s+/i,
           )[0] ?? "";
         // An elided subject inherits its plan: "I'll run and read" is not
-        // past tense. A new explicit subject can introduce an actual result.
+        // past tense. The same action cannot masquerade as a noun subject in
+        // "and run targeted tests". A new subject can introduce an actual result.
         const subjectClause = prefix
           .split(/(?:,|\b(?:and|but|so)\b)\s*(?=(?:i|we)\b)/i)
           .at(-1)
@@ -196,7 +201,8 @@ function isProgressOnlyCompletionText(value: string): boolean {
         // Reject each deferred candidate, not a later independent completed
         // action merely because the first clause only described an attempt.
         return !(
-          (elidedSubject && FIRST_PERSON_PLAN_PATTERN.test(subjectClause ?? "")) ||
+          ((elidedSubject || PROGRESS_ACTION_PATTERN.test(remainder)) &&
+            FIRST_PERSON_PLAN_PATTERN.test(subjectClause ?? "")) ||
           UNFINISHED_RESULT_PATTERN.test(remainder) ||
           /\b(?:whether|if|unless)\b/i.test(resultClause) ||
           FRONTED_CONDITIONAL_PATTERN.test(prefix) ||
