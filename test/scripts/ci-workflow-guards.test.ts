@@ -16,7 +16,6 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { isBuiltin } from "node:module";
 import { connect } from "node:net";
 import { devNull, tmpdir } from "node:os";
 import path from "node:path";
@@ -24,7 +23,6 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { runInNewContext } from "node:vm";
 import { expectDefined } from "@openclaw/normalization-core";
 import { minimatch } from "minimatch";
-import ts from "typescript";
 import { afterEach, describe, expect, it } from "vitest";
 import { parse } from "yaml";
 import * as qaEvidence from "../../extensions/qa-lab/api.js";
@@ -37,7 +35,6 @@ import {
 import { resolveShardPlans, runShardPlans } from "../../scripts/ci-run-node-test-shard.mts";
 import { resolveChangedDockerSeedLanes } from "../../scripts/lib/ci-changed-node-test-plan.mts";
 import { createNodeTestShardBundles } from "../../scripts/lib/ci-node-test-plan.mts";
-import { visitModuleSpecifiers } from "../../scripts/lib/guard-inventory-utils.mjs";
 import { pnpmLockfileDocuments } from "../../scripts/lib/pnpm-lockfile-documents.mjs";
 import { resolveRunVitestSpawnEnv } from "../../scripts/lib/vitest-process-env.mts";
 import { NATIVE_I18N_LOCALES } from "../../scripts/native-i18n-locales.ts";
@@ -56,6 +53,7 @@ import {
   uiE2eRealGatewayTestFiles,
 } from "../vitest/vitest.ui-e2e.config.ts";
 import { runCiGitStep } from "./ci-git-owner.test-support.js";
+import { runDependencyFreePreflight } from "./ci-preflight-dependencies.test-support.js";
 import { assertControlUiE2eOwnership } from "./ci-ui-e2e-ownership.test-support.js";
 import { runGeneratedPublisherScenario } from "./generated-publisher.test-support.js";
 
@@ -3334,7 +3332,7 @@ NODE
           job.steps.find((candidate: WorkflowStep) => candidate.name === name),
           name,
         );
-        expect(step["continue-on-error"], name).not.toBe(true);
+        expect(step["continue-on-error"] === true, name).toBe(name === "Save SwiftPM cache");
         return phases.filter((phase) =>
           evaluateWorkflowExpression(
             step.if?.startsWith("${{") ? step.if : `\${{ ${step.if ?? "true"} }}`,
@@ -3347,6 +3345,7 @@ NODE
                   outputs: { "debug-tests-built": phase === "tests" ? "true" : "" },
                 },
                 "swiftpm-cache": { outputs: { "cache-hit": "false" } },
+                "swift-cache-budget": { outputs: { allowed: "true" } },
               },
               ...overrides,
             },
@@ -7552,15 +7551,26 @@ setImmediate(() => {
     expect(action.inputs).not.toHaveProperty("save-sticky-disk");
     expect(actionSource).not.toContain("useblacksmith/stickydisk");
 
-    expect(configureStore.if).toBe(
-      "inputs.cache-mode != 'off' && inputs.dependency-cache == 'true'",
-    );
+    for (const mode of ["off", "restore", "read-write"]) {
+      for (const exact of ["false", "true"]) {
+        expect(
+          runInNewContext(
+            expectDefined(configureStore.if, "store configuration condition").replace(
+              /inputs\.([a-z-]+)/gu,
+              'inputs["$1"]',
+            ),
+            { inputs: { "cache-mode": mode, "dependency-cache": exact }, runner: { os: "Linux" } },
+          ),
+          `store-only and exact consumers share the publisher path: ${mode}/${exact}`,
+        ).toBe(mode !== "off");
+      }
+    }
     expect(configureStore.run).toContain(
       'echo "PNPM_CONFIG_STORE_DIR=$GITHUB_WORKSPACE/.cache/openclaw-pnpm-store"',
     );
     expect(resolve.if).toBe("inputs.cache-mode != 'off' && inputs.dependency-cache == 'true'");
     expect(resolve.run).toContain('node "$GITHUB_ACTION_PATH/dependency-fingerprint.mjs"');
-    expect(resolve.run).toContain("${GITHUB_REPOSITORY:?}-node-deps-v3");
+    expect(resolve.run).toContain("${GITHUB_REPOSITORY:?}-node-deps-v4");
     expect(resolve.run).toContain("${RUNNER_OS:?}-arch-${RUNNER_ARCH:?}");
     expect(resolve.run).toContain("node-$(node --version)-${deps_input_fingerprint:?}");
     expect(resolve.run).not.toMatch(/GITHUB_(?:REF|SHA|RUN_ID)|RUN_(?:ID|ATTEMPT)/u);
@@ -7857,6 +7867,8 @@ setImmediate(() => {
     mkdirSync(path.join(workspace, "node_modules"));
     writeFileSync(path.join(workspace, "node_modules", "before"), "");
     writeFileSync(path.join(store, "before"), "");
+    mkdirSync(path.join(store, "toolchain"));
+    writeFileSync(path.join(store, "toolchain", "pnpm.tgz"), "authenticated archive");
     symlinkSync(testNodeExecPath, path.join(bin, "node"));
     const pnpm = path.join(bin, "pnpm");
     writeFileSync(
@@ -7946,6 +7958,9 @@ process.exit(JSON.parse(process.env.RECIPE_EXITS)[count] ?? 99);
     );
     expect(existsSync(path.join(workspace, "node_modules", "before"))).toBe(modes.length < 2);
     expect(existsSync(path.join(store, "before"))).toBe(modes.length < 3);
+    expect(readFileSync(path.join(store, "toolchain", "pnpm.tgz"), "utf8")).toBe(
+      "authenticated archive",
+    );
     expect(existsSync(githubEnv)).toBe(cache && status === 0);
     if (cache && status === 0) {
       expect(readFileSync(githubEnv, "utf8")).toBe(
@@ -9030,15 +9045,25 @@ server.listen(0, "127.0.0.1", () => {
     expect(warmer.on.push.branches).toEqual(["main"]);
     expect(warmer.on.repository_dispatch.types).toEqual(["vitest-cache-warm"]);
     expect(warmer.jobs.warm.if).toContain("github.repository == 'openclaw/openclaw'");
-    expect(warmer.jobs.warm.strategy).toEqual({
-      "fail-fast": false,
-      matrix: { platform: ["linux", "macos"] },
-    });
+    expect(warmer.jobs.warm.strategy["fail-fast"]).toBe(false);
     expect(warmer.on).not.toHaveProperty("pull_request");
     expect(warmer.on).not.toHaveProperty("pull_request_target");
     for (const eventName of ["push", "workflow_dispatch"] as const) {
       for (const runnerBackend of ["blacksmith", "hybrid", "github"] as const) {
-        for (const platform of warmer.jobs.warm.strategy.matrix.platform) {
+        const configuredPlatforms = warmer.jobs.warm.strategy.matrix.platform;
+        const platforms =
+          typeof configuredPlatforms === "string"
+            ? evaluateWorkflowExpression(configuredPlatforms, {
+                eventName,
+                repository: "openclaw/openclaw",
+                runAttempt: 1,
+                runnerBackend,
+              })
+            : configuredPlatforms;
+        expect(platforms).toEqual(
+          runnerBackend === "hybrid" ? ["linux", "linux-hosted", "macos"] : ["linux", "macos"],
+        );
+        for (const platform of platforms as string[]) {
           const context = {
             eventName,
             matrix: { platform },
@@ -9047,11 +9072,12 @@ server.listen(0, "127.0.0.1", () => {
             runnerBackend,
           };
           const full = platform === "linux";
-          const expectedRunner = full
-            ? runnerBackend === "github"
-              ? "ubuntu-24.04"
-              : "blacksmith-8vcpu-ubuntu-2404"
-            : "macos-15";
+          const expectedRunner =
+            platform === "macos"
+              ? "macos-15"
+              : platform === "linux-hosted" || runnerBackend === "github"
+                ? "ubuntu-24.04"
+                : "blacksmith-8vcpu-ubuntu-2404";
           expect(evaluateWorkflowExpression(warmer.jobs.warm["runs-on"], context)).toBe(
             expectedRunner,
           );
@@ -9117,10 +9143,10 @@ server.listen(0, "127.0.0.1", () => {
     expect(saveSteps.map((step) => step.name)).toEqual([
       "Save Node toolchain cache",
       "Save exact dependency cache",
+      "Save pnpm store cache",
       "Save native SDK boundary cache",
       "Save build-all cache",
       "Save dist build cache",
-      "Save pnpm store cache",
       "Save Vitest transform cache",
       "Save Node compile cache",
     ]);
@@ -9133,7 +9159,8 @@ server.listen(0, "127.0.0.1", () => {
       );
       if (
         saveStep.name === "Save Node toolchain cache" ||
-        saveStep.name === "Save exact dependency cache"
+        saveStep.name === "Save exact dependency cache" ||
+        saveStep.name === "Save pnpm store cache"
       ) {
         expect(warmerSteps.indexOf(saveStep), saveStep.name).toBeLessThan(
           warmerSteps.indexOf(buildStep),
@@ -11703,16 +11730,15 @@ exit 1
     );
     expect(restoreMetadata.run).toBe("python3 -I -S scripts/swift-build-cache-metadata.py restore");
     expect(recordMetadata.run).toBe("python3 -I -S scripts/swift-build-cache-metadata.py record");
-    expect(recordMetadata.if).toBe(`${saveBuildCache.if} && env.HISTORICAL_TARGET != 'true'`);
-    expect(macosSwift.steps.indexOf(restoreMetadata)).toBeLessThan(
-      macosSwift.steps.indexOf(testStep),
+    const saveEligibility = saveBuildCache.if.split(" && (env.HISTORICAL_TARGET")[0];
+    expect(recordMetadata.if).toBe(`${saveEligibility} && env.HISTORICAL_TARGET != 'true'`);
+    expect(saveBuildCache.if).toBe(
+      `${saveEligibility} && (env.HISTORICAL_TARGET == 'true' || steps.record-swift-build-cache-metadata.outcome == 'success')`,
     );
-    expect(macosSwift.steps.indexOf(recordMetadata)).toBeGreaterThan(
-      macosSwift.steps.indexOf(testStep),
-    );
-    expect(macosSwift.steps.indexOf(recordMetadata) + 1).toBe(
-      macosSwift.steps.indexOf(saveBuildCache),
-    );
+    const stepIndex = (step: WorkflowStep) => macosSwift.steps.indexOf(step);
+    expect(stepIndex(restoreMetadata)).toBeLessThan(stepIndex(testStep));
+    expect(stepIndex(recordMetadata)).toBeGreaterThan(stepIndex(testStep));
+    expect(stepIndex(recordMetadata) + 1).toBe(stepIndex(saveBuildCache));
     expect(macosSwift.env).not.toHaveProperty("SWIFT_TEST_EXECUTION");
     expect(testStep.id).toBe("swift-test");
     const currentTargetBranch = testStep.run.split('elif [[ "$HISTORICAL_TARGET" == "true" ]]')[0];
@@ -12237,7 +12263,9 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
     const manifest = runCiManifestFixture({
       bundledPlanner: true,
       changedCoreTestSupport: true,
+      changedPlannerDependencies: changedPaths.slice(0, 1),
       eventName: "pull_request",
+      runnerProfile: "hybrid",
       changedPaths,
     });
     expect(manifest.status, manifest.output).toBe(0);
@@ -12297,6 +12325,16 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
     { changedPaths: null, invalid: true },
     { changedPaths: [] },
     { changedPaths: ["docs/ci.md"] },
+    {
+      changedPaths: [
+        "src/commands/doctor-config-preflight.plugin-persistence.test.ts",
+        "src/commands/deleted-core-leaf.test.ts",
+        "docs/ci.md",
+      ],
+      changedPlannerDependencies: [
+        "src/commands/doctor-config-preflight.plugin-persistence.test.ts",
+      ],
+    },
     { changedPaths: ["src/commands/doctor.test.ts", "package.json"] },
     { changedPaths: ["src/commands/doctor.test.ts", "src/shared.test-support.ts"] },
     { changedPaths: ["packages/mermaid-renderer/src/render.test.ts"] },
@@ -12314,6 +12352,7 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
       bundledPlanner: true,
       changedCoreTestSupport: true,
       eventName: "pull_request",
+      runnerProfile: "hybrid",
       ...options,
     });
     if ("invalid" in options) {
@@ -12323,6 +12362,15 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
     } else {
       expect(manifest.status, manifest.output).toBe(0);
       expect(manifest.outputs.changed_core_test_paths_json).toBe("");
+      expect(
+        evaluateWorkflowExpression(readCiWorkflow().jobs["check-test-types-hosted-core-shard"].if, {
+          eventName: options.eventName ?? "pull_request",
+          repository: "openclaw/openclaw",
+          runAttempt: 1,
+          runnerProfile: "hybrid",
+          preflightOutputs: manifest.outputs,
+        }),
+      ).toBe(true);
     }
   });
 
@@ -12520,99 +12568,13 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
       manifestRun.match(/--input-type=module <<'([A-Z][A-Z0-9_]*)'\n([\s\S]*?)\n\1(?=\n|$)/u)?.[2],
       "Build CI manifest Node source",
     );
-    const repoRoot = process.cwd();
-    const pending = new Set<string>();
-
-    function inspectImports(file: string, source: string, workflow = false) {
-      const sourceFile = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
-      const specifiers = new Set<string>();
-      const constants = new Map<string, string>();
-      for (const statement of sourceFile.statements) {
-        if (
-          !ts.isVariableStatement(statement) ||
-          !(statement.declarationList.flags & ts.NodeFlags.Const)
-        ) {
-          continue;
-        }
-        for (const declaration of statement.declarationList.declarations) {
-          if (
-            ts.isIdentifier(declaration.name) &&
-            declaration.initializer &&
-            ts.isStringLiteralLike(declaration.initializer)
-          ) {
-            constants.set(declaration.name.text, declaration.initializer.text);
-          }
-        }
-      }
-      visitModuleSpecifiers(
-        ts,
-        sourceFile,
-        ({ specifier }: { specifier: string }) => specifiers.add(specifier),
-        { includeCommonJs: true, includeImportTypes: true },
-      );
-      function visit(node: ts.Node) {
-        // The workflow selects current .mts or historical .mjs candidates before
-        // importing them through variables/helpers. Follow its existing module paths.
-        if (
-          workflow &&
-          ts.isStringLiteralLike(node) &&
-          /^\.\.?\/.*\.[cm]?[jt]s$/u.test(node.text) &&
-          existsSync(node.text)
-        ) {
-          specifiers.add(node.text);
-        }
-        if (
-          !workflow &&
-          ts.isCallExpression(node) &&
-          (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
-            (ts.isIdentifier(node.expression) && node.expression.text === "require"))
-        ) {
-          const argument = node.arguments[0];
-          if (!argument || !ts.isStringLiteralLike(argument)) {
-            const specifier =
-              argument && ts.isIdentifier(argument) ? constants.get(argument.text) : undefined;
-            expect(
-              specifier,
-              `${file}: cannot statically resolve module specifier ${argument?.getText(sourceFile) ?? "<missing>"}`,
-            ).toBeDefined();
-            specifiers.add(expectDefined(specifier, "resolved module specifier"));
-          }
-        }
-        ts.forEachChild(node, visit);
-      }
-      visit(sourceFile);
-      for (const specifier of specifiers) {
-        const diagnostic = `${file}: preflight import ${JSON.stringify(specifier)} must resolve without node_modules`;
-        if (specifier.startsWith("node:")) {
-          expect(isBuiltin(specifier), diagnostic).toBe(true);
-          continue;
-        }
-        expect(specifier, diagnostic).toMatch(/^\.\.?\//u);
-        const importedFile = path.relative(
-          repoRoot,
-          path.resolve(
-            workflow ? repoRoot : path.dirname(file),
-            // CI materializes trusted actions under the harness checkout prefix.
-            workflow ? specifier.replace(/^\.\/\.ci-harness\//u, "./") : specifier,
-          ),
-        );
-        expect(importedFile, diagnostic).not.toMatch(/^(?:\.\.(?:[\\/]|$)|[\\/])/u);
-        expect(importedFile.split(path.sep), diagnostic).not.toContain("node_modules");
-        expect(existsSync(importedFile), `${diagnostic}; missing ${importedFile}`).toBe(true);
-        pending.add(importedFile);
-      }
-    }
-
-    inspectImports(".github/workflows/ci.yml (Build CI manifest)", manifestSource, true);
-    expect(pending.size, "workflow must declare preflight module entry points").toBeGreaterThan(0);
-    // Set iteration visits newly discovered modules once, including cycles.
-    for (const file of pending) {
-      expect(
-        pending.size,
-        "preflight import closure exceeded 256 repository files",
-      ).toBeLessThanOrEqual(256);
-      inspectImports(file, readFileSync(file, "utf8"));
-    }
+    const { result, manifest } = runDependencyFreePreflight(
+      manifestSource,
+      tempDirs.make("ci-preflight-dependencies-"),
+    );
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(manifest).toContain("run_node=true\n");
+    expect(manifest).toContain("run_windows=true\n");
   });
 
   it("runs mobile protocol coverage for Node and native-only changes", () => {
@@ -13231,7 +13193,9 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
       mkdirSync(bin);
       writeExecutable(path.join(bin, "node"), [
         "#!/bin/sh",
-        'printf "%s\\n" "$@" > "$STARTUP_CORPUS_ARGS"',
+        'label="${OPENCLAW_TEST_STARTUP_CORPUS_SHARD:-config}"',
+        'case "$label" in */*) label="${label%/*}-${label#*/}" ;; esac',
+        'printf "%s\\n" "$@" > "$STARTUP_CORPUS_ARGS.$label"',
       ]);
       const script = expectDefined(selected[0]?.run, "startup corpus command").replace(
         /\$\{\{[\s\S]*?\}\}/gu,
@@ -13253,7 +13217,11 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
         },
       });
       expect(result.status, result.stdout + result.stderr).toBe(0);
-      expect(readFileSync(argsPath, "utf8").trim().split("\n")).toEqual([
+      const readArgs = (label: string) =>
+        readFileSync(`${argsPath}.${label.replace("/", "-")}`, "utf8")
+          .trim()
+          .split("\n");
+      const commonArgs = [
         "scripts/run-vitest.mjs",
         "run",
         "--config",
@@ -13268,9 +13236,17 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
               "--reporter",
               "./scripts/lib/vitest-resource-reporter.mts",
             ]),
+      ];
+      expect(readArgs("config")).toEqual([
+        ...commonArgs,
         "src/config/config-startup-corpus.test.ts",
-        "src/config/state-startup-corpus.test.ts",
       ]);
+      for (const shard of ["1/4", "2/4", "3/4", "4/4"]) {
+        expect(readArgs(shard), shard).toEqual([
+          ...commonArgs,
+          "src/config/state-startup-corpus.test.ts",
+        ]);
+      }
     }
   });
 
