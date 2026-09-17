@@ -602,13 +602,33 @@ describe("gateway agent handler", () => {
       const hasFollowUp = closeAt.endsWith("with follow-up") || closesDuringFollowUp;
       const message = hasFollowUp ? "/reset continue working" : "/reset";
       let followUpCommitted = false;
-      mockMainSessionEntry({ sessionId: "existing-session-id" });
+      // Existing-session resets preserve the session ID and advance the lifecycle.
+      // Model that contract in the case that reaches post-reset persistence.
+      mockMainSessionEntry({
+        sessionId: closesDuringFollowUp ? "reset-session-id" : "existing-session-id",
+        ...(closesDuringFollowUp ? { lifecycleRevision: "before-reset" } : {}),
+      });
       mocks.performGatewaySessionReset.mockClear();
       mocks.agentCommand.mockClear();
       mocks.patchSessionEntryTarget.mockClear();
       if (closesDuringFollowUp) {
         mocks.patchSessionEntryTarget.mockImplementationOnce(
-          async (_scope, _update, options: { assertCommitAllowed: () => void }) => {
+          async (
+            scope,
+            _update,
+            options: {
+              assertCommitAllowed: () => void;
+              fallbackEntry?: { sessionId: string; lifecycleRevision?: string };
+            },
+          ) => {
+            expect(scope).toMatchObject({
+              agentId: "main",
+              target: { canonicalKey: "agent:main:main" },
+            });
+            expect(options.fallbackEntry).toMatchObject({
+              sessionId: "reset-session-id",
+              lifecycleRevision: "after-reset",
+            });
             expect(resetCommitted).toBe(true);
             expect(authorityActive).toBe(true);
             await Promise.resolve();
@@ -638,7 +658,10 @@ describe("gateway agent handler", () => {
           }
           resetCommitted = true;
           options.onCommitted?.({ key: "agent:main:main", sessionId: "reset-session-id" });
-          mockMainSessionEntry({ sessionId: "reset-session-id" });
+          mockMainSessionEntry({
+            sessionId: "reset-session-id",
+            ...(closesDuringFollowUp ? { lifecycleRevision: "after-reset" } : {}),
+          });
           if (closesAfterCommit) {
             authorityActive = false;
           }
