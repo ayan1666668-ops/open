@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { ForksPoolWorker, type PoolOptions, type WorkerRequest } from "vitest/node";
 import { isRecord } from "../../packages/normalization-core/src/record-coerce.ts";
-import { collectNodeDiagnosticReport } from "../helpers/node-diagnostic-report.ts";
+import { collectNodeDiagnosticReport } from "../../scripts/lib/node-diagnostic-report.mts";
 
 const POOL_NAME = "openclaw-forks";
 const MAX_REPORT_CHARS = 64 * 1_024;

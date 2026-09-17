@@ -6,11 +6,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { toErrorObject } from "@openclaw/normalization-core/error-coercion";
 import { afterEach } from "vitest";
-import { resolveVitestNodeArgs } from "../../scripts/lib/vitest-process-env.mts";
 import {
   collectNodeDiagnosticReport,
   NODE_DIAGNOSTIC_REPORT_GRACE_MS as REPORT_GRACE_MS,
-} from "../../test/helpers/node-diagnostic-report.ts";
+} from "../../scripts/lib/node-diagnostic-report.mts";
+import { resolveVitestNodeArgs } from "../../scripts/lib/vitest-process-env.mts";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { DEFAULT_VITEST_TEST_TIMEOUT_MS } from "../../test/vitest/vitest.timeouts.js";
 
