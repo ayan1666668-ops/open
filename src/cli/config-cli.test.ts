@@ -113,7 +113,7 @@ vi.mock("../config/config.js", () => ({
     },
   ) => mockWriteConfigFile(cfg, options),
   replaceConfigFile: (params: {
-    nextConfig: OpenClawConfig;
+    sourceConfig: OpenClawConfig;
     writeOptions?: {
       auditOrigin?: "cli";
       unsetPaths?: string[][];
@@ -122,7 +122,7 @@ vi.mock("../config/config.js", () => ({
     };
   }) => {
     params.writeOptions?.assertConfigPathForWrite?.();
-    return mockWriteConfigFile(params.nextConfig, params.writeOptions);
+    return mockWriteConfigFile(params.sourceConfig, params.writeOptions);
   },
 }));
 
@@ -177,22 +177,15 @@ vi.mock("./config-model-validation.js", () => ({
 
 vi.mock("../gateway/config-reload-plan.js", () => ({
   buildGatewayReloadPlan: (changedPaths: string[]) => {
-    const restartReasons = changedPaths.filter((changedPath) =>
-      changedPath.startsWith("plugins.load."),
-    );
     const hotReasons = changedPaths.filter(
       (changedPath) =>
-        !restartReasons.includes(changedPath) &&
-        (changedPath.startsWith("agents.entries.") ||
-          changedPath.startsWith("agents.defaults.models.") ||
-          changedPath.startsWith("models.") ||
-          changedPath.startsWith("plugins.")),
+        changedPath.startsWith("agents.entries.") ||
+        changedPath.startsWith("agents.defaults.models.") ||
+        changedPath.startsWith("models.") ||
+        changedPath === "plugins" ||
+        changedPath.startsWith("plugins."),
     );
-    restartReasons.push(
-      ...changedPaths.filter(
-        (changedPath) => !hotReasons.includes(changedPath) && !restartReasons.includes(changedPath),
-      ),
-    );
+    const restartReasons = changedPaths.filter((changedPath) => !hotReasons.includes(changedPath));
     return {
       changedPaths,
       restartGateway: restartReasons.length > 0,
@@ -202,7 +195,6 @@ vi.mock("../gateway/config-reload-plan.js", () => ({
       restartGmailWatcher: false,
       restartCron: false,
       restartHeartbeat: hotReasons.length > 0,
-      restartHealthMonitor: false,
       reloadPlugins: false,
       restartChannels: new Set(),
       disposeMcpRuntimes: false,
@@ -1201,39 +1193,47 @@ describe("config cli", () => {
       });
     });
 
-    it("merges provider model arrays by id with --merge", async () => {
-      const resolved = {
-        models: {
-          providers: {
-            ollama: {
-              api: "ollama",
-              models: [
-                { id: "llama3.2", name: "Llama 3.2", contextWindow: 131072 },
-                { id: "qwen3", name: "Qwen 3" },
-              ],
+    it.each([
+      {
+        label: "the model list",
+        path: "models.providers.ollama.models",
+        value: '[{"id":"llama3.2","name":"Llama 3.2 latest"},{"id":"gemma4","name":"Gemma 4"}]',
+      },
+      {
+        label: "an ancestor object",
+        path: "models",
+        value:
+          '{"providers":{"ollama":{"models":[{"id":"llama3.2","name":"Llama 3.2 latest"},{"id":"gemma4","name":"Gemma 4"}]}}}',
+      },
+    ])(
+      "merges provider model arrays by id through $label with --merge",
+      async ({ path: configPath, value }) => {
+        const resolved = {
+          models: {
+            providers: {
+              ollama: {
+                api: "ollama",
+                models: [
+                  { id: "llama3.2", name: "Llama 3.2", contextWindow: 131072 },
+                  { id: "qwen3", name: "Qwen 3" },
+                ],
+              },
             },
           },
-        },
-      } as unknown as OpenClawConfig;
-      setSnapshot(resolved, resolved);
+        } as unknown as OpenClawConfig;
+        setSnapshot(resolved, resolved);
 
-      await runConfigCommand([
-        "config",
-        "set",
-        "models.providers.ollama.models",
-        '[{"id":"llama3.2","name":"Llama 3.2 latest"},{"id":"gemma4","name":"Gemma 4"}]',
-        "--strict-json",
-        "--merge",
-      ]);
+        await runConfigCommand(["config", "set", configPath, value, "--strict-json", "--merge"]);
 
-      expect(mockWriteConfigFile).toHaveBeenCalledTimes(1);
-      const written = firstWrittenConfig();
-      expect(written.models?.providers?.ollama?.models).toEqual([
-        { id: "llama3.2", name: "Llama 3.2 latest", contextWindow: 131072 },
-        { id: "qwen3", name: "Qwen 3" },
-        { id: "gemma4", name: "Gemma 4" },
-      ]);
-    });
+        expect(mockWriteConfigFile).toHaveBeenCalledTimes(1);
+        const written = firstWrittenConfig();
+        expect(written.models?.providers?.ollama?.models).toEqual([
+          { id: "llama3.2", name: "Llama 3.2 latest", contextWindow: 131072 },
+          { id: "qwen3", name: "Qwen 3" },
+          { id: "gemma4", name: "Gemma 4" },
+        ]);
+      },
+    );
 
     it("drops gateway.auth.password when switching mode to token", async () => {
       const resolved: OpenClawConfig = {
@@ -1445,6 +1445,17 @@ describe("config cli", () => {
   });
 
   describe("config get", () => {
+    it.each([
+      { args: ["gateway.port", ""], code: "commander.excessArguments" },
+      { args: ["gateway.port", "", "--json"], code: "commander.excessArguments" },
+      { args: ["gateway.port", "", "--unknown"], code: "commander.unknownOption" },
+    ])("rejects malformed getter argv $args before reading config", async ({ args, code }) => {
+      await expect(runConfigCommand(["config", "get", ...args])).rejects.toMatchObject({ code });
+      expect(mockReadConfigFileSnapshot).not.toHaveBeenCalled();
+      expect(mockWriteConfigFile).not.toHaveBeenCalled();
+      expect(mockLog).not.toHaveBeenCalled();
+    });
+
     it("reads the valid configuration without observing persistent health state", async () => {
       setGatewaySnapshot();
 
@@ -1684,7 +1695,7 @@ describe("config cli", () => {
         makeInvalidSnapshot({
           issues: [
             {
-              path: "agents.defaults.suppressToolErrorWarnings",
+              path: "agents.defaults.unknownOption",
               message: "Unrecognized key(s) in object",
             },
           ],
@@ -1694,7 +1705,7 @@ describe("config cli", () => {
       await expect(runConfigCommand(["config", "validate"])).rejects.toThrow(ExitError);
 
       expectErrorIncludes("config is invalid");
-      expectErrorIncludes("agents.defaults.suppressToolErrorWarnings");
+      expectErrorIncludes("agents.defaults.unknownOption");
       expect(mockLog).not.toHaveBeenCalled();
     });
 
@@ -3763,6 +3774,38 @@ describe("config cli", () => {
       expectErrorIncludes("Dry run failed: 2 SecretRef assignment(s) could not be resolved.");
     });
 
+    it("reports schema errors for deeply nested replacement values without an engine failure", async () => {
+      const resolved = {} as unknown as OpenClawConfig;
+      setSnapshot(resolved, resolved);
+      const pathname = path.join(
+        os.tmpdir(),
+        `openclaw-config-patch-deep-replacement-${Date.now()}-${Math.random()
+          .toString(16)
+          .slice(2)}.json5`,
+      );
+      const nestedArray = "[".repeat(20_000) + "0" + "]".repeat(20_000);
+      fs.writeFileSync(pathname, `{agents:{defaults:{params:${nestedArray}}}}`, "utf8");
+      try {
+        await expect(
+          runConfigCommand([
+            "config",
+            "patch",
+            "--file",
+            pathname,
+            "--replace-path",
+            "agents.defaults.params",
+            "--dry-run",
+          ]),
+        ).rejects.toThrow(ExitError);
+      } finally {
+        fs.rmSync(pathname, { force: true });
+      }
+
+      const errors = mockError.mock.calls.flat().join("\n");
+      expect(errors).toContain("Dry run failed: config schema validation failed.");
+      expect(errors).not.toContain("Maximum call stack size exceeded");
+    });
+
     it("rejects config patch --json without dry-run", async () => {
       await expect(runConfigCommand(["config", "patch", "--stdin", "--json"])).rejects.toThrow(
         ExitError,
@@ -5135,7 +5178,10 @@ describe("config cli", () => {
       expectLogExcludes("Restart the gateway to apply.");
     });
 
-    it("keeps the restart hint for hot-path edits when reload mode is off", async () => {
+    it.each([
+      ["agents.list[0].model.primary", '"openai/gpt-5.5"'],
+      ["plugins.entries.canvas.enabled", "false"],
+    ])("keeps the restart hint for %s when reload mode is off", async (configPath, value) => {
       const resolved: OpenClawConfig = {
         agents: {
           entries: { main: { model: { primary: "openai/gpt-5.4" } } },
@@ -5143,18 +5189,13 @@ describe("config cli", () => {
         gateway: {
           reload: { mode: "off" },
         },
+        plugins: { entries: { canvas: { enabled: true } } },
       };
       setSnapshot(resolved, withRuntimeDefaults(resolved));
 
-      await runConfigCommand([
-        "config",
-        "set",
-        "agents.list[0].model.primary",
-        '"openai/gpt-5.5"',
-        "--strict-json",
-      ]);
+      await runConfigCommand(["config", "set", configPath, value, "--strict-json"]);
 
-      expectLogIncludes("Updated agents.list[0].model.primary");
+      expectLogIncludes(`Updated ${configPath}`);
       expectLogIncludes("Restart the gateway to apply.");
       expectLogExcludes("Change will apply without restarting the gateway.");
     });
@@ -5225,7 +5266,7 @@ describe("config cli", () => {
       expectLogExcludes("Restart the gateway to apply.");
     });
 
-    it("keeps the restart hint for broad plugins writes that change load paths", async () => {
+    it("prints a hot-reload hint for broad plugins writes that change load paths", async () => {
       const resolved: OpenClawConfig = {
         plugins: {
           load: {
@@ -5247,11 +5288,11 @@ describe("config cli", () => {
         "--replace",
       ]);
 
-      expectLogIncludes("Updated plugins. Restart the gateway to apply.");
-      expectLogExcludes("Change will apply without restarting the gateway.");
+      expectLogIncludes("Updated plugins. Change will apply without restarting the gateway.");
+      expectLogExcludes("Restart the gateway to apply.");
     });
 
-    it("keeps the restart hint for broad plugins unsets that remove load paths", async () => {
+    it("prints a hot-reload hint for broad plugins unsets that remove load paths", async () => {
       const resolved: OpenClawConfig = {
         plugins: {
           load: {
@@ -5266,8 +5307,8 @@ describe("config cli", () => {
 
       await runConfigCommand(["config", "unset", "plugins"]);
 
-      expectLogIncludes("Removed plugins. Restart the gateway to apply.");
-      expectLogExcludes("Change will apply without restarting the gateway.");
+      expectLogIncludes("Removed plugins. Change will apply without restarting the gateway.");
+      expectLogExcludes("Restart the gateway to apply.");
     });
 
     it("keeps the restart hint for restart-required config paths", async () => {
@@ -5287,26 +5328,23 @@ describe("config cli", () => {
       ["canvas", "plugins.entries.canvas.enabled"],
       ["canvas.internal", 'plugins.entries["canvas.internal"].enabled'],
       ["canvas", "plugins.entries.canvas.config.accounts[0].enabled"],
-    ])(
-      "keeps plugin entry %s writes unambiguous and restart-backed",
-      async (pluginId, configPath) => {
-        const resolved = {
-          plugins: {
-            entries: {
-              [pluginId]: { enabled: true, config: { accounts: [{ enabled: true }] } },
-            },
+    ])("prints a hot-reload hint for plugin entry %s writes", async (pluginId, configPath) => {
+      const resolved = {
+        plugins: {
+          entries: {
+            [pluginId]: { enabled: true, config: { accounts: [{ enabled: true }] } },
           },
-        } as unknown as OpenClawConfig;
-        setSnapshot(resolved, resolved);
+        },
+      } as unknown as OpenClawConfig;
+      setSnapshot(resolved, resolved);
 
-        await runConfigSet(configPath, "false");
+      await runConfigSet(configPath, "false");
 
-        expectLogIncludes(`Updated ${configPath}`);
-        expectLogIncludes("Restart the gateway to apply.");
-        expectLogExcludes("Change will apply without restarting the gateway.");
-        expectLogExcludes("No gateway restart needed.");
-      },
-    );
+      expectLogIncludes(`Updated ${configPath}`);
+      expectLogIncludes("Change will apply without restarting the gateway.");
+      expectLogExcludes("Restart the gateway to apply.");
+      expectLogExcludes("No gateway restart needed.");
+    });
 
     it("keeps the restart hint for mixed hot and restart batch updates", async () => {
       const resolved: OpenClawConfig = {

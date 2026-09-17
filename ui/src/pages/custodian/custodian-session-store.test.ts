@@ -2,20 +2,13 @@
 
 import { buildSystemAgentSessionInvalidatedErrorDetails } from "@openclaw/gateway-protocol";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createDeferred as deferred } from "../../../../test/helpers/promise.js";
 import { GatewayRequestError, type GatewayBrowserClient } from "../../api/gateway.ts";
 import { installSafeLocalStorageForTesting } from "../../test-helpers/storage.ts";
 import { waitForFast } from "../../test-helpers/wait-for.ts";
 import { createContext } from "./custodian-page.test-harness.ts";
 import { CustodianSessionStore } from "./custodian-session-store.ts";
 import { custodianErrorMessage } from "./transcript.ts";
-
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((resolvePromise) => {
-    resolve = resolvePromise;
-  });
-  return { promise, resolve };
-}
 
 describe("CustodianSessionStore", () => {
   beforeEach(() => {
@@ -458,7 +451,7 @@ describe("CustodianSessionStore", () => {
   ])(
     "preserves the latest ordinary draft after an unsent failure: $edits",
     async ({ edits, expected }) => {
-      const pending = deferred<void>();
+      const pending = deferred();
       const request = vi
         .fn()
         .mockResolvedValueOnce({ sessionId: "draft-session", reply: "Ready." })
@@ -546,6 +539,33 @@ describe("CustodianSessionStore", () => {
     await expect(store.send("should not send")).resolves.toBe("rejected");
   });
 
+  it("uses an explicit utility for the setup assistant and requires a primary before regular chat", async () => {
+    const request = vi.fn().mockResolvedValue({
+      sessionId: "utility-setup-session",
+      reply: "Choose a primary model for your agent.",
+      action: "none",
+    });
+    const { context } = createContext(request, ["openclaw.chat"], {
+      agentsList: {
+        defaultId: "main",
+        mainKey: "main",
+        scope: "per-sender",
+        agents: [{ id: "main", utilityModel: "local/setup" }],
+      },
+    });
+    const store = new CustodianSessionStore();
+
+    store.connect(context, "onboarding");
+    await waitForFast(() => expect(store.messages.at(-1)?.text).toContain("Choose a primary"));
+
+    expect(store.setupRequired).toBe(false);
+    expect(store.canSend).toBe(true);
+    expect(request.mock.calls[0]?.[1]).toMatchObject({ welcomeVariant: "onboarding" });
+    expect(context.agents.state.agentsList?.agents[0]?.model?.primary).toBeUndefined();
+    store.exitSetup();
+    expect(context.navigate).toHaveBeenCalledWith("model-setup", { search: "?firstRun=1" });
+  });
+
   it("does not let a late onboarding reply navigate after the destination rotates context", async () => {
     let resolveReply!: (value: unknown) => void;
     let requestSignal: AbortSignal | undefined;
@@ -631,7 +651,7 @@ describe("CustodianSessionStore", () => {
     store.connect(context, "caretaker");
     await waitForFast(() => expect(request).toHaveBeenCalledOnce());
 
-    store.openModelSetup();
+    store.exitSetup("model-setup");
     expect(requestSignal?.aborted).toBe(true);
     expect(store.sending).toBe(false);
     resolveReply({
