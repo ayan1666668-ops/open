@@ -46,15 +46,36 @@ const PAST_TEMPORAL_EVENT_PATTERN = new RegExp(
   "i",
 );
 
+const PRESENT_TEMPORAL_EVENT_PATTERN = new RegExp(
+  String.raw`^${RESULT_SUBJECT}\s+(?:(?:will|would|could|should|might|may|can|must|is|are|has|have|do|does)\b|(?:pass|succeed|fail|finish|complete|open|close|start|stop|end|arrive|recover|resolve|deploy|land|merge|return|restart|reboot|fire|crash|begin|break|go|come|respond|become|reach|settle|receive|expire|resume|appear|disappear|connect|disconnect|stabilize|install|publish|approve|accept|reject|clear|turn)(?:s|es)?\b)`,
+  "i",
+);
+const FUTURE_COMPLETION_PATTERN = new RegExp(
+  String.raw`^${RESULT_SUBJECT}\s+(?:(?:will|would|could|should|might|may|can|must)\b|(?:is|are)\s+going\s+to\b)`,
+  "i",
+);
+const PENDING_COMPLETION_PATTERN = new RegExp(
+  String.raw`^(?:${RESULT_SUBJECT}\s+(?:(?:is|are|remains?)\s+)?)?(?:still\s+)?(?:pending|in\s+progress|not\s+yet)[.!?]?$`,
+  "i",
+);
+
 function hasDeferredTemporalResult(prefix: string, resultClause: string): boolean {
   const temporalClauses = [
-    ...prefix.matchAll(/(?:^|,\s*)(?:when|once|after|as\s+soon\s+as)\b([^,]*)/gi),
-    ...resultClause.matchAll(/\b(?:when|once|after|as\s+soon\s+as)\b([^,]*)/gi),
+    ...prefix.matchAll(/(?:^|,\s*)(when|once|after|as\s+soon\s+as)\b([^,]*)/gi),
+    ...resultClause.matchAll(/\b(when|once|after|as\s+soon\s+as)\b([^,]*)/gi),
   ];
   // Check the temporal clause's subject/predicate, not past-looking modifiers
   // such as "the failed tests pass". This exception is only for known result
   // narration; generic replies are not subject to temporal parsing.
-  return temporalClauses.some(([, event = ""]) => !PAST_TEMPORAL_EVENT_PATTERN.test(event.trim()));
+  return temporalClauses.some(([, marker = "", event = ""]) => {
+    const temporal = event.trim();
+    // "After" also introduces a noun phrase, e.g. "after midnight". Only an
+    // identifiable event predicate makes that preposition a prerequisite.
+    return (
+      !PAST_TEMPORAL_EVENT_PATTERN.test(temporal) &&
+      (marker.toLowerCase() !== "after" || PRESENT_TEMPORAL_EVENT_PATTERN.test(temporal))
+    );
+  });
 }
 
 function normalizeCompletionText(value: string | null | undefined): string {
@@ -116,9 +137,8 @@ function isProgressOnlyCompletionText(value: string): boolean {
           hasDeferredTemporalResult(prefix, resultClause));
       const progress =
         narrativeProgress ||
-        /^(?:(?:the\s+)?(?:tests?|checks?|build|lint|deployment|verification)\s+(?:(?:is|are|remains?)\s+)?)?(?:still\s+)?(?:pending|in\s+progress|not\s+yet)[.!?]?$/i.test(
-          body,
-        ) ||
+        PENDING_COMPLETION_PATTERN.test(body) ||
+        (progressSeen && FUTURE_COMPLETION_PATTERN.test(body)) ||
         (progressSeen && conditionalResult);
       progressSeen ||= progress;
       // Generic replies retain their existing behavior; only a known narrative

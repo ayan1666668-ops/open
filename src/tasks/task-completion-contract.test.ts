@@ -18,6 +18,20 @@ describe("resolveRequiredCompletionTerminalResult", () => {
   // delivered result.
   it.each([
     ["pure progress", "Let me run the tests"],
+    [
+      "future-only follow-up sentence",
+      "I'll inspect the failure. The migration will be completed tomorrow.",
+    ],
+    [
+      "going-to follow-up sentence",
+      "I'll inspect the failure. The migration is going to finish tomorrow.",
+    ],
+    ["arbitrary headed pending subject", "Status: database migration is still pending."],
+    ["release-task pending heading", "Result: release task remains pending."],
+    [
+      "pending follow-up without heading",
+      "I'll inspect the failure. Database migration is still pending.",
+    ],
     ["unfulfilled past intention", "Reviewing the rollout, we planned to deploy the release."],
     [
       "past obligation without a result",
@@ -177,6 +191,13 @@ describe("resolveRequiredCompletionTerminalResult", () => {
       "I'll inspect the repo now: the crash is a missing null check in src/foo.ts.",
     ],
     ["completed clause after narration", "Reviewing the changes, we fixed the regression."],
+    ["temporal clock noun phrase", "Reviewing the rollout, we deployed after 5 p.m."],
+    ["temporal deployment noun", "Reviewing the rollout, we deployed after deployment."],
+    ["temporal midnight noun", "Reviewing the rollout, we deployed after midnight."],
+    [
+      "temporal qualified test noun",
+      "Reviewing the rollout, we deployed after the integration tests.",
+    ],
     [
       "noun-subject completed result",
       "Reviewing the changes, the migration completed successfully.",
