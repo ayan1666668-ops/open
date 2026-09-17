@@ -2,6 +2,7 @@ import fs from "node:fs";
 import { performance } from "node:perf_hooks";
 import { expect, test } from "vitest";
 import { resolveSqliteTargetFromSessionStorePath } from "../config/sessions/session-sqlite-target.js";
+import { listSessionsNeedingTranscriptIndexReconcile } from "../config/sessions/session-transcript-index.js";
 import { openOpenClawAgentDatabase } from "../state/openclaw-agent-db.js";
 import { rpcReq, writeSessionStore } from "./test-helpers.js";
 import {
@@ -142,6 +143,7 @@ function seedTranscriptState(storePath: string): void {
     database.db.exec("ROLLBACK");
     throw error;
   }
+  expect(listSessionsNeedingTranscriptIndexReconcile(database.db)).toEqual([]);
 }
 
 test("sessions.delete keeps the Gateway responsive while reclaiming a large session", async () => {
