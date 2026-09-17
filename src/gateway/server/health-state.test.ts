@@ -56,7 +56,7 @@ function healthSnapshotCallArg(index = 0) {
 // Vitest manual mocks cannot resolve concurrent imports from one module. Enter
 // each collector separately while keeping its result pending to test overlap.
 function createPendingHealthSnapshot() {
-  const started = createDeferred<void>();
+  const started = createDeferred();
   const result = createDeferred<HealthSummary>();
   return {
     ...result,
