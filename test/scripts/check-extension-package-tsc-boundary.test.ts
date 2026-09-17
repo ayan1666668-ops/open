@@ -88,10 +88,20 @@ describe("check-extension-package-tsc-boundary", () => {
       "extensions/demo/index.ts",
       'import type { DemoContract } from "openclaw/plugin-sdk/core";\nexport const demo: DemoContract = { ok: true };\n',
     );
+    write(
+      "extensions/larger/tsconfig.json",
+      '{"extends":"../tsconfig.package-boundary.base.json","include":["index.ts"]}',
+    );
+    write("extensions/larger/index.ts", 'export { value } from "./src/value.js";\n');
+    write(
+      "extensions/larger/src/value.ts",
+      `export const value = ${JSON.stringify("x".repeat(2000))};\n`,
+    );
     // Hold preparation fixed; scheduling, config parsing, and compilation remain real.
     write("scripts/prepare-extension-package-boundary-artifacts.mts", "export {};\n");
     for (const file of [
       "check-extension-package-tsc-boundary.mts",
+      "check-file-utils.ts",
       "tsx.mjs",
       "windows-cmd-helpers.mjs",
     ]) {
@@ -115,16 +125,22 @@ describe("check-extension-package-tsc-boundary", () => {
       spawnSync(
         process.execPath,
         ["scripts/check-extension-package-tsc-boundary.mts", "--mode=compile"],
-        { cwd: root, encoding: "utf8", timeout: 20_000 },
+        {
+          cwd: root,
+          encoding: "utf8",
+          timeout: 20_000,
+          env: { ...process.env, OPENCLAW_EXTENSION_BOUNDARY_CONCURRENCY: "1" },
+        },
       );
     const cold = run();
     expect(cold.error, cold.stderr).toBeUndefined();
     expect(cold.status, cold.stdout + cold.stderr).toBe(0);
-    expect(cold.stdout).toContain("compiled plugins: 1");
+    expect(cold.stdout).toContain("compiled plugins: 2");
+    expect(cold.stdout.indexOf("] larger")).toBeLessThan(cold.stdout.indexOf("] demo"));
     const warm = run();
     expect(warm.status, warm.stdout + warm.stderr).toBe(0);
     expect(warm.stdout).toContain("compiled plugins: 0");
-    expect(warm.stdout).toContain("skipped plugins: 1");
+    expect(warm.stdout).toContain("skipped plugins: 2");
     config.compilerOptions.paths["openclaw/plugin-sdk/*"] = ["../missing-sdk/*.d.ts"];
     write(pathsConfig, JSON.stringify(config));
     const changed = run();
@@ -194,6 +210,10 @@ describe("check-extension-package-tsc-boundary", () => {
     expect(resolveCompileConcurrency({ OPENCLAW_EXTENSION_BOUNDARY_CONCURRENCY: "4" }, 32)).toBe(4);
     expect(resolveCompileConcurrency({}, 12)).toBe(6);
     expect(resolveCompileConcurrency({}, 3)).toBe(1);
+    expect(resolveCompileConcurrency({ OPENCLAW_EXTENSION_BOUNDARY_CONCURRENCY: "16" }, 16)).toBe(
+      8,
+    );
+    expect(resolveCompileConcurrency({ OPENCLAW_EXTENSION_BOUNDARY_CONCURRENCY: "16" }, 2)).toBe(1);
     for (const value of ["4x", "0", "1e3"]) {
       expect(() =>
         resolveCompileConcurrency({ OPENCLAW_EXTENSION_BOUNDARY_CONCURRENCY: value }, 32),
