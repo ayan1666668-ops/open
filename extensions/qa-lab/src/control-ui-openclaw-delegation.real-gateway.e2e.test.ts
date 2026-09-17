@@ -534,11 +534,11 @@ fullAccessSuite.define(() => {
                       (message) => isRecord(message) && message.role === "assistant",
                     )
                   : undefined;
-              const finalEntryId =
-                isRecord(finalMessage) && isRecord(finalMessage["__openclaw"])
-                  ? finalMessage["__openclaw"].id
-                  : undefined;
-              expect(finalEntryId).toEqual(expect.any(String));
+              const finalMeta = isRecord(finalMessage) ? finalMessage["__openclaw"] : undefined;
+              const finalEntryId = isRecord(finalMeta) ? finalMeta.id : undefined;
+              if (typeof finalEntryId !== "string") {
+                throw new Error("chat.history returned no persisted assistant entry id");
+              }
               // History replaces the live final and its work-group key. Expand the persisted row.
               await page.locator(`.chat-bubble[data-entry-id="${finalEntryId}"]`).waitFor();
               const workSummary = page
