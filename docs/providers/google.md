@@ -89,9 +89,28 @@ the Gateway already runs inside a managed Google Cloud environment.
         On a Google Cloud VM with an attached service account, the metadata
         server already provides credentials and no file is needed.
       </Step>
-      <Step title="Store the ADC sentinel credential">
-        The ADC path is selected by a sentinel value, not a real key. Store
-        exactly `gcp-vertex-credentials`:
+      <Step title="Set project and location">
+        Both are required in the gateway service environment:
+
+        ```bash
+        export GOOGLE_CLOUD_PROJECT="my-project"
+        export GOOGLE_CLOUD_LOCATION="us-central1"
+        ```
+
+        Without a project, runs fail earlier with `Vertex AI requires a
+        project ID`.
+      </Step>
+      <Step title="Credential: automatic discovery or manual sentinel">
+        With a recognized ADC file (created by
+        `gcloud auth application-default login`) **and** the project and
+        location variables set, OpenClaw discovers `google-vertex`
+        automatically — nothing needs to be stored.
+
+        Manual storage is only needed for metadata-only credentials (for
+        example a GCE VM with an attached service account and no ADC file on
+        disk) or to select the ADC path explicitly. The ADC path is selected
+        by a sentinel value, not a real key — store exactly
+        `gcp-vertex-credentials`:
 
         ```bash
         openclaw models auth paste-api-key --provider google-vertex
@@ -103,17 +122,6 @@ the Gateway already runs inside a managed Google Cloud environment.
         `gcloud auth print-access-token` — is sent as an API key header and
         rejected by Vertex with `401 UNAUTHENTICATED`.
         </Warning>
-      </Step>
-      <Step title="Set project and location">
-        Both are required in the gateway service environment:
-
-        ```bash
-        export GOOGLE_CLOUD_PROJECT="my-project"
-        export GOOGLE_CLOUD_LOCATION="us-central1"
-        ```
-
-        Without a project, runs fail earlier with `Vertex AI requires a
-        project ID`.
       </Step>
       <Step title="Verify the model is available">
         ```bash
