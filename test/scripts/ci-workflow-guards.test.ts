@@ -13274,8 +13274,15 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
       const bin = path.join(directory, "bin");
       const argsPath = path.join(directory, "args");
       mkdirSync(bin);
+      writeExecutable(path.join(bin, "pnpm"), [
+        "#!/bin/sh",
+        '[ "$*" = "build qaRuntime" ] || exit 1',
+        "mkdir dist || exit 1",
+        "touch dist/.buildstamp",
+      ]);
       writeExecutable(path.join(bin, "node"), [
         "#!/bin/sh",
+        'test -f dist/.buildstamp || { echo "runtime not prepared" >&2; exit 1; }',
         'label="${OPENCLAW_TEST_STARTUP_CORPUS_SHARD:-config}"',
         'case "$label" in */*) label="${label%/*}-${label#*/}" ;; esac',
         'printf "%s\\n" "$@" > "$STARTUP_CORPUS_ARGS.$label"',
