@@ -91,7 +91,7 @@ const COMPLETION_HEADING_PATTERN =
 // A subject cannot absorb an auxiliary, modal, negation, or new condition.
 const RESULT_SUBJECT_WORD = String.raw`(?!(?:if|unless|when|once|whether|before|after|while|and|or|that|which|will|would|could|should|might|may|can|must|have|has|had|did|am|is|are|was|were|not|never|to)\b|\w+(?:'|\u2019)(?:t|ll|m|re|ve|d)\b|(?:he|she|it|that|there)(?:'|\u2019)s\b)[\w'-]+`;
 // Pronouns are complete subjects, never modifiers that can absorb a verb.
-const RESULT_SUBJECT = String.raw`(?:(?:i|we|you|he|she|it|they)\b|(?!(?:i|we|you|he|she|it|they)\b)(?:${RESULT_SUBJECT_WORD}\s+){0,6}?(?!(?:the|a|an|all|both|our|already|just)\b|[\w'-]+ly\b)${RESULT_SUBJECT_WORD})`;
+const RESULT_SUBJECT = String.raw`(?:(?:i|we|you|he|she|it|they)\b|(?!(?:i|we|you|he|she|it|they)\b)(?:${RESULT_SUBJECT_WORD}\s+){0,6}?(?!(?:the|a|an|all|both|my|our|your|his|her|its|their|already|just)\b|[\w'-]+ly\b)${RESULT_SUBJECT_WORD})`;
 const IRREGULAR_PAST_VERB =
   "arose|awoke|bore|beat|became|began|bent|bet|bit|bled|blew|broke|brought|built|burnt|burst|bought|caught|chose|came|cost|crept|cut|dealt|dug|did|drew|drank|drove|ate|fell|fed|felt|fought|found|fled|flew|forbade|forgot|forgave|froze|got|gave|went|grew|hung|heard|hid|hit|held|hurt|kept|knew|laid|led|leant|leapt|learnt|left|lent|let|lay|lit|lost|made|meant|met|paid|put|quit|read|rode|rang|rose|ran|said|saw|sought|sold|sent|set|shook|shone|shot|showed|shrank|shut|sang|sank|sat|slept|slid|smelt|spoke|spelt|spent|spilt|spun|split|spread|sprang|stood|stole|stuck|stung|stank|struck|swore|swept|swam|swung|took|taught|tore|told|thought|threw|understood|upset|woke|wore|wept|won|wound|wrote";
 const PAST_RESULT_VERB = String.raw`(?:(?:(?:re|un|over|under|mis|out|fore|with)-?)?(?:${IRREGULAR_PAST_VERB})|(?!(?:need|feed|bleed|breed|heed|seed|weed|speed|succeed|exceed|proceed)\b)[a-z]+ed)`;
@@ -120,7 +120,7 @@ const ONGOING_RESULT_CLAUSE_PATTERN = new RegExp(
   "i",
 );
 const PAST_TEMPORAL_EVENT_PATTERN = new RegExp(
-  String.raw`^${RESULT_SUBJECT}\s+(?:(?:just|already|recently|finally)\s+)?(?:was|were|had|did|${PAST_RESULT_VERB})\b`,
+  String.raw`^(?<subject>${RESULT_SUBJECT})\s+(?:(?:just|already|recently|finally)\s+)?(?:(?<auxiliary>was|were|had|did)|${PAST_RESULT_VERB})\b`,
   "i",
 );
 
@@ -147,11 +147,23 @@ function hasDeferredTemporalResult(prefix: string, resultClause: string): boolea
   // narration; generic replies are not subject to temporal parsing.
   return temporalClauses.some(([, marker = "", event = ""]) => {
     const temporal = event.trim();
+    // Reuse the candidate predicate check: a present action must not become
+    // a past prerequisite by absorbing an object such as "failed tests".
     // "After" also introduces a noun phrase, e.g. "after midnight". Only an
     // identifiable event predicate makes that preposition a prerequisite.
+    const pastEvent = PAST_TEMPORAL_EVENT_PATTERN.exec(temporal);
+    const completedPastEvent =
+      pastEvent !== null &&
+      !hasNarratedNominalSubject(
+        pastEvent.groups?.subject ?? "",
+        temporal.slice(pastEvent[0].length).trimStart(),
+        Boolean(pastEvent.groups?.auxiliary),
+      );
     return (
-      !PAST_TEMPORAL_EVENT_PATTERN.test(temporal) &&
-      (marker.toLowerCase() !== "after" || PRESENT_TEMPORAL_EVENT_PATTERN.test(temporal))
+      !completedPastEvent &&
+      (marker.toLowerCase() !== "after" ||
+        pastEvent !== null ||
+        PRESENT_TEMPORAL_EVENT_PATTERN.test(temporal))
     );
   });
 }

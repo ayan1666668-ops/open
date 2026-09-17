@@ -17,6 +17,23 @@ describe("resolveRequiredCompletionTerminalResult", () => {
   // conditional clause ("whether the tests passed") is a pending outcome, not a
   // delivered result.
   it.each([
+    [
+      "nominal prerequisite when action",
+      "Reviewing the changes, I patched it when the worker reviews failed tests.",
+    ],
+    [
+      "nominal prerequisite when verification",
+      "Reviewing the changes, I patched it when the worker checks tests passed.",
+    ],
+    [
+      "nominal prerequisite after verification",
+      "Reviewing the changes, I patched it after the worker checks tests passed.",
+    ],
+    ["possessive nominal future tests", "I'll inspect the code and my failed tests pass."],
+    [
+      "possessive nominal future prerequisite",
+      "Reviewing the change, I patched it when my failed tests pass.",
+    ],
     ["nominal predicate reviews", "I'll inspect the code and the worker reviews failed tests."],
     ["nominal predicate checks", "I'll inspect the code and the worker checks tests passed."],
     [
@@ -362,6 +379,15 @@ describe("resolveRequiredCompletionTerminalResult", () => {
   // result/report/verification marker in a delivered-result sentence; those
   // must not be misclassified.
   it.each([
+    [
+      "nominal prerequisite completed actor",
+      "Reviewing the changes, I patched it when the worker reviewed failed tests.",
+    ],
+    [
+      "nominal prerequisite completed after",
+      "Reviewing the changes, I patched it after the worker reviewed failed tests.",
+    ],
+    ["possessive nominal completed tests", "I'll inspect the code and my failed tests passed."],
     [
       "nominal finite plural actor",
       "I'll inspect the code and the ops teams have fixed the regression.",
