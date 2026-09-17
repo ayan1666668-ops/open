@@ -21,7 +21,6 @@ import {
 import { pluginCommandSupportsChannel } from "./plugin-command-metadata.js";
 import type { PluginCommandDispatchContext } from "./plugin-command-runtime.js";
 import type { PluginRegistry } from "./registry-types.js";
-import { withPluginRuntimeRegistryScope } from "./runtime/gateway-request-scope.js";
 import type { PluginCommandContext, PluginCommandResult } from "./types.js";
 
 const MAX_ARGS_LENGTH = 4096;
@@ -49,7 +48,7 @@ function sanitizeArgs(args: string | undefined): string | undefined {
 
 function resolveBindingConversation(params: {
   registry: PluginRegistry;
-  config?: OpenClawConfig;
+  config: OpenClawConfig;
   channel: string;
   senderId?: string;
   from?: string;
@@ -66,7 +65,8 @@ function resolveBindingConversation(params: {
     return null;
   }
   return resolveCommandConversationResolution({
-    cfg: params.config ?? ({} as OpenClawConfig),
+    cfg: params.config,
+    plugin: channelPlugin,
     channel: params.channel,
     accountId: params.accountId,
     threadId: params.messageThreadId,
@@ -261,9 +261,7 @@ export async function executeRegisteredPluginCommand(
   };
 
   try {
-    const execution = await withPluginCommandExecution(registry, () =>
-      withPluginRuntimeRegistryScope(registry, () => command.handler(ctx)),
-    );
+    const execution = await withPluginCommandExecution(registry, () => command.handler(ctx));
     if (!execution.admitted) {
       return {
         text: "⚠️ This command is no longer available after the plugin registry changed. Please try again.",

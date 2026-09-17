@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { withEnvAsync } from "openclaw/plugin-sdk/test-env";
 import { chromium, type BrowserContext } from "playwright-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { chromeMcpSessions } from "../src/browser/chrome-mcp-state.js";
+import { getChromeMcpPid } from "../src/browser/chrome-mcp-session.js";
 import {
   chromeProductRoots,
   generateChromeExtensionIdForPath,
@@ -162,6 +162,7 @@ describe.runIf(runE2E)("Chrome native bootstrap Chromium E2E", () => {
     const root = await fs.realpath(
       await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-extension-e2e-")),
     );
+    const existingSessionProfile = "e2e-existing-session";
     cleanups.push(async () => await fs.rm(root, { recursive: true, force: true }));
     const homeDir = path.join(root, "home");
     const stateDir = path.join(root, "custom-state");
@@ -251,8 +252,9 @@ describe.runIf(runE2E)("Chrome native bootstrap Chromium E2E", () => {
             }),
         );
         cleanups.push(async () => {
-          const bridge = getBrowserControlState()?.extensionRelays?.get("e2e")?.bridge;
-          const sessions = [...chromeMcpSessions.values()].slice(0, 8);
+          const currentRelay = getBrowserControlState()?.extensionRelays?.get("e2e");
+          const bridge = currentRelay?.ownership === "owned" ? currentRelay.bridge : undefined;
+          const hadMcpSession = getChromeMcpPid(existingSessionProfile) !== null;
           try {
             await stopBrowserControlService();
           } finally {
@@ -260,11 +262,8 @@ describe.runIf(runE2E)("Chrome native bootstrap Chromium E2E", () => {
               "relay.closed",
               Boolean(bridge && !bridge.extensionConnected && bridge.cdpClientCount === 0),
             );
-            for (const session of sessions) {
-              diagnostic.mark(
-                "mcp.closed",
-                session.transport.pid === null && session.processCleanup?.status === "closed",
-              );
+            if (hadMcpSession) {
+              diagnostic.mark("mcp.closed", getChromeMcpPid(existingSessionProfile) === null);
             }
           }
         });
@@ -395,8 +394,12 @@ describe.runIf(runE2E)("Chrome native bootstrap Chromium E2E", () => {
         try {
           await expect
             .poll(
-              () =>
-                getBrowserControlState()?.extensionRelays?.get("e2e")?.bridge.extensionConnected,
+              () => {
+                const currentRelay = getBrowserControlState()?.extensionRelays?.get("e2e");
+                return (
+                  currentRelay?.ownership === "owned" && currentRelay.bridge.extensionConnected
+                );
+              },
               { timeout: 15_000 },
             )
             .toBe(true);
@@ -409,7 +412,7 @@ describe.runIf(runE2E)("Chrome native bootstrap Chromium E2E", () => {
           });
         }
         const relay = getBrowserControlState()?.extensionRelays?.get("e2e");
-        if (!relay || relay.port !== relayPort) {
+        if (!relay || relay.ownership !== "owned" || relay.port !== relayPort) {
           throw new Error("Gateway wakeup did not start the configured extension relay");
         }
         diagnostic.watchRelay(relay.bridge);
@@ -418,7 +421,6 @@ describe.runIf(runE2E)("Chrome native bootstrap Chromium E2E", () => {
         if (!browserState || !extensionProfile) {
           throw new Error("Browser E2E state did not contain the extension profile");
         }
-        const existingSessionProfile = "e2e-existing-session";
         const relayAuthorization = `Basic ${Buffer.from(
           `openclaw-internal:${relay.internalToken}`,
         ).toString("base64")}`;
@@ -514,6 +516,7 @@ describe.runIf(runE2E)("Chrome native bootstrap Chromium E2E", () => {
           const bindingSession = await relayPlaywrightContext.newCDPSession(relayPage);
           const observerSession = await relayPlaywrightContext.newCDPSession(relayPage);
           const bindingName = "__openclawRelayBindingProof";
+          diagnostic.identifyContextBinding(bindingName);
           const bindingPayloads: string[] = [];
           const observerPayloads: string[] = [];
           observerSession.on("Runtime.bindingCalled", (event) => {
@@ -561,19 +564,24 @@ describe.runIf(runE2E)("Chrome native bootstrap Chromium E2E", () => {
           .poll(() => extensionConnections, { timeout: 15_000 })
           .toBeGreaterThan(previousConnections);
         await expect.poll(() => relay.bridge.extensionConnected).toBe(true);
-        const reconnectedTabsResponse = await dispatcher.dispatch({
-          method: "GET",
-          path: "/tabs",
-          query: { profile: existingSessionProfile },
+        // Hello starts asynchronous reattachment; the MCP client's page inventory
+        // becomes ready only after it receives the restored target.
+        const reconnectedTarget = await vi.waitFor(async () => {
+          const reconnectedTabsResponse = await dispatcher.dispatch({
+            method: "GET",
+            path: "/tabs",
+            query: { profile: existingSessionProfile },
+          });
+          const target = (
+            reconnectedTabsResponse.body as { tabs?: Array<{ targetId?: string; url?: string }> }
+          ).tabs?.find((tab) => tab.url === controlled.url())?.targetId;
+          if (!target) {
+            throw new Error(
+              `Reconnected target missing: ${JSON.stringify(reconnectedTabsResponse.body)}`,
+            );
+          }
+          return target;
         });
-        const reconnectedTarget = (
-          reconnectedTabsResponse.body as { tabs?: Array<{ targetId?: string; url?: string }> }
-        ).tabs?.find((tab) => tab.url === controlled.url())?.targetId;
-        if (!reconnectedTarget) {
-          throw new Error(
-            `Reconnected target missing: ${JSON.stringify(reconnectedTabsResponse.body)}`,
-          );
-        }
         await proveLabeledRefScreenshot({
           dispatcher,
           controlled,
@@ -586,12 +594,20 @@ describe.runIf(runE2E)("Chrome native bootstrap Chromium E2E", () => {
           "[browser-extension-e2e] same-browser transport-reconnect labeled-ref screenshot passed\n",
         );
 
-        const distractingPage = await context.newPage();
         const distractingUrl = `data:text/html,${encodeURIComponent("<title>Unrelated tab</title>")}`;
-        await distractingPage.goto(distractingUrl);
-        await expect
-          .poll(() => relayPlaywrightContext.pages().some((page) => page.url() === distractingUrl))
-          .toBe(true);
+        diagnostic.arm(reconnectedTarget);
+        diagnostic.inventory(relayPlaywrightContext, relay.bridge, distractingUrl);
+        const distractingPage = await context.newPage();
+        try {
+          await distractingPage.goto(distractingUrl);
+          await expect
+            .poll(() =>
+              relayPlaywrightContext.pages().some((page) => page.url() === distractingUrl),
+            )
+            .toBe(true);
+        } finally {
+          diagnostic.inventory(relayPlaywrightContext, relay.bridge, distractingUrl);
+        }
         const liveTabsResponse = await dispatcher.dispatch({
           method: "GET",
           path: "/tabs",
@@ -614,9 +630,6 @@ describe.runIf(runE2E)("Chrome native bootstrap Chromium E2E", () => {
         const proofUrl = `http://127.0.0.1:${gatewayPort}/browser-owner-proof`;
         diagnostic.arm(selectedTab.targetId, unrelatedTab.targetId);
         diagnostic.mark("relay.clients", relay.bridge.cdpClientCount);
-        for (const session of [...chromeMcpSessions.values()].slice(0, 8)) {
-          diagnostic.peer(session.client.getServerVersion());
-        }
         const stopPageObservation = diagnostic.watchPage(controlled, proofUrl);
         const selectedOwner = relay.bridge.captureOperationTarget(selectedTab.targetId);
         const unrelatedOwner = relay.bridge.captureOperationTarget(unrelatedTab.targetId);

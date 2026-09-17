@@ -62,7 +62,7 @@ export function formatScheduledToolPolicyAdvisory(params: {
   const lines: string[] = [];
   if (params.legacyJobs.length > 0) {
     lines.push(
-      `${pluralize(params.legacyJobs.length, "tool-bearing cron job")} ${params.legacyJobs.length === 1 ? "keeps" : "keep"} legacy sender-policy resolution because stored account authority is not provable${formatJobNameList(params.legacyJobs)}.`,
+      `${pluralize(params.legacyJobs.length, "tool-bearing cron job")} ${params.legacyJobs.length === 1 ? "keeps" : "keep"} legacy sender-policy resolution because an explicit tool cap or provable stored account identity is missing${formatJobNameList(params.legacyJobs)}.`,
     );
   }
   if (params.invalidJobs.length > 0) {
@@ -124,6 +124,11 @@ export function formatLegacyIssuePreview(issues: CronLegacyIssueCounts): string[
   if (issues.legacyScheduleCron) {
     lines.push(`- ${pluralize(issues.legacyScheduleCron, "job")} still uses \`schedule.cron\``);
   }
+  if (issues.legacyScheduleKind) {
+    lines.push(
+      `- ${pluralize(issues.legacyScheduleKind, "job")} stores a non-canonical schedule \`kind\` or stream \`mode\` that will be normalized`,
+    );
+  }
   if (issues.legacyPayloadKind) {
     lines.push(`- ${pluralize(issues.legacyPayloadKind, "job")} needs payload kind normalization`);
   }
@@ -170,6 +175,11 @@ export function formatLegacyIssuePreview(issues: CronLegacyIssueCounts): string[
   if (issues.migratedScheduledToolPolicy) {
     lines.push(
       `- ${pluralize(issues.migratedScheduledToolPolicy, "job")} can recover scheduled account authority from persisted owner identity`,
+    );
+  }
+  if (issues.reconciledOwnerAccount) {
+    lines.push(
+      `- ${pluralize(issues.reconciledOwnerAccount, "job")} can reconcile its owner account from persisted creator identity without changing tool permissions`,
     );
   }
   if (issues.invalidSchedule) {

@@ -4,10 +4,15 @@
 import { normalizeConfiguredMcpServers } from "../../config/mcp-config-normalize.js";
 import type { SessionToolOverrides } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { loadMcpToolGrants } from "../../infra/exec-approvals-mcp.js";
 import type { BundleMcpConfig, BundleMcpServerConfig } from "../../plugins/bundle-mcp.js";
 import { isValidAgentId, normalizeAgentId } from "../../routing/session-key.js";
-import { getOrCreateSessionMcpRuntime } from "../agent-bundle-mcp-manager-api.js";
+import {
+  acquireSessionMcpRuntime,
+  releaseSessionMcpRuntime,
+} from "../agent-bundle-mcp-manager-api.js";
 import type { PreparedNativeMcpPolicy } from "../agent-bundle-mcp-types.js";
+import { resolveSessionAgentId } from "../agent-scope.js";
 import { isRecord } from "../bundle-mcp-adapter.js";
 import {
   applyCodexSessionMcpToolDenials,
@@ -37,6 +42,7 @@ type CodexThreadConfigValue =
 type CodexThreadConfigObject = { [key: string]: CodexThreadConfigValue };
 
 type CodexUserMcpServersProjectionOptions = {
+  preparationOnly?: true;
   agentId?: string;
   agentDir?: string;
   allowLiteralOAuthProjection?: boolean;
@@ -146,51 +152,17 @@ export function injectCodexMcpConfigArgs(
   return [...(args ?? []), "-c", `mcp_servers=${overrides}`];
 }
 
-/**
- * Codex app-server runtime (extensions/codex) receives its thread config as a
- * JSON object through JSON-RPC `thread/start`/`thread/resume`, not as `-c` CLI
- * args. This returns a thread-config patch projecting user-configured
- * `cfg.mcp.servers` entries into Codex's `mcp_servers` table using the same
- * per-server normalization the CLI path uses, so app-server agents see the
- * same user MCP servers the CLI runtime exposes via `injectCodexMcpConfigArgs`.
- *
- * Only user-configured servers (`cfg.mcp.servers`) are projected. Plugin-
- * curated app-server apps are already attached separately through the codex
- * plugin thread-config `apps` patch, so they must not be re-projected here.
- */
-export function buildCodexUserMcpServersThreadConfigPatch(
-  cfg: OpenClawConfig | undefined,
-  options?: CodexUserMcpServersProjectionOptions,
-): { mcp_servers: CodexThreadConfigObject } | undefined {
-  const entries = Object.entries(selectCodexProjectableMcpServers(cfg, options));
-  if (entries.length === 0) {
-    return undefined;
-  }
-  // Collected as entries: a server literally named `__proto__` would hit the
-  // prototype setter under plain assignment and vanish from the patch.
-  const projected: [string, CodexThreadConfigObject][] = [];
-  for (const [name, server] of entries) {
-    projected.push([
-      name,
-      normalizeCodexMcpServerConfig(
-        name,
-        applyCodexSessionMcpToolDenials(name, server, options?.toolOverrides),
-      ) as CodexThreadConfigObject,
-    ]);
-  }
-  const mcp_servers: CodexThreadConfigObject = Object.fromEntries(projected);
-  if (Object.keys(mcp_servers).length === 0) {
-    return undefined;
-  }
-  return { mcp_servers };
-}
-
 /** Async runtime projection that resolves OpenClaw-managed MCP bearer tokens. */
 export async function buildCodexUserMcpServersThreadConfigPatchForRuntime(
   cfg: OpenClawConfig | undefined,
   options?: CodexUserMcpServersProjectionOptions,
 ): Promise<{ mcp_servers: CodexThreadConfigObject } | undefined> {
   let allowedServers = selectCodexProjectableMcpServers(cfg, options);
+  if (options?.preparationOnly && Object.values(allowedServers).some(requiresMcpBearerProjection)) {
+    throw new Error(
+      "Native fork preparation cannot resolve MCP bearer credentials. Fork an original imported message instead.",
+    );
+  }
   if (options?.preparedNativeMcpPolicy) {
     allowedServers = applyPreparedNativeMcpPolicy(
       { mcpServers: allowedServers },
@@ -200,6 +172,7 @@ export async function buildCodexUserMcpServersThreadConfigPatchForRuntime(
   if (Object.keys(allowedServers).length === 0) {
     return undefined;
   }
+  const grants = options?.agentId ? await loadMcpToolGrants(options.agentId) : [];
   const resolvedConfig = await resolveMcpBearerBundleConfig({
     config: { mcpServers: allowedServers },
     cfg,
@@ -214,6 +187,7 @@ export async function buildCodexUserMcpServersThreadConfigPatchForRuntime(
       normalizeCodexMcpServerConfig(
         name,
         applyCodexSessionMcpToolDenials(name, server, options?.toolOverrides),
+        grants,
       ) as CodexThreadConfigObject,
     ]),
   );
@@ -236,10 +210,16 @@ export async function buildCodexUserMcpServersThreadConfigPatchForRun(params: {
     toolOverrides: run.toolOverrides,
   });
   const policySessionKey = run.sandboxSessionKey ?? run.sessionKey;
+  const policyAgentId = resolveSessionAgentId({
+    config: run.config,
+    sessionKey: policySessionKey,
+    agentId: run.sandboxAgentId,
+    fallbackAgentId: agentId,
+  });
   const sandboxStatus = resolveSandboxRuntimeStatus({
     cfg: run.config,
     sessionKey: policySessionKey,
-    agentId,
+    agentId: policyAgentId,
   });
   const capabilityProfile = resolveConversationCapabilityProfile({
     config: run.config,
@@ -248,7 +228,7 @@ export async function buildCodexUserMcpServersThreadConfigPatchForRun(params: {
       run.sessionKey && run.sessionKey !== policySessionKey ? run.sessionKey : undefined,
     sessionId: run.sessionId,
     runId: run.runId,
-    agentId,
+    agentId: policyAgentId,
     agentDir: run.agentDir,
     agentAccountId: run.agentAccountId,
     messageProvider: run.messageProvider ?? run.messageChannel,
@@ -299,7 +279,7 @@ export async function buildCodexUserMcpServersThreadConfigPatchForRun(params: {
     ...run.config,
     mcp: { ...run.config?.mcp, servers: configuredMcpServers },
   };
-  const runtime = await getOrCreateSessionMcpRuntime({
+  const acquisition = await acquireSessionMcpRuntime({
     sessionId: run.sessionId,
     sessionKey: run.sessionKey,
     workspaceDir: run.workspaceDir,
@@ -309,21 +289,29 @@ export async function buildCodexUserMcpServersThreadConfigPatchForRun(params: {
     agentAccountId: run.agentAccountId,
     messageChannel: run.messageChannel,
     toolOverrides: scopedToolOverrides,
+    toolDenylist: capabilityProfile.policy.explicitToolDenylist,
   });
-  const preparedNativeMcpPolicy = await prepareNativeMcpPolicy({
-    runtime,
-    config: run.config,
-    workspaceDir: run.workspaceDir,
-    capabilityProfile,
-    runtimeToolsAllow: run.toolsAllow,
-    warn: params.warn ?? (() => {}),
-  });
-  return await buildCodexUserMcpServersThreadConfigPatchForRuntime(projectionConfig, {
-    agentId,
-    agentDir: run.agentDir,
-    allowLiteralOAuthProjection: params.allowLiteralOAuthProjection,
-    onServerUnavailable: params.onServerUnavailable,
-    toolOverrides: scopedToolOverrides,
-    preparedNativeMcpPolicy,
-  });
+  let retainedServerNames: ReadonlySet<string> | undefined;
+  try {
+    const preparedNativeMcpPolicy = await prepareNativeMcpPolicy({
+      runtime: acquisition.runtime,
+      config: run.config,
+      workspaceDir: run.workspaceDir,
+      capabilityProfile,
+      runtimeToolsAllow: run.toolsAllow,
+      warn: params.warn ?? (() => {}),
+    });
+    const prepared = await buildCodexUserMcpServersThreadConfigPatchForRuntime(projectionConfig, {
+      agentId,
+      agentDir: run.agentDir,
+      allowLiteralOAuthProjection: params.allowLiteralOAuthProjection,
+      onServerUnavailable: params.onServerUnavailable,
+      toolOverrides: scopedToolOverrides,
+      preparedNativeMcpPolicy,
+    });
+    retainedServerNames = new Set(Object.keys(prepared?.mcp_servers ?? {}));
+    return prepared;
+  } finally {
+    await releaseSessionMcpRuntime(acquisition, retainedServerNames);
+  }
 }

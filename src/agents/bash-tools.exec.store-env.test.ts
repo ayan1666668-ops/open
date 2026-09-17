@@ -1,6 +1,7 @@
 /** Store-backed exec environment tests cover run snapshots, precedence, and security filtering. */
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTempDirTracker } from "../../test/helpers/temp-dir.js";
+import { withInstallationTarget } from "../infra/installation-target-context.js";
 import { looksLikeSecretSentinel, resolveSecretSentinel } from "../secrets/sentinel.js";
 import { writeSecretStoreEntry } from "../secrets/store/secret-store.js";
 import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
@@ -40,6 +41,7 @@ vi.mock("../secrets/egress-proxy/registry.js", () => ({
       SSL_CERT_FILE: "/state/secret-egress/root-ca.pem",
       CURL_CA_BUNDLE: "/state/secret-egress/root-ca.pem",
       REQUESTS_CA_BUNDLE: "/state/secret-egress/root-ca.pem",
+      GIT_SSL_CAINFO: "/state/secret-egress/root-ca.pem",
     };
   },
 }));
@@ -90,6 +92,7 @@ vi.mock("../process/supervisor/index.js", () => ({
       mocks.spawnInputs.push({ env: input.env ? { ...input.env } : undefined });
       input.onStdout?.("ok\n");
       return {
+        activity: { resultSettled: true, lastOutputAtMs: Date.now() },
         runId: "mock-run",
         startedAtMs: Date.now(),
         stdin: undefined,
@@ -108,7 +111,6 @@ vi.mock("../process/supervisor/index.js", () => ({
     },
     cancel: vi.fn(),
     cancelScope: vi.fn(),
-    getRecord: vi.fn(),
   }),
 }));
 
@@ -132,6 +134,7 @@ const EGRESS_ENV = {
   SSL_CERT_FILE: "/state/secret-egress/root-ca.pem",
   CURL_CA_BUNDLE: "/state/secret-egress/root-ca.pem",
   REQUESTS_CA_BUNDLE: "/state/secret-egress/root-ca.pem",
+  GIT_SSL_CAINFO: "/state/secret-egress/root-ca.pem",
 } as const;
 
 async function withTeamStoreEntries(
@@ -196,6 +199,60 @@ async function captureStoreExecEnvironment(params: {
 }
 
 describe("exec store environment", () => {
+  it.each(["gateway", "sandbox", "node"] as const)(
+    "retains a lazy tool's local target outside its construction scope and fences %s",
+    async (host) => {
+      await withTeamStoreEntries([], async () => {
+        const target = {
+          stateDir: "/fixture/diagnosed",
+          configPath: "/fixture/custom.json",
+          defaultWorkspaceDir: "/fixture/default-workspace",
+        };
+        const buildExecSpec = vi.fn<NonNullable<BashSandboxConfig["buildExecSpec"]>>();
+        const tool = withInstallationTarget(target, () =>
+          createLazyExecTool({
+            host,
+            security: "full",
+            ask: "off",
+            ...(host === "sandbox"
+              ? {
+                  sandbox: {
+                    containerName: "fixture-sandbox",
+                    workspaceDir: process.cwd(),
+                    containerWorkdir: "/workspace",
+                    buildExecSpec,
+                  },
+                }
+              : {}),
+          }),
+        );
+        const run = tool.execute("target-probe", { command: "echo ok", yieldMs: 120_000 });
+        if (host === "gateway") {
+          await run;
+          expect(mocks.spawnInputs.at(-1)?.env).toMatchObject({
+            OPENCLAW_STATE_DIR: target.stateDir,
+            OPENCLAW_CONFIG_PATH: target.configPath,
+            OPENCLAW_WORKSPACE_DIR: target.defaultWorkspaceDir,
+          });
+          const ordinary = createLazyExecTool({ host, security: "full", ask: "off" });
+          await withInstallationTarget(target, () =>
+            ordinary.execute("ordinary-probe", { command: "echo ok", yieldMs: 120_000 }),
+          );
+          expect(mocks.spawnInputs.at(-1)?.env?.OPENCLAW_STATE_DIR).toBe(
+            process.env.OPENCLAW_STATE_DIR,
+          );
+          expect(mocks.spawnInputs.at(-1)?.env?.OPENCLAW_WORKSPACE_DIR).toBe(
+            process.env.OPENCLAW_WORKSPACE_DIR,
+          );
+        } else {
+          await expect(run).rejects.toThrow("saved prompt");
+          expect(buildExecSpec).not.toHaveBeenCalled();
+          expect(mocks.nodeHostParams).toEqual([]);
+          expect(mocks.spawnInputs).toEqual([]);
+        }
+      });
+    },
+  );
   afterEach(() => vi.unstubAllEnvs());
   beforeAll(async () => {
     ({ createExecTool } = await import("./bash-tools.exec-run.js"));
@@ -203,6 +260,7 @@ describe("exec store environment", () => {
   });
 
   beforeEach(() => {
+    vi.stubEnv("AWS_REGION", undefined);
     mocks.egressActive = false;
     mocks.gatewayParams.length = 0;
     mocks.nodeHostParams.length = 0;

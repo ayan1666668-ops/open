@@ -114,25 +114,37 @@ describe("plugin api lifecycle", () => {
     const api = captureRegisteredPluginApi({ enqueueNextTurnInjection });
 
     const groupedResult = await api.session.workflow.enqueueNextTurnInjection({
-      sessionKey: "agent:main:main",
+      sessionKey: "global",
       text: "grouped",
+      agentId: "work",
     });
     const flatResult = await api.enqueueNextTurnInjection({
-      sessionKey: "agent:main:main",
+      sessionKey: "global",
       text: "flat",
+      agentId: "main",
     });
 
     expect(groupedResult).toEqual({
       enqueued: true,
       id: "injection-grouped",
-      sessionKey: "agent:main:main",
+      sessionKey: "global",
     });
     expect(flatResult).toEqual({
       enqueued: true,
       id: "injection-flat",
-      sessionKey: "agent:main:main",
+      sessionKey: "global",
     });
     expect(enqueueNextTurnInjection).toHaveBeenCalledTimes(2);
+    expect(enqueueNextTurnInjection).toHaveBeenNthCalledWith(1, {
+      sessionKey: "global",
+      agentId: "work",
+      text: "grouped",
+    });
+    expect(enqueueNextTurnInjection).toHaveBeenNthCalledWith(2, {
+      sessionKey: "global",
+      agentId: "main",
+      text: "flat",
+    });
   });
 
   it("blocks registration-phase methods after registration", () => {
@@ -146,5 +158,31 @@ describe("plugin api lifecycle", () => {
 
     expect(result).toBeUndefined();
     expect(registerSessionExtension).not.toHaveBeenCalled();
+  });
+
+  it.each<[string, boolean]>([
+    ["clearRunContext", true],
+    ["emitAgentEvent", true],
+    ["enqueueNextTurnInjection", true],
+    ["getRunContext", true],
+    ["sendSessionAttachment", true],
+    ["scheduleSessionTurn", true],
+    ["setRunContext", true],
+    ["unscheduleSessionTurnsByTag", true],
+    ["registerTool", false],
+    ["registerSessionExtension", false],
+    ["unknown", false],
+    ["", false],
+    ["constructor", false],
+    ["toString", false],
+    ["__proto__", false],
+  ])("enforces post-registration call eligibility for %j as %s", (methodName, expected) => {
+    const handler = vi.fn();
+    const api = captureRegisteredPluginApi({ [methodName]: handler });
+    const method = Reflect.get(api, methodName);
+    const result = typeof method === "function" ? Reflect.apply(method, api, []) : undefined;
+
+    expect(handler).toHaveBeenCalledTimes(expected ? 1 : 0);
+    expect(result).toBeUndefined();
   });
 });

@@ -1,8 +1,8 @@
 // Control UI tests cover schema defaults and restoring inherited config values.
-import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import type { Locator, Page } from "playwright";
-import { expect, it } from "vitest";
+import { beforeEach, expect, it } from "vitest";
+import { createControlUiE2eArtifactDir } from "../test-helpers/control-ui-e2e-artifacts.ts";
 import { installMockGateway, type MockGatewayRequest } from "../test-helpers/control-ui-e2e.ts";
 import { createControlUiE2eSuite } from "./control-ui-e2e-suite.test-support.ts";
 
@@ -14,12 +14,12 @@ const suite = createControlUiE2eSuite({
 });
 
 const captureUiProofEnabled = process.env.OPENCLAW_CAPTURE_UI_PROOF === "1";
-const uiProofArtifactDir = path.join(
-  process.cwd(),
-  ".artifacts",
-  "control-ui-e2e",
-  "config-form-defaults",
-);
+let uiProofArtifactDir: string;
+beforeEach(() => {
+  if (captureUiProofEnabled) {
+    uiProofArtifactDir = createControlUiE2eArtifactDir("config-form-defaults");
+  }
+});
 
 function requestRaw(request: MockGatewayRequest): Record<string, unknown> {
   const params = request.params;
@@ -152,12 +152,11 @@ suite.define(() => {
         await expect.poll(() => payloadRow.textContent()).toContain('Default: {"mode":"balanced"}');
         await expect
           .poll(() => profileBlock.textContent())
-          .toContain('Default: {"enabled":true,"mode":"balanced"}');
+          .not.toContain('{"enabled":true,"mode":"balanced"}');
         await expect.poll(() => retriesRow.getByRole("spinbutton").inputValue()).toBe("9");
         await expect.poll(() => tagsBlock.textContent()).toContain('Default: ["stable","default"]');
 
         if (captureUiProofEnabled) {
-          await mkdir(uiProofArtifactDir, { recursive: true });
           await panel.screenshot({
             animations: "disabled",
             path: path.join(uiProofArtifactDir, "01-explicit-overrides.png"),

@@ -205,7 +205,7 @@ describe("createReplyMediaPathNormalizer", () => {
         workspaceDir: "/tmp/sandboxes/session-1",
         containerWorkdir,
       });
-      const normalize = createTestReplyMediaNormalizer();
+      const normalize = createTestReplyMediaNormalizer({ agentId: "finance" });
       const fileUrl = `file://${containerWorkdir}/screens/final%20image.png`;
 
       const result = await normalize({
@@ -216,6 +216,9 @@ describe("createReplyMediaPathNormalizer", () => {
         ],
       });
 
+      expect(ensureSandboxWorkspaceForSession).toHaveBeenCalledWith(
+        expect.objectContaining({ agentId: "finance" }),
+      );
       expectMedia(result, "/tmp/outbound-media/photo.png", [
         "/tmp/outbound-media/photo.png",
         "/tmp/outbound-media/final image.png",
@@ -229,6 +232,9 @@ describe("createReplyMediaPathNormalizer", () => {
         1,
         path.join("/tmp/sandboxes/session-1", "screens", "final image.png"),
         5 * 1024 * 1024,
+      );
+      expect(resolveAgentScopedOutboundMediaAccess).toHaveBeenCalledWith(
+        expect.objectContaining({ sessionWorkspaceDir: "/tmp/sandboxes/session-1" }),
       );
     },
   );
@@ -328,10 +334,32 @@ describe("createReplyMediaPathNormalizer", () => {
     expect(resolveOutboundAttachmentFromUrl).not.toHaveBeenCalled();
   });
 
-  it("stages absolute workspace media paths before sandbox mapping", async () => {
+  it("blocks absolute host-workspace media staging for sandboxed sessions with workspaceAccess none", async () => {
     ensureSandboxWorkspaceForSession.mockResolvedValue({
       workspaceDir: "/tmp/sandboxes/session-1",
       containerWorkdir: "/workspace",
+      workspaceAccess: "none",
+    });
+    const absolutePath = "/Users/peter/.openclaw/workspace/reports/screenshot.png";
+    const normalize = createReplyMediaPathNormalizer({
+      cfg: {},
+      sessionKey: "session-key",
+      workspaceDir: "/Users/peter/.openclaw/workspace",
+    });
+
+    const result = await normalize({
+      mediaUrls: [absolutePath],
+    });
+
+    expectNoMedia(result);
+    expect(resolveOutboundAttachmentFromUrl).not.toHaveBeenCalled();
+  });
+
+  it("stages absolute workspace media paths before sandbox mapping when the workspace is mounted", async () => {
+    ensureSandboxWorkspaceForSession.mockResolvedValue({
+      workspaceDir: "/tmp/sandboxes/session-1",
+      containerWorkdir: "/workspace",
+      workspaceAccess: "rw",
     });
     const absolutePath = "/Users/peter/.openclaw/workspace/reports/screenshot.png";
     const normalize = createReplyMediaPathNormalizer({

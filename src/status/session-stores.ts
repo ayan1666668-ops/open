@@ -1,69 +1,73 @@
+import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import { resolveSessionStorePathCore } from "../config/sessions/paths.js";
-import {
-  listSessionEntriesReadOnly,
-  type SessionEntrySummary,
-} from "../config/sessions/session-accessor.js";
+import { readSessionStoreSummaryReadOnly } from "../config/sessions/session-accessor.js";
 import { resolveSqliteTargetFromSessionStorePath } from "../config/sessions/session-sqlite-target.js";
 import type { OpenClawConfig } from "../config/types.js";
-import { parseAgentSessionKey } from "../routing/session-key.js";
+import type { listGatewayAgentsBasic } from "../gateway/agent-list.js";
+import { readAgentDatabaseAdmissionRefusal } from "../state/agent-database-admission.js";
 
-type StatusSessionStore = {
-  sessions: SessionEntrySummary[];
-  byAgent: Map<string, SessionEntrySummary[]>;
-};
+export const STATUS_RECENT_SESSION_LIMIT = 10;
+export type StatusSessionStores = Awaited<
+  ReturnType<
+    typeof readStatusSessionStores<ReturnType<typeof listGatewayAgentsBasic>["agents"][number]>
+  >
+>;
 
-/** One collection owns the snapshot; borrowed read policies must finish before an await. */
+/** One collection owns each physical store's bounded snapshot, including its agent windows. */
 export function createStatusSessionStoreReader(
-  readEntries: typeof listSessionEntriesReadOnly = listSessionEntriesReadOnly,
+  agentIds: readonly string[],
+  recentLimit: number,
+  readSummary: typeof readSessionStoreSummaryReadOnly = readSessionStoreSummaryReadOnly,
 ) {
-  const stores = new Map<string, StatusSessionStore>();
+  const stores = new Map<string, ReturnType<typeof readSessionStoreSummaryReadOnly>>();
   return {
     stores,
-    read(storePath: string, agentId?: string) {
+    async read(storePath: string, agentId?: string) {
       const path = resolveSqliteTargetFromSessionStorePath(storePath, { agentId }).path;
+      if (agentId && readAgentDatabaseAdmissionRefusal(agentId)) {
+        return { path, count: 0, recent: [] };
+      }
       let store = stores.get(path);
       if (!store) {
-        store = { sessions: [], byAgent: new Map() };
-        for (const row of readEntries({
-          ...(agentId ? { agentId } : {}),
-          storePath,
-        })) {
-          // The accessor validates canonical keys; only global/unknown buckets lack an agent.
-          const owner = parseAgentSessionKey(row.sessionKey)?.agentId;
-          if (!owner) {
-            continue;
-          }
-          store.sessions.push(row);
-          const agentSessions = store.byAgent.get(owner);
-          if (agentSessions) {
-            agentSessions.push(row);
-          } else {
-            store.byAgent.set(owner, [row]);
-          }
-        }
+        store = readSummary(
+          { ...(agentId ? { agentId } : {}), storePath },
+          { agentIds, recentLimit },
+        );
         stores.set(path, store);
+        // Finish the synchronous read transaction before yielding; a fleet scan
+        // must let Gateway traffic run between physical stores, not hold it until the end.
+        await yieldToEventLoop();
       }
-      return { path, sessions: agentId ? (store.byAgent.get(agentId) ?? []) : store.sessions };
+      const summary = agentId ? store.byAgent.get(agentId) : store;
+      return { path, count: summary?.count ?? 0, recent: summary?.recent ?? [] };
     },
   };
 }
 
 /** Reads each physical store once, retaining retired agent namespaces in the aggregate. */
-export function readStatusSessionStores(
+export async function readStatusSessionStores<Agent extends { id: string; name?: string }>(
   cfg: OpenClawConfig,
-  agents: ReadonlyArray<{ id: string; name?: string }>,
+  agents: readonly Agent[],
+  recentLimit: number,
 ) {
-  const reader = createStatusSessionStoreReader();
-  const byAgent = agents.map((agent) => ({
-    agent,
-    ...reader.read(
-      resolveSessionStorePathCore(cfg.session?.store, { agentId: agent.id }),
-      agent.id,
-    ),
-  }));
+  const reader = createStatusSessionStoreReader(
+    agents.map((agent) => agent.id),
+    recentLimit,
+  );
+  const byAgent = [];
+  for (const agent of agents) {
+    byAgent.push({
+      agent,
+      ...(await reader.read(
+        resolveSessionStorePathCore(cfg.session?.store, { agentId: agent.id }),
+        agent.id,
+      )),
+    });
+  }
   return {
     paths: [...reader.stores.keys()],
-    sessions: [...reader.stores.values()].flatMap((store) => store.sessions),
+    count: [...reader.stores.values()].reduce((count, store) => count + store.count, 0),
+    recent: [...reader.stores.values()].flatMap((store) => store.recent),
     byAgent,
   };
 }

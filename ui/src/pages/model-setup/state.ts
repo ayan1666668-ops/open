@@ -8,9 +8,9 @@ import type {
 import { formatUiExternalText } from "../../lib/format-error.ts";
 
 export const MODEL_SETUP_DETECT_TIMEOUT_MS = 40_000;
-export const MODEL_SETUP_VERIFY_TIMEOUT_MS = 30_000;
-const MODEL_SETUP_ACTIVATE_TIMEOUT_MS = 150_000;
-const MODEL_SETUP_CODEX_ACTIVATE_TIMEOUT_MS = 480_000;
+// Match native setup: the Gateway's 90-second inference probe also needs startup allowance.
+export const MODEL_SETUP_VERIFY_TIMEOUT_MS = 150_000;
+const MODEL_SETUP_ACTIVATE_TIMEOUT_MS = 480_000;
 export const MODEL_SETUP_AUTH_START_TIMEOUT_MS = 30_000;
 export const MODEL_SETUP_WIZARD_NEXT_TIMEOUT_MS = null;
 
@@ -28,23 +28,34 @@ export type ModelSetupActivationState =
       status: Exclude<NonNullable<SystemAgentSetupActivateResult["status"]>, "ok">;
       error: string;
     }
-  | { phase: "success"; modelRef: string; latencyMs?: number; warning?: string };
+  | {
+      phase: "success";
+      modelRef: string;
+      modelTarget?: "utility";
+      latencyMs?: number;
+      warning?: string;
+    };
 
 type ModelSetupVerifyFailure = Extract<SystemAgentSetupVerifyResult, { ok: false }>;
 
 export type ModelSetupVerifyState =
   | { phase: "idle" }
   | { phase: "checking" }
-  | { phase: "ok"; modelRef: string; latencyMs?: number }
+  | { phase: "ok"; modelRef: string; modelTarget?: "utility"; latencyMs?: number }
   | { phase: "failed"; status: ModelSetupVerifyFailure["status"]; error: string };
 
-export type ModelSetupWizardState =
+export type ModelSetupWizardResult =
+  | WizardNextResult
+  | { done: true; status: "not-admitted"; error: string };
+
+type ModelSetupWizardPhase =
   | { phase: "idle" }
   | { phase: "starting"; authChoice: string }
   | {
       phase: "step";
       authChoice: string;
       step: WizardStep;
+      externalAuthInput?: boolean;
       busy: boolean;
       validationError: string | null;
     }
@@ -52,14 +63,14 @@ export type ModelSetupWizardState =
   | { phase: "cancelled"; message: string }
   | { phase: "error"; message: string };
 
+export type ModelSetupWizardState = ModelSetupWizardPhase & { authLabel?: string };
+
 export function activationTimeoutForKind(kind: string): number {
   // Match the Gateway-owned provider-auth wizard lifetime, including user sign-in.
   if (kind === "provider-auth") {
     return 25 * 60 * 1000;
   }
-  return kind === "codex-cli"
-    ? MODEL_SETUP_CODEX_ACTIVATE_TIMEOUT_MS
-    : MODEL_SETUP_ACTIVATE_TIMEOUT_MS;
+  return MODEL_SETUP_ACTIVATE_TIMEOUT_MS;
 }
 
 export function activationTargetId(kind: string, modelRef: string): string {
@@ -84,6 +95,7 @@ export function mapActivationResult(params: {
     return {
       phase: "success",
       modelRef: result.modelRef,
+      ...(result.modelTarget ? { modelTarget: result.modelTarget } : {}),
       ...(typeof result.latencyMs === "number" ? { latencyMs: result.latencyMs } : {}),
       ...(warning ? { warning } : {}),
     };
@@ -101,6 +113,7 @@ export function mapVerifyResult(result: SystemAgentSetupVerifyResult): ModelSetu
     return {
       phase: "ok",
       modelRef: result.modelRef,
+      ...(result.modelTarget ? { modelTarget: result.modelTarget } : {}),
       ...(typeof result.latencyMs === "number" ? { latencyMs: result.latencyMs } : {}),
     };
   }
@@ -109,7 +122,7 @@ export function mapVerifyResult(result: SystemAgentSetupVerifyResult): ModelSetu
 
 export function wizardStateFromResult(
   authChoice: string,
-  result: WizardNextResult,
+  result: ModelSetupWizardResult,
   fallbackError: string,
 ): ModelSetupWizardState {
   if (!result.done && result.step) {

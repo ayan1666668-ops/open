@@ -31,7 +31,8 @@ review_claim() {
     local user_log
     user_log=".local/review-claim-user-attempt-$attempt.log"
 
-    if reviewer=$(gh_plain api user --jq .login 2>"$user_log"); then
+    # A relay's REST /user may identify its caller, not the local mutation writer.
+    if reviewer=$(gh_plain api graphql -f 'query=query { viewer { login } }' --jq .data.viewer.login 2>"$user_log"); then
       printf "%s\n" "$reviewer" >"$user_log"
       break
     fi
@@ -86,7 +87,10 @@ review_checkout_pr() {
   local pr="$1"
   enter_worktree "$pr" false || return 1
   mark_pr_operation_side_effects_started
-  git fetch origin "pull/$pr/head:pr-$pr" --force
+  require_artifact .local/pr-meta.env
+  local expected_sha
+  expected_sha=$(source .local/pr-meta.env; printf '%s\n' "${PR_HEAD_SHA:-}")
+  fetch_pr_head "$pr" "$expected_sha" "refs/heads/pr-$pr" || return 1
   checkout_pr_worktree_target "$pr" "pr-$pr" || return 1
   set_review_mode pr
 
@@ -306,19 +310,18 @@ review_tests() {
 
 review_init() {
   local pr="$1"
-  local root json pr_url
-  root=$(repo_root) || return 1
+  local json pr_url
   # Metadata reads are read-only, so fetching before the side-effect marker keeps a
-  # transient GitHub failure inside the lock's auto-release window. Command substitution
-  # is already a subshell, so this cd gives gh its repo context without moving the
-  # caller - enter_worktree still reports the real invocation cwd.
-  json=$(cd "$root" && pr_meta_json "$pr") || return 1
+  # transient GitHub failure inside the lock's auto-release window.
+  json=$(pr_meta_json "$pr") || return 1
 
   enter_worktree "$pr" true || return 1
   write_pr_meta_files "$json"
   pr_url=$(printf '%s\n' "$json" | jq -r .url)
 
-  git fetch origin "pull/$pr/head:pr-$pr" --force
+  local expected_sha
+  expected_sha=$(pr_view_string_field "$json" headRefOid "$pr") || return 1
+  fetch_pr_head "$pr" "$expected_sha" "refs/heads/pr-$pr" || return 1
   local mb
   mb=$(git merge-base "$PR_MAIN_SHA" "refs/heads/pr-$pr")
 

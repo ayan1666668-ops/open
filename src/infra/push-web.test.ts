@@ -5,6 +5,8 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import webPush from "web-push";
+import { createDeferred, withTestTimeout } from "../../test/helpers/promise.js";
+import { trackSqliteStatementExecutions } from "../../test/helpers/sqlite-statement-execution-counter.js";
 import {
   insertOperatorApproval,
   resolveOperatorApproval,
@@ -20,6 +22,7 @@ import {
   deleteWebPushApprovalDeliveryTargets,
   findBoundWebPushSubscriptionByEndpoint,
   hashWebPushEndpoint,
+  hasBoundWebPushSubscriptions,
   listBoundWebPushSubscriptions,
   listTerminalWebPushApprovalDeliveryIds,
   listWebPushApprovalDeliveryTargets,
@@ -90,13 +93,47 @@ vi.mock("web-push", () => ({
 beforeEach(async () => {
   tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "push-web-test-"));
   vi.clearAllMocks();
-  vi.mocked(webPush.sendNotification).mockResolvedValue({ statusCode: 201 } as never);
+  vi.mocked(webPush.sendNotification)
+    .mockReset()
+    .mockResolvedValue({ statusCode: 201 } as never);
 });
 
 afterEach(async () => {
   closeOpenClawStateDatabase();
   await fs.rm(tmpDir, { recursive: true, force: true });
 });
+
+function startExpiredWebPushBroadcast(payload: Parameters<typeof broadcastWebPush>[0]) {
+  const started = createDeferred();
+  const release = createDeferred();
+  vi.mocked(webPush.sendNotification).mockImplementationOnce(async () => {
+    started.resolve();
+    await release.promise;
+    throw Object.assign(new Error("gone"), { statusCode: 410 });
+  });
+  const broadcast = broadcastWebPush(payload, tmpDir);
+  const finish = () => {
+    release.resolve();
+    return broadcast;
+  };
+  return {
+    started: withTestTimeout(
+      Promise.race([
+        started.promise,
+        broadcast.then(() => {
+          throw new Error("Web Push broadcast completed before send started");
+        }),
+      ]),
+      1_000,
+      "Web Push send did not start",
+    ),
+    finish,
+    // Join the send before afterEach removes the real SQLite fixture, even when a case fails.
+    async [Symbol.asyncDispose]() {
+      await finish();
+    },
+  };
+}
 
 describe("resolveVapidKeys", () => {
   it("generates one durable SQLite VAPID identity", async () => {
@@ -267,8 +304,16 @@ describe("subscription CRUD", () => {
   });
 
   it("keeps legacy unbound rows test-only until browser reconciliation", async () => {
+    expect(hasBoundWebPushSubscriptions(tmpDir)).toBe(false);
     await registerWebPushSubscription({ endpoint, keys, baseDir: tmpDir });
     expect(listBoundWebPushSubscriptions(tmpDir)).toEqual([]);
+    expect(hasBoundWebPushSubscriptions(tmpDir)).toBe(false);
+    const { db } = openOpenClawStateDatabase({
+      env: { ...process.env, OPENCLAW_STATE_DIR: tmpDir },
+    });
+    db.exec("UPDATE web_push_subscriptions SET device_id = ''");
+    expect(listBoundWebPushSubscriptions(tmpDir)).toEqual([]);
+    expect(hasBoundWebPushSubscriptions(tmpDir)).toBe(false);
 
     const rebound = await registerWebPushSubscription({
       endpoint,
@@ -276,6 +321,7 @@ describe("subscription CRUD", () => {
       binding: { deviceId: "browser-device", userProfileId: null },
       baseDir: tmpDir,
     });
+    expect(hasBoundWebPushSubscriptions(tmpDir)).toBe(true);
     expect(listBoundWebPushSubscriptions(tmpDir)).toEqual([
       {
         ...rebound,
@@ -718,24 +764,56 @@ describe("approval delivery target persistence", () => {
 describe("sending", () => {
   const keys = { p256dh: "p256dh-key", auth: "auth-key" };
 
-  it("configures VAPID details once before broadcasting", async () => {
-    await registerWebPushSubscription({
-      endpoint: "https://push.example.com/a",
-      keys,
-      baseDir: tmpDir,
+  it("configures VAPID once and broadcasts without fetching device preferences", async () => {
+    for (const suffix of ["a", "b"]) {
+      const endpoint = `https://push.example.com/${suffix}`;
+      await registerWebPushSubscription({
+        endpoint,
+        keys,
+        binding: { deviceId: suffix, userProfileId: null },
+        baseDir: tmpDir,
+      });
+      expect(
+        setWebPushSubscriptionPreferences({
+          endpoint,
+          expectedDeviceId: suffix,
+          expectedUserProfileId: null,
+          preferences: {
+            enabled: true,
+            label: "Browser",
+            agentIds: Array.from({ length: 128 }, (_, i) => `agent-${i}`.padEnd(128, "x")),
+          },
+          stateDir: tmpDir,
+        }),
+      ).toBe(true);
+    }
+    const subscriptions = listWebPushSubscriptions(tmpDir);
+    const { db } = openOpenClawStateDatabase({
+      env: { ...process.env, OPENCLAW_STATE_DIR: tmpDir },
     });
-    await registerWebPushSubscription({
-      endpoint: "https://push.example.com/b",
-      keys,
-      baseDir: tmpDir,
-    });
+    const reads = trackSqliteStatementExecutions(db, ["subscriptions"], (sql) =>
+      /^select\b/i.test(sql) && sql.includes('"web_push_subscriptions"') ? "subscriptions" : null,
+    );
 
-    const results = await broadcastWebPush({ title: "Broadcast" }, tmpDir);
+    try {
+      const results = await broadcastWebPush({ title: "Broadcast" }, tmpDir);
 
-    expect(results).toHaveLength(2);
-    expect(results.every((result) => result.ok)).toBe(true);
-    expect(vi.mocked(webPush.setVapidDetails)).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(webPush.sendNotification)).toHaveBeenCalledTimes(2);
+      expect(results).toEqual(
+        subscriptions.map(({ subscriptionId }) => ({ ok: true, subscriptionId, statusCode: 201 })),
+      );
+      expect(vi.mocked(webPush.setVapidDetails)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(webPush.sendNotification).mock.calls).toEqual(
+        subscriptions.map(({ endpoint, keys: subscriptionKeys }) => [
+          { endpoint, keys: subscriptionKeys },
+          JSON.stringify({ title: "Broadcast" }),
+          undefined,
+        ]),
+      );
+      expect(reads.rowCounts.subscriptions).toBe(2);
+      expect(reads.textBytes.subscriptions).toBeLessThan(2_048);
+    } finally {
+      reads.restore();
+    }
   });
 
   it("sends a bounded high-urgency notification only to selected subscriptions", async () => {
@@ -772,23 +850,14 @@ describe("sending", () => {
   it("does not delete a subscription re-registered during an expired send", async () => {
     const endpoint = "https://push.example.com/reregistered";
     await registerWebPushSubscription({ endpoint, keys, baseDir: tmpDir });
-    let rejectSend: ((error: unknown) => void) | undefined;
-    vi.mocked(webPush.sendNotification).mockImplementationOnce(
-      () =>
-        new Promise((_, reject) => {
-          rejectSend = reject;
-        }),
-    );
-
-    const broadcast = broadcastWebPush({ title: "Race" }, tmpDir);
-    await vi.waitFor(() => expect(rejectSend).toBeTypeOf("function"));
+    await using broadcast = startExpiredWebPushBroadcast({ title: "Race" });
+    await broadcast.started;
     const replacement = await registerWebPushSubscription({
       endpoint,
       keys: { p256dh: "replacement-p256dh", auth: "replacement-auth" },
       baseDir: tmpDir,
     });
-    rejectSend?.(Object.assign(new Error("gone"), { statusCode: 410 }));
-    await broadcast;
+    await broadcast.finish();
 
     expect(listWebPushSubscriptions(tmpDir)).toEqual([replacement]);
   });
@@ -796,16 +865,8 @@ describe("sending", () => {
   it("does not delete an expired subscription after a legacy claim appears", async () => {
     const endpoint = "https://push.example.com/pending-claim";
     const subscription = await registerWebPushSubscription({ endpoint, keys, baseDir: tmpDir });
-    let rejectSend: ((error: unknown) => void) | undefined;
-    vi.mocked(webPush.sendNotification).mockImplementationOnce(
-      () =>
-        new Promise((_, reject) => {
-          rejectSend = reject;
-        }),
-    );
-
-    const broadcast = broadcastWebPush({ title: "Race" }, tmpDir);
-    await vi.waitFor(() => expect(rejectSend).toBeTypeOf("function"));
+    await using broadcast = startExpiredWebPushBroadcast({ title: "Race" });
+    await broadcast.started;
     const pushDir = path.join(tmpDir, "push");
     await fs.mkdir(pushDir, { recursive: true });
     await fs.writeFile(
@@ -813,9 +874,8 @@ describe("sending", () => {
       "{}",
       "utf8",
     );
-    rejectSend?.(Object.assign(new Error("gone"), { statusCode: 410 }));
 
-    await expect(broadcast).resolves.toEqual([
+    await expect(broadcast.finish()).resolves.toEqual([
       expect.objectContaining({ ok: false, statusCode: 410 }),
     ]);
     expect(listWebPushSubscriptions(tmpDir)).toEqual([subscription]);
@@ -825,23 +885,14 @@ describe("sending", () => {
     const endpoint = "https://push.example.com/expired";
     await registerWebPushSubscription({ endpoint, keys, baseDir: tmpDir });
     await resolveVapidKeys(tmpDir);
-    let rejectSend: ((error: unknown) => void) | undefined;
-    vi.mocked(webPush.sendNotification).mockImplementationOnce(
-      () =>
-        new Promise((_, reject) => {
-          rejectSend = reject;
-        }),
-    );
-
-    const broadcast = broadcastWebPush({ title: "Expired" }, tmpDir);
-    await vi.waitFor(() => expect(rejectSend).toBeTypeOf("function"));
+    await using broadcast = startExpiredWebPushBroadcast({ title: "Expired" });
+    await broadcast.started;
     closeOpenClawStateDatabase();
     const databasePath = path.join(tmpDir, "state", "openclaw.sqlite");
     await fs.rename(databasePath, `${databasePath}.backup`);
     await fs.mkdir(databasePath);
-    rejectSend?.(Object.assign(new Error("gone"), { statusCode: 410 }));
 
-    await expect(broadcast).resolves.toEqual([
+    await expect(broadcast.finish()).resolves.toEqual([
       expect.objectContaining({ ok: false, statusCode: 410 }),
     ]);
   });

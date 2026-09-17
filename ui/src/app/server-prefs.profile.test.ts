@@ -5,6 +5,7 @@ import {
   normalizeUiAppearancePreference,
   UI_APPEARANCE_PREFERENCE_KEYS,
 } from "../../../packages/gateway-protocol/src/schema/ui-appearance-preferences.ts";
+import { createDeferred } from "../../../test/helpers/promise.js";
 import { createStorageMock } from "../test-helpers/storage.ts";
 import { waitForFast } from "../test-helpers/wait-for.ts";
 import {
@@ -30,6 +31,7 @@ const scope = "ws://profiles";
 beforeEach(() => {
   vi.stubGlobal("localStorage", createStorageMock());
   resetServerUiPrefsSync();
+  patchSettings({ gatewayUrl: scope });
 });
 
 afterEach(() => {
@@ -52,6 +54,10 @@ describe("profile-bound appearance preferences", () => {
       tide: true,
       beacon: true,
       phosphor: true,
+      crt: true,
+      manuscript: true,
+      rose: true,
+      miami: true,
       custom: false,
     };
     for (const [theme, storable] of Object.entries(profileStorable)) {
@@ -170,6 +176,34 @@ describe("profile-bound appearance preferences", () => {
     ).toBe("synced");
   });
 
+  it("reuses profile preferences across repeated reads until a save invalidates them", async () => {
+    const request = vi.fn(async (method: string) =>
+      method === "users.prefs.get"
+        ? { status: "ok" as const, entries: { "ui.theme": "knot" } }
+        : { status: "ok" as const },
+    );
+    const writer = createServerPrefsWriter(request, scope, true, { ok: true }, false);
+    const options = {
+      client: writer.state.client!,
+      profileId,
+      scope,
+      configObject: configWithPrefs({}),
+      onApplied: vi.fn(),
+    };
+    await refreshProfileAppearancePrefs(options);
+    await refreshProfileAppearancePrefs(options);
+    expect(request.mock.calls.filter(([method]) => method === "users.prefs.get")).toHaveLength(1);
+    const committed = vi.fn();
+    pushServerUiPrefs(
+      writer,
+      { theme: "dash" },
+      { profileId, canWrite: true, afterCommit: committed },
+    );
+    await waitForFast(() => expect(committed).toHaveBeenCalledOnce());
+    await refreshProfileAppearancePrefs(options);
+    expect(request.mock.calls.filter(([method]) => method === "users.prefs.get")).toHaveLength(2);
+  });
+
   it("writes profile-bound appearance without requiring config-admin access", async () => {
     const request = vi.fn(async () => ({ status: "ok" as const }));
     const writer = createServerPrefsWriter(request, scope, true, { ok: true }, false);
@@ -256,10 +290,7 @@ describe("profile-bound appearance preferences", () => {
   );
 
   it("keeps pending local edits above incoming profile updates", async () => {
-    let releaseWrite!: (value: unknown) => void;
-    const write = new Promise<unknown>((resolve) => {
-      releaseWrite = resolve;
-    });
+    const { promise: write, resolve: releaseWrite } = createDeferred<unknown>();
     let profileTheme = "knot";
     const request = vi.fn(async (method: string) =>
       method === "users.prefs.get"

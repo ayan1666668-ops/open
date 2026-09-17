@@ -18,7 +18,11 @@ import {
 import { resolveApplyPatchInputPath } from "./apply-patch-paths.js";
 import { applyUpdateHunk } from "./apply-patch-update.js";
 import type { MemoryWriteProvenanceObserver } from "./memory-write-provenance.js";
-import { preserveAtPrefixedRelativePath, resolvePathFromInput } from "./path-policy.js";
+import {
+  preserveAtPrefixedRelativePath,
+  resolvePathFromInput,
+  resolveSandboxPathMapping,
+} from "./path-policy.js";
 import type { AgentTool } from "./runtime/index.js";
 import { assertSandboxPath } from "./sandbox-paths.js";
 import { resolveSandboxFileMutationQueueKey } from "./sandbox/file-mutation-identity.js";
@@ -91,7 +95,6 @@ function normalizeUpdateComparison(content: string): string {
 }
 
 type ApplyPatchOptions = ApplyPatchFileOptions & {
-  signal?: AbortSignal;
   patchInputPaths?: ReadonlyMap<string, string>;
 };
 
@@ -122,6 +125,7 @@ export function createApplyPatchTool(
     root?: string;
     sandbox?: SandboxApplyPatchConfig;
     workspaceOnly?: boolean;
+    abortSignal?: AbortSignal;
     memoryWriteProvenance?: MemoryWriteProvenanceObserver;
   } = {},
 ): AgentTool<typeof applyPatchSchema, ApplyPatchToolDetails> {
@@ -137,12 +141,15 @@ export function createApplyPatchTool(
     parameters: applyPatchSchema,
     outputSchema: ApplyPatchToolOutputSchema,
     execute: async (_toolCallId, args, signal) => {
+      const executionSignal = options.abortSignal
+        ? AbortSignal.any(signal ? [signal, options.abortSignal] : [options.abortSignal])
+        : signal;
       const params = args as { input?: string };
       const input = typeof params.input === "string" ? params.input : "";
       if (!input.trim()) {
         throw new Error("Provide a patch input.");
       }
-      if (signal?.aborted) {
+      if (executionSignal?.aborted) {
         throw createAbortError("Aborted");
       }
 
@@ -152,13 +159,14 @@ export function createApplyPatchTool(
         sandbox,
         workspaceOnly,
         memoryWriteProvenance: options.memoryWriteProvenance,
-        signal,
+        signal: executionSignal,
       });
 
+      // A no-op patch is not terminal — the model may still be mid-task and
+      // needs a continuation, not an ended turn.
       return {
         content: [{ type: "text", text: result.text }],
         details: { summary: result.summary },
-        ...(result.noOp ? { terminate: true } : {}),
       };
     },
   };
@@ -258,8 +266,9 @@ async function applyPatch(input: string, options: ApplyPatchOptions): Promise<Ap
         if (hunk.movePath && moveTarget) {
           await assertPatchParentPath(hunk.movePath, patchOptions);
           await ensureDir(moveTarget.resolved, fileOps);
-          const moveResolvesToSource =
-            path.resolve(moveTarget.resolved) === path.resolve(target.resolved);
+          // Container aliases can name the same file; reuse the physical identity
+          // already held by the mutation queue instead of comparing spellings.
+          const moveResolvesToSource = moveTarget.queueKey === target.queueKey;
           if (moveResolvesToSource) {
             const existing = await fileOps.readFile(target.resolved);
             if (normalizeUpdateComparison(existing) === normalizeUpdateComparison(applied)) {
@@ -434,17 +443,32 @@ async function resolvePatchPath(
       filePath,
       cwd: options.cwd,
     });
-    if (options.workspaceOnly !== false && resolved.hostPath) {
-      await assertSandboxPath({
-        filePath: resolved.hostPath,
-        cwd: options.cwd,
-        root: options.root ?? options.cwd,
-        allowFinalSymlinkForUnlink: aliasPolicy.allowFinalSymlinkForUnlink,
-        allowFinalHardlinkForUnlink: aliasPolicy.allowFinalHardlinkForUnlink,
-      });
+    if (options.workspaceOnly !== false) {
+      const legacyBridge = options.sandbox.bridge.pathMappings === undefined;
+      const workspaceMapping = resolveSandboxPathMapping(
+        options.sandbox.workspaceMounts ?? [],
+        resolved.containerPath,
+      );
+      if (!legacyBridge && !workspaceMapping) {
+        throw new Error(`Path escapes sandbox root (${options.sandbox.root}): ${filePath}`);
+      }
+      if (resolved.hostPath) {
+        // Descriptor-less SDK bridges retain their published host-root admission.
+        // A declared mapping miss above must never enter that compatibility path.
+        const root = legacyBridge ? options.sandbox.root : workspaceMapping!.mapping.hostRoot;
+        await assertSandboxPath({
+          filePath: resolved.hostPath,
+          cwd: root,
+          root,
+          allowFinalSymlinkForUnlink: aliasPolicy.allowFinalSymlinkForUnlink,
+          allowFinalHardlinkForUnlink: aliasPolicy.allowFinalHardlinkForUnlink,
+        });
+      }
     }
     return {
-      resolved: resolved.hostPath ?? resolved.containerPath,
+      // Keep the admitted namespace: another bind can share this host source
+      // with a different destination or permission. Queue identity stays physical.
+      resolved: resolved.containerPath,
       queueKey: await resolveSandboxFileMutationQueueKey({
         bridge: options.sandbox.bridge,
         root: options.sandbox.root,

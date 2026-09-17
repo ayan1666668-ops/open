@@ -1,5 +1,5 @@
 // Tests for gateway runtime subscription wiring.
-import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createChannelParticipantAdmissionEvidence } from "../../test/helpers/channel-admission-evidence.js";
 import { createDeferred } from "../../test/helpers/promise.js";
 import {
@@ -23,6 +23,10 @@ import {
   releaseAgentRunContext,
 } from "../infra/agent-run-registry.js";
 import type { SubsystemLogger } from "../logging/subsystem.js";
+import {
+  resetGatewayWorkAdmission,
+  tryBeginGatewaySuspendAdmission,
+} from "../process/gateway-work-admission.js";
 import { emitSessionLifecycleEvent } from "../sessions/session-lifecycle-events.js";
 import {
   emitSessionTranscriptUpdate,
@@ -33,21 +37,24 @@ import {
   markTaskLostById,
   markTaskTerminalById,
   recordTaskProgressByRunId,
+  reloadTaskRegistryFromStore,
 } from "../tasks/task-registry.js";
 import { getTaskRegistryObservers } from "../tasks/task-registry.store.js";
 import { resetTaskRegistryForTests } from "../tasks/task-runtime.test-helpers.js";
 import { installInMemoryTaskRegistryRuntime } from "../test-utils/task-registry-runtime.js";
-import {
-  abortChatRunById,
-  registerChatAbortController,
-  type ChatAbortControllerEntry,
-} from "./chat-abort.js";
+import { abortChatRunById, registerChatAbortController } from "./chat-abort.js";
 import {
   createChatRunState,
   createSessionEventSubscriberRegistry,
   createSessionMessageSubscriberRegistry,
 } from "./server-chat-state.js";
 import type { TaskEventPayload } from "./server-methods/task-summary.js";
+import {
+  readTaskUpserts,
+  registerTaskSubscriptionOwnershipTests,
+  sessionTaskDefaults,
+} from "./server-runtime-subscriptions.task-ownership.test-support.js";
+import { lifecycleState, readLifecycleState } from "./server-runtime-subscriptions.test-support.js";
 import { TerminalSessionManager } from "./terminal/session-manager.js";
 import {
   agentTerminalOwner,
@@ -175,62 +182,26 @@ vi.mock("./server-session-events.js", async (importOriginal) => {
 const { startGatewayEventSubscriptions } = await import("./server-runtime-subscriptions.js");
 type SubscriptionParams = Parameters<typeof startGatewayEventSubscriptions>[0];
 
-function readTaskUpserts(broadcast: Mock<SubscriptionParams["broadcast"]>) {
-  return broadcast.mock.calls.flatMap(([event, payload]) => {
-    if (event !== "task") {
-      return [];
-    }
-    const taskEvent = payload as TaskEventPayload;
-    return taskEvent.action === "upserted" ? [taskEvent] : [];
-  });
-}
 type LifecycleTransition = { state: string; lifecycle?: ReturnType<typeof readLifecycleState> };
 
-function readLifecycleState(entry: ChatAbortControllerEntry) {
-  return {
-    projectSessionActive: entry.projectSessionActive,
-    projectSessionTerminalPending: entry.projectSessionTerminalPending,
-    projectSessionTerminalObservedAt: entry.projectSessionTerminalObservedAt,
-    projectSessionTerminalPersistence: entry.projectSessionTerminalPersistence,
-    projectSessionTerminalPersisted: entry.projectSessionTerminalPersisted,
-    registrationCleanupRequested: entry.registrationCleanupRequested,
-  };
-}
-
-function lifecycleState(
-  projectSessionActive: boolean | undefined,
-  projectSessionTerminalPending?: boolean,
-  projectSessionTerminalObservedAt?: number,
-  projectSessionTerminalPersistence?: Promise<void>,
-  projectSessionTerminalPersisted?: boolean,
-  registrationCleanupRequested?: boolean,
-): ReturnType<typeof readLifecycleState> {
-  return {
-    projectSessionActive,
-    projectSessionTerminalPending,
-    projectSessionTerminalObservedAt,
-    projectSessionTerminalPersistence,
-    projectSessionTerminalPersisted,
-    registrationCleanupRequested,
-  };
-}
-
 function createParams(): SubscriptionParams {
+  const chatRunState = createChatRunState();
   return {
+    signal: new AbortController().signal,
     log: mockLog,
     broadcast: vi.fn(),
     broadcastToConnIds: vi.fn(),
+    nodeHasSessionSubscribers: () => false,
     nodeSendToSession: vi.fn(),
     agentRunSeq: new Map(),
-    ...(() => {
-      const chatRunState = createChatRunState();
-      return { chatRunState, toolEventRecipients: chatRunState.toolEventRecipients };
-    })(),
+    chatRunState,
+    toolEventRecipients: chatRunState.toolEventRecipients,
     sessionEventSubscribers: createSessionEventSubscriberRegistry(),
     sessionMessageSubscribers: createSessionMessageSubscriberRegistry(),
     chatAbortControllers: new Map(),
     restartRecoveryCandidates: new Map(),
     terminalSessions: { closeTaskSessions: vi.fn() },
+    refreshConnectedUserProfiles: vi.fn(),
   };
 }
 
@@ -264,10 +235,41 @@ describe("startGatewayEventSubscriptions", () => {
     unsubs?.heartbeatUnsub();
     unsubs?.transcriptUnsub();
     unsubs?.lifecycleUnsub();
-    void unsubs?.taskUnsub();
+    await unsubs?.taskUnsub();
     resetAgentEventsForTest();
     resetTaskRegistryForTests({ persist: false });
     configureExecutionIdentityAdmissionSink(() => false)();
+  });
+
+  registerTaskSubscriptionOwnershipTests(
+    (broadcast, terminalSessions = { closeTaskSessions: vi.fn(() => 1) }) => {
+      unsubs = startGatewayEventSubscriptions({ ...createParams(), broadcast, terminalSessions });
+      return { taskUnsub: unsubs.taskUnsub, closeTaskSessions: terminalSessions.closeTaskSessions };
+    },
+  );
+
+  it("broadcasts suspension immediately and stops with the gateway lifecycle", () => {
+    resetGatewayWorkAdmission();
+    const params = createParams();
+    unsubs = startGatewayEventSubscriptions(params);
+    try {
+      const suspension = tryBeginGatewaySuspendAdmission(() => {});
+      suspension?.drain();
+      suspension?.commit();
+      suspension?.release();
+      expect(vi.mocked(params.broadcast).mock.calls).toEqual([
+        ["gateway.suspension", { phase: "preparing" }],
+        ["gateway.suspension", { phase: "draining" }],
+        ["gateway.suspension", { phase: "prepared" }],
+        ["gateway.suspension", { phase: "accepting" }],
+      ]);
+      unsubs.lifecycleUnsub();
+      vi.mocked(params.broadcast).mockClear();
+      tryBeginGatewaySuspendAdmission(() => {})?.rollback();
+      expect(params.broadcast).not.toHaveBeenCalled();
+    } finally {
+      resetGatewayWorkAdmission();
+    }
   });
 
   it("records audit events by default and stops the recorder on unsubscribe", async () => {
@@ -687,6 +689,21 @@ describe("startGatewayEventSubscriptions", () => {
     expect(warn).toHaveBeenCalledOnce();
   });
 
+  it("broadcasts progress-card retirement without session-list subscribers", () => {
+    const params = createParams();
+    unsubs = startGatewayEventSubscriptions(params);
+    emitSessionLifecycleEvent({
+      sessionKey: "global",
+      agentId: "work",
+      reason: "progress-card-reset",
+    });
+    expect(params.broadcast).toHaveBeenCalledWith(
+      "progressCard.changed",
+      { sessionKey: "agent:work:global", revision: null },
+      { sessionKeys: ["global"], agentId: "work" },
+    );
+  });
+
   it("logs lifecycle handler failures", async () => {
     unsubs = startGatewayEventSubscriptions(createParams());
 
@@ -706,24 +723,16 @@ describe("startGatewayEventSubscriptions", () => {
 
     const completed = createTaskRecord({
       runtime: "subagent",
-      requesterSessionKey: "agent:main:main",
-      ownerKey: "agent:main:main",
-      scopeKind: "session",
+      ...sessionTaskDefaults,
       task: "Completed task",
       status: "succeeded",
-      deliveryStatus: "not_applicable",
-      notifyPolicy: "silent",
       terminalSummary: "x".repeat(10_000),
     });
     const lost = createTaskRecord({
       runtime: "cli",
-      requesterSessionKey: "agent:main:main",
-      ownerKey: "agent:main:main",
-      scopeKind: "session",
+      ...sessionTaskDefaults,
       task: "Lost task",
       status: "lost",
-      deliveryStatus: "not_applicable",
-      notifyPolicy: "silent",
     });
 
     if (!completed || !lost) {
@@ -748,13 +757,9 @@ describe("startGatewayEventSubscriptions", () => {
     broadcast.mockClear();
     createTaskRecord({
       runtime: "cli",
-      requesterSessionKey: "agent:main:main",
-      ownerKey: "agent:main:main",
-      scopeKind: "session",
+      ...sessionTaskDefaults,
       task: "After dispose",
       status: "queued",
-      deliveryStatus: "not_applicable",
-      notifyPolicy: "silent",
     });
     expect(broadcast).not.toHaveBeenCalled();
   });
@@ -768,27 +773,20 @@ describe("startGatewayEventSubscriptions", () => {
 
     const primary = createTaskRecord({
       runtime: "subagent",
-      requesterSessionKey: "agent:main:main",
-      ownerKey: "agent:main:main",
-      scopeKind: "session",
+      ...sessionTaskDefaults,
       childSessionKey: "agent:main:subagent:primary",
       runId: "run-throttle-primary",
       task: "Implement live progress",
       status: "running",
-      deliveryStatus: "not_applicable",
-      notifyPolicy: "silent",
+      detail: { notes: [["runtime-owned task detail"]] },
     });
     const secondary = createTaskRecord({
       runtime: "subagent",
-      requesterSessionKey: "agent:main:main",
-      ownerKey: "agent:main:main",
-      scopeKind: "session",
+      ...sessionTaskDefaults,
       childSessionKey: "agent:main:subagent:secondary",
       runId: "run-throttle-secondary",
       task: "Review live progress",
       status: "running",
-      deliveryStatus: "not_applicable",
-      notifyPolicy: "silent",
     });
     if (!primary || !secondary) {
       throw new Error("expected task records");
@@ -808,9 +806,15 @@ describe("startGatewayEventSubscriptions", () => {
       data: { text: "parallel" },
     });
 
-    await vi.advanceTimersByTimeAsync(999);
-    expect(broadcast).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(1);
+    const clone = vi.spyOn(globalThis, "structuredClone");
+    try {
+      await vi.advanceTimersByTimeAsync(999);
+      expect(broadcast).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(clone).not.toHaveBeenCalled();
+    } finally {
+      clone.mockRestore();
+    }
     const firstFlush = readTaskUpserts(broadcast);
     expect(firstFlush).toHaveLength(2);
     expect(firstFlush.find((event) => event.task.id === primary.taskId)?.task.lastActivity).toBe(
@@ -860,22 +864,18 @@ describe("startGatewayEventSubscriptions", () => {
     expect(broadcast).not.toHaveBeenCalled();
   });
 
-  it("suppresses identical task summaries without delaying status transitions", async () => {
+  it("suppresses identical summaries and refreshes them after restore", async () => {
     const broadcast = vi.fn<SubscriptionParams["broadcast"]>();
     unsubs = startGatewayEventSubscriptions({ ...createParams(), broadcast });
     await waitForFast(() => expect(getTaskRegistryObservers()).not.toBeNull());
     const runId = "run-identical-task-summary";
     const task = createTaskRecord({
       runtime: "subagent",
-      requesterSessionKey: "agent:main:main",
-      ownerKey: "agent:main:main",
-      scopeKind: "session",
+      ...sessionTaskDefaults,
       childSessionKey: "agent:main:subagent:summary",
       runId,
       task: "Avoid duplicate broadcasts",
       status: "running",
-      deliveryStatus: "not_applicable",
-      notifyPolicy: "silent",
       startedAt: 100,
       lastEventAt: 100,
     });
@@ -892,6 +892,18 @@ describe("startGatewayEventSubscriptions", () => {
         progressSummary: "Working",
       });
     }
+    const beforeRestore = readTaskUpserts(broadcast);
+    expect(beforeRestore).toHaveLength(1);
+    broadcast.mockClear();
+    reloadTaskRegistryFromStore();
+    expect(broadcast).toHaveBeenCalledWith("task", { action: "restored" }, { dropIfSlow: true });
+    recordTaskProgressByRunId({
+      runId,
+      runtime: "subagent",
+      lastEventAt: 200,
+      progressSummary: "Working",
+    });
+    expect(readTaskUpserts(broadcast)).toEqual(beforeRestore);
     markTaskTerminalById({ taskId: task.taskId, status: "succeeded", endedAt: 300 });
 
     const taskEvents = readTaskUpserts(broadcast);
@@ -1073,13 +1085,9 @@ describe("startGatewayEventSubscriptions", () => {
 
     createTaskRecord({
       runtime: "cli",
-      requesterSessionKey: "agent:main:main",
-      ownerKey: "agent:main:main",
-      scopeKind: "session",
+      ...sessionTaskDefaults,
       task: "After stale dispose",
       status: "queued",
-      deliveryStatus: "not_applicable",
-      notifyPolicy: "silent",
     });
     expect(replacementBroadcast.mock.calls.some(([event]) => event === "task")).toBe(true);
     expect(staleBroadcast.mock.calls.some(([event]) => event === "task")).toBe(false);

@@ -1,16 +1,17 @@
 // Stores and verifies web push subscriptions and delivery payloads.
 import { randomUUID } from "node:crypto";
-import fs from "node:fs";
 import path from "node:path";
 import { expectDefined, normalizeOptionalString } from "@openclaw/normalization-core";
 import { resolveStateDir } from "../config/paths.js";
 import { createLazyRuntimeModule } from "../shared/lazy-runtime.js";
+import { pathMayExistSync } from "./path-existence.js";
 import {
   WebPushSubscriptionBindingError,
   createWebPushVapidKeyPair,
   deleteBoundWebPushSubscription,
   deleteWebPushSubscriptionIfCurrent,
   hashWebPushEndpoint,
+  hasBoundWebPushSubscriptions,
   insertVapidKeyPairIfAbsent,
   isValidWebPushEndpoint,
   isValidWebPushKey,
@@ -49,6 +50,7 @@ export {
   WebPushSubscriptionBindingError,
   findBoundWebPushSubscriptionByEndpoint,
   listBoundWebPushSubscriptions,
+  hasBoundWebPushSubscriptions,
   setWebPushSubscriptionPreferences,
 };
 export type { BoundWebPushSubscription } from "./push-web-store.js";
@@ -63,16 +65,6 @@ const loadWebPushRuntime = createLazyRuntimeModule(() =>
   import("web-push").then((mod: WebPushRuntimeModule) => mod.default ?? mod),
 );
 
-function legacyWebPushPathMayExist(filePath: string): boolean {
-  try {
-    fs.lstatSync(filePath);
-    return true;
-  } catch (error) {
-    // Only a definite absence permits creating a new signing identity.
-    return (error as NodeJS.ErrnoException).code !== "ENOENT";
-  }
-}
-
 // Production callers run under the Gateway's lifetime state/config lock. Doctor must
 // acquire those same locks before claiming legacy files, so this check remains stable
 // through the following SQLite operation or asynchronous delivery fan-out.
@@ -80,10 +72,7 @@ function assertLegacyWebPushMigrationComplete(baseDir?: string): void {
   const stateDir = baseDir ?? resolveStateDir();
   const pendingLegacyPath = LEGACY_WEB_PUSH_PATHS.find((relativePath) => {
     const sourcePath = path.join(stateDir, relativePath);
-    return (
-      legacyWebPushPathMayExist(sourcePath) ||
-      legacyWebPushPathMayExist(`${sourcePath}.doctor-importing`)
-    );
+    return pathMayExistSync(sourcePath) || pathMayExistSync(`${sourcePath}.doctor-importing`);
   });
   if (pendingLegacyPath) {
     throw new Error(
