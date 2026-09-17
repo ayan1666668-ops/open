@@ -362,10 +362,12 @@ export function validateQaRuntimePairReport(
         scenario.status !== expectedStatus ||
         scenario.drift !== source.runtimeParity.drift ||
         scenario.driftDetails !== source.runtimeParity.driftDetails ||
-        !acceptedReportCellStatuses(source.runtimeParity.cells.openclaw).has(
-          scenario.openclawStatus,
+        ![...acceptedReportCellStatuses(source.runtimeParity.cells.openclaw)].some(
+          (status) => status === scenario.openclawStatus,
         ) ||
-        !acceptedReportCellStatuses(source.runtimeParity.cells.codex).has(scenario.codexStatus)
+        ![...acceptedReportCellStatuses(source.runtimeParity.cells.codex)].some(
+          (status) => status === scenario.codexStatus,
+        )
       );
     })
   ) {

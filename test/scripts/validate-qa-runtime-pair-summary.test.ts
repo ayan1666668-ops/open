@@ -671,7 +671,7 @@ describe("preserved cell skips in frozen runtime-pair reports", () => {
 
   function reportWithCodexCell(fixture: ReturnType<typeof summary>, codexStatus: string) {
     const reportSummary = reportFor(fixture.scenarios);
-    reportSummary.scenarios[1] = { ...reportSummary.scenarios[1], codexStatus };
+    reportSummary.scenarios[1]!.codexStatus = codexStatus;
     const base = markdownFor(fixture.scenarios);
     const line = "- codex: pass (0 tool calls)";
     const last = base.lastIndexOf(line);
