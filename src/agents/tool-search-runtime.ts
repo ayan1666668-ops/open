@@ -43,13 +43,12 @@ import {
   tokenizeDocument,
   tokenizeQuery,
 } from "./tool-search-ranking.js";
-import {
-  formatCatalogInputError,
-  formatCatalogOutputError,
-  formatUnknownToolIdError,
-  type ToolLookupErrorOptions,
-} from "./tool-search-recovery.js";
+import { formatCatalogInputError, formatCatalogOutputError } from "./tool-search-recovery.js";
 import { readToolSearchLimit } from "./tool-search-request.js";
+import {
+  findToolSearchCatalogEntry,
+  findToolSearchCatalogEntryByExactId,
+} from "./tool-search-runtime-lookup.js";
 import { runScheduledToolSearchCall } from "./tool-search-scheduling.js";
 import { snapshotToolSearchTargetTranscriptResult } from "./tool-search-transcript.js";
 import type {
@@ -90,43 +89,6 @@ function toolSearchEntryText(entry: ToolSearchCatalogEntry, parameterText?: stri
   return [entry.name, entry.id, entry.label ?? "", entry.description, parameters]
     .filter(Boolean)
     .join(" ");
-}
-
-function findEntry(
-  catalog: ToolSearchCatalogSession,
-  id: string,
-  options?: CatalogVisibilityOptions & ToolLookupErrorOptions,
-): ToolSearchCatalogEntry {
-  const needle = id.trim();
-  const entries = visibleCatalogEntries(catalog, options);
-  const exactIdEntry = entries.find((candidate) => candidate.id === needle);
-  if (exactIdEntry) {
-    return exactIdEntry;
-  }
-  const namedEntries = entries.filter((candidate) => candidate.name === needle);
-  if (namedEntries.length > 1) {
-    throw new ToolInputError(`Ambiguous tool name: ${needle}; use an exact tool id.`);
-  }
-  const namedEntry = namedEntries[0];
-  if (!namedEntry) {
-    throw new ToolInputError(formatUnknownToolIdError(needle, entries, options));
-  }
-  return namedEntry;
-}
-
-function findEntryByExactId(
-  catalog: ToolSearchCatalogSession,
-  id: string,
-  errorOptions: ToolLookupErrorOptions = {},
-): ToolSearchCatalogEntry {
-  const needle = id.trim();
-  const entry = catalog.entries.find((candidate) => candidate.id === needle);
-  if (!entry) {
-    throw new ToolInputError(
-      formatUnknownToolIdError(needle, catalog.entries, { ...errorOptions, exactIdOnly: true }),
-    );
-  }
-  return entry;
 }
 
 const TOOL_SEARCH_SELECTOR_KEYS = ["id", "toolId", "name"] as const;
@@ -173,7 +135,7 @@ export function readToolSearchCallArgs(
         if (typeof value !== "string") {
           return [];
         }
-        const matches = catalog.entries.filter(
+        const matches = [...catalog.entries, ...(catalog.directCoreEntries ?? [])].filter(
           (entry) => entry.id === value || entry.name === value,
         );
         return matches.length > 0 ? [{ key, matches }] : [];
@@ -482,14 +444,20 @@ export class ToolSearchRuntime {
     const catalog = resolveCatalog(this.ctx);
     catalog.describeCount += 1;
     return describeEntry(
-      findEntry(catalog, id, { ...options, codeModeSkills: this.ctx.codeModeSkills }),
+      findToolSearchCatalogEntry(catalog, id, {
+        ...options,
+        codeModeSkills: this.ctx.codeModeSkills,
+      }),
     );
   };
 
   call = async (id: string, input?: unknown, options?: ToolSearchCallOptions) => {
     const catalog = resolveCatalog(this.ctx);
     return await this.callEntry(
-      findEntry(catalog, id, { ...options, codeModeSkills: this.ctx.codeModeSkills }),
+      findToolSearchCatalogEntry(catalog, id, {
+        ...options,
+        codeModeSkills: this.ctx.codeModeSkills,
+      }),
       input,
       options,
     );
@@ -507,7 +475,10 @@ export class ToolSearchRuntime {
   ) => {
     const catalog = resolveCatalog(this.ctx);
     return await this.callEntry(
-      findEntryByExactId(catalog, id, { ...options, codeModeSkills: this.ctx.codeModeSkills }),
+      findToolSearchCatalogEntryByExactId(catalog, id, {
+        ...options,
+        codeModeSkills: this.ctx.codeModeSkills,
+      }),
       input,
       options,
     );
@@ -541,7 +512,7 @@ export class ToolSearchRuntime {
   isReplaySafeExactId = (id: string): boolean => {
     let entry: ToolSearchCatalogEntry;
     try {
-      entry = findEntryByExactId(resolveCatalog(this.ctx), id);
+      entry = findToolSearchCatalogEntryByExactId(resolveCatalog(this.ctx), id);
     } catch {
       return false;
     }

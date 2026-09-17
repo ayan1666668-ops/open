@@ -24,48 +24,17 @@ import {
 } from "openclaw/plugin-sdk/plugin-test-runtime";
 import { withTempDir } from "openclaw/plugin-sdk/test-env";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createCopilotTestHostCapabilities } from "./host-capability.test-support.js";
 import { createCopilotToolBridge as createCopilotToolBridgeImpl } from "./tool-bridge.js";
+import {
+  convertOpenClawToolToSdkToolForTest,
+  createCopilotToolBridge,
+  testHostCapabilities,
+} from "./tool-bridge.test-support.js";
 
 type CopilotToolBridgeInput = Parameters<typeof createCopilotToolBridgeImpl>[0];
-type CopilotToolBridgeAttemptParams = NonNullable<CopilotToolBridgeInput["attemptParams"]>;
-type CopilotToolBridgeTestInput = Omit<
-  CopilotToolBridgeInput,
-  "agentId" | "attemptParams" | "modelId" | "modelProvider" | "sessionId" | "spawnWorkspaceDir"
-> &
-  Partial<Pick<CopilotToolBridgeInput, "agentId" | "modelId" | "modelProvider" | "sessionId">> & {
-    spawnWorkspaceDir?: CopilotToolBridgeInput["spawnWorkspaceDir"];
-    attemptParams?: Omit<CopilotToolBridgeAttemptParams, "hostCapabilities"> &
-      Partial<Pick<CopilotToolBridgeAttemptParams, "hostCapabilities">>;
-  };
 type CopilotCodingToolsOptions = NonNullable<
   Parameters<NonNullable<CopilotToolBridgeInput["createOpenClawCodingTools"]>>[0]
 >;
-const testHostCapabilities = createCopilotTestHostCapabilities();
-
-function createCopilotToolBridge(input: CopilotToolBridgeTestInput) {
-  const { attemptParams, ...baseInput } = input;
-  const preparedInput: CopilotToolBridgeInput = {
-    agentId: "agent-1",
-    modelId: "gpt-4o",
-    modelProvider: "github-copilot",
-    sessionId: "session-1",
-    spawnWorkspaceDir: undefined,
-    ...baseInput,
-    attemptParams: {
-      ...attemptParams,
-      hostCapabilities: attemptParams?.hostCapabilities ?? testHostCapabilities,
-    },
-  };
-  return createCopilotToolBridgeImpl(preparedInput);
-}
-type ConvertToolOptions = Pick<
-  CopilotToolBridgeInput,
-  "abortSignal" | "beforeExecute" | "onToolCompleted"
-> & {
-  onAgentToolResult?: NonNullable<CopilotToolBridgeInput["attemptParams"]>["onAgentToolResult"];
-  observeToolTerminal?: NonNullable<CopilotToolBridgeInput["attemptParams"]>["observeToolTerminal"];
-};
 
 type FakeTool = AnyAgentTool & {
   execute: ReturnType<typeof vi.fn>;
@@ -115,30 +84,6 @@ function runSdkTool(tool: SdkTool, args: unknown, invocation = makeInvocation())
     throw new Error(`SDK tool '${tool.name}' has no handler`);
   }
   return tool.handler(args, invocation);
-}
-
-async function convertOpenClawToolToSdkToolForTest(
-  sourceTool: AnyAgentTool,
-  options: ConvertToolOptions,
-): Promise<SdkTool> {
-  const bridge = await createCopilotToolBridge({
-    abortSignal: options.abortSignal,
-    allowModelTools: true,
-    attemptParams:
-      options.onAgentToolResult || options.observeToolTerminal
-        ? {
-            ...(options.onAgentToolResult ? { onAgentToolResult: options.onAgentToolResult } : {}),
-            ...(options.observeToolTerminal
-              ? { observeToolTerminal: options.observeToolTerminal }
-              : {}),
-          }
-        : undefined,
-    beforeExecute: options.beforeExecute,
-    createOpenClawCodingTools: async () => [sourceTool],
-    modelId: "gpt-test",
-    onToolCompleted: options.onToolCompleted,
-  });
-  return expectDefined(bridge.promptToolPolicy.apply().tools[0], "Copilot SDK tool");
 }
 
 afterEach(() => {
@@ -501,15 +446,14 @@ describe("createCopilotToolBridge", () => {
         toolSearchCatalogExecutor: expect.any(Function),
       }),
     );
-    expect(result.sourceTools.map((tool) => tool.name)).toEqual(["tool_search_code", "read"]);
+    expect(result.sourceTools.map((tool) => tool.name)).toEqual(["tool_search_code"]);
     expect(result.promptToolPolicy.apply().tools.map((tool) => tool.name)).toEqual([
       "tool_search_code",
-      "read",
     ]);
     expect(result.promptToolPolicy.apply().callableToolNames).toEqual([
       "tool_search_code",
-      "read",
       "fake_hidden",
+      "read",
     ]);
     expect(result.promptToolPolicy.apply({ toolsAllow: ["fake_hidden"] })).toMatchObject({
       callableToolNames: ["tool_search_code", "fake_hidden"],
@@ -537,15 +481,25 @@ describe("createCopilotToolBridge", () => {
       createOpenClawCodingTools,
     });
 
-    expect(result.sourceTools.map((tool) => tool.name)).toEqual(["tool_search_code", "read"]);
+    expect(result.sourceTools.map((tool) => tool.name)).toEqual(["tool_search_code"]);
     expect(result.promptToolPolicy.apply().tools.map((tool) => tool.name)).toEqual([
       "tool_search_code",
-      "read",
     ]);
+    expect(result.promptToolPolicy.apply().callableToolNames).toEqual(["tool_search_code", "read"]);
   });
 
   it("filters the hidden tool_search catalog before compacting narrowed tools", async () => {
     let catalogRef: { current?: { entries?: Array<{ name: string }> } } | undefined;
+    const pluginKeep = createOwnerBackedContractTool({
+      pluginId: "fake-catalog",
+      name: "plugin_keep",
+      result: textToolResult("ok"),
+    });
+    const pluginDrop = createOwnerBackedContractTool({
+      pluginId: "fake-catalog",
+      name: "plugin_drop",
+      result: textToolResult("ok"),
+    });
     const createOpenClawCodingTools = vi.fn(async (opts: unknown) => {
       catalogRef = (opts as { toolSearchCatalogRef?: typeof catalogRef }).toolSearchCatalogRef;
       return [
@@ -553,6 +507,8 @@ describe("createCopilotToolBridge", () => {
         makeTool({ name: "read" }),
         makeTool({ name: "edit" }),
         makeTool({ name: "write" }),
+        pluginKeep,
+        pluginDrop,
       ];
     });
 
@@ -561,12 +517,15 @@ describe("createCopilotToolBridge", () => {
         config: { tools: { toolSearch: true } },
         runId: "run-tool-search",
         sessionKey: "agent:agent-1:main",
-        toolsAllow: ["read"],
+        toolsAllow: ["read", "plugin_keep"],
       } as never,
       createOpenClawCodingTools,
     });
 
-    expect(catalogRef?.current?.entries?.map((entry) => entry.name)).toEqual(["read"]);
+    expect(catalogRef?.current?.entries?.map((entry) => entry.name)).toEqual([
+      "read",
+      "plugin_keep",
+    ]);
   });
 
   it("compacts the Copilot tool surface behind code-mode exec/wait when enabled", async () => {
