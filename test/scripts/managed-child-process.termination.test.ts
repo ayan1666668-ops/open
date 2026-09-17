@@ -101,7 +101,8 @@ describe("managed child termination facts", () => {
           bin: "fixture",
           platform: "win32",
           shell: false,
-          stdio: "pipe",
+          // IPC callers bypass Job admission and exercise the unowned-tree contract.
+          stdio: ["ignore", "pipe", "pipe", "ipc"],
           // The synthetic child has no filesystem resources to retain on failure.
           env: { TMPDIR: process.cwd() },
           runTaskkill,
