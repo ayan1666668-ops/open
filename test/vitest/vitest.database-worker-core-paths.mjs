@@ -2,6 +2,8 @@
 export const databaseWorkerCoreTestFiles = [
   "src/agents/tools/message-tool.internal-source-reply.integration.test.ts",
   "src/media/store.cleanup.test.ts",
+  "src/state/agent-provenance.test.ts",
+  "src/commands/agents.commands.list.worker.test.ts",
   "src/state/openclaw-agent-worker-store.test.ts",
   "src/sessions/session-state-events.test.ts",
   "packages/memory-host-sdk/src/host/session-memory-sync.test.ts",
@@ -11,6 +13,7 @@ export const databaseWorkerCoreTestFiles = [
   "src/agents/harness/native-hook-relay.lifecycle.test.ts",
   "src/agents/harness/native-hook-relay.test.ts",
   "src/cli/native-hook-relay-cli.locator-worker.test.ts",
+  "src/cli/resume-cli.test.ts",
   "src/snapshot/git-backup.test.ts",
   "src/plugins/conversation-binding.test.ts",
   "src/plugins/conversation-binding.worker.test.ts",
@@ -25,12 +28,14 @@ export const databaseWorkerCoreTestFiles = [
   "src/system-agent/setup-inference.provider-install-owner.test.ts",
   "src/system-agent/setup-inference.groq-external.integration.test.ts",
   "src/system-agent/setup-inference-activate.test.ts",
+  "src/system-agent/setup-inference-utility.test.ts",
   "src/system-agent/setup-inference-detect.lifecycle.test.ts",
   "src/wizard/setup.inference-recovery.integration.test.ts",
   "src/wizard/setup.test.ts",
   "src/wizard/setup.provenance.integration.test.ts",
   "src/flows/search-setup.test.ts",
   "src/flows/channel-setup.test.ts",
+  "src/flows/channel-setup-fallback.test.ts",
   "src/security/audit-config-symlink.test.ts",
   "src/security/audit-filesystem-windows.test.ts",
   "src/security/audit-plugins-trust.test.ts",
@@ -67,6 +72,7 @@ export const databaseWorkerCoreTestFiles = [
   "src/plugins/plugin-metadata-state-worker.test.ts",
   "src/plugins/official-external-plugin-catalog-snapshot-store.worker.test.ts",
   "src/plugins/official-external-plugin-catalog.test.ts",
+  "src/infra/device-pairing.test.ts",
   "src/infra/session-cost-usage-metadata.test.ts",
   "src/plugins/installed-plugin-index-records.test.ts",
   "src/acp/runtime/session-meta-doctor.test.ts",
@@ -125,6 +131,7 @@ const databaseWorkerCoreTestFileSet = new Set(databaseWorkerCoreTestFiles);
 
 // Preserve watch admission for consumers previously inferred into fast lanes.
 export const databaseWorkerCoreFormerFastKinds = new Map([
+  ["src/infra/device-pairing.test.ts", "unitFast"],
   ["src/logging/diagnostic-stuck-session-recovery.runtime.test.ts", "unitFast"],
   ["src/flows/search-setup.test.ts", "unitFastIsolated"],
   ["src/security/audit-config-symlink.test.ts", "unitFastIsolated"],
