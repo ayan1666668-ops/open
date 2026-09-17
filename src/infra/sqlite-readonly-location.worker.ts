@@ -12,6 +12,7 @@ import {
   SQLITE_READONLY_WORKER_MAX_BUFFER,
   type SqliteReadOnlyWorkerResult,
 } from "./sqlite-readonly-worker-protocol.js";
+import { reclaimAbandonedSqliteSnapshots } from "./sqlite-snapshot-staging.js";
 
 // The sync strategy raw-copies without attaching SQLite to the source, so sync
 // callers stay byte-neutral on the live family; the async strategy holds a read
@@ -21,13 +22,23 @@ async function inspect(args: string[]): Promise<SqliteReadOnlyWorkerResult> {
   const pathname = args[1];
   const stagingRoot = args[2];
   const agentSchemaVersionForOwnership = args[3] === undefined ? undefined : Number(args[3]);
-  if ((mode !== "sync" && mode !== "async" && mode !== "schema-header") || !pathname) {
+  if (
+    (mode !== "sync" && mode !== "async" && mode !== "schema-header" && mode !== "reclaim") ||
+    !pathname
+  ) {
     return {
       ok: false,
       message: "SQLite read-only worker requires a mode and a database path",
     };
   }
   try {
+    if (mode === "reclaim") {
+      const warnings: string[] = [];
+      reclaimAbandonedSqliteSnapshots(pathname, (message, error) => {
+        warnings.push(`${message}${formatSqliteErrorCodeSuffix(error)}`);
+      });
+      return { ok: true, warnings };
+    }
     if (mode === "schema-header") {
       if (
         agentSchemaVersionForOwnership !== undefined &&

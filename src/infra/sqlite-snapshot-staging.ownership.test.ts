@@ -1,12 +1,16 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { setLoggerOverride } from "../logging/logger.js";
 import { testApi } from "../logging/logger.test-support.js";
 import { requireNodeSqlite } from "./node-sqlite.js";
-import { prepareSqliteReadOnlyLocationSyncInProcess } from "./sqlite-readonly-location.js";
+import { removeTempDirectory } from "./sqlite-readonly-location-cleanup.js";
+import {
+  createSqliteSnapshotStagingDirectory,
+  prepareSqliteReadOnlyLocationSyncInProcess,
+} from "./sqlite-readonly-location.js";
 
 const tempDirs = useAutoCleanupTempDirTracker((cleanup) => {
   afterEach(async () => {
@@ -23,6 +27,12 @@ const nodeArguments = ["--import", import.meta.resolve("tsx"), "--input-type=mod
 const snapshotModule = new URL("./sqlite-readonly-location.ts", import.meta.url).href;
 const stagingModule = new URL("./sqlite-snapshot-staging.ts", import.meta.url).href;
 const loggerModule = new URL("../logging/logger.ts", import.meta.url).href;
+
+beforeAll(async () => {
+  // Prepare worker artifacts before measuring the reclamation operation.
+  const root = tempDirs.make("sqlite-staging-warm-");
+  removeTempDirectory(await createSqliteSnapshotStagingDirectory(root));
+});
 
 function createFixture() {
   const root = tempDirs.make("sqlite-staging-ownership-");
@@ -70,6 +80,78 @@ function runChild(script: string, signal?: NodeJS.Signals) {
   return result.stdout;
 }
 
+it("keeps timers responsive while async allocation reclaims a legacy backlog", async () => {
+  const { root, cache } = createFixture();
+  setLoggerOverride({ level: "silent", file: path.join(root, "cleanup.log") });
+  const payload = Buffer.alloc(1024 * 1024);
+  for (let index = 0; index < 429; index++) {
+    const directory = path.join(
+      cache,
+      `openclaw-sqlite-readonly-12345-${index.toString(36).padStart(6, "0")}`,
+    );
+    fs.mkdirSync(directory);
+    fs.writeFileSync(path.join(directory, "database.sqlite"), payload);
+    ageSnapshotTree(directory);
+  }
+
+  let previous = performance.now();
+  let longestGapMs = 0;
+  const measure = () => {
+    const now = performance.now();
+    longestGapMs = Math.max(longestGapMs, now - previous);
+    previous = now;
+  };
+  const timer = setInterval(measure, 1);
+  let allocated: string | undefined;
+  try {
+    allocated = await createSqliteSnapshotStagingDirectory(cache);
+    await new Promise<void>((resolve) => {
+      setTimeout(() => {
+        measure();
+        resolve();
+      }, 0);
+    });
+  } finally {
+    clearInterval(timer);
+    if (allocated) {
+      removeTempDirectory(allocated);
+    }
+  }
+  console.log(JSON.stringify({ backlogDirectories: 429, longestGapMs }));
+  expect(longestGapMs).toBeLessThan(100);
+  expect(fs.readdirSync(cache)).toEqual([]);
+});
+
+it("reclaims released-worker cache layouts only after 24 hours", async () => {
+  for (const fresh of [false, true]) {
+    const { root, cache, source } = createFixture();
+    const parent = path.join(cache, "openclaw-sqlite-readonly-12345-Parent");
+    const inner = path.join(parent, "openclaw", "openclaw-sqlite-readonly-12345-Worker");
+    const copy = path.join(inner, "database.sqlite");
+    fs.mkdirSync(inner, { recursive: true });
+    fs.copyFileSync(source, copy);
+    ageSnapshotTree(parent);
+    if (fresh) {
+      const now = new Date();
+      fs.utimesSync(copy, now, now);
+    }
+    const log = path.join(root, "cleanup.log");
+    setLoggerOverride({ level: "warn", file: log });
+    const own = prepareSqliteReadOnlyLocationSyncInProcess(source, cache);
+    own.cleanup();
+    expect(fs.existsSync(parent)).toBe(fresh);
+    await testApi.flushFileLogQueueForTests();
+    if (fresh) {
+      assertReadable(copy);
+      expect(fs.existsSync(path.join(parent, "owner.sqlite"))).toBe(false);
+      expect(fs.existsSync(path.join(inner, "owner.sqlite"))).toBe(false);
+      expect(fs.readFileSync(log, "utf8")).toContain("Skipped SQLite snapshot reclamation");
+    } else {
+      expect(fs.readFileSync(log, "utf8")).toContain(`Reclaimed ${fs.statSync(source).size} bytes`);
+    }
+  }
+});
+
 it("preserves a live snapshot when its owner PID is invisible", () => {
   const { root, cache, source } = createFixture();
   const held = prepareSqliteReadOnlyLocationSyncInProcess(source, cache);
@@ -96,7 +178,12 @@ it("preserves a live snapshot when its owner PID is invisible", () => {
 it.skipIf(process.platform === "win32")(
   "arbitrates an orphan worker allocating after reclamation inspects its parent",
   () => {
-    for (const legacyParent of [false, true]) {
+    for (const { legacyParent, cacheContainer } of [
+      { legacyParent: false, cacheContainer: false },
+      { legacyParent: true, cacheContainer: false },
+      { legacyParent: false, cacheContainer: true },
+      { legacyParent: true, cacheContainer: true },
+    ]) {
       for (const stage of ["inspection", "retirement"] as const) {
         const { root, cache, source } = createFixture();
         const resultFile = path.join(root, "worker-result.json");
@@ -113,10 +200,14 @@ it.skipIf(process.platform === "win32")(
       if (${JSON.stringify(legacyParent)}) {
         directory = path.join(${JSON.stringify(cache)}, 'openclaw-sqlite-readonly-' + process.pid + '-Legacy');
         fs.mkdirSync(directory);
-        const stale = new Date(Date.now() - 25 * 60 * 60 * 1000);
-        fs.utimesSync(directory, stale, stale);
       } else {
         directory = createSqliteSnapshotStagingDirectorySync(${JSON.stringify(cache)});
+      }
+      if (${JSON.stringify(cacheContainer)}) fs.mkdirSync(path.join(directory, 'openclaw'));
+      if (${JSON.stringify(legacyParent)}) {
+        const stale = new Date(Date.now() - 25 * 60 * 60 * 1000);
+        if (${JSON.stringify(cacheContainer)}) fs.utimesSync(path.join(directory, 'openclaw'), stale, stale);
+        fs.utimesSync(directory, stale, stale);
       }
       process.send(directory);
       process.on('message', () => {});
@@ -160,7 +251,7 @@ it.skipIf(process.platform === "win32")(
         const startWorker = (pathname) => {
           if (String(pathname) === directory && !inspected) {
             inspected = true;
-            worker.send(directory);
+            worker.send(${JSON.stringify(cacheContainer)} ? path.join(directory, 'openclaw') : directory);
             const deadline = Date.now() + 10_000;
             const barrier = new Int32Array(new SharedArrayBuffer(4));
             while (!fs.existsSync(${JSON.stringify(resultFile)})) {
@@ -201,7 +292,7 @@ it.skipIf(process.platform === "win32")(
           copyExists: boolean;
           outcome: { location?: string; error?: string; code?: string; causeCode?: string };
         };
-        const context = `${stage}, legacy parent: ${legacyParent}`;
+        const context = `${stage}, legacy parent: ${legacyParent}, cache container: ${cacheContainer}`;
         expect(result.inspected, context).toBe(true);
         expect(result.workerAlive, context).toBe(true);
         expect(result.copyExists, context).toBe(result.outcome.location !== undefined);

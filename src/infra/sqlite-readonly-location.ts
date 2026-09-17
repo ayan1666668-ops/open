@@ -21,7 +21,10 @@ import {
   readSqliteSchemaHeader,
   readSqliteSchemaHeaderFromSnapshot,
 } from "./sqlite-schema-header.js";
-import { createSqliteSnapshotStagingDirectorySync } from "./sqlite-snapshot-staging.js";
+import {
+  allocateSqliteSnapshotStagingDirectory,
+  createSqliteSnapshotStagingDirectorySync,
+} from "./sqlite-snapshot-staging.js";
 import {
   withSqliteSourceHandle,
   withSqliteSourceHandleAsync,
@@ -402,7 +405,7 @@ export async function createSqliteSnapshotStagingDirectory(
   allowLegacyWorker = false,
 ): Promise<string> {
   try {
-    return createSqliteSnapshotStagingDirectorySync(stagingRoot, allowLegacyWorker);
+    return await allocateSqliteSnapshotStagingDirectory(stagingRoot, allowLegacyWorker);
   } catch (error) {
     throw sqliteSnapshotStagingError(stagingRoot, error, true);
   }

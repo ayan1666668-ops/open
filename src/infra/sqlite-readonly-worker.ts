@@ -113,6 +113,7 @@ export function sqliteInspectionTimeoutError(
 }
 
 type SqliteReadOnlyWorkerOutput = { failure?: string; stderr: string; stdout: string };
+type SqliteReadOnlyWorkerValue = string | SqliteSchemaHeader | string[];
 type SqliteReadOnlyWorkerOptions = {
   mode: SqliteReadOnlyWorkerMode;
   stagingRoot?: string;
@@ -124,7 +125,7 @@ type SqliteReadOnlyWorkerScope = {
   active: boolean;
   busy: boolean;
   controller: AbortController;
-  pending: Set<Promise<string | SqliteSchemaHeader>>;
+  pending: Set<Promise<SqliteReadOnlyWorkerValue>>;
   deadlineOwnedByCaller: boolean;
   worker?: ReturnType<typeof createScopedSqliteReadOnlyWorker>;
 };
@@ -214,6 +215,10 @@ function isSqliteReadOnlyWorkerResult(value: unknown): value is SqliteReadOnlyWo
   }
   return (
     (value.ok === true && "location" in value && typeof value.location === "string") ||
+    (value.ok === true &&
+      "warnings" in value &&
+      Array.isArray(value.warnings) &&
+      value.warnings.every((warning) => typeof warning === "string")) ||
     (value.ok === false && "message" in value && typeof value.message === "string")
   );
 }
@@ -255,12 +260,16 @@ function readSqliteReadOnlyWorkerValue(
 ): string;
 function readSqliteReadOnlyWorkerValue(
   params: SqliteReadOnlyWorkerOutput,
-  mode: SqliteReadOnlyWorkerMode,
-): string | SqliteSchemaHeader;
+  mode: "reclaim",
+): string[];
 function readSqliteReadOnlyWorkerValue(
   params: SqliteReadOnlyWorkerOutput,
   mode: SqliteReadOnlyWorkerMode,
-): string | SqliteSchemaHeader {
+): SqliteReadOnlyWorkerValue;
+function readSqliteReadOnlyWorkerValue(
+  params: SqliteReadOnlyWorkerOutput,
+  mode: SqliteReadOnlyWorkerMode,
+): SqliteReadOnlyWorkerValue {
   let result: SqliteReadOnlyWorkerResult;
   try {
     result = parseSqliteReadOnlyWorkerResult(params.stdout, params.stderr);
@@ -279,8 +288,11 @@ function readSqliteReadOnlyWorkerValue(
   if (mode === "schema-header" && "header" in result) {
     return result.header;
   }
-  if (mode !== "schema-header" && "location" in result) {
+  if ((mode === "sync" || mode === "async") && "location" in result) {
     return result.location;
+  }
+  if (mode === "reclaim" && "warnings" in result) {
+    return result.warnings;
   }
   throw createSqliteReadOnlyWorkerError(
     "returned a result for a different operation",
@@ -337,7 +349,7 @@ function createScopedSqliteReadOnlyWorker() {
     | {
         id: number;
         mode: SqliteReadOnlyWorkerMode;
-        resolve: (value: string | SqliteSchemaHeader) => void;
+        resolve: (value: SqliteReadOnlyWorkerValue) => void;
         reject: (error: unknown) => void;
         cleanup: () => void;
         failure?: unknown;
@@ -426,7 +438,7 @@ function createScopedSqliteReadOnlyWorker() {
       );
     },
     run(pathname: string, options: SqliteReadOnlyWorkerOptions) {
-      return new Promise<string | SqliteSchemaHeader>((resolve, reject) => {
+      return new Promise<SqliteReadOnlyWorkerValue>((resolve, reject) => {
         const { timeoutMs, size } = readSqliteInspectionBudget("read-only snapshot", pathname);
         stderr = "";
         outputBytes = 0;
@@ -516,8 +528,12 @@ export function runSqliteReadOnlyWorker(
 ): Promise<string>;
 export function runSqliteReadOnlyWorker(
   pathname: string,
+  options: { mode: "reclaim"; signal?: AbortSignal },
+): Promise<string[]>;
+export function runSqliteReadOnlyWorker(
+  pathname: string,
   options: SqliteReadOnlyWorkerOptions,
-): Promise<string | SqliteSchemaHeader> {
+): Promise<SqliteReadOnlyWorkerValue> {
   const scope = readOnlyWorkerScope.getStore();
   if (!scope) {
     return runSqliteReadOnlyWorkerOnce(pathname, options);
@@ -564,8 +580,8 @@ export function runSqliteReadOnlyWorker(
 function runSqliteReadOnlyWorkerOnce(
   pathname: string,
   options: SqliteReadOnlyWorkerOptions,
-): Promise<string | SqliteSchemaHeader> {
-  return new Promise<string | SqliteSchemaHeader>((resolve, reject) => {
+): Promise<SqliteReadOnlyWorkerValue> {
+  return new Promise<SqliteReadOnlyWorkerValue>((resolve, reject) => {
     const { timeoutMs, size } = readSqliteInspectionBudget("read-only snapshot", pathname);
     let output: SqliteReadOnlyWorkerOutput = { stderr: "", stdout: "" };
     let stopped = false;
