@@ -310,7 +310,7 @@ async function listGitTags(
  * `origin` can be tag-less; otherwise the clone's canonical `origin`, then the
  * only declared remote. Multiple non-origin remotes need explicit tracking.
  */
-export function resolveReleaseTagRemote(
+function resolveReleaseTagRemote(
   remotes: readonly string[],
   trackedUpdateRemote: string,
 ): string | undefined {
