@@ -821,7 +821,7 @@ fi
             'script_parent_dir="$1/scripts"',
             'source "$script_parent_dir/pr-lib/review.sh"',
             'node "$(review_artifacts_helper_path)" template "$2" "$3"',
-            'node "$(review_artifacts_helper_path)" validate .local/review.json .local/review.md .local/pr-meta.json',
+            'node "$(review_artifacts_helper_path)" validate .local/review.json .local/pr-meta.json',
           ].join("\n"),
           "anchor-review",
           anchor,
@@ -1093,9 +1093,7 @@ exit 99
       number: 123,
       headSha: fixture.localRevision,
     });
-    expect(readScript(join(reviewRoot, ".local", "review.md")).split("\n")[0]).toBe(
-      `Review artifact for PR #123 at ${fixture.localRevision}`,
-    );
+    expect(existsSync(join(reviewRoot, ".local", "review.md"))).toBe(false);
   });
 
   it.each([

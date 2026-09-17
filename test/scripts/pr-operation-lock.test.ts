@@ -1728,9 +1728,11 @@ describePosix("scripts/pr per-PR operation lock", () => {
       invocation: "review_validate_artifacts",
       failure: "artifact",
       code: 1,
-      fetches: 1,
-      retained: true,
+      fetches: 0,
+      retained: false,
     },
+    { invocation: "prepare_init", failure: "artifact", code: 1, fetches: 0, retained: false },
+    { invocation: "prepare_init", failure: "not-ready", code: 1, fetches: 0, retained: false },
     { invocation: "enter_worktree", failure: "notification", code: 1, fetches: 0, retained: true },
   ])(
     "preserves native entry phase ownership for $invocation ($failure, $code)",
@@ -1754,6 +1756,7 @@ describePosix("scripts/pr per-PR operation lock", () => {
       const ownerFile = join(repoDir, "entry-owner-oid");
       const result = await runSupervisedOperation(repoDir, "entry-validation.sh", [
         `source '${join(repoRoot, "scripts/pr-lib/review.sh")}'`,
+        `source '${join(repoRoot, "scripts/pr-lib/prepare-core.sh")}'`,
         `script_parent_dir='${join(repoRoot, "scripts")}'`,
         "acquire_pr_operation_lock 42",
         `printf '%s\\n' "$PR_OPERATION_LOCK_OWNER_OID" > '${ownerFile}'`,
@@ -1782,7 +1785,9 @@ describePosix("scripts/pr per-PR operation lock", () => {
 
       expect.soft(result.status, `${result.stdout}\n${result.stderr}`).toBe(code === 0 ? 0 : 1);
       const commands = readFileSync(traceFile, "utf8").trim().split("\n");
-      expect.soft(commands.filter((command) => command === "auth")).toHaveLength(1);
+      expect
+        .soft(commands.filter((command) => command === "auth"))
+        .toHaveLength(failure === "artifact" || failure === "not-ready" ? 0 : 1);
       expect.soft(commands.filter((command) => command.includes(" fetch "))).toHaveLength(fetches);
       if (failure.startsWith("fetch-")) {
         const failedAt = commands.indexOf("failed-fetch");
