@@ -16,7 +16,10 @@ export function installSlackSocketModeEnvelopeGuard(
   // for this defect. Reuse that same sender rather than owning another socket.
   const send = Reflect.get(client, "send");
   if (typeof send !== "function") {
-    throw new Error("Slack Socket Mode envelope guard requires the SDK acknowledgement sender.");
+    logger.warn(
+      "Skipping Slack Socket Mode envelope guard: SDK acknowledgement sender is unavailable.",
+    );
+    return;
   }
 
   // socket-mode 3.0.1 dereferences payload.event.type before Bolt sees an

@@ -183,6 +183,60 @@ describe("createSlackBoltApp", () => {
     expect((app as unknown as FakeApp).middleware).toHaveLength(1);
   });
 
+  it("starts without an SDK acknowledgement sender and leaves receive listeners untouched", async () => {
+    const client = new EventEmitter();
+    const dispatch = vi.fn();
+    client.on("ws_message", dispatch);
+    const start = vi.fn(async () => {});
+    class SenderlessSocketModeReceiver extends FakeSocketModeReceiver {
+      client = client;
+      init() {}
+      start = start;
+      stop = async () => {};
+    }
+    const slackBoltModule = await import("@slack/bolt");
+    const interop = resolveSlackBoltInterop({
+      defaultImport: slackBoltModule.default,
+      namespaceImport: slackBoltModule,
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const { app } = createSlackBoltApp({
+        interop: resolveSlackBoltInterop({
+          defaultImport: {
+            ...interop,
+            SocketModeReceiver: SenderlessSocketModeReceiver,
+          },
+          namespaceImport: slackBoltModule,
+        }),
+        slackMode: "socket",
+        token: "xoxb-test",
+        appToken: "xapp-test",
+        slackWebhookPath: "/slack/events",
+        clientOptions: {},
+      });
+
+      await app.start();
+      expect(start).toHaveBeenCalledTimes(1);
+      expect(client.listeners("ws_message")).toEqual([dispatch]);
+      const frame = JSON.stringify({
+        type: "events_api",
+        envelope_id: "control",
+        payload: { type: "app_rate_limited" },
+      });
+      client.emit("ws_message", frame, false);
+      expect(dispatch).toHaveBeenCalledExactlyOnceWith(frame, false);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith(
+        "socket-mode:socket-mode",
+        "Skipping Slack Socket Mode envelope guard: SDK acknowledgement sender is unavailable.",
+      );
+      await app.stop();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("filters Socket Mode noise and retains SDK errors through the configured receiver logger", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
