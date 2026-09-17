@@ -6,6 +6,7 @@ import {
   buildModelAliasIndex,
   resolveModelRefFromString,
 } from "../agents/model-selection-shared.js";
+import { makeProviderModelFixture } from "../agents/test-helpers/provider-model-fixture.js";
 import { loadSessionEntry, replaceSessionEntry } from "../config/sessions/session-accessor.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import type { ModelDefinitionConfig } from "../config/types.models.js";
@@ -391,6 +392,18 @@ describe("doctor retirement owner scope", () => {
       });
       const id = scenario === "private ID" ? "private-model" : "auto";
       const ref = `personal/${id}`;
+      const {
+        provider: _provider,
+        api: _api,
+        baseUrl: _baseUrl,
+        ...configuredModel
+      } = makeProviderModelFixture<"openai-responses">({
+        id,
+        name: id,
+        provider: "personal",
+        api: "openai-responses",
+        baseUrl: "https://api.x.ai/v1",
+      });
       const config: OpenClawConfig = {
         ...cfg,
         auth: { order: { personal: ["personal:fixture"] } },
@@ -412,8 +425,7 @@ describe("doctor retirement owner scope", () => {
               auth: "api-key",
               models: [
                 {
-                  id,
-                  name: id,
+                  ...configuredModel,
                   ...(scenario === "model override"
                     ? { baseUrl: "https://custom.invalid/v1" }
                     : {}),
