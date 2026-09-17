@@ -5,7 +5,6 @@ import { isTerminalInteractive } from "../cli/terminal-interactivity.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { t } from "../wizard/i18n/index.js";
 import { WizardCancelledError } from "../wizard/prompts.js";
-import type { GuidedOnboardingDeps } from "./onboard-guided.js";
 import type { OnboardOptions } from "./onboard-types.js";
 
 export function hasInteractiveOnboardingTty(): boolean {
@@ -34,11 +33,7 @@ export async function runInteractiveOnboarding(
   }
 }
 
-export async function launchHatchTui(
-  workspace: string,
-  local: boolean,
-  agentId?: string,
-): Promise<void> {
+async function launchHatchTui(workspace: string, local: boolean, agentId?: string): Promise<void> {
   const [{ launchTuiCli }, { DEFAULT_BOOTSTRAP_FILENAME }, fs] = await Promise.all([
     import("../tui/tui-launch.js"),
     import("../agents/workspace.js"),
@@ -69,11 +64,22 @@ export type GuidedOnboardingHandoff =
   | { workspace: string; next: "hatch"; local: boolean; agentId?: string }
   | { workspace: string; next: "chat"; agentName?: string };
 
+export type GuidedOnboardingHandoffDeps = {
+  runSystemAgentChat?: (
+    workspace: string,
+    runtime: RuntimeEnv,
+    acceptRisk: boolean,
+    agentName?: string,
+  ) => Promise<void>;
+  launchHatchTui?: (workspace: string) => Promise<void>;
+  runForegroundGateway?: typeof import("./onboard-quickstart-host.js").runQuickstartForegroundGateway;
+};
+
 export async function runGuidedOnboardingHandoff(
   handoff: GuidedOnboardingHandoff | null,
   opts: OnboardOptions,
   runtime: RuntimeEnv,
-  deps: GuidedOnboardingDeps,
+  deps: GuidedOnboardingHandoffDeps,
 ): Promise<void> {
   if (!handoff) {
     return;

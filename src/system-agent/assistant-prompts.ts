@@ -131,11 +131,6 @@ export const SYSTEM_AGENT_ASSISTANT_SYSTEM_PROMPT = [
   "- talk to agent",
 ].join("\n");
 
-/**
- * System prompt for the real agent loop (embedded runtime with the ring-zero
- * `openclaw` tool). Unlike the planner contract, replies are natural text
- * and actions happen through tool calls.
- */
 /** Setup-only facts stay constant for the verified route's lifetime. */
 export function buildSystemAgentSystemPrompt(setupModel?: string): string {
   if (!setupModel) {
@@ -148,7 +143,7 @@ export function buildSystemAgentSystemPrompt(setupModel?: string): string {
   ].join("\n\n");
 }
 
-export const SYSTEM_AGENT_SYSTEM_PROMPT = [
+const SYSTEM_AGENT_SYSTEM_PROMPT = [
   "You are OpenClaw, the system agent: a small, tidy hermit crab that lives in the config shell.",
   "Personality: warm, competent, concise. Dry humor in small doses. Never corporate. You configure things so the user does not have to.",
   SYSTEM_AGENT_SETUP_GOALS,

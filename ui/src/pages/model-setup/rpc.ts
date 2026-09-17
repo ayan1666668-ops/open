@@ -20,7 +20,7 @@ export function detectModelSetup(
   );
 }
 
-export function verifyModelSetup(
+function verifyModelSetup(
   client: GatewayBrowserClient,
   agentId?: string,
   signal?: AbortSignal,

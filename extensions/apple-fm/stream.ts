@@ -64,13 +64,15 @@ export function createAppleFmStream(native: Pick<AppleFmNative, "run">): StreamF
               return parsedValue;
             });
           } catch (error) {
-            if (error instanceof SyntaxError) {
-              // oxlint-disable-next-line preserve-caught-error -- JSON.parse errors can contain model response text.
-              throw new Error(
-                "Apple Foundation Models returned an invalid structured response: malformed JSON.",
-              );
+            if (!(error instanceof SyntaxError)) {
+              throw error;
             }
-            throw error;
+          }
+          // JSON cannot encode undefined; discard syntax errors that may contain model response text.
+          if (value === undefined) {
+            throw new Error(
+              "Apple Foundation Models returned an invalid structured response: malformed JSON.",
+            );
           }
           const validation = validateJsonSchemaValue({
             schema: responseFormat,

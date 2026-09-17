@@ -1054,6 +1054,12 @@ extension OnboardingAISetupModel {
         originalServerLease: GatewayConnection.ServerLease) async -> Bool
     {
         let deadline = ReconciliationDeadline(timeout: .seconds(45))
+        let verification = PersistedActivationVerification(
+            expectedModel: expectedModel,
+            modelTarget: modelTarget,
+            routeIdentity: context.routeIdentity,
+            activationOwner: activationOwner,
+            before: before)
         var delayMs = 250
         while deadline.hasTimeRemaining {
             guard self.isCurrentAttempt(context), !Task.isCancelled else { return false }
@@ -1065,15 +1071,19 @@ extension OnboardingAISetupModel {
                let replacementLease = try? await self.gateway.acquireServerLease(
                    ifSameRouteAs: originalServerLease,
                    timeoutMs: Double(leaseTimeoutMs)),
-               await self.reconcilePersistedActivation(
-                   kind: kind,
-                   expectedModel: expectedModel,
-                   modelTarget: modelTarget,
-                   context: context,
-                   activationOwner: activationOwner,
-                   before: before,
+               await verification.reconcile(
+                   gateway: self.gateway,
+                   defaults: self.defaults,
                    serverLease: replacementLease,
-                   deadline: deadline)
+                   deadline: deadline,
+                   isCurrentAttempt: { self.isCurrentAttempt(context) },
+                   onVerified: { result in
+                       self.finishConnected(
+                           kind: kind,
+                           activationOwner: activationOwner,
+                           handoff: result.handoff(for: kind))
+                       return self.connected
+                   })
             {
                 guard self.isCurrentAttempt(context), !Task.isCancelled else { return false }
                 self.serverLease = replacementLease
@@ -1139,65 +1149,6 @@ extension OnboardingAISetupModel {
             "The Gateway did not finish restarting after AI setup. Try again once it is available.")
         self.exposeActivationFailure(failure, for: request)
     }
-
-    private func reconcilePersistedActivation(
-        kind: String,
-        expectedModel: String,
-        modelTarget: ModelTarget?,
-        context: AttemptContext,
-        activationOwner: OnboardingSystemAgentResumeStore.ActivationOwner,
-        before: PersistedActivationState?,
-        serverLease: GatewayConnection.ServerLease,
-        deadline: ReconciliationDeadline) async -> Bool
-    {
-        let detectTimeoutMs = deadline.remainingMilliseconds(
-            cappedAt: Self.setupDetectionRequestTimeoutMs)
-        guard detectTimeoutMs > 0,
-              self.isCurrentAttempt(context),
-              !Task.isCancelled,
-              OnboardingSystemAgentResumeStore.isOwned(
-                  by: activationOwner,
-                  for: context.routeIdentity,
-                  defaults: self.defaults),
-              await self.gateway.activationOwnershipFingerprint(ifCurrentServerLease: serverLease) ==
-              activationOwner.routeFingerprint
-        else { return false }
-        guard let detectData = try? await gateway.request(
-            method: "openclaw.setup.detect",
-            params: [:],
-            timeoutMs: Double(detectTimeoutMs),
-            ifCurrentServerLease: serverLease),
-            await gateway.isCurrentServerLease(serverLease),
-            isCurrentAttempt(context),
-            !Task.isCancelled,
-            let detection = try? JSONDecoder().decode(DetectResult.self, from: detectData),
-            Self.activationTransitionWasPersisted(
-                expectedModel: expectedModel,
-                modelTarget: modelTarget,
-                before: before,
-                after: detection.persistedActivationState)
-        else { return false }
-        let verifyTimeoutMs = deadline.remainingMilliseconds(
-            cappedAt: Self.setupDetectionRequestTimeoutMs)
-        guard verifyTimeoutMs > 0 else { return false }
-        guard let verifyData = try? await gateway.request(
-            method: "openclaw.setup.verify",
-            params: modelTarget == .utility ? ["modelTarget": AnyCodable("utility")] : [:],
-            timeoutMs: Double(verifyTimeoutMs),
-            ifCurrentServerLease: serverLease),
-            await gateway.isCurrentServerLease(serverLease),
-            isCurrentAttempt(context),
-            !Task.isCancelled,
-            let result = try? JSONDecoder().decode(ActivateResult.self, from: verifyData),
-            result.verifies(modelRef: expectedModel, modelTarget: modelTarget)
-        else { return false }
-        finishConnected(
-            kind: kind,
-            activationOwner: activationOwner,
-            handoff: result.handoff(for: kind))
-        return self.connected
-    }
-
 }
 
 extension OnboardingAISetupModel {
@@ -1247,6 +1198,7 @@ extension OnboardingAISetupModel {
         let authAttemptID = self.authAttemptID
         let authSessionID = UUID().uuidString
         self.authSessionID = authSessionID
+        requestParams["sessionId"] = AnyCodable(authSessionID)
         let requestID = UUID()
         self.authRequestID = requestID
         Task {
@@ -1256,7 +1208,7 @@ extension OnboardingAISetupModel {
             do {
                 let data = try await self.gateway.request(
                     method: kind.startMethod,
-                    params: requestParams.merging(["sessionId": AnyCodable(authSessionID)]) { _, sessionId in sessionId },
+                    params: requestParams,
                     timeoutMs: 600_000,
                     ifCurrentServerLease: serverLease)
                 let result = try JSONDecoder().decode(WizardStartResult.self, from: data)
@@ -1605,7 +1557,7 @@ extension OnboardingAISetupModel {
             authAttemptID == self.authAttemptID,
             let result = try? JSONDecoder().decode(DetectResult.self, from: data),
             let configuredModel = modelTarget == .utility
-                ? (result.utilityModel ?? result.setupModel) : result.configuredModel,
+            ? (result.utilityModel ?? result.setupModel) : result.configuredModel,
             Self.activationTransitionWasPersisted(
                 expectedModel: configuredModel,
                 modelTarget: modelTarget,

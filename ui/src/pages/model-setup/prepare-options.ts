@@ -12,7 +12,7 @@ export type ModelSetupPrepareOption = {
   modelTarget?: "utility";
 };
 
-export function providerAutoSetupKind(choiceId: string): `provider-auto:${string}` {
+function providerAutoSetupKind(choiceId: string): `provider-auto:${string}` {
   return `provider-auto:${encodeURIComponent(choiceId)}`;
 }
 

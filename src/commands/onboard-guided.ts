@@ -29,19 +29,12 @@ import {
   hasInteractiveOnboardingTty,
   runGuidedOnboardingHandoff,
   type GuidedOnboardingHandoff,
+  type GuidedOnboardingHandoffDeps,
   runInteractiveOnboarding,
 } from "./onboard-interactive-runner.js";
 import type { OnboardOptions } from "./onboard-types.js";
 
-export type GuidedOnboardingDeps = {
-  runSystemAgentChat?: (
-    workspace: string,
-    runtime: RuntimeEnv,
-    acceptRisk: boolean,
-    agentName?: string,
-  ) => Promise<void>;
-  launchHatchTui?: (workspace: string) => Promise<void>;
-  runForegroundGateway?: typeof import("./onboard-quickstart-host.js").runQuickstartForegroundGateway;
+export type GuidedOnboardingDeps = GuidedOnboardingHandoffDeps & {
   detect?: typeof import("../system-agent/setup-inference.js").detectSetupInference;
   activate?: typeof import("../system-agent/setup-inference.js").activateSetupInference;
   createPrompter?: () => WizardPrompter | Promise<WizardPrompter>;

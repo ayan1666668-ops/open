@@ -6,6 +6,7 @@ import { extractErrorCode } from "openclaw/plugin-sdk/error-runtime";
 import { parseJsonPreservingUnsafeIntegers } from "openclaw/plugin-sdk/json-unsafe-integers";
 import { runCommandBuffered } from "openclaw/plugin-sdk/process-runtime";
 import { resolveStateDir } from "openclaw/plugin-sdk/state-paths";
+import { resolvePreferredOpenClawTmpDir } from "openclaw/plugin-sdk/temp-path";
 import { z } from "zod";
 
 export type AppleFmFacts = {
@@ -122,7 +123,9 @@ export function createAppleFmNative(pluginRoot: string) {
     }
     // First-time discovery runs a disposable helper off-process. It must not install
     // anything in OpenClaw state before the user selects this model.
-    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-apple-fm-probe-"));
+    const directory = await fs.mkdtemp(
+      path.join(resolvePreferredOpenClawTmpDir(), "openclaw-apple-fm-probe-"),
+    );
     const temporary = path.join(directory, "helper");
     const timeout = AbortSignal.timeout(30_000);
     const probeOptions = {

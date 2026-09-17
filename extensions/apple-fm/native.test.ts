@@ -3,10 +3,12 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { runCommandBuffered } from "openclaw/plugin-sdk/process-runtime";
+import { resolvePreferredOpenClawTmpDir } from "openclaw/plugin-sdk/temp-path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createAppleFmNative, type AppleFmNative } from "./native.js";
 
 vi.mock("openclaw/plugin-sdk/process-runtime", () => ({ runCommandBuffered: vi.fn() }));
+vi.mock("openclaw/plugin-sdk/temp-path", () => ({ resolvePreferredOpenClawTmpDir: vi.fn() }));
 const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform")!;
 const originalArch = Object.getOwnPropertyDescriptor(process, "arch")!;
 const facts = { available: true, modelName: "AFM 3 Core Advanced", contextWindow: 8192 };
@@ -25,7 +27,7 @@ beforeEach(async () => {
   native = createAppleFmNative(fileURLToPath(new URL(".", import.meta.url)));
   directory = await fs.mkdtemp(path.join(os.tmpdir(), "apple-fm-native-test-"));
   vi.stubEnv("OPENCLAW_STATE_DIR", directory);
-  vi.spyOn(os, "tmpdir").mockReturnValue(directory);
+  vi.mocked(resolvePreferredOpenClawTmpDir).mockReturnValue(directory);
   Object.defineProperty(process, "platform", { ...originalPlatform, value: "darwin" });
   Object.defineProperty(process, "arch", { ...originalArch, value: "arm64" });
   vi.spyOn(os, "release").mockReturnValue("26.0.0");
