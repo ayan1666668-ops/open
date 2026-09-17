@@ -2296,9 +2296,9 @@
                       "providers/cloudflare-ai-gateway",
                       "providers/kilocode",
                       "providers/litellm",
-                      "providers/openrouter",
-                      "providers/vercel-ai-gateway",
                       "providers/neon",
+                      "providers/openrouter",
+                      "providers/vercel-ai-gateway"
                     ]
                   },
                   {
