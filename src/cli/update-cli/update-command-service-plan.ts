@@ -5,8 +5,9 @@ import { asNullableRecord } from "@openclaw/normalization-core/record-coerce";
 import { err as resultError, ok, type Result } from "@openclaw/normalization-core/result";
 import { stableStringify } from "@openclaw/normalization-core/stable-stringify";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
-import { minVersion, validRange, valid } from "semver";
+import { compare, minVersion, Range, satisfies as satisfiesRange, validRange, valid } from "semver";
 import { detectCurrentSqliteCapabilities, nodeRuntimeFailure } from "../../../node-sqlite.mjs";
+import { SUPPORTED_NODE_VERSION_RANGE } from "../../../node-version.mjs";
 import { createConfigIO } from "../../config/io.js";
 import { resolveGatewayPort } from "../../config/paths.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
@@ -357,15 +358,17 @@ export async function resolvePackageRuntimePreflight(params: {
     : `Node ${runtime.version ?? "unknown"}`;
   const engineRange = target.nodeEngine ? validRange(target.nodeEngine) : null;
   const minimum = engineRange ? (minVersion(engineRange)?.version ?? "unspecified") : "unspecified";
+  const recommendation = engineRange ? minimumSupportedNodeVersion(engineRange) : undefined;
   const requirement = target.nodeEngine ? `Node ${target.nodeEngine}` : "a working Node runtime";
-  const upgrade =
-    minimum === "unspecified"
-      ? "install a compatible Node build from https://nodejs.org/en/download"
-      : `with nvm, run \`nvm install ${minimum} && nvm use ${minimum}\``;
+  const upgrade = recommendation
+    ? `with nvm, run \`nvm install ${recommendation} && nvm use ${recommendation}\`, then rerun \`openclaw update\``
+    : engineRange
+      ? `no Node version satisfies both this range and this updater's supported range (${SUPPORTED_NODE_VERSION_RANGE}). This candidate version cannot be run by this updater with a supported Node release; install a supported Node and select a compatible OpenClaw target before rerunning \`openclaw update\``
+      : `install a supported Node build (${SUPPORTED_NODE_VERSION_RANGE}) from https://nodejs.org/en/download, then rerun \`openclaw update\``;
   return {
     ...resultError<PackageRuntimePreflight, string>(
       [
-        `openclaw@${targetVersion} requires ${requirement}; selected runtime is ${runtimeLabel}; ${upgrade}, then rerun \`openclaw update\`.`,
+        `openclaw@${targetVersion} requires ${requirement}; selected runtime is ${runtimeLabel}; ${upgrade}.`,
         ...(runtime.failure ? [runtime.failure] : []),
         ...(runtime.nodeRunner
           ? ["The managed Gateway service must also use the compatible Node runtime."]
@@ -381,6 +384,24 @@ export async function resolvePackageRuntimePreflight(params: {
       }),
     ],
   };
+}
+
+function minimumSupportedNodeVersion(engineRange: string): string | undefined {
+  const candidate = new Range(engineRange);
+  return new Range(SUPPORTED_NODE_VERSION_RANGE).set
+    .flatMap((supported) =>
+      candidate.set.flatMap((required) => {
+        const intersection = [...supported, ...required].map((entry) => entry.value).join(" ");
+        const minimum = minVersion(intersection);
+        if (!minimum) {
+          return [];
+        }
+        // Node's release contract excludes prereleases, even when engines allow them.
+        const release = `${minimum.major}.${minimum.minor}.${minimum.patch}`;
+        return satisfiesRange(release, intersection) ? [release] : [];
+      }),
+    )
+    .toSorted(compare)[0];
 }
 
 async function resolvePackageRuntimeForPreflight(params: {

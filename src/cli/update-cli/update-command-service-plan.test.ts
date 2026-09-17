@@ -1,6 +1,9 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { satisfies } from "semver";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { nodeRuntimeFailure } from "../../../node-sqlite.mjs";
+import { isSupportedOpenClawNodeVersion } from "../../../node-version.mjs";
 import { resolveNodeRuntimeInfo } from "../../daemon/runtime-paths.js";
 import { prepareUpdateFailureReport } from "../../infra/update-failure-report-prepare.js";
 import { withTempDir } from "../../test-utils/temp-dir.js";
@@ -175,6 +178,38 @@ describe("package runtime compatibility guidance", () => {
     },
   );
 
+  it.each([
+    [">=22.19.0", "24.16.0"],
+    [">=24.18.0 <25", "24.18.0"],
+    ["^22 || >=25 <27", "26.1.0"],
+    [">=26.2.0-rc.1 <27", "26.2.0"],
+  ])("recommends a release usable by the updater and candidate %s", async (engine, minimum) => {
+    const node = "22.23.2";
+    vi.stubGlobal("process", { ...process, versions: { ...process.versions, node } });
+    const result = await resolvePackageRuntimePreflight({
+      target: { version: "2027.1.0", nodeEngine: engine },
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      failureFacts: [{ check: "node-runtime", code: "node-runtime-preflight" }],
+      error: [
+        `openclaw@2027.1.0 requires Node ${engine}; selected runtime is Node ${node}; with nvm, run \`nvm install ${minimum} && nvm use ${minimum}\`, then rerun \`openclaw update\`.`,
+        `Node ${node}: openclaw requires Node >=24.16.0 <25, or >=26.1.0.`,
+      ].join("\n"),
+    });
+    expect(satisfies(minimum, engine)).toBe(true);
+    expect(isSupportedOpenClawNodeVersion(minimum)).toBe(true);
+    expect(
+      nodeRuntimeFailure(minimum, {
+        available: true,
+        version: "3.51.3",
+        text: true,
+        blob: true,
+        json: true,
+      }),
+    ).toBeNull();
+  });
+
   for (const { name, engine, minimum } of [
     {
       name: "reports the full target range when Node is below its minimum",
@@ -184,7 +219,12 @@ describe("package runtime compatibility guidance", () => {
     {
       name: "reports incompatibility when Node exceeds an exclusive upper bound",
       engine: ">=22.22.3 <23",
-      minimum: "22.22.3",
+      minimum: null,
+    },
+    {
+      name: "reports an unsupported release line with no common version",
+      engine: ">=25.0.0 <26",
+      minimum: null,
     },
   ]) {
     it(name, async () => {
@@ -196,7 +236,11 @@ describe("package runtime compatibility guidance", () => {
         throw new Error("Expected an incompatible Node runtime to be refused");
       }
       expect(result.error, "Node compatibility guidance must describe the target range").toBe(
-        `openclaw@${version} requires Node ${engine}; selected runtime is Node ${process.versions.node}; with nvm, run \`nvm install ${minimum} && nvm use ${minimum}\`, then rerun \`openclaw update\`.`,
+        `openclaw@${version} requires Node ${engine}; selected runtime is Node ${process.versions.node}; ${
+          minimum
+            ? `with nvm, run \`nvm install ${minimum} && nvm use ${minimum}\`, then rerun \`openclaw update\``
+            : "no Node version satisfies both this range and this updater's supported range (>=24.16.0 <25 || >=26.1.0). This candidate version cannot be run by this updater with a supported Node release; install a supported Node and select a compatible OpenClaw target before rerunning `openclaw update`"
+        }.`,
       );
     });
   }

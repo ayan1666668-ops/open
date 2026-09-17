@@ -87,8 +87,12 @@ the CLI fallback on the Gateway host.
 ## Node and global install permissions
 
 For `node-runtime-preflight`, upgrade the runtime named in the message to a
-version satisfying the candidate's full engine range, then rerun the same
-`openclaw update` command. If the Gateway uses a different Node executable from
+version satisfying both the candidate's full engine range and the updater's
+supported Node range, then rerun the same `openclaw update` command. The suggested
+version is the lowest supported release in that intersection. If the ranges do
+not overlap, install a supported Node and select a compatible OpenClaw target;
+that candidate cannot run through this updater on a supported Node release.
+If the Gateway uses a different Node executable from
 your shell, its runtime must also be compatible. See [Node.js](/install/node).
 
 For `global-install-permission-denied`, check the named directory and owner.

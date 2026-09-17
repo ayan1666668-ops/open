@@ -8108,7 +8108,7 @@ describe("update-cli", () => {
     expect(packageInstallCommandCall()?.[0]).toBeUndefined();
     expect(listUpdateRuns({ limit: 1 })[0]?.reason).toBe("node-runtime-preflight");
     expect(defaultRuntime.log).toHaveBeenCalledWith(
-      `openclaw@2026.3.23-2 requires Node >=22.19.0; selected runtime is Node ${process.versions.node}; with nvm, run \`nvm install 22.19.0 && nvm use 22.19.0\`, then rerun \`openclaw update\`.`,
+      `openclaw@2026.3.23-2 requires Node >=22.19.0; selected runtime is Node ${process.versions.node}; with nvm, run \`nvm install 24.16.0 && nvm use 24.16.0\`, then rerun \`openclaw update\`.`,
     );
   });
 
@@ -11785,7 +11785,7 @@ describe("update-cli", () => {
     expect(defaultRuntime.exit).not.toHaveBeenCalled();
     expect(listUpdateRuns({ limit: 1 })[0]?.reason).toBe("node-runtime-preflight");
     expect(defaultRuntime.log).toHaveBeenCalledWith(
-      `openclaw@2026.5.20 requires Node >=22.19.0; selected runtime is Node 22.18.0 at ${serviceNode}; with nvm, run \`nvm install 22.19.0 && nvm use 22.19.0\`, then rerun \`openclaw update\`.\nNode 22.18.0: node:sqlite truncates TEXT at embedded NUL (nodejs/node#61954)\nThe managed Gateway service must also use the compatible Node runtime.`,
+      `openclaw@2026.5.20 requires Node >=22.19.0; selected runtime is Node 22.18.0 at ${serviceNode}; with nvm, run \`nvm install 24.16.0 && nvm use 24.16.0\`, then rerun \`openclaw update\`.\nNode 22.18.0: node:sqlite truncates TEXT at embedded NUL (nodejs/node#61954)\nThe managed Gateway service must also use the compatible Node runtime.`,
     );
   });
 
