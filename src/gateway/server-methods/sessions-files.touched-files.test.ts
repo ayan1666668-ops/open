@@ -483,4 +483,30 @@ describe("sessions.files touched-file folds", () => {
       fs.rmSync(outsidePath, { force: true });
     }
   });
+
+  it("omits media and other non-file references without hiding missing workspace files", async () => {
+    useSqliteSession(hoisted.loadSessionEntry, workspaceRoot, "sess-touched-media-refs");
+    mockVisibleMessages(
+      [
+        "media://inbound/image---15547f7e-c109-401d-93c3-7f264c1d8552.png",
+        "media://inbound/example.png",
+        "https://example.com/report.pdf",
+        "..cache/missing.txt",
+        "src/readme.md",
+      ].map((filePath) => assistantToolCall("read", { path: filePath })),
+    );
+
+    const listPaths = async (): Promise<unknown[]> => {
+      const payload = expectOkPayload(
+        await invokeSessionFilesHandler("sessions.files.list", {
+          sessionKey: "agent:main:main",
+        }),
+      );
+      return payload.files.map((file: Record<string, unknown>) => file.path);
+    };
+
+    expect(await listPaths()).toEqual(["..cache/missing.txt", "src/readme.md"]);
+    // A cached fold replays the same transcript facts, so a repeat listing must agree.
+    expect(await listPaths()).toEqual(["..cache/missing.txt", "src/readme.md"]);
+  });
 });

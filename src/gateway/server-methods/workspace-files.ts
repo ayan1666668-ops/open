@@ -13,6 +13,7 @@ import { resolveToCwd as resolveSessionToolPathToCwd } from "../../agents/sessio
 import { insideGitCheckout } from "../../agents/worktrees/git.js";
 import { FsSafeError } from "../../infra/fs-safe.js";
 import { isPathInside } from "../../infra/path-guards.js";
+import { classifyMediaReferenceSource } from "../../media/media-reference.js";
 import {
   decodeUtf8Strict,
   listWorkspacePath,
@@ -82,12 +83,26 @@ function toDisplayPath(root: string, resolved: string): string {
   return relative.split(path.sep).join("/");
 }
 
+/**
+ * Transcript facts can name references that are not workspace files at all. Inbound
+ * attachments arrive as `media://inbound/<id>` URIs, and remote or inline sources reach the
+ * fold the same way. Cwd resolution turns those into inside-root relative paths such as
+ * `<root>/media:/inbound/<id>`, so the containment filter below accepts them and the file
+ * panel then offers an entry that can never be opened. The workspace owner resolves only
+ * filesystem references — plain and absolute paths, `~` paths, file URLs, and Windows drive
+ * paths — so every other scheme stays with the surface that owns it.
+ */
+function isWorkspaceFileReference(filePath: string): boolean {
+  const source = classifyMediaReferenceSource(filePath);
+  return !source.hasScheme || source.isFileUrl || source.looksLikeWindowsDrivePath;
+}
+
 function resolveTouchedFilePath(params: {
   root: string | undefined;
   fileRoot: string | undefined;
   filePath: string;
 }): string | undefined {
-  if (!params.root) {
+  if (!params.root || !isWorkspaceFileReference(params.filePath)) {
     return undefined;
   }
   const base = params.fileRoot ?? params.root;
@@ -449,7 +464,7 @@ export async function listSessionWorkspaceFiles(
     ? loaded.files.filter((file) =>
         Boolean(resolveTouchedFilePath({ root, fileRoot: loaded.fileRoot, filePath: file.path })),
       )
-    : loaded.files;
+    : loaded.files.filter((file) => isWorkspaceFileReference(file.path));
   const files = await Promise.all(
     workspaceFiles.map((file) =>
       toSessionFileEntry(file, loaded.root, loaded.fileRoot, { workspaceRoot }),
