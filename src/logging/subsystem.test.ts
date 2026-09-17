@@ -459,13 +459,65 @@ describe("createSubsystemLogger().isEnabled", () => {
     const warnLine = String(mockCall(warn)[0]);
     expect(warnLine).toContain("slow Codex catalog list phases");
     expect(warnLine).toContain(
-      'elapsedMs=12345 admissionWaitMs=0 admitted=true phaseDurationsMs={"open":3,"validation":8} note="two words" error="boom"',
+      'elapsedMs=12345 admissionWaitMs=0 admitted=true phaseDurationsMs={"open":3,"validation":8} note="two words" error=boom',
     );
     expect(warnLine).not.toContain("skipped=");
     expect(String(mockCall(error)[0])).toContain("catalog failed reason=timeout");
   });
 
-  it("keeps values without a JSON form on one line instead of dropping the field", () => {
+  it("masks key-aware sensitive fields in the console tail", () => {
+    setLoggerOverride({ level: "silent", consoleLevel: "warn", consoleStyle: "pretty" });
+    const warn = vi.fn();
+    loggingState.rawConsole = { log: vi.fn(), info: vi.fn(), warn, error: vi.fn() };
+
+    createSubsystemLogger("gateway").warn("provider retry", {
+      apiToken: "opaque-value-no-pattern-match",
+      nested: { password: "hunter2" },
+      elapsedMs: 12,
+    });
+
+    const warnLine = String(mockCall(warn)[0]);
+    expect(warnLine).not.toContain("opaque-value-no-pattern-match");
+    expect(warnLine).not.toContain("hunter2");
+    expect(warnLine).toContain("elapsedMs=12");
+  });
+
+  it("redacts structured fields before the console tail length cap clips them", () => {
+    setLoggerOverride({ level: "silent", consoleLevel: "warn", consoleStyle: "pretty" });
+    const warn = vi.fn();
+    loggingState.rawConsole = { log: vi.fn(), info: vi.fn(), warn, error: vi.fn() };
+
+    createSubsystemLogger("gateway").warn("provider retry", {
+      // Sized so an unredacted tail would be cut in the middle of the value below.
+      padding: "x".repeat(2040),
+      apiToken: "opaque-value-no-pattern-match",
+    });
+
+    const warnLine = String(mockCall(warn)[0]);
+    expect(warnLine).not.toContain("opaque-value");
+    expect(warnLine).toContain("...(truncated)");
+  });
+
+  it("leaves json console output untouched and serializes each field once", () => {
+    setLoggerOverride({ level: "silent", consoleLevel: "warn", consoleStyle: "json" });
+    const warn = vi.fn();
+    loggingState.rawConsole = { log: vi.fn(), info: vi.fn(), warn, error: vi.fn() };
+    let serializations = 0;
+    const stateful = {
+      toJSON() {
+        serializations += 1;
+        return { calls: serializations };
+      },
+    };
+
+    createSubsystemLogger("gateway").warn("provider retry", { elapsedMs: 12, stateful });
+
+    const parsed = JSON.parse(String(mockCall(warn)[0]));
+    expect(parsed).toMatchObject({ level: "warn", message: "provider retry", elapsedMs: 12 });
+    expect(serializations).toBe(1);
+  });
+
+  it("keeps a circular field readable on one line and omits fields with no JSON form", () => {
     setLoggerOverride({ level: "silent", consoleLevel: "warn", consoleStyle: "pretty" });
     const warn = vi.fn();
     loggingState.rawConsole = { log: vi.fn(), info: vi.fn(), warn, error: vi.fn() };
@@ -474,12 +526,15 @@ describe("createSubsystemLogger().isEnabled", () => {
 
     createSubsystemLogger("session-catalog").warn("slow list", {
       circular,
+      big: 10n,
+      // Dropped by the shared redactor, matching the file sink and the json style.
       handler: () => undefined,
     });
 
     const warnLine = String(mockCall(warn)[0]);
-    expect(warnLine).toContain("circular=");
-    expect(warnLine).toContain("handler=");
+    expect(warnLine).toContain('circular={"name":"catalog","self":"[Circular]"}');
+    expect(warnLine).toContain("big=10");
+    expect(warnLine).not.toContain("handler=");
     expect(warnLine).not.toContain("\n");
   });
 

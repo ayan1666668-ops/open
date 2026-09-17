@@ -168,7 +168,10 @@ Console logs are **TTY-aware** and formatted for readability:
 - Structured fields on `warn`, `error`, and `fatal` records, appended as one
   compact `key=value ...` tail (nested values as JSON, capped at 2 KiB) so
   plain-text sinks such as journald keep the diagnostics; `info` and lower
-  console lines stay message-only, and the file log always carries the full record
+  console lines stay message-only, and the file log always carries the full record.
+  These fields go through the same redaction as the `json` console style before
+  they are flattened, so a sensitive key such as `apiToken` is masked by name and
+  the length cap can only clip text that is already masked
 
 Console formatting is controlled by `logging.consoleStyle`.
 
