@@ -766,8 +766,11 @@ export function createChangedNodeTestShards(
     )
     .map(({ target }) => target);
 
-  const shards = [
-    ...canonicalShards.map((shard) => ({ ...shard, configs: [] })),
+  const shards: ChangedNodeTestShard[] = [];
+  for (const shard of canonicalShards) {
+    shards.push({ ...shard, configs: [] });
+  }
+  shards.push(
     ...packChangedExtensionConfigShards(createChangedExtensionConfigShardsForPaths(livePaths, cwd)),
     // Native browser files run in checks-ui, including precise changed-file plans.
     ...createChangedTargetShards(
@@ -778,7 +781,7 @@ export function createChangedNodeTestShards(
       },
     ),
     ...boundaryShards,
-  ];
+  );
   // Covered source targets keep build-artifacts ownership even with no Node rows.
   return shards.length > 0 || targets.length < targetPlans.length ? shards : null;
 }
