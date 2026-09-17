@@ -2,6 +2,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { getCliProcessTestTimeout } from "../cli/cli-process-child.test-helpers.js";
 import { readConfigFileSnapshot } from "../config/config.js";
 import { writeOpenClawConfig } from "../config/test-helpers.js";
 import { runInitialConfigWriteHealth } from "../flows/doctor-health-contribution-runners.config.js";
@@ -15,6 +16,8 @@ import {
   runBuiltRuntime,
 } from "./doctor-config-preflight.process.test-support.js";
 import { withDoctorConfigPreflightHome } from "./doctor-config-preflight.test-support.js";
+
+const CLI_CHILD_TIMEOUT_MS = 60_000;
 
 async function repairConfig(configPath: string) {
   const ctx = await prepareDoctorContext(configPath);
@@ -77,7 +80,7 @@ describe("Doctor legacy config composition", () => {
           NO_COLOR: "1",
         };
         const run = async (args: string[], expected = 0) => {
-          const result = await runBuiltRuntime(runtimeRoot, env, args, 60_000);
+          const result = await runBuiltRuntime(runtimeRoot, env, args, CLI_CHILD_TIMEOUT_MS);
           const output = `${result.stdout}\n${result.stderr}`;
           expect(result.code, output).toBe(expected);
         };
@@ -110,6 +113,12 @@ describe("Doctor legacy config composition", () => {
         expect(await fs.readFile(configPath, "utf8")).toBe(first);
       });
     },
+    getCliProcessTestTimeout(
+      CLI_CHILD_TIMEOUT_MS,
+      CLI_CHILD_TIMEOUT_MS,
+      CLI_CHILD_TIMEOUT_MS,
+      CLI_CHILD_TIMEOUT_MS,
+    ),
   );
 
   it.each([

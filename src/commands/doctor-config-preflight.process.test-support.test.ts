@@ -2,9 +2,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
+import { getCliProcessTestTimeout } from "../cli/cli-process-child.test-helpers.js";
 import { runBuiltRuntime } from "./doctor-config-preflight.process.test-support.js";
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
+const DIAGNOSTIC_CHILD_TIMEOUT_MS = 1_000;
 
 function createRuntime(source: string): string {
   const runtimeRoot = tempDirs.make("openclaw-doctor-child-diagnostics-");
@@ -63,7 +65,9 @@ describe("Doctor runtime child diagnostics", () => {
         'console.log("validation finished"); setInterval(() => {}, 1_000);',
       );
       const failure = await Promise.resolve()
-        .then(() => runBuiltRuntime(runtimeRoot, { PATH: process.env.PATH }, [], 1_000))
+        .then(() =>
+          runBuiltRuntime(runtimeRoot, { PATH: process.env.PATH }, [], DIAGNOSTIC_CHILD_TIMEOUT_MS),
+        )
         .catch((error: unknown) => error);
 
       expect(failure).toBeInstanceOf(Error);
@@ -81,5 +85,6 @@ describe("Doctor runtime child diagnostics", () => {
         ]),
       });
     },
+    getCliProcessTestTimeout(DIAGNOSTIC_CHILD_TIMEOUT_MS),
   );
 });

@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
+import { getCliProcessTestTimeout } from "../cli/cli-process-child.test-helpers.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { resolveRuntimeWorkerUrl } from "../infra/runtime-worker-url.js";
 import {
@@ -16,6 +17,8 @@ import {
 } from "./doctor-config-preflight.process.test-support.js";
 import { doctorConfigRuntimeEntrypoints } from "./doctor-config-runtime.test-support.js";
 
+const DOCTOR_CHILD_TIMEOUT_MS = 60_000;
+const VALIDATION_CHILD_TIMEOUT_MS = 30_000;
 const tempDirs = useAutoCleanupTempDirTracker(afterAll);
 const doctorArgs = ["doctor", "--fix", "--non-interactive", "--no-workspace-suggestions"];
 let runtimeRoot: string;
@@ -79,7 +82,7 @@ describe("Doctor retired plugin install config", () => {
       expect(fs.existsSync(`${configPath}.last-good`)).toBe(false);
 
       for (const pass of ["repair", "repeat"]) {
-        const result = await runBuiltRuntime(runtimeRoot, env, doctorArgs, 60_000);
+        const result = await runBuiltRuntime(runtimeRoot, env, doctorArgs, DOCTOR_CHILD_TIMEOUT_MS);
         const output = `${pass}: ${result.stdout}\n${result.stderr}`;
         expect(result.code, output).toBe(0);
         const repaired = JSON.parse(fs.readFileSync(configPath, "utf8")) as OpenClawConfig;
@@ -95,11 +98,21 @@ describe("Doctor retired plugin install config", () => {
         expect(readPersistedInstalledPluginIndexInstallRecords({ stateDir, env })).toEqual(
           empty ? { existing: durable } : { existing: durable, imported: legacy },
         );
-        const validation = await runBuiltRuntime(runtimeRoot, env, ["config", "validate"], 30_000);
+        const validation = await runBuiltRuntime(
+          runtimeRoot,
+          env,
+          ["config", "validate"],
+          VALIDATION_CHILD_TIMEOUT_MS,
+        );
         expect(validation.code, `${validation.stdout}\n${validation.stderr}`).toBe(0);
       }
     },
-    120_000,
+    getCliProcessTestTimeout(
+      DOCTOR_CHILD_TIMEOUT_MS,
+      VALIDATION_CHILD_TIMEOUT_MS,
+      DOCTOR_CHILD_TIMEOUT_MS,
+      VALIDATION_CHILD_TIMEOUT_MS,
+    ),
   );
 
   it("preserves records when plain Doctor gains config-write consent after preflight", async () => {

@@ -17,6 +17,7 @@ import { createDeferredCore } from "../shared/deferred.js";
 
 const OUTPUT_TAIL_CHARS = 8_000;
 const DIAGNOSTIC_GRACE_MS = 200;
+const TEST_SETUP_AND_ASSERTION_MARGIN_MS = 5_000;
 const reportDirs = useAutoCleanupTempDirTracker(afterEach);
 const diagnosticPreload = fileURLToPath(
   new URL("./cli-process-diagnostics.test-support.cjs", import.meta.url),
@@ -59,6 +60,18 @@ function releaseCliProcessChild(child: ChildProcessWithoutNullStreams): string[]
  * this single budget applies to all of them.
  */
 export const CLI_PROCESS_DEADLOCK_GUARD_MS = DEFAULT_VITEST_TEST_TIMEOUT_MS - 20_000;
+
+/** A sequential test stops at its first timed-out child, so it needs one diagnostic drain. */
+export function getCliProcessTestTimeout(
+  childTimeoutMs: number,
+  ...additionalChildTimeoutsMs: number[]
+): number {
+  return (
+    additionalChildTimeoutsMs.reduce((total, timeoutMs) => total + timeoutMs, childTimeoutMs) +
+    Math.max(DIAGNOSTIC_GRACE_MS, REPORT_GRACE_MS) +
+    TEST_SETUP_AND_ASSERTION_MARGIN_MS
+  );
+}
 
 export type CliProcessChildResult = {
   code: number | null;
