@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 import { buildAgentRunTerminalOutcomeFromLifecycleEvent } from "../../agent-run-terminal-outcome.js";
 import { FailoverError } from "../../failover-error.js";
 import { resolveAgentRunErrorLifecycleFields } from "../../run-termination.js";
+import { SessionManager } from "../../sessions/session-manager.js";
+import { resolveAuthProfileFailureReason } from "./auth-profile-failure-policy.js";
 import { handleEmbeddedPromptFailure } from "./prompt-failure.js";
 
 type Params = Parameters<typeof handleEmbeddedPromptFailure>[0];
@@ -327,5 +329,54 @@ describe("handleEmbeddedPromptFailure", () => {
     }
 
     await vi.waitFor(() => expect(events).toEqual(["advance", "mark-start", "mark-finish"]));
+  });
+
+  it("keeps a live SessionManager transcript-validation error off shared credential health", async () => {
+    let promptError: Error;
+    try {
+      SessionManager.inMemory("/tmp").appendModelChange("", "");
+      throw new Error("expected SessionManager.appendModelChange to reject the invalid entry");
+    } catch (error) {
+      if (
+        !(error instanceof Error) ||
+        error.message === "expected SessionManager.appendModelChange to reject the invalid entry"
+      ) {
+        throw error;
+      }
+      promptError = error;
+    }
+
+    const params = makeParams({
+      promptError,
+      provider: "openrouter",
+      modelId: "gemini-2.5-flash",
+      activeErrorContext: { provider: "openrouter", model: "gemini-2.5-flash" },
+      failover: {
+        resolveAuthProfileFailureReason: (reason, opts) =>
+          resolveAuthProfileFailureReason({
+            failoverReason: reason,
+            providerStarted: opts?.providerStarted,
+            transientRateLimit: opts?.transientRateLimit,
+            policy: "shared",
+          }),
+        advanceAuthProfile: vi.fn(async () => false),
+      },
+    });
+
+    const error = await handleEmbeddedPromptFailure(params).catch((failure: unknown) => failure);
+
+    expect(promptError.message).toMatch(/^Invalid session transcript entry:/);
+    expect(error).toBe(promptError);
+    expect(params.failover.maybeMarkAuthProfileFailure).not.toHaveBeenCalled();
+    expect(params.failover.advanceAuthProfile).not.toHaveBeenCalled();
+    expect(params.traceAttempts).toEqual([
+      expect.objectContaining({
+        provider: "openrouter",
+        model: "gemini-2.5-flash",
+        result: "surface_error",
+        reason: "format",
+        stage: "prompt",
+      }),
+    ]);
   });
 });

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { resolveReplyFailoverFacts } from "../../auto-reply/reply/agent-runner-failure-reply.js";
 import { formatUserFacingAssistantErrorText } from "../embedded-agent-helpers/error-text.js";
 import { resolveAuthProfileFailureReason } from "../embedded-agent-runner/run/auth-profile-failure-policy.js";
 import { SessionManager } from "../sessions/session-manager.js";
@@ -39,6 +40,7 @@ describe("Gateway transcript validation failure classification", () => {
     ).toBe(
       "LLM request failed: the Gateway rejected a session transcript entry. Compact or reset this session and try again.",
     );
+    expect(resolveReplyFailoverFacts(new Error(message), message).reason).toBe("format");
   });
 
   it("still cools credentials and names provider session expiry for genuine invalid-session copy", () => {
