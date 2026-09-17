@@ -293,6 +293,7 @@ describe("dispatchReplyFromConfig owner settlement", () => {
                 return { suppression: { reason: "adapter_returned_no_identity" } };
               }
             }
+            return undefined;
           },
           onError,
         });
@@ -476,6 +477,117 @@ describe("dispatchReplyFromConfig owner settlement", () => {
         }
       },
     );
+
+    it("settles from the answer's receipt when a trailing status notice fails", async () => {
+      type ResolverOptions = import("./get-reply.types.js").InternalGetReplyOptions;
+      let retained: ResolverOptions | undefined;
+      const noticeEntered = createDeferred();
+      const releaseNotice = createDeferred();
+      const failure = new Error("notice transport failed");
+      const onError = vi.fn();
+      const onQueuedFollowupSettled = vi.fn();
+      const dispatcher = createReplyDispatcher({
+        humanDelay: { mode: "custom", minMs: 1, maxMs: 1 },
+        deliver: async (payload) => {
+          if (payload.isStatusNotice !== true) {
+            return;
+          }
+          noticeEntered.resolve();
+          await releaseNotice.promise;
+          throw failure;
+        },
+        onError,
+      });
+      const dispatch = dispatchReplyFromConfig({
+        ctx: createHookCtx(),
+        cfg: emptyConfig,
+        dispatcher,
+        replyOptions: { onQueuedFollowupSettled },
+        replyResolver: async (_ctx, opts) => {
+          retained = opts;
+          await opts?.onBlockReply?.({ text: "queued reply" });
+          return undefined;
+        },
+      });
+      try {
+        await dispatch;
+        dispatcher.markComplete();
+        await dispatcher.waitForIdle();
+        await retained?.onBlockReply?.({ text: "queued notice", isStatusNotice: true });
+        await noticeEntered.promise;
+        const cleanup = retained?.onQueuedFollowupSettled?.({ finalDeliveryFailed: false });
+        await new Promise<void>((resolve) => {
+          setImmediate(resolve);
+        });
+        releaseNotice.resolve();
+        await cleanup;
+        await dispatcher.waitForIdle();
+        expect(onError).toHaveBeenCalledExactlyOnceWith(failure, { kind: "block" });
+        // The answer confirmed delivery; the trailing notice's failure is
+        // supplemental and must not retain the settled draft.
+        expect(onQueuedFollowupSettled).toHaveBeenCalledWith({ finalDeliveryFailed: false });
+      } finally {
+        releaseNotice.resolve();
+        dispatcher.markComplete();
+        await dispatcher.waitForIdle().catch(() => undefined);
+      }
+    });
+
+    it("keeps the answer's failed receipt when a trailing status notice delivers", async () => {
+      type ResolverOptions = import("./get-reply.types.js").InternalGetReplyOptions;
+      let retained: ResolverOptions | undefined;
+      const answerEntered = createDeferred();
+      const releaseAnswer = createDeferred();
+      const failure = new Error("answer transport failed");
+      const onError = vi.fn();
+      const onQueuedFollowupSettled = vi.fn();
+      const dispatcher = createReplyDispatcher({
+        humanDelay: { mode: "custom", minMs: 1, maxMs: 1 },
+        deliver: async (payload) => {
+          if (payload.isStatusNotice === true || payload.text !== "queued reply") {
+            return;
+          }
+          answerEntered.resolve();
+          await releaseAnswer.promise;
+          throw failure;
+        },
+        onError,
+      });
+      const dispatch = dispatchReplyFromConfig({
+        ctx: createHookCtx(),
+        cfg: emptyConfig,
+        dispatcher,
+        replyOptions: { onQueuedFollowupSettled },
+        replyResolver: async (_ctx, opts) => {
+          retained = opts;
+          await opts?.onBlockReply?.({ text: "initial reply" });
+          return undefined;
+        },
+      });
+      try {
+        await dispatch;
+        dispatcher.markComplete();
+        await dispatcher.waitForIdle();
+        const answerSend = retained?.onBlockReply?.({ text: "queued reply" });
+        await answerEntered.promise;
+        await retained?.onBlockReply?.({ text: "queued notice", isStatusNotice: true });
+        const cleanup = retained?.onQueuedFollowupSettled?.({ finalDeliveryFailed: false });
+        await new Promise<void>((resolve) => {
+          setImmediate(resolve);
+        });
+        releaseAnswer.resolve();
+        await answerSend;
+        await cleanup;
+        await dispatcher.waitForIdle();
+        expect(onError).toHaveBeenCalledExactlyOnceWith(failure, { kind: "block" });
+        // The answer's send failed; the delivered notice must not mask it.
+        expect(onQueuedFollowupSettled).toHaveBeenCalledWith({ finalDeliveryFailed: true });
+      } finally {
+        releaseAnswer.resolve();
+        dispatcher.markComplete();
+        await dispatcher.waitForIdle().catch(() => undefined);
+      }
+    });
 
     it.each(["final delivery", "block receipt callback"] as const)(
       "clears the reply lane but defers follow-up admission until %s settles",

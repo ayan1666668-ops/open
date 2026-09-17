@@ -4,6 +4,7 @@ import {
   copyReplyPayloadMetadata,
   getReplyPayloadMetadata,
   isReplyPayloadStatusNotice,
+  isReplyPayloadTerminalContent,
 } from "../reply-payload.js";
 import type { GetReplyOptions, ReplyPayload } from "../types.js";
 import {
@@ -214,8 +215,14 @@ export function createDispatchBlockReplyHandler(state: PrepareDispatchExecutionR
               : dispatcher.waitForIdle().then(resolveWaitForIdleBlockReplyDelivery);
             const pending = receipt.then(() => undefined);
             void pending.catch(() => undefined);
+            // Every queued send joins the drain barrier, but only terminal
+            // content owns the settlement receipt: supplemental sends (status
+            // notices, reasoning, commentary) trail the answer and must not
+            // replace its confirmed delivery evidence.
             state.progressState.pendingDirectBlockReplyDelivery = pending;
-            state.progressState.pendingDirectBlockReplyDeliveryReceipt = receipt;
+            if (isReplyPayloadTerminalContent(payload)) {
+              state.progressState.pendingDirectBlockReplyDeliveryReceipt = receipt;
+            }
           }
           if (
             delivery.queued &&
