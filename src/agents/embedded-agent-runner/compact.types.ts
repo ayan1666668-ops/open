@@ -151,6 +151,8 @@ export type CompactEmbeddedAgentSessionParams = Pick<
   compactionTimeoutReset?: () => void;
   onCompactionHookMessages?: (payload: {
     phase: "before" | "after";
+    /** False for recovery notices after a rejected compaction. */
+    completed?: boolean;
     messages: string[];
     sessionId: string;
     sessionKey: string;

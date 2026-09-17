@@ -3,7 +3,12 @@ import type { AgentCompactionIdentifierPolicy } from "../../config/types.agent-d
 import type { Model } from "../../llm/types.js";
 import { createSessionManagerRuntimeRegistry } from "./session-manager-runtime-registry.js";
 
-export type CompactionSafeguardCancellation = { reason: string; error?: unknown };
+export type CompactionSafeguardCancellation = {
+  reason: string;
+  error?: unknown;
+  /** Stable audit codes only; never include source identifiers or summary text. */
+  qualityReasonCodes?: string[];
+};
 
 /** Runtime knobs consumed by the compaction safeguard extension. */
 type CompactionSafeguardRuntimeValue = {
@@ -44,6 +49,7 @@ export function setCompactionSafeguardCancellation(
   sessionManager: unknown,
   reason: string | undefined,
   error?: unknown,
+  qualityReasonCodes?: string[],
 ): void {
   const current = getCompactionSafeguardRuntime(sessionManager);
   const trimmed = reason?.trim();
@@ -52,7 +58,11 @@ export function setCompactionSafeguardCancellation(
   }
   const next = { ...current };
   if (trimmed) {
-    next.cancellation = { reason: trimmed, ...(error !== undefined ? { error } : {}) };
+    next.cancellation = {
+      reason: trimmed,
+      ...(error !== undefined ? { error } : {}),
+      ...(qualityReasonCodes ? { qualityReasonCodes } : {}),
+    };
   } else {
     delete next.cancellation;
   }

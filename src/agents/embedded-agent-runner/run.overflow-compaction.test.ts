@@ -289,13 +289,17 @@ describe("compactEmbeddedRunForRecovery", () => {
             }),
         );
         const contextEngine = makeContextEngine(delegateCompactionToRuntime, false);
+        const onAgentEvent = trigger === "overflow" ? vi.fn() : undefined;
+        const onCompactionHookMessages = vi.fn(async () => {});
         const pending = compactEmbeddedRunForRecovery(
           makeRecoveryInput({
             runParams: {
               ...baseRunParams,
+              onAgentEvent,
               config: { agents: { defaults: { compaction: { timeoutSeconds: 1 } } } },
             },
             contextEngine,
+            onCompactionHookMessages,
           }),
           {
             tokenBudget: 200_000,
@@ -312,6 +316,11 @@ describe("compactEmbeddedRunForRecovery", () => {
         await vi.advanceTimersByTimeAsync(1_100);
         await assertion;
         expect(compactRuntimeMocks.compactEmbeddedAgentSessionOnDemand).toHaveBeenCalledOnce();
+        expect(compactRuntimeMocks.compactEmbeddedAgentSessionOnDemand).toHaveBeenCalledWith(
+          expect.objectContaining({
+            onCompactionHookMessages: onAgentEvent ? onCompactionHookMessages : undefined,
+          }),
+        );
       } finally {
         vi.useRealTimers();
       }
@@ -640,22 +649,28 @@ describe("createEmbeddedRunCompactionRuntime", () => {
     );
   });
 
-  it("forwards non-empty compaction hook messages as agent events", async () => {
-    const fixture = await createRuntime();
+  it.each([undefined, false] as const)(
+    "forwards non-empty compaction hook messages with completed=%s",
+    async (completed) => {
+      const fixture = await createRuntime();
+      const message =
+        completed === false ? "Compaction repeatedly failed quality checks" : "Compaction complete";
 
-    await fixture.runtime.onCompactionHookMessages({
-      phase: "after",
-      messages: ["", "Compaction complete"],
-    });
+      await fixture.runtime.onCompactionHookMessages({
+        phase: "after",
+        completed,
+        messages: ["", message],
+      });
 
-    expect(fixture.onAgentEvent).toHaveBeenCalledWith({
-      stream: "compaction",
-      data: {
-        phase: "end",
-        completed: true,
-        messages: ["Compaction complete"],
-      },
-      sessionKey: "agent:main:session-1",
-    });
-  });
+      expect(fixture.onAgentEvent).toHaveBeenCalledWith({
+        stream: "compaction",
+        data: {
+          phase: "end",
+          completed: completed !== false,
+          messages: [message],
+        },
+        sessionKey: "agent:main:session-1",
+      });
+    },
+  );
 });
