@@ -129,6 +129,13 @@ function projectAgentEvent(event: AgentEventPayload): AgentAuditProjection | und
   }
   const provenance = projectExplicitAttribution(event);
   if (event.stream === "skill_selection" && event.data?.kind === "skill_selection") {
+    // Hidden non-lifecycle public events drop top-level sessionKey. Private skill
+    // audit still carries explicit attribution on the marker payload.
+    const skillProvenance = projectExplicitAttribution({
+      agentId: event.agentId ?? event.data.agentId,
+      sessionKey: event.sessionKey ?? event.data.sessionKey,
+      sessionId: event.sessionId ?? event.data.sessionId,
+    });
     const selectedSkill = auditSkillSelectionName(event.data.selectedSkill);
     const selectionSource = selectedSkill
       ? auditSkillSelectionSource(event.data.selectionSource)
@@ -152,11 +159,11 @@ function projectAgentEvent(event: AgentEventPayload): AgentAuditProjection | und
       sourceSequence: event.seq,
       occurredAt: event.ts,
       kind: "skill_selection" as const,
-      actorType: provenance.actorType,
-      actorId: provenance.agentId,
-      agentId: provenance.agentId,
-      ...(provenance.sessionKey ? { sessionKey: provenance.sessionKey } : {}),
-      ...(provenance.sessionId ? { sessionId: provenance.sessionId } : {}),
+      actorType: skillProvenance.actorType,
+      actorId: skillProvenance.agentId,
+      agentId: skillProvenance.agentId,
+      ...(skillProvenance.sessionKey ? { sessionKey: skillProvenance.sessionKey } : {}),
+      ...(skillProvenance.sessionId ? { sessionId: skillProvenance.sessionId } : {}),
       runId,
     };
     const input: SkillSelectionAuditEventInput = {
