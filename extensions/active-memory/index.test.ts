@@ -55,6 +55,7 @@ const hoisted = vi.hoisted(() => {
     },
   };
   return {
+    getActiveMemoryEscalationProvider: vi.fn(),
     closeActiveMemorySearchManager: vi.fn(async () => {}),
     getActiveMemorySearchManager: vi.fn(async () => ({ manager: null })),
     cleanupSessionLifecycleArtifacts: vi.fn(),
@@ -72,6 +73,10 @@ const hoisted = vi.hoisted(() => {
     ),
   };
 });
+
+vi.mock("openclaw/plugin-sdk/active-memory-escalation-runtime", () => ({
+  getActiveMemoryEscalationProvider: hoisted.getActiveMemoryEscalationProvider,
+}));
 
 vi.mock("openclaw/plugin-sdk/memory-host-search", () => ({
   closeActiveMemorySearchManager: hoisted.closeActiveMemorySearchManager,
@@ -1917,6 +1922,106 @@ describe("active-memory plugin", () => {
     expect(runEmbeddedAgent).not.toHaveBeenCalled();
     expect(hasDebugLine("active-memory: recall skipped reason=no-recall-intent")).toBe(true);
     expect(hasInfoLine("active-memory: recall skipped reason=no-recall-intent")).toBe(false);
+  });
+
+  it("uses a configured escalation provider to recall an ordinary turn", async () => {
+    const decide = vi.fn(async () => "recall" as const);
+    hoisted.getActiveMemoryEscalationProvider.mockReturnValue({
+      id: "local-memory-intent",
+      decide,
+    });
+    registerPluginConfig({
+      mode: "escalate",
+      escalationProvider: "local-memory-intent",
+    });
+
+    const result = await runPromptBuild(
+      { prompt: "Continue with that" },
+      {
+        sessionKey: "agent:main:webchat:direct:operator",
+        messageProvider: "webchat",
+        channelId: "operator",
+      },
+    );
+
+    expect(decide).toHaveBeenCalledOnce();
+    expect(decide).toHaveBeenCalledWith({
+      message: "Continue with that",
+      searchQuery: "Continue with that",
+      signal: expect.any(AbortSignal),
+    });
+    expect(runEmbeddedAgent).toHaveBeenCalledOnce();
+    expectPrependContextContains(result, "lemon pepper wings");
+  });
+
+  it("passes only bounded normalized text to an escalation provider", async () => {
+    const decide = vi.fn(async () => "skip" as const);
+    hoisted.getActiveMemoryEscalationProvider.mockReturnValue({
+      id: "local-memory-intent",
+      decide,
+    });
+    registerPluginConfig({
+      mode: "escalate",
+      escalationProvider: "local-memory-intent",
+    });
+
+    await runPromptBuild(
+      { prompt: `  ${"context ".repeat(100)}  ` },
+      {
+        sessionKey: "agent:main:webchat:direct:operator",
+        messageProvider: "webchat",
+        channelId: "operator",
+      },
+    );
+
+    const input = decide.mock.calls[0]?.[0];
+    expect(input?.message.length).toBeGreaterThan(0);
+    expect(input?.message.length).toBeLessThanOrEqual(480);
+    expect(input?.searchQuery.length).toBeGreaterThan(0);
+    expect(input?.searchQuery.length).toBeLessThanOrEqual(480);
+    expect(input?.message).not.toContain("  ");
+    expect(input?.searchQuery).not.toContain("  ");
+  });
+
+  it("uses a configured escalation provider to skip a built-in recall match", async () => {
+    const decide = vi.fn(async () => "skip" as const);
+    hoisted.getActiveMemoryEscalationProvider.mockReturnValue({
+      id: "local-memory-intent",
+      decide,
+    });
+    registerPluginConfig({
+      mode: "escalate",
+      escalationProvider: "local-memory-intent",
+    });
+
+    const result = await runPromptBuild(
+      { prompt: "What did we decide last time?" },
+      {
+        sessionKey: "agent:main:webchat:direct:operator",
+        messageProvider: "webchat",
+        channelId: "operator",
+      },
+    );
+
+    expect(decide).toHaveBeenCalledOnce();
+    expect(runEmbeddedAgent).not.toHaveBeenCalled();
+    expectPrependContextContains(result, skippedRecallContext);
+    expect(hasDebugLine("active-memory: recall skipped reason=provider-skip")).toBe(true);
+  });
+
+  it("keeps configured escalation provider ids on one log line", async () => {
+    registerPluginConfig({
+      mode: "escalate",
+      escalationProvider: "missing-provider\nforged",
+    });
+
+    await runPromptBuild({ prompt: "Explain the current configuration" });
+
+    expect(
+      hasDebugLine(
+        "active-memory: escalation provider unavailable id=missing-provider forged; using built-in matcher",
+      ),
+    ).toBe(true);
   });
 
   it("does not run deep recall when the live active-memory plugin entry is removed", async () => {
