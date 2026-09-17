@@ -26,6 +26,25 @@ export function createEmbeddedRunContextRecoveryState() {
       if (event.kind === "compaction") {
         state.autoCompactionCount += 1;
         state.lastCompactionTokensAfter = tokens;
+        return;
+      }
+      // A model turn that produced usage means the prompt was admitted, so the
+      // overflow the budget was spent on is over. Without this the counter only
+      // ever grows and a long run exhausts its three attempts on unrelated
+      // overflows it already recovered from.
+      state.overflowCompactionAttempts = 0;
+    },
+    /**
+     * Refunds an overflow compaction attempt that freed no context.
+     *
+     * The budget exists to stop unbounded compaction loops, so it may only be
+     * charged for compactions that actually shrank the prompt. A compaction
+     * reporting `tokensAfter >= tokensBefore` removed nothing and must not
+     * consume one of the three attempts.
+     */
+    refundOverflowCompactionAttempt() {
+      if (state.overflowCompactionAttempts > 0) {
+        state.overflowCompactionAttempts -= 1;
       }
     },
     retainTimeoutRecoveryMarker(marker: EmbeddedRunTimeoutRecoveryMarker) {
