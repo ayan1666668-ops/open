@@ -18,7 +18,7 @@ import {
 } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { createQaBusState, type QaBusState } from "./bus-state.js";
 import {
-  createCrablineProviderCorrelationKey,
+  createCrablineProviderCorrelation,
   createCrablineProviderDelivery,
   createCrablineProviderInboundInput,
   resolveCrablineStateConversation,
@@ -527,25 +527,30 @@ class QaCrablineTransport extends QaStateBackedTransportAdapter {
       target,
       providerThreadId,
     );
+    let deliveryThreadId = logicalTarget.threadId;
     if (providerThreadId === undefined && logicalTarget.threadId) {
+      const providerCorrelation = createCrablineProviderCorrelation(this.#adapter, logicalTarget);
       this.#state.rememberProviderTarget(providerTargetKey, {
         conversation: logicalTarget.conversation,
       });
-      this.#state.rememberProviderTarget(
-        createCrablineProviderCorrelationKey(this.#adapter, logicalTarget),
-        logicalTarget,
-      );
+      this.#state.rememberProviderTarget(providerCorrelation.providerTargetKey, logicalTarget);
+      if (this.#selection.channel === "mattermost") {
+        if (!providerCorrelation.threadId) {
+          throw new Error("Crabline Mattermost correlation did not resolve a native thread root");
+        }
+        deliveryThreadId = providerCorrelation.threadId;
+      }
     } else {
       this.#state.rememberProviderTarget(providerTargetKey, logicalTarget);
     }
     return {
       ...delivery,
-      ...(logicalTarget.threadId
+      ...(deliveryThreadId
         ? {
             threadId:
               this.#selection.channel === "discord"
-                ? resolveDiscordQaId(logicalTarget.threadId)
-                : logicalTarget.threadId,
+                ? resolveDiscordQaId(deliveryThreadId)
+                : deliveryThreadId,
           }
         : {}),
     };

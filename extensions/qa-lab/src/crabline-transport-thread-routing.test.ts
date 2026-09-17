@@ -1,5 +1,8 @@
 // Crabline runner tests preserve provider-native thread ownership at the Gateway boundary.
 import type { OpenClawCrablineChannelDriverSelection } from "@openclaw/crabline";
+import { mattermostPlugin } from "@openclaw/mattermost/channel-plugin-api.js";
+import { setMattermostRuntime } from "@openclaw/mattermost/runtime-api.js";
+import { createPluginRuntimeMock } from "openclaw/plugin-sdk/plugin-test-runtime";
 import { fetchWithSsrFGuard } from "openclaw/plugin-sdk/ssrf-runtime";
 import { withTempDir } from "openclaw/plugin-sdk/test-env";
 import { describe, expect, it, vi } from "vitest";
@@ -227,6 +230,60 @@ describe("Crabline provider thread routing", () => {
             timeoutMs: 1_000,
           }),
         ).resolves.toMatchObject({ threadId: root.id, text: "mattermost threaded reply" });
+      } finally {
+        await transport.cleanupAfterGatewayStop?.();
+      }
+    });
+  });
+
+  it("delivers symbolic Mattermost threads through their native provider root", async () => {
+    await withTempDir("qa-crabline-transport-", async (outputDir) => {
+      const transport = await createQaCrablineTransportAdapter({
+        outputDir,
+        selection: createSelection("mattermost"),
+        state: createQaBusState(),
+      });
+      const conversationId = "symbolic-thread-channel";
+      const threadId = "post-root";
+      const gatewayCall = vi.fn(async (_method: string, _payload: Record<string, unknown>) => ({
+        runId: "run-mattermost-symbolic-thread",
+      }));
+      try {
+        setMattermostRuntime(createPluginRuntimeMock());
+        await transport.state.addInboundMessage({
+          conversation: { id: conversationId, kind: "group" },
+          senderId: "alice",
+          text: "mattermost symbolic thread seed",
+          threadId,
+        });
+        await startAgentRun({ gateway: { call: gatewayCall }, transport } as never, {
+          sessionKey: "agent:qa:mattermost-symbolic-thread",
+          message: "mattermost symbolic threaded reply",
+          to: `group:${conversationId}`,
+          threadId,
+        });
+        const gatewayPayload = gatewayCall.mock.calls[0]?.[1];
+        expect(gatewayPayload).toMatchObject({
+          channel: "mattermost",
+          threadId: expect.stringMatching(/^[a-z0-9]{26}$/u),
+          to: expect.stringMatching(/^channel:[a-z0-9]{26}$/u),
+        });
+
+        await mattermostPlugin.outbound?.sendText?.({
+          cfg: transport.createGatewayConfig({ baseUrl: "http://127.0.0.1:1" }),
+          to: String(gatewayPayload?.to),
+          threadId: String(gatewayPayload?.threadId),
+          text: "mattermost symbolic threaded reply",
+        });
+
+        await expect(
+          transport.waitForOutbound({
+            conversation: { id: conversationId, kind: "group" },
+            threadId,
+            textIncludes: "mattermost symbolic threaded reply",
+            timeoutMs: 1_000,
+          }),
+        ).resolves.toMatchObject({ threadId, text: "mattermost symbolic threaded reply" });
       } finally {
         await transport.cleanupAfterGatewayStop?.();
       }

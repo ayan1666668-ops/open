@@ -605,7 +605,7 @@ describe("crabline transport", () => {
           transport.buildAgentDelivery({ target: "group:qa-channel", threadId: "post-root" }),
         ).toMatchObject({
           channel: "mattermost",
-          threadId: "post-root",
+          threadId: expect.stringMatching(/^[a-z0-9]{26}$/u),
         });
         expect(mattermostGatewayConfig.channels?.mattermost?.streaming).toEqual({ mode: "off" });
 
