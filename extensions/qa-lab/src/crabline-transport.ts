@@ -540,7 +540,14 @@ class QaCrablineTransport extends QaStateBackedTransportAdapter {
     }
     return {
       ...delivery,
-      ...(logicalTarget.threadId ? { threadId: logicalTarget.threadId } : {}),
+      ...(logicalTarget.threadId
+        ? {
+            threadId:
+              this.#selection.channel === "discord"
+                ? resolveDiscordQaId(logicalTarget.threadId)
+                : logicalTarget.threadId,
+          }
+        : {}),
     };
   };
 
