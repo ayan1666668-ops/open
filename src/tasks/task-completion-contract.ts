@@ -159,6 +159,9 @@ function isProgressOnlyCompletionText(value: string): boolean {
         narrativeProgress ||
         PENDING_COMPLETION_PATTERN.test(body) ||
         (progressSeen && FUTURE_COMPLETION_PATTERN.test(narration)) ||
+        // A premise cannot become a deliverable just because no result matched.
+        (progressSeen &&
+          (/^(?:if|unless|whether)\b/i.test(body) || hasDeferredTemporalResult(body, ""))) ||
         (progressSeen && conditionalResult);
       progressSeen ||= progress;
       // Generic replies retain their existing behavior; only a known narrative
