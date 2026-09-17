@@ -43,6 +43,7 @@ describe("gateway startup log", () => {
       const info = vi.fn();
       await logGatewayStartup({
         cfg: {
+          meta: { migrations: { utilityModelSeparation: true } },
           agents: {
             ownership: "explicit",
             ...(ambientOwner ? { defaults: { systemAgent: { agentId: "worker" } } } : {}),

@@ -40,6 +40,7 @@ function resolveCronPayloadModel(cfg: OpenClawConfig, raw: string) {
 describe("resolveCronAgentConfig model policy preservation", () => {
   it("keeps an agent utility alias out of the implicit cron primary without flattening its model map", async () => {
     const cfg: OpenClawConfig = {
+      meta: { migrations: { utilityModelSeparation: true } },
       agents: {
         ownership: "explicit",
         entries: {

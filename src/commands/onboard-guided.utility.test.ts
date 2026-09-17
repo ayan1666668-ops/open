@@ -9,6 +9,7 @@ describe("guided onboarding utility handoff", () => {
 
   it("returns a utility-only installation to the setup assistant instead of regular agent hatch", async () => {
     const config: OpenClawConfig = {
+      meta: { migrations: { utilityModelSeparation: true } },
       agents: {
         defaults: { utilityModel: "fixture/small", workspace: "/tmp/work" },
         entries: { main: { default: true, workspace: "/tmp/work" } },

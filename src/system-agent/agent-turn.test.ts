@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { expectDefined } from "@openclaw/normalization-core";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { listAgentEntries } from "../agents/agent-scope-config.js";
@@ -116,13 +117,6 @@ function configSnapshot(config: OpenClawConfig): ConfigFileSnapshot {
     warnings: [],
     legacyIssues: [],
   };
-}
-
-function requireValue<T>(value: T | undefined, message: string): T {
-  if (value === undefined) {
-    throw new Error(message);
-  }
-  return value;
 }
 
 async function createVerifiedSession(config: OpenClawConfig) {
@@ -249,6 +243,9 @@ describe("runSystemAgentTurn", () => {
     async (role) => {
       useTempStateDir();
       const config = {
+        ...(role === "utility"
+          ? { meta: { migrations: { utilityModelSeparation: true as const } } }
+          : {}),
         agents: {
           defaults:
             role === "utility"
@@ -286,11 +283,11 @@ describe("runSystemAgentTurn", () => {
         ),
       ).toBe(role === "utility");
 
-      const firstPath = requireValue(
+      const firstPath = expectDefined(
         mocks.runEmbeddedAgent.mock.calls[0]?.[0]?.sessionFile,
         "missing first embedded transcript path",
       );
-      const secondPath = requireValue(
+      const secondPath = expectDefined(
         mocks.runEmbeddedAgent.mock.calls[1]?.[0]?.sessionFile,
         "missing second embedded transcript path",
       );
@@ -397,7 +394,7 @@ describe("runSystemAgentTurn", () => {
 
     expect(runCliAgent).toHaveBeenCalledOnce();
     expect(runEmbeddedAgent).not.toHaveBeenCalled();
-    const call = requireValue(runCliAgent.mock.calls[0]?.[0], "missing CLI runner call");
+    const call = expectDefined(runCliAgent.mock.calls[0]?.[0], "missing CLI runner call");
     expect(call).toMatchObject({
       provider: "claude-cli",
       model: "claude-opus-4-8",
@@ -420,7 +417,7 @@ describe("runSystemAgentTurn", () => {
       openClaw: ["openclaw"],
     });
     expect(call.toolsAllow).toBeUndefined();
-    expect(requireValue(call.systemAgentTool, "missing CLI OpenClaw tool").proposalRef).toBe(
+    expect(expectDefined(call.systemAgentTool, "missing CLI OpenClaw tool").proposalRef).toBe(
       session.proposalRef,
     );
   });
@@ -522,8 +519,8 @@ describe("runSystemAgentTurn", () => {
       await turn("propose setup");
       await turn("yes");
 
-      const firstCall = requireValue(runCliAgent.mock.calls[0]?.[0], "missing first CLI call");
-      const secondCall = requireValue(runCliAgent.mock.calls[1]?.[0], "missing second CLI call");
+      const firstCall = expectDefined(runCliAgent.mock.calls[0]?.[0], "missing first CLI call");
+      const secondCall = expectDefined(runCliAgent.mock.calls[1]?.[0], "missing second CLI call");
       expect(firstCall.cliSessionBinding).toBeUndefined();
       expect(secondCall.cliSessionBinding).toEqual(binding);
       expect(firstCall).toMatchObject({
@@ -670,8 +667,8 @@ describe("runSystemAgentTurn", () => {
     );
 
     expect(runCliAgent).toHaveBeenCalledTimes(2);
-    const firstCall = requireValue(runCliAgent.mock.calls[0]?.[0], "missing first CLI call");
-    const secondCall = requireValue(runCliAgent.mock.calls[1]?.[0], "missing second CLI call");
+    const firstCall = expectDefined(runCliAgent.mock.calls[0]?.[0], "missing first CLI call");
+    const secondCall = expectDefined(runCliAgent.mock.calls[1]?.[0], "missing second CLI call");
     expect(firstCall.cliSessionBinding).toBeUndefined();
     expect(secondCall).toMatchObject({
       cliSessionBinding: binding,
@@ -913,7 +910,7 @@ describe("runSystemAgentTurn", () => {
 
     expect(runEmbeddedAgent).toHaveBeenCalledOnce();
     expect(runCliAgent).not.toHaveBeenCalled();
-    const call = requireValue(runEmbeddedAgent.mock.calls[0]?.[0], "missing embedded runner call");
+    const call = expectDefined(runEmbeddedAgent.mock.calls[0]?.[0], "missing embedded runner call");
     expect(call).not.toHaveProperty("streamParams");
     expect(call).toMatchObject({
       provider: "openai",
@@ -941,7 +938,7 @@ describe("runSystemAgentTurn", () => {
       params: { temperature: 0.2 },
       tools: { allow: ["read"], deny: ["exec"] },
     });
-    expect(requireValue(call.systemAgentTool, "missing embedded OpenClaw tool").proposalRef).toBe(
+    expect(expectDefined(call.systemAgentTool, "missing embedded OpenClaw tool").proposalRef).toBe(
       session.proposalRef,
     );
   });

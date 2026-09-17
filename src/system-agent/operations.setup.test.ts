@@ -205,6 +205,7 @@ describe("parseSystemAgentOperation", () => {
       setTestEnvValue("OPENCLAW_STATE_DIR", tempDir);
       const { runtime, lines } = createSystemAgentTestRuntime();
       mockConfig.setConfig({
+        meta: { migrations: { utilityModelSeparation: true } },
         agents: {
           defaults:
             modelRole === "default"

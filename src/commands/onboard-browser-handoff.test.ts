@@ -104,7 +104,10 @@ describe("runBrowserHatchHandoff", () => {
       const prompter = createWizardPrompter({ note });
       const openBrowser = vi.fn(async (_url: string) => opened);
       sharedMocks.detectBrowserOpenSupport.mockResolvedValue({ ok: true });
-      const config = { agents: { defaults: { utilityModel: "fixture/small" } } };
+      const config = {
+        meta: { migrations: { utilityModelSeparation: true as const } },
+        agents: { defaults: { utilityModel: "fixture/small" } },
+      };
       const result = await runBrowserHatchHandoff(
         { config, prompter },
         {

@@ -186,6 +186,7 @@ src/agents/tool-policy-shared.ts
 src/agents/tool-policy.ts
 src/agents/tools/automations-tool-name.ts
 src/agents/tools/sessions-send-tokens.ts
+src/agents/utility-model-setting.ts
 src/agents/utils/git.ts
 src/agents/workspace-default-path.ts
 src/agents/workspace-default.ts
@@ -415,6 +416,7 @@ src/config/types.models.ts
 src/config/types.secrets.ts
 src/config/types.tools.ts
 src/config/types.ts
+src/config/utility-model-separation-migration.ts
 src/config/validation-channel-rules.ts
 src/config/validation-core.ts
 src/config/validation-issues.ts
