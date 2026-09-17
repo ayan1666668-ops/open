@@ -28,7 +28,13 @@ import { buildCodexUserInput } from "./user-input.js";
 
 const CODEX_CURRENT_SENDER_FIELD_MAX_CHARS = 256;
 
-function buildCodexCurrentSenderContextValue(params: EmbeddedRunAttemptParams): string | undefined {
+type CodexCurrentSender = {
+  id?: string;
+  name?: string;
+  username?: string;
+};
+
+function readCodexCurrentSender(params: EmbeddedRunAttemptParams): CodexCurrentSender | undefined {
   const metadata = asOptionalRecord(
     asOptionalRecord(params.userTurnTranscriptRecorder?.message as unknown)?.["__openclaw"],
   );
@@ -48,13 +54,25 @@ function buildCodexCurrentSenderContextValue(params: EmbeddedRunAttemptParams): 
     return undefined;
   }
   const bound = (value: string) => truncateUtf16Safe(value, CODEX_CURRENT_SENDER_FIELD_MAX_CHARS);
-  return JSON.stringify({
-    sender: {
-      ...(id ? { id: bound(id) } : {}),
-      ...(name ? { name: bound(name) } : {}),
-      ...(username ? { username: bound(username) } : {}),
-    },
-  });
+  return {
+    ...(id ? { id: bound(id) } : {}),
+    ...(name ? { name: bound(name) } : {}),
+    ...(username ? { username: bound(username) } : {}),
+  };
+}
+
+function buildCodexCurrentSenderContextValue(params: EmbeddedRunAttemptParams): string | undefined {
+  const sender = readCodexCurrentSender(params);
+  return sender ? JSON.stringify({ sender }) : undefined;
+}
+
+function buildCodexHistoryProvenancePrefix(params: EmbeddedRunAttemptParams): string | undefined {
+  const sender = readCodexCurrentSender(params);
+  // A label is not identity. Native thread history must only attach provenance
+  // when OpenClaw supplied a stable sender id, matching generic compaction.
+  return sender?.id
+    ? `[OpenClaw conversation info: sender=${JSON.stringify(sender)}]\n`
+    : undefined;
 }
 
 export function buildTurnStartParams(
@@ -153,6 +171,7 @@ export function buildTurnStartParams(
         options.promptText ?? params.prompt,
         params.images,
         options.contextImageGroups,
+        params.trigger === "user" ? buildCodexHistoryProvenancePrefix(params) : undefined,
       ),
       ...(options.explicitSkillInputs ?? []),
     ],

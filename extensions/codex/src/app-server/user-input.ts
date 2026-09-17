@@ -8,7 +8,11 @@ export function buildCodexUserInput(
   text: string | undefined,
   images?: EmbeddedRunAttemptParams["images"],
   contextImageGroups?: CodexProjectedImageGroup[],
+  historyProvenancePrefix?: string,
 ): CodexUserInput[] {
+  const provenanceInput: CodexUserInput[] = historyProvenancePrefix
+    ? [{ type: "text", text: historyProvenancePrefix, text_elements: [] }]
+    : [];
   if (text !== undefined && contextImageGroups?.length) {
     let offset = 0;
     const input = contextImageGroups.flatMap((group) => {
@@ -16,7 +20,7 @@ export function buildCodexUserInput(
       offset = group.end;
       return parts;
     });
-    return [...input, ...buildCodexUserInput(text.slice(offset), images)];
+    return [...provenanceInput, ...input, ...buildCodexUserInput(text.slice(offset), images)];
   }
   const imageInputs = (images ?? []).map((image): CodexUserInput => {
     const imageUrl = sanitizeInlineImageDataUrl(`data:${image.mimeType};base64,${image.data}`);
@@ -30,5 +34,5 @@ export function buildCodexUserInput(
   });
   const textInput: CodexUserInput[] =
     text === undefined ? [] : [{ type: "text", text, text_elements: [] }];
-  return [...textInput, ...imageInputs];
+  return [...provenanceInput, ...textInput, ...imageInputs];
 }
