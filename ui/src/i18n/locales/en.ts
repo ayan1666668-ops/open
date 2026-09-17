@@ -47,6 +47,7 @@ export const en: TranslationMap & {
   devices: TranslationMap;
   desktop: TranslationMap &
     Record<"title" | "openWindow" | "unavailable" | "toggle" | "reconnect" | "connecting", string>;
+  filePreview: TranslationMap & { bundle: TranslationMap };
   updates: TranslationMap;
   login: TranslationMap;
   newSession: TranslationMap;
@@ -249,7 +250,25 @@ export const en: TranslationMap & {
   browserLinkPreferences: {
     openInControlUi: "Open links in Control UI browser",
   },
-  filePreview: {},
+  filePreview: {
+    bundle: {},
+    label: "Support files",
+    listLabel: "Files",
+    searchPlaceholder: "Search files…",
+    readOnly: "read-only",
+    emptyTitle: "No files match",
+    emptySubtitle: "Try another file name or content search.",
+    copyFile: "Copy file",
+    fileCount: "{count} files",
+    filteredFileCount: "{count}/{total} files",
+    noMatches: "No files match.",
+    navigate: "navigate",
+    kind: {
+      text: "Text",
+      shell: "Shell",
+      file: "File",
+    },
+  },
   mcpApp: {
     title: "MCP App",
     unavailable: "MCP App unavailable: {error}",
