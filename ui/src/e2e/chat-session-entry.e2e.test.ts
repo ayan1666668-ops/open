@@ -122,7 +122,7 @@ suite.define(() => {
                 },
               );
               await page.addInitScript(
-                ({ target, enabled, lastEntryId }) => {
+                ({ target: sessionKey, enabled, lastEntryId }) => {
                   const recorder: EntryRecorder = { enabled, done: false, frames: [] };
                   window.sessionEntryRecorder = recorder;
                   const ids = new WeakMap<Element, number>();
@@ -140,7 +140,7 @@ suite.define(() => {
                         ),
                       ).find(
                         (element) =>
-                          element.sessionKey === target &&
+                          element.sessionKey === sessionKey &&
                           element.getBoundingClientRect().height > 0,
                       );
                       const thread = pane?.querySelector<HTMLElement>(".chat-thread");
