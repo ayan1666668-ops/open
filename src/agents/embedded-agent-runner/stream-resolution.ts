@@ -146,12 +146,14 @@ export function resolveEmbeddedAgentStream(
   if (params.model.provider === "anthropic-vertex") {
     const vertexStreamFn = createAnthropicVertexStreamFnForModel(params.model);
     return {
-      streamFn: params.signal
-        ? wrapEmbeddedAgentStreamFn(vertexStreamFn, {
-            runSignal: params.signal,
-            providerId: params.model.provider,
-          })
-        : vertexStreamFn,
+      streamFn:
+        params.signal || params.assertCurrent
+          ? wrapEmbeddedAgentStreamFn(vertexStreamFn, {
+              runSignal: params.signal,
+              providerId: params.model.provider,
+              assertCurrent: params.assertCurrent,
+            })
+          : vertexStreamFn,
       strategy: "anthropic-vertex",
     };
   }
@@ -206,6 +208,7 @@ export function resolveEmbeddedAgentStream(
             runSignal: params.signal,
             providerId: params.model.provider,
             promptCacheKey,
+            assertCurrent: params.assertCurrent,
           }),
     strategy: isDefault ? "stream-simple" : "session-custom",
   };
