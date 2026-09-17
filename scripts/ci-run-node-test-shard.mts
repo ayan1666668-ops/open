@@ -21,7 +21,7 @@ import { fileURLToPath } from "node:url";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { decodeNodeTestGroups } from "./lib/ci-node-test-groups-codec.mts";
 import { isDirectRunUrl } from "./lib/direct-run.mjs";
-import { isConstrainedCiCheckHost } from "./lib/local-check-runtime.mts";
+import { isConstrainedCiCheckHost, isExclusiveCiTestConfig } from "./lib/local-check-runtime.mts";
 import { parsePositiveInt, readPositiveEnvInt } from "./lib/numeric-options.mjs";
 import type { VitestWorkerRun } from "./lib/vitest-worker-run.mts";
 
@@ -121,13 +121,10 @@ export function resolveShardPlans(env: NodeJS.ProcessEnv = process.env): ShardPl
   });
 }
 
-function prepareChildEnv(entry: ShardPlan, baseEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const childEnv: NodeJS.ProcessEnv = { ...baseEnv, OPENCLAW_TEST_PROJECTS_PARALLEL: "1" };
-  if (entry.kind === "group") {
-    if (entry.plan.shard_name) {
-      childEnv.OPENCLAW_VITEST_SHARD_NAME = entry.plan.shard_name;
-    }
-    for (const [key, value] of Object.entries(entry.plan.env ?? {})) {
+function mergePlanEnv(baseEnv: NodeJS.ProcessEnv, overrides: unknown): NodeJS.ProcessEnv {
+  const childEnv = { ...baseEnv };
+  if (isRecord(overrides)) {
+    for (const [key, value] of Object.entries(overrides)) {
       if (typeof value === "string") {
         const inherited = baseEnv[key]?.trim();
         // Pins may lower the admitted job budget, never raise it. Compiler
@@ -145,6 +142,19 @@ function prepareChildEnv(entry: ShardPlan, baseEnv: NodeJS.ProcessEnv): NodeJS.P
     }
   }
   return childEnv;
+}
+
+function prepareChildEnv(entry: ShardPlan, baseEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return mergePlanEnv(
+    {
+      ...baseEnv,
+      OPENCLAW_TEST_PROJECTS_PARALLEL: "1",
+      ...(entry.kind === "group" && entry.plan.shard_name
+        ? { OPENCLAW_VITEST_SHARD_NAME: entry.plan.shard_name }
+        : {}),
+    },
+    entry.kind === "group" ? entry.plan.env : undefined,
+  );
 }
 
 export function buildChildEnv(
@@ -432,7 +442,11 @@ async function runChild(
 }
 
 export async function runShardPlans(plans: ShardPlan[], options: RunShardOptions = {}) {
-  const baseEnv = options.env ?? process.env;
+  const inheritedEnv = options.env ?? process.env;
+  const baseEnv = mergePlanEnv(
+    inheritedEnv,
+    parseJsonEnv(inheritedEnv, "OPENCLAW_NODE_TEST_ENV_JSON"),
+  );
   // Respect serial timing-sensitive bins and never clone cache slots that
   // cannot receive a plan.
   const requestedConcurrency =
@@ -446,6 +460,13 @@ export async function runShardPlans(plans: ShardPlan[], options: RunShardOptions
   const concurrency = Math.min(
     plans.length,
     requestedConcurrency,
+    // Cold in-process Gateway boot costs 37s quiet / 50s contended against a 90s
+    // budget. A job containing these configs must never admit a second plan.
+    plans.some(
+      (entry) => entry.kind === "group" && entry.plan.configs.some(isExclusiveCiTestConfig),
+    )
+      ? 1
+      : requestedConcurrency,
     hostResources
       ? isConstrainedCiCheckHost(hostResources)
         ? 1

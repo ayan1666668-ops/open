@@ -44,6 +44,17 @@ import { isGatewayServerTestFile } from "../vitest/vitest.gateway-server-paths.m
 import { boundaryTestFiles } from "../vitest/vitest.unit-paths.mjs";
 
 const CODEX_TEST_PROCESS_FILE_LIMIT = 12;
+
+it("keeps precise first-signin targets under exclusive Gateway admission", () => {
+  const target = "src/gateway/setup-inference.first-signin.integration.test.ts";
+  const jobs = createChangedNodeTestShards([target], { runnerBackend: "hybrid" });
+  expect(jobs).not.toBeNull();
+  const owner = jobs?.find((job) =>
+    job.groups?.some((group) => group.includePatterns?.includes(target)),
+  );
+  expect(owner).toMatchObject({ planConcurrency: 1 });
+  expect(jobs?.flatMap((job) => job.targets ?? [])).not.toContain(target);
+});
 const githubActivityHelper = ".agents/skills/openclaw-pr-maintainer/scripts/github-activity.sh";
 const gitToolingTargets = [
   "ci-git-owner",
