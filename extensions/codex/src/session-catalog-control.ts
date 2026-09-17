@@ -106,7 +106,7 @@ function createCodexCatalogRequestSnapshot(
   const read = <M extends CodexCatalogRequestMethod>(
     method: M,
     params: CodexAppServerRequestParams<M>,
-    timeoutMs = requestTimeoutMs,
+    timeoutMs?: number,
     observation?: CodexControlRequestObservation,
   ): Promise<CodexAppServerRequestResult<M>> => {
     // Index reads are charged by NativePages; hydration never borrows a caller's scope.
@@ -114,7 +114,7 @@ function createCodexCatalogRequestSnapshot(
     if (!scope) {
       return request(method, params, timeoutMs, undefined, observation);
     }
-    return scope.read(timeoutMs, async (remaining) => {
+    return scope.read(timeoutMs ?? requestTimeoutMs, async (remaining) => {
       const attempt = beginList(scope);
       if (!attempt.allowed) {
         throw attempt.error;
