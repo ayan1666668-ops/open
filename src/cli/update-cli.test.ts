@@ -6403,7 +6403,10 @@ describe("update-cli", () => {
         expect(packageInstallCommandCall()?.[0]).toContain("openclaw@9999.0.0");
       } else {
         expect(packageInstallCommandCall()?.[0]).toBeUndefined();
-        expect(getLogOutput()).toContain("The requested package requires >=999.0.0");
+        expect(listUpdateRuns({ limit: 1 })[0]?.reason).toBe("node-runtime-preflight");
+        expect(defaultRuntime.log).toHaveBeenCalledWith(
+          `openclaw@9999.0.0 requires Node >=999.0.0; selected runtime is Node ${process.versions.node}; with nvm, run \`nvm install 999.0.0 && nvm use 999.0.0\`, then rerun \`openclaw update\`.`,
+        );
       }
       expect(fetchNpmPackageTargetStatus).toHaveBeenCalledOnce();
     },
@@ -8101,13 +8104,11 @@ describe("update-cli", () => {
 
     await expect(updateCommand({ yes: true })).rejects.toEqual(new ExitError(1));
 
-    expect(runGatewayUpdate).not.toHaveBeenCalled();
+    expectNoSideEffects(runGatewayUpdate, defaultRuntime.exit);
     expect(packageInstallCommandCall()?.[0]).toBeUndefined();
-    expect(defaultRuntime.exit).not.toHaveBeenCalled();
-    const report = getLogOutput();
-    expect(report).toContain("Node ");
-    expect(report).toContain(
-      "Bare `npm i -g openclaw` can silently install an older compatible release.",
+    expect(listUpdateRuns({ limit: 1 })[0]?.reason).toBe("node-runtime-preflight");
+    expect(defaultRuntime.log).toHaveBeenCalledWith(
+      `openclaw@2026.3.23-2 requires Node >=22.19.0; selected runtime is Node ${process.versions.node}; with nvm, run \`nvm install 22.19.0 && nvm use 22.19.0\`, then rerun \`openclaw update\`.`,
     );
   });
 
@@ -11782,10 +11783,9 @@ describe("update-cli", () => {
     expect(packageInstallCommandCall()?.[0]).toBeUndefined();
     expect(serviceStop).not.toHaveBeenCalled();
     expect(defaultRuntime.exit).not.toHaveBeenCalled();
-    const report = getLogOutput();
-    expect(report).toContain(`Node 22.18.0 at ${serviceNode} is incompatible`);
-    expect(report).toContain(
-      "Use a compatible version of the Node runtime that owns the managed Gateway service",
+    expect(listUpdateRuns({ limit: 1 })[0]?.reason).toBe("node-runtime-preflight");
+    expect(defaultRuntime.log).toHaveBeenCalledWith(
+      `openclaw@2026.5.20 requires Node >=22.19.0; selected runtime is Node 22.18.0 at ${serviceNode}; with nvm, run \`nvm install 22.19.0 && nvm use 22.19.0\`, then rerun \`openclaw update\`.\nNode 22.18.0: node:sqlite truncates TEXT at embedded NUL (nodejs/node#61954)\nThe managed Gateway service must also use the compatible Node runtime.`,
     );
   });
 
@@ -11982,8 +11982,8 @@ describe("update-cli", () => {
           status: "error",
           reason: "node-runtime-preflight",
         });
-        expect(getErrorOutput()).toContain(
-          "Use a compatible version of the Node runtime that owns the managed Gateway service",
+        expect(getErrorOutput()).toBe(
+          `openclaw@${VERSION} requires Node >=24.16.0 <25 || >=26.1.0; selected runtime is Node 22.23.1 at ${serviceNode}; with nvm, run \`nvm install 24.16.0 && nvm use 24.16.0\`, then rerun \`openclaw update\`.\nbroken TEXT decoder\nThe managed Gateway service must also use the compatible Node runtime.`,
         );
         expectNoSideEffects(
           updateNpmInstalledPlugins,
