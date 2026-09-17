@@ -7,13 +7,19 @@ import * as sessionTargets from "../config/sessions/targets.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { EMPTY_LEGACY_SESSION_SURFACES } from "../plugins/legacy-session-surfaces.types.js";
 import { readConfigMachineState } from "../state/config-machine-state.js";
-import { closeOpenClawAgentDatabasesForTest } from "../state/openclaw-agent-db.js";
+import {
+  closeOpenClawAgentDatabasesForTest,
+  openOpenClawAgentDatabase,
+  OPENCLAW_AGENT_SCHEMA_VERSION,
+} from "../state/openclaw-agent-db.js";
+import { createOpenClawDatabaseMaintenanceScope } from "../state/openclaw-state-db-async-lifecycle.js";
 import {
   closeOpenClawStateDatabaseForTest,
   openOpenClawStateDatabase,
 } from "../state/openclaw-state-db.js";
 import { resolveOpenClawStateSqlitePath } from "../state/openclaw-state-db.paths.js";
 import { createTrackedTempDirs } from "../test-utils/tracked-temp-dirs.js";
+import { acquireGatewayMaintenanceCoordinator } from "./state-database-coordinator.js";
 import {
   createCallerModeSnapshot,
   expectBlockedTailInPlanOrder,
@@ -891,7 +897,31 @@ module.exports = { stateMigrations: [{
   it("returns target-discovery refusal after a completed schema step", async () => {
     const fixture = await makeCallerModeFixture();
     const { execPath } = writeLegacyDoctorSources(fixture.stateDir, {});
-    writeLegacyStateSchemaV1(resolveOpenClawStateSqlitePath(fixture.env));
+    const agent = openOpenClawAgentDatabase({ agentId: "main", env: fixture.env });
+    const agentPath = agent.path;
+    closeOpenClawAgentDatabasesForTest();
+    closeOpenClawStateDatabaseForTest();
+    const legacyAgent = new DatabaseSync(agentPath);
+    legacyAgent.exec("PRAGMA user_version = 21; UPDATE schema_meta SET schema_version = 21;");
+    legacyAgent
+      .prepare(
+        "INSERT INTO session_nodes (session_key, current_session_id, entry_json, updated_at) VALUES (?, ?, ?, ?)",
+      )
+      .run(
+        "agent:main:historical",
+        "historical",
+        JSON.stringify({
+          sessionId: "historical",
+          updatedAt: 1,
+          providerOverride: "synthetic",
+          modelOverride: "saved-model",
+        }),
+        1,
+      );
+    legacyAgent.close();
+    const sharedPath = resolveOpenClawStateSqlitePath(fixture.env);
+    fs.unlinkSync(sharedPath);
+    writeLegacyStateSchemaV1(sharedPath);
     const plan = await planLegacyStateMigrationsReadOnly({
       mode: "doctor",
       candidate: candidateAt(fixture.root),
@@ -899,20 +929,42 @@ module.exports = { stateMigrations: [{
       env: fixture.env,
     });
     const lastTouchedAt = "2026-09-02T00:00:00.000Z";
+    let configMigrationCompleted = false;
     const cfg = Object.defineProperty({ meta: { lastTouchedAt } }, "session", {
       get() {
-        throw new Error("synthetic agent target discovery failure");
+        if (configMigrationCompleted) {
+          throw new Error("synthetic agent target discovery failure");
+        }
+        return undefined;
       },
     }) as OpenClawConfig;
 
-    const result = await autoMigrateLegacyState({
-      cfg,
-      doctorOnlyStateMigrations: true,
-      env: fixture.env,
-      homedir: () => fixture.homeDir,
-      legacySessionSurfaces: EMPTY_LEGACY_SESSION_SURFACES,
+    const coordinator = acquireGatewayMaintenanceCoordinator({
+      databasePath: resolveOpenClawStateSqlitePath(fixture.env),
     });
-
+    const resources = createOpenClawDatabaseMaintenanceScope(coordinator.createSchemaFenceDelegate);
+    const result = await resources
+      .run(() =>
+        autoMigrateLegacyState({
+          cfg,
+          doctorOnlyStateMigrations: true,
+          env: fixture.env,
+          homedir: () => fixture.homeDir,
+          legacySessionSurfaces: EMPTY_LEGACY_SESSION_SURFACES,
+          onStepReceipt: (receipt) => {
+            if (receipt.id === "config-machine-state" && receipt.outcome === "completed") {
+              configMigrationCompleted = true;
+            }
+          },
+        }),
+      )
+      .finally(async () => {
+        try {
+          await resources.close();
+        } finally {
+          coordinator.release();
+        }
+      });
     expectBlockedTailInPlanOrder({
       plan,
       receipts: result.stepReceipts,
@@ -920,12 +972,35 @@ module.exports = { stateMigrations: [{
     });
     expect(
       result.stepReceipts.find((receipt) => receipt.id === "agent-migration-targets"),
+      JSON.stringify({ warnings: result.warnings, receipts: result.stepReceipts }),
     ).toMatchObject({
       id: "agent-migration-targets",
       outcome: "refused",
       refusal: { code: "agent-target-discovery-failed" },
     });
     expect(result.warnings.join("\n")).toContain("synthetic agent target discovery failure");
+    const migratedAgent = new DatabaseSync(agentPath, { readOnly: true });
+    const migratedShared = new DatabaseSync(sharedPath, { readOnly: true });
+    try {
+      expect(migratedAgent.prepare("PRAGMA user_version").get()).toEqual({
+        user_version: OPENCLAW_AGENT_SCHEMA_VERSION,
+      });
+      expect(
+        migratedAgent
+          .prepare(
+            "SELECT json_extract(entry_json, '$.executionSelection.state') AS state, json_extract(entry_json, '$.executionSelection.request.model.provider') AS provider, json_extract(entry_json, '$.executionSelection.request.model.id') AS model, json_extract(entry_json, '$.modelOverride') AS retired FROM session_nodes WHERE session_key = ?",
+          )
+          .get("agent:main:historical"),
+      ).toEqual({ state: "deferred", provider: "synthetic", model: "saved-model", retired: null });
+      expect(
+        migratedShared
+          .prepare("SELECT agent_id, schema_version FROM agent_databases WHERE agent_id = 'main'")
+          .get(),
+      ).toEqual({ agent_id: "main", schema_version: OPENCLAW_AGENT_SCHEMA_VERSION });
+    } finally {
+      migratedAgent.close();
+      migratedShared.close();
+    }
     expect(result.stepReceipts[0]).toMatchObject({ outcome: "completed" });
     expect(result.stepReceipts[0]?.changes.length).toBeGreaterThan(0);
     expect(result.stepReceipts[1]).toMatchObject({

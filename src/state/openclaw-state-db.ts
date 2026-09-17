@@ -157,7 +157,7 @@ export function repairOpenClawStateDatabaseSchema(
   );
 }
 
-/** Make exact legacy catalog damage readable before Doctor loads config-dependent state. */
+/** Repair known catalog damage and preserve orphan deliveries before Doctor migration. */
 export function repairOpenClawStateDatabaseReadabilityForDoctor(
   options: OpenClawStateDatabaseOptions = {},
 ): { changes: string[]; warnings: string[] } {

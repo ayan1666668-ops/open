@@ -5,6 +5,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { createAppliedLegacyProposal } from "../commands/doctor-skill-workshop-sqlite.test-support.js";
+import { resolveConfiguredAgentDatabaseTargets } from "../config/sessions/targets.js";
 import { importLegacySkillProposal } from "../skills/workshop/store.js";
 import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
 import { resolveOpenClawStateSqlitePath } from "../state/openclaw-state-db.paths.js";
@@ -73,6 +74,48 @@ afterEach(async () => {
 });
 
 describe("legacy state migration plan identity", () => {
+  it("binds configured and retired database paths before repairing a legacy registry", async () => {
+    const fixture = await makeFixture();
+    const configuredPath = path.join(fixture.stateDir, "custom", "openclaw-agent.sqlite");
+    const retiredPath = path.join(fixture.stateDir, "retained", "openclaw-agent.sqlite");
+    const config = {
+      agents: { ownership: "explicit", entries: { main: {} } },
+      session: { store: path.join(fixture.stateDir, "custom", "sessions.json") },
+    } as const;
+    fs.writeFileSync(fixture.configPath, JSON.stringify(config));
+    const databasePath = resolveOpenClawStateSqlitePath(fixture.env);
+    fs.mkdirSync(path.dirname(databasePath), { recursive: true });
+    const database = new DatabaseSync(databasePath);
+    database.exec(`
+      PRAGMA user_version = 8;
+      CREATE TABLE agent_databases (
+        agent_id TEXT NOT NULL, path TEXT NOT NULL, schema_version INTEGER NOT NULL,
+        last_seen_at INTEGER NOT NULL, size_bytes INTEGER,
+        PRIMARY KEY (agent_id, path)
+      );
+    `);
+    const insert = database.prepare("INSERT INTO agent_databases VALUES (?, ?, 19, 1, NULL)");
+    insert.run("main", configuredPath);
+    insert.run("retired", retiredPath);
+    database.close();
+    const resolveRuntimeTargets = () =>
+      resolveConfiguredAgentDatabaseTargets(config, { env: fixture.env });
+    expect(resolveRuntimeTargets).toThrow("legacy agent database registry schema");
+    const before = await captureLegacyStateSnapshotIdentity(fixture);
+
+    const plan = await planFixture(fixture);
+
+    const schema = plan.steps.find((step) => step.id === "state-schema");
+    const targets = [configuredPath, retiredPath].map((databasePath) => ({
+      kind: "sqlite",
+      path: databasePath,
+    }));
+    expect(schema?.source).toEqual(expect.arrayContaining(targets));
+    expect(schema?.target).toEqual(expect.arrayContaining(targets));
+    expect(await captureLegacyStateSnapshotIdentity(fixture)).toEqual(before);
+    expect(resolveRuntimeTargets).toThrow("legacy agent database registry schema");
+  });
+
   it("defers the Workshop owner without adopting its external recorded targets", async () => {
     const fixture = await makeFixture();
     const skillDir = path.join(fixture.root, "external-workspace", "skills", "retained");

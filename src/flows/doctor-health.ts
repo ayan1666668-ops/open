@@ -165,7 +165,7 @@ async function runDoctorHealthFlowWithResult(
       if (maintenance && (options.repair === true || options.yes === true)) {
         const { repairOpenClawStateDatabaseReadabilityForDoctor } =
           await import("../state/openclaw-state-db.js");
-        // Restore catalog reads before config discovery; versioned migrations remain in its graph.
+        // Settle known catalog and orphan-delivery repairs before verified migration snapshots.
         const readability = repairOpenClawStateDatabaseReadabilityForDoctor({ env: process.env });
         if (readability.warnings.length > 0) {
           throw new Error(readability.warnings.join("\n"));

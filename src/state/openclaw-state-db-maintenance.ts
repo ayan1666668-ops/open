@@ -176,6 +176,7 @@ const STATE_MIGRATION_ALLOWED_MISSING_TABLES = {
   14: LAZY_ADDITIVE_STATE_TABLES,
   15: LAZY_ADDITIVE_STATE_TABLES,
   16: LAZY_ADDITIVE_STATE_TABLES,
+  17: LAZY_ADDITIVE_STATE_TABLES,
 } as const satisfies Record<number, readonly string[]>;
 type OpenClawStateMigrationVersion = keyof typeof STATE_MIGRATION_ALLOWED_MISSING_TABLES;
 
@@ -264,7 +265,7 @@ export const openClawStateMigrationAssertions = new Map<
   number,
   (database: DatabaseSync, options: { pathname: string }) => void
 >(
-  ([5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16] as const).map(
+  ([5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17] as const).map(
     (version) =>
       [
         version,
@@ -273,6 +274,25 @@ export const openClawStateMigrationAssertions = new Map<
       ] as const,
   ),
 );
+
+/** Doctor may establish historical ownership while preserving the published version. */
+export function writeDoctorStateSchemaMetadata(
+  db: DatabaseSync,
+  version: number,
+  now = Date.now(),
+): void {
+  // Recognized pre-metadata schemas may acquire the global owner row during
+  // doctor migration. Conflicting existing ownership is preserved so the
+  // final maintenance assertion rejects and rolls back the repair.
+  db.prepare(
+    `INSERT INTO schema_meta (
+       meta_key, role, schema_version, agent_id, app_version, created_at, updated_at
+     ) VALUES ('primary', 'global', ?, NULL, NULL, ?, ?)
+     ON CONFLICT(meta_key) DO UPDATE SET
+       schema_version = excluded.schema_version,
+       updated_at = excluded.updated_at`,
+  ).run(version, now, now);
+}
 
 export function markCurrentStateSchemaVersion(
   db: DatabaseSync,
@@ -293,17 +313,7 @@ export function markCurrentStateSchemaVersion(
   ) {
     const now = Date.now();
     if (options.createMetadataIfMissing) {
-      // Recognized pre-metadata schemas may acquire the global owner row during
-      // doctor migration. Conflicting existing ownership is preserved so the
-      // final maintenance assertion rejects and rolls back the repair.
-      db.prepare(
-        `INSERT INTO schema_meta (
-           meta_key, role, schema_version, agent_id, app_version, created_at, updated_at
-         ) VALUES ('primary', 'global', ?, NULL, NULL, ?, ?)
-         ON CONFLICT(meta_key) DO UPDATE SET
-           schema_version = excluded.schema_version,
-           updated_at = excluded.updated_at`,
-      ).run(version, now, now);
+      writeDoctorStateSchemaMetadata(db, version, now);
       return;
     }
     db.prepare(

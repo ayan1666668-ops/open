@@ -1163,32 +1163,43 @@ function buildUnresolvedBlockedPreludeSteps(
   }));
 }
 
-function createStateSchemaMigrationStep(
+async function createStateSchemaMigrationStep(
   params: {
     stateDir: string;
     env: NodeJS.ProcessEnv;
     requiredness: PreparedLegacyStateMigrationStep["requiredness"];
+    // Refused copied plans retain lexical paths without opening unbound stores.
+    selectionEndpoints?: readonly LegacyStateMigrationEndpoint[];
   } & (
     | { mode: LegacyStateMigrationMode; config: OpenClawConfig }
     | { mode: "automatic"; config?: never }
   ),
-): LegacyStateMigrationStep {
+): Promise<LegacyStateMigrationStep> {
   const stateEnv = { ...params.env, OPENCLAW_STATE_DIR: params.stateDir };
   const database: LegacyStateMigrationEndpoint = {
     kind: "sqlite",
     path: resolveOpenClawStateSqlitePath(stateEnv),
   };
+  let selectionTargets = params.selectionEndpoints;
+  if (params.mode === "doctor" && !params.selectionEndpoints) {
+    const registeredDatabases = await inspectOpenClawRegisteredAgentDatabases({
+      env: stateEnv,
+      includeIncompatibleSchemaVersions: true,
+    });
+    selectionTargets = [
+      ...registeredDatabases,
+      ...resolveConfiguredAgentDatabaseTargets(params.config, {
+        env: stateEnv,
+        registeredDatabases,
+      }),
+    ].map(({ path: databasePath }): LegacyStateMigrationEndpoint => ({
+      kind: "sqlite",
+      path: databasePath,
+    }));
+  }
   const selectionEndpoints: LegacyStateMigrationEndpoint[] =
     params.mode === "doctor"
-      ? [
-          { kind: "path", path: path.join(params.stateDir, "agents") },
-          ...resolveConfiguredAgentDatabaseTargets(params.config, { env: stateEnv }).map(
-            ({ path: databasePath }): LegacyStateMigrationEndpoint => ({
-              kind: "sqlite",
-              path: databasePath,
-            }),
-          ),
-        ]
+      ? [{ kind: "path", path: path.join(params.stateDir, "agents") }, ...(selectionTargets ?? [])]
       : [];
   return {
     id: "state-schema",
@@ -1673,9 +1684,9 @@ type LegacyStateMigrationExecutionPlan = {
   beforeWorkspaceStateMigration?: (config: OpenClawConfig) => Promise<void>;
 };
 
-function buildLegacyStateMigrationSteps(
+async function buildLegacyStateMigrationSteps(
   params: LegacyStateMigrationExecutionPlan,
-): LegacyStateMigrationStep[] {
+): Promise<LegacyStateMigrationStep[]> {
   const { detected, env } = params;
   const stateDir = detected.stateDir;
   const stateDatabase: LegacyStateMigrationEndpoint = {
@@ -2236,7 +2247,7 @@ function buildLegacyStateMigrationSteps(
   }
 
   return [
-    createStateSchemaMigrationStep({
+    await createStateSchemaMigrationStep({
       config: params.config,
       stateDir,
       env,
@@ -2472,12 +2483,13 @@ export async function planLegacyStateMigrationsReadOnly(params: {
       ...outsideSharedAuthSources,
     ]);
     const steps = [
-      createStateSchemaMigrationStep({
+      await createStateSchemaMigrationStep({
         config: configBefore.config,
         stateDir: snapshot.stateDir,
         env,
         mode: params.mode,
         requiredness: "conditional",
+        selectionEndpoints: resolveConfiguredSessionStoreEndpoints(configBefore.config, env),
       }),
       pluginInstallIndexStep,
       createConfigMachineStateStep({
@@ -2535,12 +2547,13 @@ export async function planLegacyStateMigrationsReadOnly(params: {
       ...outsideSessionStoreEndpoints,
     ]);
     const blockedSteps = [
-      createStateSchemaMigrationStep({
+      await createStateSchemaMigrationStep({
         config: configBefore.config,
         stateDir: snapshot.stateDir,
         env,
         mode: params.mode,
         requiredness: "conditional",
+        selectionEndpoints: configuredSessionStoreEndpoints,
       }),
       pluginInstallIndexStep,
       createConfigMachineStateStep({
@@ -2618,7 +2631,7 @@ export async function planLegacyStateMigrationsReadOnly(params: {
       ? []
       : resolveConfiguredAgentDatabaseTargets(configBefore.config, { env, registeredDatabases });
     const boundTargets = bindAgentDatabaseTargetsToStateRoot(
-      agentDatabaseTargets,
+      [...agentDatabaseTargets, ...registeredDatabases],
       snapshot.stateDir,
     );
     agentDatabaseTargets = boundTargets.targets;
@@ -2652,7 +2665,7 @@ export async function planLegacyStateMigrationsReadOnly(params: {
         }
       : createDeferredPluginSessionStoreRefusal(deferredPluginSessionStores);
   const skipAgentScopedMigrations = hasCustomAgentDirOverride(env);
-  const mainSteps = buildLegacyStateMigrationSteps({
+  const mainSteps = await buildLegacyStateMigrationSteps({
     mode: params.mode,
     detected,
     config: configBefore.config,
@@ -3079,7 +3092,7 @@ export async function prepareLegacyStateDatabaseSchema(params: {
   env: NodeJS.ProcessEnv;
 }): Promise<LegacyStateMigrationStepReceipt> {
   const { receipts } = await runLegacyStateMigrationSteps([
-    createStateSchemaMigrationStep({
+    await createStateSchemaMigrationStep({
       stateDir: resolveStateDir(params.env),
       env: params.env,
       ...(params.config
@@ -3124,7 +3137,7 @@ export async function runLegacyStateMigrations(params: {
       deferPostSessionPluginMigrations: false,
       legacySessionSurfaces,
     });
-  const [stateSchemaStep, pluginInstallIndexStep, ...remainingSteps] = buildSteps();
+  const [stateSchemaStep, pluginInstallIndexStep, ...remainingSteps] = await buildSteps();
   if (!stateSchemaStep || stateSchemaStep.id !== "state-schema") {
     throw new Error("legacy state migration plan is missing its state-schema prelude");
   }
@@ -3155,7 +3168,7 @@ export async function runLegacyStateMigrations(params: {
   // inventory before the writer, rather than receipting the earlier pending-only preview.
   const inventory = resolveLivePluginDoctorStateMigrationInventory({ config, env });
   const migrations = await runLegacyStateMigrationSteps(
-    buildSteps(inventory).slice(2),
+    (await buildSteps(inventory)).slice(2),
     params.onStepReceipt,
   );
   const notices = mergeNotices([
@@ -3409,7 +3422,7 @@ async function executeLegacyStateMigrations(
         };
       },
     });
-  const buildDetectedMigrationSteps = (migrationDetection: LegacyStateDetection) => {
+  const buildDetectedMigrationSteps = async (migrationDetection: LegacyStateDetection) => {
     const hasCustomAgentDir = hasCustomAgentDirOverride(env);
     const discoveredSessionStores = inspectOrphanSessionStoreEndpoints({
       config: params.cfg,
@@ -3423,26 +3436,28 @@ async function executeLegacyStateMigrations(
             message: discoveredSessionStores.warnings.join("\n"),
           }
         : undefined;
-    const steps = buildLegacyStateMigrationSteps({
-      mode,
-      detected: migrationDetection,
-      config: pluginDoctorConfig,
-      sessionConfig: params.cfg,
-      env,
-      now: params.now,
-      agentDatabaseEndpoints: agentDatabaseTargets.map(({ path: databasePath }) => ({
-        kind: "sqlite",
-        path: databasePath,
-      })),
-      legacySessionStoreEndpoints: discoveredSessionStores.endpoints,
-      legacySessionStoreRefusal,
-      recoverCorruptTargetStore: params.recoverCorruptTargetStore,
-      skipAgentScopedMigrations: hasCustomAgentDir,
-      allowLegacyDeviceIdentityImport: params.allowLegacyDeviceIdentityImport,
-      pluginStateMigrationInventory,
-      legacySessionSurfaces,
-      beforeWorkspaceStateMigration: params.beforeWorkspaceStateMigration,
-    }).filter((step) => step.id !== "state-schema" && step.id !== "plugin-install-index");
+    const steps = (
+      await buildLegacyStateMigrationSteps({
+        mode,
+        detected: migrationDetection,
+        config: pluginDoctorConfig,
+        sessionConfig: params.cfg,
+        env,
+        now: params.now,
+        agentDatabaseEndpoints: agentDatabaseTargets.map(({ path: databasePath }) => ({
+          kind: "sqlite",
+          path: databasePath,
+        })),
+        legacySessionStoreEndpoints: discoveredSessionStores.endpoints,
+        legacySessionStoreRefusal,
+        recoverCorruptTargetStore: params.recoverCorruptTargetStore,
+        skipAgentScopedMigrations: hasCustomAgentDir,
+        allowLegacyDeviceIdentityImport: params.allowLegacyDeviceIdentityImport,
+        pluginStateMigrationInventory,
+        legacySessionSurfaces,
+        beforeWorkspaceStateMigration: params.beforeWorkspaceStateMigration,
+      })
+    ).filter((step) => step.id !== "state-schema" && step.id !== "plugin-install-index");
     return steps;
   };
   const completeBlockedPlanReceipts = async (paramsForBlockedPlan: {
@@ -3481,7 +3496,7 @@ async function executeLegacyStateMigrations(
     );
     return receipts;
   };
-  let stateSchemaStep = createStateSchemaMigrationStep({
+  const stateSchemaStep = await createStateSchemaMigrationStep({
     config: params.cfg,
     stateDir,
     env,
@@ -3555,13 +3570,7 @@ async function executeLegacyStateMigrations(
   });
   try {
     if (detectOpenClawStateDatabaseSchemaMigrations(stateSchemaOptions).length > 0) {
-      stateSchemaStep = createStateSchemaMigrationStep({
-        config: params.cfg,
-        stateDir,
-        env,
-        mode,
-        requiredness: "required",
-      });
+      stateSchemaStep.requiredness = "required";
     }
   } catch {
     // The repair step owns diagnostics for unreadable or unsupported schemas.
@@ -3892,7 +3901,7 @@ async function executeLegacyStateMigrations(
     };
   }
   const hasCustomAgentDir = hasCustomAgentDirOverride(env);
-  const migrationSteps = buildDetectedMigrationSteps(detected);
+  const migrationSteps = await buildDetectedMigrationSteps(detected);
   const eagerMigrationStepIds = new Set(["device-auth", "device-identity", "meeting-transcripts"]);
   const eagerMigrationSteps = migrationSteps.filter((step) => eagerMigrationStepIds.has(step.id));
   const remainingMigrationSteps = migrationSteps.filter(

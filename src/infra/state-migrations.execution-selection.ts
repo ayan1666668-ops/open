@@ -30,6 +30,7 @@ import { registerAgentDatabaseMaintenanceAccess } from "../state/openclaw-agent-
 import { withAgentDatabaseMaintenanceLease } from "../state/openclaw-agent-db-maintenance-lease.js";
 import { assertOpenClawAgentDatabaseOwner } from "../state/openclaw-agent-db-maintenance.js";
 import { ensureOpenClawAgentDatabasePermissions } from "../state/openclaw-agent-db-permissions.js";
+import { readOpenClawAgentDatabaseRegistryRows } from "../state/openclaw-agent-db-registry-listing.js";
 import { assertSupportedAgentSchemaVersion } from "../state/openclaw-agent-db-schema-read.js";
 import { ensureOpenClawAgentSchema } from "../state/openclaw-agent-db-schema.js";
 import type { DB as AgentDatabase } from "../state/openclaw-agent-db.generated.js";
@@ -185,10 +186,7 @@ export async function migrateLegacyExecutionSelections(params: {
         try {
           sharedVersion = readSqliteUserVersion(shared);
           const db = getNodeSqliteKysely<LegacySharedDatabase>(shared);
-          registered = executeSqliteQuerySync(
-            shared,
-            db.selectFrom("agent_databases").selectAll(),
-          ).rows.map((row) => ({
+          registered = readOpenClawAgentDatabaseRegistryRows(shared, sharedPath).map((row) => ({
             agentId: row.agent_id,
             path: resolveOpenClawRegisteredAgentDatabasePath(sharedPath, row.path),
           }));

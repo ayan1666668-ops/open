@@ -8,10 +8,15 @@ import {
 } from "../infra/sqlite-index-schema.js";
 import { assertSqliteIntegrity, assertSqliteTableIntegrity } from "../infra/sqlite-integrity.js";
 import { assertSqliteSchemaTablesPresent } from "../infra/sqlite-schema-contract.js";
+import { extractSqliteTableSchema } from "../infra/sqlite-schema-sql.js";
 import { migrateSqliteSchemaToStrictInTransaction } from "../infra/sqlite-strict.js";
 import { runSqliteImmediateTransactionSync } from "../infra/sqlite-transaction.js";
 import { clearOpenClawDatabaseQuarantine } from "./openclaw-quarantine-store.js";
-import { repairAuditEventsSchema } from "./openclaw-state-db-audit-migration.js";
+import {
+  canRepairLegacyAuditEventsSchema,
+  hasCanonicalAuditEventsSchema,
+  repairAuditEventsSchema,
+} from "./openclaw-state-db-audit-migration.js";
 import { clearOpenClawStateDatabaseOpenFailure } from "./openclaw-state-db-cache.js";
 import {
   LAZY_ADDITIVE_STATE_TABLES,
@@ -23,6 +28,7 @@ import { assertCurrentStateRuntimeSchema } from "./openclaw-state-db-fast-path.j
 import {
   assertOpenClawStateDatabaseOwner,
   markCurrentStateSchemaVersion,
+  writeDoctorStateSchemaMetadata,
   openClawStateMigrationAssertions,
   versionedStateMigrations,
   runStateSchemaMigrationTransaction,
@@ -93,6 +99,11 @@ export function repairStateSchema(
               assertOpenClawStateDatabaseOwner(db, { pathname });
               assertSqliteTableIntegrity(db, pathname, "skill_workshop_collection_reviews");
             }
+            const recovered = recoverOrphanTaskDeliveryRows(db, pathname);
+            if (recovered.length > 0) {
+              assertOpenClawStateDatabaseOwner(db, { pathname });
+              changes.push(...recovered);
+            }
             return changes;
           },
           {
@@ -111,24 +122,27 @@ export function repairStateSchema(
           pathname,
           () => {
             assertOpenClawStateWriteAllowed({ database: db, databasePath: pathname, env });
-            assertOpenClawStateDatabaseOwner(db, { pathname });
             const version = assertSupportedStateSchemaVersion(db, pathname);
             if (version >= OPENCLAW_STATE_STRICT_SCHEMA_VERSION) {
+              assertOpenClawStateDatabaseOwner(db, { pathname });
               return [];
             }
+            const historicalAuditOwner =
+              !tableExists(db, "schema_meta") &&
+              tableExists(db, "audit_events") &&
+              (hasCanonicalAuditEventsSchema(db) || canRepairLegacyAuditEventsSchema(db));
+            if (!historicalAuditOwner) {
+              assertOpenClawStateDatabaseOwner(db, { pathname });
+            }
             assertSqliteIntegrity(db, pathname);
-            const result = migrateSqliteSchemaToStrictInTransaction(
-              db,
-              OPENCLAW_AGENT_DATABASE_LEASE_SCHEMA,
-              { databaseLabel: pathname },
-            );
-            return result.migratedTables.length
-              ? [
-                  "Prepared Doctor maintenance tables for SQLite STRICT typing: " +
-                    result.migratedTables.join(", ") +
-                    ". Original schema version retained.",
-                ]
-              : [];
+            migrateSqliteSchemaToStrictInTransaction(db, OPENCLAW_AGENT_DATABASE_LEASE_SCHEMA, {
+              databaseLabel: pathname,
+            });
+            writeDoctorStateSchemaMetadata(db, version);
+            assertOpenClawStateDatabaseOwner(db, { pathname });
+            return [
+              "Prepared Doctor maintenance metadata and lease tables. Original schema version retained.",
+            ];
           },
           {
             busyTimeoutMs: OPENCLAW_SQLITE_BUSY_TIMEOUT_MS,
@@ -197,6 +211,9 @@ export function repairStateSchema(
         );
         if (repairAgentDatabasesCompositePrimaryKey(db)) {
           applied.push(`Migrated shared state agent database registry primary key → agent_id,path`);
+        }
+        if (!tableExists(db, "agent_databases")) {
+          db.exec(extractSqliteTableSchema(OPENCLAW_STATE_SCHEMA_SQL, "agent_databases"));
         }
         if (repairAuditEventsSchema(db)) {
           applied.push(
