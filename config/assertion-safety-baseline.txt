@@ -2979,7 +2979,7 @@ src/infra/sqlite-user-version.ts	1
 src/infra/sqlite-wal.ts	4
 src/infra/startup-migration-checkpoint.ts	1
 src/infra/state-migrations.acp-replay.ts	1
-src/infra/state-migrations.audit-backup.ts	2
+src/infra/state-migrations.audit-backup.ts	1
 src/infra/state-migrations.audit-records.ts	4
 src/infra/state-migrations.audit-recovery-protocol.ts	3
 src/infra/state-migrations.channel-pairing.ts	5
