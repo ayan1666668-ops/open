@@ -98,9 +98,10 @@ function buildDiscordChannelContext(params: {
   };
 }
 
-// Resolves null when a payload without a channel object has no verified channel type, because
-// the lookup timed out, failed, or returned no type: DM, Group DM, and guild policy, allowlist,
-// and routing facts are all unknown, so the caller asks for a retry instead.
+// Resolves null when a payload without a channel object timed out, or when a guildless one
+// has no verified channel type because its lookup failed or returned no type. Either way DM or
+// Group DM policy, allowlist, and routing facts are unknown, so the caller asks for a retry
+// instead. A guild payload with an unknown type still resolves: guild policy matches its id.
 async function resolveDiscordChannelContext(
   interaction: AgentComponentInteraction,
 ): Promise<DiscordChannelContext | null> {
@@ -116,7 +117,7 @@ async function resolveDiscordChannelContext(
     const resolved = await withTimeout(lookup, COMPONENT_CHANNEL_CONTEXT_WAIT_MS, {
       createError: () => timeout,
     });
-    if (!channel && resolved.channelType === undefined) {
+    if (!channel && !interaction.rawData.guild_id && resolved.channelType === undefined) {
       logVerbose(`discord component: channel lookup for ${channelId} returned no channel type`);
       return null;
     }

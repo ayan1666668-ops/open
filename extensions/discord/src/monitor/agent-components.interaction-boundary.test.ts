@@ -57,7 +57,7 @@ function attachChannelRest(
   released?: Promise<void>,
 ) {
   const post = vi.fn(async (_path: string, _request?: unknown) => undefined);
-  const get = vi.fn(async (path: string) => {
+  const get = vi.fn(async (path: string): Promise<unknown> => {
     await released;
     const channel = CHANNELS[path.replace("/channels/", "") as ChannelId];
     if (!channel) {
