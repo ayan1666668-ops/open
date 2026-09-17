@@ -6,6 +6,8 @@ export const ERROR_PREFIX_RE =
   /^(?:error|(?:[a-z][\w-]*\s+)?api\s*error|openai\s*error|anthropic\s*error|gateway\s*error|codex\s*error|request failed|failed|exception)(?:\s+\d{3})?[:\s-]+/i;
 export const PROVIDER_SCHEMA_REJECTION_USER_TEXT =
   "LLM request failed: provider rejected the request schema or tool payload.";
+export const GATEWAY_SESSION_TRANSCRIPT_VALIDATION_USER_TEXT =
+  "LLM request failed: the Gateway rejected a session transcript entry. Compact or reset this session and try again.";
 const PROVIDER_OUTPUT_TOKEN_LIMIT_RE =
   /^['"]?max_(?:tokens|output_tokens|completion_tokens|new_tokens)['"]?\s*(?:[:=]\s*)?\(?(\d[\d,]*)\)?\s+exceeds?\b.{0,120}?\b(?:maximum|max|limit)\b(?:\s+(?:output\s+)?tokens?)?(?:\s+(?:is|of)|\s*[:=])?\s*\(?(\d[\d,]*)\)?(?:\D|$)/i;
 const PROVIDER_CACHE_CONTROL_LIMIT_RE =
@@ -111,6 +113,9 @@ export function renderFormatErrorCopy(raw: string): string {
   const normalized =
     extractErrorHttpStatus(trimmed)?.rest ?? trimmed.replace(ERROR_PREFIX_RE, "").trim();
   const candidate = extractErrorHttpStatus(normalized)?.rest ?? normalized;
+  if (/\binvalid session transcript entry\b/i.test(candidate)) {
+    return GATEWAY_SESSION_TRANSCRIPT_VALIDATION_USER_TEXT;
+  }
   const cacheLimit = candidate.match(PROVIDER_CACHE_CONTROL_LIMIT_RE);
   if (cacheLimit) {
     return `LLM request rejected: provider allows at most ${cacheLimit[1]} cache_control blocks; the request contained ${cacheLimit[2]}.`;

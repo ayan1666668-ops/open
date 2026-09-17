@@ -99,6 +99,9 @@ function classifyFailoverClassificationFromMessage(
   if (isClaudeCliAuthError(raw, provider)) {
     return toReasonClassification("auth");
   }
+  if (isGatewaySessionTranscriptValidationErrorMessage(raw)) {
+    return toReasonClassification("format");
+  }
   if (isCliSessionExpiredErrorMessage(raw)) {
     return toReasonClassification("session_expired");
   }
@@ -393,8 +396,12 @@ function isStructuredServerErrorMessage(raw: string): boolean {
   );
 }
 
+function isGatewaySessionTranscriptValidationErrorMessage(raw: string): boolean {
+  return /\binvalid session transcript entry\b/.test(normalizeLowercaseStringOrEmpty(raw));
+}
+
 function isCliSessionExpiredErrorMessage(raw: string): boolean {
-  return /\b(?:session (?:not found|does not exist|expired|invalid)|conversation (?:not found|does not exist|expired|invalid)|no conversation found|no such session|invalid session|(?:session|conversation) id not found)\b/.test(
+  return /\b(?:session (?:not found|does not exist|expired|invalid)|conversation (?:not found|does not exist|expired|invalid)|no conversation found|no such session|invalid session(?! transcript)|(?:session|conversation) id not found)\b/.test(
     normalizeLowercaseStringOrEmpty(raw),
   );
 }
