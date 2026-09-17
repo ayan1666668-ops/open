@@ -1,6 +1,7 @@
 // Decides which existing workspace files an adopting Claw add may claim without rewriting them.
 import { createHash } from "node:crypto";
 import { lstat } from "node:fs/promises";
+import { dirname } from "node:path";
 import type { BootstrapPublicationIdentity } from "../agents/workspace.js";
 import { FsSafeError, root as fsSafeRoot, type Root } from "../infra/fs-safe.js";
 import { MAX_MANAGED_FILE_BYTES } from "./source-limits.js";
@@ -23,16 +24,30 @@ type WorkspaceDiskState =
   | { state: "uninspectable" }
   | { state: "present"; isDirectory: boolean };
 
-// Only ENOENT proves absence. Permission, symlink-loop, and IO failures leave the path unknown, and
-// planning must not read unknown as free space: apply already refuses an uninspectable workspace
-// (`workspace_parent_failed` in add.ts), so a plan that approves one strands the operator mid-install.
+// ENOENT can also describe a descendant of a regular file on Windows. Approve a missing workspace
+// only after reaching an existing directory; other inspection failures must block before consent.
 async function readWorkspaceDiskState(workspace: string): Promise<WorkspaceDiskState> {
-  try {
-    return { state: "present", isDirectory: (await lstat(workspace)).isDirectory() };
-  } catch (error) {
-    const absent =
-      typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
-    return absent ? { state: "absent" } : { state: "uninspectable" };
+  let candidate = workspace;
+  while (true) {
+    try {
+      const isDirectory = (await lstat(candidate)).isDirectory();
+      if (candidate === workspace) {
+        return { state: "present", isDirectory };
+      }
+      return isDirectory ? { state: "absent" } : { state: "uninspectable" };
+    } catch (error) {
+      const absent =
+        typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+      if (!absent) {
+        return { state: "uninspectable" };
+      }
+    }
+    // Workspace paths are canonicalized by the caller; stop if no existing ancestor is readable.
+    const parent = dirname(candidate);
+    if (parent === candidate) {
+      return { state: "uninspectable" };
+    }
+    candidate = parent;
   }
 }
 

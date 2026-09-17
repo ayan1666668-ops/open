@@ -363,27 +363,46 @@ describe("applyClawAddPlan workspace adoption", () => {
 });
 
 describe("buildClawAddPlan workspace inspection", () => {
-  it("blocks an uninspectable workspace parent at plan time, before workspace mutation", async () => {
+  it.each(["workspace-worker", join("missing", "workspace-worker")])(
+    "blocks a non-directory ancestor before consent for %s",
+    async (workspaceSuffix) => {
+      const root = tempDirs.make("openclaw-claw-add-");
+      const blockedParent = join(root, "blocked-parent");
+      await writeFile(blockedParent, "not a directory", "utf8");
+      const { plan } = await makeProvenancePlan(
+        root,
+        { schemaVersion: 1, agent: { id: "worker" } },
+        { workspace: join(blockedParent, workspaceSuffix) },
+      );
+
+      // A file ancestor is not creatable workspace space, regardless of the platform's error code.
+      expect(plan.blockers).toContainEqual(
+        expect.objectContaining({ code: "workspace_parent_failed", path: "$.workspace" }),
+      );
+      await expect(
+        applyClawAddPlan(plan, {
+          consentPlanIntegrity: plan.planIntegrity,
+          env: stateEnv(root),
+        }),
+      ).rejects.toMatchObject({ code: "plan_blocked" });
+      expect(readInstallRow("worker", root)).toBeUndefined();
+    },
+  );
+
+  it("allows missing workspace directories without creating them during planning", async () => {
     const root = tempDirs.make("openclaw-claw-add-");
-    const blockedParent = join(root, "blocked-parent");
-    await writeFile(blockedParent, "not a directory", "utf8");
+    const workspace = join(root, "missing", "nested", "workspace-worker");
     const { plan } = await makeProvenancePlan(
       root,
       { schemaVersion: 1, agent: { id: "worker" } },
-      { workspace: join(blockedParent, "workspace-worker") },
+      { workspace },
     );
 
-    // Resolving the workspace under a regular file fails ENOTDIR, not ENOENT. Planning fails
-    // closed on it, so consent is never offered for a path apply would refuse mid-mutation.
-    expect(plan.blockers).toContainEqual(
-      expect.objectContaining({ code: "workspace_parent_failed", path: "$.workspace" }),
+    expect(plan.blockers).toEqual([]);
+    expect(plan.actions).toContainEqual(
+      expect.objectContaining({ kind: "workspace", action: "create", blocked: false }),
     );
-    await expect(
-      applyClawAddPlan(plan, {
-        consentPlanIntegrity: plan.planIntegrity,
-        env: stateEnv(root),
-      }),
-    ).rejects.toMatchObject({ code: "plan_blocked" });
+    await expect(stat(join(root, "missing"))).rejects.toMatchObject({ code: "ENOENT" });
     expect(readInstallRow("worker", root)).toBeUndefined();
   });
 });
