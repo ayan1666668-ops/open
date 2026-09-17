@@ -245,13 +245,14 @@ async function getGatewayCatalogPool(
         process.emitWarning(`Gateway catalog worker failed to retire: ${String(error)}`);
       });
     };
-    signal.addEventListener("abort", retire, { once: true });
+    // Shutdown can refuse registration; do not expose retirement until release exists.
     const release = registerPreparedModelRuntimeClose(async (error) => {
       await current.close(error);
       if (gatewayCatalog.current === current) {
         gatewayCatalog.current = undefined;
       }
     });
+    signal.addEventListener("abort", retire, { once: true });
     gatewayCatalog.current = current;
   })();
   try {
