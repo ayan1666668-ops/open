@@ -1,13 +1,16 @@
 /**
  * Tool image output sanitizer.
  *
- * Downscales and recompresses oversized base64 image blocks before provider replay.
+ * Downscales and recompresses oversized base64 image blocks before provider replay,
+ * and stages the result in the media store so the chat display projection can show
+ * the image instead of an omitted-payload placeholder.
  */
 import { canonicalizeBase64, estimateBase64DecodedBytes } from "@openclaw/media-core/base64";
 import { formatByteSize, resolveIntegerOption } from "@openclaw/normalization-core";
 import { toErrorObject } from "../infra/errors.js";
 import type { ImageContent } from "../llm/types.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
+import { buildInboundMediaUriFromPath } from "../media/media-reference.js";
 import {
   buildImageResizeSideGrid,
   getImageMetadata,
@@ -18,6 +21,7 @@ import {
   resizeToJpeg,
   type ImageMetadata,
 } from "../media/media-services.js";
+import { saveMediaBuffer } from "../media/store.js";
 import {
   DEFAULT_IMAGE_MAX_BYTES,
   DEFAULT_IMAGE_MAX_DIMENSION_PX,
@@ -402,6 +406,59 @@ export async function sanitizeImageBlocks(
   return { images: next, dropped: Math.max(0, images.length - next.length) };
 }
 
+/**
+ * Persists inline image payloads into the managed media store and attaches the
+ * canonical `media://inbound/<id>` reference to each block.
+ *
+ * An inline image block carries only base64 `data`, which the chat display
+ * projection drops as private, so an image presented in the conversation fell back
+ * to a non-recoverable "omitted from history" placeholder even when it had been
+ * captured seconds earlier. Staging the same bytes gives the block a reference the
+ * projection keeps, and `data` stays in place because provider hydration reads it.
+ *
+ * Staging is best-effort and idempotent: a block that already carries a reference is
+ * left alone, and bytes the store refuses (over its per-file cap, or an unwritable
+ * store) keep the block's current shape, so it degrades to today's placeholder
+ * rather than pointing at a file that was never written.
+ */
+export async function stageInlineImageBlocks(
+  blocks: readonly ToolContentBlock[],
+): Promise<ToolContentBlock[]> {
+  const staged: ToolContentBlock[] = [];
+  for (const block of blocks) {
+    if (!isImageBlock(block) || hasMediaReference(block)) {
+      staged.push(block);
+      continue;
+    }
+    staged.push((await stageInlineImageBlock(block)) ?? block);
+  }
+  return staged;
+}
+
+function hasMediaReference(block: ImageContentBlock): boolean {
+  return typeof block.url === "string" && block.url.trim().length > 0;
+}
+
+async function stageInlineImageBlock(
+  block: ImageContentBlock,
+): Promise<ImageContentBlock | undefined> {
+  const data = canonicalizeBase64(block.data);
+  if (!data) {
+    return undefined;
+  }
+  try {
+    const saved = await saveMediaBuffer(Buffer.from(data, "base64"), block.mimeType, "inbound");
+    const url = buildInboundMediaUriFromPath(saved.path);
+    return url ? { ...block, url } : undefined;
+  } catch (err) {
+    log.warn("Inline image staging failed; the chat view keeps its omitted placeholder", {
+      mimeType: block.mimeType,
+      error: String(err),
+    });
+    return undefined;
+  }
+}
+
 export async function sanitizeToolResultImages(
   result: AgentToolResult<unknown>,
   label: string,
@@ -413,5 +470,5 @@ export async function sanitizeToolResultImages(
   }
 
   const next = await sanitizeContentBlocksImages(content, label, opts);
-  return { ...result, content: next };
+  return { ...result, content: await stageInlineImageBlocks(next) };
 }

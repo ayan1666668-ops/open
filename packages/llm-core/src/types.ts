@@ -297,6 +297,13 @@ export interface ImageContent {
   type: "image";
   data: string; // base64 encoded image data
   mimeType: string; // e.g., "image/jpeg", "image/png"
+  /**
+   * Managed `media://inbound/<id>` reference to the same bytes in the local media
+   * store. Tool results stage their images so the chat display projection can keep
+   * a reference after it drops the private `data` payload; providers map image
+   * blocks field by field and read `data`, so this never reaches a request.
+   */
+  url?: string;
 }
 
 /** Normalized assistant tool call emitted by providers or repaired from text. */
