@@ -82,6 +82,7 @@ suite.define(() => {
             return { x, y, width, height };
           };
           const readEditor = () => ({
+            thread: bounds(".chat-thread"),
             input: bounds(".agent-chat__input"),
             textarea: bounds(".agent-chat__composer-combobox textarea"),
           });
@@ -133,9 +134,6 @@ suite.define(() => {
           if (outcome === "card") {
             await page.locator(".session-progress-card--composer").waitFor();
           }
-          await expect
-            .poll(() => page.locator(".agent-chat__progress-float--loading").count())
-            .toBe(0);
           expect(await composer.evaluate((node, original) => node === original, textarea)).toBe(
             true,
           );
@@ -145,8 +143,14 @@ suite.define(() => {
             capture.finish(),
           );
           await page.screenshot({ path: path.join(artifactDir, "progress-resolved.png") });
+          // A real card adds content. An empty or failed read must not retire
+          // speculative space and move the already visible transcript.
+          const stableSurfaces =
+            outcome === "card"
+              ? (["input", "textarea"] as const)
+              : (["input", "textarea", "thread"] as const);
           for (const sample of editorFrames) {
-            for (const surface of ["input", "textarea"] as const) {
+            for (const surface of stableSurfaces) {
               for (const dimension of ["x", "y", "width", "height"] as const) {
                 expect(
                   Math.abs(sample[surface][dimension] - before[surface][dimension]),

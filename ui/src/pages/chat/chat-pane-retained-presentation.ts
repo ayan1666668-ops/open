@@ -95,8 +95,6 @@ export abstract class ChatPaneRetainedPresentation extends ChatPaneBoard {
     });
   }
 
-  private progressPresentationSessionKey: string | undefined;
-  private progressPresentationReady = false;
   private retainedProgressCard:
     | {
         gatewayScope: object;
@@ -168,44 +166,6 @@ export abstract class ChatPaneRetainedPresentation extends ChatPaneBoard {
     }
     // Unlike secondary metadata, the progress card determines transcript geometry.
     return this.resolveChatReadTarget();
-  }
-
-  protected get progressCardInitialLoading(): boolean {
-    const state = this.state;
-    if (!state) {
-      return false;
-    }
-    if (this.progressPresentationSessionKey !== state.sessionKey) {
-      this.progressPresentationSessionKey = state.sessionKey;
-      this.progressPresentationReady = false;
-    }
-    if (this.progressPresentationReady) {
-      return false;
-    }
-    const phase = this.context.gateway.snapshot.phase;
-    if (
-      !this.isCurrentSessionArchived(state) &&
-      !parseCatalogSessionKey(state.sessionKey) &&
-      getChatHistoryLoadState(state).phase !== "failed"
-    ) {
-      if (phase === "connecting" || phase === "starting") {
-        return true;
-      }
-      if (
-        state.connected &&
-        (!this.presented ||
-          document.visibilityState === "hidden" ||
-          (!this.transcriptReady && !getAcceptedChatHistorySession(state)) ||
-          (this.initialProgressCardTarget() &&
-            this.progressCard.loading &&
-            !this.progressCard.error))
-      ) {
-        return true;
-      }
-    }
-    // Only the first read reserves an empty card slot; refreshes retain the mounted card.
-    this.progressPresentationReady = true;
-    return false;
   }
 
   protected clearComposerPrefillAttention(): void {
