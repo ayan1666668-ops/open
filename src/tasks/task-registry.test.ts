@@ -3644,7 +3644,7 @@ describe("task-registry", () => {
           deliveryStatus: "pending",
         });
         const closeAcpSession = vi.fn().mockResolvedValue(undefined);
-        const currentTasks = new Map([[terminal.taskId, terminalCurrent]]);
+        const currentTasks = new Map<string, TaskRecord>([[terminal.taskId, terminalCurrent]]);
         if (!startsDuringPreparation) {
           currentTasks.set(active.taskId, active);
         }
