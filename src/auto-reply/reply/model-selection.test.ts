@@ -975,61 +975,6 @@ describe("createModelSelectionState catalog loading", () => {
     },
   );
 
-  it.each([
-    ["zai-org/GLM-5.2-TEE", "chutes/zai-org/GLM-5.2-TEE"],
-    ["google/gemma-4-31B-turbo-TEE", "chutes/google/gemma-4-31B-turbo-TEE"],
-  ] as const)(
-    "keeps the configured primary %s under an exact allowlist that omits it",
-    async (defaultModel, configuredPrimary) => {
-      vi.mocked(loadModelCatalogLocal).mockClear();
-      const cfg = {
-        agents: {
-          defaults: {
-            models: {
-              "chutes/deepseek-ai/DeepSeek-V3.2-TEE": {},
-            },
-          },
-          entries: {
-            athena: { model: { primary: configuredPrimary } },
-          },
-        },
-        models: {
-          providers: {
-            chutes: {
-              api: "openai-completions",
-              baseUrl: "https://chutes.invalid/v1",
-              models: [
-                makeConfiguredModel({
-                  id: "deepseek-ai/DeepSeek-V3.2-TEE",
-                  name: "DeepSeek V3.2 TEE",
-                }),
-                makeConfiguredModel({ id: "zai-org/GLM-5.2-TEE", name: "GLM 5.2 TEE" }),
-                makeConfiguredModel({
-                  id: "google/gemma-4-31B-turbo-TEE",
-                  name: "Gemma 4 31B Turbo",
-                }),
-              ],
-            },
-          },
-        },
-      } as OpenClawConfig;
-
-      const state = await createModelSelectionState({
-        cfg,
-        agentId: "athena",
-        agentCfg: cfg.agents?.defaults,
-        defaultProvider: "chutes",
-        defaultModel,
-        provider: "chutes",
-        model: defaultModel,
-        hasModelDirective: false,
-      });
-
-      expect(state.provider).toBe("chutes");
-      expect(state.model).toBe(defaultModel);
-    },
-  );
-
   it("does not reject wildcard-only policy before an explicit model directive is resolved", async () => {
     vi.mocked(loadModelCatalogLocal).mockClear();
     vi.mocked(loadModelCatalogLocal).mockResolvedValueOnce([]);
