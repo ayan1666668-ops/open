@@ -2262,6 +2262,17 @@ describe("buildLiveGatewayConfig", () => {
     });
   });
 
+  it("disables independent session-observer model traffic", () => {
+    const cfg = buildLiveGatewayConfig({
+      cfg: { gateway: { controlUi: { enabled: false, sessionObserver: true } } },
+      candidates: [createGatewayLiveTestModel("openai", "gpt-5.6-luna")],
+      liveAgentDir: GATEWAY_LIVE_CONFIG_TEST_AGENT_DIR,
+      liveAgentWorkspaceDir: GATEWAY_LIVE_CONFIG_TEST_WORKSPACE,
+    });
+
+    expect(cfg.gateway?.controlUi).toMatchObject({ enabled: false, sessionObserver: false });
+  });
+
   it("configures only the isolated live agent", () => {
     const cfg = buildLiveGatewayConfig({
       cfg: {
@@ -5790,6 +5801,16 @@ function buildLiveGatewayConfig(params: {
     ...params.cfg,
     bindings: undefined,
     broadcast: undefined,
+    gateway: {
+      ...params.cfg.gateway,
+      controlUi: {
+        ...params.cfg.gateway?.controlUi,
+        // Session-observer digests are independent utility-model traffic. They
+        // can select the current candidate while the Ultra wire proof is active,
+        // so keep this provider proof scoped to admitted agent and child runs.
+        sessionObserver: false,
+      },
+    },
     agents: {
       ...params.cfg.agents,
       entries: configuredAgents,
