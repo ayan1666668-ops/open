@@ -6012,14 +6012,14 @@
       "kind": "object-property",
       "name": "label",
       "path": "ui/src/pages/agents/emoji-catalog.ts",
-      "text": "Objects — Clothing to Money"
+      "text": "Objects — Clothing, Music & Money"
     },
     {
       "count": 1,
       "kind": "object-property",
       "name": "label",
       "path": "ui/src/pages/agents/emoji-catalog.ts",
-      "text": "Objects — Mail to Other Object"
+      "text": "Objects — Office, Tools & Household"
     },
     {
       "count": 1,
@@ -8875,14 +8875,14 @@
       "kind": "object-property",
       "name": "label",
       "path": "ui/src/pages/agents/emoji-catalog.ts",
-      "text": "Symbols — Punctuation to Geometric"
+      "text": "Symbols — Punctuation & Shapes"
     },
     {
       "count": 1,
       "kind": "object-property",
       "name": "label",
       "path": "ui/src/pages/agents/emoji-catalog.ts",
-      "text": "Symbols — Transport Sign to Math"
+      "text": "Symbols — Signs, Arrows & Math"
     },
     {
       "count": 1,
@@ -9274,14 +9274,14 @@
       "kind": "object-property",
       "name": "label",
       "path": "ui/src/pages/agents/emoji-catalog.ts",
-      "text": "Travel & Places — Place Map to Transport Ground"
+      "text": "Travel & Places — Places & Ground Transport"
     },
     {
       "count": 1,
       "kind": "object-property",
       "name": "label",
       "path": "ui/src/pages/agents/emoji-catalog.ts",
-      "text": "Travel & Places — Transport Water to Sky & Weather"
+      "text": "Travel & Places — Water, Air & Weather"
     },
     {
       "count": 1,

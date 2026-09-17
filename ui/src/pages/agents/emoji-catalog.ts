@@ -640,7 +640,7 @@ export const EMOJI_CATALOG: EmojiCatalogGroup[] = [
     ],
   },
   {
-    label: "Travel & Places — Place Map to Transport Ground",
+    label: "Travel & Places — Places & Ground Transport",
     options: [
       { emoji: "🌍", label: "Globe Showing Europe-africa" },
       { emoji: "🌎", label: "Globe Showing Americas" },
@@ -762,7 +762,7 @@ export const EMOJI_CATALOG: EmojiCatalogGroup[] = [
     ],
   },
   {
-    label: "Travel & Places — Transport Water to Sky & Weather",
+    label: "Travel & Places — Water, Air & Weather",
     options: [
       { emoji: "🛙", label: "Lighthouse" },
       { emoji: "⚓", label: "Anchor" },
@@ -961,7 +961,7 @@ export const EMOJI_CATALOG: EmojiCatalogGroup[] = [
     ],
   },
   {
-    label: "Objects — Clothing to Money",
+    label: "Objects — Clothing, Music & Money",
     options: [
       { emoji: "👓", label: "Glasses" },
       { emoji: "🕶️", label: "Sunglasses" },
@@ -1108,7 +1108,7 @@ export const EMOJI_CATALOG: EmojiCatalogGroup[] = [
     ],
   },
   {
-    label: "Objects — Mail to Other Object",
+    label: "Objects — Office, Tools & Household",
     options: [
       { emoji: "✉️", label: "Envelope" },
       { emoji: "📧", label: "E-mail" },
@@ -1238,7 +1238,7 @@ export const EMOJI_CATALOG: EmojiCatalogGroup[] = [
     ],
   },
   {
-    label: "Symbols — Transport Sign to Math",
+    label: "Symbols — Signs, Arrows & Math",
     options: [
       { emoji: "🏧", label: "Atm Sign" },
       { emoji: "🚮", label: "Litter in Bin Sign" },
@@ -1350,7 +1350,7 @@ export const EMOJI_CATALOG: EmojiCatalogGroup[] = [
     ],
   },
   {
-    label: "Symbols — Punctuation to Geometric",
+    label: "Symbols — Punctuation & Shapes",
     options: [
       { emoji: "‼️", label: "Double Exclamation Mark" },
       { emoji: "⁉️", label: "Exclamation Question Mark" },
