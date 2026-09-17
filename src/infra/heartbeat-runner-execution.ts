@@ -338,6 +338,7 @@ export async function prepareHeartbeatRunStage(wake: ReadyHeartbeatWake) {
   // Capture the client-owned generation before routing can await. The inspected
   // completion queue owns publication eligibility, not the coalesced wake source.
   const internalProjection =
+    heartbeat?.target !== "none" &&
     scheduledTasks.length === 0 &&
     preflight.shouldInspectPendingEvents &&
     preflight.pendingEventEntries.some((event) => isExecCompletionEvent(event.text)) &&

@@ -309,6 +309,42 @@ async function readProjectionMessages(scenario: ProjectionScenario) {
   return events.map(readTranscriptEventMessage).filter((message) => message?.role === "assistant");
 }
 
+it("preserves explicit target:none before target:last delivers in the same WebChat session", async () => {
+  await withProjectionScenario(async (scenario) => {
+    const heartbeat = scenario.cfg.agents?.defaults?.heartbeat;
+    if (!heartbeat) {
+      throw new Error("projection scenario heartbeat is missing");
+    }
+    for (const target of ["none", "last"] as const) {
+      heartbeat.target = target;
+      const marker = `EXPLICIT_TARGET_${target}`;
+      enqueueSystemEvent(`Exec completed (target-proof, code 0) :: ${marker}`, {
+        sessionKey: scenario.sessionKey,
+      });
+      const reply = vi.fn<NonNullable<HeartbeatDeps["getReplyFromConfig"]>>().mockResolvedValue(
+        createHeartbeatToolResponsePayload({
+          outcome: "done",
+          notify: true,
+          summary: "private",
+          notificationText: marker,
+        }),
+      );
+      await runProjectionWake(scenario, reply);
+      expect(reply).toHaveBeenCalledOnce();
+      const context = reply.mock.calls[0]?.[0];
+      const messages = await readProjectionMessages(scenario);
+      if (target === "none") {
+        expect(messages).toEqual([]);
+        expect(context?.Body).toContain("user delivery is disabled");
+      } else {
+        expect(messages).toHaveLength(1);
+        expect(JSON.stringify(messages[0]?.content)).toContain(marker);
+        expect(context?.Body).toContain("Please relay the command output to the user");
+      }
+    }
+  });
+});
+
 it.each([
   {
     name: "queued exec completion inspected by a manual wake",
