@@ -7,12 +7,12 @@ import type { OpenClawConfig } from "../types.openclaw.js";
 import type { SessionStoreTarget } from "./targets.js";
 import type { SessionEntry } from "./types.js";
 
-export type GatewayStoredSessionTarget = {
+// Model sources retain stored lineage; combined rows may project aliases for display.
+export type GatewayStoredSessionTarget = GatewaySessionModelSource & {
   agentId: string;
   /** Exact stored key when a list uses an internal key to retain sentinel owners. */
   storeKey?: string;
   storeTarget: SessionStoreTarget;
-  modelSource: GatewaySessionModelSource;
 };
 
 export type GatewayStoredSessionTargets = ReadonlyMap<string, GatewayStoredSessionTarget>;
@@ -30,7 +30,7 @@ export function createSessionModelSources(
     string,
     {
       entries: Record<string, SessionEntry>;
-      readers: Map<string, GatewaySessionModelSource["loadSessionEntry"]>;
+      readers: Map<string, GatewaySessionModelSource["readSourceEntry"]>;
     }
   >();
   const logicalEntries = new Map<string, SessionEntry | undefined>();
@@ -48,7 +48,7 @@ export function createSessionModelSources(
         logicalAgentId: string,
         key: string,
         entry: SessionEntry,
-      ): GatewaySessionModelSource => {
+      ): GatewaySessionModelSource["readSourceEntry"] => {
         store[key] = entry;
         const identity = logicalKey(logicalAgentId, key);
         // Preserve target-order selection within an owner, including hidden sentinels.
@@ -97,7 +97,7 @@ export function createSessionModelSources(
           };
           readers.set(logicalAgentId, read);
         }
-        return { entry, loadSessionEntry: read };
+        return read;
       };
     },
     remove(target: GatewayStoredSessionTarget, key: string) {

@@ -25,6 +25,7 @@ export const gatewayDatabaseWorkerTestFiles = [
   "src/gateway/server-methods/native-hook-relay.test.ts",
   "src/gateway/server-methods/projects.test.ts",
   "src/gateway/server-methods/requester-cron-authority.integration.test.ts",
+  "src/gateway/server-methods/send.scheduled-reads.integration.test.ts",
   "src/gateway/server-methods/server-methods.test.ts",
   "src/gateway/server-methods/session-creator-preparation.test.ts",
   "src/gateway/server-methods/sessions-create-thinking-claim.test.ts",
@@ -90,6 +91,7 @@ export const gatewayServerIsolatedTestFiles = [
   "src/gateway/server-plugin-subagent-runtime.overrides.test.ts",
   // Loads the real plugin runtime that neighboring server tests replace with mocks.
   "src/gateway/server.chat-cli-auth.test.ts",
+  "src/gateway/server.cli-watchdog.test.ts",
   "src/gateway/server.codex-failure-recovery.test.ts",
   "src/gateway/server.incomplete-stream.test.ts",
   "src/gateway/server.placement-abandonment.lifecycle.test.ts",

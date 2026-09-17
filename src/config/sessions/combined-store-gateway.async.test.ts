@@ -116,11 +116,11 @@ it("bounds inventory reads while preserving target order and hidden model source
         expect(target.storeTarget).toEqual(
           expected.targetsBySessionKey.get(`agent:${agentId}:main`)!.storeTarget,
         );
-        expect(target.modelSource.loadSessionEntry("global")).toMatchObject({
+        expect(target.readSourceEntry("global")).toMatchObject({
           sessionId: `${agentId}-global`,
           modelOverride: `model-${agentId}`,
         });
-        expect(target.modelSource.loadSessionEntry("agent:echo:main")).toMatchObject({
+        expect(target.readSourceEntry("agent:echo:main")).toMatchObject({
           sessionId: "echo-agent:echo:main",
           modelOverride: "model-echo",
         });
