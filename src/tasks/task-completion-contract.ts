@@ -27,7 +27,7 @@ const CONDITIONAL_PROGRESS_PATTERN = /\b(?:whether|if|unless|once|when|after|as\
 const FIRST_PERSON_PLAN_PATTERN =
   /^(?:(?:i|we)(?:'|\u2019)ll|(?:i(?:\s+am|(?:'|\u2019)m)|we(?:\s+are|(?:'|\u2019)re))\s+going\s+to|(?:i|we)\s+(?:will|would|could|should|might|may|plan\s+to|hope\s+to|need\s+to))\b/i;
 const COMPLETION_HEADING_PATTERN =
-  /^(?:result|results|report|summary|outcome|conclusion|findings?|verification|status)\s*:\s*/i;
+  /^(?:(?:result|results|report|summary|outcome|conclusion|findings?|verification|status)\s*:\s*)+/i;
 
 // Shared subject/predicate grammar stays inside progress-result classification.
 // In particular, a subject cannot absorb a modal, negation, or new condition.
@@ -101,10 +101,27 @@ function isProgressOnlyCompletionText(value: string): boolean {
       .replace(FOLLOW_UP_PLANNING_PREFIX_PATTERN, "")
       .replace(COMPLETION_HEADING_PATTERN, "")
       .trim();
-    // A colon inside a premise does not introduce an independent result.
-    const clauses = CONDITIONAL_PROGRESS_PATTERN.test(text) ? [text] : text.split(/:\s+/);
+    const parts = text.split(/:\s+/);
+    const clauses: string[] = [];
+    for (const part of parts) {
+      const body = part.trim();
+      if (
+        !body ||
+        (parts.length > 1 && `${body}:`.replace(COMPLETION_HEADING_PATTERN, "") === "")
+      ) {
+        continue;
+      }
+      const previous = clauses.at(-1);
+      // Only a premise before this colon binds its suffix. A temporal word in
+      // a later completed result must not hide an earlier clause boundary.
+      if (previous && CONDITIONAL_PROGRESS_PATTERN.test(previous)) {
+        clauses[clauses.length - 1] = `${previous}: ${body}`;
+      } else {
+        clauses.push(body);
+      }
+    }
     return clauses.every((clause) => {
-      const body = clause.trim();
+      const body = clause.replace(COMPLETION_HEADING_PATTERN, "").trim();
       const narration = body
         .replace(/^(?:if|unless|when|once|after|as\s+soon\s+as)\b[^,]*,\s*/i, "")
         .replace(PLANNING_TIME_PREFIX_PATTERN, "");

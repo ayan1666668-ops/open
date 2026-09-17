@@ -18,6 +18,16 @@ describe("resolveRequiredCompletionTerminalResult", () => {
   // delivered result.
   it.each([
     ["pure progress", "Let me run the tests"],
+    ["compact nested pending heading", "I'll inspect the repo: Result:pending."],
+    [
+      "conditional premise after an independent colon",
+      "I'll inspect the repo: I'll check whether the result is: tests passed.",
+    ],
+    ["nested result heading remains pending", "I'll inspect the repo: Result: pending."],
+    [
+      "colon result with future prerequisite",
+      "I'll inspect the repo now: I patched the handler after the tests pass.",
+    ],
     ["compound tomorrow adjunct", "Tomorrow morning, we're going to deploy the fix."],
     ["compound weekday adjunct", "On Friday morning, we're going to deploy the fix."],
     ["moment future adjunct", "I'll inspect the failure. In a moment, I will patch the handler."],
@@ -212,6 +222,14 @@ describe("resolveRequiredCompletionTerminalResult", () => {
       "I'll inspect the repo now: the crash is a missing null check in src/foo.ts.",
     ],
     ["completed clause after narration", "Reviewing the changes, we fixed the regression."],
+    [
+      "colon result with past temporal adjunct",
+      "I'll inspect the repo now: I patched the handler after the alert fired.",
+    ],
+    [
+      "nested headed colon result",
+      "I'll inspect the repo now: Verification: all unit tests have passed after the patch landed.",
+    ],
     ["completed did action", "Reviewing the changes, we did the repair."],
     [
       "dated completed report with follow-up",
