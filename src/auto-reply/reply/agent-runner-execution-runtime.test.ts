@@ -26,6 +26,7 @@ describe("executeAgentTurn: runtime selection", () => {
       state.isCliProviderMock.mockReturnValue(true);
       state.runWithModelFallbackMock.mockImplementationOnce(
         async (params: FallbackRunnerParams) => ({
+          outcome: "completed",
           result: await params.run("codex-cli", "gpt-5.4", initialFallbackAttemptOptions(params)),
           provider: "codex-cli",
           model: "gpt-5.4",
@@ -69,6 +70,7 @@ describe("executeAgentTurn: runtime selection", () => {
   it("prefers normalized current shared context over stale queued direct metadata", async () => {
     state.isCliProviderMock.mockReturnValue(true);
     state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => ({
+      outcome: "completed",
       result: await params.run("codex-cli", "gpt-5.4", initialFallbackAttemptOptions(params)),
       provider: "codex-cli",
       model: "gpt-5.4",
@@ -107,6 +109,7 @@ describe("executeAgentTurn: runtime selection", () => {
   it("resolves CLI messageProvider from the live session surface when no origin channel is set", async () => {
     state.isCliProviderMock.mockReturnValue(true);
     state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => ({
+      outcome: "completed",
       result: await params.run("codex-cli", "gpt-5.4", initialFallbackAttemptOptions(params)),
       provider: "codex-cli",
       model: "gpt-5.4",
@@ -158,6 +161,7 @@ describe("executeAgentTurn: runtime selection", () => {
     });
     state.isCliProviderMock.mockImplementation((provider: unknown) => provider === "claude-cli");
     state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => ({
+      outcome: "completed",
       result: await params.run("openai", "gpt-5.4", initialFallbackAttemptOptions(params)),
       provider: "openai",
       model: "gpt-5.4",
@@ -178,6 +182,7 @@ describe("executeAgentTurn: runtime selection", () => {
       agents: {
         defaults: {
           agentRuntime: { id: "claude-cli" },
+          model: { fallbacks: ["openai/gpt-5.4"] },
         },
       },
     };
@@ -212,6 +217,7 @@ describe("executeAgentTurn: runtime selection", () => {
     async (agentHarnessId) => {
       state.runWithModelFallbackMock.mockImplementationOnce(
         async (params: FallbackRunnerParams) => ({
+          outcome: "completed",
           result: await params.run("openai", "gpt-5.4", initialFallbackAttemptOptions(params)),
           provider: "openai",
           model: "gpt-5.4",
@@ -261,6 +267,7 @@ describe("executeAgentTurn: runtime selection", () => {
 
   it("forwards the accepted executor as the worker preparation hint", async () => {
     state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => ({
+      outcome: "completed",
       result: await params.run("openai", "gpt-5.5", initialFallbackAttemptOptions(params)),
       provider: "openai",
       model: "gpt-5.5",
@@ -311,6 +318,7 @@ describe("executeAgentTurn: runtime selection", () => {
   it("keeps the accepted executor during heartbeat despite another policy preference", async () => {
     state.isCliProviderMock.mockImplementation((provider: unknown) => provider === "claude-cli");
     state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => ({
+      outcome: "completed",
       result: await params.run(
         "anthropic",
         "claude-opus-4-6",
@@ -381,6 +389,7 @@ describe("executeAgentTurn: runtime selection", () => {
   it("keeps a locked Codex harness embedded when cliBackends.codex is configured", async () => {
     state.isCliProviderMock.mockImplementation((provider: unknown) => provider === "codex");
     state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => ({
+      outcome: "completed",
       result: await params.run("openai", "gpt-5.4", initialFallbackAttemptOptions(params)),
       provider: "openai",
       model: "gpt-5.4",
@@ -438,6 +447,7 @@ describe("executeAgentTurn: runtime selection", () => {
     });
     state.isCliProviderMock.mockImplementation((provider: unknown) => provider === "claude-cli");
     state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => ({
+      outcome: "completed",
       result: await params.run(
         "anthropic",
         "claude-sonnet-4-6",
@@ -490,6 +500,7 @@ describe("executeAgentTurn: runtime selection", () => {
   it("honors the accepted executor before a configured CLI preference", async () => {
     state.isCliProviderMock.mockImplementation((provider: unknown) => provider === "claude-cli");
     state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => ({
+      outcome: "completed",
       result: await params.run("openai", "gpt-5.4", initialFallbackAttemptOptions(params)),
       provider: "openai",
       model: "gpt-5.4",

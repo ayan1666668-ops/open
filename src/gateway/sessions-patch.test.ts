@@ -1336,7 +1336,7 @@ describe("gateway sessions patch", () => {
     },
   );
 
-  test("pins a concrete model selection that equals the configured default", async () => {
+  test("retains configured fallback permission when selecting the configured default", async () => {
     const entry = expectPatchOk(
       await runPatch({
         cfg: { agents: { defaults: { model: { primary: OPENAI_GPT_MODEL } } } },
@@ -1346,7 +1346,7 @@ describe("gateway sessions patch", () => {
     );
 
     expectModelSelection(entry, "openai", OPENAI_GPT_ID);
-    expect(entry.executionSelection?.fallbackPermission).toBe("explicit");
+    expect(entry.executionSelection?.fallbackPermission).toBe("configured");
   });
 
   test("resolves a model reset once and queues the changed accepted pair", async () => {
@@ -2284,7 +2284,9 @@ describe("gateway sessions patch", () => {
     }
     const entry = expectPatchOk(result);
     expectModelSelection(entry, "synthetic", "hf:moonshotai/Kimi-K2.7-Code");
-    expect(entry.executionSelection?.fallbackPermission).toBe("explicit");
+    expect(entry.executionSelection?.fallbackPermission).toBe(
+      config.source === "target agent primary" ? "configured" : "explicit",
+    );
   });
 
   test("persists trailing @profile suffix as authProfileOverride on model patch", async () => {

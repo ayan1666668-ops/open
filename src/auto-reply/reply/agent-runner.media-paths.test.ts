@@ -1,15 +1,17 @@
 // Tests media path handling and sandbox staging inside agent runner inputs.
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, assert, beforeEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
 import type { EmbeddedAgentQueueMessageOutcome } from "../../agents/embedded-agent-runner/runs.js";
+import type { ModelCatalogEntry } from "../../agents/model-catalog.js";
 import type { runWithModelFallback } from "../../agents/model-fallback-runner.js";
 import {
   runInitialModelFallbackAttempt,
   withModelFallbackPreparation,
   type TestModelFallbackRunnerParams,
 } from "../../agents/test-helpers/model-fallback-runner.test-support.js";
+import { createSessionModelCatalogFixture } from "../../agents/test-helpers/session-model-catalog.test-support.js";
 import { clearRuntimeConfigSnapshot, setRuntimeConfigSnapshot } from "../../config/config.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { isModelExecutionSelection } from "../../model-picker/execution-selection.js";
@@ -32,6 +34,25 @@ import {
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 let testWorkspaceDir: string;
+const preparedCatalog = createSessionModelCatalogFixture();
+const mediaCatalog: ModelCatalogEntry[] = [
+  {
+    provider: "anthropic",
+    id: "claude",
+    name: "Media test model",
+    input: ["text", "image"],
+    api: "openai-completions",
+    baseUrl: "https://fixture.example.invalid/v1",
+  },
+  {
+    provider: "ollama",
+    id: "gemma4:latest",
+    name: "Local media test model",
+    input: ["text", "image"],
+    api: "openai-completions",
+    baseUrl: "https://fixture.example.invalid/v1",
+  },
+];
 
 const runEmbeddedAgentMock = vi.fn();
 const runWithModelFallbackMock = vi.fn();
@@ -73,8 +94,22 @@ const EXPECTED_STEER_QUEUE_IDENTITY =
   "channel-user:v1:6f3f31084a7a2a6ff17176c0c16682e64d9f21301f64ff7e5bf1173b54fadc33";
 const registeredOperations: ReplyOperation[] = [];
 vi.mock("../../agents/model-fallback-runner.js", () => ({
-  runWithModelFallback: (params: Parameters<typeof runWithModelFallback<unknown>>[0]) =>
-    withModelFallbackPreparation(params, runWithModelFallbackMock),
+  runWithModelFallback: (params: Parameters<typeof runWithModelFallback<unknown>>[0]) => {
+    assert(params.cfg, "A reply attempt supplies its runtime config.");
+    assert(params.agentId, "A reply attempt supplies its agent owner.");
+    preparedCatalog.publish({
+      config: params.cfg,
+      agentId: params.agentId,
+      catalog: { entries: mediaCatalog, routeVariants: mediaCatalog },
+      profiles: Object.fromEntries(
+        mediaCatalog.map(({ provider }) => [
+          provider + ":fixture",
+          { type: "api_key" as const, provider, key: "synthetic-credential" },
+        ]),
+      ),
+    });
+    return withModelFallbackPreparation(params, runWithModelFallbackMock);
+  },
 }));
 
 vi.mock("../../agents/model-fallback-attempt.js", () => ({

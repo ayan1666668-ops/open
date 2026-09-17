@@ -1,5 +1,3 @@
-// Gateway chat integration tests cover dashboard chat requests, transcript
-// history limits, model overrides, inbound dispatch, and streaming event fanout.
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -48,6 +46,9 @@ import { isPathInside } from "../infra/path-guards.js";
 import { readPersistedMediaFacts } from "../media/media-facts.js";
 import { resolveMediaReferenceLocalPath } from "../media/media-reference.js";
 import { getMediaDir } from "../media/store.js";
+// Gateway chat integration tests cover dashboard chat requests, transcript
+// history limits, model overrides, inbound dispatch, and streaming event fanout.
+import { commitSessionExecutionSelection } from "../model-picker/apply-session-model-selection.js";
 import { withPluginMetadataSnapshotScope } from "../plugins/current-plugin-metadata-snapshot.js";
 import { resolveInstalledPluginIndexPolicyHash } from "../plugins/installed-plugin-index-policy.js";
 import { rebasePluginMetadataSnapshotManifestRegistry } from "../plugins/plugin-metadata-snapshot.js";
@@ -4974,6 +4975,18 @@ describe("gateway server chat", () => {
       caseName: "an aborted-run hint",
       runId: "idem-aborted-run-hint",
       entry: { abortedLastRun: true },
+    },
+    {
+      caseName: "an accepted ACP executor",
+      runId: "idem-acp-executor",
+      entry: (() => {
+        const entry = makeDoneSessionEntry();
+        commitSessionExecutionSelection(entry, {
+          executor: { kind: "acp", backend: "acpx", agent: "qa-agent" },
+          model: "native-managed",
+        });
+        return entry;
+      })(),
     },
   ])("chat.send leaves $caseName outside restart-safe admission", async ({ entry, runId }) => {
     const { storePath } = openDirectChatSession();

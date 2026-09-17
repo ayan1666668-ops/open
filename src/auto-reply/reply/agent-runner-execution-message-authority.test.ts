@@ -108,6 +108,7 @@ describe("channel reply message authority", () => {
       state.isCliProviderMock.mockImplementation((provider) => provider === "claude-cli");
       state.runWithModelFallbackMock.mockImplementationOnce(
         async (params: FallbackRunnerParams) => ({
+          outcome: "completed",
           result: await params.run(
             "claude-cli",
             "claude-sonnet-4-6",
@@ -172,6 +173,7 @@ describe("channel reply message authority", () => {
     state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => {
       await params.run("anthropic", "claude", initialFallbackAttemptOptions(params));
       return {
+        outcome: "completed",
         result: await params.run(
           "claude-cli",
           "claude-sonnet-4-6",
@@ -198,6 +200,7 @@ describe("channel reply message authority", () => {
       state.isCliProviderMock.mockImplementation((provider) => provider === "claude-cli");
       state.runWithModelFallbackMock.mockImplementationOnce(
         async (params: FallbackRunnerParams) => ({
+          outcome: "completed",
           result: await params.run(
             "claude-cli",
             "claude-sonnet-4-6",

@@ -41,6 +41,7 @@ describe("executeAgentTurn: session state", () => {
       const provider = isInitialInvocation ? "anthropic" : "openai";
       const model = isInitialInvocation ? "claude" : "gpt-5.6-luna";
       return {
+        outcome: "completed",
         result: await params.run(provider, model, initialFallbackAttemptOptions(params)),
         provider,
         model,
@@ -281,6 +282,7 @@ describe("executeAgentTurn: session state", () => {
         const provider = isInitialInvocation ? "anthropic" : "openai";
         const model = isInitialInvocation ? "claude" : "gpt-5.4";
         return {
+          outcome: "completed",
           result: await params.run(provider, model, initialFallbackAttemptOptions(params)),
           provider,
           model,
@@ -342,6 +344,7 @@ describe("executeAgentTurn: session state", () => {
     state.runWithModelFallbackMock.mockImplementation(async (params: FallbackRunnerParams) => {
       switchCallCount++;
       return {
+        outcome: "completed",
         result: await params.run(
           params.provider,
           params.model,
@@ -386,6 +389,7 @@ describe("executeAgentTurn: session state", () => {
       invocation++;
       if (invocation <= 2) {
         return {
+          outcome: "completed",
           result: await params.run(
             params.provider,
             params.model,
@@ -400,6 +404,7 @@ describe("executeAgentTurn: session state", () => {
       }
       // Third invocation succeeds with the switched model
       return {
+        outcome: "completed",
         result: await params.run("openai", "gpt-5.4", initialFallbackAttemptOptions(params)),
         provider: "openai",
         model: "gpt-5.4",
@@ -622,6 +627,7 @@ describe("executeAgentTurn: session state", () => {
 
   it("keeps cross-provider fallback selection turn-local", async () => {
     state.runWithModelFallbackMock.mockImplementation(async (params: FallbackRunnerParams) => ({
+      outcome: "completed",
       result: await params.run("openai", "gpt-5.4", fallbackAttemptOptions(params, "unknown")),
       provider: "openai",
       model: "gpt-5.4",
@@ -706,6 +712,7 @@ describe("executeAgentTurn: session state", () => {
     };
     const acceptedSelection = structuredClone(sessionEntry.executionSelection);
     state.runWithModelFallbackMock.mockImplementation(async (params: FallbackRunnerParams) => ({
+      outcome: "completed",
       result: await params.run("openai", "gpt-5.4", fallbackAttemptOptions(params, "unknown")),
       provider: "openai",
       model: "gpt-5.4",
@@ -732,6 +739,7 @@ describe("executeAgentTurn: session state", () => {
         .run("anthropic", "claude-opus-4-6", fallbackAttemptOptions(params, "unknown"))
         .catch(() => undefined);
       return {
+        outcome: "completed",
         result: await params.run("openai", "gpt-5.4", fallbackAttemptOptions(params, "unknown")),
         provider: "openai",
         model: "gpt-5.4",
@@ -763,6 +771,7 @@ describe("executeAgentTurn: session state", () => {
         .run("anthropic", "claude-opus-4-7", initialFallbackAttemptOptions(params))
         .catch(() => undefined);
       return {
+        outcome: "completed",
         result: await params.run("openai", "gpt-5.4", fallbackAttemptOptions(params, "unknown")),
         provider: "openai",
         model: "gpt-5.4",
@@ -806,6 +815,7 @@ describe("executeAgentTurn: session state", () => {
         .run("anthropic", "claude-opus-4-7", initialFallbackAttemptOptions(params))
         .catch(() => undefined);
       return {
+        outcome: "completed",
         result: await params.run("openai", "gpt-5.4", fallbackAttemptOptions(params, "unknown")),
         provider: "openai",
         model: "gpt-5.4",

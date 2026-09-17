@@ -246,6 +246,7 @@ describe("executeAgentTurn: message tool progress", () => {
     state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => {
       await params.run("anthropic", "primary", initialFallbackAttemptOptions(params));
       return {
+        outcome: "completed",
         result: await params.run("openai", "fallback", fallbackAttemptOptions(params, "unknown")),
         provider: "openai",
         model: "fallback",

@@ -25,6 +25,7 @@ describe("executeAgentTurn: CLI progress bridging", () => {
   it("bridges CLI assistant agent events into onPartialReply for live preview (#76869)", async () => {
     state.isCliProviderMock.mockReturnValue(true);
     state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => ({
+      outcome: "completed",
       result: await runInitialFallbackAttempt(params, "claude-cli", "claude-opus-4-6"),
       provider: "claude-cli",
       model: "claude-opus-4-6",
@@ -80,6 +81,7 @@ describe("executeAgentTurn: CLI progress bridging", () => {
   it("serializes and drains bridged CLI assistant previews before completing (#76869)", async () => {
     state.isCliProviderMock.mockReturnValue(true);
     state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => ({
+      outcome: "completed",
       result: await runInitialFallbackAttempt(params, "claude-cli", "claude-opus-4-6"),
       provider: "claude-cli",
       model: "claude-opus-4-6",
@@ -158,6 +160,7 @@ describe("executeAgentTurn: CLI progress bridging", () => {
   it("bridges CLI tool agent events into onToolStart for live preview", async () => {
     state.isCliProviderMock.mockReturnValue(true);
     state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => ({
+      outcome: "completed",
       result: await runInitialFallbackAttempt(params, "claude-cli", "claude-opus-4-6"),
       provider: "claude-cli",
       model: "claude-opus-4-6",
@@ -224,6 +227,7 @@ describe("executeAgentTurn: CLI progress bridging", () => {
   it("starts CLI assistant progress before a later tool while typing is slow", async () => {
     state.isCliProviderMock.mockReturnValue(true);
     state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => ({
+      outcome: "completed",
       result: await runInitialFallbackAttempt(params, "claude-cli", "claude-opus-4-6"),
       provider: "claude-cli",
       model: "claude-opus-4-6",
@@ -307,6 +311,7 @@ describe("executeAgentTurn: CLI progress bridging", () => {
   it("starts CLI tool progress before later assistant text while typing is slow", async () => {
     state.isCliProviderMock.mockReturnValue(true);
     state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => ({
+      outcome: "completed",
       result: await runInitialFallbackAttempt(params, "claude-cli", "claude-opus-4-6"),
       provider: "claude-cli",
       model: "claude-opus-4-6",
@@ -391,6 +396,7 @@ describe("executeAgentTurn: CLI progress bridging", () => {
   it("bridges CLI preambles for progress headlines when commentary is disabled", async () => {
     state.isCliProviderMock.mockReturnValue(true);
     state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => ({
+      outcome: "completed",
       result: await runInitialFallbackAttempt(params, "claude-cli", "claude-opus-4-6"),
       provider: "claude-cli",
       model: "claude-opus-4-6",
@@ -449,6 +455,7 @@ describe("executeAgentTurn: CLI progress bridging", () => {
   it("does not emit CLI preambles when both progress lanes are disabled", async () => {
     state.isCliProviderMock.mockReturnValue(true);
     state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => ({
+      outcome: "completed",
       result: await runInitialFallbackAttempt(params, "claude-cli", "claude-opus-4-6"),
       provider: "claude-cli",
       model: "claude-opus-4-6",
@@ -492,6 +499,7 @@ describe("executeAgentTurn: CLI progress bridging", () => {
   it("does not bridge CLI tool deltas when silentExpected is set", async () => {
     state.isCliProviderMock.mockReturnValue(true);
     state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => ({
+      outcome: "completed",
       result: await runInitialFallbackAttempt(params, "claude-cli", "claude-opus-4-6"),
       provider: "claude-cli",
       model: "claude-opus-4-6",
@@ -542,6 +550,7 @@ describe("executeAgentTurn: CLI progress bridging", () => {
   it("does not bridge CLI assistant deltas when silentExpected is set (#76869)", async () => {
     state.isCliProviderMock.mockReturnValue(true);
     state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => ({
+      outcome: "completed",
       result: await runInitialFallbackAttempt(params, "claude-cli", "claude-opus-4-6"),
       provider: "claude-cli",
       model: "claude-opus-4-6",
@@ -594,6 +603,7 @@ describe("executeAgentTurn: CLI progress bridging", () => {
   it("bridges CLI thinking agent events into onReasoningStream with the reasoning opt-in gate", async () => {
     state.isCliProviderMock.mockReturnValue(true);
     state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => ({
+      outcome: "completed",
       result: await params.run(
         "claude-cli",
         "claude-opus-4-7",
@@ -665,6 +675,7 @@ describe("executeAgentTurn: CLI progress bridging", () => {
   it("bridges tagged Claude CLI reasoning separately from its visible answer", async () => {
     state.isCliProviderMock.mockReturnValue(true);
     state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => ({
+      outcome: "completed",
       result: await params.run(
         "claude-cli",
         "claude-opus-4-7",
@@ -753,6 +764,7 @@ describe("executeAgentTurn: CLI progress bridging", () => {
   it("does not bridge CLI thinking events to onReasoningStream when silentExpected is set", async () => {
     state.isCliProviderMock.mockReturnValue(true);
     state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => ({
+      outcome: "completed",
       result: await params.run(
         "claude-cli",
         "claude-opus-4-7",
@@ -809,6 +821,7 @@ describe("executeAgentTurn: CLI progress bridging", () => {
   it("does not bridge non-Claude CLI assistant events to onReasoningStream", async () => {
     state.isCliProviderMock.mockReturnValue(true);
     state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => ({
+      outcome: "completed",
       result: await params.run("codex-cli", "gpt-5.5", initialFallbackAttemptOptions(params)),
       provider: "codex-cli",
       model: "gpt-5.5",
@@ -851,6 +864,7 @@ describe("executeAgentTurn: CLI progress bridging", () => {
   it("does not double-fire onReasoningStream from the bridge when the API/native runtime path is active", async () => {
     state.isCliProviderMock.mockReturnValue(false);
     state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => ({
+      outcome: "completed",
       result: await params.run(
         "anthropic",
         "claude-sonnet-4-7",

@@ -1,4 +1,5 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { commitSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
 import type { PluginHookReplyDispatchContext } from "../../plugins/hook-types.js";
 import { createUserTurnTranscriptRecorder } from "../../sessions/user-turn-transcript.js";
 import type { ReplyDispatchRun } from "../get-reply-options.types.js";
@@ -88,12 +89,17 @@ describe("dispatchReplyFromConfig reply hook scope", () => {
       : {
           sessionId: "target-session",
           updatedAt: Date.now(),
-          ...(scenario.metadata ? { acp: { backend: "acpx" } } : {}),
         };
     if (sourceKey !== scenario.targetKey) {
       sessionStoreMocks.entriesBySessionKey.set(sourceKey, sourceEntry);
     }
     if (targetEntry) {
+      if (scenario.metadata) {
+        commitSessionExecutionSelection(targetEntry, {
+          executor: { kind: "acp", backend: "acpx", agent: "qa-agent" },
+          model: "native-managed",
+        });
+      }
       sessionStoreMocks.entriesBySessionKey.set(scenario.targetKey, targetEntry);
     }
     const readEntry = (...args: unknown[]) => {
@@ -188,8 +194,11 @@ describe("dispatchReplyFromConfig reply hook scope", () => {
     const entry = {
       sessionId: "restricted-acp-session",
       updatedAt: Date.now(),
-      acp: { backend: "acpx" },
     };
+    commitSessionExecutionSelection(entry, {
+      executor: { kind: "acp", backend: "acpx", agent: "qa-agent" },
+      model: "native-managed",
+    });
     sessionStoreMocks.entriesBySessionKey.set(sessionKey, entry);
     const readEntry = () => entry;
     sessionStoreMocks.loadSessionStoreEntry.mockImplementation(readEntry);

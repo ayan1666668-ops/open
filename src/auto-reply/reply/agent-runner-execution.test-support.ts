@@ -10,12 +10,12 @@ import type { EmbeddedAgentRunResult } from "../../agents/embedded-agent-runner/
 import { FailoverError, type FallbackAttemptRecord } from "../../agents/failover-error.js";
 import { AUTH_INVALID_TOKEN_USER_TEXT } from "../../agents/failover/user-copy.js";
 import type { LiveSessionModelSwitchError } from "../../agents/live-model-switch-error.js";
+import type { ModelFallbackRunResult } from "../../agents/model-fallback-attempt.js";
 import type { runWithModelFallback } from "../../agents/model-fallback-runner.js";
 import { evaluatePublishedModelRuntimeChoice } from "../../agents/model-runtime-choice.js";
 import {
   initialModelFallbackAttemptOptions,
   withModelFallbackPreparation,
-  type TestModelFallbackRunnerParams,
 } from "../../agents/test-helpers/model-fallback-runner.test-support.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import type { ModelDefinitionConfig } from "../../config/types.models.js";
@@ -83,7 +83,8 @@ const state = vi.hoisted(() => ({
   runEmbeddedAgentMock: vi.fn(),
   runEmbeddedAgentEntryMock: vi.fn(),
   runCliAgentMock: vi.fn(),
-  runWithModelFallbackMock: vi.fn(),
+  runWithModelFallbackMock:
+    vi.fn<(params: FallbackRunnerParams) => Promise<ModelFallbackRunResult<unknown>>>(),
   cliModels: new Map<string, string>(),
   isCliProviderMock: vi.fn((_provider: unknown) => false),
   isInternalMessageChannelMock: vi.fn((_channel: unknown) => false),
@@ -148,8 +149,7 @@ vi.mock("../../agents/harness/runtime-plugin.js", async (importOriginal) => ({
 }));
 vi.mock("../../agents/model-fallback-runner.js", () => ({
   runWithModelFallback: async (params: Parameters<typeof runWithModelFallback<unknown>>[0]) => {
-    const resolved = await withModelFallbackPreparation(params, state.runWithModelFallbackMock);
-    return { ...resolved, outcome: resolved.outcome ?? "completed" };
+    return withModelFallbackPreparation(params, state.runWithModelFallbackMock);
   },
 }));
 
@@ -372,17 +372,7 @@ export async function loadActualRunCliAgentForTest(): Promise<RunCliAgent> {
   ).runCliAgent;
 }
 
-export type FallbackRunnerParams = TestModelFallbackRunnerParams & {
-  sessionId?: string;
-  abortSignal?: AbortSignal;
-  classifyResult?: (params: {
-    result: { payloads?: Array<{ text?: string; isError?: boolean; isReasoning?: boolean }> };
-    provider: string;
-    model: string;
-    attempt: number;
-    total: number;
-  }) => Promise<unknown>;
-};
+export type FallbackRunnerParams = Parameters<typeof runWithModelFallback<unknown>>[0];
 
 export {
   fallbackModelAttemptOptions as fallbackAttemptOptions,
@@ -823,6 +813,7 @@ export async function setupAgentRunnerExecutionTestState() {
       }),
     );
     state.runWithModelFallbackMock.mockImplementation(async (params: FallbackRunnerParams) => ({
+      outcome: "completed",
       result: await params.run(
         params.provider,
         params.model,

@@ -54,6 +54,7 @@ export async function applyMixedDirectives(params: {
     provider,
     model,
     requestedRouteResolution: "resolved",
+    sessionExecutionSelection: sessionEntry.executionSelection,
     modelPolicy: createModelVisibilityPolicy({
       cfg,
       catalog: allowedModels,

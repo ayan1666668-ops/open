@@ -203,7 +203,6 @@ it.each(
       GatewayClientScopes: ["operator.admin"],
     });
     const onSessionPrepared = vi.fn();
-    const resolverCalls: unknown[] = [];
     const dispatch = dispatchReplyFromConfig({
       ctx,
       cfg,
@@ -213,11 +212,7 @@ it.each(
           custody === "stale-admission" ? "retired-session" : before.entry.sessionId,
         onSessionPrepared,
       },
-      replyResolver: async (input, options) => {
-        const result = await getReplyFromConfig(input, options, cfg);
-        resolverCalls.push({ command: input.commandText, raw: input.rawText, result });
-        return result;
-      },
+      replyResolver: (input, options) => getReplyFromConfig(input, options, cfg),
     });
     if (custody === "stale-admission") {
       await expect(dispatch).rejects.toThrow(/changed while starting work/i);
@@ -230,14 +225,20 @@ it.each(
       expect(loadSessionEntryReadOnly(neighborScope)).toEqual(neighborBefore);
     }
     expect(after?.executionSelection).toEqual(before.entry.executionSelection);
-    expect(setConfigOption).not.toHaveBeenCalled();
     if (custody === "unlocked") {
-      expect(close, JSON.stringify({ resolverCalls, delivered, after })).toHaveBeenCalledOnce();
+      expect(setConfigOption).toHaveBeenCalledExactlyOnceWith({
+        handle: expect.objectContaining({ agentId }),
+        key: "model",
+        value: "qa-original",
+      });
+      expect(close).toHaveBeenCalledOnce();
       expect(close).toHaveBeenCalledWith(
         expect.objectContaining({ handle: expect.objectContaining({ agentId }) }),
       );
-      expect(after?.sessionId).not.toBe(before.entry.sessionId);
-      expect(runTurn).toHaveBeenCalledOnce();
+      expect(after?.sessionId).toBe(before.entry.sessionId);
+      expect(after?.lifecycleRevision).toEqual(expect.any(String));
+      expect(after?.lifecycleRevision).not.toBe(before.entry.lifecycleRevision);
+      expect(runTurn, delivered.join("\n")).toHaveBeenCalledOnce();
       expect(runTurn).toHaveBeenCalledWith(
         expect.objectContaining({
           text: "fixture/alternate explain the result",
@@ -250,14 +251,14 @@ it.each(
         expect.objectContaining({ sessionId: after?.sessionId }),
       );
     } else {
+      expect(setConfigOption).not.toHaveBeenCalled();
       expect(after?.sessionId).toBe(before.entry.sessionId);
+      expect(after?.lifecycleRevision).toBe(before.entry.lifecycleRevision);
       expect(close).not.toHaveBeenCalled();
       expect(cancel).not.toHaveBeenCalled();
       expect(runTurn).not.toHaveBeenCalled();
       if (custody === "locked") {
-        expect(delivered.join("\n"), JSON.stringify({ resolverCalls, after })).toContain(
-          MODEL_SELECTION_LOCKED_RESET_MESSAGE,
-        );
+        expect(delivered.join("\n")).toContain(MODEL_SELECTION_LOCKED_RESET_MESSAGE);
       }
     }
   },

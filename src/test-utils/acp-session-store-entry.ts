@@ -8,6 +8,7 @@ import { resolveAgentIdFromSessionKey } from "../routing/session-key.js";
 /** Seed both sides of the real agent-row/lifecycle join before installing a mock reader. */
 export function createAcpSessionStoreEntryFixture(params: {
   sessionKey: string;
+  agentId?: string;
   acp: SessionAcpMeta;
   entry?: SessionEntry;
   cfg?: OpenClawConfig;
@@ -26,7 +27,7 @@ export function createAcpSessionStoreEntryFixture(params: {
   };
   return {
     cfg: params.cfg ?? {},
-    agentId: resolveAgentIdFromSessionKey(params.sessionKey),
+    agentId: resolveAgentIdFromSessionKey(params.sessionKey, params.agentId),
     storePath: "/synthetic/agent.sqlite",
     sessionKey: params.sessionKey,
     storeSessionKey: params.sessionKey,

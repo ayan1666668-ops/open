@@ -268,7 +268,13 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
         "fallback",
         fallbackAttemptOptions(params, "unknown"),
       );
-      return { result, provider: "openai", model: "fallback", attempts: [] };
+      return {
+        outcome: "completed",
+        result,
+        provider: "openai",
+        model: "fallback",
+        attempts: [],
+      };
     });
 
     const executeAgentTurn = await getExecuteAgentTurnForTest();
@@ -359,7 +365,13 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
             "basic",
             fallbackAttemptOptions(params, "unknown"),
           );
-          return { result, provider: "demo", model: "basic", attempts: [] };
+          return {
+            outcome: "completed",
+            result,
+            provider: "demo",
+            model: "basic",
+            attempts: [],
+          };
         },
       );
       state.runEmbeddedAgentMock.mockResolvedValue({ payloads: [{ text: "ok" }], meta: {} });
@@ -391,7 +403,13 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
         "qwen3.5:4b",
         initialFallbackAttemptOptions(params),
       );
-      return { result, provider: "ollama", model: "qwen3.5:4b", attempts: [] };
+      return {
+        outcome: "completed",
+        result,
+        provider: "ollama",
+        model: "qwen3.5:4b",
+        attempts: [],
+      };
     });
     state.runEmbeddedAgentMock.mockResolvedValue({ payloads: [{ text: "ok" }], meta: {} });
 
@@ -420,6 +438,7 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
       );
       expect(freezeAbortMock).not.toHaveBeenCalled();
       return {
+        outcome: "completed",
         result,
         provider: "openai",
         model: "gpt-5.5",
@@ -477,6 +496,7 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
       candidateSettled.resolve();
       await fallbackRelease.promise;
       return {
+        outcome: "completed",
         result,
         provider: "anthropic",
         model: "claude",
@@ -550,7 +570,13 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
           );
           candidateSettled.resolve();
           await fallbackRelease.promise;
-          return { result, provider: "anthropic", model: "claude", attempts: [] };
+          return {
+            outcome: "completed",
+            result,
+            provider: "anthropic",
+            model: "claude",
+            attempts: [],
+          };
         },
       );
 
@@ -670,7 +696,13 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
               fallbackAttemptOptions(params, "unknown"),
             );
           }
-          return { result, provider: "anthropic", model: "fallback-6", attempts: [] };
+          return {
+            outcome: "completed",
+            result,
+            provider: "anthropic",
+            model: "fallback-6",
+            attempts: [],
+          };
         },
       );
 
@@ -767,6 +799,7 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
   it("forwards CLI harness execution phases into typing signals", async () => {
     state.isCliProviderMock.mockReturnValue(true);
     state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => ({
+      outcome: "completed",
       result: await params.run("codex-cli", "gpt-5.4", initialFallbackAttemptOptions(params)),
       provider: "codex-cli",
       model: "gpt-5.4",
@@ -808,6 +841,7 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
   it("requires explicit message targets on heartbeat CLI runs", async () => {
     state.isCliProviderMock.mockReturnValue(true);
     state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => ({
+      outcome: "completed",
       result: await params.run("claude-cli", "sonnet-4.6", initialFallbackAttemptOptions(params)),
       provider: "claude-cli",
       model: "sonnet-4.6",
@@ -841,6 +875,7 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
   it("requires explicit message targets on heartbeat embedded runs", async () => {
     // Heartbeat ambient From/To must not become implicit message-tool recipients.
     state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => ({
+      outcome: "completed",
       result: await params.run("anthropic", "claude", initialFallbackAttemptOptions(params)),
       provider: "anthropic",
       model: "claude",
@@ -867,6 +902,7 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
 
   it("forwards bundle MCP retirement to isolated heartbeat embedded runs", async () => {
     state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => ({
+      outcome: "completed",
       result: await params.run("anthropic", "claude", initialFallbackAttemptOptions(params)),
       provider: "anthropic",
       model: "claude",
@@ -898,6 +934,7 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
   it("forwards bundle MCP retirement to isolated heartbeat CLI runs", async () => {
     state.isCliProviderMock.mockReturnValue(true);
     state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => ({
+      outcome: "completed",
       result: await params.run("claude-cli", "sonnet-4.6", initialFallbackAttemptOptions(params)),
       provider: "claude-cli",
       model: "sonnet-4.6",
@@ -928,6 +965,7 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
 
   it("omits requireExplicitMessageTarget on ordinary embedded runs", async () => {
     state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => ({
+      outcome: "completed",
       result: await params.run("anthropic", "claude", initialFallbackAttemptOptions(params)),
       provider: "anthropic",
       model: "claude",

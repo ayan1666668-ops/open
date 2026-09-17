@@ -92,6 +92,7 @@ describe("executeAgentTurn: compaction events", () => {
     try {
       state.runWithModelFallbackMock.mockImplementationOnce(
         async (params: FallbackRunnerParams) => ({
+          outcome: "completed",
           result: await params.run("openai", "gpt-5.5", initialFallbackAttemptOptions(params)),
           provider: "openai",
           model: "gpt-5.5",

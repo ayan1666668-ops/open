@@ -7,6 +7,7 @@ import { ACP_SELECTION_REPAIR_MESSAGE } from "../acp/control-plane/manager.utils
 import { AcpRuntimeError } from "../acp/runtime/errors.js";
 import { readAcpSessionMeta, upsertAcpSessionMeta } from "../acp/runtime/session-meta.js";
 import { createTestAdmittedRunContext } from "../agents/admitted-run-context.test-support.js";
+import { createSessionModelCatalogFixture } from "../agents/test-helpers/session-model-catalog.test-support.js";
 import { applyMixedDirectives } from "../auto-reply/reply/directive-handling.mixed-inline.test-helpers.js";
 import { loadSessionEntry, patchSessionEntryWithKey } from "../config/sessions/session-accessor.js";
 import { resolveSessionExecutionControlFailure } from "../model-picker/apply-session-model-selection.js";
@@ -19,6 +20,7 @@ import {
   projectPluginSessionEntry,
   projectPluginSessionEntryPatch,
 } from "../plugin-sdk/session-store-runtime-internal.js";
+import { resolveSessionWorkerPlacementContext } from "./session-worker-placement-context.js";
 import { writeSessionStore } from "./test-helpers.js";
 import {
   acpRuntimeMocks,
@@ -401,6 +403,87 @@ test("a later ACP actor confirmation failure preserves every committed batch out
   expect(sessionHookMocks.triggerInternalHook).toHaveBeenCalledWith(
     expect.objectContaining({ sessionKey: ordinaryKey }),
   );
+});
+
+test("a later batch catalog read does not replay a settled failed ACP model control", async () => {
+  const state = await setupSelection();
+  state.cfg.models = {
+    providers: {
+      fixture: {
+        api: "openai-completions",
+        baseUrl: "https://fixture.example.invalid/v1",
+        models: [],
+      },
+    },
+  };
+  state.cfg.agents = {
+    ...state.cfg.agents,
+    defaults: { ...state.cfg.agents?.defaults, model: "fixture/next" },
+  };
+  const catalog = createSessionModelCatalogFixture();
+  const placements = resolveSessionWorkerPlacementContext().workerSessionPlacementService;
+  if (!placements) throw new Error("missing placement owner");
+  const readPlacements = placements.getMany.bind(placements);
+  let failPlacementRead = false;
+  vi.spyOn(placements, "getMany").mockImplementation((keys) => {
+    if (failPlacementRead) {
+      failPlacementRead = false;
+      throw new Error("placement storage temporarily unavailable");
+    }
+    return readPlacements(keys);
+  });
+  state.setConfigOption.mockImplementationOnce(async () => {
+    failPlacementRead = true;
+    return { configOptions: [{ id: "model", category: "model", currentValue: "qa-accepted" }] };
+  });
+  const loadGatewayModelCatalogSnapshot = vi.fn(async () => {
+    expect(state.setConfigOption.mock.calls.map(([input]) => input.value)).toEqual([
+      "fixture/next",
+      "qa-before",
+    ]);
+    expect(state.readMeta()?.lastError).toBeUndefined();
+    const entry = {
+      provider: "fixture",
+      id: "next",
+      name: "Next model",
+      api: "openai-completions" as const,
+      baseUrl: "https://fixture.example.invalid/v1",
+    };
+    return catalog.publish({
+      config: state.cfg,
+      agentId: "main",
+      catalog: { entries: [entry], routeVariants: [entry] },
+      profiles: {
+        "fixture:default": { type: "api_key", provider: "fixture", key: "synthetic-credential" },
+      },
+    });
+  });
+  const result = await directSessionReq<{ outcomes: Array<{ key: string; ok: boolean }> }>(
+    "sessions.patchMany",
+    {
+      targets: [{ key: acpKey }, { key: ordinaryKey }],
+      patch: { model: "fixture/next", pinned: true },
+    },
+    { context: { loadGatewayModelCatalogSnapshot } },
+  );
+  expect(result.ok).toBe(true);
+  expect(result.payload?.outcomes).toEqual([
+    expect.objectContaining({ key: acpKey, ok: false }),
+    expect.objectContaining({ key: ordinaryKey, ok: true }),
+  ]);
+  expect(loadGatewayModelCatalogSnapshot).toHaveBeenCalledOnce();
+  expect(state.setConfigOption.mock.calls.map(([input]) => input.value)).toEqual([
+    "fixture/next",
+    "qa-before",
+  ]);
+  expect(getSessionExecutionSelection(state.readEntry())?.model).toEqual({ id: "qa-before" });
+  expect(state.readEntry()?.pinnedAt).toBeUndefined();
+  expect(state.readMeta()?.lastError).toBeUndefined();
+  expect(getSessionExecutionSelection(state.readEntry(ordinaryKey))?.model).toEqual({
+    provider: "fixture",
+    id: "next",
+  });
+  expect(state.readEntry(ordinaryKey)?.pinnedAt).toEqual(expect.any(Number));
 });
 
 test("sessions.patch validates all accompanying metadata before an ACP model control", async () => {

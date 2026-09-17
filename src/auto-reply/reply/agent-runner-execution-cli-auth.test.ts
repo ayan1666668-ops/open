@@ -159,6 +159,7 @@ describe("executeAgentTurn: CLI credential selection", () => {
     }
     state.isCliProviderMock.mockImplementation((provider) => provider === testCase.backend);
     state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => ({
+      outcome: "completed",
       result: await params.run(
         testCase.provider,
         model,

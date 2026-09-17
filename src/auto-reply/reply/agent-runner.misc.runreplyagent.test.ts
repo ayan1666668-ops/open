@@ -15,6 +15,7 @@ import {
 } from "../../agents/embedded-agent-runner/runs.js";
 import { testing as embeddedRunTesting } from "../../agents/embedded-agent-runner/runs.test-support.js";
 import { registerPendingAgentQuestion } from "../../agents/harness/gateway-question.js";
+import type { ModelCatalogEntry } from "../../agents/model-catalog.js";
 import type { runWithModelFallback } from "../../agents/model-fallback-runner.js";
 import {
   beginForegroundSessionMaintenance,
@@ -28,6 +29,7 @@ import {
   withModelFallbackPreparation,
   type TestModelFallbackRunnerParams,
 } from "../../agents/test-helpers/model-fallback-runner.test-support.js";
+import { createSessionModelCatalogFixture } from "../../agents/test-helpers/session-model-catalog.test-support.js";
 import type { InboundEventKind } from "../../channels/inbound-event/kind.js";
 import { clearRuntimeConfigSnapshot, setRuntimeConfigSnapshot } from "../../config/config.js";
 import type { OpenClawConfig } from "../../config/config.js";
@@ -78,6 +80,21 @@ import { createMockTypingController } from "./test-helpers.js";
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 let rootDir: string;
+const preparedCatalog = createSessionModelCatalogFixture();
+const directModelCatalog: ModelCatalogEntry[] = (
+  [
+    { provider: "anthropic", id: "claude", input: ["text"] },
+    { provider: "anthropic", id: "claude-opus-4-7", input: ["text", "image"] },
+    { provider: "anthropic", id: "claude-opus-4-6", input: ["text", "image"] },
+    { provider: "google", id: "gemini-2.5-pro", input: ["text", "image"] },
+    { provider: "amazon-bedrock", id: "us.anthropic.claude-sonnet-4-6", input: ["text", "image"] },
+  ] satisfies Pick<ModelCatalogEntry, "provider" | "id" | "input">[]
+).map((entry) => ({
+  ...entry,
+  name: entry.id,
+  api: "openai-completions",
+  baseUrl: "https://fixture.example.invalid/v1",
+}));
 
 function createCliBackendTestConfig() {
   return {};
@@ -132,8 +149,22 @@ const compactState = vi.hoisted(() => ({
 }));
 
 vi.mock("../../agents/model-fallback-runner.js", () => ({
-  runWithModelFallback: (params: Parameters<typeof runWithModelFallback<unknown>>[0]) =>
-    withModelFallbackPreparation(params, runWithModelFallbackMock),
+  runWithModelFallback: (params: Parameters<typeof runWithModelFallback<unknown>>[0]) => {
+    assert(params.cfg, "A reply attempt supplies its runtime config.");
+    assert(params.agentId, "A reply attempt supplies its agent owner.");
+    preparedCatalog.publish({
+      config: params.cfg,
+      agentId: params.agentId,
+      catalog: { entries: directModelCatalog, routeVariants: directModelCatalog },
+      profiles: Object.fromEntries(
+        directModelCatalog.map(({ provider }) => [
+          provider + ":fixture",
+          { type: "api_key" as const, provider, key: "synthetic-credential" },
+        ]),
+      ),
+    });
+    return withModelFallbackPreparation(params, runWithModelFallbackMock);
+  },
 }));
 
 vi.mock("../../agents/model-fallback-attempt.js", () => ({
@@ -340,16 +371,9 @@ function createBaseRun(options: BaseRunOptions = {}) {
       provider: "anthropic",
       model: "claude",
       thinkingCatalog: [
-        { provider: "anthropic", id: "claude", input: ["text"] },
+        ...directModelCatalog,
         { provider: "claude-cli", id: "opus-4.5", input: ["text", "image"] },
-        { provider: "anthropic", id: "claude-opus-4-7", input: ["text", "image"] },
-        { provider: "google", id: "gemini-2.5-pro", input: ["text", "image"] },
         { provider: "google-gemini-cli", id: "gemini-3", input: ["text", "image"] },
-        {
-          provider: "amazon-bedrock",
-          id: "us.anthropic.claude-sonnet-4-6",
-          input: ["text", "image"],
-        },
       ],
       verboseLevel: "off",
       elevatedLevel: "off",
@@ -2680,7 +2704,7 @@ describe("runReplyAgent fallback reasoning tags", () => {
         agentId: "main",
         agentDir: path.join(rootDir, "agent"),
         sessionKey,
-        config: createCliBackendTestConfig(),
+        config: { agents: { defaults: { model: { fallbacks: ["google/gemini-2.5-pro"] } } } },
       },
       reply: { queueKey: "main", sessionEntry: params?.sessionEntry, sessionKey },
     }).run();
@@ -2731,12 +2755,14 @@ describe("runReplyAgent fallback reasoning tags", () => {
         systemPrompt: "Flush memory into the configured memory file.",
         relativePath: "memory/active.md",
       }));
-      runEmbeddedAgentMock.mockResolvedValue({ payloads: [], meta: {} });
-      runCliAgentMock.mockResolvedValueOnce({ payloads: [{ text: "ok" }], meta: {} });
+      runEmbeddedAgentMock.mockImplementation(async (params) => ({
+        payloads: params.trigger === "memory" ? [] : [{ text: "ok" }],
+        meta: {},
+      }));
       runWithModelFallbackMock.mockImplementation(async (params: RunWithModelFallbackParams) => ({
-        result: await runFallbackModelAttempt(params, "google-gemini-cli", "gemini-3", "unknown"),
-        provider: "google-gemini-cli",
-        model: "gemini-3",
+        result: await runFallbackModelAttempt(params, "google", "gemini-2.5-pro", "unknown"),
+        provider: "google",
+        model: "gemini-2.5-pro",
         attempts: [],
       }));
       compactState.compactEmbeddedAgentSessionMock.mockResolvedValueOnce({
@@ -2751,7 +2777,9 @@ describe("runReplyAgent fallback reasoning tags", () => {
           agentDir: path.join(root, "agent"),
           sessionKey,
           workspaceDir: root,
-          config: createCliBackendTestConfig(),
+          config: {
+            agents: { defaults: { model: { fallbacks: ["google/gemini-2.5-pro"] } } },
+          },
         },
         reply: {
           queueKey: sessionKey,
@@ -2768,7 +2796,7 @@ describe("runReplyAgent fallback reasoning tags", () => {
         ),
       )?.[0] as EmbeddedAgentParams | undefined;
       expect(flushCall?.enforceFinalTag).toBe(true);
-      expect(runCliAgentMock).toHaveBeenCalledOnce();
+      expect(runCliAgentMock).not.toHaveBeenCalled();
       const payloads = Array.isArray(result) ? result : [result];
       expect(payloads.filter((payload) => payload?.text === "ok")).toHaveLength(1);
     } finally {

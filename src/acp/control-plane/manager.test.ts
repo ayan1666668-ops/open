@@ -38,26 +38,34 @@ import {
 describe("AcpSessionManager", () => {
   installAcpSessionManagerTestLifecycle();
 
-  it("marks ACP-shaped sessions without metadata as stale", () => {
-    hoisted.readAcpSessionEntryMock.mockReturnValue(null);
-    const manager = new AcpSessionManager();
+  it.each(["agent:codex:acp:session-1", "global"])(
+    "marks ACP session %s without metadata as stale",
+    (sessionKey) => {
+      const { acp: _acp, ...stored } = createAcpSessionStoreEntryFixture({
+        sessionKey,
+        agentId: "main",
+        acp: readySessionMeta({ backend: "acpx", agent: "qa-agent" }),
+      });
+      hoisted.readAcpSessionEntryMock.mockReturnValue(sessionKey === "global" ? stored : null);
+      const manager = new AcpSessionManager();
 
-    const resolved = manager.resolveSession({
-      cfg: baseCfg,
-      sessionKey: "agent:codex:acp:session-1",
-    });
+      const resolved = manager.resolveSession({
+        cfg: baseCfg,
+        sessionKey,
+      });
 
-    expect(resolved.kind).toBe("stale");
-    if (resolved.kind !== "stale") {
-      return;
-    }
-    expect(resolved.error.code).toBe("ACP_SESSION_INIT_FAILED");
-    expect(resolved.error.message).toContain("ACP metadata is missing");
-    expectRecordFields(mockCallArg(hoisted.readAcpSessionEntryMock), {
-      clone: false,
-      sessionKey: "agent:codex:acp:session-1",
-    });
-  });
+      expect(resolved.kind).toBe("stale");
+      if (resolved.kind !== "stale") {
+        return;
+      }
+      expect(resolved.error.code).toBe("ACP_SESSION_INIT_FAILED");
+      expect(resolved.error.message).toContain("ACP metadata is missing");
+      expectRecordFields(mockCallArg(hoisted.readAcpSessionEntryMock), {
+        clone: false,
+        sessionKey,
+      });
+    },
+  );
 
   it("canonicalizes the main alias before ACP rehydrate after restart", async () => {
     const runtimeState = createRuntime();

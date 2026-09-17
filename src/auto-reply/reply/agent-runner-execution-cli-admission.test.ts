@@ -93,6 +93,7 @@ describe("executeAgentTurn: CLI admission", () => {
           classification: { code: "generic_external_run_failure" },
         });
         return {
+          outcome: "completed",
           result: await params.run("openai", "gpt-5.4", fallbackAttemptOptions(params, "format")),
           provider: "openai",
           model: "gpt-5.4",
@@ -100,6 +101,7 @@ describe("executeAgentTurn: CLI admission", () => {
         };
       }
       return {
+        outcome: "completed",
         result: first,
         provider: "claude-cli",
         model: "claude-sonnet-4-6",
@@ -261,7 +263,13 @@ describe("executeAgentTurn: CLI admission", () => {
               },
             },
           });
-          return { result, provider: "claude-cli", model: "claude-sonnet-4-6", attempts: [] };
+          return {
+            outcome: "completed",
+            result,
+            provider: "claude-cli",
+            model: "claude-sonnet-4-6",
+            attempts: [],
+          };
         },
       );
       try {
@@ -288,6 +296,7 @@ describe("executeAgentTurn: CLI admission", () => {
   it("carries the admitted session permission and placement into the CLI grant", async () => {
     state.isCliProviderMock.mockReturnValue(true);
     state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => ({
+      outcome: "completed",
       result: await params.run(
         "claude-cli",
         "claude-sonnet-4-6",

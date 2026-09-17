@@ -11,7 +11,7 @@ import type { OpenClawConfig } from "../../config/config.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import { loadSessionEntry, replaceSessionEntry } from "../../config/sessions/session-accessor.js";
 import { clearSessionStoreCacheForTest } from "../../config/sessions/store-writer-state.js";
-import { resolveStoredModelOverride } from "../../sessions/stored-model-overrides.js";
+import { resolveStoredModelOverrideCore } from "../../sessions/stored-model-overrides.js";
 import type { ModelAliasIndex } from "./model-selection-directive.js";
 
 const readPreparedModelCatalog = vi.hoisted(() => vi.fn(async () => modelCatalog));
@@ -307,9 +307,12 @@ describe("applyResetModelOverride", () => {
       modelCatalog,
     });
 
-    expect(fixture.sessionEntry.executionSelection).toEqual(selectedModel("openai", "gpt-4o-mini"));
+    expect(fixture.sessionEntry.executionSelection).toEqual({
+      ...selectedModel("openai", "gpt-4o-mini"),
+      fallbackPermission: "configured",
+    });
     expect(
-      resolveStoredModelOverride({
+      resolveStoredModelOverrideCore({
         sessionEntry: fixture.sessionEntry,
         sessionStore: {
           [parentKey]: {
@@ -323,7 +326,12 @@ describe("applyResetModelOverride", () => {
         parentSessionKey: parentKey,
         defaultProvider: "openai",
       }),
-    ).toEqual({ provider: "openai", model: "gpt-4o-mini" });
+    ).toEqual({
+      provider: "openai",
+      model: "gpt-4o-mini",
+      source: "session",
+      routeResolution: "resolved",
+    });
   });
 
   it.each([
@@ -370,9 +378,10 @@ describe("applyResetModelOverride", () => {
       });
       expect(result.cleanedBody).toBe("summarize");
       expect(fixture.sessionCtx.BodyStripped).toBe("summarize");
-      expect(fixture.sessionEntry.executionSelection).toEqual(
-        selectedModel("custom", "private-model"),
-      );
+      expect(fixture.sessionEntry.executionSelection).toEqual({
+        ...selectedModel("custom", "private-model"),
+        fallbackPermission: "configured",
+      });
     },
   );
 
@@ -410,6 +419,7 @@ describe("applyResetModelOverride", () => {
     const { sessionEntry } = await applyResetFixture({
       resetTriggered: true,
       sessionEntry: {
+        executionSelection: selectedModel("anthropic", "previous-model"),
         authProfileOverride: "anthropic:default",
         authProfileOverrideSource: "user",
         authProfileOverrideCompactionCount: 2,

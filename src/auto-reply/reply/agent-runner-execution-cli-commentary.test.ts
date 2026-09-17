@@ -57,6 +57,7 @@ process.stdin.on("end", () => {
 function useClaudeCliFallback() {
   state.isCliProviderMock.mockReturnValue(true);
   state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => ({
+    outcome: "completed",
     result: await params.run(
       "claude-cli",
       "claude-opus-4-6",

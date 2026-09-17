@@ -31,6 +31,7 @@ describe("executeAgentTurn: CLI delegation grants", () => {
   it("keeps primary CLI completion grants unrestricted", async () => {
     state.isCliProviderMock.mockReturnValue(true);
     state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => ({
+      outcome: "completed",
       result: await params.run("codex-cli", "gpt-5.4", initialFallbackAttemptOptions(params)),
       provider: "codex-cli",
       model: "gpt-5.4",
@@ -56,6 +57,7 @@ describe("executeAgentTurn: CLI delegation grants", () => {
     state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => {
       await params.run("anthropic", "claude", initialFallbackAttemptOptions(params));
       return {
+        outcome: "completed",
         result: await params.run("codex-cli", "gpt-5.4", fallbackAttemptOptions(params, "unknown")),
         provider: "codex-cli",
         model: "gpt-5.4",
@@ -65,6 +67,11 @@ describe("executeAgentTurn: CLI delegation grants", () => {
     state.runEmbeddedAgentMock.mockResolvedValue({ payloads: [], meta: {} });
     state.runCliAgentMock.mockResolvedValue({ payloads: [{ text: "done" }], meta: {} });
     const followupRun = createFollowupRun();
+    followupRun.run.config = {
+      agents: {
+        defaults: { model: { primary: "anthropic/claude", fallbacks: ["codex-cli/gpt-5.4"] } },
+      },
+    };
     configureTestCliModel(followupRun, "codex-cli", "gpt-5.4");
     followupRun.run.inputProvenance = {
       kind: "inter_session",

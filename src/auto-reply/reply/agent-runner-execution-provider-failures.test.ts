@@ -133,6 +133,7 @@ describe("executeAgentTurn: provider failures", () => {
           throw error;
         })
         .mockResolvedValueOnce({
+          outcome: "completed",
           result: { payloads: [{ text: "unexpected retry" }], meta: {} },
           provider: "fixture",
           model: "fixture",
@@ -608,6 +609,7 @@ describe("executeAgentTurn: provider failures", () => {
     );
     state.isCliProviderMock.mockReturnValue(true);
     state.runWithModelFallbackMock.mockImplementation(async (params: FallbackRunnerParams) => ({
+      outcome: "completed",
       result: await params.run(
         "claude-cli",
         "claude-opus-4-8",
@@ -721,6 +723,7 @@ describe("executeAgentTurn: provider failures", () => {
     expect(onBlockReply).not.toHaveBeenCalled();
 
     resolveRetry({
+      outcome: "completed",
       result: { payloads: [{ text: "recovered" }], meta: {} },
       provider: "anthropic",
       model: "claude-opus-4-1",
@@ -739,6 +742,7 @@ describe("executeAgentTurn: provider failures", () => {
     state.runWithModelFallbackMock
       .mockImplementationOnce(() => initialResult)
       .mockResolvedValueOnce({
+        outcome: "completed",
         result: { payloads: [{ text: "recovered" }], meta: {} },
         provider: "anthropic",
         model: "claude-opus-4-1",
@@ -840,6 +844,7 @@ describe("executeAgentTurn: provider failures", () => {
     expect(onBlockReply).not.toHaveBeenCalled();
 
     resolveRetry({
+      outcome: "completed",
       result: { payloads: [{ text: "recovered" }], meta: {} },
       provider: "anthropic",
       model: "claude-opus-4-1",

@@ -8,6 +8,7 @@ import { getReplyPayloadMetadata } from "../reply-payload.js";
 import type { TemplateContext } from "../templating.js";
 import type { GetReplyOptions } from "../types.js";
 import {
+  createTestFallbackSummaryError,
   createAgentTurnExecutionDefaults,
   setupAgentRunnerExecutionTestState,
   getExecuteAgentTurnForTest,
@@ -202,6 +203,7 @@ describe("executeAgentTurn: result and tool delivery", () => {
         code: "planning_only_result",
       });
       return {
+        outcome: "completed",
         result: await params.run("anthropic", "claude", fallbackAttemptOptions(params, "format")),
         provider: "anthropic",
         model: "claude",
@@ -247,6 +249,7 @@ describe("executeAgentTurn: result and tool delivery", () => {
         }),
       ).toBeNull();
       return {
+        outcome: "completed",
         result,
         provider: "openai",
         model: "gpt-5.4",
@@ -293,6 +296,7 @@ describe("executeAgentTurn: result and tool delivery", () => {
         }),
       ).toBeUndefined();
       return {
+        outcome: "completed",
         result,
         provider: "openai",
         model: "gpt-5.4",
@@ -344,6 +348,7 @@ describe("executeAgentTurn: result and tool delivery", () => {
         }),
       ).toBeUndefined();
       return {
+        outcome: "completed",
         result,
         provider: "openai",
         model: "gpt-5.4",
@@ -380,18 +385,27 @@ describe("executeAgentTurn: result and tool delivery", () => {
         reason: "format",
         code: "empty_result",
       });
-      return {
-        result,
-        provider: "openai",
-        model: "gpt-5.4",
-        attempts: [],
-      };
+      throw createTestFallbackSummaryError({
+        message: "The model ended without a visible assistant reply.",
+        attempts: [
+          {
+            provider: "openai",
+            model: "gpt-5.4",
+            reason: "format",
+            code: "empty_result",
+            error: "The model ended without a visible assistant reply.",
+          },
+        ],
+      });
     });
 
     const executeAgentTurn = await getExecuteAgentTurnForTest();
     const result = await executeAgentTurn(createMinimalRunAgentTurnParams());
 
-    expect(result.kind).toBe("success");
+    expect(result.kind).toBe("final");
+    if (result.kind === "final") {
+      expect(result.payload.isError).toBe(true);
+    }
   });
 
   it("keeps fallback candidate selection turn-local during result classification", async () => {
@@ -434,6 +448,7 @@ describe("executeAgentTurn: result and tool delivery", () => {
         code: "empty_result",
       });
       return {
+        outcome: "completed",
         result: await params.run("anthropic", "claude", fallbackAttemptOptions(params, "format")),
         provider: "anthropic",
         model: "claude",

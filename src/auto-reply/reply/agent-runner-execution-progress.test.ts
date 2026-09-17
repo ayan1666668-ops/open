@@ -875,6 +875,7 @@ describe("executeAgentTurn: lifecycle progress", () => {
 
   it("preserves GPT ack-turn final prose without reply-side truncation", async () => {
     state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => ({
+      outcome: "completed",
       result: await params.run("openai", "gpt-5.4", initialFallbackAttemptOptions(params)),
       provider: "openai",
       model: "gpt-5.4",
@@ -918,6 +919,7 @@ describe("executeAgentTurn: lifecycle progress", () => {
 
   it("does not trim GPT replies when the user asked for depth", async () => {
     state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => ({
+      outcome: "completed",
       result: await params.run("openai", "gpt-5.4", initialFallbackAttemptOptions(params)),
       provider: "openai",
       model: "gpt-5.4",

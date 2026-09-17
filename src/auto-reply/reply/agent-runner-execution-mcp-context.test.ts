@@ -95,6 +95,7 @@ describe("executeAgentTurn MCP App context", () => {
     const { provider, id: model } = followupRun.run.executionSelection.model;
     state.isCliProviderMock.mockReturnValue(true);
     state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => ({
+      outcome: "completed",
       result: await params.run(provider, model, initialFallbackAttemptOptions(params)),
       provider,
       model,

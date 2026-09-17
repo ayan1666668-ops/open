@@ -9,11 +9,15 @@ import {
   errorShape,
   type SessionsPatchManyResult,
 } from "../../packages/gateway-protocol/src/index.js";
+import { AcpSessionManager } from "../acp/control-plane/manager.core.js";
+import { disposeAcpSessionManagerInstance } from "../acp/control-plane/manager.lifecycle.js";
+import { upsertAcpSessionMeta } from "../acp/runtime/session-meta.js";
 import {
   clearActiveEmbeddedRun,
   setActiveEmbeddedRun,
 } from "../agents/embedded-agent-runner/runs.js";
 import { createEmbeddedRunHandle } from "../agents/embedded-agent-runner/runs.test-support.js";
+import { createSessionModelCatalogFixture } from "../agents/test-helpers/session-model-catalog.test-support.js";
 import { getRegistryWorktree } from "../agents/worktrees/registry.js";
 import { acquireWorktreeRunLease } from "../agents/worktrees/run-lease.js";
 import {
@@ -28,6 +32,7 @@ import {
   recordSessionParticipant,
 } from "../config/sessions/session-accessor.js";
 import { resolveSqliteTargetFromSessionStorePath } from "../config/sessions/session-sqlite-target.js";
+import { getSessionExecutionSelection } from "../model-picker/execution-selection.js";
 import { createDeferredCore } from "../shared/deferred.js";
 import { openOpenClawAgentDatabase } from "../state/openclaw-agent-db.js";
 import { withOpenClawStateLease } from "../state/openclaw-state-lease.js";
@@ -37,7 +42,9 @@ import { isSessionPermissionChangePending } from "./session-permission-change.js
 import { SessionMutationAuthorizationChangedError } from "./session-sharing.js";
 import { embeddedRunMock } from "./test-helpers.runtime-state.js";
 import {
+  acpManagerMocks,
   directSessionReq,
+  getGatewayConfigModule,
   loadSeededTranscriptEvents,
   sessionHookMocks,
 } from "./test/server-sessions.test-helpers.js";
@@ -180,44 +187,150 @@ test.each([
   },
 );
 
-test("sessions.patchMany leaves a failed restore's label available to a later target", async () => {
-  const { key, sessionId, storePath, worktree } = await createArchiveWorktreeFixture();
-  const peer = await directSessionReq<{ key: string; sessionId: string }>("sessions.create", {
-    agentId: "main",
-  });
-  expect(peer.ok).toBe(true);
-  expect(
-    await directSessionReq("sessions.patch", { key, expectedSessionId: sessionId, archived: true }),
-  ).toMatchObject({
-    ok: true,
-  });
-  const restore = vi
-    .spyOn(managedWorktrees, "restore")
-    .mockRejectedValueOnce(new Error("checkout unavailable"));
-  try {
-    const result = await directSessionReq<SessionsPatchManyResult>("sessions.patchMany", {
-      targets: [
-        { key, expectedSessionId: sessionId },
-        { key: peer.payload!.key, expectedSessionId: peer.payload!.sessionId },
-      ],
-      patch: { archived: false, label: "Available label" },
+test.each([false, true])(
+  "sessions.patchMany leaves a failed restore's label available to a later target (later catalog=%s)",
+  async (laterCatalog) => {
+    const fixture = await createArchiveWorktreeFixture();
+    const { key, sessionId, storePath, worktree } = fixture;
+    const transcript = await loadSeededTranscriptEvents(fixture.transcriptScope);
+    const peer = await directSessionReq<{ key: string; sessionId: string }>("sessions.create", {
+      agentId: "main",
     });
-    expect(result).toMatchObject({
-      ok: true,
-      payload: { outcomes: [{ ok: false, error: { code: "UNAVAILABLE" } }, { ok: true }] },
+    expect(peer.ok).toBe(true);
+    expect(
+      await directSessionReq("sessions.patch", {
+        key,
+        expectedSessionId: sessionId,
+        archived: true,
+      }),
+    ).toMatchObject({ ok: true });
+    const archivedWorktree = structuredClone(getRegistryWorktree(process.env, worktree.id));
+    expect(archivedWorktree).toMatchObject({
+      removedAt: expect.any(Number),
+      snapshotRef: expect.any(String),
     });
-    expect(loadSessionEntry({ storePath, sessionKey: key })?.archivedAt).toEqual(
-      expect.any(Number),
+    const cfg = (await getGatewayConfigModule()).getRuntimeConfig();
+    const manager = laterCatalog ? new AcpSessionManager() : undefined;
+    const control = manager ? vi.spyOn(manager, "withExecutionSelection") : undefined;
+    if (manager) {
+      onTestFinished(() => disposeAcpSessionManagerInstance(manager, "test-complete"));
+      acpManagerMocks.getManager.mockReturnValue(manager);
+      cfg.models = {
+        providers: {
+          fixture: {
+            api: "openai-completions",
+            baseUrl: "https://fixture.example.invalid/v1",
+            models: [],
+          },
+        },
+      };
+      cfg.agents = {
+        ...cfg.agents,
+        defaults: { ...cfg.agents?.defaults, model: "fixture/next" },
+      };
+      expect(
+        await upsertAcpSessionMeta({
+          cfg,
+          sessionKey: key,
+          agentId: "main",
+          preserveActivity: true,
+          executionSelection: {
+            executor: { kind: "acp", backend: "qa-acp", agent: "qa-agent" },
+            model: { id: "qa-before" },
+          },
+          mutate: () => ({
+            runtimeSessionName: "qa-native-session",
+            mode: "persistent",
+            state: "idle",
+            lastActivityAt: 1,
+          }),
+        }),
+      ).not.toBeNull();
+      expect(manager.resolveSession({ cfg, sessionKey: key, agentId: "main" })).toMatchObject({
+        kind: "ready",
+        entry: { sessionId, archivedAt: expect.any(Number), worktree: { id: worktree.id } },
+      });
+    }
+    const selectionBefore = structuredClone(
+      getSessionExecutionSelection(loadSessionEntry({ storePath, sessionKey: key })),
     );
-    expect(loadSessionEntry({ storePath, sessionKey: key })?.label).not.toBe("Available label");
-    expect(loadSessionEntry({ storePath, sessionKey: peer.payload!.key })?.label).toBe(
-      "Available label",
-    );
-    await expect(fs.access(worktree.path)).rejects.toThrow();
-  } finally {
-    restore.mockRestore();
-  }
-});
+    const restore = vi
+      .spyOn(managedWorktrees, "restore")
+      .mockRejectedValueOnce(new Error("checkout unavailable"));
+    const catalog = createSessionModelCatalogFixture();
+    const loadGatewayModelCatalogSnapshot = vi.fn(async () => {
+      expect(restore).toHaveBeenCalledOnce();
+      expect(control).not.toHaveBeenCalled();
+      const entry = {
+        provider: "fixture",
+        id: "next",
+        name: "Next model",
+        api: "openai-completions" as const,
+        baseUrl: "https://fixture.example.invalid/v1",
+      };
+      return catalog.publish({
+        config: cfg,
+        agentId: "main",
+        catalog: { entries: [entry], routeVariants: [entry] },
+        profiles: {
+          "fixture:default": { type: "api_key", provider: "fixture", key: "synthetic-credential" },
+        },
+      });
+    });
+    try {
+      const result = await directSessionReq<SessionsPatchManyResult>(
+        "sessions.patchMany",
+        {
+          targets: [
+            { key, expectedSessionId: sessionId },
+            { key: peer.payload!.key, expectedSessionId: peer.payload!.sessionId },
+          ],
+          patch: {
+            archived: false,
+            label: "Available label",
+            ...(laterCatalog ? { model: "fixture/next" } : {}),
+          },
+        },
+        laterCatalog ? { context: { loadGatewayModelCatalogSnapshot } } : undefined,
+      );
+      expect(result).toMatchObject({
+        ok: true,
+        payload: { outcomes: [{ ok: false, error: { code: "UNAVAILABLE" } }, { ok: true }] },
+      });
+      expect(restore).toHaveBeenCalledOnce();
+      expect(loadSessionEntry({ storePath, sessionKey: key })?.archivedAt).toEqual(
+        expect.any(Number),
+      );
+      expect(loadSessionEntry({ storePath, sessionKey: key })?.label).not.toBe("Available label");
+      expect(loadSessionEntry({ storePath, sessionKey: peer.payload!.key })?.label).toBe(
+        "Available label",
+      );
+      expect(
+        getSessionExecutionSelection(loadSessionEntry({ storePath, sessionKey: key })),
+      ).toEqual(selectionBefore);
+      expect(getRegistryWorktree(process.env, worktree.id)).toEqual(archivedWorktree);
+      await expect(loadSeededTranscriptEvents(fixture.transcriptScope)).resolves.toEqual(
+        transcript,
+      );
+      await expect(fs.access(worktree.path)).rejects.toThrow();
+      if (laterCatalog) {
+        expect(loadGatewayModelCatalogSnapshot).toHaveBeenCalledOnce();
+        expect(control).not.toHaveBeenCalled();
+        expect(
+          getSessionExecutionSelection(
+            loadSessionEntry({ storePath, sessionKey: peer.payload!.key }),
+          ),
+        ).toEqual({
+          model: { provider: "fixture", id: "next" },
+          executor: { kind: "harness", id: "openclaw" },
+        });
+      }
+    } finally {
+      restore.mockRestore();
+      control?.mockRestore();
+    }
+  },
+);
 
 test.each(["identity", "label-owner", "participants", "removed"] as const)(
   "sessions.patch preserves owner contracts after %s changes during restoration",
@@ -549,10 +662,9 @@ test.each([
       if (catalogMode === "rejected-reset") {
         expect(await restored).toMatchObject({ ok: false });
         expect(restore).not.toHaveBeenCalled();
-        expect(loadSessionEntry({ storePath, sessionKey: key })).toMatchObject({
-          archivedAt: expect.any(Number),
-          executionSelection: selectionBeforeRestore,
-        });
+        const rejectedEntry = loadSessionEntry({ storePath, sessionKey: key });
+        expect(rejectedEntry?.archivedAt).toEqual(expect.any(Number));
+        expect(rejectedEntry?.executionSelection).toEqual(selectionBeforeRestore);
         expect(getRegistryWorktree(process.env, worktree.id)?.removedAt).toEqual(
           expect.any(Number),
         );
