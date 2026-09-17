@@ -37,7 +37,6 @@ const graph = vi.hoisted(() => ({
   origin: "",
   prepareSdk: vi.fn<() => Promise<void>>(),
   acquireToken: vi.fn<() => Promise<string>>(),
-  acquireDelegatedToken: vi.fn<() => Promise<string | undefined>>(),
   afterEntry: undefined as (() => void) | undefined,
   beforeLookup: undefined as (() => void | Promise<void>) | undefined,
   onRequest: undefined as ((request: GraphRequest) => void) | undefined,
@@ -53,11 +52,6 @@ vi.mock("../extensions/msteams/src/sdk.js", () => ({
   createMSTeamsTokenProvider() {
     return { getAccessToken: graph.acquireToken };
   },
-}));
-
-vi.mock("../extensions/msteams/src/token.js", async (original) => ({
-  ...(await original<typeof import("../extensions/msteams/src/token.js")>()),
-  resolveDelegatedAccessToken: graph.acquireDelegatedToken,
 }));
 
 vi.mock("../extensions/msteams/runtime-api.js", async (original) => {
@@ -105,7 +99,6 @@ const cleanups: Array<() => Promise<void>> = [];
 beforeEach(() => {
   graph.prepareSdk.mockReset().mockResolvedValue(undefined);
   graph.acquireToken.mockReset().mockResolvedValue(token);
-  graph.acquireDelegatedToken.mockReset().mockResolvedValue(undefined);
   graph.afterEntry = undefined;
   graph.beforeLookup = undefined;
   graph.onRequest = undefined;
@@ -131,7 +124,6 @@ async function createFixture(
     senderIsOwner?: boolean;
     botFrameworkTeam?: boolean;
     missingRequester?: boolean;
-    delegatedAuth?: boolean;
   } = {},
 ) {
   const origin = options.origin ?? "global";
@@ -143,7 +135,6 @@ async function createFixture(
         appId: "44444444-4444-4444-4444-444444444444",
         appPassword: "synthetic-app-password",
         tenantId: "55555555-5555-5555-5555-555555555555",
-        ...(options.delegatedAuth ? { delegatedAuth: { enabled: true } } : {}),
         dmPolicy: "open",
         allowFrom: ["*"],
         groupPolicy: options.narrowTeam || options.botFrameworkTeam ? "allowlist" : "open",
@@ -505,42 +496,6 @@ describe("Teams Graph mutation currentness", () => {
       if (!revoked && action === "addParticipant") {
         expect(fixture.nativeRequests[0]?.body).toMatchObject({ roles: ["owner"] });
       }
-    },
-  );
-
-  it.each([
-    [false, false],
-    [false, true],
-    [true, false],
-    [true, true],
-  ] as const)(
-    "rechecks a delegated token wait before success or fallback (fallback=%s, revoked=%s)",
-    async (fallback, revoked) => {
-      const fixture = await createFixture({ origin: "bundled", self: true, delegatedAuth: true });
-      const started = createDeferred<void>();
-      const finish = createDeferred<void>();
-      graph.acquireDelegatedToken.mockImplementationOnce(async () => {
-        started.resolve();
-        await finish.promise;
-        return fallback ? undefined : token;
-      });
-      const result = settle(
-        fixture.invoke("tool", "react", { target: chatId, messageId, emoji: "like" }),
-      );
-      await started.promise;
-      if (revoked) {
-        fixture.revokeTurn();
-      }
-      finish.resolve();
-      expect(await result).toMatchObject(
-        revoked ? { error: expect.any(Error) } : { value: { ok: true, reactionType: "like" } },
-      );
-      expect(fixture.requests).toEqual(
-        revoked ? [] : [`POST /beta/chats/${chatId}/messages/${messageId}/setReaction`],
-      );
-      expect(graph.acquireDelegatedToken).toHaveBeenCalledOnce();
-      expect(graph.prepareSdk).toHaveBeenCalledTimes(fallback && !revoked ? 1 : 0);
-      expect(graph.acquireToken).toHaveBeenCalledTimes(fallback && !revoked ? 1 : 0);
     },
   );
 
