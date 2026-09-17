@@ -172,7 +172,7 @@ describeLive("cron tool allowlists through live harnesses", () => {
               JSON.stringify({ sessionKey: `agent:probe:cron:${job.id}`, limit: 100 }),
             ])) as {
               sessionId: string;
-              messages: Message[];
+              messages: Array<Message | { role: "assistant"; content: string }>;
               sessionInfo: { agentRuntime?: { id: string } };
             };
             expect(completed.run.sessionId).toBeTypeOf("string");
