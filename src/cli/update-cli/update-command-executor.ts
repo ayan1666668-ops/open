@@ -223,51 +223,55 @@ export async function withDelegatedUpdateCommandExecutor<T>(
         },
       };
       childOwners.set(fence, (childRoot, childOperation) => owner.run(childRoot, childOperation));
-      let outcome: { result: T } | { error: unknown };
       try {
-        fence.assertCurrent();
-        if (databaseIdentity) {
-          admittedAuthorities.set(
-            fence,
-            Object.freeze({
-              ...databaseIdentity,
-              installKey: original.key,
-              owner: original.owner,
-            }),
-          );
-        }
-        if (options) {
-          activation.start(root, options.activationTimeoutMs);
-        }
-        outcome = { result: await withCommandProcessScope(() => operation(fence)) };
-      } catch (error) {
-        outcome = { error };
-      }
-      owner.close();
-      try {
-        await owner.settle();
-        fence.assertCurrent();
-        identityWarnings.flush();
-      } catch (cause) {
-        outcome = {
-          error:
-            "error" in outcome && outcome.error !== cause
-              ? new AggregateError(
-                  [outcome.error, cause],
-                  "Unable to finish stopping the update process and its children",
-                  { cause },
-                )
-              : cause,
-        };
+        return await withCommandProcessScope(async () => {
+          let outcome: { result: T } | { error: unknown };
+          try {
+            fence.assertCurrent();
+            if (databaseIdentity) {
+              admittedAuthorities.set(
+                fence,
+                Object.freeze({
+                  ...databaseIdentity,
+                  installKey: original.key,
+                  owner: original.owner,
+                }),
+              );
+            }
+            if (options) {
+              activation.start(root, options.activationTimeoutMs);
+            }
+            outcome = { result: await operation(fence) };
+          } catch (error) {
+            outcome = { error };
+          }
+          owner.close();
+          try {
+            await owner.settle();
+            fence.assertCurrent();
+            identityWarnings.flush();
+          } catch (cause) {
+            outcome = {
+              error:
+                "error" in outcome && outcome.error !== cause
+                  ? new AggregateError(
+                      [outcome.error, cause],
+                      "Unable to finish stopping the update process and its children",
+                      { cause },
+                    )
+                  : cause,
+            };
+          }
+          if ("error" in outcome) {
+            throw outcome.error;
+          }
+          return outcome.result;
+        });
       } finally {
         active = false;
         childOwners.delete(fence);
         admittedAuthorities.delete(fence);
       }
-      if ("error" in outcome) {
-        throw outcome.error;
-      }
-      return outcome.result;
     }, activation.signal),
   );
 }
@@ -512,32 +516,49 @@ export async function withUpdateCommandExecutor<T>(
       };
       let outcome: { result: T } | { error: Error };
       try {
-        const result = await withCommandProcessScope(() => operation(executor));
-        children.close();
-        await children.settle();
-        if (lease) {
-          assertCurrent();
-        }
-        identityWarnings.flush();
-        outcome = { result };
+        outcome = {
+          result: await withCommandProcessScope(async () => {
+            let operationOutcome: { result: T } | { error: Error };
+            try {
+              operationOutcome = { result: await operation(executor) };
+            } catch (cause) {
+              operationOutcome = {
+                error:
+                  cause instanceof Error ? cause : new Error("Update execution failed", { cause }),
+              };
+            }
+            // Admitted children retain authority after the callback returns or
+            // rejects. Join them before this scope stops its remaining commands.
+            children.close();
+            try {
+              await children.settle();
+              if ("result" in operationOutcome) {
+                if (lease) {
+                  assertCurrent();
+                }
+                identityWarnings.flush();
+              }
+            } catch (cause) {
+              operationOutcome = {
+                error:
+                  "error" in operationOutcome && operationOutcome.error !== cause
+                    ? new AggregateError([operationOutcome.error, cause], "Update cleanup failed", {
+                        cause,
+                      })
+                    : cause instanceof Error
+                      ? cause
+                      : new Error("Update settlement failed", { cause }),
+              };
+            }
+            if ("error" in operationOutcome) {
+              throw operationOutcome.error;
+            }
+            return operationOutcome.result;
+          }),
+        };
       } catch (cause) {
         outcome = {
           error: cause instanceof Error ? cause : new Error("Update execution failed", { cause }),
-        };
-      }
-      children.close();
-      try {
-        await children.settle();
-      } catch (cause) {
-        outcome = {
-          error:
-            "error" in outcome && outcome.error !== cause
-              ? new AggregateError([outcome.error, cause], "Update cleanup failed", {
-                  cause,
-                })
-              : cause instanceof Error
-                ? cause
-                : new Error("Update settlement failed", { cause }),
         };
       }
       active = false;

@@ -6,7 +6,10 @@ import {
   CommandProcessCleanupError,
   hasCommandProcessCleanupError,
 } from "../../process/exec-result.js";
-import { retainCommandProcessCleanup } from "../../process/exec-spawn.js";
+import {
+  resolveCommandProcessSignal,
+  retainCommandProcessCleanup,
+} from "../../process/exec-spawn.js";
 import { createDeferredCore } from "../../shared/deferred.js";
 import {
   createUpdateActivationDeadline,
@@ -78,12 +81,151 @@ beforeEach(() => {
       return { kind: "acquired", lease: acquired };
     },
     release: (candidate: ManagedHandoffLease) => current(candidate) && rows.delete(candidate.key),
+    bind: (candidate: ManagedHandoffLease) => (current(candidate) ? candidate : undefined),
     current,
     owns: current,
     isProcessIdentityCurrent: () => true,
     acceptParentBoundExecutor: current,
   });
 });
+
+function runWithExecutorFence<T>(
+  kind: "direct" | "delegated",
+  operation: (fence: UpdateRecoveryFence) => Promise<T>,
+  activationTimeoutMs?: number,
+): Promise<T> {
+  if (kind === "direct") {
+    return withUpdateCommandExecutor("run", async (executor) =>
+      operation(await executor.enter(root, { activationTimeoutMs })),
+    );
+  }
+  const parent = lease(root, "parent", process.ppid);
+  const childKey = `${root}/.openclaw-update-child-00000000-0000-0000-0000-000000000000`;
+  rows.set(root, parent);
+  rows.set(childKey, { ...lease(childKey, "run"), helper: parent.executor });
+  return withDelegatedUpdateCommandExecutor(
+    { runId: "run", root, databasePath: "/synthetic/leases.sqlite", parent, childKey },
+    "run",
+    root,
+    operation,
+    activationTimeoutMs === undefined ? undefined : { activationTimeoutMs },
+  );
+}
+
+it.each([
+  { kind: "direct", rejects: false },
+  { kind: "direct", rejects: true },
+  { kind: "delegated", rejects: false },
+  { kind: "delegated", rejects: true },
+] as const)(
+  "lets the admitted $kind child finish before stopping its operation scope (rejects: $rejects)",
+  async ({ kind, rejects }) => {
+    const admitted = createDeferredCore();
+    const finish = createDeferredCore();
+    const original = new Error("operation failed after child admission");
+    let signal: AbortSignal | undefined;
+    let child: Promise<unknown> | undefined;
+    let ended = false;
+    const work = runWithExecutorFence(kind, async (fence) => {
+      child = withUpdateCommandExecutorChild(fence, root, async (_grant, bind) => {
+        bind(process.pid + 1);
+        signal = resolveCommandProcessSignal();
+        admitted.resolve();
+        await finish.promise;
+        signal!.throwIfAborted();
+        return "child finished";
+      });
+      void child.catch(() => undefined);
+      await admitted.promise;
+      if (rejects) {
+        throw original;
+      }
+      return "operation finished";
+    })
+      .then(
+        (value) => ({ value }),
+        (error: unknown) => ({ error }),
+      )
+      .finally(() => {
+        ended = true;
+      });
+    try {
+      await admitted.promise;
+      await setImmediate();
+      expect(ended).toBe(false);
+      expect(rows.has(root)).toBe(true);
+      expect(signal?.aborted).toBe(false);
+    } finally {
+      finish.resolve();
+      await Promise.allSettled([work, child]);
+    }
+    await expect(child).resolves.toBe("child finished");
+    expect(await work).toEqual(rejects ? { error: original } : { value: "operation finished" });
+    expect(rows.size).toBe(kind === "direct" ? 0 : 2);
+  },
+);
+
+it.each([
+  { kind: "direct", cleanupResult: "forced" },
+  { kind: "direct", cleanupResult: "uncertain" },
+  { kind: "delegated", cleanupResult: "forced" },
+  { kind: "delegated", cleanupResult: "uncertain" },
+] as const)(
+  "cancels the admitted $kind child at its activation deadline and joins $cleanupResult cleanup",
+  async ({ kind, cleanupResult }) => {
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    const admitted = createDeferredCore();
+    const cancelled = createDeferredCore();
+    const cleanup = createDeferredCore<"forced" | "uncertain">();
+    let signal: AbortSignal | undefined;
+    let child: Promise<unknown> | undefined;
+    let ended = false;
+    const work = runWithExecutorFence(
+      kind,
+      async (fence) => {
+        child = withUpdateCommandExecutorChild(fence, root, async (_grant, bind) => {
+          bind(process.pid + 1);
+          signal = resolveCommandProcessSignal();
+          retainCommandProcessCleanup(cleanup.promise);
+          signal!.addEventListener("abort", () => cancelled.resolve(), { once: true });
+          admitted.resolve();
+          await cancelled.promise;
+          throw signal!.reason;
+        });
+        void child.catch(() => undefined);
+        await admitted.promise;
+        return "operation finished";
+      },
+      1000,
+    )
+      .catch((error: unknown) => error)
+      .finally(() => {
+        ended = true;
+      });
+    try {
+      await admitted.promise;
+      await setImmediate();
+      expect(signal?.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1000);
+      await cancelled.promise;
+      expect(signal?.reason).toBeInstanceOf(UpdateActivationTimeoutError);
+      expect(ended).toBe(false);
+      expect(rows.size).toBe(kind === "direct" ? 2 : 3);
+    } finally {
+      cleanup.resolve(cleanupResult);
+      await Promise.allSettled([work, child]);
+    }
+    const error = await work;
+    expect(error).toBeInstanceOf(UpdateActivationTimeoutError);
+    expect(hasCommandProcessCleanupError(error)).toBe(cleanupResult === "uncertain");
+    if (cleanupResult === "forced") {
+      expect(error).toBe(signal!.reason);
+    }
+    expect(rows.size).toBe(
+      cleanupResult === "uncertain" ? (kind === "direct" ? 2 : 3) : kind === "direct" ? 0 : 2,
+    );
+  },
+);
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
