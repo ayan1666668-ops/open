@@ -1,9 +1,11 @@
+import { spawnSync } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 // Covers task registry store persistence, in-memory behavior, and observer notifications.
 import { expectDefined } from "@openclaw/normalization-core";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { taskRegistryRecoveryRestartEntrypoint } from "../../test/fixtures/task-registry-recovery-restart-entrypoint.js";
 import { createDeferred } from "../../test/helpers/promise.js";
 import type { AdmittedRunContext } from "../agents/admitted-run-context.js";
 import { createExecutionIdentityAdmissionToken } from "../audit/execution-identity-admission.js";
@@ -15,6 +17,7 @@ import {
   getNodeSqliteKysely,
 } from "../infra/kysely-sync.js";
 import { requireNodeSqlite } from "../infra/node-sqlite.js";
+import { resolveRuntimeWorkerArgv, resolveRuntimeWorkerUrl } from "../infra/runtime-worker-url.js";
 import { readSqliteNumberPragma } from "../infra/sqlite-pragma.test-support.js";
 import { resetLogger, setLoggerOverride } from "../logging/logger.js";
 import { loggingState } from "../logging/state.js";
@@ -565,6 +568,69 @@ describe("task-registry store runtime", () => {
           getTaskById(lostTask.taskId),
           "expected recovered record to survive the next sweep",
         );
+      },
+    );
+  });
+
+  it("persists the corrected deadline across real OS process restarts and survives the next sweep", async () => {
+    await withOpenClawTestState(
+      { layout: "state-only", prefix: "openclaw-task-recovery-proc-" },
+      async (state) => {
+        resetTaskRegistryForTests({ persist: false });
+        // The fixture is spawned as a genuinely separate OS process each time
+        // (node --import tsx, distinct PID), so the corrected deadline must
+        // survive real process restarts — not just an in-process registry
+        // reload. Phases share the same SQLite state dir.
+        const fixture = resolveRuntimeWorkerUrl(taskRegistryRecoveryRestartEntrypoint);
+        const runChild = (phase: string) =>
+          spawnSync(
+            process.execPath,
+            [...resolveRuntimeWorkerArgv(fixture), state.stateDir, phase],
+            {
+              cwd: process.cwd(),
+              encoding: "utf8",
+              env: process.env,
+              timeout: 120_000,
+            },
+          );
+
+        // Process 1: write the lost cron task whose 24h lost-window deadline
+        // has already expired, then exit.
+        const seed = runChild("seed");
+        expect(seed.status, seed.stderr ?? "").toBe(0);
+
+        // Process 2: a fresh process reloads the lost record from SQLite and
+        // recovers it via markTaskTerminalById, persisting the corrected
+        // standard terminal retention.
+        const recover = runChild("recover");
+        expect(recover.status, recover.stderr ?? "").toBe(0);
+
+        // The parent is yet another process: reload the persisted recovery and
+        // run the next maintenance sweep.
+        reloadTaskRegistryFromStore();
+        const recovered = expectDefined(
+          getTaskById("task-recovery-process-restart"),
+          "expected the recovered record to persist across real process restarts",
+        );
+        expect(recovered.status).toBe("succeeded");
+        expect(recovered.cleanupAfter).toBeGreaterThan(Date.now());
+        expect(recovered.cleanupAfter).toBeGreaterThan(recovered.endedAt! + 24 * 60 * 60_000);
+        const maintenance = await runTaskRegistryMaintenance();
+        expect(maintenance).toEqual({
+          reconciled: 0,
+          recovered: 0,
+          cleanupStamped: 0,
+          pruned: 0,
+        });
+        expectDefined(
+          getTaskById("task-recovery-process-restart"),
+          "expected the recovered record to survive the next sweep",
+        );
+
+        // Process 3: a further fresh process still sees the corrected deadline
+        // after the parent's sweep.
+        const verify = runChild("verify");
+        expect(verify.status, verify.stderr ?? "").toBe(0);
       },
     );
   });
