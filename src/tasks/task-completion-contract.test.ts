@@ -18,6 +18,22 @@ describe("resolveRequiredCompletionTerminalResult", () => {
   // delivered result.
   it.each([
     ["pure progress", "Let me run the tests"],
+    [
+      "unpunctuated conditional coordination",
+      "I'll check whether the tests pass and I've already fixed the timeout.",
+    ],
+    [
+      "context adjunct next release",
+      "I'll inspect the failure. In the next release, we will patch the handler.",
+    ],
+    [
+      "context adjunct maintenance window",
+      "I'll inspect the failure. During the maintenance window, the migration will finish.",
+    ],
+    [
+      "context adjunct nested",
+      "I'll inspect the failure. In the next release, during maintenance, we will patch the handler.",
+    ],
     ["never-completed action", "Reviewing the handler, I never fixed the regression."],
     [
       "coordinated premise if",
@@ -273,6 +289,18 @@ describe("resolveRequiredCompletionTerminalResult", () => {
       "I'll inspect the repo now: the crash is a missing null check in src/foo.ts.",
     ],
     ["completed clause after narration", "Reviewing the changes, we fixed the regression."],
+    [
+      "independent comma-delimited conditional coordination",
+      "I'll check whether the tests pass, and I've already fixed the timeout.",
+    ],
+    [
+      "context adjunct completed result",
+      "I'll inspect the repo. In production, I patched the handler.",
+    ],
+    [
+      "context adjunct retains result before follow-up",
+      "I'll inspect the repo. In production I patched the handler, and I will verify the deployment.",
+    ],
     [
       "coordinated premise past event",
       "I'll inspect the rollout, and when the alert fired, I patched the handler.",

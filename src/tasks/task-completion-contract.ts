@@ -20,6 +20,13 @@ const FOLLOW_UP_PLANNING_PREFIX_PATTERN =
 const PLANNING_TIME_PREFIX_PATTERN =
   /^(?:(?:today|tomorrow|tonight|later|soon|eventually)(?:\s+(?:morning|afternoon|evening|night))?|(?:next|this)\s+(?:week|month|year|morning|afternoon|evening|weekend)|(?:in|within)\s+(?:a|an|\d+)\s+(?:moments?|minutes?|hours?|days?|weeks?)|at\s+(?:noon|midnight|\d{1,2}(?::\d{2})?(?:\s*[ap]\.?m\.?)?)|on\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?:\s+(?:morning|afternoon|evening|night))?)(?:,\s+|\s+(?=(?:i|we)\b))/i;
 
+const CONTEXT_PREPOSITION = String.raw`(?:in|on|at|by|during|within|following|upon|for)`;
+const CONTEXT_START_PATTERN = new RegExp(String.raw`^${CONTEXT_PREPOSITION}\b`, "i");
+const LEADING_CONTEXT_PATTERN = new RegExp(
+  String.raw`^(?:${CONTEXT_PREPOSITION}\b.*?(?:,\s*|:\s+|\s+(?=(?:i|we)\b)))+`,
+  "i",
+);
+
 const COMPLETION_RESULT_CLAUSE_PATTERN =
   /^(?:(?:(?:i|we)(?:\s+(?:have\s+)?|(?:'|\u2019)ve\s+)|(?:i(?:\s+am|(?:'|\u2019)m)|we(?:\s+are|(?:'|\u2019)re))\s+))?(?:done|completed|finished|fixed|patched|resolved|deployed|landed|merged|implemented|confirmed)\b|(?:^|,\s*|\band\s+)(?:(?:(?:i|we)(?:\s+(?:have\s+)?|(?:'|\u2019)ve\s+)|(?:i(?:\s+am|(?:'|\u2019)m)|we(?:\s+are|(?:'|\u2019)re))\s+)(?:done|completed|finished|fixed|patched|resolved|deployed|landed|merged|implemented|confirmed)\b|(?:(?:all|the)\s+)?(?:\d+\s+)?(?:(?!(?:why|whether|if|unless|when|once|after|will|would|could|should|might|may)\b)[\w-]+\s+){0,3}(?:tests?|build|lint|checks?|syntax)\s+(?:(?:have|has)\s+)?(?:passed|succeeded|green)\b)/gi;
 
@@ -137,7 +144,9 @@ function isProgressOnlyCompletionText(value: string): boolean {
       // a later completed result must not hide an earlier clause boundary.
       if (
         previous &&
-        (CONDITIONAL_PROGRESS_PATTERN.test(previous) || /^before\b/i.test(previous))
+        (CONDITIONAL_PROGRESS_PATTERN.test(previous) ||
+          /^before\b/i.test(previous) ||
+          CONTEXT_START_PATTERN.test(previous))
       ) {
         clauses[clauses.length - 1] = `${previous}: ${body}`;
       } else {
@@ -148,6 +157,7 @@ function isProgressOnlyCompletionText(value: string): boolean {
       const body = clause.replace(COMPLETION_HEADING_PATTERN, "").trim();
       const narration = body
         .replace(/^(?:if|unless|when|once|after|before|as\s+soon\s+as)\b.*?(?:,\s*|:\s+)/i, "")
+        .replace(LEADING_CONTEXT_PATTERN, "")
         .replace(PLANNING_TIME_PREFIX_PATTERN, "");
       const narrativeProgress =
         PROGRESS_ONLY_PATTERN.test(narration) ||
@@ -177,7 +187,9 @@ function isProgressOnlyCompletionText(value: string): boolean {
           UNFINISHED_RESULT_PATTERN.test(remainder) ||
           /\b(?:whether|if|unless)\b/i.test(resultClause) ||
           FRONTED_CONDITIONAL_PATTERN.test(prefix) ||
-          (/^and\b/i.test(result[0]) && CONDITIONAL_PROGRESS_PATTERN.test(prefix)) ||
+          (/^and\b/i.test(result[0]) &&
+            !/,\s*$/.test(prefix) &&
+            CONDITIONAL_PROGRESS_PATTERN.test(prefix)) ||
           hasDeferredTemporalResult(prefix, resultClause)
         );
       });
