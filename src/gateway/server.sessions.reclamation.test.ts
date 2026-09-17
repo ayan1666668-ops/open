@@ -1,12 +1,8 @@
 import fs from "node:fs";
 import { performance } from "node:perf_hooks";
-import { afterEach, expect, test } from "vitest";
+import { expect, test } from "vitest";
 import { resolveSqliteTargetFromSessionStorePath } from "../config/sessions/session-sqlite-target.js";
-import {
-  closeOpenClawAgentDatabasesForTest,
-  openOpenClawAgentDatabase,
-} from "../state/openclaw-agent-db.js";
-import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
+import { openOpenClawAgentDatabase } from "../state/openclaw-agent-db.js";
 import { rpcReq, writeSessionStore } from "./test-helpers.js";
 import {
   sessionStoreEntry,
@@ -22,11 +18,6 @@ const UNRELATED_SESSION_KEY = "discord:group:phase3-reclamation-unrelated";
 const ROWS = 200_000;
 
 const { createSessionStoreDir, openClient } = setupGatewaySessionsTestHarness();
-
-afterEach(() => {
-  closeOpenClawAgentDatabasesForTest();
-  closeOpenClawStateDatabaseForTest();
-});
 
 function countRows(
   database: ReturnType<typeof openOpenClawAgentDatabase>,
