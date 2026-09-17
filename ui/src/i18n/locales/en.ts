@@ -253,7 +253,10 @@ export const en: TranslationMap & {
   browserLinkPreferences: {
     openInControlUi: "Open links in Control UI browser",
   },
-  filePreview: {},
+  filePreview: {
+    bundle: {},
+    label: "Support files",
+  },
   mcpApp: {
     title: "MCP App",
     unavailable: "MCP App unavailable: {error}",

@@ -11,7 +11,6 @@ const catalog = {
         "This file could not be read safely or is unavailable. Close and reopen the skill to try again.",
       incomplete: "Some bundle content is unavailable. Select a file to see its status.",
     },
-    label: "Support files",
     listLabel: "Files",
     searchPlaceholder: "Search files…",
     readOnly: "read-only",
@@ -32,7 +31,7 @@ const catalog = {
 
 export const registerFilePreviewEnglish = Object.assign(
   () => {
-    en.filePreview = catalog.filePreview;
+    Object.assign(en.filePreview, catalog.filePreview);
   },
   { catalog },
 );
