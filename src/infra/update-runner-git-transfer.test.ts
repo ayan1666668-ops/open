@@ -43,9 +43,51 @@ it.each([
     expect(result.stderr).toContain(expected);
     if (state === "partial-clone") {
       expect(result.stderr).not.toContain("repo corruption");
+      expect(result.stderr).toContain("sed -n 's/^?//p'");
     }
   },
 );
+
+it("uses the installed checkout runner for partial-clone classification", async () => {
+  const results: UpdateStepResult[] = [];
+  const inspectionRunCommand: CommandRunner = async () => ({
+    code: 128,
+    stdout: "",
+    stderr:
+      "fatal: object is in the commit graph file but not in the object database. " +
+      "This is probably due to repo corruption.",
+  });
+  let installedConfigProbed = false;
+  const installedRunCommand: CommandRunner = async (argv) => {
+    installedConfigProbed = argv.includes("--get-regexp");
+    return {
+      code: 0,
+      stdout: "remote.origin.promisor true\n",
+      stderr: "",
+    };
+  };
+
+  const transfer = await prepareGitCandidateTransfer({
+    candidateSha: "candidate",
+    beforeSha: null,
+    installedRoot: "/installed",
+    installedRunCommand,
+    step: {
+      runCommand: inspectionRunCommand,
+      cwd: "/inspection",
+      argv: [],
+      name: "transfer proof",
+      timeoutMs: 1_000,
+      stepIndex: 0,
+      totalSteps: 1,
+      results,
+    },
+  });
+
+  expect(transfer).toBeUndefined();
+  expect(installedConfigProbed).toBe(true);
+  expect(results.at(-1)?.stderrTail).toContain("promised objects in this partial clone");
+});
 
 // Windows forcibly terminates children instead of delivering the handled POSIX signal.
 it
@@ -178,6 +220,7 @@ it
     candidateSha,
     beforeSha,
     installedRoot: install,
+    installedRunCommand: runCommand,
     step: step(source),
   });
   expect(historyInventoryAllowsMissingObjects).toBe(true);
@@ -216,6 +259,7 @@ it
       candidateSha,
       beforeSha,
       installedRoot: install,
+      installedRunCommand: runCommand,
       step: step(inspection),
     });
     expect(transfer).toBeDefined();

@@ -36,10 +36,11 @@ export async function prepareGitCandidateTransfer(params: {
   candidateSha: string;
   beforeSha: string | null;
   installedRoot: string;
+  installedRunCommand: RunStepOptions["runCommand"];
   upstreamRef?: string;
   step: RunStepOptions;
 }) {
-  const { candidateSha, beforeSha, installedRoot, upstreamRef, step } = params;
+  const { candidateSha, beforeSha, installedRoot, installedRunCommand, upstreamRef, step } = params;
   const runGit = async (name: string, args: string[], input?: string, root = step.cwd) => {
     let stdout = "";
     const result = await runStep({
@@ -57,7 +58,7 @@ export async function prepareGitCandidateTransfer(params: {
         const commandResult = await classifyPartialCloneGitFailure({
           result: rawCommandResult,
           root: installedRoot,
-          runCommand: step.runCommand,
+          runCommand: installedRunCommand,
           timeoutMs: step.timeoutMs,
         });
         stdout = commandResult.stdout;

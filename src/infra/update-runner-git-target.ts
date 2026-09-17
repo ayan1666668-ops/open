@@ -57,9 +57,9 @@ export async function classifyPartialCloneGitFailure(params: {
       stderr:
         "Git could not resolve one or more promised objects in this partial clone. " +
         "This does not by itself indicate repository corruption. Bulk-fetch the missing object IDs " +
-        "from the configured promisor remote, then retry the update (for example, list them with " +
-        'git rev-list --objects --missing=print --all and pass them to git fetch "<promisor-remote>" ' +
-        "--stdin).",
+        "from the configured promisor remote, then retry the update (for example: " +
+        "git rev-list --objects --missing=print --all | sed -n 's/^?//p' | " +
+        'git fetch "<promisor-remote>" --stdin).',
     };
   }
   const fsck = await params
