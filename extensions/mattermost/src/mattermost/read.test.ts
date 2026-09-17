@@ -30,23 +30,52 @@ function createReadFetch(params?: { channelType?: string; postStatus?: number })
         },
       });
     }
-    const postMatch = url.match(/\/api\/v4\/posts\/([^/?]+)$/);
-    if (postMatch?.[1] === "post-1") {
-      return jsonResponse({
-        id: "post-1",
-        channel_id: "CURRENT",
-        message: "older",
-        create_at: 1_000,
-      });
-    }
-    if (postMatch?.[1] === "other-post") {
-      return jsonResponse({ id: "other-post", channel_id: "OTHER", message: "elsewhere" });
-    }
-    if (postMatch) {
-      return jsonResponse({ message: "Unable to find the post." }, 404);
-    }
     throw new Error(`Unexpected Mattermost request: ${url}`);
   });
+}
+
+const HISTORY_POSTS = [
+  { id: "current-old", channel_id: "CURRENT", message: "first", create_at: 1_000 },
+  { id: "other-post", channel_id: "OTHER", message: "elsewhere", create_at: 1_500 },
+  { id: "current-mid", channel_id: "CURRENT", message: "second", create_at: 2_000 },
+  { id: "current-new", channel_id: "CURRENT", message: "latest", create_at: 3_000 },
+];
+
+// Mirrors Mattermost's channel post cursors: `before`/`after` compare create_at
+// with the cursor post from any channel but return only the requested channel's
+// posts, newest first. Any other endpoint, including GET /posts/{id}, fails.
+function createChannelHistoryFetch() {
+  return vi.fn<typeof fetch>(async (input) => {
+    const url = new URL(requestUrl(input));
+    const match = url.pathname.match(/^\/api\/v4\/channels\/([^/]+)(\/posts)?$/);
+    if (!match) {
+      throw new Error(`Unexpected Mattermost request: ${url.toString()}`);
+    }
+    if (!match[2]) {
+      return jsonResponse({ id: match[1], type: "O" });
+    }
+    const after = url.searchParams.get("after");
+    const cursorId = after ?? url.searchParams.get("before");
+    const cursorAt = HISTORY_POSTS.find((post) => post.id === cursorId)?.create_at;
+    const page = HISTORY_POSTS.filter(
+      (post) =>
+        post.channel_id === match[1] &&
+        (!cursorId ||
+          (cursorAt !== undefined &&
+            (after ? post.create_at > cursorAt : post.create_at < cursorAt))),
+    )
+      .toSorted((a, b) => (after ? a.create_at - b.create_at : b.create_at - a.create_at))
+      .slice(0, Number(url.searchParams.get("per_page")))
+      .toSorted((a, b) => b.create_at - a.create_at);
+    return jsonResponse({
+      order: page.map((post) => post.id),
+      posts: Object.fromEntries(page.map((post) => [post.id, post])),
+    });
+  });
+}
+
+function requestPaths(fetchImpl: ReturnType<typeof createChannelHistoryFetch>): string[] {
+  return fetchImpl.mock.calls.map(([input]) => new URL(requestUrl(input)).pathname);
 }
 
 function delegatedContext(currentChannelId = "channel:CURRENT") {
@@ -239,43 +268,30 @@ describe("readMattermostMessages", () => {
     ).rejects.toThrow("Mattermost API 403 Forbidden: You do not have the appropriate permissions.");
   });
 
-  it("returns only the requested post for an exact read", async () => {
-    const fetchImpl = createReadFetch();
+  it.each(["current-old", "current-mid", "current-new"])(
+    "reads exact post %s through the target channel history",
+    async (messageId) => {
+      const fetchImpl = createChannelHistoryFetch();
 
-    const result = await readMattermostMessages({
-      cfg: createMattermostTestConfig("read-exact"),
-      channelId: "CURRENT",
-      messageId: "post-1",
-      accountId: "default",
-      context: { conversationReadOrigin: "direct-operator" },
-      fetchImpl,
-    });
-
-    expect(result).toEqual({
-      messages: [{ id: "post-1", channel_id: "CURRENT", message: "older", create_at: 1_000 }],
-      hasMore: false,
-    });
-    expect(fetchImpl).toHaveBeenCalledTimes(1);
-    expect(requestUrl(fetchImpl.mock.calls[0]![0])).toContain("/api/v4/posts/post-1");
-  });
-
-  it("fails an exact read of a missing post instead of returning history", async () => {
-    const fetchImpl = createReadFetch();
-
-    await expect(
-      readMattermostMessages({
-        cfg: createMattermostTestConfig("read-exact-missing"),
+      const result = await readMattermostMessages({
+        cfg: createMattermostTestConfig(`read-exact-${messageId}`),
         channelId: "CURRENT",
-        messageId: "missing-post",
+        messageId,
         accountId: "default",
-        context: { conversationReadOrigin: "direct-operator" },
+        context: delegatedContext(),
         fetchImpl,
-      }),
-    ).rejects.toThrow("Mattermost API 404");
-  });
+      });
 
-  it("rejects an exact read of a post from another channel", async () => {
-    const fetchImpl = createReadFetch();
+      expect(result).toEqual({
+        messages: [HISTORY_POSTS.find((post) => post.id === messageId)],
+        hasMore: false,
+      });
+      expect(requestPaths(fetchImpl)).toEqual(Array(2).fill("/api/v4/channels/CURRENT/posts"));
+    },
+  );
+
+  it("rejects an exact read of a post from another channel without fetching it", async () => {
+    const fetchImpl = createChannelHistoryFetch();
 
     await expect(
       readMattermostMessages({
@@ -286,23 +302,39 @@ describe("readMattermostMessages", () => {
         context: delegatedContext(),
         fetchImpl,
       }),
-    ).rejects.toThrow("Mattermost read post belongs to a different channel");
+    ).rejects.toThrow("Mattermost read post was not found in the target channel");
+    expect(requestPaths(fetchImpl)).toEqual(Array(2).fill("/api/v4/channels/CURRENT/posts"));
   });
 
-  it("denies an exact read of an unconfigured channel before fetching the post", async () => {
-    const fetchImpl = createReadFetch();
+  it("fails an exact read of a missing post instead of returning history", async () => {
+    const fetchImpl = createChannelHistoryFetch();
+
+    await expect(
+      readMattermostMessages({
+        cfg: createMattermostTestConfig("read-exact-missing"),
+        channelId: "CURRENT",
+        messageId: "missing-post",
+        accountId: "default",
+        context: { conversationReadOrigin: "direct-operator" },
+        fetchImpl,
+      }),
+    ).rejects.toThrow("Mattermost read post was not found in the target channel");
+  });
+
+  it("denies an exact read of an unconfigured channel before reading posts", async () => {
+    const fetchImpl = createChannelHistoryFetch();
 
     await expect(
       readMattermostMessages({
         cfg: createMattermostTestConfig("read-exact-denied"),
         channelId: "OTHER",
-        messageId: "post-1",
+        messageId: "other-post",
         accountId: "default",
         context: delegatedContext(),
         fetchImpl,
       }),
     ).rejects.toThrow("Mattermost read target channel is not allowed");
-    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(requestPaths(fetchImpl)).toEqual(["/api/v4/channels/OTHER"]);
   });
 
   it("rejects disabled accounts before provider access", async () => {

@@ -1082,17 +1082,22 @@ describe("mattermostPlugin", () => {
         throw new Error("expected Mattermost config fixture");
       }
       mattermostConfig.actions = { messages: true };
+      const older = {
+        id: "post-1",
+        channel_id: "CURRENT",
+        message: "older",
+        create_at: 1_700_000_001_000,
+      };
+      const newer = { id: "post-2", channel_id: "CURRENT", message: "newer" };
       const fetchImpl = vi.fn<typeof fetch>(async (input) => {
         const url = requestUrl(input);
-        if (!url.endsWith("/api/v4/posts/post-1")) {
-          throw new Error(`Unexpected Mattermost request: ${url}`);
+        if (url.includes("/api/v4/channels/CURRENT/posts?per_page=1&after=post-1")) {
+          return Response.json({ order: ["post-2"], posts: { "post-2": newer } });
         }
-        return Response.json({
-          id: "post-1",
-          channel_id: "CURRENT",
-          message: "older",
-          create_at: 1_700_000_001_000,
-        });
+        if (url.includes("/api/v4/channels/CURRENT/posts?per_page=60&before=post-2")) {
+          return Response.json({ order: ["post-1"], posts: { "post-1": older } });
+        }
+        throw new Error(`Unexpected Mattermost request: ${url}`);
       });
 
       const result = await withMockedGlobalFetch(fetchImpl, async () =>
@@ -1122,7 +1127,7 @@ describe("mattermostPlugin", () => {
         ],
         hasMore: false,
       });
-      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
     });
 
     it("rejects invalid read cursors and limits before provider access", async () => {

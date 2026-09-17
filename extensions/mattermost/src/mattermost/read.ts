@@ -10,6 +10,7 @@ import {
   createMattermostClient,
   fetchMattermostChannel,
   fetchMattermostChannelPosts,
+  type MattermostClient,
   type MattermostFetch,
   type MattermostPost,
 } from "./client.js";
@@ -79,6 +80,30 @@ function isConfiguredMattermostReadTarget(params: {
   return groups?.[params.channelId] !== undefined || groups?.["*"] !== undefined;
 }
 
+async function readMattermostChannelPost(
+  client: MattermostClient,
+  channelId: string,
+  postId: string,
+): Promise<{ messages: MattermostPost[]; hasMore: boolean }> {
+  // GET /posts/{id} resolves any post the bot can see, and Mattermost has no
+  // channel-scoped single-post endpoint. Channel history cursors only return
+  // posts from the authorized channel, so anchor on the next newer post there
+  // (or the newest page when none exists): that page leads with the requested
+  // post when it belongs to this channel.
+  const newer = await fetchMattermostChannelPosts(client, channelId, { after: postId, limit: 1 });
+  const anchor = newer.messages[0]?.id;
+  const page = await fetchMattermostChannelPosts(
+    client,
+    channelId,
+    anchor ? { before: anchor } : {},
+  );
+  const post = page.messages.find((message) => message.id === postId);
+  if (!post) {
+    throw new Error("Mattermost read post was not found in the target channel.");
+  }
+  return { messages: [post], hasMore: false };
+}
+
 export async function readMattermostMessages(params: {
   cfg: OpenClawConfig;
   channelId: string;
@@ -134,14 +159,7 @@ export async function readMattermostMessages(params: {
   }
 
   if (params.messageId) {
-    const post = await client.request<MattermostPost>(
-      `/posts/${encodeURIComponent(params.messageId)}`,
-    );
-    // Post IDs resolve server-wide, so bind the post to the channel authorized above.
-    if (post.channel_id?.trim() !== params.channelId) {
-      throw new Error("Mattermost read post belongs to a different channel.");
-    }
-    return { messages: [post], hasMore: false };
+    return await readMattermostChannelPost(client, params.channelId, params.messageId);
   }
 
   return await fetchMattermostChannelPosts(client, params.channelId, {
