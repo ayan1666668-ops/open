@@ -18,22 +18,17 @@ describe("loadExtensionsCached", () => {
 
   beforeAll(async () => {
     clearExtensionCache();
-    // Extensions import both public SDK helpers and runtime helper subpaths; the
-    // loader must route those aliases without package-manager involvement.
+    // Extensions import public SDK helpers through package subpaths; the loader
+    // must route those aliases without package-manager involvement.
     const dir = await mkdtemp(join(tmpdir(), "openclaw-extension-sdk-"));
     tempDirs.push(dir);
     const extensionPath = join(dir, "extension.ts");
     await writeFile(
       extensionPath,
       `
-import { createAssistantMessageEventStream } from "openclaw/plugin-sdk/llm";
 import { normalizeLowercaseStringOrEmpty } from "openclaw/plugin-sdk/string-coerce-runtime";
 
 export default async function(api) {
-  const stream = createAssistantMessageEventStream();
-  if (!stream || typeof stream.result !== "function") {
-    throw new Error("generic LLM helper unavailable");
-  }
   if (normalizeLowercaseStringOrEmpty("  MIXED  ") !== "mixed") {
     throw new Error("generic sdk subpath unavailable");
   }
@@ -48,9 +43,53 @@ export default async function(api) {
     result = await loadExtensionsCached([extensionPath], dir);
   });
 
-  it("resolves plugin SDK subpaths in jiti-loaded extensions", () => {
+  it("resolves a public plugin SDK subpath in jiti-loaded extensions", () => {
     expect(result.errors).toEqual([]);
     expect(result.extensions).toHaveLength(1);
     expect(result.extensions[0]?.commands.has("sdk-subpath-probe")).toBe(true);
+  });
+
+  it.each([
+    { sdk: "openclaw/plugin-sdk/agent-sessions", typebox: "typebox" },
+    { sdk: "@openclaw/plugin-sdk/agent-sessions", typebox: "@sinclair/typebox" },
+  ])("loads the host session SDK and schema helpers through $sdk", async ({ sdk, typebox }) => {
+    const dir = await mkdtemp(join(tmpdir(), "openclaw-extension-session-sdk-"));
+    tempDirs.push(dir);
+    const extensionPath = join(dir, "extension.ts");
+    await writeFile(
+      extensionPath,
+      `
+import { AuthStorage, ModelRegistry } from "${sdk}";
+import { streamProxy, IMAGE_BLOCK_TOKENS } from "${sdk.replace("agent-sessions", "agent-core")}";
+import { Type } from "${typebox}";
+import { Compile } from "${typebox}/compile";
+import { IsEmail } from "${typebox}/format";
+import { Check } from "${typebox}/value";
+
+export default function(api) {
+  const registry = ModelRegistry.inMemory(AuthStorage.inMemory({}));
+  registry.registerProvider("sdk-probe", {
+    api: "openai-responses",
+    baseUrl: "https://example.test",
+    models: [{ id: "probe" }],
+  });
+  const schema = Type.Number();
+  if (!Compile(schema).Check(1) || Check(schema, "invalid") || !IsEmail("probe@example.test")) {
+    throw new Error("host schema helpers did not preserve their contracts");
+  }
+  if (typeof streamProxy !== "function" || !(IMAGE_BLOCK_TOKENS > 0)) {
+    throw new Error("public agent-core exports were lost");
+  }
+  api.registerCommand("session-sdk-probe", {
+    description: registry.find("sdk-probe", "probe").id,
+    handler() {},
+  });
+}
+`,
+    );
+
+    const loaded = await loadExtensionsCached([extensionPath], dir);
+    expect(loaded.errors).toEqual([]);
+    expect(loaded.extensions[0]?.commands.get("session-sdk-probe")?.description).toBe("probe");
   });
 });

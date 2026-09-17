@@ -33,6 +33,11 @@ type DispatchReplyFromConfigMock = Mock<
   (params: {
     ctx: DispatchReplyContext;
     dispatcher: DispatchReplyDispatcher;
+    replyOptions?: {
+      turnAdoptionLifecycle?: {
+        onAdopted: () => void | Promise<void>;
+      };
+    };
   }) => Promise<{ queuedFinal: boolean; counts: DispatchReplyCounts }>
 >;
 type WithReplyDispatcherMock = Mock<
@@ -61,26 +66,24 @@ type FeishuLifecycleTestMocks = {
   sendCardFeishuMock: AsyncUnknownMock;
 };
 
-const feishuLifecycleTestMocks = vi.hoisted(
-  (): FeishuLifecycleTestMocks => ({
-    createEventDispatcherMock: vi.fn(),
-    monitorWebSocketMock: vi.fn(async () => {}),
-    monitorWebhookMock: vi.fn(async () => {}),
-    createFeishuThreadBindingManagerMock: vi.fn(() => ({ stop: vi.fn() })),
-    createFeishuReplyDispatcherMock: vi.fn(),
-    resolveBoundConversationMock: vi.fn<(ref?: unknown) => BoundConversation | null>(() => null),
-    touchBindingMock: vi.fn(),
-    resolveAgentRouteMock: vi.fn(),
-    resolveConfiguredBindingRouteMock: vi.fn(),
-    ensureConfiguredBindingRouteReadyMock: vi.fn(),
-    dispatchReplyFromConfigMock: vi.fn(),
-    withReplyDispatcherMock: vi.fn(),
-    getMessageFeishuMock: vi.fn(async () => null),
-    listFeishuThreadMessagesMock: vi.fn(async () => []),
-    sendMessageFeishuMock: vi.fn(async () => ({ messageId: "om_sent", chatId: "chat_default" })),
-    sendCardFeishuMock: vi.fn(async () => ({ messageId: "om_card", chatId: "chat_default" })),
-  }),
-);
+const feishuLifecycleTestMocks = vi.hoisted((): FeishuLifecycleTestMocks => ({
+  createEventDispatcherMock: vi.fn(),
+  monitorWebSocketMock: vi.fn(async () => {}),
+  monitorWebhookMock: vi.fn(async () => {}),
+  createFeishuThreadBindingManagerMock: vi.fn(() => ({ stop: vi.fn() })),
+  createFeishuReplyDispatcherMock: vi.fn(),
+  resolveBoundConversationMock: vi.fn<(ref?: unknown) => BoundConversation | null>(() => null),
+  touchBindingMock: vi.fn(),
+  resolveAgentRouteMock: vi.fn(),
+  resolveConfiguredBindingRouteMock: vi.fn(),
+  ensureConfiguredBindingRouteReadyMock: vi.fn(),
+  dispatchReplyFromConfigMock: vi.fn(),
+  withReplyDispatcherMock: vi.fn(),
+  getMessageFeishuMock: vi.fn(async () => null),
+  listFeishuThreadMessagesMock: vi.fn(async () => []),
+  sendMessageFeishuMock: vi.fn(async () => ({ messageId: "om_sent", chatId: "chat_default" })),
+  sendCardFeishuMock: vi.fn(async () => ({ messageId: "om_card", chatId: "chat_default" })),
+}));
 
 export function getFeishuLifecycleTestMocks(): FeishuLifecycleTestMocks {
   return feishuLifecycleTestMocks;

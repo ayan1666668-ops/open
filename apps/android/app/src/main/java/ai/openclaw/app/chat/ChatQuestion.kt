@@ -3,8 +3,6 @@ package ai.openclaw.app.chat
 import ai.openclaw.app.gateway.Question
 import ai.openclaw.app.gateway.QuestionRecord
 
-internal const val QUESTION_TERMINAL_RETENTION_MS = 15_000L
-
 enum class ChatQuestionStatus {
   Pending,
   Submitting,
@@ -12,41 +10,65 @@ enum class ChatQuestionStatus {
   AnsweredElsewhere,
   Expired,
   Cancelled,
+  Unavailable,
 }
 
 data class ChatQuestionPrompt(
   val record: QuestionRecord,
   val submitting: Boolean = false,
+  val skipping: Boolean = false,
   val answeredLocally: Boolean = false,
   val errorText: String? = null,
   val terminalObservedAtMs: Long? = null,
+  val recoveryUnavailable: Boolean = false,
+  // Process-only input can contain secrets; it must not enter saved or persisted state.
+  val draft: ChatQuestionDraft = ChatQuestionDraft(),
+  internal val promptOwner: Any = Any(),
 ) {
   fun status(nowMs: Long = System.currentTimeMillis()): ChatQuestionStatus =
-    when (record.status) {
-      "answered" -> if (answeredLocally) ChatQuestionStatus.Answered else ChatQuestionStatus.AnsweredElsewhere
-      "cancelled" -> ChatQuestionStatus.Cancelled
-      "expired" -> ChatQuestionStatus.Expired
-      else ->
-        when {
-          nowMs >= record.expiresAtMs -> ChatQuestionStatus.Expired
-          submitting -> ChatQuestionStatus.Submitting
-          else -> ChatQuestionStatus.Pending
+    if (recoveryUnavailable) {
+      ChatQuestionStatus.Unavailable
+    } else {
+      when (record.status) {
+        "answered" -> {
+          if (answeredLocally) ChatQuestionStatus.Answered else ChatQuestionStatus.AnsweredElsewhere
         }
-    }
 
-  fun shouldRetainAfterList(nowMs: Long): Boolean = terminalObservedAtMs?.let { nowMs - it < QUESTION_TERMINAL_RETENTION_MS } == true
+        "cancelled" -> {
+          ChatQuestionStatus.Cancelled
+        }
+
+        "expired" -> {
+          ChatQuestionStatus.Expired
+        }
+
+        else -> {
+          when {
+            nowMs >= record.expiresAtMs -> ChatQuestionStatus.Expired
+            submitting -> ChatQuestionStatus.Submitting
+            else -> ChatQuestionStatus.Pending
+          }
+        }
+      }
+    }
 }
 
 data class ChatQuestionDraft(
   val selectedOptions: Map<String, Set<String>> = emptyMap(),
   val otherText: Map<String, String> = emptyMap(),
+  val secretStoreAllowedHostsText: String? = null,
 ) {
+  fun secretStoreAllowedHosts(questions: List<Question>): List<String>? {
+    val store = questions.firstOrNull()?.secretStore?.takeIf { it.kind == "secret" } ?: return null
+    return secretStoreAllowedHostsText?.split(Regex("[,\\s]+"))?.filter { it.isNotEmpty() } ?: store.allowedHosts.orEmpty()
+  }
+
   fun toggle(
     question: Question,
     label: String,
   ): ChatQuestionDraft {
     if (question.options.none { it.label == label }) return this
-    val selected = selectedOptions[question.id].orEmpty()
+    val selected = selectedOptions[question.questionId].orEmpty()
     val next =
       if (question.multiSelect == true) {
         if (label in selected) selected - label else selected + label
@@ -56,8 +78,8 @@ data class ChatQuestionDraft(
         setOf(label)
       }
     return copy(
-      selectedOptions = selectedOptions + (question.id to next),
-      otherText = if (question.multiSelect != true && next.isNotEmpty()) otherText + (question.id to "") else otherText,
+      selectedOptions = selectedOptions + (question.questionId to next),
+      otherText = if (question.multiSelect != true && next.isNotEmpty()) otherText + (question.questionId to "") else otherText,
     )
   }
 
@@ -66,21 +88,22 @@ data class ChatQuestionDraft(
     value: String,
   ): ChatQuestionDraft {
     if (question.options.isNotEmpty() && question.isOther != true) return this
-    val clearOptions = question.multiSelect != true && value.isNotBlank()
+    val clearOptions = question.multiSelect != true && (if (question.isSecret == true) value.isNotEmpty() else value.isNotBlank())
     return copy(
-      selectedOptions = if (clearOptions) selectedOptions + (question.id to emptySet()) else selectedOptions,
-      otherText = otherText + (question.id to value),
+      selectedOptions = if (clearOptions) selectedOptions + (question.questionId to emptySet()) else selectedOptions,
+      otherText = otherText + (question.questionId to value),
     )
   }
 
   fun answers(questions: List<Question>): Map<String, List<String>>? {
     val result = linkedMapOf<String, List<String>>()
     for (question in questions) {
-      val selected = selectedOptions[question.id].orEmpty()
+      val selected = selectedOptions[question.questionId].orEmpty()
       val values = question.options.mapNotNull { option -> option.label.takeIf { it in selected } }.toMutableList()
-      otherText[question.id]?.trim()?.takeIf { it.isNotEmpty() }?.let(values::add)
+      val text = otherText[question.questionId]?.let { if (question.isSecret == true) it else it.trim() }
+      text?.takeIf { it.isNotEmpty() }?.let(values::add)
       if (values.isEmpty()) return null
-      result[question.id] = values
+      result[question.questionId] = values
     }
     return result
   }

@@ -1,10 +1,14 @@
+import {
+  withDispatchProcessedOutcomeSink,
+  type DispatchProcessedNote,
+} from "../../auto-reply/reply/dispatch-processed-outcome.js";
 import { clearChannelHistoryIfEnabled } from "../../auto-reply/reply/history.js";
-import type { FinalizedMsgContext } from "../../auto-reply/templating.js";
 import {
   createDiagnosticTraceContextFromActiveScope,
   runWithDiagnosticTraceContext,
 } from "../../infra/diagnostic-trace-context.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
+import { isRecentOutboundMessageIdentity } from "../message/outbound-echo.js";
 import { recordChannelBotPairLoopAndCheckSuppression } from "./bot-loop-protection.js";
 import {
   EMPTY_CHANNEL_TURN_DISPATCH_COUNTS,
@@ -12,6 +16,7 @@ import {
   type ChannelTurnDispatchResultLike,
   type ChannelTurnVisibleDeliverySignals,
 } from "./dispatch-result.js";
+import { deliverPendingDeliveryNotice } from "./pending-delivery-notice.js";
 import type {
   ChannelTurnAdmission,
   ChannelTurnHistoryFinalizeOptions,
@@ -57,10 +62,21 @@ function resolveObserveOnlyDispatchResult<TDispatchResult>(
   }) as TDispatchResult;
 }
 
-function isSystemChannelTurn(ctx: FinalizedMsgContext): boolean {
-  return (
-    ctx.Provider === "heartbeat" || ctx.Provider === "cron-event" || ctx.Provider === "exec-event"
-  );
+function resolveRecordSessionKey<TDispatchResult>(
+  params: PreparedChannelTurn<TDispatchResult>,
+): string {
+  const explicitSessionKey = params.record?.sessionKey;
+  if (explicitSessionKey === undefined) {
+    return params.ctxPayload.SessionKey ?? params.routeSessionKey;
+  }
+  const normalizedSessionKey = explicitSessionKey.trim();
+  if (!normalizedSessionKey) {
+    throw new Error("Channel turn record.sessionKey must be non-empty.");
+  }
+  if (normalizedSessionKey !== explicitSessionKey) {
+    throw new Error("Channel turn record.sessionKey must not include surrounding whitespace.");
+  }
+  return explicitSessionKey;
 }
 
 function maybeWarnZeroCountVisibleDispatch<TDispatchResult>(
@@ -69,22 +85,37 @@ function maybeWarnZeroCountVisibleDispatch<TDispatchResult>(
     "admission" | "channel" | "ctxPayload" | "messageId" | "routeSessionKey"
   > & {
     dispatchResult: TDispatchResult;
+    processedOutcome?: DispatchProcessedNote;
     log?: (event: ChannelTurnLogEvent) => void;
   },
 ): void {
-  if (params.admission?.kind === "observeOnly" || isSystemChannelTurn(params.ctxPayload)) {
+  if (
+    params.admission?.kind === "observeOnly" ||
+    params.ctxPayload.InternalTurnSource !== undefined
+  ) {
     return;
   }
   const dispatchResult = params.dispatchResult as ChannelTurnDispatchResultLike;
+  if (dispatchResult?.deferredToActiveRun) {
+    return;
+  }
   // The canonical visible signal includes observed delivery paths with zero queued counts.
   if (hasVisibleChannelTurnDispatch(dispatchResult, NO_ADDITIONAL_DELIVERY_SIGNALS)) {
     return;
   }
+  // The processed outcome names the dispatch branch that produced the silence,
+  // so operators can tell a benign duplicate or busy skip from a lost message.
+  // It stays in this core-owned log line; the channel log event is a plugin
+  // contract and must not widen.
+  const processed = params.processedOutcome;
+  const cause = processed
+    ? `${processed.outcome}${processed.reason ? `:${processed.reason}` : ""}`
+    : undefined;
   log.warn(
     `visible channel turn dispatched with no queued reply payloads: channel=${params.channel} ` +
       `messageId=${params.messageId ?? "unknown"} sessionKey=${
         params.ctxPayload.SessionKey ?? params.routeSessionKey
-      }`,
+      } cause=${cause ?? "unknown"}`,
   );
   emit({
     ...params,
@@ -129,6 +160,62 @@ function resolveBotLoopProtectionDrop<TDispatchResult>(
   };
 }
 
+function resolveOutboundEchoDrop<TDispatchResult>(
+  params: PreparedChannelTurn<TDispatchResult>,
+): ChannelTurnResult<TDispatchResult> | undefined {
+  const conversationId = [params.ctxPayload.NativeChannelId, params.ctxPayload.ChatId].find(
+    (value): value is string => typeof value === "string" && value.trim().length > 0,
+  );
+  if (!conversationId) {
+    return undefined;
+  }
+  const messageIds = [
+    params.messageId,
+    params.ctxPayload.MessageSidFull,
+    params.ctxPayload.MessageSid,
+  ];
+  const matchedMessageId = messageIds.find(
+    (messageId): messageId is string =>
+      typeof messageId === "string" &&
+      isRecentOutboundMessageIdentity({
+        channel: params.channel,
+        accountId: params.accountId,
+        conversationId,
+        messageId,
+      }),
+  );
+  const sourceId = params.outboundEchoSourceId?.trim();
+  const matchesSource = sourceId
+    ? isRecentOutboundMessageIdentity({
+        channel: params.channel,
+        accountId: params.accountId,
+        conversationId,
+        sourceId,
+      })
+    : false;
+  if (!matchedMessageId && !matchesSource) {
+    return undefined;
+  }
+  const admission: ChannelTurnAdmission = { kind: "drop", reason: "outbound-echo" };
+  emit({
+    ...params,
+    event: {
+      stage: "authorize",
+      event: "drop",
+      messageId: params.messageId ?? matchedMessageId,
+      sessionKey: params.ctxPayload.SessionKey ?? params.routeSessionKey,
+      admission: admission.kind,
+      reason: admission.reason,
+    },
+  });
+  return {
+    admission,
+    dispatched: false,
+    ctxPayload: params.ctxPayload,
+    routeSessionKey: params.routeSessionKey,
+  };
+}
+
 export async function runPreparedChannelTurnCore<
   TDispatchResult = DispatchedChannelTurnResult["dispatchResult"],
 >(
@@ -148,147 +235,159 @@ async function runPreparedChannelTurnCoreInTrace<
   options: { suppressObserveOnlyDispatch: boolean },
 ): Promise<ChannelTurnResult<TDispatchResult>> {
   const admission = params.admission ?? ({ kind: "dispatch" } as const);
+  const outboundEchoDrop = resolveOutboundEchoDrop(params);
+  if (outboundEchoDrop) {
+    clearPendingHistoryAfterTurn(params.history);
+    await params.runDispatchLifecycle?.onDispatchSkipped("outboundEcho");
+    return outboundEchoDrop;
+  }
   const botLoopDrop = resolveBotLoopProtectionDrop(params);
   if (botLoopDrop) {
     clearPendingHistoryAfterTurn(params.history);
+    await params.runDispatchLifecycle?.onDispatchSkipped("botLoopProtection");
     return botLoopDrop;
   }
-  emit({
-    ...params,
-    event: {
-      stage: "record",
-      event: "start",
-      messageId: params.messageId,
-      sessionKey: params.ctxPayload.SessionKey ?? params.routeSessionKey,
-      admission: admission.kind,
-    },
-  });
+  // Native commands can execute in an isolated command session while updating the
+  // provider-routed target session. Keep that record target separate from dispatch.
+  // The caller retains pending history across turns; finalize every admitted terminal
+  // path before the next group turn can replay stale context.
   try {
-    await params.recordInboundSession({
-      storePath: params.storePath,
-      sessionKey: params.ctxPayload.SessionKey ?? params.routeSessionKey,
-      ctx: params.ctxPayload,
-      groupResolution: params.record?.groupResolution,
-      createIfMissing: params.record?.createIfMissing,
-      updateLastRoute: params.record?.updateLastRoute,
-      onRecordError: params.record?.onRecordError ?? (() => undefined),
-      trackSessionMetaTask: params.record?.trackSessionMetaTask,
-    });
+    const recordSessionKey = resolveRecordSessionKey(params);
+    if (params.ctxPayload.SessionTranscriptContext) {
+      const { mergeSessionTranscriptContext } =
+        await import("../inbound-event/session-transcript-context.runtime.js");
+      await mergeSessionTranscriptContext({
+        agentId: params.ctxPayload.AgentId,
+        ctx: params.ctxPayload,
+        sessionKey: recordSessionKey,
+        storePath: params.storePath,
+      });
+    }
     emit({
       ...params,
       event: {
         stage: "record",
+        event: "start",
+        messageId: params.messageId,
+        sessionKey: recordSessionKey,
+        admission: admission.kind,
+      },
+    });
+    try {
+      await params.recordInboundSession({
+        storePath: params.storePath,
+        sessionKey: recordSessionKey,
+        ctx: params.ctxPayload,
+        groupResolution: params.record?.groupResolution,
+        createIfMissing: params.record?.createIfMissing,
+        updateLastRoute: params.record?.updateLastRoute,
+        onRecordError: params.record?.onRecordError ?? (() => undefined),
+        trackSessionMetaTask: params.record?.trackSessionMetaTask,
+      });
+      emit({
+        ...params,
+        event: {
+          stage: "record",
+          event: "done",
+          messageId: params.messageId,
+          sessionKey: recordSessionKey,
+          admission: admission.kind,
+        },
+      });
+      await params.afterRecord?.();
+      await deliverPendingDeliveryNotice(recordSessionKey, params.storePath);
+    } catch (err) {
+      emit({
+        ...params,
+        event: {
+          stage: "record",
+          event: "error",
+          messageId: params.messageId,
+          sessionKey: recordSessionKey,
+          admission: admission.kind,
+          error: err,
+        },
+      });
+      try {
+        await params.onPreDispatchFailure?.(err);
+      } catch {
+        // Preserve the original session-recording error.
+      }
+      throw err;
+    }
+
+    emit({
+      ...params,
+      event: {
+        stage: "dispatch",
+        event: "start",
+        messageId: params.messageId,
+        sessionKey: params.ctxPayload.SessionKey ?? params.routeSessionKey,
+        admission: admission.kind,
+      },
+    });
+    let dispatchResult: TDispatchResult;
+    try {
+      if (admission.kind === "observeOnly" && !options.suppressObserveOnlyDispatch) {
+        await params.runDispatch();
+      } else if (admission.kind === "observeOnly") {
+        await params.runDispatchLifecycle?.onDispatchSkipped("observeOnly");
+      }
+      let processedOutcome: DispatchProcessedNote | undefined;
+      if (admission.kind === "observeOnly") {
+        dispatchResult = resolveObserveOnlyDispatchResult(params);
+      } else {
+        // The sink carries the dispatch's terminal outcome to the warning below
+        // without widening the plugin-visible dispatch result contract.
+        ({ result: dispatchResult, processedOutcome } = await withDispatchProcessedOutcomeSink(() =>
+          params.runDispatch(),
+        ));
+      }
+      maybeWarnZeroCountVisibleDispatch({
+        ...params,
+        admission,
+        dispatchResult,
+        processedOutcome,
+      });
+    } catch (err) {
+      emit({
+        ...params,
+        event: {
+          stage: "dispatch",
+          event: "error",
+          messageId: params.messageId,
+          sessionKey: params.ctxPayload.SessionKey ?? params.routeSessionKey,
+          admission: admission.kind,
+          error: err,
+        },
+      });
+      throw err;
+    }
+    emit({
+      ...params,
+      event: {
+        stage: "dispatch",
         event: "done",
         messageId: params.messageId,
         sessionKey: params.ctxPayload.SessionKey ?? params.routeSessionKey,
         admission: admission.kind,
       },
     });
-    await params.afterRecord?.();
-  } catch (err) {
-    emit({
-      ...params,
-      event: {
-        stage: "record",
-        event: "error",
-        messageId: params.messageId,
-        sessionKey: params.ctxPayload.SessionKey ?? params.routeSessionKey,
-        admission: admission.kind,
-        error: err,
-      },
-    });
-    try {
-      await params.onPreDispatchFailure?.(err);
-    } catch {
-      // Preserve the original session-recording error.
-    }
-    throw err;
-  }
 
-  emit({
-    ...params,
-    event: {
-      stage: "dispatch",
-      event: "start",
-      messageId: params.messageId,
-      sessionKey: params.ctxPayload.SessionKey ?? params.routeSessionKey,
-      admission: admission.kind,
-    },
-  });
-  let dispatchResult: TDispatchResult;
-  try {
-    if (admission.kind === "observeOnly" && !options.suppressObserveOnlyDispatch) {
-      await params.runDispatch();
-    }
-    dispatchResult =
-      admission.kind === "observeOnly"
-        ? resolveObserveOnlyDispatchResult(params)
-        : await params.runDispatch();
-    maybeWarnZeroCountVisibleDispatch({
-      ...params,
+    return {
       admission,
+      dispatched: true,
+      ctxPayload: params.ctxPayload,
+      routeSessionKey: params.routeSessionKey,
       dispatchResult,
-    });
-  } catch (err) {
-    emit({
-      ...params,
-      event: {
-        stage: "dispatch",
-        event: "error",
-        messageId: params.messageId,
-        sessionKey: params.ctxPayload.SessionKey ?? params.routeSessionKey,
-        admission: admission.kind,
-        error: err,
-      },
-    });
-    throw err;
+    };
+  } finally {
+    clearPendingHistoryAfterTurn(params.history);
   }
-  emit({
-    ...params,
-    event: {
-      stage: "dispatch",
-      event: "done",
-      messageId: params.messageId,
-      sessionKey: params.ctxPayload.SessionKey ?? params.routeSessionKey,
-      admission: admission.kind,
-    },
-  });
-  clearPendingHistoryAfterTurn(params.history);
-
-  return {
-    admission,
-    dispatched: true,
-    ctxPayload: params.ctxPayload,
-    routeSessionKey: params.routeSessionKey,
-    dispatchResult,
-  };
 }
 
-type PreparedChannelTurnWithBotLoopProtection<TDispatchResult> =
-  PreparedChannelTurn<TDispatchResult> & {
-    botLoopProtection: NonNullable<PreparedChannelTurn<TDispatchResult>["botLoopProtection"]>;
-  };
-
-type PreparedChannelTurnWithoutBotLoopProtection<TDispatchResult> = Omit<
-  PreparedChannelTurn<TDispatchResult>,
-  "botLoopProtection"
-> & {
-  botLoopProtection?: undefined;
-};
-
-function runPreparedChannelTurn<TDispatchResult = DispatchedChannelTurnResult["dispatchResult"]>(
-  params: PreparedChannelTurnWithBotLoopProtection<TDispatchResult>,
-): Promise<ChannelTurnResult<TDispatchResult>>;
-function runPreparedChannelTurn<TDispatchResult = DispatchedChannelTurnResult["dispatchResult"]>(
-  params: PreparedChannelTurnWithoutBotLoopProtection<TDispatchResult>,
-): Promise<DispatchedChannelTurnResult<TDispatchResult>>;
-function runPreparedChannelTurn<TDispatchResult = DispatchedChannelTurnResult["dispatchResult"]>(
-  params: PreparedChannelTurn<TDispatchResult>,
-): Promise<ChannelTurnResult<TDispatchResult>>;
-async function runPreparedChannelTurn<
+export async function runPreparedChannelTurn<
   TDispatchResult = DispatchedChannelTurnResult["dispatchResult"],
 >(params: PreparedChannelTurn<TDispatchResult>): Promise<ChannelTurnResult<TDispatchResult>> {
   return await runPreparedChannelTurnCore(params, { suppressObserveOnlyDispatch: true });
 }
-
-export const runPreparedInboundReply = runPreparedChannelTurn;

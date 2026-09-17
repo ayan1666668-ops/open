@@ -1,17 +1,34 @@
-import { createHmac, randomBytes } from "node:crypto";
+import { createHash, createHmac, randomBytes } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { peekSessionMcpRuntime } from "../agents/agent-bundle-mcp-runtime.js";
+import { peekSessionMcpRuntime } from "../agents/agent-bundle-mcp-manager-api.js";
+import { runWithSessionMcpRequestSignal } from "../agents/agent-bundle-mcp-request-context.js";
 import { buildMcpAppSandboxPath, resolveMcpAppSandboxPort } from "../agents/mcp-app-sandbox.js";
 import { getMcpAppViewLease, type McpAppViewLease } from "../agents/mcp-ui-resource.js";
+import { formatErrorMessage } from "../infra/errors.js";
 import { safeEqualSecret } from "../security/secret-equal.js";
+import { respondPlainText } from "./control-ui-http-utils.js";
+import {
+  classifyMcpAppStandalonePath,
+  MCP_APP_STANDALONE_PATH,
+  MCP_APP_STANDALONE_VIEW_PATH,
+} from "./gateway-http-route-contracts.js";
+import { readJsonBodyOrError, sendJson, watchClientDisconnect } from "./http-common.js";
+import {
+  executeMcpAppOperation,
+  type McpAppActiveView,
+  parseMcpAppOperation,
+  requireMcpAppInteraction,
+  withMcpAppActiveView,
+} from "./mcp-app-operations.js";
+import { runStandaloneMcpAppHost } from "./mcp-app-standalone-host.js";
 
-const MCP_APP_STANDALONE_PATH = "/__openclaw__/mcp-app";
-const MCP_APP_STANDALONE_VIEW_PATH = `${MCP_APP_STANDALONE_PATH}/view`;
 const MCP_APP_STANDALONE_TICKET_SCOPE = "mcp-app-standalone-view";
+const MCP_APP_STANDALONE_INITIAL_LOAD_TIMEOUT_MS = 30_000;
 const MCP_APP_STANDALONE_TICKET_TTL_MS = 2 * 60_000;
 const MCP_APP_STANDALONE_TICKET_MIN_REMAINING_MS = 15_000;
 const MCP_APP_STANDALONE_TICKET_MAX_ENTRIES = 256;
 const MCP_APP_STABLE_PROTOCOL_VERSION = "2026-01-26";
+const MCP_APP_OPERATION_MAX_BODY_BYTES = 256 * 1024;
 const ticketSecret = randomBytes(32);
 
 type StandaloneTicketBinding = {
@@ -19,12 +36,20 @@ type StandaloneTicketBinding = {
   sessionKey: string;
   sessionId: string;
   viewId: string;
+  toolOperationsAuthorized: boolean;
   expiresAtMs: number;
 };
 
 type StandaloneTicket = { ticket: string; url: string; expiresAtMs: number };
+type StandaloneTicketActiveView = McpAppActiveView & {
+  toolOperationsAuthorized: boolean;
+};
 
 const ticketBindings = new Map<string, StandaloneTicketBinding>();
+
+export const mcpAppStandaloneTesting = {
+  clearTickets: () => ticketBindings.clear(),
+};
 
 function pruneTicketBindings(nowMs: number): void {
   for (const [nonce, binding] of ticketBindings) {
@@ -47,6 +72,7 @@ function formatTicket(binding: StandaloneTicketBinding, secret: Buffer): string 
 export function createMcpAppStandaloneTicket(params: {
   sessionKey: string;
   view: Pick<McpAppViewLease, "viewId" | "sessionId" | "expiresAtMs">;
+  toolOperationsAuthorized: boolean;
   nowMs?: number;
   secret?: Buffer;
 }): StandaloneTicket | undefined {
@@ -61,7 +87,8 @@ export function createMcpAppStandaloneTicket(params: {
     if (
       binding.sessionKey === params.sessionKey &&
       binding.sessionId === params.view.sessionId &&
-      binding.viewId === params.view.viewId
+      binding.viewId === params.view.viewId &&
+      binding.toolOperationsAuthorized === params.toolOperationsAuthorized
     ) {
       if (binding.expiresAtMs > params.view.expiresAtMs) {
         ticketBindings.delete(binding.nonce);
@@ -95,6 +122,7 @@ export function createMcpAppStandaloneTicket(params: {
     sessionKey: params.sessionKey,
     sessionId: params.view.sessionId,
     viewId: params.view.viewId,
+    toolOperationsAuthorized: params.toolOperationsAuthorized,
     expiresAtMs,
   };
   ticketBindings.set(nonce, binding);
@@ -149,11 +177,11 @@ export function verifyMcpAppStandaloneTicket(
   return binding;
 }
 
-function resolveTicketView(
+function resolveTicketActiveView(
   value: string,
   nowMs: number,
   secret: Buffer,
-): McpAppViewLease | undefined {
+): StandaloneTicketActiveView | undefined {
   const binding = verifyMcpAppStandaloneTicket(value, { nowMs, secret });
   if (!binding) {
     return undefined;
@@ -172,7 +200,7 @@ function resolveTicketView(
   ) {
     return undefined;
   }
-  return view;
+  return { runtime, view, toolOperationsAuthorized: binding.toolOperationsAuthorized };
 }
 
 function ticketFromRequest(req: IncomingMessage): string | undefined {
@@ -184,145 +212,58 @@ function ticketFromRequest(req: IncomingMessage): string | undefined {
   return value || undefined;
 }
 
-function sendText(res: ServerResponse, statusCode: number, body: string): void {
-  res.statusCode = statusCode;
-  res.setHeader("Content-Type", "text/plain; charset=utf-8");
-  res.end(body);
+function supportsStandaloneToolOperations(
+  active: Pick<StandaloneTicketActiveView, "toolOperationsAuthorized" | "view">,
+): boolean {
+  // Tool authority is the intersection of the ticket issuer's Gateway scope and
+  // the originating run's live App-tool grant, revalidated on every request.
+  return (
+    active.toolOperationsAuthorized &&
+    active.view.allowedAppToolNames !== undefined &&
+    active.view.readOnly !== true
+  );
 }
 
-function standaloneHostHtml(): string {
-  return `<!doctype html>
+async function supportsStandaloneResourceOperations(view: McpAppViewLease): Promise<boolean> {
+  try {
+    await requireMcpAppInteraction(view);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function sendJsonRepresentation(
+  req: IncomingMessage,
+  res: ServerResponse,
+  statusCode: number,
+  body: unknown,
+): void {
+  const serialized = JSON.stringify(body);
+  res.statusCode = statusCode;
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
+  res.setHeader("Content-Length", String(Buffer.byteLength(serialized)));
+  res.end(req.method === "HEAD" ? undefined : serialized);
+}
+
+function standaloneHostHtml(): { html: string; scriptHash: string } {
+  const serializedConfig = JSON.stringify({
+    protocolVersion: MCP_APP_STABLE_PROTOCOL_VERSION,
+    viewPath: MCP_APP_STANDALONE_VIEW_PATH,
+    initialLoadTimeoutMs: MCP_APP_STANDALONE_INITIAL_LOAD_TIMEOUT_MS,
+  });
+  const clientSource = `;(() => { const __name = (target) => target; (${runStandaloneMcpAppHost.toString()})(${serializedConfig}); })();`;
+  const escapedSource = clientSource.replaceAll("</script", "<\\/script");
+  return {
+    html: `<!doctype html>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>OpenClaw MCP App</title>
 <style>html,body{height:100%;margin:0;background:#fff;color:#111;font:14px system-ui,sans-serif}main{height:100%}iframe{display:block;width:100%;height:600px;border:0}.error{padding:16px;color:#b91c1c}</style>
 <main id="host" aria-live="polite"></main>
-<script>
-(() => {
-  "use strict";
-  const host = document.getElementById("host");
-  const ticket = location.hash.startsWith("#") ? location.hash.slice(1) : "";
-  let frame;
-  let payload;
-  let initialized = false;
-  let requestId = 0;
-  let teardownId;
-  const fail = (message) => {
-    host.replaceChildren(Object.assign(document.createElement("p"), { className: "error", textContent: message }));
+<script>${escapedSource}</script>`,
+    scriptHash: createHash("sha256").update(escapedSource).digest("base64"),
   };
-  const post = (message) => frame?.contentWindow?.postMessage(message, "*");
-  const notify = (method, params = {}) => post({ jsonrpc: "2.0", method, params });
-  const respond = (id, result) => post({ jsonrpc: "2.0", id, result });
-  const reject = (id, method) => post({
-    jsonrpc: "2.0",
-    id,
-    error: { code: -32601, message: "Method not available in read-only host: " + method },
-  });
-  const removeFrame = () => {
-    frame?.remove();
-    frame = undefined;
-    teardownId = undefined;
-  };
-  const resolveSandboxUrl = (view) => {
-    const base = view.sandboxOrigin ? new URL(view.sandboxOrigin) : new URL(location.origin);
-    if (!view.sandboxOrigin) base.port = String(view.sandboxPort);
-    base.pathname = "/";
-    base.search = "";
-    base.hash = "";
-    const resolved = new URL(view.sandboxUrl, base);
-    if (
-      !["http:", "https:"].includes(resolved.protocol) ||
-      resolved.origin !== base.origin ||
-      resolved.origin === location.origin ||
-      resolved.pathname !== "/mcp-app-sandbox"
-    ) throw new Error("MCP App sandbox URL is invalid");
-    return resolved.href;
-  };
-  const deliverInitialState = () => {
-    if (initialized) return;
-    initialized = true;
-    notify("ui/notifications/tool-input", {
-      arguments: payload.toolInput && typeof payload.toolInput === "object" && !Array.isArray(payload.toolInput)
-        ? payload.toolInput
-        : {},
-    });
-    notify("ui/notifications/tool-result", payload.toolResult);
-  };
-  window.addEventListener("message", (event) => {
-    if (event.source !== frame?.contentWindow || !event.data || event.data.jsonrpc !== "2.0") return;
-    const message = event.data;
-    if (message.method === "ui/notifications/sandbox-proxy-ready") {
-      notify("ui/notifications/sandbox-resource-ready", { html: payload.html, csp: payload.csp });
-      return;
-    }
-    if (message.method === "ping" && message.id !== undefined) {
-      respond(message.id, {});
-      return;
-    }
-    if (message.method === "ui/initialize" && message.id !== undefined) {
-      respond(message.id, {
-        protocolVersion: ${JSON.stringify(MCP_APP_STABLE_PROTOCOL_VERSION)},
-        hostInfo: { name: "OpenClaw read-only host", version: "1.0.0" },
-        hostCapabilities: { sandbox: { csp: payload.csp ?? {} } },
-        hostContext: {
-          theme: matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light",
-          displayMode: "inline",
-          availableDisplayModes: ["inline"],
-          containerDimensions: { width: Math.max(1, innerWidth), height: 600 },
-          locale: navigator.language,
-          timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-          platform: "web",
-        },
-      });
-      return;
-    }
-    if (message.method === "ui/notifications/initialized") {
-      deliverInitialState();
-      return;
-    }
-    if (message.method === "ui/notifications/size-changed") {
-      const height = message.params?.height;
-      if (typeof height === "number" && Number.isFinite(height)) {
-        frame.style.height = Math.min(1200, Math.max(160, Math.round(height))) + "px";
-      }
-      return;
-    }
-    if (message.method === "ui/notifications/request-teardown") {
-      const id = ++requestId;
-      teardownId = id;
-      post({ jsonrpc: "2.0", id, method: "ui/resource-teardown", params: {} });
-      setTimeout(() => { if (teardownId === id) removeFrame(); }, 1_000);
-      return;
-    }
-    if (teardownId !== undefined && message.id === teardownId && message.method === undefined) {
-      removeFrame();
-      return;
-    }
-    if (message.id !== undefined && typeof message.method === "string") reject(message.id, message.method);
-  });
-  window.addEventListener("pagehide", () => {
-    if (frame?.contentWindow) post({ jsonrpc: "2.0", id: ++requestId, method: "ui/resource-teardown", params: {} });
-  });
-  if (!ticket) {
-    fail("MCP App ticket is missing");
-    return;
-  }
-  fetch(${JSON.stringify(MCP_APP_STANDALONE_VIEW_PATH)}, {
-    headers: { Authorization: "MCP-App " + ticket },
-    cache: "no-store",
-    credentials: "omit",
-  }).then(async (response) => {
-    if (!response.ok) throw new Error("MCP App ticket was rejected");
-    payload = await response.json();
-    frame = document.createElement("iframe");
-    frame.title = "MCP App";
-    frame.referrerPolicy = "origin";
-    frame.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms");
-    frame.src = resolveSandboxUrl(payload);
-    host.replaceChildren(frame);
-  }).catch((error) => fail(error instanceof Error ? error.message : String(error)));
-})();
-</script>`;
 }
 
 function resolveShellSandboxOrigin(params: {
@@ -340,90 +281,148 @@ function resolveShellSandboxOrigin(params: {
   return base.origin;
 }
 
-export function handleMcpAppStandaloneHttpRequest(
+export async function handleMcpAppStandaloneHttpRequest(
   req: IncomingMessage,
   res: ServerResponse,
   options: {
     gatewayPort?: number;
     sandboxPort?: number;
     sandboxOrigin?: string;
+    now?: () => number;
     nowMs?: number;
     ticketSecret?: Buffer;
   } = {},
-): boolean {
+): Promise<boolean> {
   let url: URL;
   try {
     url = new URL(req.url ?? "/", "http://localhost");
   } catch {
     return false;
   }
-  if (url.pathname !== MCP_APP_STANDALONE_PATH && url.pathname !== MCP_APP_STANDALONE_VIEW_PATH) {
+  const route = classifyMcpAppStandalonePath(url.pathname);
+  if (route === "namespace" || route === "outside") {
     return false;
   }
-  if (req.method !== "GET" && req.method !== "HEAD") {
-    sendText(res, 404, "Not Found");
+  if (
+    req.method !== "GET" &&
+    req.method !== "HEAD" &&
+    !(url.pathname === MCP_APP_STANDALONE_VIEW_PATH && req.method === "POST")
+  ) {
+    respondPlainText(res, 404, "Not Found");
     return true;
   }
 
   const gatewayPort = options.gatewayPort ?? req.socket.localPort;
   if (!gatewayPort) {
-    sendText(res, 503, "MCP App host unavailable");
+    respondPlainText(res, 503, "MCP App host unavailable");
     return true;
   }
   let sandboxPort: number;
   try {
     sandboxPort = resolveMcpAppSandboxPort(gatewayPort, options.sandboxPort);
   } catch {
-    sendText(res, 503, "MCP App host unavailable");
+    respondPlainText(res, 503, "MCP App host unavailable");
     return true;
   }
 
   res.setHeader("Cache-Control", "no-store");
   res.setHeader("Referrer-Policy", "no-referrer");
   res.setHeader("X-Content-Type-Options", "nosniff");
-  if (url.pathname === MCP_APP_STANDALONE_PATH) {
+  if (route === "shell") {
     const frameOrigin = resolveShellSandboxOrigin({
       req,
       sandboxOrigin: options.sandboxOrigin,
       sandboxPort,
     });
+    const shell = standaloneHostHtml();
     res.statusCode = 200;
     res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.setHeader("Content-Length", String(Buffer.byteLength(shell.html)));
     res.setHeader(
       "Content-Security-Policy",
-      `default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-src ${frameOrigin}; base-uri 'none'; form-action 'none'; object-src 'none'`,
+      `default-src 'none'; script-src 'sha256-${shell.scriptHash}'; style-src 'unsafe-inline'; connect-src 'self'; frame-src ${frameOrigin}; base-uri 'none'; form-action 'none'; object-src 'none'`,
     );
     res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
-    res.end(req.method === "HEAD" ? undefined : standaloneHostHtml());
+    res.end(req.method === "HEAD" ? undefined : shell.html);
     return true;
   }
 
   res.setHeader("Vary", "Authorization");
   const ticket = ticketFromRequest(req);
-  const view = ticket
-    ? resolveTicketView(ticket, options.nowMs ?? Date.now(), options.ticketSecret ?? ticketSecret)
-    : undefined;
-  if (!view) {
+  const now = options.now ?? (() => options.nowMs ?? Date.now());
+  const nowMs = now();
+  const secret = options.ticketSecret ?? ticketSecret;
+  const active = ticket ? resolveTicketActiveView(ticket, nowMs, secret) : undefined;
+  if (!active) {
     res.setHeader("WWW-Authenticate", "MCP-App");
-    sendText(res, 401, "Unauthorized");
+    respondPlainText(res, 401, "Unauthorized");
     return true;
   }
-  res.statusCode = 200;
-  res.setHeader("Content-Type", "application/json; charset=utf-8");
-  res.end(
-    req.method === "HEAD"
-      ? undefined
-      : JSON.stringify({
-          sandboxUrl: buildMcpAppSandboxPath(view.csp),
-          sandboxPort,
-          ...(options.sandboxOrigin
-            ? { sandboxOrigin: new URL(options.sandboxOrigin).origin }
-            : {}),
-          html: view.html,
-          ...(view.csp ? { csp: view.csp } : {}),
-          toolInput: view.toolInput,
-          toolResult: view.toolResult,
-        }),
-  );
-  return true;
+  if (req.method === "POST") {
+    const controller = new AbortController();
+    const stopWatching = watchClientDisconnect(req, res, controller);
+    try {
+      await runWithSessionMcpRequestSignal(controller.signal, async () => {
+        controller.signal.throwIfAborted();
+        const body = await readJsonBodyOrError(req, res, MCP_APP_OPERATION_MAX_BODY_BYTES);
+        controller.signal.throwIfAborted();
+        if (body === undefined) {
+          return;
+        }
+        const operation = parseMcpAppOperation(body);
+        if (!operation) {
+          sendJson(res, 400, { ok: false, error: "Invalid MCP App operation" });
+          return;
+        }
+        // Body parsing may consume meaningful ticket lifetime. Revalidate the
+        // authoritative runtime and view immediately before privileged work.
+        const current = ticket ? resolveTicketActiveView(ticket, now(), secret) : undefined;
+        if (!current) {
+          res.setHeader("WWW-Authenticate", "MCP-App");
+          sendJson(res, 401, { ok: false, error: "Unauthorized" });
+          return;
+        }
+        if (
+          (operation.method === "tools/call" || operation.method === "tools/list") &&
+          !supportsStandaloneToolOperations(current)
+        ) {
+          sendJson(res, 403, { ok: false, error: "MCP App tool bridge is unavailable" });
+          return;
+        }
+        const result = await executeMcpAppOperation(current, operation);
+        controller.signal.throwIfAborted();
+        sendJson(res, 200, { ok: true, result });
+      });
+    } catch (error) {
+      if (!controller.signal.aborted && !res.destroyed) {
+        sendJson(res, 403, { ok: false, error: formatErrorMessage(error) });
+      }
+    } finally {
+      stopWatching();
+    }
+    return true;
+  }
+
+  try {
+    return await withMcpAppActiveView(active, "read", async () => {
+      const { runtime, view } = active;
+      const serverResources =
+        runtime.readResource !== undefined && (await supportsStandaloneResourceOperations(view));
+      sendJsonRepresentation(req, res, 200, {
+        sandboxUrl: buildMcpAppSandboxPath(view.csp),
+        sandboxPort,
+        ...(options.sandboxOrigin ? { sandboxOrigin: new URL(options.sandboxOrigin).origin } : {}),
+        html: view.html,
+        ...(view.csp ? { csp: view.csp } : {}),
+        toolInput: view.toolInput,
+        toolResult: view.toolResult,
+        serverTools: supportsStandaloneToolOperations(active),
+        serverResources,
+      });
+      return true;
+    });
+  } catch (error) {
+    sendJsonRepresentation(req, res, 429, { ok: false, error: formatErrorMessage(error) });
+    return true;
+  }
 }

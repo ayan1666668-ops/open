@@ -8,13 +8,12 @@ import {
   buildProviderReplayFamilyHooks,
   resolveClaudeThinkingProfile,
 } from "openclaw/plugin-sdk/provider-model-shared";
+import { hasAnthropicVertexAvailableAuth, resolveAnthropicVertexConfigApiKey } from "./api.js";
+import { runAnthropicVertexCatalog } from "./provider-catalog-runtime.js";
 import {
-  hasAnthropicVertexAvailableAuth,
-  mergeImplicitAnthropicVertexProvider,
-  resolveAnthropicVertexConfigApiKey,
-  resolveImplicitAnthropicVertexProvider,
-} from "./api.js";
-import { normalizeAnthropicVertexResolvedModel } from "./provider-catalog.js";
+  normalizeAnthropicVertexResolvedModel,
+  resolveAnthropicVertexDynamicModel,
+} from "./provider-catalog.js";
 
 const PROVIDER_ID = "anthropic-vertex";
 const GCP_VERTEX_CREDENTIALS_MARKER = "gcp-vertex-credentials";
@@ -32,22 +31,12 @@ export default definePluginEntry({
       auth: [],
       catalog: {
         order: "simple",
-        run: async (ctx) => {
-          const implicit = resolveImplicitAnthropicVertexProvider({
-            env: ctx.env,
-          });
-          if (!implicit) {
-            return null;
-          }
-          return {
-            provider: mergeImplicitAnthropicVertexProvider({
-              existing: ctx.config.models?.providers?.[PROVIDER_ID],
-              implicit,
-            }),
-          };
-        },
+        run: runAnthropicVertexCatalog,
       },
       resolveConfigApiKey: ({ env }) => resolveAnthropicVertexConfigApiKey(env),
+      resolveDynamicModel: ({ provider, modelId, modelRegistry, providerConfig }) =>
+        modelRegistry.find(provider, modelId) ??
+        resolveAnthropicVertexDynamicModel(modelId, providerConfig?.baseUrl),
       ...buildProviderReplayFamilyHooks({ family: "native-anthropic-by-model" }),
       normalizeResolvedModel: ({ modelId, model }) =>
         normalizeAnthropicVertexResolvedModel(modelId, model),

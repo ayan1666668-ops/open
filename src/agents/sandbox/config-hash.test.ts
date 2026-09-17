@@ -142,12 +142,12 @@ describe("computeSandboxConfigHash", () => {
 
     const withoutSkills = computeSandboxConfigHash({
       ...shared,
-      readOnlyWorkspaceSkillMounts: [],
+      managedMounts: [],
     });
 
     const withSkills = computeSandboxConfigHash({
       ...shared,
-      readOnlyWorkspaceSkillMounts: ["/tmp/workspace/skills:/workspace/skills:ro"],
+      managedMounts: ["/tmp/workspace/skills:/workspace/skills:ro"],
     });
 
     expect(withoutSkills).not.toBe(withSkills);
@@ -163,7 +163,7 @@ describe("computeSandboxBrowserConfigHash", () => {
         vncPort: 5900,
         noVncPort: 6080,
         headless: false,
-        enableNoVnc: true,
+        noVncEnabled: true,
         autoStartTimeoutMs: 12000,
       },
       securityEpoch: "epoch-v1",
@@ -197,7 +197,7 @@ describe("computeSandboxBrowserConfigHash", () => {
         vncPort: 5900,
         noVncPort: 6080,
         headless: false,
-        enableNoVnc: true,
+        noVncEnabled: true,
         autoStartTimeoutMs: 12000,
       },
       securityEpoch: "browser-security-v1",
@@ -220,7 +220,7 @@ describe("computeSandboxBrowserConfigHash", () => {
         vncPort: 5900,
         noVncPort: 6080,
         headless: false,
-        enableNoVnc: true,
+        noVncEnabled: true,
         autoStartTimeoutMs: 12000,
       },
       workspaceAccess: "rw" as const,
@@ -248,7 +248,7 @@ describe("computeSandboxBrowserConfigHash", () => {
         vncPort: 5900,
         noVncPort: 6080,
         headless: false,
-        enableNoVnc: true,
+        noVncEnabled: true,
         autoStartTimeoutMs: 12000,
       },
       securityEpoch: "epoch-v1",
@@ -278,7 +278,7 @@ describe("computeSandboxBrowserConfigHash", () => {
         vncPort: 5900,
         noVncPort: 6080,
         headless: false,
-        enableNoVnc: true,
+        noVncEnabled: true,
         autoStartTimeoutMs: 12000,
       },
       securityEpoch: "epoch-v1",

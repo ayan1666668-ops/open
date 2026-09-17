@@ -1,13 +1,14 @@
-// Feishu plugin module implements monitor.broadcast.reply once.lifecycle support behavior.
-import "./lifecycle.test-support.js";
-import { createNonExitingRuntimeEnv } from "openclaw/plugin-sdk/plugin-test-runtime";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ClawdbotConfig, RuntimeEnv } from "../runtime-api.js";
-import { FeishuConfigSchema } from "./config-schema.js";
+// Preserve module setup before modules that consume it.
+// oxfmt-ignore
 import {
   getFeishuLifecycleTestMocks,
   resetFeishuLifecycleTestMocks,
 } from "./lifecycle.test-support.js";
+import { createNonExitingRuntimeEnv } from "openclaw/plugin-sdk/plugin-test-runtime";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ClawdbotConfig, RuntimeEnv } from "../runtime-api.js";
+import { FeishuConfigSchema } from "./config-schema.js";
+// Feishu plugin module implements monitor.broadcast.reply once.lifecycle support behavior.
 import {
   createFeishuTextMessageEvent,
   createFeishuLifecycleReplyDispatcher,
@@ -229,13 +230,16 @@ describe("Feishu broadcast reply-once lifecycle", () => {
       text: "hello broadcast",
     });
 
-    dispatchReplyFromConfigMock.mockImplementationOnce(async ({ ctx, dispatcher }) => {
-      if (typeof ctx?.SessionKey === "string" && ctx.SessionKey.includes("agent:susan:")) {
-        return { queuedFinal: false, counts: { final: 0 } };
-      }
-      await dispatcher.sendFinalReply({ text: "broadcast reply once" });
-      throw new Error("post-send failure");
-    });
+    dispatchReplyFromConfigMock.mockImplementationOnce(
+      async ({ ctx, dispatcher, replyOptions }) => {
+        await replyOptions?.turnAdoptionLifecycle?.onAdopted();
+        if (typeof ctx?.SessionKey === "string" && ctx.SessionKey.includes("agent:susan:")) {
+          return { queuedFinal: false, counts: { final: 0 } };
+        }
+        await dispatcher.sendFinalReply({ text: "broadcast reply once" });
+        throw new Error("post-send failure");
+      },
+    );
 
     await runFeishuLifecycleSequence(
       [() => onMessageA(event), () => onMessageB(event)],

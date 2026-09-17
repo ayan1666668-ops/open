@@ -178,18 +178,16 @@ function resolvePersistentStoreCacheKey(pluginId: string, namespace: string): st
   return `${pluginId}\0${namespace}`;
 }
 
-function createPersistentStoreResolver(
-  options: PersistentDedupeOptions,
-): (namespace: string) => PluginStateSyncKeyedStore<PersistentDedupeEntry> {
+function createPersistentStoreResolver(options: PersistentDedupeOptions) {
   const maxEntries = resolveStateMaxEntries(options);
   const ttlMs = resolveNonNegativeIntegerOption(options.ttlMs, 0);
   const defaultTtlMs = ttlMs > 0 ? ttlMs : undefined;
-  const stores = new Map<string, PluginStateSyncKeyedStore<PersistentDedupeEntry>>();
+  const stores = new Map<string, Required<PluginStateSyncKeyedStore<PersistentDedupeEntry>>>();
 
   if (hasPluginStateOptions(options)) {
     const pluginId = options.pluginId;
     const prefix = normalizeNamespacePrefix(options.namespacePrefix);
-    return (namespace) => {
+    return (namespace: string) => {
       const stateNamespace = resolveStateNamespace(prefix, namespace);
       const cacheKey = resolvePersistentStoreCacheKey(pluginId, stateNamespace);
       const existing = stores.get(cacheKey);
@@ -208,7 +206,7 @@ function createPersistentStoreResolver(
   }
 
   const prefix = normalizeNamespacePrefix("legacy-path");
-  return (namespace) => {
+  return (namespace: string) => {
     const legacyPath = options.resolveFilePath(namespace);
     const stateNamespace = resolveStateNamespace(prefix, legacyPath);
     const cacheKey = resolvePersistentStoreCacheKey(LEGACY_PATH_OWNER_ID, stateNamespace);
@@ -311,7 +309,7 @@ export async function migratePersistentDedupeLegacyJsonFile(
   };
 
   for (const entry of legacy.entries) {
-    const changed = store.update?.(
+    const changed = store.update(
       entry.key,
       (current) => {
         const currentSeenAt = resolveEntrySeenAt(current);
@@ -359,7 +357,7 @@ export function createPersistentDedupe(options: PersistentDedupeOptions): Persis
       const entryKey = resolveEntryKey(key);
       const store = getStore(namespace);
       let duplicateSeenAt: number | undefined;
-      store.update?.(
+      store.update(
         entryKey,
         (entry) => {
           const seenAt = resolveEntrySeenAt(entry);
@@ -503,6 +501,31 @@ export function createPersistentDedupe(options: PersistentDedupeOptions): Persis
 
 function createReleasedClaimError(scopedKey: string): Error {
   return new Error(`claim released before commit: ${scopedKey}`);
+}
+
+type ClaimLoopInflight = { kind: "inflight"; pending: Promise<boolean> };
+type ClaimLoopSettled = { kind: "claimed" } | { kind: "duplicate" } | { kind: "invalid" };
+
+/** Resolve a claim, waiting on an active owner and retrying only when its release allows it. */
+export async function runClaimableDedupeClaimLoop<TClaim extends ClaimLoopSettled>(
+  claimNext: () => Promise<TClaim | ClaimLoopInflight>,
+  retryAfterRejection: (error: unknown, rejectionCount: number) => boolean,
+): Promise<TClaim | { kind: "duplicate" }> {
+  let rejectionCount = 0;
+  while (true) {
+    const claim = await claimNext();
+    if (claim.kind !== "inflight") {
+      return claim;
+    }
+    try {
+      await claim.pending;
+      return { kind: "duplicate" };
+    } catch (error) {
+      if (!retryAfterRejection(error, ++rejectionCount)) {
+        return { kind: "duplicate" };
+      }
+    }
+  }
 }
 
 /** Create a claim/commit/release dedupe guard backed by memory and optional persistent storage. */

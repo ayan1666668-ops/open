@@ -69,7 +69,10 @@ export function isSkillSecretOwnerUnavailable(skillKey: string): boolean {
 /** Returns whether cold startup isolated any configured skill secret. */
 export function hasUnavailableSkillSecretOwners(): boolean {
   return listActiveDegradedSecretOwners().some(
-    (owner) => owner.ownerKind === "capability" && owner.ownerId.startsWith("skill:"),
+    (owner) =>
+      owner.degradationState !== "stale" &&
+      owner.ownerKind === "capability" &&
+      owner.ownerId.startsWith("skill:"),
   );
 }
 
@@ -97,7 +100,7 @@ function normalizeAllowlist(input: unknown): ReadonlySet<string> | undefined {
   return normalized.length > 0 ? new Set(normalized) : undefined;
 }
 
-const BUNDLED_SOURCES = new Set(["openclaw-bundled"]);
+const BUNDLED_SOURCES = new Set(["openclaw-bundled", "openclaw-custodian"]);
 
 function isBundledSkill(entry: SkillEntry): boolean {
   return BUNDLED_SOURCES.has(resolveSkillSource(entry.skill));
@@ -123,6 +126,7 @@ export function shouldIncludeSkill(params: {
   config?: OpenClawConfig;
   bundledAllowlist: ReadonlySet<string> | undefined;
   eligibility?: SkillEligibilityContext;
+  hasBin?: (bin: string) => boolean;
 }): boolean {
   const { entry, config, bundledAllowlist, eligibility } = params;
   const skillKey = resolveSkillKey(entry.skill, entry);
@@ -142,7 +146,7 @@ export function shouldIncludeSkill(params: {
     remotePlatforms: eligibility?.remote?.platforms,
     always: entry.metadata?.always,
     requires: entry.metadata?.requires,
-    hasBin: hasBinary,
+    hasBin: params.hasBin ?? hasBinary,
     hasRemoteBin: eligibility?.remote?.hasBin,
     hasAnyRemoteBin: eligibility?.remote?.hasAnyBin,
     hasEnv: (envName) =>

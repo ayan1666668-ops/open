@@ -5,8 +5,11 @@ import path from "node:path";
 import { resolveStateDir } from "../config/paths.js";
 import { sanitizeUntrustedFileName } from "../infra/fs-safe-advanced.js";
 import { root as fsRoot } from "../infra/fs-safe.js";
+import { escapeHtml } from "../shared/html-escape.js";
 import { resolveUserPath } from "../utils.js";
 import { CANVAS_DOCUMENTS_PATH } from "./constants.js";
+
+const CANVAS_DOCUMENT_READ_MAX_BYTES = 2 * 1024 * 1024;
 
 type CanvasDocumentKind = "html_bundle" | "url_embed" | "document" | "image" | "video_asset";
 
@@ -51,15 +54,6 @@ export type CanvasDocumentManifest = {
     contentType?: string;
   }>;
 };
-
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
 
 function isPdfPathLike(value: string): boolean {
   return /\.pdf(?:[?#].*)?$/i.test(value.trim());
@@ -114,6 +108,32 @@ function normalizeCanvasDocumentId(value: string): string {
 /** Stable root for existing and newly created Canvas documents. */
 export function resolveCanvasDocumentsDir(stateDir = resolveStateDir()): string {
   return path.resolve(stateDir, "canvas", "documents");
+}
+
+/** Reads the managed HTML entrypoint for a core Canvas document. */
+export async function readCanvasDocumentHtmlSource(
+  documentId: string,
+  options?: { stateDir?: string; maxBytes?: number },
+): Promise<{ html: string; cspSandbox?: "scripts" }> {
+  const id = normalizeCanvasDocumentId(documentId);
+  // Keep the document directory inside the guarded root so aliases cannot select another document.
+  const root = await fsRoot(resolveCanvasDocumentsDir(options?.stateDir), {
+    maxBytes: CANVAS_DOCUMENT_READ_MAX_BYTES,
+  });
+  const manifest = await root.readJson<Partial<CanvasDocumentManifest>>(`${id}/manifest.json`);
+  if (manifest.id !== id || typeof manifest.localEntrypoint !== "string") {
+    throw new Error(`canvas document has no local entrypoint: ${id}`);
+  }
+  const entrypoint = normalizeLogicalPath(manifest.localEntrypoint);
+  if (!entrypoint.toLowerCase().endsWith(".html")) {
+    throw new Error(`canvas document entrypoint is not HTML: ${id}`);
+  }
+  return {
+    html: await root.readText(`${id}/${entrypoint}`, {
+      maxBytes: options?.maxBytes ?? CANVAS_DOCUMENT_READ_MAX_BYTES,
+    }),
+    ...(manifest.cspSandbox === "scripts" ? { cspSandbox: "scripts" as const } : {}),
+  };
 }
 
 async function pruneCanvasDocumentsForScope(params: {

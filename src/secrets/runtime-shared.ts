@@ -1,10 +1,15 @@
 /** Shared secrets runtime resolver context, assignments, and warning helpers. */
+import { resolveConfigSecretRef } from "../config/resolution-facts.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { coerceSecretRef, type SecretRef } from "../config/types.secrets.js";
+import type { SecretRef } from "../config/types.secrets.js";
 import type { PluginManifestRegistry } from "../plugins/manifest-registry.js";
 import { secretRefKey } from "./ref-contract.js";
 import type { SecretRefResolveCache } from "./resolve-types.js";
 import type { SecretAssignmentDisposition, SecretOwnerKind } from "./runtime-degraded-state.js";
+import {
+  canonicalizeSecretRefsForOwnerContract,
+  digestSecretOwnerContract,
+} from "./runtime-owner-contract.js";
 import { assertExpectedResolvedSecretValue } from "./secret-value.js";
 import { isRecord } from "./shared.js";
 
@@ -35,7 +40,11 @@ export type SecretAssignment = {
   ownerId: string;
   requiredForGateway: boolean;
   disposition: SecretAssignmentDisposition;
+  /** Digest of the complete owner config captured before secret materialization. */
+  ownerContractDigest?: string;
   apply: (value: unknown) => void;
+  /** Applies the canonical unavailable state when this owner must start cold. */
+  applyUnavailable?: () => void;
 };
 
 type SecretAssignmentValidationFailure = Pick<
@@ -68,7 +77,10 @@ export function getSecretAssignmentValidationFailures(
 export type SecretAssignmentOwner = Pick<
   SecretAssignment,
   "ownerKind" | "ownerId" | "requiredForGateway" | "disposition"
->;
+> & {
+  /** Complete config that controls where/how this owner uses the credential. */
+  contract?: unknown;
+};
 
 export type ResolverContext = {
   sourceConfig: OpenClawConfig;
@@ -151,6 +163,7 @@ export function collectSecretInputAssignment(params: {
   inactiveReason?: string;
   owner?: SecretAssignmentOwner;
   apply: (value: unknown) => void;
+  applyUnavailable?: () => void;
 }): void {
   collectRuntimeSecretInputAssignment(params);
 }
@@ -166,8 +179,14 @@ export function collectRuntimeSecretInputAssignment(params: {
   inactiveReason?: string;
   owner?: SecretAssignmentOwner;
   apply: (value: unknown) => void;
+  applyUnavailable?: () => void;
 }): void {
-  const ref = coerceSecretRef(params.value, params.defaults);
+  const ref = resolveConfigSecretRef({
+    config: params.context.sourceConfig,
+    path: params.path,
+    value: params.value,
+    defaults: params.defaults,
+  });
   if (!ref) {
     return;
   }
@@ -187,7 +206,15 @@ export function collectRuntimeSecretInputAssignment(params: {
     ownerId: params.owner?.ownerId ?? params.path,
     requiredForGateway: params.owner?.requiredForGateway ?? false,
     disposition: params.owner?.disposition ?? "isolate",
+    ...(params.owner?.contract !== undefined
+      ? {
+          ownerContractDigest: digestSecretOwnerContract(
+            canonicalizeSecretRefsForOwnerContract(params.owner.contract, params.defaults),
+          ),
+        }
+      : {}),
     apply: params.apply,
+    ...(params.applyUnavailable ? { applyUnavailable: params.applyUnavailable } : {}),
   });
 }
 

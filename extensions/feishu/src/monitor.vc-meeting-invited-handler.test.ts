@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createRuntimeSpies } from "../../test-support/runtime-spies.js";
 import type { ClawdbotConfig, PluginRuntime } from "../runtime-api.js";
 import type { FeishuMessageEvent } from "./event-types.js";
 import { monitorSingleAccount } from "./monitor.account.js";
@@ -14,7 +15,6 @@ const createFeishuThreadBindingManagerMock = vi.hoisted(() => vi.fn(() => ({ sto
 const dedupMocks = vi.hoisted(() => ({
   warmupDedupFromPluginState: vi.fn(async () => 0),
   hasProcessedFeishuMessage: vi.fn(async () => false),
-  recordProcessedFeishuMessage: vi.fn(async () => true),
 }));
 
 let handlers: Record<string, (data: unknown) => Promise<void>> = {};
@@ -46,7 +46,6 @@ vi.mock("./dedup.js", async () => {
     ...actual,
     warmupDedupFromPluginState: dedupMocks.warmupDedupFromPluginState,
     hasProcessedFeishuMessage: dedupMocks.hasProcessedFeishuMessage,
-    recordProcessedFeishuMessage: dedupMocks.recordProcessedFeishuMessage,
   };
 });
 
@@ -126,15 +125,10 @@ describe("createFeishuVcMeetingInvitedHandler", () => {
     handleFeishuMessageMock.mockResolvedValue(undefined);
     dedupMocks.warmupDedupFromPluginState.mockResolvedValue(0);
     dedupMocks.hasProcessedFeishuMessage.mockResolvedValue(false);
-    dedupMocks.recordProcessedFeishuMessage.mockResolvedValue(true);
   });
 
   it("ignores invitations unless VC auto-join is enabled", async () => {
-    const runtime = {
-      log: vi.fn(),
-      error: vi.fn(),
-      exit: vi.fn(),
-    };
+    const runtime = createRuntimeSpies();
     const handler = createFeishuVcMeetingInvitedHandler({
       cfg: buildConfig(),
       accountId: "default",
@@ -153,11 +147,7 @@ describe("createFeishuVcMeetingInvitedHandler", () => {
   });
 
   it("adapts the VC invite into the normal Feishu DM message ingress", async () => {
-    const runtime = {
-      log: vi.fn(),
-      error: vi.fn(),
-      exit: vi.fn(),
-    };
+    const runtime = createRuntimeSpies();
     const channelRuntime = {} as PluginRuntime["channel"];
     const handler = createFeishuVcMeetingInvitedHandler({
       cfg: buildConfig(),

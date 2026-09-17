@@ -8,7 +8,13 @@ export * from "./model-registry.js";
 export * from "./model-resolver.js";
 export * from "./package-manager.js";
 export * from "./resource-loader.js";
-export * from "./sdk.js";
+export type {
+  CreateAgentSessionOptions,
+  ExtensionAPI,
+  ExtensionContext,
+  ExtensionFactory,
+  ToolDefinition,
+} from "./sdk.js";
 export * from "./session-manager.js";
 export { SettingsManager } from "./settings-manager.js";
 export * from "../../skills/loading/session.js";

@@ -1,18 +1,18 @@
 // Feishu plugin module implements comment handler behavior.
-import { buildChannelInboundEventContext } from "openclaw/plugin-sdk/channel-inbound";
+import { resolveInboundReplyDispatchCounts } from "openclaw/plugin-sdk/channel-inbound";
+import { bindIngressLifecycleToReplyOptions } from "openclaw/plugin-sdk/channel-outbound";
+import { createChannelPairingController } from "openclaw/plugin-sdk/channel-pairing";
+import type { OpenClawConfig as ClawdbotConfig } from "openclaw/plugin-sdk/config-contracts";
 import { parseStrictNonNegativeInteger } from "openclaw/plugin-sdk/number-runtime";
 import type { ResolvedAgentRoute } from "openclaw/plugin-sdk/routing";
+import type { RuntimeEnv } from "openclaw/plugin-sdk/runtime";
 import { resolveFeishuRuntimeAccount } from "./accounts.js";
 import { createFeishuClient } from "./client.js";
 import { createFeishuCommentReplyDispatcher } from "./comment-dispatcher.js";
-import {
-  createChannelPairingController,
-  type ClawdbotConfig,
-  type RuntimeEnv,
-} from "./comment-handler-runtime-api.js";
 import { buildFeishuCommentTarget } from "./comment-target.js";
 import { deliverCommentThreadText } from "./drive.js";
 import { maybeCreateDynamicAgent } from "./dynamic-agent.js";
+import type { FeishuIngressLifecycle } from "./feishu-ingress.js";
 import {
   resolveDriveCommentEventTurn,
   type FeishuDriveCommentNoticeEvent,
@@ -27,6 +27,7 @@ type HandleFeishuCommentEventParams = {
   event: FeishuDriveCommentNoticeEvent;
   botOpenId?: string;
   abortSignal?: AbortSignal;
+  turnAdoptionLifecycle?: FeishuIngressLifecycle;
 };
 
 function buildCommentSessionKey(params: {
@@ -86,7 +87,11 @@ export async function handleFeishuCommentEvent(
     channel: "feishu",
     accountId: account.accountId,
   });
-  const resolveCommentAuthorization = async (candidateCfg: ClawdbotConfig, mayPair: boolean) => {
+  const resolveCommentAuthorization = async (
+    candidateCfg: ClawdbotConfig,
+    mayPair: boolean,
+    contextBinding?: Parameters<typeof resolveFeishuDmIngressAccess>[0]["contextBinding"],
+  ) => {
     const candidateAccount = resolveFeishuRuntimeAccount({
       cfg: candidateCfg,
       accountId: account.accountId,
@@ -102,6 +107,7 @@ export async function handleFeishuCommentEvent(
       senderUserId: turn.senderUserId,
       conversationId: turn.senderId,
       mayPair,
+      ...(contextBinding ? { contextBinding } : {}),
     });
     return { account: candidateAccount, cfg: candidateCfg, dmPolicy: candidateDmPolicy, ingress };
   };
@@ -219,7 +225,14 @@ export async function handleFeishuCommentEvent(
   const conversationLabel = turn.documentTitle
     ? `Feishu comment · ${turn.documentTitle}`
     : "Feishu comment";
-  const ctxPayload = buildChannelInboundEventContext({
+  const boundAuthorization = await resolveCommentAuthorization(effectiveCfg, false, {
+    agentId: route.agentId,
+    sessionKey: commentSessionKey,
+    messageId: turn.messageId,
+    inboundEventKind: "user_request",
+  });
+  const ctxPayload = core.channel.inbound.buildContext({
+    channelIngress: boundAuthorization.ingress,
     channel: "feishu",
     accountId: route.accountId,
     surface: "feishu-comment",
@@ -295,15 +308,17 @@ export async function handleFeishuCommentEvent(
           },
           dispatcherOptions,
           delivery,
+          ...(params.turnAdoptionLifecycle
+            ? { replyOptions: bindIngressLifecycleToReplyOptions(params.turnAdoptionLifecycle) }
+            : {}),
         }),
       },
     });
     const dispatchResult = turnResult.dispatched ? turnResult.dispatchResult : undefined;
-    const queuedFinal = dispatchResult?.queuedFinal ?? false;
-    const counts = dispatchResult?.counts ?? { tool: 0, block: 0, final: 0 };
+    const counts = resolveInboundReplyDispatchCounts(dispatchResult);
     log(
       `feishu[${account.accountId}]: drive comment dispatch complete ` +
-        `(queuedFinal=${queuedFinal}, replies=${counts.final}, session=${commentSessionKey})`,
+        `(replies=${counts.final}, session=${commentSessionKey})`,
     );
   } finally {
     void cleanupTypingReaction();

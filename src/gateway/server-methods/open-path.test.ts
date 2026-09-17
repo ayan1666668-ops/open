@@ -11,14 +11,15 @@ vi.mock("../../process/exec.js", () => ({
   spawnCommand: spawnCommandMock,
 }));
 
-import { execOpenPath, resolveOpenPathCommand } from "./open-path.js";
+import { createDeferred } from "../../../test/helpers/promise.js";
+import { execOpenPath, isHeadlessOpenPathError, resolveOpenPathCommand } from "./open-path.js";
 
 function fakeChild(result: Promise<unknown>) {
   const unref = vi.fn();
   const kill = vi.fn();
   const stderr = new PassThrough();
   return {
-    child: Object.assign(result, { kill, stderr, unref }),
+    child: Object.assign(result, { kill, stderr, nodeChildProcess: { unref } }),
     kill,
     stderr,
     unref,
@@ -92,10 +93,7 @@ describe("execOpenPath", () => {
 
   it("returns after startup observation without killing a foreground Linux handler", async () => {
     vi.useFakeTimers();
-    let settleChild: (value: unknown) => void = () => {};
-    const childResult = new Promise<unknown>((resolve) => {
-      settleChild = resolve;
-    });
+    const { promise: childResult, resolve: settleChild } = createDeferred<unknown>();
     const spawned = fakeChild(childResult);
     spawnCommandMock.mockReturnValue(spawned.child);
     let settled = false;
@@ -134,5 +132,67 @@ describe("execOpenPath", () => {
     rejectChild(new Error("Command failed with exit code 3: xdg-open"));
 
     await expect(execution).rejects.toThrow("xdg-open: no method available");
+  });
+
+  it("keeps xdg-open stderr truncation surrogate-safe", async () => {
+    let rejectChild: (error: Error) => void = () => {};
+    const spawned = fakeChild(
+      new Promise((_, reject) => {
+        rejectChild = reject;
+      }),
+    );
+    spawnCommandMock.mockReturnValue(spawned.child);
+
+    const execution = execOpenPath({ command: "xdg-open", args: ["/tmp/workspace"] }, "linux");
+    // 4095 ASCII chars plus one emoji: a plain slice for the final slot would
+    // keep only the emoji's high surrogate half.
+    spawned.stderr.write(`${"x".repeat(4095)}🤖`);
+    rejectChild(new Error("Command failed with exit code 3: xdg-open"));
+
+    const message = await execution.then(
+      () => {
+        throw new Error("expected rejection");
+      },
+      (error: unknown) => (error instanceof Error ? error.message : String(error)),
+    );
+    const expectedMessage = `Command failed with exit code 3: xdg-open: ${"x".repeat(4_095)}`;
+    expect(message).toBe(expectedMessage);
+    expect(message).toHaveLength(expectedMessage.length);
+  });
+});
+
+describe("isHeadlessOpenPathError", () => {
+  it.each([
+    { platform: "linux", command: "xdg-open", code: "ENOENT", expected: true },
+    { platform: "linux", command: "xdg-open", code: "EACCES", expected: false },
+    { platform: "linux", command: "other-opener", code: "ENOENT", expected: false },
+    { platform: "darwin", command: "open", code: "ENOENT", expected: false },
+    { platform: "win32", command: "powershell.exe", code: "ENOENT", expected: false },
+    { platform: "freebsd", command: "xdg-open", code: "ENOENT", expected: false },
+  ] as const)("classifies $platform $command $code", ({ platform, command, code, expected }) => {
+    const error = Object.assign(new Error("Launcher failed"), { code });
+    expect(isHeadlessOpenPathError(error, { command, args: ["/tmp/workspace"] }, platform)).toBe(
+      expected,
+    );
+  });
+
+  it("preserves the installed xdg-open handlerless diagnostic", () => {
+    expect(
+      isHeadlessOpenPathError(
+        new Error("xdg-open: no method available for opening '/tmp/workspace'"),
+        resolveOpenPathCommand("/tmp/workspace", "linux"),
+        "linux",
+      ),
+    ).toBe(true);
+  });
+
+  it("does not classify a handler diagnostic containing ENOENT as a missing launcher", () => {
+    expect(
+      isHeadlessOpenPathError(
+        new Error("Command failed with exit code 1: xdg-open /tmp/ENOENT-workspace"),
+        resolveOpenPathCommand("/tmp/ENOENT-workspace", "linux"),
+        "linux",
+      ),
+    ).toBe(false);
   });
 });

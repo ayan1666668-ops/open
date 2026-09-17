@@ -2,7 +2,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../runtime-api.js";
 import type { resolveMSTeamsInboundMedia } from "./inbound-media.js";
-import "./message-handler-mock-support.test-support.js";
+// Preserve module setup before modules that consume it.
+// oxfmt-ignore
 import { getRuntimeApiMockState } from "./message-handler-mock-support.test-support.js";
 
 const inboundMediaMockState = vi.hoisted(() => ({
@@ -68,7 +69,7 @@ describe("msteams message handler Graph media recovery", () => {
         {
           path: "/tmp/from-graph.pdf",
           contentType: "application/pdf",
-          placeholder: "<media:document>",
+          kind: "document",
         },
       ]);
       const { deps, getTeamDetails } = createMessageHandlerDeps(cfg);
@@ -97,7 +98,13 @@ describe("msteams message handler Graph media recovery", () => {
       expect(runtimeApiMockState.dispatchReplyWithBufferedBlockDispatcher).toHaveBeenCalledTimes(1);
       expect(firstDispatchedContext()).toMatchObject({
         BodyForAgent: "Describe the attached image file",
-        MediaPaths: ["/tmp/from-graph.pdf"],
+        media: [
+          expect.objectContaining({
+            path: "/tmp/from-graph.pdf",
+            contentType: "application/pdf",
+            kind: "document",
+          }),
+        ],
         NativeChannelId:
           entry.label === "channel" ? "team-aad-group/19:channel@thread.tacv2" : undefined,
       });
@@ -109,7 +116,7 @@ describe("msteams message handler Graph media recovery", () => {
       {
         path: "/tmp/explicit.pdf",
         contentType: "application/pdf",
-        placeholder: "<media:document>",
+        kind: "document",
       },
     ]);
     const defaultCfg = {
@@ -140,8 +147,14 @@ describe("msteams message handler Graph media recovery", () => {
       expect.objectContaining({ graphMediaFallback: undefined }),
     );
     expect(firstDispatchedContext()).toMatchObject({
-      BodyForAgent: "<media:document>",
-      MediaPaths: ["/tmp/explicit.pdf"],
+      BodyForAgent: "",
+      media: [
+        expect.objectContaining({
+          path: "/tmp/explicit.pdf",
+          contentType: "application/pdf",
+          kind: "document",
+        }),
+      ],
     });
   });
 
@@ -167,6 +180,30 @@ describe("msteams message handler Graph media recovery", () => {
     expect(getTeamDetails).not.toHaveBeenCalled();
     expect(runtimeApiMockState.dispatchReplyWithBufferedBlockDispatcher).not.toHaveBeenCalled();
     expect(enqueueSystemEvent).not.toHaveBeenCalled();
+  });
+
+  it("dispatches the exact unavailable notice for a Graph-discovered failed attachment", async () => {
+    inboundMediaMockState.resolve.mockResolvedValue([{ kind: "document" }]);
+    const { deps, getTeamDetails } = createMessageHandlerDeps(cfg);
+    const handler = createMSTeamsMessageHandler(deps);
+
+    await handler({
+      activity: buildChannelActivity({
+        text: "<at>Bot</at>",
+        channelData: {
+          team: { id: "19:team@thread.skype", aadGroupId: "team-aad" },
+          channel: { id: "19:channel@thread.tacv2" },
+        },
+        attachments: [taglessHtmlAttachment],
+      }),
+      getTeamDetails,
+      sendActivity: vi.fn(async () => undefined),
+    } as unknown as Parameters<typeof handler>[0]);
+
+    expect(firstDispatchedContext()).toMatchObject({
+      BodyForAgent: "[msteams attachment unavailable]",
+      media: [expect.objectContaining({ kind: "document" })],
+    });
   });
 
   it("keeps ordinary text when the Teams API cannot resolve the channel AAD group ID", async () => {

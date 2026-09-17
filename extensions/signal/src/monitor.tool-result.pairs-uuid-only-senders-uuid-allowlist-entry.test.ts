@@ -1,4 +1,3 @@
-// Signal tests cover monitor.tool result.pairs uuid only senders uuid allowlist entry plugin behavior.
 import { Buffer } from "node:buffer";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -7,6 +6,7 @@ import {
   installSignalToolResultTestHooks,
   setSignalToolResultTestConfig,
   toSignalToolResultTestError,
+  waitForSignalToolResultIngressIdle,
 } from "./monitor.tool-result.test-harness.js";
 
 installSignalToolResultTestHooks();
@@ -63,6 +63,7 @@ describe("monitorSignalProvider tool results", () => {
         event: "receive",
         data: JSON.stringify(payload),
       });
+      await waitForSignalToolResultIngressIdle();
       abortController.abort();
     });
 
@@ -175,6 +176,7 @@ describe("monitorSignalProvider tool results", () => {
   it("drains an inline inbound message accepted before the monitor stops", async () => {
     const abortController = new AbortController();
     setSignalToolResultTestConfig({
+      messages: { visibleReplies: "automatic" },
       channels: { signal: { autoStart: false, dmPolicy: "open", allowFrom: ["*"] } },
     });
     replyMock.mockResolvedValue({ text: "accepted reply" });
@@ -246,6 +248,16 @@ describe("monitorSignalProvider tool results", () => {
     const abortController = new AbortController();
     const maxBytes = 2 * 1024 * 1024;
     const expectedMaxResponseBytes = Math.ceil((maxBytes * 4) / 3) + 64 * 1024;
+    setSignalToolResultTestConfig({
+      messages: { visibleReplies: "automatic" },
+      channels: {
+        signal: {
+          transport: { kind: "container", url: "http://container:8080" },
+          dmPolicy: "open",
+          allowFrom: ["*"],
+        },
+      },
+    });
 
     replyMock.mockResolvedValue({ text: "ok" });
     signalRpcRequestMock.mockResolvedValue({ data: Buffer.from("hello").toString("base64") });
@@ -264,12 +276,11 @@ describe("monitorSignalProvider tool results", () => {
           },
         }),
       });
+      await waitForSignalToolResultIngressIdle();
       abortController.abort();
     });
 
     await monitorSignalProvider({
-      autoStart: false,
-      baseUrl: "http://127.0.0.1:8080",
       mediaMaxMb: 2,
       abortSignal: abortController.signal,
     });
@@ -281,9 +292,9 @@ describe("monitorSignalProvider tool results", () => {
         recipient: "+15550001111",
       },
       {
-        baseUrl: "http://127.0.0.1:8080",
+        baseUrl: "http://container:8080",
         timeoutMs: undefined,
-        apiMode: "auto",
+        transportKind: "container",
         maxResponseBytes: expectedMaxResponseBytes,
       },
     );

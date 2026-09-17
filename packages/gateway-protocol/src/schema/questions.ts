@@ -3,23 +3,48 @@ import type { Static } from "typebox";
 import { Type } from "typebox";
 import { closedObject } from "./closed-object.js";
 import { NonEmptyString } from "./primitives.js";
+import { withSince } from "./since.js";
 
 const QuestionIdSchema = Type.String({ pattern: "^[a-z][a-z0-9_]*$" });
+const QuestionResolutionIdSchema = withSince(
+  "2026.8",
+  Type.String({ minLength: 1, maxLength: 128 }),
+);
+// UI chip/tag display cap shared by every question input and output shape.
 const QuestionHeaderSchema = Type.String({ maxLength: 12 });
+const QuestionSecretStoreAllowedHostsSchema = Type.Array(
+  Type.String({ minLength: 1, maxLength: 253 }),
+  { maxItems: 128, uniqueItems: true },
+);
 
 export const QuestionOptionSchema = closedObject({
   label: NonEmptyString,
   description: Type.Optional(Type.String()),
 });
 
+export const QuestionSecretStoreBindingSchema = closedObject({
+  name: Type.String({ minLength: 1, maxLength: 128, pattern: "^[A-Z][A-Z0-9_]{0,127}$" }),
+  kind: Type.Union([Type.Literal("secret"), Type.Literal("env")]),
+  allowedHosts: Type.Optional(QuestionSecretStoreAllowedHostsSchema),
+  reason: Type.Optional(Type.String({ maxLength: 200 })),
+});
+
+export const QuestionSecretStoreExistingSchema = closedObject({
+  updatedAtMs: Type.Integer({ minimum: 0 }),
+  updatedBy: Type.Optional(NonEmptyString),
+});
+
 const QuestionInputFields = {
-  id: QuestionIdSchema,
-  header: Type.String(),
+  questionId: QuestionIdSchema,
+  header: QuestionHeaderSchema,
   question: NonEmptyString,
+  // Opening an external page is separate from submitting the question's answer.
+  url: Type.Optional(withSince("2026.8", Type.String({ minLength: 1, maxLength: 2048 }))),
   options: Type.Array(QuestionOptionSchema, { maxItems: 4 }),
   multiSelect: Type.Optional(Type.Boolean()),
   isOther: Type.Optional(Type.Boolean()),
   isSecret: Type.Optional(Type.Boolean()),
+  secretStore: Type.Optional(withSince("2026.8", QuestionSecretStoreBindingSchema)),
 };
 
 /** Unnormalized question accepted by question.request. */
@@ -27,14 +52,14 @@ export const QuestionRequestQuestionSchema = closedObject(QuestionInputFields);
 
 const QuestionFields = {
   ...QuestionInputFields,
-  header: QuestionHeaderSchema,
+  secretStoreExisting: Type.Optional(withSince("2026.8", QuestionSecretStoreExistingSchema)),
 };
 
 /** Canonical normalized question shown to an operator. */
 export const QuestionSchema = closedObject(QuestionFields);
 
 export const QuestionAnswersSchema = closedObject({
-  answers: Type.Record(QuestionIdSchema, closedObject({ answers: Type.Array(Type.String()) })),
+  answers: Type.Record(QuestionIdSchema, Type.Array(Type.String())),
 });
 
 export const QuestionStatusSchema = Type.Union([
@@ -55,6 +80,7 @@ export const QuestionRecordSchema = closedObject({
   questions: Type.Array(QuestionSchema, { minItems: 1, maxItems: 3 }),
   agentId: Type.Optional(NonEmptyString),
   sessionKey: Type.Optional(NonEmptyString),
+  runId: Type.Optional(NonEmptyString),
   createdAtMs: Type.Integer({ minimum: 0 }),
   expiresAtMs: Type.Integer({ minimum: 0 }),
   status: QuestionStatusSchema,
@@ -67,6 +93,7 @@ export const QuestionRequestParamsSchema = closedObject({
   questions: Type.Array(QuestionRequestQuestionSchema, { minItems: 1, maxItems: 3 }),
   agentId: Type.Optional(NonEmptyString),
   sessionKey: Type.Optional(NonEmptyString),
+  runId: Type.Optional(NonEmptyString),
   timeoutMs: Type.Optional(Type.Integer({ minimum: 1 })),
 });
 
@@ -78,11 +105,16 @@ export const QuestionRequestResultSchema = closedObject({
 export const QuestionWaitAnswerParamsSchema = closedObject({
   id: NonEmptyString,
   timeoutMs: Type.Optional(Type.Integer({ minimum: 1 })),
+  includeResolutionId: Type.Optional(withSince("2026.8", Type.Boolean())),
 });
 
 export const QuestionWaitAnswerResultSchema = Type.Union([
   closedObject({ status: Type.Literal("pending") }),
-  closedObject({ status: Type.Literal("answered"), answers: QuestionAnswersSchema }),
+  closedObject({
+    status: Type.Literal("answered"),
+    answers: QuestionAnswersSchema,
+    resolutionId: Type.Optional(QuestionResolutionIdSchema),
+  }),
   closedObject({ status: Type.Literal("cancelled") }),
   closedObject({ status: Type.Literal("expired") }),
 ]);
@@ -91,7 +123,11 @@ export const QuestionResolveParamsSchema = Type.Union([
   closedObject({
     id: NonEmptyString,
     answers: QuestionAnswersSchema,
+    secretStoreAllowedHosts: Type.Optional(
+      withSince("2026.8", QuestionSecretStoreAllowedHostsSchema),
+    ),
     resolvedBy: Type.Optional(NonEmptyString),
+    resolutionId: Type.Optional(QuestionResolutionIdSchema),
   }),
   closedObject({
     id: NonEmptyString,
@@ -112,16 +148,21 @@ export const QuestionListResultSchema = closedObject({
   questions: Type.Array(QuestionRecordSchema),
 });
 
-export const QuestionRequestedEventSchema = QuestionRecordSchema;
-export const QuestionResolvedEventSchema = Type.Union([
-  closedObject({
-    id: NonEmptyString,
-    status: Type.Literal("answered"),
-    answers: QuestionAnswersSchema,
-  }),
-  closedObject({ id: NonEmptyString, status: Type.Literal("cancelled") }),
-  closedObject({ id: NonEmptyString, status: Type.Literal("expired") }),
-]);
+// Native codegen intentionally reuses QuestionRecord for this event instead of
+// registering a duplicate alias, so stamp the shared schema at the event site.
+export const QuestionRequestedEventSchema = withSince("2026.7", QuestionRecordSchema);
+export const QuestionResolvedEventSchema = withSince(
+  "2026.7",
+  Type.Union([
+    closedObject({
+      id: NonEmptyString,
+      status: Type.Literal("answered"),
+      answers: QuestionAnswersSchema,
+    }),
+    closedObject({ id: NonEmptyString, status: Type.Literal("cancelled") }),
+    closedObject({ id: NonEmptyString, status: Type.Literal("expired") }),
+  ]),
+);
 
 export type QuestionOption = Static<typeof QuestionOptionSchema>;
 export type Question = Static<typeof QuestionSchema>;

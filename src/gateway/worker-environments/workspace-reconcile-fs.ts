@@ -1,10 +1,13 @@
-import { createHash } from "node:crypto";
-import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { FsSafeError, type Root } from "../../infra/fs-safe.js";
+import { hasNodeErrorCode } from "../../infra/path-guards.js";
+import { WorkerTaskError } from "../../infra/worker-task-pool.js";
+import type { createStagedInputPathMatcher } from "../../media/staged-inputs.js";
 import { runCommandBuffered } from "../../process/exec.js";
+import type { WorkspaceNode } from "./workspace-manifest-comparison.js";
+import { computeWorkspaceFileSnapshot } from "./workspace-manifest-worker.js";
 import {
-  gitFileMode,
   MAX_RECONCILIATION_FILE_BYTES,
   type WorkerWorkspaceManifestEntry,
 } from "./workspace-manifest.js";
@@ -16,12 +19,82 @@ export function localPath(root: string, relative: string): string {
   return path.join(root, ...relative.split("/"));
 }
 
-async function sha256File(filePath: string): Promise<string> {
-  const hash = createHash("sha256");
-  for await (const chunk of createReadStream(filePath)) {
-    hash.update(chunk);
+export async function removeEmptyWorkspaceDirectory(root: Root, entryPath: string): Promise<void> {
+  let children: string[];
+  try {
+    children = await root.list(entryPath);
+  } catch (error) {
+    if (error instanceof FsSafeError && ["not-found", "path-alias"].includes(error.code)) {
+      return;
+    }
+    throw error;
   }
-  return hash.digest("hex");
+  if (children.length > 0) {
+    // Conflicted descendants deliberately keep their containing directory
+    // even when the cloud result removed that directory.
+    return;
+  }
+  try {
+    await root.remove(entryPath);
+  } catch (error) {
+    if (error instanceof FsSafeError && ["not-found", "path-alias"].includes(error.code)) {
+      return;
+    }
+    const racedChildren = await root.list(entryPath).catch(() => undefined);
+    if (racedChildren?.length) {
+      return;
+    }
+    throw error;
+  }
+}
+
+type WorkspaceFileSnapshot =
+  | { type: "file"; mode: number; size: number; sha256: string }
+  | { type: "unsupported" };
+
+async function readWorkspaceFileSnapshot(
+  root: string,
+  entryPath: string,
+): Promise<WorkspaceFileSnapshot> {
+  const absolute = localPath(root, entryPath);
+  return await computeWorkspaceFileSnapshot(absolute, MAX_RECONCILIATION_FILE_BYTES, root);
+}
+
+export async function localWorkspaceNode(root: string, entryPath: string): Promise<WorkspaceNode> {
+  const absolute = localPath(root, entryPath);
+  const stats = await fs.lstat(absolute).catch((error: unknown) => {
+    if (hasNodeErrorCode(error, "ENOENT") || hasNodeErrorCode(error, "ENOTDIR")) {
+      return undefined;
+    }
+    throw error;
+  });
+  if (!stats) {
+    return undefined;
+  }
+  if (stats.isDirectory() && !stats.isSymbolicLink()) {
+    return { path: entryPath, type: "directory" };
+  }
+  if (stats.isSymbolicLink()) {
+    return { path: entryPath, type: "symlink", mode: 0o777, target: await fs.readlink(absolute) };
+  }
+  if (!stats.isFile()) {
+    return { path: entryPath, type: "unsupported" };
+  }
+  const snapshot = await readWorkspaceFileSnapshot(root, entryPath);
+  if (snapshot.type === "unsupported") {
+    return { path: entryPath, type: "unsupported" };
+  }
+  return {
+    path: entryPath,
+    type: "file",
+    mode: snapshot.mode,
+    size: snapshot.size,
+    sha256: snapshot.sha256,
+  };
+}
+
+async function readAbsoluteFileSnapshot(absolute: string): Promise<WorkspaceFileSnapshot> {
+  return await computeWorkspaceFileSnapshot(absolute, MAX_RECONCILIATION_FILE_BYTES);
 }
 
 export async function absoluteEntryMatches(
@@ -35,12 +108,20 @@ export async function absoluteEntryMatches(
   if (entry.type === "symlink") {
     return stats.isSymbolicLink() && (await fs.readlink(absolute)) === entry.target;
   }
+  if (!stats.isFile() || stats.isSymbolicLink()) {
+    return false;
+  }
+  const snapshot = await readAbsoluteFileSnapshot(absolute).catch((error: unknown) => {
+    if (error instanceof WorkerTaskError) {
+      throw error;
+    }
+    return undefined;
+  });
   return (
-    stats.isFile() &&
-    !stats.isSymbolicLink() &&
-    gitFileMode(stats.mode & 0o777) === entry.mode &&
-    stats.size === entry.size &&
-    (await sha256File(absolute)) === entry.sha256
+    snapshot?.type === "file" &&
+    snapshot.mode === entry.mode &&
+    snapshot.size === entry.size &&
+    snapshot.sha256 === entry.sha256
   );
 }
 
@@ -48,7 +129,21 @@ export async function entryMatches(
   root: string,
   entry: WorkerWorkspaceManifestEntry,
 ): Promise<boolean> {
-  return await absoluteEntryMatches(localPath(root, entry.path), entry);
+  if (entry.type === "symlink") {
+    return await absoluteEntryMatches(localPath(root, entry.path), entry);
+  }
+  const snapshot = await readWorkspaceFileSnapshot(root, entry.path).catch((error: unknown) => {
+    if (error instanceof WorkerTaskError) {
+      throw error;
+    }
+    return undefined;
+  });
+  return (
+    snapshot?.type === "file" &&
+    snapshot.mode === entry.mode &&
+    snapshot.size === entry.size &&
+    snapshot.sha256 === entry.sha256
+  );
 }
 
 export async function readWorkspaceTreeFile(params: {
@@ -107,18 +202,25 @@ export async function directoryContainsOnlyJournalPaths(
   directory: string,
   paths: ReadonlySet<string>,
   directories: ReadonlySet<string>,
+  isRetainedInput: ReturnType<typeof createStagedInputPathMatcher>,
 ): Promise<boolean> {
   for (const name of await fs.readdir(localPath(root, directory))) {
     const child = `${directory}/${name}`;
-    if (isDerivedWorkspacePath(child)) {
+    if (isDerivedWorkspacePath(child, await isRetainedInput(child))) {
       continue;
     }
     const stats = await fs.lstat(localPath(root, child));
     if (stats.isDirectory() && !stats.isSymbolicLink()) {
-      if (!directories.has(child)) {
+      if (
+        !directories.has(child) &&
+        !(await directoryContainsOnlyDerivedWorkspaceEntries(root, child, isRetainedInput))
+      ) {
         return false;
       }
-      if (!(await directoryContainsOnlyJournalPaths(root, child, paths, directories))) {
+      if (
+        directories.has(child) &&
+        !(await directoryContainsOnlyJournalPaths(root, child, paths, directories, isRetainedInput))
+      ) {
         return false;
       }
     } else if (!paths.has(child)) {
@@ -131,12 +233,13 @@ export async function directoryContainsOnlyJournalPaths(
 export async function directoryContainsOnlyDerivedWorkspaceEntries(
   root: string,
   directory: string,
+  isRetainedInput: ReturnType<typeof createStagedInputPathMatcher>,
 ): Promise<boolean> {
   const names = await fs.readdir(localPath(root, directory));
   let foundDerivedEntry = false;
   for (const name of names) {
     const child = `${directory}/${name}`;
-    if (isDerivedWorkspacePath(child)) {
+    if (isDerivedWorkspacePath(child, await isRetainedInput(child))) {
       foundDerivedEntry = true;
       continue;
     }
@@ -144,7 +247,7 @@ export async function directoryContainsOnlyDerivedWorkspaceEntries(
     if (
       !stats.isDirectory() ||
       stats.isSymbolicLink() ||
-      !(await directoryContainsOnlyDerivedWorkspaceEntries(root, child))
+      !(await directoryContainsOnlyDerivedWorkspaceEntries(root, child, isRetainedInput))
     ) {
       return false;
     }
