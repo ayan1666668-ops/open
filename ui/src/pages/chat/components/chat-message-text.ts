@@ -78,7 +78,7 @@ export function renderMessageJson(
 const USER_MESSAGE_COLLAPSED_CHAR_LIMIT = 1_200;
 const USER_MESSAGE_COLLAPSED_LINE_LIMIT = 40;
 const USER_MESSAGE_PREVIEW_LINES = 5;
-const MESSAGE_PREVIEW_FADE_START_FRACTION = 0.5;
+const MESSAGE_PREVIEW_FADE_START_FRACTION = 0.24;
 
 function shouldCollapseUserMessage(markdown: string): boolean {
   return (

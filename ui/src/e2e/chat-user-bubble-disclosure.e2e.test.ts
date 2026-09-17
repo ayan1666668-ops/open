@@ -115,7 +115,10 @@ async function expectReadableLastLine(content: Locator) {
   );
   const upperAlpha = rows[0].upper / rows[1].upper;
   const lowerAlpha = rows[0].lower / rows[1].lower;
-  expect(upperAlpha, "the upper half of the line stays fully opaque").toBeGreaterThan(0.99);
+  expect(upperAlpha, "the upper half remains legible").toBeGreaterThan(0.65);
+  expect(upperAlpha, "the fade reaches the upper half instead of ending abruptly").toBeLessThan(
+    0.9,
+  );
   expect(lowerAlpha, "the bottom of the line visibly fades").toBeLessThan(upperAlpha - 0.2);
 }
 
