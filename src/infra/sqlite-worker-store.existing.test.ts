@@ -324,6 +324,104 @@ describe("existing-only SQLite worker admission", () => {
     }
   });
 
+  it.skipIf(Boolean(process.versions.bun))(
+    "keeps shared I/O moving on a saturated pool while a foreign factory is blocked",
+    async () => {
+      const root = path.dirname(databasePath());
+      const sharedStores: SqliteWorkerStore<FixtureOperations>[] = [];
+      for (let index = 0; index < 3; index += 1) {
+        const store = await open(path.join(root, `shared-pool-${index}.sqlite`));
+        assert.ok(store);
+        sharedStores.push(store);
+      }
+
+      const foreign = path.resolve(path.join(root, "foreign-saturated.sqlite"));
+      await writeFile(foreign, "");
+      const factoryMarker = `${foreign}.factory-entered`;
+      const hangModule = new URL(
+        "./sqlite-worker-store.hang-open.test-support.ts",
+        import.meta.url,
+      );
+      let foreignWorker: Worker | undefined;
+      const postMessage = vi.spyOn(Worker.prototype, "postMessage").mockImplementation(function (
+        this: Worker,
+        request: unknown,
+        transferList?: readonly import("node:worker_threads").TransferListItem[],
+      ) {
+        const body = request as { type?: string; databasePath?: string };
+        if (body?.type === "open" && body.databasePath === foreign) {
+          foreignWorker = this;
+          postMessage.mockRestore();
+        }
+        return this.postMessage(request, transferList);
+      });
+      let hungSettled = false;
+      try {
+        const hung = openIsolatedSqliteWorkerStore({
+          moduleUrl: hangModule,
+          databasePath: foreign,
+          existingOnly: true,
+          input: undefined,
+        });
+        void hung.then(
+          () => {
+            hungSettled = true;
+          },
+          () => {
+            hungSettled = true;
+          },
+        );
+
+        const entered = await Promise.race([
+          (async () => {
+            const deadline = Date.now() + 5_000;
+            while (Date.now() < deadline) {
+              if (existsSync(factoryMarker)) {
+                return true;
+              }
+              await new Promise((resolve) => setTimeout(resolve, 20));
+            }
+            return false;
+          })(),
+          hung.then(() => false),
+        ]);
+        assert.ok(entered, "foreign hang factory never entered before saturated shared open");
+        expect(hungSettled).toBe(false);
+        assert.ok(foreignWorker, "expected the foreign open worker to be observed");
+
+        // Pool is full (3 shared + 1 foreign). A further shared open must co-locate on a
+        // shared-lane worker — never the foreign-wedged one — so admission still completes.
+        const extraPath = path.join(root, "shared-pool-extra.sqlite");
+        const extra = await Promise.race([
+          open(extraPath).then((store) => {
+            assert.ok(store);
+            return store;
+          }),
+          new Promise<null>((resolve) => {
+            setTimeout(() => resolve(null), 3_000);
+          }),
+        ]);
+        assert.ok(extra, "shared open stalled behind foreign-wedged worker at full pool");
+        expect(hungSettled).toBe(false);
+
+        for (const store of sharedStores) {
+          expect(await store.execute({ type: "append", input: { value: "alive" } })).toMatchObject({
+            writes: 1,
+          });
+        }
+        expect(await extra.execute({ type: "append", input: { value: "extra" } })).toMatchObject({
+          writes: 1,
+        });
+        expect(hungSettled).toBe(false);
+      } finally {
+        postMessage.mockRestore();
+        if (foreignWorker) {
+          await Promise.allSettled([foreignWorker.terminate()]);
+        }
+      }
+    },
+  );
+
   it("shares one native actor across shared and isolated lanes for the same file", async () => {
     const file = databasePath();
     await seed(file, "seed");
@@ -395,6 +493,88 @@ describe("existing-only SQLite worker admission", () => {
         }),
       ).rejects.toThrow("already belongs to another worker backend");
       expect(await shared.execute({ type: "read", input: undefined })).toEqual(["seed"]);
+    });
+
+    it("reserves ownership across concurrent same-file opens during worker retirement", async () => {
+      const file = databasePath();
+      await seed(file, "seed");
+      const root = path.dirname(file);
+      const fillers: SqliteWorkerStore<FixtureOperations>[] = [];
+      for (let index = 0; index < 4; index += 1) {
+        const store = await open(path.join(root, `retire-fill-${index}.sqlite`));
+        assert.ok(store);
+        fillers.push(store);
+      }
+      const closing = Promise.all(fillers.map((store) => store.close()));
+      const sharedOpen = open(file, true);
+      const isolatedOpen = openIsolatedSqliteWorkerStore<FixtureOperations>({
+        moduleUrl: new URL("./sqlite-worker-store.test-support.ts", import.meta.url),
+        databasePath: file,
+        existingOnly: true,
+        input: undefined,
+      });
+      await closing;
+      const [shared, isolated] = await Promise.all([sharedOpen, isolatedOpen]);
+      assert.ok(shared);
+      assert.ok(isolated);
+      stores.add(isolated);
+      const first = await shared.execute({ type: "append", input: { value: "shared" } });
+      const second = await isolated.execute({ type: "append", input: { value: "isolated" } });
+      expect(second).toEqual({ ...first, writes: 2 });
+      expect(await shared.execute({ type: "read", input: undefined })).toEqual([
+        "seed",
+        "shared",
+        "isolated",
+      ]);
+    });
+
+    it("rejects a mismatched backend when concurrent cross-lane opens race during retirement", async () => {
+      const file = databasePath();
+      await seed(file, "seed");
+      const root = path.dirname(file);
+      const fillers: SqliteWorkerStore<FixtureOperations>[] = [];
+      for (let index = 0; index < 4; index += 1) {
+        const store = await open(path.join(root, `retire-mismatch-${index}.sqlite`));
+        assert.ok(store);
+        fillers.push(store);
+      }
+      const otherModule = path.join(root, "retire-other-backend.mjs");
+      await writeFile(
+        otherModule,
+        [
+          "export function openExistingSqliteWorkerBackend() {",
+          "  return {",
+          "    execute() { return null; },",
+          "    close() {},",
+          "  };",
+          "}",
+          "",
+        ].join("\n"),
+      );
+      const closing = Promise.all(fillers.map((store) => store.close()));
+      const sharedOpen = open(file, true);
+      const isolatedOpen = openIsolatedSqliteWorkerStore({
+        moduleUrl: pathToFileURL(otherModule),
+        databasePath: file,
+        existingOnly: true,
+        input: undefined,
+      });
+      // Settle immediately so a fast backend-mismatch rejection is not unhandled
+      // while filler workers are still retiring.
+      const resultsPromise = Promise.allSettled([sharedOpen, isolatedOpen]);
+      await closing;
+      const results = await resultsPromise;
+      const fulfilled = results.filter((result) => result.status === "fulfilled");
+      const rejected = results.filter((result) => result.status === "rejected");
+      expect(fulfilled).toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+      const rejection = rejected[0];
+      assert.ok(rejection && rejection.status === "rejected");
+      expect(String(rejection.reason)).toMatch(/already belongs to another worker backend/);
+      const winner = fulfilled[0];
+      assert.ok(winner && winner.status === "fulfilled");
+      assert.ok(winner.value);
+      stores.add(winner.value as SqliteWorkerStore<FixtureOperations>);
     });
 
     it("rejects a replaced pathname while the shared-lane owner is still active", async () => {

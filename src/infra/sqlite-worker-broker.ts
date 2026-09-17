@@ -33,6 +33,7 @@ import type {
   PreparedSqliteWorkerOpen,
   RequestBody,
   Slot,
+  SqliteWorkerAdmissionLane,
   SqliteWorkerStoreOptions,
   StoreClient,
 } from "./sqlite-worker-broker.types.js";
@@ -71,6 +72,8 @@ export class SqliteWorkerBroker {
     shared: Promise.resolve() as Promise<void>,
     isolated: Promise.resolve() as Promise<void>,
   };
+  /** Serialize create/reuse per physical identity across concurrent lanes. */
+  private readonly ownershipTail = new Map<string, Promise<void>>();
   private draining?: Promise<void>;
 
   open<Operations extends SqliteWorkerOperations>(
@@ -78,7 +81,7 @@ export class SqliteWorkerBroker {
     stateContext?: SqliteWorkerStateContext,
     assertCurrent?: () => void,
     lifecycle?: Pick<PreparedSqliteWorkerOpen, "maintenanceScope" | "retainCleanup">,
-    admissionLane: "shared" | "isolated" = "shared",
+    admissionLane: SqliteWorkerAdmissionLane = "shared",
   ): Promise<SqliteWorkerStore<Operations> | undefined> {
     try {
       validateSqliteWorkerDatabaseLocator(options.databasePath);
@@ -120,7 +123,7 @@ export class SqliteWorkerBroker {
     this.admissionBytes += input.byteLength;
     // Opening can create the physical file. Publish its identity before admitting any alias.
     return previous
-      .then(() => this.openAdmitted<Operations>(snapshot, client))
+      .then(() => this.openAdmitted<Operations>(snapshot, client, admissionLane))
       .catch((error: unknown) => {
         this.clients.delete(client);
         throw error;
@@ -134,6 +137,7 @@ export class SqliteWorkerBroker {
   private async openAdmitted<Operations extends SqliteWorkerOperations>(
     options: PreparedSqliteWorkerOpen,
     client: object,
+    admissionLane: SqliteWorkerAdmissionLane = "shared",
   ): Promise<SqliteWorkerStore<Operations> | undefined> {
     const { databasePath, inputHash, identity } =
       await prepareSqliteWorkerDatabaseAdmission(options);
@@ -149,28 +153,31 @@ export class SqliteWorkerBroker {
       return undefined;
     }
     const { modulePath, moduleUrl } = await resolveSqliteWorkerModuleUrl(options.moduleUrl);
-    let actor = this.actors.get(key);
-    if (actor?.cleanupState === "pending") {
-      if (actor.closing) {
-        await actor.closing;
-        return this.openAdmitted(options, client);
+    // Reserve physical ownership before awaiting worker capacity so concurrent
+    // cross-lane opens cannot both observe an empty registry and double-create.
+    const actor = await this.withPhysicalOwnershipReservation(key, async () => {
+      let current = this.actors.get(key);
+      while (current?.cleanupState === "pending") {
+        if (!current.closing) {
+          throw new SqliteWorkerError(
+            "SQLite worker cleanup is pending; retry close before reopening",
+            "closed",
+          );
+        }
+        await current.closing;
+        current = this.actors.get(key);
       }
-      throw new SqliteWorkerError(
-        "SQLite worker cleanup is pending; retry close before reopening",
-        "closed",
-      );
-    }
-    if (actor) {
-      if (actor.slot.failed) {
-        throw actor.slot.failed;
+      if (current) {
+        return this.retainExistingActor(current, moduleUrl, inputHash);
       }
-      if (actor.moduleUrl !== moduleUrl || actor.inputHash !== inputHash) {
-        throw new Error("SQLite database already belongs to another worker backend");
+      const slot = await this.acquireSlot(admissionLane);
+      current = this.actors.get(key);
+      if (current) {
+        slot.pendingOpens -= 1;
+        await this.retireEmpty(slot);
+        return this.retainExistingActor(current, moduleUrl, inputHash);
       }
-      actor.references += 1;
-    } else {
-      const slot = await this.acquireSlot();
-      actor = {
+      const created: Actor = {
         pendingStateLifecycles: new Set(),
         id: ++this.nextActor,
         key,
@@ -187,15 +194,15 @@ export class SqliteWorkerBroker {
         databasePath,
         stateContext: options.stateContext,
       };
-      this.actors.set(key, actor);
-      slot.actors.add(actor);
+      this.actors.set(key, created);
+      slot.actors.add(created);
       slot.pendingOpens -= 1;
-      const opening = actor;
+      const opening = created;
       opening.opened = this.enqueue(
         slot,
         {
           type: "open",
-          actor: actor.id,
+          actor: created.id,
           moduleUrl,
           databasePath,
           ...(options.existingOnly ? { existingIdentity: key } : {}),
@@ -222,7 +229,8 @@ export class SqliteWorkerBroker {
           this.actors.set(physical, opening);
         }
       });
-    }
+      return created;
+    });
     const admittedActor = actor;
     try {
       retainSqliteWorkerAdmissionCleanup(admittedActor, options.retainCleanup, () =>
@@ -353,12 +361,44 @@ export class SqliteWorkerBroker {
     }
   }
 
-  private async acquireSlot(): Promise<Slot> {
-    const available = [...this.slots].filter((slot) => !slot.failed && !slot.retiring);
+  private retainExistingActor(actor: Actor, moduleUrl: string, inputHash: string): Actor {
+    if (actor.slot.failed) {
+      throw actor.slot.failed;
+    }
+    if (actor.moduleUrl !== moduleUrl || actor.inputHash !== inputHash) {
+      throw new Error("SQLite database already belongs to another worker backend");
+    }
+    actor.references += 1;
+    return actor;
+  }
+
+  private async withPhysicalOwnershipReservation<T>(
+    key: string,
+    run: () => Promise<T>,
+  ): Promise<T> {
+    const previous = this.ownershipTail.get(key) ?? Promise.resolve();
+    const released = createDeferredCore();
+    const next = previous.then(() => released.promise);
+    this.ownershipTail.set(key, next);
+    try {
+      await previous;
+      return await run();
+    } finally {
+      released.resolve();
+      if (this.ownershipTail.get(key) === next) {
+        this.ownershipTail.delete(key);
+      }
+    }
+  }
+
+  private async acquireSlot(lane: SqliteWorkerAdmissionLane): Promise<Slot> {
+    const laneCompatible = (slot: Slot) =>
+      !slot.failed && !slot.retiring && (slot.lane === undefined || slot.lane === lane);
+    const available = [...this.slots].filter(laneCompatible);
     if (this.slots.size >= MAX_WORKERS) {
       if (!available.length) {
         await Promise.race([...this.slots].map((slot) => slot.exit));
-        return this.acquireSlot();
+        return this.acquireSlot(lane);
       }
       if (process.versions.bun) {
         throw new SqliteWorkerError(
@@ -369,6 +409,7 @@ export class SqliteWorkerBroker {
       const selected = available.reduce((left, right) =>
         left.actors.size <= right.actors.size ? left : right,
       );
+      selected.lane = lane;
       selected.pendingOpens += 1;
       return selected;
     }
@@ -387,6 +428,7 @@ export class SqliteWorkerBroker {
     const exited = createDeferredCore();
     const slot: Slot = {
       worker,
+      lane,
       actors: new Set(),
       queue: [],
       exit: exited.promise,
