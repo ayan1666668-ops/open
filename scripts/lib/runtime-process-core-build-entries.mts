@@ -27,10 +27,7 @@ export const standaloneRuntimeProcessBuildEntries = createRuntimeProcessBuildEnt
 ]);
 
 export function shouldBundleRuntimeSqliteDependency(id: string): boolean {
-  // Keep SQLite validation in the shared graph instead of resolving hundreds of modules per worker.
-  return (
-    id === "kysely" || id.startsWith("kysely/") || id === "typebox" || id.startsWith("typebox/")
-  );
+  return id === "kysely" || id.startsWith("kysely/");
 }
 
 export function sharedRuntimeProcessBuildEntries(entries: Record<string, string>) {
