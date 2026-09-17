@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import { afterEach, expect, it, vi } from "vitest";
 import {
   consumeCodexAppServerLiveThread,
@@ -23,6 +24,7 @@ import {
   resetSharedCodexAppServerClientForTests,
 } from "./shared-client.js";
 import { createClientHarness } from "./test-support.js";
+import { withCodexAppServerThreadMutation } from "./thread-ownership.js";
 import { CODEX_APP_SERVER_VERSION } from "./version.js";
 
 let directory: string | undefined;
@@ -276,5 +278,179 @@ it.each(["warm", "closed", "detached", "unconfirmed-close"])(
         releaseLeasedSharedCodexAppServerClient(nextOwner);
       }
     }
+  },
+);
+
+it.each(["success", "failure"])(
+  "keeps a successor fenced until final detached-owner exit after compaction %s",
+  async (outcome) => {
+    directory = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "codex-compact-exit-")));
+    const agentDir = path.join(directory, "agent");
+    const sessionFile = path.join(directory, "session.jsonl");
+    const sessionKey = "agent:main:compact-final-owner";
+    const pluginConfig = {
+      appServer: { command: process.execPath, args: ["app-server"], homeScope: "user" },
+    };
+    const runtime = resolveCodexAppServerRuntimeOptions({
+      pluginConfig,
+      codexConfigToml: null,
+      requirementsToml: null,
+    });
+    const compactStarted = createDeferred<{
+      id: number;
+      send: (message: unknown) => void;
+    }>();
+    vi.spyOn(CodexAppServerClient, "start").mockImplementation(async () => {
+      const harness = createClientHarness({
+        autoEmitExit: false,
+        onWrite(line, send) {
+          const request = JSON.parse(line) as {
+            id?: number;
+            method: string;
+            params?: { threadId?: string };
+          };
+          if (request.id === undefined) {
+            return;
+          }
+          if (request.method === "initialize") {
+            send({
+              id: request.id,
+              result: { userAgent: `codex-cli/${CODEX_APP_SERVER_VERSION}`, codexHome: directory },
+            });
+            return;
+          }
+          if (request.method === "thread/resume") {
+            send({
+              id: request.id,
+              result: {
+                thread: {
+                  id: request.params?.threadId,
+                  turns: [],
+                  cwd: directory,
+                  sessionId: "session-final-owner",
+                  cliVersion: CODEX_APP_SERVER_VERSION,
+                  createdAt: 1,
+                  updatedAt: 1,
+                  ephemeral: false,
+                  modelProvider: "openai",
+                  preview: "",
+                  projectId: null,
+                  source: "unknown",
+                  status: { type: "idle" },
+                },
+                model: "gpt-5.6-luna",
+                modelProvider: "openai",
+                cwd: directory,
+                approvalPolicy: "never",
+                approvalsReviewer: "user",
+                sandbox: { type: "dangerFullAccess" },
+              },
+            });
+            return;
+          }
+          if (request.method === "thread/compact/start") {
+            compactStarted.resolve({ id: request.id, send });
+            return;
+          }
+          send({ id: request.id, result: {} });
+        },
+      });
+      transports.push(harness);
+      return harness.client;
+    });
+
+    const owner = await getLeasedSharedCodexAppServerClient({
+      startOptions: runtime.start,
+      agentDir,
+      authProfileId: null,
+    });
+    await owner.request(
+      "thread/resume",
+      { threadId: "final-owner-thread", excludeTurns: true },
+      { timeoutMs: 1_000 },
+    );
+    registerCodexTestSessionIdentity(sessionFile, "session-final-owner", sessionKey, "main");
+    await writeCodexAppServerBinding(sessionFile, {
+      threadId: "final-owner-thread",
+      cwd: directory,
+      clientId: owner.getInstanceId(),
+    });
+    const releaseRetirementLease = retainSharedCodexAppServerClientIfCurrent(owner);
+    expect(releaseRetirementLease).toBeDefined();
+    expect(releaseLeasedSharedCodexAppServerClient(owner)).toBe(true);
+    expect(retireSharedCodexAppServerClientIfCurrent(owner)).toEqual({
+      activeLeases: 1,
+      closed: false,
+    });
+
+    const compaction = maybeCompactCodexAppServerSession(
+      {
+        sessionId: "session-final-owner",
+        sessionKey,
+        sessionFile,
+        agentDir,
+        workspaceDir: directory,
+        trigger: "manual",
+      },
+      { bindingStore: testCodexAppServerBindingStore, pluginConfig },
+    );
+    const pendingCompact = await compactStarted.promise;
+    releaseRetirementLease?.();
+    if (outcome === "success") {
+      const turn = {
+        id: "compaction-turn",
+        threadId: "final-owner-thread",
+        status: "completed",
+      };
+      pendingCompact.send({
+        method: "turn/started",
+        params: { threadId: "final-owner-thread", turn: { ...turn, status: "inProgress" } },
+      });
+      pendingCompact.send({
+        method: "item/started",
+        params: {
+          threadId: "final-owner-thread",
+          turnId: turn.id,
+          item: { id: "compacted", type: "contextCompaction" },
+        },
+      });
+      pendingCompact.send({
+        method: "item/completed",
+        params: {
+          threadId: "final-owner-thread",
+          turnId: turn.id,
+          item: { id: "compacted", type: "contextCompaction" },
+        },
+      });
+      pendingCompact.send({ method: "turn/completed", params: { threadId: turn.threadId, turn } });
+      pendingCompact.send({ id: pendingCompact.id, result: {} });
+    } else {
+      pendingCompact.send({
+        id: pendingCompact.id,
+        error: { code: -32603, message: "forced compaction failure" },
+      });
+    }
+
+    const result = await compaction;
+    expect(result).toMatchObject(
+      outcome === "success"
+        ? { ok: true, compacted: true }
+        : { ok: false, compacted: false, reason: "forced compaction failure" },
+    );
+    const harness = transports[0];
+    expect(harness?.stdinDestroyed).toBe(true);
+
+    let successorRan = false;
+    const successor = withCodexAppServerThreadMutation("final-owner-thread", async () => {
+      successorRan = true;
+    });
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 20);
+    });
+    expect(successorRan).toBe(false);
+
+    harness?.emitExit();
+    await successor;
+    expect(successorRan).toBe(true);
   },
 );

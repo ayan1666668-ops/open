@@ -79,7 +79,7 @@ type CodexNativeCompactionCompletion =
   | { completed: false; reason: string };
 
 /** Keeps same-thread ownership held when bounded temporary cleanup is uncertain. */
-export async function waitForCodexAppServerTemporaryClientExit(
+async function waitForCodexAppServerTemporaryClientExit(
   client: Pick<CodexAppServerClient, "waitForTransportExit">,
   exited: boolean,
 ): Promise<void> {

@@ -40,7 +40,7 @@ export function withCodexAppServerThreadMutationHold<T>(
     }
     await heldUntil;
   });
-  void queued.catch((error) => rejectResult(error));
+  void queued.catch((error: unknown) => rejectResult(error));
   return result;
 }
 
