@@ -9,6 +9,8 @@ import {
   getExecuteAgentTurnForTest,
   createMockTypingSignaler,
   createFollowupRun,
+  testModel,
+  testAuthProfiles,
   configureTestCliModel,
   initialFallbackAttemptOptions,
   runInitialFallbackAttempt,
@@ -18,6 +20,18 @@ import type {
   FallbackRunnerParams,
   EmbeddedAgentParams,
 } from "./agent-runner-execution.test-support.js";
+
+const progressExecutionFixture = {
+  catalog: [testModel("claude-cli", "claude-opus-4-6")],
+  profiles: testAuthProfiles("claude-cli"),
+  runtimeAuthModes: { "claude-cli": "token" },
+} satisfies Parameters<typeof createFollowupRun>[0];
+
+const canonicalProgressExecutionFixture = {
+  catalog: [testModel("claude-cli", "claude-opus-4-7")],
+  profiles: testAuthProfiles("claude-cli"),
+  runtimeAuthModes: { "claude-cli": "token" },
+} satisfies Parameters<typeof createFollowupRun>[0];
 
 const state = await setupAgentRunnerExecutionTestState();
 
@@ -55,7 +69,7 @@ describe("executeAgentTurn: CLI progress bridging", () => {
       async (_payload) => undefined,
     );
     const executeAgentTurn = await getExecuteAgentTurnForTest();
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun(progressExecutionFixture);
     followupRun.run.executionSelection = configureTestCliModel(
       followupRun,
       "claude-cli",
@@ -126,7 +140,7 @@ describe("executeAgentTurn: CLI progress bridging", () => {
       },
     );
     const executeAgentTurn = await getExecuteAgentTurnForTest();
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun(progressExecutionFixture);
     followupRun.run.executionSelection = configureTestCliModel(
       followupRun,
       "claude-cli",
@@ -198,7 +212,7 @@ describe("executeAgentTurn: CLI progress bridging", () => {
 
     const onToolStart = vi.fn<NonNullable<GetReplyOptions["onToolStart"]>>(async () => undefined);
     const executeAgentTurn = await getExecuteAgentTurnForTest();
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun(progressExecutionFixture);
     followupRun.run.executionSelection = configureTestCliModel(
       followupRun,
       "claude-cli",
@@ -267,7 +281,7 @@ describe("executeAgentTurn: CLI progress bridging", () => {
     const callbackOrder: string[] = [];
     const toolStarted = createDeferred();
     const executeAgentTurn = await getExecuteAgentTurnForTest();
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun(progressExecutionFixture);
     followupRun.run.executionSelection = configureTestCliModel(
       followupRun,
       "claude-cli",
@@ -356,7 +370,7 @@ describe("executeAgentTurn: CLI progress bridging", () => {
     const callbackOrder: string[] = [];
     const partialReplyStarted = createDeferred();
     const executeAgentTurn = await getExecuteAgentTurnForTest();
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun(progressExecutionFixture);
     followupRun.run.executionSelection = configureTestCliModel(
       followupRun,
       "claude-cli",
@@ -422,7 +436,7 @@ describe("executeAgentTurn: CLI progress bridging", () => {
 
     const onItemEvent = vi.fn<NonNullable<GetReplyOptions["onItemEvent"]>>(async () => undefined);
     const executeAgentTurn = await getExecuteAgentTurnForTest();
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun(progressExecutionFixture);
     followupRun.run.executionSelection = configureTestCliModel(
       followupRun,
       "claude-cli",
@@ -472,7 +486,7 @@ describe("executeAgentTurn: CLI progress bridging", () => {
 
     const onItemEvent = vi.fn<NonNullable<GetReplyOptions["onItemEvent"]>>();
     const executeAgentTurn = await getExecuteAgentTurnForTest();
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun(progressExecutionFixture);
     followupRun.run.executionSelection = configureTestCliModel(
       followupRun,
       "claude-cli",
@@ -524,7 +538,7 @@ describe("executeAgentTurn: CLI progress bridging", () => {
 
     const onToolStart = vi.fn<NonNullable<GetReplyOptions["onToolStart"]>>(async () => undefined);
     const executeAgentTurn = await getExecuteAgentTurnForTest();
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun(progressExecutionFixture);
     followupRun.run.executionSelection = configureTestCliModel(
       followupRun,
       "claude-cli",
@@ -577,7 +591,7 @@ describe("executeAgentTurn: CLI progress bridging", () => {
       async (_payload) => undefined,
     );
     const executeAgentTurn = await getExecuteAgentTurnForTest();
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun(progressExecutionFixture);
     followupRun.run.executionSelection = configureTestCliModel(
       followupRun,
       "claude-cli",
@@ -639,7 +653,7 @@ describe("executeAgentTurn: CLI progress bridging", () => {
       async (_payload) => undefined,
     );
     const executeAgentTurn = await getExecuteAgentTurnForTest();
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun(canonicalProgressExecutionFixture);
     followupRun.run.executionSelection = configureTestCliModel(
       followupRun,
       "claude-cli",
@@ -739,7 +753,7 @@ describe("executeAgentTurn: CLI progress bridging", () => {
       async () => undefined,
     );
     const executeAgentTurn = await getExecuteAgentTurnForTest();
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun(canonicalProgressExecutionFixture);
     followupRun.run.executionSelection = configureTestCliModel(
       followupRun,
       "claude-cli",
@@ -795,7 +809,7 @@ describe("executeAgentTurn: CLI progress bridging", () => {
       async (_payload) => undefined,
     );
     const executeAgentTurn = await getExecuteAgentTurnForTest();
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun(canonicalProgressExecutionFixture);
     followupRun.run.executionSelection = configureTestCliModel(
       followupRun,
       "claude-cli",
@@ -843,7 +857,11 @@ describe("executeAgentTurn: CLI progress bridging", () => {
       async (_payload) => undefined,
     );
     const executeAgentTurn = await getExecuteAgentTurnForTest();
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun({
+      catalog: [testModel("codex-cli", "gpt-5.5")],
+      profiles: testAuthProfiles("codex-cli"),
+      runtimeAuthModes: { "codex-cli": "token" },
+    });
     followupRun.run.executionSelection = configureTestCliModel(followupRun, "codex-cli", "gpt-5.5");
 
     await executeAgentTurn({
@@ -894,7 +912,11 @@ describe("executeAgentTurn: CLI progress bridging", () => {
       async (_payload) => undefined,
     );
     const executeAgentTurn = await getExecuteAgentTurnForTest();
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun({
+      catalog: [testModel("anthropic", "claude-sonnet-4-7")],
+      profiles: testAuthProfiles("anthropic"),
+      fallbacks: [],
+    });
     followupRun.run.executionSelection = {
       model: { provider: "anthropic", id: "claude-sonnet-4-7" },
       executor: { kind: "harness", id: "openclaw" },

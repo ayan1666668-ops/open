@@ -16,6 +16,8 @@ import {
   getExecuteAgentTurnForTest,
   configureTestCliModel,
   createFollowupRun,
+  testModel,
+  testAuthProfiles,
   createTestUserTurnRecorder,
   requireRecord,
   requireMockCall,
@@ -26,6 +28,18 @@ import {
   makeTestSessionStorePath,
 } from "./agent-runner-execution.test-support.js";
 import type { FallbackRunnerParams } from "./agent-runner-execution.test-support.js";
+
+const sessionExecutionFixture = {
+  catalog: [testModel("codex-cli", "gpt-5.4")],
+  profiles: testAuthProfiles("codex-cli"),
+  runtimeAuthModes: { "codex-cli": "token" },
+} satisfies Parameters<typeof createFollowupRun>[0];
+
+const canonicalSessionExecutionFixture = {
+  catalog: [testModel("claude-cli", "claude-opus-4-8")],
+  profiles: testAuthProfiles("claude-cli"),
+  runtimeAuthModes: { "claude-cli": "token" },
+} satisfies Parameters<typeof createFollowupRun>[0];
 
 const state = await setupAgentRunnerExecutionTestState();
 afterEach(resetGeneratedMediaTaskActivityForTests);
@@ -52,7 +66,11 @@ describe("executeAgentTurn: CLI session routing", () => {
       payloads: [{ text: "done" }],
       meta: {},
     });
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun({
+      catalog: [testModel("claude-cli", "claude-sonnet-4-6")],
+      profiles: testAuthProfiles("claude-cli"),
+      runtimeAuthModes: { "claude-cli": "token" },
+    });
     followupRun.originatingThreadId = 42;
     followupRun.run.executionSelection = configureTestCliModel(
       followupRun,
@@ -114,7 +132,11 @@ describe("executeAgentTurn: CLI session routing", () => {
       },
     ];
     const imageOrder = ["inline" as const];
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun({
+      catalog: [testModel("claude-cli", "claude-opus-5")],
+      profiles: testAuthProfiles("claude-cli"),
+      runtimeAuthModes: { "claude-cli": "token" },
+    });
     followupRun.run.executionSelection = configureTestCliModel(
       followupRun,
       "claude-cli",
@@ -202,7 +224,11 @@ describe("executeAgentTurn: CLI session routing", () => {
         meta: {},
       };
     });
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun({
+      catalog: [testModel("claude-cli", "claude-opus-5")],
+      profiles: testAuthProfiles("claude-cli"),
+      runtimeAuthModes: { "claude-cli": "token" },
+    });
     followupRun.run.executionSelection = configureTestCliModel(
       followupRun,
       "claude-cli",
@@ -261,7 +287,7 @@ describe("executeAgentTurn: CLI session routing", () => {
     });
 
     const executeAgentTurn = await getExecuteAgentTurnForTest();
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun(sessionExecutionFixture);
     followupRun.run.agentId = "main";
     followupRun.run.executionSelection = configureTestCliModel(followupRun, "codex-cli", "gpt-5.4");
     followupRun.run.extraSystemPrompt = "dynamic inbound metadata\n\nstable group prompt";
@@ -326,7 +352,11 @@ describe("executeAgentTurn: CLI session routing", () => {
     });
 
     const executeAgentTurn = await getExecuteAgentTurnForTest();
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun({
+      catalog: [testModel("claude-cli", "claude-sonnet-4-6")],
+      profiles: testAuthProfiles("claude-cli"),
+      runtimeAuthModes: { "claude-cli": "token" },
+    });
     followupRun.run.executionSelection = configureTestCliModel(
       followupRun,
       "claude-cli",
@@ -373,7 +403,7 @@ describe("executeAgentTurn: CLI session routing", () => {
     });
 
     const executeAgentTurn = await getExecuteAgentTurnForTest();
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun(sessionExecutionFixture);
     followupRun.run.executionSelection = configureTestCliModel(followupRun, "codex-cli", "gpt-5.4");
     const preparedUserTurnMessage = {
       role: "user",
@@ -451,7 +481,7 @@ describe("executeAgentTurn: CLI session routing", () => {
     });
 
     const executeAgentTurn = await getExecuteAgentTurnForTest();
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun(sessionExecutionFixture);
     followupRun.currentInboundEventKind = "room_event";
     followupRun.run.executionSelection = configureTestCliModel(followupRun, "codex-cli", "gpt-5.4");
     const sessionEntry = {
@@ -509,7 +539,7 @@ describe("executeAgentTurn: CLI session routing", () => {
     });
 
     const executeAgentTurn = await getExecuteAgentTurnForTest();
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun(sessionExecutionFixture);
     followupRun.currentInboundEventKind = "room_event";
     followupRun.run.executionSelection = configureTestCliModel(followupRun, "codex-cli", "gpt-5.4");
     const sessionEntry = {} as unknown as SessionEntry;
@@ -559,7 +589,7 @@ describe("executeAgentTurn: CLI session routing", () => {
     });
 
     const executeAgentTurn = await getExecuteAgentTurnForTest();
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun(sessionExecutionFixture);
     followupRun.currentInboundEventKind = "room_event";
     followupRun.run.executionSelection = configureTestCliModel(followupRun, "codex-cli", "gpt-5.4");
     const sessionEntry = {
@@ -630,7 +660,7 @@ describe("executeAgentTurn: CLI session routing", () => {
     });
 
     const executeAgentTurn = await getExecuteAgentTurnForTest();
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun(sessionExecutionFixture);
     followupRun.currentInboundEventKind = "room_event";
     followupRun.run.executionSelection = configureTestCliModel(followupRun, "codex-cli", "gpt-5.4");
     const sessionEntry = {
@@ -679,7 +709,7 @@ describe("executeAgentTurn: CLI session routing", () => {
     });
 
     const executeAgentTurn = await getExecuteAgentTurnForTest();
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun(sessionExecutionFixture);
     followupRun.currentInboundEventKind = "room_event";
     followupRun.run.executionSelection = configureTestCliModel(followupRun, "codex-cli", "gpt-5.4");
     const sessionEntry = {
@@ -726,7 +756,7 @@ describe("executeAgentTurn: CLI session routing", () => {
       }),
     );
 
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun(canonicalSessionExecutionFixture);
     followupRun.run.executionSelection = configureTestCliModel(
       followupRun,
       "claude-cli",
@@ -776,7 +806,7 @@ describe("executeAgentTurn: CLI session routing", () => {
       throw abort;
     });
 
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun(canonicalSessionExecutionFixture);
     followupRun.run.executionSelection = configureTestCliModel(
       followupRun,
       "claude-cli",
@@ -822,7 +852,7 @@ describe("executeAgentTurn: CLI session routing", () => {
       Object.assign(new Error("CLI run aborted"), { name: "AbortError" }),
     );
 
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun(canonicalSessionExecutionFixture);
     followupRun.run.executionSelection = configureTestCliModel(
       followupRun,
       "claude-cli",
@@ -890,7 +920,7 @@ describe("executeAgentTurn: CLI session routing", () => {
       executeTurn: async (_claim, _params, runLocal) => await runLocal(),
     });
 
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun(canonicalSessionExecutionFixture);
     followupRun.run.executionSelection = configureTestCliModel(
       followupRun,
       "claude-cli",
@@ -949,7 +979,7 @@ describe("executeAgentTurn: CLI session routing", () => {
       }),
     );
 
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun(canonicalSessionExecutionFixture);
     followupRun.run.executionSelection = configureTestCliModel(
       followupRun,
       "claude-cli",

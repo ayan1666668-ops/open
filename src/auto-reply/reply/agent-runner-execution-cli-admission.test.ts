@@ -14,6 +14,8 @@ import {
   setupAgentRunnerExecutionTestState,
   getExecuteAgentTurnForTest,
   createFollowupRun,
+  testModel,
+  testAuthProfiles,
   configureTestCliModel,
   requireMockCall,
   expectMockCallArgFields,
@@ -69,7 +71,18 @@ describe("executeAgentTurn: CLI admission", () => {
         cliSessionBindings: { "claude-cli": binding },
       },
     );
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun({
+      catalog: [testModel("claude-cli", "claude-sonnet-4-6"), testModel("openai", "gpt-5.4")],
+      profiles: testAuthProfiles("claude-cli", "openai"),
+      runtimeAuthModes: { "claude-cli": "token" },
+
+      fallbacks: rejected ? ["openai/gpt-5.4"] : [],
+      config: {
+        agents: {
+          defaults: { models: { "openai/gpt-5.4": { agentRuntime: { id: "openclaw" } } } },
+        },
+      },
+    });
     followupRun.run.executionSelection = configureTestCliModel(
       followupRun,
       "claude-cli",
@@ -210,7 +223,11 @@ describe("executeAgentTurn: CLI admission", () => {
         cliSessionBindings: { "claude-cli": binding },
       };
       await replaceSessionEntry({ sessionKey, storePath }, entry);
-      const followupRun = createFollowupRun();
+      const followupRun = createFollowupRun({
+        catalog: [testModel("claude-cli", "claude-sonnet-4-6")],
+        profiles: testAuthProfiles("claude-cli"),
+        runtimeAuthModes: { "claude-cli": "token" },
+      });
       followupRun.run.executionSelection = configureTestCliModel(
         followupRun,
         "claude-cli",
@@ -345,7 +362,11 @@ describe("executeAgentTurn: CLI admission", () => {
       },
     };
     state.runCliAgentMock.mockResolvedValueOnce({ payloads: [{ text: "done" }], meta: {} });
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun({
+      catalog: [testModel("claude-cli", "claude-sonnet-4-6")],
+      profiles: testAuthProfiles("claude-cli"),
+      runtimeAuthModes: { "claude-cli": "token" },
+    });
     followupRun.run.executionSelection = configureTestCliModel(
       followupRun,
       "claude-cli",

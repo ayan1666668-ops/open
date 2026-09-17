@@ -5,6 +5,10 @@ import { settleReplyDispatcher } from "../../auto-reply/dispatch-dispatcher.js";
 import * as replyPayloadRuntime from "../../auto-reply/reply-payload.js";
 import {
   createFollowupRun,
+  configureTestCliModel,
+  configureTestExecution,
+  testModel,
+  testAuthProfiles,
   createMockTypingSignaler,
   getExecuteAgentTurnForTest,
   setupAgentRunnerExecutionTestState,
@@ -13,6 +17,7 @@ import {
 } from "../../auto-reply/reply/agent-runner-execution.test-support.js";
 import {
   emptyConfig,
+  runtimePluginMocks,
   sessionStoreMocks,
 } from "../../auto-reply/reply/dispatch-from-config.shared.test-harness.js";
 import {
@@ -32,12 +37,15 @@ import {
 import { buildTestCtx } from "../../auto-reply/reply/test-ctx.js";
 import type { MsgContext } from "../../auto-reply/templating.js";
 import type { GetReplyOptions, ReplyPayload } from "../../auto-reply/types.js";
+import type { ModelExecutionSelection } from "../../model-picker/execution-selection.js";
 import { createPluginMetadataSnapshotFixture } from "../../plugins/plugin-metadata.test-support.js";
 import { createEmptyPluginRegistry } from "../../plugins/registry-empty.js";
 import type { OpenClawTestState } from "../../test-utils/openclaw-test-state.js";
 import type { FailoverReason } from "../failover/signal.js";
 import type { AgentHarnessHostCapabilities } from "../harness/host-capability-types.js";
 import { registerAgentHarness } from "../harness/registry.js";
+import * as preparedModelCatalogRuntime from "../prepared-model-catalog.js";
+import * as preparedModelRuntimeAuth from "../prepared-model-runtime-auth.js";
 import {
   getPreparedModelRuntimeBorrowedSnapshot,
   withPreparedModelRuntimePluginGenerationScope,
@@ -52,6 +60,8 @@ import {
   loadRunOverflowCompactionHarness,
   mockedAcquireAgentRunPreparedModelRuntime,
   mockedBuildEmbeddedRunPayloads,
+  mockedBuildAgentRuntimePlan,
+  mockedEnsureAuthProfileStore,
   mockedGlobalHookRunner,
   mockedRunEmbeddedAttempt,
   createOverflowRunParams,
@@ -85,8 +95,10 @@ describe("prepared harness source delivery", () => {
   let state: OpenClawTestState;
   let restoreSynthesis: (() => void) | undefined;
   async function loadSourceDeliveryHarness() {
-    // The runner resets modules; keep its private payload metadata shared with dispatch.
+    // The runner resets modules; keep dispatch metadata and published catalog/auth together.
     vi.doMock("../../auto-reply/reply-payload.js", () => replyPayloadRuntime);
+    vi.doMock("../prepared-model-catalog.js", () => preparedModelCatalogRuntime);
+    vi.doMock("../prepared-model-runtime-auth.js", () => preparedModelRuntimeAuth);
     const loaded = await loadRunOverflowCompactionHarness();
     const { createOpenClawTestState } = await import("../../test-utils/openclaw-test-state.js");
     state = await createOpenClawTestState({ label: "prepared-source-delivery" });
@@ -112,7 +124,7 @@ describe("prepared harness source delivery", () => {
       expectedFinals: 1,
     },
     {
-      name: "suppresses live output when preparation changes automatic ownership to tool",
+      name: "suppresses live output when an automatic preview prepares the accepted tool owner",
       candidatePath: "embedded" as const,
       preliminaryVisibleReplies: "automatic" as const,
       preparedVisibleReplies: "message_tool" as const,
@@ -123,7 +135,7 @@ describe("prepared harness source delivery", () => {
       expectedFinals: 0,
     },
     {
-      name: "lets implicit built-in automatic ownership yield to a prepared tool owner",
+      name: "replaces the built-in automatic preview with accepted tool delivery",
       candidatePath: "embedded" as const,
       preliminaryVisibleReplies: undefined,
       preparedVisibleReplies: "message_tool" as const,
@@ -156,7 +168,7 @@ describe("prepared harness source delivery", () => {
       expectedFinals: 1,
     },
     {
-      name: "delivers a successful API-to-CLI fallback with its session-stable ownership",
+      name: "delivers a successful direct-harness-to-CLI fallback with its session-stable ownership",
       candidatePath: "embedded-failure-cli" as const,
       preliminaryVisibleReplies: undefined,
       preparedVisibleReplies: "automatic" as const,
@@ -218,16 +230,138 @@ describe("prepared harness source delivery", () => {
       restoreSynthesis = () => vi.doMock("../../tts/tts.js", () => ttsFixture);
     }
     const { runEmbeddedAgent, registerPreparedAgentHarness } = await loadSourceDeliveryHarness();
+    const authOrder = await import("../auth-profiles/order.js");
+    const actualAuthOrder = await vi.importActual<typeof import("../auth-profiles/order.js")>(
+      "../auth-profiles/order.js",
+    );
+    vi.mocked(authOrder.resolveAuthProfileOrderWithMetadata).mockImplementation(
+      actualAuthOrder.resolveAuthProfileOrderWithMetadata,
+    );
     const { resolveCodexTtsProvenanceTransfer } =
       await import("../../plugin-sdk/codex-mcp-projection.js");
     mockedGlobalHookRunner.hasHooks.mockImplementation(
       (hookName: string) => hookName === "before_model_resolve",
     );
-    mockedGlobalHookRunner.runBeforeModelResolve.mockResolvedValue({
-      providerOverride: "openai",
-      modelOverride: "gpt-5.4",
-    });
     const followupRun = createFollowupRun();
+    const cliPrimary = configureTestCliModel(
+      followupRun,
+      "anthropic",
+      "cli-primary",
+      "claude-cli",
+      "anthropic",
+    );
+    configureTestCliModel(followupRun, "anthropic", "cli-fallback", "claude-cli", "anthropic");
+    const startsWithCli =
+      testCase.candidatePath === "cli" || testCase.candidatePath === "cli-failure-embedded";
+    const directHarnessFails = testCase.candidatePath === "embedded-failure-cli";
+    const embeddedSelection: ModelExecutionSelection = {
+      model:
+        testCase.preparedVisibleReplies === "message_tool"
+          ? { provider: "openai", id: "gpt-5.4" }
+          : { provider: "custom", id: "plugin-fallback" },
+      executor: {
+        kind: "harness",
+        id: testCase.preparedVisibleReplies === "message_tool" ? "codex" : "openclaw",
+      },
+    };
+    const primarySelection: ModelExecutionSelection = startsWithCli
+      ? cliPrimary
+      : directHarnessFails
+        ? {
+            model: { provider: "custom", id: "api-primary" },
+            executor: { kind: "harness", id: "source-test-primary" },
+          }
+        : embeddedSelection;
+    const embeddedModel = directHarnessFails ? primarySelection.model : embeddedSelection.model;
+    const profiles = {
+      ...testAuthProfiles("custom", "openai"),
+      "anthropic:fixture": {
+        type: "token" as const,
+        provider: "anthropic",
+        token: "synthetic-cli-token",
+      },
+    };
+    const catalog = [
+      testModel("custom", "api-primary", { api: "messages" }),
+      testModel("custom", "plugin-fallback", { api: "messages" }),
+      testModel("openai", "gpt-5.4", { api: "openai-responses" }),
+      testModel("anthropic", "cli-primary", { api: "messages" }),
+      testModel("anthropic", "cli-fallback", { api: "messages" }),
+    ];
+    const cfg = followupRun.run.config;
+    configureTestExecution(followupRun, {
+      selection: primarySelection,
+      config: {
+        ...cfg,
+        agents: {
+          ...cfg.agents,
+          defaults: {
+            ...cfg.agents?.defaults,
+            model: { primary: `${primarySelection.model.provider}/${primarySelection.model.id}` },
+            models: {
+              ...cfg.agents?.defaults?.models,
+              [`${embeddedSelection.model.provider}/${embeddedSelection.model.id}`]: {
+                agentRuntime: { id: embeddedSelection.executor.id },
+              },
+              ...(directHarnessFails
+                ? { "custom/api-primary": { agentRuntime: { id: "source-test-primary" } } }
+                : {}),
+            },
+          },
+        },
+      },
+      catalog,
+      profiles,
+      runtimeAuthModes: { "claude-cli": "token" },
+      fallbacks:
+        testCase.candidatePath === "cli-failure-embedded"
+          ? [`${embeddedSelection.model.provider}/${embeddedSelection.model.id}`]
+          : directHarnessFails
+            ? ["anthropic/cli-fallback"]
+            : [],
+    });
+    mockedGlobalHookRunner.runBeforeModelResolve.mockResolvedValue({
+      providerOverride: embeddedModel.provider,
+      modelOverride: embeddedModel.id,
+    });
+    const modelAuth = await import("../model-auth.js");
+    vi.mocked(modelAuth.resolveAuthProfileOrder).mockImplementation(
+      actualAuthOrder.resolveAuthProfileOrder,
+    );
+    mockedEnsureAuthProfileStore.mockReturnValue({ version: 1, profiles });
+    const runtimePlan = mockedBuildAgentRuntimePlan();
+    mockedBuildAgentRuntimePlan.mockReturnValue({
+      ...runtimePlan,
+      auth: {
+        ...runtimePlan.auth,
+        authProfileProviderForAuth: embeddedModel.provider,
+        providerForAuth: embeddedModel.provider,
+      },
+      observability: {
+        ...runtimePlan.observability,
+        harnessId: directHarnessFails ? "source-test-primary" : embeddedSelection.executor.id,
+      },
+    });
+    if (directHarnessFails) {
+      registerPreparedAgentHarness({
+        id: "source-test-primary",
+        label: "Primary test app",
+        deliveryDefaults: { visibleReplies: "automatic" },
+        supports: ({ provider, modelId }) =>
+          provider === "custom" && modelId === "api-primary"
+            ? { supported: true }
+            : {
+                supported: false,
+                reason: "This test app does not implement this route.",
+                ...(provider === "anthropic" && modelId === "cli-fallback"
+                  ? { fallbackRuntime: "openclaw" as const }
+                  : {}),
+              },
+        runAttempt: async () => {
+          throw new Error("primary harness failed");
+        },
+      });
+    }
     const emittedStreamingCallbacks: string[] = [];
     let forbiddenSdkAuthorityObserved = false;
     let modelVisiblePrompt = "";
@@ -267,21 +401,7 @@ describe("prepared harness source delivery", () => {
       await attemptParams.onBlockReply?.({ text: "Streaming progress" });
       return makeAttemptResult({ assistantTexts: ["Short fallback final"] });
     });
-    if (testCase.candidatePath === "embedded-failure-cli") {
-      mockedRunEmbeddedAttempt.mockRejectedValueOnce(new Error("api primary failed"));
-    }
-    useOpenAIPlatformAuthFixture();
-    let embeddedError: unknown;
-    let embeddedParams: unknown;
-    runnerState.runEmbeddedAgentMock.mockImplementationOnce(async (params: unknown) => {
-      embeddedParams = params;
-      try {
-        return await runEmbeddedAgent(params as Parameters<typeof runEmbeddedAgent>[0]);
-      } catch (error) {
-        embeddedError = error;
-        throw error;
-      }
-    });
+    runnerState.runEmbeddedAgentMock.mockImplementationOnce(runEmbeddedAgent);
     runnerState.isCliProviderMock.mockImplementation(
       (provider: unknown) => provider === "anthropic",
     );
@@ -302,6 +422,7 @@ describe("prepared harness source delivery", () => {
         }
         if (testCase.candidatePath === "cli") {
           return {
+            outcome: "completed",
             result: await runAdmittedAttempt(params, "anthropic", "cli-primary", {
               stage: "initial",
             }),
@@ -315,6 +436,7 @@ describe("prepared harness source delivery", () => {
             stage: "initial",
           }).catch(() => undefined);
           return {
+            outcome: "completed",
             result: await runAdmittedAttempt(params, "anthropic", "cli-fallback", {
               stage: "fallback",
               fallbackReason: "unknown",
@@ -325,23 +447,24 @@ describe("prepared harness source delivery", () => {
           };
         }
         return {
+          outcome: "completed",
           result: await runAdmittedAttempt(
             params,
-            "custom",
-            "plugin-fallback",
+            embeddedSelection.model.provider,
+            embeddedSelection.model.id,
             testCase.candidatePath === "cli-failure-embedded"
               ? { stage: "fallback", fallbackReason: "unknown" }
               : { stage: "initial" },
           ),
-          provider: "custom",
-          model: "plugin-fallback",
+          provider: embeddedSelection.model.provider,
+          model: embeddedSelection.model.id,
           attempts: [],
         };
       },
     );
 
-    // Dispatch sees only the preliminary harness. The actual embedded run's
-    // hook-selected route is prepared by the final harness instead.
+    // Dispatch previews registered delivery defaults before reply preparation.
+    // The accepted harness prepares its declared route after that preview.
     if (testCase.preliminaryVisibleReplies !== undefined) {
       registerAgentHarness({
         id: "preliminary-owner",
@@ -351,7 +474,9 @@ describe("prepared harness source delivery", () => {
           testCase.preparedVisibleReplies === "automatic" && modelProvider?.preparedAuth
             ? { supported: false, reason: "raw route only" }
             : { supported: true, priority: 100 },
-        runAttempt: vi.fn(async () => ({}) as never),
+        runAttempt: async () => {
+          throw new Error("The delivery preview must not execute a candidate.");
+        },
       });
     }
     if (testCase.preparedVisibleReplies === "message_tool") {
@@ -360,10 +485,10 @@ describe("prepared harness source delivery", () => {
           id: "codex",
           label: "Prepared tool owner",
           deliveryDefaults: { visibleReplies: "message_tool" },
-          supports: ({ provider, modelProvider }) =>
-            provider === "openai" && modelProvider?.preparedAuth
+          supports: ({ provider, modelId }) =>
+            provider === embeddedSelection.model.provider && modelId === embeddedSelection.model.id
               ? { supported: true, priority: 200 }
-              : { supported: false, reason: "prepared OpenAI route only" },
+              : { supported: false, reason: "This test app only implements its declared route." },
           runAttempt: vi.fn(async (attemptParams) => {
             recordModelVisiblePrompt(attemptParams);
             emittedStreamingCallbacks.push("partial");
@@ -423,13 +548,14 @@ describe("prepared harness source delivery", () => {
     sessionStoreMocks.currentEntry = {
       sessionId: "session",
       updatedAt: 0,
-      ...(testCase.preliminaryVisibleReplies === undefined
-        ? {}
-        : { agentHarnessId: "preliminary-owner" }),
       sendPolicy: "allow",
     };
     setNoAbort();
     const executeAgentTurn = await getExecuteAgentTurnForTest();
+    const { requireActivePluginRegistry } = await import("../../plugins/runtime.js");
+    runtimePluginMocks.loadAgentRuntimePluginRegistryHandle.mockReturnValue(
+      requireActivePluginRegistry(),
+    );
     const modeTransitions: string[] = [];
     const replyResolver = vi.fn(async (_ctx: MsgContext, opts?: GetReplyOptions) => {
       const runtimeOpts = opts as InternalGetReplyOptions & SourceReplyDeliveryRuntimeOptions;
@@ -442,13 +568,7 @@ describe("prepared harness source delivery", () => {
         modeTransitions.push(mode);
         outerModeCallback?.(mode);
       };
-      // These candidate facts precede the hook-selected route inside embedded execution.
-      followupRun.run.thinkingCatalog = [
-        { provider: "custom", id: "plugin-fallback", api: "messages", input: ["text"] },
-        { provider: "custom", id: "api-primary", api: "messages", input: ["text"] },
-        { provider: "anthropic", id: "cli-primary", api: "messages", input: ["text"] },
-        { provider: "anthropic", id: "cli-fallback", api: "messages", input: ["text"] },
-      ];
+      followupRun.run.thinkingCatalog = catalog;
       followupRun.run.sessionKey = undefined;
       followupRun.run.sessionFile = followupRun.run.sessionId;
       followupRun.run.sourceReplyDeliveryMode = runtimeOpts.sourceReplyDeliveryMode;
@@ -507,16 +627,7 @@ describe("prepared harness source delivery", () => {
         resolvedVerboseLevel: "off",
       });
       if (execution.kind !== "success") {
-        const failedParams = embeddedParams as {
-          sessionId?: string;
-          sessionKey?: string;
-          sessionTarget?: unknown;
-        };
-        const embeddedErrorText =
-          embeddedError instanceof Error ? embeddedError.stack : String(embeddedError);
-        throw new Error(
-          `expected settled fallback execution: ${embeddedErrorText}; ${JSON.stringify({ execution, failedParams })}`,
-        );
+        throw new Error(`expected settled fallback execution: ${JSON.stringify(execution)}`);
       }
       const payload = execution.runResult.payloads?.[0];
       if (!payload) {
@@ -540,6 +651,11 @@ describe("prepared harness source delivery", () => {
       replyOptions: { onPartialReply },
     });
     await settleReplyDispatcher({ dispatcher });
+    expect(replyResolver).toHaveBeenCalledOnce();
+    const [resolverOutcome] = replyResolver.mock.results;
+    if (resolverOutcome?.type === "return") {
+      await resolverOutcome.value;
+    }
 
     if (genuineTtsDelivery) {
       expect(retainedHost).toBeDefined();

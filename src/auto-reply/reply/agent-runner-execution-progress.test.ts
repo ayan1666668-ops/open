@@ -13,6 +13,8 @@ import {
   getExecuteAgentTurnForTest,
   createMockTypingSignaler,
   createFollowupRun,
+  testModel,
+  testAuthProfiles,
   initialFallbackAttemptOptions,
   requireRecord,
   expectRecordFields,
@@ -896,7 +898,11 @@ describe("executeAgentTurn: lifecycle progress", () => {
       meta: {},
     }));
 
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun({
+      catalog: [testModel("openai", "gpt-5.4")],
+      profiles: testAuthProfiles("openai"),
+      fallbacks: [],
+    });
     followupRun.run.executionSelection = {
       model: { provider: "openai", id: "gpt-5.4" },
       executor: { kind: "harness", id: "openclaw" },
@@ -937,7 +943,10 @@ describe("executeAgentTurn: lifecycle progress", () => {
       meta: {},
     }));
 
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun({
+      catalog: [testModel("openai", "gpt-5.4")],
+      profiles: testAuthProfiles("openai"),
+    });
     followupRun.run.executionSelection = {
       model: { provider: "openai", id: "gpt-5.4" },
       executor: { kind: "harness", id: "openclaw" },

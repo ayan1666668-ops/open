@@ -14,6 +14,8 @@ import {
   getExecuteAgentTurnForTest,
   createMockTypingSignaler,
   createFollowupRun,
+  testModel,
+  testAuthProfiles,
   initialFallbackAttemptOptions,
   fallbackAttemptOptions,
   requireRecord,
@@ -151,7 +153,10 @@ describe("executeAgentTurn: result and tool delivery", () => {
     );
 
     const executeAgentTurn = await getExecuteAgentTurnForTest();
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun({
+      catalog: [testModel("openai", "gpt-5.5")],
+      profiles: testAuthProfiles("openai"),
+    });
     followupRun.run.executionSelection = {
       model: { provider: "openai", id: "gpt-5.5" },
       executor: { kind: "harness", id: "openclaw" },
@@ -170,7 +175,11 @@ describe("executeAgentTurn: result and tool delivery", () => {
   });
 
   it("classifies structured harness plan-only terminal results as fallback-eligible", async () => {
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun({
+      catalog: [testModel("openai", "gpt-5.4"), testModel("anthropic", "claude")],
+      profiles: testAuthProfiles("openai", "anthropic"),
+      fallbacks: ["anthropic/claude"],
+    });
     followupRun.run.executionSelection = {
       model: { provider: "openai", id: "gpt-5.4" },
       executor: { kind: "harness", id: "openclaw" },
@@ -258,13 +267,29 @@ describe("executeAgentTurn: result and tool delivery", () => {
     });
 
     const executeAgentTurn = await getExecuteAgentTurnForTest();
-    const result = await executeAgentTurn(createMinimalRunAgentTurnParams());
+    const result = await executeAgentTurn(
+      createMinimalRunAgentTurnParams({
+        followupRun: createFollowupRun({
+          catalog: [testModel("openai", "gpt-5.4")],
+          profiles: testAuthProfiles("openai"),
+          fallbacks: [],
+          selection: {
+            model: { provider: "openai", id: "gpt-5.4" },
+            executor: { kind: "harness", id: "openclaw" },
+          },
+        }),
+      }),
+    );
 
     expect(result.kind).toBe("success");
   });
 
   it("does not classify empty final payloads after block replies were sent", async () => {
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun({
+      catalog: [testModel("openai", "gpt-5.4"), testModel("anthropic", "claude")],
+      profiles: testAuthProfiles("openai", "anthropic"),
+      fallbacks: [],
+    });
     followupRun.run.executionSelection = {
       model: { provider: "openai", id: "gpt-5.4" },
       executor: { kind: "harness", id: "openclaw" },
@@ -316,7 +341,11 @@ describe("executeAgentTurn: result and tool delivery", () => {
   });
 
   it("does not classify empty final payloads while block replies are buffered", async () => {
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun({
+      catalog: [testModel("openai", "gpt-5.4"), testModel("anthropic", "claude")],
+      profiles: testAuthProfiles("openai", "anthropic"),
+      fallbacks: [],
+    });
     followupRun.run.executionSelection = {
       model: { provider: "openai", id: "gpt-5.4" },
       executor: { kind: "harness", id: "openclaw" },
@@ -400,7 +429,19 @@ describe("executeAgentTurn: result and tool delivery", () => {
     });
 
     const executeAgentTurn = await getExecuteAgentTurnForTest();
-    const result = await executeAgentTurn(createMinimalRunAgentTurnParams());
+    const result = await executeAgentTurn(
+      createMinimalRunAgentTurnParams({
+        followupRun: createFollowupRun({
+          catalog: [testModel("openai", "gpt-5.4")],
+          profiles: testAuthProfiles("openai"),
+          fallbacks: [],
+          selection: {
+            model: { provider: "openai", id: "gpt-5.4" },
+            executor: { kind: "harness", id: "openclaw" },
+          },
+        }),
+      }),
+    );
 
     expect(result.kind).toBe("final");
     if (result.kind === "final") {
@@ -409,7 +450,11 @@ describe("executeAgentTurn: result and tool delivery", () => {
   });
 
   it("keeps fallback candidate selection turn-local during result classification", async () => {
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun({
+      catalog: [testModel("anthropic", "claude"), testModel("openai", "gpt-5.4")],
+      profiles: testAuthProfiles("anthropic", "openai"),
+      fallbacks: ["openai/gpt-5.4"],
+    });
     followupRun.run.executionSelection = {
       model: { provider: "anthropic", id: "claude" },
       executor: { kind: "harness", id: "openclaw" },
@@ -432,15 +477,15 @@ describe("executeAgentTurn: result and tool delivery", () => {
       .mockResolvedValueOnce({ payloads: [{ text: "fallback ok" }], meta: {} });
     state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => {
       const failedResult = await params.run(
-        "openai",
-        "gpt-5.4",
+        "anthropic",
+        "claude",
         initialFallbackAttemptOptions(params),
       );
       expect(sessionEntry.executionSelection).toEqual(acceptedSelection);
       const classification = await params.classifyResult?.({
         result: failedResult as { payloads?: [] },
-        provider: "openai",
-        model: "gpt-5.4",
+        provider: "anthropic",
+        model: "claude",
         attempt: 1,
         total: 2,
       });
@@ -449,9 +494,9 @@ describe("executeAgentTurn: result and tool delivery", () => {
       });
       return {
         outcome: "completed",
-        result: await params.run("anthropic", "claude", fallbackAttemptOptions(params, "format")),
-        provider: "anthropic",
-        model: "claude",
+        result: await params.run("openai", "gpt-5.4", fallbackAttemptOptions(params, "format")),
+        provider: "openai",
+        model: "gpt-5.4",
         attempts: [],
       };
     });

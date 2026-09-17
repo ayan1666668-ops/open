@@ -3,11 +3,12 @@ import { describe, expect, it, onTestFinished } from "vitest";
 import { saveAuthProfileStore } from "../../agents/auth-profiles/store-runtime.js";
 import type { AuthProfileCredential } from "../../agents/auth-profiles/types.js";
 import { testing as cliBackendsTesting } from "../../agents/cli-backends.test-support.js";
-import { GENERIC_EXTERNAL_RUN_FAILURE_TEXT } from "../../agents/failover/user-copy.js";
 import { closeOpenClawAgentDatabaseByPath } from "../../state/openclaw-agent-db.js";
 import {
   configureTestCliModel,
   createFollowupRun,
+  configureTestExecution,
+  testModel,
   createMinimalRunAgentTurnParams,
   expectMockCallArgFields,
   fallbackAttemptOptions,
@@ -15,8 +16,16 @@ import {
   setupAgentRunnerExecutionTestState,
   type FallbackRunnerParams,
 } from "./agent-runner-execution.test-support.js";
+import { createAgentTurnPresentation } from "./agent-runner-presentation.js";
+import { createAgentTurnTimingTracker } from "./agent-runner-turn-timing.js";
+import { createReplyMediaContext } from "./reply-media-paths.runtime.js";
 
 const state = await setupAgentRunnerExecutionTestState();
+const { runCliFallbackCandidate } = await import("./agent-runner-cli-candidate.js");
+const { prepareSystemAgentRunAdmission } = await import("../../agents/admitted-run-context.js");
+const { createDeferredEmbeddedRunLifecycleManager } =
+  await import("../../agents/embedded-agent-runner/run/deferred-lifecycle-owner.js");
+const { captureAgentRunLifecycleGeneration } = await import("../../infra/agent-events.js");
 const managedProfile = "claude-cli:managed";
 const canonicalProfile = "anthropic:managed";
 const primaryProfile = "openai:primary";
@@ -157,6 +166,13 @@ describe("executeAgentTurn: CLI credential selection", () => {
     if (testCase.primary === testCase.provider || testCase.primary === "anthropic") {
       followupRun.run.executionSelection = cliSelection;
     }
+    configureTestExecution(followupRun, {
+      catalog: [testModel(testCase.primary, model), testModel(testCase.provider, model)],
+      profiles,
+      runtimeAuthModes: {
+        [testCase.backend]: testCase.backend === "google-gemini-cli" ? "api-key" : "token",
+      },
+    });
     state.isCliProviderMock.mockImplementation((provider) => provider === testCase.backend);
     state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => ({
       outcome: "completed",
@@ -171,18 +187,78 @@ describe("executeAgentTurn: CLI credential selection", () => {
     }));
     state.runCliAgentMock.mockResolvedValueOnce({ payloads: [{ text: "done" }], meta: {} });
     const executeAgentTurn = await getExecuteAgentTurnForTest();
-    const result = executeAgentTurn(createMinimalRunAgentTurnParams({ followupRun }));
-    if ("error" in testCase) {
-      expect(await result).toMatchObject({
-        kind: "final",
-        payload: { isError: true, text: GENERIC_EXTERNAL_RUN_FAILURE_TEXT },
+    const turn = createMinimalRunAgentTurnParams({ followupRun });
+    if (testCase.primary !== testCase.provider && testCase.primary !== "anthropic") {
+      // These account protections apply after selection, regardless of how the CLI was chosen.
+      const runId = "cli-account-dispatch";
+      const admission = prepareSystemAgentRunAdmission(
+        followupRun.run.config,
+        runId,
+        "main",
+        "cli-account-fixture",
+      );
+      const deferredLifecycle = createDeferredEmbeddedRunLifecycleManager({
+        runId,
+        agentId: "main",
+        sessionId: followupRun.run.sessionId,
+        sessionKey: followupRun.run.sessionKey,
+        sessionFile: followupRun.run.sessionFile,
       });
-      const { defaultRuntime } = await import("../../runtime.js");
-      expect(defaultRuntime.error).toHaveBeenCalledWith(expect.stringContaining(testCase.error));
-      expect(state.runCliAgentMock).not.toHaveBeenCalled();
-      return;
+      try {
+        const dispatch = runCliFallbackCandidate({
+          preparedRunAdmission: admission,
+          turn,
+          candidateRun: { ...followupRun.run, executionSelection: cliSelection },
+          runtimeConfig: followupRun.run.config,
+          candidateFastMode: {},
+          runId,
+          runLane: "main",
+          isFallbackRetry: true,
+          suppressQueuedUserPersistenceForCandidate: false,
+          userTurnTranscriptRecorder: undefined,
+          onContextEngineTurnCandidate: undefined,
+          assistantErrorTranscript: undefined,
+          authProfileFailurePolicy: undefined,
+          notifyUserMessagePersisted: () => {},
+          fastModeStartedAtMs: Date.now(),
+          fastModeAutoProgressState: { offAnnounced: false, resetAnnounced: false },
+          bootstrapContextRunKind: "default",
+          bootstrapPromptWarningSignaturesSeen: [],
+          currentTurnImages: {},
+          signalExecutionPhaseForTyping: () => {},
+          notifyAgentRunStart: () => {},
+          preserveProgressCallbackStartOrder: false,
+          presentation: createAgentTurnPresentation({
+            turn,
+            replyMediaContext: createReplyMediaContext({
+              cfg: followupRun.run.config,
+              agentId: "main",
+              workspaceDir: followupRun.run.workspaceDir,
+            }),
+            directlySentBlockKeys: new Set(),
+            directBlockDeliveries: [],
+            heartbeatState: { didLogStrip: false },
+          }),
+          timing: createAgentTurnTimingTracker({}),
+          onLifecycleBackstop: () => {},
+          deferredLifecycle,
+          cliExecutionProvider: testCase.backend,
+          classifyResult: () => undefined,
+          lifecycleGeneration: captureAgentRunLifecycleGeneration(runId),
+        });
+        if ("error" in testCase) {
+          await expect(dispatch).rejects.toThrow(testCase.error);
+          expect(state.runCliAgentMock).not.toHaveBeenCalled();
+          return;
+        }
+        expect(await dispatch).toMatchObject({ result: { payloads: [{ text: "done" }] } });
+      } finally {
+        await deferredLifecycle.complete();
+        admission.close();
+      }
+    } else {
+      expect(await executeAgentTurn(turn)).toMatchObject({ kind: "success" });
     }
-    expect(await result).toMatchObject({ kind: "success" });
     expect(state.runCliAgentMock).toHaveBeenCalledOnce();
     expectMockCallArgFields(state.runCliAgentMock, 0, "CLI credential handoff", {
       provider: testCase.backend,

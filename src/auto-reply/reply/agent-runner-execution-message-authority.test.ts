@@ -11,6 +11,10 @@ import {
 } from "../../test-utils/channel-plugins.js";
 import {
   createFollowupRun,
+  testModel,
+  testAuthProfiles,
+  configureTestExecution,
+  configureTestHarness,
   configureTestCliModel,
   createMinimalRunAgentTurnParams,
   fallbackAttemptOptions,
@@ -61,7 +65,12 @@ beforeEach(() => {
 afterEach(() => externalAuthTesting.resetResolveExternalAuthProfilesForTest());
 
 function channelTurn() {
-  const followupRun = createFollowupRun();
+  const followupRun = createFollowupRun({
+    catalog: [testModel("claude-cli", "claude-sonnet-4-6")],
+    profiles: testAuthProfiles("claude-cli"),
+    fallbacks: [],
+    runtimeAuthModes: { "claude-cli": "token" },
+  });
   Object.assign(followupRun.run, {
     sessionKey,
     executionSelection: configureTestCliModel(followupRun, "claude-cli", "claude-sonnet-4-6"),
@@ -186,7 +195,24 @@ describe("channel reply message authority", () => {
     });
 
     const execute = await getExecuteAgentTurnForTest();
-    expect((await execute(channelTurn())).kind).toBe("success");
+    const turn = channelTurn();
+    configureTestExecution(turn.followupRun, {
+      catalog: [testModel("anthropic", "claude"), testModel("claude-cli", "claude-sonnet-4-6")],
+      profiles: testAuthProfiles("anthropic", "claude-cli"),
+      fallbacks: ["claude-cli/claude-sonnet-4-6"],
+      selection: {
+        model: { provider: "anthropic", id: "claude" },
+        executor: { kind: "harness", id: "openclaw" },
+      },
+      runtimeAuthModes: { "claude-cli": "token" },
+    });
+    configureTestHarness(
+      turn.followupRun,
+      "test-primary-app",
+      [{ provider: "anthropic", id: "claude" }],
+      [{ provider: "claude-cli", id: "claude-sonnet-4-6" }],
+    );
+    expect((await execute(turn)).kind).toBe("success");
     expect(embeddedToken).toBeDefined();
     expect(cliToken).toBeDefined();
     expect(resolveCapability(embeddedToken)).toBeUndefined();

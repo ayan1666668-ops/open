@@ -28,6 +28,8 @@ import {
   getExecuteAgentTurnForTest,
   createMockTypingSignaler,
   createFollowupRun,
+  testModel,
+  testAuthProfiles,
   configureTestCliModel,
   fallbackAttemptOptions,
   initialFallbackAttemptOptions,
@@ -253,7 +255,18 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
   });
 
   it("passes the operator-reviewed proposal revision to every embedded candidate", async () => {
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun({
+      catalog: [
+        testModel("anthropic", "primary"),
+        testModel("openai", "fallback", { api: "openai-responses" }),
+      ],
+      profiles: testAuthProfiles("anthropic", "openai"),
+      fallbacks: ["openai/fallback"],
+      selection: {
+        model: { provider: "anthropic", id: "primary" },
+        executor: { kind: "harness", id: "openclaw" },
+      },
+    });
     followupRun.run.skillWorkshopProposalRevision = {
       agentId: "main",
       workspaceDir: "/tmp/workspace",
@@ -278,7 +291,8 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
     });
 
     const executeAgentTurn = await getExecuteAgentTurnForTest();
-    await executeAgentTurn(createMinimalRunAgentTurnParams({ followupRun }));
+    const result = await executeAgentTurn(createMinimalRunAgentTurnParams({ followupRun }));
+    expect(result, JSON.stringify(result)).toMatchObject({ kind: "success" });
 
     expect(
       state.runEmbeddedAgentMock.mock.calls.map(
@@ -334,7 +348,14 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
   it.each([undefined, "default", "ultra"] as const)(
     "revalidates original thinking for main-chat fallback with turn request=%s",
     async (override) => {
-      const followupRun = createFollowupRun();
+      const followupRun = createFollowupRun({
+        catalog: [
+          testModel("openai", "gpt-5.6-sol", { reasoning: true }),
+          testModel("demo", "basic", { reasoning: true }),
+        ],
+        profiles: testAuthProfiles("openai", "demo"),
+        fallbacks: ["demo/basic"],
+      });
       followupRun.run.executionSelection = {
         model: { provider: "openai", id: "gpt-5.6-sol" },
         executor: { kind: "harness", id: "openclaw" },
@@ -390,7 +411,14 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
   );
 
   it("preserves thinking for runtime-discovered Ollama fallback models", async () => {
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun({
+      catalog: [
+        testModel("openai", "gpt-5.6-sol"),
+        testModel("ollama", "qwen3.5:4b", { reasoning: true }),
+      ],
+      profiles: testAuthProfiles("openai", "ollama"),
+      fallbacks: ["ollama/qwen3.5:4b"],
+    });
     followupRun.run.executionSelection = {
       model: { provider: "openai", id: "gpt-5.6-sol" },
       executor: { kind: "harness", id: "openclaw" },
@@ -401,7 +429,7 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
       const result = await params.run(
         "ollama",
         "qwen3.5:4b",
-        initialFallbackAttemptOptions(params),
+        fallbackAttemptOptions(params, "unknown"),
       );
       return {
         outcome: "completed",
@@ -423,7 +451,11 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
 
   it("freezes abort ownership only after model fallback settles", async () => {
     const { replyOperation, freezeAbortMock } = createMockReplyOperation();
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun({
+      catalog: [testModel("anthropic", "claude"), testModel("openai", "gpt-5.5")],
+      profiles: testAuthProfiles("anthropic", "openai"),
+      fallbacks: ["openai/gpt-5.5"],
+    });
     followupRun.media = [{ path: "/tmp/retry.png", contentType: "image/png" }];
     state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => {
       expect(freezeAbortMock).not.toHaveBeenCalled();
@@ -706,7 +738,33 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
         },
       );
 
-      const result = await execution.executeAgentTurn(createMinimalRunAgentTurnParams());
+      const followupRun = createFollowupRun({
+        catalog: [
+          testModel("anthropic", "primary"),
+          testModel("anthropic", "fallback-1"),
+          testModel("anthropic", "fallback-2"),
+          testModel("anthropic", "fallback-3"),
+          testModel("anthropic", "fallback-4"),
+          testModel("anthropic", "fallback-5"),
+          testModel("anthropic", "fallback-6"),
+        ],
+        profiles: testAuthProfiles("anthropic"),
+        fallbacks: [
+          "anthropic/fallback-1",
+          "anthropic/fallback-2",
+          "anthropic/fallback-3",
+          "anthropic/fallback-4",
+          "anthropic/fallback-5",
+          "anthropic/fallback-6",
+        ],
+        selection: {
+          model: { provider: "anthropic", id: "primary" },
+          executor: { kind: "harness", id: "openclaw" },
+        },
+      });
+      const result = await execution.executeAgentTurn(
+        createMinimalRunAgentTurnParams({ followupRun }),
+      );
 
       expect(result.outcome).toMatchObject({ kind: "settled", autoCompactionCount: 8 });
       expect(result.outcome.compaction).toEqual({
@@ -814,7 +872,11 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
       });
       return { payloads: [{ text: "final" }], meta: {} };
     });
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun({
+      catalog: [testModel("codex-cli", "gpt-5.4")],
+      profiles: testAuthProfiles("codex-cli"),
+      runtimeAuthModes: { "codex-cli": "token" },
+    });
     followupRun.run.executionSelection = configureTestCliModel(followupRun, "codex-cli", "gpt-5.4");
     followupRun.run.clientCaps = ["tool-events", "inline-widgets"];
     followupRun.media = [{ path: "/tmp/cli.png", contentType: "image/png" }];
@@ -851,7 +913,11 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
       payloads: [{ text: "final" }],
       meta: {},
     });
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun({
+      catalog: [testModel("claude-cli", "sonnet-4.6")],
+      profiles: testAuthProfiles("claude-cli"),
+      runtimeAuthModes: { "claude-cli": "token" },
+    });
     followupRun.run.executionSelection = configureTestCliModel(
       followupRun,
       "claude-cli",
@@ -944,7 +1010,11 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
       payloads: [{ text: "final" }],
       meta: {},
     });
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun({
+      catalog: [testModel("claude-cli", "sonnet-4.6")],
+      profiles: testAuthProfiles("claude-cli"),
+      runtimeAuthModes: { "claude-cli": "token" },
+    });
     followupRun.run.executionSelection = configureTestCliModel(
       followupRun,
       "claude-cli",

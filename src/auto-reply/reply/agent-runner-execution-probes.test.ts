@@ -7,6 +7,9 @@ import {
   GENERIC_RUN_FAILURE_TEXT,
   getExecuteAgentTurnForTest,
   createFollowupRun,
+  configureTestExecution,
+  testModel,
+  testAuthProfiles,
   configureTestCliModel,
   initialFallbackAttemptOptions,
   fallbackAttemptOptions,
@@ -29,7 +32,17 @@ describe("executeAgentTurn: fallback terminal ownership", () => {
       fallbackAuthProfileId: "google:fallback",
       fallbackAuthProfileIdSource: "auto" as const,
     };
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun({
+      catalog: [testModel(probe.provider, probe.model)],
+      profiles: {
+        ...testAuthProfiles(probe.provider),
+        [probe.fallbackAuthProfileId]: {
+          type: "api_key",
+          provider: probe.fallbackProvider,
+          key: "synthetic-fallback",
+        },
+      },
+    });
     followupRun.run.executionSelection = {
       model: { provider: probe.provider, id: probe.model },
       executor: { kind: "harness", id: "openclaw" },
@@ -301,9 +314,19 @@ describe("executeAgentTurn: fallback terminal ownership", () => {
     if (attemptedModel !== "gpt-5.4") {
       state.runCliAgentMock.mockRejectedValueOnce(lastFailure);
     }
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun({
+      catalog: [testModel("codex-cli", "gpt-5.4")],
+      profiles: testAuthProfiles("codex-cli"),
+      runtimeAuthModes: { "codex-cli": "token" },
+    });
     followupRun.run.executionSelection = configureTestCliModel(followupRun, "codex-cli", "gpt-5.4");
     configureTestCliModel(followupRun, "codex-cli", attemptedModel);
+    configureTestExecution(followupRun, {
+      catalog: [testModel("codex-cli", "gpt-5.4"), testModel("codex-cli", attemptedModel)],
+      profiles: testAuthProfiles("codex-cli"),
+      runtimeAuthModes: { "codex-cli": "token" },
+      fallbacks: attemptedModel === "gpt-5.4" ? [] : ["codex-cli/" + attemptedModel],
+    });
     const { replyOperation, failMock, retainFailureUntilCompleteMock } = createMockReplyOperation();
     replyOperation.bindToolAuthoritySnapshot(prepareReplyToolAuthority(followupRun));
     const emitAgentEvent = vi.mocked((await import("../../infra/agent-events.js")).emitAgentEvent);
@@ -363,7 +386,11 @@ describe("executeAgentTurn: fallback terminal ownership", () => {
         },
       ),
     );
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun({
+      catalog: [testModel("codex-cli", "gpt-5.4")],
+      profiles: testAuthProfiles("codex-cli"),
+      runtimeAuthModes: { "codex-cli": "token" },
+    });
     followupRun.run.executionSelection = configureTestCliModel(followupRun, "codex-cli", "gpt-5.4");
     const emitAgentEvent = vi.mocked((await import("../../infra/agent-events.js")).emitAgentEvent);
 

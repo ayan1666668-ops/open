@@ -6,6 +6,8 @@ import type { TemplateContext } from "../templating.js";
 import type { GetReplyOptions } from "../types.js";
 import {
   createFollowupRun,
+  testModel,
+  testAuthProfiles,
   configureTestCliModel,
   initialFallbackAttemptOptions,
   createMockTypingSignaler,
@@ -99,7 +101,11 @@ function useScriptedClaudeCliBackend() {
 }
 
 function createClaudeCliFollowupRun() {
-  const followupRun = createFollowupRun();
+  const followupRun = createFollowupRun({
+    catalog: [testModel("claude-cli", "claude-opus-4-6")],
+    profiles: testAuthProfiles("claude-cli"),
+    runtimeAuthModes: { "claude-cli": "token" },
+  });
   followupRun.run.agentId = "agent";
   followupRun.run.executionSelection = configureTestCliModel(
     followupRun,

@@ -9,6 +9,10 @@ import {
   createMockTypingSignaler,
   configureTestCliModel,
   createFollowupRun,
+  configureTestNativeHarness,
+  fallbackAttemptOptions,
+  testModel,
+  testAuthProfiles,
   initialFallbackAttemptOptions,
   requireRecord,
   requireMockCall,
@@ -16,6 +20,12 @@ import {
   createMinimalRunAgentTurnParams,
 } from "./agent-runner-execution.test-support.js";
 import type { FallbackRunnerParams } from "./agent-runner-execution.test-support.js";
+
+const explicitCliExecutionFixture = {
+  catalog: [testModel("codex-cli", "gpt-5.4")],
+  profiles: testAuthProfiles("codex-cli"),
+  runtimeAuthModes: { "codex-cli": "token" },
+} satisfies Parameters<typeof createFollowupRun>[0];
 
 const state = await setupAgentRunnerExecutionTestState();
 
@@ -39,7 +49,7 @@ describe("executeAgentTurn: runtime selection", () => {
       });
 
       const executeAgentTurn = await getExecuteAgentTurnForTest();
-      const followupRun = createFollowupRun();
+      const followupRun = createFollowupRun(explicitCliExecutionFixture);
       followupRun.run.agentId = "main";
       followupRun.run.executionSelection = configureTestCliModel(
         followupRun,
@@ -82,7 +92,7 @@ describe("executeAgentTurn: runtime selection", () => {
     });
 
     const executeAgentTurn = await getExecuteAgentTurnForTest();
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun(explicitCliExecutionFixture);
     followupRun.run.agentId = "main";
     followupRun.run.executionSelection = configureTestCliModel(followupRun, "codex-cli", "gpt-5.4");
     followupRun.run.sessionKey = "agent:main:opaque:binding";
@@ -121,7 +131,7 @@ describe("executeAgentTurn: runtime selection", () => {
     });
 
     const executeAgentTurn = await getExecuteAgentTurnForTest();
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun(explicitCliExecutionFixture);
     followupRun.run.executionSelection = configureTestCliModel(followupRun, "codex-cli", "gpt-5.4");
     followupRun.run.messageProvider = "stale-provider";
 
@@ -162,7 +172,7 @@ describe("executeAgentTurn: runtime selection", () => {
     state.isCliProviderMock.mockImplementation((provider: unknown) => provider === "claude-cli");
     state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => ({
       outcome: "completed",
-      result: await params.run("openai", "gpt-5.4", initialFallbackAttemptOptions(params)),
+      result: await params.run("openai", "gpt-5.4", fallbackAttemptOptions(params, "unknown")),
       provider: "openai",
       model: "gpt-5.4",
       attempts: [],
@@ -173,7 +183,11 @@ describe("executeAgentTurn: runtime selection", () => {
     });
 
     const executeAgentTurn = await getExecuteAgentTurnForTest();
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun({
+      catalog: [testModel("anthropic", "claude-opus-4-7"), testModel("openai", "gpt-5.4")],
+      profiles: testAuthProfiles("anthropic", "openai"),
+      fallbacks: ["openai/gpt-5.4"],
+    });
     followupRun.run.executionSelection = {
       model: { provider: "anthropic", id: "claude-opus-4-7" },
       executor: { kind: "harness", id: "openclaw" },
@@ -230,7 +244,11 @@ describe("executeAgentTurn: runtime selection", () => {
       });
 
       const executeAgentTurn = await getExecuteAgentTurnForTest();
-      const followupRun = createFollowupRun();
+      await configureTestNativeHarness();
+      const followupRun = createFollowupRun({
+        catalog: [testModel("openai", "gpt-5.4")],
+        profiles: testAuthProfiles("openai"),
+      });
       followupRun.run.executionSelection = {
         model: { provider: "openai", id: "gpt-5.4" },
         executor: { kind: "harness", id: "codex" },
@@ -279,7 +297,12 @@ describe("executeAgentTurn: runtime selection", () => {
     });
 
     const executeAgentTurn = await getExecuteAgentTurnForTest();
-    const followupRun = createFollowupRun();
+    await configureTestNativeHarness();
+    const followupRun = createFollowupRun({
+      catalog: [testModel("openai", "gpt-5.5")],
+      profiles: testAuthProfiles("openai"),
+      fallbacks: [],
+    });
     followupRun.run.agentId = "worker";
     followupRun.run.sessionKey = "agent:worker:main";
     followupRun.run.executionSelection = {
@@ -316,27 +339,31 @@ describe("executeAgentTurn: runtime selection", () => {
   });
 
   it("keeps the accepted executor during heartbeat despite another policy preference", async () => {
+    const [
+      { sessionBindingIdentity },
+      { readSessionRuntimeOwnership },
+      { commitSessionExecutionSelection },
+    ] = await Promise.all([
+      import("../../../extensions/codex/src/app-server/session-binding.test-helpers.js"),
+      import("../../agents/harness/session-runtime-ownership.js"),
+      import("../../model-picker/apply-session-model-selection.js"),
+    ]);
+    const { supervisedTestBinding } =
+      await import("../../../extensions/codex/src/commands.test-support.js");
+    const bindingStore = await configureTestNativeHarness();
     state.isCliProviderMock.mockImplementation((provider: unknown) => provider === "claude-cli");
-    state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => ({
-      outcome: "completed",
-      result: await params.run(
-        "anthropic",
-        "claude-opus-4-6",
-        initialFallbackAttemptOptions(params),
-      ),
-      provider: "anthropic",
-      model: "claude-opus-4-6",
-      attempts: [],
-    }));
     state.runEmbeddedAgentMock.mockResolvedValueOnce({
       payloads: [{ text: "heartbeat" }],
       meta: {},
     });
 
     const executeAgentTurn = await getExecuteAgentTurnForTest();
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun({
+      catalog: [testModel("anthropic", "claude-opus-4-6")],
+      profiles: {},
+    });
     followupRun.run.executionSelection = {
-      model: { provider: "anthropic", id: "claude-opus-4-6" },
+      model: "native-managed",
       executor: { kind: "harness", id: "codex" },
     };
     followupRun.run.config = {
@@ -348,41 +375,68 @@ describe("executeAgentTurn: runtime selection", () => {
         },
       },
     };
+    const identity = sessionBindingIdentity({
+      agentId: followupRun.run.agentId,
+      sessionId: followupRun.run.sessionId,
+      sessionKey: followupRun.run.sessionKey,
+    });
+    expect(
+      await bindingStore.mutate(identity, {
+        kind: "set",
+        if: { kind: "absent" },
+        binding: {
+          ...supervisedTestBinding("native-heartbeat-thread"),
+          cwd: followupRun.run.workspaceDir,
+          modelProvider: "anthropic",
+          model: "claude-opus-4-6",
+        },
+      }),
+    ).toBe(true);
+    const entry: SessionEntry = {
+      sessionId: followupRun.run.sessionId,
+      updatedAt: Date.now(),
+      agentHarnessId: "codex",
+      modelSelectionLocked: true,
+    };
+    commitSessionExecutionSelection(entry, followupRun.run.executionSelection);
 
     const result = await executeAgentTurn({
       ...createMinimalRunAgentTurnParams({ followupRun }),
       isHeartbeat: true,
-      getActiveSessionEntry: () =>
-        ({
-          sessionId: "catalog-adopted-session",
-          updatedAt: Date.now(),
-          executionSelection: {
-            state: "accepted",
-            selection: followupRun.run.executionSelection,
-            fallbackPermission: "configured",
-          },
-          agentHarnessId: "codex",
-          modelSelectionLocked: true,
-          pluginExtensions: {
-            codex: {
-              supervision: {
-                sourceThreadId: "019f-codex-thread",
-                modelLocked: true,
-              },
-            },
-          },
-        }) as SessionEntry,
+      getActiveSessionEntry: () => entry,
     });
 
     expect(result, JSON.stringify(result)).toMatchObject({ kind: "success" });
     expect(state.runCliAgentMock).not.toHaveBeenCalled();
     expectMockCallArgFields(state.runEmbeddedAgentMock, 0, "embedded run params", {
-      provider: "anthropic",
-      model: "claude-opus-4-6",
+      provider: undefined,
+      model: undefined,
       trigger: "heartbeat",
       lane: "cron-nested",
       agentHarnessId: "codex",
       agentHarnessRuntimeOverride: "codex",
+    });
+    expect(entry).toMatchObject({
+      modelSelectionLocked: true,
+      executionSelection: {
+        state: "accepted",
+        selection: {
+          model: "native-managed",
+          executor: { kind: "harness", id: "codex" },
+        },
+      },
+    });
+    expect(
+      readSessionRuntimeOwnership({
+        config: followupRun.run.config,
+        agentId: followupRun.run.agentId,
+        sessionKey: followupRun.run.sessionKey,
+        sessionEntry: entry,
+      }),
+    ).toEqual({
+      model: "native",
+      auth: "native",
+      modelRef: { provider: "anthropic", model: "claude-opus-4-6" },
     });
   });
 
@@ -401,7 +455,11 @@ describe("executeAgentTurn: runtime selection", () => {
     });
 
     const executeAgentTurn = await getExecuteAgentTurnForTest();
-    const followupRun = createFollowupRun();
+    await configureTestNativeHarness();
+    const followupRun = createFollowupRun({
+      catalog: [testModel("openai", "gpt-5.4")],
+      profiles: testAuthProfiles("openai"),
+    });
     followupRun.run.executionSelection = {
       model: { provider: "openai", id: "gpt-5.4" },
       executor: { kind: "harness", id: "codex" },
@@ -458,7 +516,11 @@ describe("executeAgentTurn: runtime selection", () => {
       attempts: [],
     }));
     state.runCliAgentMock.mockResolvedValueOnce({ payloads: [{ text: "continued" }], meta: {} });
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun({
+      catalog: [testModel("anthropic", "claude-sonnet-4-6")],
+      profiles: testAuthProfiles("anthropic"),
+      runtimeAuthModes: { "claude-cli": "token" },
+    });
     followupRun.run.executionSelection = configureTestCliModel(
       followupRun,
       "anthropic",
@@ -512,7 +574,11 @@ describe("executeAgentTurn: runtime selection", () => {
     });
 
     const executeAgentTurn = await getExecuteAgentTurnForTest();
-    const followupRun = createFollowupRun();
+    await configureTestNativeHarness();
+    const followupRun = createFollowupRun({
+      catalog: [testModel("openai", "gpt-5.4")],
+      profiles: testAuthProfiles("openai"),
+    });
     followupRun.run.executionSelection = {
       model: { provider: "openai", id: "gpt-5.4" },
       executor: { kind: "harness", id: "codex" },

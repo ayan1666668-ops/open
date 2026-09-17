@@ -16,6 +16,8 @@ import {
   GENERIC_RUN_FAILURE_TEXT,
   getExecuteAgentTurnForTest,
   createFollowupRun,
+  testModel,
+  testAuthProfiles,
   createLiveSwitchSession,
   configureTestCliModel,
   initialFallbackAttemptOptions,
@@ -214,7 +216,11 @@ describe("executeAgentTurn: provider failures", () => {
   )(
     "surfaces $failure failure after an accepted partial in $surface.label chats",
     async ({ surface: testCase, failure }) => {
-      const followupRun = createFollowupRun();
+      const followupRun = createFollowupRun({
+        catalog: [testModel("anthropic", "claude"), testModel("openai", "gpt-5.4")],
+        profiles: testAuthProfiles("anthropic", "openai"),
+        fallbacks: [],
+      });
       const session = createLiveSwitchSession(followupRun);
       let partialDelivered = false;
       state.runEmbeddedAgentMock.mockImplementation(async (params: EmbeddedAgentParams) => {
@@ -620,7 +626,11 @@ describe("executeAgentTurn: provider failures", () => {
       attempts: [],
     }));
     state.runCliAgentMock.mockRejectedValue(timeoutError);
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun({
+      catalog: [testModel("claude-cli", "claude-opus-4-8")],
+      profiles: testAuthProfiles("claude-cli"),
+      runtimeAuthModes: { "claude-cli": "token" },
+    });
     followupRun.run.executionSelection = configureTestCliModel(
       followupRun,
       "claude-cli",

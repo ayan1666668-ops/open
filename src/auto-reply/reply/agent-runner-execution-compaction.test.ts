@@ -4,9 +4,13 @@ import { resetLogger, setLoggerOverride } from "../../logging/logger.js";
 import { loggingState } from "../../logging/state.js";
 import {
   configureTestCliModel,
+  configureTestHarness,
   setupAgentRunnerExecutionTestState,
   getExecuteAgentTurnForTest,
   createFollowupRun,
+  fallbackAttemptOptions,
+  testModel,
+  testAuthProfiles,
   initialFallbackAttemptOptions,
   expectBlockReplyCall,
   createMinimalRunAgentTurnParams,
@@ -93,7 +97,11 @@ describe("executeAgentTurn: compaction events", () => {
       state.runWithModelFallbackMock.mockImplementationOnce(
         async (params: FallbackRunnerParams) => ({
           outcome: "completed",
-          result: await params.run("openai", "gpt-5.5", initialFallbackAttemptOptions(params)),
+          result: await params.run(
+            "openai",
+            "gpt-5.5",
+            fallbackAttemptOptions(params, "rate_limit"),
+          ),
           provider: "openai",
           model: "gpt-5.5",
           attempts: [{ provider: "anthropic", model: "claude", error: "rate limit" }],
@@ -124,7 +132,14 @@ describe("executeAgentTurn: compaction events", () => {
         return { payloads: [{ text: "final" }], meta: {} };
       });
 
-      const result = await executeTestTurn({ opts: { onBlockReply } });
+      const result = await executeTestTurn({
+        opts: { onBlockReply },
+        followupRun: createFollowupRun({
+          catalog: [testModel("anthropic", "claude"), testModel("openai", "gpt-5.5")],
+          profiles: testAuthProfiles("anthropic", "openai"),
+          fallbacks: ["openai/gpt-5.5"],
+        }),
+      });
 
       expect(result.kind).toBe("success");
       expect(onBlockReply).not.toHaveBeenCalled();
@@ -160,7 +175,7 @@ describe("executeAgentTurn: compaction events", () => {
         result: await params.run(
           "anthropic",
           "claude-sonnet-4-6",
-          initialFallbackAttemptOptions(params),
+          fallbackAttemptOptions(params, "timeout"),
         ),
         provider: "anthropic",
         model: "claude-sonnet-4-6",
@@ -181,7 +196,17 @@ describe("executeAgentTurn: compaction events", () => {
       };
     });
 
-    const result = await executeTestTurn();
+    const result = await executeTestTurn({
+      followupRun: createFollowupRun({
+        catalog: [testModel("openai", "gpt-5.5"), testModel("anthropic", "claude-sonnet-4-6")],
+        profiles: testAuthProfiles("openai", "anthropic"),
+        fallbacks: ["anthropic/claude-sonnet-4-6"],
+        selection: {
+          model: { provider: "openai", id: "gpt-5.5" },
+          executor: { kind: "harness", id: "openclaw" },
+        },
+      }),
+    });
 
     expect(result).toMatchObject({
       kind: "success",
@@ -191,8 +216,23 @@ describe("executeAgentTurn: compaction events", () => {
   });
 
   it("carries committed compaction into a later CLI fallback failure", async () => {
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun({
+      catalog: [testModel("anthropic", "claude"), testModel("claude-cli", "claude-sonnet-4-6")],
+      profiles: testAuthProfiles("anthropic", "claude-cli"),
+      fallbacks: ["claude-cli/claude-sonnet-4-6"],
+      selection: {
+        model: { provider: "anthropic", id: "claude" },
+        executor: { kind: "harness", id: "openclaw" },
+      },
+      runtimeAuthModes: { "claude-cli": "token" },
+    });
     configureTestCliModel(followupRun, "claude-cli", "claude-sonnet-4-6");
+    configureTestHarness(
+      followupRun,
+      "compaction-primary",
+      [{ provider: "anthropic", id: "claude" }],
+      [{ provider: "claude-cli", id: "claude-sonnet-4-6" }],
+    );
     state.isCliProviderMock.mockImplementation((provider: unknown) => provider === "claude-cli");
     state.runEmbeddedAgentMock.mockImplementationOnce(async (params: EmbeddedAgentParams) => {
       params.onAutoCompactionSucceeded?.(1);
@@ -207,21 +247,21 @@ describe("executeAgentTurn: compaction events", () => {
     });
     state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => {
       await params
-        .run("openai", "gpt-5.5", initialFallbackAttemptOptions(params))
+        .run("anthropic", "claude", initialFallbackAttemptOptions(params))
         .catch(() => undefined);
       return {
         outcome: "exhausted",
         result: await params.run(
           "claude-cli",
           "claude-sonnet-4-6",
-          initialFallbackAttemptOptions(params),
+          fallbackAttemptOptions(params, "unknown"),
         ),
         provider: "claude-cli",
         model: "claude-sonnet-4-6",
         attempts: [
           {
-            provider: "openai",
-            model: "gpt-5.5",
+            provider: "anthropic",
+            model: "claude",
             error: "retry transcript preparation failed",
             reason: "unknown",
           },

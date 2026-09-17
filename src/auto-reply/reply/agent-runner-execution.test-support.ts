@@ -2,6 +2,7 @@
 import path from "node:path";
 import { afterEach, beforeEach, expect, onTestFinished, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
+import type { AuthProfileStore } from "../../agents/auth-profiles/types.js";
 import { testing as cliBackendsTesting } from "../../agents/cli-backends.test-support.js";
 import type { runEmbeddedAgentEntry } from "../../agents/embedded-agent-runner/run-entry.js";
 import type { DeferredEmbeddedRunLifecycleOwner } from "../../agents/embedded-agent-runner/run/deferred-lifecycle-owner.js";
@@ -9,16 +10,19 @@ import type { RunEmbeddedAgentInternalParams } from "../../agents/embedded-agent
 import type { EmbeddedAgentRunResult } from "../../agents/embedded-agent-runner/types.js";
 import { FailoverError, type FallbackAttemptRecord } from "../../agents/failover-error.js";
 import { AUTH_INVALID_TOKEN_USER_TEXT } from "../../agents/failover/user-copy.js";
+import { registerAgentHarness } from "../../agents/harness/registry.js";
 import type { LiveSessionModelSwitchError } from "../../agents/live-model-switch-error.js";
+import type { ModelCatalogEntry } from "../../agents/model-catalog.types.js";
 import type { ModelFallbackRunResult } from "../../agents/model-fallback-attempt.js";
 import type { runWithModelFallback } from "../../agents/model-fallback-runner.js";
-import { evaluatePublishedModelRuntimeChoice } from "../../agents/model-runtime-choice.js";
 import {
   initialModelFallbackAttemptOptions,
   withModelFallbackPreparation,
 } from "../../agents/test-helpers/model-fallback-runner.test-support.js";
+import { createSessionModelCatalogFixture } from "../../agents/test-helpers/session-model-catalog.test-support.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import type { ModelDefinitionConfig } from "../../config/types.models.js";
+import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { commitSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
 import {
   isModelExecutionSelection,
@@ -27,7 +31,6 @@ import {
 import { createEmptyPluginRegistry } from "../../plugins/registry-empty.js";
 import {
   captureActivePluginRegistrySnapshot,
-  getActivePluginRegistryVersion,
   requireActivePluginRegistry,
   restoreActivePluginRegistrySnapshot,
   setActivePluginRegistry,
@@ -85,7 +88,6 @@ const state = vi.hoisted(() => ({
   runCliAgentMock: vi.fn(),
   runWithModelFallbackMock:
     vi.fn<(params: FallbackRunnerParams) => Promise<ModelFallbackRunResult<unknown>>>(),
-  cliModels: new Map<string, string>(),
   isCliProviderMock: vi.fn((_provider: unknown) => false),
   isInternalMessageChannelMock: vi.fn((_channel: unknown) => false),
   createBlockReplyDeliveryHandlerMock: vi.fn(),
@@ -140,9 +142,6 @@ vi.mock("../../agents/cli-runner.js", () => ({
   runCliAgent: (params: unknown) => state.runCliAgentMock(params),
 }));
 
-vi.mock("../../agents/model-runtime-choice.js", () => ({
-  evaluatePublishedModelRuntimeChoice: vi.fn(),
-}));
 vi.mock("../../agents/harness/runtime-plugin.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../agents/harness/runtime-plugin.js")>()),
   ensureSelectedAgentHarnessPlugin: vi.fn(),
@@ -326,9 +325,49 @@ vi.mock("./reply-media-paths.runtime.js", () => ({
   createReplyMediaPathNormalizer: () => (payload: unknown) => payload,
 }));
 
+function publishTestExecutionCatalog(followupRun: FollowupRun): void {
+  const fixture = executionFixtures.get(followupRun);
+  if (!fixture) throw new Error("The execution test must declare its catalog and accounts.");
+  const cfg = followupRun.run.config;
+  const agentId = followupRun.run.agentId;
+  followupRun.run.config = {
+    ...cfg,
+    agents: {
+      ...cfg.agents,
+      ...(fixture.fallbacks
+        ? {
+            defaults: {
+              ...cfg.agents?.defaults,
+              model: {
+                ...(typeof cfg.agents?.defaults?.model === "object"
+                  ? cfg.agents.defaults.model
+                  : { primary: cfg.agents?.defaults?.model }),
+                fallbacks: fixture.fallbacks,
+              },
+            },
+          }
+        : {}),
+      entries: {
+        ...cfg.agents?.entries,
+        [agentId]: {
+          ...cfg.agents?.entries?.[agentId],
+          agentDir: followupRun.run.agentDir,
+          workspace: followupRun.run.workspaceDir,
+        },
+      },
+    },
+  };
+  publishedExecutionCatalog.publish({
+    ...fixture,
+    config: followupRun.run.config,
+    agentId: followupRun.run.agentId,
+  });
+}
+
 export async function getExecuteAgentTurnForTest() {
   const execute = (await import("./agent-runner-execution.js")).executeAgentTurn;
   return async (...args: Parameters<typeof execute>) => {
+    publishTestExecutionCatalog(args[0].followupRun);
     const execution = await execute(...args);
     const outcome = execution.outcome;
     if (outcome.kind === "settled") {
@@ -464,6 +503,96 @@ export function createMockTypingSignaler(): TypingSignaler {
   };
 }
 
+type ExecutionCatalogFixture = Pick<
+  Parameters<ReturnType<typeof createSessionModelCatalogFixture>["publish"]>[0],
+  "catalog" | "profiles" | "runtimeAuthModes"
+> & { fallbacks?: string[] };
+const executionFixtures = new WeakMap<FollowupRun, ExecutionCatalogFixture>();
+const publishedExecutionCatalog = createSessionModelCatalogFixture();
+
+export function testModel(
+  provider: string,
+  id: string,
+  facts: Omit<Partial<ModelCatalogEntry>, "provider" | "id"> = {},
+): ModelCatalogEntry {
+  return { provider, id, name: id, input: ["text"], ...facts };
+}
+
+export function testAuthProfiles(...providers: string[]): AuthProfileStore["profiles"] {
+  return Object.fromEntries(
+    providers.map((provider) => [
+      provider + ":fixture",
+      { type: "api_key" as const, provider, key: "synthetic-credential" },
+    ]),
+  );
+}
+
+export function configureTestExecution(
+  followupRun: FollowupRun,
+  fixture: {
+    config?: OpenClawConfig;
+    selection?: ModelExecutionSelection;
+    fallbacks?: string[];
+    catalog: ModelCatalogEntry[];
+    profiles: AuthProfileStore["profiles"];
+    runtimeAuthModes?: ExecutionCatalogFixture["runtimeAuthModes"];
+  },
+): void {
+  if (fixture.config) followupRun.run.config = fixture.config;
+  if (fixture.selection) followupRun.run.executionSelection = fixture.selection;
+  executionFixtures.set(followupRun, {
+    catalog: { entries: fixture.catalog, routeVariants: fixture.catalog },
+    profiles: fixture.profiles,
+    runtimeAuthModes: fixture.runtimeAuthModes,
+    fallbacks: fixture.fallbacks,
+  });
+}
+
+export async function configureTestNativeHarness() {
+  const [{ createCodexAppServerAgentHarness }, { createCodexTestBindingStore }] = await Promise.all(
+    [
+      import("../../../extensions/codex/harness.js"),
+      import("../../../extensions/codex/src/app-server/session-binding.test-helpers.js"),
+    ],
+  );
+  const bindingStore = createCodexTestBindingStore();
+  registerAgentHarness(createCodexAppServerAgentHarness({ bindingStore }));
+  return bindingStore;
+}
+
+export function configureTestHarness(
+  followupRun: FollowupRun,
+  id: string,
+  models: readonly { provider: string; id: string }[],
+  fallbackModels: readonly { provider: string; id: string }[] = [],
+): void {
+  registerAgentHarness({
+    id,
+    label: "Execution test app",
+    supports: ({ provider, modelId }) => {
+      if (models.some((model) => model.provider === provider && model.id === modelId))
+        return { supported: true };
+      const fallback = fallbackModels.find(
+        (model) => model.provider === provider && model.id === modelId,
+      );
+      return {
+        supported: false,
+        reason: "This test app does not implement this route.",
+        ...(fallback ? { fallbackRuntime: "openclaw" as const } : {}),
+      };
+    },
+    runAttempt: async () => {
+      throw new Error("This test observes the embedded runner boundary.");
+    },
+  });
+  if (!isModelExecutionSelection(followupRun.run.executionSelection))
+    throw new Error("Expected a concrete fixture selection.");
+  followupRun.run.executionSelection = {
+    ...followupRun.run.executionSelection,
+    executor: { kind: "harness", id },
+  };
+}
+
 export function configureTestCliModel(
   followupRun: FollowupRun,
   provider: string,
@@ -471,7 +600,6 @@ export function configureTestCliModel(
   backendId = provider,
   modelProvider = provider,
 ): ModelExecutionSelection {
-  state.cliModels.set(`${provider}/${model}`, backendId);
   const registry = requireActivePluginRegistry();
   setActivePluginRegistry({
     ...registry,
@@ -501,9 +629,11 @@ export function configureTestCliModel(
   return { model: { provider, id: model }, executor: { kind: "cli", id: backendId } };
 }
 
-export function createFollowupRun(): FollowupRun {
+export function createFollowupRun(
+  fixture?: Parameters<typeof configureTestExecution>[1],
+): FollowupRun {
   const rootDir = useAutoCleanupTempDirTracker(onTestFinished).make("openclaw-agent-execution-");
-  return {
+  const followupRun: FollowupRun = {
     prompt: "hello",
     summaryLine: "hello",
     enqueuedAt: Date.now(),
@@ -546,6 +676,13 @@ export function createFollowupRun(): FollowupRun {
       blockReplyBreak: "message_end",
     },
   } as unknown as FollowupRun;
+  const entry = testModel("anthropic", "claude");
+  executionFixtures.set(followupRun, {
+    catalog: { entries: [entry], routeVariants: [entry] },
+    profiles: testAuthProfiles("anthropic"),
+  });
+  if (fixture) configureTestExecution(followupRun, fixture);
+  return followupRun;
 }
 
 export function createTestUserTurnRecorder(message: PersistedUserTurnMessage) {
@@ -688,6 +825,7 @@ export function createLiveSwitchSession(followupRun: FollowupRun) {
 }
 
 export function createRunAgentTurnParams(followupRun: FollowupRun): AgentTurnParams {
+  publishTestExecutionCatalog(followupRun);
   return {
     commandBody: "hello",
     followupRun,
@@ -708,9 +846,11 @@ export function createMinimalRunAgentTurnParams(overrides?: {
   sessionCtx?: TemplateContext;
   typingSignals?: TypingSignaler;
 }): AgentTurnParams {
+  const followupRun = overrides?.followupRun ?? createFollowupRun();
+  publishTestExecutionCatalog(followupRun);
   return {
     commandBody: "fix it",
-    followupRun: overrides?.followupRun ?? createFollowupRun(),
+    followupRun,
     sessionCtx:
       overrides?.sessionCtx ??
       ({
@@ -755,32 +895,7 @@ export async function setupAgentRunnerExecutionTestState() {
     vi.useRealTimers();
     const registry = captureActivePluginRegistrySnapshot();
     setActivePluginRegistry(createEmptyPluginRegistry());
-    state.cliModels.clear();
-    const generation = { current: true };
-    onTestFinished(() => {
-      generation.current = false;
-      restoreActivePluginRegistrySnapshot(registry);
-    });
-    vi.mocked(evaluatePublishedModelRuntimeChoice).mockImplementation(
-      async ({ provider, model, runtimeId }) => {
-        const requiredRuntime = state.cliModels.get(`${provider}/${model}`);
-        const isCliRuntime = requireActivePluginRegistry().cliBackends.some(
-          ({ backend }) => backend.id === runtimeId,
-        );
-        if (requiredRuntime ? runtimeId !== requiredRuntime : isCliRuntime) {
-          return { kind: "unsupported", message: "The fixture model uses a different executor." };
-        }
-        const registryGeneration = getActivePluginRegistryVersion();
-        return {
-          kind: "ready",
-          entry: { provider, id: model, name: model },
-          validate: () =>
-            generation.current && registryGeneration === getActivePluginRegistryVersion()
-              ? undefined
-              : "Execution fixture catalog retired.",
-        };
-      },
-    );
+    onTestFinished(() => restoreActivePluginRegistrySnapshot(registry));
     state.runEmbeddedAgentMock.mockReset();
     state.runEmbeddedAgentEntryMock
       .mockReset()

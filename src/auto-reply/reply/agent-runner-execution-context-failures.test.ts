@@ -10,6 +10,9 @@ import {
   makeTestModel,
   getExecuteAgentTurnForTest,
   createFollowupRun,
+  fallbackAttemptOptions,
+  testModel,
+  testAuthProfiles,
   initialFallbackAttemptOptions,
   createMockReplyOperation,
   requireRecord,
@@ -156,14 +159,18 @@ describe("executeAgentTurn: context failures", () => {
   it("uses the built-in compaction failure hint when the fallback candidate throws", async () => {
     state.isCompactionFailureErrorMock.mockReturnValue(true);
     state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => {
-      await params.run("custom", "uncataloged-32k", initialFallbackAttemptOptions(params));
+      await params.run("custom", "uncataloged-32k", fallbackAttemptOptions(params, "unknown"));
       throw new Error("expected fallback candidate to throw");
     });
     state.runEmbeddedAgentMock.mockRejectedValueOnce(
       new Error("Auto-compaction failed: nothing to compact"),
     );
 
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun({
+      catalog: [testModel("openrouter", "qwen3.6-plus"), testModel("custom", "uncataloged-32k")],
+      profiles: testAuthProfiles("openrouter", "custom"),
+      fallbacks: ["custom/uncataloged-32k"],
+    });
     followupRun.run.executionSelection = {
       model: { provider: "openrouter", id: "qwen3.6-plus" },
       executor: { kind: "harness", id: "openclaw" },

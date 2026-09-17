@@ -9,6 +9,7 @@ import {
 import { LiveSessionModelSwitchError } from "../../agents/live-model-switch-error.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import * as sessionAccessor from "../../config/sessions/session-accessor.js";
+import { commitSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
 import type { TemplateContext } from "../templating.js";
 import {
   setupAgentRunnerExecutionTestState,
@@ -16,6 +17,9 @@ import {
   createMockTypingSignaler,
   configureTestCliModel,
   createFollowupRun,
+  configureTestNativeHarness,
+  testModel,
+  testAuthProfiles,
   createLiveSwitchSession,
   makeTestSessionStorePath,
   GENERIC_RUN_FAILURE_TEXT,
@@ -33,7 +37,12 @@ const { emitAgentEvent } = await import("../../infra/agent-events.js");
 
 describe("executeAgentTurn: session state", () => {
   it("keeps thinking paired with the winning runtime when a live model switch restarts the prompt", async () => {
-    const followupRun = createFollowupRun();
+    await configureTestNativeHarness();
+    const followupRun = createFollowupRun({
+      catalog: [testModel("anthropic", "claude"), testModel("openai", "gpt-5.6-luna")],
+      profiles: testAuthProfiles("anthropic", "openai"),
+      fallbacks: [],
+    });
     const session = createLiveSwitchSession(followupRun);
     let fallbackInvocation = 0;
     state.runWithModelFallbackMock.mockImplementation(async (params: FallbackRunnerParams) => {
@@ -203,7 +212,18 @@ describe("executeAgentTurn: session state", () => {
   it.each(["retained", "replaced"] as const)(
     "checks the live successor identity and its %s lifecycle before a switch retry",
     async (lifecycle) => {
-      const followupRun = createFollowupRun();
+      const followupRun = createFollowupRun({
+        catalog: [testModel("anthropic", "claude"), testModel("fixture", "selected")],
+        profiles: {
+          ...testAuthProfiles("anthropic", "fixture"),
+          "selected-account": {
+            type: "api_key",
+            provider: "fixture",
+            key: "synthetic-selected-key",
+          },
+        },
+        fallbacks: [],
+      });
       const session = createLiveSwitchSession(followupRun);
       const queued = structuredClone(followupRun.run.executionSelection);
       const generation = session.getActiveSessionEntry().lifecycleRevision;
@@ -274,7 +294,12 @@ describe("executeAgentTurn: session state", () => {
   it.each(["user", "reset"] as const)(
     "restarts the active prompt after a saved %s selection",
     async (cause) => {
-      const followupRun = createFollowupRun();
+      await configureTestNativeHarness();
+      const followupRun = createFollowupRun({
+        catalog: [testModel("anthropic", "claude"), testModel("openai", "gpt-5.4")],
+        profiles: testAuthProfiles("anthropic", "openai"),
+        fallbacks: [],
+      });
       const session = createLiveSwitchSession(followupRun);
       let fallbackInvocation = 0;
       state.runWithModelFallbackMock.mockImplementation(async (params: FallbackRunnerParams) => {
@@ -335,7 +360,11 @@ describe("executeAgentTurn: session state", () => {
   );
 
   it("breaks out of the retry loop when LiveSessionModelSwitchError is thrown repeatedly (#58348)", async () => {
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun({
+      catalog: [testModel("anthropic", "claude"), testModel("openai", "gpt-5.4")],
+      profiles: testAuthProfiles("anthropic", "openai"),
+      fallbacks: [],
+    });
     const session = createLiveSwitchSession(followupRun);
     // Simulate a scenario where the persisted session selection keeps conflicting
     // with the fallback model, causing LiveSessionModelSwitchError on every attempt.
@@ -382,7 +411,15 @@ describe("executeAgentTurn: session state", () => {
   });
 
   it("propagates auth profile state on bounded live model switch retries (#58348)", async () => {
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun({
+      catalog: [testModel("anthropic", "claude"), testModel("openai", "gpt-5.4")],
+      profiles: {
+        ...testAuthProfiles("anthropic"),
+        "profile-b": { type: "api_key", provider: "openai", key: "synthetic-b" },
+        "profile-c": { type: "api_key", provider: "openai", key: "synthetic-c" },
+      },
+      fallbacks: [],
+    });
     const session = createLiveSwitchSession(followupRun);
     let invocation = 0;
     state.runWithModelFallbackMock.mockImplementation(async (params: FallbackRunnerParams) => {
@@ -482,7 +519,17 @@ describe("executeAgentTurn: session state", () => {
   it.each(["newer reset", "newer account"] as const)(
     "rejects a stale switch notification after a %s before another attempt starts",
     async (change) => {
-      const followupRun = createFollowupRun();
+      const followupRun = createFollowupRun({
+        catalog: [
+          testModel("fixture", "initial"),
+          testModel("fixture", "notified"),
+          testModel("fixture", "newer"),
+        ],
+        profiles: {
+          "account-before": { type: "api_key", provider: "fixture", key: "synthetic-before" },
+          "account-after": { type: "api_key", provider: "fixture", key: "synthetic-after" },
+        },
+      });
       followupRun.run.executionSelection = {
         model: { provider: "fixture", id: "initial" },
         executor: { kind: "harness", id: "openclaw" },
@@ -573,14 +620,14 @@ describe("executeAgentTurn: session state", () => {
     };
     const sessionStore = { main: sessionEntry };
     state.runEmbeddedAgentMock.mockImplementationOnce(async () => {
-      sessionEntry.executionSelection = {
-        state: "accepted",
-        selection: {
+      commitSessionExecutionSelection(
+        sessionEntry,
+        {
           model: { provider: "zai", id: "glm-5" },
           executor: { kind: "harness", id: "openclaw" },
         },
-        fallbackPermission: "explicit",
-      };
+        { cause: { kind: "user" } },
+      );
       sessionEntry.authProfileOverride = "zai:work";
       sessionEntry.authProfileOverrideSource = "user";
       throw new Error("fallback failed");
@@ -589,7 +636,14 @@ describe("executeAgentTurn: session state", () => {
     const executeAgentTurn = await getExecuteAgentTurnForTest();
     const result = await executeAgentTurn({
       commandBody: "hello",
-      followupRun: createFollowupRun(),
+      followupRun: createFollowupRun({
+        catalog: [testModel("anthropic", "claude"), testModel("openai", "gpt-5.4")],
+        profiles: {
+          "anthropic:default": { type: "api_key", provider: "anthropic", key: "synthetic-primary" },
+          ...testAuthProfiles("openai"),
+        },
+        fallbacks: ["openai/gpt-5.4"],
+      }),
       sessionCtx: {
         Provider: "whatsapp",
         MessageSid: "msg",
@@ -638,7 +692,14 @@ describe("executeAgentTurn: session state", () => {
       meta: {},
     });
 
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun({
+      catalog: [testModel("anthropic", "claude-opus"), testModel("openai", "gpt-5.4")],
+      profiles: {
+        "anthropic:openclaw": { type: "api_key", provider: "anthropic", key: "synthetic-primary" },
+        ...testAuthProfiles("openai"),
+      },
+      fallbacks: ["openai/gpt-5.4"],
+    });
     followupRun.run.executionSelection = {
       model: { provider: "anthropic", id: "claude-opus" },
       executor: { kind: "harness", id: "openclaw" },
@@ -754,7 +815,23 @@ describe("executeAgentTurn: session state", () => {
     });
 
     const executeAgentTurn = await getExecuteAgentTurnForTest();
-    await executeAgentTurn(createMinimalRunAgentTurnParams());
+    await executeAgentTurn(
+      createMinimalRunAgentTurnParams({
+        followupRun: createFollowupRun({
+          catalog: [
+            testModel("anthropic", "claude-opus-4-7"),
+            testModel("anthropic", "claude-opus-4-6"),
+            testModel("openai", "gpt-5.4"),
+          ],
+          profiles: testAuthProfiles("anthropic", "openai"),
+          fallbacks: ["anthropic/claude-opus-4-6", "openai/gpt-5.4"],
+          selection: {
+            model: { provider: "anthropic", id: "claude-opus-4-7" },
+            executor: { kind: "harness", id: "openclaw" },
+          },
+        }),
+      }),
+    );
 
     expect(state.runEmbeddedAgentMock).toHaveBeenCalledTimes(3);
     const owner = state.runEmbeddedAgentMock.mock.calls[0]?.[0].assistantErrorTranscript;
@@ -784,7 +861,12 @@ describe("executeAgentTurn: session state", () => {
       meta: {},
     });
 
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun({
+      catalog: [testModel("anthropic", "claude-opus-4-7"), testModel("openai", "gpt-5.4")],
+      profiles: testAuthProfiles("anthropic", "openai"),
+      fallbacks: ["openai/gpt-5.4"],
+      runtimeAuthModes: { "claude-cli": "token" },
+    });
     followupRun.run.config = {
       agents: { defaults: { models: { "openai/gpt-5.4": { agentRuntime: { id: "openclaw" } } } } },
     };
@@ -842,7 +924,19 @@ describe("executeAgentTurn: session state", () => {
     });
 
     const executeAgentTurn = await getExecuteAgentTurnForTest();
-    await executeAgentTurn(createMinimalRunAgentTurnParams());
+    await executeAgentTurn(
+      createMinimalRunAgentTurnParams({
+        followupRun: createFollowupRun({
+          catalog: [testModel("anthropic", "claude-opus-4-7"), testModel("openai", "gpt-5.4")],
+          profiles: testAuthProfiles("anthropic", "openai"),
+          fallbacks: ["openai/gpt-5.4"],
+          selection: {
+            model: { provider: "anthropic", id: "claude-opus-4-7" },
+            executor: { kind: "harness", id: "openclaw" },
+          },
+        }),
+      }),
+    );
 
     expect(state.runEmbeddedAgentMock).toHaveBeenCalledTimes(2);
     expectMockCallArgFields(state.runEmbeddedAgentMock, 0, "primary candidate", {

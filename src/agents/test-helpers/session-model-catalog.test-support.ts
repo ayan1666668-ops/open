@@ -5,6 +5,7 @@ import type { PluginManifestRecord } from "../../plugins/manifest-registry.types
 import { createPluginMetadataSnapshotFixture } from "../../plugins/plugin-metadata.test-support.js";
 import { getActivePluginRegistryVersion } from "../../plugins/runtime.js";
 import { getPluginRegistryForContext } from "../../plugins/runtime/gateway-request-scope.js";
+import type { PreparedAgentCredentialModes } from "../agent-auth-credential-modes.js";
 import { resolveAgentDir, resolveAgentWorkspaceDir } from "../agent-scope.js";
 import { setRuntimeAuthProfileStoreSnapshot } from "../auth-profiles/runtime-snapshots.js";
 import {
@@ -32,6 +33,7 @@ export function createSessionModelCatalogFixture() {
     agentId: string;
     catalog: ModelCatalogSnapshot;
     profiles: AuthProfileStore["profiles"];
+    runtimeAuthModes?: PreparedAgentCredentialModes;
     plugins?: readonly PluginManifestRecord[];
   }) {
     if (!installed) {
@@ -76,7 +78,7 @@ export function createSessionModelCatalogFixture() {
       workspaceDir,
       catalogOwner: { agentId, workspaceDir },
       activeProjectKeys: [],
-      authModes: {},
+      authModes: params.runtimeAuthModes ?? {},
       metadataSnapshot: createPluginMetadataSnapshotFixture({
         plugins: [...(params.plugins ?? [])],
       }),

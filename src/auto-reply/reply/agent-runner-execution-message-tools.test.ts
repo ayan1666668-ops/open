@@ -7,6 +7,8 @@ import {
   getExecuteAgentTurnForTest,
   createMockTypingSignaler,
   createFollowupRun,
+  testModel,
+  testAuthProfiles,
   fallbackAttemptOptions,
   initialFallbackAttemptOptions,
   createMinimalRunAgentTurnParams,
@@ -255,7 +257,15 @@ describe("executeAgentTurn: message tool progress", () => {
     });
 
     const executeAgentTurn = await getExecuteAgentTurnForTest();
-    const followupRun = createFollowupRun();
+    const followupRun = createFollowupRun({
+      catalog: [testModel("anthropic", "primary"), testModel("openai", "fallback")],
+      profiles: testAuthProfiles("anthropic", "openai"),
+      fallbacks: ["openai/fallback"],
+      selection: {
+        model: { provider: "anthropic", id: "primary" },
+        executor: { kind: "harness", id: "openclaw" },
+      },
+    });
     followupRun.run.sourceReplyDeliveryMode = "message_tool_only";
     await executeAgentTurn({
       commandBody: "hello",
