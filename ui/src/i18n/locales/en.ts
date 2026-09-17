@@ -976,6 +976,8 @@ export const en: TranslationMap & {
     operatingSystem: "Operating system",
     runsOn: "Runs on {place}",
     browse: "Browse folders",
+    folderRequiresScope:
+      "This folder is outside the agent workspaces and needs {scope} access. Open Inbox, select Limited access, request admin, then approve in Devices.",
     worktree: "Worktree",
     checkingGit: "Checking Git availability…",
     gitCheckUnavailable: "Couldn't verify Git for this folder. Choose it again to retry.",
