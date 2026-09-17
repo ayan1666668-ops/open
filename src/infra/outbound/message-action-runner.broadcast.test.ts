@@ -15,6 +15,7 @@ import {
 } from "../../test-utils/channel-plugins.js";
 import { createTempHomeEnv, type TempHomeEnv } from "../../test-utils/temp-home.js";
 import { resolveMessageActionOutcome } from "./message-action-contracts.js";
+import { MessageActionDeniedError } from "./message-action-denial.js";
 import { runMessageAction } from "./message-action-runner.js";
 
 describe("broadcast send outcomes through native actions", () => {
@@ -115,16 +116,53 @@ describe("broadcast send outcomes through native actions", () => {
     {
       name: "before the in-flight target dispatches",
       dispatchBeforeWait: false,
-      failed: 0,
-      notAttempted: 2,
+      failureKind: "cancellation",
+      expectedError: "current action canceled",
+      failed: 1,
+      notAttempted: 1,
     },
     {
       name: "after the in-flight target starts dispatching",
       dispatchBeforeWait: true,
+      failureKind: "cancellation",
+      expectedError: "current action canceled",
       failed: 1,
       notAttempted: 1,
     },
-  ])("keeps completed results when cancellation arrives $name", async (scenario) => {
+    {
+      name: "after part of the in-flight target was sent",
+      dispatchBeforeWait: true,
+      failureKind: "cancellation",
+      expectedError: "current action canceled",
+      sentBeforeError: true,
+      failed: 1,
+      notAttempted: 1,
+    },
+    {
+      name: "while an adapter without a dispatch callback reports a provider error",
+      dispatchBeforeWait: false,
+      failureKind: "provider",
+      expectedError: "provider request failed",
+      failed: 1,
+      notAttempted: 1,
+    },
+    {
+      name: "while the in-flight target reports a policy denial",
+      dispatchBeforeWait: false,
+      failureKind: "policy",
+      expectedError: "target policy denied",
+      failed: 1,
+      notAttempted: 1,
+    },
+  ] satisfies Array<{
+    name: string;
+    dispatchBeforeWait: boolean;
+    failureKind: "cancellation" | "provider" | "policy";
+    expectedError: string;
+    failed: number;
+    notAttempted: number;
+    sentBeforeError?: true;
+  }>)("keeps completed results when cancellation arrives $name", async (scenario) => {
     let actionCurrent = true;
     let releaseSecond: () => void = () => undefined;
     const secondStarted = new Promise<void>((resolve) => {
@@ -136,6 +174,7 @@ describe("broadcast send outcomes through native actions", () => {
     });
     const handled: string[] = [];
     const dispatched: string[] = [];
+    const denied: string[] = [];
     const plugin: ChannelPlugin = {
       ...createChannelTestPluginBase({ id: "broadcast-test" }),
       messaging: { targetResolver: { looksLikeId: () => true } },
@@ -164,6 +203,16 @@ describe("broadcast send outcomes through native actions", () => {
           }
           enteredSecond();
           await secondStarted;
+          if (scenario.failureKind === "provider") {
+            throw new Error(scenario.expectedError);
+          }
+          if (scenario.failureKind === "policy") {
+            throw new MessageActionDeniedError(
+              scenario.expectedError,
+              "target_policy_denied",
+              "target:policy",
+            );
+          }
           assertDirectAdapterHandoff?.();
           await dispatch();
           return jsonResult({ ok: true, messageId: `sent-${target}` });
@@ -178,9 +227,13 @@ describe("broadcast send outcomes through native actions", () => {
       params: { channel: plugin.id, targets: ["first", "second", "third"], message: "hello" },
       assertDirectAdapterHandoff: () => {
         if (!actionCurrent) {
-          throw Object.assign(new Error("current action canceled"), { name: "AbortError" });
+          throw Object.assign(new Error("current action canceled"), {
+            name: "AbortError",
+            ...(scenario.sentBeforeError ? { sentBeforeError: true as const } : {}),
+          });
         }
       },
+      onActionDenied: (err) => denied.push(err.message),
     });
     await secondEntered;
     actionCurrent = false;
@@ -202,6 +255,10 @@ describe("broadcast send outcomes through native actions", () => {
     if (result.kind !== "broadcast") {
       throw new Error("Expected broadcast result");
     }
+    expect(result.payload.results[1]?.sentBeforeError).toBe(scenario.sentBeforeError);
+    expect(result.payload.results[1]?.attempted).toBeUndefined();
+    expect(result.payload.results[1]?.error).toBe(scenario.expectedError);
+    expect(denied).toEqual(scenario.failureKind === "policy" ? [scenario.expectedError] : []);
     expect(result.payload.results.filter((entry) => entry.attempted === false)).toHaveLength(
       scenario.notAttempted,
     );
@@ -214,6 +271,58 @@ describe("broadcast send outcomes through native actions", () => {
       `Broadcast incomplete (1/3 succeeded, ${scenario.failed} failed, ${scenario.notAttempted} not attempted)`,
     );
     expect(cliOutput).toContain("not attempted");
+  });
+
+  it("marks a native target unattempted when its final host handoff rejects", async () => {
+    let actionCurrent = true;
+    const handled: string[] = [];
+    const plugin: ChannelPlugin = {
+      ...createChannelTestPluginBase({ id: "broadcast-test" }),
+      messaging: { targetResolver: { looksLikeId: () => true } },
+      outbound: {
+        deliveryMode: "direct",
+        sendText: async () => {
+          throw new Error("native action bypassed");
+        },
+      },
+      actions: {
+        describeMessageTool: () => ({ actions: ["send"] }),
+        supportsAction: ({ action }) => {
+          if (handled.length === 1) {
+            actionCurrent = false;
+          }
+          return action === "send";
+        },
+        handleAction: async ({ params }) => {
+          handled.push(String(params.to));
+          return jsonResult({ ok: true, messageId: `sent-${String(params.to)}` });
+        },
+      },
+    };
+    setActivePluginRegistry(createTestRegistry([{ pluginId: plugin.id, plugin, source: "test" }]));
+
+    const result = await runMessageAction({
+      cfg: {},
+      action: "broadcast",
+      params: { channel: plugin.id, targets: ["first", "second", "third"], message: "hello" },
+      assertDirectAdapterHandoff: () => {
+        if (!actionCurrent) {
+          throw Object.assign(new Error("current action canceled"), { name: "AbortError" });
+        }
+      },
+    });
+
+    expect(handled).toEqual(["first"]);
+    expect(result).toMatchObject({
+      kind: "broadcast",
+      payload: {
+        results: [
+          { to: "first", ok: true },
+          { to: "second", ok: false, attempted: false },
+          { to: "third", ok: false, attempted: false },
+        ],
+      },
+    });
   });
 
   it("marks a gateway target unattempted when the final handoff fence rejects it", async () => {
@@ -371,12 +480,13 @@ describe("broadcast send outcomes through native actions", () => {
       actions: {
         describeMessageTool: () => ({ actions: ["send"] }),
         supportsAction: ({ action }) => action === "send",
-        handleAction: async ({ params, onPlatformSendDispatch, assertDirectAdapterHandoff }) => {
+        handleAction: async ({ params, onPlatformSendDispatch }) => {
           const target = String(params.to);
           if (target === "second") {
+            await onPlatformSendDispatch?.();
             enterSecond();
             await secondWait;
-            assertDirectAdapterHandoff?.();
+            return jsonResult({ ok: true, messageId: `sent-${target}` });
           }
           await onPlatformSendDispatch?.();
           return jsonResult({ ok: true, messageId: `sent-${target}` });
@@ -416,7 +526,7 @@ describe("broadcast send outcomes through native actions", () => {
       expect(result.details).toMatchObject({
         results: [
           { to: "first", ok: true },
-          { to: "second", ok: false, attempted: false },
+          { to: "second", ok: true },
           { to: "third", ok: false, attempted: false },
         ],
         messageDelivery: {

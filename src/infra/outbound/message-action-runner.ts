@@ -20,13 +20,13 @@ import {
 } from "../../shared/clawhub-recommendations.js";
 import { createLazyRuntimeModule } from "../../shared/lazy-runtime.js";
 import { INTERNAL_MESSAGE_CHANNEL, normalizeMessageChannel } from "../../utils/message-channel.js";
-import { isProvenDeliveryNotSentError } from "../delivery-recovery.shared.js";
 import { formatErrorMessage } from "../errors.js";
 import { throwIfAborted } from "./abort.js";
 import {
   listConfiguredMessageChannels,
   resolveMessageChannelSelection,
 } from "./channel-selection.js";
+import { OutboundHandoffRejectedError } from "./deliver-handoff.js";
 import { shouldUseInternalSourceReplySink } from "./internal-source-reply.js";
 import { validateExplicitMessageAccountSelection } from "./message-account-selection.js";
 import {
@@ -133,13 +133,13 @@ async function handleBroadcastAction(
     payload?: unknown;
     result?: MessageSendResult;
   }> = [];
-  const isAbortError = (err: unknown): boolean => err instanceof Error && err.name === "AbortError";
   const hasAcceptedResult = () =>
     !input.dryRun && results.some((result) => result.ok || result.sentBeforeError);
-  const captureInterruption = (error?: unknown): unknown | undefined => {
-    if (isAbortError(error)) {
-      return error;
-    }
+  const errorSentBefore = (error: unknown): boolean =>
+    error !== null &&
+    typeof error === "object" &&
+    (error as { sentBeforeError?: unknown }).sentBeforeError === true;
+  const captureInterruption = (): unknown | undefined => {
     try {
       throwIfAborted(input.abortSignal);
       input.assertDirectAdapterHandoff?.();
@@ -147,17 +147,6 @@ async function handleBroadcastAction(
       return interruption;
     }
     return undefined;
-  };
-  const sendResultProvesNotDispatched = (result: MessageSendResult | undefined): boolean => {
-    const outcomes = result?.payloadOutcomes;
-    if (result?.deliveryStatus !== "failed" || !outcomes?.length) {
-      return false;
-    }
-    return outcomes.every((outcome) =>
-      outcome.status === "failed"
-        ? !outcome.sentBeforeError
-        : outcome.status === "suppressed" && outcome.reason !== "adapter_returned_no_identity",
-    );
   };
   let attemptIndex = 0;
   let interrupted = false;
@@ -175,10 +164,24 @@ async function handleBroadcastAction(
         continue;
       }
       const hadAcceptedResult = hasAcceptedResult();
-      let platformDispatchStarted = false;
       try {
         throwIfAborted(input.abortSignal);
         input.assertDirectAdapterHandoff?.();
+      } catch (err) {
+        if (!hadAcceptedResult) {
+          throw err;
+        }
+        interrupted = true;
+        results.push({
+          channel: targetChannel,
+          to: target,
+          ok: false,
+          attempted: false,
+          error: "Broadcast canceled before this target was attempted.",
+        });
+        continue;
+      }
+      try {
         const targetAccountId = validateExplicitMessageAccountSelection({
           cfg: input.cfg,
           channel: targetChannel,
@@ -198,10 +201,6 @@ async function handleBroadcastAction(
         }
         const sendResult = await runMessageAction({
           ...input,
-          onPlatformSendDispatch: async () => {
-            await input.onPlatformSendDispatch?.();
-            platformDispatchStarted = true;
-          },
           action: "send",
           params: {
             ...params,
@@ -210,7 +209,7 @@ async function handleBroadcastAction(
           },
         });
         const outcome = resolveMessageActionOutcome(sendResult, "Broadcast");
-        let entry: (typeof results)[number] = {
+        const entry: (typeof results)[number] = {
           channel: targetChannel,
           to: resolved.to,
           ...outcome,
@@ -219,57 +218,45 @@ async function handleBroadcastAction(
         };
         const interruption = outcome.ok ? undefined : captureInterruption();
         if (interruption) {
-          if (!hadAcceptedResult) {
-            throw interruption;
-          }
           interrupted = true;
-          if (
-            !platformDispatchStarted ||
-            (sendResult.kind === "send" && sendResultProvesNotDispatched(sendResult.sendResult))
-          ) {
-            entry = {
-              ...entry,
-              attempted: false as const,
-              error: "Broadcast canceled before this target was attempted.",
-            };
-          }
         }
         results.push(entry);
       } catch (err) {
-        const interruption = captureInterruption(err);
+        if (err instanceof MessageActionDeniedError) {
+          // Preserve the owner fact before broadcast converts the failure to result text;
+          // otherwise admitted-run audit would have to infer policy from presentation.
+          input.onActionDenied?.(err, targetChannel, receiptDiscriminator);
+        }
+        const interruption =
+          err instanceof OutboundHandoffRejectedError ? err : captureInterruption();
         if (interruption) {
           if (!hadAcceptedResult) {
             throw err;
           }
           interrupted = true;
+          const sentBeforeError = errorSentBefore(err);
           results.push({
             channel: targetChannel,
             to: target,
             ok: false,
-            ...(!platformDispatchStarted || isProvenDeliveryNotSentError(err)
+            ...(!sentBeforeError && err instanceof OutboundHandoffRejectedError
               ? {
                   attempted: false as const,
                   error: "Broadcast canceled before this target was attempted.",
                 }
-              : { error: formatErrorMessage(err) }),
+              : {
+                  error: formatErrorMessage(err),
+                  ...(sentBeforeError ? { sentBeforeError: true as const } : {}),
+                }),
           });
           continue;
-        }
-        if (err instanceof MessageActionDeniedError) {
-          // Preserve the owner fact before broadcast converts the failure to result text;
-          // otherwise admitted-run audit would have to infer policy from presentation.
-          input.onActionDenied?.(err, targetChannel, receiptDiscriminator);
         }
         results.push({
           channel: targetChannel,
           to: target,
           ok: false,
           error: formatErrorMessage(err),
-          ...(err &&
-          typeof err === "object" &&
-          (err as { sentBeforeError?: unknown }).sentBeforeError === true
-            ? { sentBeforeError: true as const }
-            : {}),
+          ...(errorSentBefore(err) ? { sentBeforeError: true as const } : {}),
         });
       }
     }

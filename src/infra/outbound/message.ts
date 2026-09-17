@@ -22,7 +22,10 @@ import { GATEWAY_CLIENT_NAMES } from "../../utils/message-channel.js";
 import type { DeliveryQueueCompletionRetention } from "../delivery-queue-sqlite.js";
 import { formatErrorMessage } from "../errors.js";
 import { resolveMessageChannelSelection } from "./channel-selection.js";
-import { assertOutboundHandoffCurrent } from "./deliver-handoff.js";
+import {
+  assertOutboundHandoffCurrent,
+  findOutboundHandoffRejectedError,
+} from "./deliver-handoff.js";
 import {
   resolveOutboundDurableFinalDeliverySupport,
   type DurableFinalDeliveryRequirements,
@@ -494,6 +497,21 @@ export async function sendMessage(params: MessageSendParams): Promise<MessageSen
       },
       params.conversationDeliveryTarget,
     );
+    const handoffRejection =
+      send.status === "failed"
+        ? (send.payloadOutcomes
+            ?.map((outcome) =>
+              outcome.status === "failed"
+                ? findOutboundHandoffRejectedError(outcome.error)
+                : undefined,
+            )
+            .find((error) => error !== undefined) ?? findOutboundHandoffRejectedError(send.error))
+        : undefined;
+    if (handoffRejection) {
+      // Keep the final host handoff fact intact for both ordinary and
+      // best-effort callers instead of normalizing it into a provider result.
+      throw handoffRejection;
+    }
     const shouldThrowFailure =
       !params.bestEffort && params.gateway?.clientName !== GATEWAY_CLIENT_NAMES.CLI;
     if (shouldThrowFailure && (send.status === "failed" || send.status === "partial_failed")) {
