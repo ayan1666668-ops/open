@@ -18,7 +18,7 @@ const FOLLOW_UP_PLANNING_PREFIX_PATTERN =
   /^(?:after(?:wards|\s+that)?|from\s+there|next|once\s+(?:done|that(?:'|\u2019)?s\s+done|that\s+is\s+done)|then)[,.\s]+/i;
 
 const PLANNING_TIME_PREFIX_PATTERN =
-  /^(?:(?:today|tomorrow|tonight|later|soon|eventually)|(?:next|this)\s+(?:week|month|morning|afternoon|evening|weekend)|in\s+\d+\s+(?:minutes?|hours?|days?|weeks?)|on\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday))[,\s]+/i;
+  /^(?:(?:today|tomorrow|tonight|later|soon|eventually)(?:\s+(?:morning|afternoon|evening|night))?|(?:next|this)\s+(?:week|month|year|morning|afternoon|evening|weekend)|(?:in|within)\s+(?:a|an|\d+)\s+(?:moments?|minutes?|hours?|days?|weeks?)|at\s+(?:noon|midnight|\d{1,2}(?::\d{2})?(?:\s*[ap]\.?m\.?)?)|on\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?:\s+(?:morning|afternoon|evening|night))?)(?:,\s+|\s+(?=(?:i|we)\b))/i;
 
 const COMPLETION_RESULT_CLAUSE_PATTERN =
   /^(?:(?:(?:i|we)(?:\s+(?:have\s+)?|(?:'|\u2019)ve\s+)|(?:i(?:\s+am|(?:'|\u2019)m)|we(?:\s+are|(?:'|\u2019)re))\s+))?(?:done|completed|finished|fixed|patched|resolved|deployed|landed|merged|implemented|confirmed)\b|(?:^|,\s*|\band\s+)(?:(?:(?:i|we)(?:\s+(?:have\s+)?|(?:'|\u2019)ve\s+)|(?:i(?:\s+am|(?:'|\u2019)m)|we(?:\s+are|(?:'|\u2019)re))\s+)(?:done|completed|finished|fixed|patched|resolved|deployed|landed|merged|implemented|confirmed)\b|(?:(?:all|the)\s+)?(?:\d+\s+)?(?:(?!(?:why|whether|if|unless|when|once|after|will|would|could|should|might|may)\b)[\w-]+\s+){0,3}(?:tests?|build|lint|checks?|syntax)\s+(?:(?:have|has)\s+)?(?:passed|succeeded|green)\b)/i;
@@ -34,14 +34,14 @@ const COMPLETION_HEADING_PATTERN =
 const RESULT_SUBJECT_WORD = String.raw`(?!(?:if|unless|when|once|whether|before|after|while|and|or|that|which|will|would|could|should|might|may|can|must|have|has|had|did|is|are|was|were|not|to)\b|\w+(?:'|\u2019)(?:t|ll)\b)[\w'-]+`;
 const RESULT_SUBJECT = String.raw`(?:${RESULT_SUBJECT_WORD}\s+){0,6}(?!(?:the|a|an|all|both|our|already|just)\b|[\w'-]+ly\b)${RESULT_SUBJECT_WORD}`;
 const IRREGULAR_PAST_VERB =
-  "arose|awoke|bore|beat|became|began|bent|bet|bit|bled|blew|broke|brought|built|burnt|burst|bought|caught|chose|came|cost|crept|cut|dealt|dug|drew|drank|drove|ate|fell|fed|felt|fought|found|fled|flew|forbade|forgot|forgave|froze|got|gave|went|grew|hung|heard|hid|hit|held|hurt|kept|knew|laid|led|leant|leapt|learnt|left|lent|let|lay|lit|lost|made|meant|met|paid|put|quit|read|rode|rang|rose|ran|said|saw|sought|sold|sent|set|shook|shone|shot|showed|shrank|shut|sang|sank|sat|slept|slid|smelt|spoke|spelt|spent|spilt|spun|split|spread|sprang|stood|stole|stuck|stung|stank|struck|swore|swept|swam|swung|took|taught|tore|told|thought|threw|understood|upset|woke|wore|wept|won|wound|wrote";
+  "arose|awoke|bore|beat|became|began|bent|bet|bit|bled|blew|broke|brought|built|burnt|burst|bought|caught|chose|came|cost|crept|cut|dealt|dug|did|drew|drank|drove|ate|fell|fed|felt|fought|found|fled|flew|forbade|forgot|forgave|froze|got|gave|went|grew|hung|heard|hid|hit|held|hurt|kept|knew|laid|led|leant|leapt|learnt|left|lent|let|lay|lit|lost|made|meant|met|paid|put|quit|read|rode|rang|rose|ran|said|saw|sought|sold|sent|set|shook|shone|shot|showed|shrank|shut|sang|sank|sat|slept|slid|smelt|spoke|spelt|spent|spilt|spun|split|spread|sprang|stood|stole|stuck|stung|stank|struck|swore|swept|swam|swung|took|taught|tore|told|thought|threw|understood|upset|woke|wore|wept|won|wound|wrote";
 const PAST_RESULT_VERB = String.raw`(?:${IRREGULAR_PAST_VERB}|(?!(?:need|feed|bleed|breed|heed|seed|weed|speed|succeed|exceed|proceed)\b)[a-z]+ed)`;
 const COMPLETION_STATE_CLAUSE_PATTERN = new RegExp(
   String.raw`(?:^|,\s*|\band\s+)${RESULT_SUBJECT}\s+(?:(?:(?:has|have)\s+)?(?:${PAST_RESULT_VERB}|done)|(?:is|are|was|were|has\s+been|have\s+been)\s+(?:done|complete|completed|finished|fixed|resolved))\b`,
   "i",
 );
-const INTENDED_RESULT_PATTERN = new RegExp(
-  String.raw`^${RESULT_SUBJECT}\s+(?:(?:had|has|have|was|were)\s+)?(?:planned|hoped|intended|expected|wanted|needed|aimed|supposed)\s+to\b`,
+const UNFINISHED_RESULT_PATTERN = new RegExp(
+  String.raw`^${RESULT_SUBJECT}\s+(?:did\s+(?:not|never)\b|(?:(?:had|has|have|was|were|did)\s+)?(?:plan(?:ned)?|hope(?:d)?|intend(?:ed)?|expect(?:ed)?|want(?:ed)?|need(?:ed)?|aim(?:ed)?|supposed)\s+to\b)`,
   "i",
 );
 const PAST_TEMPORAL_EVENT_PATTERN = new RegExp(
@@ -133,7 +133,7 @@ function isProgressOnlyCompletionText(value: string): boolean {
       // end before an independent comma-delimited past-tense statement.
       const conditionalResult =
         result !== null &&
-        (INTENDED_RESULT_PATTERN.test(body.slice(resultIndex).replace(/^(?:,|and)\s*/i, "")) ||
+        (UNFINISHED_RESULT_PATTERN.test(body.slice(resultIndex).replace(/^(?:,|and)\s*/i, "")) ||
           /\b(?:whether|if|unless)\b/i.test(resultClause) ||
           /(?:^|[,;:]\s*)(?:if|unless)\b/i.test(prefix) ||
           (/^and\b/i.test(result[0]) && CONDITIONAL_PROGRESS_PATTERN.test(prefix)) ||

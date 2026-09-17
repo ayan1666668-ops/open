@@ -18,6 +18,12 @@ describe("resolveRequiredCompletionTerminalResult", () => {
   // delivered result.
   it.each([
     ["pure progress", "Let me run the tests"],
+    ["compound tomorrow adjunct", "Tomorrow morning, we're going to deploy the fix."],
+    ["compound weekday adjunct", "On Friday morning, we're going to deploy the fix."],
+    ["moment future adjunct", "I'll inspect the failure. In a moment, I will patch the handler."],
+    ["noon future adjunct", "I'll inspect the failure. At noon, we are going to deploy."],
+    ["did-plan intention", "Reviewing the changes, we did plan to deploy the fix."],
+    ["negated did result", "Reviewing the changes, we did not repair the handler."],
     ["contracted plural going-to plan", "We're going to verify the fix."],
     ["expanded plural going-to plan", "We are going to deploy the fix."],
     ["singular going-to plan", "I'm going to deploy the fix."],
@@ -206,6 +212,12 @@ describe("resolveRequiredCompletionTerminalResult", () => {
       "I'll inspect the repo now: the crash is a missing null check in src/foo.ts.",
     ],
     ["completed clause after narration", "Reviewing the changes, we fixed the regression."],
+    ["completed did action", "Reviewing the changes, we did the repair."],
+    [
+      "dated completed report with follow-up",
+      "Today I patched the handler, I'll monitor it tomorrow.",
+    ],
+    ["compound dated completed report", "On Friday morning, I patched the handler."],
     ["dated completed report", "On Friday, I patched the handler."],
     [
       "diagnosis before a future follow-up",
