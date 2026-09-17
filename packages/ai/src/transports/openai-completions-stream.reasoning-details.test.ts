@@ -1,16 +1,77 @@
 import { expectDefined } from "@openclaw/normalization-core";
 import { describe, expect, it } from "vitest";
+import { buildOpenAICompletionsParams } from "./openai-completions-params.js";
 import { processCompletionsStream } from "./openai-completions-stream.js";
 import {
   type OpenAICompletionsOutput,
   createAssistantOutput,
   expectRecordFields,
+  getAssistantMessage,
   makeCompletionsChunk,
   makeCompletionsModel,
   streamChunks,
 } from "./openai-completions.test-support.js";
 
 describe("openai completions stream", () => {
+  it.each(["before", "same", "after"] as const)(
+    "replays encrypted reasoning without exposing text (arrival=%s)",
+    async (position) => {
+      const model = makeCompletionsModel({
+        provider: "openrouter",
+        baseUrl: "https://openrouter.ai/api/v1",
+      });
+      const detail = { type: "reasoning.encrypted", id: "call_1", data: "synthetic-ciphertext" };
+      const reasoning = { reasoning_details: [detail] };
+      const calls = {
+        tool_calls: [
+          {
+            index: 0,
+            id: "call_1",
+            type: "function",
+            function: { name: "lookup", arguments: "{}" },
+          },
+          {
+            index: 1,
+            id: "call_2",
+            type: "function",
+            function: { name: "lookup", arguments: "{}" },
+          },
+        ],
+      };
+      const deltas =
+        position === "same"
+          ? [{ ...reasoning, ...calls }]
+          : position === "before"
+            ? [reasoning, calls]
+            : [calls, reasoning];
+      const output = createAssistantOutput(model);
+      await processCompletionsStream(
+        streamChunks([
+          ...deltas.map((delta) => makeCompletionsChunk(delta)),
+          makeCompletionsChunk({}, "tool_calls"),
+        ]),
+        output,
+        model,
+        { push() {} },
+        { emitReasoning: false },
+      );
+
+      expect(output.stopReason).toBe("toolUse");
+      expect(output.content).toEqual([
+        {
+          type: "toolCall",
+          id: "call_1",
+          name: "lookup",
+          arguments: {},
+          thoughtSignature: JSON.stringify(detail),
+        },
+        { type: "toolCall", id: "call_2", name: "lookup", arguments: {} },
+      ]);
+      const replay = buildOpenAICompletionsParams(model, { messages: [output] }, undefined);
+      expect(getAssistantMessage(replay).reasoning_details).toEqual([detail]);
+    },
+  );
+
   it("handles reasoning_details from OpenRouter/Qwen3 in completions stream", async () => {
     const model = makeCompletionsModel({
       id: "openrouter/qwen/qwen3-235b-a22b",
