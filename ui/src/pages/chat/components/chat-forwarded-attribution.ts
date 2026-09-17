@@ -47,15 +47,24 @@ export function renderForwardedAttribution(group: MessageGroup, opts: ForwardedA
         : undefined);
   const sourceAgentPrefix =
     !sourceIsMainSession && sourceIsOtherAgent ? sourceAgentDisplayName : undefined;
-  const sourceLink = html`<a
-    class="markdown-session-link${sourceLabel ? " markdown-session-link--titled" : ""}${
-      sourceIsOtherAgent && sourceIsMainSession ? " markdown-session-link--agent" : ""
-    }${sourceIsCronRun ? " markdown-session-link--automation" : ""}"
-    role="link"
-    tabindex="0"
-    data-session-key=${linkableSourceKey}
-    >${sourceIsCronRun ? html`<span class="session-link-icon" aria-hidden="true">${icons.clock}</span>` : nothing}<span class="session-label" .textContent=${sourceLabel ?? linkableSourceKey}></span
-  ></a>`;
+  const sourceLink = sourceIsCronRun
+    ? html`<a
+        class="markdown-session-link markdown-session-link--titled markdown-session-link--automation"
+        role="link"
+        tabindex="0"
+        data-session-key=${linkableSourceKey}
+        ><span class="session-link-icon" aria-hidden="true">${icons.clock}</span
+        ><span class="session-label" .textContent=${sourceLabel}></span
+      ></a>`
+    : html`<a
+        class="markdown-session-link${sourceLabel ? " markdown-session-link--titled" : ""}${
+          sourceIsOtherAgent && sourceIsMainSession ? " markdown-session-link--agent" : ""
+        }"
+        role="link"
+        tabindex="0"
+        data-session-key=${linkableSourceKey}
+        ><span class="session-label" .textContent=${sourceLabel ?? linkableSourceKey}></span
+      ></a>`;
   return html`
     <div class="chat-reply-attribution chat-reply-attribution--forwarded">
       <span class="chat-reply-attribution__icon" aria-hidden="true">${icons.forward}</span>
@@ -64,9 +73,8 @@ export function renderForwardedAttribution(group: MessageGroup, opts: ForwardedA
           ? // The titler may replace the initial label. Its .textContent binding
             // keeps Lit text parts out of it. A group's source never changes: messages are
             // immutable and grouping splits on senderSession, so no keyed
-            // remount is needed. Main-session sources pre-title as the agent's
-            // display name (an agent's main session IS the agent); the titler
-            // still stamps the href but leaves pre-titled text alone.
+            // remount is needed. Gateway labels, cron fallbacks, and main-session
+            // agent names pre-title the source; the titler still stamps the href.
             html`<span>${t("chat.messages.forwardedFrom")}</span>
               ${
                 sourceIsOtherAgent
@@ -85,7 +93,7 @@ export function renderForwardedAttribution(group: MessageGroup, opts: ForwardedA
               } `
           : sourceSessionKey
             ? html`<span>${t("chat.messages.forwardedFrom")}</span>
-                <span>${sourceSessionKey}</span>`
+                <span>${sourceLabel ?? sourceSessionKey}</span>`
             : html`<span
                 >${
                   group.senderSession?.agentId

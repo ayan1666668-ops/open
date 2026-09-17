@@ -1,5 +1,6 @@
 import { render } from "lit";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it } from "vitest";
+import { THEME_TYPEFACES, syncTypefaceStylesheets } from "../../../app/typography.ts";
 import type { MessageGroup } from "../../../lib/chat/chat-types.ts";
 import { renderMessageGroup } from "./chat-message-group.ts";
 import "../../../styles/base.css";
@@ -7,6 +8,17 @@ import "../../../styles/chat/startup-layout.css";
 import "../../../styles/chat/message-layout.css";
 import "../../../styles/chat/grouped.css";
 import "../../../styles/chat/text.css";
+
+// Match the app's default font before measuring the disclosure's inline baseline.
+beforeEach(async () => {
+  const typefaces = THEME_TYPEFACES.claw;
+  syncTypefaceStylesheets(typefaces);
+  await expect
+    .poll(() =>
+      Boolean(document.querySelector<HTMLLinkElement>(`#openclaw-typeface-${typefaces.ui}`)?.sheet),
+    )
+    .toBe(true);
+});
 
 let host: HTMLDivElement;
 let avatarUrl: string | undefined;
