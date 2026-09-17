@@ -20,9 +20,11 @@ import {
 import type { UpdateFailureFact } from "../../infra/update-failure-facts.js";
 import { FreeBsdPkgOwnershipError } from "../../infra/update-freebsd-pkg-ownership.js";
 import { UpdateRequesterRevokedError } from "../../infra/update-requester-authority.js";
+import { UpdateRunAdmissionBusyError } from "../../infra/update-run-admission.js";
 import { getUpdateRun, recordUpdateRunPhase } from "../../infra/update-run-ledger.js";
-import type { UpdateRunResult } from "../../infra/update-runner.js";
+import type { UpdateRunResult, UpdateStepResult } from "../../infra/update-runner.js";
 import { defaultRuntime } from "../../runtime.js";
+import type { UpdateRecoveryStep } from "../../shared/update-outcome.js";
 import type { OpenClawSchemaVersions } from "../../state/openclaw-schema-versions.js";
 import { exitCliAfterOutput } from "../one-shot-exit.js";
 import { printResult } from "./progress.js";
@@ -83,36 +85,51 @@ export function createUpdateCommandFailureResult(
         : admissionFailure
           ? "managed-service-preflight"
           : "update-failed";
-  return {
-    ...result,
-    status: "error",
-    reason,
-    steps: [
-      {
-        name: preMutationFailure || pkgOwnershipFailure || admissionFailure ? reason : "update",
-        command: "openclaw update",
-        cwd: result.root ?? process.cwd(),
-        durationMs: result.durationMs,
-        exitCode: 1,
-        ...(isAbortError(cause) ? { termination: "signal" as const } : {}),
-        ...(detail !== undefined ? { stderrTail: detail } : {}),
-        // Recorded diagnostics do not change post-mutation recovery eligibility.
-        ...(preMutationFailure || cause instanceof GatewayServiceUpdateOwnershipError
-          ? { failureFacts: cause.failureFacts }
-          : {}),
-      },
-    ],
+  const failedStep: UpdateStepResult = {
+    name: preMutationFailure || pkgOwnershipFailure || admissionFailure ? reason : "update",
+    command: "openclaw update",
+    cwd: result.root ?? process.cwd(),
+    durationMs: result.durationMs,
+    exitCode: 1,
+    ...(isAbortError(cause) ? { termination: "signal" as const } : {}),
+    ...(detail !== undefined ? { stderrTail: detail } : {}),
+    ...(preMutationFailure && cause.recoverySteps ? { recoverySteps: cause.recoverySteps } : {}),
+    // Recorded diagnostics do not change post-mutation recovery eligibility.
+    ...(preMutationFailure || cause instanceof GatewayServiceUpdateOwnershipError
+      ? { failureFacts: cause.failureFacts }
+      : {}),
   };
+  return { ...result, status: "error", reason, failedStep, steps: [failedStep] };
 }
 
 /** Report rejected read-only admission without creating a run or recovery diagnostics. */
 export async function withUpdateAdmissionReporting<T>(
   opts: UpdateCommandOptions,
   admit: () => Promise<T>,
+  mode: "unknown" | "finalize" = "unknown",
 ): Promise<T> {
+  const startedAt = Date.now();
   try {
     return await admit();
   } catch (error) {
+    if (error instanceof UpdateRunAdmissionBusyError) {
+      const result = {
+        status: "skipped",
+        mode,
+        reason: error.reason,
+        steps: [],
+        durationMs: Date.now() - startedAt,
+        ...(opts.dryRun ? { dryRun: true } : {}),
+        notes: [error.message],
+      };
+      if (opts.json) {
+        defaultRuntime.writeJson(result);
+      } else {
+        defaultRuntime.log(theme.warn(error.message));
+      }
+      // Existing parents treat zero as completed convergence, even without reading JSON.
+      return exitCliAfterOutput(defaultRuntime, result.mode === "finalize" ? 1 : 0);
+    }
     if (error instanceof UpdateCommandPendingRecoveryFailure) {
       return reportUpdateCommandPendingRecovery(error, opts);
     }
@@ -279,6 +296,7 @@ export function resolveAutomaticUpdateTriage(
 }
 
 export type UpdateAdmissionReportParams = {
+  recoverySteps?: readonly UpdateRecoveryStep[];
   failureFacts?: readonly UpdateFailureFact[];
   root: string;
   installKind: "git" | "package" | "unknown";
@@ -292,6 +310,7 @@ export type RefuseUpdate = (
   reason: string,
   message?: string,
   failureFacts?: readonly UpdateFailureFact[],
+  recoverySteps?: readonly UpdateRecoveryStep[],
 ) => Promise<void>;
 
 /** A fresh admission decision is data until its staging and executor owners settle. */
@@ -309,15 +328,16 @@ export async function writeControlPlaneUpdateRestartSentinelBestEffort(params: {
   meta: ControlPlaneUpdateSentinelMetaFile["meta"] | null;
   result: UpdateRunResult;
   jsonMode: boolean;
+  env: NodeJS.ProcessEnv | undefined;
 }): Promise<void> {
   if (!params.meta) {
     return;
   }
   try {
-    await writeControlPlaneUpdateRestartSentinel({
-      meta: params.meta,
-      result: params.result,
-    });
+    await writeControlPlaneUpdateRestartSentinel(
+      { meta: params.meta, result: params.result },
+      params.env,
+    );
   } catch (err) {
     const message = `Failed to write update.run restart sentinel: ${String(err)}`;
     if (params.jsonMode) {
@@ -332,12 +352,13 @@ export async function markControlPlaneUpdateRestartSentinelFailureBestEffort(par
   meta: ControlPlaneUpdateSentinelMetaFile["meta"] | null;
   reason: string;
   jsonMode: boolean;
+  env: NodeJS.ProcessEnv | undefined;
 }): Promise<void> {
   if (!params.meta) {
     return;
   }
   try {
-    await markControlPlaneUpdateRestartSentinelFailure(params.reason, params.meta);
+    await markControlPlaneUpdateRestartSentinelFailure(params.reason, params.meta, params.env);
   } catch (err) {
     const message = `Failed to mark update.run restart sentinel failed: ${String(err)}`;
     if (params.jsonMode) {

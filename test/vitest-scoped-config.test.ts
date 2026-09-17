@@ -815,6 +815,7 @@ describe("scoped vitest configs", () => {
       "amazon-bedrock-mantle/**/*.test.ts",
       "anthropic/**/*.test.ts",
       "anthropic-vertex/**/*.test.ts",
+      "apple-fm/**/*.test.ts",
       "byteplus/**/*.test.ts",
       "chutes/**/*.test.ts",
       "comfy/**/*.test.ts",
@@ -1168,6 +1169,10 @@ describe("scoped vitest configs", () => {
     const testConfig = requireTestConfig(defaultLoggingConfig);
     expect(testConfig.dir).toBe(path.join(process.cwd(), "src"));
     expect(testConfig.include).toEqual(["logging/**/*.test.ts"]);
+    expect(testConfig.exclude).toContain("logging/diagnostic-session-context.test.ts");
+    expect(testConfig.exclude).toContain(
+      "logging/diagnostic-stuck-session-recovery.runtime.test.ts",
+    );
   });
 
   it("normalizes plugin-sdk include patterns relative to the scoped dir", () => {
