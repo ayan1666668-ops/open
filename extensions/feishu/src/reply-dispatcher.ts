@@ -682,20 +682,25 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
         // final would, so this close drops the card and reuses a matching block
         // receipt or sends the combined text for a final to inherit.
         // Reasoning is blockquoted before it reaches the card, and a card does not draw
-        // a blockquoted table, so a native one there loses its rows. Bullets survive the
-        // quote, so reasoning degrades to a list rather than the rows disappearing, and
-        // the card the answer earned is kept. The post path keeps the native table,
-        // which it renders as a fenced block.
+        // a blockquoted table, so one that is still raw here loses its rows. The preview
+        // asks this question of every mode and gives way to the authored table when its own
+        // conversion outgrows the limit, which is exactly the text the close then finds
+        // stored, so the close asks the same question rather than only the native one:
+        // block degrades to a quote-surviving list and keeps the card the answer earned,
+        // and the other modes take their configured shape. What a mode already converted
+        // carries no table for this to find, so nothing is converted twice. A projection
+        // that outgrows the limit falls to the post path below, where the rows stay
+        // readable: that path converts for its own target and keeps them as authored when a
+        // quoted fence could not survive its cut.
         const plainReasoning = plainReasoningText(finalizedReasoningText);
-        const reasoningForCard =
-          nativeTables && hasCardMarkdownTable(plainReasoning)
-            ? core.channel.text.convertMarkdownTables(plainReasoning, "bullets")
-            : finalizedReasoningText;
+        const projectedReasoning = hasCardMarkdownTable(plainReasoning)
+          ? previewReasoningText(plainReasoning)
+          : undefined;
         // The body a card close would write, which is what the limit has to be asked about.
         const cardText =
-          reasoningForCard === finalizedReasoningText
+          projectedReasoning === undefined
             ? rawText
-            : buildCombinedStreamText(reasoningForCard, answerText);
+            : buildCombinedStreamText(projectedReasoning, answerText);
         const authoredCloseText = buildCombinedStreamText(
           finalizedReasoningText,
           finalizedAnswerText,

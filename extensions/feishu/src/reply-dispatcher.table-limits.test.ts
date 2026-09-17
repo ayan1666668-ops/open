@@ -974,6 +974,46 @@ describe("createFeishuReplyDispatcher table limits", () => {
     expect(sendMessageFeishuMock).not.toHaveBeenCalled();
   });
 
+  // The preview gives way to the authored table when its own conversion outgrows the limit,
+  // and that authored table is what the close then finds stored. A card blockquotes what it
+  // is handed and Feishu draws no rows from a quoted table, so the close has to ask the same
+  // projection question the preview asked, in every mode and not only the native one.
+  it("re-projects a reasoning table the preview left authored when the close commits", async () => {
+    const convert = getFeishuRuntimeMock().channel.text.convertMarkdownTables;
+    const outgrows = [
+      "| name | detail |",
+      "| --- | --- |",
+      ...Array.from({ length: 40 }, (_entry, index) => `| row${index} | d |`),
+      `| wide | ${"w".repeat(220)} |`,
+    ].join("\n");
+    // Guard the fixture: authored inside the limit, so nothing but the projection decides,
+    // and the answer carries no table of its own, so this is the reasoning-only case.
+    expect(outgrows.length).toBeLessThanOrEqual(4000);
+    expect(convert(outgrows, "code").length).toBeGreaterThan(4000);
+    const answer = "Here is the summary.";
+    expect(convert(answer, "code")).toBe(answer);
+
+    const harness = createBlockTableHarness(tableCfg("code"), true);
+    harness.result.replyOptions.onReasoningStream?.({ text: outgrows });
+    await vi.waitFor(() => expect(streamingInstances).toHaveLength(1));
+    harness.result.replyOptions.onPartialReply?.({ text: answer });
+    await harness.options.onIdle?.();
+
+    const closed = requireStreamingInstance(0);
+    const cardBodies = closed.closeWithResult.mock.calls.map((call) => String(call[0] ?? ""));
+    // Counts rather than two walls of rows: the defect is a card that carries any raw row.
+    expect(cardBodies.filter((body) => body.includes("| row0 |")).length).toBe(0);
+    expect([closed.closeWithResult.mock.calls.length, closed.discard.mock.calls.length]).toEqual([
+      0, 1,
+    ]);
+    const posts = sendMessageFeishuMock.mock.calls.map((call) => String(call[0]?.text ?? ""));
+    expect(posts.length).toBeGreaterThan(0);
+    // The rows reach the reader in the post, and the configured mode is not swapped for the
+    // native one's list on the way.
+    expect(posts.join("")).toContain("| row0 |");
+    expect(posts.join("")).not.toContain("\u2022");
+  });
+
   // Reasoning shares the card with the answer, and its own conversion can outgrow the
   // limit the answer preview answers to. It gives way to the text as authored there.
   it("shows reasoning as authored when its conversion outgrows the chunk limit", async () => {
