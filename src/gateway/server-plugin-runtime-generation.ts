@@ -1,6 +1,13 @@
 import type { PluginServicesHandle } from "../plugins/services.js";
 import { createDeferredCore } from "../shared/deferred.js";
 
+export type GatewayPluginReloadStatus = Readonly<{
+  phase: "reloading" | "recovering" | "failed";
+  pluginIds: string[];
+  deadlineAtMs?: number;
+  reason?: string;
+}>;
+
 export type GatewayPluginRuntimeClaim = Readonly<{
   isCurrent: () => boolean;
   waitForUnblocked: () => Promise<boolean>;
@@ -11,6 +18,12 @@ type GatewayPluginRuntimeReservation = Readonly<{
   claim: GatewayPluginRuntimeClaim;
   commit: () => void;
   reject: () => void;
+  setReloadStatus: (status: GatewayPluginReloadStatus | undefined) => void;
+  finishReload: (
+    outcome: "applied" | "restored" | "failed" | "unchanged",
+    pluginIds: ReadonlySet<string>,
+    reportFailure?: (reason: string) => void,
+  ) => void;
 }>;
 
 /** One Gateway owner fences every plugin publication across startup and hot replacement. */
@@ -19,6 +32,8 @@ export function createGatewayPluginRuntimeGeneration(params: {
   setServices: (services: PluginServicesHandle | null) => void;
 }) {
   let current: GatewayPluginRuntimeClaim;
+  let latestReservation: GatewayPluginRuntimeClaim | undefined;
+  let reloadStatus: GatewayPluginReloadStatus | undefined;
   let pending:
     | {
         claim: GatewayPluginRuntimeClaim;
@@ -51,6 +66,7 @@ export function createGatewayPluginRuntimeGeneration(params: {
   current = createClaim();
 
   return {
+    getReloadStatus: () => reloadStatus,
     currentClaim: () => current,
     currentServices: () => params.getServices(),
     publishServices: (claim: GatewayPluginRuntimeClaim, services: PluginServicesHandle | null) =>
@@ -60,6 +76,8 @@ export function createGatewayPluginRuntimeGeneration(params: {
         throw new Error("a Gateway plugin runtime replacement is already pending");
       }
       const reservation = { claim: createClaim(), settled: createDeferredCore() };
+      const previousReloadStatus = reloadStatus;
+      latestReservation = reservation.claim;
       pending = reservation;
       const settle = (accepted: boolean) => {
         if (pending !== reservation) {
@@ -75,6 +93,41 @@ export function createGatewayPluginRuntimeGeneration(params: {
         claim: reservation.claim,
         commit: () => settle(true),
         reject: () => settle(false),
+        setReloadStatus: (status) => {
+          if (latestReservation === reservation.claim) {
+            reloadStatus = status;
+          }
+        },
+        finishReload: (outcome, pluginIds, reportFailure) => {
+          if (latestReservation !== reservation.claim) {
+            return;
+          }
+          if (outcome === "unchanged") {
+            reloadStatus = previousReloadStatus;
+            return;
+          }
+          const failedIds = new Set(
+            previousReloadStatus?.phase === "failed"
+              ? previousReloadStatus.pluginIds.filter((id) => !pluginIds.has(id))
+              : [],
+          );
+          if (outcome === "failed") {
+            for (const id of pluginIds) {
+              failedIds.add(id);
+            }
+          }
+          reloadStatus = failedIds.size
+            ? {
+                phase: "failed",
+                pluginIds: [...failedIds].toSorted(),
+                reason:
+                  "Plugin activation or recovery failed. Retry openclaw plugins reload <id> after admitted work settles, or restart the Gateway. Inspect the Gateway log for the failure.",
+              }
+            : undefined;
+          if (outcome === "failed" && reloadStatus?.reason) {
+            reportFailure?.(reloadStatus.reason);
+          }
+        },
       });
     },
   };
