@@ -1,4 +1,5 @@
 import path from "node:path";
+import { expect } from "vitest";
 import type { UpdateRunResult } from "../../infra/update-runner.js";
 import type { UpdateRecoveryStep } from "../../shared/update-outcome.js";
 import { createCommandResult } from "../../test-utils/npm-spec-install-test-helpers.js";
@@ -6,7 +7,10 @@ import { quoteCliArg, quotePowerShellArg } from "../quote-cli-arg.js";
 
 export const expectedNpmProbes = [
   ["npm", "--version"],
-  ["npm", "prefix", "-g"],
+  expect.toBeOneOf([
+    ["npm", "prefix", "-g"],
+    [process.execPath, expect.stringMatching(/[/\\]npm-cli\.js$/u), "prefix", "-g"],
+  ]),
 ];
 
 export function expectedRuntimeSelectionCommand(manager: "nvm" | "fnm", version: string): string {
