@@ -439,7 +439,7 @@ export function createPreparedModelRuntimeSnapshot(
     ...(input.inheritedAuthDir ? { inheritedAuthDir: input.inheritedAuthDir } : {}),
     ...(input.workspaceDir ? { workspaceDir: input.workspaceDir } : {}),
     config: publishedConfig,
-    observationConfig: publishedConfig,
+    observationConfig: input.config,
     isCurrent: catalogAccess.isCurrent,
     authModes: resolveUsableAgentCredentialModes(credentials),
     metadataSnapshot: pluginMetadataSnapshot,
