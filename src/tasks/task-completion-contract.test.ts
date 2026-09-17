@@ -18,6 +18,19 @@ describe("resolveRequiredCompletionTerminalResult", () => {
   // delivered result.
   it.each([
     ["pure progress", "Let me run the tests"],
+    ["clock adjunct comma plan", "I'll inspect the repo: Before 5:00, I will patch the handler."],
+    ["clock adjunct colon plan", "I'll inspect the repo: Before 5:00: I will patch the handler."],
+    ["present run prerequisite", "Reviewing the changes, I patched it when the tests run."],
+    ["noun-object attempt", "Reviewing the failure, I attempted the repair."],
+    ["noun-object try", "Reviewing the failure, I tried the repair."],
+    [
+      "coordinated scan future-only follow-up",
+      "Reviewing the handler, I started patching it and will finish the repair.",
+    ],
+    [
+      "coordinated scan conditional finish",
+      "Reviewing the handler, I started patching it and finished the repair if tests pass.",
+    ],
     ["unfinished attempt started", "Reviewing the failure, I started to patch the handler."],
     ["unfinished attempt attempted", "Reviewing the failure, I attempted to patch the handler."],
     ["unfinished attempt began", "Reviewing the failure, I began patching the handler."],
@@ -243,6 +256,21 @@ describe("resolveRequiredCompletionTerminalResult", () => {
       "I'll inspect the repo now: the crash is a missing null check in src/foo.ts.",
     ],
     ["completed clause after narration", "Reviewing the changes, we fixed the regression."],
+    ["perfect irregular written", "Reviewing the changes, I have written the migration."],
+    ["perfect irregular contracted rewrite", "Reviewing the changes, I've rewritten the handler."],
+    ["perfect irregular run", "Reviewing the changes, I have run the migration."],
+    [
+      "coordinated scan completed elided subject",
+      "Reviewing the handler, I started patching it and finished the repair.",
+    ],
+    [
+      "coordinated scan later explicit subject",
+      "Reviewing the database, I attempted the repair and I rebuilt the index.",
+    ],
+    [
+      "coordinated scan later irregular action",
+      "Reviewing the handler, I attempted the repair and rewrote the handler.",
+    ],
     ["completed adverb result", "Reviewing the changes, I successfully patched the handler."],
     [
       "completed adverb after auxiliary",

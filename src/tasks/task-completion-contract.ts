@@ -21,7 +21,7 @@ const PLANNING_TIME_PREFIX_PATTERN =
   /^(?:(?:today|tomorrow|tonight|later|soon|eventually)(?:\s+(?:morning|afternoon|evening|night))?|(?:next|this)\s+(?:week|month|year|morning|afternoon|evening|weekend)|(?:in|within)\s+(?:a|an|\d+)\s+(?:moments?|minutes?|hours?|days?|weeks?)|at\s+(?:noon|midnight|\d{1,2}(?::\d{2})?(?:\s*[ap]\.?m\.?)?)|on\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?:\s+(?:morning|afternoon|evening|night))?)(?:,\s+|\s+(?=(?:i|we)\b))/i;
 
 const COMPLETION_RESULT_CLAUSE_PATTERN =
-  /^(?:(?:(?:i|we)(?:\s+(?:have\s+)?|(?:'|\u2019)ve\s+)|(?:i(?:\s+am|(?:'|\u2019)m)|we(?:\s+are|(?:'|\u2019)re))\s+))?(?:done|completed|finished|fixed|patched|resolved|deployed|landed|merged|implemented|confirmed)\b|(?:^|,\s*|\band\s+)(?:(?:(?:i|we)(?:\s+(?:have\s+)?|(?:'|\u2019)ve\s+)|(?:i(?:\s+am|(?:'|\u2019)m)|we(?:\s+are|(?:'|\u2019)re))\s+)(?:done|completed|finished|fixed|patched|resolved|deployed|landed|merged|implemented|confirmed)\b|(?:(?:all|the)\s+)?(?:\d+\s+)?(?:(?!(?:why|whether|if|unless|when|once|after|will|would|could|should|might|may)\b)[\w-]+\s+){0,3}(?:tests?|build|lint|checks?|syntax)\s+(?:(?:have|has)\s+)?(?:passed|succeeded|green)\b)/i;
+  /^(?:(?:(?:i|we)(?:\s+(?:have\s+)?|(?:'|\u2019)ve\s+)|(?:i(?:\s+am|(?:'|\u2019)m)|we(?:\s+are|(?:'|\u2019)re))\s+))?(?:done|completed|finished|fixed|patched|resolved|deployed|landed|merged|implemented|confirmed)\b|(?:^|,\s*|\band\s+)(?:(?:(?:i|we)(?:\s+(?:have\s+)?|(?:'|\u2019)ve\s+)|(?:i(?:\s+am|(?:'|\u2019)m)|we(?:\s+are|(?:'|\u2019)re))\s+)(?:done|completed|finished|fixed|patched|resolved|deployed|landed|merged|implemented|confirmed)\b|(?:(?:all|the)\s+)?(?:\d+\s+)?(?:(?!(?:why|whether|if|unless|when|once|after|will|would|could|should|might|may)\b)[\w-]+\s+){0,3}(?:tests?|build|lint|checks?|syntax)\s+(?:(?:have|has)\s+)?(?:passed|succeeded|green)\b)/gi;
 
 const CONDITIONAL_PROGRESS_PATTERN = /\b(?:whether|if|unless|once|when|after|as\s+soon\s+as)\b/i;
 const FIRST_PERSON_PLAN_PATTERN =
@@ -36,13 +36,24 @@ const RESULT_SUBJECT = String.raw`(?:${RESULT_SUBJECT_WORD}\s+){0,6}(?!(?:the|a|
 const IRREGULAR_PAST_VERB =
   "arose|awoke|bore|beat|became|began|bent|bet|bit|bled|blew|broke|brought|built|burnt|burst|bought|caught|chose|came|cost|crept|cut|dealt|dug|did|drew|drank|drove|ate|fell|fed|felt|fought|found|fled|flew|forbade|forgot|forgave|froze|got|gave|went|grew|hung|heard|hid|hit|held|hurt|kept|knew|laid|led|leant|leapt|learnt|left|lent|let|lay|lit|lost|made|meant|met|paid|put|quit|read|rode|rang|rose|ran|said|saw|sought|sold|sent|set|shook|shone|shot|showed|shrank|shut|sang|sank|sat|slept|slid|smelt|spoke|spelt|spent|spilt|spun|split|spread|sprang|stood|stole|stuck|stung|stank|struck|swore|swept|swam|swung|took|taught|tore|told|thought|threw|understood|upset|woke|wore|wept|won|wound|wrote";
 const PAST_RESULT_VERB = String.raw`(?:(?:(?:re|un|over|under|mis|out|fore|with)-?)?(?:${IRREGULAR_PAST_VERB})|(?!(?:need|feed|bleed|breed|heed|seed|weed|speed|succeed|exceed|proceed)\b)[a-z]+ed)`;
+// Perfect-tense forms are separate: a present "tests run" is not a past
+// temporal event merely because "have run" can report a completed action.
+const PERFECT_RESULT_VERB = String.raw`(?:(?:re|un|over|under|mis|out|fore|with)-?)?(?:arisen|awoken|borne|beaten|become|begun|bitten|blown|broken|chosen|drunk|driven|eaten|fallen|flown|forbidden|forgotten|forgiven|frozen|gotten|given|gone|grown|hidden|known|lain|ridden|rung|risen|run|seen|shaken|shown|shrunk|sung|sunk|spoken|sprung|stolen|stunk|stricken|sworn|swum|taken|torn|thrown|woken|worn|written)`;
 const RESULT_ADVERBS = String.raw`(?:(?:[a-z]+ly|already|just)\s+){0,3}`;
 const COMPLETION_STATE_CLAUSE_PATTERN = new RegExp(
   String.raw`(?:^|,\s*|\band\s+)${RESULT_SUBJECT}\s+${RESULT_ADVERBS}(?:(?:(?:has|have)\s+)?${RESULT_ADVERBS}(?:${PAST_RESULT_VERB}|done)|(?:is|are|was|were|has\s+been|have\s+been)\s+${RESULT_ADVERBS}(?:done|complete|completed|finished|fixed|resolved))\b`,
-  "i",
+  "gi",
+);
+const PERFECT_RESULT_CLAUSE_PATTERN = new RegExp(
+  String.raw`(?:^|,\s*|\band\s+)(?:${RESULT_SUBJECT}\s+${RESULT_ADVERBS}(?:has|have)|(?:i|we)(?:'|\u2019)ve)\s+${RESULT_ADVERBS}(?:${PAST_RESULT_VERB}|${PERFECT_RESULT_VERB}|done)\b`,
+  "gi",
+);
+const COORDINATED_RESULT_CLAUSE_PATTERN = new RegExp(
+  String.raw`(?:,\s*|\band\s+)${RESULT_ADVERBS}(?:${PAST_RESULT_VERB}|done|complete)\b`,
+  "gi",
 );
 const UNFINISHED_RESULT_PATTERN = new RegExp(
-  String.raw`^${RESULT_SUBJECT}\s+${RESULT_ADVERBS}(?:did\s+(?:not|never)\b|(?:(?:had|has|have|was|were|did)\s+)?${RESULT_ADVERBS}(?:(?:plan(?:ned)?|hope(?:d)?|intend(?:ed)?|expect(?:ed)?|want(?:ed)?|need(?:ed)?|aim(?:ed)?|supposed)\s+to\b|(?:start(?:ed)?|begin|began|begun|continu(?:e|ed)|attempt(?:ed)?|try|tried|proceed(?:ed)?)\s+(?:to\b|[a-z]+ing\b)))`,
+  String.raw`^(?:${RESULT_SUBJECT}\s+)?${RESULT_ADVERBS}(?:did\s+(?:not|never)\b|(?:(?:had|has|have|was|were|did)\s+)?${RESULT_ADVERBS}(?:(?:attempt(?:ed)?|try|tried)\b|(?:plan(?:ned)?|hope(?:d)?|intend(?:ed)?|expect(?:ed)?|want(?:ed)?|need(?:ed)?|aim(?:ed)?|supposed)\s+to\b|(?:start(?:ed)?|begin|began|begun|continu(?:e|ed)|proceed(?:ed)?)\s+(?:to\b|[a-z]+ing\b)))`,
   "i",
 );
 const PAST_TEMPORAL_EVENT_PATTERN = new RegExp(
@@ -127,7 +138,7 @@ function isProgressOnlyCompletionText(value: string): boolean {
     return clauses.every((clause) => {
       const body = clause.replace(COMPLETION_HEADING_PATTERN, "").trim();
       const narration = body
-        .replace(/^(?:if|unless|when|once|after|before|as\s+soon\s+as)\b[^,:]*[,:]\s*/i, "")
+        .replace(/^(?:if|unless|when|once|after|before|as\s+soon\s+as)\b.*?(?:,\s*|:\s+)/i, "")
         .replace(PLANNING_TIME_PREFIX_PATTERN, "");
       const narrativeProgress =
         PROGRESS_ONLY_PATTERN.test(narration) ||
@@ -137,28 +148,31 @@ function isProgressOnlyCompletionText(value: string): boolean {
       // independent; qualified test subjects must not absorb that prefix.
       const resultOffset = narrativeProgress ? body.search(/,|\band\s+/i) : 0;
       const resultText = resultOffset < 0 ? "" : body.slice(resultOffset);
-      const result =
-        COMPLETION_RESULT_CLAUSE_PATTERN.exec(resultText) ??
-        COMPLETION_STATE_CLAUSE_PATTERN.exec(resultText);
-      const resultIndex = result ? resultOffset + result.index : 0;
-      const prefix = result ? body.slice(0, resultIndex) : "";
-      const resultClause = result
-        ? (body
-            .slice(resultIndex)
-            .replace(/^(?:,|and)\s*/i, "")
-            .split(
-              /,(?!\s*(?:if|unless|whether|once|when|after|as\s+soon\s+as)\b)|\s+(?:and|but|so|because|to)\s+/i,
-            )[0] ?? "")
-        : "";
-      // Fronted if/unless governs the result; an embedded whether question can
-      // end before an independent comma-delimited past-tense statement.
-      const conditionalResult =
-        result !== null &&
-        (UNFINISHED_RESULT_PATTERN.test(body.slice(resultIndex).replace(/^(?:,|and)\s*/i, "")) ||
+      const results = [
+        ...resultText.matchAll(COMPLETION_RESULT_CLAUSE_PATTERN),
+        ...resultText.matchAll(COMPLETION_STATE_CLAUSE_PATTERN),
+        ...resultText.matchAll(PERFECT_RESULT_CLAUSE_PATTERN),
+        ...resultText.matchAll(COORDINATED_RESULT_CLAUSE_PATTERN),
+      ];
+      const completedResult = results.some((result) => {
+        const resultIndex = resultOffset + result.index;
+        const prefix = body.slice(0, resultIndex);
+        const remainder = body.slice(resultIndex).replace(/^(?:,|and)\s*/i, "");
+        const resultClause =
+          remainder.split(
+            /,(?!\s*(?:if|unless|whether|once|when|after|as\s+soon\s+as)\b)|\s+(?:and|but|so|because|to)\s+/i,
+          )[0] ?? "";
+        // Reject each deferred candidate, not a later independent completed
+        // action merely because the first clause only described an attempt.
+        return !(
+          UNFINISHED_RESULT_PATTERN.test(remainder) ||
           /\b(?:whether|if|unless)\b/i.test(resultClause) ||
           /(?:^|[,;:]\s*)(?:if|unless)\b/i.test(prefix) ||
           (/^and\b/i.test(result[0]) && CONDITIONAL_PROGRESS_PATTERN.test(prefix)) ||
-          hasDeferredTemporalResult(prefix, resultClause));
+          hasDeferredTemporalResult(prefix, resultClause)
+        );
+      });
+      const conditionalResult = results.length > 0 && !completedResult;
       const progress =
         narrativeProgress ||
         PENDING_COMPLETION_PATTERN.test(body) ||
@@ -170,7 +184,7 @@ function isProgressOnlyCompletionText(value: string): boolean {
       progressSeen ||= progress;
       // Generic replies retain their existing behavior; only a known narrative
       // needs an actual result, not an adjective or deferred completion status.
-      return progress && (result === null || conditionalResult);
+      return progress && !completedResult;
     });
   });
 }
