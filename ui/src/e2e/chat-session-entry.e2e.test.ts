@@ -15,9 +15,15 @@ import {
 } from "./control-ui-e2e-suite.test-support.ts";
 
 type EntrySample = { id: number; kind: string; y: number; height: number };
+type TimedEntrySample = EntrySample & { time: number };
 type EntryFrame = { time: number; samples: EntrySample[]; scrollTop: number | undefined };
 type EntryRecorder = { enabled: boolean; done: boolean; frames: EntryFrame[] };
-type ObservedWindow = Window & { sessionEntryRecorder: EntryRecorder };
+
+declare global {
+  interface Window {
+    sessionEntryRecorder: EntryRecorder;
+  }
+}
 
 const suite = createControlUiE2eSuite({
   name: "chat session entry",
@@ -118,10 +124,11 @@ suite.define(() => {
               await page.addInitScript(
                 ({ target, enabled, lastEntryId }) => {
                   const recorder: EntryRecorder = { enabled, done: false, frames: [] };
-                  (window as ObservedWindow).sessionEntryRecorder = recorder;
+                  window.sessionEntryRecorder = recorder;
                   const ids = new WeakMap<Element, number>();
                   let nextId = 0;
                   let lastEntryPaintedAt: number | undefined;
+                  let lastEntryPaintedFrames = 0;
                   const tick = (time: number) => {
                     if (recorder.done) {
                       return;
@@ -184,6 +191,7 @@ suite.define(() => {
                         });
                         if (entryId === lastEntryId) {
                           lastEntryPaintedAt ??= time;
+                          lastEntryPaintedFrames += 1;
                         }
                       }
                       if (samples.length) {
@@ -192,7 +200,11 @@ suite.define(() => {
                       // Keep all entry frames, including the first one; the window
                       // extends beyond the existing 300 ms entry effects without
                       // changing animation state or delaying the observer.
-                      if (lastEntryPaintedAt !== undefined && time - lastEntryPaintedAt >= 750) {
+                      if (
+                        lastEntryPaintedAt !== undefined &&
+                        time - lastEntryPaintedAt >= 750 &&
+                        lastEntryPaintedFrames >= 10
+                      ) {
                         recorder.done = true;
                       }
                     }
@@ -222,19 +234,15 @@ suite.define(() => {
                 );
                 await link.waitFor();
                 await page.evaluate(() => {
-                  (window as ObservedWindow).sessionEntryRecorder.enabled = true;
+                  window.sessionEntryRecorder.enabled = true;
                 });
                 await link.click();
               }
-              await page.waitForFunction(
-                () => (window as ObservedWindow).sessionEntryRecorder.done,
-                undefined,
-                { timeout: controlUiE2eWaitTimeoutMs },
-              );
+              await page.waitForFunction(() => window.sessionEntryRecorder.done, undefined, {
+                timeout: controlUiE2eWaitTimeoutMs,
+              });
               expect(pageErrors).toEqual([]);
-              const frames = await page.evaluate(
-                () => (window as ObservedWindow).sessionEntryRecorder.frames,
-              );
+              const frames = await page.evaluate(() => window.sessionEntryRecorder.frames);
               await writeFile(
                 path.join(suite.artifactDir, "entry-frames.json"),
                 JSON.stringify(frames, null, 2),
@@ -256,12 +264,16 @@ suite.define(() => {
               });
               expect((await gateway.getRequests("chat.startup")).length).toBeGreaterThan(0);
               expect(frames.length).toBeGreaterThanOrEqual(10);
-              const samplesById = new Map<number, Array<EntrySample & { time: number }>>();
+              const samplesById = new Map<number, [TimedEntrySample, ...TimedEntrySample[]]>();
               for (const frame of frames) {
                 for (const sample of frame.samples) {
-                  const samples = samplesById.get(sample.id) ?? [];
-                  samples.push({ ...sample, time: frame.time });
-                  samplesById.set(sample.id, samples);
+                  const timedSample = { ...sample, time: frame.time };
+                  const samples = samplesById.get(sample.id);
+                  if (samples) {
+                    samples.push(timedSample);
+                  } else {
+                    samplesById.set(sample.id, [timedSample]);
+                  }
                 }
               }
               const observed = Array.from(samplesById.values());
