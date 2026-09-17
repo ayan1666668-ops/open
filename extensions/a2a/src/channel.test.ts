@@ -1,5 +1,6 @@
 import { verifyChannelMessageAdapterCapabilityProofs } from "openclaw/plugin-sdk/channel-outbound";
 import { validateJsonSchemaValue } from "openclaw/plugin-sdk/json-schema-runtime";
+import * as ssrfRuntime from "openclaw/plugin-sdk/ssrf-runtime";
 import { describe, expect, it, vi } from "vitest";
 import { a2aChannelPlugin } from "./channel.js";
 import { a2aPluginConfigSchema } from "./config-schema.js";
@@ -101,6 +102,76 @@ describe("A2A channel configuration", () => {
 });
 
 describe("A2A channel message adapter", () => {
+  it.each(["preferred", "legacy"] as const)(
+    "checks authority after transport preparation through the %s registered send",
+    async (surface) => {
+      const guardedFetch = ssrfRuntime.fetchWithSsrFGuard;
+      const lookupStarted = Promise.withResolvers<void>();
+      const lookupFinished = Promise.withResolvers<Array<{ address: string; family: 4 }>>();
+      const lookupFn: NonNullable<Parameters<typeof guardedFetch>[0]["lookupFn"]> = vi.fn(
+        async () => {
+          lookupStarted.resolve();
+          return await lookupFinished.promise;
+        },
+      );
+      vi.spyOn(ssrfRuntime, "fetchWithSsrFGuard").mockImplementationOnce(
+        async (params) => await guardedFetch({ ...params, lookupFn }),
+      );
+      const fetchSpy = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValue(new Response('{"jsonrpc":"2.0","result":{}}'));
+      const cfg: A2aCoreConfig = {
+        channels: {
+          a2a: {
+            peers: {
+              hermes: {
+                token: "test-inbound-token",
+                url: "https://peer.example.test/a2a/v1",
+              },
+            },
+          },
+        },
+      };
+      let current = true;
+      const assertDirectAdapterHandoff = vi.fn(() => {
+        if (!current) {
+          throw new Error("source authority revoked");
+        }
+      });
+
+      try {
+        const send =
+          surface === "preferred"
+            ? a2aChannelPlugin.message?.send?.text?.({
+                cfg,
+                accountId: "default",
+                to: "hermes",
+                text: "hello",
+                assertDirectAdapterHandoff,
+              })
+            : a2aChannelPlugin.outbound?.sendText?.({
+                cfg,
+                to: "hermes",
+                text: "hello",
+                assertDirectAdapterHandoff,
+              });
+        if (!send) {
+          throw new Error(`expected ${surface} A2A text sender`);
+        }
+        await lookupStarted.promise;
+        current = false;
+        lookupFinished.resolve([{ address: "93.184.216.34", family: 4 }]);
+
+        await expect(send).rejects.toThrow("source authority revoked");
+        expect(lookupFn).toHaveBeenCalledOnce();
+        expect(assertDirectAdapterHandoff).toHaveBeenCalledOnce();
+        expect(fetchSpy).not.toHaveBeenCalled();
+      } finally {
+        vi.restoreAllMocks();
+      }
+    },
+  );
+
   it("keeps authority current through preferred and legacy registered sends", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(
       async () =>
