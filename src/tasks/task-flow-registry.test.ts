@@ -11,6 +11,7 @@ import {
   failFlow,
   getTaskFlowById,
   listTaskFlowRecords,
+  listTaskFlowsForOwnerKey,
   requestFlowCancel,
   reloadTaskFlowRegistryFromStoreAsync,
   resumeFlow,
@@ -189,6 +190,48 @@ describe("task-flow-registry", () => {
 
       expect(deleteTaskFlowRecordById(created.flowId)).toBe(true);
       expect(getTaskFlowById(created.flowId)).toBeUndefined();
+    });
+  });
+
+  it("lists isolated flow copies newest first with normalized owner filtering", async () => {
+    await withFlowRegistryTempDir(async () => {
+      const records = [
+        ["owner-a", 10],
+        ["owner-b", 30],
+        ["owner-a", 20],
+      ] as const;
+      const created = records.map(([ownerKey, createdAt]) =>
+        createManagedTaskFlow({
+          ownerKey,
+          createdAt,
+          controllerId: "tests/listing",
+          goal: "Synthetic listing",
+          stateJson: { count: 1 },
+        }),
+      );
+      const [older, foreign, newer] = created;
+      if (!older || !foreign || !newer) {
+        throw new Error("Expected all three flow fixtures to be created");
+      }
+      expect(listTaskFlowRecords().map((flow) => flow.flowId)).toEqual([
+        foreign.flowId,
+        newer.flowId,
+        older.flowId,
+      ]);
+      const selected = listTaskFlowsForOwnerKey("  owner-a  ");
+      expect(selected.map((flow) => flow.flowId)).toEqual([newer.flowId, older.flowId]);
+      expect(listTaskFlowsForOwnerKey(" ")).toEqual([]);
+      expect(listTaskFlowsForOwnerKey("missing")).toEqual([]);
+      const selectedFlow = selected[0];
+      if (!selectedFlow) {
+        throw new Error("Expected the newest owner flow");
+      }
+      selectedFlow.stateJson = { count: 2 };
+      selectedFlow.goal = "Changed copy";
+      expect(getTaskFlowById(newer.flowId)).toMatchObject({
+        goal: "Synthetic listing",
+        stateJson: { count: 1 },
+      });
     });
   });
 

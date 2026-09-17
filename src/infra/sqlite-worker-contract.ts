@@ -70,7 +70,8 @@ export const SQLITE_WORKER_MAX_MESSAGE_BYTES = 32 * 1024 * 1024;
 export const SQLITE_WORKER_MAX_RESULT_BYTES = 64 * 1024 * 1024;
 export const SQLITE_WORKER_TRANSFER_FRAME_BYTES = 8 * 1024 * 1024;
 
-const SQLITE_WORKER_ERROR_NAME = "SqliteWorkerError";
+// The process-global broker can return errors to a different source/built module copy.
+const retainedWorkerErrorCode = Symbol.for("openclaw.sqliteWorkerErrorCode");
 
 export class SqliteWorkerError extends Error {
   constructor(
@@ -78,20 +79,43 @@ export class SqliteWorkerError extends Error {
     readonly code: "closed" | "overloaded" | "unavailable" | "outcome-unknown",
   ) {
     super(message);
-    this.name = SQLITE_WORKER_ERROR_NAME;
+    this.name = "SqliteWorkerError";
+    Object.defineProperty(this, retainedWorkerErrorCode, { value: code });
   }
 }
 
-/** Recognize typed broker errors across module graphs without admitting cleanup aggregates. */
+/** Carry only canonical worker classification through a local cleanup aggregate. */
+export function retainSqliteWorkerErrorCode(error: Error, source: unknown): Error {
+  let code: unknown;
+  try {
+    code = Object.getOwnPropertyDescriptor(source, retainedWorkerErrorCode)?.value;
+  } catch {
+    // Optional classification must not replace an error that refuses inspection.
+    return error;
+  }
+  if (
+    code === "closed" ||
+    code === "overloaded" ||
+    code === "unavailable" ||
+    code === "outcome-unknown"
+  ) {
+    Object.defineProperty(error, retainedWorkerErrorCode, { value: code });
+    Object.assign(error, { code });
+  }
+  return error;
+}
+
+/** Recognize canonical broker errors without admitting cleanup aggregates for retry. */
 export function isSqliteWorkerError(
   error: unknown,
   code: SqliteWorkerError["code"],
 ): error is SqliteWorkerError {
-  return (
-    error instanceof Error &&
-    !(error instanceof AggregateError) &&
-    error.name === SQLITE_WORKER_ERROR_NAME &&
-    "code" in error &&
-    error.code === code
-  );
+  if (!(error instanceof Error) || error instanceof AggregateError) {
+    return false;
+  }
+  try {
+    return Object.getOwnPropertyDescriptor(error, retainedWorkerErrorCode)?.value === code;
+  } catch {
+    return false;
+  }
 }

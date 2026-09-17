@@ -287,7 +287,7 @@ export function createOpenClawStateDatabaseAsyncLifecycle() {
   const resolve = (pathname: string, preparedIdentity?: DatabasePathIdentity): IdentityRecord => {
     const resolvedPath = path.resolve(pathname);
     const cached = known(resolvedPath);
-    if (cached) {
+    if (cached && (!preparedIdentity || cached.identity.key === preparedIdentity.key)) {
       return cached;
     }
     const identity = preparedIdentity ?? readDatabasePathIdentitySync(resolvedPath);
@@ -349,7 +349,7 @@ export function createOpenClawStateDatabaseAsyncLifecycle() {
 
   return {
     identity(pathname: string): DatabasePathIdentity | undefined {
-      return resolveForNative(pathname)?.identity;
+      return known(pathname)?.identity ?? inspectDatabasePathIdentitySync(pathname);
     },
     knownIdentity(this: void, pathname: string): DatabasePathIdentity | undefined {
       return known(pathname)?.identity;
@@ -372,8 +372,7 @@ export function createOpenClawStateDatabaseAsyncLifecycle() {
         }
       }
       if (!record) {
-        record = { identity, paths: new Set(), generation: {} };
-        records.set(identity.key, record);
+        record = resolve(resolvedPath, identity);
       }
       record.paths.add(resolvedPath).add(identity.canonicalPath);
       return identity;

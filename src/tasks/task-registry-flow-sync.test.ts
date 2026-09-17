@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../test/helpers/promise.js";
-import { SqliteWorkerError } from "../infra/sqlite-worker-contract.js";
+import { retainSqliteWorkerErrorCode, SqliteWorkerError } from "../infra/sqlite-worker-contract.js";
 import { getActiveGatewayRootWorkCount } from "../process/gateway-work-admission.js";
 import { serializeAgentSchemaInspectionError } from "../state/openclaw-agent-schema-inspection-response.js";
 import { createOpenClawDatabaseMaintenanceScope } from "../state/openclaw-state-db-async-lifecycle.js";
@@ -86,7 +86,7 @@ describe("restored task flow synchronization", () => {
     "flow read error",
     "retry flow read error",
     "retry overload real class",
-    "retry overload other module",
+    "retry overload retained classification",
     "overloaded superseded store",
     "retry overload exhaustion",
     "retired overload admission",
@@ -153,10 +153,10 @@ describe("restored task flow synchronization", () => {
     const overloaded = new SqliteWorkerError("Synthetic queue capacity", "overloaded");
     const failures: Partial<Record<typeof boundary, Error>> = {
       "retry overload real class": overloaded,
-      "retry overload other module": Object.assign(new Error("Other module queue capacity"), {
-        name: "SqliteWorkerError",
-        code: "overloaded",
-      }),
+      "retry overload retained classification": retainSqliteWorkerErrorCode(
+        new Error("Other module queue capacity"),
+        overloaded,
+      ),
       "overloaded superseded store": overloaded,
       "retry overload exhaustion": overloaded,
       "retired overload admission": overloaded,
@@ -164,11 +164,12 @@ describe("restored task flow synchronization", () => {
       "unavailable worker rejection": new SqliteWorkerError("Worker unavailable", "unavailable"),
       "unknown worker outcome": new SqliteWorkerError("Unknown outcome", "outcome-unknown"),
       "ordinary worker rejection": Object.assign(new Error("Ordinary worker rejection"), {
+        name: "SqliteWorkerError",
         code: "overloaded",
       }),
-      "worker cleanup aggregate": Object.assign(
+      "worker cleanup aggregate": retainSqliteWorkerErrorCode(
         new AggregateError([overloaded, new Error("Cleanup failed")], "Worker cleanup failed"),
-        { code: "overloaded" },
+        overloaded,
       ),
     };
     const rejection = failures[boundary];

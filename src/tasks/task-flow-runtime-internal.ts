@@ -8,6 +8,7 @@ export {
   failFlow,
   finishFlow,
   getTaskFlowById,
+  getTaskMirroredFlowIds,
   listTaskFlowRecords,
   prepareTaskMirroredFlowSync,
   publishTaskFlowAfterAtomicStore,

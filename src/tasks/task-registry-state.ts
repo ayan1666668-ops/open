@@ -364,7 +364,12 @@ export const ensureTaskRegistryReadyAsync = createAsyncRegistryRestore<
       try {
         await reconcile();
       } catch (error) {
-        admission.assertCurrent();
+        try {
+          admission.assertCurrent();
+        } catch {
+          // The restore coordinator retains admission failure behind the operation failure.
+          throw error;
+        }
         if (isCurrent()) {
           failTaskRegistryRestore(error, admission);
         }

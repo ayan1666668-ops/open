@@ -1362,7 +1362,7 @@ function createDeferredPluginSessionStoreRefusal(
   return endpoints.length > 0
     ? {
         code: "plugin-planning-deferred",
-        message: "Plugin-owned session migration targets are deferred to candidate validation.",
+        message: "Plugin session migrations will be checked with the update.",
       }
     : undefined;
 }
@@ -1394,7 +1394,7 @@ function createPluginMigrationPreparationRefusal(params: {
   return {
     code: "plugin-planning-deferred",
     message:
-      "Plugin migration preparation requires candidate-bound plugin and session-store descriptors.",
+      "Plugin migration preparation requires plugin and session-store descriptors for the new version.",
   };
 }
 
@@ -2148,10 +2148,10 @@ function buildLegacyStateMigrationSteps(
               const result = await migrateLegacyMainSessionKeys({
                 cfg: params.sessionConfig ?? params.config,
                 env,
-                mode: "automatic",
+                mode: "detect",
                 now,
               });
-              return { changes: result.changes, warnings: [], notices: result.warnings };
+              return { changes: [], warnings: [], notices: result.warnings };
             },
         true,
         legacySessionStoreRefusal,
@@ -2752,7 +2752,7 @@ export async function planLegacyStateMigrationsReadOnly(params: {
     channelPairingStep.requiredness = "conditional";
     channelPairingStep.refusal = {
       code: "plugin-planning-deferred",
-      message: "Channel pairing account discovery is deferred to candidate plugin validation.",
+      message: "Channel pairing accounts will be checked with the updated plugins.",
     };
   }
   const firstRefusalIndex = steps.findIndex((step) => step.refusal !== undefined);

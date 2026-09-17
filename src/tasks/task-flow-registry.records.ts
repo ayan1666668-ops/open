@@ -61,7 +61,7 @@ export type FlowRecordPatch = Omit<
   endedAt?: number | null;
 };
 
-export type FlowRecordCreateFields = {
+type FlowRecordCreateFields = {
   ownerKey: string;
   requesterOrigin?: TaskFlowRecord["requesterOrigin"];
   status?: TaskFlowStatus;
@@ -76,6 +76,10 @@ export type FlowRecordCreateFields = {
   createdAt?: number;
   updatedAt?: number;
   endedAt?: number | null;
+};
+
+export type ManagedTaskFlowCreateFields = FlowRecordCreateFields & {
+  controllerId: string;
 };
 
 export type ManagedTaskFlowMutation = "setWaiting" | "resume" | "finish" | "fail" | "requestCancel";
@@ -211,6 +215,24 @@ export function normalizeRestoredFlowRecord(record: TaskFlowRecord): TaskFlowRec
     cancelRequestedAt: record.cancelRequestedAt ?? undefined,
     endedAt: record.endedAt ?? undefined,
   };
+}
+
+export function selectTaskFlowRecords(
+  source: ReadonlyMap<string, TaskFlowRecord>,
+  ownerKey?: string,
+): TaskFlowRecord[] {
+  const normalizedOwnerKey = ownerKey?.trim();
+  if (normalizedOwnerKey === "") {
+    return [];
+  }
+  const records = [...source.values()];
+  const selected =
+    normalizedOwnerKey === undefined
+      ? records
+      : records.filter((flow) => flow.ownerKey.trim() === normalizedOwnerKey);
+  return selected
+    .map((flow) => cloneFlowRecord(flow))
+    .toSorted((left, right) => right.createdAt - left.createdAt);
 }
 
 export function snapshotFlowRecords(source: ReadonlyMap<string, TaskFlowRecord>): TaskFlowRecord[] {

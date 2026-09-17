@@ -1,3 +1,4 @@
+import { createSqliteLifecycleAggregateError } from "../infra/sqlite-coordinator.js";
 import type { OpenClawStateDatabaseReadAdmission } from "../state/openclaw-state-db-async-lifecycle.js";
 import type { OpenClawStateWorkerContext } from "../state/openclaw-state-worker-context.types.js";
 
@@ -104,17 +105,7 @@ export function createAsyncRegistryRestore<Snapshot, Store extends SnapshotStore
       }
     }
     if (previous) {
-      try {
-        await previous.promise;
-      } catch (error) {
-        context.admission.assertCurrent();
-        try {
-          previous.context.admission.assertCurrent();
-        } catch {
-          return ensure(context);
-        }
-        throw error;
-      }
+      await previous.promise;
       return ensure(context);
     }
     const state = owner.getState(context.admission);
@@ -128,36 +119,51 @@ export function createAsyncRegistryRestore<Snapshot, Store extends SnapshotStore
     const restore = Promise.resolve().then(async () => {
       const receipts: Array<{ snapshot: Snapshot; store: Store }> = [];
       const reconcile = async () => {
+        const errors: unknown[] = [];
         for (let receipt = receipts.shift(); receipt; receipt = receipts.shift()) {
-          await owner.reconcile?.(receipt.snapshot, context, receipt.store);
-        }
-      };
-      for (;;) {
-        context.admission.assertCurrent();
-        if (!owner.isCurrentDatabase(context.admission)) {
-          return;
-        }
-        const before = owner.getState(context.admission);
-        if (before.status === "ready") {
-          await reconcile();
-          return;
-        }
-        if (before.status === "failed") {
           try {
-            throw before.error;
-          } finally {
-            await reconcile();
+            await owner.reconcile?.(receipt.snapshot, context, receipt.store);
+          } catch (error) {
+            errors.push(error);
           }
         }
-        const revision = owner.getRevision();
-        const store = owner.getStore();
-        const isCurrent = () =>
-          owner.isCurrentDatabase(context.admission) &&
-          owner.getState(context.admission) === before &&
-          owner.getRevision() === revision &&
-          owner.getStore() === store;
-        let applied = false;
-        try {
+        if (errors.length === 1) {
+          throw errors[0];
+        }
+        if (errors.length > 1) {
+          throw createSqliteLifecycleAggregateError(
+            errors,
+            "Registry restore receipt reconciliation failed",
+            errors[0],
+          );
+        }
+      };
+      let failCurrent: (() => boolean) | undefined;
+      try {
+        for (;;) {
+          failCurrent = undefined;
+          context.admission.assertCurrent();
+          if (!owner.isCurrentDatabase(context.admission)) {
+            await reconcile();
+            return;
+          }
+          const before = owner.getState(context.admission);
+          if (before.status === "ready") {
+            await reconcile();
+            return;
+          }
+          if (before.status === "failed") {
+            throw before.error;
+          }
+          const revision = owner.getRevision();
+          const store = owner.getStore();
+          const isCurrent = () =>
+            owner.isCurrentDatabase(context.admission) &&
+            owner.getState(context.admission) === before &&
+            owner.getRevision() === revision &&
+            owner.getStore() === store;
+          let applied = false;
+          failCurrent = () => !applied && isCurrent();
           await store.withSnapshotAsync(context, async (snapshot) => {
             if (owner.reconcile) {
               receipts.push({ snapshot, store });
@@ -171,19 +177,40 @@ export function createAsyncRegistryRestore<Snapshot, Store extends SnapshotStore
             applied = true;
             await publish(reconcile);
           });
-        } catch (error) {
+        }
+      } catch (error) {
+        let failure = error;
+        const secondary: unknown[] = [];
+        let admitted = true;
+        try {
           context.admission.assertCurrent();
-          if (applied || !owner.isCurrentDatabase(context.admission)) {
-            throw error;
-          }
-          if (isCurrent()) {
-            try {
-              owner.fail(error, context.admission);
-            } finally {
-              await reconcile();
-            }
+        } catch (admissionError) {
+          admitted = false;
+          if (admissionError !== error) {
+            secondary.push(admissionError);
           }
         }
+        if (admitted && failCurrent?.()) {
+          try {
+            owner.fail(error, context.admission);
+          } catch (restoreError) {
+            failure = restoreError;
+          }
+        }
+        try {
+          await reconcile();
+        } catch (reconciliationError) {
+          secondary.push(reconciliationError);
+        }
+        if (secondary.length > 0) {
+          throw createSqliteLifecycleAggregateError(
+            [failure, ...secondary],
+            "Registry restore failed with additional lifecycle errors",
+            failure,
+          );
+        }
+        // Superseded projection state cannot make a failed write-capable restore replayable.
+        throw failure;
       }
     });
     pending = { context, promise: restore };

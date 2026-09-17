@@ -20,8 +20,9 @@ import {
   isTaskMirroredFlowSyncUnchanged,
   normalizeRestoredFlowRecord,
   prepareTaskMirroredFlowSyncFromCurrent,
+  selectTaskFlowRecords,
   type CreateFlowRecordParams,
-  type FlowRecordCreateFields,
+  type ManagedTaskFlowCreateFields,
   type FlowRecordPatch,
   type PreparedTaskMirroredFlowSync,
   type TaskFlowSyncInput,
@@ -428,11 +429,7 @@ function createFlowRecord(params: CreateFlowRecordParams): TaskFlowRecord | null
   return writeFlowRecord(record);
 }
 
-export function createManagedTaskFlow(
-  params: FlowRecordCreateFields & {
-    controllerId: string;
-  },
-): TaskFlowRecord | null {
+export function createManagedTaskFlow(params: ManagedTaskFlowCreateFields): TaskFlowRecord | null {
   return createFlowRecord({
     ...params,
     syncMode: "managed",
@@ -672,16 +669,20 @@ export function getTaskFlowById(flowId: string): TaskFlowRecord | undefined {
   return flow ? cloneFlowRecord(flow) : undefined;
 }
 
+export function getTaskMirroredFlowIds(flowIds: Iterable<string>): ReadonlySet<string> {
+  ensureTaskFlowRegistryReady();
+  const mirrored = new Set<string>();
+  for (const flowId of flowIds) {
+    if (flows.get(flowId)?.syncMode === "task_mirrored") {
+      mirrored.add(flowId);
+    }
+  }
+  return mirrored;
+}
+
 export function listTaskFlowsForOwnerKey(ownerKey: string): TaskFlowRecord[] {
   ensureTaskFlowRegistryReady();
-  const normalizedOwnerKey = ownerKey.trim();
-  if (!normalizedOwnerKey) {
-    return [];
-  }
-  return [...flows.values()]
-    .filter((flow) => flow.ownerKey.trim() === normalizedOwnerKey)
-    .map((flow) => cloneFlowRecord(flow))
-    .toSorted((left, right) => right.createdAt - left.createdAt);
+  return selectTaskFlowRecords(flows, ownerKey);
 }
 
 export function findLatestTaskFlowForOwnerKey(ownerKey: string): TaskFlowRecord | undefined {
@@ -705,9 +706,7 @@ export function resolveTaskFlowForLookupToken(token: string): TaskFlowRecord | u
 
 export function listTaskFlowRecords(): TaskFlowRecord[] {
   ensureTaskFlowRegistryReady();
-  return [...flows.values()]
-    .map((flow) => cloneFlowRecord(flow))
-    .toSorted((left, right) => right.createdAt - left.createdAt);
+  return selectTaskFlowRecords(flows);
 }
 
 export function deleteTaskFlowRecordById(flowId: string): boolean {

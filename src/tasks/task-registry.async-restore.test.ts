@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../test/helpers/promise.js";
 import { requireNodeSqlite } from "../infra/node-sqlite.js";
+import { SqliteWorkerError } from "../infra/sqlite-worker-contract.js";
 import * as stateDatabaseCache from "../state/openclaw-state-db-cache.js";
 import {
   closeOpenClawStateDatabase,
@@ -275,6 +276,72 @@ describe("asynchronous registry restoration", () => {
     expect(counters.map((counter) => counter.mock.calls.length)).toEqual([0, 0, 0, 0, 0, 0]);
   });
 
+  it("preserves flow preparation failure when task publication loses admission", async () => {
+    const store = taskStore();
+    const started = createDeferred();
+    const release = createDeferred();
+    const operationError = new SqliteWorkerError(
+      "Synthetic flow preparation failed",
+      "outcome-unknown",
+    );
+    const retirementError = new Error("Synthetic task publication admission retired");
+    const context = captureOpenClawStateWorkerContext();
+    const observed: string[] = [];
+    let loads = 0;
+    configureTaskFlowRegistryRuntime({
+      store: {
+        ...createInMemoryTaskFlowRegistryStore({ flows: new Map() }),
+        async withSnapshotAsync() {
+          started.resolve();
+          await release.promise;
+          throw operationError;
+        },
+      },
+    });
+    configureTaskRegistryRuntime({
+      store: {
+        ...store,
+        async withSnapshotAsync(_context, consume) {
+          loads += 1;
+          return consume({
+            ...taskRestoreResult(store.loadSnapshot()),
+            flowSyncs: [
+              {
+                taskId: task.taskId,
+                flowId: flow.flowId,
+                kind: "result",
+                result: { ok: true, flow },
+              },
+            ],
+          });
+        },
+      },
+      observers: { onEvent: (event) => observed.push(event.kind) },
+    });
+    const first = ensureTaskRegistryReadyAsync(context);
+    await started.promise;
+    const second = ensureTaskRegistryReadyAsync(context);
+    const settled = Promise.allSettled([first, second]);
+    vi.spyOn(context.admission, "assertCurrent").mockImplementation(() => {
+      throw retirementError;
+    });
+    release.resolve();
+    const results = await settled;
+    expect(loads).toBe(1);
+    expect(observed).toEqual([]);
+    for (const result of results) {
+      expect(result.status).toBe("rejected");
+      if (result.status !== "rejected") {
+        throw new Error("Retired task publication unexpectedly succeeded");
+      }
+      expect(result.reason).toBeInstanceOf(AggregateError);
+      expect(result.reason.cause).toBeInstanceOf(AggregateError);
+      expect(result.reason.cause.cause).toBe(operationError);
+      expect(result.reason.cause.errors).toEqual([operationError, retirementError]);
+      expect(result.reason.errors).toEqual([result.reason.cause, retirementError]);
+    }
+  });
+
   it("coalesces restoration through current flow reconciliation before observers without clearing delivery work", async () => {
     const store = taskStore();
     const flowStore = createInMemoryTaskFlowRegistryStore({
@@ -367,6 +434,7 @@ describe("asynchronous registry restoration", () => {
     async (outcome) => {
       const store = taskStore();
       const snapshot = store.loadSnapshot();
+      const failure = new Error("obsolete load failure");
       const started = createDeferred();
       const release = createDeferred();
       configureTaskRegistryRuntime({
@@ -376,7 +444,7 @@ describe("asynchronous registry restoration", () => {
             started.resolve();
             await release.promise;
             if (outcome === "failure") {
-              throw new Error("obsolete load failure");
+              throw failure;
             }
             return consume(taskRestoreResult(snapshot));
           },
@@ -391,7 +459,7 @@ describe("asynchronous registry restoration", () => {
       } finally {
         release.resolve();
       }
-      await pending;
+      await (outcome === "failure" ? expect(pending).rejects.toBe(failure) : pending);
       expect(getTaskById(task.taskId)).toBeUndefined();
     },
   );
@@ -540,6 +608,7 @@ describe("asynchronous registry restoration", () => {
     async (outcome) => {
       const store = createInMemoryTaskFlowRegistryStore({ flows: new Map([[flow.flowId, flow]]) });
       const snapshot = store.loadSnapshot();
+      const failure = new Error("obsolete flow load");
       const started = createDeferred();
       const release = createDeferred();
       configureTaskFlowRegistryRuntime({
@@ -549,7 +618,7 @@ describe("asynchronous registry restoration", () => {
             started.resolve();
             await release.promise;
             if (outcome === "failure") {
-              throw new Error("obsolete flow load");
+              throw failure;
             }
             return consume(snapshot);
           },
@@ -561,7 +630,7 @@ describe("asynchronous registry restoration", () => {
         setFlowWaiting({ flowId: flow.flowId, expectedRevision: 0, currentStep: "updated" }),
       ).toMatchObject({ applied: true });
       release.resolve();
-      await pending;
+      await (outcome === "failure" ? expect(pending).rejects.toBe(failure) : pending);
       expect(getTaskFlowById(flow.flowId)).toMatchObject({ revision: 1, currentStep: "updated" });
     },
   );
