@@ -355,7 +355,12 @@ describe("Client.handleInteraction component channel identity", () => {
   });
 
   it.each([
-    { name: "fails", lookup: async () => Promise.reject(new Error("Missing Access")) },
+    {
+      name: "fails",
+      lookup: async () => {
+        throw new Error("Missing Access");
+      },
+    },
     { name: "returns no channel", lookup: async () => undefined },
   ])(
     "asks for a retry instead of applying DM policy when a raw Group DM lookup $name",
