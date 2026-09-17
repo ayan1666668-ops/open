@@ -61,7 +61,9 @@ let discordTranscriptsState: DiscordTranscriptsGlobalState | undefined;
 
 function resolveDiscordTranscriptsGlobalState(): DiscordTranscriptsGlobalState {
   if (!discordTranscriptsState) {
+    // SAFETY: globalThis is an object; this view only adds a symbol-keyed property.
     const globalStore = globalThis as Record<PropertyKey, unknown>;
+    // SAFETY: this module is the sole writer for the process-global symbol.
     discordTranscriptsState = (globalStore[DISCORD_TRANSCRIPTS_STATE_KEY] as
       | DiscordTranscriptsGlobalState
       | undefined) ?? {
