@@ -1,5 +1,4 @@
 import type { AgentEventPayload } from "../../../infra/agent-events.js";
-import { runWithGatewayIndependentRootWorkAdmission } from "../../../process/gateway-work-admission.js";
 import { buildAgentRunTerminalOutcomeFromLifecycleEvent } from "../../agent-run-terminal-outcome.js";
 import { normalizeAgentRunTerminalReplySnapshot } from "../../agent-run-terminal-reply.js";
 import { classifySubagentTerminalOutcome } from "../subagent-terminal-outcome.js";
@@ -18,22 +17,14 @@ export function createSubagentRegistryListener(config: {
   pendingLifecycle: ReturnType<typeof createPendingLifecycleScheduler>;
   onAgentEvent: (listener: (event: AgentEventPayload) => void) => () => void;
   persist: (...runIds: string[]) => void;
-  refreshFrozenResultFromSession: (sessionKey: string) => Promise<unknown>;
   completeSubagentRunWithRecovery: (
     params: SubagentCompletionRequest,
     source: string,
   ) => Promise<void>;
   warn: (message: string, meta?: Record<string, unknown>) => void;
 }) {
-  const {
-    runs,
-    pendingLifecycle,
-    onAgentEvent,
-    persist,
-    refreshFrozenResultFromSession,
-    completeSubagentRunWithRecovery,
-    warn,
-  } = config;
+  const { runs, pendingLifecycle, onAgentEvent, persist, completeSubagentRunWithRecovery, warn } =
+    config;
   let listenerStarted = false;
   let listenerStop: (() => void) | null = null;
 
@@ -50,14 +41,8 @@ export function createSubagentRegistryListener(config: {
         const phase = evt.data?.phase;
         const entry = runs.get(evt.runId);
         if (!entry) {
-          if (phase === "end" && typeof evt.sessionKey === "string") {
-            const sessionKey = evt.sessionKey;
-            // A replacement generation can finish after its predecessor row is
-            // terminal. Keep capture + persistence inside the suspension fence.
-            await runWithGatewayIndependentRootWorkAdmission(async () => {
-              await refreshFrozenResultFromSession(sessionKey);
-            }, "subagents:result-refresh");
-          }
+          // Admission replaces the registry run before a same-task continuation starts.
+          // A session key alone never transfers completion ownership to another producer.
           return;
         }
         if (phase === "start") {

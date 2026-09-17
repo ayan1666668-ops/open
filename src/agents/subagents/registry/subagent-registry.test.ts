@@ -1037,55 +1037,49 @@ describe("subagent registry seam flow", () => {
     });
   });
 
-  it("tracks missing-entry lifecycle result refresh until capture and persistence settle", async () => {
+  it("ignores unregistered lifecycle results without creating capture work", async () => {
     const childSessionKey = "agent:main:subagent:refresh-admission";
     mockPendingAgentWait();
     mod.registerSubagentRun({
       runId: "run-refresh-admission-old",
       childSessionKey,
-      task: "capture replacement completion",
+      task: "preserve registered completion",
       expectsCompletionMessage: true,
     });
     await waitForFast(() => expect(mocks.callGateway).toHaveBeenCalled());
-    const entry = mod.getSubagentRunByChildSessionKey(childSessionKey);
-    expect(entry).not.toBeNull();
-    if (entry) {
-      entry.execution = {
-        ...entry.execution,
-        status: "terminal",
-        endedAt: Date.now(),
-        outcome: { status: "ok" },
-      };
-    }
+    const entry = expectDefined(mod.getSubagentRunByChildSessionKey(childSessionKey), "run");
+    entry.execution = {
+      ...entry.execution,
+      status: "terminal",
+      endedAt: Date.now(),
+      outcome: { status: "ok" },
+    };
+    entry.completion = { required: true, resultText: "owned final reply", capturedAt: Date.now() };
     await waitForFast(() => expect(getActiveGatewayRootWorkCount()).toBe(0));
-
-    let finishCapture: ((value: string) => void) | undefined;
-    mocks.captureSubagentCompletionReply.mockImplementationOnce(
-      async () =>
-        await new Promise<string>((resolve) => {
-          finishCapture = resolve;
-        }),
-    );
+    const before = structuredClone(entry);
+    const capture = createDeferred<string>();
+    mocks.captureSubagentCompletionReply.mockReturnValueOnce(capture.promise);
     mocks.persistSubagentRunsToDisk.mockClear();
-    const lifecycleHandler = getLifecycleHandler();
-
-    lifecycleHandler?.({
-      runId: "run-refresh-admission-new",
-      seq: 1,
-      stream: "lifecycle",
-      ts: Date.now(),
-      sessionKey: childSessionKey,
-      data: { phase: "end" },
-    });
-
-    await waitForFast(() => expect(finishCapture).toBeTypeOf("function"));
-    expect(getActiveGatewayRootWorkCount()).toBe(1);
-    expect(entry?.completion?.resultText).toBeUndefined();
-
-    finishCapture?.("replacement final reply");
-    await waitForFast(() => expect(getActiveGatewayRootWorkCount()).toBe(0));
-    expect(entry?.completion?.resultText).toBe("replacement final reply");
-    expect(mocks.persistSubagentRunsToDisk).toHaveBeenCalledOnce();
+    mocks.persistSubagentRunsToDiskOrThrow.mockClear();
+    try {
+      getLifecycleHandler()({
+        runId: "run-refresh-admission-new",
+        seq: 1,
+        stream: "lifecycle",
+        ts: Date.now(),
+        sessionKey: childSessionKey,
+        data: { phase: "end" },
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(getActiveGatewayRootWorkCount()).toBe(0);
+      expect(mocks.captureSubagentCompletionReply).not.toHaveBeenCalled();
+      expect(mocks.persistSubagentRunsToDisk).not.toHaveBeenCalled();
+      expect(mocks.persistSubagentRunsToDiskOrThrow).not.toHaveBeenCalled();
+      expect(entry).toEqual(before);
+    } finally {
+      capture.resolve("unowned later reply");
+      await waitForFast(() => expect(getActiveGatewayRootWorkCount()).toBe(0));
+    }
   });
 
   it("retries a terminal completion deferred by restart drain", async () => {

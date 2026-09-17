@@ -27,7 +27,6 @@ import {
   buildAnnounceIdFromChildRun,
   buildAnnounceIdempotencyKey,
 } from "../../announce-idempotency.js";
-import { isSilentAgentReplyText } from "../../embedded-agent-runner/message-visibility.js";
 import type { SubagentAnnounceDeliveryResult } from "../announce/subagent-announce-dispatch.js";
 import type { SubagentRunOutcome } from "../subagent-run-outcome.types.js";
 import {
@@ -44,7 +43,6 @@ import type {
 } from "./subagent-registry-lifecycle-context.js";
 import type { PendingFinalDeliveryPayload } from "./subagent-registry-read.types.js";
 import type { RequesterSettleWakeState, SubagentRunRecord } from "./subagent-registry.types.js";
-import { compareSubagentRunGeneration } from "./subagent-run-generation.js";
 import { hasSubagentRunEnded } from "./subagent-run-liveness.js";
 
 const DELIVERY_MIRROR_HISTORY_MAX_CHARS = 128 * 1024;
@@ -413,68 +411,6 @@ export const freezeRunResultAtCompletion = async (
   }
   completion.resultText = resultText;
   completion.capturedAt = Date.now();
-  return true;
-};
-
-export const refreshFrozenResultFromSession = async (
-  context: SubagentLifecycleCommonContext,
-  sessionKey: string,
-): Promise<boolean> => {
-  const params = context.options;
-  const key = sessionKey.trim();
-  if (!key) {
-    return false;
-  }
-  // A paused row's result was cleared on yield; later session text belongs to the next turn.
-  const candidates: SubagentRunRecord[] = [];
-  for (const entry of params.runs.values()) {
-    if (
-      entry.childSessionKey === key &&
-      entry.expectsCompletionMessage === true &&
-      typeof entry.execution.endedAt === "number" &&
-      typeof entry.cleanupCompletedAt !== "number" &&
-      entry.pauseReason !== "sessions_yield" &&
-      entry.execution.outcome?.status !== "error"
-    ) {
-      candidates.push(entry);
-    }
-  }
-  const entry = candidates.toSorted(compareSubagentRunGeneration).at(-1);
-  if (!entry || context.newerGenerationOwnsSession(entry)) {
-    return false;
-  }
-  const generation = entry.generation;
-
-  let captured: string | undefined;
-  try {
-    captured = await withPluginRuntimeGatewayContextResolver(getGatewayContextResolver(entry), () =>
-      params.captureSubagentCompletionReply(sessionKey),
-    );
-  } catch {
-    return false;
-  }
-  const trimmed = captured?.trim();
-  if (!trimmed || isSilentAgentReplyText(trimmed)) {
-    return false;
-  }
-  // Reply capture yields while registration can transfer session ownership.
-  // Only the exact row and generation that started capture may commit its text.
-  if (
-    params.runs.get(entry.runId) !== entry ||
-    entry.generation !== generation ||
-    context.newerGenerationOwnsSession(entry)
-  ) {
-    return false;
-  }
-
-  const nextFrozen = capFrozenResultText(trimmed);
-  const completion = ensureCompletionState(entry);
-  if (completion.resultText === nextFrozen) {
-    return false;
-  }
-  completion.resultText = nextFrozen;
-  completion.capturedAt = Date.now();
-  params.persist(entry.runId);
   return true;
 };
 

@@ -18,7 +18,6 @@ import type {
   ScheduledRequesterSettleWake,
   SubagentLifecycleOptions,
 } from "./subagent-registry-lifecycle-context.js";
-import { refreshFrozenResultFromSession } from "./subagent-registry-lifecycle-delivery.js";
 import {
   completeCleanupBookkeeping,
   scheduleRequesterSettleWake,
@@ -292,9 +291,6 @@ export class SubagentLifecycleController {
 
   finalizeResumedAnnounceGiveUp = (params: Parameters<typeof finalizeResumedAnnounceGiveUp>[1]) =>
     finalizeResumedAnnounceGiveUp(this, params);
-
-  refreshFrozenResultFromSession = (sessionKey: string) =>
-    refreshFrozenResultFromSession(this, sessionKey);
 
   resumeRequesterSettleWake = (
     runId: string,

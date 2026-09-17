@@ -78,6 +78,12 @@ results together. It does not shorten an answer to fit the former announce
 projection limits. The bounded lifecycle snapshot remains separate from the
 complete answer sent to the parent.
 
+A same-task continuation goes through admission, which replaces the registered run
+ID and advances its generation while preserving the task and requester lineage.
+Completion then reads the new producer's exact-run transcript. An unrelated later
+turn or a delayed predecessor event cannot refresh the selected run's result merely
+because it uses the same session.
+
 For nested work, descendant findings help the child form its answer. The child's
 own final answer is what travels onward to its parent. If the child sends its
 final answer through the message tool and then returns `NO_REPLY`, that final

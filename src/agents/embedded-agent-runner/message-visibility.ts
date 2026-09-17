@@ -85,10 +85,7 @@ function hasVisibleAttachmentReference(value: unknown): boolean {
 }
 
 /** Applies the shared exact or payload-aware silent-reply contract. */
-export function isSilentAgentReplyText(
-  value: unknown,
-  mode: "exact" | "payload" = "exact",
-): boolean {
+function isSilentAgentReplyText(value: unknown, mode: "exact" | "payload" = "exact"): boolean {
   if (typeof value !== "string") {
     return false;
   }
