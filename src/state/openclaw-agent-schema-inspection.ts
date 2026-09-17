@@ -73,6 +73,7 @@ export function inspectAgentDatabaseSchema(
       assertOpenClawAgentDatabaseForMaintenance(database, {
         agentId,
         pathname: input.pathname,
+        allowStartupIndexRepair: input.requireStartupMigrationReadiness,
       });
     }
     return inspection;
