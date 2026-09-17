@@ -345,7 +345,6 @@ console.log(JSON.stringify(value));
       expect(runReads.map((args) => args[args.indexOf("--json") + 1])).toEqual([
         "status,conclusion",
         "status,conclusion,jobs",
-        "status,conclusion,jobs",
       ]);
     });
   });
