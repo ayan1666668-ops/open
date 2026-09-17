@@ -209,10 +209,12 @@ export async function startCodexAttemptThread(params: {
             ? undefined
             : (params.bundleMcpThreadConfig?.configPatch as JsonObject | undefined),
         );
+        const startupPolicyAttemptParams = params.buildAttemptParams();
         const pluginStartupPolicy = resolveCodexPluginThreadConfigStartupPolicy({
           pluginConfig: params.pluginConfig,
           nativeToolSurfaceEnabled: params.nativeToolSurfaceEnabled,
-          scheduledRuntimeAuthority: params.buildAttemptParams().scheduledRuntimeAuthority,
+          scheduledRuntimeAuthority: startupPolicyAttemptParams.scheduledRuntimeAuthority,
+          deniedAppPatterns: startupPolicyAttemptParams.pluginHarnessToolPolicyDeniedAppPatterns,
         });
         const {
           pluginThreadConfigRequired,
@@ -359,6 +361,7 @@ export async function startCodexAttemptThread(params: {
               ? buildCodexPluginThreadConfigInputFingerprint({
                   pluginConfig: pluginThreadConfigPluginConfig,
                   appCacheKey: pluginAppCacheKey,
+                  deniedAppPatterns: attemptParams.pluginHarnessToolPolicyDeniedAppPatterns,
                 })
               : undefined;
             const pluginThreadConfigInputFingerprint = basePluginThreadConfigInputFingerprint
@@ -518,6 +521,7 @@ export async function startCodexAttemptThread(params: {
                       configCwd: startupExecutionCwd,
                       appCacheKey: pluginAppCacheKey,
                       scheduledRuntimeAuthority: attemptParams.scheduledRuntimeAuthority,
+                      deniedAppPatterns: attemptParams.pluginHarnessToolPolicyDeniedAppPatterns,
                     })
                   : undefined,
               }) satisfies Parameters<typeof startOrResumeThread>[0];
