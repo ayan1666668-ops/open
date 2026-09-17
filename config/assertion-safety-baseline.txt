@@ -729,7 +729,7 @@ extensions/memory-core/src/session-backfill.ts	1
 extensions/memory-core/src/session-ingestion.ts	2
 extensions/memory-core/src/session-reset-recall-metadata.ts	3
 extensions/memory-core/src/short-term-promotion-apply.ts	4
-extensions/memory-core/src/short-term-promotion-memory-write.ts	4
+extensions/memory-core/src/short-term-promotion-memory-write.ts	2
 extensions/memory-core/src/short-term-promotion-record.ts	1
 extensions/memory-core/src/short-term-promotion-rehydrate.ts	1
 extensions/memory-core/src/short-term-promotion-utils.ts	4
@@ -2327,7 +2327,7 @@ src/commands/doctor-session-incognito-key-repair-state.ts	8
 src/commands/doctor-session-incognito-key-repair.ts	4
 src/commands/doctor-session-snapshots.ts	5
 src/commands/doctor-session-sqlite-compact.ts	1
-src/commands/doctor-session-sqlite-migration-run.ts	6
+src/commands/doctor-session-sqlite-migration-run.ts	4
 src/commands/doctor-session-sqlite-readers.ts	5
 src/commands/doctor-session-sqlite-recover-report.ts	1
 src/commands/doctor-session-state-providers.ts	3
