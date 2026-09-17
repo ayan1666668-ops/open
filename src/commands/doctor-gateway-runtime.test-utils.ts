@@ -1,6 +1,6 @@
 import { expect, it, vi, type Mock } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
-import type { DaemonRuntimePinSnapshot } from "../daemon/runtime-pin-state.js";
+import type { DaemonRuntimePinSnapshot } from "../daemon/runtime-pin-types.js";
 import type { ServiceConfigAudit } from "../daemon/service-audit.js";
 import { withEnvAsync } from "../test-utils/env.js";
 // Vitest hoists the declaration before imports; the export must remain a separate statement.

@@ -1,4 +1,4 @@
-import type { DaemonRuntimePinUpdate } from "./runtime-pin-state.js";
+import type { DaemonRuntimePinUpdate } from "./runtime-pin-types.js";
 import type { ServiceInspectionReason } from "./service-inspection-error.js";
 import type { GatewayServiceRuntime } from "./service-runtime.js";
 /** Shared daemon service argument, state, and command config contracts. */

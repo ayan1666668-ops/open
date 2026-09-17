@@ -6,6 +6,7 @@ import { updateConfigMachineState } from "../state/config-machine-state-write.js
 import { readConfigMachineState } from "../state/config-machine-state.js";
 import { resolveNodeServiceIdentityEnvironment } from "./constants.js";
 import { resolveLaunchAgentLabel } from "./launchd-label.js";
+import type { DaemonRuntimePinSnapshot, DaemonRuntimePinUpdate } from "./runtime-pin-types.js";
 import { resolveTaskName } from "./schtasks-layout.js";
 import {
   resolveManagedGatewayServiceCommand,
@@ -15,14 +16,6 @@ import { resolveSystemdServiceName } from "./systemd-service-files.js";
 
 const pinSchema = z.object({ runtime: z.enum(["node", "bun"]), path: z.string().min(1) });
 const recordSchema = z.object({ version: z.literal(1), pin: pinSchema, definition: z.string() });
-type DaemonRuntimePin = z.infer<typeof pinSchema>;
-export type DaemonRuntimePinSnapshot = {
-  revision: string;
-  stored: boolean;
-  definition?: string;
-  pin?: DaemonRuntimePin;
-};
-export type DaemonRuntimePinUpdate = { expected: DaemonRuntimePinSnapshot; pin?: DaemonRuntimePin };
 
 type PinScope = { kind: "gateway" | "node"; env: NodeJS.ProcessEnv };
 function resolveScope({ kind, env }: PinScope) {

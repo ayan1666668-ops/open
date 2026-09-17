@@ -1,4 +1,4 @@
-import type { DaemonRuntimePinSnapshot } from "../../daemon/runtime-pin-state.js";
+import type { DaemonRuntimePinSnapshot } from "../../daemon/runtime-pin-types.js";
 const pinSnapshotMock = vi.hoisted(() =>
   vi.fn<() => DaemonRuntimePinSnapshot>(() => ({ revision: "empty", stored: false })),
 );
