@@ -53,12 +53,23 @@ export function trackBackgroundSessionCompletion(params: {
     }
   }
   const key = JSON.stringify([agentId, sessionKey]);
-  const current = () =>
-    starts.get(key) === entry &&
-    context.gateway.snapshot.client === client &&
-    context.gateway.snapshot.hello === hello &&
-    context.gateway.snapshot.selfUser?.id === selfUser?.id &&
-    context.gateway.connectionRevision === revision;
+  const current = () => {
+    const snapshot = context.gateway.snapshot;
+    // Transport retries clear the handshake and profile without replacing the
+    // client or credentials. Preserve launch intent during that gap, then
+    // require the original account again before accepting a settled outcome.
+    const recovering =
+      (snapshot.phase === "connecting" ||
+        snapshot.phase === "starting" ||
+        snapshot.phase === "reconnecting") &&
+      snapshot.selfUser === null;
+    return (
+      starts.get(key) === entry &&
+      snapshot.client === client &&
+      context.gateway.connectionRevision === revision &&
+      (recovering || snapshot.selfUser?.id === selfUser?.id)
+    );
+  };
   const cancel = () => {
     if (starts.get(key) === entry) {
       starts.delete(key);

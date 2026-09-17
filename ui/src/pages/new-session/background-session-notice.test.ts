@@ -3,9 +3,19 @@ import { afterEach, expect, it, vi } from "vitest";
 import { ShellGatewayOwner, type ShellGatewayHost } from "../../app/app-shell-gateway.ts";
 import { handleSessionCompletionEvent } from "../../app/background-session-tracker.ts";
 import type { ApplicationContext } from "../../app/context.ts";
+import {
+  createGatewayStoreTestStore,
+  GATEWAY_STORE_TEST_HELLO,
+} from "../../app/gateway-store.test-support.ts";
 import { showSessionCompletionNotice } from "../../app/session-completion-notice.ts";
 import * as toast from "../../lib/toast.ts";
 import { prepareBackgroundSessionCompletion } from "./background-session-notice.ts";
+
+vi.mock("../../app/bootstrap-warm-boot.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../app/bootstrap-warm-boot.ts")>()),
+  // Credential replacement also clears unrelated persistent warm-boot caches.
+  clearWarmBootState: vi.fn(),
+}));
 
 const key = "agent:main:dashboard:test";
 function fixture(result: Record<string, unknown> | Promise<Record<string, unknown>>) {
@@ -34,6 +44,7 @@ function fixture(result: Record<string, unknown> | Promise<Record<string, unknow
   };
 }
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   document.body.replaceChildren();
 });
@@ -216,3 +227,68 @@ it("captures visible panes synchronously when the shell receives a completion", 
   });
   expect(f.show).not.toHaveBeenCalled();
 });
+
+// Exercise the production store callbacks: a retry keeps the client/revision,
+// clears identity during disconnection, and installs a fresh hello afterward.
+it.each(["same-account", "other-account", "replaced-client", "changed-credentials"])(
+  "retains explicit background launch intent only for same-account reconnect (%s)",
+  async (recovery) => {
+    vi.useFakeTimers();
+    const f = fixture({ status: "ok", endedAt: 1 });
+    const { gateway, current } = createGatewayStoreTestStore();
+    Object.assign(f.context, { gateway });
+    Object.assign(f.context.inAppNotifications.snapshot, { enabled: false });
+    gateway.start();
+    const client = current();
+    const helloFor = (id: string) => ({
+      ...GATEWAY_STORE_TEST_HELLO,
+      snapshot: { presence: [{ instanceId: client.instanceId, user: { id, name: id } }] },
+    });
+    client.opts.onHello?.(helloFor("owner"));
+    const initialHello = gateway.snapshot.hello;
+    const initialRevision = gateway.connectionRevision;
+    let disconnect!: (reason: Error) => void;
+    client.request.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          disconnect = reject;
+        }),
+    );
+    client.request.mockResolvedValue({ status: "ok", endedAt: 1 });
+    try {
+      f.start();
+      client.opts.onClose?.({ code: 1006, reason: "socket lost", willRetry: true });
+      expect(gateway.snapshot).toMatchObject({
+        phase: "reconnecting",
+        hello: null,
+        selfUser: null,
+        client,
+      });
+      expect(gateway.connectionRevision).toBe(initialRevision);
+      disconnect(new Error("socket lost"));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(f.show).not.toHaveBeenCalled();
+      expect(f.backgroundSessionCompleted).not.toHaveBeenCalled();
+      if (recovery === "replaced-client") {
+        gateway.connect();
+      } else if (recovery === "changed-credentials") {
+        gateway.connect({ token: "synthetic-replacement-token" });
+      }
+      current().opts.onHello?.(helloFor(recovery === "other-account" ? "other" : "owner"));
+      expect(gateway.snapshot.hello).not.toBe(initialHello);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(f.show).toHaveBeenCalledTimes(recovery === "same-account" ? 1 : 0);
+      expect(f.backgroundSessionCompleted).toHaveBeenCalledTimes(
+        recovery === "same-account" ? 1 : 0,
+      );
+      if (recovery === "same-account") {
+        expect(client.request).toHaveBeenCalledTimes(2);
+        expect(f.backgroundSessionCompleted).toHaveBeenCalledWith(
+          expect.objectContaining({ runId: "run-1" }),
+        );
+      }
+    } finally {
+      gateway.stop();
+    }
+  },
+);
