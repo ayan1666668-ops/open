@@ -1,5 +1,5 @@
-import "../../styles/config.css";
 import { consume } from "@lit/context";
+import "../../styles/config.css";
 import { initialState, Task, TaskStatus } from "@lit/task";
 import { asNullableRecord as asConfigRecord } from "@openclaw/normalization-core/record-coerce";
 import { html, nothing, type PropertyValues } from "lit";
@@ -82,6 +82,7 @@ import { renderMcp } from "./mcp.ts";
 import { renderMeetingCapture } from "./meeting-capture.ts";
 import { renderMemoryPage } from "./memory-page.ts";
 import { narrowMemorySchema } from "./memory-schema.ts";
+import { createNotificationsSectionProps } from "./notifications-section.ts";
 import { configTargetIdFromHash, type ConfigRouteData } from "./route-data.ts";
 import { renderSecurity, type SecurityOverview } from "./security.ts";
 import {
@@ -462,6 +463,10 @@ export class ConfigPage extends OpenClawLightDomElement {
     .watch(
       () => this.context?.nativeNotifications ?? undefined,
       (nativeNotifications, notify) => nativeNotifications.subscribe(notify),
+    )
+    .watch(
+      () => this.context?.inAppNotifications,
+      (inAppNotifications, notify) => inAppNotifications.subscribe(notify),
     )
     .watch(
       () => this.context?.webPush,
@@ -1298,18 +1303,7 @@ export class ConfigPage extends OpenClawLightDomElement {
       excludeSections,
       includeVirtualSections: this.pageId === "appearance" || this.pageId === "notifications",
       settingsLayout: this.pageId === "advanced" ? "accordion" : undefined,
-      nativeNotifications: this.context.nativeNotifications?.snapshot,
-      onNativeNotificationsRequestPermission: () =>
-        this.context.nativeNotifications?.requestPermission(),
-      onNativeNotificationsSendTest: () => this.context.nativeNotifications?.sendTest(),
-      webPush: this.context.webPush.snapshot,
-      onWebPushSubscribe: () => void this.context.webPush.run({ kind: "enable" }),
-      onWebPushUnsubscribe: () => void this.context.webPush.run({ kind: "disable" }),
-      onWebPushTest: () => void this.context.webPush.run({ kind: "test" }),
-      onWebPushSetUserPreferences: (preferences) =>
-        void this.context.webPush.run({ kind: "set", scope: "user", preferences }),
-      onWebPushSetDevicePreferences: (preferences) =>
-        void this.context.webPush.run({ kind: "set", scope: "device", preferences }),
+      ...createNotificationsSectionProps(this.context),
     };
     if (this.pageId === "mcp") {
       return renderMcp({

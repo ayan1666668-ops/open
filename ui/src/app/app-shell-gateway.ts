@@ -145,6 +145,54 @@ export class ShellGatewayOwner {
       }
       return;
     }
+    if (event.event === "session.run.completed") {
+      const context = this.host.context;
+      const client = context?.gateway.snapshot.client;
+      const hello = context?.gateway.snapshot.hello;
+      const profileId = context?.gateway.snapshot.selfUser?.id;
+      const revision = context?.gateway.connectionRevision;
+      // Snapshot values, not live pane references: lazy dispatch must not turn an
+      // attended completion into a notice after navigation.
+      const visiblePanes = [...document.querySelectorAll("openclaw-chat-pane")]
+        .filter((pane) => pane.conversationPresented)
+        .map((pane) => ({
+          conversationPresented: true,
+          sessionKey: pane.sessionKey,
+          agentId: pane.agentId,
+        }));
+      if (context && client) {
+        void import("./background-session-tracker.ts").then(({ handleSessionCompletionEvent }) => {
+          if (
+            context.gateway.connectionRevision !== revision ||
+            context.gateway.snapshot.hello !== hello ||
+            context.gateway.snapshot.selfUser?.id !== profileId
+          ) {
+            return;
+          }
+          handleSessionCompletionEvent({ context, client, payload: event.payload, visiblePanes });
+        });
+      }
+      return;
+    }
+    if (event.event === "session.observer") {
+      const context = this.host.context;
+      if (context) {
+        // Recovery digests share the tracker so stale critical notices can announce again.
+        this.host.criticalNoticeRuntime ??=
+          import("../pages/chat/critical-observer-notice.runtime.ts");
+        const payload = event.payload;
+        void this.host.criticalNoticeRuntime.then((runtime) =>
+          runtime.handleCriticalObserverDigest({
+            payload,
+            selectedSessionKey: this.host.activeSessionKey,
+            sessionHost: this.host.storedOutboxScopeHost(context),
+            sessions: context.sessions.state.result?.sessions ?? [],
+            onOpen: (sessionKey, agentId) => this.host.selectChatSession(sessionKey, agentId),
+          }),
+        );
+      }
+      return;
+    }
     if (event.event === "config.changed") {
       // A local settings draft owns config conflicts; external snapshots must not overwrite it.
       const runtimeConfig = this.host.context?.runtimeConfig;
