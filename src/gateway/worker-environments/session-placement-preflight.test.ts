@@ -116,6 +116,17 @@ describe("session-host placement preflight", () => {
     await expect(workspaceHasEscapingSymlinks(root)).resolves.toBe(true);
   });
 
+  it("does not apply Git exclusions for unborn repositories (plain transfer mode)", async () => {
+    const root = await makeTempRoot("openclaw-session-preflight-unborn-");
+    const outside = await makeTempRoot("openclaw-session-preflight-outside-");
+    await initGitRepo(root);
+    await fs.writeFile(path.join(root, ".gitignore"), "ignored/\n");
+    await fs.mkdir(path.join(root, "ignored"), { recursive: true });
+    await fs.symlink(outside, path.join(root, "ignored", "escape"));
+    // No commit => probeWorkspaceGitMode treats this as plain; check-ignore must not skip.
+    await expect(workspaceHasEscapingSymlinks(root)).resolves.toBe(true);
+  });
+
   it("marks missing prepared auth for remote-exec when homeScope is user", () => {
     const registered = registerRemoteCodex();
     try {
@@ -165,6 +176,53 @@ describe("session-host placement preflight", () => {
           authProfileId: "openai:research",
         }),
       ).toBe(false);
+    } finally {
+      restoreRegisteredAgentHarnesses(registered);
+    }
+  });
+
+  it("preserves prepared API-key routes when the profile snapshot is empty", () => {
+    const registered = registerRemoteCodex();
+    try {
+      const config = {
+        models: {
+          providers: {
+            openai: { apiKey: "sk-prepared-platform-key", baseUrl: "", models: [] },
+          },
+        },
+        plugins: { entries: { codex: { config: { appServer: { homeScope: "agent" } } } } },
+      } as OpenClawConfig;
+      expect(
+        resolveMissingPreparedAuthForPlacement({
+          config,
+          runtimeId: "codex-remote",
+          agentId: "research",
+        }),
+      ).toBe(false);
+    } finally {
+      restoreRegisteredAgentHarnesses(registered);
+    }
+  });
+
+  it("still blocks when a requested auth profile is missing even if models.providers has a key", () => {
+    const registered = registerRemoteCodex();
+    try {
+      const config = {
+        models: {
+          providers: {
+            openai: { apiKey: "sk-prepared-platform-key", baseUrl: "", models: [] },
+          },
+        },
+        plugins: { entries: { codex: { config: { appServer: { homeScope: "agent" } } } } },
+      } as OpenClawConfig;
+      expect(
+        resolveMissingPreparedAuthForPlacement({
+          config,
+          runtimeId: "codex-remote",
+          agentId: "research",
+          authProfileId: "openai:missing-pin",
+        }),
+      ).toBe(true);
     } finally {
       restoreRegisteredAgentHarnesses(registered);
     }

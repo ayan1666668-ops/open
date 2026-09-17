@@ -9,6 +9,7 @@ import {
 import { getPreparedRuntimeAuthProfileStoreSnapshot } from "../../agents/auth-profiles/store.js";
 import { resolveLegacyInheritedAuthAgentId } from "../../agents/legacy-inherited-auth-dir.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { hasConfiguredSecretInput } from "../../config/types.secrets.js";
 import { runCommandWithTimeout } from "../../process/exec.js";
 import { normalizeAgentId } from "../../routing/session-key.js";
 import {
@@ -42,6 +43,27 @@ function configHasPreparedOpenAiAuth(config: OpenClawConfig, authProfileId?: str
     return isOpenAiAuthProvider(profiles[authProfileId]?.provider);
   }
   return Object.values(profiles).some((profile) => isOpenAiAuthProvider(profile?.provider));
+}
+
+/**
+ * Prepared API-key routes (`models.providers.*.apiKey`) are accepted by the
+ * Codex auth-bridge without an auth profile. Empty profile snapshots must not
+ * hard-disable those destinations.
+ */
+function configHasPreparedOpenAiApiKeyRoute(config: OpenClawConfig): boolean {
+  const providers = config.models?.providers;
+  if (!providers || typeof providers !== "object") {
+    return false;
+  }
+  for (const [providerId, entry] of Object.entries(providers)) {
+    if (!isOpenAiAuthProvider(providerId)) {
+      continue;
+    }
+    if (hasConfiguredSecretInput(entry?.apiKey, config.secrets?.defaults)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function storeHasPreparedOpenAiAuth(
@@ -110,10 +132,23 @@ export function resolveMissingPreparedAuthForPlacement(params: {
   if (storeReady === true) {
     return false;
   }
+  // A requested profile must resolve from the profile store / config profiles.
+  // Do not substitute models.providers when Move Session / New Session pinned one.
+  if (authProfileId) {
+    if (storeReady === false) {
+      return true;
+    }
+    return !configHasPreparedOpenAiAuth(params.config, authProfileId);
+  }
+  // Empty / absent profile snapshot: auth-bridge still accepts prepared
+  // api-key routes with resolvedApiKey and no auth profile.
+  if (configHasPreparedOpenAiApiKeyRoute(params.config)) {
+    return false;
+  }
   if (storeReady === false) {
     return true;
   }
-  return !configHasPreparedOpenAiAuth(params.config, authProfileId);
+  return !configHasPreparedOpenAiAuth(params.config);
 }
 
 /**
@@ -134,6 +169,19 @@ export async function isTransferEligibleSymlinkPath(
     return true;
   }
   if (!gitDir.isDirectory() && !gitDir.isFile()) {
+    return true;
+  }
+  // Match transfer owner probeWorkspaceGitMode: unborn repos (git init, no HEAD)
+  // sync in plain mode and do not apply Git exclusions.
+  try {
+    const head = await runCommandWithTimeout(
+      ["git", "-C", root, "rev-parse", "--verify", "--quiet", "HEAD"],
+      { timeoutMs: GIT_CHECK_IGNORE_TIMEOUT_MS },
+    );
+    if (head.code !== 0) {
+      return true;
+    }
+  } catch {
     return true;
   }
   try {
@@ -157,7 +205,7 @@ export async function isTransferEligibleSymlinkPath(
  * Early-exit walk: true when any *transfer-eligible* workspace symlink is
  * absolute or escapes the root. Caps visited entries so picker catalog reads
  * stay bounded. Skips derived paths (node_modules, caches) and Git-ignored
- * paths the inventory owner would never sync.
+ * paths the inventory owner would never sync when transfer uses Git mode.
  */
 export async function workspaceHasEscapingSymlinks(workspacePath: string): Promise<boolean> {
   const root = path.resolve(workspacePath.trim());

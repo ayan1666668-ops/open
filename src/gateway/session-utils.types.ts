@@ -100,6 +100,8 @@ export type GatewaySessionRow = Omit<SessionRow, "archivedBy" | "updatedAt" | "w
   queueMode?: QueueMode;
   effectiveQueueMode?: QueueMode;
   modelSelectionLocked?: boolean;
+  /** Stored session auth profile; Move Session placement must use this, not model text. */
+  authProfileOverride?: string;
   runtimeSelectionLocked?: boolean;
   agentRuntime?: GatewayAgentRuntime;
   contextBudgetStatus?: SessionEntry["contextBudgetStatus"];

@@ -483,6 +483,9 @@ export function buildGatewaySessionRow(params: {
     }).mode,
     modelProvider: rowModelIdentity.provider,
     model: rowModelIdentity.model,
+    ...(entry?.authProfileOverride?.trim()
+      ? { authProfileOverride: entry.authProfileOverride.trim() }
+      : {}),
     activeModelProvider: activeModel?.provider,
     activeModel: activeModel?.model,
     modelOverrideSource:

@@ -80,7 +80,12 @@ async function selectChatPanePlacementTarget(params: {
         "";
       const agentId =
         params.row.agentId?.trim() || parseAgentSessionKey(params.row.key)?.agentId || "";
-      const authProfileId = splitTrailingAuthProfile(params.row.model?.trim() || "").profile ?? "";
+      // sessions.patch stores the selection as authProfileOverride and projects the
+      // plain model identity on the row — do not reconstruct from display model.
+      const authProfileId =
+        params.row.authProfileOverride?.trim() ||
+        splitTrailingAuthProfile(params.row.model?.trim() || "").profile ||
+        "";
       const catalog = await requestPlaceCatalog(params.client, {
         runtimeId: runtime?.id,
         workspacePath,

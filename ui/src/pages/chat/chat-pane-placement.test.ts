@@ -129,7 +129,10 @@ describe("chat pane placement", () => {
       answerWorkerPicker(outcome === "cancel" ? "Cancel" : "Continue on worker");
       await dispatching;
 
-      expect(request).toHaveBeenCalledWith("environments.list", { runtimeId: "openclaw" });
+      expect(request).toHaveBeenCalledWith("environments.list", {
+        runtimeId: "openclaw",
+        agentId: "main",
+      });
       if (outcome === "cancel") {
         expect(request).not.toHaveBeenCalledWith("sessions.dispatch", expect.anything());
         expect(refreshReplacement).not.toHaveBeenCalled();
@@ -256,6 +259,69 @@ describe("chat pane placement", () => {
       target: { kind: "device", deviceId: "runner" },
     });
     expect(request.mock.calls.some(([method]) => method === "node.list")).toBe(false);
+    expect(refreshReplacement).toHaveBeenCalledWith("main");
+  });
+
+  it("resolves Move Session auth from stored authProfileOverride, not model text", async () => {
+    const listParams: unknown[] = [];
+    const request = dialogs.mockRequest(async (method: string, params?: unknown) => {
+      if (method === "environments.list") {
+        listParams.push(params);
+        return {
+          profiles: [],
+          environments: [
+            {
+              id: "node:runner",
+              type: "node",
+              label: "Writer runner",
+              status: "available",
+              sessionHost: true,
+              workerSlots: { total: 1, available: 1 },
+            },
+          ],
+        };
+      }
+      return { ok: true };
+    });
+    const refreshReplacement = vi.fn(async () => null);
+    const { pane } = createTestChatPane({
+      client: createGatewayBrowserClientFixture({ request }),
+      sessions: createSessionCapabilityFixture({ refreshReplacement }),
+    });
+    pane.context.gateway.snapshot.hello = gatewayHelloForMethods(
+      ["sessions.move"],
+      ["operator.read", "operator.write"],
+    );
+    const session = {
+      ...activePlacementSession(),
+      model: "gpt-5",
+      authProfileOverride: "openai:pinned-work",
+      agentRuntime: {
+        id: "codex",
+        cloudPlacementSupported: true,
+        cloudPlacementExecutionMode: "remote-exec",
+        devicePlacementSupported: true,
+        devicePlacement: { requiredNodeCommands: [], consumesWorkerSlot: true },
+        source: "model",
+      },
+    };
+
+    const moving = dialogs.track(pane.changeHeaderPlacement(session, "move"));
+    await dialogs.waitFor(() => {
+      expect(document.body.querySelector('[data-value="device:runner"]')).not.toBeNull();
+    });
+    expect(listParams).toEqual([
+      expect.objectContaining({
+        authProfileId: "openai:pinned-work",
+        runtimeId: "codex",
+      }),
+    ]);
+    document.body.querySelector<HTMLButtonElement>('[data-value="device:runner"]')?.click();
+    const moveButton = [...document.body.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent?.trim() === "Move session",
+    );
+    moveButton?.click();
+    await moving;
     expect(refreshReplacement).toHaveBeenCalledWith("main");
   });
 
@@ -747,6 +813,7 @@ describe("chat pane placement", () => {
     await dialogs.waitFor(() =>
       expect(request).toHaveBeenCalledWith("environments.list", {
         runtimeId: scenario.runtimeId,
+        agentId: "main",
       }),
     );
     await dialogs.waitFor(() => {
