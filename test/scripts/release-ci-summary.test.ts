@@ -308,6 +308,7 @@ describe("original publication admission reader", () => {
       }
       const result = preflightContinuation(observed, fixture.runId, {
         getReleaseEvidenceClient: () => client,
+        getRun: client.getRun,
         getParentJobs: async () => [
           ...originalJobs,
           ...fixture.client.getParentJobs(fixture.runId),

@@ -5,7 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
-import { promisify } from "node:util";
+import { promisify, stripVTControlCharacters } from "node:util";
+import { validateArtifactProducerRun } from "./full-release-artifacts.mjs";
 import {
   publicationAdmissionContract,
   publicationSourceContract,
@@ -308,6 +309,81 @@ function exactParentJob(parentJobs, child, sourceParentAttempt) {
   return matches[0];
 }
 
+async function checkArtifactProducers(producers, client) {
+  for (const { request, runId, runAttempt } of producers) {
+    try {
+      const run = validateArtifactProducerRun(
+        request,
+        await client.getRun(runId),
+        runId,
+        runAttempt,
+      );
+      if (run.status !== "completed") {
+        throw new Error(
+          `Artifact ${request.stage} producer is still active; wait for diagnostic drain`,
+        );
+      }
+    } catch (error) {
+      throw new Error(
+        `Original artifact producer cannot be reused: ${error.message}; inspect the producer before recovery. Failed or changed producers require a fresh all-group FRV.`,
+        { cause: error },
+      );
+    }
+  }
+}
+
+async function originalArtifactProducers(plan, parentJobs, client, repository, workflow) {
+  // Older workflow revisions did not dispatch independently recoverable producers.
+  if (!workflow.includes("node scripts/full-release-artifacts.mjs resolve")) {
+    return [];
+  }
+  const producers = [];
+  for (const [name, stage] of [
+    ["Prepare release npm artifacts", "npm"],
+    ["Prepare release Docker artifacts", "docker"],
+    ["Acquire full release candidate", "candidate"],
+  ]) {
+    const matches = parentJobs.filter(
+      (job) => job.name === name && Number(job.run_attempt) === plan.parentRunAttempt,
+    );
+    if (matches.length !== 1) {
+      throw new Error(`Original artifact dispatch job is missing or ambiguous: ${stage}`);
+    }
+    const [job] = matches;
+    if (job.conclusion === "skipped") {
+      continue;
+    }
+    const log = stripVTControlCharacters(await client.getJobLog(job.id));
+    const dispatches = [
+      ...log.matchAll(
+        /(?:^|\n)(?:\d{4}-\d\d-\d\dT\S+ )?Dispatched full-release-artifacts\.yml: https:\/\/github\.com\/([^/\s]+\/[^/\s]+)\/actions\/runs\/([1-9][0-9]*) \(attempt ([1-9][0-9]*)\)\r?(?=\n|$)/gu,
+      ),
+    ];
+    if (
+      dispatches.length !== 1 ||
+      dispatches[0][1] !== repository ||
+      !log.includes(`TARGET_SHA: ${plan.targetSha}`)
+    ) {
+      throw new Error(
+        `Original artifact dispatch identity is unavailable or ambiguous: ${stage}; start a fresh all-group FRV`,
+      );
+    }
+    producers.push({
+      request: {
+        stage,
+        repository,
+        dispatchId: `full-release-validation-${plan.parentRunId}-${plan.parentRunAttempt}-artifacts-${stage}`,
+        toolingSha: plan.workflowSha,
+        workflowRef: plan.workflowRef,
+      },
+      runId: dispatches[0][2],
+      runAttempt: dispatches[0][3],
+    });
+  }
+  await checkArtifactProducers(producers, client);
+  return producers;
+}
+
 export async function preflightContinuation(
   plan,
   rootRunId,
@@ -420,6 +496,13 @@ export async function preflightContinuation(
       throw new Error("continuation differs from the authenticated original publication plan");
     }
   }
+  const artifactProducers = await originalArtifactProducers(
+    plan,
+    parentJobs,
+    client,
+    repository,
+    workflow,
+  );
   const childObservations = await Promise.all(
     selectedChildren(plan).map(async (child) => {
       const sourceParentAttempt = child.sourceParentAttempt ?? source.sourceRunAttempt;
@@ -444,7 +527,7 @@ export async function preflightContinuation(
   for (const { child, childRun } of childObservations) {
     assertChildRunIdentity(child, childRun, repository);
   }
-  return sourceRun;
+  return { ...sourceRun, artifactProducers };
 }
 
 export async function inspectContinuation(plan, client) {
@@ -807,7 +890,12 @@ export async function continueFailed(plan, rootRunId, client, options = {}) {
       ? createOperationDeadline()
       : validateOperationDeadline(options.operationDeadline);
   const ownedAttempts = new Map();
-  await preflightContinuation(plan, rootRunId, client, client.repository ?? DEFAULT_REPOSITORY);
+  const { artifactProducers } = await preflightContinuation(
+    plan,
+    rootRunId,
+    client,
+    client.repository ?? DEFAULT_REPOSITORY,
+  );
   let status = await inspectContinuation(plan, client);
   if (status.active.length > 0) {
     await waitForTerminal(
@@ -839,6 +927,7 @@ export async function continueFailed(plan, rootRunId, client, options = {}) {
     const minimumAttempts = new Map(
       status.failed.map((child) => [child.runId, child.effectiveRunAttempt + 1]),
     );
+    await checkArtifactProducers(artifactProducers, client);
     remainingOperationTime(operationDeadline);
     const mutationResults = await Promise.allSettled(
       status.failed.map((child) => client.rerunFailed(child.runId)),
@@ -909,6 +998,7 @@ export async function continueFailed(plan, rootRunId, client, options = {}) {
   if (!parentSealed && (completedParent.conclusion !== "success" || childEvidenceAdvanced)) {
     const terminalParent = exactTerminalRunState(completedParent, rootRunId);
     const minimumAttempts = new Map([[rootRunId, terminalParent.runAttempt + 1]]);
+    await checkArtifactProducers(artifactProducers, client);
     remainingOperationTime(operationDeadline);
     const mutationResults = await Promise.allSettled([client.rerunParent(rootRunId)]);
     await reconcileAttemptStarts(

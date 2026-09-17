@@ -275,6 +275,7 @@ function preflightMethods(
       ].join("\n");
     },
     getParentJobs: async () => parentJobs,
+    getRun: async (runId: string) => (runId === "77" ? rootRun() : childRun(byRunId.get(runId)!)),
     getRunAttempt: async (runId: string) =>
       runId === "77" ? rootRun() : childRun(byRunId.get(runId)!),
   };
@@ -445,6 +446,154 @@ describe("FRV immutable plan eligibility", () => {
 });
 
 describe("FRV continuation preflight", () => {
+  function artifactFixture(stage = "npm") {
+    const selected = child("normalCi", "101");
+    const methods = preflightMethods([selected], (entry) => runFor(entry, 1, "success"));
+    const producer = {
+      id: 81,
+      run_attempt: 1,
+      event: "workflow_dispatch",
+      path: ".github/workflows/full-release-artifacts.yml",
+      repository: { full_name: REPOSITORY },
+      head_repository: { full_name: REPOSITORY },
+      head_sha: SHA,
+      head_branch: SOURCE_REF,
+      display_title: `Full Release Artifacts full-release-validation-77-1-artifacts-${stage}`,
+      status: "completed",
+      conclusion: "success" as string | null,
+      html_url: `https://github.com/${REPOSITORY}/actions/runs/81`,
+    };
+    const logs = {
+      dispatch: `TARGET_SHA: ${TARGET_SHA}\nDispatched full-release-artifacts.yml: https://github.com/${REPOSITORY}/actions/runs/81 (attempt 1)`,
+    };
+    const client = {
+      ...methods,
+      getReleaseEvidenceClient: () => ({
+        ...methods.getReleaseEvidenceClient(),
+        getWorkflowSource: () =>
+          "name: Full Release Validation\njobs:\n  prepare:\n    steps:\n      - run: node scripts/full-release-artifacts.mjs resolve\n",
+      }),
+      getParentJobs: async () => [
+        ...(await methods.getParentJobs()),
+        ...[
+          ["Prepare release npm artifacts", "npm"],
+          ["Prepare release Docker artifacts", "docker"],
+          ["Acquire full release candidate", "candidate"],
+        ].map(([name, kind]) => ({
+          id: 90,
+          name,
+          run_attempt: 1,
+          status: "completed",
+          conclusion: kind === stage ? "success" : "skipped",
+        })),
+      ],
+      getJobLog: async (id: number) => (id === 90 ? logs.dispatch : methods.getJobLog(id)),
+      getRun: vi.fn(async (id: string) => (id === "81" ? producer : methods.getRun(id))),
+      getAttemptJobs: async () => [job("test")],
+      rerunFailed: vi.fn(),
+      rerunParent: vi.fn(),
+    };
+    return { client, producer, logs, plan: plan([selected]) };
+  }
+
+  it.each(["npm", "docker", "candidate"])(
+    "rejects a failed original %s producer before rerunning green diagnostics",
+    async (stage) => {
+      const fixture = artifactFixture(stage);
+      fixture.producer.conclusion = "failure";
+      await expect(continueFailed(fixture.plan, "77", fixture.client)).rejects.toThrow(
+        "producer failed",
+      );
+      expect(fixture.client.rerunFailed).not.toHaveBeenCalled();
+      expect(fixture.client.rerunParent).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ["cancelled", { conclusion: "cancelled" }, "producer failed"],
+    ["timed out", { conclusion: "timed_out" }, "producer failed"],
+    ["rerun", { run_attempt: 2 }, "identity changed"],
+    ["different tooling", { head_sha: "c".repeat(40) }, "identity changed"],
+    [
+      "different dispatch",
+      { display_title: "Full Release Artifacts unrelated" },
+      "identity changed",
+    ],
+    ["active", { status: "in_progress", conclusion: null }, "still active"],
+  ])("rejects %s producer evidence without mutations", async (_label, update, error) => {
+    const fixture = artifactFixture();
+    Object.assign(fixture.producer, update);
+    await expect(
+      continueFailed(fixture.plan, "77", fixture.client, { dryRun: true }),
+    ).rejects.toThrow(error);
+    expect(fixture.client.rerunFailed).not.toHaveBeenCalled();
+    expect(fixture.client.rerunParent).not.toHaveBeenCalled();
+  });
+
+  it.each(["success", "failure"])(
+    "keeps successful producers eligible after a collector %s",
+    async (conclusion) => {
+      const fixture = artifactFixture();
+      const jobs = fixture.client.getParentJobs;
+      fixture.client.getParentJobs = async () => {
+        const entries = await jobs();
+        for (const entry of entries) {
+          if (entry.name === "Prepare release npm artifacts") {
+            entry.conclusion = conclusion;
+          }
+        }
+        return entries;
+      };
+      await expect(
+        continueFailed(fixture.plan, "77", fixture.client, { dryRun: true }),
+      ).resolves.toMatchObject({ action: "would-rerun-parent" });
+    },
+  );
+
+  it("rejects ambiguous producer dispatch logs", async () => {
+    const fixture = artifactFixture();
+    fixture.logs.dispatch += `\n${fixture.logs.dispatch}`;
+    await expect(continueFailed(fixture.plan, "77", fixture.client)).rejects.toThrow(
+      "dispatch identity is unavailable or ambiguous",
+    );
+    expect(fixture.client.rerunParent).not.toHaveBeenCalled();
+  });
+
+  it("rechecks the producer after child inspection and before parent mutation", async () => {
+    const fixture = artifactFixture();
+    const read = fixture.client.getRun.getMockImplementation()!;
+    fixture.client.getRun.mockImplementation(async (id) => {
+      if (id === "77") {
+        fixture.producer.run_attempt = 2;
+      }
+      return read(id);
+    });
+    await expect(continueFailed(fixture.plan, "77", fixture.client)).rejects.toThrow(
+      "identity changed",
+    );
+    expect(fixture.client.rerunParent).not.toHaveBeenCalled();
+  });
+
+  it("rechecks the producer before retrying a failed diagnostic child", async () => {
+    const fixture = artifactFixture();
+    const read = fixture.client.getRun.getMockImplementation()!;
+    let childReads = 0;
+    fixture.client.getRun.mockImplementation(async (id) => {
+      if (id === "101") {
+        if (++childReads === 2) {
+          fixture.producer.run_attempt = 2;
+        }
+        return runFor(child("normalCi", "101"), 1, "failure");
+      }
+      return read(id);
+    });
+    fixture.client.getAttemptJobs = async () => [job("test", "failure")];
+    await expect(continueFailed(fixture.plan, "77", fixture.client)).rejects.toThrow(
+      "identity changed",
+    );
+    expect(fixture.client.rerunFailed).not.toHaveBeenCalled();
+    expect(fixture.client.rerunParent).not.toHaveBeenCalled();
+  });
   it("rejects deleted B admission before continuation can select rerun effects", async () => {
     const selected = child("normalCi", "101");
     const client = {

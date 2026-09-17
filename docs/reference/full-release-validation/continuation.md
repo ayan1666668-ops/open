@@ -39,6 +39,12 @@ all-group validation. Lost or expired original dispatch records and receipts als
 require fresh validation. This applies to npm qualification, Docker preparation,
 and candidate preparation.
 
+Before offering a retry, the controller checks the original independent artifact
+producer runs from their exact dispatch jobs, then checks them again before any
+rerun mutation. Green diagnostic children do not make a failed npm, Docker, or
+candidate producer reusable. A failed collector job can still be recovered when
+its original producer completed successfully without changing attempts.
+
 Each child or parent rerun mutation is sent exactly once. If GitHub returns an
 ambiguous transient error, the controller performs read-only reconciliation
 until the newer attempt becomes visible or the bounded reconciliation deadline

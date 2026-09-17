@@ -110,12 +110,15 @@ function validateArtifactParent(request, parent, env) {
   );
 }
 
-function readArtifactRun(request, runId, runAttempt) {
+function validateArtifactProducerTuple(runId, runAttempt) {
   requireValue(
     DECIMAL.test(String(runId)) && DECIMAL.test(String(runAttempt)),
     "Invalid artifact producer tuple.",
   );
-  const run = api(request.repository, `actions/runs/${runId}`);
+}
+
+export function validateArtifactProducerRun(request, run, runId, runAttempt) {
+  validateArtifactProducerTuple(runId, runAttempt);
   requireValue(
     String(run.id) === String(runId) &&
       String(run.run_attempt) === String(runAttempt) &&
@@ -133,6 +136,16 @@ function readArtifactRun(request, runId, runAttempt) {
     `Artifact ${request.stage} producer failed: ${run.html_url}`,
   );
   return run;
+}
+
+function readArtifactRun(request, runId, runAttempt) {
+  validateArtifactProducerTuple(runId, runAttempt);
+  return validateArtifactProducerRun(
+    request,
+    api(request.repository, `actions/runs/${runId}`),
+    runId,
+    runAttempt,
+  );
 }
 
 function validateArtifactReceipt(receipt, request, runId, runAttempt) {
