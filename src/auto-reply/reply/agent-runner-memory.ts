@@ -1730,6 +1730,7 @@ export async function runMemoryFlushIfNeeded(params: {
           ...senderContext,
           ...runBaseParams,
           ...memorySession,
+          cleanupBundleMcpOnRunEnd: true,
           agentHarnessId: resolveSessionPinnedHarnessId(activeSessionEntry),
           agentHarnessRuntimeOverride: sessionRuntimeOverride,
           sandboxSessionKey: sourcePolicySessionKey,
