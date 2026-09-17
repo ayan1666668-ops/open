@@ -535,8 +535,8 @@ fullAccessSuite.define(() => {
                     )
                   : undefined;
               const finalEntryId =
-                isRecord(finalMessage) && isRecord(finalMessage.__openclaw)
-                  ? finalMessage.__openclaw.id
+                isRecord(finalMessage) && isRecord(finalMessage["__openclaw"])
+                  ? finalMessage["__openclaw"].id
                   : undefined;
               expect(finalEntryId).toEqual(expect.any(String));
               // History replaces the live final and its work-group key. Expand the persisted row.
