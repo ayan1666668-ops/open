@@ -343,11 +343,19 @@ function formatConsoleMetaValue(value: unknown): string | undefined {
   if (value instanceof Error) {
     return JSON.stringify(value.message);
   }
+  // Functions and symbols have no JSON form and circular structures throw. Reuse
+  // this file's inspect formatter so such a field is still reported rather than
+  // silently dropped, collapsed to keep the record on one line.
   try {
-    return JSON.stringify(value) ?? String(value);
+    return JSON.stringify(value) ?? inspectConsoleMetaValue(value);
   } catch {
-    return String(value);
+    return inspectConsoleMetaValue(value);
   }
+}
+
+function inspectConsoleMetaValue(value: unknown): string {
+  const inspected = inspectValue?.(value);
+  return inspected === undefined ? `<${typeof value}>` : inspected.replace(/\s+/g, " ");
 }
 
 /**

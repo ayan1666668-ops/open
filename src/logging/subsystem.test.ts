@@ -465,6 +465,24 @@ describe("createSubsystemLogger().isEnabled", () => {
     expect(String(mockCall(error)[0])).toContain("catalog failed reason=timeout");
   });
 
+  it("keeps values without a JSON form on one line instead of dropping the field", () => {
+    setLoggerOverride({ level: "silent", consoleLevel: "warn", consoleStyle: "pretty" });
+    const warn = vi.fn();
+    loggingState.rawConsole = { log: vi.fn(), info: vi.fn(), warn, error: vi.fn() };
+    const circular: Record<string, unknown> = { name: "catalog" };
+    circular.self = circular;
+
+    createSubsystemLogger("session-catalog").warn("slow list", {
+      circular,
+      handler: () => undefined,
+    });
+
+    const warnLine = String(mockCall(warn)[0]);
+    expect(warnLine).toContain("circular=");
+    expect(warnLine).toContain("handler=");
+    expect(warnLine).not.toContain("\n");
+  });
+
   it("keeps info console lines and explicit consoleMessage overrides free of structured fields", () => {
     setLoggerOverride({ level: "silent", consoleLevel: "info" });
     const logSpy = vi.fn();
