@@ -182,8 +182,20 @@ function classifyArgv(argvInput: readonly string[], depth = 0): string | undefin
   }
   let bin = executableBase(argv[0]);
   if (bin === "env") {
-    const rest = argv.slice(1).filter((token) => !token.startsWith("-") && !isAssignment(token));
-    return classifyArgv(rest, depth + 1);
+    let commandIndex = 1;
+    while (commandIndex < argv.length) {
+      const token = argv[commandIndex]!;
+      if (token === "--") {
+        commandIndex += 1;
+        break;
+      }
+      if (isAssignment(token) || token.startsWith("-")) {
+        commandIndex += 1;
+        continue;
+      }
+      break;
+    }
+    return classifyArgv(argv.slice(commandIndex), depth + 1);
   }
   if (SHELL_WRAPPERS.has(bin)) {
     const cIndex = argv.findIndex(
