@@ -5,6 +5,7 @@ import type { PreManagedServiceStop } from "../cli/update-cli/update-command-ser
 import { isDefaultInstallIdentity, resolveConfigPath, resolveStateDir } from "../config/paths.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { resolvePathViaExistingAncestorSync } from "../infra/boundary-path.js";
+import { readActiveGatewayLockIdentity } from "../infra/gateway-lock.js";
 import { readGatewayOwnerLease } from "../infra/gateway-owner-lease.js";
 import {
   acquireGatewayMaintenanceCoordinator,
@@ -195,10 +196,19 @@ export async function beginDoctorMaintenance(params: {
           current: true,
           openStateSchemaReadAdmission: openDoctorStateSchemaReadAdmission,
         });
+        const legacyGatewayLock = gatewayOwner
+          ? undefined
+          : await readActiveGatewayLockIdentity({
+              env: inspection.serviceEnv ?? env,
+              requireInspection: true,
+            });
         if (
           !inspection.running ||
-          gatewayOwner?.state !== "live" ||
-          gatewayOwner.mode !== "supervised"
+          !(
+            (gatewayOwner?.state === "live" && gatewayOwner.mode === "supervised") ||
+            (inspection.servicePid !== undefined &&
+              legacyGatewayLock?.pid === inspection.servicePid)
+          )
         ) {
           throw error;
         }

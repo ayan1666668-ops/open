@@ -8,6 +8,7 @@ import type { SystemdServiceReadBinding } from "../daemon/service-types.js";
 import type { GatewayService } from "../daemon/service.js";
 import { createMockGatewayService, mockSystemAccountHome } from "../daemon/service.test-helpers.js";
 import { readLoadedSystemdServiceRuntime } from "../daemon/systemd-loaded-runtime.js";
+import * as gatewayLock from "../infra/gateway-lock.js";
 import { openNodeSqliteDatabase } from "../infra/node-sqlite.js";
 import { tryAcquireExclusiveSqliteCoordinator } from "../infra/sqlite-coordinator.js";
 import * as sqliteSnapshotSource from "../infra/sqlite-snapshot-source.js";
@@ -106,7 +107,8 @@ type StoppedUnitState =
   | "slow-admission"
   | "competing-during-inspection"
   | "lifecycle-contended"
-  | "gateway-lifecycle-contended";
+  | "gateway-lifecycle-contended"
+  | "legacy-gateway-lifecycle-contended";
 type Continuation =
   | "own"
   | "manual"
@@ -370,6 +372,14 @@ async function runDoctorFinishForStoppedUnit(
       let inspectionClock = 0;
       let competingUpdateStarted = false;
       let otherOwner: ReturnType<typeof tryAcquireExclusiveSqliteCoordinator> | undefined;
+      const legacyGatewayPid = process.pid + 100_000;
+      if (scenario === "legacy-gateway-lifecycle-contended") {
+        vi.spyOn(gatewayLock, "readActiveGatewayLockIdentity").mockResolvedValue({
+          pid: legacyGatewayPid,
+          createdAt: new Date().toISOString(),
+          port: 18789,
+        });
+      }
       const command = {
         programArguments: [
           process.execPath,
@@ -420,7 +430,13 @@ async function runDoctorFinishForStoppedUnit(
           },
           readRuntime: async (env, opts) => {
             if (running) {
-              return { status: "running", systemd: { managerUid: 2001 } };
+              return {
+                status: "running",
+                ...(scenario === "legacy-gateway-lifecycle-contended"
+                  ? { pid: legacyGatewayPid }
+                  : {}),
+                systemd: { managerUid: 2001 },
+              };
             }
             if (boundedInspection) {
               const started = inspectionClock;
@@ -460,7 +476,10 @@ async function runDoctorFinishForStoppedUnit(
             mocks.stops += 1;
             running = false;
             stopObserved = true;
-            if (scenario === "gateway-lifecycle-contended") {
+            if (
+              scenario === "gateway-lifecycle-contended" ||
+              scenario === "legacy-gateway-lifecycle-contended"
+            ) {
               otherOwner?.release();
               otherOwner = undefined;
             }
@@ -471,7 +490,9 @@ async function runDoctorFinishForStoppedUnit(
       const logs: string[] = [];
       const databasePath = path.join(home, ".openclaw", "state", "openclaw.sqlite");
       const coordinator =
-        scenario === "lifecycle-contended" || scenario === "gateway-lifecycle-contended"
+        scenario === "lifecycle-contended" ||
+        scenario === "gateway-lifecycle-contended" ||
+        scenario === "legacy-gateway-lifecycle-contended"
           ? acquireGatewayLifecycleCoordinator({
               databasePath,
               runtimeDirectory: mocks.coordinatorRuntimeDir,
@@ -563,6 +584,17 @@ it("admits exact legacy catalog reads for an owned running service without repai
 it("admits the exact legacy catalog while a live supervised Gateway owns lifecycle", async () => {
   const result = await runDoctorFinishForStoppedUnit(
     "gateway-lifecycle-contended",
+    undefined,
+    "exact",
+  );
+  expect(result.finishError).toBeUndefined();
+  expect(mocks.stops).toBe(1);
+  expect(result.restartCalls).toBe(1);
+});
+
+it("admits a published legacy Gateway by its verified native process lock", async () => {
+  const result = await runDoctorFinishForStoppedUnit(
+    "legacy-gateway-lifecycle-contended",
     undefined,
     "exact",
   );
