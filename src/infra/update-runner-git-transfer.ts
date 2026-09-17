@@ -4,6 +4,7 @@ import path from "node:path";
 import { hasErrnoCode } from "./errno.js";
 import { readLocalFileSafely } from "./fs-safe.js";
 import { runStep } from "./update-runner-command.js";
+import { classifyPartialCloneGitFailure } from "./update-runner-git-target.js";
 import type { RunStepOptions, UpdateStepResult } from "./update-runner-types.js";
 
 // Bound the retained import buffer independently of Git's pack-file size. An
@@ -48,10 +49,16 @@ export async function prepareGitCandidateTransfer(params: {
       argv: ["git", "-C", root, ...args],
       runCommand: async (argv, options) => {
         // Transfer inputs must never be silently truncated by diagnostic capture.
-        const commandResult = await step.runCommand(argv, {
+        const rawCommandResult = await step.runCommand(argv, {
           ...options,
           input,
           terminateOnOutputLimit: true,
+        });
+        const commandResult = await classifyPartialCloneGitFailure({
+          result: rawCommandResult,
+          root: installedRoot,
+          runCommand: step.runCommand,
+          timeoutMs: step.timeoutMs,
         });
         stdout = commandResult.stdout;
         // Object inventories are transfer input, not operator diagnostics.

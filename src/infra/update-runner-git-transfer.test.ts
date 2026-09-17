@@ -5,10 +5,47 @@ import { afterEach, expect, it } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { runCommandWithTimeout } from "../process/exec.js";
 import { gitNullConfigPath } from "./git-exec.js";
+import { classifyPartialCloneGitFailure } from "./update-runner-git-target.js";
 import { prepareGitCandidateTransfer } from "./update-runner-git-transfer.js";
 import type { CommandRunner, RunStepOptions, UpdateStepResult } from "./update-runner-types.js";
 
 const temporary = useAutoCleanupTempDirTracker(afterEach);
+
+it.each([
+  { state: "partial-clone", expected: "promised objects in this partial clone" },
+  { state: "unverified", expected: "did not verify repository corruption" },
+  { state: "corrupt", expected: "verified repository corruption" },
+])(
+  "classifies Git's unverified corruption claim from repository evidence ($state)",
+  async ({ state, expected }) => {
+    const stderr =
+      "fatal: object is in the commit graph file but not in the object database. This is probably due to repo corruption.";
+    const runCommand: CommandRunner = async (argv) => {
+      if (argv.includes("--get-regexp")) {
+        return {
+          code: state === "partial-clone" ? 0 : 1,
+          stdout: state === "partial-clone" ? "remote.origin.promisor true\n" : "",
+          stderr: "",
+        };
+      }
+      return {
+        code: state === "corrupt" ? 1 : 0,
+        stdout: "",
+        stderr: state === "corrupt" ? "missing blob 0123456789abcdef" : "",
+      };
+    };
+    const result = await classifyPartialCloneGitFailure({
+      result: { code: 128, stdout: "", stderr },
+      root: "/partial-clone",
+      runCommand,
+      timeoutMs: 1_000,
+    });
+    expect(result.stderr).toContain(expected);
+    if (state === "partial-clone") {
+      expect(result.stderr).not.toContain("repo corruption");
+    }
+  },
+);
 
 // Windows forcibly terminates children instead of delivering the handled POSIX signal.
 it
