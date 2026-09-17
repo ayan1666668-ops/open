@@ -7,8 +7,7 @@ import { resolvePathViaExistingAncestorSync as resolvePathViaExistingAncestorSyn
 import { safeRealpathSync } from "@openclaw/fs-safe/path";
 export { safeRealpathSync } from "@openclaw/fs-safe/path";
 
-// oxlint-disable-next-line no-warning-comments -- removal awaits the upstream Bun realpath fix.
-// TODO(bun): Remove this stable frame after fs-safe drops its N-API realpath
+// Bun follow-up: Remove this stable frame after fs-safe drops its N-API realpath
 // workaround for oven-sh/bun#42374. Its process-lived callback must not retain
 // the first request context that resolves a missing path.
 const runInBoundaryPathContext = AsyncLocalStorage.snapshot();
