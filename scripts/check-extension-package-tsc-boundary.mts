@@ -34,6 +34,7 @@ import {
 } from "./lib/dist-artifact-ownership.mts";
 import { toErrorObject } from "./lib/error-format.mts";
 import { BOUNDARY_CACHE_ROOT, BoundaryInputSnapshot } from "./lib/extension-boundary-inputs.mts";
+import { prepareExtensionBoundaryProjects } from "./lib/extension-boundary-projects.mts";
 import { classifyBundledExtensionSourcePath } from "./lib/extension-source-classifier.mts";
 import {
   runManagedCommand,
@@ -509,6 +510,7 @@ async function runCompileCheck(extensionIds: string[]) {
   );
   await runNodeStepAsync("plugin-sdk boundary prep", prepareBoundaryArtifactsArgs, 420_000);
   const prepElapsedMs = Date.now() - prepStartedAt;
+  const compileStartedAt = Date.now();
   const availableParallelism = os.availableParallelism();
   const concurrency = resolveCompileConcurrency(process.env, availableParallelism);
   const cpuShare = Math.max(1, Math.floor(availableParallelism / concurrency));
@@ -517,11 +519,12 @@ async function runCompileCheck(extensionIds: string[]) {
     : cpuShare;
   const compilerEnv = { ...process.env, GOMAXPROCS: String(compilerThreads) };
   const verboseFreshLogs = process.env.OPENCLAW_EXTENSION_BOUNDARY_VERBOSE_FRESH === "1";
-  const before = new BoundaryInputSnapshot(repoRoot);
+  const projects = prepareExtensionBoundaryProjects(repoRoot, extensionIds);
+  const metadataInputs = projects.flatMap((project) => project.metadataInputs);
+  const before = new BoundaryInputSnapshot(repoRoot, metadataInputs);
   process.stdout.write(
     `compile concurrency ${concurrency}; CPUs per compiler ${compilerThreads}\n`,
   );
-  const compileStartedAt = Date.now();
   let skippedCompileCount = 0;
   const compileTimings: CompileTiming[] = [];
   const completed: {
@@ -533,19 +536,18 @@ async function runCompileCheck(extensionIds: string[]) {
   }[] = [];
   // Source bytes are a cold-cache scheduling hint, never a coverage selector.
   // Include the package's implementation even when its config starts at public barrels.
-  const orderedExtensions = extensionIds
-    .map((extensionId) => ({
-      extensionId,
-      sourceBytes: collectFilesSync(join(repoRoot, "extensions", extensionId), {
-        includeFile: (file) => classifyBundledExtensionSourcePath(file).isProductionSource,
-      }).reduce((total, file) => total + statSync(file).size, 0),
-    }))
+  const orderedExtensions = projects
+    .map((project) =>
+      Object.assign(project, {
+        sourceBytes: collectFilesSync(join(repoRoot, "extensions", project.extensionId), {
+          includeFile: (file) => classifyBundledExtensionSourcePath(file).isProductionSource,
+        }).reduce((total, file) => total + statSync(file).size, 0),
+      }),
+    )
     .toSorted((left, right) => right.sourceBytes - left.sourceBytes);
   const steps = orderedExtensions
-    .map(({ extensionId }) => extensionId)
-    .map((extensionId, index) => {
+    .map(({ extensionId, config }, index) => {
       const tsBuildInfoPath = resolveBoundaryTsBuildInfoPath(extensionId);
-      const config = `extensions/${extensionId}/tsconfig.json`;
       const args = [
         tsgoBin,
         "-p",
@@ -608,7 +610,7 @@ async function runCompileCheck(extensionIds: string[]) {
   }
   if (steps.length > 0) {
     await runNodeStepsWithConcurrency(steps, concurrency);
-    const after = new BoundaryInputSnapshot(repoRoot);
+    const after = new BoundaryInputSnapshot(repoRoot, metadataInputs);
     const records = completed.map((unit) =>
       Object.assign(unit, {
         record: after.record(

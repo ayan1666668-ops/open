@@ -1,5 +1,3 @@
 {
-  "extends": "../tsconfig.package-boundary.base.json",
-  "include": ["./*.ts"],
-  "exclude": ["./*.test.ts", "./test-api.ts"]
+  "extends": "../tsconfig.package-boundary.base.json"
 }
