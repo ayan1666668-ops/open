@@ -433,13 +433,25 @@ export function resolveAgentWorkspaceDir(
   env: NodeJS.ProcessEnv = process.env,
 ) {
   const id = normalizeAgentId(agentId);
-  const configured = resolveAgentConfig(cfg, id)?.workspace?.trim();
+  // Only omission selects the fallback workspace. An explicit blank value (often
+  // from an unset shell variable in `config set`) must fail loudly instead of
+  // silently resolving to the default workspace directory.
+  const configuredWorkspace = resolveAgentConfig(cfg, id)?.workspace;
+  const configured =
+    typeof configuredWorkspace === "string" ? configuredWorkspace.trim() : undefined;
+  if (configuredWorkspace !== undefined && !configured) {
+    throw new Error(`agents.${id}.workspace must not be blank`);
+  }
   if (configured) {
     return stripNullBytes(resolveUserPath(configured, env));
   }
   // Read-time migration removes default:true before write-time workspace pinning can run.
   const inheritedWorkspaceAgentId = tryResolveLegacyDataOwnerAgentId(cfg);
-  const fallback = cfg.agents?.defaults?.workspace?.trim();
+  const defaultsWorkspace = cfg.agents?.defaults?.workspace;
+  const fallback = typeof defaultsWorkspace === "string" ? defaultsWorkspace.trim() : undefined;
+  if (defaultsWorkspace !== undefined && !fallback) {
+    throw new Error("agents.defaults.workspace must not be blank");
+  }
   if (inheritedWorkspaceAgentId && id === inheritedWorkspaceAgentId) {
     if (fallback) {
       return stripNullBytes(resolveUserPath(fallback, env));

@@ -457,6 +457,30 @@ describe("agent roster resolution", () => {
   });
 });
 
+describe("resolveAgentWorkspaceDir blank workspace rejection", () => {
+  it.each(["", "   ", "\t\n "])("rejects a blank per-agent workspace %j", (workspace) => {
+    const cfg = { agents: { entries: { main: { workspace } } } } as OpenClawConfig;
+
+    expect(() => resolveAgentWorkspaceDir(cfg, "main")).toThrow(
+      "agents.main.workspace must not be blank",
+    );
+  });
+
+  it("rejects a blank defaults workspace instead of silently using the default directory", () => {
+    const cfg = { agents: { defaults: { workspace: "   " } } } as OpenClawConfig;
+
+    expect(() => resolveAgentWorkspaceDir(cfg, "main")).toThrow(
+      "agents.defaults.workspace must not be blank",
+    );
+  });
+
+  it("still trims surrounding whitespace from a non-blank workspace", () => {
+    const cfg = { agents: { entries: { main: { workspace: " /srv/main " } } } } as OpenClawConfig;
+
+    expect(resolveAgentWorkspaceDir(cfg, "main")).toBe(path.resolve("/srv/main"));
+  });
+});
+
 describe("resolveAgentConfig model policy", () => {
   it("keeps an empty per-agent policy inherited instead of flattening it", () => {
     const cfg: OpenClawConfig = {
