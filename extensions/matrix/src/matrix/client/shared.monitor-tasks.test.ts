@@ -160,6 +160,73 @@ describe("shared Matrix monitor task ownership", () => {
     }
   });
 
+  it.each(["authentication", "client creation"])(
+    "allows a retained acquisition already suspended during %s to finish after owner settlement",
+    async (phase) => {
+      const auth = authFor("main");
+      const replacementAuth =
+        phase === "client creation"
+          ? { ...auth, accessToken: `${auth.accessToken}-rotated` }
+          : auth;
+      const client = createMockClient("main");
+      const replacementClient = createMockClient("main-replacement");
+      createMatrixClientMock.mockResolvedValueOnce(client);
+      const monitor = await acquireSharedMatrixClient({
+        auth,
+        role: "monitor",
+        startClient: false,
+      });
+      const tasks = createMatrixMonitorTaskRunner({
+        logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+        logVerboseMessage: vi.fn(),
+      });
+      const allowOwnerSettlement = createDeferred<void>();
+      const authReady = createDeferred<MatrixAuth>();
+      const clientReady = createDeferred<typeof replacementClient>();
+      resolveMatrixAuthMock.mockReturnValue(
+        phase === "authentication" ? authReady.promise : Promise.resolve(replacementAuth),
+      );
+      if (phase === "client creation") {
+        createMatrixClientMock.mockReturnValueOnce(clientReady.promise);
+      }
+      let retained: Promise<Awaited<ReturnType<typeof acquireSharedMatrixClient>>> | undefined;
+      const task = tasks.runDetachedTask("retained acquisition", async () => {
+        retained = acquireSharedMatrixClient({
+          cfg: TEST_CFG,
+          accountId: "main",
+          startClient: false,
+        });
+        await allowOwnerSettlement.promise;
+      });
+
+      try {
+        await vi.waitFor(() => {
+          expect(
+            phase === "authentication" ? resolveMatrixAuthMock : createMatrixClientMock,
+          ).toHaveBeenCalledTimes(phase === "authentication" ? 1 : 2);
+        });
+        allowOwnerSettlement.resolve();
+        await task;
+        if (!retained) {
+          throw new Error("Expected retained acquisition to start before owner settlement");
+        }
+
+        authReady.resolve(auth);
+        clientReady.resolve(replacementClient);
+        const retainedLease = await retained;
+        expect(retainedLease.client).toBe(phase === "authentication" ? client : replacementClient);
+        await retainedLease.release();
+      } finally {
+        allowOwnerSettlement.resolve();
+        authReady.resolve(auth);
+        clientReady.resolve(replacementClient);
+        await task;
+        await retained?.catch(() => undefined);
+        await monitor.release();
+      }
+    },
+  );
+
   it("keeps shutdown cancellation after the task settles for a retained continuation", async () => {
     const client = createMockClient("main");
     createMatrixClientMock.mockResolvedValue(client);
@@ -256,7 +323,8 @@ describe("shared Matrix monitor task ownership", () => {
         logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
         logVerboseMessage: vi.fn(),
       });
-      const startRetainedAcquisition = createDeferred<void>();
+      const allowOwnerSettlement = createDeferred<void>();
+      const taskAdmissionClosed = createDeferred<void>();
       const authReady = createDeferred<MatrixAuth>();
       const clientReady = createDeferred<typeof replacementClient>();
       resolveMatrixAuthMock.mockReturnValue(
@@ -264,29 +332,38 @@ describe("shared Matrix monitor task ownership", () => {
       );
       if (phase === "client creation") {
         createMatrixClientMock.mockReturnValueOnce(clientReady.promise);
-      } else {
-        createMatrixClientMock.mockResolvedValueOnce(replacementClient);
       }
-      let retained: Promise<unknown> | undefined;
-      await tasks.runDetachedTask("retained acquisition", async () => {
-        retained = startRetainedAcquisition.promise.then(() =>
-          acquireSharedMatrixClient({ cfg: TEST_CFG, accountId: "main", startClient: false }),
-        );
+      let retained: Promise<Awaited<ReturnType<typeof acquireSharedMatrixClient>>> | undefined;
+      const task = tasks.runDetachedTask("retained acquisition", async () => {
+        retained = acquireSharedMatrixClient({
+          cfg: TEST_CFG,
+          accountId: "main",
+          startClient: false,
+        });
+        await allowOwnerSettlement.promise;
       });
       monitor.registerMonitorRetirement({
-        closeTaskAdmission: tasks.close,
+        closeTaskAdmission: () => {
+          tasks.close();
+          taskAdmissionClosed.resolve();
+        },
         detachListeners: vi.fn(),
         waitForTasks: tasks.waitForIdle,
         cleanup: vi.fn(),
       });
 
-      startRetainedAcquisition.resolve();
       await vi.waitFor(() => {
         expect(
           phase === "authentication" ? resolveMatrixAuthMock : createMatrixClientMock,
         ).toHaveBeenCalledTimes(phase === "authentication" ? 1 : 2);
       });
+      allowOwnerSettlement.resolve();
+      await task;
+      if (!retained) {
+        throw new Error("Expected retained acquisition to start before owner settlement");
+      }
       const retirement = stopSharedClientForAccount(auth);
+      await taskAdmissionClosed.promise;
       await retirement;
 
       const retainedExpectation = expect(retained).rejects.toMatchObject({ name: "AbortError" });

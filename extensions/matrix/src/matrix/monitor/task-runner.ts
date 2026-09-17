@@ -49,9 +49,8 @@ export function createMatrixMonitorTaskRunner(params: {
         });
       })
       .finally(() => {
-        // Descendants retain the context, but no longer belong to a settled owner.
+        // Descendants retain shutdown ownership, but no longer belong to a settled task.
         context.settled = true;
-        controller.abort();
         inFlight.delete(trackedTask);
       });
     inFlight.set(trackedTask, controller);
