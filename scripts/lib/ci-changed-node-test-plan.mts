@@ -1,6 +1,7 @@
 import { existsSync, lstatSync } from "node:fs";
 import path from "node:path";
 import { pluginContractPatterns } from "../../test/vitest/vitest.contracts-paths.mjs";
+import { isDatabaseWorkerExtensionRoot } from "../../test/vitest/vitest.extension-database-workers-paths.mjs";
 import {
   isPluginControlUiPath,
   isUiBrowserTestFile,
@@ -29,6 +30,7 @@ import {
   type NodeTestShardGroup,
 } from "./ci-node-test-plan.mts";
 import {
+  NATIVE_DATABASE_WORKER_TEST_JOB_FILE_LIMIT,
   estimateExtensionTestCost,
   listExtensionTestFilesForRoots,
   resolveExtensionTestConfig,
@@ -551,6 +553,14 @@ export function createChangedExtensionFallbackShards(
 function packChangedExtensionConfigShards(
   shards: ChangedExtensionConfigShard[],
 ): ChangedNodeTestShard[] {
+  const nativeWorkerFileCounts = new Map(
+    shards.map((shard) => [
+      shard,
+      shard.includePatterns?.filter((file) =>
+        isDatabaseWorkerExtensionRoot(file.split("/").slice(0, 2).join("/")),
+      ).length ?? 0,
+    ]),
+  );
   const bins = packNodeTestGroups(
     shards.toSorted(
       (a, b) => b.predictedSeconds - a.predictedSeconds || a.shardName.localeCompare(b.shardName),
@@ -558,6 +568,11 @@ function packChangedExtensionConfigShards(
     // Each envelope retains its own child process. Share only the checkout;
     // runtime preparation stays separate from other configs' readers.
     (bin, shard) =>
+      // Cost packing must not recreate the oversized native worker envelope.
+      bin.reduce(
+        (count, entry) => count + (nativeWorkerFileCounts.get(entry) ?? 0),
+        nativeWorkerFileCounts.get(shard) ?? 0,
+      ) <= NATIVE_DATABASE_WORKER_TEST_JOB_FILE_LIMIT &&
       !shard.pretestBuildMode &&
       bin.every(
         (entry) =>
@@ -610,6 +625,18 @@ export function createChangedNodeTestShards(
 ): ChangedNodeTestShard[] | null {
   const cwd = options.cwd ?? process.cwd();
   if (!Array.isArray(changedPaths) || changedPaths.length === 0) {
+    return null;
+  }
+
+  // Packing changes can move every compact child. Observe the complete plan on
+  // Blacksmith while preserving hosted targeting and its registration footprint.
+  if (
+    options.runnerBackend !== "github" &&
+    changedPaths.some(
+      (file) =>
+        file === "config/ci-test-timings.json" || file === "scripts/lib/ci-node-test-plan.mts",
+    )
+  ) {
     return null;
   }
 
