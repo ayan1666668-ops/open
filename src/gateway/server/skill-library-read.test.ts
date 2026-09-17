@@ -194,6 +194,9 @@ describe("Gateway pinned manual library read", () => {
           // This regression must execute production snapshot preparation, not fast-test shortcuts.
           OPENCLAW_TEST_FAST: undefined,
           OPENCLAW_TEST_MINIMAL_GATEWAY: undefined,
+          // The synthetic provider belongs to this process, not an inherited HTTP proxy.
+          NO_PROXY: "127.0.0.1,localhost,::1",
+          no_proxy: "127.0.0.1,localhost,::1",
           OPENCLAW_GATEWAY_TOKEN: undefined,
           OPENCLAW_GATEWAY_PASSWORD: undefined,
           OPENCLAW_SKIP_CHANNELS: "1",

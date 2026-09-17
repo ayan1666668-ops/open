@@ -547,6 +547,7 @@ export async function buildPreparedCompactionRuntime(
     const buildSystemPromptText = () => {
       const builtSystemPrompt = buildEmbeddedSystemPrompt({
         config: params.config,
+        preparedModelRuntime: params.preparedModelRuntime,
         agentId: sessionAgentId,
         workspaceDir: effectiveWorkspace,
         runtimeCwd: effectiveCwd,
