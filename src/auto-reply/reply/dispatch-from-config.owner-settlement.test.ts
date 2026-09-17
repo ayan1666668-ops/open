@@ -239,6 +239,7 @@ describe("dispatchReplyFromConfig owner settlement", () => {
     it.each([
       "before delivery",
       "transport failure",
+      "ambiguous delivery",
       "overlapping progress",
       "subsequent block",
       "aborted progress",
@@ -286,6 +287,10 @@ describe("dispatchReplyFromConfig owner settlement", () => {
               await release.promise;
               if (phase === "transport failure") {
                 throw failure;
+              }
+              if (phase === "ambiguous delivery") {
+                // The adapter accepted the send but returned no delivery identity.
+                return { suppression: { reason: "adapter_returned_no_identity" } };
               }
             }
           },
@@ -364,13 +369,18 @@ describe("dispatchReplyFromConfig owner settlement", () => {
           expect(receipt?.counts.block.delivered).toBe(
             phase === "cancelled block and tool-only reply"
               ? 0
-              : noPendingBlock || phase === "transport failure"
+              : noPendingBlock || phase === "transport failure" || phase === "ambiguous delivery"
                 ? 1
                 : phase === "subsequent block"
                   ? 3
                   : 2,
           );
           expect(receipt?.counts.block.failedAfterSend).toBe(phase === "transport failure" ? 1 : 0);
+          // The forwarded settlement must carry the dispatcher's terminal
+          // receipt: a failed or still-pending send keeps the queued draft.
+          expect(onQueuedFollowupSettled).toHaveBeenCalledWith({
+            finalDeliveryFailed: phase === "transport failure" || phase === "ambiguous delivery",
+          });
           if (phase === "transport failure") {
             expect(onError).toHaveBeenCalledExactlyOnceWith(failure, { kind: "block" });
           } else {

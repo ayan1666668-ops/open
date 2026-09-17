@@ -10,6 +10,7 @@ import { logVerbose } from "../../globals.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { isCommandReplyForDelivery, readAskUserQuestionId } from "../reply-payload.js";
 import { buildTerminalAgentRunFailureReplyPayload } from "./agent-runner-failure-reply.js";
+import { isUnconfirmedBlockReplyDelivery } from "./block-reply-delivery.js";
 import { takeCommandSessionMetadataChanges } from "./command-session-metadata.js";
 import { runWithDispatchAbortSignal } from "./dispatch-from-config.abort.js";
 import { handleAcpDispatchTailAfterReset } from "./dispatch-from-config.acp-tail.js";
@@ -42,6 +43,7 @@ export async function executeDispatch(state: PrepareDispatchExecutionReadyState)
     getDispatchAbortOperation,
     getDispatchAbortSignal,
     isDispatchOperationAborted,
+    latestDirectBlockReplyDeliveryReceipt,
     markInboundDedupeReplayUnsafe,
     markProgress,
     maybeApplyTtsWithFinalizationLease,
@@ -166,7 +168,19 @@ export async function executeDispatch(state: PrepareDispatchExecutionReadyState)
                     }
                     throw error;
                   }
-                  await params.replyOptions?.onQueuedFollowupSettled?.(settlement);
+                  // A resolved wait is not delivery evidence: consume the
+                  // terminal send's receipt so failed or pending deliveries
+                  // keep the queued draft instead of reporting success.
+                  const blockDeliveryReceipt = await latestDirectBlockReplyDeliveryReceipt();
+                  await params.replyOptions?.onQueuedFollowupSettled?.(
+                    settlement === undefined && blockDeliveryReceipt === undefined
+                      ? undefined
+                      : {
+                          finalDeliveryFailed:
+                            settlement?.finalDeliveryFailed === true ||
+                            isUnconfirmedBlockReplyDelivery(blockDeliveryReceipt),
+                        },
+                  );
                 },
                 onBlockReplyQueued: wrapProgressCallback(params.replyOptions?.onBlockReplyQueued),
                 onToolStart: wrapProgressCallback(params.replyOptions?.onToolStart, {
