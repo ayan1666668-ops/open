@@ -3334,7 +3334,7 @@ NODE
           job.steps.find((candidate: WorkflowStep) => candidate.name === name),
           name,
         );
-        expect(step["continue-on-error"], name).not.toBe(true);
+        expect(step["continue-on-error"] === true, name).toBe(name === "Save SwiftPM cache");
         return phases.filter((phase) =>
           evaluateWorkflowExpression(
             step.if?.startsWith("${{") ? step.if : `\${{ ${step.if ?? "true"} }}`,
@@ -3347,6 +3347,7 @@ NODE
                   outputs: { "debug-tests-built": phase === "tests" ? "true" : "" },
                 },
                 "swiftpm-cache": { outputs: { "cache-hit": "false" } },
+                "swift-cache-budget": { outputs: { allowed: "true" } },
               },
               ...overrides,
             },
@@ -11703,16 +11704,15 @@ exit 1
     );
     expect(restoreMetadata.run).toBe("python3 -I -S scripts/swift-build-cache-metadata.py restore");
     expect(recordMetadata.run).toBe("python3 -I -S scripts/swift-build-cache-metadata.py record");
-    expect(recordMetadata.if).toBe(`${saveBuildCache.if} && env.HISTORICAL_TARGET != 'true'`);
-    expect(macosSwift.steps.indexOf(restoreMetadata)).toBeLessThan(
-      macosSwift.steps.indexOf(testStep),
+    const saveEligibility = saveBuildCache.if.split(" && (env.HISTORICAL_TARGET")[0];
+    expect(recordMetadata.if).toBe(`${saveEligibility} && env.HISTORICAL_TARGET != 'true'`);
+    expect(saveBuildCache.if).toBe(
+      `${saveEligibility} && (env.HISTORICAL_TARGET == 'true' || steps.record-swift-build-cache-metadata.outcome == 'success')`,
     );
-    expect(macosSwift.steps.indexOf(recordMetadata)).toBeGreaterThan(
-      macosSwift.steps.indexOf(testStep),
-    );
-    expect(macosSwift.steps.indexOf(recordMetadata) + 1).toBe(
-      macosSwift.steps.indexOf(saveBuildCache),
-    );
+    const stepIndex = (step: WorkflowStep) => macosSwift.steps.indexOf(step);
+    expect(stepIndex(restoreMetadata)).toBeLessThan(stepIndex(testStep));
+    expect(stepIndex(recordMetadata)).toBeGreaterThan(stepIndex(testStep));
+    expect(stepIndex(recordMetadata) + 1).toBe(stepIndex(saveBuildCache));
     expect(macosSwift.env).not.toHaveProperty("SWIFT_TEST_EXECUTION");
     expect(testStep.id).toBe("swift-test");
     const currentTargetBranch = testStep.run.split('elif [[ "$HISTORICAL_TARGET" == "true" ]]')[0];
@@ -13253,7 +13253,9 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
       mkdirSync(bin);
       writeExecutable(path.join(bin, "node"), [
         "#!/bin/sh",
-        'printf "%s\\n" "$@" > "$STARTUP_CORPUS_ARGS"',
+        'label="${OPENCLAW_TEST_STARTUP_CORPUS_SHARD:-config}"',
+        'case "$label" in */*) label="${label%/*}-${label#*/}" ;; esac',
+        'printf "%s\\n" "$@" > "$STARTUP_CORPUS_ARGS.$label"',
       ]);
       const script = expectDefined(selected[0]?.run, "startup corpus command").replace(
         /\$\{\{[\s\S]*?\}\}/gu,
@@ -13275,7 +13277,11 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
         },
       });
       expect(result.status, result.stdout + result.stderr).toBe(0);
-      expect(readFileSync(argsPath, "utf8").trim().split("\n")).toEqual([
+      const readArgs = (label: string) =>
+        readFileSync(`${argsPath}.${label.replace("/", "-")}`, "utf8")
+          .trim()
+          .split("\n");
+      const commonArgs = [
         "scripts/run-vitest.mjs",
         "run",
         "--config",
@@ -13290,9 +13296,17 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
               "--reporter",
               "./scripts/lib/vitest-resource-reporter.mts",
             ]),
+      ];
+      expect(readArgs("config")).toEqual([
+        ...commonArgs,
         "src/config/config-startup-corpus.test.ts",
-        "src/config/state-startup-corpus.test.ts",
       ]);
+      for (const shard of ["1/4", "2/4", "3/4", "4/4"]) {
+        expect(readArgs(shard), shard).toEqual([
+          ...commonArgs,
+          "src/config/state-startup-corpus.test.ts",
+        ]);
+      }
     }
   });
 
