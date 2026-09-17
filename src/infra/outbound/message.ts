@@ -22,6 +22,7 @@ import { GATEWAY_CLIENT_NAMES } from "../../utils/message-channel.js";
 import type { DeliveryQueueCompletionRetention } from "../delivery-queue-sqlite.js";
 import { formatErrorMessage } from "../errors.js";
 import { resolveMessageChannelSelection } from "./channel-selection.js";
+import { assertOutboundHandoffCurrent } from "./deliver-handoff.js";
 import {
   resolveOutboundDurableFinalDeliverySupport,
   type DurableFinalDeliveryRequirements,
@@ -325,7 +326,7 @@ async function callMessageGateway<T>(params: {
     ? undefined
     : await params.gateway?.resolveAgentRuntimeIdentityToken?.();
   await params.onPlatformSendDispatch?.();
-  params.assertDirectAdapterHandoff?.();
+  assertOutboundHandoffCurrent(params.assertDirectAdapterHandoff);
   if (params.gateway?.request) {
     return await params.gateway.request<T>({
       method: params.method,

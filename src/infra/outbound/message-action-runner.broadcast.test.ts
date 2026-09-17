@@ -216,6 +216,65 @@ describe("broadcast send outcomes through native actions", () => {
     expect(cliOutput).toContain("not attempted");
   });
 
+  it("marks a gateway target unattempted when the final handoff fence rejects it", async () => {
+    let actionCurrent = true;
+    let releaseHandoff: () => void = () => undefined;
+    const handoffWait = new Promise<void>((resolve) => {
+      releaseHandoff = resolve;
+    });
+    let enterHandoff: () => void = () => undefined;
+    const handoffEntered = new Promise<void>((resolve) => {
+      enterHandoff = resolve;
+    });
+    const gatewayTargets: string[] = [];
+    const plugin: ChannelPlugin = {
+      ...createChannelTestPluginBase({ id: "broadcast-test" }),
+      messaging: { targetResolver: { looksLikeId: () => true } },
+      outbound: { deliveryMode: "gateway" },
+    };
+    setActivePluginRegistry(createTestRegistry([{ pluginId: plugin.id, plugin, source: "test" }]));
+
+    const pending = runMessageAction({
+      cfg: {},
+      action: "broadcast",
+      params: { channel: plugin.id, targets: ["first", "second", "third"], message: "hello" },
+      gateway: {
+        request: async ({ params }) => {
+          const target = String(params.to);
+          gatewayTargets.push(target);
+          return { messageId: `sent-${target}` };
+        },
+      },
+      onPlatformSendDispatch: async () => {
+        if (gatewayTargets.length > 0) {
+          enterHandoff();
+          await handoffWait;
+        }
+      },
+      assertDirectAdapterHandoff: () => {
+        if (!actionCurrent) {
+          throw Object.assign(new Error("current action canceled"), { name: "AbortError" });
+        }
+      },
+    });
+    await handoffEntered;
+    actionCurrent = false;
+    releaseHandoff();
+    const result = await pending;
+
+    expect(gatewayTargets).toEqual(["first"]);
+    expect(result).toMatchObject({
+      kind: "broadcast",
+      payload: {
+        results: [
+          { to: "first", ok: true },
+          { to: "second", ok: false, attempted: false },
+          { to: "third", ok: false, attempted: false },
+        ],
+      },
+    });
+  });
+
   it.each([undefined, true])(
     "stops core delivery after a rejected handoff (bestEffort: %s)",
     async (bestEffort) => {
