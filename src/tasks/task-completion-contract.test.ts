@@ -19,6 +19,18 @@ describe("resolveRequiredCompletionTerminalResult", () => {
   it.each([
     ["pure progress", "Let me run the tests"],
     [
+      "adverbial past adjective in prerequisite",
+      "Reviewing the rollout, we deployed it when the newly failed tests pass.",
+    ],
+    [
+      "comma-delimited after prerequisite",
+      "Reviewing the rollout, we deployed it, after the tests pass.",
+    ],
+    ["after prerequisite", "Reviewing the rollout, we deployed it after the tests pass."],
+    ["as-soon-as prerequisite", "Reviewing the rollout, we deployed it as soon as the tests pass."],
+    ["qualified indirect test result", "Investigating why the unit tests have passed."],
+    ["qualified future test result", "Reviewing the changes, the unit tests will have passed."],
+    [
       "past adjective in future prerequisite",
       "Reviewing the rollout, we deployed the release when the failed tests pass.",
     ],
@@ -157,6 +169,25 @@ describe("resolveRequiredCompletionTerminalResult", () => {
       "I'll inspect the repo now: the crash is a missing null check in src/foo.ts.",
     ],
     ["completed clause after narration", "Reviewing the changes, we fixed the regression."],
+    [
+      "past event with an adjectival subject",
+      "Reviewing the rollout, we deployed it when the newly failed tests passed.",
+    ],
+    [
+      "irregular past temporal predicate",
+      "Reviewing the rollout, we deployed it when the old worker went down.",
+    ],
+    [
+      "past predicate with an adverb",
+      "Reviewing the rollout, we deployed it when the tests finally passed.",
+    ],
+    [
+      "ordinary past temporal predicate",
+      "Reviewing the rollout, we deployed it when the maintenance window opened.",
+    ],
+    ["past temporal crash", "Reviewing the handler, we fixed it after the worker crashed."],
+    ["qualified present-perfect test result", "Reviewing the changes, the unit tests have passed."],
+    ["qualified counted results", "Reviewing the changes, all 12 integration tests have passed."],
     ["present-perfect test result", "Reviewing the changes, all tests have passed."],
     ["present-perfect build result", "Reviewing the changes, the build has succeeded."],
     ["past temporal action", "Reviewing the rollout, we deployed it when we finished the checks."],
