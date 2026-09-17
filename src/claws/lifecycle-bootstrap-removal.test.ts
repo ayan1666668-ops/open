@@ -111,7 +111,7 @@ describe("adopted bootstrap descriptor-bound removal", () => {
             const move = opened.move.bind(opened);
             const moveSpy = vi.spyOn(opened, "move").mockImplementation(async (...moveArgs) => {
               const result = await move(...moveArgs);
-              if (String(moveArgs[1]).startsWith("BOOTSTRAP.md.openclaw-claw-remove-")) {
+              if (moveArgs[1].startsWith("BOOTSTRAP.md.openclaw-claw-remove-")) {
                 staged = true;
                 birthtimeNs = 202n;
               }
@@ -125,7 +125,7 @@ describe("adopted bootstrap descriptor-bound removal", () => {
                 // remove is entered after the staged file's digest was checked. Change that
                 // same object before fs-safe admits unlink, without replacing its inode.
                 if ((entry === "modified-size" || entry === "modified-mtime") && !edited) {
-                  const target = join(workspace, String(removeArgs[0]));
+                  const target = join(workspace, removeArgs[0]);
                   edited =
                     entry === "modified-size"
                       ? Buffer.concat([content, Buffer.from("operator edit\n")])
@@ -136,7 +136,7 @@ describe("adopted bootstrap descriptor-bound removal", () => {
                 }
                 if (entry === "replacement" && !replaced) {
                   replaced = true;
-                  const target = join(workspace, String(removeArgs[0]));
+                  const target = join(workspace, removeArgs[0]);
                   syncFs.renameSync(target, originalPath);
                   syncFs.writeFileSync(target, content);
                 }

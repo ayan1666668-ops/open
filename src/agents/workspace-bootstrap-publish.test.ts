@@ -115,7 +115,7 @@ describe("bootstrap publication atomicity", () => {
         const move = opened.move.bind(opened);
         const moveSpy = vi.spyOn(opened, "move").mockImplementation(async (...moveArgs) => {
           const result = await move(...moveArgs);
-          if (path.join(opened.rootReal, String(moveArgs[1])) === target) {
+          if (path.join(opened.rootReal, moveArgs[1]) === target) {
             renamed = true;
             birthtimeNs = 202n;
           }
