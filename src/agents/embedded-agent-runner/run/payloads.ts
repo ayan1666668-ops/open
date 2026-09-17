@@ -199,6 +199,7 @@ export function buildEmbeddedRunPayloads(params: {
     (params.sourceReplyDeliveryMode === "message_tool_only" && completedSourceReplyViaMessageTool);
   let hasUserFacingReply =
     completedSourceReplyViaMessageTool || params.heartbeatToolResponse?.notify === true;
+  let hasIntentionalSilentFinal = false;
   const appendSegmentAnswer = ({
     assistantTexts,
     lastAssistant,
@@ -208,6 +209,9 @@ export function buildEmbeddedRunPayloads(params: {
     typeof params,
     "assistantTexts" | "lastAssistant" | "currentAssistant" | "assistantMessageIndex"
   >) => {
+    // Silence belongs to this input's answer. An earlier steered input must not
+    // hide a later input that actually failed without producing an answer.
+    hasIntentionalSilentFinal = false;
     const nonEmptyAssistantTexts = assistantTexts
       .map((text) => sanitizeAssistantVisibleStreamText(text))
       .filter((text) => text.trim().length > 0);
@@ -343,7 +347,9 @@ export function buildEmbeddedRunPayloads(params: {
           replyToId,
           replyToTag,
           replyToCurrent,
+          isSilent,
         } = preparedAnswerDirectives ?? parseReplyDirectives(text);
+        hasIntentionalSilentFinal = isSilent;
         const ttsFacts = shouldUseCanonicalFinalAnswer ? storedDelivery?.tts : undefined;
         const delivery = shouldUseCanonicalFinalAnswer
           ? {
@@ -396,7 +402,17 @@ export function buildEmbeddedRunPayloads(params: {
     currentAssistant: params.currentAssistant,
     assistantMessageIndex: params.assistantMessageIndex,
   });
-  if (params.lastToolError) {
+  // A conversational NO_REPLY is an authored outcome, not a missing answer.
+  // For example, a rate-limited context read must not turn a reaction to
+  // "thank you" into a synthetic tool-error message. Keep failure reporting
+  // for missing answers, unknown/mutating actions, and scheduled work.
+  const respectIntentionalSilence =
+    hasIntentionalSilentFinal &&
+    params.lastToolError?.mutatingAction === false &&
+    !params.isCronTrigger &&
+    !params.isHeartbeatTrigger &&
+    !params.runAborted;
+  if (params.lastToolError && !respectIntentionalSilence) {
     // A restart intentionally aborts the active tool while the Gateway takes over.
     // Report the lifecycle status instead of a tool failure.
     const isRestartStatus = params.runStopReason === "restart";
