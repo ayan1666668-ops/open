@@ -96,6 +96,7 @@ export async function captureScreenshot(opts: {
       commandTimeoutMs: opts.timeoutMs,
       lookup: opts.lookup,
       signal: opts.signal,
+      abortScope: "operation",
     },
   );
 }

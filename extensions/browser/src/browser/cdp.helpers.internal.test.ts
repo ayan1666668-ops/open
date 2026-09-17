@@ -832,7 +832,12 @@ describe("cdp.helpers internal", () => {
           controller.abort(new Error("cancelled"));
           return await command;
         },
-        { commandTimeoutMs: 2_000, handshakeRetries: 0, signal: controller.signal },
+        {
+          commandTimeoutMs: 2_000,
+          handshakeRetries: 0,
+          signal: controller.signal,
+          abortScope: "operation",
+        },
       );
 
       await expect(pending).rejects.toThrow(/CDP socket closed|WebSocket was closed|cancelled/i);
