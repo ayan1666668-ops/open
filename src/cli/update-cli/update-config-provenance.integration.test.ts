@@ -2,7 +2,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { withTempHome } from "openclaw/plugin-sdk/test-env";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createAccountListHelpers } from "../../channels/plugins/account-helpers.js";
 import { replaceConfigFile } from "../../config/config.js";
 import {
@@ -12,23 +12,29 @@ import {
 } from "../../config/io.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { POST_CORE_UPDATE_REQUESTED_CHANNEL_ENV } from "../../infra/update-post-core-context.js";
+import { createPluginManifestRecordFixture } from "../../plugins/plugin-metadata.test-support.js";
+import { getActivePluginRegistry, setActivePluginRegistry } from "../../plugins/runtime.js";
 import { defaultRuntime } from "../../runtime.js";
 import { closeOpenClawStateDatabaseForTest } from "../../state/openclaw-state-db.js";
+import {
+  createChannelTestPluginBase,
+  createTestRegistry,
+} from "../../test-utils/channel-plugins.js";
 
 const controls = vi.hoisted(() => ({ root: "" }));
 
 vi.mock("../../plugins/manifest-registry.js", () => ({
-  loadPluginManifestRegistryCore: () => ({ plugins: [], diagnostics: [] }),
-}));
-vi.mock("../../channels/plugins/read-only.js", () => ({
-  resolveReadOnlyChannelPluginsForConfig: (config: OpenClawConfig) => ({
-    configuredChannelIds: config.channels?.discord ? ["discord"] : [],
-    plugins: [{ id: "discord", config: createAccountListHelpers("discord") }],
+  loadPluginManifestRegistryCore: () => ({
+    plugins: [createPluginManifestRecordFixture({ id: "discord", channels: ["discord"] })],
+    diagnostics: [],
   }),
 }));
 vi.mock("../../plugins/plugin-registry.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../plugins/plugin-registry.js")>()),
-  loadPluginManifestRegistryForPluginRegistry: () => ({ plugins: [], diagnostics: [] }),
+  loadPluginManifestRegistryForPluginRegistry: () => ({
+    plugins: [createPluginManifestRecordFixture({ id: "discord", channels: ["discord"] })],
+    diagnostics: [],
+  }),
 }));
 vi.mock("../../plugins/doctor-contract-registry.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../plugins/doctor-contract-registry.js")>()),
@@ -93,7 +99,25 @@ import { updateFinalizeCommand } from "./update-command-finalize.js";
 import { updatePluginsAfterCoreUpdate } from "./update-command-plugins.js";
 import { resumePostCoreUpdate } from "./update-command-resume.js";
 
+let previousRegistry: ReturnType<typeof getActivePluginRegistry>;
+beforeEach(() => {
+  previousRegistry = getActivePluginRegistry();
+  setActivePluginRegistry(
+    createTestRegistry([
+      {
+        pluginId: "discord",
+        source: "test",
+        plugin: createChannelTestPluginBase({
+          id: "discord",
+          config: createAccountListHelpers("discord"),
+        }),
+      },
+    ]),
+  );
+});
+
 afterEach(() => {
+  setActivePluginRegistry(previousRegistry ?? createTestRegistry());
   closeOpenClawStateDatabaseForTest();
   resetConfigRuntimeState();
   vi.unstubAllEnvs();

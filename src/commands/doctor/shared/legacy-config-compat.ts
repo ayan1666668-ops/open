@@ -1,10 +1,36 @@
 // Top-level legacy config migration runner used before full config validation.
+import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 import { inheritLegacyDefaultAgentId } from "../../../config/legacy.default-agent-owner.js";
 import type { LegacyConfigMigrationContext } from "../../../config/legacy.shared.js";
 import { cloneConfigWithResolutionFacts } from "../../../config/resolution-facts.js";
+import { isPluginSourceModulePath } from "../../../plugins/native-module-require.js";
+import { getCachedPluginModuleLoader } from "../../../plugins/plugin-module-loader-cache.js";
 import { applyChannelDoctorCompatibilityMigrations } from "./channel-legacy-config-migrate.js";
-import { repairUnownedChannelAccountBindings } from "./legacy-config-binding-repair.js";
 import { LEGACY_CONFIG_MIGRATIONS } from "./legacy-config-migrations.js";
+
+const require = createRequire(import.meta.url);
+
+// Recovery also migrates synchronously. Load repair machinery only when a full
+// migration runs, leaving config readers and the extracted PR wrapper lightweight.
+function loadBindingRepair(): typeof import("./legacy-config-binding-repair.runtime.js") {
+  const source = isPluginSourceModulePath(fileURLToPath(import.meta.url));
+  const modulePath = fileURLToPath(
+    new URL(
+      source
+        ? "./legacy-config-binding-repair.runtime.ts"
+        : "./legacy-config-binding-repair.runtime.js",
+      import.meta.url,
+    ),
+  );
+  const loaded: unknown = source
+    ? getCachedPluginModuleLoader({ modulePath, importerUrl: import.meta.url, tryNative: false })(
+        modulePath,
+      )
+    : require(modulePath);
+  // SAFETY: Both fixed targets expose the same typed repair owner.
+  return loaded as typeof import("./legacy-config-binding-repair.runtime.js");
+}
 
 export type LegacyDoctorMigrationOptions = {
   /** Original include/env-resolved source, or explicitly unavailable. Never the normalized roster. */
@@ -36,9 +62,11 @@ export function applyLegacyDoctorMigrations(
     pluginContracts: options.pluginContracts !== false,
   });
   changes.push(...compat.changes);
-  const ownership: ReturnType<typeof repairUnownedChannelAccountBindings> =
+  const ownership: ReturnType<
+    typeof import("./legacy-config-binding-repair.runtime.js").repairUnownedChannelAccountBindings
+  > =
     options.pluginContracts !== false
-      ? repairUnownedChannelAccountBindings({
+      ? loadBindingRepair().repairUnownedChannelAccountBindings({
           config: compat.next,
           sourceConfigBeforeMigrations: options.sourceConfigBeforeMigrations,
         })
