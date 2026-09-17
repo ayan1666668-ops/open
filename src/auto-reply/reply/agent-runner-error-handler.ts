@@ -99,7 +99,11 @@ export async function handleAgentExecutionError(params: {
     };
   };
   const resolveReplyOperationAbortAction = (abortError: unknown): ErrorAction | undefined => {
-    const reason = resolveReplyOperationAbortReason(turn.replyOperation, abortError);
+    const reason = resolveReplyOperationAbortReason(
+      turn.replyOperation,
+      abortError,
+      turn.replyOperation?.abortSignal ?? turn.opts?.abortSignal,
+    );
     if (!reason) {
       return undefined;
     }

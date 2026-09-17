@@ -1,10 +1,6 @@
 /** Executes isolated cron prompts with model fallbacks and interim-ack retries. */
 import { createHash } from "node:crypto";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
-import {
-  createOperationalRunInstanceRef,
-  prepareAgentRunAdmission,
-} from "../../agents/admitted-run-context.js";
 import { resolveGroupToolPolicyOutcome } from "../../agents/agent-tools.policy.js";
 import type { BootstrapContextMode } from "../../agents/bootstrap-files.js";
 import { resolveCliBackendConfig } from "../../agents/cli-backends.js";
@@ -34,7 +30,6 @@ import { wrapUntrustedPromptDataBlock } from "../../agents/sanitize-for-prompt.j
 import { resolveScheduledToolPolicyContext } from "../../agents/scheduled-tool-policy.js";
 import { withLocalSessionPlacementTurnSettlement } from "../../agents/session-placement-admission.js";
 import { needsThinkHydration } from "../../agents/thinking-runtime.js";
-import { withPostAdmissionExecutionOwnerBinding } from "../../audit/execution-owner-binding.js";
 import {
   resolveAgentLifecycleTerminalMetadata,
   type AgentLifecycleTerminalBackstop,
@@ -72,6 +67,7 @@ import {
   resolveCurrentChannelTarget,
 } from "./channel-output-policy.js";
 import { resolveCronPayloadOutcome } from "./helpers.js";
+import { prepareCronPromptRunAdmission } from "./run-admission.js";
 import { appendCronDeliveryInstruction } from "./run-delivery-trace.js";
 import {
   getCliSessionBinding,
@@ -80,7 +76,6 @@ import {
   normalizeVerboseLevel,
   registerAgentRunContext,
   resolveBootstrapWarningSignaturesSeen,
-  resolveCandidateThinkingLevel,
   resolveCronAgentLane,
   resolveFastModeState,
   runCliAgent,
@@ -95,7 +90,7 @@ import {
   setCronSessionRuntimeModel,
   syncCronSessionLiveSelection,
 } from "./run-session-state.js";
-import { resolveThinkingDefault } from "./run.runtime.js";
+import { resolveThinkingSelection } from "./run.runtime.js";
 import { isLikelyInterimCronMessage } from "./subagent-followup-hints.js";
 
 type AgentTurnPayload = Extract<CronJob["payload"], { kind: "agentTurn" }> | null;
@@ -422,26 +417,20 @@ function createCronPromptExecutor(
           });
     pendingUserTurn = { promptText, recorder: userTurnTranscriptRecorder };
     const runId = params.cronSession.sessionEntry.sessionId;
-    const basePreparedRunAdmission = prepareAgentRunAdmission({
-      operationalRunInstance: createOperationalRunInstanceRef(runId),
+    const {
+      preparedRunAdmission,
+      messageActionTurnCapability,
+      close: closePromptAdmission,
+    } = prepareCronPromptRunAdmission({
       cfg: params.cfgWithAgentDefaults,
-      facts: {
-        runId,
-        agentId: params.agentId,
-        ingress: params.executionIdentity?.ingress ?? {
-          kind: "schedule",
-          boundary: "cron.isolated-agent",
-          state: "present",
-        },
-        ...(params.executionIdentity?.invoker ? { invoker: params.executionIdentity.invoker } : {}),
-      },
+      agentId: params.agentId,
+      runId,
+      sessionKey: params.runSessionKey,
+      jobId: params.job.id,
+      toolsAllow: params.agentPayload?.toolsAllow,
+      scheduledToolPolicy,
+      executionIdentity: params.executionIdentity,
     });
-    const preparedRunAdmission = params.executionIdentity?.onPostAdmission
-      ? withPostAdmissionExecutionOwnerBinding(
-          basePreparedRunAdmission,
-          params.executionIdentity.onPostAdmission,
-        )
-      : basePreparedRunAdmission;
     const onExecutionStarted = (info?: CronRunnerStartedInfo) => {
       params.onExecutionStarted?.(info);
       params.executionIdentity?.onExecutionStarted?.();
@@ -543,27 +532,15 @@ function createCronPromptExecutor(
               thinkingCatalog = runtimeCatalog;
             }
           }
-          const candidateRequestedThinkLevel =
-            candidateConfiguredThinkLevel ??
-            resolveThinkingDefault({
-              cfg: params.cfgWithAgentDefaults,
-              agentId: params.agentId,
-              provider: providerOverride,
-              model: modelOverride,
-              catalog: thinkingCatalog,
-              agentRuntime: candidateRuntime,
-            });
-          candidateThinkLevel = resolveCandidateThinkingLevel({
+          candidateThinkLevel = resolveThinkingSelection({
             cfg: params.cfgWithAgentDefaults,
-            provider: providerOverride,
-            modelId: modelOverride,
-            level: candidateRequestedThinkLevel,
-            catalog: thinkingCatalog,
             agentId: params.agentId,
-            sessionKey: params.runSessionKey,
-            sessionEntry: params.cronSession.sessionEntry,
+            provider: providerOverride,
+            model: modelOverride,
+            level: candidateConfiguredThinkLevel,
+            catalog: thinkingCatalog,
             agentRuntime: candidateRuntime,
-          });
+          }).level;
         }
         const rootedExecution = params.executionRoot ? { root: params.executionRoot } : undefined;
         assertCronExecutionRootRuntime(
@@ -672,6 +649,7 @@ function createCronPromptExecutor(
                   agentId: params.agentId,
                   trigger: "cron",
                   jobId: params.job.id,
+                  messageActionTurnCapability,
                   cleanupCliLiveSessionOnRunEnd: params.usesDetachedRunSession === true,
                   sessionFile,
                   storePath: params.cronSession.storePath,
@@ -842,6 +820,7 @@ function createCronPromptExecutor(
           scheduledRuntimeAuthorityRecoveryRequired:
             params.job.runtimeAuthorityRecoveryRequired === true,
           scheduledToolPolicy,
+          messageActionTurnCapability,
           execOverrides: params.suppressExecNotifyOnExit
             ? {
                 notifyOnExit: false,
@@ -994,7 +973,7 @@ function createCronPromptExecutor(
       })
       .finally(() => {
         unregisterCronRunExecSource();
-        preparedRunAdmission.close();
+        closePromptAdmission();
       });
     const executionError =
       params.lifecycle.getDeferredError() ??

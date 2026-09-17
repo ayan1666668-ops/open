@@ -106,7 +106,10 @@ export function resolveSessionPatchModelSelection(params: {
       catalog: params.catalog,
       ref,
       defaultProvider: params.defaultProvider,
-      defaultModel: params.subagentModelHint ?? params.defaultModel,
+      defaultModel: params.subagentModelHint ?? {
+        provider: params.defaultProvider,
+        model: params.defaultModel,
+      },
     });
     return status.allowed
       ? { ok: true, ...ref, ...(profile ? { profile } : {}), isDefault: false }
@@ -118,7 +121,10 @@ export function resolveSessionPatchModelSelection(params: {
     catalog: params.catalog,
     raw: modelWithoutProfile,
     defaultProvider: params.defaultProvider,
-    defaultModel: params.subagentModelHint ?? params.defaultModel,
+    defaultModel: params.subagentModelHint ?? {
+      provider: params.defaultProvider,
+      model: params.defaultModel,
+    },
   });
   if ("error" in resolved) {
     return { ok: false, error: resolved.error };

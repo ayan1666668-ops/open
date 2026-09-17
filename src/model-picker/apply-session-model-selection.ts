@@ -50,6 +50,11 @@ import {
 } from "./execution-selection.js";
 import { sessionExecutionSelectionSchema } from "./execution-selection.schema.js";
 
+/** Explicit unfinished SDK intent suppresses channel defaults without supplying a route. */
+export function hasSessionModelSelection(entry: Pick<SessionEntry, "executionSelection"> | undefined): boolean {
+  return Boolean(getSessionExecutionSelection(entry) || entry?.executionSelection?.legacyRequest);
+}
+
 export function inheritSessionExecutionSelection(
   entry: Partial<SessionEntry> | undefined,
 ): Partial<SessionEntry> {
@@ -115,6 +120,7 @@ export function stageSessionExecutionSelection(params: {
     !selection.isDefault &&
     previous.model.provider === selection.provider &&
     previous.model.id === selection.model &&
+    !pinInput.executionSelection?.legacyRequest &&
     pinInput.executionSelection?.state === "accepted" &&
     pinInput.executionSelection.fallbackPermission === fallbackPermission;
   const preserveAcpDefault =
@@ -207,6 +213,7 @@ export function reconcileSessionExecutionSelectionView(
           ? proposed.request
           : { model: proposed.selection.model, executor: proposed.selection.executor },
       fallbackPermission: proposed.fallbackPermission,
+      ...(proposed.legacyRequest ? { legacyRequest: proposed.legacyRequest } : {}),
       ...(previous ? { previous } : {}),
     });
   } else if (changed || acpChanged) {
@@ -239,9 +246,16 @@ export function reconcileSessionExecutionSelectionView(
               ? { executor: previous.executor }
               : {}),
           };
-    commitStoredSessionExecutionSelection(entry, {
+    const legacyRequest = !acpChanged && !next.modelOverride && next.providerOverride
+      ? { provider: next.providerOverride, ...(next.modelOverrideSource ? { source: next.modelOverrideSource } : {}) }
+      : undefined;
+    if (legacyRequest && before?.state === "accepted" && !replace &&
+        !Object.hasOwn(patch, "agentRuntimeOverride")) {
+      commitStoredSessionExecutionSelection(entry, { ...before, legacyRequest });
+    } else commitStoredSessionExecutionSelection(entry, {
       state: "deferred",
       request,
+      ...(legacyRequest ? { legacyRequest } : {}),
       fallbackPermission:
         next.modelOverrideSource === "user"
           ? "explicit"
@@ -475,10 +489,14 @@ export function commitSessionExecutionSelection(
   const before = getSessionExecutionSelection(entry);
   const initial = { ...entry };
   const pairChanged = !isDeepStrictEqual(before, selection);
+  const legacyRequest = (options.cause?.kind === "inherit"
+    ? options.cause.entry
+    : options.cause?.kind === "initialize" ? entry : undefined)?.executionSelection?.legacyRequest;
   commitStoredSessionExecutionSelection(entry, {
     state: "accepted",
     selection,
     fallbackPermission: fallbackPermissionForCommit(entry, options.cause ?? { kind: "user" }),
+    ...(legacyRequest ? { legacyRequest } : {}),
   });
   if (options.cause?.kind === "user" || options.cause?.kind === "reset" || !options.cause) {
     delete entry.modelFallback;

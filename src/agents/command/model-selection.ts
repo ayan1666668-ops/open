@@ -1,7 +1,7 @@
+import { buildModelCatalogRef } from "@openclaw/model-catalog-core/model-catalog-refs";
 import { sanitizeForLog } from "../../../packages/terminal-core/src/ansi.js";
 import {
   formatThinkingLevels,
-  isThinkingLevelSupported,
   normalizeThinkLevel,
   type ThinkLevel,
 } from "../../auto-reply/thinking.js";
@@ -10,6 +10,7 @@ import type { InternalSessionEntry as SessionEntry } from "../../config/sessions
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import {
   commitSessionExecutionSelection,
+  hasSessionModelSelection,
   prepareSessionExecutionSelection,
 } from "../../model-picker/apply-session-model-selection.js";
 import { getSessionExecutionSelection } from "../../model-picker/execution-selection.js";
@@ -43,16 +44,14 @@ import { resolveAvailableAgentHarnessPolicy } from "../harness/selection.js";
 import { resolveModelProviderAuthConfig } from "../model-auth-provider-route.js";
 import { findModelInCatalog } from "../model-catalog-lookup.js";
 import { loadManifestModelCatalog } from "../model-catalog.js";
-import type { ModelFallbackRouteResolution } from "../model-fallback.types.js";
 import { splitTrailingAuthProfile } from "../model-ref-profile.js";
 import type { ModelManifestNormalizationContext } from "../model-ref-shared.js";
 import { dedupeModelCatalogEntries } from "../model-selection-shared.js";
+import { resolveDefaultModelForAgent } from "../model-selection.js";
 import {
-  modelKey,
-  resolveDefaultModelForAgent,
-  resolveThinkingDefault,
-} from "../model-selection.js";
-import { resolveConfiguredThinkingDefault } from "../model-thinking-default.js";
+  resolveConfiguredThinkingDefault,
+  resolveThinkingSelection,
+} from "../model-thinking-default.js";
 import { createModelVisibilityPolicy } from "../model-visibility-policy.js";
 import { listOpenAIAuthProfileProvidersForAgentRuntime } from "../openai-routing.js";
 import { resolveProviderIdForAuth } from "../provider-auth-aliases.js";
@@ -62,11 +61,7 @@ import {
   resolveEffectiveAgentRuntime,
 } from "../thinking-runtime.js";
 import { persistAgentSession } from "./attempt-execution.shared.js";
-import {
-  normalizeAgentCommandDefaultModelRef,
-  normalizeAgentCommandModelRef,
-  parseAgentCommandModelRef,
-} from "./model-ref.js";
+import { normalizeAgentCommandModelRef, parseAgentCommandModelRef } from "./model-ref.js";
 import { normalizeExplicitOverrideInput } from "./prepare.js";
 import type { resolveAgentRunContext } from "./run-context.js";
 import { loadTranscriptResolveRuntime } from "./runtime-loaders.js";
@@ -104,15 +99,9 @@ export async function resolveEmbeddedModelSelection(params: {
   const configuredDefaultAuthProfileId = splitTrailingAuthProfile(
     resolveAgentEffectiveModelPrimary(params.cfg, params.sessionAgentId) ?? "",
   ).profile;
-  const { provider: defaultProvider, model: defaultModel } = normalizeAgentCommandDefaultModelRef(
-    params.cfg,
-    configuredDefaultRef.provider,
-    configuredDefaultRef.model,
-    params.modelManifestContext,
-  );
+  const { provider: defaultProvider, model: defaultModel } = configuredDefaultRef;
   let provider = defaultProvider;
   let model = defaultModel;
-  let requestedRouteResolution: ModelFallbackRouteResolution = "resolved";
   let sessionEntry = params.sessionEntry;
   const acceptedSelection = getSessionExecutionSelection(sessionEntry);
   const explicitProviderOverride =
@@ -145,7 +134,7 @@ export async function resolveEmbeddedModelSelection(params: {
     cfg: params.cfg,
     catalog: modelCatalog,
     defaultProvider,
-    defaultModel,
+    defaultModel: configuredDefaultRef,
     agentId: params.sessionAgentId,
     allowManifestNormalization: true,
     allowPluginNormalization: params.pluginsEnabled,
@@ -163,7 +152,7 @@ export async function resolveEmbeddedModelSelection(params: {
   const channelModelOverride =
     params.cfg.channels?.modelByChannel &&
     !hasExplicitRunOverride &&
-    !sessionEntry?.executionSelection
+    !hasSessionModelSelection(sessionEntry)
       ? resolveChannelModelOverride({
           cfg: params.cfg,
           channel: currentRunModelChannel ?? sessionDeliveryChannel(sessionEntry),
@@ -233,25 +222,20 @@ export async function resolveEmbeddedModelSelection(params: {
     }
     provider = explicitRef.provider;
     model = explicitRef.model;
-    requestedRouteResolution = "resolved";
   }
-  const unresolvedSelectionKey = modelKey(provider, model);
   const allowedInitialSelection =
     isModelSelectionLocked(sessionEntry) ||
     (acceptedSelection?.model === "native-managed" && !hasExplicitRunOverride)
       ? { provider, model }
-      : visibilityPolicy.resolveSelection({ provider, model });
+      : visibilityPolicy.resolveSelection({ provider, model, routeResolution: "resolved" });
   if (!allowedInitialSelection) {
     const policyPath = visibilityPolicy.allowConfigPath ?? "modelPolicy.allow";
     throw new Error(
-      `Configured default model "${modelKey(provider, model)}" is not allowed by ${policyPath}, and no allowed model is available.`,
+      `Configured default model "${buildModelCatalogRef(provider, model)}" is not allowed by ${policyPath}, and no allowed model is available.`,
     );
   }
   provider = allowedInitialSelection.provider;
   model = allowedInitialSelection.model;
-  if (modelKey(provider, model) !== unresolvedSelectionKey) {
-    requestedRouteResolution = "resolved";
-  }
   const providerForAuthProfileValidation = provider;
   const preparedSelection = await prepareSessionExecutionSelection({
     cfg: params.cfg,
@@ -455,7 +439,7 @@ export async function resolveEmbeddedModelSelection(params: {
         cfg: params.cfg,
         catalog: dedupeModelCatalogEntries([refreshedModel, ...catalogForThinking]),
         defaultProvider,
-        defaultModel,
+        defaultModel: configuredDefaultRef,
         agentId: params.sessionAgentId,
         allowManifestNormalization: true,
         allowPluginNormalization: params.pluginsEnabled,
@@ -464,30 +448,21 @@ export async function resolveEmbeddedModelSelection(params: {
     }
   }
   const thinkingCatalog = catalogForThinking.length > 0 ? catalogForThinking : undefined;
-  const primaryThinkLevel =
-    primaryConfiguredThinkLevel ??
-    resolveThinkingDefault({
-      cfg: params.cfg,
-      agentId: params.sessionAgentId,
-      provider,
-      model,
-      catalog: thinkingCatalog,
-      agentRuntime: thinkingRuntime,
-    });
-  if (
-    !isThinkingLevelSupported({
-      provider,
-      model,
-      level: primaryThinkLevel,
-      catalog: thinkingCatalog,
-      agentRuntime: thinkingRuntime,
-    })
-  ) {
+  const primaryThinking = resolveThinkingSelection({
+    cfg: params.cfg,
+    agentId: params.sessionAgentId,
+    provider,
+    model,
+    level: primaryConfiguredThinkLevel,
+    catalog: thinkingCatalog,
+    agentRuntime: thinkingRuntime,
+  });
+  if (!primaryThinking.supported) {
     const explicitThink = Boolean(params.thinkOnce || params.thinkOverride);
     const isSubagentSpawnRun = params.isSubagentLane && isSubagentSessionKey(params.sessionKey);
     if (explicitThink && !isSubagentSpawnRun) {
       throw new Error(
-        `Thinking level "${primaryThinkLevel}" is not supported for ${provider}/${model}. Use one of: ${formatThinkingLevels(provider, model, ", ", thinkingCatalog, thinkingRuntime)}.`,
+        `Thinking level "${primaryThinking.requestedLevel}" is not supported for ${provider}/${model}. Use one of: ${formatThinkingLevels(provider, model, ", ", thinkingCatalog, thinkingRuntime)}.`,
       );
     }
   }
@@ -554,7 +529,7 @@ export async function resolveEmbeddedModelSelection(params: {
     sessionEntry,
     provider,
     model,
-    requestedRouteResolution,
+    requestedRouteResolution: "resolved" as const,
     defaultProvider,
     defaultModel,
     configuredDefaultAuthProfileId,
@@ -564,7 +539,7 @@ export async function resolveEmbeddedModelSelection(params: {
     sessionEntryForAttempt,
     thinkingCatalog,
     immutableThinkLevel,
-    effectiveTurnThinkLevel: primaryThinkLevel,
+    effectiveTurnThinkLevel: primaryThinking.requestedLevel,
     sessionFile,
   };
 }

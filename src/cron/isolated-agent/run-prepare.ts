@@ -91,10 +91,8 @@ import {
   resolveAgentWorkspaceDir,
   resolveCronStyleNow,
   resolveHookExternalContentSource,
-  isThinkingLevelSupported,
-  resolveSupportedThinkingLevel,
   resolvePersistedSessionRuntimeId,
-  resolveThinkingDefault,
+  resolveThinkingSelection,
 } from "./run.runtime.js";
 import type { RunCronAgentTurnResult } from "./run.types.js";
 import { resolveCronAgentSessionKey } from "./session-key.js";
@@ -498,37 +496,20 @@ export async function prepareCronRunContext(params: {
       sessionThinking: cronSession.sessionEntry.thinkingLevel,
     });
     let requestedThinkLevel = thinkingSelection.requestedThinkLevel;
-    if (!nativeManaged && !requestedThinkLevel) {
-      requestedThinkLevel = resolveThinkingDefault({
+    if (!nativeManaged) {
+      const resolvedThinking = resolveThinkingSelection({
         cfg: cfgWithAgentDefaults,
         agentId: modelOwner.agentId,
         provider,
         model,
-        catalog: thinkingSelection.catalog,
-        agentRuntime: effectiveAgentRuntime,
-      });
-    }
-    if (
-      !nativeManaged &&
-      requestedThinkLevel &&
-      !isThinkingLevelSupported({
-        provider,
-        model,
-        level: requestedThinkLevel,
-        catalog: thinkingSelection.catalog,
-        agentRuntime: effectiveAgentRuntime,
-      })
-    ) {
-      const fallbackThinkLevel = resolveSupportedThinkingLevel({
-        provider,
-        model,
         level: requestedThinkLevel,
         catalog: thinkingSelection.catalog,
         agentRuntime: effectiveAgentRuntime,
       });
-      if (fallbackThinkLevel !== requestedThinkLevel) {
+      requestedThinkLevel = resolvedThinking.requestedLevel;
+      if (!resolvedThinking.supported && resolvedThinking.level !== requestedThinkLevel) {
         logWarn(
-          `[cron:${input.job.id}] Thinking level "${requestedThinkLevel}" is not supported for ${provider}/${model}; using "${fallbackThinkLevel}" for this candidate.`,
+          `[cron:${input.job.id}] Thinking level "${requestedThinkLevel}" is not supported for ${provider}/${model}; using "${resolvedThinking.level}" for this candidate.`,
         );
       }
     }

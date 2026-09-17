@@ -2,14 +2,14 @@
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import type { QueueMode } from "../../../../packages/gateway-protocol/src/schema/logs-chat.js";
 import type { ModelCatalogEntry } from "../../../agents/model-catalog.types.js";
-import { resolveThinkingDefault } from "../../../agents/model-thinking-default.js";
+import { resolveThinkingSelection } from "../../../agents/model-thinking-default.js";
 import {
   isModelExecutionSelection,
   type ExecutionSelection,
 } from "../../../model-picker/execution-selection.js";
 import { resolveGlobalMap } from "../../../shared/global-singleton.js";
 import { applyQueueRuntimeSettings } from "../../../utils/queue-helpers.js";
-import { normalizeThinkLevel, resolveSupportedThinkingLevel } from "../../thinking.js";
+import { normalizeThinkLevel } from "../../thinking.js";
 import { completeFollowupRunLifecycle } from "./lifecycle.js";
 import type { FollowupRun, QueueDropPolicy, QueueSettings } from "./types.js";
 
@@ -264,18 +264,15 @@ export function refreshQueuedFollowupSession(params: {
           run.thinkLevel = explicitLevel;
           return;
         }
-        const thinkingPolicy = {
+        run.thinkLevel = resolveThinkingSelection({
+          cfg: run.config,
+          agentId: run.agentId,
           provider: run.executionSelection.model.provider,
           model: run.executionSelection.model.id,
           catalog: params.nextThinking.catalog,
           agentRuntime: run.executionSelection.executor.id,
-        };
-        run.thinkLevel = resolveSupportedThinkingLevel({
-          ...thinkingPolicy,
-          level:
-            explicitLevel ??
-            resolveThinkingDefault({ cfg: run.config, agentId: run.agentId, ...thinkingPolicy }),
-        });
+          level: explicitLevel,
+        }).level;
       }
     }
   };

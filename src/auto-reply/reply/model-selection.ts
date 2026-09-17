@@ -9,7 +9,6 @@ import type { ModelCatalogSnapshot } from "../../agents/model-catalog.types.js";
 import type { ModelFallbackRouteResolution } from "../../agents/model-fallback.types.js";
 import {
   type ModelAliasIndex,
-  modelKey,
   normalizeProviderId,
   resolveReasoningDefault,
   resolveThinkingDefault,
@@ -155,7 +154,6 @@ export async function createModelSelectionState(params: {
 
   let provider = params.provider;
   let model = params.model;
-  const requestedRouteResolution: ModelFallbackRouteResolution = "resolved";
   const hasOneTurnModelOverride = params.hasOneTurnModelOverride === true;
   const agentEntry = params.agentId ? resolveAgentConfig(cfg, params.agentId) : undefined;
 
@@ -163,7 +161,7 @@ export async function createModelSelectionState(params: {
     cfg,
     catalog: [],
     defaultProvider,
-    defaultModel,
+    defaultModel: { provider: defaultProvider, model: defaultModel },
     agentId: params.agentId,
     ...runtimeModelNormalization,
   });
@@ -203,7 +201,7 @@ export async function createModelSelectionState(params: {
       cfg,
       catalog: modelCatalog,
       defaultProvider,
-      defaultModel,
+      defaultModel: { provider: defaultProvider, model: defaultModel },
       agentId: params.agentId,
       ...runtimeModelNormalization,
     });
@@ -218,7 +216,7 @@ export async function createModelSelectionState(params: {
       cfg,
       catalog: configuredModelCatalog,
       defaultProvider,
-      defaultModel,
+      defaultModel: { provider: defaultProvider, model: defaultModel },
       agentId: params.agentId,
       ...runtimeModelNormalization,
     });
@@ -364,7 +362,7 @@ export async function createModelSelectionState(params: {
       cfg,
       catalog,
       defaultProvider,
-      defaultModel,
+      defaultModel: { provider: defaultProvider, model: defaultModel },
       agentId: params.agentId,
       ...runtimeModelNormalization,
     }).catalog;
@@ -392,7 +390,7 @@ export async function createModelSelectionState(params: {
   ) => {
     const thinkingSelection = resolveThinkingSelection(selection);
     const { agentRuntime } = thinkingSelection;
-    const key = `${modelKey(selection.provider, selection.model)}\0${agentRuntime}`;
+    const key = JSON.stringify([selection.provider, selection.model, agentRuntime]);
     const cached = thinkingCatalogs.get(key);
     if (cached) {
       return cached.length > 0 ? cached : undefined;
@@ -421,7 +419,11 @@ export async function createModelSelectionState(params: {
     selection: ThinkingDefaultSelection = { provider, model },
   ) => {
     const thinkingSelection = resolveThinkingSelection(selection);
-    const cacheKey = `${modelKey(selection.provider, selection.model)}\0${thinkingSelection.agentRuntime}`;
+    const cacheKey = JSON.stringify([
+      selection.provider,
+      selection.model,
+      thinkingSelection.agentRuntime,
+    ]);
     const cached = defaultThinkingLevels.get(cacheKey);
     if (cached) {
       return cached;
@@ -462,7 +464,7 @@ export async function createModelSelectionState(params: {
     provider,
     model,
     executionSelection,
-    requestedRouteResolution,
+    requestedRouteResolution: "resolved",
     modelPolicy: visibilityPolicy,
     allowedModelKeys,
     allowedModelCatalog,

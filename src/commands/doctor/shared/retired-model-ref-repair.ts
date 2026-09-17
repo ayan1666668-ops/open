@@ -149,7 +149,7 @@ export function createRetiredModelRefRepairResolver(params: {
                 catalog: [],
                 agentId,
                 defaultProvider: currentModel.defaultRef.provider,
-                defaultModel: currentModel.defaultRef.model,
+                defaultModel: currentModel.defaultRef,
                 manifestPlugins: metadataSnapshot.plugins,
               })
             : undefined,
