@@ -624,11 +624,7 @@ export function createSlashCommandHttpHandler(params: SlashHttpHandlerParams) {
     // valid for command A from advancing to upstream validation for command B,
     // which would otherwise let an attacker poison the per-command failure
     // cache and DoS legitimate invocations of command B.
-    if (
-      registeredCommands.length === 0 ||
-      !registeredCommand ||
-      !safeEqualSecret(payload.token, registeredCommand.token)
-    ) {
+    if (!registeredCommand || !safeEqualSecret(payload.token, registeredCommand.token)) {
       sendJsonResponse(res, 401, {
         response_type: "ephemeral",
         text: "Unauthorized: invalid command token.",
@@ -658,11 +654,8 @@ export function createSlashCommandHttpHandler(params: SlashHttpHandlerParams) {
       return;
     }
 
-    // The route-level pre-authentication slot only protects body parsing and
-    // token validation; release it before user authorization or command work.
+    // Release the route's pre-auth slot before user authorization or command work.
     onRequestAuthenticated?.();
-
-    // Extract command info
     const trigger = normalizeSlashCommandTrigger(payload.command);
     const commandText = resolveCommandText(trigger, payload.text, triggerMap);
     const channelId = payload.channel_id;
@@ -887,8 +880,6 @@ async function handleSlashCommandAsync(params: {
     accountId: account.accountId,
   });
 
-  const humanDelay = resolveHumanDelayConfig(cfg, route.agentId);
-
   await core.channel.inbound.dispatch({
     cfg,
     channel: "mattermost",
@@ -937,9 +928,7 @@ async function handleSlashCommandAsync(params: {
         },
       },
     },
-    dispatcherOptions: {
-      humanDelay,
-    },
+    dispatcherOptions: { humanDelay: resolveHumanDelayConfig(cfg, route.agentId) },
     replyOptions: {
       disableBlockStreaming:
         typeof account.blockStreaming === "boolean" ? !account.blockStreaming : undefined,
