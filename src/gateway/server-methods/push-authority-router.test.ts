@@ -4,7 +4,12 @@ import { PROTOCOL_VERSION } from "../../../packages/gateway-protocol/src/version
 import { createDeferred } from "../../../test/helpers/promise.js";
 import { registerWebPushSubscription } from "../../infra/push-web.js";
 import { resetGatewayWorkAdmission } from "../../process/gateway-work-admission.js";
+import { readUserProfileIdentity } from "../../state/user-profile-list.js";
 import { resolveUserProfileId } from "../../state/user-profiles.js";
+import {
+  closeGatewayDeviceRevocation,
+  invalidateGatewayDeviceRevocation,
+} from "../device-revocation.js";
 import { createDirectChatContext } from "../server-chat.agent-events.test-helpers.js";
 import { createRequiredSharedGatewaySessionGenerationReader } from "../server-shared-auth-generation.js";
 import {
@@ -33,6 +38,7 @@ vi.mock("../../infra/push-web.js", () => ({
   setWebPushSubscriptionPreferences: vi.fn(),
 }));
 vi.mock("../../state/user-profiles.js", () => ({ resolveUserProfileId: vi.fn() }));
+vi.mock("../../state/user-profile-list.js", () => ({ readUserProfileIdentity: vi.fn() }));
 vi.mock("../../state/user-preferences.js", () => ({
   getUserPreferences: vi.fn(),
   setUserPreferences: vi.fn(),
@@ -55,6 +61,8 @@ describe("Web Push router authority at the worker grant", () => {
     "unchanged",
     "merged alias",
     "transport retirement",
+    "retained device revoked",
+    "Gateway closed",
     "worker selection mismatch",
   ] as const)("keeps profile SQL outside the grant for %s", async (scenario) => {
     let inGrant = false;
@@ -65,6 +73,17 @@ describe("Web Push router authority at the worker grant", () => {
         throw new Error("profile SQL attempted while the worker owns its transaction");
       }
       return profileId === "retired-profile" ? "profile-owner" : profileId;
+    });
+    vi.mocked(readUserProfileIdentity).mockImplementation((profileId) => {
+      if (inGrant) {
+        forbiddenGrantReads();
+        throw new Error("profile catalog acquisition attempted during worker admission");
+      }
+      return {
+        profileId: profileId === "retired-profile" ? "profile-owner" : profileId,
+        role: null,
+        aliases: new Set([profileId]),
+      };
     });
     const entered = createDeferred();
     const release = createDeferred();
@@ -163,12 +182,26 @@ describe("Web Push router authority at the worker grant", () => {
         connection.abort();
         isConnectionActive.mockReturnValue(false);
         getClientConnIds.mockReturnValue(new Set());
+      } else if (scenario === "retained device revoked") {
+        connection.abort();
+        isConnectionActive.mockReturnValue(false);
+        getClientConnIds.mockReturnValue(new Set());
+        invalidateGatewayDeviceRevocation(context, "browser-device", "operator");
+        expect(client.invalidated).not.toBe(true);
+      } else if (scenario === "Gateway closed") {
+        closeGatewayDeviceRevocation(context);
+        expect(client.invalidated).not.toBe(true);
       }
     } finally {
       release.resolve();
       await request;
     }
     expect(forbiddenGrantReads).not.toHaveBeenCalled();
+    if (scenario === "retained device revoked" || scenario === "Gateway closed") {
+      expect(persisted).not.toHaveBeenCalled();
+      expect(harness.send).not.toHaveBeenCalled();
+      return;
+    }
     expect(harness.send).toHaveBeenCalledOnce();
     const response = await harness.awaitResponseFrame("router-authority");
     if (scenario === "worker selection mismatch") {

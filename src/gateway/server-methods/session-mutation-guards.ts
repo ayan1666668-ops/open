@@ -1,4 +1,5 @@
 import { resolveGlobalSingleton } from "../../shared/global-singleton.js";
+import { readGatewayDeviceRevocationGuard } from "../device-revocation.js";
 import type { ExpectedProfileBinding } from "../expected-profile.js";
 import {
   getRequiredSharedGatewaySessionGeneration,
@@ -63,8 +64,12 @@ export function bindWebSocketRequestMutationAuthority<T extends GatewayRequestOp
   generationReader: (() => string | undefined) | undefined,
 ): T {
   const generationState = getSharedGatewaySessionGenerationReaderState(generationReader);
+  const hasCurrentDeviceRevocation = readGatewayDeviceRevocationGuard(
+    options.hasCurrentClientAuthority,
+  );
   if (
     !generationState ||
+    !hasCurrentDeviceRevocation ||
     client.internal?.agentRuntimeIdentity ||
     options.sessionMutationCommitGuard
   ) {
@@ -81,6 +86,7 @@ export function bindWebSocketRequestMutationAuthority<T extends GatewayRequestOp
       options.hasCurrentClientAuthority !== hasCurrentClientAuthority ||
       options.sessionMutationCommitGuard !== undefined ||
       client.invalidated ||
+      !hasCurrentDeviceRevocation() ||
       client.internal?.agentRuntimeIdentity
     ) {
       throw new Error("Gateway requester authority changed");

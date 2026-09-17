@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { resetGatewayWorkAdmission } from "../../../process/gateway-work-admission.js";
 import { createDeferredCore } from "../../../shared/deferred.js";
-import { resolveUserProfileId } from "../../../state/user-profiles.js";
+import { readUserProfileIdentity } from "../../../state/user-profile-list.js";
 import { createDirectChatContext } from "../../server-chat.agent-events.test-helpers.js";
 import { readGatewayRequestMutationAuthority } from "../../server-methods/session-mutation-guards.js";
 import {
@@ -13,7 +13,7 @@ import {
   createOperatorWsClient,
 } from "./authenticated-request-dispatch.test-support.js";
 
-vi.mock("../../../state/user-profiles.js", () => ({ resolveUserProfileId: vi.fn() }));
+vi.mock("../../../state/user-profile-list.js", () => ({ readUserProfileIdentity: vi.fn() }));
 vi.mock("../../session-sharing.js", async () => ({
   // The probe has no session target; its request and selection owners remain real.
   resolveSessionMutationAuthorization: vi.fn(() => ({ error: null })),
@@ -58,12 +58,12 @@ describe("authenticated request mutation custody", () => {
     const grantProfileReads = vi.fn();
     let inGrant = false;
     let grantError: unknown;
-    vi.mocked(resolveUserProfileId).mockImplementation((profile) => {
+    vi.mocked(readUserProfileIdentity).mockImplementation((profile) => {
       if (inGrant) {
         grantProfileReads();
         throw new Error("host profile storage entered during worker admission");
       }
-      return profile;
+      return { profileId: profile, role: null, aliases: new Set([profile]) };
     });
     const harness = createDispatchTestHarness({
       getRequiredSharedGatewaySessionGeneration:
