@@ -136,7 +136,9 @@ it.each(["static catalog", "synthetic auth"] as const)(
       await Promise.all(
         workers.filter((worker) => worker.threadId !== -1).map((worker) => worker.terminate()),
       );
-      for (const timer of timers) clearInterval(timer);
+      for (const timer of timers) {
+        clearInterval(timer);
+      }
       unregisterClose();
       unsubscribe();
       await fixture.cleanup();
