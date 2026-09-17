@@ -98,8 +98,8 @@ describe("Nostr outbound relay failover", () => {
     setNostrRuntime(
       createPluginRuntimeMock({
         state: {
-          openChannelIngressQueue<TEnvelope>() {
-            return createChannelIngressQueueForTests<TEnvelope>({
+          openChannelIngressQueue<TEnvelope, TMetadata = unknown, TCompletedMetadata = unknown>() {
+            return createChannelIngressQueueForTests<TEnvelope, TMetadata, TCompletedMetadata>({
               channelId: "nostr",
               accountId: "default",
               stateDir,
