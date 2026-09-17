@@ -11,15 +11,17 @@ import type { FollowupRun } from "./queue.js";
 function makeRun(config: OpenClawConfig): FollowupRun["run"] {
   return {
     sessionId: "session-1",
-    agentId: "agent-1",
+    agentId: "main",
     config,
-    provider: "openai",
-    model: "gpt-4.1",
+    executionSelection: {
+      model: { provider: "openai", id: "gpt-4.1-mini" },
+      executor: { kind: "harness", id: "openclaw" },
+    },
     agentDir: "/tmp/agent",
-    sessionKey: "agent:test:session",
+    sessionKey: "agent:main:session",
     sessionFile: "/tmp/session.json",
     workspaceDir: "/tmp/workspace",
-    skillsSnapshot: [],
+    skillsSnapshot: { prompt: "", skills: [] },
     ownerNumbers: ["+15550001"],
     enforceFinalTag: false,
     skipProviderRuntimeHints: true,
@@ -33,11 +35,12 @@ function makeRun(config: OpenClawConfig): FollowupRun["run"] {
     ],
     thinkLevel: "medium",
     verboseLevel: "off",
-    reasoningLevel: "none",
+    reasoningLevel: "off",
     execOverrides: {},
-    bashElevated: false,
+    bashElevated: { enabled: false, allowed: false, defaultLevel: "off" },
+    blockReplyBreak: "message_end",
     timeoutMs: 60_000,
-  } as unknown as FollowupRun["run"];
+  };
 }
 
 afterEach(() => {
@@ -76,10 +79,7 @@ describe("buildEmbeddedRunBaseParams runtime config", () => {
 
     const resolved = await buildEmbeddedRunBaseParams({
       run: makeRun(resolvedRunConfig),
-      provider: "openai",
-      model: "gpt-4.1-mini",
       runId: "run-1",
-      authProfile: {},
     });
 
     expect(resolved.config).toBe(resolvedRunConfig);
@@ -91,10 +91,7 @@ describe("buildEmbeddedRunBaseParams runtime config", () => {
 
     const resolved = await buildEmbeddedRunBaseParams({
       run,
-      provider: "openai",
-      model: "gpt-4.1-mini",
       runId: "run-1",
-      authProfile: {},
     });
 
     expect(resolved.toolBindings).toEqual(run.toolBindings);

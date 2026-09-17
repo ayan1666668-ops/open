@@ -43,6 +43,11 @@ leave model choice with the connected app. Its concrete model remains observed
 runtime output and does not rewrite the stored selection. Existing native
 bindings and their observed model fields remain compatible with released plugins.
 
+An unfinished request from a released plugin stays beside the accepted selection
+in the same record. Doctor preserves provider-only input, and completed turns do
+not consume it. It does not select execution; a later model-only patch can
+complete the request through the selection owner.
+
 Doctor removes `providerOverride`, `modelOverride`, `agentRuntimeOverride`,
 `modelOverrideSource`, `modelOverrideRouteResolution`,
 `modelOverrideFallbackOriginProvider`, and `modelOverrideFallbackOriginModel`.

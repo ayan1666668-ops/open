@@ -151,6 +151,11 @@ callers still own persistence of the changed entry. Both setters will be removed
 in the first stable release after 2026.10; use
 `applySessionExecutionSelection(...)` for new integrations.
 
+A provider-only patch through the released session store remains an unfinished
+request beside the accepted selection. It survives completed turns and model
+history updates, but does not run the current model under that provider. A later
+model-only patch completes the request through the same selection owner.
+
 Model-picker actions carry only bounded snapshot and catalog tokens. Channel
 actor identity, source-message binding, and serialized callback data stay in
 the channel's private authenticated envelope. Channel codecs opt into resolving

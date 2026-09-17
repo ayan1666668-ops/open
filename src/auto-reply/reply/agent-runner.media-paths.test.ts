@@ -4,12 +4,15 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
 import type { EmbeddedAgentQueueMessageOutcome } from "../../agents/embedded-agent-runner/runs.js";
+import type { runWithModelFallback } from "../../agents/model-fallback-runner.js";
 import {
   runInitialModelFallbackAttempt,
+  withModelFallbackPreparation,
   type TestModelFallbackRunnerParams,
 } from "../../agents/test-helpers/model-fallback-runner.test-support.js";
 import { clearRuntimeConfigSnapshot, setRuntimeConfigSnapshot } from "../../config/config.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { isModelExecutionSelection } from "../../model-picker/execution-selection.js";
 import type { TemplateContext } from "../templating.js";
 import type { AgentTurnParams } from "./agent-runner-execution.types.js";
 import type { FollowupRun, QueueSettings } from "./queue.js";
@@ -70,7 +73,8 @@ const EXPECTED_STEER_QUEUE_IDENTITY =
   "channel-user:v1:6f3f31084a7a2a6ff17176c0c16682e64d9f21301f64ff7e5bf1173b54fadc33";
 const registeredOperations: ReplyOperation[] = [];
 vi.mock("../../agents/model-fallback-runner.js", () => ({
-  runWithModelFallback: (params: TestModelFallbackRunnerParams) => runWithModelFallbackMock(params),
+  runWithModelFallback: (params: Parameters<typeof runWithModelFallback<unknown>>[0]) =>
+    withModelFallbackPreparation(params, runWithModelFallbackMock),
 }));
 
 vi.mock("../../agents/model-fallback-attempt.js", () => ({
@@ -220,13 +224,10 @@ const { runReplyAgent } = await import("./agent-runner.js");
 
 function createMediaFollowupRun(overrides: Parameters<typeof createMockFollowupRun>[0]) {
   const followupRun = createMockFollowupRun(overrides);
-  followupRun.run.thinkingCatalog = [
-    {
-      provider: followupRun.run.provider,
-      id: followupRun.run.model,
-      input: ["text", "image"],
-    },
-  ];
+  const selection = followupRun.run.executionSelection;
+  followupRun.run.thinkingCatalog = isModelExecutionSelection(selection)
+    ? [{ provider: selection.model.provider, id: selection.model.id, input: ["text", "image"] }]
+    : [];
   return followupRun;
 }
 

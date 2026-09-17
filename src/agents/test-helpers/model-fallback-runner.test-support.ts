@@ -1,5 +1,7 @@
 import type { FailoverReason } from "../failover/signal.js";
 import type { ModelFallbackRunOptions } from "../model-fallback-attempt.js";
+import { resolveModelCandidateChain } from "../model-fallback-candidates.js";
+import type { runWithModelFallback } from "../model-fallback-runner.js";
 
 export type TestModelFallbackRunnerParams<T = unknown> = {
   provider: string;
@@ -48,4 +50,24 @@ export function runFallbackModelAttempt<T>(
   fallbackReason: FailoverReason,
 ): Promise<T> {
   return params.run(provider, model, fallbackModelAttemptOptions(params, fallbackReason));
+}
+
+/** Preserve run-entry preparation while a test scripts the fallback loop's result. */
+export async function withModelFallbackPreparation<T, Result>(
+  params: Parameters<typeof runWithModelFallback<T>>[0],
+  run: (prepared: Parameters<typeof runWithModelFallback<T>>[0]) => Promise<Result>,
+): Promise<Result> {
+  await params.prepareCandidateChain?.(resolveModelCandidateChain(params));
+  return run({
+    ...params,
+    run: async (provider, model, options) => {
+      await params.prepareCandidate?.(provider, model);
+      await params.prepareAgentHarnessRuntime?.({
+        provider,
+        model,
+        agentHarnessRuntimeOverride: params.resolveAgentHarnessRuntimeOverride?.(provider, model),
+      });
+      return params.run(provider, model, options);
+    },
+  });
 }

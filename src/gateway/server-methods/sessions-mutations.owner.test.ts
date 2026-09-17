@@ -5,6 +5,7 @@ import {
   setActiveEmbeddedRun,
 } from "../../agents/embedded-agent-runner/runs.js";
 import { createEmbeddedRunHandle } from "../../agents/embedded-agent-runner/runs.test-support.js";
+import { createSessionModelCatalogFixture } from "../../agents/test-helpers/session-model-catalog.test-support.js";
 import { createDashboardTool } from "../../agents/tools/dashboard-tool.js";
 import { withGatewayToolCallerIdentity } from "../../agents/tools/gateway-caller-context.js";
 import { callInProcessGatewayTool } from "../../agents/tools/in-process-gateway.js";
@@ -451,22 +452,54 @@ describe("sessions.patch", () => {
             ...(index === 1 ? { thinkingLevel: "off" } : {}),
           });
         }
-        const cfg: OpenClawConfig = {};
+        const cfg: OpenClawConfig = {
+          agents: {
+            defaults: { model: "fixture/default" },
+            list: [
+              {
+                id: "main",
+                default: true,
+                agentDir: state.agentDir("main"),
+                workspace: state.workspaceDir,
+              },
+            ],
+          },
+          models: {
+            providers: {
+              fixture: {
+                api: "openai-completions",
+                baseUrl: "https://fixture.example.invalid/v1",
+                models: [],
+              },
+            },
+          },
+        };
+        const selectionCatalog = createSessionModelCatalogFixture();
         const requestContext = context(cfg);
         const catalogEntered = createDeferredCore();
         const catalogRelease = createDeferredCore();
         requestContext.loadGatewayModelCatalogSnapshot = vi.fn(async () => {
           catalogEntered.resolve();
           await catalogRelease.promise;
-          return {
-            agentId: "main",
-            agentDir: state.agentDir("main"),
-            workspaceDir: state.workspaceDir,
-            config: cfg,
-            catalogComplete: true,
-            entries: [],
-            routeVariants: [],
+          const entry = {
+            provider: "fixture",
+            id: "default",
+            name: "Default model",
+            api: "openai-completions" as const,
+            baseUrl: "https://fixture.example.invalid/v1",
           };
+          return selectionCatalog.publish({
+            config: cfg,
+            agentId: "main",
+            catalog: { entries: [entry], routeVariants: [entry] },
+            profiles: {
+              "fixture:default": {
+                type: "api_key",
+                provider: "fixture",
+                key: "synthetic-credential",
+              },
+            },
+          });
         });
         const handles = keys.map(() => ({
           ...createEmbeddedRunHandle(),

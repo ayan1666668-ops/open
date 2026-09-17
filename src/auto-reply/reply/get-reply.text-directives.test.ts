@@ -657,8 +657,6 @@ it.each(["new", "deferred", "accepted"])(
     if (initialState === "accepted") {
       expect(loadSessionEntryReadOnly(scope)?.executionSelection).toEqual(before);
     }
-    expect(notices).toContainEqual(
-      expect.objectContaining({ isStatusNotice: true, text: expect.stringContaining("Current:") }),
-    );
+    expect(notices).toEqual([]);
   },
 );

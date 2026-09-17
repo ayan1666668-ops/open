@@ -15,6 +15,7 @@ import {
 } from "../../agents/embedded-agent-runner/runs.js";
 import { testing as embeddedRunTesting } from "../../agents/embedded-agent-runner/runs.test-support.js";
 import { registerPendingAgentQuestion } from "../../agents/harness/gateway-question.js";
+import type { runWithModelFallback } from "../../agents/model-fallback-runner.js";
 import {
   beginForegroundSessionMaintenance,
   waitForSessionMaintenance,
@@ -24,6 +25,7 @@ import { makeAssistantMessageFixture } from "../../agents/test-helpers/assistant
 import {
   runFallbackModelAttempt,
   runInitialModelFallbackAttempt,
+  withModelFallbackPreparation,
   type TestModelFallbackRunnerParams,
 } from "../../agents/test-helpers/model-fallback-runner.test-support.js";
 import type { InboundEventKind } from "../../channels/inbound-event/kind.js";
@@ -130,7 +132,8 @@ const compactState = vi.hoisted(() => ({
 }));
 
 vi.mock("../../agents/model-fallback-runner.js", () => ({
-  runWithModelFallback: (params: TestModelFallbackRunnerParams) => runWithModelFallbackMock(params),
+  runWithModelFallback: (params: Parameters<typeof runWithModelFallback<unknown>>[0]) =>
+    withModelFallbackPreparation(params, runWithModelFallbackMock),
 }));
 
 vi.mock("../../agents/model-fallback-attempt.js", () => ({
@@ -325,6 +328,8 @@ function createBaseRun(options: BaseRunOptions = {}) {
     enqueuedAt: Date.now(),
     ...options.followup,
     run: {
+      agentId: "main",
+      agentDir: path.join(rootDir, "agent"),
       sessionId: "session",
       sessionKey,
       messageProvider,

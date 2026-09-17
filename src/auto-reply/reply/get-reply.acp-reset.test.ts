@@ -203,7 +203,8 @@ it.each(
       GatewayClientScopes: ["operator.admin"],
     });
     const onSessionPrepared = vi.fn();
-    await dispatchReplyFromConfig({
+    const resolverCalls: unknown[] = [];
+    const dispatch = dispatchReplyFromConfig({
       ctx,
       cfg,
       dispatcher,
@@ -212,8 +213,17 @@ it.each(
           custody === "stale-admission" ? "retired-session" : before.entry.sessionId,
         onSessionPrepared,
       },
-      replyResolver: (input, options) => getReplyFromConfig(input, options, cfg),
+      replyResolver: async (input, options) => {
+        const result = await getReplyFromConfig(input, options, cfg);
+        resolverCalls.push({ command: input.commandText, raw: input.rawText, result });
+        return result;
+      },
     });
+    if (custody === "stale-admission") {
+      await expect(dispatch).rejects.toThrow(/changed while starting work/i);
+    } else {
+      await dispatch;
+    }
     await dispatcher.waitForIdle();
     const after = loadSessionEntryReadOnly(scope);
     if (neighborBefore) {
@@ -222,7 +232,7 @@ it.each(
     expect(after?.executionSelection).toEqual(before.entry.executionSelection);
     expect(setConfigOption).not.toHaveBeenCalled();
     if (custody === "unlocked") {
-      expect(close).toHaveBeenCalledOnce();
+      expect(close, JSON.stringify({ resolverCalls, delivered, after })).toHaveBeenCalledOnce();
       expect(close).toHaveBeenCalledWith(
         expect.objectContaining({ handle: expect.objectContaining({ agentId }) }),
       );
@@ -244,9 +254,11 @@ it.each(
       expect(close).not.toHaveBeenCalled();
       expect(cancel).not.toHaveBeenCalled();
       expect(runTurn).not.toHaveBeenCalled();
-      expect(delivered.join("\n")).toContain(
-        custody === "locked" ? MODEL_SELECTION_LOCKED_RESET_MESSAGE : "reset failed",
-      );
+      if (custody === "locked") {
+        expect(delivered.join("\n"), JSON.stringify({ resolverCalls, after })).toContain(
+          MODEL_SELECTION_LOCKED_RESET_MESSAGE,
+        );
+      }
     }
   },
 );

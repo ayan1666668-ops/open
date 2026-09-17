@@ -9,9 +9,11 @@ import {
 import type { FallbackRunnerParams } from "../../agents/embedded-agent-runner/run-entry.test-support.js";
 import { resolveFastModeState as resolveFastModeStateImpl } from "../../agents/fast-mode.js";
 import { LiveSessionModelSwitchError } from "../../agents/live-model-switch-error.js";
-import { resolveModelCandidateChain } from "../../agents/model-fallback-candidates.js";
 import { evaluatePublishedModelRuntimeChoice } from "../../agents/model-runtime-choice.js";
-import { runInitialModelFallbackAttempt } from "../../agents/test-helpers/model-fallback-runner.test-support.js";
+import {
+  runInitialModelFallbackAttempt,
+  withModelFallbackPreparation,
+} from "../../agents/test-helpers/model-fallback-runner.test-support.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import { resolveSqliteScope } from "../../config/sessions/session-accessor.sqlite-scope.js";
 import {
@@ -339,16 +341,8 @@ vi.mock("./run-model-selection.runtime.js", () => ({
 
 vi.mock("../../agents/model-fallback-runner.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../agents/model-fallback-runner.js")>()),
-  runWithModelFallback: async (params: FallbackRunnerParams) => {
-    await params.prepareCandidateChain?.(resolveModelCandidateChain(params));
-    return runWithModelFallbackMock({
-      ...params,
-      run: async (...[provider, model, options]: Parameters<FallbackRunnerParams["run"]>) => {
-        await params.prepareCandidate?.(provider, model);
-        return params.run(provider, model, options);
-      },
-    });
-  },
+  runWithModelFallback: (params: FallbackRunnerParams) =>
+    withModelFallbackPreparation(params, runWithModelFallbackMock),
 }));
 
 vi.mock("./run-execution.runtime.js", () => ({

@@ -17,6 +17,7 @@ import {
 } from "../../agents/harness/gateway-question.test-support.js";
 import { withPreparedEmbeddedRunToolAuthority } from "../../agents/harness/tool-authority.runtime.js";
 import type { GatewayQuestionCall } from "../../agents/tools/gateway-question-lifecycle.js";
+import { isModelExecutionSelection } from "../../model-picker/execution-selection.js";
 import { runReplyQuestionInput } from "./agent-runner-question-input.js";
 import { runReplyAgent } from "./agent-runner-run.js";
 import { runActiveReplySteer } from "./agent-runner-steer-adoption.js";
@@ -75,9 +76,13 @@ async function withQuestionCreator(
     resetTriggered: false,
   });
   operation.bindToolAuthoritySnapshot(prepareReplyToolAuthority(run));
+  const selection = run.run.executionSelection;
+  if (!isModelExecutionSelection(selection)) {
+    throw new Error("Question custody fixture requires a concrete model.");
+  }
   const fingerprint = operation.bindToolAuthorityRoute({
-    provider: run.run.provider,
-    model: run.run.model,
+    provider: selection.model.provider,
+    model: selection.model.id,
   });
   const admission = prepareAgentRunAdmission({
     cfg: run.run.config,
@@ -97,7 +102,8 @@ async function withQuestionCreator(
       {
         ...run.run,
         runId,
-        modelId: run.run.model,
+        provider: selection.model.provider,
+        modelId: selection.model.id,
         toolAuthorityFingerprint: fingerprint,
         abortSignal: operation.abortSignal,
       },

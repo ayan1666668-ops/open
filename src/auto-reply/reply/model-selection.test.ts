@@ -18,6 +18,7 @@ import { createPluginMetadataSnapshotFixture } from "../../plugins/plugin-metada
 import * as activeThinkingPolicy from "../../plugins/provider-thinking-active.js";
 import { prepareModelCatalogThinkingPolicies } from "../../plugins/provider-thinking.js";
 import { isThinkingLevelSupported } from "../thinking.js";
+import { resolveDefaultModel } from "./directive-handling.defaults.js";
 import {
   createModelSelectionState as createModelSelectionStateOwner,
   resolveContextTokens,
@@ -1041,8 +1042,8 @@ describe("createModelSelectionState catalog loading", () => {
 
   it.each([
     ["anthropic", "claude-opus-4-5", "openai/*", "anthropic", "claude-opus-4-5", 1, false],
-    ["openai/team", "claude-opus-4-5", "openai/*", "openai", "team/claude-opus-4-5", 1, true],
-    ["openai", "openai/team/Reader", "openai/team/*", "openai", "team/Reader", 1, true],
+    ["openai/team", "claude-opus-4-5", "openai/*", "openai", "team/claude-opus-4-5", 0, true],
+    ["openai", "openai/team/Reader", "openai/team/*", "openai", "team/Reader", 0, true],
     ["openai", "team/Reader", "openai/team/*", "openai", "team/Reader", 0, true],
   ] as const)(
     "initializes configured %s/%s without substituting a browse match for wildcard %s",
@@ -1072,7 +1073,8 @@ describe("createModelSelectionState catalog loading", () => {
         },
       } as OpenClawConfig;
 
-      const state = await createInitialState(cfg, defaultProvider, defaultModel);
+      const defaults = resolveDefaultModel({ cfg, agentId: "main" });
+      const state = await createInitialState(cfg, defaults.defaultProvider, defaults.defaultModel);
 
       expect(state.provider).toBe(selectedProvider);
       expect(state.model).toBe(selectedModel);

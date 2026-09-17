@@ -14,6 +14,7 @@ import type { runWithModelFallback } from "../../agents/model-fallback-runner.js
 import { evaluatePublishedModelRuntimeChoice } from "../../agents/model-runtime-choice.js";
 import {
   initialModelFallbackAttemptOptions,
+  withModelFallbackPreparation,
   type TestModelFallbackRunnerParams,
 } from "../../agents/test-helpers/model-fallback-runner.test-support.js";
 import type { SessionEntry } from "../../config/sessions.js";
@@ -147,22 +148,7 @@ vi.mock("../../agents/harness/runtime-plugin.js", async (importOriginal) => ({
 }));
 vi.mock("../../agents/model-fallback-runner.js", () => ({
   runWithModelFallback: async (params: Parameters<typeof runWithModelFallback<unknown>>[0]) => {
-    const input = {
-      ...params,
-      run: async (provider: string, model: string, options: Parameters<typeof params.run>[2]) => {
-        await params.prepareCandidateChain?.([
-          { provider, model, routeOrigin: "requested", routeResolution: "resolved" },
-        ]);
-        await params.prepareCandidate?.(provider, model);
-        await params.prepareAgentHarnessRuntime?.({
-          provider,
-          model,
-          agentHarnessRuntimeOverride: params.resolveAgentHarnessRuntimeOverride?.(provider, model),
-        });
-        return params.run(provider, model, options);
-      },
-    };
-    const resolved = await state.runWithModelFallbackMock(input);
+    const resolved = await withModelFallbackPreparation(params, state.runWithModelFallbackMock);
     return { ...resolved, outcome: resolved.outcome ?? "completed" };
   },
 }));

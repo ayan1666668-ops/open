@@ -457,7 +457,7 @@ test.each([
   ["sessions.patchMany", false, "none"],
   ["sessions.patch", true, "none"],
   ["sessions.patch", false, "ready"],
-  ["sessions.patch", false, "cleared-selection"],
+  ["sessions.patch", false, "rejected-reset"],
 ] as const)(
   "%s archives the checkout and restores dirty work without deleting the conversation (already archived=%s, catalog preparation=%s)",
   async (method, alreadyArchived, catalogMode) => {
@@ -482,7 +482,7 @@ test.each([
     const loadGatewayModelCatalog = vi.fn(async () => {
       catalogEntered.resolve();
       await catalogRelease.promise;
-      if (catalogMode === "cleared-selection") {
+      if (catalogMode === "rejected-reset") {
         throw new Error("Synthetic catalog preparation failed");
       }
       return [];
@@ -496,7 +496,7 @@ test.each([
               expectedSessionId: sessionId,
               archived,
               ...(!archived && prepareCatalog
-                ? catalogMode === "cleared-selection"
+                ? catalogMode === "rejected-reset"
                   ? { model: null }
                   : { thinkingLevel: "off" }
                 : {}),
@@ -521,10 +521,13 @@ test.each([
     ).not.toContain(worktree.path);
     await expect(loadSeededTranscriptEvents(fixture.transcriptScope)).resolves.toEqual(transcript);
 
-    if (catalogMode === "cleared-selection") {
+    if (catalogMode === "rejected-reset") {
       await patchSessionEntryCore({ storePath, sessionKey: key }, () => ({ thinkingLevel: "off" }));
     }
     const restore = prepareCatalog ? vi.spyOn(managedWorktrees, "restore") : undefined;
+    const selectionBeforeRestore = structuredClone(
+      loadSessionEntry({ storePath, sessionKey: key })?.executionSelection,
+    );
     const restored = patch(false);
     try {
       if (prepareCatalog) {
@@ -535,7 +538,7 @@ test.each([
           expect.any(Number),
         );
         await expect(fs.access(worktree.path)).rejects.toThrow();
-        if (catalogMode === "cleared-selection") {
+        if (catalogMode === "rejected-reset") {
           await patchSessionEntryCore({ storePath, sessionKey: key }, () => ({
             thinkingLevel: undefined,
             contextWindow: undefined,
@@ -543,12 +546,35 @@ test.each([
         }
       }
       catalogRelease.resolve();
-      expect(await restored).toMatchObject({ ok: true });
+      if (catalogMode === "rejected-reset") {
+        expect(await restored).toMatchObject({ ok: false });
+        expect(restore).not.toHaveBeenCalled();
+        expect(loadSessionEntry({ storePath, sessionKey: key })).toMatchObject({
+          archivedAt: expect.any(Number),
+          executionSelection: selectionBeforeRestore,
+        });
+        expect(getRegistryWorktree(process.env, worktree.id)?.removedAt).toEqual(
+          expect.any(Number),
+        );
+        await expect(fs.access(worktree.path)).rejects.toThrow();
+        await expect(loadSeededTranscriptEvents(fixture.transcriptScope)).resolves.toEqual(
+          transcript,
+        );
+        expect(
+          await directSessionReq("sessions.patch", {
+            key,
+            expectedSessionId: sessionId,
+            archived: false,
+          }),
+        ).toMatchObject({ ok: true });
+      } else {
+        expect(await restored).toMatchObject({ ok: true });
+      }
       if (prepareCatalog) {
         expect(restore).toHaveBeenCalledOnce();
         expect(loadGatewayModelCatalog).toHaveBeenCalledOnce();
         expect(loadSessionEntry({ storePath, sessionKey: key })?.thinkingLevel).toBe(
-          catalogMode === "cleared-selection" ? undefined : "off",
+          catalogMode === "rejected-reset" ? undefined : "off",
         );
       }
     } finally {
