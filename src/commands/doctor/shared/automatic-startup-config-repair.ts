@@ -121,11 +121,11 @@ function planConfigRepair(
     return withPluginMetadataSnapshotScope(metadata, () => invoke(metadata), { config });
   };
   const migration = withMetadata(projected, () =>
-    applyLegacyDoctorMigrations(
-      projected,
-      { authoredRaw: snapshot.parsed, resolvedRaw: snapshot.sourceConfig },
-      { pluginContracts, sourceConfigBeforeMigrations: snapshot.sourceConfigBeforeMigrations },
-    ),
+    applyLegacyDoctorMigrations(projected, {
+      sourceConfigBeforeMigrations: snapshot.sourceConfigBeforeMigrations,
+      context: { authoredRaw: snapshot.parsed, resolvedRaw: snapshot.sourceConfig },
+      pluginContracts,
+    }),
   );
   const config = preserveDeferredPluginMigrationConfig({
     sourceConfig: snapshot.sourceConfig,

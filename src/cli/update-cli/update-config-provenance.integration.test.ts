@@ -3,6 +3,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { withTempHome } from "openclaw/plugin-sdk/test-env";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createAccountListHelpers } from "../../channels/plugins/account-helpers.js";
+import { replaceConfigFile } from "../../config/config.js";
 import {
   createConfigIO,
   readConfigFileSnapshot,
@@ -18,6 +20,12 @@ const controls = vi.hoisted(() => ({ root: "" }));
 vi.mock("../../plugins/manifest-registry.js", () => ({
   loadPluginManifestRegistryCore: () => ({ plugins: [], diagnostics: [] }),
 }));
+vi.mock("../../channels/plugins/read-only.js", () => ({
+  resolveReadOnlyChannelPluginsForConfig: (config: OpenClawConfig) => ({
+    configuredChannelIds: config.channels?.discord ? ["discord"] : [],
+    plugins: [{ id: "discord", config: createAccountListHelpers("discord") }],
+  }),
+}));
 vi.mock("../../plugins/plugin-registry.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../plugins/plugin-registry.js")>()),
   loadPluginManifestRegistryForPluginRegistry: () => ({ plugins: [], diagnostics: [] }),
@@ -25,7 +33,7 @@ vi.mock("../../plugins/plugin-registry.js", async (importOriginal) => ({
 vi.mock("../../plugins/doctor-contract-registry.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../plugins/doctor-contract-registry.js")>()),
   listPluginDoctorLegacyConfigRules: () => [],
-  applyPluginDoctorCompatibilityMigrations: () => ({ next: null, changes: [] }),
+  applyPluginDoctorCompatibilityMigrations: (config: OpenClawConfig) => ({ config, changes: [] }),
 }));
 vi.mock("../../plugins/update-cohort.js", () => ({
   convergePluginReleaseCohort: async ({ config }: { config: OpenClawConfig }) => {
@@ -75,7 +83,11 @@ vi.mock("./update-command-fresh-doctor.js", async (importOriginal) => ({
   }),
 }));
 
-import { repairLegacyConfigForUpdateChannel } from "../../commands/doctor/legacy-config-repair.js";
+import {
+  planLegacyConfigForUpdateChannel,
+  repairLegacyConfigForUpdateChannel,
+} from "../../commands/doctor/legacy-config-repair.js";
+import { applyLegacyCompatibilityStep } from "../../commands/doctor/shared/config-flow-steps.js";
 import { convergeUpdatePlugins } from "./update-command-convergence.js";
 import { updateFinalizeCommand } from "./update-command-finalize.js";
 import { updatePluginsAfterCoreUpdate } from "./update-command-plugins.js";
@@ -89,6 +101,115 @@ afterEach(() => {
 });
 
 describe("update config provenance", () => {
+  it("reports unresolved ownership without writing when the original roster is unavailable", async () => {
+    await withTempHome(async (home) => {
+      const stateDir = path.join(home, ".openclaw");
+      const configPath = path.join(stateDir, "openclaw.json");
+      vi.stubEnv("OPENCLAW_CONFIG_PATH", configPath);
+      vi.stubEnv("OPENCLAW_STATE_DIR", stateDir);
+      const original = JSON.stringify({
+        agents: { ownership: "explicit", entries: { ops: {}, research: {} } },
+        channels: { discord: { accounts: { default: {} } } },
+        bindings: [
+          {
+            agentId: "research",
+            match: { channel: "discord", peer: { kind: "direct", id: "research-user" } },
+          },
+        ],
+      });
+      await fs.mkdir(stateDir, { recursive: true });
+      await fs.writeFile(configPath, original);
+      resetConfigRuntimeState();
+      const { snapshot, writeOptions } = await createConfigIO({
+        pluginValidation: "skip",
+      }).readConfigFileSnapshotForWrite();
+      const result = await repairLegacyConfigForUpdateChannel({
+        configSnapshot: { ...snapshot, sourceConfigBeforeMigrations: undefined },
+        configWriteOptions: writeOptions,
+        jsonMode: true,
+      });
+      expect(result).toMatchObject({
+        repaired: false,
+        warnings: [expect.stringContaining("unresolved: original roster unavailable")],
+      });
+      expect(result).toMatchObject({
+        warnings: [
+          expect.stringContaining(
+            '{"agentId":"<agentId>","match":{"channel":"discord","accountId":"default"}}',
+          ),
+        ],
+      });
+      expect(await fs.readFile(configPath, "utf8")).toBe(original);
+    });
+  });
+
+  it.each(["update channel", "manual Doctor"])(
+    "preserves the historical account owner and narrower route through %s",
+    async (flow) => {
+      await withTempHome(async (home) => {
+        const stateDir = path.join(home, ".openclaw");
+        const configPath = path.join(stateDir, "openclaw.json");
+        vi.stubEnv("OPENCLAW_CONFIG_PATH", configPath);
+        vi.stubEnv("OPENCLAW_STATE_DIR", stateDir);
+        const narrowerRoute = {
+          agentId: "research",
+          match: { channel: "discord", peer: { kind: "direct", id: "research-user" } },
+        };
+        await fs.mkdir(stateDir, { recursive: true });
+        await fs.writeFile(
+          configPath,
+          JSON.stringify({
+            gateway: { mode: "local", bind: "localhost" },
+            agents: { list: [{ id: "ops" }, { id: "research" }] },
+            channels: { discord: { accounts: { default: {} } } },
+            bindings: [narrowerRoute],
+          }),
+        );
+        resetConfigRuntimeState();
+        const { snapshot, writeOptions } = await createConfigIO({
+          pluginValidation: "skip",
+        }).readConfigFileSnapshotForWrite();
+        expect(snapshot.sourceConfigBeforeMigrations?.agents?.list).toEqual([
+          { id: "ops" },
+          { id: "research" },
+        ]);
+        if (flow === "update channel") {
+          const plan = planLegacyConfigForUpdateChannel(snapshot, writeOptions);
+          expect(plan).toBeDefined();
+          await repairLegacyConfigForUpdateChannel({
+            configSnapshot: snapshot,
+            plan,
+            configWriteOptions: writeOptions,
+            jsonMode: true,
+          });
+        } else {
+          const result = applyLegacyCompatibilityStep({
+            snapshot,
+            state: {
+              cfg: snapshot.sourceConfig,
+              candidate: snapshot.sourceConfig,
+              pendingChanges: false,
+              fixHints: [],
+            },
+            shouldRepair: true,
+            doctorFixCommand: "openclaw doctor --fix",
+          });
+          expect(result.state.pendingChanges).toBe(true);
+          await replaceConfigFile({
+            sourceConfig: result.state.candidate,
+            baseHash: snapshot.hash,
+            writeOptions: { ...writeOptions, auditOrigin: "doctor", skipOutputLogs: true },
+          });
+        }
+        const persisted = JSON.parse(await fs.readFile(configPath, "utf8")) as OpenClawConfig;
+        expect(persisted.bindings).toEqual([
+          narrowerRoute,
+          { agentId: "ops", match: { channel: "discord", accountId: "default" } },
+        ]);
+      });
+    },
+  );
+
   it.each([
     { flow: "plugins", requestedChannel: undefined },
     { flow: "legacy", requestedChannel: undefined },

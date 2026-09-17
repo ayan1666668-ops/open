@@ -128,10 +128,11 @@ describe("channel ownership startup", () => {
   ])(
     "preserves legacy account owner $authored across migration and a persisted restart",
     async ({ authored, owner, sibling }) => {
-      const repaired = applyLegacyDoctorMigrations({
+      const raw = {
         agents: { list: [{ id: authored }, { id: sibling }] },
         channels: { discord: { enabled: true } },
-      });
+      };
+      const repaired = applyLegacyDoctorMigrations(raw, { sourceConfigBeforeMigrations: raw });
       await start(repaired.next as OpenClawConfig);
       expect(manager.getRuntimeSnapshot().channelAccounts.discord?.default).toMatchObject({
         running: true,

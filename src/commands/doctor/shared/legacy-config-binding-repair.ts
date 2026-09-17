@@ -6,10 +6,7 @@ import { projectLegacyAgentRosterEntries } from "../../../config/legacy.roster.j
 import type { AgentRouteBinding } from "../../../config/types.agents.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import { resolveChannelAccountEntry } from "../../../routing/account-lookup.js";
-import {
-  listChannelAccountRouteBindings,
-  resolveAgentRoute,
-} from "../../../routing/resolve-route.js";
+import { resolveAgentRoute } from "../../../routing/resolve-route.js";
 import {
   DEFAULT_AGENT_ID,
   normalizeAccountId,
@@ -58,10 +55,13 @@ export function pruneBindingsForMissingAgents(
 }
 
 /** Preserve proven route owners before explicit ownership retires implicit account routing. */
-export function repairUnownedChannelAccountBindings(
-  cfg: OpenClawConfig,
-  sourceConfig?: unknown,
-): DoctorConfigMutationResult & { warnings?: string[] } {
+export function repairUnownedChannelAccountBindings({
+  config: cfg,
+  sourceConfigBeforeMigrations,
+}: {
+  config: OpenClawConfig;
+  sourceConfigBeforeMigrations: unknown;
+}): DoctorConfigMutationResult & { warnings?: string[] } {
   const agentIds = new Set(listAgentIds(cfg));
   const additions: AgentRouteBinding[] = [];
   const warnings: string[] = [];
@@ -83,7 +83,7 @@ export function repairUnownedChannelAccountBindings(
   ) {
     return { config: cfg, changes: [] };
   }
-  const sourceAgents = asNullableRecord(asNullableRecord(sourceConfig)?.agents);
+  const sourceAgents = asNullableRecord(asNullableRecord(sourceConfigBeforeMigrations)?.agents);
   const sourceList = sourceAgents?.list;
   // The shipped list fallback used source array order, which keyed rosters cannot recover.
   const legacyDefaultAgentId =
@@ -138,17 +138,16 @@ export function repairUnownedChannelAccountBindings(
         }
         missingOwner = error;
       }
-      const owners = new Set(
-        listChannelAccountRouteBindings(routeInput).map((binding) =>
-          normalizeAgentId(binding.agentId),
-        ),
-      );
-      const agentId = legacyDefaultAgentId ?? (owners.size === 1 ? [...owners][0] : undefined);
+      const agentId = legacyDefaultAgentId;
       if (agentId && agentIds.has(agentId)) {
         // An exact account fallback preserves narrower precedence and never assigns sibling accounts.
         additions.push({ agentId, match: { channel: channelId, accountId } });
       } else if (missingOwner) {
-        warnings.push(missingOwner.message);
+        warnings.push(
+          !Array.isArray(sourceList) && !isRecord(sourceAgents?.entries)
+            ? `${channelId}:${accountId} unresolved: original roster unavailable. ${missingOwner.message}`
+            : missingOwner.message,
+        );
       }
     }
   }

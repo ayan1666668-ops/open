@@ -6,17 +6,18 @@ import { applyChannelDoctorCompatibilityMigrations } from "./channel-legacy-conf
 import { repairUnownedChannelAccountBindings } from "./legacy-config-binding-repair.js";
 import { LEGACY_CONFIG_MIGRATIONS } from "./legacy-config-migrations.js";
 
+export type LegacyDoctorMigrationOptions = {
+  /** Original include/env-resolved source, or explicitly unavailable. Never the normalized roster. */
+  sourceConfigBeforeMigrations: unknown;
+  context?: LegacyConfigMigrationContext;
+  // State-free previews skip plugin contracts; the committed result always uses a full run.
+  pluginContracts?: boolean;
+};
+
 /** Apply all legacy doctor migrations to raw config, returning null when nothing changed. */
 export function applyLegacyDoctorMigrations(
   raw: unknown,
-  context?: LegacyConfigMigrationContext,
-  options?: {
-    // Plugin doctor contracts resolve the installed-plugin registry, which reads the shared
-    // state database. Preview callers that must stay state-free pass false; the config they
-    // produce is scaffolding only — the committed result always comes from a full run.
-    pluginContracts?: boolean;
-    sourceConfigBeforeMigrations?: unknown;
-  },
+  options: LegacyDoctorMigrationOptions,
 ): {
   next: Record<string, unknown> | null;
   changes: string[];
@@ -29,18 +30,18 @@ export function applyLegacyDoctorMigrations(
   const next = cloneConfigWithResolutionFacts(original);
   const changes: string[] = [];
   for (const migration of LEGACY_CONFIG_MIGRATIONS) {
-    migration.apply(next, changes, context);
+    migration.apply(next, changes, options.context);
   }
   const compat = applyChannelDoctorCompatibilityMigrations(next, {
-    pluginContracts: options?.pluginContracts !== false,
+    pluginContracts: options.pluginContracts !== false,
   });
   changes.push(...compat.changes);
   const ownership: ReturnType<typeof repairUnownedChannelAccountBindings> =
-    options?.pluginContracts !== false
-      ? repairUnownedChannelAccountBindings(
-          compat.next,
-          options?.sourceConfigBeforeMigrations ?? context?.resolvedRaw ?? original,
-        )
+    options.pluginContracts !== false
+      ? repairUnownedChannelAccountBindings({
+          config: compat.next,
+          sourceConfigBeforeMigrations: options.sourceConfigBeforeMigrations,
+        })
       : { config: compat.next, changes: [] };
   changes.push(...ownership.changes);
   // The config reader keeps the retired default-agent marker outside the object.

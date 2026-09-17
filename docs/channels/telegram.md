@@ -131,10 +131,11 @@ that account blocked with the exact binding remediation in channel status;
 other accounts keep running. Add the binding and restart the Gateway.
 
 When upgrading a legacy `agents.list` config, Doctor preserves the previous
-implicit account owner in a binding before saving explicit ownership. For current
-explicit fleets, `openclaw doctor --fix` can infer an account owner when its
-narrower routes all name one agent. Conflicting or missing ownership requires an
-operator choice. See [migration repairs](/gateway/doctor/config-migrations#channel-ownership-during-an-update).
+implicit account owner in a binding before saving explicit ownership. Doctor
+requires the original roster and never promotes a narrower conversation route
+to account-wide ownership. Missing historical ownership requires an operator
+choice; Doctor reports the exact binding to add without changing existing routes.
+See [migration repairs](/gateway/doctor/config-migrations#channel-ownership-during-an-update).
 
 ## Related
 

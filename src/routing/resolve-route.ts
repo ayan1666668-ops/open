@@ -447,17 +447,6 @@ function getEvaluatedBindingsForChannelAccount(
   return evaluated;
 }
 
-/** @internal Lists matchable candidates from the canonical channel/account binding index. */
-export function listChannelAccountRouteBindings(
-  input: Pick<ResolveAgentRouteInput, "cfg" | "channel" | "accountId">,
-) {
-  return getEvaluatedBindingsForChannelAccount(
-    input.cfg,
-    normalizeLowercaseStringOrEmpty(input.channel),
-    normalizeAccountId(input.accountId),
-  ).bindings.map(({ binding }) => binding);
-}
-
 /** @internal Lists exact DM peers from the canonical channel/account binding index. */
 export function listExactDirectMessageBindingPeerIds(
   input: Pick<ResolveAgentRouteInput, "cfg" | "channel" | "accountId">,

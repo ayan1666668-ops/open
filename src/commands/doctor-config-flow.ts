@@ -385,10 +385,10 @@ export async function loadAndMaybeMigrateDoctorConfig(params: {
     await import("./doctor/shared/legacy-config-binding-repair.js");
   applyConfigMutation(
     runWithCurrentPluginMetadata(state.candidate, () =>
-      repairUnownedChannelAccountBindings(
-        state.candidate,
-        snapshot.sourceConfigBeforeMigrations ?? snapshot.parsed,
-      ),
+      repairUnownedChannelAccountBindings({
+        config: state.candidate,
+        sourceConfigBeforeMigrations: snapshot.sourceConfigBeforeMigrations,
+      }),
     ),
     {
       fixHint: `Run "${doctorFixCommand}" to preserve channel account ownership.`,
