@@ -36,12 +36,13 @@ const RESULT_SUBJECT = String.raw`(?:${RESULT_SUBJECT_WORD}\s+){0,6}(?!(?:the|a|
 const IRREGULAR_PAST_VERB =
   "arose|awoke|bore|beat|became|began|bent|bet|bit|bled|blew|broke|brought|built|burnt|burst|bought|caught|chose|came|cost|crept|cut|dealt|dug|did|drew|drank|drove|ate|fell|fed|felt|fought|found|fled|flew|forbade|forgot|forgave|froze|got|gave|went|grew|hung|heard|hid|hit|held|hurt|kept|knew|laid|led|leant|leapt|learnt|left|lent|let|lay|lit|lost|made|meant|met|paid|put|quit|read|rode|rang|rose|ran|said|saw|sought|sold|sent|set|shook|shone|shot|showed|shrank|shut|sang|sank|sat|slept|slid|smelt|spoke|spelt|spent|spilt|spun|split|spread|sprang|stood|stole|stuck|stung|stank|struck|swore|swept|swam|swung|took|taught|tore|told|thought|threw|understood|upset|woke|wore|wept|won|wound|wrote";
 const PAST_RESULT_VERB = String.raw`(?:(?:(?:re|un|over|under|mis|out|fore|with)-?)?(?:${IRREGULAR_PAST_VERB})|(?!(?:need|feed|bleed|breed|heed|seed|weed|speed|succeed|exceed|proceed)\b)[a-z]+ed)`;
+const RESULT_ADVERBS = String.raw`(?:(?:[a-z]+ly|already|just)\s+){0,3}`;
 const COMPLETION_STATE_CLAUSE_PATTERN = new RegExp(
-  String.raw`(?:^|,\s*|\band\s+)${RESULT_SUBJECT}\s+(?:(?:(?:has|have)\s+)?(?:${PAST_RESULT_VERB}|done)|(?:is|are|was|were|has\s+been|have\s+been)\s+(?:done|complete|completed|finished|fixed|resolved))\b`,
+  String.raw`(?:^|,\s*|\band\s+)${RESULT_SUBJECT}\s+${RESULT_ADVERBS}(?:(?:(?:has|have)\s+)?${RESULT_ADVERBS}(?:${PAST_RESULT_VERB}|done)|(?:is|are|was|were|has\s+been|have\s+been)\s+${RESULT_ADVERBS}(?:done|complete|completed|finished|fixed|resolved))\b`,
   "i",
 );
 const UNFINISHED_RESULT_PATTERN = new RegExp(
-  String.raw`^${RESULT_SUBJECT}\s+(?:did\s+(?:not|never)\b|(?:(?:had|has|have|was|were|did)\s+)?(?:plan(?:ned)?|hope(?:d)?|intend(?:ed)?|expect(?:ed)?|want(?:ed)?|need(?:ed)?|aim(?:ed)?|supposed)\s+to\b)`,
+  String.raw`^${RESULT_SUBJECT}\s+${RESULT_ADVERBS}(?:did\s+(?:not|never)\b|(?:(?:had|has|have|was|were|did)\s+)?${RESULT_ADVERBS}(?:(?:plan(?:ned)?|hope(?:d)?|intend(?:ed)?|expect(?:ed)?|want(?:ed)?|need(?:ed)?|aim(?:ed)?|supposed)\s+to\b|(?:start(?:ed)?|begin|began|begun|continu(?:e|ed)|attempt(?:ed)?|try|tried|proceed(?:ed)?)\s+(?:to\b|[a-z]+ing\b)))`,
   "i",
 );
 const PAST_TEMPORAL_EVENT_PATTERN = new RegExp(

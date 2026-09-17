@@ -18,6 +18,14 @@ describe("resolveRequiredCompletionTerminalResult", () => {
   // delivered result.
   it.each([
     ["pure progress", "Let me run the tests"],
+    ["unfinished attempt started", "Reviewing the failure, I started to patch the handler."],
+    ["unfinished attempt attempted", "Reviewing the failure, I attempted to patch the handler."],
+    ["unfinished attempt began", "Reviewing the failure, I began patching the handler."],
+    ["unfinished attempt continued", "Reviewing the failure, I continued patching the handler."],
+    [
+      "unfinished attempt with adverb",
+      "Reviewing the failure, I successfully started to patch the handler.",
+    ],
     [
       "fronted before future plan",
       "I'll inspect the failure: Before proceeding, I will patch the handler.",
@@ -235,6 +243,12 @@ describe("resolveRequiredCompletionTerminalResult", () => {
       "I'll inspect the repo now: the crash is a missing null check in src/foo.ts.",
     ],
     ["completed clause after narration", "Reviewing the changes, we fixed the regression."],
+    ["completed adverb result", "Reviewing the changes, I successfully patched the handler."],
+    [
+      "completed adverb after auxiliary",
+      "Reviewing the changes, I have successfully patched the handler.",
+    ],
+    ["completed start action", "Reviewing the deployment, I started the server."],
     ["prefixed irregular rebuilt", "Reviewing the database, I rebuilt the corrupted index."],
     ["prefixed irregular overwrote", "Reviewing the settings, I overwrote the stale config."],
     ["prefixed irregular rewrote", "Reviewing the changes, I rewrote the broken handler."],
