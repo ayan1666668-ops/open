@@ -69,6 +69,10 @@ const NOMINAL_COMPOUND_HEAD_PATTERN =
   /^(?:teams?|groups?|suites?|windows?|caches?|gateways?|pipelines?)$/i;
 const RESULT_TAIL_PATTERN =
   /^(?:[.!?,;:]|$|(?:and|but|so|because|after|when|once|if|unless|with|without|on|in|at|for|during|already|just|[a-z]+ly)\b)/i;
+// A compound's simple-past predicate must actually finish. A comma or "and"
+// can instead join adjectives in an object ("completed and pending jobs").
+const CLOSED_RESULT_TAIL_PATTERN =
+  /^(?:(?:[a-z]+ly|already|just)(?:\s+(?:[a-z]+ly|already|just)){0,2})?[.!?]*$/i;
 
 function hasAmbiguousNominalSubject(subject: string, tail: string, finite: boolean): boolean {
   const words = subject
@@ -93,10 +97,15 @@ function hasAmbiguousNominalSubject(subject: string, tail: string, finite: boole
       (finite || RESULT_TAIL_PATTERN.test(tail));
     // After a noun head, -s is also a present-verb inflection, including verbs
     // outside the progress vocabulary. Do not reinterpret "worker examines"
-    // or "worker delivers" as a compound noun. Collective compound heads and
-    // a closing verification predicate still give independent subject forms.
-    const ambiguousInflection =
-      nounSeen && /s$/i.test(word) && !NOMINAL_COMPOUND_HEAD_PATTERN.test(word);
+    // or "worker delivers" as a compound noun. A compound head must finish
+    // the subject, and its predicate must be finite or close before its suffix;
+    // otherwise "worker caches completed results" still describes an action
+    // on an object, not a completed result from the caches.
+    const independentCompoundHead =
+      index === words.length - 1 &&
+      NOMINAL_COMPOUND_HEAD_PATTERN.test(word) &&
+      (finite || CLOSED_RESULT_TAIL_PATTERN.test(tail));
+    const ambiguousInflection = nounSeen && /s$/i.test(word) && !independentCompoundHead;
     if (((index > 0 && action && !compoundTest) || ambiguousInflection) && !finalVerification) {
       return true;
     }

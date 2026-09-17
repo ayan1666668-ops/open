@@ -17,6 +17,38 @@ describe("resolveRequiredCompletionTerminalResult", () => {
   // conditional clause ("whether the tests passed") is a pending outcome, not a
   // delivered result.
   it.each([
+    [
+      "compound-tail coordinated object",
+      "I'll inspect the code and the worker groups completed and pending jobs.",
+    ],
+    [
+      "compound-tail listed object",
+      "I'll inspect the code and the worker caches completed, failed results.",
+    ],
+    [
+      "compound-boundary caches object",
+      "I'll inspect the code and the worker caches completed results.",
+    ],
+    [
+      "compound-boundary groups object",
+      "I'll inspect the code and the worker groups completed jobs.",
+    ],
+    [
+      "compound-boundary perfect complement",
+      "I'll inspect the code and the worker groups tests have passed.",
+    ],
+    [
+      "compound-boundary state complement",
+      "I'll inspect the code and the worker caches deployment is complete.",
+    ],
+    [
+      "compound-boundary temporal cache",
+      "Reviewing the change, I patched it when the worker caches completed results.",
+    ],
+    [
+      "compound-boundary temporal groups",
+      "Reviewing the change, I patched it after the worker groups completed jobs.",
+    ],
     ["nominal-inflection examines", "I'll inspect the code and the worker examines failed tests."],
     [
       "nominal-inflection delivers",
@@ -416,6 +448,19 @@ describe("resolveRequiredCompletionTerminalResult", () => {
   // result/report/verification marker in a delivered-result sentence; those
   // must not be misclassified.
   it.each([
+    [
+      "compound-boundary finite caches",
+      "I'll inspect the code and the worker caches have completed.",
+    ],
+    ["compound-boundary closed groups", "I'll inspect the code and the worker groups completed."],
+    [
+      "compound-boundary completed modifier",
+      "I'll inspect the code and the worker caches completed successfully.",
+    ],
+    [
+      "compound-boundary plural compound",
+      "I'll inspect the code and the core services groups have fixed the regression.",
+    ],
     [
       "nominal-inflection plural compound",
       "I'll inspect the code and the core services teams have fixed the regression.",
