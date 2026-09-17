@@ -30,11 +30,13 @@ import {
   resolveExpectedInstalledVersionFromSpec,
   resolveGlobalInstallTarget,
   resolveGlobalInstallSpec,
-  resolveNpmGlobalPrefixLayoutFromGlobalRoot,
-  resolveNpmGlobalPrefixLayoutFromPrefix,
   resolvePnpmGlobalDirFromGlobalRoot,
   type CommandRunner,
 } from "./update-global.js";
+import {
+  resolveNpmGlobalPrefixLayoutFromGlobalRoot,
+  resolveNpmGlobalPrefixLayoutFromPrefix,
+} from "./update-npm-prefix.js";
 
 const execFileSyncMock = vi.hoisted(() => vi.fn(() => "/tmp/openclaw-test-global-npmrc\n"));
 const TELEGRAM_RUNTIME_API = bundledDistPluginFile("telegram", "runtime-api.js");

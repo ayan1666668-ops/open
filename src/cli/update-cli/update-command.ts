@@ -67,15 +67,14 @@ export async function updateCommand(inputOpts: UpdateCommandOptions): Promise<vo
   );
   // Post-core children report phase results; the outer updater owns the run ledger.
   if (prepared.postCoreUpdateResume) {
-    return await withUpdateInProgressEnv(invocationCwd, async () => {
-      const { resumePostCoreUpdate } = await import("./update-execution.runtime.js");
-      await resumePostCoreUpdate({
+    return await withUpdateInProgressEnv(invocationCwd, async () =>
+      (await import("./update-execution.runtime.js")).resumePostCoreUpdate({
         root: prepared.discoveredRoot,
         channel: prepared.postCoreUpdateChannel,
         opts: inputOpts,
         timeoutMs: prepared.timeoutMs ?? DEFAULT_UPDATE_STEP_TIMEOUT_MS,
-      });
-    });
+      }),
+    );
   }
   return await withUpdateAdmissionReporting(inputOpts, async () => {
     const env = await resolveUpdateCommandAdmissionEnv({
@@ -167,6 +166,7 @@ async function initializeAndRunUpdate(
   invocationCwd: string | undefined,
   env: NodeJS.ProcessEnv,
 ): Promise<void> {
+  const targetEnv = resolveUpdateTargetEnv({ baseEnv: env, nodeRunner: process.execPath });
   const runId = env.OPENCLAW_UPDATE_RUN_ID?.trim() || randomUUID();
   let handleFailure: Awaited<ReturnType<typeof prepareUpdateCommandFailureTriage>> | undefined;
   try {
@@ -174,7 +174,7 @@ async function initializeAndRunUpdate(
       (registerRun) =>
         withUpdateInProgressEnv(invocationCwd, () =>
           withUpdateCommandExecutor(runId, async (executor) => {
-            const target = await withOwnedManagedUpdateEnv(env, () =>
+            const target = await withOwnedManagedUpdateEnv(targetEnv, () =>
               resolveUpdateCommandTarget(
                 opts,
                 recoveryState,

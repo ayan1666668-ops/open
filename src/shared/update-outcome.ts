@@ -1,18 +1,9 @@
 import type { NodeVersionManager } from "./version-manager-path.js";
 
 export type UpdateRecoveryStep =
+  | { kind: "preserve-context" | "select-runtime" | "continue-update"; command: string }
   | {
-      kind:
-        | "preserve-context"
-        | "select-runtime"
-        | "install-package"
-        | "refresh-service"
-        | "restart-service"
-        | "verify";
-      command: string;
-    }
-  | {
-      kind: "select-runtime" | "preserve-context" | "service-owner" | "deployment";
+      kind: "select-runtime" | "preserve-context" | "continue-update" | "deployment";
       instruction: string;
     };
 
@@ -29,16 +20,11 @@ export function createRuntimeUpdateRecoverySteps(params: {
   nodeVersion: string;
   targetVersion: string;
   manager: NodeVersionManager;
-  service: "refresh" | "absent" | "owner";
   container: boolean;
   contextCommand?: string;
-  installPackage?: boolean;
-  command: (value: string) => string;
+  continuation?: string;
 }): UpdateRecoveryStep[] {
-  const { nodeVersion, targetVersion, manager, command } = params;
-  const underNode = (value: string) =>
-    manager === "volta" ? `volta run --node ${nodeVersion} ${value}` : value;
-  const cli = (value: string) => underNode(command(value));
+  const { nodeVersion, targetVersion, manager } = params;
   if (params.container) {
     return [
       {
@@ -48,13 +34,13 @@ export function createRuntimeUpdateRecoverySteps(params: {
     ];
   }
   const runtimeCommand =
-    manager === "nvm"
-      ? `nvm install ${nodeVersion} && nvm use ${nodeVersion}`
-      : manager === "fnm"
-        ? `fnm install ${nodeVersion} && fnm use ${nodeVersion}`
-        : manager === "volta"
-          ? `volta install node@${nodeVersion}`
-          : undefined;
+    manager === "nvm" || manager === "fnm"
+      ? process.platform === "win32"
+        ? `${manager} install ${nodeVersion}; if ($LASTEXITCODE -eq 0) { ${manager} use ${nodeVersion} }`
+        : `${manager} install ${nodeVersion} && ${manager} use ${nodeVersion}`
+      : manager === "volta"
+        ? `volta install node@${nodeVersion}`
+        : undefined;
   return [
     {
       kind: "preserve-context",
@@ -70,45 +56,29 @@ export function createRuntimeUpdateRecoverySteps(params: {
           kind: "select-runtime",
           instruction: `Install and select Node ${nodeVersion} using ${manager === "other" ? "your version manager" : "your system package manager or https://nodejs.org/en/download"}.`,
         },
-    ...(params.installPackage === false
-      ? []
-      : [
-          {
-            kind: "install-package" as const,
-            command: underNode(`npm install -g openclaw@${targetVersion}`),
-          },
-        ]),
-    ...(params.service === "refresh"
-      ? [
-          {
-            kind: "refresh-service" as const,
-            command: cli(
-              `openclaw gateway install --force --runtime-path "$(${underNode("node")} -p 'process.execPath')"`,
-            ),
-          },
-          { kind: "restart-service" as const, command: cli("openclaw gateway restart") },
-        ]
-      : params.service === "owner"
-        ? [
-            {
-              kind: "service-owner" as const,
-              instruction:
-                "Have the existing Gateway service or deployment owner select the new Node runtime and OpenClaw install, then restart it with the same account, state, and configuration. Service ownership or permission to rewrite its definition was not established.",
-            },
-          ]
-        : []),
-    {
-      kind: "verify",
-      command: `${cli("openclaw --version")} && ${cli("openclaw status")}`,
-    },
+    params.continuation
+      ? {
+          kind: "continue-update",
+          command:
+            manager === "volta"
+              ? `volta run --node ${nodeVersion} ${params.continuation}`
+              : params.continuation,
+        }
+      : {
+          kind: "continue-update",
+          instruction:
+            "Run this installation's absolute openclaw.mjs launcher with the selected Node and the update command to recheck package and service ownership before installation.",
+        },
   ];
 }
 
 export const UPDATE_ACTIVATION_TIMEOUT_REASON = "update-activation-timeout";
+export const UPDATE_FOREIGN_DESTINATION_REASON = "global-install-foreign-destination";
 export const UPDATE_GLOBAL_PERMISSION_REASON = "global-install-permission-denied";
 export const UPDATE_ENVIRONMENT_FAILURE_REASONS: ReadonlySet<string> = new Set([
   "node-runtime-preflight",
   UPDATE_GLOBAL_PERMISSION_REASON,
+  UPDATE_FOREIGN_DESTINATION_REASON,
 ]);
 
 export function formatUpdateActivationTimeoutGuidance(

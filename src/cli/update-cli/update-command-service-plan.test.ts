@@ -10,6 +10,7 @@ import { withTempDir } from "../../test-utils/temp-dir.js";
 import { quoteCliArg, quotePowerShellArg } from "../quote-cli-arg.js";
 import {
   expectedPlainRecovery,
+  expectedRuntimeSelectionCommand,
   unsupportedServiceRuntimeFixture,
 } from "./update-command-runtime-recovery.test-support.js";
 import type { PreManagedServiceStop } from "./update-command-service-context-types.js";
@@ -137,7 +138,7 @@ describe("package runtime compatibility guidance", () => {
         target: { version: "2026.9.4", nodeEngine: ">=24.16.0" },
         nodeRunner,
         sourceRoot,
-        root: sourceRoot,
+        root: sourceRoot ?? "/fixture",
         alreadyCurrent: Boolean(sourceRoot),
         service: {
           ...refreshableService,
@@ -145,7 +146,7 @@ describe("package runtime compatibility guidance", () => {
         },
       });
       const prefix = command === "volta install node@24.16.0" ? "volta run --node 24.16.0 " : "";
-      const sourceEntry = sourceRoot ? path.join(sourceRoot, "openclaw.mjs") : undefined;
+      const sourceEntry = path.join(sourceRoot ?? "/fixture", "openclaw.mjs");
       const cli = sourceEntry
         ? `node ${process.platform === "win32" ? quotePowerShellArg(sourceEntry) : quoteCliArg(sourceEntry)}`
         : "openclaw";
@@ -164,23 +165,22 @@ describe("package runtime compatibility guidance", () => {
               "export OPENCLAW_PROFILE=work; unset OPENCLAW_HOME OPENCLAW_STATE_DIR OPENCLAW_CONFIG_PATH OPENCLAW_GATEWAY_PORT OPENCLAW_LAUNCHD_LABEL OPENCLAW_SYSTEMD_UNIT OPENCLAW_WINDOWS_TASK_NAME OPENCLAW_WORKSPACE_DIR",
           },
           command
-            ? { kind: "select-runtime", command }
+            ? {
+                kind: "select-runtime",
+                command: command.startsWith("nvm")
+                  ? expectedRuntimeSelectionCommand("nvm", "24.16.0")
+                  : command.startsWith("fnm")
+                    ? expectedRuntimeSelectionCommand("fnm", "24.16.0")
+                    : command,
+              }
             : {
                 kind: "select-runtime",
                 instruction:
                   "Install and select Node 24.16.0 using your system package manager or https://nodejs.org/en/download.",
               },
-          ...(sourceRoot
-            ? []
-            : [{ kind: "install-package", command: `${prefix}npm install -g openclaw@2026.9.4` }]),
           {
-            kind: "refresh-service",
-            command: `${prefix}${cli} --profile work gateway install --force --runtime-path "$(${prefix}node -p 'process.execPath')"`,
-          },
-          { kind: "restart-service", command: `${prefix}${cli} --profile work gateway restart` },
-          {
-            kind: "verify",
-            command: `${prefix}${cli} --profile work --version && ${prefix}${cli} --profile work status`,
+            kind: "continue-update",
+            command: `${prefix}${cli} --profile work update${sourceRoot ? "" : " --tag 2026.9.4"}`,
           },
         ],
       });
@@ -218,22 +218,11 @@ describe("package runtime compatibility guidance", () => {
         command:
           "export OPENCLAW_STATE_DIR='/service state' OPENCLAW_CONFIG_PATH=/service-launch/config.json OPENCLAW_SYSTEMD_UNIT=custom-gateway.service; unset OPENCLAW_HOME OPENCLAW_PROFILE OPENCLAW_GATEWAY_PORT OPENCLAW_LAUNCHD_LABEL OPENCLAW_WINDOWS_TASK_NAME OPENCLAW_WORKSPACE_DIR",
       });
-      expect(
-        result.recoverySteps?.filter(
-          (step) => step.kind === "refresh-service" || step.kind === "restart-service",
-        ),
-      ).toEqual(
-        wrapper
-          ? []
-          : [
-              {
-                kind: "refresh-service",
-                command:
-                  "openclaw gateway install --force --runtime-path \"$(node -p 'process.execPath')\"",
-              },
-              { kind: "restart-service", command: "openclaw gateway restart" },
-            ],
-      );
+      expect(result.recoverySteps?.at(-1)).toEqual({
+        kind: "continue-update",
+        instruction:
+          "Run this installation's absolute openclaw.mjs launcher with the selected Node and the update command to recheck package and service ownership before installation.",
+      });
       expect(JSON.stringify(result)).not.toContain("fixture-sensitive-value");
     },
   );
@@ -257,7 +246,7 @@ describe("package runtime compatibility guidance", () => {
       });
       expect(result.recoverySteps?.[1]).toEqual({
         kind: "select-runtime",
-        command: "fnm install 24.16.0 && fnm use 24.16.0",
+        command: expectedRuntimeSelectionCommand("fnm", "24.16.0"),
       });
     });
   });
@@ -280,24 +269,33 @@ describe("package runtime compatibility guidance", () => {
     });
   });
 
-  it("renders service-only selectors for PowerShell without shell interpolation", async () => {
-    vi.stubGlobal("process", { ...process, platform: "win32" });
-    const result = await resolvePackageRuntimePreflight({
-      target: { version: "2026.9.4", nodeEngine: ">=90.0.0" },
-      service: {
-        ...refreshableService,
-        serviceEnv: {
-          OPENCLAW_STATE_DIR: "C:/service 'state'",
-          OPENCLAW_CONFIG_PATH: "C:/service/config.json",
+  it.each(["nvm", "fnm"] as const)(
+    "renders %s recovery for PowerShell 5.1 without shell interpolation",
+    async (manager) => {
+      vi.stubGlobal("process", { ...process, platform: "win32" });
+      vi.mocked(resolveNodeRuntimeInfo).mockResolvedValue(unsupportedServiceRuntimeFixture);
+      const result = await resolvePackageRuntimePreflight({
+        target: { version: "2026.9.4", nodeEngine: ">=90.0.0" },
+        nodeRunner: `/fixture/.${manager}/versions/node/v22.18.0/bin/node`,
+        service: {
+          ...refreshableService,
+          serviceEnv: {
+            OPENCLAW_STATE_DIR: "C:/service 'state'",
+            OPENCLAW_CONFIG_PATH: "C:/service/config.json",
+          },
         },
-      },
-    });
-    expect(result.recoverySteps?.[1]).toEqual({
-      kind: "preserve-context",
-      command:
-        "Remove-Item Env:OPENCLAW_HOME -ErrorAction SilentlyContinue; $env:OPENCLAW_STATE_DIR = 'C:/service ''state'''; $env:OPENCLAW_CONFIG_PATH = 'C:/service/config.json'; Remove-Item Env:OPENCLAW_PROFILE -ErrorAction SilentlyContinue; Remove-Item Env:OPENCLAW_GATEWAY_PORT -ErrorAction SilentlyContinue; Remove-Item Env:OPENCLAW_LAUNCHD_LABEL -ErrorAction SilentlyContinue; Remove-Item Env:OPENCLAW_SYSTEMD_UNIT -ErrorAction SilentlyContinue; Remove-Item Env:OPENCLAW_WINDOWS_TASK_NAME -ErrorAction SilentlyContinue; Remove-Item Env:OPENCLAW_WORKSPACE_DIR -ErrorAction SilentlyContinue",
-    });
-  });
+      });
+      expect(result.recoverySteps?.[2]).toEqual({
+        kind: "select-runtime",
+        command: `${manager} install 90.0.0; if ($LASTEXITCODE -eq 0) { ${manager} use 90.0.0 }`,
+      });
+      expect(result.recoverySteps?.[1]).toEqual({
+        kind: "preserve-context",
+        command:
+          "Remove-Item Env:OPENCLAW_HOME -ErrorAction SilentlyContinue; $env:OPENCLAW_STATE_DIR = 'C:/service ''state'''; $env:OPENCLAW_CONFIG_PATH = 'C:/service/config.json'; Remove-Item Env:OPENCLAW_PROFILE -ErrorAction SilentlyContinue; Remove-Item Env:OPENCLAW_GATEWAY_PORT -ErrorAction SilentlyContinue; Remove-Item Env:OPENCLAW_LAUNCHD_LABEL -ErrorAction SilentlyContinue; Remove-Item Env:OPENCLAW_SYSTEMD_UNIT -ErrorAction SilentlyContinue; Remove-Item Env:OPENCLAW_WINDOWS_TASK_NAME -ErrorAction SilentlyContinue; Remove-Item Env:OPENCLAW_WORKSPACE_DIR -ErrorAction SilentlyContinue",
+      });
+    },
+  );
 
   it.each([false, true])(
     "admits only a compatible explicit replacement (fallback=%s)",

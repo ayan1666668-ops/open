@@ -18,6 +18,8 @@ const hostGuidance =
 const redeploy = "recreate or redeploy the container";
 const permissionDetail =
   "Package update cannot write /usr/lib/node_modules (EACCES; owner UID 0 (root), GID 0). Run the package update as the directory's owning account, keeping the Gateway's existing state/configuration.";
+const foreignDetail =
+  "Selected npm destination /other is occupied by an unclaimed OpenClaw installation; launcher /other/bin/openclaw. Switch the runtime back and retry through the original absolute launcher.";
 function failure(overrides: Partial<UpdateRunResult> = {}): UpdateRunResult {
   const failedStep = {
     name: "global install stage",
@@ -28,7 +30,9 @@ function failure(overrides: Partial<UpdateRunResult> = {}): UpdateRunResult {
     stderrTail:
       overrides.reason === "global-install-permission-denied"
         ? permissionDetail
-        : "EACCES: permission denied",
+        : overrides.reason === "global-install-foreign-destination"
+          ? foreignDetail
+          : "EACCES: permission denied",
   };
   return {
     status: "error",
@@ -152,6 +156,8 @@ describe("update recovery reporting", () => {
   });
 
   it.each([
+    ["unknown", true, true, "global-install-foreign-destination"],
+    ["unknown", true, false, "global-install-foreign-destination"],
     ["npm", false, true, "global-install-permission-denied"],
     ["npm", true, true, "global-install-permission-denied"],
     ["pnpm", false, true, "global-install-failed"],
@@ -179,6 +185,13 @@ describe("update recovery reporting", () => {
       expect(result.status).toBe("error");
       expect(stored?.status).toBe("failed");
       const action = stored?.origin.nextAction;
+      if (reason === "global-install-foreign-destination") {
+        expect(action).toBe(
+          container
+            ? `${foreignDetail} Detected a foreign npm destination inside a container. Pull or build an OpenClaw image with the target version, then recreate or redeploy the container with the same state/config mounts. In-container package changes are not durable.`
+            : foreignDetail,
+        );
+      }
       if (reason === "global-install-permission-denied") {
         expect(action?.startsWith(permissionDetail)).toBe(true);
       }
@@ -190,7 +203,11 @@ describe("update recovery reporting", () => {
         expect(action).not.toMatch(/sudo|npm config set prefix/);
       } else {
         expect(action).toBe(
-          reason === "global-install-permission-denied" ? permissionDetail : hostGuidance,
+          reason === "global-install-permission-denied"
+            ? permissionDetail
+            : reason === "global-install-foreign-destination"
+              ? foreignDetail
+              : hostGuidance,
         );
       }
       expect(stored && renderUpdateRunReport(stored).markdown).toContain(action);

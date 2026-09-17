@@ -6381,7 +6381,7 @@ describe("update-cli", () => {
   it.each([true, false])(
     "uses inspected package runtime requirements when a later lookup disagrees (compatible=%s)",
     async (compatible) => {
-      await mockPackageInstallAtCaseDir("openclaw-runtime-target");
+      const root = await mockPackageInstallAtCaseDir("openclaw-runtime-target");
       const inspectedEngine = compatible ? ">=22.19.0" : ">=999.0.0";
       vi.mocked(fetchNpmPackageTargetStatus)
         .mockResolvedValueOnce(packageTargetStatus({ nodeEngine: inspectedEngine }))
@@ -6406,7 +6406,7 @@ describe("update-cli", () => {
         expect(packageInstallCommandCall()?.[0]).toBeUndefined();
         expect(listUpdateRuns({ limit: 1 })[0]?.reason).toBe("node-runtime-preflight");
         expect(defaultRuntime.log).toHaveBeenCalledWith(
-          `openclaw@9999.0.0 requires Node >=999.0.0; selected runtime is Node ${process.versions.node}.\n${runtimeRecovery.expectedPlainRecovery("9999.0.0", "999.0.0", "absent")}`,
+          `openclaw@9999.0.0 requires Node >=999.0.0; selected runtime is Node ${process.versions.node}.\n${runtimeRecovery.expectedPlainRecovery("9999.0.0", "999.0.0", "absent", undefined, root)}`,
         );
       }
       expect(fetchNpmPackageTargetStatus).toHaveBeenCalledOnce();
@@ -8095,7 +8095,7 @@ describe("update-cli", () => {
   });
 
   it("blocks package updates when the target requires a newer Node runtime", async () => {
-    await mockPackageInstallAtCaseDir();
+    const root = await mockPackageInstallAtCaseDir();
     primeNpmChannelTag("latest", "2026.3.23-2");
     vi.mocked(fetchNpmPackageTargetStatus).mockResolvedValue(
       packageTargetStatus({ target: "latest", version: "2026.3.23-2" }),
@@ -8108,7 +8108,7 @@ describe("update-cli", () => {
     expect(packageInstallCommandCall()?.[0]).toBeUndefined();
     expect(listUpdateRuns({ limit: 1 })[0]?.reason).toBe("node-runtime-preflight");
     expect(defaultRuntime.log).toHaveBeenCalledWith(
-      `openclaw@2026.3.23-2 requires Node >=22.19.0; selected runtime is Node ${process.versions.node}.\n${runtimeRecovery.expectedPlainRecovery("2026.3.23-2", "24.16.0", "absent")}`,
+      `openclaw@2026.3.23-2 requires Node >=22.19.0; selected runtime is Node ${process.versions.node}.\n${runtimeRecovery.expectedPlainRecovery("2026.3.23-2", "24.16.0", "absent", undefined, root)}`,
     );
   });
 
@@ -11749,7 +11749,7 @@ describe("update-cli", () => {
     async (manager) => {
       resolveNodeRuntimeInfo.mockResolvedValue(runtimeRecovery.unsupportedServiceRuntimeFixture);
       const shellRoot = createCaseDir("openclaw-shell-root");
-      const { serviceNode, entrypoint } = await setupServicePackageAtPrefix({
+      const { root, serviceNode, entrypoint } = await setupServicePackageAtPrefix({
         prefix: path.join(
           tempDirs.make("runtime-recovery-"),
           manager === "nvm" ? ".nvm/versions/node/v22.18.0" : "system",
@@ -11774,7 +11774,7 @@ describe("update-cli", () => {
       expect(lastWriteJsonCall()).toMatchObject({
         reason: "node-runtime-preflight",
         failedStep: {
-          recoverySteps: runtimeRecovery.expectedManagedRuntimeRecoverySteps(manager),
+          recoverySteps: runtimeRecovery.expectedManagedRuntimeRecoverySteps(manager, root),
         },
       });
       expect(packageInstallCommandCall()?.[0]).toBeUndefined();
@@ -11782,7 +11782,7 @@ describe("update-cli", () => {
       expect(defaultRuntime.exit).not.toHaveBeenCalled();
       expect(listUpdateRuns({ limit: 1 })[0]?.reason).toBe("node-runtime-preflight");
       expect(defaultRuntime.error).toHaveBeenCalledWith(
-        `openclaw@2026.5.20 requires Node >=22.19.0; selected runtime is Node 22.18.0 at ${serviceNode}.\nNode 22.18.0: node:sqlite truncates TEXT at embedded NUL (nodejs/node#61954)\n${runtimeRecovery.expectedPlainRecovery("2026.5.20", "24.16.0", "refresh").replace("3. Install and select Node 24.16.0 using your system package manager or https://nodejs.org/en/download.", manager === "nvm" ? "3. Run `nvm install 24.16.0 && nvm use 24.16.0`." : "3. Install and select Node 24.16.0 using your system package manager or https://nodejs.org/en/download.")}`,
+        `openclaw@2026.5.20 requires Node >=22.19.0; selected runtime is Node 22.18.0 at ${serviceNode}.\nNode 22.18.0: node:sqlite truncates TEXT at embedded NUL (nodejs/node#61954)\n${runtimeRecovery.expectedPlainRecovery("2026.5.20", "24.16.0", "refresh", undefined, root).replace("3. Install and select Node 24.16.0 using your system package manager or https://nodejs.org/en/download.", manager === "nvm" ? `3. Run \`${runtimeRecovery.expectedRuntimeSelectionCommand("nvm", "24.16.0")}\`.` : "3. Install and select Node 24.16.0 using your system package manager or https://nodejs.org/en/download.")}`,
       );
     },
   );
@@ -11981,7 +11981,7 @@ describe("update-cli", () => {
           reason: "node-runtime-preflight",
         });
         expect(getErrorOutput()).toBe(
-          `openclaw@${VERSION} requires Node >=24.16.0 <25 || >=26.1.0; selected runtime is Node 22.23.1 at ${serviceNode}.\nbroken TEXT decoder\n${runtimeRecovery.expectedPlainRecovery(VERSION, "24.16.0", writable ? "refresh" : "owner", "unset OPENCLAW_HOME OPENCLAW_STATE_DIR OPENCLAW_CONFIG_PATH OPENCLAW_PROFILE OPENCLAW_GATEWAY_PORT OPENCLAW_LAUNCHD_LABEL OPENCLAW_SYSTEMD_UNIT OPENCLAW_WINDOWS_TASK_NAME OPENCLAW_WORKSPACE_DIR")}`,
+          `openclaw@${VERSION} requires Node >=24.16.0 <25 || >=26.1.0; selected runtime is Node 22.23.1 at ${serviceNode}.\nbroken TEXT decoder\n${runtimeRecovery.expectedPlainRecovery(VERSION, "24.16.0", writable ? "refresh" : "owner", "unset OPENCLAW_HOME OPENCLAW_STATE_DIR OPENCLAW_CONFIG_PATH OPENCLAW_PROFILE OPENCLAW_GATEWAY_PORT OPENCLAW_LAUNCHD_LABEL OPENCLAW_SYSTEMD_UNIT OPENCLAW_WINDOWS_TASK_NAME OPENCLAW_WORKSPACE_DIR", root)}`,
         );
         expectNoSideEffects(
           updateNpmInstalledPlugins,
@@ -12432,7 +12432,7 @@ describe("update-cli", () => {
       replaceConfigFile,
       launchdUpdateCleanupMocks.disableCurrentOpenClawUpdateLaunchdJob,
     );
-    expect(commandCalls().map(([argv]) => argv)).toEqual([["npm", "--version"]]);
+    expect(commandCalls().map(([argv]) => argv)).toEqual(runtimeRecovery.expectedNpmProbes);
     expect(legacyConfigRepairMocks.repairLegacyConfigForUpdateChannel).not.toHaveBeenCalled();
     expect(defaultRuntime.exit).not.toHaveBeenCalled();
   });

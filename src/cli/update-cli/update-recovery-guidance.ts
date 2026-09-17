@@ -9,6 +9,7 @@ import {
   UPDATE_INSTALL_SKIP_GUIDANCE,
   UPDATE_ENVIRONMENT_FAILURE_REASONS,
   UPDATE_GLOBAL_PERMISSION_REASON,
+  UPDATE_FOREIGN_DESTINATION_REASON,
 } from "../../shared/update-outcome.js";
 import { formatCliCommand } from "../command-format.js";
 
@@ -78,20 +79,23 @@ export function resolveUpdateResultNextAction(params: {
       result.reason && UPDATE_ENVIRONMENT_FAILURE_REASONS.has(result.reason)
         ? failedStep?.stderrTail
         : undefined;
-    const containerPermissionFailure =
-      (result.mode === "npm" || result.mode === "pnpm" || result.mode === "bun") &&
-      (result.reason === UPDATE_GLOBAL_PERMISSION_REASON ||
-        (failedStep !== undefined &&
-          failedStep.exitCode !== 0 &&
-          !failedStep.advisory &&
-          (failedStep.name.startsWith("global update") ||
-            failedStep.name.startsWith("global install")) &&
-          /\beacces\b/i.test(failedStep.stderrTail ?? ""))) &&
+    const foreignDestination = result.reason === UPDATE_FOREIGN_DESTINATION_REASON;
+    // The typed pre-admission refusal identifies npm even before result.mode is available.
+    const containerPackageFailure =
+      (foreignDestination ||
+        ((result.mode === "npm" || result.mode === "pnpm" || result.mode === "bun") &&
+          (result.reason === UPDATE_GLOBAL_PERMISSION_REASON ||
+            (failedStep !== undefined &&
+              failedStep.exitCode !== 0 &&
+              !failedStep.advisory &&
+              (failedStep.name.startsWith("global update") ||
+                failedStep.name.startsWith("global install")) &&
+              /\beacces\b/i.test(failedStep.stderrTail ?? ""))))) &&
       isContainerEnvironment();
     // Record deployment-specific advice here so CLI output and later reports agree.
     // Keep the recovery constraints: an image change must not roll back migrated state.
-    const deployment = containerPermissionFailure
-      ? "Detected package update permission failure inside a container. Pull or build an OpenClaw image with the target version, then recreate or redeploy the container with the same state/config mounts. In-container package changes are not durable."
+    const deployment = containerPackageFailure
+      ? `Detected ${foreignDestination ? "a foreign npm destination" : "package update permission failure"} inside a container. Pull or build an OpenClaw image with the target version, then recreate or redeploy the container with the same state/config mounts. In-container package changes are not durable.`
       : "";
     return [
       detail,

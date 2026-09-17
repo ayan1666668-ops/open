@@ -7,12 +7,14 @@ import { formatErrorMessage } from "./errors.js";
 import { createUpdateFailureFact } from "./update-failure-facts.js";
 import {
   listActivePnpmIsolatedGlobalPackages,
-  resolveNpmGlobalPrefixLayoutFromGlobalRoot,
-  readPackageManagerProbeValue,
   resolvePnpmIsolatedInstallOwner,
   type CommandRunner,
   type ResolvedGlobalInstallTarget,
 } from "./update-global.js";
+import {
+  resolveNpmGlobalPrefixLayoutFromGlobalRoot,
+  readPackageManagerProbeValue,
+} from "./update-npm-prefix.js";
 import type { UpdateStepResult } from "./update-runner-types.js";
 
 export async function resolveCanonicalPath(filePath: string): Promise<string> {

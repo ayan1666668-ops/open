@@ -4,6 +4,17 @@ import type { UpdateRecoveryStep } from "../../shared/update-outcome.js";
 import { createCommandResult } from "../../test-utils/npm-spec-install-test-helpers.js";
 import { quoteCliArg, quotePowerShellArg } from "../quote-cli-arg.js";
 
+export const expectedNpmProbes = [
+  ["npm", "--version"],
+  ["npm", "prefix", "-g"],
+];
+
+export function expectedRuntimeSelectionCommand(manager: "nvm" | "fnm", version: string): string {
+  return process.platform === "win32"
+    ? `${manager} install ${version}; if ($LASTEXITCODE -eq 0) { ${manager} use ${version} }`
+    : `${manager} install ${version} && ${manager} use ${version}`;
+}
+
 // Independent operator-facing fixtures shared by CLI and preflight boundary tests.
 export function expectedPlainRecovery(
   version: string,
@@ -12,25 +23,16 @@ export function expectedPlainRecovery(
   context = service === "refresh"
     ? "unset OPENCLAW_HOME OPENCLAW_STATE_DIR OPENCLAW_CONFIG_PATH OPENCLAW_PROFILE OPENCLAW_GATEWAY_PORT OPENCLAW_LAUNCHD_LABEL OPENCLAW_SYSTEMD_UNIT OPENCLAW_WINDOWS_TASK_NAME OPENCLAW_WORKSPACE_DIR"
     : undefined,
+  root?: string,
 ): string {
   return [
     "Recovery:",
     "1. Use the same service account and keep the existing OPENCLAW_STATE_DIR and OPENCLAW_CONFIG_PATH overrides throughout recovery.",
     ...(context ? [`2. Run \`${context}\`.`] : []),
     `2. Install and select Node ${node} using your system package manager or https://nodejs.org/en/download.`,
-    `3. Run \`npm install -g openclaw@${version}\`.`,
-    ...(service === "refresh"
-      ? [
-          "4. Run `openclaw gateway install --force --runtime-path \"$(node -p 'process.execPath')\"`.",
-          "5. Run `openclaw gateway restart`.",
-          "6. Run `openclaw --version && openclaw status`.",
-        ]
-      : service === "owner"
-        ? [
-            "4. Have the existing Gateway service or deployment owner select the new Node runtime and OpenClaw install, then restart it with the same account, state, and configuration. Service ownership or permission to rewrite its definition was not established.",
-            "5. Run `openclaw --version && openclaw status`.",
-          ]
-        : ["4. Run `openclaw --version && openclaw status`."]),
+    root
+      ? `3. Run \`node ${process.platform === "win32" ? quotePowerShellArg(path.join(root, "openclaw.mjs")) : quoteCliArg(path.join(root, "openclaw.mjs"))} update --tag ${version}\`.`
+      : "3. Run this installation's absolute openclaw.mjs launcher with the selected Node and the update command to recheck package and service ownership before installation.",
   ]
     .map((line, index) => (index ? line.replace(/^\d+\./, `${index}.`) : line))
     .join("\n");
@@ -38,6 +40,7 @@ export function expectedPlainRecovery(
 
 export function expectedManagedRuntimeRecoverySteps(
   manager: "nvm" | "system",
+  root: string,
 ): UpdateRecoveryStep[] {
   return [
     {
@@ -51,19 +54,16 @@ export function expectedManagedRuntimeRecoverySteps(
         "unset OPENCLAW_HOME OPENCLAW_STATE_DIR OPENCLAW_CONFIG_PATH OPENCLAW_PROFILE OPENCLAW_GATEWAY_PORT OPENCLAW_LAUNCHD_LABEL OPENCLAW_SYSTEMD_UNIT OPENCLAW_WINDOWS_TASK_NAME OPENCLAW_WORKSPACE_DIR",
     },
     manager === "nvm"
-      ? { kind: "select-runtime", command: "nvm install 24.16.0 && nvm use 24.16.0" }
+      ? { kind: "select-runtime", command: expectedRuntimeSelectionCommand("nvm", "24.16.0") }
       : {
           kind: "select-runtime",
           instruction:
             "Install and select Node 24.16.0 using your system package manager or https://nodejs.org/en/download.",
         },
-    { kind: "install-package", command: "npm install -g openclaw@2026.5.20" },
     {
-      kind: "refresh-service",
-      command: "openclaw gateway install --force --runtime-path \"$(node -p 'process.execPath')\"",
+      kind: "continue-update",
+      command: `node ${process.platform === "win32" ? quotePowerShellArg(path.join(root, "openclaw.mjs")) : quoteCliArg(path.join(root, "openclaw.mjs"))} update --tag 2026.5.20`,
     },
-    { kind: "restart-service", command: "openclaw gateway restart" },
-    { kind: "verify", command: "openclaw --version && openclaw status" },
   ];
 }
 
@@ -111,7 +111,7 @@ export function currentGitCoreFixture(root: string, version: string) {
       instruction:
         "Install and select Node 24.16.0 using your system package manager or https://nodejs.org/en/download.",
     },
-    { kind: "verify", command: `${launcher} --version && ${launcher} status` },
+    { kind: "continue-update", command: `${launcher} update` },
   ];
   return {
     outcome,

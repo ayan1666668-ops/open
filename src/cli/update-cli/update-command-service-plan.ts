@@ -389,9 +389,17 @@ export async function resolvePackageRuntimePreflight(params: {
       : undefined;
   const env = context?.env ?? params.service?.serviceEnv ?? process.env;
   const recoveryVersion = valid(targetVersion);
-  const sourceEntry = params.sourceRoot ? path.join(params.sourceRoot, "openclaw.mjs") : undefined;
-  const sourceLauncher = sourceEntry
-    ? `node ${process.platform === "win32" ? quotePowerShellArg(sourceEntry) : quoteCliArg(sourceEntry)}`
+  const retainedRoot = params.sourceRoot ?? params.root ?? params.installedRoot;
+  const retainedEntry = retainedRoot ? path.resolve(retainedRoot, "openclaw.mjs") : undefined;
+  const continuation = retainedEntry
+    ? formatCliCommand(
+        params.sourceRoot ? "openclaw update" : `openclaw update --tag ${recoveryVersion}`,
+        env,
+      ).replace(
+        /^openclaw\b/,
+        () =>
+          `node ${process.platform === "win32" ? quotePowerShellArg(retainedEntry) : quoteCliArg(retainedEntry)}`,
+      )
     : undefined;
   const recoverySteps =
     recommendation && recoveryVersion
@@ -402,25 +410,9 @@ export async function resolvePackageRuntimePreflight(params: {
             await tryRealpathOrResolve(runtime.nodeRunner ?? resolveNodeRunner()),
             env,
           ),
-          service:
-            verdict?.kind === "owned" &&
-            verdict.refreshDefinition &&
-            !env.OPENCLAW_WRAPPER?.trim() &&
-            !params.service?.serviceDefinitionEnv?.OPENCLAW_WRAPPER?.trim() &&
-            params.service?.serviceMutationAllowed !== false
-              ? "refresh"
-              : verdict?.kind === "absent"
-                ? "absent"
-                : "owner",
           container: isContainerEnvironment(),
           contextCommand: context?.command,
-          installPackage: !params.sourceRoot,
-          command: (value) => {
-            const formatted = formatCliCommand(value, env);
-            return sourceLauncher
-              ? formatted.replace(/^openclaw\b/, () => sourceLauncher)
-              : formatted;
-          },
+          continuation,
         })
       : undefined;
   const upgrade = recoverySteps

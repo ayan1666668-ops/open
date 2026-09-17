@@ -17,11 +17,13 @@ it.each([
       "Recovery:",
       "1. Use the same service account and keep the existing OPENCLAW_STATE_DIR and OPENCLAW_CONFIG_PATH overrides throughout recovery.",
       "2. Run `nvm install 24.16.0 && nvm use 24.16.0`.",
-      "3. Run `npm install -g openclaw@2026.9.4`.",
-      "4. Run `openclaw gateway install --force --runtime-path \"$(node -p 'process.execPath')\"`.",
-      "5. Run `openclaw gateway restart`.",
-      "6. Run `openclaw --version && openclaw status`.",
+      "3. Run `node /original/openclaw/openclaw.mjs update --tag 2026.9.4`.",
     ].join("\n"),
+  },
+  {
+    reason: "global-install-foreign-destination",
+    nextAction:
+      "Selected npm destination /other-prefix is occupied by another OpenClaw installation: launcher /other-prefix/bin/openclaw. No selected managed service claims this destination. Switch the runtime back and run `node /original/openclaw/openclaw.mjs update`.",
   },
   {
     reason: "global-install-permission-denied",

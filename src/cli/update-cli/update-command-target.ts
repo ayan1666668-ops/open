@@ -49,6 +49,7 @@ import {
   type UpdateCommandExecutor,
 } from "./update-command-executor.js";
 import { readUpdateCandidateSource } from "./update-command-managed-context.js";
+import { inspectPackageUpdateDestination } from "./update-command-package-destination.js";
 import { UnreportedUpdateAdmissionOutcome, type RefuseUpdate } from "./update-command-result.js";
 import {
   failUpdateCommandRun,
@@ -255,6 +256,13 @@ export async function resolveUpdateCommandTarget(
         packageName: installedPackageName,
         pkgOwnership,
       });
+      if (packageInstallTarget.manager === "npm") {
+        const destination = await inspectPackageUpdateDestination(root, updateStepTimeoutMs);
+        if (destination) {
+          await refuseUpdate(destination.reason, destination.message, destination.failureFacts);
+          return undefined;
+        }
+      }
       const diskWarning = createLowDiskSpaceWarning({
         targetPath: packageInstallTarget.packageRoot
           ? path.dirname(packageInstallTarget.packageRoot)

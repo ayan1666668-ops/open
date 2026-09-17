@@ -10,9 +10,9 @@ import {
   globalInstallArgs,
   globalInstallFallbackArgs,
   resolveGlobalInstallTarget,
-  resolveNpmGlobalPrefixLayoutFromPrefix,
   type CommandRunner,
 } from "./update-global.js";
+import { resolveNpmGlobalPrefixLayoutFromPrefix } from "./update-npm-prefix.js";
 
 vi.mock("node:child_process", async (importOriginal) => ({
   ...(await importOriginal<typeof import("node:child_process")>()),

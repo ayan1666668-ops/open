@@ -8,6 +8,7 @@ import * as gatewaySupervision from "../../infra/gateway-supervision.js";
 import * as packageMetadata from "../../infra/update-check-package-target.js";
 import * as updateGlobal from "../../infra/update-global.js";
 import { defaultRuntime } from "../../runtime.js";
+import { quoteCliArg, quotePowerShellArg } from "../quote-cli-arg.js";
 import * as shared from "./shared.js";
 import * as databaseContext from "./update-command-database-context.js";
 import { installFreshUpdateFixture, targetMetadata } from "./update-command-fresh.test-support.js";
@@ -132,24 +133,10 @@ it.each(cases.flatMap((entry) => [true, false].map((json) => Object.assign({}, e
           instruction:
             "Install and select Node 26.1.0 using your system package manager or https://nodejs.org/en/download.",
         },
-        { kind: "install-package", command: "npm install -g openclaw@2026.9.2" },
-        ...(current && refresh
-          ? [
-              {
-                kind: "refresh-service",
-                command:
-                  "openclaw gateway install --force --runtime-path \"$(node -p 'process.execPath')\"",
-              },
-              { kind: "restart-service", command: "openclaw gateway restart" },
-            ]
-          : [
-              {
-                kind: "service-owner",
-                instruction:
-                  "Have the existing Gateway service or deployment owner select the new Node runtime and OpenClaw install, then restart it with the same account, state, and configuration. Service ownership or permission to rewrite its definition was not established.",
-              },
-            ]),
-        { kind: "verify", command: "openclaw --version && openclaw status" },
+        {
+          kind: "continue-update",
+          command: `node ${process.platform === "win32" ? quotePowerShellArg(path.join(fixture.root, "openclaw.mjs")) : quoteCliArg(path.join(fixture.root, "openclaw.mjs"))} update --tag 2026.9.2`,
+        },
       ];
       const message = [
         "openclaw@2026.9.2 requires Node >=26.1.0; selected runtime is Node 24.16.0 at /service/node.",
@@ -209,7 +196,9 @@ it.each(cases.flatMap((entry) => [true, false].map((json) => Object.assign({}, e
             reason: "node-runtime-preflight",
             steps: expect.arrayContaining([
               expect.objectContaining({
-                stderrTail: expect.stringContaining("npm install -g openclaw@2026.9.2"),
+                stderrTail: expect.stringContaining(
+                  `node ${process.platform === "win32" ? quotePowerShellArg(path.join(fixture.root, "openclaw.mjs")) : quoteCliArg(path.join(fixture.root, "openclaw.mjs"))} update --tag 2026.9.2`,
+                ),
                 failureFacts: [
                   expect.objectContaining({
                     code: "node-runtime-preflight",

@@ -3,6 +3,7 @@ import {
   GATEWAY_SERVICE_RUNTIME_PID_ENV,
   GATEWAY_SERVICE_SELECTOR_ENV_KEYS,
 } from "../../daemon/constants.js";
+import { mergePathPrepend } from "../../infra/path-prepend.js";
 import { mergeProcessEnv, resolveEnvironmentValue } from "../../infra/process-env.js";
 import { quoteCliArg, quotePowerShellArg } from "../quote-cli-arg.js";
 
@@ -213,10 +214,14 @@ export function resolveUpdateTargetEnv(params?: {
   baseEnv?: NodeJS.ProcessEnv;
   serviceEnv?: NodeJS.ProcessEnv;
   invocationCwd?: string;
+  nodeRunner?: string;
 }): NodeJS.ProcessEnv {
   const resolvedEnv = disableUpdatedPackageCompileCacheEnv(
     resolveServiceRefreshEnv(params?.baseEnv ?? process.env, params?.invocationCwd),
   );
+  if (params?.nodeRunner) {
+    resolvedEnv.PATH = mergePathPrepend(resolvedEnv.PATH, [path.dirname(params.nodeRunner)]);
+  }
   if (!params?.serviceEnv) {
     return resolvedEnv;
   }

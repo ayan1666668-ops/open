@@ -90,25 +90,28 @@ For `node-runtime-preflight`, upgrade the runtime named in the message to a
 version satisfying both the candidate's full engine range and the updater's
 supported Node range. The suggested version is the lowest supported release in
 that intersection. Follow the recovery steps for the detected runtime manager
-(nvm, fnm, Volta, or system Node). For a package install, install the displayed candidate with
-`npm install -g openclaw@<candidate>`. That command performs the package update;
-a version-manager switch can remove the old global `openclaw` command from PATH,
-so do not rely on it to perform a second update. An already-current Git checkout
-keeps its built source launcher; the message uses its explicit
-`node <checkout>/openclaw.mjs` commands for recovery.
+(nvm, fnm, Volta, or system Node). The next step runs `update` through the
+original installation's absolute `openclaw.mjs` launcher using the selected Node.
+It does not rely on `openclaw` remaining on PATH after a version-manager switch,
+or recommend a global install into an uninspected prefix.
 
-Keep the same service account, profile, and state/config overrides. The recovery
-steps restore the recorded service selectors, including overrides that were not
-present in your shell. They include only the known state/service selectors, not
-service credentials. For an owned,
-writable managed service, the recovery sequence runs
-`openclaw gateway install --force --runtime-path "$(node -p 'process.execPath')"`
-and `openclaw gateway restart` so the service uses the selected runtime and new
-installation. Existing explicit runtime pins otherwise survive `--force`.
-For a wrapper-managed service, or one whose ownership or write permission cannot
-be established, have its deployment owner make that change. Verify with `openclaw --version` and
-`openclaw status`. Containers must redeploy the target image with the same
-state/config mounts instead of changing packages inside the container.
+Keep the same service account, profile, and state/config overrides. Recovery
+restores the recorded service selectors, including overrides absent from your
+shell; credentials are not included. The ordinary update invocation rechecks
+the selected npm prefix and managed service before installation, and retains
+the original package owner. Its normal runtime selection, service refresh,
+restart, and verification checks apply. Containers redeploy the target image
+with the same state/config mounts.
+
+`global-install-foreign-destination` means the selected prefix contains a package
+or launcher that this update does not own. The report names that destination
+and the selected service's launcher when available. Switch the runtime back and
+retry through the retained absolute launcher. Alternatively, with the destination
+owner's agreement, explicitly select that installation for the intended service
+using the printed `gateway install --force` command, then update. This changes
+the service binding; it is not permission to overwrite another deployment's
+package. Dry-run returns the same refusal. Recorded attempts remain in update
+history and are shown by Doctor.
 
 If the ranges do not overlap, install a supported Node and select a compatible
 OpenClaw target; that candidate cannot run through this updater on a supported

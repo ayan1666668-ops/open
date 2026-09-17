@@ -48,9 +48,6 @@ import {
   globalInstallArgs,
   globalInstallFallbackArgs,
   listActivePnpmIsolatedGlobalPackages,
-  readPackageManagerProbeValue,
-  resolveNpmGlobalPrefixLayoutFromGlobalRoot,
-  resolveNpmGlobalPrefixLayoutFromPrefix,
   resolvePnpmIsolatedInstallOwner,
   resolvePnpmGlobalDirFromGlobalRoot,
   resolveNpmLifecyclePolicyGate,
@@ -58,10 +55,15 @@ import {
   resolveGlobalInstallTarget,
   verifyPackageUpdateRecovery,
   type CommandRunner,
-  type NpmGlobalPrefixLayout,
   type ResolvedGlobalInstallTarget,
 } from "./update-global.js";
 import { prepareNativePackageStage } from "./update-native-package-stage.js";
+import {
+  readPackageManagerProbeValue,
+  resolveNpmGlobalPrefixLayoutFromGlobalRoot,
+  resolveNpmGlobalPrefixLayoutFromPrefix,
+  type NpmGlobalPrefixLayout,
+} from "./update-npm-prefix.js";
 import type { UpdateRecovery } from "./update-recovery.js";
 import type { UpdateStepResult } from "./update-runner-types.js";
 export type { PackageUpdateTransaction } from "./package-update-swap.js";

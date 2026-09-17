@@ -7,7 +7,7 @@ import { CLAWHUB_INSTALL_ERROR_CODE } from "../plugins/clawhub-error-codes.js";
 import { PLUGIN_INSTALL_ERROR_CODE } from "../plugins/install-types.js";
 import {
   SKIPPED_UPDATE_OUTCOMES,
-  UPDATE_GLOBAL_PERMISSION_REASON,
+  UPDATE_ENVIRONMENT_FAILURE_REASONS,
 } from "../shared/update-outcome.js";
 import type { UpdateFailureFact } from "./update-failure-facts.js";
 import { updateRecoverySchema } from "./update-recovery.js";
@@ -72,7 +72,7 @@ const PUBLIC_CODES = new Set<string>([
   "command-failed",
   "doctor-failed",
   "global-install-failed",
-  UPDATE_GLOBAL_PERMISSION_REASON,
+  ...UPDATE_ENVIRONMENT_FAILURE_REASONS,
   "already-current",
   "container-image-install",
   "unmanaged-package-install",
@@ -90,7 +90,6 @@ const PUBLIC_CODES = new Set<string>([
   "managed-service-preflight",
   "service-inspection-unavailable",
   "service-ownership-unverified",
-  "node-runtime-preflight",
   "database-schema-preflight",
   "update-ledger-busy",
   "invalid-git-directory",
