@@ -14,6 +14,7 @@ import {
   expectOkPayload,
   useSqliteSession,
   visibleMessageEvent,
+  writeWorkspaceFile,
 } from "./sessions-files.test-support.js";
 
 const hoisted = vi.hoisted(() => ({
@@ -486,27 +487,51 @@ describe("sessions.files touched-file folds", () => {
 
   it("omits media and other non-file references without hiding missing workspace files", async () => {
     useSqliteSession(hoisted.loadSessionEntry, workspaceRoot, "sess-touched-media-refs");
+    writeWorkspaceFile(workspaceRoot, "report:2026.txt", "colon\n");
     mockVisibleMessages(
       [
         "media://inbound/image---15547f7e-c109-401d-93c3-7f264c1d8552.png",
         "media://inbound/example.png",
         "https://example.com/report.pdf",
+        "report:2026.txt",
         "..cache/missing.txt",
         "src/readme.md",
       ].map((filePath) => assistantToolCall("read", { path: filePath })),
     );
 
-    const listPaths = async (): Promise<unknown[]> => {
-      const payload = expectOkPayload(
+    const listFiles = async (): Promise<Record<string, unknown>[]> =>
+      expectOkPayload(
         await invokeSessionFilesHandler("sessions.files.list", {
           sessionKey: "agent:main:main",
         }),
-      );
-      return payload.files.map((file: Record<string, unknown>) => file.path);
-    };
+      ).files;
 
-    expect(await listPaths()).toEqual(["..cache/missing.txt", "src/readme.md"]);
+    expect((await listFiles()).map((file) => file.path)).toEqual([
+      "..cache/missing.txt",
+      "report:2026.txt",
+      "src/readme.md",
+    ]);
     // A cached fold replays the same transcript facts, so a repeat listing must agree.
-    expect(await listPaths()).toEqual(["..cache/missing.txt", "src/readme.md"]);
+    expect(await listFiles()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: "..cache/missing.txt", missing: true }),
+        // A literal colon is a POSIX filename, not a scheme, so it stays resolvable.
+        expect.objectContaining({ path: "report:2026.txt", missing: false }),
+        expect.objectContaining({ path: "src/readme.md", missing: false }),
+      ]),
+    );
+
+    const preview = expectOkPayload(
+      await invokeSessionFilesHandler("sessions.files.get", {
+        sessionKey: "agent:main:main",
+        path: "report:2026.txt",
+      }),
+    );
+    expect(preview.file).toMatchObject({
+      content: "colon\n",
+      contentEncoding: "utf8",
+      missing: false,
+      path: "report:2026.txt",
+    });
   });
 });

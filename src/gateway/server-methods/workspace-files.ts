@@ -13,7 +13,6 @@ import { resolveToCwd as resolveSessionToolPathToCwd } from "../../agents/sessio
 import { insideGitCheckout } from "../../agents/worktrees/git.js";
 import { FsSafeError } from "../../infra/fs-safe.js";
 import { isPathInside } from "../../infra/path-guards.js";
-import { classifyMediaReferenceSource } from "../../media/media-reference.js";
 import {
   decodeUtf8Strict,
   listWorkspacePath,
@@ -88,13 +87,21 @@ function toDisplayPath(root: string, resolved: string): string {
  * attachments arrive as `media://inbound/<id>` URIs, and remote or inline sources reach the
  * fold the same way. Cwd resolution turns those into inside-root relative paths such as
  * `<root>/media:/inbound/<id>`, so the containment filter below accepts them and the file
- * panel then offers an entry that can never be opened. The workspace owner resolves only
- * filesystem references — plain and absolute paths, `~` paths, file URLs, and Windows drive
- * paths — so every other scheme stays with the surface that owns it.
+ * panel then offers an entry that can never be opened.
+ *
+ * Only scheme-qualified transport sources are excluded. A bare colon is not a scheme here:
+ * POSIX filenames such as `report:2026.txt` are ordinary workspace files, and file URLs and
+ * Windows drive paths resolve like any other path.
  */
+const NON_WORKSPACE_REFERENCE_RE = /^(?:[a-z][a-z0-9+.-]*:\/\/|data:)/i;
+const FILE_URL_RE = /^file:/i;
+
 function isWorkspaceFileReference(filePath: string): boolean {
-  const source = classifyMediaReferenceSource(filePath);
-  return !source.hasScheme || source.isFileUrl || source.looksLikeWindowsDrivePath;
+  const source = filePath.trim();
+  if (FILE_URL_RE.test(source)) {
+    return true;
+  }
+  return !NON_WORKSPACE_REFERENCE_RE.test(source);
 }
 
 function resolveTouchedFilePath(params: {
