@@ -17,6 +17,24 @@ describe("resolveRequiredCompletionTerminalResult", () => {
   // conditional clause ("whether the tests passed") is a pending outcome, not a
   // delivered result.
   it.each([
+    ["nominal predicate reviews", "I'll inspect the code and the worker reviews failed tests."],
+    ["nominal predicate checks", "I'll inspect the code and the worker checks tests passed."],
+    [
+      "nominal predicate perfect complement",
+      "I'll inspect the code and the worker verifies tests have passed.",
+    ],
+    [
+      "nominal predicate state complement",
+      "I'll inspect the code and the worker verifies deployment is complete.",
+    ],
+    [
+      "nominal predicate plural actor",
+      "I'll inspect the code and the workers review failed tests.",
+    ],
+    [
+      "nominal predicate plural complement",
+      "I'll inspect the code and the workers verify tests have passed.",
+    ],
     ["speaker-aspect keeps", "I'll inspect the code and the worker keeps reviewing failed tests."],
     [
       "speaker-aspect continues",
@@ -344,6 +362,39 @@ describe("resolveRequiredCompletionTerminalResult", () => {
   // result/report/verification marker in a delivered-result sentence; those
   // must not be misclassified.
   it.each([
+    [
+      "nominal finite plural actor",
+      "I'll inspect the code and the ops teams have fixed the regression.",
+    ],
+    [
+      "nominal finite compound noun",
+      "I'll inspect the code and the gateway check has completed the audit.",
+    ],
+    ["nominal completed actor", "I'll inspect the code and the worker reviewed failed tests."],
+    [
+      "nominal completed plural actor",
+      "I'll inspect the code and the workers reviewed failed tests.",
+    ],
+    [
+      "nominal completed verification",
+      "I'll inspect the code and the worker verified tests have passed.",
+    ],
+    [
+      "nominal completed compound actor",
+      "I'll inspect the code and the operations team reviewed failed tests.",
+    ],
+    [
+      "nominal completed modified actor",
+      "I'll inspect the code and the senior worker reviewed failed tests.",
+    ],
+    [
+      "nominal completed finite compound",
+      "I'll inspect the code and the full test suite has passed.",
+    ],
+    [
+      "nominal present then completed",
+      "I'll inspect the code and the worker reviews failed tests, and I patched the handler.",
+    ],
     [
       "speaker-intent later completed clause",
       "I'll inspect the code and I'm reviewing failed tests, and I patched the regression.",

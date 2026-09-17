@@ -57,6 +57,33 @@ const EXPLICIT_RESULT_SUBJECT_PATTERN =
 // Arbitrary leading words cannot turn a verification object into its subject.
 const BARE_VERIFICATION_SUBJECT_PATTERN =
   /^(?:(?:unit|integration|regression|smoke|e2e|end-to-end)\s+)?(?:tests?|build|lint|checks?|syntax)$/i;
+// Do not let a noun subject consume a present action and its object. Reuse
+// the existing narration vocabulary for bare actions and regular third-person
+// inflection for noun actors. A final plural noun can still be a subject when
+// its completed predicate closes the clause ("the failed tests passed").
+const NOMINAL_ACTION_WORD_PATTERN = new RegExp(String.raw`^(?:${PROGRESS_ACTION}|[a-z]+s)$`, "i");
+const RESULT_TAIL_PATTERN =
+  /^(?:[.!?,;:]|$|(?:and|but|so|because|after|when|once|if|unless|with|without|on|in|at|for|during|already|just|[a-z]+ly)\b)/i;
+
+function hasNarratedNominalSubject(subject: string, tail: string, finite: boolean): boolean {
+  const words = subject
+    .replace(
+      /^(?:the|a|an|all|both|each|every|some|any|no|my|our|your|his|her|its|their|this|that|these|those|\d+)\s+/i,
+      "",
+    )
+    .split(/\s+/);
+  return words.some((word, index) => {
+    if (index === 0 || !NOMINAL_ACTION_WORD_PATTERN.test(word)) {
+      return false;
+    }
+    // "test suite" is a compound verification noun, not an action/complement.
+    if (/^test$/i.test(word) && /^suite$/i.test(words[index + 1] ?? "")) {
+      return false;
+    }
+    return index < words.length - 1 || (!finite && !RESULT_TAIL_PATTERN.test(tail));
+  });
+}
+
 const COMPLETION_HEADING_PATTERN =
   /^(?:(?:result|results|report|summary|outcome|conclusion|findings?|verification|status)\s*:\s*)+/i;
 
@@ -64,7 +91,7 @@ const COMPLETION_HEADING_PATTERN =
 // A subject cannot absorb an auxiliary, modal, negation, or new condition.
 const RESULT_SUBJECT_WORD = String.raw`(?!(?:if|unless|when|once|whether|before|after|while|and|or|that|which|will|would|could|should|might|may|can|must|have|has|had|did|am|is|are|was|were|not|never|to)\b|\w+(?:'|\u2019)(?:t|ll|m|re|ve|d)\b|(?:he|she|it|that|there)(?:'|\u2019)s\b)[\w'-]+`;
 // Pronouns are complete subjects, never modifiers that can absorb a verb.
-const RESULT_SUBJECT = String.raw`(?:(?:i|we|you|he|she|it|they)\b|(?!(?:i|we|you|he|she|it|they)\b)(?:${RESULT_SUBJECT_WORD}\s+){0,6}(?!(?:the|a|an|all|both|our|already|just)\b|[\w'-]+ly\b)${RESULT_SUBJECT_WORD})`;
+const RESULT_SUBJECT = String.raw`(?:(?:i|we|you|he|she|it|they)\b|(?!(?:i|we|you|he|she|it|they)\b)(?:${RESULT_SUBJECT_WORD}\s+){0,6}?(?!(?:the|a|an|all|both|our|already|just)\b|[\w'-]+ly\b)${RESULT_SUBJECT_WORD})`;
 const IRREGULAR_PAST_VERB =
   "arose|awoke|bore|beat|became|began|bent|bet|bit|bled|blew|broke|brought|built|burnt|burst|bought|caught|chose|came|cost|crept|cut|dealt|dug|did|drew|drank|drove|ate|fell|fed|felt|fought|found|fled|flew|forbade|forgot|forgave|froze|got|gave|went|grew|hung|heard|hid|hit|held|hurt|kept|knew|laid|led|leant|leapt|learnt|left|lent|let|lay|lit|lost|made|meant|met|paid|put|quit|read|rode|rang|rose|ran|said|saw|sought|sold|sent|set|shook|shone|shot|showed|shrank|shut|sang|sank|sat|slept|slid|smelt|spoke|spelt|spent|spilt|spun|split|spread|sprang|stood|stole|stuck|stung|stank|struck|swore|swept|swam|swung|took|taught|tore|told|thought|threw|understood|upset|woke|wore|wept|won|wound|wrote";
 const PAST_RESULT_VERB = String.raw`(?:(?:(?:re|un|over|under|mis|out|fore|with)-?)?(?:${IRREGULAR_PAST_VERB})|(?!(?:need|feed|bleed|breed|heed|seed|weed|speed|succeed|exceed|proceed)\b)[a-z]+ed)`;
@@ -210,14 +237,13 @@ function isProgressOnlyCompletionText(value: string): boolean {
           const independentVerification =
             subject !== undefined &&
             BARE_VERIFICATION_SUBJECT_PATTERN.test(subject) &&
-            (finite ||
-              (result.groups?.testSubject &&
-                /^(?:[.!?,;:]|$|(?:and|but|so|because|after|when|once|if|unless|with|without|on|in|at|for|during|already|just|[a-z]+ly)\b)/i.test(
-                  verificationTail,
-                )));
+            (finite || (result.groups?.testSubject && RESULT_TAIL_PATTERN.test(verificationTail)));
           return {
             result,
             elidedSubject: pattern === COORDINATED_RESULT_CLAUSE_PATTERN,
+            narratedSubject:
+              subject !== undefined &&
+              hasNarratedNominalSubject(subject, verificationTail, Boolean(finite)),
             ambiguousSubject:
               subject !== undefined &&
               !EXPLICIT_RESULT_SUBJECT_PATTERN.test(subject) &&
@@ -226,41 +252,44 @@ function isProgressOnlyCompletionText(value: string): boolean {
           };
         }),
       );
-      const completedResult = results.some(({ result, elidedSubject, ambiguousSubject }) => {
-        const resultIndex = resultOffset + result.index;
-        const prefix = body.slice(0, resultIndex);
-        const remainder = body.slice(resultIndex).replace(/^(?:,|and)\s*/i, "");
-        const resultClause =
-          remainder.split(
-            /,(?!\s*(?:if|unless|whether|once|when|after|as\s+soon\s+as)\b)|\s+(?:and|but|so|because|to)\s+/i,
-          )[0] ?? "";
-        // Elided and ambiguous noun subjects inherit the preceding intent,
-        // including ongoing narration. A new explicit subject or finite
-        // completed-state clause can establish an independent result.
-        const subjectClause = prefix
-          .split(/(?:,|\b(?:and|but|so)\b)\s*(?=(?:i|we|you|he|she|it|they)\b)/i)
-          .at(-1)
-          ?.trim()
-          .replace(LEADING_CONTEXT_PATTERN, "");
-        // Reject each deferred candidate, not a later independent completed
-        // action merely because the first clause only described an attempt.
-        return !(
-          FIRST_PERSON_PLAN_PATTERN.test(remainder) ||
-          ONGOING_RESULT_CLAUSE_PATTERN.test(result[0].replace(/^(?:,|and)\s*/i, "")) ||
-          ((elidedSubject || ambiguousSubject) &&
-            (FIRST_PERSON_PLAN_PATTERN.test(subjectClause ?? "") ||
-              PROGRESS_ONLY_PATTERN.test(subjectClause ?? "") ||
-              BARE_PROGRESS_ONLY_PATTERN.test(subjectClause ?? "") ||
-              ONGOING_NARRATION_PATTERN.test(subjectClause ?? ""))) ||
-          UNFINISHED_RESULT_PATTERN.test(remainder) ||
-          /\b(?:whether|if|unless)\b/i.test(resultClause) ||
-          FRONTED_CONDITIONAL_PATTERN.test(prefix) ||
-          (/^and\b/i.test(result[0]) &&
-            !/,\s*$/.test(prefix) &&
-            CONDITIONAL_PROGRESS_PATTERN.test(prefix)) ||
-          hasDeferredTemporalResult(prefix, resultClause)
-        );
-      });
+      const completedResult = results.some(
+        ({ result, elidedSubject, ambiguousSubject, narratedSubject }) => {
+          const resultIndex = resultOffset + result.index;
+          const prefix = body.slice(0, resultIndex);
+          const remainder = body.slice(resultIndex).replace(/^(?:,|and)\s*/i, "");
+          const resultClause =
+            remainder.split(
+              /,(?!\s*(?:if|unless|whether|once|when|after|as\s+soon\s+as)\b)|\s+(?:and|but|so|because|to)\s+/i,
+            )[0] ?? "";
+          // Elided and ambiguous noun subjects inherit the preceding intent,
+          // including ongoing narration. A new explicit subject or finite
+          // completed-state clause can establish an independent result.
+          const subjectClause = prefix
+            .split(/(?:,|\b(?:and|but|so)\b)\s*(?=(?:i|we|you|he|she|it|they)\b)/i)
+            .at(-1)
+            ?.trim()
+            .replace(LEADING_CONTEXT_PATTERN, "");
+          // Reject each deferred candidate, not a later independent completed
+          // action merely because the first clause only described an attempt.
+          return !(
+            narratedSubject ||
+            FIRST_PERSON_PLAN_PATTERN.test(remainder) ||
+            ONGOING_RESULT_CLAUSE_PATTERN.test(result[0].replace(/^(?:,|and)\s*/i, "")) ||
+            ((elidedSubject || ambiguousSubject) &&
+              (FIRST_PERSON_PLAN_PATTERN.test(subjectClause ?? "") ||
+                PROGRESS_ONLY_PATTERN.test(subjectClause ?? "") ||
+                BARE_PROGRESS_ONLY_PATTERN.test(subjectClause ?? "") ||
+                ONGOING_NARRATION_PATTERN.test(subjectClause ?? ""))) ||
+            UNFINISHED_RESULT_PATTERN.test(remainder) ||
+            /\b(?:whether|if|unless)\b/i.test(resultClause) ||
+            FRONTED_CONDITIONAL_PATTERN.test(prefix) ||
+            (/^and\b/i.test(result[0]) &&
+              !/,\s*$/.test(prefix) &&
+              CONDITIONAL_PROGRESS_PATTERN.test(prefix)) ||
+            hasDeferredTemporalResult(prefix, resultClause)
+          );
+        },
+      );
       const conditionalResult = results.length > 0 && !completedResult;
       const progress =
         narrativeProgress ||
