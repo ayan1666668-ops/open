@@ -3,7 +3,7 @@ const DEFAULT_MAX_WAIT_MS = 1_000;
 
 export type SessionEventRefreshCoordinatorOptions = Readonly<{
   active: boolean;
-  refresh: () => Promise<void>;
+  refresh: (isCurrent: () => boolean) => Promise<void>;
   debounceMs?: number;
   maxWaitMs?: number;
   now?: () => number;
@@ -23,9 +23,9 @@ export function createSessionEventRefreshCoordinator({
   let active = initialActive;
   let timer: ReturnType<typeof globalThis.setTimeout> | null = null;
   let deadline: number | null = null;
-  let inFlight: Promise<void> | null = null;
+  let nextAllowed = 0;
+  let pending: object | null = null;
   let queued = false;
-  let trailing = false;
   let generation = 0;
   let disposed = false;
 
@@ -39,37 +39,50 @@ export function createSessionEventRefreshCoordinator({
 
   const start = () => {
     clearTimer();
-    if (disposed) {
-      return;
-    }
-    if (!active) {
-      queued = true;
-      return;
-    }
-    if (inFlight) {
-      trailing = true;
+    if (disposed || !active || pending || !queued) {
       return;
     }
     queued = false;
-    const operationGeneration = generation;
-    const operation = refresh().catch(() => undefined);
-    const pending = operation.finally(() => {
-      if (generation !== operationGeneration || inFlight !== pending) {
-        return;
-      }
-      inFlight = null;
-      if (trailing) {
-        trailing = false;
-        start();
-      }
-    });
-    inFlight = pending;
+    const request = {};
+    pending = request;
+    const started = now();
+    const requestGeneration = generation;
+    void refresh(() => pending === request && requestGeneration === generation)
+      .catch(() => undefined)
+      .finally(() => {
+        if (pending !== request) {
+          return;
+        }
+        pending = null;
+        const completed = now();
+        nextAllowed = completed + Math.min(15_000, Math.max(1_000, 3 * (completed - started)));
+        arm();
+      });
+  };
+
+  const arm = (debounce = true) => {
+    if (disposed || !active || pending || !queued) {
+      return;
+    }
+    const currentTime = now();
+    deadline ??= currentTime + maxWaitMs;
+    if (timer !== null) {
+      globalThis.clearTimeout(timer);
+    }
+    const delay = debounce ? Math.min(debounceMs, deadline - currentTime) : 0;
+    timer = globalThis.setTimeout(start, Math.max(delay, nextAllowed - currentTime));
   };
 
   const absorb = () => {
+    generation += 1;
     clearTimer();
     queued = false;
-    trailing = false;
+  };
+
+  const reset = () => {
+    absorb();
+    pending = null;
+    nextAllowed = 0;
   };
 
   return {
@@ -77,18 +90,8 @@ export function createSessionEventRefreshCoordinator({
       if (disposed) {
         return;
       }
-      if (!active) {
-        clearTimer();
-        queued = true;
-        return;
-      }
-      const currentTime = now();
-      deadline ??= currentTime + maxWaitMs;
-      if (timer !== null) {
-        globalThis.clearTimeout(timer);
-      }
-      const delay = Math.min(debounceMs, Math.max(0, deadline - currentTime));
-      timer = globalThis.setTimeout(start, delay);
+      queued = true;
+      arm();
     },
     flush() {
       if (timer === null) {
@@ -99,25 +102,16 @@ export function createSessionEventRefreshCoordinator({
     setActive(next: boolean, markDirty = false) {
       active = next;
       if (next) {
-        if (queued) {
-          start();
-        }
+        arm(false);
         return;
       }
-      queued ||= markDirty || timer !== null || inFlight !== null;
-      trailing = false;
+      queued ||= markDirty || timer !== null;
       clearTimer();
     },
     absorb,
-    reset() {
-      absorb();
-      inFlight = null;
-      generation += 1;
-    },
+    reset,
     dispose() {
-      absorb();
-      inFlight = null;
-      generation += 1;
+      reset();
       disposed = true;
     },
   };

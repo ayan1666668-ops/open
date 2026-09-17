@@ -16,7 +16,7 @@ afterEach(() => {
 });
 
 describe("session event refresh coordinator", () => {
-  it("coalesces bursts and runs one trailing refresh after failure", async () => {
+  it("coalesces bursts and runs one bounded trailing refresh after failure", async () => {
     vi.useFakeTimers();
     const first = deferred<void>();
     const refresh = vi.fn().mockReturnValueOnce(first.promise).mockResolvedValue(undefined);
@@ -33,9 +33,10 @@ describe("session event refresh coordinator", () => {
     coordinator.schedule();
     await vi.advanceTimersByTimeAsync(200);
     first.reject(new Error("transient failure"));
-    await vi.waitFor(() => {
-      expect(refresh).toHaveBeenCalledTimes(2);
-    });
+    await vi.advanceTimersByTimeAsync(999);
+    expect(refresh).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(refresh).toHaveBeenCalledTimes(2);
   });
 
   it("retires pending work on reset", async () => {
@@ -67,5 +68,26 @@ describe("session event refresh coordinator", () => {
     await vi.waitFor(() => {
       expect(refresh).toHaveBeenCalledTimes(1);
     });
+  });
+
+  it("invalidates the completion guard when pending work is absorbed", async () => {
+    vi.useFakeTimers();
+    const pending = deferred<void>();
+    let isCurrent: (() => boolean) | undefined;
+    const coordinator = createSessionEventRefreshCoordinator({
+      active: true,
+      refresh: vi.fn((current) => {
+        isCurrent = current;
+        return pending.promise;
+      }),
+    });
+
+    coordinator.schedule();
+    await vi.advanceTimersByTimeAsync(200);
+    expect(isCurrent?.()).toBe(true);
+    coordinator.absorb();
+    expect(isCurrent?.()).toBe(false);
+    pending.resolve();
+    coordinator.dispose();
   });
 });
