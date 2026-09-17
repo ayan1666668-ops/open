@@ -500,6 +500,7 @@ function parseUpdateStateInspectionWorker<T>(
 async function discoverLegacyUpdateStateSchemaInspection(
   params: Parameters<typeof runUpdateStateInspectionWorker>[0],
 ): Promise<UpdateStateSchemaInspectionPlan> {
+  params.signal?.throwIfAborted();
   const shared = path.resolve(params.input.stateDir, "state", "openclaw.sqlite");
   const files = await collectStateDatabasePaths(params.input);
   if (!(await fileExists(shared))) {
@@ -508,6 +509,7 @@ async function discoverLegacyUpdateStateSchemaInspection(
   const stagingRoot = await createSqliteSnapshotStagingDirectory(
     params.stagingRoot,
     params.root !== undefined,
+    params.signal,
   );
   let outcome: { value: UpdateStateSchemaInspectionPlan } | { cause: unknown };
   try {
@@ -562,10 +564,12 @@ export async function readUpdateStateSchemaVersions({
   if (root === null) {
     throw new Error("The active installation root is unknown; state inspection is unsafe.");
   }
+  signal?.throwIfAborted();
   const sourceEnv = input.env ?? process.env;
   const stagingRoot = await createSqliteSnapshotStagingDirectory(
     resolvePrivateSqliteSnapshotStagingRoot(sourceEnv),
     root !== undefined,
+    signal,
   );
   let outcome: { value: UpdateStateSchemaVersion[] } | { cause: unknown };
   try {

@@ -12,6 +12,7 @@ import {
   inspectSqliteSchemaHeader,
   prepareSqliteReadOnlyLocation,
 } from "./sqlite-snapshot-source.js";
+import { readUpdateStateSchemaVersions } from "./update-candidate-state.js";
 
 const processMocks = vi.hoisted(() => ({
   execFile: vi.fn<typeof import("node:child_process").execFile>(),
@@ -184,15 +185,21 @@ async function readSnapshot(source: string, signal?: AbortSignal): Promise<void>
 }
 
 it("detaches a cancelled snapshot caller while reclamation finishes its directory", async () => {
-  for (const mode of ["snapshot", "header"] as const) {
+  for (const mode of ["snapshot", "header", "update"] as const) {
     const f = mode === "snapshot" ? fixture(64, 4 * 1024 * 1024) : fixture();
     const controller = new AbortController();
     const reason = new DOMException(`${mode} caller stopped`, "AbortError");
     const operation = withSqliteReadOnlyWorkerScope(async () => {
       if (mode === "snapshot") {
         await readSnapshot(f.source, controller.signal);
-      } else {
+      } else if (mode === "header") {
         await inspectSqliteSchemaHeader(f.source, { signal: controller.signal });
+      } else {
+        await readUpdateStateSchemaVersions({
+          stateDir: path.dirname(f.source),
+          config: {},
+          signal: controller.signal,
+        });
       }
     }).then(
       () => undefined,
