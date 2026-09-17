@@ -1,6 +1,8 @@
+import path from "node:path";
 import { coerceErrorMessage } from "@openclaw/normalization-core/error-coercion";
 import { SQLITE_READONLY_CHILD_ARG } from "./runtime-process-entrypoints.js";
 import { formatSqliteErrorCodeSuffix } from "./sqlite-error-diagnostics.js";
+import { releaseSnapshotTempDirectory } from "./sqlite-readonly-location-cleanup.js";
 import {
   inspectSqliteSchemaHeaderInProcess,
   prepareSqliteReadOnlyLocationInProcess,
@@ -45,6 +47,7 @@ async function inspect(args: string[]): Promise<SqliteReadOnlyWorkerResult> {
       mode === "sync"
         ? prepareSqliteReadOnlyLocationSyncInProcess(pathname, stagingRoot)
         : await prepareSqliteReadOnlyLocationInProcess(pathname, stagingRoot);
+    releaseSnapshotTempDirectory(prepared.cleanupRoot ?? path.dirname(prepared.location));
     return { ok: true, location: prepared.location };
   } catch (error) {
     const message = `${coerceErrorMessage(error)}${formatSqliteErrorCodeSuffix(error)}`;

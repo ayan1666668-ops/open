@@ -14,6 +14,7 @@ import {
   SQLITE_READONLY_CHILD_ARG,
 } from "./runtime-process-entrypoints.js";
 import { resolveRuntimeWorkerArgv, resolveRuntimeWorkerUrl } from "./runtime-worker-url.js";
+import { retainSnapshotWork } from "./sqlite-readonly-location-cleanup.js";
 import {
   SQLITE_READONLY_WORKER_MAX_BUFFER,
   type SqliteReadOnlyWorkerMode,
@@ -353,6 +354,7 @@ function createScopedSqliteReadOnlyWorker() {
     }
     child.kill("SIGKILL");
   };
+  void retainSnapshotWork(closed, () => retire(new Error("SQLite snapshot owner stopped")));
   child.on("error", (error) => retire(error));
   child.once("close", (code, signal) => {
     retired = true;
@@ -566,6 +568,7 @@ function runSqliteReadOnlyWorkerOnce(
   return new Promise<string | SqliteSchemaHeader>((resolve, reject) => {
     const { timeoutMs, size } = readSqliteInspectionBudget("read-only snapshot", pathname);
     let output: SqliteReadOnlyWorkerOutput = { stderr: "", stdout: "" };
+    let stopped = false;
     const child = execFile(
       process.execPath,
       sqliteReadOnlyWorkerArgv(pathname, options),
@@ -579,10 +582,12 @@ function runSqliteReadOnlyWorkerOnce(
       (error, stdout, stderr) => {
         output = {
           failure: error
-            ? error.killed && error.signal === "SIGKILL" && error.code == null
-              ? sqliteInspectionTimeoutError("read-only snapshot", pathname, timeoutMs, size)
-                  .message
-              : `exited unsuccessfully: ${error.message}`
+            ? stopped
+              ? "snapshot owner stopped"
+              : error.killed && error.signal === "SIGKILL" && error.code == null
+                ? sqliteInspectionTimeoutError("read-only snapshot", pathname, timeoutMs, size)
+                    .message
+                : `exited unsuccessfully: ${error.message}`
             : undefined,
           stderr,
           stdout,
@@ -591,8 +596,15 @@ function runSqliteReadOnlyWorkerOnce(
     );
     // execFile does not forward killSignal for AbortSignal cancellation.
     const abort = () => {
+      stopped = true;
       child.kill("SIGKILL");
     };
+    void retainSnapshotWork(
+      new Promise<void>((resolveClosed) => {
+        child.once("close", () => resolveClosed());
+      }),
+      abort,
+    );
     options.signal?.addEventListener("abort", abort, { once: true });
     if (options.signal?.aborted) {
       abort();

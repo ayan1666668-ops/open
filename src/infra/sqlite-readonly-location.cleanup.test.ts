@@ -2,6 +2,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
+import {
+  registerSignalExitBarrier,
+  waitForSignalExitBarriers,
+} from "../cli/signal-exit-barrier.js";
 import { createDeferredCore } from "../shared/deferred.js";
 import { adoptPreparedLocation } from "./sqlite-readonly-location-cleanup.js";
 import { readSqliteSchemaHeaderFromSnapshotAsync } from "./sqlite-schema-header.js";
@@ -26,6 +30,33 @@ function fixture(strict: boolean) {
 }
 
 describe("prepared SQLite snapshot cleanup", () => {
+  it("keeps the private read view until other shutdown owners have drained", async () => {
+    const { ownedRoot } = fixture(false);
+    const entered = createDeferredCore();
+    const release = createDeferredCore();
+    const unregister = registerSignalExitBarrier(async () => {
+      entered.resolve();
+      await release.promise;
+      expect(fs.readFileSync(path.join(ownedRoot, "snapshot-child/database.sqlite"), "utf8")).toBe(
+        "private synthetic snapshot",
+      );
+    });
+    const removal = vi.spyOn(fs.promises, "rm");
+    const shutdown = waitForSignalExitBarriers();
+    try {
+      await entered.promise;
+      expect(removal).not.toHaveBeenCalled();
+    } finally {
+      release.resolve();
+      try {
+        await shutdown;
+      } finally {
+        unregister();
+      }
+    }
+    expect(fs.existsSync(ownedRoot)).toBe(false);
+  });
+
   it("retains header cancellation and failed async removal while cleanup remains retryable", async () => {
     const { ownedRoot, prepared } = fixture(false);
     const controller = new AbortController();

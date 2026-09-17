@@ -36,6 +36,15 @@ Schema compatibility preflight can read agent schema headers without a full inte
 
 Private snapshots remain necessary inside owner-held source-exclusion or canonical-mutation scopes, for incomplete WAL families whose inspection would create source sidecars, and for rollback journals requiring private recovery. Those cases use the existing snapshot owner and deadline; ordinary inspection errors do not trigger a full-copy fallback. Shared-state preflight is unchanged. `openclaw database preflight` performs the release-local shape comparison for an explicit copied file. The background verifier also scans already-open databases about once daily.
 
+Private snapshot files remain temporary artifacts: the creator registers cleanup
+before copying and publishes the finished copy by rename. Graceful shutdown
+drains existing shutdown owners and joins snapshot workers before cleanup.
+Native termination and hard kills can skip that drain. After an unclean process exit, the next
+snapshot owner reclaims recognized staging directories in the private cache and
+logs the reclaimed byte count. Reclamation requires the recorded parent and child
+processes to have exited; live or uncertain owners, unknown contents, and symlinks
+are left alone. It does not use file age or remove canonical databases or backups.
+
 Schema-only agent inspections during Doctor and restart checks read metadata in
 a child process, within one SQLite read transaction, without copying the whole
 database. Empty files, rollback journals, incomplete WAL sidecars, and

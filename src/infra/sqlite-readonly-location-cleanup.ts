@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { extractErrorCode } from "@openclaw/normalization-core/error-coercion";
+import { registerSignalExitFinalizer } from "../cli/signal-exit-barrier.js";
 import { getChildLogger } from "../logging/logger.js";
 import type { PreparedSqliteReadOnlyLocation } from "./sqlite-readonly-location.types.js";
 
@@ -8,6 +9,50 @@ export class SqliteSnapshotCleanupError extends Error {}
 
 const pendingTempDirectoryCleanup = new Set<string>();
 let cleanupExitHandlerInstalled = false;
+const activeSnapshotWork = new Map<Promise<unknown>, () => void>();
+let pendingSignalCleanup: Promise<void> | undefined;
+
+export function cleanupSnapshotOperations(): Promise<void> {
+  pendingSignalCleanup ??= (async () => {
+    while (activeSnapshotWork.size > 0) {
+      for (const stop of activeSnapshotWork.values()) {
+        stop();
+      }
+      await Promise.allSettled(activeSnapshotWork.keys());
+    }
+    for (const directory of pendingTempDirectoryCleanup) {
+      await removeTempDirectoryAsync(directory, (error) =>
+        emitSnapshotCleanupFailure({
+          cleanupRoot: directory,
+          operation: "rm",
+          code: extractErrorCode(error),
+        }),
+      );
+    }
+  })().finally(() => {
+    pendingSignalCleanup = undefined;
+  });
+  return pendingSignalCleanup;
+}
+
+/** Join native backup work or a terminated child before removing its private bytes. */
+export function retainSnapshotWork<T>(work: Promise<T>, stop: () => void = () => {}): Promise<T> {
+  registerSignalExitFinalizer(cleanupSnapshotOperations);
+  activeSnapshotWork.set(work, stop);
+  const release = () => activeSnapshotWork.delete(work);
+  void work.then(release, release);
+  return work;
+}
+
+export function registerSnapshotTempDirectory(directory: string): void {
+  recordTempDirectoryCleanup(directory, false);
+  registerSignalExitFinalizer(cleanupSnapshotOperations);
+}
+
+/** A successful child hands its files to the caller's enclosing staging owner. */
+export function releaseSnapshotTempDirectory(directory: string): void {
+  pendingTempDirectoryCleanup.delete(directory);
+}
 const tempDirectoryRemovalOptions = {
   force: true,
   maxRetries: 3,
@@ -55,6 +100,9 @@ function recordTempDirectoryCleanup(tempDir: string, removed: boolean): boolean 
   if (!cleanupExitHandlerInstalled) {
     cleanupExitHandlerInstalled = true;
     process.once("exit", () => {
+      for (const stop of activeSnapshotWork.values()) {
+        stop();
+      }
       for (const pendingDir of pendingTempDirectoryCleanup) {
         try {
           fs.rmSync(pendingDir, { force: true, recursive: true });
@@ -85,7 +133,7 @@ export async function removeTempDirectoryAsync(
   onFailure?: (error: unknown) => void,
 ): Promise<boolean> {
   try {
-    await fs.promises.rm(tempDir, tempDirectoryRemovalOptions);
+    await retainSnapshotWork(fs.promises.rm(tempDir, tempDirectoryRemovalOptions));
     return recordTempDirectoryCleanup(tempDir, true);
   } catch (error) {
     onFailure?.(error);
@@ -100,6 +148,7 @@ export function adoptPreparedLocation(
   onCleanupFailure?: (report: CleanupFailureReport) => void,
 ): PreparedSqliteReadOnlyLocation {
   const tempDir = ownedRoot ?? path.dirname(location);
+  registerSnapshotTempDirectory(tempDir);
   let active = true;
   let pending: Promise<boolean> | undefined;
   let reported = false;

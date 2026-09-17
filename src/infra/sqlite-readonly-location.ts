@@ -9,21 +9,22 @@ import {
   resolveSqliteFilesystemPath,
 } from "./node-sqlite.js";
 import { setSqliteBusyTimeout } from "./sqlite-busy-timeout.js";
-import {
-  createPrivateSqliteTempDirectory,
-  createPrivateSqliteTempDirectorySync,
-  resolvePrivateSqliteSnapshotStagingRoot,
-} from "./sqlite-private-directory.js";
+import { resolvePrivateSqliteSnapshotStagingRoot } from "./sqlite-private-directory.js";
 import {
   adoptPreparedLocation,
   removeTempDirectory,
   removeTempDirectoryAsync,
+  retainSnapshotWork,
 } from "./sqlite-readonly-location-cleanup.js";
 import type { PreparedSqliteReadOnlyLocation } from "./sqlite-readonly-location.types.js";
 import {
   readSqliteSchemaHeader,
   readSqliteSchemaHeaderFromSnapshot,
 } from "./sqlite-schema-header.js";
+import {
+  allocateSqliteSnapshotStagingDirectory,
+  createSqliteSnapshotStagingDirectorySync,
+} from "./sqlite-snapshot-staging.js";
 import {
   withSqliteSourceHandle,
   withSqliteSourceHandleAsync,
@@ -37,7 +38,6 @@ const SQLITE_SOURCE_READ_BUSY_TIMEOUT_MS = 30_000;
 const SQLITE_READONLY_RESULT_CODE = 8;
 const SQLITE_RESULT_CODE_MASK = 0xff;
 const SQLITE_JOURNAL_MAGIC = Buffer.from([0xd9, 0xd5, 0x05, 0xf9, 0x20, 0xa1, 0x63, 0xd7]);
-export const SQLITE_SNAPSHOT_STAGING_PREFIX = `openclaw-sqlite-readonly-${process.pid}-`;
 
 type PinnedFile = {
   descriptor: number;
@@ -325,6 +325,17 @@ function recoverPrivateRollbackCopy(snapshotPath: string): void {
   }
 }
 
+function publishPreparedCopy(directory: string): PreparedSqliteReadOnlyLocation {
+  const location = path.join(directory, "database.sqlite");
+  for (const suffix of ["-wal", "-shm", "-journal", ""]) {
+    const staged = `${location}.partial${suffix}`;
+    if (fs.existsSync(staged)) {
+      fs.renameSync(staged, `${location}${suffix}`);
+    }
+  }
+  return adoptPreparedLocation(location, directory);
+}
+
 function createStableReadOnlyCopyInTempDirectory(
   pathname: string,
   journalMode: SourceJournalMode,
@@ -335,8 +346,8 @@ function createStableReadOnlyCopyInTempDirectory(
 ): PreparedSqliteReadOnlyLocation {
   let tempDir = existingTempDir;
   try {
-    tempDir ??= createPrivateSqliteTempDirectorySync(stagingRoot, SQLITE_SNAPSHOT_STAGING_PREFIX);
-    const snapshotPath = path.join(tempDir, "database.sqlite");
+    tempDir ??= createSqliteSnapshotStagingDirectorySync(stagingRoot);
+    const snapshotPath = path.join(tempDir, "database.sqlite.partial");
     const firstPath = path.join(tempDir, "first");
     if (process.platform !== "win32") {
       fs.chmodSync(tempDir, 0o700);
@@ -380,7 +391,7 @@ function createStableReadOnlyCopyInTempDirectory(
       // a later writable open can perform SQLite's normal crash recovery.
       recoverPrivateRollbackCopy(snapshotPath);
     }
-    return adoptPreparedLocation(snapshotPath);
+    return publishPreparedCopy(tempDir);
   } catch (error) {
     if (tempDir && existingTempDir === undefined) {
       removeTempDirectory(tempDir);
@@ -393,7 +404,7 @@ export async function createSqliteSnapshotStagingDirectory(
   stagingRoot = resolvePrivateSqliteSnapshotStagingRoot(),
 ): Promise<string> {
   try {
-    return await createPrivateSqliteTempDirectory(stagingRoot, SQLITE_SNAPSHOT_STAGING_PREFIX);
+    return await allocateSqliteSnapshotStagingDirectory(stagingRoot);
   } catch (error) {
     throw sqliteSnapshotStagingError(stagingRoot, error, true);
   }
@@ -418,7 +429,7 @@ async function createOnlineReadOnlyBackup(
   stagingRoot?: string,
 ): Promise<PreparedSqliteReadOnlyLocation> {
   const tempDir = await createSqliteSnapshotStagingDirectory(stagingRoot);
-  const snapshotPath = path.join(tempDir, "database.sqlite");
+  const snapshotPath = path.join(tempDir, "database.sqlite.partial");
   const sqlite = requireNodeSqlite();
   try {
     if (process.platform !== "win32") {
@@ -430,7 +441,7 @@ async function createOnlineReadOnlyBackup(
         `PRAGMA busy_timeout = ${SQLITE_SOURCE_READ_BUSY_TIMEOUT_MS}; PRAGMA trusted_schema = OFF; BEGIN;`,
       );
       source.prepare("PRAGMA schema_version;").get();
-      await sqlite.backup(source, resolveSqliteFilesystemPath(snapshotPath));
+      await retainSnapshotWork(sqlite.backup(source, resolveSqliteFilesystemPath(snapshotPath)));
       source.exec("ROLLBACK;");
     } finally {
       if (source.isOpen) {
@@ -449,7 +460,7 @@ async function createOnlineReadOnlyBackup(
     } finally {
       fs.closeSync(descriptor);
     }
-    return adoptPreparedLocation(snapshotPath);
+    return publishPreparedCopy(tempDir);
   } catch (error) {
     await removeTempDirectoryAsync(tempDir);
     throw sqliteSnapshotStagingError(tempDir, error);
@@ -660,10 +671,12 @@ export async function prepareSqliteReadOnlyLocationFromOwnedDatabase(
     if (!database.isOpen || database.isTransaction) {
       throw new Error("SQLite inspection requires an open owner outside a transaction");
     }
-    const location = path.join(directory, "database.sqlite");
-    await requireNodeSqlite().backup(database, resolveSqliteFilesystemPath(location));
+    const location = path.join(directory, "database.sqlite.partial");
+    await retainSnapshotWork(
+      requireNodeSqlite().backup(database, resolveSqliteFilesystemPath(location)),
+    );
     assertCurrent();
-    return adoptPreparedLocation(location, directory);
+    return publishPreparedCopy(directory);
   } catch (error) {
     await removeTempDirectoryAsync(directory);
     throw error;

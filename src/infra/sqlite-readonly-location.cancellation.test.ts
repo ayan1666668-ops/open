@@ -4,6 +4,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
+import { waitForSignalExitBarriers } from "../cli/signal-exit-barrier.js";
 import { requireNodeSqlite } from "./node-sqlite.js";
 import { SQLITE_READONLY_CHILD_ARG } from "./runtime-process-entrypoints.js";
 import * as workerUrls from "./runtime-worker-url.js";
@@ -93,7 +94,7 @@ describe("SQLite read-only worker cancellation", () => {
 
   it.each(
     [true, false].flatMap((preserveSourceArtifacts) =>
-      (["abort", "scope-close", "invalid-response"] as const).map((stop) => ({
+      (["abort", "scope-close", "invalid-response", "signal-exit"] as const).map((stop) => ({
         preserveSourceArtifacts,
         stop,
       })),
@@ -148,6 +149,9 @@ describe("SQLite read-only worker cancellation", () => {
           if (stop === "abort") {
             controller.abort(reason);
             await expect(operation).rejects.toBe(reason);
+          } else if (stop === "signal-exit") {
+            await waitForSignalExitBarriers();
+            await expect(operation).rejects.toThrow(/snapshot owner stopped|SIGKILL/);
           } else if (stop === "invalid-response") {
             await expect(operation).rejects.toThrow("returned an invalid result");
           }

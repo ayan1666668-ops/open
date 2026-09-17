@@ -1,10 +1,6 @@
 // Keep source lifetime pinned while the snapshot owner consumes live or private bytes.
 import fs, { type BigIntStats } from "node:fs";
 import {
-  createPrivateSqliteTempDirectorySync,
-  resolvePrivateSqliteSnapshotStagingRoot,
-} from "./sqlite-private-directory.js";
-import {
   adoptPreparedLocation,
   removeTempDirectory,
   removeTempDirectoryAsync,
@@ -14,7 +10,6 @@ import {
   createSqliteSnapshotStagingDirectory,
   prepareSqliteReadOnlyLocationInProcess,
   prepareSqliteReadOnlyLocationSyncInProcess,
-  SQLITE_SNAPSHOT_STAGING_PREFIX,
 } from "./sqlite-readonly-location.js";
 import type { PreparedSqliteReadOnlyLocation } from "./sqlite-readonly-location.types.js";
 import { runSqliteReadOnlyWorker, runSqliteReadOnlyWorkerSync } from "./sqlite-readonly-worker.js";
@@ -22,6 +17,7 @@ import {
   readSqliteSchemaHeaderFromSnapshotAsync,
   type SqliteSchemaHeader,
 } from "./sqlite-schema-header.js";
+import { createSqliteSnapshotStagingDirectorySync } from "./sqlite-snapshot-staging.js";
 import { withSqliteSourceHandleAsync } from "./sqlite-source-handle.js";
 import {
   hasStateDatabaseSourceExclusion,
@@ -136,10 +132,7 @@ export function prepareSqliteReadOnlyLocationSync(
   if (hasStateDatabaseSourceExclusion(pathname)) {
     return prepareSqliteReadOnlyLocationSyncInProcess(pathname);
   }
-  const stagingRoot = createPrivateSqliteTempDirectorySync(
-    resolvePrivateSqliteSnapshotStagingRoot(),
-    SQLITE_SNAPSHOT_STAGING_PREFIX,
-  );
+  const stagingRoot = createSqliteSnapshotStagingDirectorySync();
   try {
     return adoptPreparedLocation(runSqliteReadOnlyWorkerSync(pathname, stagingRoot), stagingRoot);
   } catch (error) {
