@@ -20,7 +20,7 @@ import {
 } from "../../shared/clawhub-recommendations.js";
 import { createLazyRuntimeModule } from "../../shared/lazy-runtime.js";
 import { INTERNAL_MESSAGE_CHANNEL, normalizeMessageChannel } from "../../utils/message-channel.js";
-import { formatErrorMessage } from "../errors.js";
+import { formatErrorMessage, toErrorObject } from "../errors.js";
 import { throwIfAborted } from "./abort.js";
 import {
   listConfiguredMessageChannels,
@@ -139,12 +139,12 @@ async function handleBroadcastAction(
     error !== null &&
     typeof error === "object" &&
     (error as { sentBeforeError?: unknown }).sentBeforeError === true;
-  const captureInterruption = (): unknown => {
+  const captureInterruption = (): Error | undefined => {
     try {
       throwIfAborted(input.abortSignal);
       input.assertDirectAdapterHandoff?.();
     } catch (interruption) {
-      return interruption;
+      return toErrorObject(interruption, "Message action interrupted");
     }
     return undefined;
   };
