@@ -309,79 +309,108 @@ function exactParentJob(parentJobs, child, sourceParentAttempt) {
   return matches[0];
 }
 
-async function checkArtifactProducers(producers, client) {
-  for (const { request, runId, runAttempt } of producers) {
-    try {
+async function inspectArtifactProducers(producers, client) {
+  return Promise.all(
+    producers.map(async ({ request, runId, runAttempt }) => {
       const run = validateArtifactProducerRun(
         request,
         await client.getRun(runId),
         runId,
         runAttempt,
+        {
+          allowFailure: true,
+          allowNewerAttempts: true,
+        },
       );
-      if (run.status !== "completed") {
-        throw new Error(
-          `Artifact ${request.stage} producer is still active; wait for diagnostic drain`,
-        );
-      }
-    } catch (error) {
-      throw new Error(
-        `Original artifact producer cannot be reused: ${error.message}; inspect the producer before recovery. Failed or changed producers require a fresh all-group FRV.`,
-        { cause: error },
-      );
+      const active = run.status !== "completed";
+      const passed = !active && run.conclusion === "success";
+      return {
+        key: `artifact:${request.stage}`,
+        runId,
+        plannedRunAttempt: Number(runAttempt),
+        effectiveRunAttempt: Number(run.run_attempt),
+        conclusion: String(run.conclusion ?? ""),
+        status: active ? "active" : passed ? "passed" : "failed",
+        passed,
+        url: run.html_url,
+      };
+    }),
+  );
+}
+
+async function inspectRecovery(plan, producers, client) {
+  const [diagnostics, artifacts] = await Promise.all([
+    inspectContinuation(plan, client),
+    inspectArtifactProducers(producers, client),
+  ]);
+  const children = [...diagnostics.children, ...artifacts];
+  return {
+    children,
+    failed: children.filter((child) => child.status === "failed"),
+    active: children.filter((child) => child.status === "active"),
+    missing: children.filter((child) => child.status === "missing"),
+    passed: children.filter((child) => child.status === "passed"),
+  };
+}
+
+async function recheckArtifactProducers(producers, status, client) {
+  const current = await inspectArtifactProducers(producers, client);
+  for (const observed of current) {
+    const expected = status.children.find((child) => child.runId === observed.runId);
+    if (
+      !expected ||
+      observed.effectiveRunAttempt !== expected.effectiveRunAttempt ||
+      observed.status !== expected.status ||
+      observed.conclusion !== expected.conclusion
+    ) {
+      throw new Error(`Artifact producer changed before rerun dispatch: ${observed.runId}`);
     }
   }
 }
 
-async function originalArtifactProducers(plan, parentJobs, client, repository, workflow) {
-  // Older workflow revisions did not dispatch independently recoverable producers.
+async function npmRecoveryProducers(plan, parentJobs, client, repository, workflow) {
+  // Older workflow revisions did not dispatch npm qualification independently.
   if (!workflow.includes("node scripts/full-release-artifacts.mjs resolve")) {
     return [];
   }
-  const producers = [];
-  for (const [name, stage] of [
-    ["Prepare release npm artifacts", "npm"],
-    ["Prepare release Docker artifacts", "docker"],
-    ["Acquire full release candidate", "candidate"],
-  ]) {
-    const matches = parentJobs.filter(
-      (job) => job.name === name && Number(job.run_attempt) === plan.parentRunAttempt,
-    );
-    if (matches.length !== 1) {
-      throw new Error(`Original artifact dispatch job is missing or ambiguous: ${stage}`);
-    }
-    const [job] = matches;
-    if (job.conclusion === "skipped") {
-      continue;
-    }
-    const log = stripVTControlCharacters(await client.getJobLog(job.id));
-    const dispatches = [
-      ...log.matchAll(
-        /(?:^|\n)(?:\d{4}-\d\d-\d\dT\S+ )?Dispatched full-release-artifacts\.yml: https:\/\/github\.com\/([^/\s]+\/[^/\s]+)\/actions\/runs\/([1-9][0-9]*) \(attempt ([1-9][0-9]*)\)\r?(?=\n|$)/gu,
-      ),
-    ];
-    if (
-      dispatches.length !== 1 ||
-      dispatches[0][1] !== repository ||
-      !log.includes(`TARGET_SHA: ${plan.targetSha}`)
-    ) {
-      throw new Error(
-        `Original artifact dispatch identity is unavailable or ambiguous: ${stage}; start a fresh all-group FRV`,
-      );
-    }
-    producers.push({
+  const matches = parentJobs.filter(
+    (job) =>
+      job.name === "Prepare release npm artifacts" &&
+      Number(job.run_attempt) === plan.parentRunAttempt,
+  );
+  if (matches.length !== 1) {
+    throw new Error("Original npm dispatch job is missing or ambiguous");
+  }
+  const [job] = matches;
+  if (job.conclusion === "skipped") {
+    return [];
+  }
+  const log = stripVTControlCharacters(await client.getJobLog(job.id));
+  const dispatches = [
+    ...log.matchAll(
+      /(?:^|\n)(?:\d{4}-\d\d-\d\dT\S+ )?Dispatched full-release-artifacts\.yml: https:\/\/github\.com\/([^/\s]+\/[^/\s]+)\/actions\/runs\/([1-9][0-9]*) \(attempt ([1-9][0-9]*)\)\r?(?=\n|$)/gu,
+    ),
+  ];
+  if (
+    dispatches.length !== 1 ||
+    dispatches[0][1] !== repository ||
+    !log.includes(`TARGET_SHA: ${plan.targetSha}`)
+  ) {
+    throw new Error("Original npm dispatch identity is unavailable or ambiguous");
+  }
+  return [
+    {
       request: {
-        stage,
+        stage: "npm",
         repository,
-        dispatchId: `full-release-validation-${plan.parentRunId}-${plan.parentRunAttempt}-artifacts-${stage}`,
+        dispatchId: `full-release-validation-${plan.parentRunId}-${plan.parentRunAttempt}-artifacts-npm`,
         toolingSha: plan.workflowSha,
         workflowRef: plan.workflowRef,
       },
       runId: dispatches[0][2],
       runAttempt: dispatches[0][3],
-    });
-  }
-  await checkArtifactProducers(producers, client);
-  return producers;
+    },
+  ];
 }
 
 export async function preflightContinuation(
@@ -496,7 +525,7 @@ export async function preflightContinuation(
       throw new Error("continuation differs from the authenticated original publication plan");
     }
   }
-  const artifactProducers = await originalArtifactProducers(
+  const artifactProducers = await npmRecoveryProducers(
     plan,
     parentJobs,
     client,
@@ -896,14 +925,19 @@ export async function continueFailed(plan, rootRunId, client, options = {}) {
     client,
     client.repository ?? DEFAULT_REPOSITORY,
   );
-  let status = await inspectContinuation(plan, client);
+  // Do not replace any observed child attempt while the original diagnostic
+  // drain is still collecting it. A terminal parent closes that collection.
+  if ((await client.getRun(rootRunId)).status !== "completed") {
+    await waitForTerminal([rootRunId], client, operationDeadline);
+  }
+  let status = await inspectRecovery(plan, artifactProducers, client);
   if (status.active.length > 0) {
     await waitForTerminal(
       status.active.map((child) => child.runId),
       client,
       operationDeadline,
     );
-    status = await inspectContinuation(plan, client);
+    status = await inspectRecovery(plan, artifactProducers, client);
   }
   if (status.failed.length > 0) {
     if (options.dryRun) {
@@ -913,6 +947,22 @@ export async function continueFailed(plan, rootRunId, client, options = {}) {
       await Promise.all(
         status.failed.map(async (child) => {
           const run = await client.getRun(child.runId);
+          const producer = artifactProducers.find((entry) => entry.runId === child.runId);
+          if (producer) {
+            validateArtifactProducerRun(
+              producer.request,
+              run,
+              producer.runId,
+              child.effectiveRunAttempt,
+              { allowFailure: true },
+            );
+          } else {
+            assertChildRunIdentity(
+              selectedChildren(plan).find((entry) => entry.runId === child.runId),
+              run,
+              client.repository ?? DEFAULT_REPOSITORY,
+            );
+          }
           const terminal = exactTerminalRunState(run, child.runId);
           if (
             terminal.runAttempt !== child.effectiveRunAttempt ||
@@ -927,7 +977,7 @@ export async function continueFailed(plan, rootRunId, client, options = {}) {
     const minimumAttempts = new Map(
       status.failed.map((child) => [child.runId, child.effectiveRunAttempt + 1]),
     );
-    await checkArtifactProducers(artifactProducers, client);
+    await recheckArtifactProducers(artifactProducers, status, client);
     remainingOperationTime(operationDeadline);
     const mutationResults = await Promise.allSettled(
       status.failed.map((child) => client.rerunFailed(child.runId)),
@@ -946,7 +996,7 @@ export async function continueFailed(plan, rootRunId, client, options = {}) {
       operationDeadline,
       minimumAttempts,
     );
-    status = await inspectContinuation(plan, client);
+    status = await inspectRecovery(plan, artifactProducers, client);
     for (const child of status.children) {
       const expectedAttempt = ownedAttempts.get(child.runId);
       if (expectedAttempt !== undefined) {
@@ -998,7 +1048,7 @@ export async function continueFailed(plan, rootRunId, client, options = {}) {
   if (!parentSealed && (completedParent.conclusion !== "success" || childEvidenceAdvanced)) {
     const terminalParent = exactTerminalRunState(completedParent, rootRunId);
     const minimumAttempts = new Map([[rootRunId, terminalParent.runAttempt + 1]]);
-    await checkArtifactProducers(artifactProducers, client);
+    await recheckArtifactProducers(artifactProducers, status, client);
     remainingOperationTime(operationDeadline);
     const mutationResults = await Promise.allSettled([client.rerunParent(rootRunId)]);
     await reconcileAttemptStarts(

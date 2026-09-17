@@ -496,36 +496,72 @@ describe("FRV continuation preflight", () => {
     return { client, producer, logs, plan: plan([selected]) };
   }
 
-  it.each(["npm", "docker", "candidate"])(
-    "rejects a failed original %s producer before rerunning green diagnostics",
-    async (stage) => {
-      const fixture = artifactFixture(stage);
-      fixture.producer.conclusion = "failure";
-      await expect(continueFailed(fixture.plan, "77", fixture.client)).rejects.toThrow(
-        "producer failed",
-      );
+  it("retries only failed npm producer jobs, preserves green diagnostics, and verifies the parent", async () => {
+    const fixture = artifactFixture();
+    fixture.producer.conclusion = "failure";
+    let parentAttempt = 1;
+    const read = fixture.client.getRun.getMockImplementation()!;
+    fixture.client.getRun.mockImplementation(async (id) =>
+      id === "77"
+        ? rootRun(parentAttempt, parentAttempt === 1 ? "failure" : "success")
+        : structuredClone(await read(id)),
+    );
+    fixture.client.rerunFailed.mockImplementation(async (id: string) => {
+      expect(id).toBe("81");
+      fixture.producer.run_attempt = 2;
+      fixture.producer.conclusion = "success";
+    });
+    fixture.client.rerunParent.mockImplementation(async () => {
+      parentAttempt = 2;
+    });
+    const verify = vi.fn();
+    await expect(
+      continueFailed(fixture.plan, "77", { ...fixture.client, verify }),
+    ).resolves.toMatchObject({ action: "reran-parent" });
+    expect(fixture.client.rerunFailed).toHaveBeenCalledExactlyOnceWith("81");
+    expect(fixture.client.rerunParent).toHaveBeenCalledExactlyOnceWith("77");
+    expect(verify).toHaveBeenCalledWith("77", fixture.plan, expect.any(Number), {
+      "77": 2,
+      "81": 2,
+      "101": 1,
+    });
+  });
+
+  it.each(["failure", "cancelled", "timed_out"])(
+    "offers failed-job producer recovery for %s without mutating during dry run",
+    async (conclusion) => {
+      const fixture = artifactFixture();
+      fixture.producer.conclusion = conclusion;
+      await expect(
+        continueFailed(fixture.plan, "77", fixture.client, { dryRun: true }),
+      ).resolves.toMatchObject({
+        action: "would-rerun",
+        status: { failed: [expect.objectContaining({ key: "artifact:npm", runId: "81" })] },
+      });
       expect(fixture.client.rerunFailed).not.toHaveBeenCalled();
       expect(fixture.client.rerunParent).not.toHaveBeenCalled();
     },
   );
 
+  it("adopts an already successful newer producer attempt without rerunning it", async () => {
+    const fixture = artifactFixture();
+    fixture.producer.run_attempt = 2;
+    await expect(
+      continueFailed(fixture.plan, "77", fixture.client, { dryRun: true }),
+    ).resolves.toMatchObject({ action: "would-rerun-parent" });
+    expect(fixture.client.rerunFailed).not.toHaveBeenCalled();
+  });
+
   it.each([
-    ["cancelled", { conclusion: "cancelled" }, "producer failed"],
-    ["timed out", { conclusion: "timed_out" }, "producer failed"],
-    ["rerun", { run_attempt: 2 }, "identity changed"],
-    ["different tooling", { head_sha: "c".repeat(40) }, "identity changed"],
-    [
-      "different dispatch",
-      { display_title: "Full Release Artifacts unrelated" },
-      "identity changed",
-    ],
-    ["active", { status: "in_progress", conclusion: null }, "still active"],
-  ])("rejects %s producer evidence without mutations", async (_label, update, error) => {
+    ["different tooling", { head_sha: "c".repeat(40) }],
+    ["different dispatch", { display_title: "Full Release Artifacts unrelated" }],
+    ["regressed attempt", { run_attempt: 0 }],
+  ])("rejects %s producer evidence without mutations", async (_label, update) => {
     const fixture = artifactFixture();
     Object.assign(fixture.producer, update);
     await expect(
       continueFailed(fixture.plan, "77", fixture.client, { dryRun: true }),
-    ).rejects.toThrow(error);
+    ).rejects.toThrow();
     expect(fixture.client.rerunFailed).not.toHaveBeenCalled();
     expect(fixture.client.rerunParent).not.toHaveBeenCalled();
   });
@@ -564,7 +600,7 @@ describe("FRV continuation preflight", () => {
     const read = fixture.client.getRun.getMockImplementation()!;
     fixture.client.getRun.mockImplementation(async (id) => {
       if (id === "77") {
-        fixture.producer.run_attempt = 2;
+        fixture.producer.head_sha = "c".repeat(40);
       }
       return read(id);
     });
@@ -581,7 +617,7 @@ describe("FRV continuation preflight", () => {
     fixture.client.getRun.mockImplementation(async (id) => {
       if (id === "101") {
         if (++childReads === 2) {
-          fixture.producer.run_attempt = 2;
+          fixture.producer.head_sha = "c".repeat(40);
         }
         return runFor(child("normalCi", "101"), 1, "failure");
       }
@@ -1060,6 +1096,7 @@ describe("FRV same-parent recovery", () => {
     const scenario = rerunScenario({
       childSource: [1, "success"],
       parentBefore: [
+        [1, "failure"],
         [1, "failure"],
         [2, null],
       ],
