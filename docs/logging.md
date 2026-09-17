@@ -168,6 +168,11 @@ Console logs are **TTY-aware** and formatted for readability:
 
 Console formatting is controlled by `logging.consoleStyle`.
 
+SQLite worker diagnostics use stderr. After the final backend closes normally,
+the worker gives pending console output up to five seconds to drain before
+acknowledging close. This is best effort; forced worker termination can still
+discard pending diagnostics.
+
 ### Gateway WebSocket logs
 
 `openclaw gateway` also has WebSocket protocol logging for RPC traffic:
@@ -323,18 +328,25 @@ logging. A missing summary does not prove preparation completed without delay.
 ### Session catalog provider waits
 
 With process diagnostics enabled, the `gateway/session-catalog` logger records
-`slow session catalog provider list` for attempts that settle after at least one second. It separates
-`admissionWaitMs`, `providerElapsedMs`, and `completionDelayMs`: waiting for
-catalog provider admission, elapsed time inside the provider call, and the
-continuation after settlement and queue release. These are elapsed intervals,
-not CPU measurements. The Gateway's earlier operator-start queue is separate.
+`slow session catalog provider list` for attempts that settle after at least one second.
+`admissionWaitMs` records initial provider admission waiting. `providerElapsedMs`
+spans the first provider invocation through final logical settlement, including
+waiting between steps of a stepped fill. `completionDelayMs` begins after final
+settlement and queue release. The Gateway's earlier operator-start queue is separate.
+
+`stepCount` counts admitted callbacks. `admittedStepMs` sums their elapsed time
+through actual settlement, including authority checks, factory work, and I/O
+waits. `continuationWaitMs` measures queue waiting after an incomplete step until
+resumption or cancellation; it excludes initial admission. These fields are not
+an exact disjoint partition and do not measure CPU time.
 
 `admitted` and `providerInvoked` distinguish an attempt that never entered the
 queue's active slot from one that called the provider. Unreached intervals are
 omitted. `outcome` reports the attempt's resolution or rejection;
 `signalAborted` reports the signal independently and does not identify an error's
-cause or prove that native work stopped. Provider slots remain owned until their
-returned promises settle, including after cancellation.
+cause or prove that native work stopped. An active provider call or `next()` step
+keeps its slot until its actual promise settles, including after cancellation.
+An inert continuation queues with other callers between steps.
 
 `providerIdHash` hashes provider IDs of at most 256 UTF-16 units; longer IDs omit
 the field. It supports correlation, not anonymization or authorization. Host
@@ -509,6 +521,20 @@ who owns that queue at the sampled instant, not every predecessor responsible
 for the entire wait or which work consumed CPU. These are ordinary performance
 logs. They do not use or change [audit identity](/gateway/audit), decisions,
 retention, principal attribution or admission authority.
+
+### Worker pool capacity
+
+Gateway `status` responses include `workerPools.transcriptReconciliation` and
+`workerPools.modelCatalog`. Each reports `maxWorkers`, `workers`, `workersCreated`,
+`activeTasks`, and `pendingTasks` from the pool owner. Both Gateway pools admit one
+worker at a time. Pending tasks include queued and executing work; creation counts
+belong to the current pool lifetime. The startup trace's `memory.ready` record also
+includes these pool counts.
+
+These figures describe worker and task counts. Process RSS includes every isolate
+and native allocation; Node's process heap flags can override a worker's requested
+heap limits. Use constructor or per-isolate measurements when attributing memory
+growth to a particular worker.
 
 ### Slow worktree cleanup
 

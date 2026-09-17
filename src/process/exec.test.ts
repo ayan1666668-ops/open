@@ -1,8 +1,7 @@
 // Exec tests cover command execution, output capture, and cancellation behavior.
 import type { ChildProcess } from "node:child_process";
 import { EventEmitter, once } from "node:events";
-import { existsSync } from "node:fs";
-import fs from "node:fs/promises";
+import { closeSync, existsSync, openSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -19,6 +18,7 @@ import {
   runCommandBuffered,
   runCommandWithTimeout,
   runExec,
+  runUtf8CommandWithTimeout,
   shouldSpawnWithShell,
 } from "./exec.js";
 
@@ -360,7 +360,7 @@ describe("runCommandWithTimeout", () => {
     ["long unterminated", "x".repeat(10_000), "x".repeat(24)],
     ["UTF-8 boundary", `😀${"x".repeat(22)}`, "x".repeat(22)],
   ])("bounds preserved %s line tails", async (_name, input, expected) => {
-    const result = await runCommandWithTimeout(
+    const result = await runUtf8CommandWithTimeout(
       [process.execPath, "-e", "process.stdin.pipe(process.stdout)"],
       {
         input,
@@ -520,7 +520,7 @@ describe("runCommandWithTimeout", () => {
   ] as const)(
     "preserves truncated UTF-8 %s output (%#)",
     async (outputCapture, input, maxOutputBytes, expected, truncatedBytes) => {
-      const result = await runCommandWithTimeout(
+      const result = await runUtf8CommandWithTimeout(
         [process.execPath, "-e", "process.stdin.pipe(process.stdout)"],
         {
           input,
@@ -538,7 +538,7 @@ describe("runCommandWithTimeout", () => {
   it.each([1, 2, 3])(
     "discards an entirely partial UTF-8 head at %i bytes",
     async (maxOutputBytes) => {
-      const result = await runCommandWithTimeout(
+      const result = await runUtf8CommandWithTimeout(
         [process.execPath, "-e", "process.stdout.write('😀')"],
         {
           maxOutputBytes,
@@ -848,17 +848,19 @@ describe("runExec", () => {
   });
 
   it("supports an inherited file descriptor as stdin", async () => {
-    const handle = await fs.open(fileURLToPath(import.meta.url), "r");
+    const descriptor = openSync(fileURLToPath(import.meta.url), "r");
+    let running: ReturnType<typeof runExec>;
     try {
-      const { stdout } = await runExec(
-        process.execPath,
-        ["-e", "process.stdin.pipe(process.stdout)"],
-        { stdinFileDescriptor: handle.fd, timeoutMs: 3_000 },
-      );
-      expect(stdout).toContain("// Exec tests cover command execution");
+      running = runExec(process.execPath, ["-e", "process.stdin.pipe(process.stdout)"], {
+        stdinFileDescriptor: descriptor,
+        timeoutMs: 3_000,
+      });
     } finally {
-      await handle.close();
+      // The child must own stdin before control returns to the caller.
+      closeSync(descriptor);
     }
+    const { stdout } = await running;
+    expect(stdout).toContain("// Exec tests cover command execution");
   });
 
   it("can keep sensitive output out of verbose logs", async () => {
@@ -917,6 +919,29 @@ describe("attachChildProcessBridge", () => {
 });
 
 describe("child input admission", () => {
+  it.each([0, 1])("preserves exit %s when the admitted child closes stdin early", async (code) => {
+    const beforeInput = vi.fn();
+    const result = await runCommandWithTimeout(
+      [process.execPath, "-e", `process.stderr.write('receiver result');process.exitCode=${code}`],
+      {
+        // Exceed the pipe capacity so the child exits with input still pending.
+        input: "x".repeat(1024 * 1024),
+        beforeInput,
+        timeoutMs: 5_000,
+        killProcessTree: true,
+        requireProcessTreeExtinction: true,
+      },
+    );
+    expect(beforeInput).toHaveBeenCalledOnce();
+    expect(result).toMatchObject({
+      code,
+      stderr: "receiver result",
+      termination: "exit",
+      signal: null,
+      cleanup: "normal",
+    });
+  });
+
   it("publishes input only after binding the actual spawned PID and argv", async () => {
     let admittedPid: number | undefined;
     let admittedArgv: readonly string[] | undefined;

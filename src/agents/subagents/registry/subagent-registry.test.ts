@@ -102,18 +102,6 @@ function findRecordCallArg(
   throw new Error(`expected ${label}`);
 }
 
-async function expectPathMissing(targetPath: string): Promise<void> {
-  // Cleanup assertions need ENOENT proof; fs.access success means the artifact
-  // directory survived when lifecycle cleanup should have removed it.
-  try {
-    await fs.access(targetPath);
-  } catch (error) {
-    expect((error as NodeJS.ErrnoException).code).toBe("ENOENT");
-    return;
-  }
-  throw new Error(`expected ${targetPath} to be missing`);
-}
-
 const mocks = vi.hoisted(() => ({
   callGateway:
     vi.fn<
@@ -261,6 +249,7 @@ vi.mock("../../../config/sessions.js", () => ({
 }));
 
 vi.mock("../../../config/sessions/session-accessor.js", () => ({
+  findTranscriptEvent: vi.fn(async () => undefined),
   listSessionEntriesCore: mocks.listSessionEntriesCore,
   listSessionEntriesReadOnly: mocks.listSessionEntriesCore,
   loadSessionEntry: mocks.loadSessionEntry,
@@ -277,6 +266,7 @@ vi.mock("./subagent-registry-state.js", () => ({
   getSubagentRunsSnapshotForChildSession: mocks.getSubagentRunsSnapshotForChildSession,
   getSubagentRunsSnapshotForController: mocks.getSubagentRunsSnapshotForController,
   getSubagentRunsSnapshotForRead: mocks.getSubagentRunsSnapshotForRead,
+  getSubagentRunsSnapshotForSessions: mocks.getSubagentRunsSnapshotForRead,
   getSubagentMaintenanceRunsSnapshotForRead: mocks.getSubagentRunsSnapshotForRead,
   persistSubagentRunsToDisk: mocks.persistSubagentRunsToDisk,
   persistSubagentRunsToDiskOrThrow: mocks.persistSubagentRunsToDiskOrThrow,
@@ -976,7 +966,7 @@ describe("subagent registry seam flow", () => {
     });
   });
 
-  it("keeps collector records when attachment cleanup cannot prove a safe path", async () => {
+  it("retires collector records without traversing legacy attachment paths", async () => {
     const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-swarm-archive-"));
     const attachmentsRootDir = path.join(tempRoot, "root");
     const attachmentsDir = path.join(tempRoot, "outside");
@@ -999,7 +989,7 @@ describe("subagent registry seam flow", () => {
 
       await mod.testing.sweepOnceForTests();
 
-      expect(mod.getSubagentRunByRunId("run-collector-unsafe-attachments")).toBeDefined();
+      expect(mod.getSubagentRunByRunId("run-collector-unsafe-attachments")).toBeUndefined();
       await expect(fs.access(attachmentsDir)).resolves.toBeUndefined();
     } finally {
       await fs.rm(tempRoot, { recursive: true, force: true });
@@ -5367,7 +5357,7 @@ describe("subagent registry seam flow", () => {
       ),
     ).toBe(false);
     expect(mocks.removeInternalSessionEffectsSession).toHaveBeenCalledWith(oldTranscriptTarget);
-    await expectPathMissing(attachmentsDir);
+    await expect(fs.access(attachmentsDir)).resolves.toBeUndefined();
     expect(
       mocks.callGateway.mock.calls.some(
         ([request]) => (request as { method?: string } | undefined)?.method === "sessions.delete",
@@ -6852,7 +6842,7 @@ describe("subagent registry seam flow", () => {
     );
   });
 
-  it("removes attachments for killed delete-mode runs", async () => {
+  it("does not traverse legacy attachment paths for killed delete-mode runs", async () => {
     const attachmentsRootDir = await fs.mkdtemp(
       path.join(os.tmpdir(), "openclaw-kill-attachments-"),
     );
@@ -6875,9 +6865,7 @@ describe("subagent registry seam flow", () => {
     });
 
     expect(updated).toBe(1);
-    await waitForFast(async () => {
-      await expectPathMissing(attachmentsDir);
-    });
+    await expect(fs.access(attachmentsDir)).resolves.toBeUndefined();
   });
 
   it("announces readable failure when an interrupted run is finalized", async () => {
@@ -7089,7 +7077,7 @@ describe("subagent registry seam flow", () => {
     },
   );
 
-  it("removes attachments for released delete-mode runs", async () => {
+  it("does not traverse legacy attachment paths for released delete-mode runs", async () => {
     const attachmentsRootDir = await fs.mkdtemp(
       path.join(os.tmpdir(), "openclaw-release-attachments-"),
     );
@@ -7117,9 +7105,7 @@ describe("subagent registry seam flow", () => {
 
     mod.releaseSubagentRun("run-release-delete");
 
-    await waitForFast(async () => {
-      await expectPathMissing(attachmentsDir);
-    });
+    await expect(fs.access(attachmentsDir)).resolves.toBeUndefined();
     await waitForFast(() => {
       expect(mocks.onSubagentEnded).toHaveBeenCalledWith({
         childSessionKey: "agent:main:subagent:release-delete",

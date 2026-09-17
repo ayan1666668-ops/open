@@ -75,6 +75,9 @@ export type SessionEntryReadScope = SessionAccessScope & {
   projection?: "full" | "list";
 };
 
+/** Address of the physical store admitted by an entry read; never retains its handle. */
+export type SessionEntryReadSource = Readonly<{ agentId: string; path: string }>;
+
 export type SessionEntryListScope = Partial<Omit<SessionEntryReadScope, "sessionKey">> & {
   /** Select exact persisted keys after validating the complete listing snapshot. */
   sessionKeys?: readonly string[];
@@ -167,6 +170,8 @@ export type SessionTranscriptReadScope = Omit<SessionTranscriptRuntimeScope, "se
   sessionKey?: string;
   /** Entry already loaded by hot callers; avoids rereading the session store. */
   sessionEntry?: Partial<Pick<SessionEntry, "sessionId">>;
+  /** Byte budget enforced via SQL before parsing transcript event rows. */
+  maxEventBytes?: number;
 };
 
 export interface SessionTranscriptReadTarget {

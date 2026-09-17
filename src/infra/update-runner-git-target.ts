@@ -1,6 +1,8 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { asNullableRecord } from "@openclaw/normalization-core/record-coerce";
+import { normalizeNullableString } from "@openclaw/normalization-core/string-coerce";
 import { normalizeStringEntries } from "@openclaw/normalization-core/string-normalization";
 import {
   parsePackageOpenClawSchemaVersions,
@@ -16,6 +18,71 @@ import type {
   UpdateRunnerOptions,
   UpdateStepResult,
 } from "./update-runner-types.js";
+
+const UNVERIFIED_GIT_CORRUPTION =
+  /(?:in the commit graph file but not in the object database|probably due to repo corruption)/iu;
+const VERIFIED_GIT_CORRUPTION =
+  /(?:broken link from|dangling (?:commit|tree|blob)|hash mismatch|invalid sha1 pointer|missing (?:blob|commit|tree)|object corrupt)/iu;
+
+/** Replace Git's unverified corruption guess when promised objects may be intentionally absent. */
+export async function classifyPartialCloneGitFailure(params: {
+  result: Awaited<ReturnType<CommandRunner>>;
+  root: string;
+  runCommand: CommandRunner;
+  timeoutMs: number;
+}): Promise<Awaited<ReturnType<CommandRunner>>> {
+  if (params.result.code === 0 || !UNVERIFIED_GIT_CORRUPTION.test(params.result.stderr)) {
+    return params.result;
+  }
+  const promisorConfig = await params
+    .runCommand(
+      [
+        "git",
+        "-C",
+        params.root,
+        "config",
+        "--includes",
+        "--get-regexp",
+        "^remote\\..*\\.promisor$",
+      ],
+      { cwd: params.root, timeoutMs: params.timeoutMs },
+    )
+    .catch(() => undefined);
+  if (
+    promisorConfig?.code === 0 &&
+    promisorConfig.stdout.split("\n").some((line) => /\s(?:true|yes|on|1)$/iu.test(line.trim()))
+  ) {
+    return {
+      ...params.result,
+      stderr:
+        "Git could not resolve one or more promised objects in this partial clone. " +
+        "This does not by itself indicate repository corruption. Bulk-fetch the missing object IDs " +
+        "from the configured promisor remote, then retry the update (for example: " +
+        "git rev-list --objects --missing=print --all | sed -n 's/^?//p' | " +
+        'git fetch "<promisor-remote>" --stdin).',
+    };
+  }
+  const fsck = await params
+    .runCommand(
+      ["git", "--no-lazy-fetch", "-C", params.root, "fsck", "--connectivity-only", "--no-dangling"],
+      { cwd: params.root, timeoutMs: params.timeoutMs },
+    )
+    .catch(() => undefined);
+  const fsckOutput = `${fsck?.stdout ?? ""}\n${fsck?.stderr ?? ""}`.trim();
+  if (fsck?.code !== 0 && VERIFIED_GIT_CORRUPTION.test(fsckOutput)) {
+    return {
+      ...params.result,
+      stderr: `Git verified repository corruption with git fsck: ${fsckOutput}`,
+    };
+  }
+  return {
+    ...params.result,
+    stderr:
+      "Git reported an object-database inconsistency, but OpenClaw did not verify repository " +
+      "corruption with git fsck. Retry the update; if it recurs, inspect the repository with " +
+      "git fsck before attempting repair.",
+  };
+}
 
 function quoteGitConfig(value: string): string {
   return `"${value.replace(/\\/gu, "\\\\").replace(/"/gu, '\\"').replace(/\n/gu, "\\n").replace(/\t/gu, "\\t").replaceAll("\b", "\\b")}"`;
@@ -126,7 +193,7 @@ export async function withGitTargetInspectionRoot<T>(
 }
 
 type GitTargetSchemaMetadata =
-  | { status: "ok"; schemaVersions?: OpenClawSchemaVersions }
+  | { status: "ok"; version?: string; schemaVersions?: OpenClawSchemaVersions }
   | { status: "unreadable"; reason: string };
 
 export async function readGitTargetSchemaVersions(params: {
@@ -151,8 +218,14 @@ export async function readGitTargetSchemaVersions(params: {
     };
   }
   try {
-    const schemaVersions = parsePackageOpenClawSchemaVersions(JSON.parse(result.stdout) as unknown);
-    return { status: "ok", ...(schemaVersions ? { schemaVersions } : {}) };
+    const manifest: unknown = JSON.parse(result.stdout);
+    const schemaVersions = parsePackageOpenClawSchemaVersions(manifest);
+    const version = normalizeNullableString(asNullableRecord(manifest)?.version);
+    return {
+      status: "ok",
+      ...(version ? { version } : {}),
+      ...(schemaVersions ? { schemaVersions } : {}),
+    };
   } catch (error) {
     return { status: "unreadable", reason: `target package.json unparseable: ${String(error)}` };
   }
@@ -169,13 +242,18 @@ export async function prepareGitMutation(params: {
   allowGatewayActivation?: boolean;
 }> {
   const target = await readGitTargetSchemaVersions(params);
-  const preparation = await params.beforeGitMutation?.(
-    target.status === "ok"
-      ? target.schemaVersions
-        ? { schemaVersions: target.schemaVersions }
-        : {}
-      : { metadataUnreadable: target.reason },
-  );
+  const sha = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/iu.test(params.revision)
+    ? params.revision.toLowerCase()
+    : undefined;
+  const preparation = await params.beforeGitMutation?.({
+    ...(sha ? { sha } : {}),
+    ...(target.status === "ok"
+      ? {
+          ...(target.version ? { version: target.version } : {}),
+          ...(target.schemaVersions ? { schemaVersions: target.schemaVersions } : {}),
+        }
+      : { metadataUnreadable: target.reason }),
+  });
   return preparation ?? {};
 }
 
