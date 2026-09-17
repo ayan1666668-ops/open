@@ -3,8 +3,12 @@
 // doubles are the external RealtimeVoiceProviderPlugin and its RealtimeVoiceBridge; manager
 // spies are call-through observers, and persistence uses the production SQLite state store.
 import crypto from "node:crypto";
-import { createPluginStateSyncKeyedStore } from "openclaw/plugin-sdk/plugin-state-store-runtime";
-import { closeOpenClawStateDatabaseForTest } from "openclaw/plugin-sdk/plugin-state-test-runtime";
+import type { OpenKeyedStoreOptions } from "openclaw/plugin-sdk/plugin-state-runtime";
+import {
+  closeOpenClawStateDatabaseForTest,
+  createPluginStateKeyedStoreForTests,
+  resetPluginStateStoreForTests,
+} from "openclaw/plugin-sdk/plugin-state-test-runtime";
 import type {
   RealtimeVoiceBridge,
   RealtimeVoiceProviderPlugin,
@@ -32,12 +36,21 @@ const REDACTED_CALL_SID = "CA…redacted";
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 
 function installProductionStateStore(): void {
-  const state = {
+  // Earlier suite files close the shared state DB and leave the module-level
+  // singleton stale; reset it so this test opens a fresh handle instead of
+  // failing with PLUGIN_STATE_OPEN_FAILED.
+  resetPluginStateStoreForTests();
+  const state: VoiceCallStateRuntime["state"] = {
     resolveStateDir,
-    openSyncKeyedStore: <T>(
-      options: Parameters<VoiceCallStateRuntime["state"]["openSyncKeyedStore"]>[0],
-    ) => createPluginStateSyncKeyedStore<T>("voice-call", options),
-  } as VoiceCallStateRuntime["state"];
+    openKeyedStore: (options: OpenKeyedStoreOptions) =>
+      createPluginStateKeyedStoreForTests("voice-call", options),
+    openChannelIngressQueue: (() => {
+      throw new Error("openChannelIngressQueue is not used by signed-call boundary tests");
+    }) as never,
+    openChannelIngressDrain: (() => {
+      throw new Error("openChannelIngressDrain is not used by signed-call boundary tests");
+    }) as never,
+  };
   setVoiceCallStateRuntime({ state });
 }
 
@@ -284,7 +297,7 @@ async function createSignedBoundaryHarness() {
       }
       await server.stop();
       for (const call of manager.getActiveCalls()) {
-        manager.processEvent({
+        await manager.processEvent({
           id: `boundary-cleanup-${call.callId}`,
           type: "call.ended",
           callId: call.callId,

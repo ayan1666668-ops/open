@@ -1,13 +1,11 @@
+import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import { stripInternalMetadataForDisplay } from "../auto-reply/reply/display-text-sanitize.js";
 import { isSilentReplyText, SILENT_REPLY_TOKEN } from "../auto-reply/tokens.js";
+import { normalizeAgentRunRouteChange } from "./agent-run-terminal-receipt.js";
+import type { AgentRunTerminalReplySnapshot } from "./agent-run-terminal-reply.types.js";
 
 const AGENT_RUN_TERMINAL_REPLY_MAX_CHARS = 4_096;
-
-export type AgentRunTerminalReplySnapshot =
-  | { disposition: "visible"; text: string }
-  | { disposition: "silent" }
-  | { disposition: "empty"; code?: "message-tool-not-called" };
 
 function isMessageToolNotCalledTerminalReply(
   reply: AgentRunTerminalReplySnapshot | undefined,
@@ -44,15 +42,15 @@ export function buildAgentRunTerminalReplySnapshot(params: {
 export function normalizeAgentRunTerminalReplySnapshot(
   value: unknown,
 ): AgentRunTerminalReplySnapshot | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+  if (!isRecord(value)) {
     return undefined;
   }
-  const disposition = (value as { disposition?: unknown }).disposition;
+  const disposition = value.disposition;
   if (disposition === "silent") {
     return { disposition };
   }
   if (disposition === "empty") {
-    if ((value as { code?: unknown }).code === "message-tool-not-called") {
+    if (value.code === "message-tool-not-called") {
       return { disposition, code: "message-tool-not-called" };
     }
     return { disposition };
@@ -60,12 +58,15 @@ export function normalizeAgentRunTerminalReplySnapshot(
   if (disposition !== "visible") {
     return undefined;
   }
-  const rawText = (value as { text?: unknown }).text;
+  const rawText = value.text;
   if (typeof rawText !== "string") {
     return undefined;
   }
   const text = sanitizeAgentRunTerminalReplyText(rawText);
-  return text ? { disposition: "visible", text } : { disposition: "empty" };
+  const modelRouteChange = normalizeAgentRunRouteChange(value.modelRouteChange);
+  return text
+    ? { disposition: "visible", text, ...(modelRouteChange ? { modelRouteChange } : {}) }
+    : { disposition: "empty" };
 }
 
 /** Reply evidence merges independently from sticky timeout/cancellation precedence. */

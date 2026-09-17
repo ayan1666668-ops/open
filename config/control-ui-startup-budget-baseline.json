@@ -1,5 +1,5 @@
 {
-  "startupJsGzipBytes": 348668,
-  "reason": "Model provider defaults consolidation, autosave, and contextual help add 235 B (0.07%) over the reconciled 348433 B main baseline; fixed 358400 B cap and existing allowances retained",
-  "updatedAt": "2026-09-01"
+  "startupJsGzipBytes": 362706,
+  "reason": "Maintainer-approved correction in #149291 for the existing startup bundle: exact base 7b6094ec7b7d and CI merge b524940307fc emitted byte-identical Control UI output at 362706 B with Vite 8.2.2/Pako 3.0.1 on Node 24.21.0. CI run 35173887678 also measured 362706 B. The 512 B growth and 64 B build variance allowances remain unchanged.",
+  "updatedAt": "2026-09-17"
 }
