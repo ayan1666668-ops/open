@@ -31,7 +31,7 @@ const LEADING_CONTEXT_PATTERN = new RegExp(
 );
 
 const COMPLETION_RESULT_CLAUSE_PATTERN =
-  /^(?:(?:(?:i|we)(?:\s+(?:have\s+)?|(?:'|\u2019)ve\s+)|(?:i(?:\s+am|(?:'|\u2019)m)|we(?:\s+are|(?:'|\u2019)re))\s+))?(?:done|completed|finished|fixed|patched|resolved|deployed|landed|merged|implemented|confirmed)\b|(?:^|,\s*|\band\s+)(?:(?:(?:i|we)(?:\s+(?:have\s+)?|(?:'|\u2019)ve\s+)|(?:i(?:\s+am|(?:'|\u2019)m)|we(?:\s+are|(?:'|\u2019)re))\s+)(?:done|completed|finished|fixed|patched|resolved|deployed|landed|merged|implemented|confirmed)\b|(?:(?:all|the)\s+)?(?:\d+\s+)?(?:(?!(?:why|whether|if|unless|when|once|after|will|would|could|should|might|may)\b)[\w-]+\s+){0,3}(?:tests?|build|lint|checks?|syntax)\s+(?:(?:have|has)\s+)?(?:passed|succeeded|green)\b)/gi;
+  /^(?:(?:(?:i|we)(?:\s+(?:have\s+)?|(?:'|\u2019)ve\s+)|(?:i(?:\s+am|(?:'|\u2019)m)|we(?:\s+are|(?:'|\u2019)re))\s+))?(?:done|completed|finished|fixed|patched|resolved|deployed|landed|merged|implemented|confirmed)\b|(?:^|,\s*|\band\s+)(?:(?:(?:i|we)(?:\s+(?:have\s+)?|(?:'|\u2019)ve\s+)|(?:i(?:\s+am|(?:'|\u2019)m)|we(?:\s+are|(?:'|\u2019)re))\s+)(?:done|completed|finished|fixed|patched|resolved|deployed|landed|merged|implemented|confirmed)\b|(?:,\s*|\band\s+|^)(?<testSubject>(?:(?:all|the)\s+)?(?:\d+\s+)?(?:(?!(?:and|but|or|so|then|why|whether|if|unless|when|once|after|will|would|could|should|might|may)\b)[\w-]+\s+){0,3}(?:tests?|build|lint|checks?|syntax))\s+(?<testAuxiliary>(?:have|has)\s+)?(?:passed|succeeded|green)\b)/gi;
 
 const CONDITIONAL_PROGRESS_PATTERN = /\b(?:whether|if|unless|once|when|after|as\s+soon\s+as)\b/i;
 const CONDITION_CLAUSE_PREFIX = String.raw`(?:^|[,;:]\s*|\b(?:and|but|or|so|then)\s+)(?:(?:and|but|or|so|then)\s+)*`;
@@ -49,10 +49,14 @@ const ONGOING_NARRATION_PATTERN =
   /^(?:i(?:\s+am|(?:'|\u2019)m)|we(?:\s+are|(?:'|\u2019)re))\s+(?:(?:[a-z]+ly|now)\s+)*[a-z]+ing\b/i;
 // In inherited narration, an arbitrary bare word may be an action, not a
 // subject ("install selected dependencies"). Require a grammatical subject
-// marker for simple-past noun candidates; finite auxiliaries establish their
-// own clause without this restriction.
+// marker for simple-past noun candidates. Known verification nouns and bare
+// single-word subjects with finite auxiliaries can also stand independently.
 const EXPLICIT_RESULT_SUBJECT_PATTERN =
   /^(?:i|we|you|he|she|it|they|the|a|an|all|both|each|every|some|any|no|my|our|your|his|her|its|their|this|that|these|those|\d+)\b|^[\w-]+(?:'|\u2019)s\s/i;
+// These established verification nouns also stand alone without a determiner.
+// Arbitrary leading words cannot turn a verification object into its subject.
+const BARE_VERIFICATION_SUBJECT_PATTERN =
+  /^(?:(?:unit|integration|regression|smoke|e2e|end-to-end)\s+)?(?:tests?|build|lint|checks?|syntax)$/i;
 const COMPLETION_HEADING_PATTERN =
   /^(?:(?:result|results|report|summary|outcome|conclusion|findings?|verification|status)\s*:\s*)+/i;
 
@@ -72,7 +76,7 @@ const COMPLETION_STATE_CLAUSE_PATTERN = new RegExp(
   "gi",
 );
 const PERFECT_RESULT_CLAUSE_PATTERN = new RegExp(
-  String.raw`(?:^|,\s*|\band\s+)(?:${RESULT_SUBJECT}\s+${RESULT_ADVERBS}(?:has|have)|(?:i|we)(?:'|\u2019)ve)\s+${RESULT_ADVERBS}(?:${PAST_RESULT_VERB}|${PERFECT_RESULT_VERB}|done)\b`,
+  String.raw`(?:^|,\s*|\band\s+)(?:(?<perfectSubject>${RESULT_SUBJECT})\s+${RESULT_ADVERBS}(?:has|have)|(?:i|we)(?:'|\u2019)ve)\s+${RESULT_ADVERBS}(?:${PAST_RESULT_VERB}|${PERFECT_RESULT_VERB}|done)\b`,
   "gi",
 );
 const COORDINATED_RESULT_CLAUSE_PATTERN = new RegExp(
@@ -185,15 +189,37 @@ function isProgressOnlyCompletionText(value: string): boolean {
         PERFECT_RESULT_CLAUSE_PATTERN,
         COORDINATED_RESULT_CLAUSE_PATTERN,
       ].flatMap((pattern) =>
-        [...resultText.matchAll(pattern)].map((result) => ({
-          result,
-          elidedSubject: pattern === COORDINATED_RESULT_CLAUSE_PATTERN,
-          ambiguousSubject:
-            pattern === COMPLETION_STATE_CLAUSE_PATTERN &&
-            !result.groups?.perfectAuxiliary &&
-            !result.groups?.stateAuxiliary &&
-            !EXPLICIT_RESULT_SUBJECT_PATTERN.test(result.groups?.subject ?? ""),
-        })),
+        [...resultText.matchAll(pattern)].map((result) => {
+          const subject =
+            result.groups?.subject ?? result.groups?.testSubject ?? result.groups?.perfectSubject;
+          const finite =
+            result.groups?.perfectAuxiliary ??
+            result.groups?.stateAuxiliary ??
+            result.groups?.testAuxiliary ??
+            result.groups?.perfectSubject;
+          // A verification predicate must finish before its suffix. In
+          // "check passed tests", "passed" modifies an object; in "checks
+          // passed", it is the result. Do not grant this exception to the
+          // generic past-verb matcher ("check stored results").
+          const verificationTail = resultText.slice(result.index + result[0].length).trimStart();
+          const independentVerification =
+            subject !== undefined &&
+            BARE_VERIFICATION_SUBJECT_PATTERN.test(subject) &&
+            (finite ||
+              (result.groups?.testSubject &&
+                /^(?:[.!?,;:]|$|(?:and|but|so|because|after|when|once|if|unless|with|without|on|in|at|for|during|already|just|[a-z]+ly)\b)/i.test(
+                  verificationTail,
+                )));
+          return {
+            result,
+            elidedSubject: pattern === COORDINATED_RESULT_CLAUSE_PATTERN,
+            ambiguousSubject:
+              subject !== undefined &&
+              !EXPLICIT_RESULT_SUBJECT_PATTERN.test(subject) &&
+              !independentVerification &&
+              !(finite && /^[\w'-]+$/.test(subject)),
+          };
+        }),
       );
       const completedResult = results.some(({ result, elidedSubject, ambiguousSubject }) => {
         const resultIndex = resultOffset + result.index;

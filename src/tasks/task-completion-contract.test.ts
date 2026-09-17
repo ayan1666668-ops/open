@@ -17,6 +17,26 @@ describe("resolveRequiredCompletionTerminalResult", () => {
   // conditional clause ("whether the tests passed") is a pending outcome, not a
   // delivered result.
   it.each([
+    ["verification-tail planned check", "I will inspect the code and check passed tests."],
+    [
+      "verification-complement perfect tests",
+      "I'll inspect the code and verify tests have passed.",
+    ],
+    [
+      "verification-complement perfect state",
+      "I'll inspect the code and ensure deployment has completed.",
+    ],
+    [
+      "verification-complement copular state",
+      "I'll inspect the code and check the migration is complete.",
+    ],
+    ["verification-object verify", "I'll inspect the code and verify all tests passed."],
+    ["verification-object ongoing", "I'm inspecting the code and checking the unit tests passed."],
+    ["verification-object unknown action", "I'll inspect the code and ensure the tests passed."],
+    ["verification-object comma", "I'll inspect the code, verify all tests passed."],
+    ["verification-object bare object", "I'll inspect the code and verify tests passed."],
+    ["verification-object ongoing bare", "Inspecting the code and checking tests passed."],
+    ["verification-object multiple words", "I'll inspect the code and make sure the tests passed."],
     ["structural ongoing reviewing", "I'm inspecting the code and reviewing failed tests."],
     [
       "structural ongoing expanded",
@@ -286,6 +306,14 @@ describe("resolveRequiredCompletionTerminalResult", () => {
   // result/report/verification marker in a delivered-result sentence; those
   // must not be misclassified.
   it.each([
+    ["verification-tail independent check", "I will inspect the code and check passed."],
+    ["verification-object bare independent", "I'll inspect the code and tests passed."],
+    ["verification-object marked qualified", "I'll inspect the code and all unit tests passed."],
+    ["verification-object finite independent", "I'll inspect the code and unit tests have passed."],
+    [
+      "verification-object explicit actor",
+      "I'll inspect the code and I verified all tests passed.",
+    ],
     ["structural ongoing explicit subject", "I'm inspecting the code and the failed tests passed."],
     [
       "structural future explicit subject",
