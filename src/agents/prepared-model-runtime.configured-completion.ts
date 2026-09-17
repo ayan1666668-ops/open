@@ -111,7 +111,7 @@ export function prepareConfiguredModelAliases(
       const policy = createModelVisibilityPolicyWithFallbacks({
         ...selection,
         defaultProvider: defaults.provider,
-        defaultModel: defaults.model,
+        defaultModel: defaults,
         catalog: [
           ...modelRegistry.getAll().map(modelCatalogRowToEntry),
           ...models.map(({ model }) => modelCatalogRowToEntry(model)),

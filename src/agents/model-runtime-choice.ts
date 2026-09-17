@@ -56,7 +56,7 @@ export async function prepareModelChoice(params: {
           cfg: owner.config,
           agentId: params.agentId,
           defaultProvider: defaults.provider,
-          defaultModel: defaults.model,
+          defaultModel: defaults,
           catalog: owner.modelCatalog.entries,
           manifestPlugins: owner.metadataSnapshot.plugins,
           raw: params.raw,

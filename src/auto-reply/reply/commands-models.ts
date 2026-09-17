@@ -220,7 +220,7 @@ async function projectPreparedModelsProviderData(
     cfg,
     catalog,
     defaultProvider: resolvedDefault.provider,
-    defaultModel: resolvedDefault.model,
+    defaultModel: resolvedDefault,
     agentId,
     ...runtimeNormalization,
   });
@@ -269,7 +269,7 @@ async function projectPreparedModelsProviderData(
     metadataSnapshot: owner.metadataSnapshot,
     catalog,
     defaultProvider: resolvedDefault.provider,
-    defaultModel: resolvedDefault.model,
+    defaultModel: resolvedDefault,
     agentId,
     workspaceDir,
     view: options.view,

@@ -8,6 +8,10 @@ import {
   normalizeProviderId,
 } from "../../agents/model-selection.js";
 import { RUNTIME_MODEL_VISIBILITY_NORMALIZATION } from "../../agents/model-visibility-policy.js";
+import {
+  needsThinkHydration,
+  resolveEffectiveAgentRuntime,
+} from "../../agents/thinking-runtime.js";
 import type { SessionEntry } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { getCurrentPluginMetadataSnapshot } from "../../plugins/current-plugin-metadata-snapshot.js";
@@ -15,7 +19,10 @@ import {
   isManifestPluginAvailableForControlPlane,
   loadManifestMetadataSnapshot,
 } from "../../plugins/manifest-contract-eligibility.js";
-import { resolveModelRuntimeDirective } from "./directive-handling.model-runtime.js";
+import {
+  applyModelRuntimeDirective,
+  resolveModelRuntimeDirective,
+} from "./directive-handling.model-runtime.js";
 
 export function normalizeRuntimeChoiceId(runtime: string | undefined): string {
   const normalized = normalizeLowercaseStringOrEmpty(runtime);
@@ -147,7 +154,21 @@ export async function prepareModelSelectionRuntime(params: {
     }
     validateRuntimeSelection = choice.validate;
   }
-  if (selected?.reasoning !== undefined) {
+  const runtimeEntry = { ...sessionEntry };
+  applyModelRuntimeDirective(runtimeEntry, runtime);
+  const agentRuntime =
+    runtime.kind === "set"
+      ? runtime.runtime
+      : resolveEffectiveAgentRuntime({
+          cfg: params.cfg,
+          agentId: params.agentId,
+          provider: params.provider,
+          modelId: params.model,
+          modelApi: selected?.api,
+          modelBaseUrl: selected?.baseUrl,
+          sessionEntry: runtimeEntry,
+        });
+  if (!needsThinkHydration(params.catalog, params.provider, params.model, agentRuntime)) {
     return { status: "ready", runtime, catalog: [...params.catalog], validateRuntimeSelection };
   }
   // The selected route owns its capabilities. A prepared default-provider row cannot
@@ -159,6 +180,8 @@ export async function prepareModelSelectionRuntime(params: {
     agentId: params.agentId,
     provider: params.provider,
     model: params.model,
+    agentRuntime,
+    workspaceDir: params.workspaceDir,
   });
   const resolved = findSelectedCatalogEntry({ ...params, catalog });
   return {

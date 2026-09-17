@@ -269,6 +269,10 @@ describe("prepared model runtime Gateway catalog mode", () => {
         levels: [{ id: "off" }, { id: "max" }, { id: "ultra" }],
         defaultLevel: "ultra",
       },
+      expectedLevels: [
+        { id: "max", label: "max" },
+        { id: "ultra", label: "ultra" },
+      ],
     },
     {
       name: "binary thinking",
@@ -276,10 +280,11 @@ describe("prepared model runtime Gateway catalog mode", () => {
         levels: [{ id: "off" }, { id: "low", label: "on" }],
         defaultLevel: "low",
       },
+      expectedLevels: [{ id: "low", label: "on" }],
     },
   ] as const)(
-    "publishes $name policy for lightweight configured and full catalog reads",
-    async ({ profile }) => {
+    "publishes $name policy with model caps for lightweight configured and full catalog reads",
+    async ({ profile, expectedLevels }) => {
       const config = {
         agents: {
           defaults: {
@@ -326,10 +331,7 @@ describe("prepared model runtime Gateway catalog mode", () => {
         };
       };
       const expected = {
-        levels: profile.levels.map((level) => ({
-          id: level.id,
-          label: "label" in level ? level.label : level.id,
-        })),
+        levels: expectedLevels,
         defaultLevel: profile.defaultLevel,
       };
       mocks.resolveProviderPolicySurface.mockImplementation(() => {

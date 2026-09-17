@@ -21,6 +21,7 @@ import {
   getSubagentRunsSnapshotForRead,
   getSubagentMaintenanceRunsSnapshotForRead,
   getSubagentSessionListRunsSnapshotForRead,
+  getSubagentSessionListRunsSnapshotForSessions,
   invalidateSubagentSessionListReadCache,
   onSubagentRegistryPersisted,
   persistSubagentRunsToDisk,
@@ -47,6 +48,8 @@ let memory: Map<string, SubagentRunRecord>;
 let replies: ReturnType<
   typeof createDeferredCore<Map<string, SubagentRunReadRecord> | undefined>
 >[];
+const rootSessionKey = "agent:main:main";
+const otherSessionKey = "agent:main:other";
 beforeEach(async () => {
   state = await createOpenClawTestState({ scenario: "minimal", applyEnv: true });
   openOpenClawStateDatabase();
@@ -66,13 +69,20 @@ afterEach(async () => {
   clearSubagentRunsReadCacheForTest();
   await state.cleanup();
 });
-function runs(model: string, runId = "one") {
+function runs(
+  model: string,
+  runId = "one",
+  scope: Partial<
+    Pick<SubagentRunRecord, "childSessionKey" | "requesterSessionKey" | "controllerSessionKey">
+  > = {},
+) {
   const run = createSubagentRunRecord({
     runId,
     childSessionKey: `agent:main:subagent:${runId}`,
     model,
     completion: { required: false },
     delivery: { status: "not_required" },
+    ...scope,
   });
   return new Map([[run.runId, run]]);
 }
@@ -80,13 +90,49 @@ async function started(index: number) {
   await vi.waitFor(() => expect(replies).toHaveLength(index + 1));
   return replies[index]!;
 }
-function read() {
+function read(yieldIfNeeded?: () => Promise<void> | undefined) {
   return withSubagentSessionListRunsSnapshotForRead(
     memory,
     captureOpenClawStateWorkerContext(),
     (snapshot) => [...snapshot.values()].map((run) => run.model),
+    yieldIfNeeded,
   );
 }
+function expectScopedModels(
+  sessionKey: string,
+  treeModels: string[],
+  options: {
+    controllerModels?: string[];
+    inMemoryRuns?: Map<string, SubagentRunRecord>;
+  } = {},
+) {
+  const inMemoryRuns = options.inMemoryRuns ?? new Map<string, SubagentRunRecord>();
+  expect(
+    [...getSubagentSessionListRunsSnapshotForSessions(inMemoryRuns, [sessionKey]).values()].map(
+      (run) => run.model,
+    ),
+  ).toEqual(treeModels);
+  expect(
+    [...getSubagentSessionListRunsSnapshotForRead(inMemoryRuns, [sessionKey]).values()].map(
+      (run) => run.model,
+    ),
+  ).toEqual(options.controllerModels ?? treeModels);
+}
+
+it("captures in-memory-only reads after the budget pause without reading persisted rows", async () => {
+  vi.stubEnv("OPENCLAW_TEST_READ_SUBAGENT_RUNS_FROM_SQLITE", "0");
+  memory = runs("before");
+  const pause = createDeferredCore();
+  let holdRead = true;
+  const first = read(() => (holdRead ? pause.promise : undefined));
+  for (const [id, entry] of runs("current")) {
+    memory.set(id, entry);
+  }
+  holdRead = false;
+  pause.resolve();
+  expect(await first).toEqual(["current"]);
+  expect(transport.execute).not.toHaveBeenCalled();
+});
 
 it("coalesces a fill and projects current memory after the reply", async () => {
   const first = read();
@@ -99,6 +145,8 @@ it("coalesces a fill and projects current memory after the reply", async () => {
   replies[0]!.resolve(runs("old"));
   expect(await first).toEqual(["current"]);
   expect(await second).toEqual(["current"]);
+  expectScopedModels(rootSessionKey, ["old"]);
+  expectScopedModels(rootSessionKey, ["current"], { inMemoryRuns: memory });
 });
 
 it.each([
@@ -106,6 +154,7 @@ it.each([
   "named deletion",
   "failed best effort",
   "restore",
+  "complete tree fill",
   "ownership rebind",
   "reset",
 ])("rejects a delayed reply across %s in the same millisecond", async (change) => {
@@ -124,30 +173,58 @@ it.each([
   } else if (change === "restore") {
     store.saveSubagentRegistryToSqlite(runs("current"));
     restoreSubagentRunsFromDisk({ runs: memory });
+  } else if (change === "complete tree fill") {
+    store.saveSubagentRegistryToSqlite(runs("current"));
+    expectScopedModels(rootSessionKey, ["current"]);
   } else if (change === "ownership rebind") {
     invalidateSubagentSessionListReadCache();
   } else {
     clearSubagentRunsReadCacheForTest();
   }
-  replies[0]!.resolve(runs("old"));
+  replies[0]!.resolve(
+    runs("old", "one", {
+      requesterSessionKey: otherSessionKey,
+      controllerSessionKey: otherSessionKey,
+      childSessionKey: "agent:main:subagent:old",
+    }),
+  );
   if (["ownership rebind", "reset"].includes(change)) {
     (await started(1)).resolve(runs("current"));
   }
   expect(await first).toEqual(change === "named deletion" ? [] : ["current"]);
+  expectScopedModels(rootSessionKey, change === "named deletion" ? [] : ["current"]);
+  expectScopedModels(otherSessionKey, []);
 });
 
-it("keeps the accepted newer fill when replies finish out of order", async () => {
-  const first = read();
-  await started(0);
-  clearSubagentRunsReadCacheForTest();
-  const second = read();
-  await started(1);
-  replies[1]!.resolve(runs("current"));
-  expect(await second).toEqual(["current"]);
-  replies[0]!.resolve(runs("old"));
-  expect(await first).toEqual(["current"]);
-  expect(await read()).toEqual(["current"]);
-});
+it.each(["reset", "ownership rebind"])(
+  "keeps the accepted newer fill when replies finish out of order after %s",
+  async (change) => {
+    const first = read();
+    await started(0);
+    if (change === "reset") {
+      clearSubagentRunsReadCacheForTest();
+    } else {
+      invalidateSubagentSessionListReadCache();
+    }
+    const second = read();
+    await started(1);
+    replies[1]!.resolve(
+      runs("current", "one", {
+        requesterSessionKey: otherSessionKey,
+        controllerSessionKey: otherSessionKey,
+        childSessionKey: "agent:main:subagent:current",
+      }),
+    );
+    expect(await second).toEqual(["current"]);
+    expectScopedModels(rootSessionKey, []);
+    expectScopedModels(otherSessionKey, ["current"]);
+    replies[0]!.resolve(runs("old"));
+    expect(await first).toEqual(["current"]);
+    expect(await read()).toEqual(["current"]);
+    expectScopedModels(rootSessionKey, []);
+    expectScopedModels(otherSessionKey, ["current"]);
+  },
+);
 
 it("does not supersede a fill on a rolled-back strict write", async () => {
   const first = read();
@@ -158,6 +235,7 @@ it("does not supersede a fill on a rolled-back strict write", async () => {
   expect(() => persistSubagentRunsToDiskOrThrow(runs("uncommitted"))).toThrow("write failed");
   replies[0]!.resolve(runs("committed"));
   expect(await first).toEqual(["committed"]);
+  expectScopedModels(rootSessionKey, ["committed"]);
 });
 
 it.each(["best effort", "strict refusal", "strict commit", "atomic commit"])(
@@ -165,6 +243,7 @@ it.each(["best effort", "strict refusal", "strict commit", "atomic commit"])(
   async (mode) => {
     vi.spyOn(Date, "now").mockReturnValue(1000);
     persistSubagentRunsToDiskOrThrow(runs("before"), ["one"]);
+    expectScopedModels(rootSessionKey, ["before"]);
     const database = openOpenClawStateDatabase();
     const context = captureOpenClawStateWorkerContext();
     const current = runs("after");
@@ -202,6 +281,15 @@ it.each(["best effort", "strict refusal", "strict commit", "atomic commit"])(
     const closing = closeOpenClawStateDatabaseByPathAsync(context.admission.databasePath);
     try {
       expect(() => captureOpenClawStateWorkerContext()).toThrow("read admission is closed");
+      const local = runs("current-memory", "memory", {
+        requesterSessionKey: otherSessionKey,
+        controllerSessionKey: rootSessionKey,
+      });
+      expect(
+        [...getSubagentSessionListRunsSnapshotForRead(local, [rootSessionKey]).values()].map(
+          (run) => run.model,
+        ),
+      ).toEqual(["current-memory"]);
       if (publication) {
         const observed =
           mode === "strict refusal"
@@ -235,8 +323,17 @@ it.each(["best effort", "strict refusal", "strict commit", "atomic commit"])(
       unregister();
       unsubscribe();
     }
-    store.saveSubagentRegistryChangesToSqlite(runs("reopened"), ["one"]);
+    store.saveSubagentRegistryChangesToSqlite(
+      runs("reopened", "one", {
+        requesterSessionKey: otherSessionKey,
+        controllerSessionKey: otherSessionKey,
+        childSessionKey: "agent:main:subagent:reopened",
+      }),
+      ["one"],
+    );
     expect(getSubagentSessionListRunsSnapshotForRead(new Map()).get("one")?.model).toBe("reopened");
+    expectScopedModels(rootSessionKey, []);
+    expectScopedModels(otherSessionKey, ["reopened"]);
     await expect(
       withSubagentSessionListRunsSnapshotForRead(new Map(), context, () => "stale"),
     ).rejects.toThrow("read admission changed");
@@ -257,14 +354,23 @@ it.each([1600, 900])(
   "reuses a completed fill after idle time and clock shifts (%i)",
   async (completedAt) => {
     const now = vi.spyOn(Date, "now").mockReturnValue(1000);
+    const persisted = new Map([
+      ...runs("first"),
+      ...runs("nested", "nested", { requesterSessionKey: "agent:main:subagent:one" }),
+      ...runs("unrelated", "unrelated", { requesterSessionKey: otherSessionKey }),
+    ]);
     const first = read();
     await started(0);
     now.mockReturnValue(completedAt);
-    replies[0]!.resolve(runs("first"));
-    expect(await first).toEqual(["first"]);
+    replies[0]!.resolve(persisted);
+    expect(await first).toEqual(["first", "nested", "unrelated"]);
+    expectScopedModels(rootSessionKey, ["first", "nested"], { controllerModels: ["first"] });
+    expectScopedModels(otherSessionKey, ["unrelated"]);
     now.mockReturnValue(completedAt + 60_000);
-    transport.execute.mockResolvedValueOnce(runs("first"));
-    expect(await read()).toEqual(["first"]);
+    transport.execute.mockResolvedValueOnce(persisted);
+    expect(await read()).toEqual(["first", "nested", "unrelated"]);
+    expectScopedModels(rootSessionKey, ["first", "nested"], { controllerModels: ["first"] });
+    expectScopedModels(otherSessionKey, ["unrelated"]);
     expect(transport.execute).toHaveBeenCalledTimes(1);
   },
 );
@@ -279,6 +385,13 @@ it("does not retarget a waiting read after its database closes", async () => {
   await closeOpenClawStateDatabaseByPathAsync(context.admission.databasePath);
   replies[0]!.resolve(runs("old"));
   await rejected;
+
+  openOpenClawStateDatabase();
+  const reopened = read();
+  (await started(1)).resolve(runs("reopened", "one", { requesterSessionKey: otherSessionKey }));
+  expect(await reopened).toEqual(["reopened"]);
+  expectScopedModels(rootSessionKey, []);
+  expectScopedModels(otherSessionKey, ["reopened"]);
 });
 
 it.each(["read failure", "absent database"])(
@@ -294,7 +407,21 @@ it.each(["read failure", "absent database"])(
         }
         return undefined;
       });
-    const readers = Array.from({ length: 8 }, () => read());
+    const resumed = createDeferredCore();
+    const paused = createDeferredCore();
+    let holdReaders = false;
+    let waitingReaders = 0;
+    const readers = Array.from({ length: 8 }, () =>
+      read(() => {
+        if (!holdReaders) {
+          return undefined;
+        }
+        if (++waitingReaders === 8) {
+          paused.resolve();
+        }
+        return resumed.promise;
+      }),
+    );
     await vi.waitFor(() => expect(operation).toHaveBeenCalledTimes(1));
     for (const [id, run] of runs("memory", "memory")) {
       memory.set(id, run);
@@ -303,17 +430,31 @@ it.each(["read failure", "absent database"])(
       new Map([...runs("written", "written"), ...runs("deleted", "deleted")]),
       ["written", "deleted"],
     );
-    persistSubagentRunsToDisk(new Map(), ["deleted"]);
+    holdReaders = true;
     settled.resolve();
+    await paused.promise;
+    persistSubagentRunsToDisk(runs("resumed-written", "written"), ["written"]);
+    persistSubagentRunsToDisk(new Map(), ["deleted"]);
+    for (const [id, entry] of runs("resumed-memory", "memory")) {
+      memory.set(id, entry);
+    }
+    holdReaders = false;
+    resumed.resolve();
     expect(await Promise.all(readers)).toEqual(
-      Array.from({ length: 8 }, () => ["written", "memory"]),
+      Array.from({ length: 8 }, () => ["resumed-written", "resumed-memory"]),
     );
     expect(operation).toHaveBeenCalledTimes(1);
     operation.mockRestore();
 
     const retry = read();
-    (await started(0)).resolve(runs("persisted", "persisted"));
-    expect(await retry).toEqual(["persisted", "written", "memory"]);
+    (await started(0)).resolve(
+      runs("persisted", "persisted", { requesterSessionKey: otherSessionKey }),
+    );
+    expect(await retry).toEqual(["persisted", "resumed-written", "resumed-memory"]);
+    expectScopedModels(rootSessionKey, ["resumed-written", "resumed-memory"], {
+      inMemoryRuns: memory,
+    });
+    expectScopedModels(otherSessionKey, ["persisted"]);
   },
 );
 
@@ -327,14 +468,17 @@ it.each(["reset", "ownership rebind"])("supersedes a settled fallback after %s",
       } else {
         invalidateSubagentSessionListReadCache();
       }
+      persistSubagentRunsToDisk(runs("published", "published"), ["published"]);
     },
   );
   await started(0);
   const second = read();
   replies[0]!.reject(new Error("read failed"));
   await first;
-  (await started(1)).resolve(runs("current"));
-  expect(await second).toEqual(["current"]);
+  (await started(1)).resolve(runs("current", "one", { requesterSessionKey: otherSessionKey }));
+  expect(await second).toEqual(["current", "published"]);
+  expectScopedModels(rootSessionKey, ["published"]);
+  expectScopedModels(otherSessionKey, ["current"]);
 });
 
 it("rejects a reply after its captured maintenance scope has retired", async () => {
@@ -348,6 +492,12 @@ it("rejects a reply after its captured maintenance scope has retired", async () 
   await scope.close();
   replies[0]!.resolve(runs("old"));
   await rejected;
+
+  const rebound = read();
+  (await started(1)).resolve(runs("rebound", "one", { requesterSessionKey: otherSessionKey }));
+  expect(await rebound).toEqual(["rebound"]);
+  expectScopedModels(rootSessionKey, []);
+  expectScopedModels(otherSessionKey, ["rebound"]);
 });
 
 it("keeps the scalar full-record cache when a compact fill publishes", async () => {
@@ -367,7 +517,7 @@ it.each([false, true])(
     const now = vi.spyOn(Date, "now").mockReturnValue(1000);
     const initial = new Map([
       ...runs("durable", "durable"),
-      ...runs("old"),
+      ...runs("old", "one", { requesterSessionKey: otherSessionKey }),
       ...runs("deleted", "deleted"),
     ]);
     if (failed) {
@@ -384,12 +534,22 @@ it.each([false, true])(
     expect(replies).toHaveLength(1);
     replies[0]!.resolve(initial);
     expect(await first).toEqual(["durable", "current-7"]);
+    expectScopedModels(rootSessionKey, ["durable", "current-7"]);
+    expectScopedModels(otherSessionKey, []);
     now.mockReturnValue(1600);
     for (let index = 8; index < 16; index++) {
-      persistSubagentRunsToDisk(runs(`current-${index}`), ["one"]);
+      persistSubagentRunsToDisk(
+        runs(`current-${index}`, "one", {
+          requesterSessionKey: otherSessionKey,
+          controllerSessionKey: otherSessionKey,
+        }),
+        ["one"],
+      );
       persistSubagentRunsToDisk(new Map(), ["deleted"]);
     }
     expect(await read()).toEqual(["durable", "current-15"]);
+    expectScopedModels(rootSessionKey, ["durable"]);
+    expectScopedModels(otherSessionKey, ["current-15"]);
     expect(replies).toHaveLength(1);
   },
 );
@@ -400,4 +560,5 @@ it("hydrates durable-only rows after a cold named publication", async () => {
   await started(0);
   replies[0]!.resolve(new Map([...runs("durable", "durable"), ...runs("old")]));
   expect(await pending).toEqual(["durable", "current"]);
+  expectScopedModels(rootSessionKey, ["durable", "current"]);
 });

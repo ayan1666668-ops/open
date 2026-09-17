@@ -405,6 +405,7 @@ export function createPreparedModelRuntimeSnapshot(
   pluginGeneration: PreparedModelRuntimePluginGeneration,
   catalogFacts: PreparedModelRuntimeCatalogFacts,
   catalogAccess: PreparedModelRuntimeCatalogAccess,
+  publishedConfig = agentFacts.input.config,
 ): PreparedModelRuntimeSnapshot {
   const { credentials, input } = agentFacts;
   const {
@@ -440,7 +441,7 @@ export function createPreparedModelRuntimeSnapshot(
     activeProjectKeys: [],
     ...(input.inheritedAuthDir ? { inheritedAuthDir: input.inheritedAuthDir } : {}),
     ...(input.workspaceDir ? { workspaceDir: input.workspaceDir } : {}),
-    config: input.config,
+    config: publishedConfig,
     observationConfig: input.config,
     isCurrent: catalogAccess.isCurrent,
     authModes: resolveUsableAgentCredentialModes(credentials),
