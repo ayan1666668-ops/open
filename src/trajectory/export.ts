@@ -4,10 +4,14 @@ import path from "node:path";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { sanitizeDiagnosticPayload } from "../agents/payload-redaction.js";
 import type { AgentMessage } from "../agents/runtime/index.js";
-import type { SessionEntry, SessionHeader } from "../agents/sessions/session-manager.js";
+import type { FileEntry, SessionEntry, SessionHeader } from "../agents/sessions/session-manager.js";
 import { resolveStateDir } from "../config/paths.js";
 import { parseSqliteSessionFileMarker } from "../config/sessions/legacy-sqlite-marker.js";
 import type { SessionTranscriptRuntimeTarget } from "../config/sessions/session-accessor.js";
+import {
+  isCanonicalSessionTranscriptEntry,
+  scanSessionTranscriptTree,
+} from "../config/sessions/transcript-tree.js";
 import {
   jsonSupportBundleFile,
   jsonlSupportBundleFile,
@@ -29,9 +33,9 @@ import { safeJsonStringify } from "../utils/safe-json.js";
 import {
   MAX_TRAJECTORY_SESSION_FILE_BYTES,
   normalizeCompleteSessionTarget,
-  readSessionBranch,
+  readSessionEntries,
   type JsonlParseWarning,
-} from "./export-session.js";
+} from "./export-session-entries.js";
 import { TRAJECTORY_RUNTIME_FILE_MAX_BYTES, safeTrajectorySessionFileName } from "./paths.js";
 import { isRegularNonSymlinkFile, resolveTrajectoryRuntimeFile } from "./runtime-file.js";
 import { loadSqliteTrajectoryRuntimeEvents } from "./runtime-store.sqlite.js";
@@ -74,6 +78,131 @@ const MAX_TRAJECTORY_WARNING_ROWS = 20;
 
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
+}
+
+function migrateLegacySessionEntries(entries: FileEntry[]): void {
+  const header = entries.find((entry): entry is SessionHeader => entry.type === "session");
+  const version = header?.version ?? 1;
+  if (version < 2) {
+    // Older session logs predate entry ids. Synthetic ids preserve branch order
+    // long enough to export the reachable suffix without mutating source files.
+    let previousId: string | null = null;
+    let index = 0;
+    for (const entry of entries) {
+      if (entry.type === "session") {
+        entry.version = 2;
+        continue;
+      }
+      const mutable = entry as unknown as Record<string, unknown>;
+      if (typeof mutable.id !== "string") {
+        mutable.id = `legacy-${index++}`;
+      }
+      mutable.parentId = previousId;
+      const entryId = mutable.id;
+      previousId = typeof entryId === "string" ? entryId : null;
+      if (entry.type === "compaction" && typeof mutable.firstKeptEntryIndex === "number") {
+        const target = entries[mutable.firstKeptEntryIndex];
+        if (target && target.type !== "session") {
+          mutable.firstKeptEntryId = (target as unknown as Record<string, unknown>).id;
+        }
+        delete mutable.firstKeptEntryIndex;
+      }
+    }
+  }
+  if (version < 3) {
+    for (const entry of entries) {
+      if (entry.type === "session") {
+        entry.version = 3;
+        continue;
+      }
+      if (entry.type === "message") {
+        const message = (entry as { message?: { role?: string } }).message;
+        if (message?.role === "hookMessage") {
+          message.role = "custom";
+        }
+      }
+    }
+  }
+}
+
+async function readSessionBranch(params: {
+  sessionFile?: string;
+  sessionTarget?: SessionTranscriptRuntimeTarget;
+  sessionId: string;
+  sessionKey?: string;
+}): Promise<{
+  header: SessionHeader | null;
+  leafId: string | null;
+  branchEntries: SessionEntry[];
+  warnings: JsonlParseWarning[];
+}> {
+  const { entries: fileEntries, warnings, rowByEntry } = await readSessionEntries(params);
+  migrateLegacySessionEntries(fileEntries);
+  const header =
+    fileEntries.find((entry): entry is SessionHeader => entry.type === "session") ?? null;
+  const entries = fileEntries.filter(
+    (entry): entry is SessionEntry =>
+      entry.type !== "session" &&
+      isCanonicalSessionTranscriptEntry(entry) &&
+      typeof (entry as { id?: unknown }).id === "string",
+  );
+  const tree = scanSessionTranscriptTree(fileEntries);
+  if (!tree.hasLeafUpdate) {
+    return {
+      header,
+      leafId: entries.at(-1)?.id ?? null,
+      branchEntries: entries,
+      warnings,
+    };
+  }
+  const entriesById = new Map(entries.map((entry) => [entry.id, entry]));
+  const branchEntries: SessionEntry[] = [];
+  const seen = new Set<string>();
+  let descendantEntry: SessionEntry | undefined;
+  let currentId = tree.leafId;
+  while (currentId) {
+    if (seen.has(currentId)) {
+      const cycleEntry = tree.byId.get(currentId)?.entry;
+      warnings.push({
+        source: "session",
+        code: "cyclic-session-branch",
+        row: cycleEntry ? (rowByEntry.get(cycleEntry) ?? 0) : 0,
+        message: "Stopped trajectory session branch export at a cyclic parent link.",
+      });
+      break;
+    }
+    seen.add(currentId);
+    const current = tree.byId.get(currentId);
+    if (!current) {
+      warnings.push({
+        source: "session",
+        code: "incomplete-session-branch",
+        row: 0,
+        message: "Exported the reachable session branch suffix after a missing parent link.",
+      });
+      break;
+    }
+    const visibleEntry = entriesById.get(currentId);
+    if (visibleEntry) {
+      const normalizedEntry = { ...visibleEntry, parentId: current.parentId };
+      if (descendantEntry) {
+        descendantEntry.parentId = normalizedEntry.id;
+      }
+      branchEntries.unshift(normalizedEntry);
+      descendantEntry = normalizedEntry;
+    }
+    if (current.parentId && !tree.byId.has(current.parentId)) {
+      warnings.push({
+        source: "session",
+        code: "incomplete-session-branch",
+        row: rowByEntry.get(current.entry) ?? 0,
+        message: "Exported the reachable session branch suffix after a missing parent link.",
+      });
+      break;
+    }
+    currentId = current.parentId;
+  }
+  return { header, leafId: tree.leafId, branchEntries, warnings };
 }
 
 async function parseJsonlFile<T>(

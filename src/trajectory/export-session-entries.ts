@@ -1,4 +1,4 @@
-// Trajectory session reader: loads the exported session branch from SQLite or a
+// Trajectory session entry reader: loads exported session rows from SQLite or a
 // legacy JSONL artifact through read-only session storage accessors.
 import fsp from "node:fs/promises";
 import path from "node:path";
@@ -7,7 +7,7 @@ import {
   isSessionFileEntry,
   parseSessionFileEntriesWithWarnings,
 } from "../agents/sessions/session-file-parser.js";
-import type { FileEntry, SessionEntry, SessionHeader } from "../agents/sessions/session-manager.js";
+import type { FileEntry } from "../agents/sessions/session-manager.js";
 import { parseSqliteSessionFileMarker } from "../config/sessions/legacy-sqlite-marker.js";
 import {
   listSessionEntriesReadOnly,
@@ -19,10 +19,6 @@ import {
 } from "../config/sessions/session-accessor.js";
 import { readRestoredSessionTranscript } from "../config/sessions/session-cold-storage-read.js";
 import { SessionTranscriptColdError } from "../config/sessions/session-cold-storage-state.js";
-import {
-  isCanonicalSessionTranscriptEntry,
-  scanSessionTranscriptTree,
-} from "../config/sessions/transcript-tree.js";
 import { parseAgentSessionKey } from "../routing/session-key.js";
 import { resolvePreferredSessionKeyForSessionIdMatches } from "../sessions/session-id-resolution.js";
 import type { TrajectoryBundleWarning } from "./types.js";
@@ -93,51 +89,6 @@ function collectSessionEntries(
   return { entries, warnings, rowByEntry };
 }
 
-function migrateLegacySessionEntries(entries: FileEntry[]): void {
-  const header = entries.find((entry): entry is SessionHeader => entry.type === "session");
-  const version = header?.version ?? 1;
-  if (version < 2) {
-    // Older session logs predate entry ids. Synthetic ids preserve branch order
-    // long enough to export the reachable suffix without mutating source files.
-    let previousId: string | null = null;
-    let index = 0;
-    for (const entry of entries) {
-      if (entry.type === "session") {
-        entry.version = 2;
-        continue;
-      }
-      const mutable = entry as unknown as Record<string, unknown>;
-      if (typeof mutable.id !== "string") {
-        mutable.id = `legacy-${index++}`;
-      }
-      mutable.parentId = previousId;
-      const entryId = mutable.id;
-      previousId = typeof entryId === "string" ? entryId : null;
-      if (entry.type === "compaction" && typeof mutable.firstKeptEntryIndex === "number") {
-        const target = entries[mutable.firstKeptEntryIndex];
-        if (target && target.type !== "session") {
-          mutable.firstKeptEntryId = (target as unknown as Record<string, unknown>).id;
-        }
-        delete mutable.firstKeptEntryIndex;
-      }
-    }
-  }
-  if (version < 3) {
-    for (const entry of entries) {
-      if (entry.type === "session") {
-        entry.version = 3;
-        continue;
-      }
-      if (entry.type === "message") {
-        const message = (entry as { message?: { role?: string } }).message;
-        if (message?.role === "hookMessage") {
-          message.role = "custom";
-        }
-      }
-    }
-  }
-}
-
 async function loadTranscriptEventsForExport(
   scope: SessionTranscriptReadScope,
 ): Promise<TranscriptEvent[]> {
@@ -154,7 +105,7 @@ async function loadTranscriptEventsForExport(
   }
 }
 
-async function readSessionEntries(params: {
+export async function readSessionEntries(params: {
   sessionFile?: string;
   sessionTarget?: SessionTranscriptRuntimeTarget;
   sessionId: string;
@@ -273,84 +224,4 @@ async function readSessionEntries(params: {
       })
     ).map((value, index) => ({ row: index + 1, value })),
   );
-}
-
-export async function readSessionBranch(params: {
-  sessionFile?: string;
-  sessionTarget?: SessionTranscriptRuntimeTarget;
-  sessionId: string;
-  sessionKey?: string;
-}): Promise<{
-  header: SessionHeader | null;
-  leafId: string | null;
-  branchEntries: SessionEntry[];
-  warnings: JsonlParseWarning[];
-}> {
-  const { entries: fileEntries, warnings, rowByEntry } = await readSessionEntries(params);
-  migrateLegacySessionEntries(fileEntries);
-  const header =
-    fileEntries.find((entry): entry is SessionHeader => entry.type === "session") ?? null;
-  const entries = fileEntries.filter(
-    (entry): entry is SessionEntry =>
-      entry.type !== "session" &&
-      isCanonicalSessionTranscriptEntry(entry) &&
-      typeof (entry as { id?: unknown }).id === "string",
-  );
-  const tree = scanSessionTranscriptTree(fileEntries);
-  if (!tree.hasLeafUpdate) {
-    return {
-      header,
-      leafId: entries.at(-1)?.id ?? null,
-      branchEntries: entries,
-      warnings,
-    };
-  }
-  const entriesById = new Map(entries.map((entry) => [entry.id, entry]));
-  const branchEntries: SessionEntry[] = [];
-  const seen = new Set<string>();
-  let descendantEntry: SessionEntry | undefined;
-  let currentId = tree.leafId;
-  while (currentId) {
-    if (seen.has(currentId)) {
-      const cycleEntry = tree.byId.get(currentId)?.entry;
-      warnings.push({
-        source: "session",
-        code: "cyclic-session-branch",
-        row: cycleEntry ? (rowByEntry.get(cycleEntry) ?? 0) : 0,
-        message: "Stopped trajectory session branch export at a cyclic parent link.",
-      });
-      break;
-    }
-    seen.add(currentId);
-    const current = tree.byId.get(currentId);
-    if (!current) {
-      warnings.push({
-        source: "session",
-        code: "incomplete-session-branch",
-        row: 0,
-        message: "Exported the reachable session branch suffix after a missing parent link.",
-      });
-      break;
-    }
-    const visibleEntry = entriesById.get(currentId);
-    if (visibleEntry) {
-      const normalizedEntry = { ...visibleEntry, parentId: current.parentId };
-      if (descendantEntry) {
-        descendantEntry.parentId = normalizedEntry.id;
-      }
-      branchEntries.unshift(normalizedEntry);
-      descendantEntry = normalizedEntry;
-    }
-    if (current.parentId && !tree.byId.has(current.parentId)) {
-      warnings.push({
-        source: "session",
-        code: "incomplete-session-branch",
-        row: rowByEntry.get(current.entry) ?? 0,
-        message: "Exported the reachable session branch suffix after a missing parent link.",
-      });
-      break;
-    }
-    currentId = current.parentId;
-  }
-  return { header, leafId: tree.leafId, branchEntries, warnings };
 }

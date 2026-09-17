@@ -1,4 +1,4 @@
-// Trajectory session reader tests cover SQLite storage lifecycle during export.
+// Trajectory session entry reader tests cover SQLite storage lifecycle during export.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
