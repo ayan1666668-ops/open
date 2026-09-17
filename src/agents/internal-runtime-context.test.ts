@@ -557,7 +557,7 @@ describe("shouldRelocateRuntimeContextCarrierToTail", () => {
       }),
     ).toBe(false);
 
-    // Synthetic test-fixture provider representing cloud models in integration suites preserves tail relocation
+    // Unknown provider with loopback baseUrl classifies as local (before-user placement)
     expect(
       shouldRelocateRuntimeContextCarrierToTail({
         provider: "test-provider",
@@ -567,6 +567,6 @@ describe("shouldRelocateRuntimeContextCarrierToTail", () => {
           baseUrl: "http://127.0.0.1:54321/v1",
         },
       }),
-    ).toBe(true);
+    ).toBe(false);
   });
 });
