@@ -47,6 +47,7 @@ describe("session companion RPC", () => {
       sessionKey: "agent:main:main",
       question: "What is happening?",
       connId: "conn-1",
+      authorize: expect.any(Function),
     });
     expect(respond).toHaveBeenCalledWith(true, {
       answer: "It is checking the fix.",
@@ -70,6 +71,7 @@ describe("session companion RPC", () => {
       sessionKey: "agent:main:main",
       question: "Who owns this ask?",
       connId: "conn-1",
+      authorize: expect.any(Function),
       signal: controller.signal,
     });
     expect(respond.mock.calls).toEqual([[true, { answer: "Bound to this connection.", ts: 124 }]]);
