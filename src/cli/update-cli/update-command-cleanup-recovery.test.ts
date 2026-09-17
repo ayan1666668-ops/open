@@ -8,6 +8,7 @@ import {
   resolveCommandProcessSignal,
   retainCommandProcessCleanup,
 } from "../../process/exec-spawn.js";
+import { defaultRuntime } from "../../runtime.js";
 import { createDeferredCore } from "../../shared/deferred.js";
 import { UpdatePreMutationError } from "./shared.js";
 import { resolveMutableUpdateFailure } from "./update-command-result.js";
@@ -86,22 +87,43 @@ it.each(["forced", "uncertain"] as const)(
   },
 );
 
-it("rejects uncertain pre-mutation failures before inspecting recovery", async () => {
-  const error = new UpdatePreMutationError("inspection-failed", "Inspection failed", {
-    cause: new CommandProcessCleanupError(),
-  });
-  const originalRecovery = vi.fn(async () => ({
-    serviceRestartSafe: true as const,
-    version: "2026.9.4",
-  }));
-  await expect(
-    resolveMutableUpdateFailure({
+it.each([false, true])(
+  "preserves runtime recovery metadata without authorizing uncertain cleanup (%s)",
+  async (uncertain) => {
+    const report = vi.spyOn(defaultRuntime, "error").mockImplementation(() => {});
+    const error = new UpdatePreMutationError("node-runtime-preflight", "Select a supported Node", {
+      ...(uncertain ? { cause: new CommandProcessCleanupError() } : {}),
+      recoverySteps: [{ kind: "continue-update", command: "node /synthetic/openclaw.mjs update" }],
+    });
+    const originalRecovery = vi.fn(async () => ({
+      serviceRestartSafe: true as const,
+      version: "2026.9.4",
+    }));
+    const work = resolveMutableUpdateFailure({
       cause: error,
       durationMs: 1,
       mode: "npm",
       root: "/synthetic",
       originalRecovery,
-    }),
-  ).rejects.toBe(error);
-  expect(originalRecovery).not.toHaveBeenCalled();
-});
+    });
+    try {
+      if (uncertain) {
+        await expect(work).rejects.toBe(error);
+        expect(originalRecovery).not.toHaveBeenCalled();
+        expect(report).not.toHaveBeenCalled();
+      } else {
+        const { result, failure } = await work;
+        expect(failure.cause).toBe(error);
+        expect(originalRecovery).toHaveBeenCalledOnce();
+        expect(result.failedStep).toMatchObject({
+          name: "node-runtime-preflight",
+          recoverySteps: error.recoverySteps,
+          failureFacts: error.failureFacts,
+        });
+        expect(result.steps).toEqual([result.failedStep]);
+      }
+    } finally {
+      report.mockRestore();
+    }
+  },
+);

@@ -18,7 +18,7 @@ import {
 import { createDeferredCore } from "../../shared/deferred.js";
 import {
   GatewayServiceUpdateOwnershipError,
-  readManagedGatewayServiceCommandForUpdate,
+  readManagedGatewayServiceForUpdate,
 } from "./update-command-service-plan.js";
 
 const boundary = vi.hoisted(() => ({
@@ -93,7 +93,7 @@ it.each(
       });
     }
     let finished = false;
-    const work = readManagedGatewayServiceCommandForUpdate({})
+    const work = readManagedGatewayServiceForUpdate({})
       .catch((error: unknown) => error)
       .finally(() => {
         finished = true;
@@ -132,12 +132,12 @@ it.each(["inspection", "fallback"] as const)(
       );
       vi.mocked(service.isLoaded).mockRejectedValue(failure);
     }
-    await expect(readManagedGatewayServiceCommandForUpdate({})).rejects.toBe(failure);
+    await expect(readManagedGatewayServiceForUpdate({})).rejects.toBe(failure);
     expect(service.isLoaded).toHaveBeenCalledTimes(phase === "fallback" ? 1 : 0);
   },
 );
 
-it("returns the verified owned command only after confirmed cleanup", async () => {
+it("returns the verified command and ownership verdict only after confirmed cleanup", async () => {
   const cleanup = createDeferredCore<"forced">();
   const joining = createDeferredCore();
   boundary.read.mockImplementation(async () => {
@@ -155,7 +155,7 @@ it("returns the verified owned command only after confirmed cleanup", async () =
   });
   vi.spyOn(fs, "realpath").mockResolvedValue(root);
   let selected = false;
-  const work = readManagedGatewayServiceCommandForUpdate({}).then((result) => {
+  const work = readManagedGatewayServiceForUpdate({}).then((result) => {
     selected = true;
     return result;
   });
@@ -171,6 +171,8 @@ it("returns the verified owned command only after confirmed cleanup", async () =
     cleanup.resolve("forced");
     await work;
   }
-  expect(await work).toBe(command);
+  const result = await work;
+  expect(result?.command).toBe(command);
+  expect(result?.verdict).toMatchObject({ kind: "owned", root, refreshDefinition: true });
   expect(service.isLoaded).not.toHaveBeenCalled();
 });
