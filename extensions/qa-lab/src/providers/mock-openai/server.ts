@@ -161,6 +161,7 @@ import {
   buildFailedResponseEvents,
 } from "./mock-openai-events.js";
 import {
+  extractLatestScenarioFamilyPrompt,
   extractLastUserText,
   extractLastMatchingUserTurn,
   extractMockSubagentContext,
@@ -304,10 +305,6 @@ function hasCompactionOutputRecoveryMarker(allInputText: string) {
   );
 }
 
-const QA_STREAMING_TOOL_PROGRESS_FAMILY_PROMPT_RE =
-  /(?:partial|quiet) streaming qa check|final-only marker streaming qa check|block streaming qa check|tool progress(?: error)? qa check/i;
-const QA_STREAMING_TOOL_PROGRESS_CONTINUATION_RE =
-  /^Continue with (?:the current Matrix QA scenario|the QA scenario plan and report worked, failed, and blocked items)\.$/i;
 const QA_CODE_MODE_TARGET_MARKER = "qa-code-mode-target:";
 const QA_RESTART_CHECKPOINT_COUNT = 3;
 const QA_RESTART_FINAL_TEXT = "unsafeVisible=false\nRESTART-CODE-MODE-WAIT-OK";
@@ -321,39 +318,6 @@ const QA_TELEGRAM_VISIBLE_PARTIAL_FAILURE_MARKER = "TELEGRAM-VISIBLE-PARTIAL-BEF
 const QA_REPEATED_REQUEST_RESPONSE_PAUSE_MS = 80_000;
 const QA_REPEATED_REQUEST_STALLED_RESPONSE_PAUSE_MS = 180_000;
 const QA_REPEATED_REQUEST_STALL_ATTEMPT = 5;
-
-function isStreamingToolProgressContinuationText(text: string) {
-  const trimmed = text.trim();
-  return (
-    QA_STREAMING_TOOL_PROGRESS_CONTINUATION_RE.test(trimmed) ||
-    trimmed.startsWith(QA_SETTLED_TOOL_TERMINAL_CONTINUATION_NEEDLE)
-  );
-}
-
-function extractLatestScenarioFamilyPrompt(
-  texts: string[],
-  familyPattern = QA_STREAMING_TOOL_PROGRESS_FAMILY_PROMPT_RE,
-) {
-  let envelope = "";
-  for (const text of texts.toReversed()) {
-    if (familyPattern.test(text)) {
-      envelope = text;
-      break;
-    }
-    if (!isStreamingToolProgressContinuationText(text)) {
-      return "";
-    }
-  }
-  if (!envelope) {
-    return "";
-  }
-  const pattern = new RegExp(familyPattern.source, `${familyPattern.flags}g`);
-  let latestIndex = -1;
-  for (const match of envelope.matchAll(pattern)) {
-    latestIndex = match.index;
-  }
-  return latestIndex < 0 ? "" : envelope.slice(latestIndex);
-}
 
 function stringifyScenarioToolOutput(value: unknown): string {
   if (typeof value === "string") {
