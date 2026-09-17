@@ -18,6 +18,14 @@ describe("resolveRequiredCompletionTerminalResult", () => {
   // delivered result.
   it.each([
     ["pure progress", "Let me run the tests"],
+    [
+      "fronted before future plan",
+      "I'll inspect the failure: Before proceeding, I will patch the handler.",
+    ],
+    [
+      "fronted before colon future plan",
+      "I'll inspect the failure: Before proceeding: I will patch the handler.",
+    ],
     ["colon conditional pending", "I'll inspect the repo: If tests pass: Result: pending."],
     ["colon conditional result", "I'll inspect the repo: If tests pass: deployed."],
     ["colon unless result", "I'll inspect the repo: Unless tests fail: deployed."],
@@ -227,6 +235,9 @@ describe("resolveRequiredCompletionTerminalResult", () => {
       "I'll inspect the repo now: the crash is a missing null check in src/foo.ts.",
     ],
     ["completed clause after narration", "Reviewing the changes, we fixed the regression."],
+    ["prefixed irregular rebuilt", "Reviewing the database, I rebuilt the corrupted index."],
+    ["prefixed irregular overwrote", "Reviewing the settings, I overwrote the stale config."],
+    ["prefixed irregular rewrote", "Reviewing the changes, I rewrote the broken handler."],
     [
       "colon past event result",
       "I'll inspect the repo: After the alert fired: I patched the handler.",

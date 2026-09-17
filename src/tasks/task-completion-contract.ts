@@ -35,7 +35,7 @@ const RESULT_SUBJECT_WORD = String.raw`(?!(?:if|unless|when|once|whether|before|
 const RESULT_SUBJECT = String.raw`(?:${RESULT_SUBJECT_WORD}\s+){0,6}(?!(?:the|a|an|all|both|our|already|just)\b|[\w'-]+ly\b)${RESULT_SUBJECT_WORD}`;
 const IRREGULAR_PAST_VERB =
   "arose|awoke|bore|beat|became|began|bent|bet|bit|bled|blew|broke|brought|built|burnt|burst|bought|caught|chose|came|cost|crept|cut|dealt|dug|did|drew|drank|drove|ate|fell|fed|felt|fought|found|fled|flew|forbade|forgot|forgave|froze|got|gave|went|grew|hung|heard|hid|hit|held|hurt|kept|knew|laid|led|leant|leapt|learnt|left|lent|let|lay|lit|lost|made|meant|met|paid|put|quit|read|rode|rang|rose|ran|said|saw|sought|sold|sent|set|shook|shone|shot|showed|shrank|shut|sang|sank|sat|slept|slid|smelt|spoke|spelt|spent|spilt|spun|split|spread|sprang|stood|stole|stuck|stung|stank|struck|swore|swept|swam|swung|took|taught|tore|told|thought|threw|understood|upset|woke|wore|wept|won|wound|wrote";
-const PAST_RESULT_VERB = String.raw`(?:${IRREGULAR_PAST_VERB}|(?!(?:need|feed|bleed|breed|heed|seed|weed|speed|succeed|exceed|proceed)\b)[a-z]+ed)`;
+const PAST_RESULT_VERB = String.raw`(?:(?:(?:re|un|over|under|mis|out|fore|with)-?)?(?:${IRREGULAR_PAST_VERB})|(?!(?:need|feed|bleed|breed|heed|seed|weed|speed|succeed|exceed|proceed)\b)[a-z]+ed)`;
 const COMPLETION_STATE_CLAUSE_PATTERN = new RegExp(
   String.raw`(?:^|,\s*|\band\s+)${RESULT_SUBJECT}\s+(?:(?:(?:has|have)\s+)?(?:${PAST_RESULT_VERB}|done)|(?:is|are|was|were|has\s+been|have\s+been)\s+(?:done|complete|completed|finished|fixed|resolved))\b`,
   "i",
@@ -114,7 +114,10 @@ function isProgressOnlyCompletionText(value: string): boolean {
       const previous = clauses.at(-1);
       // Only a premise before this colon binds its suffix. A temporal word in
       // a later completed result must not hide an earlier clause boundary.
-      if (previous && CONDITIONAL_PROGRESS_PATTERN.test(previous)) {
+      if (
+        previous &&
+        (CONDITIONAL_PROGRESS_PATTERN.test(previous) || /^before\b/i.test(previous))
+      ) {
         clauses[clauses.length - 1] = `${previous}: ${body}`;
       } else {
         clauses.push(body);
@@ -123,7 +126,7 @@ function isProgressOnlyCompletionText(value: string): boolean {
     return clauses.every((clause) => {
       const body = clause.replace(COMPLETION_HEADING_PATTERN, "").trim();
       const narration = body
-        .replace(/^(?:if|unless|when|once|after|as\s+soon\s+as)\b[^,]*,\s*/i, "")
+        .replace(/^(?:if|unless|when|once|after|before|as\s+soon\s+as)\b[^,:]*[,:]\s*/i, "")
         .replace(PLANNING_TIME_PREFIX_PATTERN, "");
       const narrativeProgress =
         PROGRESS_ONLY_PATTERN.test(narration) ||
