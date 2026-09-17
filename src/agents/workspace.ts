@@ -10,7 +10,6 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import { Minimatch } from "minimatch";
-import { extractFrontmatterBlock } from "../../packages/markdown-core/src/frontmatter.js";
 import type { ChatType } from "../channels/chat-type.js";
 import { isRootFileMissingFailure, openRootFile } from "../infra/boundary-file-read.js";
 import { isHardlinkFallbackError } from "../infra/directory-durability.js";
@@ -52,7 +51,7 @@ import {
   type WorkspaceStateSnapshot,
   type WorkspaceSetupState,
 } from "./workspace-state-store.js";
-import { resolveWorkspaceTemplateSearchDirs } from "./workspace-templates.js";
+import { loadWorkspaceTemplate } from "./workspace-templates.js";
 export { WORKSPACE_VANISHED_ERROR_CODE } from "./workspace-state-identity.js";
 export {
   DEFAULT_AGENT_WORKSPACE_DIR,
@@ -84,7 +83,6 @@ const TRANSIENT_WORKSPACE_READ_ERRNOS = new Set([-11, -4]);
 const TRANSIENT_WORKSPACE_READ_MESSAGE = /Unknown system error -(?:11|4)\b/i;
 const workspaceLogger = createSubsystemLogger("workspace");
 
-const workspaceTemplateCache = new Map<string, Promise<string>>();
 const gitInitializationInFlight = new Map<string, Promise<void>>();
 
 type WorkspaceFileSourceIdentity = readonly [
@@ -195,45 +193,6 @@ async function readWorkspaceFileWithGuards(params: {
   } catch (error) {
     // Non-transient read failure, or transient retries exhausted.
     return { ok: false, reason: error instanceof RangeError ? "validation" : "io", error };
-  }
-}
-
-function stripFrontMatter(content: string): string {
-  return extractFrontmatterBlock(content)?.body.replace(/^\s+/, "") ?? content;
-}
-
-async function loadTemplate(name: string): Promise<string> {
-  const cached = workspaceTemplateCache.get(name);
-  if (cached) {
-    return cached;
-  }
-
-  const pending = (async () => {
-    const templateDirs = await resolveWorkspaceTemplateSearchDirs();
-    const triedPaths: string[] = [];
-    for (const templateDir of templateDirs) {
-      const templatePath = path.join(templateDir, name);
-      triedPaths.push(templatePath);
-      try {
-        const content = await fs.readFile(templatePath, "utf-8");
-        return stripFrontMatter(content);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException | undefined)?.code !== "ENOENT") {
-          throw error;
-        }
-      }
-    }
-    throw new Error(
-      `Missing workspace template: ${name} (${triedPaths.join(", ")}). Ensure workspace templates are packaged.`,
-    );
-  })();
-
-  workspaceTemplateCache.set(name, pending);
-  try {
-    return await pending;
-  } catch (error) {
-    workspaceTemplateCache.delete(name);
-    throw error;
   }
 }
 
@@ -473,7 +432,10 @@ async function workspaceProfileLooksConfigured(params: {
 }): Promise<boolean> {
   const profileFileDiffs = await Promise.all(
     WORKSPACE_ONBOARDING_PROFILE_FILENAMES.map(async (fileName) =>
-      fileContentDiffersFromTemplate(path.join(params.dir, fileName), await loadTemplate(fileName)),
+      fileContentDiffersFromTemplate(
+        path.join(params.dir, fileName),
+        await loadWorkspaceTemplate(fileName),
+      ),
     ),
   );
   return (
@@ -497,7 +459,7 @@ async function workspaceRequiredBootstrapLooksCustomized(
       try {
         const content = await fs.readFile(filePath, "utf-8");
         const contentHash = createHash("sha256").update(content).digest("hex");
-        if (contentHash !== generatedHash && content !== (await loadTemplate(fileName))) {
+        if (contentHash !== generatedHash && content !== (await loadWorkspaceTemplate(fileName))) {
           return true;
         }
       } catch {
@@ -508,7 +470,10 @@ async function workspaceRequiredBootstrapLooksCustomized(
   }
   const fileDiffs = await Promise.all(
     fileNames.map(async (fileName) =>
-      fileContentDiffersFromTemplate(path.join(dir, fileName), await loadTemplate(fileName)),
+      fileContentDiffersFromTemplate(
+        path.join(dir, fileName),
+        await loadWorkspaceTemplate(fileName),
+      ),
     ),
   );
   return fileDiffs.some(Boolean);
@@ -611,7 +576,7 @@ async function collectGeneratedBootstrapHashes(dir: string): Promise<Map<string,
   for (const fileName of GENERATED_WORKSPACE_BOOTSTRAP_FILENAMES) {
     try {
       const content = await fs.readFile(path.join(dir, fileName), "utf-8");
-      if (content === (await loadTemplate(fileName))) {
+      if (content === (await loadWorkspaceTemplate(fileName))) {
         hashes.set(fileName, createHash("sha256").update(content).digest("hex"));
       }
     } catch {
@@ -1160,13 +1125,15 @@ export async function ensureAgentWorkspace(params?: {
   }
 
   const agentsTemplate =
-    params?.templates?.[DEFAULT_AGENTS_FILENAME] ?? (await loadTemplate(DEFAULT_AGENTS_FILENAME));
+    params?.templates?.[DEFAULT_AGENTS_FILENAME] ??
+    (await loadWorkspaceTemplate(DEFAULT_AGENTS_FILENAME));
   const soulTemplate =
-    params?.templates?.[DEFAULT_SOUL_FILENAME] ?? (await loadTemplate(DEFAULT_SOUL_FILENAME));
+    params?.templates?.[DEFAULT_SOUL_FILENAME] ??
+    (await loadWorkspaceTemplate(DEFAULT_SOUL_FILENAME));
   const identityTemplate =
     params?.templates?.[DEFAULT_IDENTITY_FILENAME] ??
-    (await loadTemplate(DEFAULT_IDENTITY_FILENAME));
-  const userTemplate = await loadTemplate(DEFAULT_USER_FILENAME);
+    (await loadWorkspaceTemplate(DEFAULT_IDENTITY_FILENAME));
+  const userTemplate = await loadWorkspaceTemplate(DEFAULT_USER_FILENAME);
   // Template and filesystem checks above are async. Another process may have
   // completed setup while they ran, so optional-file policy needs fresh state.
   initialState = await readCanonicalWorkspaceStateSnapshot(dir, undefined, beforePersistentApply);
@@ -1242,7 +1209,7 @@ export async function ensureAgentWorkspace(params?: {
     ) {
       markState({ setupCompletedAt: nowIso() });
     } else {
-      const bootstrapTemplate = await loadTemplate(DEFAULT_BOOTSTRAP_FILENAME);
+      const bootstrapTemplate = await loadWorkspaceTemplate(DEFAULT_BOOTSTRAP_FILENAME);
       const wroteBootstrap = await publishBootstrapFile(
         bootstrapPath,
         bootstrapTemplate,
