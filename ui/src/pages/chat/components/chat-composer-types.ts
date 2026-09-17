@@ -224,7 +224,4 @@ export type ChatComposerState = SkillMenuState &
     composerDraftScopeKey: string | null;
     dictationError: string | null;
     dictationSelection: { start: number; end: number; value: string } | null;
-    // One commit per dictation: a repeated stop dispatch must not insert the
-    // same transcript twice.
-    dictationCommitted: boolean;
   };

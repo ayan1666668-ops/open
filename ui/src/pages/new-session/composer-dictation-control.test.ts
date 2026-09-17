@@ -193,11 +193,12 @@ describe("NewSessionDictationControl", () => {
     expect(controller.finishActive).toHaveBeenCalledTimes(2);
   });
 
-  it("commits one transcript when the iOS release dispatch reaches the commit twice", () => {
-    const insertTranscript = vi.fn(() => "spoken task");
+  it("claims a fresh draft and commits again when the microphone starts the next recording", () => {
+    const captureSelection = vi.fn();
+    const insertTranscript = vi.fn((transcript: string) => transcript);
     const onMessage = vi.fn();
     const control = new NewSessionDictationControl({
-      textarea: { captureSelection: vi.fn(), insertTranscript } as never,
+      textarea: { captureSelection, insertTranscript } as never,
       getClient: () => ({}) as never,
       isConnected: () => true,
       canCommit: () => true,
@@ -213,25 +214,22 @@ describe("NewSessionDictationControl", () => {
     if (!controller) {
       throw new Error("expected dictation controller");
     }
-    const commit = dictationHarness.options?.onCommit;
 
-    // iOS Safari delivers the release click that ends a hold and the explicit
-    // Stop as two commits of the same dictation.
-    commit?.("spoken task");
-    commit?.("spoken task");
+    expect(captureSelection).toHaveBeenCalledOnce();
+    dictationHarness.options?.onCommit("spoken task");
 
-    expect(insertTranscript).toHaveBeenCalledOnce();
-    expect(onMessage).toHaveBeenCalledOnce();
+    expect(insertTranscript).toHaveBeenCalledWith("spoken task", undefined);
     expect(onMessage).toHaveBeenCalledWith("spoken task");
 
-    // The next dictation owns a fresh commit.
+    // The next recording owns a fresh draft and its own commit.
     controller.active = false;
     render(control.render("agent-a"), container);
     container.querySelector<HTMLButtonElement>(".chat-send-btn--voice")?.click();
-    commit?.("second task");
+    expect(captureSelection).toHaveBeenCalledTimes(2);
+    dictationHarness.options?.onCommit("second task");
 
     expect(insertTranscript).toHaveBeenCalledTimes(2);
-    expect(onMessage).toHaveBeenCalledTimes(2);
+    expect(onMessage).toHaveBeenLastCalledWith("second task");
     control.dispose();
   });
 

@@ -505,14 +505,6 @@ export function renderChatComposer(props: ChatComposerProps) {
     dictationAvailable: devicePicker.dictationStatus === "ready",
     realtimeTalkActive: props.realtimeTalkActive === true,
     onCommit: (transcript: string, late?: true) => {
-      // iOS Safari can dispatch the release click that ends a hold and an
-      // explicit Stop as two commits of the same dictation. The first insert
-      // spends the draft captured when the gesture started, so repeating the
-      // commit would append the same snapshot again.
-      if (state.dictationCommitted) {
-        return;
-      }
-      state.dictationCommitted = true;
       const target = state.composerTextarea;
       const captured = state.dictationSelection;
       const liveValue = target?.value ?? props.getDraft?.() ?? props.draft;
@@ -584,21 +576,28 @@ export function renderChatComposer(props: ChatComposerProps) {
     props.onToggleRealtimeTalk && props.composerHoldToRecord !== false
       ? state.dictation
       : undefined;
+  // A commit inserts the transcript into the draft the recording started from.
+  // The textarea itself shows the live dictation preview, so every entry that
+  // starts a recording — the hold gesture and the mobile microphone that starts
+  // directly — claims that base before the preview takes the value over; a
+  // commit without it would insert the snapshot into its own preview.
+  const captureDictationBaseSelection = () => {
+    const target = state.composerTextarea;
+    state.dictationSelection = {
+      start: target?.selectionStart ?? visibleDraft.length,
+      end: target?.selectionEnd ?? visibleDraft.length,
+      value: target?.value ?? visibleDraft,
+    };
+  };
   const handleDictationPointerDown = (event: PointerEvent) => {
     if (state.dictationError) {
       state.dictationError = null;
       requestUpdate();
     }
     const target = state.composerTextarea;
-    const selection = {
-      start: target?.selectionStart ?? visibleDraft.length,
-      end: target?.selectionEnd ?? visibleDraft.length,
-      value: target?.value ?? visibleDraft,
-    };
     if (dictation?.handlePointerDown(event)) {
       // Stop also emits pointerdown; only a new gesture owns a draft snapshot.
-      state.dictationSelection = selection;
-      state.dictationCommitted = false;
+      captureDictationBaseSelection();
       if (target) {
         target.readOnly = true;
       }
@@ -636,6 +635,7 @@ export function renderChatComposer(props: ChatComposerProps) {
     microphonePicker,
     dictation,
     onDictationPointerDown: handleDictationPointerDown,
+    onDirectDictationStart: captureDictationBaseSelection,
     onPrimaryActionPointerDown: (event) =>
       preserveComposerFocusOnPrimaryAction(event, state.composerTextarea),
   };
