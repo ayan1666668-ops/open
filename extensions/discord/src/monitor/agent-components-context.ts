@@ -98,8 +98,9 @@ function buildDiscordChannelContext(params: {
   };
 }
 
-// Resolves null only when a guild payload without a channel object timed out: its
-// allowlist and routing facts are unknown, so the caller asks for a retry instead.
+// Resolves null only when a payload without a channel object timed out: its channel type
+// (DM, Group DM, or guild), allowlist, and routing facts are unknown, so the caller asks
+// for a retry instead.
 async function resolveDiscordChannelContext(
   interaction: AgentComponentInteraction,
 ): Promise<DiscordChannelContext | null> {
@@ -128,7 +129,7 @@ async function resolveDiscordChannelContext(
     }
   }
   logVerbose(`discord component: channel lookup for ${channelId} timed out`);
-  if (!channel && interaction.rawData.guild_id) {
+  if (!channel) {
     return null;
   }
   // A hydrated thread still carries its parent id; only parent-name matching is lost.

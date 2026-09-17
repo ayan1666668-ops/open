@@ -22,6 +22,8 @@ const OTHER_CHANNEL = "100000000000000005";
 const OTHER_THREAD = "100000000000000006";
 const CATEGORY = "100000000000000007";
 const CATEGORY_CHILD = "100000000000000008";
+const GROUP_DM = "100000000000000009";
+const OTHER_GROUP_DM = "100000000000000010";
 const QUESTION_ID = "ask_0123456789abcdef0123456789abcdef";
 const QUESTION_CUSTOM_ID = buildDiscordQuestionCustomId({
   questionId: QUESTION_ID,
@@ -44,6 +46,8 @@ const CHANNELS = {
     parent_id: CATEGORY,
     name: "category-child",
   },
+  [GROUP_DM]: { id: GROUP_DM, type: ChannelType.GroupDM, name: "incident-room" },
+  [OTHER_GROUP_DM]: { id: OTHER_GROUP_DM, type: ChannelType.GroupDM, name: "side-chat" },
 } as const;
 type ChannelId = keyof typeof CHANNELS;
 
@@ -84,6 +88,41 @@ function componentPayload(params: { channelId: ChannelId; hydrated: boolean; cus
     ...(params.hydrated ? { channel: CHANNELS[params.channelId] } : {}),
     data: { custom_id: params.customId },
   });
+}
+
+function groupDmPayload(params: { channelId: ChannelId; hydrated: boolean }) {
+  return createInternalComponentInteractionPayload({
+    id: "interaction1",
+    token: "test-token",
+    channel_id: params.channelId,
+    user: { id: USER, username: "tester", discriminator: "0", avatar: null, global_name: null },
+    ...(params.hydrated ? { channel: CHANNELS[params.channelId] } : {}),
+    data: { custom_id: "agent:componentId=hello" },
+  });
+}
+
+// DM policy is open to everyone, so only Group DM classification can reject a click.
+function createGroupDmHarness(released?: Promise<void>) {
+  const client = createInternalTestClient();
+  client.componentHandler.register(
+    createAgentComponentButton({
+      cfg: {},
+      accountId: "default",
+      dmPolicy: "open",
+      allowFrom: ["*"],
+      discordConfig: { dm: { groupEnabled: true, groupChannels: ["incident-room"] } },
+    }),
+  );
+  const sessionEvents = (kind: "direct" | "group", id: string) =>
+    peekSystemEvents(
+      buildAgentSessionKey({
+        agentId: "main",
+        channel: "discord",
+        accountId: "default",
+        peer: { kind, id },
+      }),
+    );
+  return { client, sessionEvents, ...attachChannelRest(client, released) };
 }
 
 function createQuestionHarness(released?: Promise<void>) {
@@ -270,4 +309,50 @@ describe("Client.handleInteraction component channel identity", () => {
       expect(peekSystemEvents(threadSession("main"))).toEqual([]);
     },
   );
+
+  it.each([true, false])(
+    "routes a Group DM click allowlisted by name to the group session (hydrated=%s)",
+    async (hydrated) => {
+      const harness = createGroupDmHarness();
+
+      await harness.client.handleInteraction(groupDmPayload({ channelId: GROUP_DM, hydrated }));
+
+      expect(harness.sessionEvents("group", GROUP_DM)).toEqual([
+        `[Discord component: hello clicked by tester (${USER})]`,
+      ]);
+      expect(harness.sessionEvents("direct", USER)).toEqual([]);
+    },
+  );
+
+  it.each([true, false])(
+    "rejects a Group DM click outside dm.groupChannels even when DMs are open (hydrated=%s)",
+    async (hydrated) => {
+      const harness = createGroupDmHarness();
+
+      await harness.client.handleInteraction(
+        groupDmPayload({ channelId: OTHER_GROUP_DM, hydrated }),
+      );
+
+      expect(replyContents(harness.post)).toEqual(["You are not authorized to use this button."]);
+      expect(harness.sessionEvents("group", OTHER_GROUP_DM)).toEqual([]);
+      expect(harness.sessionEvents("direct", USER)).toEqual([]);
+    },
+  );
+
+  it("asks for a retry instead of applying DM policy when a raw Group DM lookup stalls", async () => {
+    vi.useFakeTimers();
+    const harness = createGroupDmHarness(new Promise(() => {}));
+
+    await expectSettledWithinLookupBound(
+      harness.client.handleInteraction(
+        groupDmPayload({ channelId: OTHER_GROUP_DM, hydrated: false }),
+      ),
+    );
+
+    expect(replyContents(harness.post)).toEqual([
+      "Channel details are still loading. Try this interaction again.",
+    ]);
+    expect(harness.sessionEvents("group", OTHER_GROUP_DM)).toEqual([]);
+    expect(harness.sessionEvents("direct", USER)).toEqual([]);
+  });
 });
