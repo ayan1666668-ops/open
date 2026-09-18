@@ -62,6 +62,7 @@ function instrumentParentSql() {
 
 function instrumentProvenanceWorkerRequests() {
   const commands: string[] = [];
+  // oxlint-disable-next-line typescript/unbound-method -- Every intercepted call supplies the original Worker receiver.
   const originalPostMessage = Worker.prototype.postMessage;
   const spy = vi
     .spyOn(Worker.prototype, "postMessage")
