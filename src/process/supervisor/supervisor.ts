@@ -227,21 +227,25 @@ export function createProcessSupervisor(): ProcessSupervisor & {
     const settleConstructionResult = (
       reason: TerminationReason,
       cleanup?: Promise<void>,
+      output?: { stdout: string; stderr: string; lastOutputAtMs: number },
     ): ManagedRun => {
       const exit: RunExit = {
         reason,
         exitCode: null,
         exitSignal: null,
         durationMs: Date.now() - startedAtMs,
-        stdout: "",
-        stderr: "",
+        stdout: output?.stdout ?? "",
+        stderr: output?.stderr ?? "",
         timedOut: isTimeoutReason(reason),
         noOutputTimedOut: reason === "no-output-timeout",
       };
       return {
         runId,
         startedAtMs,
-        activity: Object.freeze({ resultSettled: true, lastOutputAtMs: startedAtMs }),
+        activity: Object.freeze({
+          resultSettled: true,
+          lastOutputAtMs: output?.lastOutputAtMs ?? startedAtMs,
+        }),
         wait: async () => exit,
         ...(cleanup && { waitForExtinction: () => cleanup }),
         cancel: () => undefined,
@@ -274,6 +278,8 @@ export function createProcessSupervisor(): ProcessSupervisor & {
     let resultSettled = false;
     let lastOutputAtMs = startedAtMs;
     let cleanupSettled = false;
+    const outputCompletion = createDeferredCore();
+    let outputError: Error | undefined;
     const captured = { stdout: "", stderr: "" };
     // Forced settlement (kill-wait fallback, Windows forced close) resolves the
     // result while inherited pipes stay open, and callers finalize their own
@@ -374,7 +380,7 @@ export function createProcessSupervisor(): ProcessSupervisor & {
       };
       overallDeadline.reset();
       outputDeadline.reset();
-      const adapterPromise =
+      const startupPromise =
         input.mode === "pty"
           ? createPtyAdapter({
               assertCurrent: input.assertCurrent,
@@ -385,7 +391,7 @@ export function createProcessSupervisor(): ProcessSupervisor & {
               env: input.env,
               abortSignal: constructionAbort.signal,
               onSpawnCleanup,
-            })
+            }).then((adapter) => ({ adapter, ready: Promise.resolve() }))
           : input.mode === "anchored-shell"
             ? createChildAdapter({
                 assertCurrent: input.assertCurrent,
@@ -412,10 +418,18 @@ export function createProcessSupervisor(): ProcessSupervisor & {
                 abortSignal: constructionAbort.signal,
                 onSpawnCleanup,
               });
-      const extinctionPromise = adapterPromise
+      const nativeExtinctionPromise = startupPromise
         .then(
-          async (started) => {
+          async ({ adapter: started, ready }) => {
             ownedAdapter = started;
+            // The adapter retains errors from construction. Subscribe before readiness
+            // and keep observation until both output and native cleanup settle.
+            started.onError?.((error, source) => {
+              if (source === "stdout" || source === "stderr") {
+                outputError ??= error;
+                recordScopeCleanupFailure(owner, error);
+              }
+            });
             if (external || !started.waitForExtinction) {
               for (const scope of owner.cleanupOwners) {
                 if (requiresProcessTree(scope, external)) {
@@ -432,6 +446,9 @@ export function createProcessSupervisor(): ProcessSupervisor & {
               // Drain a late adapter's output without reopening the terminal result.
               void started.wait().catch(() => undefined);
             }
+            // Child close can precede a descendant's private-input consumption.
+            // Readiness failure is separate from the cleanup owner's outcome.
+            await Promise.allSettled([ready]);
             await (constructionCleanup ?? started.waitForExtinction?.() ?? started.wait());
           },
           async () => {
@@ -448,6 +465,16 @@ export function createProcessSupervisor(): ProcessSupervisor & {
             ownedAdapter?.dispose();
           }
         });
+      // Successful cleanup joins every output tail. A known native failure must
+      // remain reportable even if an inherited pipe never produces EOF.
+      const extinctionPromise = Promise.all([
+        nativeExtinctionPromise,
+        outputCompletion.promise,
+      ]).then(() => {
+        if (outputError) {
+          throw outputError;
+        }
+      });
       void extinctionPromise.then(
         () => {
           ownedRuns.delete(owner);
@@ -460,25 +487,31 @@ export function createProcessSupervisor(): ProcessSupervisor & {
           cleanup.reject(error);
         },
       );
-      let adapter: Awaited<typeof adapterPromise>;
-      try {
-        adapter = await Promise.race([adapterPromise, constructionAbortPromise]);
-      } catch (err) {
-        if (err !== constructionAbortError || !forcedReason) {
-          throw err;
-        }
+      const settleAbortedConstruction = (reason: TerminationReason) => {
         resultSettled = true;
+        outputCompletion.resolve();
         overallDeadline.clear();
         outputDeadline.clear();
         detachOutput();
         if (cleanupSettled) {
           ownedAdapter?.dispose();
         }
-        return settleConstructionResult(forcedReason, cleanup.promise);
+        return settleConstructionResult(reason, cleanup.promise, { ...captured, lastOutputAtMs });
+      };
+      let startup: Awaited<typeof startupPromise>;
+      try {
+        startup = await Promise.race([startupPromise, constructionAbortPromise]);
+      } catch (err) {
+        if (err !== constructionAbortError || !forcedReason) {
+          throw err;
+        }
+        return settleAbortedConstruction(forcedReason);
       }
+      const adapter = startup.adapter;
 
       const settleResult = () => {
         resultSettled = true;
+        outputCompletion.resolve();
         overallDeadline.clear();
         outputDeadline.clear();
         detachOutput();
@@ -486,6 +519,50 @@ export function createProcessSupervisor(): ProcessSupervisor & {
           adapter.dispose();
         }
       };
+
+      const withOutputFence =
+        <Chunk>(deliver?: (chunk: Chunk) => void, recordsOutput = true) =>
+        (chunk: Chunk) => {
+          if (outputDetached) {
+            return;
+          }
+          if (recordsOutput) {
+            touchOutput();
+          }
+          deliver?.(chunk);
+        };
+      const rawInput = input.mode === "child" ? input : undefined;
+      // Byte transports can flush decoded text at EOF without fresh activity.
+      // PTYs and Windows Job transports report only text.
+      for (const [stream, subscribe, onText, onRaw] of [
+        ["stdout", adapter.onStdout, input.onStdout, rawInput?.onStdoutRaw],
+        ["stderr", adapter.onStderr, input.onStderr, rawInput?.onStderrRaw],
+      ] as const) {
+        subscribe(
+          withOutputFence((chunk: string) => {
+            if (captureOutput) {
+              captured[stream] = appendCapturedOutput(
+                captured[stream],
+                chunk,
+                stream,
+                maxCapturedOutputChars,
+              );
+            }
+            onText?.(chunk);
+          }, !adapter.supportsRawOutput),
+          withOutputFence(onRaw),
+        );
+      }
+
+      try {
+        await Promise.race([startup.ready, constructionAbortPromise]);
+      } catch (error) {
+        if (error === constructionAbortError && forcedReason) {
+          return settleAbortedConstruction(forcedReason);
+        }
+        settleResult();
+        throw error;
+      }
 
       cancelAdapter = (reason: TerminationReason) => {
         if (
@@ -524,69 +601,36 @@ export function createProcessSupervisor(): ProcessSupervisor & {
         forceKillTimer.unref?.();
       };
 
-      const withOutputFence =
-        <Chunk>(deliver?: (chunk: Chunk) => void, recordsOutput = true) =>
-        (chunk: Chunk) => {
-          if (outputDetached) {
-            return;
-          }
-          if (recordsOutput) {
-            touchOutput();
-          }
-          deliver?.(chunk);
-        };
-      const rawInput = input.mode === "child" ? input : undefined;
-      // Byte transports can flush decoded text at EOF without fresh activity.
-      // PTYs and Windows Job transports report only text.
-      for (const [stream, subscribe, onText, onRaw] of [
-        ["stdout", adapter.onStdout, input.onStdout, rawInput?.onStdoutRaw],
-        ["stderr", adapter.onStderr, input.onStderr, rawInput?.onStderrRaw],
-      ] as const) {
-        subscribe(
-          withOutputFence((chunk: string) => {
-            if (captureOutput) {
-              captured[stream] = appendCapturedOutput(
-                captured[stream],
-                chunk,
-                stream,
-                maxCapturedOutputChars,
-              );
-            }
-            onText?.(chunk);
-          }, !adapter.supportsRawOutput),
-          withOutputFence(onRaw),
-        );
-      }
-
-      const waitPromise = (async (): Promise<RunExit> => {
-        const result = await adapter.wait();
-        const deadlineReason = resolveElapsedTimeoutReason({
-          nowMs: performance.now(),
-          overallTimeoutDeadlineMs: overallDeadline.deadlineMs,
-          noOutputTimeoutDeadlineMs: outputDeadline.deadlineMs,
-        });
-        const terminalReason = forcedReason ?? deadlineReason;
-        settleResult();
-
-        const reason: TerminationReason =
-          terminalReason ?? (result.signal != null ? ("signal" as const) : ("exit" as const));
-        const exit: RunExit = {
-          reason,
-          exitCode: result.code,
-          exitSignal: result.signal,
-          oomScoreWrapperSelected: adapter.oomScoreWrapperSelected === true,
-          durationMs: Date.now() - startedAtMs,
-          ...captured,
-          timedOut: isTimeoutReason(reason),
-          noOutputTimedOut: terminalReason === "no-output-timeout",
-        };
-        return exit;
-      })().catch((err: unknown) => {
-        if (!resultSettled) {
+      const waitOutcome = Promise.allSettled([
+        (async (): Promise<RunExit> => {
+          const result = await adapter.wait();
+          const deadlineReason = resolveElapsedTimeoutReason({
+            nowMs: performance.now(),
+            overallTimeoutDeadlineMs: overallDeadline.deadlineMs,
+            noOutputTimeoutDeadlineMs: outputDeadline.deadlineMs,
+          });
+          const terminalReason = forcedReason ?? deadlineReason;
           settleResult();
-        }
-        throw err;
-      });
+
+          const reason: TerminationReason =
+            terminalReason ?? (result.signal != null ? ("signal" as const) : ("exit" as const));
+          const exit: RunExit = {
+            reason,
+            exitCode: result.code,
+            exitSignal: result.signal,
+            oomScoreWrapperSelected: adapter.oomScoreWrapperSelected === true,
+            durationMs: Date.now() - startedAtMs,
+            ...captured,
+            timedOut: isTimeoutReason(reason),
+            noOutputTimedOut: terminalReason === "no-output-timeout",
+          };
+          return exit;
+        })().finally(() => {
+          if (!resultSettled) {
+            settleResult();
+          }
+        }),
+      ]);
 
       const managedRun: ManagedRun = {
         activity: Object.freeze({
@@ -606,7 +650,13 @@ export function createProcessSupervisor(): ProcessSupervisor & {
         pid: adapter.pid,
         startedAtMs,
         stdin: adapter.stdin,
-        wait: async () => await waitPromise,
+        wait: async () => {
+          const [outcome] = await waitOutcome;
+          if (outcome.status === "rejected") {
+            throw outcome.reason;
+          }
+          return outcome.value;
+        },
         ...(adapter.waitForExtinction && { waitForExtinction: () => cleanup.promise }),
         cancel: (reason = "manual-cancel") => {
           requestCancel(reason);
@@ -620,6 +670,7 @@ export function createProcessSupervisor(): ProcessSupervisor & {
       return managedRun;
     } catch (err) {
       resultSettled = true;
+      outputCompletion.resolve();
       overallDeadline.clear();
       outputDeadline.clear();
       detachOutput();
