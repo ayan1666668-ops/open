@@ -425,7 +425,6 @@ async function runCase(params: {
                     command: process.execPath,
                     args: [fixturePath, "--app-server"],
                     requestTimeoutMs: CHECKPOINT_TIMEOUT_MS,
-                    turnCompletionIdleTimeoutMs: CHECKPOINT_TIMEOUT_MS,
                   },
                 },
               },

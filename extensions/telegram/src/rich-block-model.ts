@@ -171,94 +171,133 @@ export function countRichTextChars(text: RichText): number {
   return countRichTextChars(text.text);
 }
 
+type RichBlockMeasurement = { chars: number; blocks: number; media: number; nesting: number };
+
+function measureRichBlockText(text: RichText, size: RichBlockMeasurement, depth: number): void {
+  if (typeof text === "string") {
+    size.chars += text.length;
+  } else if (Array.isArray(text)) {
+    for (const part of text) {
+      measureRichBlockText(part, size, depth);
+    }
+  } else if (text.type === "mathematical_expression") {
+    size.chars += text.expression.length;
+  } else if (text.type === "custom_emoji") {
+    size.chars += text.alternative_text.length;
+  } else {
+    if (depth >= size.nesting) {
+      size.nesting = depth + 1;
+    }
+    measureRichBlockText(text.text, size, depth + 1);
+  }
+}
+
+function measureRichBlockCaption(
+  caption: RichBlockCaption | undefined,
+  size: RichBlockMeasurement,
+  depth: number,
+): void {
+  if (caption) {
+    if (depth > size.nesting) {
+      size.nesting = depth;
+    }
+    measureRichBlockText(caption.text, size, depth);
+    if (caption.credit) {
+      measureRichBlockText(caption.credit, size, depth);
+    }
+  }
+}
+
+function measureRichBlockChildren(
+  children: readonly InputRichBlock[],
+  size: RichBlockMeasurement,
+  depth: number,
+): void {
+  // Empty containers still contribute their nesting edge; plain text leaves do not add one.
+  if (depth > size.nesting) {
+    size.nesting = depth;
+  }
+  for (const block of children) {
+    size.blocks += 1;
+    switch (block.type) {
+      case "paragraph":
+      case "heading":
+      case "footer":
+        measureRichBlockText(block.text, size, depth);
+        break;
+      case "pre":
+        size.chars += block.text.length;
+        break;
+      case "mathematical_expression":
+        size.chars += block.expression.length;
+        break;
+      case "pullquote":
+        measureRichBlockText(block.text, size, depth);
+        if (block.credit) {
+          measureRichBlockText(block.credit, size, depth);
+        }
+        break;
+      case "blockquote":
+        measureRichBlockChildren(block.blocks, size, depth + 1);
+        if (block.credit) {
+          measureRichBlockText(block.credit, size, depth + 1);
+        }
+        break;
+      case "details":
+        measureRichBlockChildren(block.blocks, size, depth + 1);
+        measureRichBlockText(block.summary, size, depth + 1);
+        break;
+      case "collage":
+      case "slideshow":
+        measureRichBlockChildren(block.blocks, size, depth + 1);
+        measureRichBlockCaption(block.caption, size, depth + 1);
+        break;
+      case "list":
+        size.blocks += block.items.length;
+        if (depth >= size.nesting) {
+          size.nesting = depth + 1;
+        }
+        for (const item of block.items) {
+          measureRichBlockChildren(item.blocks, size, depth + 1);
+        }
+        break;
+      case "table":
+        size.blocks += block.cells.length;
+        if (depth >= size.nesting) {
+          size.nesting = depth + 1;
+        }
+        if (block.caption) {
+          measureRichBlockText(block.caption, size, depth + 1);
+        }
+        for (const row of block.cells) {
+          for (const cell of row) {
+            const text = cell.text;
+            if (text) {
+              measureRichBlockText(text, size, depth + 1);
+            }
+          }
+        }
+        break;
+      case "photo":
+      case "video":
+      case "audio":
+      case "animation":
+      case "voice_note":
+        size.media += 1;
+        measureRichBlockCaption(block.caption, size, depth + 1);
+        break;
+      case "map":
+        // Live-verified: maps do not consume the 50-attachment budget.
+        measureRichBlockCaption(block.caption, size, depth + 1);
+        break;
+    }
+  }
+}
+
 /** Bot API budgets: UTF-16 text, nested blocks/items/rows, media, and formatting edges. */
 export function measureInputRichBlocks(blocks: readonly InputRichBlock[]) {
   const size = { chars: 0, blocks: 0, media: 0, nesting: 0 };
-  const visitText = (text: RichText, depth: number): void => {
-    size.nesting = Math.max(size.nesting, depth);
-    if (typeof text === "string") {
-      size.chars += text.length;
-    } else if (Array.isArray(text)) {
-      for (const part of text) {
-        visitText(part, depth);
-      }
-    } else if (text.type === "mathematical_expression") {
-      size.chars += text.expression.length;
-    } else if (text.type === "custom_emoji") {
-      size.chars += text.alternative_text.length;
-    } else {
-      visitText(text.text, depth + 1);
-    }
-  };
-  const visitCaption = (caption: RichBlockCaption | undefined, depth: number) => {
-    if (caption) {
-      visitText(caption.text, depth);
-      visitText(caption.credit ?? "", depth);
-    }
-  };
-  const visitBlocks = (children: readonly InputRichBlock[], depth: number): void => {
-    size.nesting = Math.max(size.nesting, depth);
-    for (const block of children) {
-      size.blocks += 1;
-      switch (block.type) {
-        case "paragraph":
-        case "heading":
-        case "footer":
-        case "pre":
-          visitText(block.text, depth);
-          break;
-        case "mathematical_expression":
-          visitText(block.expression, depth);
-          break;
-        case "pullquote":
-          visitText(block.text, depth);
-          visitText(block.credit ?? "", depth);
-          break;
-        case "blockquote":
-          visitBlocks(block.blocks, depth + 1);
-          visitText(block.credit ?? "", depth + 1);
-          break;
-        case "details":
-          visitBlocks(block.blocks, depth + 1);
-          visitText(block.summary, depth + 1);
-          break;
-        case "collage":
-        case "slideshow":
-          visitBlocks(block.blocks, depth + 1);
-          visitCaption(block.caption, depth + 1);
-          break;
-        case "list":
-          size.blocks += block.items.length;
-          size.nesting = Math.max(size.nesting, depth + 1);
-          for (const item of block.items) {
-            visitBlocks(item.blocks, depth + 1);
-          }
-          break;
-        case "table":
-          size.blocks += block.cells.length;
-          visitText(block.caption ?? "", depth + 1);
-          for (const row of block.cells) {
-            for (const cell of row) {
-              visitText(cell.text ?? "", depth + 1);
-            }
-          }
-          break;
-        case "photo":
-        case "video":
-        case "audio":
-        case "animation":
-        case "voice_note":
-          size.media += 1;
-          visitCaption(block.caption, depth + 1);
-          break;
-        case "map":
-          // Live-verified: maps do not consume the 50-attachment budget.
-          visitCaption(block.caption, depth + 1);
-          break;
-      }
-    }
-  };
-  visitBlocks(blocks, 0);
+  measureRichBlockChildren(blocks, size, 0);
   return size;
 }
 

@@ -31,7 +31,6 @@ import {
 import type {
   ToolResultContentSource,
   AgentContext,
-  AgentEvent,
   AgentLoopConfig,
   AgentMessage,
   AgentTool,
