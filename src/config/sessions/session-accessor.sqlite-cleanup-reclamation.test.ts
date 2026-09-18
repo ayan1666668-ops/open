@@ -345,7 +345,7 @@ describe("SQLite lifecycle cleanup reclamation", () => {
     },
   );
 
-  it("reclaims orphan-only history and republishes pending archives on an empty pass", async () => {
+  it("reclaims cold orphan-only history and republishes pending archives on a cold empty pass", async () => {
     const now = Date.now();
     const sessionKey = "agent:main:current";
     const sessionId = "orphaned-history";
@@ -369,6 +369,8 @@ describe("SQLite lifecycle cleanup reclamation", () => {
         nowMs: now,
       });
 
+    await closeOpenClawAgentDatabasesAsync();
+    closeOpenClawAgentDatabasesForTest();
     await expect(cleanup()).resolves.toEqual({
       removedEntries: 0,
       archivedTranscriptArtifacts: 1,
@@ -389,14 +391,16 @@ describe("SQLite lifecycle cleanup reclamation", () => {
       .prepare("UPDATE session_transcript_archives SET published_at = NULL WHERE session_id = ?")
       .run(sessionId);
 
+    await closeOpenClawAgentDatabasesAsync();
+    closeOpenClawAgentDatabasesForTest();
     await expect(cleanup()).resolves.toEqual({
       removedEntries: 0,
       archivedTranscriptArtifacts: 0,
     });
     expect(fs.readFileSync(archivePath)).toEqual(bytes);
     expect(
-      database.db
-        .prepare("SELECT published_at FROM session_transcript_archives WHERE session_id = ?")
+      openDatabase(storePath)
+        .db.prepare("SELECT published_at FROM session_transcript_archives WHERE session_id = ?")
         .get(sessionId),
     ).toEqual({ published_at: expect.any(Number) });
     expect(loadSessionEntry(scope)).toMatchObject(current);
