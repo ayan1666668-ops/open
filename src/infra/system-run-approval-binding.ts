@@ -6,6 +6,7 @@ import type {
   ExecCommandSegment,
   SystemRunApprovalBinding,
   SystemRunApprovalFileOperand,
+  SystemRunApprovalPlan,
 } from "./exec-approvals.js";
 import { planShellAuthorization } from "./exec-authorization-plan.js";
 import {
@@ -92,6 +93,20 @@ export function buildSystemRunApprovalBinding(params: {
   };
 }
 
+/** Derives approval identity from the same canonical plan that replay forwards. */
+export function buildSystemRunApprovalBindingFromPlan(params: {
+  plan: SystemRunApprovalPlan;
+  env?: unknown;
+}): { binding: SystemRunApprovalBinding; envKeys: string[] } {
+  return buildSystemRunApprovalBinding({
+    argv: params.plan.argv,
+    cwd: params.plan.cwd,
+    agentId: params.plan.agentId,
+    sessionKey: params.plan.sessionKey,
+    env: params.env,
+  });
+}
+
 function argvMatches(expectedArgv: string[], actualArgv: string[]): boolean {
   if (expectedArgv.length === 0 || expectedArgv.length !== actualArgv.length) {
     return false;
@@ -173,16 +188,16 @@ export function matchSystemRunApprovalBinding(params: {
   actualEnvKeys: string[];
 }): SystemRunApprovalMatchResult {
   if (!argvMatches(params.expected.argv, params.actual.argv)) {
-    return requestMismatch();
+    return requestMismatch({ mismatchField: "argv" });
   }
   if (params.expected.cwd !== params.actual.cwd) {
-    return requestMismatch();
+    return requestMismatch({ mismatchField: "cwd" });
   }
   if (params.expected.agentId !== params.actual.agentId) {
-    return requestMismatch();
+    return requestMismatch({ mismatchField: "agentId" });
   }
   if (params.expected.sessionKey !== params.actual.sessionKey) {
-    return requestMismatch();
+    return requestMismatch({ mismatchField: "sessionKey" });
   }
   return matchSystemRunApprovalEnvHash({
     expectedEnvHash: params.expected.envHash,

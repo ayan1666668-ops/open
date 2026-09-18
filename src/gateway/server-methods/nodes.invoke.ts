@@ -393,7 +393,10 @@ export const nodeInvokeHandlers: GatewayRequestHandlers = {
             false,
             undefined,
             errorShape(ErrorCodes.INVALID_REQUEST, forwardedParams.message, {
-              details: forwardedParams.details ?? null,
+              details: {
+                ...(forwardedParams.details ?? {}),
+                nodeCommandDispatched: false,
+              },
             }),
           );
           return;
@@ -412,7 +415,12 @@ export const nodeInvokeHandlers: GatewayRequestHandlers = {
               errorShape(
                 ErrorCodes.INVALID_REQUEST,
                 "approved runtime authority closed before node dispatch",
-                { details: { code: "APPROVAL_AUTHORITY_CLOSED" } },
+                {
+                  details: {
+                    code: "APPROVAL_AUTHORITY_CLOSED",
+                    nodeCommandDispatched: false,
+                  },
+                },
               ),
             );
             return;

@@ -8,6 +8,7 @@ import * as commandResolution from "./exec-command-resolution.js";
 import {
   APPROVAL_SCRIPT_OPERAND_DRIFT_DENIED_MESSAGE,
   buildSystemRunApprovalBinding,
+  buildSystemRunApprovalBindingFromPlan,
   buildSystemRunApprovalEnvBinding,
   matchSystemRunApprovalBinding,
   missingSystemRunApprovalBinding,
@@ -270,6 +271,25 @@ describe("buildSystemRunApprovalBinding", () => {
       envKeys: ["alpha", "beta"],
     });
   });
+
+  it("derives binding identity from the canonical replay plan", () => {
+    const plan = {
+      argv: ["cmd.exe", "/d", "/s", "/c", "%LOCALAPPDATA%\\Synthetic.exe"],
+      cwd: "C:\\work",
+      commandText: "cmd.exe /d /s /c %LOCALAPPDATA%\\Synthetic.exe",
+      commandPreview: "C:\\Users\\synthetic\\AppData\\Local\\Synthetic.exe",
+      agentId: "hermes-worker",
+      sessionKey: "agent:hermes-worker:validation",
+    };
+    expect(buildSystemRunApprovalBindingFromPlan({ plan })).toEqual(
+      buildSystemRunApprovalBinding({
+        argv: plan.argv,
+        cwd: plan.cwd,
+        agentId: plan.agentId,
+        sessionKey: plan.sessionKey,
+      }),
+    );
+  });
 });
 
 describe("matchSystemRunApprovalBinding", () => {
@@ -294,21 +314,25 @@ describe("matchSystemRunApprovalBinding", () => {
   it.each([
     {
       name: "argv mismatch",
+      mismatchField: "argv",
       actual: { ...expected, argv: ["bash", "-lc", "echo bye"] },
     },
     {
       name: "cwd mismatch",
+      mismatchField: "cwd",
       actual: { ...expected, cwd: "/var/tmp" },
     },
     {
       name: "agent mismatch",
+      mismatchField: "agentId",
       actual: { ...expected, agentId: "other" },
     },
     {
       name: "session mismatch",
+      mismatchField: "sessionKey",
       actual: { ...expected, sessionKey: "agent:main:other" },
     },
-  ])("rejects $name", ({ actual }) => {
+  ])("rejects $name", ({ actual, mismatchField }) => {
     expect(
       matchSystemRunApprovalBinding({
         expected,
@@ -319,7 +343,7 @@ describe("matchSystemRunApprovalBinding", () => {
       ok: false,
       code: "APPROVAL_REQUEST_MISMATCH",
       message: "approval id does not match request",
-      details: undefined,
+      details: { mismatchField },
     });
   });
 });
