@@ -37,8 +37,10 @@ import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Rect
+import android.os.Bundle
 import android.os.SystemClock
 import android.provider.Settings
+import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -194,6 +196,7 @@ import java.util.Base64
 import java.util.UUID
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.ceil
 import kotlin.math.roundToInt
 
@@ -220,6 +223,7 @@ class ChatComposerLayoutTest {
   private val sheetFeatures = SheetFeatures()
   private lateinit var branchRootView: AbstractComposeView
   private lateinit var branchRootEffectJob: Job
+  private var branchDiagnosticCase = "default"
 
   @Before
   @SuppressLint("RestrictedApi")
@@ -1027,6 +1031,68 @@ class ChatComposerLayoutTest {
   }
 
   @Test
+  fun dictationShowsPlatformProgressAndCommitsOnlyTheFinalTranscript() {
+    val permission = Manifest.permission.RECORD_AUDIO
+    val permissionWasGranted = app.checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
+    val recognitionAvailable = SpeechRecognizer.isOnDeviceRecognitionAvailable(app)
+    shadowOf(app).grantPermissions(permission)
+    ShadowSpeechRecognizer.setIsOnDeviceRecognitionAvailable(true)
+    val lifecycleOwner =
+      object : LifecycleOwner {
+        override val lifecycle = LifecycleRegistry(this).apply { currentState = Lifecycle.State.RESUMED }
+      }
+
+    fun mic(label: String) =
+      composeRule.onNode(
+        SemanticsMatcher("dictation control: $label") { node ->
+          node.config.getOrNull(SemanticsActions.OnClick)?.label == nativeString(label)
+        },
+      )
+    try {
+      val viewModel = showChat(viewportWidth = 320.dp)
+      composeRule.runOnIdle {
+        viewModel.attachRuntimeUi(lifecycleOwner, app.permissionRequester)
+        controller.handleGatewayEvent(
+          "agent",
+          """{"sessionKey":"${AndroidScreenshotFixture.mainSessionKey}","runId":"android-screenshot-active-run","seq":1,"stream":"lifecycle","data":{"phase":"end"}}""",
+        )
+      }
+      val editor = composeRule.onNode(hasSetTextAction())
+      editor.performTextReplacement("Existing draft")
+      mic("Dictation").performClick()
+      composeRule.onNodeWithText(nativeString("Starting dictation…")).assertIsDisplayed()
+      composeRule.onNodeWithContentDescription(nativeString("Send")).assertIsNotEnabled()
+      val recognizer = shadowOf(ShadowSpeechRecognizer.getLatestSpeechRecognizer())
+      assertTrue(recognizer.lastRecognizerIntent.getBooleanExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false))
+      composeRule.runOnIdle { recognizer.triggerOnReadyForSpeech(Bundle()) }
+      composeRule.onNodeWithText(nativeString("Listening…")).assertIsDisplayed()
+      composeRule.runOnIdle {
+        recognizer.triggerOnPartialResults(
+          Bundle().apply { putStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION, arrayListOf("a partial sentence")) },
+        )
+      }
+      composeRule.onNodeWithText("a partial sentence").assertIsDisplayed()
+      editor.assertTextEquals("Existing draft")
+      composeRule.runOnIdle { recognizer.triggerOnEndOfSpeech() }
+      composeRule.onNodeWithText(nativeString("Transcribing…")).assertIsDisplayed()
+      mic("Cancel dictation").assertIsDisplayed()
+      composeRule.onNodeWithContentDescription(nativeString("Send")).assertIsNotEnabled()
+      composeRule.runOnIdle {
+        recognizer.triggerOnResults(
+          Bundle().apply { putStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION, arrayListOf("a finished sentence")) },
+        )
+      }
+      editor.assertTextEquals("Existing draft a finished sentence")
+      composeRule.onNodeWithText(nativeString("Transcribing…")).assertDoesNotExist()
+      composeRule.onNodeWithText("a partial sentence").assertDoesNotExist()
+      composeRule.onNodeWithContentDescription(nativeString("Send")).assertIsEnabled()
+    } finally {
+      ShadowSpeechRecognizer.setIsOnDeviceRecognitionAvailable(recognitionAvailable)
+      if (!permissionWasGranted) shadowOf(app).denyPermissions(permission)
+    }
+  }
+
+  @Test
   fun unavailableDictationOffersExplicitVoiceNoteRecoveryWithoutChangingTheDraft() {
     prefs.gatewayRegistry.upsert(
       GatewayRegistryEntry(
@@ -1202,25 +1268,7 @@ class ChatComposerLayoutTest {
     val height = mutableStateOf(720.dp)
     val viewModel = showChat(viewportWidth = 720.dp, viewportHeight = { height.value }, fontScale = { 1.5f }, useChatShell = true)
     val owner = viewModel.captureChatShareOwner()
-    val sent = ConcurrentLinkedQueue<JsonObject>()
-    val requestField = ChatController::class.java.getDeclaredField("requestGatewayForGateway").apply { isAccessible = true }
-
-    @Suppress("UNCHECKED_CAST")
-    val originalRequest = requestField.get(controller) as suspend (String, String, String?) -> String
-    val request: suspend (String, String, String?) -> String = { gatewayId, method, params ->
-      if (method == "chat.send") {
-        val payload = Json.parseToJsonElement(requireNotNull(params)).jsonObject
-        sent.add(payload)
-        buildJsonObject {
-          put("runId", payload.getValue("idempotencyKey"))
-          put("status", JsonPrimitive("started"))
-        }.toString()
-      } else {
-        originalRequest(gatewayId, method, params)
-      }
-    }
-    try {
-      requestField.set(controller, request)
+    withChatSendRequests { sent ->
       composeRule.runOnIdle {
         viewModel.chatComposerState.addAttachments(
           owner,
@@ -1298,6 +1346,30 @@ class ChatComposerLayoutTest {
       }
       assertEquals(JsonPrimitive(edited), sent.single()["message"])
       editor.assert(SemanticsMatcher.expectValue(SemanticsProperties.EditableText, AnnotatedString("")))
+    }
+  }
+
+  private fun withChatSendRequests(assertions: (ConcurrentLinkedQueue<JsonObject>) -> Unit) {
+    val sent = ConcurrentLinkedQueue<JsonObject>()
+    val requestField = ChatController::class.java.getDeclaredField("requestGatewayForGateway").apply { isAccessible = true }
+
+    @Suppress("UNCHECKED_CAST")
+    val originalRequest = requestField.get(controller) as suspend (String, String, String?) -> String
+    val request: suspend (String, String, String?) -> String = { gatewayId, method, params ->
+      if (method == "chat.send") {
+        val payload = Json.parseToJsonElement(requireNotNull(params)).jsonObject
+        sent.add(payload)
+        buildJsonObject {
+          put("runId", payload.getValue("idempotencyKey"))
+          put("status", JsonPrimitive("started"))
+        }.toString()
+      } else {
+        originalRequest(gatewayId, method, params)
+      }
+    }
+    try {
+      requestField.set(controller, request)
+      assertions(sent)
     } finally {
       requestField.set(controller, originalRequest)
     }
@@ -1362,25 +1434,7 @@ class ChatComposerLayoutTest {
     val height = mutableStateOf(720.dp)
     val viewModel = showChat(viewportWidth = 720.dp, viewportHeight = { height.value }, useChatShell = true)
     val owner = viewModel.captureChatShareOwner()
-    val sent = ConcurrentLinkedQueue<JsonObject>()
-    val requestField = ChatController::class.java.getDeclaredField("requestGatewayForGateway").apply { isAccessible = true }
-
-    @Suppress("UNCHECKED_CAST")
-    val originalRequest = requestField.get(controller) as suspend (String, String, String?) -> String
-    val request: suspend (String, String, String?) -> String = { gatewayId, method, params ->
-      if (method == "chat.send") {
-        val payload = Json.parseToJsonElement(requireNotNull(params)).jsonObject
-        sent.add(payload)
-        buildJsonObject {
-          put("runId", payload.getValue("idempotencyKey"))
-          put("status", JsonPrimitive("started"))
-        }.toString()
-      } else {
-        originalRequest(gatewayId, method, params)
-      }
-    }
-    try {
-      requestField.set(controller, request)
+    withChatSendRequests { sent ->
       val editor = composeRule.onNode(hasSetTextAction())
       val draft = "Visible draft"
       editor.performClick().performTextReplacement(draft)
@@ -1416,8 +1470,6 @@ class ChatComposerLayoutTest {
       composeRule.waitUntil { composeRule.runOnIdle { sent.isNotEmpty() } }
       assertEquals(listOf(JsonPrimitive(edited)), sent.map { it["message"] })
       editor.assert(SemanticsMatcher.expectValue(SemanticsProperties.EditableText, AnnotatedString("")))
-    } finally {
-      requestField.set(controller, originalRequest)
     }
   }
 
@@ -2487,6 +2539,7 @@ class ChatComposerLayoutTest {
     withBranchRequests { _, calls, _ ->
       val cases = listOf("admin", "loading", "active", "missing", "switching")
       for (condition in cases) {
+        branchDiagnosticCase = condition
         val dialog = openBranchSheet()
         val select = checkNotNull(branchRow(2).fetchSemanticsNode().config[SemanticsActions.OnClick].action)
         val branches = controller.sessionBranches.value
@@ -2531,6 +2584,7 @@ class ChatComposerLayoutTest {
         }
         composeRule.onNode(isDialog()).assertDoesNotExist()
       }
+      branchDiagnosticCase = "eligible"
       openBranchSheet()
       branchRow(2).assertIsEnabled().performClick()
       composeRule.waitUntil {
@@ -2614,7 +2668,10 @@ class ChatComposerLayoutTest {
         scene = AndroidScreenshotScene.Branches,
       )
     composeRule.waitUntil {
-      model.chatSessionBranches.value.size == 12 && model.chatOutboxPresentationRestored.value && !model.chatSessionBranchesLoading.value
+      // Branch IO can publish after showChat idles; drain Android Main before reading ViewModel bridges.
+      composeRule.runOnIdle {
+        model.chatSessionBranches.value.size == 12 && model.chatOutboxPresentationRestored.value && !model.chatSessionBranchesLoading.value
+      }
     }
     assertEquals(0, controller.pendingRunCount.value)
     return model
@@ -2682,18 +2739,58 @@ class ChatComposerLayoutTest {
     val release = CompletableDeferred<Unit>()
     val switchJob = CompletableDeferred<Job>()
     val historyReturned = CompletableDeferred<Unit>()
+    val diagnosticRequests = AtomicInteger()
+    val diagnosticEvents = AtomicInteger()
+    val diagnosticJobs = ConcurrentLinkedQueue<Pair<Int, Job>>()
+    val diagnosticLog = ConcurrentLinkedQueue<Pair<Int, String>>()
+
+    fun recordDiagnostic(event: String) {
+      val sequence = diagnosticEvents.incrementAndGet()
+      if (sequence <= 64) diagnosticLog.add(sequence to event)
+    }
+
     val field = ChatController::class.java.getDeclaredField("requestGatewayForGateway").apply { isAccessible = true }
 
     @Suppress("UNCHECKED_CAST")
     val original = field.get(controller) as suspend (String, String, String?) -> String
     val request: suspend (String, String, String?) -> String = { gateway, method, params ->
+      val label =
+        when (method) {
+          "sessions.branches.list" -> "list"
+          "sessions.branches.switch" -> "switch"
+          "chat.history" -> "history"
+          else -> null
+        }
+      val requestId = if (label == null) 0 else diagnosticRequests.incrementAndGet()
+
+      fun recordPhase(phase: String) {
+        if (requestId in 1..16) recordDiagnostic("$requestId:$label:$phase")
+      }
+
+      if (requestId in 1..16) {
+        val job = currentCoroutineContext().job
+        diagnosticJobs.add(requestId to job)
+        recordPhase("entered")
+        job.invokeOnCompletion { recordPhase(if (job.isCancelled) "job-cancelled" else "job-completed") }
+      }
       if (method.startsWith("sessions.branches.")) {
         observedJobs.add(currentCoroutineContext().job)
         assertEquals(AndroidScreenshotFixture.gatewayId, gateway)
         calls.add(BranchRequest(method, Json.parseToJsonElement(checkNotNull(params)).jsonObject))
-        if (method == hold) release.await()
+        if (method == hold) {
+          recordPhase("held")
+          release.await()
+          recordPhase("released")
+        }
       }
-      val response = original(gateway, method, params)
+      val response =
+        try {
+          original(gateway, method, params)
+        } catch (failure: Throwable) {
+          recordPhase("threw")
+          throw failure
+        }
+      recordPhase("returned")
       if (holdPostHistoryListReply?.armed?.isCompleted == true) {
         val job = currentCoroutineContext().job
         if (method == "sessions.branches.switch") {
@@ -2715,7 +2812,9 @@ class ChatComposerLayoutTest {
                   ?.entryId,
               )
               assertTrue("Hold one post-history listing reply", holdPostHistoryListReply.reached.complete(Unit))
+              recordPhase("reply-held")
               release.await()
+              recordPhase("reply-released")
             }
           }
         }
@@ -2728,8 +2827,27 @@ class ChatComposerLayoutTest {
       assertions(model, calls, release)
     } catch (failure: Throwable) {
       primaryFailure = failure
+      // Snapshot before disposal releases gates or cancels jobs. Never log RPC values or errors.
+      // These bounded observations do not drain a dispatcher or alter the original timeout.
+      runCatching {
+        val jobs =
+          diagnosticJobs.map { (id, job) ->
+            "$id:active=${job.isActive},completed=${job.isCompleted},cancelled=${job.isCancelled}"
+          }
+        val events = diagnosticLog.sortedBy { it.first }.joinToString(";") { (sequence, event) -> "$sequence:$event" }
+        println(
+          "Branch diagnostic case=$branchDiagnosticCase " +
+            "loading=${controller.sessionBranchesLoading.value}/${model.chatSessionBranchesLoading.value} " +
+            "switching=${controller.sessionBranchSwitching.value}/${model.chatSessionBranchSwitching.value} " +
+            "historyLoading=${controller.historyLoading.value} releaseCompleted=${release.isCompleted} " +
+            "autoAdvance=${composeRule.mainClock.autoAdvance} " +
+            "requests=${diagnosticRequests.get()} droppedEvents=${(diagnosticEvents.get() - 64).coerceAtLeast(0)} " +
+            "jobs=$jobs events=[$events]",
+        )
+      }
       throw failure
     } finally {
+      branchDiagnosticCase = "default"
       val cleanupFailure = runCatching { disposeBranchFixture(release, observedJobs) }.exceptionOrNull()
       val restoreFailure = runCatching { field.set(controller, original) }.exceptionOrNull()
       if (cleanupFailure != null && restoreFailure != null) cleanupFailure.addSuppressed(restoreFailure)
@@ -3886,6 +4004,7 @@ class ChatComposerLayoutTest {
       val owner = model.captureChatShareOwner()
       val editor = composeRule.onNode(hasSetTextAction())
       editor.assertTextEquals(caption)
+      composeRule.onNodeWithText(nativeString("Preparing attachments…")).assertIsDisplayed()
       composeRule.onNodeWithContentDescription("Send").assertIsDisplayed().assertIsNotEnabled()
       composeRule.runOnIdle {
         assertEquals(ChatComposerSendStartResult.Unavailable, model.chatComposerState.beginSend(owner).result)
@@ -3896,6 +4015,7 @@ class ChatComposerLayoutTest {
         composeRule.runOnIdle { model.chatComposerState.attachments.value[owner] == listOf(attachment) }
       }
       composeRule.onNodeWithText(attachment.fileName).assertIsDisplayed()
+      composeRule.onNodeWithText(nativeString("Preparing attachments…")).assertDoesNotExist()
       editor.assertTextEquals(caption)
       composeRule.onNodeWithContentDescription("Send").assertIsDisplayed().assertIsEnabled()
       composeRule.runOnIdle {
@@ -4368,25 +4488,7 @@ class ChatComposerLayoutTest {
     val owner = viewModel.captureChatShareOwner()
     assertTrue("The fixture must have an active run", controller.pendingRunCount.value > 0)
     assertTrue("The composer must have a routable controller owner", controller.isCurrentComposerOwner(owner))
-    val sent = ConcurrentLinkedQueue<JsonObject>()
-    val requestField = ChatController::class.java.getDeclaredField("requestGatewayForGateway").apply { isAccessible = true }
-
-    @Suppress("UNCHECKED_CAST")
-    val originalRequest = requestField.get(controller) as suspend (String, String, String?) -> String
-    val request: suspend (String, String, String?) -> String = { gatewayId, method, params ->
-      if (method == "chat.send") {
-        val payload = Json.parseToJsonElement(requireNotNull(params)).jsonObject
-        sent.add(payload)
-        buildJsonObject {
-          put("runId", payload.getValue("idempotencyKey"))
-          put("status", JsonPrimitive("started"))
-        }.toString()
-      } else {
-        originalRequest(gatewayId, method, params)
-      }
-    }
-    try {
-      requestField.set(controller, request)
+    withChatSendRequests { sent ->
       val draft = "Physical follow-up"
       val editor = composeRule.onNode(hasSetTextAction())
       editor.performClick()
@@ -4403,8 +4505,6 @@ class ChatComposerLayoutTest {
       }
       assertEquals(List(expectedSends) { JsonPrimitive(draft) }, sent.map { it["message"] })
       editor.assert(SemanticsMatcher.expectValue(SemanticsProperties.EditableText, AnnotatedString(if (expectedSends == 0) draft else "")))
-    } finally {
-      requestField.set(controller, originalRequest)
     }
   }
 
@@ -4465,12 +4565,14 @@ class ChatComposerLayoutTest {
     val admissionId = composeRule.runOnIdle { requireNotNull(viewModel.chatComposerState.tryBeginTrackedSend(owner)) }
     try {
       composeRule.onNodeWithContentDescription("Send").assertIsDisplayed().assertIsNotEnabled()
+      composeRule.onNodeWithText(nativeString("Queuing message…")).assertIsDisplayed()
       composeRule.onNodeWithContentDescription("Start Talk").assertDoesNotExist()
     } finally {
       composeRule.runOnIdle { viewModel.chatComposerState.finishTrackedSend(admissionId) }
     }
 
     composeRule.onNodeWithContentDescription("Send").assertIsDisplayed().assertIsEnabled()
+    composeRule.onNodeWithText(nativeString("Queuing message…")).assertDoesNotExist()
     if (text.isNotEmpty()) editor.assertTextEquals(text)
     attachment?.let { composeRule.onNodeWithText(it.fileName).assertIsDisplayed() }
   }

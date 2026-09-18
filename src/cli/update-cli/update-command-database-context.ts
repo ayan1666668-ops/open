@@ -4,6 +4,7 @@ import { UpdatePreMutationError } from "./shared.js";
 import { formatUpdateAncestryBlockMessage } from "./update-command-handoff.js";
 import { captureOwnedManagedUpdatePreflightContext } from "./update-command-managed-context.js";
 import {
+  collectServiceInspectionFailureFacts,
   GatewayServiceUpdateOwnershipError,
   type ManagedServiceRootRedirect,
 } from "./update-command-service-plan.js";
@@ -36,24 +37,17 @@ export async function inspectUpdateDatabaseContexts(params: {
       expectedService: params.expectedServices?.get(root),
     }).catch((error: unknown) => {
       if (error instanceof GatewayServiceUpdateOwnershipError) {
-        throw new UpdatePreMutationError("managed-service-preflight", error.message);
+        throw new UpdatePreMutationError("managed-service-preflight", error.message, {
+          failureFacts: error.failureFacts,
+        });
       }
       throw error;
     });
-    const unavailable =
-      inspected.serviceUpdateVerdict?.kind === "unavailable"
-        ? inspected.serviceUpdateVerdict.message
-        : undefined;
-    if (inspected.blockMessage || unavailable) {
+    if (inspected.blockMessage) {
       throw new UpdatePreMutationError(
         "managed-service-preflight",
-        formatUpdateAncestryBlockMessage(inspected.blockMessage ?? unavailable!),
-      );
-    }
-    if (inspected.serviceUpdateVerdict?.kind === "unresolved") {
-      throw new UpdatePreMutationError(
-        "managed-service-preflight",
-        "Gateway service installation ownership is unresolved. Run `openclaw gateway status --deep` and retry before changing package or Git files.",
+        formatUpdateAncestryBlockMessage(inspected.blockMessage),
+        { failureFacts: collectServiceInspectionFailureFacts(inspected.serviceUpdateVerdict) },
       );
     }
     services.set(root, inspected);
