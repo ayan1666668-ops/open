@@ -250,6 +250,60 @@ describe("short-term promotion recall anchors", () => {
     expect(elapsedMs).toBeLessThan(4000);
   });
 
+  it("records complete-text promotion beside an explicit source-rehydration rejection", async (workspaceDir) => {
+    await writeDailyMemoryNote(workspaceDir, "2026-04-01", [
+      "intro",
+      "Moved backups to S3 Glacier.",
+      "Keep cold storage retention at 365 days.",
+      "Vendor renewal signed for two more years.",
+    ]);
+    await recordMemoryRecalls(workspaceDir, "glacier", [
+      memoryRecallResult(
+        "memory/2026-04-01.md",
+        2,
+        3,
+        0.94,
+        "Moved backups to S3 Glacier. Keep cold storage retention at 365 days.",
+      ),
+      memoryRecallResult(
+        "memory/2026-04-01.md",
+        4,
+        4,
+        0.91,
+        "Vendor renewal signed for two more years.",
+      ),
+    ]);
+    // One apply run sees both fates: the first passage survives with a comment
+    // gained above it, so rehydration relocates its complete text; the second
+    // passage's line was replaced by unrelated content, so rehydration fails
+    // and apply must record that rejection instead of promoting the filler.
+    await writeDailyMemoryNote(workspaceDir, "2026-04-01", [
+      "intro",
+      "<!-- status refreshed by tooling -->",
+      "Moved backups to S3 Glacier.",
+      "Keep cold storage retention at 365 days.",
+      "Unrelated replacement text now occupies the vendor line.",
+    ]);
+
+    const ranked = await rankAllCandidates(workspaceDir);
+    const applied = await applyAllCandidates(workspaceDir, ranked);
+    const memoryFile = await fs.readFile(applied.memoryPath, "utf-8");
+
+    expect(applied.applied).toBe(1);
+    expect(applied.appliedCandidates[0]?.snippet).toBe(
+      "Moved backups to S3 Glacier. Keep cold storage retention at 365 days.",
+    );
+    const rejected = applied.rejectedCandidates.find(
+      (entry) => entry.candidate.snippet === "Vendor renewal signed for two more years.",
+    );
+    expect(rejected?.reason).toBe("source rehydration failed");
+    expect(rejected?.category).toBe("source rehydration");
+    expect(memoryFile).toContain(
+      "Moved backups to S3 Glacier. Keep cold storage retention at 365 days.",
+    );
+    expect(memoryFile).not.toContain("Unrelated replacement text");
+  });
+
   it("does not promote replacement text through a comment-only stored anchor", async (workspaceDir) => {
     await writeDailyMemoryNote(workspaceDir, "2026-04-01", [
       "intro",
