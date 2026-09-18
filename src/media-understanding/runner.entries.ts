@@ -1014,11 +1014,11 @@ export async function runCliEntry(params: {
 }): Promise<MediaUnderstandingOutput | null> {
   const { entry, capability, cfg, ctx } = params;
   const attachmentIndex = params.attachment.index;
-  const resolved = resolveCliModelEntry(entry);
-  if (!resolved.ok) {
-    throw resolved.error;
+  const cli = resolveCliModelEntry(entry);
+  if (!cli.ok) {
+    throw cli.error;
   }
-  const { command, args } = resolved.value;
+  const { command, args } = cli.value;
   const requestOverrides = resolveMediaRequestOverrides(params.config);
   const language = requestOverrides.language ?? entry.language ?? params.config?.language;
   const { maxBytes, maxChars, timeoutMs, prompt } = resolveEntryRunOptions({
