@@ -77,11 +77,13 @@ async function startFixtureGatewayGeneration(params: {
     binding,
     caseIds: params.caseIds,
     config,
-    // Take the state owner from the case's own isolated state, not from ambient
-    // `process.env`. A timed-out case's deferred `state.cleanup()` restores the
-    // environment while later work is still in flight, and a snapshot of ambient
-    // values taken after that restore resolves no state directory at all.
-    env: { ...process.env, ...params.stateEnv },
+    // Use the case's own isolated state env verbatim. It is already a complete
+    // environment (process.env plus this case's overrides, minus the keys the
+    // helper deliberately unsets), so spreading it over ambient `process.env`
+    // would resurrect exactly those unset keys - on an operator-owned seat that
+    // repoints the fixture at real agent state. Taking it directly also keeps a
+    // timed-out case's deferred `state.cleanup()` from deciding this owner.
+    env: params.stateEnv,
   });
   const server = await startGatewayServer(
     params.port,
