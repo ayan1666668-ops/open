@@ -280,37 +280,46 @@ function runSqliteReadOnlyWorkerOnce(
   options: SqliteReadOnlyWorkerOptions,
 ): Promise<SqliteReadOnlyWorkerValue> {
   if (options.mode === "auth-profile-rows") {
-    const worker = createScopedSqliteReadOnlyWorker(options.env, options.source);
     return (async () => {
-      let outcome: { value: SqliteReadOnlyWorkerValue } | { error: unknown };
-      try {
-        const value = await worker.run(pathname, options);
-        options.signal?.throwIfAborted();
-        outcome = { value };
-      } catch (error) {
-        outcome = { error };
-      }
-      let cleanupFailure: { error: unknown } | undefined;
-      try {
-        await worker.close();
-      } catch (error) {
-        cleanupFailure = { error };
-      }
-      if (cleanupFailure) {
-        if ("error" in outcome) {
-          throw new AggregateError(
-            [outcome.error, cleanupFailure.error],
-            "Auth read and child cleanup failed",
-            { cause: outcome.error },
-          );
-        }
-        throw cleanupFailure.error;
-      }
-      if ("error" in outcome) {
-        throw outcome.error;
-      }
       options.signal?.throwIfAborted();
-      return outcome.value;
+      let worker = createScopedSqliteReadOnlyWorker(options.env, options.source);
+      while (true) {
+        let outcome: { value: SqliteReadOnlyWorkerValue } | { error: unknown };
+        try {
+          const value = await worker.run(pathname, options);
+          options.signal?.throwIfAborted();
+          outcome = { value };
+        } catch (error) {
+          outcome = { error };
+        }
+        let cleanupFailure: { error: unknown } | undefined;
+        try {
+          await worker.close();
+        } catch (error) {
+          cleanupFailure = { error };
+        }
+        if (cleanupFailure) {
+          if ("error" in outcome) {
+            throw new AggregateError(
+              [outcome.error, cleanupFailure.error],
+              "Auth read and child cleanup failed",
+              { cause: outcome.error },
+            );
+          }
+          throw cleanupFailure.error;
+        }
+        if ("error" in outcome) {
+          if (worker.notStarted && hasErrnoCode(outcome.error, "ERR_SPAWN_BROKER_UNAVAILABLE")) {
+            options.signal?.throwIfAborted();
+            // A confirmed refusal has no child to replay. Preserve the captured launch context.
+            worker = worker.createNativeReplacement();
+            continue;
+          }
+          throw outcome.error;
+        }
+        options.signal?.throwIfAborted();
+        return outcome.value;
+      }
     })();
   }
   return new Promise<SqliteReadOnlyWorkerValue>((resolve, reject) => {

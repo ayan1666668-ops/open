@@ -14,9 +14,21 @@ import {
   type SqliteReadOnlyWorkerValue,
 } from "./sqlite-readonly-worker-protocol.js";
 
+type SqliteReadOnlyWorkerSession = {
+  readonly notStarted: boolean;
+  createNativeReplacement: () => SqliteReadOnlyWorkerSession;
+  compatible: () => boolean;
+  run: (
+    pathname: string,
+    options: SqliteReadOnlyWorkerOptions,
+  ) => Promise<SqliteReadOnlyWorkerValue>;
+  close: () => Promise<void>;
+};
+
 export function createSqliteReadOnlyWorkerSession(host: {
   spawnBroker?: SpawnBrokerHost;
   env: NodeJS.ProcessEnv;
+  cwd?: string;
   currentEnv: () => NodeJS.ProcessEnv;
   argv: string[];
   requestArgs: (pathname: string, options: SqliteReadOnlyWorkerOptions) => string[];
@@ -24,17 +36,18 @@ export function createSqliteReadOnlyWorkerSession(host: {
   deadlineOwnedByCaller: () => boolean;
   timeoutError: (pathname: string, timeoutMs: number, size: string) => Error;
   closeTimeoutMs: number;
-}) {
+}): SqliteReadOnlyWorkerSession {
   const env = { ...host.env };
-  const cwd = process.cwd();
+  const cwd = host.cwd ?? process.cwd();
+  const argv = [...host.argv];
   const spawnOptions: SpawnOptions = {
     env,
     cwd,
     stdio: ["ignore", "pipe", "pipe", "ipc"],
   };
   const child: ChildProcess = host.spawnBroker
-    ? host.spawnBroker.spawn(process.execPath, host.argv, spawnOptions)
-    : spawn(process.execPath, host.argv, spawnOptions);
+    ? host.spawnBroker.spawn(process.execPath, argv, spawnOptions)
+    : spawn(process.execPath, argv, spawnOptions);
   let retired = false;
   let sequence = 0;
   let stderr = "";
@@ -163,6 +176,12 @@ export function createSqliteReadOnlyWorkerSession(host: {
     }
   });
   return {
+    get notStarted() {
+      return child instanceof BrokerChild && child.notStarted;
+    },
+    createNativeReplacement() {
+      return createSqliteReadOnlyWorkerSession({ ...host, spawnBroker: undefined, env, cwd, argv });
+    },
     compatible() {
       const currentEnv = host.currentEnv();
       const keys = Object.keys(currentEnv);

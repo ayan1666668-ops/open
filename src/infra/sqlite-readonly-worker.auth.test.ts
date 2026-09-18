@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -7,8 +7,10 @@ import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { BrokerChild } from "../process/spawn-broker/child.js";
 import { runWithSpawnBroker } from "../process/spawn-broker/context.js";
 import { createSpawnBrokerHost } from "../process/spawn-broker/host.js";
+import { SpawnBrokerError } from "../process/spawn-broker/protocol.js";
 import { createDeferredCore } from "../shared/deferred.js";
 import { requireNodeSqlite } from "./node-sqlite.js";
+import { SQLITE_READONLY_CHILD_ARG } from "./runtime-process-entrypoints.js";
 import { runSqliteReadOnlyWorker } from "./sqlite-readonly-worker.js";
 import { readDatabasePathIdentitySync } from "./sqlite-worker-identity.js";
 
@@ -18,7 +20,10 @@ vi.mock("node:child_process", async (importOriginal) => {
 });
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.mocked(spawn).mockReset();
+});
 const skipBroker = process.platform === "win32" || Boolean(process.versions.bun);
 
 function createAuthDatabase(key = "synthetic") {
@@ -172,22 +177,137 @@ describe.skipIf(skipBroker)("auth SQLite broker lifecycle", () => {
     }
   });
 
-  it("rejects an unavailable broker without falling back to a local auth read", async () => {
+  it.each(["unavailable", "worker refusal", "cancelled refusal"])(
+    "settles confirmed broker nonadmission (%s) before any native replacement",
+    async (refusal) => {
+      const { source, store, state } = createAuthDatabase();
+      const broker = createSpawnBrokerHost();
+      let nativeChild: ChildProcess | undefined;
+      let nativeClosed = false;
+      let proxyClosed = false;
+      let nativeOptions: SpawnOptions | undefined;
+      let brokerOptions: SpawnOptions | undefined;
+      const abort = new AbortController();
+      const cancellation = new Error("auth read cancelled after broker refusal");
+      const changedCwd = tempDirs.make("openclaw-auth-fallback-cwd-");
+      try {
+        await broker.ready();
+        await broker.close();
+        const brokerSpawn = broker.spawn.bind(broker);
+        vi.spyOn(broker, "spawn").mockImplementationOnce((command, args, options) => {
+          brokerOptions = options;
+          const child =
+            refusal === "unavailable"
+              ? brokerSpawn(command, args, options)
+              : new BrokerChild(1, [command, ...args], async () => {});
+          child.once("close", () => {
+            proxyClosed = true;
+            if (refusal === "cancelled refusal") {
+              queueMicrotask(() => abort.abort(cancellation));
+            } else if (refusal === "worker refusal") {
+              vi.spyOn(process, "cwd").mockReturnValue(changedCwd);
+            }
+          });
+          if (refusal !== "unavailable") {
+            queueMicrotask(() => {
+              child.markNotStarted();
+              child.fail(new SpawnBrokerError("Spawn broker request capacity exceeded"));
+            });
+          }
+          return child;
+        });
+        vi.spyOn(broker, "waitForCleanup").mockRejectedValue(
+          new Error("prior broker generation cleanup failed"),
+        );
+        const actual =
+          await vi.importActual<typeof import("node:child_process")>("node:child_process");
+        vi.mocked(spawn).mockImplementationOnce((...args) => {
+          nativeOptions = args[2];
+          nativeChild = actual.spawn(...args);
+          nativeChild.once("close", () => {
+            nativeClosed = true;
+          });
+          return nativeChild;
+        });
+        const reading = runWithSpawnBroker(broker, () => read(source, "canonical", abort.signal));
+        if (refusal === "cancelled refusal") {
+          await expect(reading).rejects.toBe(cancellation);
+          expect(nativeChild).toBeUndefined();
+        } else {
+          expect(await reading).toEqual({
+            store: { status: "readable", raw: store },
+            state: { status: "readable", raw: state },
+          });
+          expect(nativeClosed).toBe(true);
+          expect(nativeChild?.exitCode).toBe(0);
+          expect(nativeChild?.connected).toBe(false);
+          expect(nativeOptions?.cwd).toBe(brokerOptions?.cwd);
+        }
+        expect(proxyClosed).toBe(true);
+      } finally {
+        vi.restoreAllMocks();
+        await broker.close();
+      }
+    },
+  );
+
+  it("preserves timeout failure when broker nonadmission arrives afterward", async () => {
     const { source } = createAuthDatabase();
     const broker = createSpawnBrokerHost();
+    let child: BrokerChild | undefined;
     try {
       await broker.ready();
       await broker.close();
-      vi.spyOn(broker, "waitForCleanup").mockRejectedValue(
-        new Error("prior broker generation cleanup failed"),
-      );
+      vi.mocked(spawn).mockClear();
+      vi.spyOn(broker, "spawn").mockImplementationOnce((command, args) => {
+        child = new BrokerChild(1, [command, ...args], async () => {});
+        return child;
+      });
+      const nativeSetTimeout = globalThis.setTimeout;
+      vi.spyOn(globalThis, "setTimeout").mockImplementation((callback, delay, ...args) => {
+        if (typeof delay !== "number" || delay < 300_000) {
+          return nativeSetTimeout(callback, delay, ...args);
+        }
+        return nativeSetTimeout(() => {
+          callback(...args);
+          child?.markNotStarted();
+          child?.fail(new SpawnBrokerError("Spawn broker request capacity exceeded"));
+        }, 0);
+      });
       await expect(runWithSpawnBroker(broker, () => read(source, "canonical"))).rejects.toThrow(
-        "Spawn broker is unavailable",
+        "SQLite read-only snapshot timed out",
       );
+      expect(child?.notStarted).toBe(true);
+      expect(spawn).not.toHaveBeenCalled();
     } finally {
+      vi.restoreAllMocks();
       await broker.close();
     }
   });
+
+  it.each([false, true])(
+    "starts no child for an aborted read (broker closed: %s)",
+    async (closed) => {
+      const { source } = createAuthDatabase();
+      const broker = createSpawnBrokerHost();
+      try {
+        await broker.ready();
+        if (closed) {
+          await broker.close();
+        }
+        const brokerSpawn = vi.spyOn(broker, "spawn");
+        vi.mocked(spawn).mockClear();
+        const failure = new Error("auth read already cancelled");
+        await expect(
+          runWithSpawnBroker(broker, () => read(source, "canonical", AbortSignal.abort(failure))),
+        ).rejects.toBe(failure);
+        expect(brokerSpawn).not.toHaveBeenCalled();
+        expect(spawn).not.toHaveBeenCalled();
+      } finally {
+        await broker.close();
+      }
+    },
+  );
 
   it.each([false, true])(
     "retains a failed read until lost-broker cleanup settles (cleanup failure: %s)",
@@ -244,6 +364,11 @@ describe.skipIf(skipBroker)("auth SQLite broker lifecycle", () => {
         releaseCleanup.resolve();
         await rejected;
         expect(settled).toBe(true);
+        expect(spawn).not.toHaveBeenCalledWith(
+          process.execPath,
+          expect.arrayContaining([SQLITE_READONLY_CHILD_ARG]),
+          expect.anything(),
+        );
         cleanupSpy.mockRestore();
       } finally {
         ready.resolve();
