@@ -303,6 +303,59 @@ describe("resolveAgentScopedOutboundMediaAccess", () => {
     expect(workspaceReadFile).not.toHaveBeenCalled();
   });
 
+  it.each(["overlapping", "unrelated"] as const)(
+    "enforces the approved temp boundary with missing sentinel directories and %s state",
+    async (stateLocation) => {
+      const preferredTmpRoot = getDefaultMediaLocalRoots()[0];
+      if (!preferredTmpRoot) {
+        throw new Error("preferred temp media root is unavailable");
+      }
+      await fs.mkdir(preferredTmpRoot, { recursive: true });
+      const runtimeRoot = tempDirs.make(
+        "media-missing-sentinels-",
+        await fs.realpath(preferredTmpRoot),
+      );
+      const aliasParent = tempDirs.make("media-state-alias-");
+      const aliasRoot = path.join(aliasParent, "runtime");
+      await fs.symlink(runtimeRoot, aliasRoot, process.platform === "win32" ? "junction" : "dir");
+      const stateDir = path.join(
+        stateLocation === "overlapping" ? aliasRoot : aliasParent,
+        "state",
+      );
+      vi.stubEnv("OPENCLAW_STATE_DIR", stateDir);
+      const workspaceDir = path.join(runtimeRoot, "state", "worktrees", "selected");
+      const outsidePath = path.join(runtimeRoot, "sibling", "private.txt");
+      await fs.mkdir(stateDir, { recursive: true });
+      await fs.mkdir(workspaceDir, { recursive: true });
+      await fs.mkdir(path.dirname(outsidePath));
+      await fs.writeFile(path.join(workspaceDir, "selected.txt"), "selected workspace");
+      await fs.writeFile(outsidePath, "approved temp content");
+      for (const sentinel of ["workspace", "sandboxes"]) {
+        await expect(fs.stat(path.join(stateDir, sentinel))).rejects.toMatchObject({
+          code: "ENOENT",
+        });
+      }
+      const mediaAccess = resolveAgentScopedOutboundMediaAccess({
+        cfg: { tools: { fs: { workspaceOnly: true } } },
+        workspaceDir,
+        sessionWorkspaceDir: workspaceDir,
+        workspaceOnly: true,
+        mediaSources: [outsidePath],
+      });
+      const options = buildOutboundMediaLoadOptions({ mediaAccess });
+      const selected = await loadWebMediaRaw(path.join(workspaceDir, "selected.txt"), options);
+      expect(selected.buffer.toString()).toBe("selected workspace");
+      if (stateLocation === "overlapping") {
+        await expect(loadWebMediaRaw(outsidePath, options)).rejects.toMatchObject({
+          code: "path-not-allowed",
+        });
+      } else {
+        const approved = await loadWebMediaRaw(outsidePath, options);
+        expect(approved.buffer.toString()).toBe("approved temp content");
+      }
+    },
+  );
+
   it("rejects sibling sandbox media for a workspace-only agent", async () => {
     const baseDir = tempDirs.make("workspace-only-sibling-sandbox-");
     const stateDir = path.join(baseDir, "state");

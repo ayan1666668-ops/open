@@ -1,3 +1,4 @@
+// The owning dispatch suite supplies the scoped session-store mocks this fixture needs.
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { normalizeSessionDeliveryState } from "../../utils/delivery-context.shared.js";
 import type { MsgContext } from "../templating.js";
