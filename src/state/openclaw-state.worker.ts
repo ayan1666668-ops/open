@@ -68,8 +68,11 @@ import {
   pruneSessionStateEventsInDatabase,
   recordSessionStateEventInDatabase,
 } from "../sessions/session-state-events.kernel.js";
+import { listWatchedSessionUpstreamLinksInDatabase } from "../sessions/session-upstream-links.kernel.js";
 import { isTaskRegistryWorkerCommand } from "../tasks/task-registry.worker-contract.js";
 import { executeTaskRegistryCommand } from "../tasks/task-registry.worker.js";
+import { ensureMeetingTranscriptsSchema } from "../transcripts/sqlite-schema.js";
+import { executeTranscriptRead } from "../transcripts/store-worker-read.js";
 import {
   listAgentProvenanceInDatabase,
   readAgentProvenanceBatchInDatabase,
@@ -329,6 +332,29 @@ function createSharedStateWorkerBackend(
       if (command.type === "deviceAuth.list") {
         return readDeviceAuthTokensFromDatabase(database.db, command.input);
       }
+      switch (command.type) {
+        case "transcripts.sessionEntries":
+        case "transcripts.matches":
+        case "transcripts.session":
+        case "transcripts.entry":
+        case "transcripts.latest":
+        case "transcripts.notes":
+        case "transcripts.libraryEntry":
+        case "transcripts.recentStopped":
+        case "transcripts.summaryRevision":
+        case "transcripts.utterances":
+        case "transcripts.summary": {
+          ensureMeetingTranscriptsSchema({
+            database,
+            path: context.databasePath,
+            env: getSqliteWorkerStateContext().environment,
+            readOnly: command.input.readOnly,
+          });
+          return executeTranscriptRead(database.db, command);
+        }
+        default:
+          break;
+      }
       if (command.type === "managedImages.read") {
         return readManagedImageRecordInDatabase(database.db, command.input.attachmentId);
       }
@@ -361,6 +387,9 @@ function createSharedStateWorkerBackend(
           path: context.databasePath,
           env: getSqliteWorkerStateContext().environment,
         });
+      }
+      if (command.type === "sessionUpstream.listWatched") {
+        return listWatchedSessionUpstreamLinksInDatabase(database.db);
       }
       if (command.type === "cron.loadMutable") {
         return loadMutableCronStoreInWorker(database, command.input.storeKey);
