@@ -1,5 +1,7 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { sliceUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
+import { BrokerChild } from "../process/spawn-broker/child.js";
+import type { SpawnBrokerHost } from "../process/spawn-broker/host.js";
 import { createSqliteAuthTransferReceiver } from "./sqlite-readonly-auth-transfer.js";
 import { retainSnapshotWork } from "./sqlite-readonly-location-cleanup.js";
 import {
@@ -13,6 +15,7 @@ import {
 } from "./sqlite-readonly-worker-protocol.js";
 
 export function createSqliteReadOnlyWorkerSession(host: {
+  spawnBroker?: SpawnBrokerHost;
   env: NodeJS.ProcessEnv;
   currentEnv: () => NodeJS.ProcessEnv;
   argv: string[];
@@ -24,10 +27,14 @@ export function createSqliteReadOnlyWorkerSession(host: {
 }) {
   const env = { ...host.env };
   const cwd = process.cwd();
-  const child = spawn(process.execPath, host.argv, {
+  const spawnOptions: SpawnOptions = {
     env,
+    cwd,
     stdio: ["ignore", "pipe", "pipe", "ipc"],
-  });
+  };
+  const child: ChildProcess = host.spawnBroker
+    ? host.spawnBroker.spawn(process.execPath, host.argv, spawnOptions)
+    : spawn(process.execPath, host.argv, spawnOptions);
   let retired = false;
   let sequence = 0;
   let stderr = "";
@@ -44,8 +51,19 @@ export function createSqliteReadOnlyWorkerSession(host: {
       }
     | undefined;
   let resolveClosed: () => void;
+  // Broker loss retains group cleanup later in the same turn as proxy close.
   const closed = new Promise<void>((resolve) => {
     resolveClosed = resolve;
+  }).then(() => {
+    if (
+      child instanceof BrokerChild &&
+      !child.notStarted &&
+      child.exitCode === null &&
+      child.signalCode === null
+    ) {
+      return host.spawnBroker?.waitForCleanup();
+    }
+    return undefined;
   });
   const retire = (error?: unknown) => {
     retired = true;
@@ -81,8 +99,16 @@ export function createSqliteReadOnlyWorkerSession(host: {
       retire(createSqliteReadOnlyWorkerError("exceeded its output buffer", stderr));
     }
   };
-  child.stdout?.on("data", (data: Buffer) => captureOutput(data, false));
-  child.stderr?.on("data", (data: Buffer) => captureOutput(data, true));
+  const attachOutput = () => {
+    child.stdout?.on("data", (data: Buffer) => captureOutput(data, false));
+    child.stderr?.on("data", (data: Buffer) => captureOutput(data, true));
+  };
+  // The broker publishes IPC connectivity and transferred pipes asynchronously.
+  const ready =
+    child instanceof BrokerChild ? child.ready().then(attachOutput).catch(retire) : undefined;
+  if (!ready) {
+    attachOutput();
+  }
   child.on("message", (message: unknown) => {
     if (retired) {
       return;
@@ -175,28 +201,38 @@ export function createSqliteReadOnlyWorkerSession(host: {
           abort();
           return;
         }
-        try {
-          child.send(
-            {
-              id,
-              args: host.requestArgs(pathname, options),
-              ...(options.mode === "auth-profile-rows"
-                ? {
-                    auth: {
-                      expectedIdentity: options.expectedIdentity,
-                      coordinatorRuntime: options.coordinatorRuntime,
-                    },
-                  }
-                : {}),
-            },
-            (error) => {
-              if (error) {
-                retire(error);
-              }
-            },
-          );
-        } catch (error) {
-          retire(error);
+        const send = () => {
+          if (retired) {
+            return;
+          }
+          try {
+            child.send(
+              {
+                id,
+                args: host.requestArgs(pathname, options),
+                ...(options.mode === "auth-profile-rows"
+                  ? {
+                      auth: {
+                        expectedIdentity: options.expectedIdentity,
+                        coordinatorRuntime: options.coordinatorRuntime,
+                      },
+                    }
+                  : {}),
+              },
+              (error) => {
+                if (error) {
+                  retire(error);
+                }
+              },
+            );
+          } catch (error) {
+            retire(error);
+          }
+        };
+        if (ready) {
+          void ready.then(send);
+        } else {
+          send();
         }
       });
     },
