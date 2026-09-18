@@ -2179,146 +2179,121 @@ internal fun ChatBubble(
       null
     }
 
-  Row(
-    modifier = Modifier.fillMaxWidth(),
-    horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start,
+  ChatBubbleContainer(
+    user = isUser,
+    speaker = speaker,
+    messageActions = { modifier, body ->
+      ChatMessageActionHost(
+        text = messageText,
+        onReply = onReplyMessage,
+        showSessionActions = isUser && entryId != null && sessionActionsEnabled,
+        onRewind = entryId?.let { value -> { onRewindMessage(value) } },
+        onFork = entryId?.let { value -> { onForkMessage(value) } },
+        enabled = !live,
+        listenActive = messageSpeech?.isActive == true,
+        onToggleListen = toggleListen,
+        modifier = modifier,
+        content = body,
+      )
+    },
   ) {
-    ChatMessageActionHost(
-      text = messageText,
-      onReply = onReplyMessage,
-      showSessionActions = isUser && entryId != null && sessionActionsEnabled,
-      onRewind = entryId?.let { value -> { onRewindMessage(value) } },
-      onFork = entryId?.let { value -> { onForkMessage(value) } },
-      enabled = !live,
-      listenActive = messageSpeech?.isActive == true,
-      onToggleListen = toggleListen,
-      modifier =
-        Modifier
-          .fillMaxWidth(chatBubbleWidthFraction(isUser))
-          .semantics(mergeDescendants = true) { contentDescription = speaker },
-    ) {
-      Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(if (isUser) CHAT_BUBBLE_CORNER_RADIUS_DP.dp else 0.dp),
-        color = if (isUser) ClawTheme.colors.userMessageSurface else Color.Transparent,
-        contentColor = ClawTheme.colors.text,
-        border = null,
-        tonalElevation = 0.dp,
-        shadowElevation = 0.dp,
-      ) {
-        Column(
-          modifier =
-            if (isUser) {
-              Modifier.padding(horizontal = 11.dp, vertical = 8.dp)
-            } else {
-              Modifier.padding(vertical = 4.dp)
-            },
-          verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-          caption?.let {
-            Text(
-              text = it,
-              style = ClawTheme.type.caption.copy(fontSize = 12.sp, lineHeight = 15.sp, fontWeight = FontWeight.Medium),
-              color = ClawTheme.colors.textMuted,
-            )
-          }
-          if (collapsibleUserText && messageText.isNotBlank()) {
-            ChatUserMessageText(
-              textParts = displayableContent.mapNotNull { it.text },
-              plainText = messageText,
-              expanded = userMessageExpanded,
-              onExpandedChange = { userMessageExpanded = it },
-            )
-          }
-          displayableContent.forEach { part ->
-            when {
-              part.type == "text" && !collapsibleUserText -> {
-                ChatText(text = part.text.orEmpty(), textColor = ClawTheme.colors.text, isStreaming = live)
-              }
+    caption?.let {
+      Text(
+        text = it,
+        style = ClawTheme.type.caption.copy(fontSize = 12.sp, lineHeight = 15.sp, fontWeight = FontWeight.Medium),
+        color = ClawTheme.colors.textMuted,
+      )
+    }
+    if (collapsibleUserText && messageText.isNotBlank()) {
+      ChatUserMessageText(
+        textParts = displayableContent.mapNotNull { it.text },
+        plainText = messageText,
+        expanded = userMessageExpanded,
+        onExpandedChange = { userMessageExpanded = it },
+      )
+    }
+    displayableContent.forEach { part ->
+      when {
+        part.type == "text" && !collapsibleUserText -> {
+          ChatText(text = part.text.orEmpty(), textColor = ClawTheme.colors.text, isStreaming = live)
+        }
 
-              part.type == "text" -> {}
+        part.type == "text" -> {}
 
-              part.isAudioAttachment() && part.hasPlayableMediaArtifact() -> {
-                ChatAudioPlayerCard(
-                  content = part,
-                  playbackBlocked = inlineMediaPlaybackBlocked,
-                  loadMedia = loadMediaArtifact,
-                )
-              }
+        part.isAudioAttachment() && part.hasPlayableMediaArtifact() -> {
+          ChatAudioPlayerCard(
+            content = part,
+            playbackBlocked = inlineMediaPlaybackBlocked,
+            loadMedia = loadMediaArtifact,
+          )
+        }
 
-              part.isVideoAttachment() && part.hasPlayableMediaArtifact() -> {
-                ChatVideoPlayerCard(
-                  content = part,
-                  playbackBlocked = inlineMediaPlaybackBlocked,
-                  loadMedia = loadMediaArtifact,
-                )
-              }
+        part.isVideoAttachment() && part.hasPlayableMediaArtifact() -> {
+          ChatVideoPlayerCard(
+            content = part,
+            playbackBlocked = inlineMediaPlaybackBlocked,
+            loadMedia = loadMediaArtifact,
+          )
+        }
 
-              part.isAudioAttachment() || part.isVideoAttachment() -> {
-                ChatMediaAttachmentLabel(content = part)
-              }
+        part.isAudioAttachment() || part.isVideoAttachment() -> {
+          ChatMediaAttachmentLabel(content = part)
+        }
 
-              part.type == "image" && !part.base64.isNullOrBlank() -> {
-                ChatBase64Image(base64 = part.base64, mimeType = part.mimeType)
-              }
+        part.type == "image" && !part.base64.isNullOrBlank() -> {
+          ChatBase64Image(base64 = part.base64, mimeType = part.mimeType)
+        }
 
-              part.type == "image" && !part.artifactId.isNullOrBlank() -> {
-                ChatManagedImage(
-                  artifactId = part.artifactId,
-                  label = part.alt?.takeIf(String::isNotBlank) ?: part.fileName ?: nativeString("Image"),
-                  resolverReady = inlineWidgetResolverReady,
-                  loadImage = loadImageArtifact,
-                )
-              }
+        part.type == "image" && !part.artifactId.isNullOrBlank() -> {
+          ChatManagedImage(
+            artifactId = part.artifactId,
+            label = part.alt?.takeIf(String::isNotBlank) ?: part.fileName ?: nativeString("Image"),
+            resolverReady = inlineWidgetResolverReady,
+            loadImage = loadImageArtifact,
+          )
+        }
 
-              part.type == "canvas" && normalizedRole == "assistant" -> {
-                ChatInlineWidget(
-                  preview = checkNotNull(part.widget),
-                  resolverReady = inlineWidgetResolverReady,
-                  resolveResource = resolveInlineWidgetResource,
-                )
-              }
+        part.type == "canvas" && normalizedRole == "assistant" -> {
+          ChatInlineWidget(
+            preview = checkNotNull(part.widget),
+            resolverReady = inlineWidgetResolverReady,
+            resolveResource = resolveInlineWidgetResource,
+          )
+        }
 
-              else -> {
-                Text(text = part.fileName ?: nativeString("Attachment"), style = ClawTheme.type.body, color = ClawTheme.colors.textMuted)
-              }
-            }
-          }
-          if (omittedImageCount > 0) {
-            Text(
-              text = nativeString("Additional images hidden: \${omittedImageCount}", omittedImageCount),
-              style = ClawTheme.type.caption,
-              color = ClawTheme.colors.textMuted,
-            )
-          }
-          if (messageId != null) {
-            ChatSourcePreviews(sourcePreviews, sourcePreviewConfig, loadSourceFavicon)
-            ChatMessageLinkPreview(messageId = messageId, role = normalizedRole, content = displayableContent, excludedUrls = sourcePreviews.flatMap { it.aliases }.toSet())
-          }
-          disclosure()
-          messageSpeech?.let { speech ->
-            FullChatSpeechIndicator(
-              phase = speech.phase,
-              onToggle = { onToggleListen(checkNotNull(messageId), messageText) },
-            )
-          }
-          timestampMs?.let {
-            Text(
-              text = formatChatTimestamp(it),
-              style = ClawTheme.type.caption.copy(fontSize = 11.5.sp, lineHeight = 14.sp, fontWeight = FontWeight.Normal),
-              color = ClawTheme.colors.textSubtle,
-              modifier = Modifier.align(if (isUser) Alignment.End else Alignment.Start),
-            )
-          }
+        else -> {
+          Text(text = part.fileName ?: nativeString("Attachment"), style = ClawTheme.type.body, color = ClawTheme.colors.textMuted)
         }
       }
     }
+    if (omittedImageCount > 0) {
+      Text(
+        text = nativeString("Additional images hidden: \${omittedImageCount}", omittedImageCount),
+        style = ClawTheme.type.caption,
+        color = ClawTheme.colors.textMuted,
+      )
+    }
+    if (messageId != null) {
+      ChatSourcePreviews(sourcePreviews, sourcePreviewConfig, loadSourceFavicon)
+      ChatMessageLinkPreview(messageId = messageId, role = normalizedRole, content = displayableContent, excludedUrls = sourcePreviews.flatMap { it.aliases }.toSet())
+    }
+    disclosure()
+    messageSpeech?.let { speech ->
+      FullChatSpeechIndicator(
+        phase = speech.phase,
+        onToggle = { onToggleListen(checkNotNull(messageId), messageText) },
+      )
+    }
+    timestampMs?.let {
+      Text(
+        text = formatChatTimestamp(it),
+        style = ClawTheme.type.caption.copy(fontSize = 11.5.sp, lineHeight = 14.sp, fontWeight = FontWeight.Normal),
+        color = ClawTheme.colors.textSubtle,
+        modifier = Modifier.align(if (isUser) Alignment.End else Alignment.Start),
+      )
+    }
   }
 }
-
-internal fun chatBubbleWidthFraction(isUser: Boolean): Float = if (isUser) 0.78f else 1f
-
-internal const val CHAT_BUBBLE_CORNER_RADIUS_DP = 24
 
 @Composable
 private fun FullChatSpeechIndicator(

@@ -10,8 +10,12 @@ import ai.openclaw.app.NodeRuntime
 import ai.openclaw.app.NodeRuntimeMode
 import ai.openclaw.app.R
 import ai.openclaw.app.SecurePrefs
+import ai.openclaw.app.chat.ChatActiveRunPresentation
 import ai.openclaw.app.chat.ChatCacheScope
 import ai.openclaw.app.chat.ChatController
+import ai.openclaw.app.chat.ChatMessage
+import ai.openclaw.app.chat.ChatMessageContent
+import ai.openclaw.app.chat.ChatOutboxAttachment
 import ai.openclaw.app.chat.ChatOutboxItem
 import ai.openclaw.app.chat.ChatOutboxStatus
 import ai.openclaw.app.chat.ChatThinkingLevelOption
@@ -4931,6 +4935,118 @@ class ChatComposerLayoutTest {
       requestField.set(controller, originalRequest)
     }
   }
+
+  @Test
+  @Config(qualifiers = "en-rUS-w360dp-h800dp-mdpi", instrumentedPackages = ["ai.openclaw.app.AndroidScreenshotFixture"])
+  fun deliveryTransitionsKeepRoleGeometryInFullChatScreen() =
+    withReaderHistory(
+      assistantCount = 1,
+      assistantText = { "I will keep the summary concise." },
+      userText = "Summarize the release checklist.",
+      viewportHeight = { 800.dp },
+    ) { model ->
+      val text = "Include the remaining review items."
+      val initialMessages = model.chatMessages.value
+      val queued =
+        ChatOutboxItem(
+          id = "bubble-proof-outbox",
+          sessionKey = model.chatSessionKey.value,
+          text = text,
+          thinkingLevel = "low",
+          createdAtMs = 0L,
+          status = ChatOutboxStatus.Queued,
+          retryCount = 0,
+          lastError = null,
+          ownerAgentId = "main",
+          attachments = listOf(ChatOutboxAttachment("notes", "file", "application/pdf", "checklist.pdf", null, 12L)),
+        )
+      val geometryFailures = mutableListOf<String>()
+
+      fun verifyGeometry(label: String) {
+        val reference = composeRule.onNode(hasContentDescription("You") and hasText("Summarize the release checklist.")).fetchSemanticsNode().boundsInRoot
+        val actual =
+          composeRule
+            .onNode(hasContentDescription("You") and hasText(text))
+            .assertIsDisplayed()
+            .fetchSemanticsNode()
+            .boundsInRoot
+        val assistant = composeRule.onNode(hasContentDescription("OpenClaw") and hasText("I will keep the summary concise.")).fetchSemanticsNode().boundsInRoot
+        if (kotlin.math.abs(reference.width - actual.width) > 1f || kotlin.math.abs(reference.right - actual.right) > 1f) {
+          geometryFailures += "$label: pending user width/edge differs from confirmed user: $actual vs $reference"
+        }
+        if (model.chatSelectedActiveRunPresentation.value.count > 0 && model.chatStreamingAssistantText.value == null) {
+          val typing =
+            composeRule
+              .onNode(hasContentDescription("OpenClaw") and hasAnyDescendant(hasContentDescription("Working")))
+              .assertIsDisplayed()
+              .fetchSemanticsNode()
+              .boundsInRoot
+          if (kotlin.math.abs(assistant.width - typing.width) > 1f || kotlin.math.abs(assistant.left - typing.left) > 1f) {
+            geometryFailures += "$label: typing width/edge differs from assistant: $typing vs $assistant"
+          }
+        }
+      }
+
+      fun capture(name: String) {
+        val directory = System.getenv("OPENCLAW_CHAT_WORK_PROOF_DIR") ?: return
+        val folder = File(directory)
+        check(folder.isDirectory || folder.mkdirs())
+        val image = composeRule.onNodeWithTag("chat-viewport").captureToImage().asAndroidBitmap()
+        assertEquals(360, image.width)
+        assertEquals(800, image.height)
+        File(folder, "$name.png").outputStream().use { assertTrue(image.compress(Bitmap.CompressFormat.PNG, 100, it)) }
+      }
+      composeRule.runOnIdle {
+        controllerFlow<ChatActiveRunPresentation>("selectedActiveRunPresentationState").value =
+          ChatActiveRunPresentation(count = 1, runId = "bubble-proof-run", clockKey = "bubble-proof-run")
+        controllerFlow<Int>("_pendingRunCount").value = 1
+      }
+      ChatOutboxStatus.entries.forEach { status ->
+        composeRule.runOnIdle {
+          controllerFlow<List<ChatOutboxItem>>("_outboxItems").value =
+            listOf(queued.copy(status = status, lastError = if (status == ChatOutboxStatus.Failed) "Connection interrupted; retry when ready." else null))
+        }
+        composeRule.onNodeWithText("📎 checklist.pdf", useUnmergedTree = true).assertIsDisplayed()
+        if (status == ChatOutboxStatus.Queued) capture("queued-and-working")
+        if (status == ChatOutboxStatus.Failed) capture("failed-and-working")
+        verifyGeometry(status.name)
+        if (status == ChatOutboxStatus.Failed) composeRule.onNodeWithText("Retry").assertIsDisplayed() else composeRule.onNodeWithText("Retry").assertDoesNotExist()
+        if (status == ChatOutboxStatus.Queued || status == ChatOutboxStatus.Failed) {
+          composeRule.onNodeWithText("Delete").assertIsDisplayed()
+        } else {
+          composeRule.onNodeWithText("Delete").assertDoesNotExist()
+        }
+      }
+      composeRule.runOnIdle {
+        controllerFlow<List<ChatOutboxItem>>("_outboxItems").value = listOf(queued.copy(status = ChatOutboxStatus.Failed, ownerAgentId = null))
+      }
+      composeRule.onNodeWithText("Messages to recover").assertIsDisplayed()
+      composeRule.onNodeWithText("Retry").assertDoesNotExist()
+      composeRule.onNodeWithText("Delete").assertIsDisplayed()
+      capture("recovery")
+      verifyGeometry("recovery")
+      composeRule.runOnIdle {
+        controllerFlow<List<ChatOutboxItem>>("_outboxItems").value = emptyList()
+        controllerFlow<List<ChatMessage>>("_messages").value =
+          initialMessages + ChatMessage("bubble-proof-confirmed", "user", listOf(ChatMessageContent(text = text), ChatMessageContent(type = "file", fileName = "checklist.pdf")), null)
+        controllerFlow<String?>("_streamingAssistantText").value = "Two reviews remain before release."
+      }
+      composeRule.onNodeWithText("OpenClaw · Live", useUnmergedTree = true).assertIsDisplayed()
+      capture("streaming")
+      verifyGeometry("streaming")
+      composeRule.runOnIdle {
+        controllerFlow<ChatActiveRunPresentation>("selectedActiveRunPresentationState").value = ChatActiveRunPresentation()
+        controllerFlow<Int>("_pendingRunCount").value = 0
+        controllerFlow<String?>("_streamingAssistantText").value = null
+        controllerFlow<List<ChatMessage>>("_messages").value +=
+          ChatMessage("bubble-proof-answer", "assistant", listOf(ChatMessageContent(text = "Two reviews remain before release.")), null)
+      }
+      composeRule.onNodeWithText("Two reviews remain before release.", useUnmergedTree = true).assertIsDisplayed()
+      composeRule.onNodeWithContentDescription("Start Talk").assertIsDisplayed()
+      capture("confirmed")
+      verifyGeometry("confirmed")
+      assertTrue(geometryFailures.joinToString("\n"), geometryFailures.isEmpty())
+    }
 
   private fun readerMarkerBounds(
     marker: String,
