@@ -1,4 +1,3 @@
-// Qa Lab plugin module implements cli behavior.
 import type { Command } from "commander";
 import { createLazyRuntimeModule } from "openclaw/plugin-sdk/lazy-runtime";
 import {
