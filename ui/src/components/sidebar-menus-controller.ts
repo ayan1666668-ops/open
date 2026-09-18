@@ -51,7 +51,7 @@ interface SidebarMenusControllerState {
   identityMenuPosition: { x: number; bottom: number; width: number } | null;
 }
 
-export type SidebarFilterMenuView = "root" | "specific-owner";
+export type SidebarFilterMenuView = "root" | "filters" | "view" | "specific-owner";
 
 type SidebarMenusRenderer = typeof import("./sidebar-menus-render.ts");
 

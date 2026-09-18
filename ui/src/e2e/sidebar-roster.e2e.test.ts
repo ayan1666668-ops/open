@@ -3,6 +3,7 @@ import type { AgentsListResult, GatewaySessionRow, SessionsListResult } from "..
 import { installMockGateway, waitForControlUiRoute } from "../test-helpers/control-ui-e2e.ts";
 import { createControlUiE2eSuite } from "./control-ui-e2e-suite.test-support.ts";
 import { captureSidebarUiProof } from "./sidebar-customization.test-support.ts";
+import { closeSidebarMenu, openSidebarMenuPage } from "./sidebar-session-menu.test-support.ts";
 
 const suite = createControlUiE2eSuite({ name: "Control UI sidebar agent roster" });
 
@@ -290,24 +291,26 @@ suite.define(() => {
         await expectWorkspace();
         await expect.poll(() => sessionRows.count()).toBe(12);
         await sidebar.locator(".sidebar-session-sort").click();
+        await openSidebarMenuPage(page, "View");
         expect(
           await sidebar
             .locator(".sidebar-session-sort-menu")
-            .getByRole("group", { name: "Group by", exact: true })
+            .getByRole("menuitem", { name: /^Group by:/ })
             .count(),
         ).toBe(0);
         expect(
           await sidebar
             .locator(".sidebar-session-sort-menu")
-            .getByRole("button", { name: /^Hide empty groups:/ })
+            .getByRole("menuitem", { name: /^Hide empty groups:/ })
             .count(),
         ).toBe(0);
-        await sidebar.getByRole("button", { name: /^Owners:/ }).click();
+        await openSidebarMenuPage(page, "Filters");
+        await sidebar.getByRole("menuitem", { name: /^Owners:/ }).click();
         await sidebar.getByRole("option", { name: /^Specific owner/ }).click();
         await sidebar
           .locator('.sidebar-session-owner-picker [value="owner:profile-riley"]')
           .click();
-        await page.keyboard.press("Escape");
+        await closeSidebarMenu(page);
         await expect.poll(() => sessionRows.count()).toBe(4);
         expect(await sessionRows.allTextContents()).toEqual([
           expect.stringContaining("Harbor project"),
@@ -316,9 +319,10 @@ suite.define(() => {
           expect.stringContaining("Bloom project"),
         ]);
         await sidebar.locator(".sidebar-session-sort").click();
-        await sidebar.getByRole("button", { name: /^Owners:/ }).click();
+        await openSidebarMenuPage(page, "Filters");
+        await sidebar.getByRole("menuitem", { name: /^Owners:/ }).click();
         await sidebar.getByRole("option", { name: "All owners", exact: true }).click();
-        await page.keyboard.press("Escape");
+        await closeSidebarMenu(page);
         await expect.poll(() => sessionRows.count()).toBe(12);
 
         await sidebar.locator('[data-agent-collapse="bloom"]').click();
