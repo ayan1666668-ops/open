@@ -1,4 +1,7 @@
+import { getChildLogger } from "../logging/logger.js";
+import { createDeferredCore } from "../shared/deferred.js";
 import { resolveGlobalSingleton } from "../shared/global-singleton.js";
+import { retainSnapshotWork } from "./sqlite-readonly-location-cleanup.js";
 import type { PreparedSqliteReadOnlyLocation } from "./sqlite-readonly-location.types.js";
 import { readDatabasePathIdentitySync } from "./sqlite-worker-identity.js";
 
@@ -7,6 +10,8 @@ type SnapshotFlight = {
   controller: AbortController;
   leases: number;
   promise: Promise<PreparedSqliteReadOnlyLocation>;
+  settled: Promise<PreparedSqliteReadOnlyLocation>;
+  finishWaiters: () => void;
   waiters: number;
 };
 
@@ -50,9 +55,7 @@ function cleanupUnleasedFlight(key: string, flight: SnapshotFlight): void {
   if (snapshotFlights.get(key) === flight) {
     snapshotFlights.delete(key);
   }
-  if (flight.base) {
-    void flight.base.cleanupAsync();
-  } else {
+  if (!flight.base) {
     flight.controller.abort();
   }
 }
@@ -64,7 +67,7 @@ function releaseFlight(
   flight: SnapshotFlight,
   asyncCleanup: boolean,
 ): boolean | Promise<boolean> {
-  if (flight.leases > 1) {
+  if (flight.leases > 1 || flight.waiters > 0) {
     flight.leases -= 1;
     return asyncCleanup ? Promise.resolve(true) : true;
   }
@@ -133,29 +136,65 @@ export async function prepareSingleFlightSqliteSnapshot(
   let flight = snapshotFlights.get(key);
   if (!flight) {
     const controller = new AbortController();
+    const waitersDrained = createDeferredCore();
+    const produced = Promise.resolve().then(() => producer(controller.signal));
     flight = {
       controller,
       leases: 0,
       waiters: 0,
-      promise: Promise.resolve().then(() => producer(controller.signal)),
+      promise: produced,
+      settled: produced,
+      finishWaiters: () => waitersDrained.resolve(),
     };
     snapshotFlights.set(key, flight);
-    void flight.promise.then(
+    flight.promise = produced.then(
       (base) => {
         flight!.base = base;
         if (snapshotFlights.get(key) === flight) {
           snapshotFlights.delete(key);
         }
-        cleanupUnleasedFlight(key, flight!);
+        return base;
       },
-      () => {
+      (error: unknown) => {
         if (snapshotFlights.get(key) === flight) {
           snapshotFlights.delete(key);
         }
+        throw error;
       },
     );
+    // A cancelled caller detaches promptly, but its lifecycle owner must still
+    // join production, waiter admission and any cleanup of unpublished bytes.
+    flight.settled = retainSnapshotWork(
+      flight.promise.then(async (base) => {
+        await waitersDrained.promise;
+        if (flight!.leases === 0) {
+          try {
+            if (!(await base.cleanupAsync())) {
+              throw new Error("SQLite orphan snapshot cleanup did not complete");
+            }
+          } catch (error) {
+            // Prepared locations retain failed removals in the existing temp
+            // directory registry for signal/exit retry; never drop that owner.
+            try {
+              getChildLogger({ subsystem: "infra/sqlite-snapshot" }).warn(
+                { cleanupRoot: base.cleanupRoot },
+                "SQLite orphan snapshot cleanup failed; retained for cleanup retry.",
+              );
+            } catch {
+              // Diagnostics must not replace the cleanup failure.
+            }
+            throw error;
+          }
+        }
+        return base;
+      }),
+      () => controller.abort(),
+    );
+    // An orphan has no caller left to observe rejection. The lifecycle retains
+    // the original rejecting settlement promise, not this observation branch.
+    void flight.settled.catch(() => undefined);
   }
-  lifecycle?.trackProducer?.(flight.promise);
+  lifecycle?.trackProducer?.(flight.settled);
   flight.waiters += 1;
   try {
     const base = await waitForFlight(flight.promise, signal);
@@ -163,6 +202,9 @@ export async function prepareSingleFlightSqliteSnapshot(
     return leaseFlight(key, flight, base);
   } finally {
     flight.waiters -= 1;
+    if (flight.waiters === 0) {
+      flight.finishWaiters();
+    }
     cleanupUnleasedFlight(key, flight);
   }
 }

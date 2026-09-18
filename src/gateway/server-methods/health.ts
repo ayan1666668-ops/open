@@ -1,6 +1,7 @@
 // Health gateway methods return cached or refreshed status summaries while
 // detecting stale channel runtime state against live gateway snapshots.
 import { isFutureDateTimestampMs } from "@openclaw/normalization-core/number-coercion";
+import { getPreparedModelRuntimeStartupStatus } from "../../agents/prepared-model-runtime.startup-status.js";
 import type { ChannelAccountSnapshot } from "../../channels/plugins/types.public.js";
 import { getStatusSummary } from "../../status/summary.js";
 import type { GatewayHotReloadStatus } from "../config-reload-status.types.js";
@@ -104,6 +105,7 @@ async function mergeCachedHealthRuntimeState(params: {
   const contextEngines = buildContextEngineHealthSummary();
   return {
     ...cached,
+    modelRuntime: getPreparedModelRuntimeStartupStatus(),
     ...(params.eventLoop ? { eventLoop: params.eventLoop } : {}),
     ...(contextEngines ? { contextEngines } : {}),
     ...(deliveryQueues ? { deliveryQueues } : {}),
@@ -159,7 +161,7 @@ export const healthHandlers: GatewayRequestHandlers = {
     }
     await respondUnavailableOnThrow(respond, async () => {
       const snap = await refreshHealthSnapshot({ probe: wantsProbe, includeSensitive });
-      respond(true, snap, undefined);
+      respond(true, { ...snap, modelRuntime: getPreparedModelRuntimeStartupStatus() }, undefined);
     });
   },
   status: async ({ respond, client, params, context }) => {
@@ -176,6 +178,7 @@ export const healthHandlers: GatewayRequestHandlers = {
       true,
       {
         ...status,
+        modelRuntime: getPreparedModelRuntimeStartupStatus(),
         ...readGatewayProcessVitals(context.getEventLoopHealth),
         workerPools: await readGatewayWorkerPoolFacts(),
       },

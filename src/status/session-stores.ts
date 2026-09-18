@@ -1,3 +1,4 @@
+import { performance } from "node:perf_hooks";
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import { resolveSessionStorePathCore } from "../config/sessions/paths.js";
 import { readSessionStoreSummaryReadOnly } from "../config/sessions/session-accessor.js";
@@ -8,6 +9,7 @@ import type { SessionRowProjection } from "../gateway/session-row-projection.js"
 import { readAgentDatabaseAdmissionRefusal } from "../state/agent-database-admission.js";
 
 export const STATUS_RECENT_SESSION_LIMIT = 10;
+const SESSION_STORE_READ_SLICE_MS = 8;
 type SessionStoreSummary = ReturnType<typeof readSessionStoreSummaryReadOnly>;
 export type StatusSessionStores = Awaited<
   ReturnType<
@@ -71,6 +73,7 @@ export function createStatusSessionStoreReader(
     })();
     await projectionReady;
   };
+  let sliceStartedAt = performance.now();
   return {
     stores,
     async read(storePath: string, agentId?: string) {
@@ -95,9 +98,12 @@ export function createStatusSessionStoreReader(
           store = options.recoverReadError(error);
         }
         stores.set(path, store);
-        // Finish the synchronous read transaction before yielding; a fleet scan
-        // must let Gateway traffic run between physical stores, not hold it until the end.
-        await yieldToEventLoop();
+        // Transactions finish before yielding. Cheap reads share a slice so competing
+        // background work cannot add a full event-loop turn to every physical store.
+        if (performance.now() - sliceStartedAt >= SESSION_STORE_READ_SLICE_MS) {
+          await yieldToEventLoop();
+          sliceStartedAt = performance.now();
+        }
       }
       const summary = agentId ? store.byAgent.get(agentId) : store;
       return { path, count: summary?.count ?? 0, recent: summary?.recent ?? [] };

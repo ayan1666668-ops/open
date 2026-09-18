@@ -199,6 +199,9 @@ it("gives abandoned current-generation snapshots a grace period", () => {
 
   const allocated = createSqliteSnapshotStagingDirectorySync(cache);
   try {
+    for (const _ of reclaimAbandonedSqliteSnapshots(cache)) {
+      // Exercise cleanup independently of allocation.
+    }
     expect(fs.existsSync(abandoned)).toBe(true);
   } finally {
     removeTempDirectory(allocated);
@@ -242,6 +245,7 @@ it("preserves a live snapshot when its owner PID is invisible", () => {
   try {
     runChild(`
       import { prepareSqliteReadOnlyLocationSyncInProcess } from ${JSON.stringify(snapshotModule)};
+      import { reclaimAbandonedSqliteSnapshots } from ${JSON.stringify(stagingModule)};
       import { setLoggerOverride } from ${JSON.stringify(loggerModule)};
       setLoggerOverride({ level: 'silent', file: ${JSON.stringify(path.join(root, "child.log"))} });
       const kill = process.kill.bind(process);
@@ -249,8 +253,8 @@ it("preserves a live snapshot when its owner PID is invisible", () => {
         if (signal === 0) throw Object.assign(new Error('owner is outside this PID namespace'), { code: 'ESRCH' });
         return kill(pid, signal);
       };
-      const own = prepareSqliteReadOnlyLocationSyncInProcess(${JSON.stringify(source)}, ${JSON.stringify(cache)});
-      own.cleanup();
+      for (const _ of reclaimAbandonedSqliteSnapshots(${JSON.stringify(cache)})) {}
+
     `);
     expect(fs.existsSync(held.location)).toBe(true);
     assertReadable(held.location);
@@ -275,7 +279,7 @@ it.skipIf(process.platform === "win32")(
       import fs from 'node:fs';
       import path from 'node:path';
       import { prepareSqliteReadOnlyLocationSyncInProcess } from ${JSON.stringify(snapshotModule)};
-      import { createSqliteSnapshotStagingDirectorySync } from ${JSON.stringify(stagingModule)};
+      import { createSqliteSnapshotStagingDirectorySync, reclaimAbandonedSqliteSnapshots } from ${JSON.stringify(stagingModule)};
       import { setLoggerOverride } from ${JSON.stringify(loggerModule)};
       setLoggerOverride({ level: 'silent', file: ${JSON.stringify(path.join(root, "child.log"))} });
     `;
@@ -330,6 +334,9 @@ it.skipIf(process.platform === "win32")(
         await once(worker, 'message');
         parent.kill('SIGKILL');
         await parentClosed;
+        const stale = new Date(Date.now() - 25 * 60 * 60 * 1000);
+        if (fs.existsSync(path.join(directory, 'openclaw'))) fs.utimesSync(path.join(directory, 'openclaw'), stale, stale);
+        fs.utimesSync(directory, stale, stale);
         const readDirectory = fs.readdirSync;
         const rename = fs.renameSync;
         const startWorker = (pathname) => {
@@ -354,10 +361,10 @@ it.skipIf(process.platform === "win32")(
           if (${JSON.stringify(stage)} === 'retirement') startWorker(args[0]);
           return rename(...args);
         };
-        const own = prepareSqliteReadOnlyLocationSyncInProcess(${JSON.stringify(source)}, ${JSON.stringify(cache)});
+        for (const _ of reclaimAbandonedSqliteSnapshots(${JSON.stringify(cache)})) {}
         fs.readdirSync = readDirectory;
         fs.renameSync = rename;
-        own.cleanup();
+
         process.stdout.write(JSON.stringify({
           inspected, outcome,
           workerAlive: worker.exitCode === null && worker.signalCode === null,
@@ -487,11 +494,12 @@ it.skipIf(process.platform === "win32")(
     ageSnapshotTree(outer);
     try {
       runChild(`
-        import { prepareSqliteReadOnlyLocationSyncInProcess } from ${JSON.stringify(snapshotModule)};
+        import { reclaimAbandonedSqliteSnapshots } from ${JSON.stringify(stagingModule)};
+
         import { setLoggerOverride } from ${JSON.stringify(loggerModule)};
         setLoggerOverride({ level: 'silent', file: ${JSON.stringify(path.join(root, "child.log"))} });
-        const own = prepareSqliteReadOnlyLocationSyncInProcess(${JSON.stringify(source)}, ${JSON.stringify(cache)});
-        own.cleanup();
+        for (const _ of reclaimAbandonedSqliteSnapshots(${JSON.stringify(cache)})) {}
+
       `);
       assertReadable(held.location);
     } finally {
