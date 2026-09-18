@@ -317,7 +317,7 @@ it.each(
       let reclaimedWorkers = 0;
       const spawn = archiveWorker.createSqliteTranscriptArchiveWorker;
       vi.spyOn(archiveWorker, "createSqliteTranscriptArchiveWorker").mockImplementation((data) => {
-        if (data.operation === "reclaim") {
+        if ("operation" in data && data.operation === "reclaim") {
           reclaimedWorkers += 1;
         }
         return spawn(data);

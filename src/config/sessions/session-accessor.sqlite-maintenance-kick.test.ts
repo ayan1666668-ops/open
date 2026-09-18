@@ -208,7 +208,7 @@ it.each([0, 32 * 24 * 60 * 60 * 1_000])(
       });
     }, scope);
     const release = registerSessionMaintenancePreserveKeysProvider(() => [sessionKey]);
-    const plans = vi.spyOn(maintenance, "applySessionEntryMaintenance");
+    const plans = vi.spyOn(reclamation, "createSessionMaintenancePlanningOperation");
     try {
       kickSessionEntryMaintenanceAfterWrite(request);
       await yieldToEventLoop();
