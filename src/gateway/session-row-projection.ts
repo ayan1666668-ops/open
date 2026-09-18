@@ -56,6 +56,7 @@ export async function createSessionRowProjection(params: {
   modelCatalog?: records.Inputs["modelCatalog"];
   getModelCatalog?: () => Promise<records.Inputs["modelCatalog"]>;
   context?: Parameters<typeof readSessionRowFacts>[0]["context"];
+  placementFactsReader?: Parameters<typeof readSessionRowFacts>[0]["placementFactsReader"];
 }) {
   // Publications may borrow startup admission; projection work retains its own authority.
   const inOwnerContext = AsyncLocalStorage.snapshot();
@@ -377,6 +378,7 @@ export async function createSessionRowProjection(params: {
       context: metadata.current,
       subagentInputs: metadata.subagentInputs,
       gatewayContext: params.context,
+      placementFactsReader: params.placementFactsReader,
       links,
       readSourceEntry: (key) => {
         const source = referenced(
