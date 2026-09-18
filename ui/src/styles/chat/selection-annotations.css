@@ -3,12 +3,16 @@
   flex: 0 0 auto;
   align-self: flex-start;
   width: fit-content;
+  max-width: 100%;
+  min-width: 0;
   height: auto;
   min-height: 30px;
   white-space: nowrap;
 }
 
 .chat-selection-annotations__chip .chat-attachment-file {
+  min-width: 0;
+  max-width: 100%;
   gap: 6px;
   padding: 6px 10px;
 }
@@ -191,18 +195,9 @@ openclaw-chat-comment-pins {
   display: flex;
 }
 
-.chat-pasted-text__actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  margin-block-end: 8px;
-}
-
-.chat-pasted-text__content {
-  margin: 0;
-  font-family: var(--mono);
-  font-size: inherit;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+.chat-attachment-preview-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

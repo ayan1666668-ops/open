@@ -1052,12 +1052,6 @@ img.chat-avatar {
   }
 }
 
-.chat-message-preview-body {
-  display: flex;
-  flex-direction: column;
-  gap: var(--chat-block-gap);
-}
-
 .chat-message-avatar-anchor {
   display: contents;
 }
@@ -1094,7 +1088,7 @@ img.chat-avatar {
 
 .chat-group.user
   :is(.chat-bubble--with-images, .chat-bubble--with-images > .chat-message-avatar-anchor)
-  > :is(.chat-text, .chat-message-disclosure, .chat-json-collapse, .chat-message-preview-body) {
+  > :is(.chat-text, .chat-message-disclosure, .chat-json-collapse) {
   width: fit-content;
   max-width: 100%;
   padding: 10px 14px;
@@ -1105,7 +1099,7 @@ img.chat-avatar {
 :where(:root[data-theme-mode="light"])
   .chat-group.user
   :is(.chat-bubble--with-images, .chat-bubble--with-images > .chat-message-avatar-anchor)
-  > :is(.chat-text, .chat-message-disclosure, .chat-json-collapse, .chat-message-preview-body) {
+  > :is(.chat-text, .chat-message-disclosure, .chat-json-collapse) {
   color: var(--text-strong);
 }
 

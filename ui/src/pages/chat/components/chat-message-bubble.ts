@@ -306,7 +306,13 @@ export function renderGroupedMessage(
       (item) => isSentCommentAttachment(item) || isSentPastedTextAttachment(item),
     );
   const transparentShell =
-    hasImages || videoPreviews.length > 0 || hasUserFiles || onlyPreviewChips;
+    hasImages ||
+    videoPreviews.length > 0 ||
+    hasUserFiles ||
+    (normalizedRole === "user" &&
+      cardAttachments.some(
+        (item) => isSentCommentAttachment(item) || isSentPastedTextAttachment(item),
+      ));
   const bubbleClasses = [
     "chat-bubble",
     transparentShell ? "chat-bubble--with-images" : "",
@@ -494,21 +500,7 @@ export function renderGroupedMessage(
       { ...prepared.media, text: bodyMarkdown ?? "" },
     );
   };
-  const textPreviewAttachments =
-    normalizedRole === "user" && markdown && (hasImages || videoPreviews.length > 0 || hasUserFiles)
-      ? cardAttachments.filter(
-          (item) => isSentCommentAttachment(item) || isSentPastedTextAttachment(item),
-        )
-      : [];
-  const renderMessageContent = () =>
-    textPreviewAttachments.length
-      ? html`<div class="chat-message-preview-body">
-          ${renderAssistantAttachments(textPreviewAttachments, imageRenderOptions, onOpenSidebar, opts.onAssistantAttachmentLoaded, false)}
-          ${renderText()}
-        </div>`
-      : renderInOrder
-        ? renderOrderedContent()
-        : renderText();
+  const renderMessageContent = () => (renderInOrder ? renderOrderedContent() : renderText());
   // Collapsed tool results must not load attachments or render hidden markdown.
   // Retained panes use opacity, so hidden transcripts must unmount video previews.
   const renderBody = () => html`
@@ -536,11 +528,7 @@ export function renderGroupedMessage(
     )}
     ${renderOmittedMedia(omittedMedia)}
     ${renderAssistantAttachments(
-      renderInOrder
-        ? supplementalAttachments
-        : cardAttachments.filter(
-            (item) => item.type !== "attachment" || !textPreviewAttachments.includes(item),
-          ),
+      renderInOrder ? supplementalAttachments : cardAttachments,
       imageRenderOptions,
       onOpenSidebar,
       opts.onAssistantAttachmentLoaded,

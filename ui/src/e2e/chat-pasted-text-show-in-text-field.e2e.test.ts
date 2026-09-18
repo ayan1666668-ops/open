@@ -12,6 +12,7 @@ const suite = createControlUiE2eSuite({
 });
 
 const pastedText = `Quarterly launch plan\n\n  Preserve indentation 🦞\n${"x".repeat(1100)}`;
+const pastedTextLabel = "Quarterly launch plan Preserve…";
 const contextOptions = {
   locale: "en-US",
   reducedMotion: "reduce" as const,
@@ -42,12 +43,13 @@ suite.define(() => {
       const composer = page.locator(".agent-chat__composer-combobox textarea");
       await composer.waitFor({ state: "visible" });
       await paste(composer);
-      const chip = page.getByRole("button", { name: "Pasted text", exact: true });
+      const chip = page.getByRole("button", { name: pastedTextLabel, exact: true });
       await chip.focus();
       await page.keyboard.press("Enter");
-      const preview = page.getByRole("region", { name: "Pasted text", exact: true });
+      const preview = page.locator("openclaw-chat-detail-panel:visible");
       await preview.waitFor({ state: "visible" });
-      const content = preview.locator(".chat-pasted-text__content");
+      expect(await page.locator("openclaw-chat-pasted-text openclaw-tooltip").count()).toBe(0);
+      const content = preview.locator(".sidebar-attachment-preview__text");
       await expect.poll(() => content.textContent()).toBe(pastedText);
       expect(await content.evaluate((element) => getComputedStyle(element).fontFamily)).toMatch(
         /mono/i,
@@ -143,11 +145,11 @@ suite.define(() => {
         { scopeKey, legacy },
       );
       await page.reload();
-      const chip = page.getByRole("button", { name: "Pasted text", exact: true });
+      const chip = page.getByRole("button", { name: pastedTextLabel, exact: true });
       await chip.click();
-      const preview = page.getByRole("region", { name: "Pasted text", exact: true });
+      const preview = page.locator("openclaw-chat-detail-panel:visible");
       await expect
-        .poll(() => preview.locator(".chat-pasted-text__content").textContent())
+        .poll(() => preview.locator(".sidebar-attachment-preview__text").textContent())
         .toBe(pastedText);
       await composer.click();
       await page.getByRole("button", { name: "Send message", exact: true }).click();
@@ -182,7 +184,7 @@ suite.define(() => {
       await page
         .locator(".chat-attachment-file__name", { hasText: "pasted-text-123.txt" })
         .waitFor();
-      expect(await page.getByRole("button", { name: "Pasted text", exact: true }).count()).toBe(0);
+      expect(await page.locator("openclaw-chat-pasted-text").count()).toBe(0);
       await page.getByRole("button", { name: "Send message", exact: true }).click();
       await expect.poll(async () => (await gateway.getRequests("chat.send")).length).toBe(1);
       expect((await gateway.getRequests("chat.send"))[0]!.params).toEqual(
@@ -212,25 +214,24 @@ suite.define(() => {
         ...(origin ? { origin } : {}),
       });
       const retryUrl = `${suite.server.baseUrl}pasted-note-retry.txt`;
-      let reads = 0;
+      let sourceAvailable = false;
       await page.route(retryUrl, (route) => {
-        reads += 1;
         return route.fulfill({
-          status: reads === 1 ? 503 : 200,
+          status: sourceAvailable ? 200 : 503,
           contentType: "text/plain; charset=utf-8",
-          body: reads === 1 ? "Temporarily unavailable" : pastedText,
+          body: sourceAvailable ? pastedText : "Temporarily unavailable",
         });
       });
       await installMockGateway(page, {
         historyMessages: [
           {
             role: "user",
-            content: "",
+            content: "Please review the attached notes.",
             timestamp: 1,
             __openclaw: {
               media: [
                 fact(comment, "selection-comment.txt", "file"),
-                { ...fact(pastedText, "renamed-note.txt", "paste"), url: retryUrl },
+                { ...fact(pastedText, "renamed-note.md", "paste"), url: retryUrl },
                 fact("Legacy pasted text", "pasted-text-123.txt"),
               ],
             },
@@ -256,9 +257,10 @@ suite.define(() => {
       await page.goto(`${suite.server.baseUrl}chat`);
       const chips = page.locator(".chat-thread-inner .chat-selection-annotations__chip");
       await expect.poll(() => chips.count()).toBe(3);
+      await expect.poll(() => chips.nth(2).textContent()).toContain("Legacy pasted text");
       const labels = (await chips.allTextContents()).map((label) => label.trim());
       expect(labels[0]).toMatch(/comment/i);
-      expect(labels.slice(1)).toEqual(["Pasted text", "Pasted text"]);
+      expect(labels.slice(1)).toEqual(["Pasted text", "Legacy pasted text"]);
       const cards = page.locator(".chat-thread-inner .chat-assistant-attachment-card__title");
       await expect
         .poll(async () => (await cards.allTextContents()).map((label) => label.trim()))
@@ -269,25 +271,71 @@ suite.define(() => {
       expect(await shell.evaluate((element) => getComputedStyle(element).backgroundColor)).toBe(
         "rgba(0, 0, 0, 0)",
       );
+      await expect
+        .poll(() =>
+          shell.evaluate((element) => {
+            const text = element.querySelector(".chat-text")!;
+            const body = text.getBoundingClientRect();
+            const rects = Array.from(
+              element.querySelectorAll(".chat-selection-annotations__chip"),
+              (chip) => chip.getBoundingClientRect(),
+            );
+            return {
+              above: rects.every((rect) => rect.bottom <= body.top),
+              horizontal: rects.every((rect) => Math.abs(rect.top - rects[0]!.top) < 1),
+              aligned: Math.abs(Math.max(...rects.map((rect) => rect.right)) - body.right) < 1,
+              paintedText: getComputedStyle(text).backgroundColor !== "rgba(0, 0, 0, 0)",
+            };
+          }),
+        )
+        .toEqual({ above: true, horizontal: true, aligned: true, paintedText: true });
+      await page.setViewportSize({ width: 390, height: 900 });
+      await expect
+        .poll(() =>
+          shell.evaluate((element) => {
+            const body = element.querySelector(".chat-text")!.getBoundingClientRect();
+            const rects = Array.from(
+              element.querySelectorAll(".chat-selection-annotations__chip"),
+              (chip) => chip.getBoundingClientRect(),
+            );
+            return {
+              above: rects.every((rect) => rect.bottom <= body.top),
+              wrapped: rects.some((rect) => rect.top > rects[0]!.bottom),
+              sharesRow: rects.some((rect, index) =>
+                rects.some(
+                  (other, otherIndex) => index !== otherIndex && Math.abs(rect.top - other.top) < 1,
+                ),
+              ),
+              withinViewport: rects.every((rect) => rect.left >= 0 && rect.right <= innerWidth),
+              aligned: Math.abs(Math.max(...rects.map((rect) => rect.right)) - body.right) < 1,
+            };
+          }),
+        )
+        .toEqual({
+          above: true,
+          wrapped: true,
+          sharesRow: true,
+          withinViewport: true,
+          aligned: true,
+        });
       await chips.nth(1).click();
-      const preview = page
-        .getByRole("region", { name: "Pasted text", exact: true })
-        .filter({ visible: true });
+      const preview = page.locator("openclaw-chat-detail-panel:visible");
       const retry = preview.getByRole("button", { name: "Retry", exact: true });
       await retry.waitFor();
-      const download = preview.getByRole("link", { name: "Download text", exact: true });
+      const download = preview.getByRole("link", { name: "Download renamed-note.md", exact: true });
       expect(await download.getAttribute("href")).toBe(retryUrl);
-      expect(await download.getAttribute("download")).toBe("renamed-note.txt");
+      expect(await download.getAttribute("download")).toBe("renamed-note.md");
+      sourceAvailable = true;
       await retry.click();
       await expect
-        .poll(() => preview.locator(".chat-pasted-text__content").textContent())
+        .poll(() => preview.locator(".sidebar-attachment-preview__text").textContent())
         .toBe(pastedText);
-      expect(reads).toBe(2);
+      expect(await preview.locator("article").count()).toBe(0);
       expect((await chips.allTextContents()).map((label) => label.trim())).toEqual(labels);
     });
   });
 
-  it("downloads every byte of an oversized persisted inline paste when preview is unavailable", async () => {
+  it("labels an oversized persisted inline paste and downloads every original byte", async () => {
     await suite.withPage(contextOptions, async ({ page }) => {
       const text = "  Preserve the original UTF-8 text 🦞\n".repeat(8_000);
       const bytes = Buffer.from(text, "utf8");
@@ -314,17 +362,17 @@ suite.define(() => {
         ],
       });
       await page.goto(`${suite.server.baseUrl}chat`);
-      await page.getByRole("button", { name: "Pasted text", exact: true }).click();
-      const preview = page
-        .getByRole("region", { name: "Pasted text", exact: true })
-        .filter({ visible: true });
+      await page
+        .getByRole("button", { name: "Preserve the original UTF-8 te…", exact: true })
+        .click();
+      const preview = page.locator("openclaw-chat-detail-panel:visible");
       await preview
         .getByText(
-          "Could not preview this text. Text previews require UTF-8 content up to 256 KiB.",
+          "Could not preview this file. Text previews require UTF-8 files up to 256 KiB. Download it to read the full file.",
           { exact: true },
         )
         .waitFor();
-      const link = preview.getByRole("link", { name: "Download text", exact: true });
+      const link = preview.getByRole("link", { name: `Download ${fileName}`, exact: true });
       expect(await link.getAttribute("download")).toBe(fileName);
       const [download] = await Promise.all([page.waitForEvent("download"), link.click()]);
       expect(download.suggestedFilename()).toBe(fileName);

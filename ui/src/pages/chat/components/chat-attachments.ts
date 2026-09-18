@@ -10,7 +10,6 @@ import { t } from "../../../i18n/index.ts";
 import type { BrowserAnnotationAttachment, ChatAttachment } from "../../../lib/chat/chat-types.ts";
 import {
   generateAttachmentId,
-  getChatAttachmentDataUrl,
   getChatAttachmentPreviewUrl,
   registerChatAttachmentPayload,
   releaseChatAttachmentPayload,
@@ -21,6 +20,7 @@ import { renderAttachmentFileIcon } from "./chat-attachment-file-icon.ts";
 import { renderCompactAttachmentFile } from "./chat-attachment-file.ts";
 import { ChatAttachmentReadLifecycle, type ChatAttachmentRead } from "./chat-attachment-reads.ts";
 import { encodeTextAsDataUrl } from "./chat-attachment-text.ts";
+import { renderComposerPastedText } from "./chat-composer-pasted-text.ts";
 import { isPastedTextAttachment } from "./chat-pasted-text.ts";
 import { renderChatSelectionAnnotations } from "./chat-selection-annotations.ts";
 
@@ -89,39 +89,6 @@ function chatAttachmentFromFile(
     sizeBytes: file.size,
   };
   return registerChatAttachmentPayload({ attachment, dataUrl, file });
-}
-
-function readTextFromDataUrl(dataUrl: string): string | null {
-  const match = /^data:([^,]*),(.*)$/s.exec(dataUrl);
-  if (!match) {
-    return null;
-  }
-  const metadata = match[1];
-  const payload = match[2];
-  if (metadata === undefined || payload === undefined) {
-    return null;
-  }
-  if (metadata.toLowerCase().includes(";base64")) {
-    try {
-      const binary = atob(payload);
-      const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
-      return new TextDecoder().decode(bytes);
-    } catch {
-      return null;
-    }
-  }
-  try {
-    return decodeURIComponent(payload.replace(/\+/g, "%20"));
-  } catch {
-    return null;
-  }
-}
-
-function appendPastedTextToDraft(draft: string, text: string): string {
-  if (!draft.trim()) {
-    return text;
-  }
-  return `${draft.replace(/\s+$/u, "")}\n\n${text}`;
 }
 
 function handleLargeTextPaste(e: ClipboardEvent, props: ChatAttachmentControlsProps): boolean {
@@ -306,21 +273,6 @@ export function handleChatAttachmentPaste(e: ClipboardEvent, props: ChatAttachme
   }
   e.preventDefault();
   appendAttachmentFiles(imageFiles, props);
-}
-
-function showPastedTextInComposer(att: ChatAttachment, props: ChatAttachmentControlsProps): void {
-  const dataUrl = getChatAttachmentDataUrl(att);
-  const text = dataUrl ? readTextFromDataUrl(dataUrl) : null;
-  if (!text || !props.onDraftChange) {
-    return;
-  }
-  const nextAttachments = currentAttachments(props).filter(
-    (attachment) => attachment.id !== att.id,
-  );
-  releaseChatAttachmentPayload(att.id);
-  props.onAttachmentsChange?.(nextAttachments);
-  props.onDraftChange(appendPastedTextToDraft(props.getDraft?.() ?? props.draft ?? "", text));
-  props.onRequestUpdate?.();
 }
 
 function handleChatAttachmentFileSelect(e: Event, props: ChatAttachmentControlsProps) {
@@ -621,34 +573,7 @@ export function renderAttachmentPreview(props: ChatAttachmentControlsProps) {
           return att.browserAnnotation
             ? renderBrowserAnnotationAttachment(att, att.browserAnnotation, props)
             : isPastedTextAttachment(att)
-              ? html`<openclaw-chat-pasted-text
-                  .src=${getChatAttachmentDataUrl(att)}
-                  .downloadHref=${getChatAttachmentPreviewUrl(att)}
-                  .fileName=${att.fileName}
-                  .sizeBytes=${att.sizeBytes}
-                  .scope=${att.id}
-                  .actions=${html`<button
-                      class="chat-attachment-text-action"
-                      type="button"
-                      ?disabled=${props.disabled}
-                      @click=${() => showPastedTextInComposer(att, props)}
-                    >
-                      ${t("chat.attachments.showInTextField")}
-                    </button>
-                    <button
-                      class="btn btn--sm"
-                      type="button"
-                      aria-label=${removeLabel}
-                      ?disabled=${props.disabled}
-                      @click=${() => {
-                        const next = currentAttachments(props).filter((a) => a.id !== att.id);
-                        releaseChatAttachmentPayload(att.id);
-                        props.onAttachmentsChange?.(next);
-                      }}
-                    >
-                      ${icons.trash}
-                    </button>`}
-                ></openclaw-chat-pasted-text>`
+              ? renderComposerPastedText(att, props)
               : html`
                   <div
                     class=${[

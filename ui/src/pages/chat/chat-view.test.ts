@@ -37,6 +37,14 @@ import {
   registerChatAttachmentPayload as registerStoredChatAttachmentPayload,
   releaseChatAttachmentPayloads,
 } from "./attachment-payload-store.ts";
+import {
+  createAttachmentSidebarHarness,
+  getAttachmentMenuOption,
+  renderAttachmentHarness,
+  requireAttachmentInput,
+  selectAttachmentMenuOption,
+  selectFile,
+} from "./chat-attachment-picker.test-support.ts";
 import { makeChatHost } from "./chat-host.test-support.ts";
 import { createChatModelSetupBanner } from "./chat-model-setup.ts";
 import { applyChatPendingInputs, getChatPendingInputs } from "./chat-pending-inputs.ts";
@@ -5981,38 +5989,6 @@ describe("chat slash menu accessibility", () => {
 });
 
 describe("chat attachment picker", () => {
-  function renderAttachmentHarness(
-    getAttachments: () => ChatAttachment[],
-    onAttachmentsChange: (attachments: ChatAttachment[]) => void,
-  ) {
-    return renderChatView({
-      attachments: getAttachments(),
-      getAttachments,
-      onAttachmentsChange,
-    });
-  }
-
-  function selectFile(input: HTMLInputElement, file: File) {
-    Object.defineProperty(input, "files", { configurable: true, value: [file] });
-    input.dispatchEvent(new Event("change", { bubbles: true }));
-  }
-
-  function getAttachmentMenuOption(container: Element, label: string) {
-    return Array.from(
-      container.querySelectorAll<HTMLButtonElement>(".agent-chat__attach-menu-option"),
-    ).find((button) => button.textContent?.trim() === label);
-  }
-
-  function requireAttachmentInput(container: Element, selector: string, label: string) {
-    return requireElement(container, selector, label) as HTMLInputElement;
-  }
-
-  function selectAttachmentMenuOption(button: HTMLButtonElement | undefined) {
-    button
-      ?.closest("wa-dropdown")
-      ?.dispatchEvent(new CustomEvent("wa-select", { detail: { item: button }, bubbles: true }));
-  }
-
   it("highlights only the chat pane receiving a file drag", () => {
     const first = renderChatView();
     const second = renderChatView();
@@ -6240,7 +6216,7 @@ describe("chat attachment picker", () => {
     );
   });
 
-  it("shows a labeled pasted text chip with the text-field action", async () => {
+  it("opens a pasted text excerpt in the side panel with the text-field action", async () => {
     let attachments: ChatAttachment[] = [];
     let container = renderAttachmentHarness(
       () => attachments,
@@ -6251,18 +6227,28 @@ describe("chat attachment picker", () => {
     const textarea = getComposerTextarea(container);
     const text = `First words from a long pasted note ${"x".repeat(1100)}`;
     textarea.dispatchEvent(createPasteEvent(text));
-    container = renderChatView({ attachments });
+    const sidebar = createAttachmentSidebarHarness();
+    container = renderChatView({ attachments, onOpenSidebar: sidebar.open });
     document.body.append(container);
 
     await waitForFast(() => {
       expect(container.querySelector(".chat-selection-annotations__chip")?.textContent).toContain(
-        "Pasted text",
+        "First words from a long pasted…",
       );
     });
     expect(attachments[0]?.origin).toBe("paste");
-    expect(container.querySelector(".chat-attachment-text-action")?.textContent?.trim()).toBe(
-      "Show in text field",
+    expect(container.querySelector("openclaw-chat-pasted-text openclaw-tooltip")).toBeNull();
+    requireElement(
+      container,
+      ".chat-selection-annotations__chip",
+      "pasted text chip",
+    ).dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(sidebar.open).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "attachment", plainText: true, mimeType: "text/plain" }),
     );
+    expect(
+      sidebar.container.querySelector(".chat-attachment-text-action")?.textContent?.trim(),
+    ).toBe("Show in text field");
   });
 
   it("preserves pasted-text presentation and restore behavior across handoff", async () => {
@@ -6298,7 +6284,9 @@ describe("chat attachment picker", () => {
 
     const onAttachmentsChange = vi.fn();
     const onDraftChange = vi.fn();
+    const sidebar = createAttachmentSidebarHarness();
     const remounted = renderChatView({
+      onOpenSidebar: sidebar.open,
       attachments,
       getAttachments: () => attachments,
       draft: "intro",
@@ -6309,12 +6297,17 @@ describe("chat attachment picker", () => {
     document.body.append(remounted);
     await waitForFast(() => {
       expect(remounted.querySelector(".chat-selection-annotations__chip")?.textContent).toContain(
-        "Pasted text",
+        "First words from a remounted p…",
       );
     });
     expect(attachments[0]?.origin).toBe("paste");
     requireElement(
       remounted,
+      ".chat-selection-annotations__chip",
+      "pasted text chip",
+    ).dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    requireElement(
+      sidebar.container,
       ".chat-attachment-text-action",
       "show pasted text button",
     ).dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -6350,8 +6343,10 @@ describe("chat attachment picker", () => {
     );
     const onDraftChange = vi.fn();
     const onShowAttachmentsChange = vi.fn();
+    const sidebar = createAttachmentSidebarHarness();
     const preview = expectDefined(
       renderChatView({
+        onOpenSidebar: sidebar.open,
         attachments: [attachment],
         draft: "intro",
         getDraft: () => "intro",
@@ -6362,10 +6357,13 @@ describe("chat attachment picker", () => {
     );
     document.body.append(preview);
     await waitForFast(() => {
-      expect(preview.querySelector(".chat-attachment-text-action")).not.toBeNull();
+      expect(preview.querySelector(".chat-selection-annotations__chip")).not.toBeNull();
     });
+    requireElement(preview, ".chat-selection-annotations__chip", "pasted text chip").dispatchEvent(
+      new MouseEvent("click", { bubbles: true }),
+    );
     const showInTextFieldButton = requireElement(
-      preview,
+      sidebar.container,
       ".chat-attachment-text-action",
       "show pasted text in text field button",
     ) as HTMLButtonElement;
