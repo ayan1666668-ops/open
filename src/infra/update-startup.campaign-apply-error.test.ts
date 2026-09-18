@@ -28,7 +28,7 @@ vi.mock("./restart-sentinel.js", async () => {
     readRestartSentinelSnapshot: async (
       ...args: Parameters<typeof actual.readRestartSentinelSnapshot>
     ) => {
-      if (fault.at === "sentinel-read") {
+      if (fault.at === "sentinel-read" && fault.error) {
         throw fault.error;
       }
       return await actual.readRestartSentinelSnapshot(...args);
@@ -41,7 +41,7 @@ vi.mock("../state/config-machine-state-write.js", async (importOriginal) => {
   return {
     ...actual,
     writeConfigMachineState: (...args: Parameters<typeof actual.writeConfigMachineState>) => {
-      if (fault.at === "state-write") {
+      if (fault.at === "state-write" && fault.error) {
         throw fault.error;
       }
       return actual.writeConfigMachineState(...args);
