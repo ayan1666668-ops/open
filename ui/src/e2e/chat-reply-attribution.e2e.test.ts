@@ -855,6 +855,37 @@ suite.define(() => {
             ).toBeGreaterThan(0.5);
             expect(await page.locator("openclaw-image-lightbox").count()).toBe(0);
             expect(await stackGeometry()).toEqual(resting);
+
+            await page.touchscreen.tap(besideImage.x, besideImage.y);
+            await expect.poll(visibleActionRows).toBe(0);
+            const lastPeer = pane.locator('[data-entry-id="peer-last"]');
+            const lastPeerId = await lastPeer.getAttribute("data-message-id");
+            await lastPeer.locator(".chat-text").tap();
+            const interactiveOwners = () =>
+              peerGroup
+                .locator("[data-message-actions-for]")
+                .evaluateAll((owners) =>
+                  owners
+                    .filter((owner) =>
+                      [...owner.querySelectorAll("button")].some(
+                        (button) => getComputedStyle(button).pointerEvents !== "none",
+                      ),
+                    )
+                    .map((owner) => owner.getAttribute("data-message-actions-for")),
+                );
+            expect(
+              await interactiveOwners(),
+              "only final peer message action is interactive",
+            ).toEqual([lastPeerId]);
+            const lastAction = await actionFor("peer-last");
+            await lastAction.focus();
+            expect(
+              await interactiveOwners(),
+              "only final peer message action is interactive",
+            ).toEqual([lastPeerId]);
+            await lastAction.evaluate((element) => element.blur());
+            await lastPeer.locator(".chat-text").tap();
+            await expect.poll(visibleActionRows).toBe(0);
           }
 
           expect(

@@ -418,6 +418,7 @@
     > .chat-group-messages > .chat-bubble:last-child:hover,
     > .chat-group-messages > .chat-message--reply:last-child > .chat-bubble:hover
   )
+  > .chat-group-footer
   .chat-group-footer-actions
   button,
 .chat-group.user.chat-group--peer .chat-group-footer:hover .chat-group-footer-actions button {
@@ -432,6 +433,7 @@
       > .chat-message--reply:last-child
       > .chat-bubble:is(:focus-within, .chat-bubble--actions-revealed)
   )
+  > .chat-group-footer
   .chat-group-footer-actions
   button,
 .chat-group.user.chat-group--peer
