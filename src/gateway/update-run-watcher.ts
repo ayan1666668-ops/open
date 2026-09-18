@@ -56,7 +56,7 @@ export function startUpdateRunWatcher(params: {
     }
   };
 
-  const scan = (reconcile = true) => {
+  const scan = (reconcileAll = true) => {
     if (work.isClosing) {
       return;
     }
@@ -65,11 +65,11 @@ export function startUpdateRunWatcher(params: {
     }
     timer = undefined;
     try {
-      if (reconcile) {
-        reconciled.push(
-          ...reconcileAbandonedUpdateRuns().filter((run) => run.runId !== watched?.runId),
-        );
-      }
+      reconciled.push(
+        ...reconcileAbandonedUpdateRuns({ legacyOnly: !reconcileAll }).filter(
+          (run) => run.runId !== watched?.runId,
+        ),
+      );
       schedulePublication();
       const run = watched
         ? getUpdateRun(watched.runId)
@@ -116,7 +116,7 @@ export function startUpdateRunWatcher(params: {
       }
       if (terminal) {
         watched = undefined;
-        scan(reconcile);
+        scan(reconcileAll);
         return;
       }
       // Named freshness-poll exception: the detached orchestrator writes the
@@ -139,8 +139,8 @@ export function startUpdateRunWatcher(params: {
     }
     polling = true;
     timer = undefined;
-    // Capture a run before awaited probes: a fast terminal result must still
-    // publish its transition. Abandonment waits for candidate verification.
+    // Capture fast terminal changes and expire legacy admissions synchronously.
+    // Other abandonment waits for candidate verification.
     scan(false);
     void work
       .track(async () => {
