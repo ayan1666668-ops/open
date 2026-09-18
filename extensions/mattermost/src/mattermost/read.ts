@@ -80,6 +80,12 @@ function isConfiguredMattermostReadTarget(params: {
   return groups?.[params.channelId] !== undefined || groups?.["*"] !== undefined;
 }
 
+// Posts sharing one `create_at` are all reachable from the same cursor, so the
+// candidate page can be exhausted before the requested post appears. Walk at
+// most this many pages before giving up rather than paging a whole channel.
+const MATTERMOST_EXACT_READ_MAX_PAGES = 25;
+const MATTERMOST_EXACT_READ_PAGE_SIZE = 60;
+
 async function readMattermostChannelPost(
   client: MattermostClient,
   channelId: string,
@@ -88,20 +94,40 @@ async function readMattermostChannelPost(
   // GET /posts/{id} resolves any post the bot can see, and Mattermost has no
   // channel-scoped single-post endpoint. Channel history cursors only return
   // posts from the authorized channel, so anchor on the next newer post there
-  // (or the newest page when none exists): that page leads with the requested
-  // post when it belongs to this channel.
+  // (or the newest page when none exists): the page below that anchor leads
+  // with the requested post's `create_at` group when it belongs to this channel.
   const newer = await fetchMattermostChannelPosts(client, channelId, { after: postId, limit: 1 });
   const anchor = newer.messages[0]?.id;
-  const page = await fetchMattermostChannelPosts(
-    client,
-    channelId,
-    anchor ? { before: anchor } : {},
-  );
-  const post = page.messages.find((message) => message.id === postId);
-  if (!post) {
-    throw new Error("Mattermost read post was not found in the target channel.");
+  const cursor = anchor ? { before: anchor } : {};
+  // Mattermost cursors compare `create_at` strictly, so re-anchoring on the
+  // oldest post of a page would skip the rest of that post's timestamp group.
+  // Page by offset instead, and stop once a page reaches an older timestamp:
+  // everything between the anchor and that timestamp has then been inspected.
+  let groupCreatedAt: number | undefined;
+  for (let page = 0; page < MATTERMOST_EXACT_READ_MAX_PAGES; page += 1) {
+    const { messages } = await fetchMattermostChannelPosts(client, channelId, {
+      ...cursor,
+      limit: MATTERMOST_EXACT_READ_PAGE_SIZE,
+      page,
+    });
+    const post = messages.find((message) => message.id === postId);
+    if (post) {
+      return { messages: [post], hasMore: false };
+    }
+    groupCreatedAt ??= messages[0]?.create_at ?? undefined;
+    const oldest = messages[messages.length - 1]?.create_at;
+    if (
+      groupCreatedAt === undefined ||
+      oldest == null ||
+      oldest < groupCreatedAt ||
+      messages.length < MATTERMOST_EXACT_READ_PAGE_SIZE
+    ) {
+      throw new Error("Mattermost read post was not found in the target channel.");
+    }
   }
-  return { messages: [post], hasMore: false };
+  throw new Error(
+    "Mattermost read post was not found among the posts sharing its channel timestamp.",
+  );
 }
 
 export async function readMattermostMessages(params: {

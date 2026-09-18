@@ -42,10 +42,29 @@ const HISTORY_POSTS = [
   { id: "current-new", channel_id: "CURRENT", message: "latest", create_at: 3_000 },
 ];
 
+// A channel whose posts all carry one create_at: `before`/`after` cursors skip
+// the whole tied group, so only the page offset reaches past the first page.
+const TIED_GROUP_SIZE = 61;
+const TIED_POSTS = [
+  { id: "current-newest", channel_id: "CURRENT", message: "anchor", create_at: 3_000 },
+  ...Array.from({ length: TIED_GROUP_SIZE }, (_, index) => ({
+    id: `current-tied-${index}`,
+    channel_id: "CURRENT",
+    message: `tied ${index}`,
+    create_at: 2_000,
+  })),
+  { id: "current-oldest", channel_id: "CURRENT", message: "older", create_at: 1_000 },
+];
+// The last member of the group falls outside the default 60-post page.
+const TIED_SECOND_PAGE_POST = TIED_POSTS[TIED_GROUP_SIZE] as (typeof TIED_POSTS)[number];
+// Without the anchor the tied group carries the channel's newest create_at.
+const TIED_NEWEST_POSTS = TIED_POSTS.filter((post) => post.id !== "current-newest");
+
 // Mirrors Mattermost's channel post cursors: `before`/`after` compare create_at
 // with the cursor post from any channel but return only the requested channel's
-// posts, newest first. Any other endpoint, including GET /posts/{id}, fails.
-function createChannelHistoryFetch() {
+// posts, newest first, offset by `page` pages of `per_page`. Any other endpoint,
+// including GET /posts/{id}, fails.
+function createChannelHistoryFetch(posts: typeof HISTORY_POSTS = HISTORY_POSTS) {
   return vi.fn<typeof fetch>(async (input) => {
     const url = new URL(requestUrl(input));
     const match = url.pathname.match(/^\/api\/v4\/channels\/([^/]+)(\/posts)?$/);
@@ -57,16 +76,19 @@ function createChannelHistoryFetch() {
     }
     const after = url.searchParams.get("after");
     const cursorId = after ?? url.searchParams.get("before");
-    const cursorAt = HISTORY_POSTS.find((post) => post.id === cursorId)?.create_at;
-    const page = HISTORY_POSTS.filter(
-      (post) =>
-        post.channel_id === match[1] &&
-        (!cursorId ||
-          (cursorAt !== undefined &&
-            (after ? post.create_at > cursorAt : post.create_at < cursorAt))),
-    )
+    const cursorAt = posts.find((post) => post.id === cursorId)?.create_at;
+    const perPage = Number(url.searchParams.get("per_page"));
+    const offset = Number(url.searchParams.get("page") ?? 0) * perPage;
+    const page = posts
+      .filter(
+        (post) =>
+          post.channel_id === match[1] &&
+          (!cursorId ||
+            (cursorAt !== undefined &&
+              (after ? post.create_at > cursorAt : post.create_at < cursorAt))),
+      )
       .toSorted((a, b) => (after ? a.create_at - b.create_at : b.create_at - a.create_at))
-      .slice(0, Number(url.searchParams.get("per_page")))
+      .slice(offset, offset + perPage)
       .toSorted((a, b) => b.create_at - a.create_at);
     return jsonResponse({
       order: page.map((post) => post.id),
@@ -77,6 +99,17 @@ function createChannelHistoryFetch() {
 
 function requestPaths(fetchImpl: ReturnType<typeof createChannelHistoryFetch>): string[] {
   return fetchImpl.mock.calls.map(([input]) => new URL(requestUrl(input)).pathname);
+}
+
+// `<cursor direction>:<page offset>` for each channel-history request.
+function postRequestPages(fetchImpl: ReturnType<typeof createChannelHistoryFetch>): string[] {
+  return fetchImpl.mock.calls
+    .map(([input]) => new URL(requestUrl(input)))
+    .filter((url) => url.pathname.endsWith("/posts"))
+    .map(
+      (url) =>
+        `${url.searchParams.get("after") ? "after" : "before"}:${url.searchParams.get("page") ?? "default"}`,
+    );
 }
 
 function delegatedContext(currentChannelId = "channel:CURRENT") {
@@ -290,6 +323,54 @@ describe("readMattermostMessages", () => {
       expect(requestPaths(fetchImpl)).toEqual(Array(2).fill("/api/v4/channels/CURRENT/posts"));
     },
   );
+
+  it("reads an exact post that a full timestamp group pushed off the first page", async () => {
+    const fetchImpl = createChannelHistoryFetch(TIED_POSTS);
+
+    const result = await readMattermostMessages({
+      cfg: createMattermostTestConfig("read-exact-tied"),
+      channelId: "CURRENT",
+      messageId: TIED_SECOND_PAGE_POST.id,
+      accountId: "default",
+      context: delegatedContext(),
+      fetchImpl,
+    });
+
+    expect(result).toEqual({ messages: [TIED_SECOND_PAGE_POST], hasMore: false });
+    expect(postRequestPages(fetchImpl)).toEqual(["after:default", "before:default", "before:1"]);
+  });
+
+  it("reads an exact post from a timestamp group with no newer anchor", async () => {
+    const fetchImpl = createChannelHistoryFetch(TIED_NEWEST_POSTS);
+
+    const result = await readMattermostMessages({
+      cfg: createMattermostTestConfig("read-exact-tied-newest"),
+      channelId: "CURRENT",
+      messageId: TIED_SECOND_PAGE_POST.id,
+      accountId: "default",
+      context: delegatedContext(),
+      fetchImpl,
+    });
+
+    expect(result).toEqual({ messages: [TIED_SECOND_PAGE_POST], hasMore: false });
+    expect(postRequestPages(fetchImpl)).toEqual(["after:default", "before:default", "before:1"]);
+  });
+
+  it("stops paging a timestamp group once an older post proves the read missing", async () => {
+    const fetchImpl = createChannelHistoryFetch(TIED_NEWEST_POSTS);
+
+    await expect(
+      readMattermostMessages({
+        cfg: createMattermostTestConfig("read-exact-tied-missing"),
+        channelId: "CURRENT",
+        messageId: "current-absent",
+        accountId: "default",
+        context: delegatedContext(),
+        fetchImpl,
+      }),
+    ).rejects.toThrow("Mattermost read post was not found in the target channel");
+    expect(postRequestPages(fetchImpl)).toEqual(["after:default", "before:default", "before:1"]);
+  });
 
   it("rejects an exact read of a post from another channel without fetching it", async () => {
     const fetchImpl = createChannelHistoryFetch();
