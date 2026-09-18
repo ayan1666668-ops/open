@@ -35,7 +35,7 @@ class OpenClawCarScreen(
 
   override fun onGetTemplate(): Template {
     val runtime = app.ensureRuntime()
-    val isConnected = runtime.isGatewayConnected.value
+    val isConnected = runtime.gatewayConnectionDisplay.value.isConnected
     val messageText = when {
       !isConnected -> "Gateway desconectado. Verifique conexão."
       isListening -> "Ouvindo... Fale agora."
@@ -71,16 +71,13 @@ class OpenClawCarScreen(
 
   private fun startVoiceInteraction() {
     val runtime = app.ensureRuntime()
-    if (!runtime.isGatewayConnected.value) return
+    if (!runtime.gatewayConnectionDisplay.value.isConnected) return
     isListening = true
-    runtime.startTalkMode()
     invalidate()
   }
 
   private fun stopVoiceInteraction() {
-    val runtime = app.ensureRuntime()
     isListening = false
-    runtime.stopTalkMode()
     invalidate()
   }
 }

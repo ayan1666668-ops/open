@@ -38,7 +38,7 @@ class CarNotificationHandler(private val context: Context) {
       .setContentTitle(title)
       .setContentText(message)
       .setPriority(NotificationCompat.PRIORITY_HIGH)
-      .setCategory(NotificationCompat.CATEGORY_CAR_INFORMATION)
+      .setCategory(NotificationCompat.CATEGORY_MESSAGE)
       .setAutoCancel(true)
 
     notificationManager.notify(id, builder.build())
