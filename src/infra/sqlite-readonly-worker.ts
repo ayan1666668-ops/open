@@ -282,31 +282,35 @@ function runSqliteReadOnlyWorkerOnce(
   if (options.mode === "auth-profile-rows") {
     const worker = createScopedSqliteReadOnlyWorker(options.env, options.source);
     return (async () => {
-      let failure: unknown;
+      let outcome: { value: SqliteReadOnlyWorkerValue } | { error: unknown };
       try {
         const value = await worker.run(pathname, options);
         options.signal?.throwIfAborted();
-        return value;
+        outcome = { value };
       } catch (error) {
-        failure = error;
-        throw error;
-      } finally {
-        try {
-          await worker.close();
-        } catch (cleanupError) {
-          if (failure !== undefined) {
-            throw new AggregateError(
-              [failure, cleanupError],
-              "Auth read and child cleanup failed",
-              {
-                cause: failure,
-              },
-            );
-          }
-          throw cleanupError;
-        }
-        options.signal?.throwIfAborted();
+        outcome = { error };
       }
+      let cleanupFailure: { error: unknown } | undefined;
+      try {
+        await worker.close();
+      } catch (error) {
+        cleanupFailure = { error };
+      }
+      if (cleanupFailure) {
+        if ("error" in outcome) {
+          throw new AggregateError(
+            [outcome.error, cleanupFailure.error],
+            "Auth read and child cleanup failed",
+            { cause: outcome.error },
+          );
+        }
+        throw cleanupFailure.error;
+      }
+      if ("error" in outcome) {
+        throw outcome.error;
+      }
+      options.signal?.throwIfAborted();
+      return outcome.value;
     })();
   }
   return new Promise<SqliteReadOnlyWorkerValue>((resolve, reject) => {
