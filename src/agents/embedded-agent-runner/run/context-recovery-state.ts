@@ -37,19 +37,6 @@ export function createEmbeddedRunContextRecoveryState() {
         state.overflowCompactionAttempts = 0;
       }
     },
-    /**
-     * Refunds an overflow compaction attempt that freed no context.
-     *
-     * The budget exists to stop unbounded compaction loops, so it may only be
-     * charged for compactions that actually shrank the prompt. A compaction
-     * reporting `tokensAfter >= tokensBefore` removed nothing and must not
-     * consume one of the three attempts.
-     */
-    refundOverflowCompactionAttempt() {
-      if (state.overflowCompactionAttempts > 0) {
-        state.overflowCompactionAttempts -= 1;
-      }
-    },
     retainTimeoutRecoveryMarker(marker: EmbeddedRunTimeoutRecoveryMarker) {
       timeoutRecoveryMarker = marker;
     },

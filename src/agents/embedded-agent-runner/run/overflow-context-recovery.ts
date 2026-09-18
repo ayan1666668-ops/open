@@ -337,21 +337,24 @@ export async function recoverEmbeddedRunOverflow(
     }
 
     if (compactResult.compacted) {
-      // A compaction that freed no context must not be charged to the overflow
-      // budget and must not claim success in the log. It is still a committed
-      // compaction: the context engine reassembles model messages independently,
-      // so the next prompt is not necessarily the one the provider rejected.
-      // Keep the bounded retry/reassembly path so a recoverable run continues;
-      // only budget accounting and log wording change for this case.
+      // A compaction that freed no context stays charged: refunding it would
+      // cancel every increment, so a provider that keeps rejecting the retried
+      // prompt could never reach MAX_OVERFLOW_COMPACTION_ATTEMPTS and the run
+      // would spin until the far coarser outer run guard fired. Renewal is the
+      // job of real model progress instead (see observeContextAccounting).
+      //
+      // It is still a committed compaction, and the context engine reassembles
+      // model messages independently, so the next prompt is not necessarily the
+      // one the provider rejected: keep the bounded retry/reassembly path so a
+      // recoverable run continues. Only the log wording changes here, because
+      // this is not the success it used to claim to be.
       const nonReducingCompaction = isNonReducingCompaction(compactResult);
       if (nonReducingCompaction) {
-        input.state.refundOverflowCompactionAttempt();
         log.warn(
           `auto-compaction removed no context for ${input.modelSelection.provider}/${input.modelSelection.model} ` +
             `(tokensBefore=${compactResult.result?.tokensBefore ?? "unknown"} ` +
             `tokensAfter=${compactResult.result?.tokensAfter ?? "unknown"}); ` +
-            `not charging the overflow compaction budget ` +
-            `(attempt ${input.state.overflowCompactionAttempts}/${MAX_OVERFLOW_COMPACTION_ATTEMPTS})`,
+            `attempt ${input.state.overflowCompactionAttempts}/${MAX_OVERFLOW_COMPACTION_ATTEMPTS} stays charged)`,
         );
       }
       if (preflightRecovery?.route === "compact_then_truncate") {

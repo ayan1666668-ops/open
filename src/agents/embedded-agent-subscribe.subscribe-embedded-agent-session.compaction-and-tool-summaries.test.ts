@@ -109,11 +109,53 @@ describe("synchronous context accounting", () => {
       events: [accountingAssistant(50_000, "error")],
       expected: [{ kind: "model", contextTokens: 50_000, admitted: false }],
     },
-  ])("records $name in producer order", ({ events, expected }) => {
+    {
+      // isContextOverflow Case 2 (z.ai/GLM shape, openclaw#75799): a
+      // successful-looking `stop` whose input already exceeds the window. The
+      // usage is positive, so only the overflow classifier can tell this apart
+      // from real progress - it must not renew the recovery budget.
+      name: "silent overflow reported as a successful stop",
+      events: [accountingAssistant(220_000)],
+      contextWindowTokens: 200_000,
+      expected: [{ kind: "model", contextTokens: 220_000, admitted: false }],
+    },
+    {
+      // isContextOverflow Case 3 (Xiaomi MiMo shape): `length` stop with zero
+      // output because the server truncated an oversized prompt, at 199,000 of a
+      // 200,000 window (>= 99%). Also not progress.
+      name: "length-stop overflow that left no room for output",
+      events: [
+        makeAgentAssistantMessage({
+          content: [{ type: "text", text: "" }],
+          usage: { ...makeZeroUsageSnapshot(), input: 199_000, output: 0, totalTokens: 199_000 },
+          stopReason: "length",
+        }),
+      ],
+      contextWindowTokens: 200_000,
+      expected: [{ kind: "model", contextTokens: 199_000, admitted: false }],
+    },
+    {
+      // Same window, ordinary truncated reply that did produce output: the prompt
+      // was admitted, so this one may renew.
+      name: "length-stop with real output under the window",
+      events: [
+        makeAgentAssistantMessage({
+          content: [{ type: "text", text: "partial reply" }],
+          usage: { ...makeZeroUsageSnapshot(), input: 50_000, output: 120, totalTokens: 50_120 },
+          stopReason: "length",
+        }),
+      ],
+      contextWindowTokens: 200_000,
+      // The point of this control case is the admission verdict; the derived
+      // context number belongs to the usage helper and is asserted as a number.
+      expected: [{ kind: "model", contextTokens: expect.any(Number), admitted: true }],
+    },
+  ])("records $name in producer order", ({ events, expected, contextWindowTokens }) => {
     const observed: EmbeddedContextAccountingEvent[] = [];
     const { emit, subscription } = createSubscribedSessionHarness({
       runId: "run-context-accounting",
       sessionPersistence: "detached",
+      ...(contextWindowTokens === undefined ? {} : { contextWindowTokens }),
       onContextAccountingEvent: (event) => {
         observed.push(event);
       },
