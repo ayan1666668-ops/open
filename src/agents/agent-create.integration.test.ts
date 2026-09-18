@@ -39,11 +39,11 @@ import {
 import { resolveOpenClawStateSqlitePath } from "../state/openclaw-state-db.paths.js";
 import { executeSystemAgentOperation } from "../system-agent/operations-execute.js";
 import { createSystemAgentTestRuntime } from "../system-agent/system-agent.runtime.test-support.js";
-import { nodeFilePath } from "../test-utils/node-file-path.js";
 import { createOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import { createAgent } from "./agent-create.js";
 import { resolveSharedAuthStorePath } from "./auth-profiles/path-resolve.js";
 import { resolveAuthProfileDatabasePath } from "./auth-profiles/sqlite.js";
+import { interceptBootstrapStageWrites } from "./workspace-bootstrap-publish.test-support.js";
 import { readWorkspaceStateSnapshot } from "./workspace-state-store.js";
 import {
   DEFAULT_IDENTITY_FILENAME,
@@ -124,40 +124,38 @@ it.each(["workspace", "workspace-write", "config"] as const)(
       instanceId: "preparation-instance",
       runId: "preparation-run",
     });
-    const entered = createDeferred();
+    const entered = createDeferred<typeof phase>();
     const resume = createDeferred();
     const workspace = state.path("prepared-workspace");
     const stagedFile = state.path("staged-effect");
     const originalConfig = await fs.readFile(state.configPath, "utf8");
-    const pause = async () => {
-      entered.resolve();
+    const pause = async (at: typeof phase) => {
+      entered.resolve(at);
       await resume.promise;
     };
     const realAccess = fs.access.bind(fs);
     const access = vi.spyOn(fs, "access").mockImplementation(async (file, mode) => {
       if (phase === "workspace" && file === path.join(workspace, "AGENTS.md")) {
-        await pause();
+        await pause("workspace");
       }
       return await realAccess(file, mode);
     });
-    const realWrite = fs.writeFile.bind(fs);
-    const write = vi.spyOn(fs, "writeFile").mockImplementation(async (file, data, options) => {
-      await realWrite(file, data, options);
-      const filePath = nodeFilePath(file);
+    const restoreWrite = interceptBootstrapStageWrites(async (filePath, write) => {
+      const result = await write();
       if (
         phase === "workspace-write" &&
-        filePath &&
-        path.basename(filePath) === "AGENTS.md" &&
-        path.basename(path.dirname(filePath)).startsWith("openclaw-bootstrap-")
+        path.dirname(path.dirname(filePath)) === workspace &&
+        path.basename(filePath) === "AGENTS.md"
       ) {
-        await pause();
+        await pause("workspace-write");
       }
+      return result;
     });
     const commit = vi.fn();
     const rollback = vi.fn(async () => await fs.rm(stagedFile));
     const prepareConfigCommit = vi.fn(async () => {
       await fs.writeFile(stagedFile, "staged before publication");
-      await pause();
+      await pause("config");
       return { commit, rollback };
     });
     const creation = createAgent({
@@ -175,7 +173,9 @@ it.each(["workspace", "workspace-write", "config"] as const)(
       (error: unknown) => ({ error }),
     );
     try {
-      await withTestTimeout(entered.promise, 10_000, "creation did not reach preparation pause");
+      expect(
+        await withTestTimeout(entered.promise, 10_000, "creation did not reach preparation pause"),
+      ).toBe(phase);
       expect(releaseAgentRunDelegatedAuthority(authority)).toBe(true);
       resume.resolve();
 
@@ -198,7 +198,7 @@ it.each(["workspace", "workspace-write", "config"] as const)(
     } finally {
       resume.resolve();
       await outcome;
-      write.mockRestore();
+      restoreWrite();
       access.mockRestore();
       releaseAgentRunDelegatedAuthority(authority);
       closeOpenClawStateDatabaseForTest();

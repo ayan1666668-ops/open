@@ -7,16 +7,12 @@ import { createHash } from "node:crypto";
 import syncFs from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
 import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import { Minimatch } from "minimatch";
-import { extractFrontmatterBlock } from "../../packages/markdown-core/src/frontmatter.js";
 import type { ChatType } from "../channels/chat-type.js";
 import { isRootFileMissingFailure, openRootFile } from "../infra/boundary-file-read.js";
-import { isHardlinkFallbackError } from "../infra/directory-durability.js";
-import { hasErrnoCode } from "../infra/errno.js";
-import { sameFileIdentity, tempFile, type FileIdentityStat } from "../infra/fs-safe-advanced.js";
-import { FsSafeError, pathExists, root as fsSafeRoot } from "../infra/fs-safe.js";
+import { sameFileIdentity, type FileIdentityStat } from "../infra/fs-safe-advanced.js";
+import { pathExists } from "../infra/fs-safe.js";
 import { isPathInside } from "../infra/path-guards.js";
 import { retryAsync } from "../infra/retry.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
@@ -30,6 +26,10 @@ import { deriveSessionChatTypeFromKey } from "../sessions/session-chat-type-shar
 import { createLazyPromise, getOrCreatePromise } from "../shared/lazy-promise.js";
 import type { OpenClawStateDatabaseOptions } from "../state/openclaw-state-db.js";
 import { resolveUserPath } from "../utils.js";
+import {
+  publishBootstrapFile,
+  type BootstrapPublicationIdentity,
+} from "./workspace-bootstrap-publish.js";
 import {
   MAX_WORKSPACE_BOOTSTRAP_FILE_BYTES,
   readWorkspaceBootstrapFile,
@@ -52,7 +52,11 @@ import {
   type WorkspaceStateSnapshot,
   type WorkspaceSetupState,
 } from "./workspace-state-store.js";
-import { resolveWorkspaceTemplateSearchDirs } from "./workspace-templates.js";
+import { loadWorkspaceTemplate } from "./workspace-templates.js";
+export {
+  publishBootstrapFile,
+  type BootstrapPublicationIdentity,
+} from "./workspace-bootstrap-publish.js";
 export { WORKSPACE_VANISHED_ERROR_CODE } from "./workspace-state-identity.js";
 export {
   DEFAULT_AGENT_WORKSPACE_DIR,
@@ -84,7 +88,6 @@ const TRANSIENT_WORKSPACE_READ_ERRNOS = new Set([-11, -4]);
 const TRANSIENT_WORKSPACE_READ_MESSAGE = /Unknown system error -(?:11|4)\b/i;
 const workspaceLogger = createSubsystemLogger("workspace");
 
-const workspaceTemplateCache = new Map<string, Promise<string>>();
 const gitInitializationInFlight = new Map<string, Promise<void>>();
 
 type WorkspaceFileSourceIdentity = readonly [
@@ -198,45 +201,6 @@ async function readWorkspaceFileWithGuards(params: {
   }
 }
 
-function stripFrontMatter(content: string): string {
-  return extractFrontmatterBlock(content)?.body.replace(/^\s+/, "") ?? content;
-}
-
-async function loadTemplate(name: string): Promise<string> {
-  const cached = workspaceTemplateCache.get(name);
-  if (cached) {
-    return cached;
-  }
-
-  const pending = (async () => {
-    const templateDirs = await resolveWorkspaceTemplateSearchDirs();
-    const triedPaths: string[] = [];
-    for (const templateDir of templateDirs) {
-      const templatePath = path.join(templateDir, name);
-      triedPaths.push(templatePath);
-      try {
-        const content = await fs.readFile(templatePath, "utf-8");
-        return stripFrontMatter(content);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException | undefined)?.code !== "ENOENT") {
-          throw error;
-        }
-      }
-    }
-    throw new Error(
-      `Missing workspace template: ${name} (${triedPaths.join(", ")}). Ensure workspace templates are packaged.`,
-    );
-  })();
-
-  workspaceTemplateCache.set(name, pending);
-  try {
-    return await pending;
-  } catch (error) {
-    workspaceTemplateCache.delete(name);
-    throw error;
-  }
-}
-
 /**
  * Canonical bootstrap filenames in prompt order. Single source for the runtime
  * validation set, the name union, and the Control UI core-files list; a private
@@ -288,83 +252,6 @@ const OPTIONAL_BOOTSTRAP_FILENAMES: ReadonlySet<string> = new Set([
  */
 export function isExpectedAbsentBootstrapFile(name: string): boolean {
   return OPTIONAL_BOOTSTRAP_FILENAMES.has(name) || name === DEFAULT_MEMORY_FILENAME;
-}
-
-export async function publishBootstrapFile(
-  filePath: string,
-  content: string | Buffer,
-  beforePersistentApply?: () => void,
-): Promise<boolean> {
-  const dir = await fs.realpath(path.dirname(filePath));
-  const targetPath = path.join(dir, path.basename(filePath));
-  // Existing entries, including dangling symlinks, need no staging writes.
-  // Preserve the exclusive-create no-op on read-only established workspaces.
-  const existing = await fs.lstat(targetPath).catch((error: unknown) => {
-    if (!hasErrnoCode(error, "ENOENT")) {
-      throw error;
-    }
-  });
-  beforePersistentApply?.();
-  if (existing) {
-    return false;
-  }
-  let cleanupError: unknown;
-  const staging = await tempFile({
-    rootDir: dir,
-    prefix: "openclaw-bootstrap",
-    fileName: path.basename(filePath),
-    onCleanupError: (error) => {
-      cleanupError = error;
-    },
-  });
-  let outcome: { kind: "created" } | { kind: "exists" } | { kind: "failed"; error: unknown };
-  try {
-    beforePersistentApply?.();
-    await fs.writeFile(staging.path, content, { flag: "wx", flush: true });
-    beforePersistentApply?.();
-    let linked = false;
-    try {
-      // No await may split these operations: safe readers reject the temporary
-      // two-link inode, so publication must reach one link in the same turn.
-      syncFs.linkSync(staging.path, targetPath);
-      linked = true;
-      syncFs.unlinkSync(staging.path);
-      outcome = { kind: "created" };
-    } catch (error) {
-      if (!linked && hasErrnoCode(error, "EEXIST")) {
-        outcome = { kind: "exists" };
-      } else if (!linked && isHardlinkFallbackError(error)) {
-        outcome = {
-          kind: "failed",
-          error: new Error(
-            "Workspace filesystem does not support atomic bootstrap publication. Use a workspace on a filesystem with hard-link support.",
-            { cause: error },
-          ),
-        };
-      } else {
-        outcome = { kind: "failed", error };
-      }
-    }
-  } catch (error) {
-    outcome = { kind: "failed", error };
-  }
-  await staging.cleanup();
-  if (cleanupError !== undefined) {
-    if (outcome.kind !== "failed") {
-      throw new Error("Workspace bootstrap staging cleanup failed after publication.", {
-        cause: cleanupError,
-      });
-    }
-    throw new AggregateError(
-      [outcome.error, cleanupError],
-      "Workspace bootstrap publication and staging cleanup failed. Remove the incomplete staging directory, then retry.",
-      { cause: cleanupError },
-    );
-  }
-  if (outcome.kind === "failed") {
-    throw outcome.error;
-  }
-  return outcome.kind === "created";
 }
 
 function isTransientWorkspaceReadError(error: unknown): boolean {
@@ -473,7 +360,10 @@ async function workspaceProfileLooksConfigured(params: {
 }): Promise<boolean> {
   const profileFileDiffs = await Promise.all(
     WORKSPACE_ONBOARDING_PROFILE_FILENAMES.map(async (fileName) =>
-      fileContentDiffersFromTemplate(path.join(params.dir, fileName), await loadTemplate(fileName)),
+      fileContentDiffersFromTemplate(
+        path.join(params.dir, fileName),
+        await loadWorkspaceTemplate(fileName),
+      ),
     ),
   );
   return (
@@ -497,7 +387,7 @@ async function workspaceRequiredBootstrapLooksCustomized(
       try {
         const content = await fs.readFile(filePath, "utf-8");
         const contentHash = createHash("sha256").update(content).digest("hex");
-        if (contentHash !== generatedHash && content !== (await loadTemplate(fileName))) {
+        if (contentHash !== generatedHash && content !== (await loadWorkspaceTemplate(fileName))) {
           return true;
         }
       } catch {
@@ -508,7 +398,10 @@ async function workspaceRequiredBootstrapLooksCustomized(
   }
   const fileDiffs = await Promise.all(
     fileNames.map(async (fileName) =>
-      fileContentDiffersFromTemplate(path.join(dir, fileName), await loadTemplate(fileName)),
+      fileContentDiffersFromTemplate(
+        path.join(dir, fileName),
+        await loadWorkspaceTemplate(fileName),
+      ),
     ),
   );
   return fileDiffs.some(Boolean);
@@ -611,7 +504,7 @@ async function collectGeneratedBootstrapHashes(dir: string): Promise<Map<string,
   for (const fileName of GENERATED_WORKSPACE_BOOTSTRAP_FILENAMES) {
     try {
       const content = await fs.readFile(path.join(dir, fileName), "utf-8");
-      if (content === (await loadTemplate(fileName))) {
+      if (content === (await loadWorkspaceTemplate(fileName))) {
         hashes.set(fileName, createHash("sha256").update(content).digest("hex"));
       }
     } catch {
@@ -781,6 +674,13 @@ export async function seedWorkspaceBootstrap(params: {
   content: Buffer;
   nowMs?: number;
   stateOptions?: OpenClawStateDatabaseOptions;
+  /** "claim" reads an identical pre-existing file as this seed; "conflict" refuses any
+   * pre-existing file before the seed marker is written, for a caller that never wrote one. */
+  existingFile?: "claim" | "conflict";
+  beforePublish?: (identity: BootstrapPublicationIdentity) => void;
+  afterPublish?: (identity: BootstrapPublicationIdentity) => void;
+  ownsExisting?: (file: syncFs.BigIntStats) => boolean;
+  assertCurrent?: () => void;
 }): Promise<"seeded" | "already-seeded" | "consumed"> {
   if (params.content.byteLength > MAX_WORKSPACE_BOOTSTRAP_FILE_BYTES) {
     throw new WorkspaceBootstrapSeedConflictError(
@@ -797,104 +697,72 @@ export async function seedWorkspaceBootstrap(params: {
     throw new WorkspaceBootstrapSeedConflictError("BOOTSTRAP.md must not be empty.");
   }
 
+  params.assertCurrent?.();
   const dir = resolveUserPath(params.dir);
   const bootstrapPath = path.join(dir, DEFAULT_BOOTSTRAP_FILENAME);
   const initialState = (await readCanonicalWorkspaceStateSnapshot(dir, params.stateOptions)).setup;
+  params.assertCurrent?.();
   if (initialState.setupCompletedAt) {
     return "consumed";
   }
   const bootstrapExists = await pathExists(bootstrapPath);
+  params.assertCurrent?.();
   if (initialState.bootstrapSeededAt && !bootstrapExists) {
     return "consumed";
   }
 
   await fs.mkdir(dir, { recursive: true });
-  const workspaceRoot = await fsSafeRoot(dir, {
-    hardlinks: "reject",
-    maxBytes: MAX_WORKSPACE_BOOTSTRAP_FILE_BYTES,
-    symlinks: "reject",
-  });
-  let created = false;
-  if (!bootstrapExists) {
-    try {
-      await workspaceRoot.write(DEFAULT_BOOTSTRAP_FILENAME, params.content, {
-        overwrite: false,
-      });
-      created = true;
-    } catch (error) {
-      const alreadyExists =
-        (error as NodeJS.ErrnoException).code === "EEXIST" ||
-        (error instanceof FsSafeError && error.code === "already-exists");
-      if (!alreadyExists) {
-        throw error;
-      }
+  const created =
+    !bootstrapExists &&
+    (await publishBootstrapFile(
+      bootstrapPath,
+      params.content,
+      params.assertCurrent,
+      params.beforePublish,
+      0o600,
+      params.afterPublish,
+    ));
+  if (!created || params.ownsExisting) {
+    const opened = await openRootFile({
+      absolutePath: bootstrapPath,
+      rootPath: dir,
+      boundaryLabel: "workspace root",
+      symlinks: "reject",
+      maxBytes: MAX_WORKSPACE_BOOTSTRAP_FILE_BYTES,
+    });
+    if (!opened.ok) {
+      throw new WorkspaceBootstrapSeedConflictError(
+        "Existing BOOTSTRAP.md could not be read safely.",
+      );
     }
-  }
-
-  if (!created) {
-    await retryAsync(
-      async () => {
-        let statBefore: syncFs.Stats;
-        try {
-          statBefore = await fs.stat(bootstrapPath);
-        } catch (error) {
-          throw new WorkspaceBootstrapSeedConflictError(
-            "Existing BOOTSTRAP.md could not be read safely.",
-            { cause: error },
-          );
-        }
-        const existing = await readWorkspaceFileWithGuards({
-          filePath: bootstrapPath,
-          workspaceDir: dir,
-          useCache: false,
-        });
-        if (!existing.ok) {
-          throw new WorkspaceBootstrapSeedConflictError(
-            "Existing BOOTSTRAP.md could not be read safely.",
-          );
-        }
-        if (!Buffer.from(existing.content, "utf8").equals(params.content)) {
-          throw new WorkspaceBootstrapSeedConflictError(
-            "Existing BOOTSTRAP.md differs from the consented Claw bootstrap.",
-          );
-        }
-        await delay(20);
-        let statAfter: syncFs.Stats;
-        try {
-          statAfter = await fs.stat(bootstrapPath);
-        } catch (error) {
-          throw new WorkspaceBootstrapSeedConflictError(
-            "Existing BOOTSTRAP.md could not be read safely.",
-            { cause: error },
-          );
-        }
-        if (
-          statBefore.size !== statAfter.size ||
-          statBefore.mtimeMs !== statAfter.mtimeMs ||
-          statAfter.size !== params.content.byteLength
-        ) {
-          throw new WorkspaceBootstrapSeedConflictError(
-            "Existing BOOTSTRAP.md write has not stabilized.",
-          );
-        }
-        const stable = await readWorkspaceFileWithGuards({
-          filePath: bootstrapPath,
-          workspaceDir: dir,
-          useCache: false,
-        });
-        if (!stable.ok || !Buffer.from(stable.content, "utf8").equals(params.content)) {
-          throw new WorkspaceBootstrapSeedConflictError(
-            "Existing BOOTSTRAP.md differs from the consented Claw bootstrap.",
-          );
-        }
-      },
-      {
-        attempts: 5,
-        minDelayMs: 20,
-        maxDelayMs: 80,
-        shouldRetry: (error) => error instanceof WorkspaceBootstrapSeedConflictError,
-      },
-    );
+    try {
+      const before = syncFs.fstatSync(opened.fd, { bigint: true });
+      const content = await readWorkspaceBootstrapFile(opened.fd);
+      const after = syncFs.fstatSync(opened.fd, { bigint: true });
+      if (
+        !Buffer.from(content, "utf8").equals(params.content) ||
+        before.size !== after.size ||
+        before.mtimeNs !== after.mtimeNs ||
+        before.ctimeNs !== after.ctimeNs
+      ) {
+        throw new WorkspaceBootstrapSeedConflictError(
+          "Existing BOOTSTRAP.md differs from the consented Claw bootstrap or changed during inspection.",
+        );
+      }
+      // Bind the content read to the same pinned object the install's receipt identifies.
+      // A later safe open of an unrelated identical file cannot lend this read authority.
+      if (
+        params.ownsExisting
+          ? !params.ownsExisting(after)
+          : !created && params.existingFile === "conflict"
+      ) {
+        throw new WorkspaceBootstrapSeedConflictError(
+          "Existing BOOTSTRAP.md was not seeded by this install.",
+        );
+      }
+    } finally {
+      syncFs.closeSync(opened.fd);
+    }
   }
 
   if (!initialState.bootstrapSeededAt) {
@@ -905,7 +773,7 @@ export async function seedWorkspaceBootstrap(params: {
         bootstrapSeededAt: new Date(nowMs).toISOString(),
       },
       nowMs,
-      params.stateOptions,
+      { ...params.stateOptions, assertCurrent: params.assertCurrent },
     );
   }
   return created ? "seeded" : "already-seeded";
@@ -1152,13 +1020,15 @@ export async function ensureAgentWorkspace(params?: {
   }
 
   const agentsTemplate =
-    params?.templates?.[DEFAULT_AGENTS_FILENAME] ?? (await loadTemplate(DEFAULT_AGENTS_FILENAME));
+    params?.templates?.[DEFAULT_AGENTS_FILENAME] ??
+    (await loadWorkspaceTemplate(DEFAULT_AGENTS_FILENAME));
   const soulTemplate =
-    params?.templates?.[DEFAULT_SOUL_FILENAME] ?? (await loadTemplate(DEFAULT_SOUL_FILENAME));
+    params?.templates?.[DEFAULT_SOUL_FILENAME] ??
+    (await loadWorkspaceTemplate(DEFAULT_SOUL_FILENAME));
   const identityTemplate =
     params?.templates?.[DEFAULT_IDENTITY_FILENAME] ??
-    (await loadTemplate(DEFAULT_IDENTITY_FILENAME));
-  const userTemplate = await loadTemplate(DEFAULT_USER_FILENAME);
+    (await loadWorkspaceTemplate(DEFAULT_IDENTITY_FILENAME));
+  const userTemplate = await loadWorkspaceTemplate(DEFAULT_USER_FILENAME);
   // Template and filesystem checks above are async. Another process may have
   // completed setup while they ran, so optional-file policy needs fresh state.
   initialState = await readCanonicalWorkspaceStateSnapshot(dir, undefined, beforePersistentApply);
@@ -1234,7 +1104,7 @@ export async function ensureAgentWorkspace(params?: {
     ) {
       markState({ setupCompletedAt: nowIso() });
     } else {
-      const bootstrapTemplate = await loadTemplate(DEFAULT_BOOTSTRAP_FILENAME);
+      const bootstrapTemplate = await loadWorkspaceTemplate(DEFAULT_BOOTSTRAP_FILENAME);
       const wroteBootstrap = await publishBootstrapFile(
         bootstrapPath,
         bootstrapTemplate,

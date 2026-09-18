@@ -2,10 +2,10 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import { injectPartialPublicationFailure } from "../../agents/workspace-bootstrap-publish.test-support.js";
 import { resetConfigRuntimeState } from "../../config/config.js";
 import { withEnvAsync } from "../../test-utils/env.js";
-import { nodeFilePath } from "../../test-utils/node-file-path.js";
 import { ensureDevGatewayConfig } from "./dev.js";
 
 describe("ensureDevGatewayConfig integration", () => {
@@ -61,37 +61,19 @@ describe("ensureDevGatewayConfig integration", () => {
       },
       async () => {
         resetConfigRuntimeState();
-        const realWriteFile = fs.writeFile.bind(fs);
-        const writeSpy = vi
-          .spyOn(fs, "writeFile")
-          .mockImplementation(async (filePath, data, options) => {
-            const rawPath = nodeFilePath(filePath);
-            if (!rawPath) {
-              return await realWriteFile(filePath, data, options);
-            }
-            const target = path.resolve(rawPath);
-            const parent = path.dirname(target);
-            const isStagedAgents =
-              path.dirname(parent) === devWorkspace &&
-              path.basename(parent).startsWith("openclaw-bootstrap-") &&
-              path.basename(target) === "AGENTS.md";
-            if (isStagedAgents) {
-              await realWriteFile(filePath, "# PARTIAL\n", options);
-              const error = new Error("ENOSPC") as NodeJS.ErrnoException;
-              error.code = "ENOSPC";
-              throw error;
-            }
-            return await realWriteFile(filePath, data, options);
-          });
+        await fs.mkdir(devWorkspace, { recursive: true });
+        const injection = await injectPartialPublicationFailure(devWorkspace, "AGENTS.md");
 
         try {
           await expect(ensureDevGatewayConfig({})).rejects.toMatchObject({ code: "ENOSPC" });
+          injection.assertInjected();
           await expect(fs.access(configPath)).rejects.toMatchObject({ code: "ENOENT" });
           await expect(fs.access(path.join(devWorkspace, "AGENTS.md"))).rejects.toMatchObject({
             code: "ENOENT",
           });
+          expect(await fs.readdir(devWorkspace)).toEqual([]);
         } finally {
-          writeSpy.mockRestore();
+          injection.restore();
         }
 
         await ensureDevGatewayConfig({});

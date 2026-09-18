@@ -7,11 +7,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred, withTestTimeout } from "../../test/helpers/promise.js";
 import * as commandExec from "../process/exec.js";
 import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
-import { nodeFilePath } from "../test-utils/node-file-path.js";
 import {
   createOpenClawTestState,
   type OpenClawTestState,
 } from "../test-utils/openclaw-test-state.js";
+import { interceptBootstrapStageWrites } from "./workspace-bootstrap-publish.test-support.js";
 import { resetLegacyWorkspaceStateCheckForTest } from "./workspace-legacy-state.test-support.js";
 import * as workspaceState from "./workspace-state-store.js";
 import {
@@ -174,19 +174,10 @@ function startGitProvisioning(directories: string[], retryAfterFailure = false) 
   if (!retryAfterFailure) {
     lateCaller.resolve();
   }
-  const realWrite = fs.writeFile.bind(fs);
-  const writeSpy = vi.spyOn(fs, "writeFile").mockImplementation(async (file, data, options) => {
-    const filePath = nodeFilePath(file);
-    const parent = filePath ? path.dirname(filePath) : undefined;
-    const workspaceDir =
-      parent && initGates.has(parent)
-        ? parent
-        : parent &&
-            path.basename(parent).startsWith("openclaw-bootstrap-") &&
-            initGates.has(path.dirname(parent))
-          ? path.dirname(parent)
-          : undefined;
-    if (workspaceDir && filePath && path.basename(filePath) === DEFAULT_AGENTS_FILENAME) {
+  const restoreWrite = interceptBootstrapStageWrites(async (filePath, write) => {
+    const parent = path.dirname(path.dirname(filePath));
+    const workspaceDir = initGates.has(parent) ? parent : undefined;
+    if (workspaceDir && path.basename(filePath) === DEFAULT_AGENTS_FILENAME) {
       if (++agentsWrites === dirs.length) {
         admitted.resolve();
       }
@@ -194,9 +185,9 @@ function startGitProvisioning(directories: string[], retryAfterFailure = false) 
       await admitted.promise;
     }
     try {
-      return await realWrite(file, data, options);
+      return await write();
     } finally {
-      if (workspaceDir && filePath && path.basename(filePath) === DEFAULT_USER_FILENAME) {
+      if (workspaceDir && path.basename(filePath) === DEFAULT_USER_FILENAME) {
         const last = ++userWrites === dirs.length;
         if (last) {
           templates.resolve();
@@ -290,7 +281,8 @@ function startGitProvisioning(directories: string[], retryAfterFailure = false) 
       gate.resolve();
     }
     await Promise.allSettled(calls);
-    for (const spy of [commandSpy, statSpy, mergeSpy, writeSpy]) {
+    restoreWrite();
+    for (const spy of [commandSpy, statSpy, mergeSpy]) {
       spy.mockRestore();
     }
   };
