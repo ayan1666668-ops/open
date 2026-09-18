@@ -28,6 +28,14 @@ suite.define(() => {
         });
         try {
           await installMockGateway(page, {
+            presenceUsers: [
+              {
+                self: true,
+                id: "demo-viewer",
+                identity: { type: "profile", id: "demo-viewer" },
+                name: "Demo viewer",
+              },
+            ],
             methodResponses: {
               "users.mentionable": {
                 users: [{ profileId, displayName: "Casey Vale", avatarUrl, online: true }],
@@ -57,7 +65,7 @@ suite.define(() => {
           );
           const initials = avatar.locator(".chat-author-avatar__initials");
           await expect.poll(() => initials.isVisible()).toBe(true);
-          expect(await initials.textContent()).toBe("CV");
+          expect((await initials.textContent())?.trim()).toBe("CV");
           const size = () =>
             avatar.evaluate((element) => {
               const { width, height } = element.getBoundingClientRect();
