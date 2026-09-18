@@ -3,6 +3,11 @@ import {
   startWebLoginWithQr as startWebLoginWithQrImpl,
   waitForWebLogin as waitForWebLoginImpl,
 } from "../login-qr-runtime.js";
+import "./active-listener.js";
+import "./auth-store.js";
+import "./auto-reply/monitor.js";
+import "./login.js";
+import { whatsappSetupWizard as whatsappSetupWizardImpl } from "./setup-surface.js";
 export { getActiveWebListener } from "./active-listener.js";
 export {
   getWebAuthAgeMs,
@@ -18,7 +23,6 @@ export {
 } from "./auth-store.js";
 export { monitorWebChannel } from "./auto-reply/monitor.js";
 export { loginWeb } from "./login.js";
-import { whatsappSetupWizard as whatsappSetupWizardImpl } from "./setup-surface.js";
 
 type StartWebLoginWithQr = typeof import("../login-qr-runtime.js").startWebLoginWithQr;
 type WaitForWebLogin = typeof import("../login-qr-runtime.js").waitForWebLogin;

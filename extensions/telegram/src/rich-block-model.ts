@@ -290,6 +290,9 @@ function measureRichBlockChildren(
         // Live-verified: maps do not consume the 50-attachment budget.
         measureRichBlockCaption(block.caption, size, depth + 1);
         break;
+      case "anchor":
+      case "divider":
+        break;
     }
   }
 }

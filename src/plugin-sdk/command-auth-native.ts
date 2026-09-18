@@ -33,7 +33,6 @@ export {
   resolveControlCommandGate,
 } from "../channels/command-gating.js";
 export { resolveNativeCommandSessionTargets } from "../channels/native-command-session-targets.js";
-export { resolveNativeCommandMenuModelContext } from "../auto-reply/reply/command-menu-model-context.js";
 export {
   resolveCommandAuthorization,
   type CommandAuthorization,

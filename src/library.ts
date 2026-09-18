@@ -1,19 +1,14 @@
 // Public library facade for consumers embedding OpenClaw reply runtime APIs.
 import type { getReplyFromConfig as getReplyFromConfigRuntime } from "./auto-reply/reply.runtime.js";
-export { applyTemplate } from "./auto-reply/templating.js";
-export { createDefaultDeps } from "./cli/deps.js";
+import "./auto-reply/templating.js";
+import "./cli/deps.js";
 import type { promptYesNo as promptYesNoRuntime } from "./cli/prompt.js";
-export { waitForever } from "./cli/wait.js";
-export { loadConfig } from "./config/config.js";
-export { resolveSessionStorePathCore as resolveStorePath } from "./config/sessions/paths.js";
-export { deriveSessionKey, resolveSessionKey } from "./config/sessions/session-key.js";
+import "./cli/wait.js";
+import "./config/config.js";
+import "./config/sessions/paths.js";
+import "./config/sessions/session-key.js";
 import type { ensureBinary as ensureBinaryRuntime } from "./infra/binaries.js";
-export {
-  describePortOwner,
-  ensurePortAvailable,
-  handlePortError,
-  PortInUseError,
-} from "./infra/ports.js";
+import "./infra/ports.js";
 import {
   saveLegacySessionStore,
   type LegacySessionStoreSaveOptions,
@@ -24,6 +19,18 @@ import type {
   runExec as runExecRuntime,
 } from "./process/exec.js";
 import { createLazyRuntimeModule } from "./shared/lazy-runtime.js";
+export { applyTemplate } from "./auto-reply/templating.js";
+export { createDefaultDeps } from "./cli/deps.js";
+export { waitForever } from "./cli/wait.js";
+export { loadConfig } from "./config/config.js";
+export { resolveSessionStorePathCore as resolveStorePath } from "./config/sessions/paths.js";
+export { deriveSessionKey, resolveSessionKey } from "./config/sessions/session-key.js";
+export {
+  describePortOwner,
+  ensurePortAvailable,
+  handlePortError,
+  PortInUseError,
+} from "./infra/ports.js";
 export { normalizeE164 } from "./utils.js";
 
 type GetReplyFromConfig = typeof getReplyFromConfigRuntime;

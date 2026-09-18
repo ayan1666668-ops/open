@@ -1,7 +1,7 @@
 // Shared Zod leaves for bundled channel messaging configuration.
 import { z, type ZodRawShape, type ZodTypeAny } from "zod";
 import { NativeExecApprovalEnableModeSchema } from "./zod-schema.approvals.js";
-export { ChannelBotLoopProtectionSchema } from "./zod-schema.channels-config.js";
+import "./zod-schema.channels-config.js";
 import {
   ChannelHealthMonitorSchema,
   ChannelHeartbeatVisibilitySchema,
@@ -19,6 +19,7 @@ import {
   ReplyToModeSchema,
   TextChunkModeSchema,
 } from "./zod-schema.core.js";
+export { ChannelBotLoopProtectionSchema } from "./zod-schema.channels-config.js";
 
 export const UnifiedStreamingModeSchema = z.enum(["off", "partial", "block", "progress"]);
 export const ChannelStreamingPreviewSchema = z

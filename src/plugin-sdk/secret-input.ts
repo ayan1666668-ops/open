@@ -1,5 +1,9 @@
 // Secret input helpers normalize credential prompt definitions for plugin setup flows.
 import { z } from "zod";
+import "../config/types.secrets.js";
+import "../secrets/ref-contract.js";
+import "../utils/normalize-secret-input.js";
+import { buildSecretInputSchema, registerSensitiveConfigSchema } from "./secret-input-schema.js";
 export {
   hasConfiguredSecretInput,
   isSecretRef,
@@ -7,21 +11,18 @@ export {
   resolveSecretInputString,
   normalizeResolvedSecretInputString,
   normalizeSecretInputString,
+  type SecretInput,
+  type SecretInputStringResolution,
+  type SecretInputStringResolutionMode,
 } from "../config/types.secrets.js";
 export { isBuiltInDefaultSecretProviderRef, isValidSecretRef } from "../secrets/ref-contract.js";
 export { normalizeSecretInput } from "../utils/normalize-secret-input.js";
-import { buildSecretInputSchema, registerSensitiveConfigSchema } from "./secret-input-schema.js";
 
 export {
   readProviderEnvValue,
   resolveNonEnvSecretRefApiKeyMarker,
 } from "../secrets/provider-credential-values.js";
 
-export type {
-  SecretInput,
-  SecretInputStringResolution,
-  SecretInputStringResolutionMode,
-} from "../config/types.secrets.js";
 export { buildSecretInputSchema, registerSensitiveConfigSchema };
 
 /**

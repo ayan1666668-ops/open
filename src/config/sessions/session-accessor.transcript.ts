@@ -1,4 +1,22 @@
 import { safeParseJsonRecord } from "@openclaw/normalization-core";
+import "./session-accessor.sqlite-compaction.js";
+import "./session-accessor.sqlite-delta.js";
+import "./session-accessor.sqlite-entry.js";
+import "./session-accessor.sqlite-events.js";
+import "./session-accessor.sqlite-metadata-read.js";
+import { readTranscriptStatsSync } from "./session-accessor.sqlite-read.js";
+import "./session-accessor.sqlite-suffix-read.js";
+import "./session-accessor.sqlite-transcript-message-rewrite.js";
+import { trimTranscriptForManualCompact } from "./session-accessor.sqlite-transcript-write.js";
+import type {
+  SessionTranscriptRuntimeScope,
+  SessionTranscriptManualTrimResult,
+  SessionTranscriptManualTrimPreflightResult,
+} from "./session-accessor.types.js";
+import {
+  scanSessionTranscriptTree,
+  selectSessionTranscriptTreePathNodes,
+} from "./transcript-tree.js";
 export { persistCompactionBoundaryWithSessionEntrySync } from "./session-accessor.sqlite-compaction.js";
 export { readTranscriptRawDelta } from "./session-accessor.sqlite-delta.js";
 export { resolveSessionKeyBySessionId as resolveTranscriptSessionKeyBySessionId } from "./session-accessor.sqlite-entry.js";
@@ -8,7 +26,6 @@ export {
   readTranscriptMutationAtSync,
   readTranscriptMutationStateSync,
 } from "./session-accessor.sqlite-metadata-read.js";
-import { readTranscriptStatsSync } from "./session-accessor.sqlite-read.js";
 export {
   findTranscriptEvent,
   hasSessionTranscriptMessage,
@@ -34,7 +51,6 @@ export {
   rewriteAssistantTranscriptMessageForRun,
   rewriteTranscriptMessageAtAnchor,
 } from "./session-accessor.sqlite-transcript-message-rewrite.js";
-import { trimTranscriptForManualCompact } from "./session-accessor.sqlite-transcript-write.js";
 export {
   appendTranscriptEvent,
   appendTranscriptEventSync,
@@ -48,15 +64,6 @@ export {
   withTranscriptWriteLock,
   withTranscriptWriteTransaction,
 } from "./session-accessor.sqlite-transcript-write.js";
-import type {
-  SessionTranscriptRuntimeScope,
-  SessionTranscriptManualTrimResult,
-  SessionTranscriptManualTrimPreflightResult,
-} from "./session-accessor.types.js";
-import {
-  scanSessionTranscriptTree,
-  selectSessionTranscriptTreePathNodes,
-} from "./transcript-tree.js";
 
 export { emitSessionTranscriptUpdate as emitTranscriptUpdate } from "../../sessions/transcript-events.js";
 

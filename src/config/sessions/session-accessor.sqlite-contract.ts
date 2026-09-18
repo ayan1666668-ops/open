@@ -1,3 +1,5 @@
+import type { SessionEntrySummary } from "./session-accessor.types.js";
+import type { InternalSessionEntry as SessionEntry } from "./types.js";
 export type {
   DeletedAgentSessionEntryPurgeParams,
   DeleteSessionEntryLifecycleParams,
@@ -11,8 +13,6 @@ export type {
   SessionLifecycleArtifactCleanupParams,
   SessionLifecycleArtifactCleanupResult,
 } from "./session-accessor.lifecycle-types.js";
-import type { SessionEntrySummary } from "./session-accessor.types.js";
-import type { InternalSessionEntry as SessionEntry } from "./types.js";
 
 export type SessionEntryStatus = NonNullable<SessionEntry["status"]>;
 

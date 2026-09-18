@@ -4,7 +4,7 @@
  * Tests override this module's delivery capabilities while origin routing keeps
  * using the direct runtime exports below.
  */
-export { resolveQueueSettings } from "../../../auto-reply/reply/queue.js";
+import "../../../auto-reply/reply/queue.js";
 import { getRuntimeConfig } from "../../../config/config.js";
 import { tryResolveLegacyCompatibilityAgentId } from "../../../config/legacy.default-agent-owner.js";
 import { resolveSessionStorePathCore } from "../../../config/sessions.js";
@@ -13,11 +13,11 @@ import { resolvePersistedSessionStoreOwnerForKey } from "../../../config/session
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import type { callGateway } from "../../../gateway/call.js";
 import { bindGatewayLifecycleRequest } from "../../../gateway/server-recovery-runtime-context.js";
-export { resolveExternalBestEffortDeliveryTarget } from "../../../infra/outbound/best-effort-delivery.js";
-export { createBoundDeliveryRouter } from "../../../infra/outbound/bound-delivery-router.js";
-export { resolveConversationIdFromTargets } from "../../../infra/outbound/conversation-id.js";
+import "../../../infra/outbound/best-effort-delivery.js";
+import "../../../infra/outbound/bound-delivery-router.js";
+import "../../../infra/outbound/conversation-id.js";
 import { sendMessage } from "../../../infra/outbound/message.js";
-export { getGlobalHookRunner } from "../../../plugins/hook-runner-global.js";
+import "../../../plugins/hook-runner-global.js";
 import {
   normalizeAgentId,
   normalizeMainKey,
@@ -35,6 +35,11 @@ import {
 } from "../../embedded-agent-runner/runs.js";
 import { dispatchGatewayMethodInProcess } from "./subagent-announce.runtime.js";
 import { resolveRequesterStoreKey } from "./subagent-requester-store-key.js";
+export { resolveQueueSettings } from "../../../auto-reply/reply/queue.js";
+export { resolveExternalBestEffortDeliveryTarget } from "../../../infra/outbound/best-effort-delivery.js";
+export { createBoundDeliveryRouter } from "../../../infra/outbound/bound-delivery-router.js";
+export { resolveConversationIdFromTargets } from "../../../infra/outbound/conversation-id.js";
+export { getGlobalHookRunner } from "../../../plugins/hook-runner-global.js";
 
 export { formatEmbeddedAgentQueueFailureSummary, isEmbeddedAgentRunActive };
 

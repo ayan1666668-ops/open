@@ -314,13 +314,19 @@ struct ExecApprovalsStoreRefactorTests {
                 commandText: "python3 b.py",
                 argPattern: #"^b\.py$"#)
             _ = try Self.updateAgentFixture(agentId: "main") { entry in
+                entry.security = .allowlist
+                entry.ask = .off
                 entry.allowlist = [first, second]
             }.get()
 
-            _ = try ExecApprovalsStore.recordAllowlistUses(
+            _ = try ExecApprovalsStore.commitExecution(ExecApprovalExecutionCommit(
                 agentId: "main",
-                uses: [ExecAllowlistUse(match: first, resolvedPath: "/usr/bin/python3")],
-                command: "python3 a.py").get()
+                command: "python3 a.py",
+                authorization: .currentPolicy(
+                    evaluatedSecurity: .allowlist,
+                    evaluatedAsk: .off,
+                    basis: .allowlistEntries),
+                uses: [ExecAllowlistUse(match: first, resolvedPath: "/usr/bin/python3")])).get()
 
             let entries = try #require(Self.readStoredFile().agents?["main"]?.allowlist)
             #expect(entries[0].lastUsedCommand == "python3 a.py")
@@ -340,13 +346,19 @@ struct ExecApprovalsStoreRefactorTests {
                 source: "allow-always",
                 argPattern: "sha256:argv:test-digest")
             _ = try Self.updateAgentFixture(agentId: "main") { entry in
+                entry.security = .allowlist
+                entry.ask = .off
                 entry.allowlist = [hashed]
             }.get()
 
-            _ = try ExecApprovalsStore.recordAllowlistUses(
+            _ = try ExecApprovalsStore.commitExecution(ExecApprovalExecutionCommit(
                 agentId: "main",
-                uses: [ExecAllowlistUse(match: hashed, resolvedPath: "/usr/bin/curl")],
-                command: "curl https://trusted.example/install.sh?token=secret").get()
+                command: "curl https://trusted.example/install.sh?token=secret",
+                authorization: .currentPolicy(
+                    evaluatedSecurity: .allowlist,
+                    evaluatedAsk: .off,
+                    basis: .allowlistEntries),
+                uses: [ExecAllowlistUse(match: hashed, resolvedPath: "/usr/bin/curl")])).get()
 
             let entry = try #require(Self.readStoredFile().agents?["main"]?.allowlist?.first)
             #expect(entry.pattern == "/usr/bin/curl")
@@ -370,14 +382,14 @@ struct ExecApprovalsStoreRefactorTests {
                 entry.allowlist = []
             }.get()
 
-            let result = ExecApprovalsStore.recordAllowlistUses(
+            let result = ExecApprovalsStore.commitExecution(ExecApprovalExecutionCommit(
                 agentId: "main",
-                uses: [ExecAllowlistUse(match: stale, resolvedPath: "/usr/bin/printf")],
                 command: "printf ok",
                 authorization: .currentPolicy(
                     evaluatedSecurity: .allowlist,
                     evaluatedAsk: .off,
-                    basis: .allowlistEntries))
+                    basis: .allowlistEntries),
+                uses: [ExecAllowlistUse(match: stale, resolvedPath: "/usr/bin/printf")]))
 
             guard case .failure(.unavailable) = result else {
                 Issue.record("expected revoked approval checkpoint to fail")
@@ -783,14 +795,14 @@ struct ExecApprovalsStoreRefactorTests {
                 entry.allowlist = [stale]
             }.get()
 
-            let result = ExecApprovalsStore.recordAllowlistUses(
+            let result = ExecApprovalsStore.commitExecution(ExecApprovalExecutionCommit(
                 agentId: "main",
-                uses: [ExecAllowlistUse(match: stale, resolvedPath: "/usr/bin/printf")],
                 command: "printf ok",
                 authorization: .currentPolicy(
                     evaluatedSecurity: .allowlist,
                     evaluatedAsk: .off,
-                    basis: .allowlistEntries))
+                    basis: .allowlistEntries),
+                uses: [ExecAllowlistUse(match: stale, resolvedPath: "/usr/bin/printf")]))
 
             guard case .failure(.unavailable) = result else {
                 Issue.record("expected deny policy checkpoint to fail")
@@ -810,13 +822,13 @@ struct ExecApprovalsStoreRefactorTests {
                 entry.askFallback = .full
             }.get()
 
-            let result = ExecApprovalsStore.recordAllowlistUses(
+            let result = ExecApprovalsStore.commitExecution(ExecApprovalExecutionCommit(
                 agentId: "main",
-                uses: [],
                 command: "printf fallback",
                 authorization: .askFallback(
                     evaluatedSecurity: .full,
-                    basis: nil))
+                    basis: nil),
+                uses: []))
 
             _ = try result.get()
         }
@@ -831,13 +843,13 @@ struct ExecApprovalsStoreRefactorTests {
                 entry.askFallback = .deny
             }.get()
 
-            let result = ExecApprovalsStore.recordAllowlistUses(
+            let result = ExecApprovalsStore.commitExecution(ExecApprovalExecutionCommit(
                 agentId: "main",
-                uses: [],
                 command: "printf fallback",
                 authorization: .askFallback(
                     evaluatedSecurity: .full,
-                    basis: nil))
+                    basis: nil),
+                uses: []))
 
             guard case .failure(.unavailable) = result else {
                 Issue.record("expected revoked timeout fallback checkpoint to fail")
@@ -856,13 +868,13 @@ struct ExecApprovalsStoreRefactorTests {
                 entry.allowlist = [ExecAllowlistEntry(pattern: "/usr/bin/printf")]
             }.get()
 
-            let result = ExecApprovalsStore.recordAllowlistUses(
+            let result = ExecApprovalsStore.commitExecution(ExecApprovalExecutionCommit(
                 agentId: "main",
-                uses: [],
                 command: "printf fallback",
                 authorization: .askFallback(
                     evaluatedSecurity: .full,
-                    basis: nil))
+                    basis: nil),
+                uses: []))
 
             guard case .failure(.unavailable) = result else {
                 Issue.record("expected tightened timeout fallback checkpoint to fail")

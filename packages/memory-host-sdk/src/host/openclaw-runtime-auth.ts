@@ -1,5 +1,5 @@
-export { requireApiKey } from "../../../../src/agents/model-auth-runtime-shared.js";
 import type { resolveApiKeyForProviderCore as ResolveApiKeyForProvider } from "../../../../src/agents/model-auth.js";
+export { requireApiKey } from "../../../../src/agents/model-auth-runtime-shared.js";
 
 // Lazy auth facade so memory host helpers avoid eager model-auth module loading.
 

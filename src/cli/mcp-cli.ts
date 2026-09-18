@@ -83,11 +83,11 @@ type LoadedMcpConfig = Awaited<ReturnType<typeof loadMcpConfig>>;
 
 function failUnknownMcpServer(
   name: string | undefined,
-  path: string,
+  configPath: string,
   opts?: { json?: boolean },
 ): never {
   fail(
-    `No MCP server named "${name}" in ${path}. Run ${formatCliCommand("openclaw mcp list")} to see configured servers.`,
+    `No MCP server named "${name}" in ${configPath}. Run ${formatCliCommand("openclaw mcp list")} to see configured servers.`,
     opts?.json,
   );
 }

@@ -330,6 +330,14 @@ export function isPrivateIpAddress(address: string, policy?: SsrFPolicy): boolea
   return false;
 }
 
+export function isBlockedHostname(hostname: string): boolean {
+  const normalized = normalizeHostname(hostname);
+  if (!normalized) {
+    return false;
+  }
+  return isBlockedHostnameNormalized(normalized);
+}
+
 function isBlockedHostnameNormalized(normalized: string): boolean {
   if (BLOCKED_HOSTNAMES.has(normalized)) {
     return true;
@@ -780,4 +788,11 @@ export async function closeDispatcher(dispatcher?: Dispatcher | null): Promise<v
   } catch {
     // ignore dispatcher cleanup errors
   }
+}
+
+export async function assertPublicHostname(
+  hostname: string,
+  lookupFn: LookupFn = dnsLookup,
+): Promise<void> {
+  await resolvePinnedHostname(hostname, lookupFn);
 }

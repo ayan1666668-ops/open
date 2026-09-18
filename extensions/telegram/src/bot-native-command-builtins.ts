@@ -14,7 +14,7 @@ import {
   formatFastModeCurrentStatus,
   parseCommandArgs,
   resolveCommandArgMenu,
-  resolveNativeCommandMenuModelContext,
+  resolveEffectiveAgentRuntime,
   resolveFastModeState,
   resolveStoredModelOverride,
   type CommandArgs,
@@ -47,6 +47,20 @@ type TelegramCommandMenuModelContext = {
   fastMode?: SessionEntry["fastMode"];
 };
 
+function buildTelegramCommandMenuModelContext(params: {
+  provider: string;
+  model: string;
+  thinkingLevel?: string;
+  fastMode?: SessionEntry["fastMode"];
+}): TelegramCommandMenuModelContext {
+  return {
+    provider: params.provider,
+    model: params.model,
+    ...(params.thinkingLevel ? { thinkingLevel: params.thinkingLevel } : {}),
+    ...(params.fastMode !== undefined ? { fastMode: params.fastMode } : {}),
+  };
+}
+
 function resolveTelegramCommandMenuModelContext(params: {
   cfg: OpenClawConfig;
   agentId: string;
@@ -61,15 +75,52 @@ function resolveTelegramCommandMenuModelContext(params: {
     const entry = getSessionEntry({ storePath, sessionKey: params.sessionKey });
     const thinkingLevel = normalizeOptionalString(entry?.thinkingLevel);
     const fastMode = entry?.fastMode;
-    return {
-      ...resolveNativeCommandMenuModelContext({
-        ...params,
-        defaultModel,
+    let context: TelegramCommandMenuModelContext;
+    if (entry?.modelOverrideSource === "auto" && normalizeOptionalString(entry.modelOverride)) {
+      context = buildTelegramCommandMenuModelContext({
+        provider: defaultModel.provider,
+        model: defaultModel.model,
+        ...(thinkingLevel ? { thinkingLevel } : {}),
+        ...(fastMode !== undefined ? { fastMode } : {}),
+      });
+    } else {
+      const override = resolveStoredModelOverride({
         sessionEntry: entry,
         loadSessionEntry: (sessionKey) => getSessionEntry({ storePath, sessionKey }),
+        sessionKey: params.sessionKey,
+        defaultProvider: defaultModel.provider,
+      });
+      if (override?.model) {
+        context = buildTelegramCommandMenuModelContext({
+          provider: override.provider || defaultModel.provider,
+          model: override.model,
+          ...(thinkingLevel ? { thinkingLevel } : {}),
+          ...(fastMode !== undefined ? { fastMode } : {}),
+        });
+      } else {
+        const provider =
+          normalizeOptionalString(entry?.providerOverride) ??
+          normalizeOptionalString(entry?.modelProvider);
+        const model =
+          normalizeOptionalString(entry?.modelOverride) ?? normalizeOptionalString(entry?.model);
+        context = {
+          ...(provider ? { provider } : {}),
+          ...(model ? { model } : {}),
+          ...(thinkingLevel ? { thinkingLevel } : {}),
+          ...(fastMode !== undefined ? { fastMode } : {}),
+        };
+      }
+    }
+    return {
+      ...context,
+      agentRuntime: resolveEffectiveAgentRuntime({
+        cfg: params.cfg,
+        provider: context.provider ?? defaultModel.provider,
+        modelId: context.model ?? defaultModel.model,
+        agentId: params.agentId,
+        sessionKey: params.sessionKey,
+        sessionEntry: entry,
       }),
-      ...(thinkingLevel ? { thinkingLevel } : {}),
-      ...(fastMode !== undefined ? { fastMode } : {}),
     };
   } catch {
     return {};

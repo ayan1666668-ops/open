@@ -9,19 +9,8 @@ import {
 } from "./plugin-host-cleanup.js";
 import { listSessionEntriesCore, patchSessionEntryCore } from "./session-accessor.entry.js";
 import { applySessionEntryBatchProjection } from "./session-accessor.sqlite-batch-projection.js";
-export {
-  cleanupSessionLifecycleArtifactsCore,
-  deleteSessionEntryLifecycle,
-  rollbackAgentHarnessSessionEntryLifecycle,
-  rollbackPluginOwnedSessionEntryLifecycle,
-  resetSessionEntryLifecycle,
-} from "./session-accessor.sqlite-lifecycle.js";
-export {
-  applySessionEntryLifecycleMutation,
-  applySessionEntryReplacements,
-  applySessionStoreProjection,
-  purgeDeletedAgentSessionEntries,
-} from "./session-accessor.sqlite-projection.js";
+import "./session-accessor.sqlite-lifecycle.js";
+import "./session-accessor.sqlite-projection.js";
 import type {
   SessionPatchProjectionSnapshot,
   SessionPatchProjectionTarget,
@@ -35,6 +24,19 @@ import {
   SessionLabelOwnerIndex,
 } from "./session-entry-selection.js";
 import type { InternalSessionEntry as SessionEntry } from "./types.js";
+export {
+  cleanupSessionLifecycleArtifactsCore,
+  deleteSessionEntryLifecycle,
+  rollbackAgentHarnessSessionEntryLifecycle,
+  rollbackPluginOwnedSessionEntryLifecycle,
+  resetSessionEntryLifecycle,
+} from "./session-accessor.sqlite-lifecycle.js";
+export {
+  applySessionEntryLifecycleMutation,
+  applySessionEntryReplacements,
+  applySessionStoreProjection,
+  purgeDeletedAgentSessionEntries,
+} from "./session-accessor.sqlite-projection.js";
 
 /** Projects ordered session patches against one store snapshot and commits once. */
 export async function applySessionPatchProjections<

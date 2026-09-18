@@ -20,8 +20,9 @@ import {
   normalizeSessionKeyPreservingOpaquePeerIds,
   parseAgentSessionKey,
 } from "../sessions/session-key-utils.js";
-export { isIncognitoSessionKey } from "../shared/incognito-session-key.js";
+import "../shared/incognito-session-key.js";
 import { normalizeAccountId } from "./account-id.js";
+export { isIncognitoSessionKey } from "../shared/incognito-session-key.js";
 
 export {
   isCronSessionKey,

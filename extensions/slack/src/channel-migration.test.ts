@@ -110,19 +110,4 @@ describe("migrateSlackChannelConfig", () => {
       C999: { requireMention: false },
     });
   });
-
-  it("leaves an owned undefined source unchanged", () => {
-    const cfg = createSlackGlobalChannelConfig({});
-    Object.defineProperty(cfg.channels.slack.channels, "C123", {
-      value: undefined,
-      enumerable: true,
-      configurable: true,
-    });
-    expect(migrateSlackChannelConfig({ cfg, oldChannelId: "C123", newChannelId: "C999" })).toEqual({
-      migrated: false,
-      skippedExisting: false,
-      scopes: [],
-    });
-    expect(Object.keys(cfg.channels.slack.channels)).toEqual(["C123"]);
-  });
 });

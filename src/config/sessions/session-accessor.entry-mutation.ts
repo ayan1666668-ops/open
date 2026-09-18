@@ -12,15 +12,8 @@ import {
 } from "./session-accessor.entry.js";
 import { applySessionEntryLifecycleMutation } from "./session-accessor.lifecycle.js";
 import { readSessionCreationSnapshot } from "./session-accessor.sqlite-creation-read.js";
-export {
-  recordInboundSessionMeta,
-  updateSessionLastRoute,
-} from "./session-accessor.sqlite-entry.js";
+import "./session-accessor.sqlite-entry.js";
 import { forkSessionTranscriptFromParent } from "./session-accessor.sqlite-parent-session.js";
-export {
-  forkSessionEntryFromParentTarget,
-  resolveSessionParentForkDecision,
-} from "./session-accessor.sqlite-parent-session.js";
 import {
   resolveSqliteTranscriptScope,
   runExclusiveSqliteSessionWrite,
@@ -43,6 +36,14 @@ import type {
 } from "./session-accessor.types.js";
 import { normalizeStoreSessionKey } from "./store-entry.js";
 import type { GroupKeyResolution, InternalSessionEntry as SessionEntry } from "./types.js";
+export {
+  recordInboundSessionMeta,
+  updateSessionLastRoute,
+} from "./session-accessor.sqlite-entry.js";
+export {
+  forkSessionEntryFromParentTarget,
+  resolveSessionParentForkDecision,
+} from "./session-accessor.sqlite-parent-session.js";
 
 export async function forkSessionFromParentTranscript(
   params: ForkSessionFromParentTranscriptParams,

@@ -1,10 +1,11 @@
-export { readNonEmptyStringPreservingWhitespace as readOptionalNonEmptyString } from "@openclaw/normalization-core/string-coerce";
+import "@openclaw/normalization-core/string-coerce";
 import { truncateUtf16Safe, truncateWithMarker } from "@openclaw/normalization-core/utf16-slice";
 import type {
   JsonValue,
   NativeHookRelayEvent,
   NativeHookRelayProvider,
 } from "./native-hook-relay-types.js";
+export { readNonEmptyStringPreservingWhitespace as readOptionalNonEmptyString } from "@openclaw/normalization-core/string-coerce";
 
 const MAX_NATIVE_HOOK_RELAY_JSON_DEPTH = 64;
 const MAX_NATIVE_HOOK_RELAY_JSON_NODES = 20_000;

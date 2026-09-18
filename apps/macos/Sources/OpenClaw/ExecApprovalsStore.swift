@@ -439,46 +439,6 @@ extension ExecApprovalsStore {
         }
     }
 
-    @discardableResult
-    static func recordAllowlistUses(
-        agentId: String?,
-        uses: [ExecAllowlistUse],
-        command: String,
-        authorization: ExecApprovalAuthorization? = nil) -> Result<Void, ExecApprovalsMutationError>
-    {
-        if let authorization {
-            return self.commitExecution(ExecApprovalExecutionCommit(
-                agentId: agentId,
-                command: command,
-                authorization: authorization,
-                uses: uses))
-        }
-        guard !uses.isEmpty else { return .success(()) }
-        let usesByKey = Dictionary(
-            uses.map { (self.allowlistEntryMatchKey($0.match), $0) },
-            uniquingKeysWith: { first, _ in first })
-        do {
-            try ExecApprovalsSQLiteStore.withImmediateTransaction(
-                stateDirectoryURL: self.stateDirURL())
-            { record in
-                let ensured = self.ensureFile(record)
-                var file = ensured.file
-                let changed = self.applyAllowlistUsesUnlocked(
-                    file: &file,
-                    agentId: agentId,
-                    usesByKey: usesByKey,
-                    command: command)
-                return ExecApprovalsSQLiteMutation(
-                    value: (),
-                    documentToWrite: ensured.needsWrite || changed ? file : nil)
-            }
-            return .success(())
-        } catch {
-            self.logger.error("exec approvals usage update failed: \(error.localizedDescription, privacy: .public)")
-            return .failure(.unavailable)
-        }
-    }
-
     private static func normalizeExecutionGrants(
         _ grants: [ExecAllowlistUse]) -> Result<[ExecAllowlistUse], ExecApprovalsMutationError>
     {
