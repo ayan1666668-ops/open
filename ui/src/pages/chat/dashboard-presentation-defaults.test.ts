@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 
 import { createDeferred } from "../../../../test/helpers/promise.js";
 import type { GatewaySessionRow, SessionsPatchResult } from "../../api/types.ts";
 import { loadSettings, patchSettings } from "../../app/settings.ts";
+import type { BoardWidgetPageMenu } from "../../components/board/board-widget-cell-render.ts";
 import { t } from "../../i18n/index.ts";
 import type { BoardCommandEvent, BoardProvider } from "../../lib/board/provider.ts";
 import { sessionsResult } from "../../lib/sessions/session-capability.test-support.ts";
@@ -12,6 +13,7 @@ import { showToast } from "../../lib/toast.ts";
 import { createMockBoardProvider } from "../../test-helpers/board-provider.ts";
 import { gatewayHelloForMethods } from "../../test-helpers/gateway-methods.ts";
 import { createStorageMock } from "../../test-helpers/storage.ts";
+import { ensureBoardViewElement } from "./board-session-surface.ts";
 import { createChatPaneRails } from "./chat-pane-rails.ts";
 import type { ResolvedBoardView } from "./chat-pane-shared.ts";
 import { sidebarRegionCallbacks } from "./chat-pane-sidebar-layout.ts";
@@ -51,6 +53,11 @@ vi.mock("../../components/board/board-view.ts", () => {
 });
 
 type DashboardPane = TestChatPane & {
+  visuallyPresented: boolean;
+  fullscreenBoardWidgetMenu: (
+    layout: SidebarLayout,
+    board?: ResolvedBoardView,
+  ) => BoardWidgetPageMenu | undefined;
   boardProvider: BoardProvider;
   routeFace: "chat" | "dashboard";
   dashboardExpanded: boolean;
@@ -243,6 +250,35 @@ afterEach(() => {
 });
 
 describe("dashboard default activation and personal layout persistence", () => {
+  it("relocates only the visible fullscreen widget when a replacement task menu exists", async () => {
+    await ensureBoardViewElement();
+    const { pane } = createDashboardHarness();
+    const board = { ...pane.resolveBoardView(), activeTabId: "research" };
+    const expanded = openDashboardPresentation({ columns: [] }, "expanded");
+    expect(pane.fullscreenBoardWidgetMenu(expanded, board)?.widget.name).toBe("source-map");
+    expect(
+      pane.fullscreenBoardWidgetMenu(openDashboardPresentation(expanded, "split"), board),
+    ).toBeUndefined();
+    expect(
+      pane.fullscreenBoardWidgetMenu(expanded, { ...board, activeTabId: "main" }),
+    ).toBeUndefined();
+    const narrow = {
+      ...board,
+      snapshot: {
+        ...board.snapshot,
+        widgets: board.snapshot.widgets.map((widget) =>
+          widget.name === "source-map" ? { ...widget, sizeW: 6 } : widget,
+        ),
+      },
+    };
+    expect(pane.fullscreenBoardWidgetMenu(expanded, narrow)).toBeUndefined();
+    pane.visuallyPresented = false;
+    expect(pane.fullscreenBoardWidgetMenu(expanded, board)).toBeUndefined();
+    pane.visuallyPresented = true;
+    pane.state.sessionsResult = null;
+    expect(pane.fullscreenBoardWidgetMenu(expanded, board)).toBeUndefined();
+  });
+
   it.each(["shared", "personal"] as const)(
     "opens the %s expanded preference through the registered keyboard handler",
     (kind) => {
