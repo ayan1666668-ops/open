@@ -46,9 +46,10 @@ function sliceNormalizedMarkdownIR(
   ir: MarkdownIR,
   { start: normalizedStart, end: normalizedEnd }: MarkdownIRRange,
 ): MarkdownIR {
-  const metadataIR = ir as MarkdownIRWithMetadata;
+  const metadataIR: MarkdownIRWithMetadata = ir;
   const annotations = sliceAnnotationSpans(ir.annotations ?? [], normalizedStart, normalizedEnd);
-  const listItems = ((ir.listItems ?? []) as MarkdownListItemWithMetadata[]).flatMap((item) => {
+  const sourceListItems: MarkdownListItemWithMetadata[] = ir.listItems ?? [];
+  const listItems = sourceListItems.flatMap((item) => {
     const listMarker = item.listMarker
       ? sliceListMarker(item.listMarker, normalizedStart, normalizedEnd)
       : undefined;
@@ -175,7 +176,8 @@ export function sliceMarkdownIRRanges(ir: MarkdownIR, ranges: MarkdownIRRange[])
       });
     }
   }
-  for (const block of (ir as MarkdownIRWithMetadata).blocks ?? []) {
+  const metadataIR: MarkdownIRWithMetadata = ir;
+  for (const block of metadataIR.blocks ?? []) {
     visitRanges(block.start, block.end, (metadata) => (metadata.blocks ??= []).push(block));
   }
   for (const tag of ir.htmlTags ?? []) {

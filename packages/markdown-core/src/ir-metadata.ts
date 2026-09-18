@@ -120,7 +120,7 @@ export function attachListItemMetadata(
   item: MarkdownListItemMarker,
   metadata: MarkdownListItemMetadata,
 ): MarkdownListItemWithMetadata {
-  const itemWithMetadata = item as MarkdownListItemWithMetadata;
+  const itemWithMetadata: MarkdownListItemWithMetadata = item;
   for (const key of [
     "contentStart",
     "contentEnd",
@@ -138,7 +138,8 @@ export function attachListItemMetadata(
 
 export function attachBlockMetadata(ir: MarkdownIR, blocks: MarkdownBlockSpan[]): MarkdownIR {
   if (blocks.length > 0) {
-    defineMetadata(ir as MarkdownIRWithMetadata, "blocks", blocks);
+    const metadataIR: MarkdownIRWithMetadata = ir;
+    defineMetadata(metadataIR, "blocks", blocks);
   }
   return ir;
 }
