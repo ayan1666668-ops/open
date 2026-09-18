@@ -67,7 +67,7 @@ export function prepareSessionTitleRead(
   if (!entry?.sessionId || !(opts.includeDerivedTitles || opts.includeLastMessage)) {
     return undefined;
   }
-  // Metadata wins over transcript text in both scalar and batched rows. Carry
+  // Metadata wins over transcript text in both scalar and tool rows. Carry
   // that result forward so title-only reads do not hydrate discarded payloads.
   const derivedTitle = opts.includeDerivedTitles
     ? deriveSessionTitle(entry, undefined, displayName)

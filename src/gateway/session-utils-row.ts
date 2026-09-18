@@ -91,6 +91,10 @@ import { projectWorkerPlacementAgentRuntime } from "./worker-environments/placem
 export function readSessionRowInputs(params: {
   cfg: OpenClawConfig;
   storePath: string;
+  storeAgentId?: string;
+  active?: boolean;
+  /** A supplied resident model avoids transcript reads; null uses only stored model facts. */
+  activeModel?: { provider: string; model: string } | null;
   store: Record<string, SessionEntry>;
   modelSource?: GatewaySessionModelSource;
   key: string;
@@ -132,7 +136,7 @@ export function readSessionRowInputs(params: {
   const selectedModel = resolveSessionSelectedModelRef({
     cfg,
     sessionKey: key,
-    source: params.modelSource ?? { entry, loadSessionEntry: (parentKey) => store[parentKey] },
+    source: params.modelSource ?? { entry, readSourceEntry: (parentKey) => store[parentKey] },
     agentId,
     rowContext,
     allowPluginNormalization: !lightweight,
@@ -155,6 +159,7 @@ export function readSessionRowInputs(params: {
           maxTranscriptBytes: params.transcriptUsageMaxBytes,
           rowContext,
           agentId,
+          storeAgentId: params.storeAgentId,
         })
       : undefined;
   const { provider, model } = selectedModel;
@@ -168,6 +173,9 @@ export function readSessionRowInputs(params: {
   // Display aliases do not change the selected route's catalog or runtime policy.
   const activeModel = resolveGatewaySessionActiveModel({
     cfg,
+    active: params.active,
+    activeModel: params.activeModel,
+    storeAgentId: params.storeAgentId,
     selectedModel,
     projectedAgentRuns: (rowContext.projectedAgentRuns ??= buildProjectedAgentRunIndex()),
     entry,
@@ -182,7 +190,7 @@ export function readSessionRowInputs(params: {
   let lastMessagePreview: string | undefined;
   if (entry?.sessionId && titleRead?.needsTranscript) {
     const fields = readScopedSessionTitleFieldsFromTranscript({
-      agentId,
+      agentId: params.storeAgentId ?? agentId,
       sessionEntry: entry,
       sessionId: entry.sessionId,
       sessionKey: key,
@@ -344,10 +352,12 @@ export function buildGatewaySessionRow(
   return presentSessionRow(materializeSessionRow(inputs), presentation);
 }
 
-export function resolveGatewaySessionActiveModel(params: {
+function resolveGatewaySessionActiveModel(params: {
   cfg: OpenClawConfig;
   active?: boolean;
+  activeModel?: { provider: string; model: string } | null;
   agentId?: string;
+  storeAgentId?: string;
   sessionId?: string;
   sessionKey: string;
   projectedAgentRuns: ProjectedAgentRunIndex;
@@ -384,21 +394,26 @@ export function resolveGatewaySessionActiveModel(params: {
     return undefined;
   }
 
+  const fallbackEntry =
+    params.activeModel === undefined
+      ? readSessionFallbackModel({
+          selectedProvider: selectedModel.provider,
+          selectedModel: selectedModel.model,
+          sessionEntry: params.entry,
+          config: params.cfg,
+          sessionScope: {
+            agentId: params.storeAgentId ?? params.agentId,
+            sessionKey: params.sessionKey,
+            storePath: params.storePath,
+          },
+        })
+      : params.activeModel
+        ? { modelProvider: params.activeModel.provider, model: params.activeModel.model }
+        : undefined;
   const { selected, active } = resolveSelectedAndActiveModel({
     selectedProvider: selectedModel.provider,
     selectedModel: selectedModel.model,
-    sessionEntry:
-      readSessionFallbackModel({
-        selectedProvider: selectedModel.provider,
-        selectedModel: selectedModel.model,
-        sessionEntry: params.entry,
-        config: params.cfg,
-        sessionScope: {
-          agentId: params.agentId,
-          sessionKey: params.sessionKey,
-          storePath: params.storePath,
-        },
-      }) ?? params.entry,
+    sessionEntry: fallbackEntry ?? params.entry,
   });
   return resolveActiveFallbackState({
     selectedModelRef: selected.label,
@@ -558,6 +573,7 @@ export function materializeSessionRow(input: ReturnType<typeof readSessionRowInp
     hasAutomation: input.hasAutomation,
     // Navigation lineage is persisted; runtime control is exposed separately above.
     parentSessionKey: entry?.parentSessionKey,
+    parentSessionId: entry?.parentSessionId,
     childSessions: undefined,
     responseUsage: entry?.responseUsage,
     effectiveResponseUsage: resolveEffectiveResponseUsage(
@@ -609,6 +625,9 @@ export function presentSessionRow(
   const { source } = materialized;
   const { entry, freshSessionTotalTokens } = source;
   const { now } = options;
+  // Stamp the temporal projection, not the reusable materialized inputs.
+  // Completed list caches retain this sample when they replay the finished row.
+  row.snapshotAt = now;
   const subagentRuns =
     options.subagentRuns ?? buildSubagentRunReadIndexFromRuns({ ...source.subagentRunInputs, now });
   const { subagentRun, subagentOwner, fields } = projectGatewaySessionRunState({
