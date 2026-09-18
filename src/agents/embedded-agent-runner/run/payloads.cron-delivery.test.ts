@@ -20,12 +20,24 @@ describe("cron completion after a delivered report", () => {
     },
   };
 
-  it("does not replace an already delivered report with a failed verification read", () => {
-    expect(buildPayloads(completedRun)).toEqual([]);
-  });
+  it.each([true, undefined])(
+    "does not replace a delivered report with a failed verification read (final=%s)",
+    (sourceReplyFinal) => {
+      expect(
+        buildPayloads({
+          ...completedRun,
+          messagingToolSentTargets: [{ ...deliveredReport, sourceReplyFinal }],
+        }),
+      ).toEqual([]);
+    },
+  );
 
   it.each([
     { name: "an unconfirmed send", messagingToolSentTargets: [] },
+    {
+      name: "an explicitly progress-only send",
+      messagingToolSentTargets: [{ ...deliveredReport, sourceReplyFinal: false }],
+    },
     {
       name: "a send without visible content",
       messagingToolSentTargets: [{ ...deliveredReport, text: "", visible: false }],

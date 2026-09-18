@@ -48,7 +48,10 @@ import {
 import { isTimeoutErrorMessage } from "../../failover/classify.js";
 import type { PreparedProviderFailoverOwner } from "../../failover/provider-patterns.js";
 import type { ToolErrorSummary } from "../../tool-error-summary.js";
-import { hasVisibleCommittedMessagingToolDeliveryEvidence } from "../delivery-evidence.js";
+import {
+  hasCompletedMessagingToolDeliveryEvidence,
+  hasVisibleCommittedMessagingToolDeliveryEvidence,
+} from "../delivery-evidence.js";
 import { buildSourceReplyPayloadState } from "./source-reply-payloads.js";
 import { buildFailureWarning } from "./tool-error-warning.js";
 
@@ -341,14 +344,13 @@ export function buildEmbeddedRunPayloads(params: {
   // Native shell calls are conservatively classified as mutating even when
   // they only search files. That replay-safety classification must not replace
   // a completed answer with a synthetic warning. A scheduled report can also
-  // finish silently after a confirmed message-tool delivery. Without that
-  // evidence, scheduled work must still retain its failure reporting.
+  // finish silently after a confirmed completed message-tool delivery. Progress
+  // updates alone must not suppress a scheduled task's failure reporting.
   const respectIntentionalSilence =
     hasIntentionalSilentFinal &&
     (!params.isCronTrigger ||
-      hasVisibleCommittedMessagingToolDeliveryEvidence({
-        messagingToolSentTargets: params.messagingToolSentTargets,
-      })) &&
+      (hasVisibleCommittedMessagingToolDeliveryEvidence(params) &&
+        hasCompletedMessagingToolDeliveryEvidence(params))) &&
     !params.isHeartbeatTrigger &&
     !params.runAborted;
   if (params.lastToolError && !respectIntentionalSilence) {
