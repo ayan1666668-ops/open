@@ -463,6 +463,59 @@ describe("Scheduled Task stop/restart cleanup", () => {
     },
   );
 
+  it("keeps terminating the validated owner after graceful shutdown removes its lease", async () => {
+    await withPreparedGatewayTask(async ({ env }) => {
+      vi.spyOn(process, "platform", "get").mockReturnValue("win32");
+      let leaseRemoved = false;
+      let forced = false;
+      readGatewayOwnerLease.mockImplementation(() => (leaseRemoved ? null : GATEWAY_OWNER));
+      readWindowsProcessStartTimeSync.mockReturnValue(GATEWAY_OWNER.startedAt);
+      spawnSync.mockImplementation((command, args) => {
+        const executable = command.toLowerCase();
+        if (executable.endsWith("taskkill.exe")) {
+          leaseRemoved = true;
+          forced = args?.includes("/F") ?? false;
+          return {
+            pid: 0,
+            output: [null, "", ""],
+            stdout: "",
+            stderr: "",
+            status: 0,
+            signal: null,
+          };
+        }
+        if (executable.endsWith("tasklist.exe")) {
+          const output = forced ? "No tasks" : '\"node.exe\",\"4242\",\"Console\",\"1\",\"1 K\"';
+          return {
+            pid: 0,
+            output: [null, output, ""],
+            stdout: output,
+            stderr: "",
+            status: 0,
+            signal: null,
+          };
+        }
+        const output = JSON.stringify([
+          ...(!forced ? [{ ProcessId: 4242, CommandLine: INSTALLED_GATEWAY_COMMAND_LINE }] : []),
+          { ProcessId: 9999, CommandLine: "powershell.exe" },
+        ]);
+        return {
+          pid: 0,
+          output: [null, output, ""],
+          stdout: output,
+          stderr: "",
+          status: 0,
+          signal: null,
+        };
+      });
+
+      await expect(terminateScheduledTaskGatewayListeners(env)).resolves.toEqual([4242]);
+
+      expect(readWindowsProcessStartTimeSync).toHaveBeenCalledWith(4242, 5_000, env);
+      expect(taskkillPids()).toEqual([4242, 4242]);
+    });
+  });
+
   it.each([
     { label: "belongs to another host", owner: { host: "another-host" }, currentStart: 100 },
     { label: "has no recorded process identity", owner: { startedAt: null }, currentStart: 100 },

@@ -231,6 +231,7 @@ async function resolveScheduledTaskGatewayOwnership(
       ? [owner.pid]
       : []
     : await resolveLegacyScheduledTaskOwnedGatewayPids(env, context, command);
+  let ownerWasValidatedForTermination = false;
   return {
     pids,
     acquireTerminationExclusion() {
@@ -273,6 +274,20 @@ async function resolveScheduledTaskGatewayOwnership(
         return;
       }
       if (
+        owner &&
+        !current &&
+        ownerWasValidatedForTermination &&
+        owner.host === hostname() &&
+        owner.startedAt !== null &&
+        readWindowsProcessStartTimeSync(pid, 5_000, ownerEnv) === owner.startedAt
+      ) {
+        // Graceful shutdown removes its published lease before the process has
+        // necessarily exited. Keep the already-authorized termination bound to
+        // the same local PID incarnation rather than treating cleanup as an
+        // ownership transfer.
+        return;
+      }
+      if (
         !owner ||
         !current ||
         current.owner !== owner.owner ||
@@ -285,6 +300,7 @@ async function resolveScheduledTaskGatewayOwnership(
       ) {
         throw new Error(`Gateway owner changed before terminating process ${pid}`);
       }
+      ownerWasValidatedForTermination = true;
     },
   };
 }
