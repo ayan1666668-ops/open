@@ -33,6 +33,7 @@ import { updateRunStepsFromResultStep } from "../../infra/update-run-step.js";
 import {
   describeUpdateInstallRoot,
   resolveUnmanagedUpdateInstallReason,
+  resolveUpdateInstallSurface,
 } from "../../infra/update-runner-install-surface.js";
 import type { UpdateRunResult } from "../../infra/update-runner.js";
 import { hasCommandProcessCleanupError } from "../../process/exec-result.js";
@@ -112,12 +113,29 @@ export async function resolveUpdateCommandTarget(
       let { devTarget } = prepared;
       let root = discoveredRoot;
       let updateInstallKind = installKind;
-      let mode: UpdateRunResult["mode"] = installKind === "git" ? "git" : "unknown";
+      let packageManager: ResolvedGlobalInstallTarget["manager"] | undefined;
+      const resolveMode = async (): Promise<UpdateRunResult["mode"]> => {
+        if (updateInstallKind === "git") {
+          return "git";
+        }
+        if (packageManager) {
+          return packageManager;
+        }
+        // Policy/config refusals can precede target preparation. Inspect their owner too.
+        return (
+          await resolveUpdateInstallSurface({
+            root,
+            installKind,
+            timeoutMs: updateStepTimeoutMs,
+            runCommand: runCommandWithTimeout,
+          })
+        ).mode;
+      };
       const refuseUpdate: RefuseUpdate = async (reason, message, failureFacts, recoverySteps) => {
         const report = {
           root,
           installKind: updateInstallKind,
-          mode,
+          mode: await resolveMode(),
           reason,
           message,
           failureFacts,
@@ -141,7 +159,7 @@ export async function resolveUpdateCommandTarget(
           {
             root,
             installKind,
-            mode,
+            mode: "unknown",
             opts,
             controlPlaneUpdateSentinelMeta,
             reason: resolveUnmanagedUpdateInstallReason(),
@@ -193,7 +211,6 @@ export async function resolveUpdateCommandTarget(
       const switchToPackage =
         requestedChannel !== null && requestedChannel !== "dev" && installKind === "git";
       updateInstallKind = switchToGit ? "git" : switchToPackage ? "package" : installKind;
-      mode = updateInstallKind === "git" ? "git" : "unknown";
       if (channel === "dev" && requestedChannel !== "dev" && !opts.sourceUpdate) {
         try {
           devTarget = readDevUpdateTarget();
@@ -296,7 +313,7 @@ export async function resolveUpdateCommandTarget(
             };
             throw new UnreportedUpdateAdmissionOutcome(report, { exitCode: 0 });
           });
-          mode = manager;
+          packageManager = manager;
           packageInstallTarget = await resolveGlobalInstallTarget({
             manager,
             runCommand: runCommandWithTimeout,
@@ -473,7 +490,7 @@ export async function resolveUpdateCommandTarget(
 
       return {
         root,
-        mode,
+        mode: await resolveMode(),
         updateInstallKind,
         refuseUpdate,
         configSnapshot,
