@@ -2,6 +2,7 @@
 import type {
   ChannelPreviewStreamingConfig,
   ChannelStreamingPreviewConfig,
+  ChannelStreamingProgressConfig,
   DmPolicy,
   GroupPolicy,
   SessionThreadBindingsConfig,
@@ -54,8 +55,24 @@ export type TelegramInlineButtonsScope = "off" | "dm" | "group" | "all" | "allow
 export type TelegramStreamingMode = "off" | "partial" | "block" | "progress";
 export type TelegramExecApprovalTarget = ChannelExecApprovalTarget;
 
-export type TelegramPreviewStreamingConfig = Omit<ChannelPreviewStreamingConfig, "preview"> & {
+export type TelegramStreamingProgressConfig = ChannelStreamingProgressConfig & {
+  /**
+   * Explicit waiver: keep the progress draft while plugins register
+   * `reply_payload_sending` or `message_sending` hooks, which otherwise suppress
+   * every provider preview. The draft's status headline, plan milestones, approval
+   * requests and tool lines then bypass those hooks; durable messages do not.
+   * Applies only in `progress` mode without `progress.commentary` and without
+   * streamed reasoning; answer previews stay suppressed. Default: false.
+   */
+  previewWithHooks?: boolean;
+};
+
+export type TelegramPreviewStreamingConfig = Omit<
+  ChannelPreviewStreamingConfig,
+  "preview" | "progress"
+> & {
   preview?: ChannelStreamingPreviewConfig;
+  progress?: TelegramStreamingProgressConfig;
 };
 
 export type TelegramExecApprovalConfig = ChannelExecApprovalConfig;

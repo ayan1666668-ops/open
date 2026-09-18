@@ -1,12 +1,16 @@
 import { expect, it, vi } from "vitest";
 import {
+  allDeliveredReplyTexts,
   createContext,
   createReasoningStreamContext,
   createTelegramDraftStream,
+  deliverInboundReplyWithMessageSendContext,
   describeTelegramDispatch,
+  dispatchReplyWithBufferedBlockDispatcher,
   dispatchWithContext,
   expectDispatchParams,
   getGlobalHookRunner,
+  setupDraftStreams,
 } from "./bot-message-dispatch.test-harness.js";
 
 function registerHooks(...hooks: string[]) {
@@ -90,6 +94,84 @@ describeTelegramDispatch("Telegram provider preview hook safety", () => {
       expect(params.replyOptions).not.toHaveProperty("forceToolResultProgress");
     },
   );
+
+  it("keeps the progress draft with a modifying hook when previewWithHooks opts in", async () => {
+    registerHooks("reply_payload_sending");
+
+    await dispatchWithContext({
+      context: createContext(),
+      streamMode: "progress",
+      telegramCfg: { streaming: { mode: "progress", progress: { previewWithHooks: true } } },
+    });
+
+    expect(createTelegramDraftStream).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the final answer on the hooked durable path when previewWithHooks keeps the draft", async () => {
+    registerHooks("reply_payload_sending");
+    const { answerDraftStream } = setupDraftStreams({ answerMessageId: 2001 });
+    dispatchReplyWithBufferedBlockDispatcher.mockImplementation(
+      async ({ dispatcherOptions, replyOptions }) => {
+        await replyOptions?.onToolStart?.({ name: "exec", phase: "start" });
+        await dispatcherOptions.deliver({ text: "Final answer" }, { kind: "final" });
+        return { queuedFinal: true };
+      },
+    );
+
+    await dispatchWithContext({
+      context: createContext(),
+      streamMode: "progress",
+      telegramCfg: {
+        streaming: { mode: "progress", progress: { previewWithHooks: true, toolProgress: true } },
+      },
+    });
+
+    // The waiver covers the draft only: answer text never enters it, and the
+    // final still goes through the durable delivery owner where the hooks run.
+    expect(answerDraftStream.update.mock.calls.map((call) => call[0])).not.toContain(
+      "Final answer",
+    );
+    const durablyDelivered = [
+      ...allDeliveredReplyTexts(),
+      ...deliverInboundReplyWithMessageSendContext.mock.calls.map(
+        (call) => (call[0] as { payload?: { text?: string } }).payload?.text ?? "",
+      ),
+    ];
+    expect(durablyDelivered).toContain("Final answer");
+  });
+
+  it.each([
+    {
+      label: "outside progress mode",
+      streamMode: "partial",
+      telegramCfg: { streaming: { mode: "partial", progress: { previewWithHooks: true } } },
+    },
+    {
+      label: "when the commentary lane is enabled",
+      streamMode: "progress",
+      telegramCfg: {
+        streaming: { mode: "progress", progress: { previewWithHooks: true, commentary: true } },
+      },
+    },
+  ] as const)("ignores previewWithHooks $label", async ({ streamMode, telegramCfg }) => {
+    registerHooks("message_sending");
+
+    await dispatchWithContext({ context: createContext(), streamMode, telegramCfg });
+
+    expect(createTelegramDraftStream).not.toHaveBeenCalled();
+  });
+
+  it("ignores previewWithHooks when reasoning would stream into the progress draft", async () => {
+    registerHooks("reply_payload_sending");
+
+    await dispatchWithContext({
+      context: createReasoningStreamContext(),
+      streamMode: "progress",
+      telegramCfg: { streaming: { mode: "progress", progress: { previewWithHooks: true } } },
+    });
+
+    expect(createTelegramDraftStream).not.toHaveBeenCalled();
+  });
 
   it("suppresses previews when both modifying hooks are registered", async () => {
     registerHooks("reply_payload_sending", "message_sending");

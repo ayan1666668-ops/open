@@ -6,6 +6,7 @@ import {
   buildChannelAccountSchemaParts,
   buildGroupEntrySchema,
   ChannelPreviewStreamingConfigSchema,
+  ChannelStreamingProgressSchema,
   ChannelStreamingPreviewSchema,
   DmPolicySchema,
   GroupPolicySchema,
@@ -81,8 +82,12 @@ const TelegramCapabilitiesSchema = z.union([
     })
     .strict(),
 ]);
+const TelegramStreamingProgressSchema = ChannelStreamingProgressSchema.extend({
+  previewWithHooks: z.boolean().optional(),
+}).strict();
 const TelegramPreviewStreamingConfigSchema = ChannelPreviewStreamingConfigSchema.extend({
   preview: ChannelStreamingPreviewSchema.optional(),
+  progress: TelegramStreamingProgressSchema.optional(),
 }).strict();
 const TelegramErrorPolicySchema = z.enum(["always", "once", "silent"]).optional();
 const TelegramTopicSchema = z
