@@ -316,6 +316,24 @@ describe("mock gateway stateful config", () => {
       resolved: sourceConfig,
       runtimeConfig,
     });
+
+    const invalidEdit = "{ still invalid";
+    await request("set-invalid", "config.set", {
+      raw: invalidEdit,
+      baseHash: "invalid-raw-fixture",
+    });
+    const invalidReloaded = await request("get-invalid-after-edit", "config.get", {});
+    expect(invalidReloaded).toMatchObject({
+      raw: invalidEdit,
+      valid: false,
+      issues,
+      config: runtimeConfig,
+      sourceConfig,
+      resolved: sourceConfig,
+      runtimeConfig,
+    });
+    expect(invalidReloaded.sourceConfig).toEqual(sourceConfig);
+    expect(invalidReloaded.resolved).toEqual(sourceConfig);
   });
 
   it("leaves config methods untouched when the scenario has no raw fixture", async ({

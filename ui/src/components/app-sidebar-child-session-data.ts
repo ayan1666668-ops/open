@@ -448,7 +448,8 @@ export function publishActiveSessionRow(
   if (!isCurrent()) {
     return null;
   }
-  const rowIsCurrent = reconcile(row, owner.sessionsResult?.defaults, { archivedFilter: "all" });
+  const rowIsCurrent =
+    reconcile(row, owner.sessionsResult?.defaults, { archivedFilter: "all" }) === true;
   if (!isCurrent()) {
     return null;
   }
@@ -462,7 +463,7 @@ export function publishActiveSessionRow(
       (candidate) =>
         candidate &&
         isCurrent() &&
-        sessions?.reconcile(candidate, undefined, { archivedFilter: "all" }),
+        sessions?.reconcile(candidate, undefined, { archivedFilter: "all" }) === true,
     );
     if (!isCurrent()) {
       return null;
