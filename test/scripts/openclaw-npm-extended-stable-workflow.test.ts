@@ -246,6 +246,7 @@ describe("minimal npm extended-stable workflow", () => {
     );
     expect(isolatedVerifier).toContain("docker run --rm");
     expect(isolatedVerifier).toContain("--read-only");
+    expect(isolatedVerifier).toContain("--tmpfs /tmp:rw,exec,nosuid,nodev,size=4g,mode=1777");
     expect(isolatedVerifier).toContain("--cap-drop ALL");
     expect(isolatedVerifier).toContain("--security-opt no-new-privileges");
     expect(isolatedVerifier).toContain("--user 65532:65532");

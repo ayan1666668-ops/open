@@ -19,7 +19,7 @@ chmod -R a+rX "$verifier_root"
 
 docker run --rm \
   --read-only \
-  --tmpfs /tmp:rw,nosuid,nodev,size=4g \
+  --tmpfs /tmp:rw,exec,nosuid,nodev,size=4g,mode=1777 \
   --cap-drop ALL \
   --security-opt no-new-privileges \
   --user 65532:65532 \
