@@ -188,7 +188,7 @@ export async function prepareSingleFlightSqliteSnapshot(
         }
         return base;
       }),
-      () => controller.abort(),
+      () => controller.abort(new Error("SQLite snapshot owner stopped")),
     );
     // An orphan has no caller left to observe rejection. The lifecycle retains
     // the original rejecting settlement promise, not this observation branch.
@@ -206,5 +206,10 @@ export async function prepareSingleFlightSqliteSnapshot(
       flight.finishWaiters();
     }
     cleanupUnleasedFlight(key, flight);
+    if (flight.waiters === 0 && flight.leases === 0 && !lifecycle?.trackProducer) {
+      // A standalone last caller is the cleanup owner. Only an explicit
+      // enclosing lifecycle may take custody and let that caller detach.
+      await flight.settled.catch(() => undefined);
+    }
   }
 }

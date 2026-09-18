@@ -102,7 +102,7 @@ function snapshotToken(directory: string, mode: "create" | "read" | "reclaim"): 
 function inspectSnapshot(
   directory: string,
   tokens: SnapshotToken[] | undefined,
-  cutoff: number,
+  inheritedCutoff: number,
   layout = "",
 ): { bytes: number; newest: number } {
   const stat = fs.lstatSync(directory);
@@ -110,6 +110,8 @@ function inspectSnapshot(
     throw new Error("Snapshot directory ownership is unknown");
   }
   const legacy = !layout && legacyMarker.test(path.basename(directory));
+  // A current parent never shortens the compatibility grace of a legacy child.
+  const cutoff = legacy ? Math.min(inheritedCutoff, Date.now() - legacyAgeMs) : inheritedCutoff;
   // Check all legacy activity without creating tokens, then repeat under locks.
   // Even creating an empty token would otherwise postpone a recent copy's expiry.
   if (legacy && tokens) {

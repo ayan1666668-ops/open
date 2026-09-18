@@ -437,9 +437,11 @@ it.skipIf(process.platform === "win32")(
   "reclaims abandoned mixed-generation snapshots while preserving live or recent children",
   async () => {
     for (const fixture of [
-      { legacyParent: true, recentChild: false },
-      { legacyParent: false, recentChild: false },
-      { legacyParent: false, recentChild: true },
+      { legacyParent: true, childAgeHours: 25 },
+      { legacyParent: false, childAgeHours: 25 },
+      { legacyParent: false, childAgeHours: 0 },
+      { legacyParent: false, childAgeHours: 1 },
+      { legacyParent: false, childAgeHours: 23 },
     ]) {
       const { root, cache, source } = createFixture();
       const output = runChild(
@@ -468,16 +470,15 @@ it.skipIf(process.platform === "win32")(
       );
       const { outer, location } = JSON.parse(output) as { outer: string; location: string };
       ageSnapshotTree(outer);
-      if (fixture.recentChild) {
-        const now = new Date();
-        fs.utimesSync(location, now, now);
-      }
+      const childTime = new Date(Date.now() - fixture.childAgeHours * 60 * 60 * 1000);
+      fs.utimesSync(location, childTime, childTime);
+      const recentChild = fixture.childAgeHours < 24;
       const log = path.join(root, "cleanup.log");
       setLoggerOverride({ level: "warn", file: log });
       await reclaimAbandonedSqliteSnapshotsAsync(cache);
-      expect(fs.existsSync(outer), JSON.stringify(fixture)).toBe(fixture.recentChild);
+      expect(fs.existsSync(outer), JSON.stringify(fixture)).toBe(recentChild);
       await testApi.flushFileLogQueueForTests();
-      if (fixture.recentChild) {
+      if (recentChild) {
         assertReadable(location);
         expect(fs.readFileSync(log, "utf8")).toContain("Skipped SQLite snapshot reclamation");
       } else {

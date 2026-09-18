@@ -54,6 +54,42 @@ it("holds cached in-flight recovery capacity until agent.wait observes completio
   release?.();
 });
 
+it("does not add terminal probes when no capacity lease was acquired", async () => {
+  const dispatch = vi
+    .spyOn(dispatchStart, "dispatchRestartRecoveryUntilStarted")
+    .mockResolvedValue({
+      kind: "started",
+      observation: {
+        dispatchAccepted: true,
+        executionStarted: true,
+        preStartAbortAttempted: false,
+        preStartAbortConfirmed: false,
+      },
+    });
+  dispatch.mockClear();
+  const waitForAgent = vi.fn();
+  const onSettled = vi.fn();
+  await dispatchRestartRecoveryWithinCapacity({
+    agentParams: { idempotencyKey: "unbounded-recovery", message: "resume" },
+    gatewayRuntime: {
+      dispatchAgent: vi.fn(),
+      dispatchSessionMethod: vi.fn(),
+      sendRecoveryNotice: async () => ({ suppressed: false }),
+      waitForAgent: async () => {
+        waitForAgent();
+        throw new Error("Unexpected capacity observation without a lease");
+      },
+    },
+    onSettled,
+    shouldContinue: () => true,
+  });
+  expect(dispatch).toHaveBeenCalledOnce();
+  expect(waitForAgent).not.toHaveBeenCalled();
+  expect(onSettled).not.toHaveBeenCalled();
+  dispatch.mock.calls[0]?.[0].onSettled?.();
+  expect(onSettled).toHaveBeenCalledOnce();
+});
+
 it.each([
   ["missing terminal snapshot", "timeout"],
   ["terminal observation error", "error"],

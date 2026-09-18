@@ -41,7 +41,7 @@ export async function dispatchRestartRecoveryWithinCapacity(params: {
     });
     if (outcome.kind !== "started") {
       onSettled();
-    } else {
+    } else if (release) {
       void releaseCapacityAtTerminal({
         gatewayRuntime: params.gatewayRuntime,
         onSettled,
