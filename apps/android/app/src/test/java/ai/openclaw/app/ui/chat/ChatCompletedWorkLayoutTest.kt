@@ -477,7 +477,7 @@ class ChatCompletedWorkLayoutTest {
         toolResult("command-ok", "exec", "Command succeeded.", isError = false),
       ),
     )
-    val group = composeRule.onNode(hasClickAction() and hasText("Ran a command, read a file"))
+    val group = composeRule.onNode(hasClickAction() and hasText(nativeString("Tool details")))
     group.assertIsDisplayed().assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, nativeString("Collapsed")))
     composeRule.onNodeWithText(nativeString("Tool error"), useUnmergedTree = true).assertDoesNotExist()
     group.performClick()
