@@ -23,6 +23,7 @@ export type SessionMenuData = {
   pinned: boolean;
   unread: boolean;
   archived: boolean;
+  hiddenFromInvolvingMe?: boolean;
   archiving?: boolean;
   category: string | null;
   icon: string | null;
@@ -43,6 +44,7 @@ export type SessionManagementAction =
   | { kind: "reset-appearance" }
   | { kind: "toggle-pin" }
   | { kind: "toggle-unread" }
+  | { kind: "toggle-involving-me" }
   | { kind: "rename" }
   | { kind: "set-icon"; icon: string | null }
   | { kind: "set-color"; color: string | null }
@@ -142,6 +144,8 @@ export class SessionMenuActions {
         return batch || !session.sessionId;
       case "toggle-pin":
         return batch || session.pinnable === false || session.isChild === true || session.archived;
+      case "toggle-involving-me":
+        return batch || session.hiddenFromInvolvingMe === undefined || !session.sessionId;
       case "rename":
       case "set-icon":
       case "set-color":
@@ -195,6 +199,7 @@ export class SessionMenuActions {
       value === "reset-appearance" ||
       value === "toggle-pin" ||
       value === "toggle-unread" ||
+      value === "toggle-involving-me" ||
       value === "rename" ||
       value === "fork" ||
       value === "new-group" ||
@@ -378,6 +383,19 @@ export class SessionMenuActions {
         session.unread ? icons.eye : icons.circle,
         { shortcut: "u" },
       )}
+      ${
+        !batch && session.hiddenFromInvolvingMe !== undefined
+          ? this.renderItem(
+              "toggle-involving-me",
+              t(
+                session.hiddenFromInvolvingMe
+                  ? "sessionsView.showInInvolvingMe"
+                  : "sessionsView.hideFromInvolvingMe",
+              ),
+              session.hiddenFromInvolvingMe ? icons.eye : icons.eyeOff,
+            )
+          : nothing
+      }
       ${this.renderItem(
         "toggle-archived",
         t(

@@ -197,3 +197,41 @@ export async function patchSessionRows(
   }
   return successful;
 }
+
+/** A personal list choice is not an archive or a shared-session mutation. */
+export async function setSessionInvolvement(
+  host: SessionActionHost,
+  session: SessionActionRow,
+  hidden: boolean,
+  scope: SidebarSessionMutationScope,
+): Promise<void> {
+  if (!host.sessionData.isSessionMutationScopeCurrent(scope) || !session.sessionId) {
+    return;
+  }
+  const agentId = sessionRowAgentId(session, scope);
+  const access = readSessionMethodAccess(scope.gateway.snapshot, {
+    method: "sessions.setInvolvement",
+    requiredScope: "operator.read",
+  });
+  if (!access.allowed) {
+    host.sessionData.publishSessionMutationError(scope, access.reason);
+    return;
+  }
+  try {
+    await scope.client.request("sessions.setInvolvement", {
+      key: session.key,
+      agentId,
+      expectedSessionId: session.sessionId,
+      hidden,
+    });
+    if (!host.sessionData.isSessionMutationScopeCurrent(scope)) {
+      return;
+    }
+    scope.sessions.patchRowLocal(session.key, { hiddenFromInvolvingMe: hidden });
+    await host.sessionData.refreshSidebarSessions(agentId);
+  } catch (error) {
+    if (host.sessionData.isSessionMutationScopeCurrent(scope)) {
+      host.sessionData.publishSessionMutationError(scope, error);
+    }
+  }
+}
