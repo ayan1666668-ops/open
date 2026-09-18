@@ -375,7 +375,7 @@ function collectRepoTestFilesFromGit(cwd) {
       "packages",
       "test",
     ],
-    { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+    { cwd, encoding: "utf8", maxBuffer: 16 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] },
   );
   if (result.status !== 0) {
     return null;
