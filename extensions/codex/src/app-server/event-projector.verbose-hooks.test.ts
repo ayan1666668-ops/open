@@ -1,4 +1,5 @@
 import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
+import { readAttemptTerminal } from "./attempt-terminal.test-helper.js";
 import * as compactionActivity from "./context-compaction-activity.js";
 import {
   describe,
@@ -544,5 +545,59 @@ describe("CodexAppServerEventProjector verbose output and hook projection", () =
     expect(started.hookRunId).toBe("hook-thread-1");
     expect(started.eventName).toBe("sessionStart");
     expect(started.scope).toBe("thread");
+  });
+
+  it("terminates after MAX_COMPACTION_ATTEMPTS_PER_TURN consecutive compactions", async () => {
+    const projector = await createProjector();
+
+    // Fire 5 compaction start+complete cycles (MAX_COMPACTION_ATTEMPTS_PER_TURN = 5).
+    for (let i = 1; i <= 5; i++) {
+      await projector.handleNotification(
+        forCurrentTurn("item/started", {
+          item: { type: "contextCompaction", id: `compact-${i}` },
+        }),
+      );
+      await projector.handleNotification(
+        forCurrentTurn("item/completed", {
+          item: { type: "contextCompaction", id: `compact-${i}` },
+        }),
+      );
+    }
+
+    // The projector should have aborted after the 5th compaction.
+    expect(projector.isCompacting()).toBe(false);
+    const result = projector.buildResult(buildEmptyToolTelemetry());
+    const terminal = readAttemptTerminal(result);
+    const errorMessage =
+      typeof terminal.promptError === "string"
+        ? terminal.promptError
+        : (terminal.promptError as any)?.message;
+    expect(errorMessage).toMatch(/compaction exhausted/i);
+    expect(terminal.promptErrorSource).toBe("compaction");
+  });
+
+  it("allows compactions below the safety threshold to proceed normally", async () => {
+    const onContextCompacted = vi.fn();
+    const projector = await createProjector(undefined, { onContextCompacted });
+
+    // Fire 4 compaction cycles — one below the threshold.
+    for (let i = 1; i <= 4; i++) {
+      await projector.handleNotification(
+        forCurrentTurn("item/started", {
+          item: { type: "contextCompaction", id: `compact-${i}` },
+        }),
+      );
+      await projector.handleNotification(
+        forCurrentTurn("item/completed", {
+          item: { type: "contextCompaction", id: `compact-${i}` },
+        }),
+      );
+    }
+
+    expect(onContextCompacted).toHaveBeenCalledTimes(4);
+    // Projector should NOT be aborted — normal compaction behavior.
+    expect(projector.isCompacting()).toBe(false);
+    const result = projector.buildResult(buildEmptyToolTelemetry());
+    expect(result.promptError).toBeUndefined();
   });
 });

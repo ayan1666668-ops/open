@@ -18,6 +18,7 @@ import {
   CODEX_TURN_START_TEXT_INPUT_MAX_CHARS,
   fitCodexProjectedContextForTurnStart,
   CodexContextAttachmentError,
+  CODEX_TURN_START_TEXT_INPUT_MAX_CHARS,
   isCodexDurableCustomMessage,
   projectContextEngineAssemblyForCodex,
   type CodexProjectedImageGroup,
@@ -432,6 +433,7 @@ export async function prepareCodexAttemptPrompt(context: CodexAttemptContext) {
               start: group.start + imageOffset,
               end: group.end + imageOffset,
             })),
+      maxChars: CODEX_TURN_START_TEXT_INPUT_MAX_CHARS,
     });
     turnContextImageGroups = fitted.imageGroups ?? [];
     return fitted.promptText;

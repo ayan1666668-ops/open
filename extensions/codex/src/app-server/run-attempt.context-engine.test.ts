@@ -455,7 +455,7 @@ describe("runCodexAppServerAttempt context-engine lifecycle", () => {
     const harness = createStartedThreadHarness();
     const params = createParams(sessionFile, workspaceDir);
     params.contextEngine = contextEngine;
-    params.contextTokenBudget = 80_000;
+    params.contextTokenBudget = 100_000;
 
     const run = runCodexAppServerAttempt(params);
     await harness.waitForMethod("turn/start");

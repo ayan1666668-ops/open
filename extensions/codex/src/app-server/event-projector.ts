@@ -37,6 +37,12 @@ import {
   type JsonValue,
 } from "./protocol.js";
 
+// Safety fuse: maximum number of completed compaction items within a single turn
+// before the projector aborts with a bounded error.  Normal multi-turn sessions
+// may trigger 1–3 compactions legitimately; 5 is generous enough to avoid false
+// positives while preventing runaway loops (see #149689).
+const MAX_COMPACTION_ATTEMPTS_PER_TURN = 5;
+
 export class CodexAppServerEventProjector extends CodexTurnProjection {
   getCompletedTurnStatus(): CodexTurn["status"] | undefined {
     return this.completedTurn?.status;
@@ -449,6 +455,23 @@ export class CodexAppServerEventProjector extends CodexTurnProjection {
       }
       this.activeCompactionItemIds.delete(itemId);
       this.completedCompactionCount += 1;
+      this.continuousCompactionAttempts += 1;
+      // Safety fuse: native compaction operates on prior turn history only and
+      // cannot reduce an oversized active user prompt.  If compaction repeats
+      // without making progress, terminate the turn with a bounded error rather
+      // than looping indefinitely (see #149689: 38 compactions / 99 minutes).
+      if (this.continuousCompactionAttempts >= MAX_COMPACTION_ATTEMPTS_PER_TURN) {
+        this.settledTurnFailureFinalizationAllowed = true;
+        this.terminalFailure.record({
+          message: `Native compaction exhausted (${this.continuousCompactionAttempts} attempts) without reducing active prompt below context budget`,
+          codexErrorInfo: undefined,
+          rateLimits: undefined,
+          fallbackMessage: "compaction loop exhausted",
+          promptErrorSource: "compaction",
+        });
+        this.options.onNativeTurnInterruptRequired?.();
+        return;
+      }
       await this.options.onContextCompacted?.();
       if (!this.isCompactionProjectionActive()) {
         return;
@@ -482,6 +505,19 @@ export class CodexAppServerEventProjector extends CodexTurnProjection {
         return;
       }
       this.eventProjection.emitCompactionEnd(itemId, true);
+    } else if (
+      item?.type === "agentMessage" ||
+      item?.type === "dynamicToolCall" ||
+      item?.type === "commandExecution" ||
+      item?.type === "fileChange" ||
+      item?.type === "mcpToolCall" ||
+      item?.type === "webSearch" ||
+      item?.type === "imageGeneration" ||
+      item?.type === "imageView" ||
+      item?.type === "collabAgentToolCall" ||
+      item?.type === "sleep"
+    ) {
+      this.continuousCompactionAttempts = 0;
     }
     this.toolProgressProjection.recordToolMeta(item);
     this.toolProgressProjection.rememberCommandAggregateOutputEcho(item);

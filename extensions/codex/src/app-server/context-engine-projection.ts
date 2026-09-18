@@ -49,11 +49,17 @@ const MAX_RENDERED_CONTEXT_CHARS = 1_000_000;
 const DEFAULT_TEXT_PART_CHARS = 6_000;
 const MAX_TEXT_PART_CHARS = 128_000;
 const APPROX_RENDERED_CHARS_PER_TOKEN = 4;
+// Context-engine projections use the empirical chars-per-token measured on real
+// sessions (703,134 chars for 226,146 input tokens = 3.11), matching the
+// continuity path's CONTINUITY_EMPIRICAL_CHARS_PER_TOKEN.  The shared
+// APPROX_RENDERED_CHARS_PER_TOKEN = 4 is retained only for native image-block
+// estimation where conservative sizing is intentional.
+const CONTEXT_ENGINE_CHARS_PER_TOKEN = 3;
 // Codex app-server validates the summed v2 turn/start text input against
 // codex-rs/protocol/src/user_input.rs::MAX_USER_INPUT_TEXT_CHARS.
 export const CODEX_TURN_START_TEXT_INPUT_MAX_CHARS = 1 << 20;
 /** Default token reserve kept out of rendered context-engine prompt text. */
-const DEFAULT_CODEX_PROJECTION_RESERVE_TOKENS = 20_000;
+const DEFAULT_CODEX_PROJECTION_RESERVE_TOKENS = 40_000;
 const MIN_PROMPT_BUDGET_RATIO = 0.5;
 const MIN_PROMPT_BUDGET_TOKENS = 8_000;
 const CODEX_CONTEXT_SENDER_FIELD_MAX_CHARS = 256;
@@ -184,7 +190,7 @@ export function resolveCodexContextEngineProjectionMaxChars(params: {
     resolveProjectionPromptBudgetTokens({
       contextTokenBudget,
       reserveTokens: params.reserveTokens,
-    }) * APPROX_RENDERED_CHARS_PER_TOKEN;
+    }) * CONTEXT_ENGINE_CHARS_PER_TOKEN;
   return normalizeRenderedContextMaxChars(scaledChars);
 }
 
@@ -341,7 +347,9 @@ export function fitCodexProjectedContextForTurnStart(params: {
       return finish(slice(0, params.promptText.length, maxChars));
     }
     if (preservedText.length >= maxChars) {
-      return finish(slice(preservedRange.start, preservedRange.end, maxChars));
+      throw new CodexContextAttachmentError(
+        `The current user request (${preservedText.length} characters) exceeds the context projection budget (${maxChars} characters). Please reduce the size of the request or its attachments.`,
+      );
     }
     return finish(
       slice(0, preservedRange.start, maxChars - preservedText.length),
@@ -358,11 +366,13 @@ export function fitCodexProjectedContextForTurnStart(params: {
   if (
     requestRange &&
     requestRange.start >= range.end &&
-    requestRange.end < params.promptText.length
+    requestRange.end <= params.promptText.length
   ) {
     const request = params.promptText.slice(requestRange.start, requestRange.end);
     if (request.length >= maxChars) {
-      return finish(slice(requestRange.start, requestRange.end, maxChars));
+      throw new CodexContextAttachmentError(
+        `The current user request (${request.length} characters) exceeds the context projection budget (${maxChars} characters). Please reduce the size of the request or its attachments.`,
+      );
     }
     // Hook-appended context is newer than the projected history. Retain it
     // before trimming the projection, while the full current request remains
