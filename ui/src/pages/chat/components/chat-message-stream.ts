@@ -169,21 +169,22 @@ export function renderWorkGroupSummary(
   const cards = item.groups.flatMap((group) =>
     group.messages.flatMap(({ message }) => extractToolCardsCached(message)),
   );
-  const label = cards.length
-    ? summarizeToolGroup(
-        item.groups.flatMap((group) =>
-          group.messages.flatMap(({ message }) => readPreparedActivity(message)),
-        ),
-      )
-    : duration
-      ? t("chat.workRun.workedFor", { duration })
-      : t("chat.workRun.worked");
+  const activity = item.groups.flatMap((group) =>
+    group.messages.flatMap(({ message }) => readPreparedActivity(message)),
+  );
+  const workedLabel = duration
+    ? t("chat.workRun.workedFor", { duration })
+    : t("chat.workRun.worked");
+  // Expanded work already exposes its tool summaries in the nested disclosures.
+  const label = cards.length && !opts.expanded ? summarizeToolGroup(activity) : workedLabel;
+  const fullLabel = cards.length ? summarizeToolGroup(activity, { full: true }) : workedLabel;
   const content = html`
     <div class="chat-activity-group chat-work-group ${opts.expanded ? "is-open" : ""}">
       <button
         class="chat-inline-disclosure chat-activity-group__summary"
         type="button"
         aria-expanded=${String(opts.expanded)}
+        aria-description=${cards.length && duration ? `${fullLabel}, ${workedLabel}` : fullLabel}
         @pointerenter=${syncToolDisclosureOverflow}
         @focus=${syncToolDisclosureOverflow}
         @click=${(event: MouseEvent) => {
@@ -193,10 +194,10 @@ export function renderWorkGroupSummary(
         }}
       >
         <span class="chat-tool-disclosure__content">
-          <span class="chat-activity-group__label" title=${label}>${label}</span>
+          <span class="chat-activity-group__label" title=${fullLabel}>${label}</span>
         </span>
         ${
-          cards.length && duration
+          cards.length && duration && !opts.expanded
             ? html`<span
                 class="chat-activity-group__duration"
                 aria-label=${t("chat.workRun.workedFor", { duration })}
