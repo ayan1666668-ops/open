@@ -1,4 +1,5 @@
 // Memory Core tests cover manager provider lifecycle availability behavior.
+import { channel } from "node:diagnostics_channel";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
@@ -386,11 +387,73 @@ describe("memory index", () => {
     const secondEmbeddingStarted = new Promise<void>((resolve) => {
       markSecondEmbeddingStarted = resolve;
     });
+    // Temporary phase attribution for the hosted readiness failure; remove before landing.
+    const startedAt = performance.now();
+    const wallStartedAt = Date.now();
+    const marks: Record<string, { elapsedMs: number; wallMs: number }> = {};
+    const mark = (phase: string) => {
+      marks[phase] = {
+        elapsedMs: performance.now() - startedAt,
+        wallMs: Date.now() - wallStartedAt,
+      };
+    };
+    const workerRecords: Array<Record<string, string | number>> = [];
+    let droppedWorkerRecords = 0;
+    const workerChannel = channel("openclaw.worker.task");
+    const observeWorker = (value: unknown) => {
+      if (!value || typeof value !== "object" || !("worker" in value)) {
+        return;
+      }
+      if (
+        typeof value.worker !== "string" ||
+        !["manager-index.worker.ts", "manager-index.worker.js", "memory-index.worker.js"].includes(
+          value.worker,
+        )
+      ) {
+        return;
+      }
+      if (workerRecords.length === 8) {
+        droppedWorkerRecords += 1;
+        return;
+      }
+      const record: Record<string, string | number> = {
+        elapsedMs: performance.now() - startedAt,
+        wallMs: Date.now() - wallStartedAt,
+      };
+      for (const key of [
+        "queueMs",
+        "preparationMs",
+        "runMs",
+        "pendingTasks",
+        "activeTasks",
+        "workers",
+      ]) {
+        const field = Reflect.get(value, key);
+        if (typeof field === "number" && Number.isFinite(field)) {
+          record[key] = field;
+        }
+      }
+      if ("outcome" in value && (value.outcome === "ok" || value.outcome === "failed")) {
+        record.outcome = value.outcome;
+      }
+      workerRecords.push(record);
+    };
+    workerChannel.subscribe(observeWorker);
+    let failureSnapshot:
+      | {
+          marks: typeof marks;
+          workerRecordCount: number;
+          droppedWorkerRecords: number;
+          publicationCalls: number;
+        }
+      | undefined;
     indexedProvider.embedBatch = async (texts) => {
       if (texts.some((text) => text.includes("First"))) {
+        mark("first-embedding");
         markFirstEmbeddingStarted();
         await firstEmbeddingGate;
       } else {
+        mark("second-embedding");
         markSecondEmbeddingStarted();
         await secondEmbeddingGate;
       }
@@ -411,12 +474,14 @@ describe("memory index", () => {
       if (publicationCalls === 1) {
         return await ensureVectorReady(dimensions);
       }
+      mark("publication");
       markPublicationStarted();
       await publicationGate;
       return await ensureVectorReady(dimensions);
     };
 
     const callsBeforeFallback = providerFixture.providerCalls.length;
+    mark("first-index");
     const firstIndexPromise = fields.indexFile(
       {
         path: "memory/generation-race-first.md",
@@ -428,6 +493,7 @@ describe("memory index", () => {
       },
       { source: "memory", content: firstContent },
     );
+    mark("second-index");
     const secondIndexPromise = fields.indexFile(
       {
         path: "memory/generation-race-second.md",
@@ -441,6 +507,7 @@ describe("memory index", () => {
     );
     let fallbackPromise: Promise<boolean> | null = null;
     try {
+      mark("wait-embeddings");
       await fields.withTimeout(
         Promise.all([firstEmbeddingStarted, secondEmbeddingStarted]),
         5_000,
@@ -455,6 +522,7 @@ describe("memory index", () => {
       expect(providerFixture.providerCalls).toHaveLength(callsBeforeFallback);
 
       releaseSecondEmbedding();
+      mark("wait-publication");
       await fields.withTimeout(publicationStarted, 5_000, "publication did not start");
       expect(providerFixture.providerCloseCalls).toBe(0);
       expect(providerFixture.providerCalls).toHaveLength(callsBeforeFallback);
@@ -462,15 +530,39 @@ describe("memory index", () => {
       releasePublication();
       await secondIndexPromise;
       await expect(fallbackPromise).resolves.toBe(true);
+    } catch (error) {
+      mark("failure");
+      failureSnapshot = {
+        marks: { ...marks },
+        workerRecordCount: workerRecords.length,
+        droppedWorkerRecords,
+        publicationCalls,
+      };
+      throw error;
     } finally {
       releaseFirstEmbedding();
       releaseSecondEmbedding();
       releasePublication();
-      await Promise.allSettled([
+      const settlements = await Promise.allSettled([
         firstIndexPromise,
         secondIndexPromise,
         ...(fallbackPromise ? [fallbackPromise] : []),
       ]);
+      workerChannel.unsubscribe(observeWorker);
+      if (failureSnapshot) {
+        const summary = {
+          atFailure: failureSnapshot,
+          afterSettlement: { marks, droppedWorkerRecords, publicationCalls },
+          settlements: settlements.map((result) => result.status),
+        };
+        const report = JSON.stringify({ ...summary, workerRecords });
+        console.error(
+          "[cpu-provider-readiness]",
+          report.length <= 3_900
+            ? report
+            : JSON.stringify({ ...summary, workerRecordsOmitted: workerRecords.length }),
+        );
+      }
     }
 
     expect(
