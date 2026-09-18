@@ -453,6 +453,9 @@ export async function completeSubagentRunAttempt(
       entry.completion?.terminalReply,
       completeParams.terminalReply,
     );
+    // Captured before the required-reply rewrite below can retarget the reason:
+    // a cancellation stays a cancellation even when the child owed a reply.
+    const cancelledCompletion = completionReason === SUBAGENT_ENDED_REASON_KILLED;
     // Lifecycle events and agent.wait both settle here. A required success
     // needs producer evidence before any transcript fallback can freeze it.
     if (
@@ -462,6 +465,21 @@ export async function completeSubagentRunAttempt(
     ) {
       completionOutcome = { status: "error", error: MISSING_REQUIRED_FINAL_REPLY_ERROR };
       completionReason = SUBAGENT_ENDED_REASON_ERROR;
+    }
+    if (cancelledCompletion && completionOutcome.disposition !== "killed") {
+      // This boundary owns cancellation disposition for every producer, not
+      // just the `entry.killIntent` path above. The lifecycle cancellation
+      // listener, cancellation grace, and persisted killed-session
+      // reconciliation all supply the killed reason with no disposition, and
+      // `resolveSubagentRunDisposition` reads that absence as `exited` -- so
+      // announcement, which does not wait for completion, published `exited`
+      // for a child that was killed.
+      //
+      // A cancellation completion is terminal by construction, so the reason is
+      // the authority here: an absent disposition is not evidence of a clean
+      // exit, and a `still-running` disposition drained from an earlier
+      // provisional wait-expiry publication describes the waiter, not this run.
+      completionOutcome = { ...completionOutcome, disposition: "killed" };
     }
     const outcome =
       recoveryRequested && entry.execution.outcome

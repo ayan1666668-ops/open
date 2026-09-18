@@ -58,6 +58,7 @@ import {
   runSubagentAnnounceDispatch,
   type SubagentAnnounceDeliveryResult,
 } from "../announce/subagent-announce-dispatch.js";
+import { resolveSubagentRunDisposition } from "../announce/subagent-announce-output.js";
 import { maybeWakeRequesterAfterAllChildrenSettled as runRequesterSettleWake } from "../announce/subagent-announce.requester-settle-wake.js";
 import {
   consumeRequesterCronAuthorityAdmission,
@@ -1151,6 +1152,50 @@ describe("subagent registry lifecycle hardening", () => {
     });
     expect(entry.killIntent).toBeUndefined();
     expect(entry.killReconciliation).toBeUndefined();
+  });
+
+  // Every cancellation producer other than the entry.killIntent path reaches
+  // this boundary with the killed reason and no disposition. The default read
+  // of an absent disposition is `exited`, and announcement does not wait for
+  // completion, so each of these used to publish `exited` for a killed child.
+  it.each([
+    {
+      label: "a lifecycle cancellation without a durable kill intent",
+      outcome: { status: "error", error: "agent run aborted" } as const,
+    },
+    {
+      label: "the sweeper's cancellation-grace completion",
+      outcome: { status: "error", error: "killed" } as const,
+    },
+    {
+      label: "persisted killed-session reconciliation",
+      outcome: { status: "error", error: "subagent run terminated" } as const,
+    },
+  ])("stamps killed disposition for $label", async ({ outcome }) => {
+    const entry = createRunEntry({ execution: { status: "running", startedAt: 2_000 } });
+    const controller = createLifecycleController({ entry });
+
+    await controller.completeSubagentRun(makeKilledSubagentCompletion(entry, { outcome }));
+
+    expect(entry.endedReason).toBe(SUBAGENT_ENDED_REASON_KILLED);
+    expect(entry.execution.outcome).toMatchObject({ ...outcome, disposition: "killed" });
+    expect(resolveSubagentRunDisposition(entry.execution.outcome)).toBe("killed");
+  });
+
+  it("replaces a provisional still-running disposition on a cancellation completion", async () => {
+    const entry = createRunEntry({ execution: { status: "running", startedAt: 2_000 } });
+    const controller = createLifecycleController({ entry });
+
+    await controller.completeSubagentRun(
+      makeKilledSubagentCompletion(entry, {
+        // A wait-expiry publication describes the waiter, not the run. Carrying
+        // it onto a cancellation would tell the parent a killed child is still
+        // live and harvestable.
+        outcome: { status: "error", error: "agent run aborted", disposition: "still-running" },
+      }),
+    );
+
+    expect(resolveSubagentRunDisposition(entry.execution.outcome)).toBe("killed");
   });
 
   it("keeps task finalization, resource retirement, and announce cleanup root-admitted", async () => {
