@@ -778,12 +778,12 @@ suite.define(() => {
             const position = await action.evaluate((button) => {
               const actionBounds = button.getBoundingClientRect();
               const owner = button.closest<HTMLElement>("[data-message-actions-for]")!;
-              const bubble = [
+              const ownedBubble = [
                 ...button.closest(".chat-group")!.querySelectorAll<HTMLElement>(".chat-bubble"),
               ].find(
                 (candidate) => candidate.dataset.messageId === owner.dataset.messageActionsFor,
               )!;
-              const bubbleBounds = bubble.getBoundingClientRect();
+              const bubbleBounds = ownedBubble.getBoundingClientRect();
               const meta = owner
                 .parentElement!.querySelector(".chat-group-footer__meta")
                 ?.getBoundingClientRect();
