@@ -1,5 +1,6 @@
 // Provides shared assertions for provider plugin runtime tests.
 import { expect, vi, type Mock } from "vitest";
+import type { SubsystemLogger } from "../logging/subsystem.js";
 
 const openaiCodexCatalogEntries = [
   { provider: "openai", id: "gpt-5.5", name: "gpt-5.5" },
@@ -76,7 +77,13 @@ export async function expectAugmentedCodexCatalog(
   }
 }
 
-export function createProviderRuntimeLogger(warn: Mock) {
+type ProviderRuntimeLogger = Pick<SubsystemLogger, "isEnabled"> & {
+  [Method in "debug" | "info" | "warn" | "error"]: Mock<SubsystemLogger[Method]>;
+};
+
+export function createProviderRuntimeLogger(
+  warn: ProviderRuntimeLogger["warn"],
+): ProviderRuntimeLogger {
   return {
     isEnabled: () => false,
     debug: vi.fn(),
