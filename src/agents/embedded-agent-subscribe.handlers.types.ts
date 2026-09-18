@@ -273,6 +273,7 @@ export type EmbeddedAgentSubscribeContext = {
       assistantMessageIndex?: number;
       final?: boolean;
       completeMarkdownChunk?: boolean;
+      startsAtLineStart?: boolean;
       finalReply?: ReplyDirectiveParseResult;
     },
   ) => void;
