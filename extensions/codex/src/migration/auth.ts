@@ -62,7 +62,7 @@ type CodexAuthProfileConfig = {
 };
 
 function loadLocalAuthProfileStore(
-  targets: CodexMigrationTargets,
+  targets: PlannedMigrationTargets,
 ): ReturnType<typeof loadAuthProfileStoreWithoutExternalProfiles> {
   // Bind inheritance to the target owner so planning sees only its local profiles.
   // The read-only loader leaves a missing target database missing during previews.
