@@ -6,6 +6,7 @@ import { isDeepStrictEqual } from "node:util";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { z } from "zod";
 import { ConfigMutationConflictError } from "../config/mutation-conflict.js";
+import { collectNestedErrorCandidates } from "./error-graph-internal.js";
 import {
   resolvePreferredOpenClawTmpDir,
   type ResolvePreferredOpenClawTmpDirOptions,
@@ -76,6 +77,14 @@ export class UpdateDoctorError extends Error {
     this.name = "UpdateDoctorError";
     this.exitCode = options?.exitCode;
   }
+}
+
+export function collectUpdateDoctorFailureFacts(error: unknown): UpdateFailureFact[] {
+  return normalizeUpdateFailureFacts(
+    collectNestedErrorCandidates(error).flatMap((candidate) =>
+      candidate instanceof UpdateDoctorError ? candidate.failureFacts : [],
+    ),
+  );
 }
 
 /** Keep optional health diagnostics bounded across Doctor and its update parent. */

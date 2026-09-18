@@ -54,8 +54,8 @@ manual allowlist rules unchanged. Rerun affected workflows and choose
 
 Explicit repair stops the matching managed Gateway and checks Gateway, state,
 and agent-database ownership before taking read-only schema snapshots. It
-excludes other processes during repair, verifies readiness,
-and restarts the same service once. It preserves the service definition and does
+excludes other processes during repair, then restarts the same service once
+and verifies readiness. It preserves the service definition and does
 not activate a service confirmed offline before maintenance. On Linux, it also
 restores a previously running service if systemd unloads the stopped unit during
 repair; a changed service definition or manager still blocks restart. A loaded, enabled
@@ -111,11 +111,14 @@ ownership, write-access, or interactive-only confirmation requirements.
 
 During an update, Doctor respects the updater's service activation policy.
 If the running Gateway has an old version/build or cannot load its WebSocket
-handler after package replacement, Doctor replaces that stale instance through
-the verified service manager and checks the candidate's version and build ID
-before maintenance. A warning names the replaced PID and the serving build.
-HTTP health alone does not prove recovery. A refused or unverified replacement
-records the failure and an exact restart command in the update result.
+handler after package replacement, Doctor stops that stale instance through
+the verified service manager and confirms its process and listener are gone.
+It retains service custody while running offline repairs, including legacy session
+imports, then restarts the service and verifies the candidate's version and build
+ID over RPC. Startup can require those imports, so candidate readiness is checked
+after maintenance. A warning names the replaced PID and verified serving build.
+HTTP health alone does not prove recovery. A refused stop or unverified restoration
+records the failed phase and exact recovery commands in the update result.
 
 Legacy post-core convergence retains service maintenance custody while its fresh
 Doctor processes run, then restores the Gateway before publishing completion.

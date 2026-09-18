@@ -27,8 +27,10 @@ import {
 import { openDoctorStateSchemaReadAdmission } from "../state/openclaw-state-db-doctor-schema.js";
 import { resolveOpenClawStateSqlitePath } from "../state/openclaw-state-db.paths.js";
 import {
-  replaceStaleDoctorGateway,
-  type DoctorStaleGatewayReplacement,
+  assertStaleDoctorGatewayStopped,
+  doctorGatewayMaintenanceError,
+  inspectStaleDoctorGateway,
+  type DoctorStaleGateway,
 } from "./doctor-maintenance-stale-service.js";
 import type { DoctorOptions } from "./doctor-prompter.js";
 import { isDoctorUpdateRepairMode, resolveDoctorRepairMode } from "./doctor-repair-mode.js";
@@ -98,7 +100,7 @@ export async function beginDoctorMaintenance(params: {
   }
   const env = { ...process.env, ...(params.runId ? { [UPDATE_RUN_ID_ENV]: params.runId } : {}) };
   // Ordinary activation remains with the parent. Stale-instance recovery below
-  // retains its own maintenance custody after verifying the replacement.
+  // retains custody through offline repair and verified restoration.
   const parentActivation = isDoctorUpdateRepairMode(resolveDoctorRepairMode(params.options))
     ? resolveUpdateParentGatewayActivation(env)
     : undefined;
@@ -114,7 +116,7 @@ export async function beginDoctorMaintenance(params: {
   let resources: OpenClawDatabaseMaintenanceScope | undefined;
   let inspectingActivation = false;
   let parentMustStopGateway = false;
-  let staleReplacement: DoctorStaleGatewayReplacement | undefined;
+  let staleReplacement: DoctorStaleGateway | undefined;
   let assertUpdateAdmissionCurrent: (() => void) | undefined;
   let cleanupFailure: { error: unknown } | undefined;
   const settle = async <T>(operation: () => Promise<T>): Promise<T> => {
@@ -262,23 +264,34 @@ export async function beginDoctorMaintenance(params: {
         }),
       );
       if (!health.healthy) {
-        throw new Error(
-          `Doctor repaired state, but the managed Gateway did not become ready: ${renderRestartDiagnostics(health).join(" ")}. Run ${formatCliCommand("openclaw gateway status --deep", env)}.`,
-        );
+        throw doctorGatewayMaintenanceError({
+          env,
+          phase: "gateway-restoration",
+          code: "doctor-gateway-rpc-verification-failed",
+          detail: `Doctor repaired state, but the managed Gateway did not become ready: ${renderRestartDiagnostics(health).join(" ")}.`,
+        });
       }
     } catch (error) {
       if (hasCommandProcessCleanupError(error)) {
         cleanupFailure ??= { error };
         throw error;
       }
-      throw new Error(
-        `The managed Gateway could not be restored after Doctor maintenance: ${String(error)} Run ${formatCliCommand("openclaw gateway status --deep", env)}, then ${formatCliCommand("openclaw gateway restart", env)} after resolving the reported failure.`,
-        { cause: error },
-      );
+      if (error instanceof UpdateDoctorError) {
+        throw error;
+      }
+      throw doctorGatewayMaintenanceError({
+        env,
+        phase: "gateway-restoration",
+        code: "doctor-gateway-restoration-failed",
+        detail: `The managed Gateway could not be restored after Doctor maintenance: ${String(error)}`,
+        cause: error,
+      });
     }
     params.runtime.log("Gateway restarted and verified after Doctor repair.");
     if (staleReplacement) {
-      params.runtime.log(staleReplacement.warning);
+      const warning = `Warning: Replaced stale Gateway PID ${staleReplacement.pid ?? "unknown"} through its service manager; verified ${staleReplacement.version} build ${staleReplacement.buildId} after Doctor maintenance.`;
+      warnings.push(warning);
+      params.runtime.log(warning);
     }
   };
   try {
@@ -293,7 +306,7 @@ export async function beginDoctorMaintenance(params: {
           await import("../cli/update-cli/update-command-service-maintenance.js");
         const { maybeStopManagedServiceBeforeMutableUpdate } = serviceMaintenance;
         inspectingActivation = true;
-        let inspection = await maybeStopManagedServiceBeforeMutableUpdate({
+        const inspection = await maybeStopManagedServiceBeforeMutableUpdate({
           updateInstallKind: "package",
           root: params.root,
           shouldRestart: true,
@@ -333,17 +346,12 @@ export async function beginDoctorMaintenance(params: {
         if (inspection.serviceUpdateVerdict?.kind === "owned" && inspection.serviceEnv) {
           assertDoctorServiceSelection(env, inspection.serviceEnv);
         }
-        staleReplacement = await replaceStaleDoctorGateway({
+        staleReplacement = await inspectStaleDoctorGateway({
           root: params.root,
           env,
           before: inspection,
-          stdout: params.options.json ? process.stderr : process.stdout,
           assertCurrent: assertUpdateAdmissionCurrent,
         });
-        if (staleReplacement) {
-          warnings.push(staleReplacement.warning);
-          inspection = staleReplacement.inspection;
-        }
         if (
           parentActivation !== undefined &&
           !staleReplacement &&
@@ -390,19 +398,39 @@ export async function beginDoctorMaintenance(params: {
           // Even an owning continuation leaves native activation with its parent.
           if (parentActivation === undefined || staleReplacement) {
             inspection.serviceUpdateVerdict.refreshDefinition = false;
-            stopped = await maybeStopManagedServiceBeforeMutableUpdate({
-              updateInstallKind: "package",
-              root: params.root,
-              shouldRestart: true,
-              jsonMode: true,
-              expectedService: inspection,
-              assertCurrent: assertUpdateAdmissionCurrent,
-              onStopped: (before) => {
-                stopped = before;
-              },
-            });
-            assertDoctorMaintenanceInspection(stopped, env);
-            if (stopped.stopped) {
+            try {
+              stopped = await maybeStopManagedServiceBeforeMutableUpdate({
+                updateInstallKind: "package",
+                root: params.root,
+                shouldRestart: true,
+                jsonMode: true,
+                expectedService: inspection,
+                assertCurrent: assertUpdateAdmissionCurrent,
+                onStopped: (before) => {
+                  stopped = before;
+                },
+              });
+              assertDoctorMaintenanceInspection(stopped, env);
+              if (staleReplacement && stopped.serviceEnv) {
+                await assertStaleDoctorGatewayStopped({
+                  stale: staleReplacement,
+                  env: stopped.serviceEnv,
+                  assertCurrent: assertUpdateAdmissionCurrent,
+                });
+              }
+            } catch (error) {
+              if (!staleReplacement || hasCommandProcessCleanupError(error)) {
+                throw error;
+              }
+              throw doctorGatewayMaintenanceError({
+                env,
+                phase: "gateway-stop",
+                code: "stale-gateway-stop-failed",
+                detail: String(error),
+                cause: error,
+              });
+            }
+            if (stopped?.stopped) {
               params.runtime.log("Stopped the managed Gateway for Doctor repair.");
             }
           }

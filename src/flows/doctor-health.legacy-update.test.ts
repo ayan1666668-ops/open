@@ -6,7 +6,10 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { formatCliCommand } from "../cli/command-format.js";
+import { runDoctorSessionSqlite } from "../commands/doctor-session-sqlite.js";
+import { loadExactSessionEntry } from "../config/sessions/session-accessor.js";
 import type { GatewayServiceRuntime } from "../daemon/service-runtime.js";
+import * as legacyGatewayLock from "../infra/gateway-lock-legacy.js";
 import * as packageJson from "../infra/package-json.js";
 import * as builtRuntime from "../infra/update-git-runtime.js";
 import { getFileLockProcessStartTime } from "../shared/pid-alive.js";
@@ -144,12 +147,17 @@ describe("Doctor invoked by the published 2026.6.33 updater", () => {
   });
 
   it.each(["mismatched build", "missing RPC chunks"])(
-    "replaces %s and verifies it before maintenance",
+    "replaces %s and verifies it after offline maintenance",
     async (failure) => {
       await withOpenClawTestState({ scenario: "minimal" }, async (state) => {
         await state.writeConfig({});
         const events: string[] = [];
         const service = managedService(state, true, events);
+        mocks.probePortUsage.mockImplementation(async () => {
+          expect(await service.readRuntime()).toMatchObject({ status: "stopped" });
+          events.push("verified-stop");
+          return "free";
+        });
         inspectStaleBuild();
         if (failure === "missing RPC chunks") {
           mocks.inspectGatewayRestart.mockImplementation(async (params) => ({
@@ -184,7 +192,7 @@ describe("Doctor invoked by the published 2026.6.33 updater", () => {
 
         await runDoctorHealthFlow(runtime, { repair: true, nonInteractive: true });
 
-        expect(events).toEqual(["restart", "verified", "stop", "repair", "restart", "verified"]);
+        expect(events).toEqual(["stop", "verified-stop", "repair", "restart", "verified"]);
         expect(service.restart).toHaveBeenNthCalledWith(
           1,
           expect.objectContaining({ preserveDefinition: true }),
@@ -202,6 +210,85 @@ describe("Doctor invoked by the published 2026.6.33 updater", () => {
       });
     },
   );
+
+  it("imports retained legacy sessions after verified stop and before any candidate RPC", async () => {
+    await withOpenClawTestState({ scenario: "minimal" }, async (state) => {
+      const storePath = state.statePath("agents", "main", "sessions", "sessions.json");
+      const sessionKey = "agent:main:legacy";
+      const sessionId = "retained-legacy-session";
+      const cfg = { agents: { entries: { main: {} } }, session: { store: storePath } };
+      await state.writeConfig(cfg);
+      fs.mkdirSync(path.dirname(storePath), { recursive: true });
+      fs.writeFileSync(storePath, JSON.stringify({ [sessionKey]: { sessionId, updatedAt: 1 } }));
+      mocks.config.mockReturnValue(cfg);
+      const events: string[] = [];
+      const service = managedService(state, true, events);
+      vi.spyOn(legacyGatewayLock, "readLegacyGatewayLockIdentity").mockImplementation(async () => {
+        const runtime = await service.readRuntime();
+        return runtime.pid === 4200
+          ? { pid: 4200, state: "alive", path: state.path("legacy-gateway.lock") }
+          : undefined;
+      });
+      mocks.inspectGatewayRestart.mockImplementation(async () => {
+        throw new Error("RPC attempted before retained session import");
+      });
+      mocks.probePortUsage.mockImplementation(async () => {
+        expect(await service.readRuntime()).toMatchObject({ status: "stopped" });
+        events.push("verified-stop");
+        return "free";
+      });
+      mocks.runContributions.mockImplementation(async (ctx) => {
+        expect(ctx.gatewayMaintenanceActive).toBe(true);
+        expect(events).toEqual(["stop", "verified-stop"]);
+        expect(service.restart).not.toHaveBeenCalled();
+        const imported = await runDoctorSessionSqlite({
+          cfg: ctx.cfg,
+          env: state.env,
+          allAgents: true,
+          mode: "import",
+        });
+        expect(imported.totals.importedEntries).toBe(1);
+        expect(imported.totals.archivedLegacyStoreFiles).toBe(1);
+        events.push("import");
+      });
+      mocks.waitForGatewayHealthyRestart.mockImplementation(async (params) => {
+        expect(events).toEqual(["stop", "verified-stop", "import", "restart"]);
+        expect(
+          loadExactSessionEntry({
+            env: state.env,
+            agentId: "main",
+            storePath,
+            sessionKey,
+          })?.entry.sessionId,
+        ).toBe(sessionId);
+        expect(params).toMatchObject({
+          expectedVersion: candidateVersion,
+          expectedBuildId: candidateBuildId,
+        });
+        events.push("verified");
+        return {
+          runtime: await service.readRuntime(),
+          portUsage: { port: params.port, status: "busy", listeners: [], hints: [] },
+          healthy: true,
+          staleGatewayPids: [],
+          gatewayVersion: candidateVersion,
+          gatewayBuildId: candidateBuildId,
+          gatewayBootId: "candidate-boot",
+          waitOutcome: "healthy",
+        };
+      });
+
+      await runDoctorHealthFlow(
+        { log: vi.fn(), error: vi.fn(), exit: vi.fn() },
+        { repair: true, nonInteractive: true },
+      );
+
+      expect(events).toEqual(["stop", "verified-stop", "import", "restart", "verified"]);
+      expect(mocks.inspectGatewayRestart).not.toHaveBeenCalled();
+      expect(mocks.waitForGatewayHealthyRestart).toHaveBeenCalledOnce();
+      expect(mocks.outro).toHaveBeenCalledWith("Doctor complete.");
+    });
+  });
 
   it("repairs unavailable identity without treating it as a stale build", async () => {
     await withOpenClawTestState({ scenario: "minimal" }, async (state) => {
@@ -231,8 +318,8 @@ describe("Doctor invoked by the published 2026.6.33 updater", () => {
     });
   });
 
-  it.each(["manager-refused", "replacement-unverified"] as const)(
-    "reports stale replacement failure before repair mutations: %s",
+  it.each(["manager-refused", "old-listener-remains"] as const)(
+    "reports stale stop failure before repair mutations: %s",
     async (failure) => {
       await withOpenClawTestState({ scenario: "minimal" }, async (state) => {
         await state.writeConfig({});
@@ -242,18 +329,9 @@ describe("Doctor invoked by the published 2026.6.33 updater", () => {
         const service = managedService(state, true);
         inspectStaleBuild();
         if (failure === "manager-refused") {
-          service.restart.mockRejectedValueOnce(new Error("synthetic native restart refused"));
+          service.stop.mockRejectedValueOnce(new Error("synthetic native stop refused"));
         } else {
-          mocks.waitForGatewayHealthyRestart.mockImplementation(async (params) => ({
-            runtime: await service.readRuntime(),
-            portUsage: { port: params.port, status: "busy", listeners: [], hints: [] },
-            healthy: false,
-            staleGatewayPids: [],
-            gatewayVersion: candidateVersion,
-            gatewayBuildId: null,
-            probeError: "synthetic replacement identity unavailable",
-            waitOutcome: "timeout",
-          }));
+          mocks.probePortUsage.mockResolvedValue("busy");
         }
         const runtime = { log: vi.fn(), error: vi.fn(), exit: vi.fn() };
         const run = runDoctorHealthFlow(runtime, { repair: true, nonInteractive: true });
@@ -261,26 +339,24 @@ describe("Doctor invoked by the published 2026.6.33 updater", () => {
         await expect(run).rejects.toMatchObject({
           name: "UpdateDoctorError",
           failureFacts: expect.arrayContaining([
-            expect.objectContaining({ code: "stale-gateway-restart-failed" }),
+            expect.objectContaining({ check: "gateway-stop", code: "stale-gateway-stop-failed" }),
           ]),
         });
         await expect(run).rejects.toThrow(formatCliCommand("openclaw gateway restart", state.env));
         await expect(run).rejects.toThrow(
           formatCliCommand("openclaw gateway status --deep", state.env),
         );
-        expect(service.restart).toHaveBeenCalledOnce();
-        expect(service.stop).not.toHaveBeenCalled();
+        expect(service.stop).toHaveBeenCalledOnce();
         expect(mocks.config).not.toHaveBeenCalled();
         expect(mocks.runContributions).not.toHaveBeenCalled();
         expect(fs.readFileSync(state.configPath)).toEqual(configBefore);
-        expect(fs.existsSync(resolveOpenClawStateSqlitePath(state.env))).toBe(false);
         expect(mocks.writeUpdatePostInstallDoctorResult).toHaveBeenCalledWith({
           resultPath,
           result: expect.objectContaining({
             status: "error",
             configHash: "unchanged",
             failureFacts: expect.arrayContaining([
-              expect.objectContaining({ code: "stale-gateway-restart-failed" }),
+              expect.objectContaining({ check: "gateway-stop", code: "stale-gateway-stop-failed" }),
             ]),
           }),
         });
@@ -288,6 +364,61 @@ describe("Doctor invoked by the published 2026.6.33 updater", () => {
       });
     },
   );
+
+  it("records restoration verification failure after offline repair without publishing success", async () => {
+    await withOpenClawTestState({ scenario: "minimal" }, async (state) => {
+      await state.writeConfig({});
+      const resultPath = state.path("doctor-result.json");
+      vi.stubEnv("OPENCLAW_UPDATE_POST_INSTALL_DOCTOR_RESULT_PATH", resultPath);
+      const events: string[] = [];
+      const service = managedService(state, true, events);
+      inspectStaleBuild();
+      mocks.runContributions.mockImplementation(async () => {
+        events.push("repair");
+      });
+      mocks.waitForGatewayHealthyRestart.mockImplementation(async (params) => {
+        expect(events).toEqual(["stop", "repair", "restart"]);
+        return {
+          runtime: await service.readRuntime(),
+          portUsage: { port: params.port, status: "busy", listeners: [], hints: [] },
+          healthy: false,
+          staleGatewayPids: [],
+          gatewayVersion: candidateVersion,
+          gatewayBuildId: null,
+          probeError: "synthetic replacement identity unavailable",
+          waitOutcome: "timeout",
+        };
+      });
+      const run = runDoctorHealthFlow(
+        { log: vi.fn(), error: vi.fn(), exit: vi.fn() },
+        { repair: true, nonInteractive: true },
+      );
+      await expect(run).rejects.toMatchObject({
+        name: "UpdateDoctorError",
+        failureFacts: expect.arrayContaining([
+          expect.objectContaining({
+            check: "gateway-restoration",
+            code: "doctor-gateway-rpc-verification-failed",
+          }),
+          expect.objectContaining({ code: "stale-gateway-recovery-command" }),
+        ]),
+      });
+      expect(service.restart).toHaveBeenCalledOnce();
+      expect(mocks.writeUpdatePostInstallDoctorResult).toHaveBeenCalledWith({
+        resultPath,
+        result: expect.objectContaining({
+          status: "error",
+          failureFacts: expect.arrayContaining([
+            expect.objectContaining({
+              check: "gateway-restoration",
+              code: "doctor-gateway-rpc-verification-failed",
+            }),
+          ]),
+        }),
+      });
+      expect(mocks.outro).not.toHaveBeenCalledWith("Doctor complete.");
+    });
+  });
 
   it("refuses repair behind a live legacy tempfile lock when native inspection is unavailable", async () => {
     await withOpenClawTestState({ scenario: "minimal" }, async (state) => {
