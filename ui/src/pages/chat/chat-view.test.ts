@@ -2937,6 +2937,23 @@ describe("chat loading skeleton", () => {
     };
   }
 
+  it("does not render the realtime Talk block while the session is idle", () => {
+    // Voice turns persist into history; once the realtime session goes idle the
+    // unpinned tail block would render those earlier turns below newer typed
+    // messages — out of chronological order. Idle turns must render only from
+    // history, in their correct chronological slot.
+    const container = renderChatView({
+      realtimeTalkActive: false,
+      realtimeTalkConversation: [
+        { id: "u1", role: "user", text: "Turn off the lights", isStreaming: false },
+        { id: "a1", role: "assistant", text: "Checking", isStreaming: false },
+      ],
+    });
+
+    expect(container.querySelector(".agent-chat__voice-turns")).toBeNull();
+    expect(container.querySelector(".agent-chat__voice-turn")).toBeNull();
+  });
+
   it("renders realtime Talk transcript as ordered voice turns", () => {
     const container = renderChatView({
       realtimeTalkActive: true,
