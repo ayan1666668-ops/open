@@ -20,6 +20,7 @@ import {
   restartScheduledTask,
   setTaskStateProbeResult,
   spawnSync,
+  spawnSyncResult,
   startScheduledTask,
   stopScheduledTask,
   taskkillPids,
@@ -697,14 +698,7 @@ describe("Scheduled Task stop/restart cleanup", () => {
         const executable = command.toLowerCase();
         if (executable.endsWith("taskkill.exe")) {
           forced = args?.includes("/F") ?? false;
-          return {
-            pid: 0,
-            output: [null, "", ""],
-            stdout: "",
-            stderr: "",
-            status: 0,
-            signal: null,
-          };
+          return spawnSyncResult("");
         }
         if (executable.endsWith("tasklist.exe")) {
           if (forced) {
@@ -714,26 +708,12 @@ describe("Scheduled Task stop/restart cleanup", () => {
             forced && tasklistCallsAfterForce > 75
               ? "No tasks"
               : '"node.exe","4242","Console","1","1 K"';
-          return {
-            pid: 0,
-            output: [null, output, ""],
-            stdout: output,
-            stderr: "",
-            status: 0,
-            signal: null,
-          };
+          return spawnSyncResult(output);
         }
         const output = JSON.stringify([
           { ProcessId: 4242, CommandLine: INSTALLED_GATEWAY_COMMAND_LINE },
         ]);
-        return {
-          pid: 0,
-          output: [null, output, ""],
-          stdout: output,
-          stderr: "",
-          status: 0,
-          signal: null,
-        };
+        return spawnSyncResult(output);
       });
 
       await expect(terminateScheduledTaskGatewayListeners(env)).resolves.toEqual([4242]);

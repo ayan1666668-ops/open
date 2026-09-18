@@ -39,6 +39,16 @@ type SpawnSyncResult = {
   status: number;
   signal: null;
 };
+function spawnSyncResult(stdout: string, status = 0): SpawnSyncResult {
+  return {
+    pid: 0,
+    output: [null, stdout, ""],
+    stdout,
+    stderr: "",
+    status,
+    signal: null,
+  };
+}
 const spawnSync = vi.hoisted(() =>
   vi.fn<(command: string, args?: readonly string[], options?: SpawnSyncOptions) => SpawnSyncResult>(
     () => ({
@@ -264,6 +274,7 @@ export {
   resumeScheduledTaskAutoStartAfterUpdate,
   setTaskStateProbeResult,
   spawnSync,
+  spawnSyncResult,
   startScheduledTask,
   stopScheduledTask,
   suspendScheduledTaskAutoStartForUpdate,
