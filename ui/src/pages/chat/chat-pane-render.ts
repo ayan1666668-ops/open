@@ -388,7 +388,7 @@ export class ChatPane extends ChatPaneLayoutRender {
         state.chatSending ||
         this.recoveringSession ||
         this.sessionSuggestionAddOperation !== undefined,
-      placementStartup,
+      placementStartup: placementStartup ?? placementComposer.startup,
       onRetrySessionPlacementStartup: placementStartup?.retryable
         ? () => this.context.placementStartup.retry(state.sessionKey)
         : undefined,
@@ -547,8 +547,8 @@ export class ChatPane extends ChatPaneLayoutRender {
       pullRequestsStatus: this.sessionPullRequestsStatus,
       pullRequestsExpanded: this.sessionPullRequestsExpanded,
       onOpenSessionDiff: sessionWorkspace.onOpenDiff,
-      onExpandPullRequests: () => {
-        this.sessionPullRequestsExpanded = true;
+      onTogglePullRequests: () => {
+        this.sessionPullRequestsExpanded = !this.sessionPullRequestsExpanded;
         this.requestUpdate();
       },
       onDismissPullRequest: this.dismissSessionPullRequest,

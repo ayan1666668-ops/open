@@ -7,8 +7,12 @@ import type { selectModelCatalogRuntimeEntry } from "../agents/model-catalog-vie
 import type { resolveSessionModelRef } from "../agents/session-model-ref.js";
 import type { SubagentRunReadIndex } from "../agents/subagents/registry/subagent-registry-read.js";
 import type { SubagentRunReadRecord } from "../agents/subagents/registry/subagent-registry-read.types.js";
-import type { ThinkLevel, listThinkingLevelOptions } from "../auto-reply/thinking.js";
-import type { SessionAcpMeta, SessionEntry } from "../config/sessions.js";
+import type {
+  ThinkLevel,
+  listThinkingLevelOptions,
+  resolveThinkingProfile,
+} from "../auto-reply/thinking.js";
+import type { SessionEntry } from "../config/sessions.js";
 import type { ProjectedAgentRunIndex } from "../infra/agent-run-registry.js";
 import type { ModelCostConfig } from "../utils/usage-format.js";
 import type { CurrentUserProfileDisplay } from "./current-user-profile-display.js";
@@ -16,6 +20,11 @@ import type { CurrentUserProfileDisplay } from "./current-user-profile-display.j
 export type GatewayModelThinkingProfile = {
   thinkingLevels: ReturnType<typeof listThinkingLevelOptions>;
   thinkingDefault?: ThinkLevel;
+};
+
+export type GatewayModelThinkingFacts = {
+  profile: ReturnType<typeof resolveThinkingProfile>;
+  metadata: GatewayModelThinkingProfile;
 };
 
 export type SessionActorProfileIdentity = Extract<CurrentUserProfileDisplay, { kind: "resolved" }>;
@@ -31,13 +40,12 @@ export type SessionListRowContext = {
   subagentRuns: SubagentRunReadIndex<SubagentRunReadRecord>;
   subagentRunsByChildSessionKey: ReadonlyMap<string, readonly SubagentRunReadRecord[]>;
   configuredDefaultModelByAgent: Map<string, ReturnType<typeof resolveSessionModelRef>>;
-  thinkingMetadataByModelRef: Map<string, GatewayModelThinkingProfile>;
+  thinkingFactsByModelRef: Map<string, GatewayModelThinkingFacts>;
   findModelCatalogEntry: typeof findModelCatalogEntry;
   selectModelCatalogRuntimeEntry: typeof selectModelCatalogRuntimeEntry;
   displayModelIdentityByKey: Map<string, { provider?: string; model?: string }>;
   modelCostConfigByModelRef: Map<string, ModelCostConfig | undefined>;
   userProfileIdentityById: Map<string, SessionActorProfileIdentity | undefined>;
-  acpSessionMetaByEntry: Map<SessionEntry, SessionAcpMeta | undefined>;
 };
 
 export type SessionListRowContextProvider = () => SessionListRowContext;
