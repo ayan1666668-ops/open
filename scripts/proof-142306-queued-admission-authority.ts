@@ -23,6 +23,18 @@
  *   - no model is called: the admitted turn is deliberately held in its post-admission,
  *     pre-execution window, which is exactly the window this PR moves the binding into.
  *
+ * Queue admission inputs are PRODUCTION-DERIVED, not asserted:
+ *   - `resolvedQueue` comes from production's own `resolveQueueSettingsCore`, called the way
+ *     `get-reply-run-admission.ts:358` calls it, over a config that sets no queue mode. The
+ *     mode is therefore OpenClaw's documented default `steer` (docs/concepts/queue.md,
+ *     "Defaults") — and `steer` is the only mode for which production computes steering at
+ *     all (`get-reply-run-admission.ts:562-570`).
+ *   - `queueAdmissionState` is recomputed before each inbound message by production's own
+ *     `resolveReplyQueueAdmissionState` over the live queue and live active operation, the
+ *     same call `get-reply-run-admission.ts:557` makes.
+ *   - `shouldSteer`/`shouldFollowup` are production's conjunctions over that state; the
+ *     conjuncts this fixture holds constant are named at the call site.
+ *
  * Scenarios:
  *   1. fresh queued admission — an admitted turn owns a tool authority fingerprint before
  *      execution, that fingerprint is the one an identical inbound message computes, and the
@@ -90,6 +102,9 @@ async function main(): Promise<void> {
     await import("../src/auto-reply/reply/reply-tool-authority.js");
   const { getExistingFollowupQueue } = await import("../src/auto-reply/reply/queue/state.js");
   const { createTypingController } = await import("../src/auto-reply/reply/typing.js");
+  const { resolveQueueSettingsCore } = await import("../src/auto-reply/reply/queue/settings.js");
+  const { resolveReplyQueueAdmissionState } =
+    await import("../src/auto-reply/reply/queue-policy.js");
 
   type AnyRecord = Record<string, unknown>;
 
@@ -107,10 +122,28 @@ async function main(): Promise<void> {
   } as AnyRecord;
   const sessionStore: AnyRecord = { [SESSION_KEY]: sessionEntry };
 
+  // Ordinary config. `messages.queue.mode` is deliberately absent so production's own
+  // resolver supplies OpenClaw's default mode; only the CLI debounce is pinned so the
+  // harness does not wait on the 500 ms default quiet window.
   const config = {
     agents: { defaults: {} },
-    queue: { mode: "followup" },
+    messages: { queue: { debounceMsByChannel: { cli: 0 } } },
   } as AnyRecord;
+
+  // Resolved the way `get-reply-run-admission.ts:358` resolves it, not hand-written.
+  const resolvedQueue = resolveQueueSettingsCore({
+    cfg: config as never,
+    channel: "cli",
+    sessionEntry: sessionEntry as never,
+  });
+  console.log(
+    `queue settings resolved by production: mode=${resolvedQueue.mode} cap=${String(resolvedQueue.cap)} drop=${String(resolvedQueue.dropPolicy)} debounceMs=${String(resolvedQueue.debounceMs)}`,
+  );
+  mustHold(
+    "production resolved the default queue mode `steer`, the only mode that computes steering",
+    resolvedQueue.mode === "steer",
+    `mode=${resolvedQueue.mode} — get-reply-run-admission.ts:570 requires "steer" before shouldSteer can be true`,
+  );
 
   const makeRun = (params: {
     prompt: string;
@@ -268,17 +301,47 @@ async function main(): Promise<void> {
 
   type InboundOutcome = { settled: boolean; error: string };
 
+  /**
+   * Reproduces production's admission computation rather than asserting its outputs.
+   * `queueAdmissionState` is production's own function over the live queue and live active
+   * operation (`get-reply-run-admission.ts:557`); `shouldSteer`/`shouldFollowup` are
+   * production's conjunctions (`:562`, `:571`). Every conjunct this fixture holds constant is
+   * a property of the fixture: an ordinary CLI user message is not a room event and not a
+   * heartbeat, nothing triggers a reset or preempts a heartbeat, no recovery owner is
+   * registered, and `resolveActiveRunAcceptsCurrentThread` returns true for any route that is
+   * not a Slack direct-routed thread turn (`:474-480`).
+   */
+  const resolveAdmissionInputs = () => {
+    const queueAdmissionState = resolveReplyQueueAdmissionState(
+      getExistingFollowupQueue(SESSION_KEY),
+      replyRunRegistry.get(SESSION_KEY),
+    );
+    return {
+      queueAdmissionState,
+      isActive: isReplyRunActiveForSessionId(SESSION_ID),
+      shouldSteer: queueAdmissionState !== "ready" && resolvedQueue.mode === "steer",
+      shouldFollowup:
+        resolvedQueue.mode === "steer" ||
+        resolvedQueue.mode === "followup" ||
+        resolvedQueue.mode === "collect",
+    };
+  };
+
   const runInbound = async (run: AnyRecord): Promise<InboundOutcome> => {
     const outcome: InboundOutcome = { settled: false, error: "" };
+    const admissionInputs = resolveAdmissionInputs();
+    console.log(
+      `  admission inputs for ${String(run.messageId)} (derived from the live queue): state=${admissionInputs.queueAdmissionState} shouldSteer=${String(admissionInputs.shouldSteer)} isActive=${String(admissionInputs.isActive)}`,
+    );
     const settled = runReplyAgent({
       commandBody: run.prompt as string,
       followupRun: run as never,
       queueKey: SESSION_KEY,
-      resolvedQueue: { mode: "followup", cap: 20, drop: "summarize", debounceMs: 0 } as never,
-      shouldSteer: true,
-      shouldFollowup: true,
-      queueAdmissionState: "steering",
-      isActive: isReplyRunActiveForSessionId(SESSION_ID),
+      resolvedQueue: resolvedQueue as never,
+      shouldSteer: admissionInputs.shouldSteer,
+      shouldFollowup: admissionInputs.shouldFollowup,
+      queueAdmissionState: admissionInputs.queueAdmissionState,
+      isActive: admissionInputs.isActive,
       typing: createTypingController({}),
       sessionEntry: sessionEntry as never,
       sessionStore: sessionStore as never,

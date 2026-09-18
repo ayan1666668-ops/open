@@ -32,6 +32,32 @@
  *     user prompts were actually executed.
  *   - the channel transport (typing controller with no callbacks).
  *
+ * Queue admission inputs are PRODUCTION-DERIVED, not asserted:
+ *   - `resolvedQueue` is not hand-written. It is whatever production's own
+ *     `resolveQueueSettingsCore` resolves from the harness config, called the same way
+ *     `get-reply-run-admission.ts:358` calls it. The config sets no queue mode, so the mode
+ *     is OpenClaw's documented default `steer` (docs/concepts/queue.md, "Defaults").
+ *     That matters: `shouldSteer` is computed only for `resolvedQueue.mode === "steer"`
+ *     (`get-reply-run-admission.ts:562-570`), so `steer` is the mode in which the benefit
+ *     measured below is reachable at all. Under `followup` no message is ever steered, so
+ *     no `steerAnchor` exists on either tree and this overflow difference does not arise.
+ *   - `queueAdmissionState` is recomputed before every inbound message by production's own
+ *     `resolveReplyQueueAdmissionState`, applied to the live follow-up queue and the live
+ *     active reply operation — the same call `get-reply-run-admission.ts:557` makes.
+ *   - `shouldSteer` and `shouldFollowup` are then production's conjunctions over that state
+ *     (`get-reply-run-admission.ts:562-576`). The conjuncts held constant by this fixture
+ *     are named at the call site, and each is a property of the fixture rather than an
+ *     override: an ordinary CLI user message is not a room event and not a heartbeat, no
+ *     reset is triggered, no recovery owner is registered, and
+ *     `resolveActiveRunAcceptsCurrentThread` returns true for every non-Slack route
+ *     (`get-reply-run-admission.ts:474-480`).
+ *   - `cap: 2` and `drop: "old"` are ordinary `messages.queue` config values read through
+ *     that same resolver. The cap only decides how many messages are needed to reach
+ *     overflow (the default 20 would need twenty-one); `drop: "old"` makes the loss
+ *     observable as a discarded message instead of a summary line. `applyQueueDropPolicy`
+ *     consults the same `isProtected` predicate under every drop policy
+ *     (`queue/enqueue.ts:238`).
+ *
  * Scenarios:
  *   1. a queued turn is admitted and owns its tool authority BEFORE execution.
  *   2. a same-authority follow-up arriving in that window is routed into the steer path
@@ -180,6 +206,12 @@ async function main(server: { server: Server; baseUrl: string }, requestBodies: 
 
   const config = {
     agents: { entries: { main: { workspace: WORKSPACE_DIR } } },
+    // Ordinary queue config. `mode` is deliberately absent so production's resolver supplies
+    // OpenClaw's default (`steer`); `cap`/`drop`/`debounceMsByChannel` are the documented
+    // `messages.queue` knobs.
+    messages: {
+      queue: { cap: 2, drop: "old", debounceMsByChannel: { cli: 0 } },
+    },
     models: {
       providers: {
         [PROVIDER_ID]: {
@@ -213,6 +245,9 @@ async function main(server: { server: Server; baseUrl: string }, requestBodies: 
     await import("../src/auto-reply/reply/reply-run-registry.js");
   const { getExistingFollowupQueue } = await import("../src/auto-reply/reply/queue/state.js");
   const { createTypingController } = await import("../src/auto-reply/reply/typing.js");
+  const { resolveQueueSettingsCore } = await import("../src/auto-reply/reply/queue/settings.js");
+  const { resolveReplyQueueAdmissionState } =
+    await import("../src/auto-reply/reply/queue-policy.js");
 
   const sessionEntry = {
     agent: "main",
@@ -268,15 +303,25 @@ async function main(server: { server: Server; baseUrl: string }, requestBodies: 
     sessionStore,
   };
 
-  // Real production settings. `cap` and `drop` are ordinary `queue` config; a small cap
-  // reaches overflow in three messages instead of twenty-one. The mechanism under test —
-  // `applyQueueDropPolicy` skipping `steerAnchor` items — is unconditional production code.
-  const resolvedQueue = {
-    mode: "followup",
-    cap: 2,
-    dropPolicy: "old",
-    debounceMs: 0,
-  };
+  // ---------------------------------------------------------------- scenario 0
+  console.log("[0] production resolves the queue settings this run is measured under");
+
+  // Production's own resolver decides the queue settings, called exactly as
+  // `get-reply-run-admission.ts:358` calls it. Nothing here asserts a mode: the config sets
+  // none, so this is whatever OpenClaw uses by default for a CLI turn.
+  const resolvedQueue = resolveQueueSettingsCore({
+    cfg: config as never,
+    channel: "cli",
+    sessionEntry: sessionEntry as never,
+  });
+  console.log(
+    `queue settings resolved by production: mode=${resolvedQueue.mode} cap=${String(resolvedQueue.cap)} drop=${String(resolvedQueue.dropPolicy)} debounceMs=${String(resolvedQueue.debounceMs)}`,
+  );
+  mustHold(
+    "production resolved the default queue mode `steer`, the only mode that computes steering",
+    resolvedQueue.mode === "steer",
+    `mode=${resolvedQueue.mode} — get-reply-run-admission.ts:570 requires "steer" before shouldSteer can be true`,
+  );
 
   const queueItems = (): AnyRecord[] =>
     ((getExistingFollowupQueue(SESSION_KEY) as AnyRecord | undefined)?.items ?? []) as AnyRecord[];
@@ -286,17 +331,47 @@ async function main(server: { server: Server; baseUrl: string }, requestBodies: 
 
   type InboundOutcome = { settled: boolean; error: string };
 
+  /**
+   * Reproduces production's admission computation for an inbound CLI user message instead of
+   * asserting its outputs. `queueAdmissionState` is production's own function over the live
+   * queue and live active operation (`get-reply-run-admission.ts:557`); `shouldSteer` and
+   * `shouldFollowup` are production's conjunctions (`:562` and `:571`). The conjuncts fixed by
+   * this fixture are each a property of it: a CLI user message is neither a room event nor a
+   * heartbeat, nothing triggers a reset or preempts a heartbeat, no recovery owner is
+   * registered for this store, and `resolveActiveRunAcceptsCurrentThread` returns true for any
+   * route that is not a Slack direct-routed thread turn (`:474-480`).
+   */
+  const resolveAdmissionInputs = () => {
+    const queueAdmissionState = resolveReplyQueueAdmissionState(
+      getExistingFollowupQueue(SESSION_KEY),
+      replyRunRegistry.get(SESSION_KEY),
+    );
+    return {
+      queueAdmissionState,
+      isActive: isReplyRunActiveForSessionId(SESSION_ID),
+      shouldSteer: queueAdmissionState !== "ready" && resolvedQueue.mode === "steer",
+      shouldFollowup:
+        resolvedQueue.mode === "steer" ||
+        resolvedQueue.mode === "followup" ||
+        resolvedQueue.mode === "collect",
+    };
+  };
+
   const deliverInbound = async (run: AnyRecord): Promise<InboundOutcome> => {
     const outcome: InboundOutcome = { settled: false, error: "" };
+    const admissionInputs = resolveAdmissionInputs();
+    console.log(
+      `  admission inputs for ${String(run.messageId)} (derived from the live queue): state=${admissionInputs.queueAdmissionState} shouldSteer=${String(admissionInputs.shouldSteer)} isActive=${String(admissionInputs.isActive)}`,
+    );
     const settled = runReplyAgent({
       commandBody: run.prompt as string,
       followupRun: run as never,
       queueKey: SESSION_KEY,
       resolvedQueue: resolvedQueue as never,
-      shouldSteer: true,
-      shouldFollowup: true,
-      queueAdmissionState: "steering",
-      isActive: isReplyRunActiveForSessionId(SESSION_ID),
+      shouldSteer: admissionInputs.shouldSteer,
+      shouldFollowup: admissionInputs.shouldFollowup,
+      queueAdmissionState: admissionInputs.queueAdmissionState,
+      isActive: admissionInputs.isActive,
       typing: createTypingController({}),
       sessionEntry: sessionEntry as never,
       sessionStore: sessionStore as never,
@@ -338,6 +413,7 @@ async function main(server: { server: Server; baseUrl: string }, requestBodies: 
   };
 
   // ---------------------------------------------------------------- scenario 1
+  console.log("");
   console.log("[1] a queued turn is admitted and owns its tool authority before execution");
 
   const admittedRun = makeRun({ prompt: MARKER_ADMITTED, messageId: "proof-exec-1" });
