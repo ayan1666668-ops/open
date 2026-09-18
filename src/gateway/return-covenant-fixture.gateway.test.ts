@@ -76,7 +76,11 @@ async function startFixtureGatewayGeneration(params: {
     binding,
     caseIds: params.caseIds,
     config,
-    env: process.env,
+    // Pin the isolated state owner for this generation's lifetime. A live
+    // `process.env` reference lets another case's deferred `state.cleanup()`
+    // restore the environment mid-flight, after which this generation resolves
+    // no state directory at all.
+    env: { ...process.env },
   });
   const server = await startGatewayServer(
     params.port,

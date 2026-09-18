@@ -74,7 +74,9 @@ vi.mock("../infra/heartbeat-runner-scheduler.js", () => ({
 }));
 
 vi.mock("../infra/heartbeat-runner-run.js", () => ({
-  runHeartbeatOnce: runtimeServiceMocks.runHeartbeatOnce,
+  // The module exports `runHeartbeatOnceCore`; a factory keyed on the old name
+  // leaves the lazy loader with an undefined export.
+  runHeartbeatOnceCore: runtimeServiceMocks.runHeartbeatOnce,
 }));
 
 vi.mock("../sessions/session-upstream-monitor.js", () => ({

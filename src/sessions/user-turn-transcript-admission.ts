@@ -1,8 +1,5 @@
-import {
-  publishTranscriptUpdate,
-  rewriteTranscriptMessageAtAnchor,
-} from "../config/sessions/session-accessor.js";
 import type { TranscriptEntryAnchor } from "../config/sessions/transcript-entry-anchor.js";
+import { createLazyRuntimeModule } from "../shared/lazy-runtime.js";
 import { isUserMessage } from "./user-turn-transcript.message.js";
 import {
   normalizePersistedSteerTargetRunId,
@@ -66,6 +63,15 @@ export function resolveUserTurnTranscriptAdmission(params: {
       };
 }
 
+// The transcript read fence imports this module for its pure admission-registry
+// reads, and `session-history-read.imports.test.ts` keeps every read owner clear
+// of host acquisition and decoration. This write-path confirmation is the only
+// consumer of the session accessor here, so it loads that owner on demand rather
+// than pulling it into the read graph statically.
+const loadSessionAccessor = createLazyRuntimeModule(
+  () => import("../config/sessions/session-accessor.js"),
+);
+
 export async function confirmPersistedSteerTargetRunId(params: {
   admission: UserTurnTranscriptAdmissionReceipt;
   targetRunId: string;
@@ -76,6 +82,7 @@ export async function confirmPersistedSteerTargetRunId(params: {
     }
   | undefined
 > {
+  const { publishTranscriptUpdate, rewriteTranscriptMessageAtAnchor } = await loadSessionAccessor();
   const rewritten = await rewriteTranscriptMessageAtAnchor(params.admission, (message) => {
     if (!isUserMessage(message)) {
       return undefined;

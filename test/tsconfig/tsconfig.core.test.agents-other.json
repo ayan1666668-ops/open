@@ -7,7 +7,9 @@
     "../../src/agents/*/**/*.test.ts",
     "../../src/agents/*/**/*.test.tsx",
     "../../src/agents/model-catalog.test.ts",
-    "../../src/agents/model-catalog.planning.test.ts"
+    "../../src/agents/model-catalog.planning.test.ts",
+    "../../src/agents/prepared-model*.test.ts",
+    "../../src/agents/prepared-model*.test.tsx"
   ],
   "exclude": [
     "../../node_modules",

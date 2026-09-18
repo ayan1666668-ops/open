@@ -120,7 +120,7 @@ describe("heartbeat scheduler execution loading", { concurrent: false }, () => {
       vi.doMock("./heartbeat-runner-run.js", async () => {
         loading.resolve();
         await release.promise;
-        return { runHeartbeatOnce: execute };
+        return { runHeartbeatOnceCore: execute };
       });
       const nextCfg: OpenClawConfig = {
         agents: {

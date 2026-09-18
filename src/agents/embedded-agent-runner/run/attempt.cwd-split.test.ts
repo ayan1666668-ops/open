@@ -235,9 +235,12 @@ describe("runEmbeddedAttempt cwd/workspace split", () => {
       },
     });
 
-    expect(hoisted.createOpenClawCodingToolsMock).toHaveBeenCalledWith(
-      expect.objectContaining({ disableContinuationTools: true }),
-    );
+    // Assert the forwarded options, not the call arity: the factory is invoked
+    // with (options, skillReadResources), so a single-argument
+    // `toHaveBeenCalledWith` never matches.
+    expect(hoisted.createOpenClawCodingToolsMock.mock.calls[0]?.[0]).toMatchObject({
+      disableContinuationTools: true,
+    });
   });
 
   it("skips runtime tool construction when the selected model does not support tools", async () => {

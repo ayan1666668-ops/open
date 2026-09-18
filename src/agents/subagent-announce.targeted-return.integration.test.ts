@@ -17,6 +17,11 @@ const requesterDepthMock = vi.hoisted(() => vi.fn(() => 0));
 
 const registryRuntimeMock = vi.hoisted(() => ({
   shouldIgnorePostCompletionAnnounceForSession: vi.fn((_sessionKey: string) => false),
+  // The announce flow and its requester-settle-wake owner read these three; a
+  // full module factory must provide every export production touches.
+  getLatestSubagentRunByChildSessionKey: vi.fn(() => undefined),
+  getLatestLiveSubagentRunByChildSessionKey: vi.fn(() => undefined),
+  hasDescendantRunAwaitingSettle: vi.fn(() => false),
   isSubagentSessionRunActive: vi.fn(() => true),
   countActiveDescendantRuns: vi.fn(() => 0),
   countPendingDescendantRuns: vi.fn(() => 0),

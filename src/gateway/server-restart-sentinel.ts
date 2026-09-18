@@ -21,10 +21,10 @@ import {
   type SettleSessionDeliveryFn,
 } from "../infra/session-delivery-queue-recovery.js";
 import { enqueueSessionDelivery } from "../infra/session-delivery-queue-storage.js";
-import {
-  type QueuedSessionDelivery,
-  type QueuedSessionDeliveryPayload,
-  type SessionDeliveryRoute,
+import type {
+  QueuedSessionDelivery,
+  QueuedSessionDeliveryPayload,
+  SessionDeliveryRoute,
 } from "../infra/session-delivery-queue.records.js";
 import { isPendingControlPlaneUpdateRestartSentinel } from "../infra/update-control-plane-sentinel.js";
 import { recordUpdateRunVerification } from "../infra/update-run-ledger.js";

@@ -64,8 +64,9 @@ import {
 const mocks = getAgentTestMocks();
 
 describe("gateway agent handler", () => {
-  afterEach(() => {
-    describe0AfterEach0();
+  afterEach(async () => {
+    // Shared harness teardown is async; the traceparent reset must follow it.
+    await describe0AfterEach0();
     resetSubagentTraceparentHandoffsForTests();
   });
 
