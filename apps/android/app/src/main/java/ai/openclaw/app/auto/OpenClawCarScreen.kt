@@ -36,16 +36,21 @@ class OpenClawCarScreen(
   override fun onGetTemplate(): Template {
     val runtime = app.ensureRuntime()
     val isConnected = runtime.gatewayConnectionDisplay.value.isConnected
-    val messageText = when {
-      !isConnected -> "Gateway desconectado. Verifique conexão."
-      isListening -> "Ouvindo... Fale agora."
-      else -> "Pronto. Diga a wake word ou toque no botão para falar."
+    val messageRes = when {
+      !isConnected -> ai.openclaw.app.R.string.native_0303e18246708180 // "Not connected"
+      isListening -> ai.openclaw.app.R.string.native_049579fa8efbaa1b // "Listening (PTT)"
+      else -> ai.openclaw.app.R.string.native_003aaf9e0a0e6b9f // "Mic off"
+    }
+    val messageText = carContext.getString(messageRes)
+
+    val pttActionTitle = if (isListening) {
+      carContext.getString(ai.openclaw.app.R.string.cancel)
+    } else {
+      carContext.getString(ai.openclaw.app.R.string.native_0979c6fdbdca1675) // "Open Chat"
     }
 
-    val pttActionTitle = if (isListening) "Parar" else "Falar"
-
     val header = Header.Builder()
-      .setTitle("OpenClaw Auto")
+      .setTitle(carContext.getString(ai.openclaw.app.R.string.app_name))
       .build()
 
     return MessageTemplate.Builder(messageText)
