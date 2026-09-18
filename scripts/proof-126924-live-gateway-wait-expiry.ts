@@ -75,20 +75,44 @@
  *     the run (`outcome.status === "ok"`), the provisional marker is retained
  *     rather than rewritten, the detached task publishes `succeeded` rather than
  *     the clock's `timed_out`, and no expired child is retired at its deadline.
+ *  5. Terminal-notification RECEIPT for the same child, after its own
+ *     provisional notification settled — the run reaches
+ *     `delivery.status === "delivered"` with a `deliveredAt` later than its
+ *     `waitExpiryAnnouncedAt`, and the requester's own turn at the provider
+ *     carries the Gateway-authored terminal completion block for that exact
+ *     child session (`disposition: exited` + `Stats: runtime`) at a later
+ *     provider ordinal than the provisional block (`disposition:
+ *     still-running`) for the same child.
  *
- * WHY 3 AND 4 NEED NOT LAND ON THE SAME CHILD
+ * WHY 3 AND 4 NEED NOT LAND ON THE SAME CHILD — BUT 5 DOES
  * `SUBAGENT_WAIT_EXPIRY_TERMINAL_GRACE_MS` deliberately withholds the wake for a
  * moment so an authoritative terminal can win. A child whose own stop lands
  * inside that grace therefore gets no provisional wake at all — which is the
  * intended behavior, not a gap — while a child still unfinished after it does.
  * The burst exercises both halves in one run, and the assertions say which.
+ * Assertion 4 is therefore drawn from the expired set. Assertion 5 is the
+ * narrower claim and is deliberately same-child: it starts from the children
+ * that actually got a provisional wake and requires each candidate's OWN
+ * terminal notification, matched by child session key and ordered by the
+ * provider's own arrival ordinal.
+ *
+ * WHY THE RECEIPT IS NOT THIS HARNESS'S BOOKKEEPING
+ * Both halves of assertion 5 are written by production code: the delivery
+ * receipt comes from the completion-delivery path, which credits `delivered`
+ * only from a transport result, and the completion-event block is authored by
+ * the Gateway and reaches the provider only because it was delivered into that
+ * requester's session. The provisional wake is measured to leave delivery
+ * `pending` with no `deliveredAt`, which is asserted rather than assumed, so a
+ * receipt stamped after `waitExpiryAnnouncedAt` cannot be the provisional one.
  *
  * NEGATIVE CONTROL
  * Revert the `if (!isTerminalWaitTimeout) { … reportSubagentWaitExpiry … }`
  * branch in `subagent-registry-run-wait.ts` so a bare deadline expiry falls
  * through to `completeAsRunTimeout` — that is current main's behavior — rebuild,
  * and re-run. Assertion 1 can no longer be satisfied by any child and the script
- * fails at "no child reached the nonterminal wait-expiry observation".
+ * fails at "no child reached the nonterminal wait-expiry observation"; with no
+ * provisional notification anywhere, assertion 5's ordered pair is unreachable
+ * too.
  */
 import assert from "node:assert/strict";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
@@ -118,7 +142,20 @@ const RUN_TIMEOUT_SECONDS = 1;
 const CHILD_RESPONSE_DELAY_MS = 500;
 /** How long after the last expiry the provisional wake is still expected. */
 const ANNOUNCE_SETTLE_WINDOW_MS = 20_000;
-const OBSERVE_TIMEOUT_MS = 120_000;
+/**
+ * How long after the last provisional wake the terminal notification's own
+ * delivery receipt is still expected. Measured on this host: the terminal
+ * receipt lands 5–20 s after the provisional wake settles, because it waits for
+ * the child's real stop and then for a requester turn of its own.
+ */
+const DELIVERY_SETTLE_WINDOW_MS = 45_000;
+const OBSERVE_TIMEOUT_MS = 240_000;
+/**
+ * A completion-event block is ~450 characters from its `session_key:` line to
+ * the end of its `Stats:` line. Scanning that far keeps the disposition match
+ * inside the block that names the child.
+ */
+const NOTIFICATION_BLOCK_SCAN_CHARS = 900;
 const CHILD_TASK_MARKER = "PROOF126924LIVEEXPIRY";
 const PARENT_PROMPT_PREFIX = "Delegate the long task to a subagent.";
 
@@ -192,8 +229,15 @@ function captureOutput(child: ChildProcessWithoutNullStreams) {
 type RegistryRow = {
   runId: string;
   childSessionKey?: string;
+  requesterSessionKey?: string;
   createdAt?: number;
   collect?: boolean;
+  delivery?: {
+    status?: string;
+    deliveredAt?: number;
+    announcedAt?: number;
+    disposition?: string;
+  };
   execution: {
     status?: string;
     startedAt?: number;
@@ -208,6 +252,7 @@ type RegistryRow = {
 type ChildObservation = {
   runId: string;
   childSessionKey: string;
+  requesterSessionKey?: string;
   createdAt: number;
   expiryObservedAt?: number;
   endedAtWhenExpiryObserved?: number;
@@ -217,11 +262,18 @@ type ChildObservation = {
 
   announcedAt?: number;
   endedAtWhenAnnounced?: number;
+  /** The run's delivery state at the instant the provisional wake settled. */
+  deliveryWhenAnnounced?: RegistryRow["delivery"];
   finalOutcome?: RegistryRow["execution"]["outcome"];
   finalEndedAt?: number;
   finalExpiryObservedAt?: number;
   finalTaskStatus?: string;
+  /** The run's own delivery receipt for its terminal completion notification. */
+  finalDelivery?: RegistryRow["delivery"];
 };
+
+/** One provider request, in the provider's own arrival order. */
+type ProviderRequest = { seq: number; body: string };
 
 const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-proof-126924-live-"));
 const statePath = path.join(stateRoot, "state", "state", "openclaw.sqlite");
@@ -296,6 +348,63 @@ function countChildProviderRequests(): number {
         typeof request.body === "string" ? request.body : JSON.stringify(request.body ?? "");
       return body.includes(CHILD_TASK_MARKER) && !body.includes(PARENT_PROMPT_PREFIX);
     }).length;
+}
+
+/** Every provider request so far, carrying the provider's own arrival ordinal. */
+function readProviderRequests(): ProviderRequest[] {
+  if (!fs.existsSync(requestLogPath)) {
+    return [];
+  }
+  return fs
+    .readFileSync(requestLogPath, "utf8")
+    .split("\n")
+    .filter((line) => line.trim().length > 0)
+    .map((line) => JSON.parse(line) as { seq: number; body: unknown })
+    .map((record) => ({
+      seq: record.seq,
+      body: typeof record.body === "string" ? record.body : JSON.stringify(record.body ?? ""),
+    }))
+    .toSorted((left, right) => left.seq - right.seq);
+}
+
+/**
+ * The provider ordinal of the FIRST requester turn that carried a completion
+ * event for this exact child session with this disposition.
+ *
+ * The Gateway writes these blocks itself — `[Internal task completion event]` /
+ * `A background task completed`, each with `session_key:` and `disposition:` —
+ * and a requester's turn only sees one because the notification was delivered
+ * into that requester's session. Matching is block-local: the disposition must
+ * appear inside the same block as the child's session key, so one parent's
+ * terminal notice can never be credited to another child. The requester's own
+ * runtime line (`session=<requesterSessionKey>`) pins the turn to the
+ * requester, which is what distinguishes a receipt from the child's own turn.
+ */
+function findNotificationSeq(params: {
+  requests: ProviderRequest[];
+  childSessionKey: string;
+  requesterSessionKey: string;
+  disposition: string;
+  requiredBlockText?: string;
+}): number | undefined {
+  const anchor = `session_key: ${params.childSessionKey}`;
+  for (const request of params.requests) {
+    if (!request.body.includes(`session=${params.requesterSessionKey}`)) {
+      continue;
+    }
+    let index = request.body.indexOf(anchor);
+    while (index >= 0) {
+      const blockText = request.body.slice(index, index + NOTIFICATION_BLOCK_SCAN_CHARS);
+      if (
+        blockText.indexOf(`disposition: ${params.disposition}`) >= 0 &&
+        (!params.requiredBlockText || blockText.indexOf(params.requiredBlockText) >= 0)
+      ) {
+        return request.seq;
+      }
+      index = request.body.indexOf(anchor, index + 1);
+    }
+  }
+  return undefined;
 }
 
 async function waitFor(
@@ -503,9 +612,11 @@ try {
         ({
           runId: row.runId,
           childSessionKey: row.childSessionKey,
+          requesterSessionKey: row.requesterSessionKey,
           createdAt: row.createdAt ?? 0,
         } satisfies ChildObservation);
       observations.set(row.runId, observation);
+      observation.requesterSessionKey ??= row.requesterSessionKey;
       if (
         observation.expiryObservedAt === undefined &&
         typeof row.waitExpiryObservedAt === "number"
@@ -526,6 +637,7 @@ try {
       if (observation.announcedAt === undefined && typeof row.waitExpiryAnnouncedAt === "number") {
         observation.announcedAt = row.waitExpiryAnnouncedAt;
         observation.endedAtWhenAnnounced = row.execution.endedAt;
+        observation.deliveryWhenAnnounced = row.delivery ? { ...row.delivery } : undefined;
       }
       if (typeof row.execution.endedAt === "number") {
         observation.finalOutcome = row.execution.outcome;
@@ -533,6 +645,7 @@ try {
         observation.finalExpiryObservedAt = row.waitExpiryObservedAt;
         observation.finalTaskStatus = readTaskStatus(row.childSessionKey);
       }
+      observation.finalDelivery = row.delivery ? { ...row.delivery } : undefined;
     }
     const settled = [...observations.values()].filter(
       (observation) => observation.finalEndedAt !== undefined,
@@ -546,12 +659,78 @@ try {
     );
     const announceWindowClosed =
       lastExpiryAt > 0 && Date.now() - lastExpiryAt >= ANNOUNCE_SETTLE_WINDOW_MS;
-    if (observations.size >= BURST && settled.length >= BURST && announceWindowClosed) {
+    // The terminal notification's own receipt is a later, separate event: the
+    // child must stop for real and the requester must take another turn. Keep
+    // sampling until every provisionally-woken child has that receipt, or until
+    // the window closes, so assertion 5 reads a settled state either way.
+    const announcedRuns = [...observations.values()].filter(
+      (observation) => observation.announcedAt !== undefined,
+    );
+    const lastAnnouncedAt = Math.max(
+      0,
+      ...announcedRuns.map((observation) => observation.announcedAt ?? 0),
+    );
+    const deliveryWindowClosed =
+      lastAnnouncedAt > 0 && Date.now() - lastAnnouncedAt >= DELIVERY_SETTLE_WINDOW_MS;
+    const deliveriesSettled =
+      announcedRuns.length > 0 &&
+      announcedRuns.every((observation) => observation.finalDelivery?.status === "delivered");
+    if (
+      observations.size >= BURST &&
+      settled.length >= BURST &&
+      announceWindowClosed &&
+      (deliveriesSettled || deliveryWindowClosed)
+    ) {
       break;
     }
     await delay(20);
   }
   await Promise.all(parentTurns);
+
+  // The notification census, printed BEFORE the assertions so a negative-control
+  // run reports it too: how many of these real children got a provisional
+  // completion event, and how many then got a terminal one, counted from the
+  // Gateway-authored blocks in the requesters' own provider turns. On current
+  // main the provisional column is empty by construction — the deadline
+  // publishes one terminal notification and there is no earlier provisional to
+  // follow.
+  const providerRequests = readProviderRequests();
+  const notificationOrdinals = new Map<string, { provisionalSeq?: number; terminalSeq?: number }>();
+  for (const observation of observations.values()) {
+    const requesterSessionKey = observation.requesterSessionKey;
+    notificationOrdinals.set(
+      observation.runId,
+      requesterSessionKey
+        ? {
+            provisionalSeq: findNotificationSeq({
+              requests: providerRequests,
+              childSessionKey: observation.childSessionKey,
+              requesterSessionKey,
+              disposition: "still-running",
+            }),
+            terminalSeq: findNotificationSeq({
+              requests: providerRequests,
+              childSessionKey: observation.childSessionKey,
+              requesterSessionKey,
+              disposition: "exited",
+              requiredBlockText: "Stats: runtime ",
+            }),
+          }
+        : {},
+    );
+  }
+  const censusProvisional = [...notificationOrdinals.values()].filter(
+    (ordinals) => ordinals.provisionalSeq !== undefined,
+  ).length;
+  const censusTerminal = [...notificationOrdinals.values()].filter(
+    (ordinals) => ordinals.terminalSeq !== undefined,
+  ).length;
+  log(
+    `[notifications] across ${observations.size} real children and ${providerRequests.length} ` +
+      `provider requests: ${censusProvisional} carried a provisional completion event ` +
+      `("disposition: still-running") into their requester's turn, ${censusTerminal} carried a ` +
+      `terminal one ("disposition: exited")`,
+  );
 
   const expired = [...observations.values()].filter(
     (observation) => observation.expiryObservedAt !== undefined,
@@ -573,7 +752,7 @@ try {
     `every wait expiry terminalized its run or task; observed: ${describeObservations(observations)}`,
   );
   log(
-    `[1/4] ${provisional.length} of ${observations.size} real children recorded a NONTERMINAL ` +
+    `[1/5] ${provisional.length} of ${observations.size} real children recorded a NONTERMINAL ` +
       `wait expiry: waitExpiryObservedAt persisted, execution.endedAt still unset, and the ` +
       `detached task a parent reads still "running"`,
   );
@@ -595,7 +774,7 @@ try {
       `${childRequestsFinal} by the end of the run)`,
   );
   log(
-    `[2/4] continued child activity: ${stillActive.length} of them had not even started when ` +
+    `[2/5] continued child activity: ${stillActive.length} of them had not even started when ` +
       `their parent's wait expired — e.g. run ${activeExample.runId.slice(-8)} expired at ` +
       `${activeExample.expiryObservedAt} and started at ${activeExample.startedAtAfterExpiry} ` +
       `(+${(activeExample.startedAtAfterExpiry ?? 0) - (activeExample.expiryObservedAt ?? 0)}ms); ` +
@@ -616,7 +795,7 @@ try {
     "the provisional notification must settle while the run is still nonterminal",
   );
   log(
-    `[3/4] the provisional notification settled on its own while the run was still nonterminal: ` +
+    `[3/5] the provisional notification settled on its own while the run was still nonterminal: ` +
       `run ${announcedExample.runId.slice(-8)} waitExpiryAnnouncedAt=${announcedExample.announcedAt} ` +
       `(+${(announcedExample.announcedAt ?? 0) - (announcedExample.expiryObservedAt ?? 0)}ms after the ` +
       `observation; the wake carries disposition "still-running")`,
@@ -655,11 +834,81 @@ try {
     );
   }
   log(
-    `[4/4] later final settlement and delivery: ${delivered.length} of them then finished for ` +
+    `[4/5] later final settlement and delivery: ${delivered.length} of them then finished for ` +
       `real — e.g. run ${deliveredExample.runId.slice(-8)} settled with ` +
       `${JSON.stringify(deliveredExample.finalOutcome)} at ${deliveredExample.finalEndedAt}, ` +
       `waitExpiryObservedAt retained, and the detached task published "succeeded" rather than ` +
       `the clock's "timed_out". No expired child was retired at its deadline.`,
+  );
+
+  // --------------------------------------------------------------- assert 5
+  // The narrow question assertion 4 does not answer: after the SAME child's
+  // provisional notification has settled, does the requester actually RECEIVE a
+  // terminal notification for that child? Two independent surfaces have to
+  // agree, and both are the Gateway's own — not this harness's bookkeeping:
+  //
+  //   * the run's durable delivery receipt (`delivery.status`/`deliveredAt`),
+  //     which the completion-delivery path writes only from a transport result;
+  //   * the requester's own turn at the provider, carrying the Gateway-authored
+  //     completion-event block for that exact child session.
+  //
+  // Nothing here is satisfied by the provisional wake: measured on this host,
+  // the provisional announce leaves delivery `pending` and stamps no
+  // `deliveredAt`, so a receipt timestamp after `waitExpiryAnnouncedAt` can
+  // only be the terminal notification's.
+  const receipts = announced
+    .map((observation) => ({
+      observation,
+      provisionalSeq: notificationOrdinals.get(observation.runId)?.provisionalSeq,
+      terminalSeq: notificationOrdinals.get(observation.runId)?.terminalSeq,
+    }))
+    .filter(
+      (receipt) =>
+        receipt.observation.finalDelivery?.status === "delivered" &&
+        typeof receipt.observation.finalDelivery.deliveredAt === "number" &&
+        (receipt.observation.finalDelivery.deliveredAt ?? 0) >
+          (receipt.observation.announcedAt ?? 0) &&
+        receipt.provisionalSeq !== undefined &&
+        receipt.terminalSeq !== undefined &&
+        receipt.terminalSeq > receipt.provisionalSeq,
+    );
+  assert.ok(
+    receipts.length > 0,
+    `no child's terminal notification was received after its own provisional notification ` +
+      `settled; announced=${announced.length}, ` +
+      `delivery=${JSON.stringify(
+        announced.map((observation) => ({
+          run: observation.runId.slice(-8),
+          announcedAt: observation.announcedAt,
+          delivery: observation.finalDelivery,
+        })),
+      )}`,
+  );
+  const receiptExample = receipts[0];
+  assert.equal(
+    receiptExample.observation.deliveryWhenAnnounced?.status === "delivered",
+    false,
+    "the provisional wake must not already have credited a terminal delivery receipt; " +
+      `saw ${JSON.stringify(receiptExample.observation.deliveryWhenAnnounced)} when it settled`,
+  );
+  assert.ok(
+    (receiptExample.observation.finalEndedAt ?? 0) > (receiptExample.observation.announcedAt ?? 0),
+    "the terminal notification must follow the child's own later stop, which itself follows the " +
+      "provisional wake",
+  );
+  log(
+    `[5/5] terminal-notification receipt for the SAME child, after its provisional notification ` +
+      `settled: ${receipts.length} of ${announced.length} provisionally-woken children — e.g. run ` +
+      `${receiptExample.observation.runId.slice(-8)} (child session ` +
+      `${receiptExample.observation.childSessionKey.slice(-12)}) woke its requester ` +
+      `provisionally at provider request #${receiptExample.provisionalSeq} ` +
+      `("disposition: still-running"), settled that wake at ` +
+      `${receiptExample.observation.announcedAt} with delivery still ` +
+      `"${receiptExample.observation.deliveryWhenAnnounced?.status ?? "pending"}", stopped for real ` +
+      `at ${receiptExample.observation.finalEndedAt}, and then delivered its TERMINAL ` +
+      `notification into the same requester's turn at provider request ` +
+      `#${receiptExample.terminalSeq} ("disposition: exited" + "Stats: runtime"), with the run's ` +
+      `own receipt ${JSON.stringify(receiptExample.observation.finalDelivery)}`,
   );
 
   // In-run control: a child whose dispatch beat its own budget never reaches the
