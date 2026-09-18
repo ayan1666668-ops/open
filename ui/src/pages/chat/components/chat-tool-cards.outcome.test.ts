@@ -2,6 +2,7 @@
 
 import { render } from "lit";
 import { describe, expect, it, vi } from "vitest";
+import type { AgentActivityItem } from "../../../../../packages/gateway-protocol/src/schema/logs-chat.js";
 import { projectAgentActivityItem } from "../../../../../src/agents/agent-activity-presentation.js";
 import { projectAgentToolActivity } from "../../../../../src/infra/agent-activity-events.js";
 import type { ToolCard } from "../../../lib/chat/chat-types.ts";
@@ -32,7 +33,7 @@ describe("tool-card outcomes", () => {
         title: "Delegate task",
         phase: "end",
         ...(status ? { status } : { summary: "Outcome unknown" }),
-      });
+      } satisfies AgentActivityItem);
       const host = createHost({ chatRunId: "run-outcome" });
       handleAgentEvent(host, agentEvent("run-outcome", 1, "item", item));
       const live = host.chatToolMessages[0];
