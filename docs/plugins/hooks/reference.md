@@ -117,11 +117,19 @@ default so a hung callback cannot retain the serialized delivery lane.
 
 `before_prompt_build` is the one modifying hook whose losses are reported to the
 agent. When a contribution never reaches the prompt — the handler threw, it ran
-past its budget, or the chain was skipped because a nested prompt build
-re-entered assembly — OpenClaw adds a short `<dropped_plugin_context>` block to
-the turn's `appendContext`, naming the plugin and the reason. Without it an
-agent cannot tell "this plugin had nothing to add" from "this plugin's context
-was lost", so it reasons over a prompt that only looks complete.
+past its budget, the chain was skipped because a nested prompt build re-entered
+assembly, or the dispatch itself rejected before any handler ran — OpenClaw adds
+a short `<dropped_plugin_context>` block to the turn's `appendContext`, naming
+the plugin and the reason. Without it an agent cannot tell "this plugin had
+nothing to add" from "this plugin's context was lost", so it reasons over a
+prompt that only looks complete. Both prompt-build phases report, including the
+authority-scoped phase that runs after the turn's tool surface is final.
+
+A failure _before_ dispatch — loading session history, assembling the hook
+context — is deliberately not marked. Nothing was dispatched, so nothing was
+dropped, and telling the agent to re-read context that never existed is the same
+misleading instruction the marker exists to prevent. Those failures stay in the
+operator log.
 
 The block appears only on turns that actually dropped something, and it is
 bounded so a warning cannot distort the prompt it is warning about: identical

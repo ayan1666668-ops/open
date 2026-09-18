@@ -44,6 +44,7 @@ import type {
 } from "../../plugins/cli-backend.types.js";
 import { buildAgentHookContextChannelFields } from "../../plugins/hook-agent-context.js";
 import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
+import { buildPromptBuildDropResult } from "../../plugins/prompt-build-drop.js";
 import {
   LEGACY_IMPLICIT_AGENT_ID,
   isSubagentSessionKey,
@@ -1396,12 +1397,22 @@ async function prepareCliRunContextWithinReadFence(
     if (!assertHostActive) {
       return undefined;
     }
+    // Preparation gets its own catch, matching the ordinary phase above: a
+    // session-history load never reaches the dispatcher, so reporting it as a
+    // dropped contribution would hand the model a false recovery instruction.
+    let promptEvent: { prompt: string; messages: unknown[] };
+    try {
+      promptEvent = {
+        prompt: params.prompt,
+        messages: await loadOpenClawHistoryMessages(),
+      };
+    } catch (error) {
+      cliBackendLog.warn(`authorized cli prompt-build hook preparation failed: ${String(error)}`);
+      return undefined;
+    }
     try {
       return await promptBuildHookRunner.runAuthorizedPromptBuild(
-        {
-          prompt: params.prompt,
-          messages: await loadOpenClawHistoryMessages(),
-        },
+        promptEvent,
         promptBuildHookContext,
         {
           toolAuthorityFingerprint,
@@ -1411,7 +1422,10 @@ async function prepareCliRunContextWithinReadFence(
       );
     } catch (error) {
       cliBackendLog.warn(`authorized CLI prompt-build hook failed: ${String(error)}`);
-      return undefined;
+      // This prepared run continues, so the lost contribution has to be visible
+      // in the prompt it continues with. A rejection here is dispatch-level and
+      // never reaches runAuthorizedPromptBuild's per-handler drop collector.
+      return buildPromptBuildDropResult([{ reason: "dispatch-failed" }]);
     }
   })();
   params.assertCurrent?.();

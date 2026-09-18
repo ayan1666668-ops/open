@@ -112,7 +112,15 @@ export async function resolveAgentHarnessBeforePromptBuildResult(params: {
           })
           .catch((error: unknown) => {
             log.warn(`authorized before_prompt_build hook failed: ${String(error)}`);
-            return undefined;
+            // Same contract as the ordinary phase above: this prompt continues,
+            // so the lost contribution must be visible in it. A rejection here is
+            // dispatch-level (event isolation, the authority boundary assertion)
+            // and never reaches runAuthorizedPromptBuild's per-handler drop
+            // collector, so the marker has to be built at this boundary.
+            // Only the dispatch sits inside this catch: `activeToolNames()` is
+            // evaluated as an argument, so a preparation failure still throws
+            // rather than being reported as a dropped contribution.
+            return buildPromptBuildDropResult([{ reason: "dispatch-failed" }]);
           })
       : undefined;
   const systemPrompt = resolvePromptBuildSystemPrompt({
