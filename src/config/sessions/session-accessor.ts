@@ -140,7 +140,6 @@ export type {
   UpdateSessionLastRouteParams,
 } from "./session-accessor.entry-mutation.js";
 export {
-  countSessionEntryRowsReadOnly,
   ensureSessionEntrySync,
   copySessionOwnedStateForCanonicalRepair,
   ensureTranscriptGenerationsForCanonicalRepair,
@@ -309,21 +308,14 @@ export {
   waitForSessionTranscriptProjection,
   withRecentSessionTranscriptActiveEvents,
 } from "./session-accessor.sqlite-active-events.js";
-export {
-  readSessionTranscriptTitleProbeBatch,
-  type SessionTranscriptTitleProbe,
-} from "./session-accessor.sqlite-title-probes.js";
 export type {
   SessionTranscriptBoundedMessageTailPage,
   SessionTranscriptMessageAnchorPage,
   SessionTranscriptMessageEvent,
   SessionTranscriptMessageEventPage,
 } from "./session-accessor.sqlite-active-events.js";
-export {
-  readSessionTranscriptWatermark,
-  readSessionTranscriptWatermarkBatch,
-  type SessionTranscriptWatermark,
-} from "./session-accessor.sqlite-transcript-watermark.js";
+export type { SessionTranscriptWatermark } from "./session-accessor.sqlite-transcript-watermark-read.js";
+export { readSessionTranscriptWatermark } from "./session-accessor.sqlite-transcript-watermark.js";
 export {
   bindSessionTranscriptStoreScope,
   resolveSessionTranscriptDatabasePath,
