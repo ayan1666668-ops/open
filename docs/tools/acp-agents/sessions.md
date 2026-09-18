@@ -9,7 +9,11 @@ read_when:
 
 ## Start ACP sessions
 
-Two ways to start an ACP session:
+Two ways to start an ACP session from chat or an agent turn. Plugin code that
+needs its own one-shot harness run uses
+[`api.runtime.acp`](/plugins/sdk-runtime/background-work#api-runtime-acp)
+instead; those runs reuse the same ACP policy and admission but are owned by the
+plugin, carry no chat binding or parent session, and never announce completion.
 
 <Tabs>
   <Tab title="From sessions_spawn">
