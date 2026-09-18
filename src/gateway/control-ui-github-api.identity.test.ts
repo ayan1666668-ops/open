@@ -3,7 +3,7 @@ import {
   setActiveDegradedSecretOwners,
   SecretSurfaceUnavailableError,
 } from "../secrets/runtime-degraded-state.js";
-import { gitHubPublicApi } from "./github-public-api.js";
+import { githubApiToken, hasConfiguredGitHubApiCredential } from "./github-public-api.js";
 
 afterEach(() => setActiveDegradedSecretOwners([]));
 
@@ -11,9 +11,9 @@ describe("Control UI GitHub credential", () => {
   it("keeps the explicit preview credential separate and preserves ambient fallback by omission", () => {
     const env = { GH_TOKEN: "ambient-gh", GITHUB_TOKEN: "ambient-github" };
 
-    expect(gitHubPublicApi.githubApiToken(env, {})).toBe("ambient-gh");
+    expect(githubApiToken(env, {})).toBe("ambient-gh");
     expect(
-      gitHubPublicApi.githubApiToken(env, {
+      githubApiToken(env, {
         gateway: { controlUi: { github: { token: "preview-service-token" } } },
         tools: {
           github: {
@@ -23,7 +23,7 @@ describe("Control UI GitHub credential", () => {
       }),
     ).toBe("preview-service-token");
     expect(() =>
-      gitHubPublicApi.githubApiToken(env, {
+      githubApiToken(env, {
         gateway: {
           controlUi: {
             github: {
@@ -57,10 +57,10 @@ describe("Control UI GitHub credential", () => {
       },
     ]);
 
-    expect(() => gitHubPublicApi.githubApiToken({ GH_TOKEN: "ambient" }, config)).toThrow(
+    expect(() => githubApiToken({ GH_TOKEN: "ambient" }, config)).toThrow(
       SecretSurfaceUnavailableError,
     );
-    expect(gitHubPublicApi.hasConfiguredGitHubApiCredential({}, config)).toBe(true);
-    expect(gitHubPublicApi.githubApiToken({ GH_TOKEN: "ambient" }, {})).toBe("ambient");
+    expect(hasConfiguredGitHubApiCredential({}, config)).toBe(true);
+    expect(githubApiToken({ GH_TOKEN: "ambient" }, {})).toBe("ambient");
   });
 });

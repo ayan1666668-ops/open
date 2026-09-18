@@ -1,15 +1,15 @@
 import type { NormalizedPluginsConfig } from "../../../plugins/config-state.js";
 import { loadBundledPluginPublicArtifactModuleFromCandidatesSync } from "../../../plugins/public-surface-loader.js";
 
-type GitHubDoctorContract = {
+type GitHubUpgradeApi = {
   collectGitHubUpgradeWarnings: (policy: NormalizedPluginsConfig) => string[];
 };
 
 /** Optional bundled diagnostics must not prevent Doctor from repairing minimal installs. */
 export function collectGitHubUpgradeWarnings(policy: NormalizedPluginsConfig): string[] {
-  const artifact = loadBundledPluginPublicArtifactModuleFromCandidatesSync<GitHubDoctorContract>({
+  const artifact = loadBundledPluginPublicArtifactModuleFromCandidatesSync<GitHubUpgradeApi>({
     dirName: "github",
-    artifactCandidates: ["doctor-contract-api.js"],
+    artifactCandidates: ["upgrade-api.js"],
   });
   return artifact?.collectGitHubUpgradeWarnings(policy) ?? [];
 }

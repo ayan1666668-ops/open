@@ -48,8 +48,6 @@ type GitHubPublicApi = {
     retryable: boolean;
     retryAfterMs?: number;
   };
-  githubApiToken: (env?: NodeJS.ProcessEnv, config?: OpenClawConfig | null) => string | undefined;
-  hasConfiguredGitHubApiCredential: (env: NodeJS.ProcessEnv, config: OpenClawConfig) => boolean;
   resolveGitHubApiCredentialScope: (env?: NodeJS.ProcessEnv) => {
     token: string | undefined;
     cacheScope: string;
@@ -98,7 +96,7 @@ type GitHubPublicApi = {
 };
 
 /** Host credential selection uses canonical config and degradation state. */
-function hostGitHubToken(
+export function githubApiToken(
   env: NodeJS.ProcessEnv = process.env,
   config: OpenClawConfig | null = getRuntimeConfigSnapshot(),
 ): string | undefined {
@@ -121,10 +119,17 @@ function hostGitHubToken(
   return env.GH_TOKEN?.trim() || env.GITHUB_TOKEN?.trim() || undefined;
 }
 
-type GitHubTransportApi = Omit<
-  GitHubPublicApi,
-  "githubApiToken" | "hasConfiguredGitHubApiCredential" | "resolveGitHubApiCredentialScope"
->;
+export function hasConfiguredGitHubApiCredential(
+  env: NodeJS.ProcessEnv,
+  config: OpenClawConfig,
+): boolean {
+  return (
+    config.gateway?.controlUi?.github?.token !== undefined ||
+    Boolean(env.GH_TOKEN?.trim() || env.GITHUB_TOKEN?.trim())
+  );
+}
+
+type GitHubTransportApi = Omit<GitHubPublicApi, "resolveGitHubApiCredentialScope">;
 
 // The existing loader owns library caching and retirement. Host-specific
 // callbacks stay here, rather than consulting another loader’s state.
@@ -134,15 +139,11 @@ export const gitHubPublicApi = createLazyFacadeObjectValue<GitHubPublicApi>(() =
     artifactBasename: "api.js",
   });
   const resolveScope = (env: NodeJS.ProcessEnv = process.env) => {
-    const token = hostGitHubToken(env);
+    const token = githubApiToken(env);
     return { token, cacheScope: library.githubApiCredentialCacheScope(token) };
   };
   return {
     ...library,
-    githubApiToken: hostGitHubToken,
-    hasConfiguredGitHubApiCredential: (env, config) =>
-      config.gateway?.controlUi?.github?.token !== undefined ||
-      Boolean(env.GH_TOKEN?.trim() || env.GITHUB_TOKEN?.trim()),
     resolveGitHubApiCredentialScope: resolveScope,
     formatControlUiGitHubPreviewError(error) {
       return isTrustedSecretSurfaceUnavailableError(error)

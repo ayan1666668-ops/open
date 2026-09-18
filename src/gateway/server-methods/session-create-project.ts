@@ -15,7 +15,7 @@ import { parseProjectGitUrl } from "../../projects/project-git-url.js";
 import { resolveProjectDirectory } from "../../projects/project-registry.js";
 import { getSessionRepositoryWorkspaceStore } from "../../state/session-repository-workspaces.js";
 import { generateWorktreeSessionTitle } from "../dashboard-session-title.js";
-import { gitHubPublicApi } from "../github-public-api.js";
+import { githubApiToken } from "../github-public-api.js";
 import { ADMIN_SCOPE } from "../operator-scopes.js";
 import type {
   PrepareGatewaySessionLifecycle,
@@ -268,7 +268,7 @@ export async function prepareSessionWorkspace(params: {
     const project = gitUrl
       ? await materializeProjectClone(
           { cfg, gitUrl },
-          { signal, token: gitHubPublicApi.githubApiToken(process.env, cfg) },
+          { signal, token: githubApiToken(process.env, cfg) },
         )
       : undefined;
     assertRunOwnership();
@@ -330,7 +330,7 @@ export async function prepareSessionWorkspace(params: {
         ) {
           await refreshProjectClone(project, {
             signal,
-            token: gitHubPublicApi.githubApiToken(process.env, cfg),
+            token: githubApiToken(process.env, cfg),
           });
           assertRunOwnership();
           resolved = await resolveSessionWorktreeBase(directory, pending.baseRef, signal);

@@ -38,7 +38,7 @@ import { parseAgentSessionKey } from "../../routing/session-key.js";
 import { isTrustedSecretSurfaceUnavailableError } from "../../secrets/runtime-degraded-state.js";
 import { getSessionRepositoryWorkspaceStore } from "../../state/session-repository-workspaces.js";
 import { listProfiles, resolveUserProfileId } from "../../state/user-profiles.js";
-import { gitHubPublicApi } from "../github-public-api.js";
+import { gitHubPublicApi, githubApiToken } from "../github-public-api.js";
 import { WRITE_SCOPE, authorizeOperatorScopesForRequiredScope } from "../method-scopes.js";
 import { searchRemoteProjects } from "../project-github-search.js";
 import { createSessionListEntryFilter } from "../session-sharing.js";
@@ -545,7 +545,7 @@ export function createProjectsHandlers(service: ProjectWorktreeService): Gateway
           true,
           await materializeProjectClone(
             { cfg: context.getRuntimeConfig(), gitUrl: params.gitUrl, name: params.name },
-            { signal, token: gitHubPublicApi.githubApiToken() },
+            { signal, token: githubApiToken() },
           ),
           undefined,
         );

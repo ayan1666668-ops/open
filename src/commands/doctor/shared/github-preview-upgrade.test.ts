@@ -12,7 +12,7 @@ describe("optional GitHub upgrade diagnostics", () => {
     expect(collectGitHubUpgradeWarnings(normalizePluginsConfig())).toEqual([]);
     expect(load).toHaveBeenCalledWith({
       dirName: "github",
-      artifactCandidates: ["doctor-contract-api.js"],
+      artifactCandidates: ["upgrade-api.js"],
     });
   });
   it("passes prepared policy to the plugin without changing it", () => {

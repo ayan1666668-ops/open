@@ -12,7 +12,7 @@ import { classifyTailscaleLogin } from "../state/user-profiles-tailscale-login.j
 import { syncGitHubIdentity } from "../state/user-profiles.js";
 import { normalizeGitHubLogin } from "../utils/github-login.js";
 import type { GatewayAuthResult } from "./auth.js";
-import { gitHubPublicApi } from "./github-public-api.js";
+import { gitHubPublicApi, githubApiToken } from "./github-public-api.js";
 import type { AuthenticatedGitHubIdentitySync } from "./github-user-identity.types.js";
 
 const CLOUDFLARE_ACCESS_USER_HEADER = "cf-access-authenticated-user-email";
@@ -123,7 +123,7 @@ async function resolveGitHubUserIdentityByLogin(
   if (!requestedLogin) {
     throw new TypeError("GitHub username is invalid");
   }
-  const token = gitHubPublicApi.githubApiToken();
+  const token = githubApiToken();
   let payload: unknown;
   try {
     payload = await gitHubPublicApi.fetchGitHubJson(
@@ -285,7 +285,7 @@ export function createAuthenticatedGitHubIdentitySync(params: {
     );
     const identityBinding = { accountId: accessIdentity.accountId, email: access.principal };
     // Service auth raises public-data quota; Access still owns the signed-in account id.
-    const token = gitHubPublicApi.githubApiToken();
+    const token = githubApiToken();
     let lookup: GitHubIdentityLookup;
     try {
       lookup = await gitHubPublicApi.withOptionalGitHubAuth(token, (requestToken) =>

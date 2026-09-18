@@ -263,7 +263,8 @@ async function loadSessionCheckDetails(
 }
 
 export function createControlUiHandlers(
-  loadGitHubPreview: LoadGitHubPreview = gitHubPublicApi.loadControlUiGitHubPreview,
+  loadGitHubPreview: LoadGitHubPreview = (...args) =>
+    gitHubPublicApi.loadControlUiGitHubPreview(...args),
   loadSessionPreview: LoadSessionPreview = loadControlUiSessionPreview,
   loadChecks: typeof loadControlUiSessionPullRequestChecks = loadSessionCheckDetails,
 ): GatewayRequestHandlers {

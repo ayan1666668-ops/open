@@ -43,11 +43,9 @@ vi.mock("../commands/doctor-bootstrap-size.js", () => ({
   },
 }));
 vi.mock("../gateway/github-public-api.js", () => ({
-  gitHubPublicApi: {
-    hasConfiguredGitHubApiCredential: () => {
-      obs.events.push("github-credential-advice");
-      return false;
-    },
+  hasConfiguredGitHubApiCredential: () => {
+    obs.events.push("github-credential-advice");
+    return false;
   },
 }));
 vi.mock("../commands/doctor/shared/active-tool-schema-warnings.js", () => ({
