@@ -56,6 +56,7 @@ import {
   SidebarSessionProjection,
   type SidebarVisibleSections,
 } from "./app-sidebar-session-projection.ts";
+import { collectSidebarChildSessionParents } from "./app-sidebar-session-tree.ts";
 import {
   loadStoredHiddenSessionCatalogIds,
   loadStoredSidebarSessionSortMode,
@@ -86,6 +87,8 @@ export class AppSidebarSessionNavigationElement extends AppSidebarBase {
     agentIds: readonly string[];
     collapsedAgentIds: ReadonlySet<string>;
   } | null = null;
+
+  rosterMainSessions: ReadonlyMap<string, SidebarRecentSession> = new Map();
 
   protected readonly rosterVisibleSessionLimits = new Map<string, number>();
 
@@ -267,26 +270,12 @@ export class AppSidebarSessionNavigationElement extends AppSidebarBase {
   }
 
   private childSessionParents(): Set<string> {
-    const revalidating = new Set<string>();
-    const pending = [...this.visibleSessionRowsInOrder()];
-    while (pending.length > 0) {
-      const session = pending.shift();
-      if (!session) {
-        continue;
-      }
-      pending.push(...session.children);
-      if (
-        session.childSessionKeys.length > 0 &&
-        (session.visuallyActive || this.isSessionChildrenExpanded(session))
-      ) {
-        revalidating.add(session.key);
-      }
-    }
-    const mainRow = this.mainSessionRow();
-    if (mainRow && (mainRow.childSessions?.length ?? 0) > 0) {
-      revalidating.add(mainRow.key);
-    }
-    return revalidating;
+    const mainAgentIds = this.groupedSessionSource?.agentIds ?? [this.expandedAgentId()];
+    return collectSidebarChildSessionParents({
+      rows: this.visibleSessionRowsInOrder(),
+      mainRows: mainAgentIds.map((agentId) => this.mainSessionRow(agentId)),
+      isExpanded: (session) => this.isSessionChildrenExpanded(session),
+    });
   }
 
   setSessionOwnerFilter = (ownerId: string | null, involvingMe = false) =>
@@ -688,7 +677,14 @@ export class AppSidebarSessionNavigationElement extends AppSidebarBase {
       compareSessions: createSidebarSessionRowsComparator(this.readSidebarSessionSortOptions),
       knownSessionAttention: this.attention.knownSessionAttention(),
     });
-    return this.applySessionOwnerFilter(projected, this.selectedAgentSessionResult()?.owners);
+    const filtered = this.applySessionOwnerFilter(
+      [...projected.mainSessions.values(), ...projected.rows],
+      this.selectedAgentSessionResult()?.owners,
+    );
+    this.rosterMainSessions = new Map(
+      filtered.filter((row) => projected.mainSessions.has(row.key)).map((row) => [row.key, row]),
+    );
+    return filtered.filter((row) => !projected.mainSessions.has(row.key));
   }
 
   private selectedAgentSessionResult(): SessionsListResult | null {
