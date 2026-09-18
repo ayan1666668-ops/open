@@ -15,8 +15,8 @@ scenario:
       profile: full
   objective: Prove a child that finishes while its requester is still running is delivered exactly once through Telegram only after the requester lane releases.
   successCriteria:
-    - A real Telegram inbound turn spawns one native child, then keeps the requester lane occupied in a long-running exec call.
-    - The child reaches succeeded while that exec call is still in flight.
+    - A real Telegram inbound turn spawns one native child, then keeps the requester lane occupied in a foreground exec call that outlives the hold.
+    - The child holds its reply behind a readiness barrier until that exec call has actually started, then reaches succeeded while it is still in flight.
     - The requester's ordinary turn reply reaches Telegram before the deferred child completion reply.
     - The deferred child completion reaches Telegram exactly once after lane release.
   docsRefs:
@@ -32,7 +32,7 @@ scenario:
     isolationReason: Exercises a real Telegram transport and a live child completion while the requester session lane is occupied.
     channel: telegram
     retryCount: 0
-    summary: Hold the requester lane with exec, let a native child settle, and verify ordered exactly-once Telegram delivery after release.
+    summary: Hold the requester lane with a foreground exec, release a barrier-gated child inside that window, and verify ordered exactly-once Telegram delivery after release.
     config:
       requiredProviderMode: live-frontier
       childLabelPrefix: telegram-busy-lane-child
@@ -40,6 +40,8 @@ scenario:
       childVisiblePrefix: TELEGRAM_BUSY_CHILD_VISIBLE
       parentPrefix: TELEGRAM_BUSY_PARENT_DONE
       holdMs: 60000
+      execYieldMs: 90000
+      barrierTimeoutMs: 45000
       duplicateWindowMs: 8000
 
 flow:
@@ -76,10 +78,20 @@ flow:
         - set: proofPath
           value:
             expr: path.join(env.gateway.workspaceDir, proofFile)
+        # The hold publishes a marker the instant it starts. That marker, not
+        # relative model latency, is what releases the child, so the overlap the
+        # scenario asserts is established rather than hoped for.
+        - set: readyFile
+          value:
+            expr: "`telegram-busy-lane-hold-started-${randomUUID()}.txt`"
         - set: holdCommand
           value:
             expr: |-
-              `node -e ${JSON.stringify(`const fs=require("node:fs");const startedAt=Date.now();setTimeout(()=>{fs.writeFileSync(${JSON.stringify(proofFile)},JSON.stringify({startedAt,finishedAt:Date.now()})+"\\n");process.stdout.write("lane released\\n");},${config.holdMs});`)}`
+              `node -e ${JSON.stringify(`const fs=require("node:fs");const startedAt=Date.now();fs.writeFileSync(${JSON.stringify(readyFile)},String(startedAt)+"\\n");setTimeout(()=>{fs.writeFileSync(${JSON.stringify(proofFile)},JSON.stringify({startedAt,finishedAt:Date.now()})+"\\n");process.stdout.write("lane released\\n");},${config.holdMs});`)}`
+        - set: barrierCommand
+          value:
+            expr: |-
+              `node -e ${JSON.stringify(`const fs=require("node:fs");const deadline=Date.now()+${config.barrierTimeoutMs};const wait=()=>{if(fs.existsSync(${JSON.stringify(readyFile)})){process.stdout.write("hold started\\n");return;}if(Date.now()>deadline){process.stderr.write("requester hold never started\\n");process.exit(1);}setTimeout(wait,100);};wait();`)}`
         - set: attemptStartedAt
           value:
             expr: Date.now()
@@ -96,10 +108,11 @@ flow:
             text:
               expr: |-
                 `Telegram busy requester-lane probe. Follow these instructions exactly.
-                1. Call sessions_spawn exactly once with runtime subagent, label ${childLabel}, and this task: "Reply with exactly ${childResult} and nothing else. Do not call any tools."
-                2. Immediately after sessions_spawn succeeds, call exec exactly once with this exact command: ${holdCommand}
-                3. After exec finishes, reply with exactly ${parentMarker} and nothing else.
-                4. If the child completion arrives in a later turn, reply with exactly ${childVisible} and nothing else. Do not call any more tools.`
+                1. Call sessions_spawn exactly once with runtime subagent, label ${childLabel}, and this task: "Call exec exactly once with yieldMs ${config.barrierTimeoutMs} and this exact command: ${barrierCommand}\nAfter that exec call returns, reply with exactly ${childResult} and nothing else. Do not call any other tool."
+                2. Immediately after sessions_spawn succeeds, call exec exactly once with yieldMs ${config.execYieldMs} and this exact command: ${holdCommand}
+                3. Do not background that exec call and do not poll it with the process tool; let it return on its own.
+                4. After exec finishes, reply with exactly ${parentMarker} and nothing else.
+                5. If the child completion arrives in a later turn, reply with exactly ${childVisible} and nothing else. Do not call any more tools.`
         - call: waitForOutboundMessage
           saveAs: parentOutbound
           args:
@@ -168,12 +181,24 @@ flow:
         - assert:
             expr: "proofContents.startedAt <= completedChild.endedAt && completedChild.endedAt <= proofContents.finishedAt"
             message: exec proof interval did not contain child completion
+        # successfulToolCallEvents carries the tool RESULT timestamp, so an exec
+        # that had backgrounded itself at the default 10s yield would land here
+        # long before the command wrote its proof file.
+        - assert:
+            expr: "proofContents.finishedAt <= execEvent?.timestamp"
+            message:
+              expr: "`exec did not stay in the foreground for the whole hold; execFinished=${String(proofContents.finishedAt)} execToolResult=${String(execEvent?.timestamp)}`"
+        - assert:
+            expr: "completedChild.endedAt <= execEvent?.timestamp"
+            message:
+              expr: "`child completion did not precede the exec tool result; childEnded=${String(completedChild.endedAt)} execToolResult=${String(execEvent?.timestamp)}`"
         - assert:
             expr: "String(childTranscript.finalText ?? '').trim() === childResult"
             message: child did not produce the exact isolated result marker
         - assert:
-            expr: "Object.values(childTranscript.successfulToolCallCounts ?? {}).every((count) => count === 0)"
-            message: child unexpectedly called a tool
+            expr: "(childTranscript.successfulToolCallCounts?.exec ?? 0) === 1 && Object.entries(childTranscript.successfulToolCallCounts ?? {}).every(([name, count]) => name === 'exec' || count === 0)"
+            message:
+              expr: "`child did not run exactly one readiness-barrier exec and no other tool; tools=${JSON.stringify(childTranscript.successfulToolCallCounts ?? {})}`"
         - set: orderedOutbound
           value:
             expr: "state.getSnapshot().messages.filter((message) => message.direction === 'outbound').slice(outboundStartIndex).filter((message) => message.conversation.id === conversationId)"
