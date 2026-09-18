@@ -106,7 +106,7 @@ function renderSettingsSidebarSkeleton(props: SettingsSidebarProps) {
           ? html`<div class="settings-sidebar__group" aria-hidden="true">
               <span class="skeleton settings-sidebar__loading-group-label"></span>
               ${Array.from(
-                { length: 5 },
+                { length: 3 },
                 () => html`<span class="settings-sidebar__item settings-sidebar__loading-item">
                   <span class="skeleton settings-sidebar__loading-icon"></span>
                   <span class="skeleton settings-sidebar__loading-label"></span>

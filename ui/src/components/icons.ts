@@ -14,12 +14,6 @@ export const icons = {
   reddit: strokeIcon(
     svg`<ellipse cx="12" cy="15" rx="9" ry="6"/><path d="m12 9 2-6 4 1M4 11a2 2 0 1 0-1 4m17-4a2 2 0 1 1 1 4M8 17c2 2 6 2 8 0"/><circle cx="20" cy="4" r="2"/><circle cx="8" cy="13" r="1"/><circle cx="16" cy="13" r="1"/>`,
   ),
-  instagram: strokeIcon(
-    svg`<rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><path d="M17.5 6.5h.01"/>`,
-  ),
-  youtube: strokeIcon(
-    svg`<rect x="2" y="5" width="20" height="14" rx="4"/><path d="m10 9 5 3-5 3Z"/>`,
-  ),
   repeat: strokeIcon(
     svg`<path d="m17 2 4 4-4 4"/><path d="M3 11V9a3 3 0 0 1 3-3h15M7 22l-4-4 4-4"/><path d="M21 13v2a3 3 0 0 1-3 3H3"/>`,
   ),

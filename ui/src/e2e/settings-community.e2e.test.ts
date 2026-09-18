@@ -27,7 +27,7 @@ suite.define(() => {
         const about = nav.getByRole("link", { name: "About", exact: true });
         await about.waitFor();
         const links = nav.locator('a[target="_blank"]');
-        await expect.poll(() => links.count()).toBe(communityInvite ? 5 : 0);
+        await expect.poll(() => links.count()).toBe(communityInvite ? 3 : 0);
         if (!communityInvite) {
           expect(await nav.getByText("Community", { exact: true }).count()).toBe(0);
           return;
@@ -38,8 +38,6 @@ suite.define(() => {
           ["X", "https://x.com/openclaw"],
           ["Discord", "https://discord.com/invite/clawd"],
           ["Reddit", "https://www.reddit.com/r/openclaw/"],
-          ["Instagram", "https://www.instagram.com/openclaw_org/"],
-          ["YouTube", "https://www.youtube.com/@OpenClawYT"],
         ];
         for (const [name, href] of destinations) {
           const link = nav.getByRole("link", { name, exact: true });
@@ -60,7 +58,7 @@ suite.define(() => {
         await page.keyboard.press("Shift+Tab");
         expect(
           await nav
-            .getByRole("link", { name: "Instagram", exact: true })
+            .getByRole("link", { name: "Discord", exact: true })
             .evaluate((element) => element === document.activeElement),
         ).toBe(true);
       });

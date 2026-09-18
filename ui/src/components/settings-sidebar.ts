@@ -47,8 +47,6 @@ const communityLinks = [
   { name: "X", href: "https://x.com/openclaw", icon: "brandX" },
   { name: "Discord", href: "https://discord.com/invite/clawd", icon: "discord" },
   { name: "Reddit", href: "https://www.reddit.com/r/openclaw/", icon: "reddit" },
-  { name: "Instagram", href: "https://www.instagram.com/openclaw_org/", icon: "instagram" },
-  { name: "YouTube", href: "https://www.youtube.com/@OpenClawYT", icon: "youtube" },
 ] as const;
 
 type AgentRosterRow = AgentsListResult["agents"][number];
