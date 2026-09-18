@@ -26,7 +26,10 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { ChannelAccountKeyPolicy } from "../routing/account-lookup.js";
 import { DEFAULT_ACCOUNT_ID, normalizeAccountId } from "../routing/session-key.js";
 
-export { clearAccountFieldsFromConfigSection } from "../channels/plugins/config-helpers.js";
+export {
+  clearAccountFieldsFromConfigSection,
+  migrateScopedChannelConfigMap,
+} from "../channels/plugins/config-helpers.js";
 
 export {
   ensureOpenDmPolicyAllowFromWildcard,

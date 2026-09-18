@@ -1,6 +1,6 @@
 // Public channel registry facade for channel ids, metadata, and setup copy.
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
-import { normalizeChatChannelId } from "./ids.js";
+export { normalizeChatChannelId } from "./ids.js";
 import type { ChannelId } from "./plugins/channel-id.types.js";
 import type { ChannelMeta } from "./plugins/types.core.js";
 import {
@@ -11,7 +11,6 @@ export { findChatChannelMeta } from "./chat-meta.js";
 export { CHAT_CHANNEL_ORDER } from "./ids.js";
 export type { ChatChannelId } from "./ids.js";
 export { normalizeAnyChannelId } from "./registry-normalize.js";
-export { normalizeChatChannelId };
 
 /**
  * Lists registered channel plugin ids without importing their runtime implementations.

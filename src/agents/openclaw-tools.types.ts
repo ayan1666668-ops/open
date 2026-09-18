@@ -1,7 +1,3 @@
-import type {
-  SourceReplyDeliveryMode,
-  TaskSuggestionDeliveryMode,
-} from "../auto-reply/get-reply-options.types.js";
 import type { ChatType } from "../channels/chat-type.js";
 import type { InboundEventKind } from "../channels/inbound-event/kind.js";
 import type { ConversationReadInvocationOrigin } from "../channels/plugins/conversation-read-origin.js";
@@ -9,6 +5,7 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { ExecMode } from "../infra/exec-approvals.js";
 import type { SkillWorkshopRunOptions } from "../skills/workshop/types.js";
 import type { HookContext } from "./agent-tools.before-tool-call.js";
+import type { AgentRunClientContext, AgentRunMessageContext } from "./command/shared-types.js";
 import type { PreparedPairedComputerUse } from "./computer-use-node-capabilities.js";
 import type { ConversationRecallContext } from "./conversation-recall.types.js";
 import type { ExecPolicyOverrides, ExecSessionDefaults } from "./exec-defaults.js";
@@ -23,7 +20,6 @@ export type OpenClawToolsOptions = {
   sandboxBrowserBridgeUrl?: string;
   allowHostBrowserControl?: boolean;
   agentSessionKey?: string;
-  gatewayUiCommandTarget?: import("../gateway/ui-command-target.types.js").GatewayUiCommandTarget;
   toolBindings?: Readonly<Record<string, unknown>>;
   /** Durable store key when it differs from the sandbox/policy session key. */
   runSessionKey?: string;
@@ -37,7 +33,6 @@ export type OpenClawToolsOptions = {
   execOverrides?: ExecPolicyOverrides & { mode?: ExecMode };
   /** Trusted operator devices allowed to review this run's terminal input. */
   approvalReviewerDeviceIds?: string[];
-  agentAccountId?: string;
   /** Trusted account used for authorization; delivery keeps agentAccountId. */
   gatewayCallerAccountId?: string;
   gatewayCallerChannel?: string | null;
@@ -51,8 +46,6 @@ export type OpenClawToolsOptions = {
   agentThreadId?: string | number;
   /** Trusted platform-native conversation id for the active inbound turn. */
   nativeChannelId?: string;
-  /** Opaque host-issued capability for current-turn channel message actions. */
-  messageActionTurnCapability?: string;
   /** Message-only authority from a CLI grant; does not authorize plugin delivery. */
   messageToolTurnCapability?: { token: string; sessionKey: string };
   /** Private factory admission for a new scheduled message invocation. */
@@ -74,10 +67,6 @@ export type OpenClawToolsOptions = {
   sessionReadScopeKey?: string;
   webFetchHostnameAllowlistRef?: { value?: string[] };
   webSearchEnabled?: boolean;
-  /** Capabilities declared by the gateway client that originated this run. */
-  clientCaps?: string[];
-  /** Host-admitted dashboard authoring without an originating inline renderer. */
-  pinnedWidgetAuthoring?: boolean;
   pluginToolAllowlist?: string[];
   pluginToolDenylist?: string[];
   /** Prepared profile authority for the gateway tool's configuration-read actions. */
@@ -90,22 +79,12 @@ export type OpenClawToolsOptions = {
   cronCreatorToolAllowlistCaptureRef?: CronToolOptions["creatorToolAllowlistCaptureRef"];
   resolveCronCreatorToolAuthority?: CronToolOptions["resolveCreatorToolAuthority"];
   cronCreatorAuthorityUnavailableReason?: CronToolOptions["creatorAuthorityUnavailableReason"];
-  /** Current channel ID for auto-threading. */
-  currentChannelId?: string;
   /** Trusted normalized conversation kind for the active inbound turn. */
   currentChatType?: ChatType;
   /** Routable target for the current conversation when it differs from the native channel ID. */
   currentMessagingTarget?: string;
-  /** Current thread timestamp for auto-threading. */
-  currentThreadTs?: string;
-  /** Current inbound message id for action fallbacks. */
-  currentMessageId?: string | number;
-  /** True when the current inbound turn carried audio media. */
-  currentInboundAudio?: boolean;
   /** Dynamic audio state for runs that can accept steered input after tool creation. */
   hasCurrentInboundAudio?: () => boolean;
-  /** Reply-to mode for auto-threading. */
-  replyToMode?: "off" | "first" | "all" | "batched";
   /** Mutable ref to track if a reply was sent (for "first" mode). */
   hasRepliedRef?: { value: boolean };
   /** Fail closed instead of posting same-channel thread-originated replies at the root. */
@@ -120,20 +99,12 @@ export type OpenClawToolsOptions = {
   skillWorkshop?: SkillWorkshopRunOptions;
   /** If true, nodes action="invoke" can call media-returning commands directly. */
   allowMediaInvokeCommands?: boolean;
-  /** Trusted sender identity bit for channel action auth. */
-  senderIsOwner?: boolean;
   /** Server-owned operation-local origin for conversation-read visibility policy. */
   conversationReadOrigin?: ConversationReadInvocationOrigin;
   /** Restrict cron operations to the active cron job's self-scoped surface. */
   cronSelfRemoveOnlyJobId?: string;
-  /** Require explicit message targets (no implicit last-route sends). */
-  requireExplicitMessageTarget?: boolean;
-  /** Visible source replies must be sent through the message tool when set to message_tool_only. */
-  sourceReplyDeliveryMode?: SourceReplyDeliveryMode;
   /** Process-local completion authority restricted to the current source conversation. */
   sourceReplyOnly?: boolean;
-  /** Action sink available for model-proposed follow-up tasks. */
-  taskSuggestionDeliveryMode?: TaskSuggestionDeliveryMode;
   inboundEventKind?: InboundEventKind;
   /** If true, omit the message tool from the tool list. */
   disableMessageTool?: boolean;
@@ -189,5 +160,7 @@ export type OpenClawToolsOptions = {
   processScopeKey?: string;
   /** Allow plugin tools for this tool set to late-bind the gateway subagent. */
   allowGatewaySubagentBinding?: boolean;
-} & SpawnedToolContext &
+} & AgentRunClientContext &
+  AgentRunMessageContext &
+  SpawnedToolContext &
   ModelAwareToolContext;

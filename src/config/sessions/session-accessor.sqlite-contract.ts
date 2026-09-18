@@ -1,4 +1,4 @@
-import type {
+export type {
   DeletedAgentSessionEntryPurgeParams,
   DeleteSessionEntryLifecycleParams,
   DeleteSessionEntryLifecycleResult,
@@ -171,20 +171,6 @@ type SessionEntryBatchProjectionMutation = {
 export type SessionEntryBatchProjectionUpdate<T> = {
   mutations?: Iterable<SessionEntryBatchProjectionMutation>;
   result: T;
-};
-
-export type {
-  DeletedAgentSessionEntryPurgeParams,
-  DeleteSessionEntryLifecycleParams,
-  DeleteSessionEntryLifecycleResult,
-  ResetSessionEntryLifecycleParams,
-  ResetSessionEntryLifecycleResult,
-  SessionEntryLifecycleMutationResult,
-  SessionEntryLifecycleRemoval,
-  SessionEntryLifecycleUpsert,
-  SessionLifecycleArchivedTranscript,
-  SessionLifecycleArtifactCleanupParams,
-  SessionLifecycleArtifactCleanupResult,
 };
 
 export type {

@@ -1,7 +1,7 @@
 // Shared Zod leaves for bundled channel messaging configuration.
 import { z, type ZodRawShape, type ZodTypeAny } from "zod";
 import { NativeExecApprovalEnableModeSchema } from "./zod-schema.approvals.js";
-import { ChannelBotLoopProtectionSchema } from "./zod-schema.channels-config.js";
+export { ChannelBotLoopProtectionSchema } from "./zod-schema.channels-config.js";
 import {
   ChannelHealthMonitorSchema,
   ChannelHeartbeatVisibilitySchema,
@@ -206,8 +206,6 @@ export function buildChannelExecApprovalsSchema<T extends ZodRawShape = Record<n
     .strict()
     .optional();
 }
-
-export { ChannelBotLoopProtectionSchema };
 
 type ChannelReactionShapeOptions = {
   notificationModes?: readonly [string, string, ...string[]];

@@ -10,15 +10,13 @@ import { createOutboundSendDeps } from "../cli/outbound-send-deps.js";
 import type { OpenClawConfig } from "../config/types.js";
 import { resolveAgentOutboundIdentity } from "../infra/outbound/identity.js";
 import { buildOutboundSessionContext } from "../infra/outbound/session-context.js";
-import { resolveCronDeliveryPlan } from "./delivery-plan.js";
+export { resolveCronDeliveryPlan } from "./delivery-plan.js";
 import {
   resolveDeliveryTarget,
   type DeliveryTargetResolution,
 } from "./isolated-agent/delivery-target.js";
 import { resolveCronNotificationSessionKey } from "./session-target.js";
 import type { CronMessageChannel } from "./types.js";
-
-export { resolveCronDeliveryPlan };
 
 /** Channel target metadata used for cron announcements and failure notifications. */
 type CronAnnounceTarget = {

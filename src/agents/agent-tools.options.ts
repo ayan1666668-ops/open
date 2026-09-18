@@ -1,15 +1,9 @@
-import type {
-  SourceReplyDeliveryMode,
-  TaskSuggestionDeliveryMode,
-} from "../auto-reply/get-reply-options.types.js";
 import type { ThinkLevel } from "../auto-reply/thinking.shared.js";
-import type { ChatType } from "../channels/chat-type.js";
 import type { InboundEventKind } from "../channels/inbound-event/kind.js";
 import type { ModelCompatConfig } from "../config/types.models.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { GroupToolPolicyConfig } from "../config/types.tools.js";
 import type { DiagnosticTraceContext } from "../infra/diagnostic-trace-context.js";
-import type { PluginHookChannelContext } from "../plugins/hook-types.js";
 import type { InputProvenance } from "../sessions/input-provenance.js";
 import type { SkillSnapshot, SkillUsagePath } from "../skills/types.js";
 import type { SkillWorkshopRunOptions } from "../skills/workshop/types.js";
@@ -19,6 +13,11 @@ import type { SkillInstructionDeliveryCache } from "./agent-tools.read.js";
 import type { AuthProfileStore } from "./auth-profiles/types.js";
 import type { ExecToolDefaults } from "./bash-tools.exec-types.js";
 import type { ProcessToolDefaults } from "./bash-tools.process.js";
+import type {
+  AgentRunClientContext,
+  AgentRunMessageContext,
+  AgentRunChannelContext,
+} from "./command/shared-types.js";
 import type { ResolvedConversationCapabilityProfile } from "./conversation-capability-profile.js";
 import type { ConversationRecallContext } from "./conversation-recall.types.js";
 import type { OpenClawCodingToolConstructionPlan } from "./core-tool-factory-descriptors.js";
@@ -45,34 +44,21 @@ export type OpenClawCodingToolsOptions = {
   /** Retained policy owner; execution identity remains agentId/runSessionKey. */
   policyAgentId?: string;
   exec?: ExecToolDefaults & ProcessToolDefaults;
-  messageProvider?: string;
-  /** Canonical transport channel when tool-policy provider differs from delivery channel. */
-  messageChannel?: string;
   /**
    * How this run shows a blocking question tool's prompt. Left unset by harnesses
    * whose tool lifecycle reserves the prompt for them.
    */
   questionPrompt?: QuestionPromptDelivery;
-  /** Capabilities declared by the gateway client that originated this run. */
-  clientCaps?: string[];
-  gatewayUiCommandTarget?: import("../gateway/ui-command-target.types.js").GatewayUiCommandTarget;
-  /** Host-admitted dashboard authoring without an originating inline renderer. */
-  pinnedWidgetAuthoring?: boolean;
   /** Out-of-band plugin bindings attached by the run initiator. */
   toolBindings?: Readonly<Record<string, unknown>>;
   /** Trusted runtime-only authorization for one bounded cross-conversation recall pass. */
   conversationRecall?: ConversationRecallContext;
-  /** Normalized conversation kind when the caller already has channel metadata. */
-  chatType?: ChatType;
   /** Specific ingress provider used only for transport tool availability. */
   toolPolicyMessageProvider?: string;
-  agentAccountId?: string;
   messageTo?: string;
   messageThreadId?: string | number;
   /** Trusted platform-native conversation id for the active inbound turn. */
   nativeChannelId?: string;
-  /** Opaque host-issued capability for current-turn channel message actions. */
-  messageActionTurnCapability?: string;
   sandbox?: SandboxContext | null;
   stagedMediaPaths?: ReadonlyMap<string, string>;
   sessionKey?: string;
@@ -98,8 +84,6 @@ export type OpenClawCodingToolsOptions = {
   computerTransport?: import("./tools/computer-tool.js").ComputerToolTransport | null;
   /** Host-prepared effective paired-node Computer Use surface. */
   pairedNodeComputerUse?: import("./computer-use-node-capabilities.js").PreparedPairedComputerUse;
-  /** Device-scoped operator session allowed to review approvals initiated by this run. */
-  approvalReviewerDeviceId?: string;
   /** Diagnostic trace context for hook/log correlation during this run. */
   trace?: DiagnosticTraceContext;
   /** What initiated this run (for trigger-specific tool restrictions). */
@@ -159,38 +143,14 @@ export type OpenClawCodingToolsOptions = {
    * tool-name blocking quirks.
    */
   modelAuthMode?: ModelAuthMode;
-  /** Current channel ID for auto-threading (Slack). */
-  currentChannelId?: string;
   /** Routable target for the current conversation when it differs from the native channel ID. */
   currentMessagingTarget?: string;
   /** Normalized conversation id exposed to tool hooks. Defaults to currentChannelId. */
   hookChannelId?: string;
-  /** Channel-owned sender/chat metadata exposed to subprocess environments. */
-  channelContext?: PluginHookChannelContext;
-  /** Current thread timestamp for auto-threading (Slack). */
-  currentThreadTs?: string;
-  /** Current inbound message id for action fallbacks (e.g. Telegram react). */
-  currentMessageId?: string | number;
-  /** True when the current inbound turn carried audio media. */
-  currentInboundAudio?: boolean;
   /** Dynamic audio state for runs that can accept steered input after tool creation. */
   hasCurrentInboundAudio?: () => boolean;
-  /** Group id for channel-level tool policy resolution. */
-  groupId?: string | null;
-  /** Group channel label (e.g. #general) for channel-level tool policy resolution. */
-  groupChannel?: string | null;
-  /** Group space label (e.g. guild/team id) for channel-level tool policy resolution. */
-  groupSpace?: string | null;
   /** Trusted provider role ids for the requester in this group turn. */
   memberRoleIds?: string[];
-  /** Parent session key for subagent group policy inheritance. */
-  spawnedBy?: string | null;
-  senderId?: string | null;
-  senderName?: string | null;
-  senderUsername?: string | null;
-  senderE164?: string | null;
-  /** Reply-to mode for Slack auto-threading. */
-  replyToMode?: "off" | "first" | "all" | "batched";
   /** Mutable ref to track if a reply was sent (for "first" mode). */
   hasRepliedRef?: { value: boolean };
   /** Allow plugin tools for this run to late-bind the gateway subagent. */
@@ -217,12 +177,6 @@ export type OpenClawCodingToolsOptions = {
   skillInstructionDeliveryCache?: SkillInstructionDeliveryCache;
   /** Registers run-owned cleanup for tools that hold node resources. */
   registerRunCleanup?: (cleanup: (reason: string) => Promise<void>) => void;
-  /** Require explicit message targets (no implicit last-route sends). */
-  requireExplicitMessageTarget?: boolean;
-  /** Visible source replies must be sent through the message tool when set to message_tool_only. */
-  sourceReplyDeliveryMode?: SourceReplyDeliveryMode;
-  /** Action sink available for model-proposed follow-up tasks. */
-  taskSuggestionDeliveryMode?: TaskSuggestionDeliveryMode;
   inboundEventKind?: InboundEventKind;
   /** If true, omit the message tool from the tool list. */
   disableMessageTool?: boolean;
@@ -250,8 +204,6 @@ export type OpenClawCodingToolsOptions = {
   toolConstructionPlan?: OpenClawCodingToolConstructionPlan;
   /** Ring-zero OpenClaw tool; set only by the OpenClaw agent runner. */
   systemAgentTool?: import("./tools/system-agent-tool.js").SystemAgentToolOptions;
-  /** Trusted sender identity bit for command/channel-action auth and owner-gated plugin tools. */
-  senderIsOwner?: boolean;
   /** Auth profiles already loaded for this run; used for prompt-time tool availability. */
   authProfileStore?: AuthProfileStore;
   /** Callback invoked when sessions_yield tool is called. */
@@ -279,4 +231,6 @@ export type OpenClawCodingToolsOptions = {
   trustedInternalHandoff?: TrustedSubagentCompletionHandoff;
   /** Trusted server-stamped authority for an explicitly capped scheduled run. */
   scheduledToolPolicy?: ScheduledToolPolicyContext;
-};
+} & AgentRunClientContext &
+  AgentRunMessageContext &
+  AgentRunChannelContext;

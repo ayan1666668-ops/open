@@ -5,8 +5,8 @@ import { resolveIncognitoOpenClawAgentSqlitePath } from "../../state/openclaw-ag
 import type { OpenClawConfig } from "../types.openclaw.js";
 import { resolveAgentMainSessionKey } from "./main-session.js";
 import { resolveSessionStorePathCore } from "./paths.js";
-import { clearPluginOwnedSessionState } from "./plugin-host-cleanup.js";
-import {
+export { clearPluginOwnedSessionState } from "./plugin-host-cleanup.js";
+export {
   copySqliteSessionOwnedStateForCanonicalRepair as copySessionOwnedStateForCanonicalRepair,
   ensureSqliteTranscriptGenerationsForCanonicalRepair as ensureTranscriptGenerationsForCanonicalRepair,
   listSqliteSessionGenerationIdsForCanonicalRepair as listSessionGenerationIdsForCanonicalRepair,
@@ -14,10 +14,17 @@ import {
   rehomeSqliteSessionDeliveryReferencesForCanonicalRepairBatch as rehomeSessionDeliveryReferencesForCanonicalRepairBatch,
 } from "./session-accessor.sqlite-canonical-repair.js";
 import {
+  listSessionEntryRows,
+  listSessionEntriesReadOnly,
+  loadExactSessionEntry,
+  loadExactSessionEntryCandidates,
+  loadExactSessionEntryReadOnly,
+  patchSessionEntryCore,
+} from "./session-accessor.sqlite-entry.js";
+export {
   ensureSessionEntrySync,
   hasSessionEntriesByStatusReadOnly,
   listSessionChildEntriesReadOnly,
-  listSessionEntryRows,
   listSessionEntriesReadOnly,
   listSessionEntryKeysReadOnly,
   loadExactSessionEntry,
@@ -30,12 +37,14 @@ import {
   patchSessionEntryTarget,
   readSessionUpdatedAtCore,
   replaceSessionEntry,
+  // Intentionally unfenced: branching owns session-identity freshness; worker transcript commit
+  // fresh-reads and checks sessionId inside its locked commit, and void/entry has no rebound signal.
   replaceSessionEntrySync,
   upsertSessionEntryCore,
   withSessionEntryReadOnlyScope,
 } from "./session-accessor.sqlite-entry.js";
 import { resolveSessionEntry } from "./session-accessor.sqlite-exact-read.js";
-import { readSessionStoreSummaryReadOnly } from "./session-accessor.sqlite-summary.js";
+export { readSessionStoreSummaryReadOnly } from "./session-accessor.sqlite-summary.js";
 import type {
   SessionAccessScope,
   LogicalSessionAccessScope,
@@ -61,38 +70,7 @@ import {
 import { resolveAllAgentSessionStoreTargetsSync, type SessionStoreTarget } from "./targets.js";
 import type { InternalSessionEntry as SessionEntry } from "./types.js";
 
-export { clearPluginOwnedSessionState };
-
-// SQLite is the only runtime session store. Re-export its canonical entry operations directly.
-export {
-  copySessionOwnedStateForCanonicalRepair,
-  ensureTranscriptGenerationsForCanonicalRepair,
-  ensureSessionEntrySync,
-  hasSessionEntriesByStatusReadOnly,
-  listSessionGenerationIdsForCanonicalRepair,
-  listSessionChildEntriesReadOnly,
-  listSessionEntriesReadOnly,
-  rehomeSessionDeliveryReferencesForCanonicalRepair,
-  rehomeSessionDeliveryReferencesForCanonicalRepairBatch,
-  listSessionEntryKeysReadOnly,
-  loadExactSessionEntry,
-  loadExactSessionEntryCandidates,
-  loadExactSessionEntryCandidatesReadOnlyBatch,
-  loadExactSessionEntryReadOnly,
-  loadSessionEntry,
-  loadSessionEntryReadOnly,
-  patchSessionEntryCore,
-  patchSessionEntryTarget,
-  readSessionUpdatedAtCore,
-  replaceSessionEntry,
-  // Intentionally unfenced: branching owns session-identity freshness; worker transcript commit
-  // fresh-reads and checks sessionId inside its locked commit, and void/entry has no rebound signal.
-  replaceSessionEntrySync,
-  resolveSessionEntryFromStore,
-  readSessionStoreSummaryReadOnly,
-  upsertSessionEntryCore,
-  withSessionEntryReadOnlyScope,
-};
+export { resolveSessionEntryFromStore };
 
 /** Resolves a session directly through canonical SQLite row and alias ownership. */
 export function resolveSessionEntrySelection(

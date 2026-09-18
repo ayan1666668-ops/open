@@ -171,197 +171,95 @@ export function countRichTextChars(text: RichText): number {
   return countRichTextChars(text.text);
 }
 
-function countCaptionChars(caption: RichBlockCaption | undefined): number {
-  if (!caption) {
-    return 0;
-  }
-  return countRichTextChars(caption.text) + countRichTextChars(caption.credit ?? "");
-}
-
-export function countInputRichBlockChars(block: InputRichBlock): number {
-  switch (block.type) {
-    case "paragraph":
-    case "heading":
-    case "footer":
-      return countRichTextChars(block.text);
-    case "pre":
-      return block.text.length;
-    case "mathematical_expression":
-      return block.expression.length;
-    case "pullquote":
-      return countRichTextChars(block.text) + countRichTextChars(block.credit ?? "");
-    case "blockquote":
-      return (
-        block.blocks.reduce((total, item) => total + countInputRichBlockChars(item), 0) +
-        countRichTextChars(block.credit ?? "")
-      );
-    case "collage":
-    case "slideshow":
-      return (
-        block.blocks.reduce((total, item) => total + countInputRichBlockChars(item), 0) +
-        countCaptionChars(block.caption)
-      );
-    case "details":
-      return (
-        countRichTextChars(block.summary) +
-        block.blocks.reduce((total, item) => total + countInputRichBlockChars(item), 0)
-      );
-    case "list":
-      return block.items.reduce(
-        (total, item) =>
-          total + item.blocks.reduce((inner, child) => inner + countInputRichBlockChars(child), 0),
-        0,
-      );
-    case "table":
-      return (
-        countRichTextChars(block.caption ?? "") +
-        block.cells.reduce(
-          (rowTotal, row) =>
-            rowTotal +
-            row.reduce((cellTotal, cell) => cellTotal + countRichTextChars(cell.text ?? ""), 0),
-          0,
-        )
-      );
-    case "photo":
-    case "video":
-    case "audio":
-    case "animation":
-    case "voice_note":
-    case "map":
-      return countCaptionChars(block.caption);
-    // divider and anchor carry no text.
-    default:
-      return 0;
-  }
-}
-
-/** Bot API block budget, including nested blocks, list items, and table rows. */
-export function countInputRichBlocks(blocks: readonly InputRichBlock[]): number {
-  return blocks.reduce((total, block) => {
-    switch (block.type) {
-      case "blockquote":
-      case "details":
-      case "collage":
-      case "slideshow":
-        return total + 1 + countInputRichBlocks(block.blocks);
-      case "list":
-        return (
-          total +
-          1 +
-          block.items.reduce((items, item) => items + 1 + countInputRichBlocks(item.blocks), 0)
-        );
-      case "table":
-        return total + 1 + block.cells.length;
-      default:
-        return total + 1;
-    }
-  }, 0);
-}
-
-function maxRichTextNesting(text: RichText): number {
-  if (typeof text === "string") {
-    return 0;
-  }
-  if (Array.isArray(text)) {
-    return Math.max(0, ...text.map(maxRichTextNesting));
-  }
-  if (text.type === "mathematical_expression" || text.type === "custom_emoji") {
-    return 0;
-  }
-  return 1 + maxRichTextNesting(text.text);
-}
-
-function maxCaptionNesting(caption: RichBlockCaption | undefined): number {
-  return caption
-    ? Math.max(
-        maxRichTextNesting(caption.text),
-        caption.credit ? maxRichTextNesting(caption.credit) : 0,
-      )
-    : 0;
-}
-
-/** Maximum nested block/formatting edges in a rich-message tree. */
-export function maxInputRichBlockNesting(blocks: readonly InputRichBlock[]): number {
-  const blockDepth = (block: InputRichBlock): number => {
-    switch (block.type) {
-      case "paragraph":
-      case "heading":
-      case "footer":
-        return maxRichTextNesting(block.text);
-      case "pullquote":
-        return Math.max(
-          maxRichTextNesting(block.text),
-          block.credit ? maxRichTextNesting(block.credit) : 0,
-        );
-      case "blockquote":
-        return Math.max(
-          1 + maxInputRichBlockNesting(block.blocks),
-          block.credit ? 1 + maxRichTextNesting(block.credit) : 0,
-        );
-      case "details":
-        return Math.max(
-          1 + maxInputRichBlockNesting(block.blocks),
-          1 + maxRichTextNesting(block.summary),
-        );
-      case "collage":
-      case "slideshow":
-        return Math.max(
-          1 + maxInputRichBlockNesting(block.blocks),
-          1 + maxCaptionNesting(block.caption),
-        );
-      case "list":
-        return 1 + Math.max(0, ...block.items.map((item) => maxInputRichBlockNesting(item.blocks)));
-      case "table":
-        return (
-          1 +
-          Math.max(
-            maxRichTextNesting(block.caption ?? ""),
-            ...block.cells.flatMap((row) => row.map((cell) => maxRichTextNesting(cell.text ?? ""))),
-          )
-        );
-      case "photo":
-      case "video":
-      case "audio":
-      case "animation":
-      case "voice_note":
-      case "map":
-        return block.caption ? 1 + maxCaptionNesting(block.caption) : 0;
-      case "pre":
-        // This wire model intentionally narrows pre text to a plain string;
-        // draft-only thinking blocks are not part of InputRichBlock.
-        return 0;
-      default:
-        return 0;
+/** Bot API budgets: UTF-16 text, nested blocks/items/rows, media, and formatting edges. */
+export function measureInputRichBlocks(blocks: readonly InputRichBlock[]) {
+  const size = { chars: 0, blocks: 0, media: 0, nesting: 0 };
+  const visitText = (text: RichText, depth: number): void => {
+    size.nesting = Math.max(size.nesting, depth);
+    if (typeof text === "string") {
+      size.chars += text.length;
+    } else if (Array.isArray(text)) {
+      for (const part of text) {
+        visitText(part, depth);
+      }
+    } else if (text.type === "mathematical_expression") {
+      size.chars += text.expression.length;
+    } else if (text.type === "custom_emoji") {
+      size.chars += text.alternative_text.length;
+    } else {
+      visitText(text.text, depth + 1);
     }
   };
-  return Math.max(0, ...blocks.map(blockDepth));
-}
-
-/** Media elements per block, for the wire's 50-media message cap. */
-export function countInputRichBlockMedia(block: InputRichBlock): number {
-  switch (block.type) {
-    // Maps are excluded: 51 maps in one message were accepted live, so they
-    // do not consume the 50-attachment budget.
-    case "photo":
-    case "video":
-    case "audio":
-    case "animation":
-    case "voice_note":
-      return 1;
-    case "collage":
-    case "slideshow":
-    case "blockquote":
-    case "details":
-      return block.blocks.reduce((total, item) => total + countInputRichBlockMedia(item), 0);
-    case "list":
-      return block.items.reduce(
-        (total, item) =>
-          total + item.blocks.reduce((inner, child) => inner + countInputRichBlockMedia(child), 0),
-        0,
-      );
-    default:
-      return 0;
-  }
+  const visitCaption = (caption: RichBlockCaption | undefined, depth: number) => {
+    if (caption) {
+      visitText(caption.text, depth);
+      visitText(caption.credit ?? "", depth);
+    }
+  };
+  const visitBlocks = (children: readonly InputRichBlock[], depth: number): void => {
+    size.nesting = Math.max(size.nesting, depth);
+    for (const block of children) {
+      size.blocks += 1;
+      switch (block.type) {
+        case "paragraph":
+        case "heading":
+        case "footer":
+        case "pre":
+          visitText(block.text, depth);
+          break;
+        case "mathematical_expression":
+          visitText(block.expression, depth);
+          break;
+        case "pullquote":
+          visitText(block.text, depth);
+          visitText(block.credit ?? "", depth);
+          break;
+        case "blockquote":
+          visitBlocks(block.blocks, depth + 1);
+          visitText(block.credit ?? "", depth + 1);
+          break;
+        case "details":
+          visitBlocks(block.blocks, depth + 1);
+          visitText(block.summary, depth + 1);
+          break;
+        case "collage":
+        case "slideshow":
+          visitBlocks(block.blocks, depth + 1);
+          visitCaption(block.caption, depth + 1);
+          break;
+        case "list":
+          size.blocks += block.items.length;
+          size.nesting = Math.max(size.nesting, depth + 1);
+          for (const item of block.items) {
+            visitBlocks(item.blocks, depth + 1);
+          }
+          break;
+        case "table":
+          size.blocks += block.cells.length;
+          visitText(block.caption ?? "", depth + 1);
+          for (const row of block.cells) {
+            for (const cell of row) {
+              visitText(cell.text ?? "", depth + 1);
+            }
+          }
+          break;
+        case "photo":
+        case "video":
+        case "audio":
+        case "animation":
+        case "voice_note":
+          size.media += 1;
+          visitCaption(block.caption, depth + 1);
+          break;
+        case "map":
+          // Live-verified: maps do not consume the 50-attachment budget.
+          visitCaption(block.caption, depth + 1);
+          break;
+      }
+    }
+  };
+  visitBlocks(blocks, 0);
+  return size;
 }
 
 export function richTextToPlainString(text: RichText): string {

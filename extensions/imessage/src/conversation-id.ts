@@ -1,16 +1,10 @@
 // Imessage plugin module implements conversation id behavior.
-import {
+export {
   matchIMessageAcpConversation,
   normalizeIMessageAcpConversationId,
   resolveIMessageConversationIdFromTarget,
 } from "./conversation-id-core.js";
 import { normalizeIMessageHandle } from "./targets.js";
-
-export {
-  matchIMessageAcpConversation,
-  normalizeIMessageAcpConversationId,
-  resolveIMessageConversationIdFromTarget,
-};
 
 export function resolveIMessageInboundConversationId(params: {
   isGroup: boolean;

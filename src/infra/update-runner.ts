@@ -8,7 +8,7 @@ import {
 } from "./update-install-root.js";
 import { UPDATE_RUNNER_TIMEOUT_MS } from "./update-run-timeouts.js";
 import { buildUpdateCommandRunner } from "./update-runner-command.js";
-import { resolveUpdateDoctorExecutionPolicy } from "./update-runner-doctor.js";
+export { resolveUpdateDoctorExecutionPolicy } from "./update-runner-doctor.js";
 import { updateGitCheckout } from "./update-runner-git.js";
 import {
   buildStartDirs,
@@ -26,7 +26,7 @@ export type {
   UpdateStepProgress,
   UpdateStepResult,
 } from "./update-runner-types.js";
-export { resolveUpdateDoctorExecutionPolicy, resolveUpdateInstallSurface };
+export { resolveUpdateInstallSurface };
 
 export async function runGatewayUpdate(opts: UpdateRunnerOptions = {}): Promise<UpdateRunResult> {
   const result = await runGatewayUpdateInternal(opts);

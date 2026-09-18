@@ -6,7 +6,7 @@ import { resolveConfigDir } from "./infra/config-dir.js";
 import { pathExists as fsSafePathExists } from "./infra/fs-safe.js";
 import { resolveEffectiveHomeDir, resolveUserPath } from "./infra/home-dir.js";
 import { shortenPathWithHome } from "./infra/home-display.js";
-import { isPlainObject } from "./infra/plain-object.js";
+export { isPlainObject } from "./infra/plain-object.js";
 import { escapeRegExp as escapeRegExpValue } from "./shared/regexp.js";
 export { escapeRegExp } from "./shared/regexp.js";
 export { sleep } from "./utils/sleep.js";
@@ -42,8 +42,6 @@ export function tryParseJson<T>(raw: string): T | null {
     return null;
   }
 }
-
-export { isPlainObject };
 
 /** Normalizes phone-like input into the loose E.164 shape used by channel helpers. */
 export function normalizeE164(number: string): string {

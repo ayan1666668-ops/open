@@ -126,4 +126,17 @@ describe("migrateTelegramGroupConfig", () => {
       "-123": { requireMention: true },
     });
   });
+
+  it("rejects an owned undefined source without moving it", () => {
+    const cfg = createTelegramGlobalGroupConfig({});
+    Object.defineProperty(cfg.channels.telegram.groups, "-123", {
+      value: undefined,
+      enumerable: true,
+      configurable: true,
+    });
+    expect(() =>
+      migrateTelegramGroupConfig({ cfg, oldChatId: "-123", newChatId: "-100123" }),
+    ).toThrow("expected owned Telegram group config key to be defined");
+    expect(Object.keys(cfg.channels.telegram.groups)).toEqual(["-123"]);
+  });
 });

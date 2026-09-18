@@ -258,6 +258,15 @@ raw callback string. Actor and source-message checks remain channel-owned.
     selection, persistence, environment reporting, and other logout side effects
     in the plugin.
 
+    Provider conversation-ID changes can use `migrateScopedChannelConfigMap`
+    from the same subpath. Supply the root and account records, a `selectMap`
+    callback, the old/new IDs, and a `mapSourceValue` callback that returns the
+    value to move, returns `undefined` to skip it, or throws for an invalid
+    authored source. The helper mutates the selected account and root maps in
+    place, preserving existing destinations, and reports `migrated`,
+    `skippedExisting`, and ordered `scopes`. The plugin retains config-write
+    authorization and persistence.
+
     If a channel intentionally applies stricter DM session routing than the
     global config, expose that behavior through `security.dmRouting` so Doctor
     and security audit resolve the same session owner as runtime. The optional

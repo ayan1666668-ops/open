@@ -1,11 +1,11 @@
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 // Discord plugin module implements runtime.messaging behavior.
-import { readDiscordComponentSpec } from "../components.js";
-import { sendDiscordComponentMessage } from "../send.components.js";
+export { readDiscordComponentSpec } from "../components.js";
+export { sendDiscordComponentMessage } from "../send.components.js";
 import { resolveDiscordTargetChannelId } from "../send.shared.js";
 import { resolveDiscordChannelId } from "../targets.js";
 
-export { readDiscordComponentSpec, resolveDiscordChannelId, sendDiscordComponentMessage };
+export { resolveDiscordChannelId };
 export {
   createThreadDiscord,
   deleteMessageDiscord,

@@ -4,7 +4,7 @@
  * Compatibility wrappers for plugin command registration, matching, and execution.
  */
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { clearPluginCommands, registerPluginCommand } from "./command-registration.js";
+export { clearPluginCommands, registerPluginCommand } from "./command-registration.js";
 import {
   listRegisteredPluginAgentPromptGuidance,
   type RegisteredPluginCommand,
@@ -18,7 +18,7 @@ import { listRegisteredPluginCommands } from "./plugin-command-registry.js";
 import { requireActivePluginRegistry } from "./runtime.js";
 import type { PluginCommandContext, PluginCommandResult } from "./types.js";
 
-export { clearPluginCommands, listRegisteredPluginAgentPromptGuidance, registerPluginCommand };
+export { listRegisteredPluginAgentPromptGuidance };
 
 /** Match one compatibility command invocation against the current command registry. */
 export function matchPluginCommand(

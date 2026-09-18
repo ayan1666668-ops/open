@@ -14,8 +14,7 @@ import {
 } from "openclaw/plugin-sdk/agent-runtime";
 import {
   formatCommandArgMenuTitle,
-  resolveEffectiveAgentRuntime,
-  resolveStoredModelOverride,
+  resolveNativeCommandMenuModelContext,
   type ChatCommandDefinition,
   type CommandArgs,
   resolveNativeCommandSessionTargets,
@@ -39,10 +38,7 @@ import type {
 import type { ResolvedAgentRoute } from "openclaw/plugin-sdk/routing";
 import { danger, logVerbose, warn } from "openclaw/plugin-sdk/runtime-env";
 import { getSessionEntry, resolveStorePath } from "openclaw/plugin-sdk/session-store-runtime";
-import {
-  normalizeLowercaseStringOrEmpty,
-  normalizeOptionalString,
-} from "openclaw/plugin-sdk/string-coerce-runtime";
+import { normalizeLowercaseStringOrEmpty } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { chunkItems } from "openclaw/plugin-sdk/text-chunking";
 import { resolveSlackAccount, type ResolvedSlackAccount } from "../accounts.js";
 import { SLACK_MAX_BLOCKS } from "../blocks-input.js";
@@ -128,38 +124,12 @@ function resolveSlackCommandMenuModelContext(params: {
     });
     const storePath = resolveStorePath(params.cfg.session?.store, { agentId: params.agentId });
     const entry = getSessionEntry({ storePath, sessionKey: params.sessionKey });
-    let provider: string | undefined;
-    let model: string | undefined;
-    if (entry?.modelOverrideSource === "auto" && normalizeOptionalString(entry.modelOverride)) {
-      provider = defaultModel.provider;
-      model = defaultModel.model;
-    } else {
-      const override = resolveStoredModelOverride({
-        sessionEntry: entry,
-        loadSessionEntry: (sessionKey) => getSessionEntry({ storePath, sessionKey }),
-        sessionKey: params.sessionKey,
-        defaultProvider: defaultModel.provider,
-      });
-      provider = override?.model
-        ? override.provider || defaultModel.provider
-        : (normalizeOptionalString(entry?.providerOverride) ??
-          normalizeOptionalString(entry?.modelProvider));
-      model = override?.model
-        ? override.model
-        : (normalizeOptionalString(entry?.modelOverride) ?? normalizeOptionalString(entry?.model));
-    }
-    return {
-      ...(provider ? { provider } : {}),
-      ...(model ? { model } : {}),
-      agentRuntime: resolveEffectiveAgentRuntime({
-        cfg: params.cfg,
-        provider: provider ?? defaultModel.provider,
-        modelId: model ?? defaultModel.model,
-        agentId: params.agentId,
-        sessionKey: params.sessionKey,
-        sessionEntry: entry,
-      }),
-    };
+    return resolveNativeCommandMenuModelContext({
+      ...params,
+      defaultModel,
+      sessionEntry: entry,
+      loadSessionEntry: (sessionKey) => getSessionEntry({ storePath, sessionKey }),
+    });
   } catch {
     return {};
   }

@@ -15,10 +15,10 @@ import {
   type FinalizeChannelInboundContextResult,
 } from "../channels/inbound-event/context.js";
 import type { InboundEventKind } from "../channels/inbound-event/kind.js";
-import {
-  hasFinalChannelTurnDispatch,
-  hasVisibleChannelTurnDispatch,
-  resolveChannelTurnDispatchCounts,
+export {
+  hasFinalChannelTurnDispatch as hasFinalInboundReplyDispatch,
+  hasVisibleChannelTurnDispatch as hasVisibleInboundReplyDispatch,
+  resolveChannelTurnDispatchCounts as resolveInboundReplyDispatchCounts,
 } from "../channels/turn/dispatch-result.js";
 import { runPreparedChannelTurn } from "../channels/turn/execution.js";
 import {
@@ -275,11 +275,8 @@ export async function dispatchChannelInboundTurn(
 }
 
 export {
-  hasFinalChannelTurnDispatch as hasFinalInboundReplyDispatch,
-  hasVisibleChannelTurnDispatch as hasVisibleInboundReplyDispatch,
   recordDroppedChannelTurnHistoryInternal as recordDroppedChannelInboundHistory,
   recordDroppedChannelTurnHistoryInternal as recordDroppedChannelTurnHistory,
-  resolveChannelTurnDispatchCounts as resolveInboundReplyDispatchCounts,
 };
 export {
   createAcceptedChannelDeliveryResult,

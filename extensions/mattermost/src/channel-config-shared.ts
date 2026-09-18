@@ -6,7 +6,7 @@ import {
   createScopedChannelConfigAdapter,
 } from "openclaw/plugin-sdk/channel-config-helpers";
 import { normalizeLowercaseStringOrEmpty } from "openclaw/plugin-sdk/string-coerce-runtime";
-import { resolveMattermostGatewayAuthBypassPaths } from "./gateway-auth-bypass.js";
+export { resolveMattermostGatewayAuthBypassPaths } from "./gateway-auth-bypass.js";
 import {
   inspectMattermostAccount,
   isMattermostConfigured,
@@ -49,8 +49,6 @@ function formatMattermostAllowEntry(entry: string): string {
   }
   return normalizeLowercaseStringOrEmpty(trimmed.replace(/^(mattermost|user):/i, ""));
 }
-
-export { resolveMattermostGatewayAuthBypassPaths };
 
 export const mattermostConfigAdapter = createScopedChannelConfigAdapter<ResolvedMattermostAccount>({
   sectionKey: "mattermost",

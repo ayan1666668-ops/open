@@ -3,18 +3,67 @@
  *
  * Updates account enabled state and detects configured secret-like values.
  */
+import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import {
   resolveAccountKey,
   resolveChannelAccountKey,
   type ChannelAccountKeyPolicy,
 } from "../../routing/account-lookup.js";
-import { DEFAULT_ACCOUNT_ID } from "../../routing/session-key.js";
+import { DEFAULT_ACCOUNT_ID, normalizeAccountId } from "../../routing/session-key.js";
 
 type ChannelSection = {
   accounts?: Record<string, Record<string, unknown>>;
   enabled?: boolean;
 };
+
+/** Move a provider-renamed conversation in account and root maps without replacing a destination. */
+export function migrateScopedChannelConfigMap<TAccount, TValue>(params: {
+  root?: TAccount;
+  accounts?: Record<string, TAccount>;
+  accountId?: string | null;
+  selectMap: (entry: TAccount | undefined) => Record<string, TValue> | undefined;
+  mapSourceValue: (value: TValue | undefined) => TValue | undefined;
+  oldId: string;
+  newId: string;
+}): { migrated: boolean; skippedExisting: boolean; scopes: Array<"account" | "global"> } {
+  let accountMap: Record<string, TValue> | undefined;
+  if (params.accountId && params.accounts && typeof params.accounts === "object") {
+    const normalized = normalizeAccountId(params.accountId);
+    accountMap = params.selectMap(params.accounts[normalized]);
+    if (!accountMap) {
+      const matchKey = Object.keys(params.accounts).find(
+        (key) =>
+          normalizeLowercaseStringOrEmpty(key) === normalizeLowercaseStringOrEmpty(normalized),
+      );
+      accountMap = matchKey ? params.selectMap(params.accounts[matchKey]) : undefined;
+    }
+  }
+  const scopes: Array<"account" | "global"> = [];
+  let skippedExisting = false;
+  const targets = [
+    { scope: "account", map: accountMap },
+    { scope: "global", map: params.selectMap(params.root) },
+  ] as const;
+  for (const { scope, map } of targets) {
+    if (!map || params.oldId === params.newId || !Object.hasOwn(map, params.oldId)) {
+      continue;
+    }
+    if (Object.hasOwn(map, params.newId)) {
+      skippedExisting = true;
+      continue;
+    }
+    // The plugin owns whether an authored invalid source is skipped or rejected.
+    const value = params.mapSourceValue(map[params.oldId]);
+    if (value === undefined) {
+      continue;
+    }
+    map[params.newId] = value;
+    delete map[params.oldId];
+    scopes.push(scope);
+  }
+  return { migrated: scopes.length > 0, skippedExisting, scopes };
+}
 
 /** Replace one section; undefined removes it and prunes an empty channels object. */
 export function writeChannelSection(

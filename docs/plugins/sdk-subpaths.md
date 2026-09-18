@@ -259,7 +259,7 @@ usage endpoint failed or returned no usable usage data.
     | `plugin-sdk/approval-reaction-runtime` | Private-local after July 2026; Hardcoded approval reaction bindings, reaction prompt payloads, reaction target stores, reaction hint text helpers, and compatibility export for local native exec prompt suppression |
     | `plugin-sdk/approval-reply-runtime` | Exec/plugin approval reply payload helpers |
     | `plugin-sdk/approval-runtime` | Exec/plugin/system-agent approval payload helpers, approval-capability builders, approval auth/profile helpers, native approval routing/runtime helpers, and structured approval display helpers such as `formatApprovalDisplayPath` |
-    | `plugin-sdk/command-auth-native` | Native command auth, dynamic argument menu formatting, and native session-target helpers |
+    | `plugin-sdk/command-auth-native` | Native command auth, dynamic argument menu formatting, `resolveNativeCommandMenuModelContext`, and native session-target helpers |
     | `plugin-sdk/command-detection` | Shared command detection helpers |
     | `plugin-sdk/command-primitives-runtime` | Lightweight command text predicates for hot channel paths |
     | `plugin-sdk/command-surface` | Private-local after July 2026; Command-body normalization and command-surface helpers |
@@ -278,6 +278,14 @@ usage endpoint failed or returned no usable usage data.
     | `plugin-sdk/webhook-ingress` | Webhook request/target helpers and raw websocket/body coercion |
     | `plugin-sdk/webhook-request-guards` | Request body size/timeout helpers, canonical Gateway browser-origin acceptance via `resolveAcceptedBrowserOrigin`, and `runDetachedWebhookWork` for tracked post-ack processing |
   </Accordion>
+
+`resolveNativeCommandMenuModelContext` projects native argument-menu choices
+from caller-supplied `cfg`, `agentId`, `sessionKey`, `defaultModel`,
+`sessionEntry`, and a `loadSessionEntry` callback for parent inheritance. It
+keeps temporary automatic fallback models out of menu selection and resolves
+the effective runtime for the selected model. It does not open a session store
+or discover a model catalog. Callers retain session-read consistency, error
+handling, and channel-specific menu fields such as thinking level or fast mode.
 
 ### Sensitive text redaction
 

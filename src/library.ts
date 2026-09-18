@@ -1,14 +1,14 @@
 // Public library facade for consumers embedding OpenClaw reply runtime APIs.
 import type { getReplyFromConfig as getReplyFromConfigRuntime } from "./auto-reply/reply.runtime.js";
-import { applyTemplate } from "./auto-reply/templating.js";
-import { createDefaultDeps } from "./cli/deps.js";
+export { applyTemplate } from "./auto-reply/templating.js";
+export { createDefaultDeps } from "./cli/deps.js";
 import type { promptYesNo as promptYesNoRuntime } from "./cli/prompt.js";
-import { waitForever } from "./cli/wait.js";
-import { loadConfig } from "./config/config.js";
-import { resolveSessionStorePathCore } from "./config/sessions/paths.js";
-import { deriveSessionKey, resolveSessionKey } from "./config/sessions/session-key.js";
+export { waitForever } from "./cli/wait.js";
+export { loadConfig } from "./config/config.js";
+export { resolveSessionStorePathCore as resolveStorePath } from "./config/sessions/paths.js";
+export { deriveSessionKey, resolveSessionKey } from "./config/sessions/session-key.js";
 import type { ensureBinary as ensureBinaryRuntime } from "./infra/binaries.js";
-import {
+export {
   describePortOwner,
   ensurePortAvailable,
   handlePortError,
@@ -24,7 +24,7 @@ import type {
   runExec as runExecRuntime,
 } from "./process/exec.js";
 import { createLazyRuntimeModule } from "./shared/lazy-runtime.js";
-import { normalizeE164 } from "./utils.js";
+export { normalizeE164 } from "./utils.js";
 
 type GetReplyFromConfig = typeof getReplyFromConfigRuntime;
 type PromptYesNo = typeof promptYesNoRuntime;
@@ -67,18 +67,3 @@ export async function saveSessionStore(
 ): Promise<void> {
   await saveLegacySessionStore(storePath, store, options);
 }
-
-export {
-  applyTemplate,
-  createDefaultDeps,
-  deriveSessionKey,
-  describePortOwner,
-  ensurePortAvailable,
-  handlePortError,
-  loadConfig,
-  normalizeE164,
-  PortInUseError,
-  resolveSessionKey,
-  resolveSessionStorePathCore as resolveStorePath,
-  waitForever,
-};

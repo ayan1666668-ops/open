@@ -3,8 +3,8 @@ import {
   startWebLoginWithQr as startWebLoginWithQrImpl,
   waitForWebLogin as waitForWebLoginImpl,
 } from "../login-qr-runtime.js";
-import { getActiveWebListener } from "./active-listener.js";
-import {
+export { getActiveWebListener } from "./active-listener.js";
+export {
   getWebAuthAgeMs,
   logWebSelfId,
   logoutWeb,
@@ -16,25 +16,9 @@ import {
   readWebSelfId,
   webAuthExists,
 } from "./auth-store.js";
-import { monitorWebChannel } from "./auto-reply/monitor.js";
-import { loginWeb } from "./login.js";
+export { monitorWebChannel } from "./auto-reply/monitor.js";
+export { loginWeb } from "./login.js";
 import { whatsappSetupWizard as whatsappSetupWizardImpl } from "./setup-surface.js";
-
-export {
-  getActiveWebListener,
-  getWebAuthAgeMs,
-  logWebSelfId,
-  logoutWeb,
-  readWebAuthSnapshot,
-  readWebAuthState,
-  readWebAuthExistsBestEffort,
-  readWebAuthExistsForDecision,
-  readWebAuthSnapshotBestEffort,
-  readWebSelfId,
-  webAuthExists,
-  loginWeb,
-  monitorWebChannel,
-};
 
 type StartWebLoginWithQr = typeof import("../login-qr-runtime.js").startWebLoginWithQr;
 type WaitForWebLogin = typeof import("../login-qr-runtime.js").waitForWebLogin;

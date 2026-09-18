@@ -12,13 +12,13 @@ import {
 } from "./session-accessor.entry.js";
 import { applySessionEntryLifecycleMutation } from "./session-accessor.lifecycle.js";
 import { readSessionCreationSnapshot } from "./session-accessor.sqlite-creation-read.js";
-import {
+export {
   recordInboundSessionMeta,
   updateSessionLastRoute,
 } from "./session-accessor.sqlite-entry.js";
-import {
+import { forkSessionTranscriptFromParent } from "./session-accessor.sqlite-parent-session.js";
+export {
   forkSessionEntryFromParentTarget,
-  forkSessionTranscriptFromParent,
   resolveSessionParentForkDecision,
 } from "./session-accessor.sqlite-parent-session.js";
 import {
@@ -49,13 +49,6 @@ export async function forkSessionFromParentTranscript(
 ): Promise<ForkSessionFromParentTranscriptResult> {
   return await forkSessionTranscriptFromParent(params);
 }
-
-export {
-  forkSessionEntryFromParentTarget,
-  recordInboundSessionMeta,
-  resolveSessionParentForkDecision,
-  updateSessionLastRoute,
-};
 
 /**
  * Creates or updates one session entry and initializes its transcript header as

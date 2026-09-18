@@ -1,6 +1,6 @@
 // Summarizes heartbeat config for CLI and UI display.
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { resolveHeartbeatIntervalMs } from "./heartbeat-config.js";
+export { resolveHeartbeatIntervalMs } from "./heartbeat-config.js";
 import {
   buildHeartbeatSummary,
   enrolledHeartbeatAgentIds,
@@ -8,7 +8,6 @@ import {
   type HeartbeatSummary,
 } from "./heartbeat-summary-projection.js";
 
-export { resolveHeartbeatIntervalMs };
 export type { HeartbeatSummary };
 
 /** Return whether heartbeat scheduling applies to an agent. */

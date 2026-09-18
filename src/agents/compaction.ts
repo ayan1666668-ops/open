@@ -13,7 +13,7 @@ import {
   buildStageSplitPlanWithWorker,
   buildSummaryChunksWithWorker,
 } from "./compaction-planning-worker.js";
-import {
+export {
   BASE_CHUNK_RATIO,
   computeAdaptiveChunkRatio,
   estimateMessagesTokens,
@@ -32,15 +32,6 @@ import type {
 import type { SessionModelUsageSink } from "./sessions/compaction/runtime.js";
 import type { ExtensionContext } from "./sessions/index.js";
 import { generateSummary } from "./sessions/index.js";
-
-export {
-  BASE_CHUNK_RATIO,
-  computeAdaptiveChunkRatio,
-  estimateMessagesTokens,
-  MIN_CHUNK_RATIO,
-  SAFETY_MARGIN,
-  SUMMARIZATION_OVERHEAD_TOKENS,
-};
 
 const log = createSubsystemLogger("compaction");
 
