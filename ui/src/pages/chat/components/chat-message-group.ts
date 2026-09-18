@@ -202,12 +202,20 @@ export function renderActivityGroup(
   if (!firstGroup || opts.showToolCalls === false) {
     return nothing;
   }
-  const cards = groups.flatMap((group) =>
-    group.messages.flatMap((item) => extractToolCardsCached(item.message)),
-  );
-  const activity = groups.flatMap((group) =>
-    group.messages.flatMap((entry) => readPreparedActivity(entry.message)),
-  );
+  const entries = groups.flatMap((group) => group.messages);
+  const cards = entries.flatMap((entry) => extractToolCardsCached(entry.message));
+  const preparedByCard = new Map<ToolCard, ReturnType<typeof readPreparedActivity>[number]>();
+  const activity = entries.flatMap((entry) => {
+    const prepared = readPreparedActivity(entry.message);
+    const byCallId = new Map(prepared.map((item) => [item.toolCallId, item]));
+    for (const card of extractToolCardsCached(entry.message)) {
+      const item = card.callId ? byCallId.get(card.callId) : undefined;
+      if (item) {
+        preparedByCard.set(card, item);
+      }
+    }
+    return prepared;
+  });
   const visibleActivity = activity.filter(
     (item) => !item.hideFromChannelProgress && !item.suppressChannelProgress,
   );
@@ -215,7 +223,30 @@ export function renderActivityGroup(
     ? visibleActivity.findLast((item) => item.status === "running")
     : undefined;
   const cardGroups = groupToolCards(cards);
-  const groupSummaryLabel = running ? `${running.title}…` : summarizeToolGroup(visibleActivity);
+  let runningOperation = running;
+  if (running?.toolCallId) {
+    const runningCard = cards.findLast((card) => preparedByCard.get(card) === running);
+    for (const root of cardGroups) {
+      const pending = [...root.children];
+      for (const child of pending) {
+        if (child.card === runningCard) {
+          // Recorded nesting chooses the owner; only its prepared item supplies copy.
+          const parentActivity = preparedByCard.get(root.card);
+          if (
+            parentActivity &&
+            !parentActivity.hideFromChannelProgress &&
+            !parentActivity.suppressChannelProgress
+          ) {
+            runningOperation = parentActivity;
+          }
+        }
+        pending.push(...child.children);
+      }
+    }
+  }
+  const groupSummaryLabel = runningOperation
+    ? `${runningOperation.title}…`
+    : summarizeToolGroup(visibleActivity);
   const visibleCalls = new Set(visibleActivity.map((item) => item.toolCallId ?? item.itemId));
   const activityDisclosureId = `activity:${firstGroup.key}`;
   const activityBodyId = `activity-body-${fnv1aUtf16(firstGroup.key).toString(16)}`;

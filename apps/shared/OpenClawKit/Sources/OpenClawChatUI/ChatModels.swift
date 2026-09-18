@@ -463,7 +463,7 @@ public struct OpenClawChatMessage: Codable, Hashable, Identifiable, Sendable {
 
     public var id: UUID = .init()
     public var transcriptMessageID: String?
-    public var activity: [OpenClawAgentActivityItem]? = nil
+    public var activity: [OpenClawAgentActivityItem]?
     public let transcriptRunID: String?
     public var isTruncated = false
     public let role: String
@@ -1031,7 +1031,7 @@ public struct OpenClawChatPendingToolCall: Identifiable, Hashable, Sendable {
     public let startedAt: Double?
     public let isError: Bool?
     let diffStat: ChatToolDiffStat?
-    var activity: OpenClawAgentActivityItem? = nil
+    var activity: OpenClawAgentActivityItem?
     var isComplete: Bool = false
 }
 

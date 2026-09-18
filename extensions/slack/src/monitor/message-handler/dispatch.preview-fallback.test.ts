@@ -18,7 +18,10 @@ import { createRequireRecord } from "openclaw/plugin-sdk/test-fixtures";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { slackSetupPlugin } from "../../channel.setup.js";
 import { getSlackSessionRuns } from "../session-run-targets.js";
-import { emitCompactProgressScenario } from "./dispatch.compact-progress.test-support.js";
+import {
+  emitCompactProgressScenario,
+  type SlackReplyOptionEvent,
+} from "./dispatch.compact-progress.test-support.js";
 
 const FINAL_REPLY_TEXT = "final answer";
 const THREAD_TS = "thread-1";
@@ -126,67 +129,7 @@ let useRealChannelInboundTurn = false;
 
 let mockedProgressEvents: string[] = [];
 let mockedEmptyProgressToolName: string | undefined;
-let mockedReplyOptionEvents: Array<
-  | {
-      kind: "item";
-      itemId?: string;
-      toolCallId?: string;
-      itemKind?: string;
-      progressText?: string;
-      summary?: string;
-      title?: string;
-      name?: string;
-      phase?: string;
-      status?: string;
-      meta?: string;
-    }
-  | {
-      kind: "tool_start";
-      itemId?: string;
-      toolCallId?: string;
-      name: string;
-      phase?: string;
-      args?: Record<string, unknown>;
-      detailMode?: "explain" | "raw";
-    }
-  | {
-      kind: "patch";
-      itemId?: string;
-      toolCallId?: string;
-      phase?: string;
-      title?: string;
-      name?: string;
-      added?: string[];
-      modified?: string[];
-      deleted?: string[];
-      summary?: string;
-    }
-  | {
-      kind: "command_output";
-      itemId?: string;
-      toolCallId?: string;
-      phase?: string;
-      title?: string;
-      name?: string;
-      explanation?: string;
-      status?: string;
-      exitCode?: number | null;
-    }
-  | {
-      kind: "plan";
-      phase?: string;
-      explanation?: string;
-      explanationFormat?: "plain";
-      steps: Array<{ step: string; status: "pending" | "in_progress" | "completed" }>;
-    }
-  | { kind: "concurrent_items"; progressTexts: string[] }
-  | { kind: "partial"; text: string }
-  | { kind: "assistant_start" }
-  | { kind: "reasoning"; text?: string; isReasoningSnapshot?: boolean }
-  | { kind: "reasoning_end" }
-  | { kind: "checkpoint"; run: () => Promise<void> }
-  | ({ kind: "approval" } & Parameters<NonNullable<GetReplyOptions["onApprovalEvent"]>>[0])
-> = [];
+let mockedReplyOptionEvents: SlackReplyOptionEvent[] = [];
 
 function requireCapturedTyping() {
   if (!capturedTyping) {

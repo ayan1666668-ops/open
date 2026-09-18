@@ -104,6 +104,7 @@ export function createDiscordDraftPreviewController(params: {
     resolveChannelStreamingPreviewCommandText(params.discordConfig) === "status";
   const progressSeed = `${params.accountId}:${params.deliverChannelId}`;
   const progressDraft = createChannelProgressDraftCompositor({
+    preparedItems: true,
     entry: params.discordConfig,
     mode: discordStreamMode,
     active: Boolean(draftStream),

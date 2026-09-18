@@ -84,6 +84,7 @@ export function createProgressState(
     verboseProgressActive: () => false,
   };
   const progressCompositor = createChannelProgressDraftCompositor({
+    preparedItems: true,
     entry: config.telegramCfg,
     mode: config.streamMode,
     active: Boolean(draftState.answerLane.stream),

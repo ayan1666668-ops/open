@@ -1,7 +1,7 @@
 import { asNullableRecord } from "@openclaw/normalization-core/record-coerce";
 import { Value } from "typebox/value";
 import { AgentActivityItemSchema } from "../../packages/gateway-protocol/src/schema/logs-chat.js";
-import { isCompleteAgentPreamble } from "../agents/tool-display-common.js";
+import { isCompleteAgentPreamble } from "../agents/agent-activity-presentation.js";
 import type { AgentEventPayload } from "../infra/agent-events.js";
 
 const CHAT_RUN_PROGRESS_MAX_EVENTS = 50;

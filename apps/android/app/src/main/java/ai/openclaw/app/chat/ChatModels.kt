@@ -222,7 +222,10 @@ data class ChatAgentActivity(
 }
 
 @Serializable
-data class ChatHistoryActivity(val messageId: String, val items: List<ChatAgentActivity>)
+data class ChatHistoryActivity(
+  val messageId: String,
+  val items: List<ChatAgentActivity>,
+)
 
 data class ChatWidgetPreview(
   val title: String?,

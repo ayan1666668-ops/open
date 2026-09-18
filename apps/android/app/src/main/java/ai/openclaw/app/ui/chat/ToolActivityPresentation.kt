@@ -29,7 +29,13 @@ internal fun completedToolDisplayName(name: String): String =
   }
 
 internal fun completedToolGroupSummary(tools: List<ChatToolActivity>): String {
-  val items = tools.mapNotNull { it.activity }.filter { !it.suppressChannelProgress }.associateBy { it.toolCallId ?: it.itemId }.values.filter { it.isVisible }
+  val items =
+    tools
+      .mapNotNull { it.activity }
+      .filter { !it.suppressChannelProgress }
+      .associateBy { it.toolCallId ?: it.itemId }
+      .values
+      .filter { it.isVisible }
   if (items.isEmpty()) return nativeString("Tool details")
   return items.groupingBy { if (it.status == "failed" || it.status == "blocked") "${it.title} (${it.status})" else it.title }.eachCount().entries.joinToString(", ") { (title, count) ->
     if (count == 1) title else "$title ×$count"

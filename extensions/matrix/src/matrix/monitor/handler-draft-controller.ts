@@ -73,6 +73,7 @@ export async function createMatrixDraftController(params: {
   const progressConfigEntry = accountConfig ?? cfg.channels?.matrix;
   const progressSeed = `${accountId}:${roomId}`;
   const progressDraft = createChannelProgressDraftCompositor({
+    preparedItems: true,
     entry: progressConfigEntry,
     mode: streaming === "quiet" ? "partial" : streaming,
     active: Boolean(draftStream),

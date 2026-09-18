@@ -5,6 +5,7 @@ import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import { createReplyDispatcher } from "openclaw/plugin-sdk/reply-runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReplyPayload } from "../runtime-api.js";
+import { createStreamMock, type StreamMock } from "./reply-dispatcher.test-support.js";
 
 const createChannelMessageReplyPipelineMock = vi.hoisted(() => vi.fn());
 const getMSTeamsRuntimeMock = vi.hoisted(() => vi.fn());
@@ -41,60 +42,6 @@ vi.mock("./messenger.js", () => ({
 vi.mock("./revoked-context.js", () => ({
   withRevokedProxyFallback: async ({ run }: { run: () => Promise<unknown> }) => await run(),
 }));
-
-/**
- * Mock for the SDK's `ctx.stream` (IStreamer). The migration uses
- * `ctx.stream.update()` for informative status, `.emit()` for token chunks,
- * and `.close()` to flush the final activity. Replaces the deleted
- * `TeamsHttpStream` mock pattern.
- */
-type StreamMock = {
-  update: ReturnType<typeof vi.fn>;
-  emit: ReturnType<typeof vi.fn>;
-  clearText: ReturnType<typeof vi.fn>;
-  close: ReturnType<typeof vi.fn<() => Promise<{ id: string } | undefined>>>;
-  canceled: boolean;
-  events: {
-    on: ReturnType<typeof vi.fn>;
-    off: ReturnType<typeof vi.fn>;
-  };
-  acknowledge: (text: string) => void;
-};
-
-function createStreamMock(): StreamMock {
-  let chunkHandler:
-    | ((activity: {
-        id: string;
-        type: string;
-        text: string;
-        channelData: { streamType: string };
-      }) => void)
-    | undefined;
-  return {
-    update: vi.fn(),
-    emit: vi.fn(),
-    clearText: vi.fn(),
-    close: vi.fn(async () => ({ id: "stream-final" })),
-    canceled: false,
-    events: {
-      on: vi.fn((_event: "chunk", handler: typeof chunkHandler) => {
-        chunkHandler = handler;
-        return 0;
-      }),
-      off: vi.fn(() => {
-        chunkHandler = undefined;
-      }),
-    },
-    acknowledge: (text: string) => {
-      chunkHandler?.({
-        id: "stream-acknowledged",
-        type: "typing",
-        text,
-        channelData: { streamType: "streaming" },
-      });
-    },
-  };
-}
 
 import { createMSTeamsReplyDispatcher } from "./reply-dispatcher.js";
 

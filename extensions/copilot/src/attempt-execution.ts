@@ -283,26 +283,11 @@ export async function runCopilotExecution(context: {
             yieldDetected = true;
             yieldAcknowledgment = acknowledgment;
           },
-          onToolCompleted: async ({
-            args,
-            isError,
-            error,
-            result,
-            startedAt,
-            toolCallId,
-            parentToolCallId,
-            toolName,
-          }) => {
-            bridge?.completeTool({
-              toolCallId,
-              parentToolCallId,
-              name: toolName,
-              args,
-              result,
-              isError,
-            });
+          onToolCompleted: async (completion) => {
+            bridge?.completeTool(completion);
+            const { args, error, result, startedAt, toolCallId, toolName } = completion;
             const acceptedSessionSpawnDetails =
-              toolName === "sessions_spawn" && !isError
+              toolName === "sessions_spawn" && !completion.isError
                 ? asOptionalRecord(asOptionalRecord(result)?.details)
                 : undefined;
             const runId = normalizeOptionalString(acceptedSessionSpawnDetails?.runId);

@@ -1,11 +1,8 @@
-import { Type } from "typebox";
-import { Value } from "typebox/value";
 import {
   hasSessionProjectionAcceptedFinal,
   reduceSessionProjectionRunEvent,
   type SessionProjectionRunStatus,
 } from "../../packages/gateway-client/src/session-projection.js";
-import { AgentActivityItemSchema } from "../../packages/gateway-protocol/src/schema/logs-chat.js";
 // Handles TUI keyboard, paste, backend, and command events.
 import type { ChatLogOperations } from "./components/chat-log.js";
 import {
@@ -33,6 +30,7 @@ import {
   getPendingSubmitAcceptedRunId,
   hasPendingSubmit,
 } from "./tui-submit-state.js";
+import { renderTuiActivityItem } from "./tui-tool-activity.js";
 import type {
   AgentEvent,
   BtwEvent,
@@ -42,11 +40,6 @@ import type {
   TuiHistoryLoadResult,
   TuiStateAccess,
 } from "./tui-types.js";
-
-// Live item telemetry is open; the history descriptor uses the same fields but is closed.
-const liveActivitySchema = Type.Object(AgentActivityItemSchema.properties, {
-  additionalProperties: true,
-});
 
 type EventHandlerTui = { requestRender: (force?: boolean) => void };
 
@@ -596,20 +589,10 @@ export function createEventHandlers(context: EventHandlerContext) {
     if (!isKnownRun) {
       return;
     }
-    if (evt.stream === "item" && Value.Check(liveActivitySchema, evt.data)) {
-      const item = evt.data;
+    if (evt.stream === "item") {
       if (
-        (state.sessionInfo.verboseLevel ?? "off") !== "off" &&
-        item.kind !== "preamble" &&
-        !item.suppressChannelProgress
+        renderTuiActivityItem({ chatLog, event: evt, verboseLevel: state.sessionInfo.verboseLevel })
       ) {
-        chatLog.startTool(
-          item.toolCallId ?? item.itemId,
-          item.name ?? item.title,
-          undefined,
-          evt.runId,
-          item,
-        );
         tui.requestRender();
       }
       return;

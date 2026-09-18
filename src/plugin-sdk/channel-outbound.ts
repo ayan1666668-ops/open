@@ -10,7 +10,7 @@ import {
 } from "../channels/streaming.js";
 import { createLazyRuntimeModule } from "../shared/lazy-runtime.js";
 
-export { isCompleteAgentPreamble } from "../agents/tool-display-common.js";
+export { isCompleteAgentPreamble } from "../agents/agent-activity-presentation.js";
 
 type ChannelDurableDeliveryModule = typeof import("../channels/turn/durable-delivery.js");
 // Share one lazy import across SDK helper calls so plugin barrels do not eagerly pull

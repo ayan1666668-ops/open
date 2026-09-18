@@ -273,17 +273,100 @@ describe("chat history delta display budget", () => {
           },
         });
       }
-      expect(readDelta(scope, cursor)).toMatchObject({
+      const delta = readDelta(scope, cursor);
+      const unknownOutcome = { phase: "end", summary: "Outcome unknown" };
+      expect(delta).toMatchObject({
         kind: "delta",
         activity: [
-          { messageId: "failed-run-call", items: [{ status: scoped ? "failed" : "running" }] },
+          {
+            messageId: "failed-run-call",
+            items: [scoped ? { status: "failed" } : unknownOutcome],
+          },
           { messageId: "failed-run-result", items: [{ status: "failed" }] },
-          { messageId: "quiet-run-call", items: scoped ? [] : [{ status: "running" }] },
+          { messageId: "quiet-run-call", items: scoped ? [] : [unknownOutcome] },
           { messageId: "quiet-run-result", items: [] },
         ],
       });
+      if (delta.kind !== "delta") {
+        throw new Error("Expected the reused-call delta");
+      }
+      if (!scoped) {
+        for (const entry of delta.activity.filter((item) => item.messageId.endsWith("-call"))) {
+          expect(entry.items).toHaveLength(1);
+          expect(entry.items[0]).not.toHaveProperty("status");
+        }
+      }
     },
   );
+
+  it("keeps inactive stored calls unknown until their result is inside the history page", async () => {
+    const { scope, cursor } = await createTranscript();
+    const call = {
+      role: "assistant",
+      content: [{ type: "toolCall", id: "read-1", name: "read", arguments: { path: "notes.txt" } }],
+    };
+    await appendTranscriptMessage(scope, { eventId: "stored-call", message: call });
+    const savedCall = readTranscriptDisplayDelta(scope, { cursor });
+    const pending = await readTail(scope);
+    const pendingDelta = readDelta(scope, cursor);
+    expect(pending.messages).toMatchObject([call]);
+    expect(pendingDelta).toMatchObject({
+      kind: "delta",
+      messages: [{ messageId: "stored-call", message: call }],
+    });
+    if (pendingDelta.kind !== "delta") {
+      throw new Error("Expected the stored-call delta");
+    }
+    for (const activity of [pending.activity, pendingDelta.activity]) {
+      expect(activity).toMatchObject([
+        {
+          messageId: "stored-call",
+          items: [{ toolCallId: "read-1", phase: "end", summary: "Outcome unknown" }],
+        },
+      ]);
+      expect(activity?.[0]?.items[0]).not.toHaveProperty("status");
+    }
+    expect(readTranscriptDisplayDelta(scope, { cursor })).toEqual(savedCall);
+
+    const result = {
+      role: "toolResult",
+      toolCallId: "read-1",
+      toolName: "read",
+      isError: false,
+      content: [{ type: "text", text: "Saved notes" }],
+    };
+    await appendTranscriptMessage(scope, { eventId: "stored-result", message: result });
+    const savedPair = readTranscriptDisplayDelta(scope, { cursor });
+    const olderPage = await readTail(scope, 1, 1);
+    expect(olderPage.messages).toMatchObject([call]);
+    expect(olderPage.messages).toHaveLength(1);
+    expect(olderPage.activity).toMatchObject([
+      {
+        messageId: "stored-call",
+        items: [{ toolCallId: "read-1", phase: "end", summary: "Outcome unknown" }],
+      },
+    ]);
+    expect(olderPage.activity?.[0]?.items[0]).not.toHaveProperty("status");
+
+    const completed = { toolCallId: "read-1", phase: "end", status: "completed" };
+    expect(readDelta(scope, pendingDelta.deltaCursor)).toMatchObject({
+      kind: "delta",
+      messages: [{ messageId: "stored-result", message: result }],
+      activity: [{ messageId: "stored-result", items: [completed] }],
+    });
+    const refreshedDelta = readDelta(scope, cursor);
+    if (refreshedDelta.kind !== "delta") {
+      throw new Error("Expected the completed-call delta");
+    }
+    for (const refreshed of [await readTail(scope), refreshedDelta]) {
+      expect(refreshed.activity).toMatchObject([
+        { messageId: "stored-call", items: [completed] },
+        { messageId: "stored-result", items: [completed] },
+      ]);
+      expect(JSON.stringify(refreshed.activity)).not.toContain("Outcome unknown");
+    }
+    expect(readTranscriptDisplayDelta(scope, { cursor })).toEqual(savedPair);
+  });
 
   it.each([
     [1, 0, undefined],
@@ -363,7 +446,7 @@ function readDelta(scope: TranscriptScope, cursor: string) {
   return readChatHistoryDelta({ agentId: "main", cursor, scope, sessionKey, sessionSnapshot });
 }
 
-function readTail(scope: TranscriptScope, offset?: number) {
+function readTail(scope: TranscriptScope, offset?: number, max = 20) {
   return readChatHistoryPage({
     entry: { sessionId, updatedAt: 42 },
     provider: "openai",
@@ -371,7 +454,7 @@ function readTail(scope: TranscriptScope, offset?: number) {
     storePath: scope.storePath,
     sessionAgentId: "main",
     canonicalKey: sessionKey,
-    max: 20,
+    max,
     maxHistoryBytes: maxBytes,
     effectiveMaxChars: 10_000,
     offset,

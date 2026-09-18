@@ -1,4 +1,3 @@
-import { isCompleteAgentPreamble } from "../agents/tool-display-common.js";
 import type {
   ChannelProgressDraftCompositorLine,
   ChannelProgressDraftCompositorSnapshot,
@@ -8,7 +7,10 @@ import {
   createProgressDraftDiffStatTracker,
   formatChannelProgressDraftDiffStat,
 } from "./progress-draft-diffstat.js";
-import { createChannelProgressDraftEventHandlers } from "./progress-draft-events.js";
+import {
+  createChannelProgressDraftEventHandlers,
+  routePreparedProgressItem,
+} from "./progress-draft-events.js";
 import { removeChannelProgressDraftLine } from "./progress-draft-lines.js";
 import {
   formatReasoningProgressDisplayLine,
@@ -456,6 +458,7 @@ export function createChannelProgressDraftCompositor(params: ChannelProgressDraf
 
   const progressEventHandlers = createChannelProgressDraftEventHandlers({
     entry: params.entry,
+    preparedItems: params.preparedItems,
     pushLine: noteProgress,
     onTool: diffStatTracker.stageToolEvent,
     onItem: diffStatTracker.commitItemEvent,
@@ -558,29 +561,16 @@ export function createChannelProgressDraftCompositor(params: ChannelProgressDraf
     },
     pushToolProgress: noteProgress,
     ...progressEventHandlers,
-    async pushItemEvent(
-      payload: Parameters<typeof progressEventHandlers.pushItemEvent>[0],
-    ): Promise<boolean> {
-      if (payload.kind !== "preamble") {
-        if (payload.hideFromChannelProgress && payload.itemId) {
-          await progressEventHandlers.pushItemEvent(payload);
-          return await clearLine(payload.itemId);
-        }
-        return await progressEventHandlers.pushItemEvent(payload);
-      }
-      if (!isCompleteAgentPreamble(payload)) {
-        return false;
-      }
-      if (params.mode !== "progress") {
-        return await progressEventHandlers.pushItemEvent(payload);
-      }
-      return commentaryProgressEnabled
-        ? await compositor.pushCommentaryProgress(payload.progressText, {
-            itemId: payload.itemId,
-            complete: true,
-          })
-        : await compositor.pushPreambleHeadline(payload.progressText, { itemId: payload.itemId });
-    },
+    pushItemEvent: (payload: Parameters<typeof progressEventHandlers.pushItemEvent>[0]) =>
+      routePreparedProgressItem({
+        payload,
+        progressMode: params.mode === "progress",
+        commentary: commentaryProgressEnabled,
+        handlers: progressEventHandlers,
+        clearLine,
+        pushCommentary: (text, options) => compositor.pushCommentaryProgress(text, options),
+        pushHeadline: (text, options) => compositor.pushPreambleHeadline(text, options),
+      }),
     async pushApprovalEvent(
       payload: Parameters<typeof progressEventHandlers.pushApprovalEvent>[0],
     ) {

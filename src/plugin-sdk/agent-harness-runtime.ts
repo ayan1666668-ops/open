@@ -50,7 +50,7 @@ import { redactToolDetail } from "../logging/redact.js";
 import type { PromptImageOrderEntry } from "../media/prompt-image-order.js";
 import { truncateUtf16Safe } from "../utils.js";
 
-export { projectAgentActivityItem } from "../agents/tool-display-common.js";
+export { projectAgentActivityItem } from "../agents/agent-activity-presentation.js";
 export { projectAgentToolActivity } from "../infra/agent-activity-events.js";
 
 /** Default truncation limit for user-facing tool progress output. */

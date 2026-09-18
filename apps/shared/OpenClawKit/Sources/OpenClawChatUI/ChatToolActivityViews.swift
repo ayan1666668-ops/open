@@ -28,7 +28,7 @@ struct ChatToolActivityItem: Identifiable, Equatable {
     let resultText: String?
     let state: State
     let liveDiffStat: ChatToolDiffStat?
-    var activity: OpenClawAgentActivityItem? = nil
+    var activity: OpenClawAgentActivityItem?
     var activityPrepared = false
 
     var isVisible: Bool { self.activity?.isVisible ?? !self.activityPrepared }

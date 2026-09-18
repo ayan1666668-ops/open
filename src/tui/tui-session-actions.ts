@@ -36,6 +36,7 @@ import {
   reduceTuiSessionProjection,
 } from "./tui-session-projection.js";
 import * as submit from "./tui-submit-state.js";
+import { renderTuiHistoryToolResult } from "./tui-tool-activity.js";
 import type { TuiHistoryLoadResult, TuiOptions, TuiStateAccess } from "./tui-types.js";
 
 type SessionActionContext = {
@@ -589,30 +590,13 @@ export function createSessionActions(context: SessionActionContext) {
           continue;
         }
         if (message.role === "toolResult") {
-          const toolCallId = formatPrimitiveString(message.toolCallId, "");
-          const toolName = formatPrimitiveString(message.toolName, "tool");
           const messageId = entry.identity?.id;
-          const items = messageId ? activityByMessageId.get(messageId) : undefined;
-          const activity =
-            items?.find((item) => item.toolCallId === toolCallId) ?? (items ? null : undefined);
-          const component =
-            activity === undefined
-              ? chatLog.startTool(toolCallId, toolName, {})
-              : chatLog.startTool(toolCallId, toolName, {}, undefined, activity);
-          component.setResult(
-            state.sessionInfo.verboseLevel === "full"
-              ? {
-                  content: Array.isArray(message.content)
-                    ? (message.content as Record<string, unknown>[])
-                    : [],
-                  details:
-                    typeof message.details === "object" && message.details
-                      ? (message.details as Record<string, unknown>)
-                      : undefined,
-                }
-              : { content: [] },
-            { isError: Boolean(message.isError) },
-          );
+          renderTuiHistoryToolResult({
+            chatLog,
+            message,
+            items: messageId ? activityByMessageId.get(messageId) : undefined,
+            verboseLevel: state.sessionInfo.verboseLevel,
+          });
         }
       }
       submit.reconcilePendingSubmitHistory(

@@ -947,6 +947,7 @@ describe("createChannelProgressDraftCompositor", () => {
   it("renders prepared items without duplicating raw diagnostic events", async () => {
     const update = vi.fn();
     const progress = createChannelProgressDraftCompositor({
+      preparedItems: true,
       entry: { streaming: { mode: "progress", progress: { toolProgress: true } } },
       mode: "progress",
       active: true,

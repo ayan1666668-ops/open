@@ -9,7 +9,7 @@ import {
   AgentActivityItemSchema,
   type AgentActivityItem,
 } from "../../../../packages/gateway-protocol/src/schema/logs-chat.js";
-import { summarizeAgentActivity } from "../../../../src/agents/tool-display-common.js";
+import { summarizeAgentActivity } from "../../../../src/agents/agent-activity-presentation.js";
 import { t } from "../../i18n/index.ts";
 import type { ToolCard } from "./chat-types.ts";
 

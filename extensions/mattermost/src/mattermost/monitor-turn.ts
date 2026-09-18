@@ -144,6 +144,7 @@ export async function dispatchMattermostInboundTurn(
   let blockPreviewActivity: "none" | "reasoning" | "text" | "tool" = "none";
   let blockPreviewAssistantMessagePending = false;
   const progressDraft = createChannelProgressDraftCompositor({
+    preparedItems: true,
     entry: account.config,
     mode: account.streamingMode,
     active: draftPreviewEnabled,

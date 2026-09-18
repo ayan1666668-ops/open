@@ -2421,19 +2421,23 @@ private fun ToolBubble(toolCalls: List<ChatPendingToolCall>) {
       toolCalls.filter { it.activity?.isVisible != false }.forEach { tool ->
         ClawListItem(
           title = tool.activity?.title ?: tool.name,
-          subtitle = when (tool.activity?.status) {
-            "running" -> nativeString("OpenClaw is working")
-            "completed" -> nativeString("Finished")
-            "failed" -> nativeString("Failed")
-            "blocked" -> nativeString("Blocked")
-            else -> if (tool.activity == null && !tool.isComplete) nativeString("OpenClaw is working") else nativeString("No result")
-          },
+          subtitle =
+            when (tool.activity?.status) {
+              "running" -> nativeString("OpenClaw is working")
+              "completed" -> nativeString("Finished")
+              "failed" -> nativeString("Failed")
+              "blocked" -> nativeString("Blocked")
+              else -> if (tool.activity == null && !tool.isComplete) nativeString("OpenClaw is working") else nativeString("No result")
+            },
           trailing = { tool.liveDiff?.let { DiffStatChips(it) } },
         )
       }
-      CompletedToolActivity(toolCalls.filter { it.activity?.isVisible == false }.map {
-        ChatToolActivity(it.toolCallId, it.name, null, null, it.isError == true, it.args, it.activity, true)
-      }, stableKey = "pending-tool-details")
+      CompletedToolActivity(
+        toolCalls.filter { it.activity?.isVisible == false }.map {
+          ChatToolActivity(it.toolCallId, it.name, null, null, it.isError == true, it.args, it.activity, true)
+        },
+        stableKey = "pending-tool-details",
+      )
     }
   }
 }

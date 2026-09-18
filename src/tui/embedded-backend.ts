@@ -121,6 +121,7 @@ import {
 import { defaultRuntime } from "../runtime.js";
 import { INTERNAL_MESSAGE_CHANNEL } from "../utils/message-channel.js";
 import { applyQueueDropPolicy, waitForQueueDebounce } from "../utils/queue-helpers.js";
+import { payloadText, resolveDeltaPayload } from "./embedded-chat-projection.js";
 import {
   buildLocalQueuedPrompt,
   createQueuedRunReadiness,
@@ -193,23 +194,6 @@ function resolveBtwQuestion(message: string): string | undefined {
   return question ? question : undefined;
 }
 
-function payloadText(parts: unknown): string {
-  if (!Array.isArray(parts)) {
-    return "";
-  }
-  return parts
-    .map((part) => {
-      if (!part || typeof part !== "object") {
-        return "";
-      }
-      const payload = part as { text?: unknown };
-      return typeof payload.text === "string" ? payload.text.trim() : "";
-    })
-    .filter(Boolean)
-    .join("\n\n")
-    .trim();
-}
-
 function assistantChatMessage(text: string) {
   return { role: "assistant", content: [{ type: "text", text }], timestamp: Date.now() };
 }
@@ -219,16 +203,6 @@ function timeoutSecondsFromMs(timeoutMs?: number): string | undefined {
     return undefined;
   }
   return String(Math.max(0, Math.ceil(timeoutMs / 1000)));
-}
-
-function resolveDeltaPayload(text: string, previousText: string | undefined) {
-  if (previousText === undefined) {
-    return { deltaText: text };
-  }
-  if (!text.startsWith(previousText)) {
-    return { deltaText: text, replace: true as const };
-  }
-  return { deltaText: text.slice(previousText.length) };
 }
 
 export class EmbeddedTuiBackend implements TuiBackend {

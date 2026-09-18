@@ -2,8 +2,8 @@ import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { isSyntheticMissingToolResult } from "../../packages/agent-core/src/harness/session/tool-result-pairing.js";
 import type { AgentActivityItem } from "../../packages/gateway-protocol/src/schema/logs-chat.js";
+import { projectAgentActivityItem } from "../agents/agent-activity-presentation.js";
 import { isProcessPollResultDetails } from "../agents/bash-tools.process-schema.js";
-import { projectAgentActivityItem } from "../agents/tool-display-common.js";
 import {
   inferToolMetaFromArgsCore,
   isCommandBearingToolCall,
@@ -88,10 +88,11 @@ export function projectAgentToolActivity(tool: ToolActivityInput): AgentActivity
   const approval =
     tool.phase === "result" &&
     (details?.status === "approval-pending" || details?.status === "approval-unavailable");
+  const skipped = tool.phase === "result" && details?.status === "skipped";
   const status =
     tool.phase !== "result"
       ? "running"
-      : approval
+      : approval || skipped
         ? "blocked"
         : tool.status === "unknown"
           ? undefined
@@ -118,6 +119,7 @@ export function projectAgentToolActivity(tool: ToolActivityInput): AgentActivity
                 : "Command is blocked because no interactive approval route is available.",
           }
         : {}),
+      ...(skipped ? { summary: "Skipped" } : {}),
       ...(meta ? { meta } : {}),
       commandBearing: isCommandBearingToolCall(tool.name, tool.args),
       ...(tool.hideFromChannelProgress ? { hideFromChannelProgress: true } : {}),
@@ -224,7 +226,9 @@ export function projectAgentHistoryActivity(
       if (isToolCallContentType(block.type)) {
         const name =
           normalizeOptionalString(block.name) ?? normalizeOptionalString(block.toolName) ?? "Tool";
-        facts.set(key, { toolCallId, name, phase: "start", args: executedArgs });
+        // A transcript call is not live authority. Its result may be absent or
+        // outside this page; only live events can establish running activity.
+        facts.set(key, { toolCallId, name, phase: "result", args: executedArgs });
       }
     }
   }

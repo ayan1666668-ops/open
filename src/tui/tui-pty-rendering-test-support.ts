@@ -1,5 +1,5 @@
 import { writeFile } from "node:fs/promises";
-import { expect } from "vitest";
+import { expect, it } from "vitest";
 import {
   readFixtureLog,
   type StartTuiPtyFixture,
@@ -137,7 +137,7 @@ export async function exerciseStreamingRendering(
     }
   });
 }
-export async function exerciseToolCardRendering(
+async function exerciseToolCardRendering(
   start: StartTuiPtyFixture,
   timeoutMs: number,
   prepared = false,
@@ -193,6 +193,23 @@ export async function exerciseToolCardRendering(
     },
   );
 }
+export function registerToolCardRenderingTests(
+  start: StartTuiPtyFixture,
+  startupTimeoutMs: number,
+  testTimeoutMs: number,
+) {
+  it(
+    "authenticates running partial and completed tool cards in real terminal frames",
+    async () => await exerciseToolCardRendering(start, startupTimeoutMs),
+    testTimeoutMs,
+  );
+  it(
+    "keeps quiet tool details available through Ctrl+O and settles prepared-only outcomes",
+    async () => await exerciseToolCardRendering(start, startupTimeoutMs, true),
+    testTimeoutMs,
+  );
+}
+
 export const TUI_PTY_RENDERING_FIXTURE_SCRIPT = `
   const renderingTokens = Array.from({ length: 128 }, (_, i) => "T" + String(i).padStart(3, "0"));
   async function waitForRenderingRelease(gate: string) {

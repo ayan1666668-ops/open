@@ -723,21 +723,7 @@ extension OpenClawChatViewModel {
                 markdown: explanation?.isEmpty == false ? explanation : nil,
                 steps: steps))
         case "item":
-            guard evt.data["kind"]?.value as? String != "preamble",
-                  let activity = try? ChatPayloadDecoding.decode(AnyCodable(evt.data), as: OpenClawAgentActivityItem.self),
-                  activity.suppressChannelProgress != true
-            else { return }
-            let toolCallId = activity.toolCallId ?? activity.itemId
-            var pending = self.turnToolCallsById[toolCallId] ?? OpenClawChatPendingToolCall(
-                toolCallId: toolCallId,
-                name: activity.name ?? activity.title,
-                args: nil,
-                startedAt: evt.ts.map(Double.init),
-                isError: nil,
-                diffStat: nil)
-            pending.activity = activity
-            pending.isComplete = activity.phase == "end"
-            self.turnToolCallsById[toolCallId] = pending
+            self.handleAgentActivityItem(evt)
         case "tool":
             guard let phase = evt.data["phase"]?.value as? String else { return }
             guard let name = evt.data["name"]?.value as? String else { return }

@@ -146,9 +146,6 @@ public final class OpenClawChatViewModel {
     public private(set) var streamingAssistantText: String?
 
     public private(set) var toolActivities: [OpenClawChatPendingToolCall] = []
-    public var pendingToolCalls: [OpenClawChatPendingToolCall] {
-        self.toolActivities.filter { !$0.isComplete }
-    }
     var subagentActivities: [ChatSubagentActivity] = []
     var hiddenWorkingSubagentCount = 0
     private(set) var timelineRevision: UInt64 = 0
@@ -496,12 +493,7 @@ public final class OpenClawChatViewModel {
     var turnToolCallsById: [String: OpenClawChatPendingToolCall] = [:] {
         didSet {
             guard self.turnToolCallsById != oldValue else { return }
-            reportToolActivityChanges(from: oldValue, to: self.turnToolCallsById)
-            self.toolActivities = self.turnToolCallsById.values
-                .sorted {
-                    if $0.isComplete != $1.isComplete { return !$0.isComplete }
-                    return ($0.startedAt ?? 0) < ($1.startedAt ?? 0)
-                }
+            self.toolActivities = prepareToolActivities(from: oldValue)
             markTimelineChanged()
         }
     }

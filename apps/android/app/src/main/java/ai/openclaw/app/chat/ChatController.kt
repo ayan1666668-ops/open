@@ -6905,10 +6905,11 @@ class ChatController internal constructor(
         synchronized(gatewayScopeApplyLock) {
           val owner = liveRunOwner(runId)
           val existing = turnToolCallsById[toolCallId]?.takeIf { it.owner == owner }?.call
-          turnToolCallsById[toolCallId] = OwnedPendingToolCall(
-            owner,
-            (existing ?: ChatPendingToolCall(toolCallId, activity.name ?: activity.title, startedAtMs = ts)).copy(activity = activity, isComplete = activity.phase == "end"),
-          )
+          turnToolCallsById[toolCallId] =
+            OwnedPendingToolCall(
+              owner,
+              (existing ?: ChatPendingToolCall(toolCallId, activity.name ?: activity.title, startedAtMs = ts)).copy(activity = activity, isComplete = activity.phase == "end"),
+            )
           publishPendingToolCalls()
         }
       }
@@ -6940,6 +6941,7 @@ class ChatController internal constructor(
                 )
               publishPendingToolCalls()
             }
+
             "result" -> {
               val existing = turnToolCallsById[toolCallId]?.takeIf { it.owner == owner }
               if (existing?.call?.activity != null) {
@@ -6949,6 +6951,7 @@ class ChatController internal constructor(
               }
               publishPendingToolCalls()
             }
+
             "input_delta" -> {
               val diff = parseChatDiffStat(data["diff"], includeFiles = false) ?: return
               val existing = turnToolCallsById[toolCallId]?.takeIf { it.owner == owner }?.call
@@ -6965,7 +6968,6 @@ class ChatController internal constructor(
                 )
               publishPendingToolCalls()
             }
-
           }
         }
       }
@@ -7695,8 +7697,10 @@ class ChatController internal constructor(
     val array = root["messages"].asArrayOrNull() ?: JsonArray(emptyList())
 
     val activity = root["activity"]?.let { json.decodeFromJsonElement<List<ChatHistoryActivity>>(it) }?.associate { it.messageId to it.items }
-    val messages = array.mapNotNull { it.asObjectOrNull()?.let { message -> parseMessage(message) } }
-      .map { it.copy(activity = activity?.get(it.entryId)) }
+    val messages =
+      array
+        .mapNotNull { it.asObjectOrNull()?.let { message -> parseMessage(message) } }
+        .map { it.copy(activity = activity?.get(it.entryId)) }
 
     return ChatHistory(
       sessionKey = sessionKey,
