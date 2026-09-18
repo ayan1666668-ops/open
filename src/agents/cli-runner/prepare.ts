@@ -1981,6 +1981,7 @@ async function prepareCliRunContextWithinReadFence(
           cfg: params.config,
           channel: runtimeChannel,
           accountId: params.agentAccountId,
+          clientCaps: params.clientCaps,
         });
     const builtSystemPrompt = isControlOperation
       ? ""
