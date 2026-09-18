@@ -28,6 +28,7 @@ vi.mock("../../logging/subsystem.js", async () => {
 import { resetAgentRunRegistryForTest } from "../../infra/agent-run-registry.js";
 import * as tmpDirOwner from "../../infra/tmp-openclaw-dir.js";
 import { beginSessionWorkAdmission } from "../../sessions/session-lifecycle-admission.js";
+import * as queue from "../../shared/store-writer-queue.js";
 import { closeCachedOpenClawAgentDatabase } from "../../state/openclaw-agent-db-lifecycle.js";
 import {
   closeOpenClawAgentDatabaseByPath,
@@ -51,7 +52,10 @@ import {
   resetSessionEntryLifecycle,
 } from "./session-accessor.js";
 import * as sessionLifecycleState from "./session-accessor.sqlite-lifecycle-state.js";
-import { createSessionHistoryBudgetFixture } from "./session-history-budget.test-support.js";
+import {
+  createSessionHistoryBudgetFixture,
+  joinSessionHistoryBudgetSweeps,
+} from "./session-history-budget.test-support.js";
 import {
   enforceSqliteSessionHistoryDiskBudget,
   inspectSqliteSessionHistoryDiskBudget,
@@ -107,6 +111,7 @@ describe("SQLite historical session disk budget", () => {
     "forces maintenance only after a commit: $operation / $phase",
     async ({ operation, phase, committed }) => {
       const sessionKey = "agent:main:target";
+      const queueSpy = vi.spyOn(queue, "runQueuedStoreWrite");
       for (const name of ["target", "unrelated"]) {
         await createHistoricalTranscript({
           sessionKey: `agent:main:${name}`,
@@ -116,12 +121,9 @@ describe("SQLite historical session disk budget", () => {
           updatedAt: Date.now(),
         });
       }
-      // Drain fixture writes before enabling pressure; only this lifecycle attempt may force it.
-      await enforceSqliteSessionHistoryDiskBudget({
-        storePath,
-        mode: "warn",
-        maintenance: { maxDiskBytes: 1, highWaterBytes: 1 },
-      });
+      // Join setup's full sweep chain before pressure; only this lifecycle attempt may force it.
+      await joinSessionHistoryBudgetSweeps(queueSpy);
+      queueSpy.mockClear();
       const archive = path.join(tempDir, "retained.jsonl.deleted.2026-01-01T00-00-00.000Z");
       fs.writeFileSync(archive, Buffer.alloc(64 * 1024));
       await replaceConfigFile({
@@ -202,12 +204,7 @@ describe("SQLite historical session disk budget", () => {
             .prepare("DELETE FROM session_transcript_archives WHERE session_id = ?")
             .run("target-old");
         }
-        // Warn mode shares the real retention queue but performs no reclamation itself.
-        await enforceSqliteSessionHistoryDiskBudget({
-          storePath,
-          mode: "warn",
-          maintenance: { maxDiskBytes: 1, highWaterBytes: 1 },
-        });
+        await joinSessionHistoryBudgetSweeps(queueSpy);
         expect.soft(checkpoint.mock.calls.length > 0).toBe(committed);
         expect.soft(fs.existsSync(archive)).toBe(!committed);
         expect.soft(sessionExists("unrelated-old")).toBe(!committed);
