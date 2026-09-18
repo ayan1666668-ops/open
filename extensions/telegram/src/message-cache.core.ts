@@ -52,7 +52,7 @@ import {
 } from "./prompt-context-projection.js";
 import { getOptionalTelegramRuntime } from "./runtime.js";
 
-export type { TelegramCachedMessageNode, TelegramReplyChainEntry } from "./message-cache.types.js";
+export type { TelegramCachedMessageNode } from "./message-cache.types.js";
 
 type MessageWithPromptContextTimestamp = Message & {
   openclaw_prompt_context_timestamp_ms?: unknown;
