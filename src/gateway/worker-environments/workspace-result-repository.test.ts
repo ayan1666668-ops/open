@@ -372,6 +372,7 @@ describe("repository workspace result ownership", () => {
             return metadata;
           });
         }
+        const admittedClaims = vi.spyOn(placements, "claimWorkspaceMutationResult");
         saving = f.mutations
           .mutate({
             ...sessionTarget,
@@ -400,10 +401,12 @@ describe("repository workspace result ownership", () => {
           throw new Error("Repository mutation did not admit its editor operation");
         }
         expect(assertMutationCurrent).not.toThrow();
-        const claim = projectWorkerSessionTurnClaim(placements.get(SESSION_ID)!);
-        if (!claim) {
-          throw new Error("Repository mutation did not retain its actual claim");
+        expect(admittedClaims).toHaveBeenCalledTimes(1);
+        const admission = admittedClaims.mock.results[0];
+        if (admission?.type !== "return") {
+          throw new Error("Repository mutation did not return its admitted claim");
         }
+        const claim = admission.value;
         expect(placements.validateWorkspaceResultClaim(claim)).toBe(true);
         const pausedCandidates = await candidates();
         expect(pausedCandidates).toHaveLength(boundary === "publication-metadata" ? 1 : 0);
