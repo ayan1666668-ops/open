@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterAll, describe, expect, it } from "vitest";
-import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
+import { createFixtureLifetime } from "../../test/helpers/fixture-lifetime.js";
 import { getCliProcessTestTimeout } from "../cli/cli-process-child.test-helpers.js";
 import { createUpdateRun } from "../infra/update-run-ledger.js";
 import { OPENCLAW_STATE_SCHEMA_VERSION } from "../state/openclaw-state-db-contract.js";
@@ -17,14 +17,15 @@ import {
   runIsolatedModuleScript,
 } from "./doctor-config-preflight.process.test-support.js";
 
-const tempDirs = useAutoCleanupTempDirTracker(afterAll);
+const tempDirs = createFixtureLifetime();
+afterAll(() => tempDirs.cleanup());
 const DOCTOR_CHILD_TIMEOUT_MS = 60_000;
 
 describe("Doctor CLI migration refusal", () => {
   it.each(["index.js", "entry.js"])(
     "refuses missing deferral metadata through %s with the 2026.9.2 row only in WAL",
     (entry) => {
-      const root = fs.realpathSync(tempDirs.make("openclaw-doctor-update-wal-"));
+      const root = fs.realpathSync(tempDirs.createTempDir("openclaw-doctor-update-wal-"));
       const stateDir = path.join(root, "state");
       const configPath = path.join(root, "openclaw.json");
       const env = { OPENCLAW_STATE_DIR: stateDir, OPENCLAW_CONFIG_PATH: configPath };
@@ -107,7 +108,7 @@ describe("Doctor CLI migration refusal", () => {
   it(
     "fails closed with manual recovery for an unsupported workspace and conflicting exec policy",
     async () => {
-      const root = fs.realpathSync(tempDirs.make("openclaw-doctor-unsupported-state-"));
+      const root = fs.realpathSync(tempDirs.createTempDir("openclaw-doctor-unsupported-state-"));
       const stateDir = path.join(root, "state");
       const workspaceDir = path.join(root, "workspace");
       const configPath = path.join(root, "openclaw.json");
@@ -149,11 +150,13 @@ describe("Doctor CLI migration refusal", () => {
     `,
         { runtimeRoot, timeoutMs: DOCTOR_CHILD_TIMEOUT_MS },
       );
-      const result = await runBuiltRuntime(
-        runtimeRoot,
-        env,
-        ["doctor", "--fix", "--non-interactive", "--no-workspace-suggestions"],
-        DOCTOR_CHILD_TIMEOUT_MS,
+      const result = await tempDirs.track(
+        runBuiltRuntime(
+          runtimeRoot,
+          env,
+          ["doctor", "--fix", "--non-interactive", "--no-workspace-suggestions"],
+          DOCTOR_CHILD_TIMEOUT_MS,
+        ),
       );
       const output = `${result.stdout}\n${result.stderr}`;
       const text = output.replaceAll("│", " ").replace(/\s+/g, " ");
@@ -188,7 +191,7 @@ describe("Doctor CLI migration refusal", () => {
   it.each([false, true])(
     "honors the ordered graph with valid TUI=%s",
     async (validTui) => {
-      const root = fs.realpathSync(tempDirs.make("openclaw-doctor-refusal-"));
+      const root = fs.realpathSync(tempDirs.createTempDir("openclaw-doctor-refusal-"));
       const stateDir = path.join(root, "state");
       const configPath = path.join(root, "openclaw.json");
       const tuiPath = path.join(stateDir, "tui", "last-session.json");
@@ -209,20 +212,22 @@ describe("Doctor CLI migration refusal", () => {
       fs.writeFileSync(tuiPath, tuiRaw);
       fs.writeFileSync(approvalsPath, approvalsRaw);
       const runtimeRoot = createBuiltRuntime(root);
-      const result = await runBuiltRuntime(
-        runtimeRoot,
-        {
-          PATH: process.env.PATH,
-          HOME: root,
-          USERPROFILE: root,
-          OPENCLAW_STATE_DIR: stateDir,
-          OPENCLAW_CONFIG_PATH: configPath,
-          OPENCLAW_SERVICE_REPAIR_POLICY: "external",
-          NO_COLOR: "1",
-          CI: "1",
-        },
-        ["doctor", "--fix", "--non-interactive", "--no-workspace-suggestions"],
-        DOCTOR_CHILD_TIMEOUT_MS,
+      const result = await tempDirs.track(
+        runBuiltRuntime(
+          runtimeRoot,
+          {
+            PATH: process.env.PATH,
+            HOME: root,
+            USERPROFILE: root,
+            OPENCLAW_STATE_DIR: stateDir,
+            OPENCLAW_CONFIG_PATH: configPath,
+            OPENCLAW_SERVICE_REPAIR_POLICY: "external",
+            NO_COLOR: "1",
+            CI: "1",
+          },
+          ["doctor", "--fix", "--non-interactive", "--no-workspace-suggestions"],
+          DOCTOR_CHILD_TIMEOUT_MS,
+        ),
       );
       const output = `${result.stdout}\n${result.stderr}`;
       expect(result.signal, output).toBeNull();
@@ -264,7 +269,7 @@ describe("Doctor CLI migration refusal", () => {
 
 describe("Doctor CLI config recovery", () => {
   it("repairs retired and unknown keys and migrates legacy state with the system agent in one run", async () => {
-    const root = fs.realpathSync(tempDirs.make("openclaw-doctor-config-state-"));
+    const root = fs.realpathSync(tempDirs.createTempDir("openclaw-doctor-config-state-"));
     const stateDir = path.join(root, "state");
     const workspaceDir = path.join(root, "workspace");
     const configPath = path.join(root, "openclaw.json");
@@ -297,21 +302,23 @@ describe("Doctor CLI config recovery", () => {
     );
     fs.writeFileSync(path.join(sessionsDir, "legacy-session.jsonl"), "{}\n");
     const runtimeRoot = createBuiltRuntime(root);
-    const result = await runBuiltRuntime(
-      runtimeRoot,
-      {
-        PATH: process.env.PATH,
-        HOME: root,
-        USERPROFILE: root,
-        OPENCLAW_STATE_DIR: stateDir,
-        OPENCLAW_CONFIG_PATH: configPath,
-        OPENCLAW_DISABLE_BUNDLED_PLUGINS: "1",
-        OPENCLAW_SERVICE_REPAIR_POLICY: "external",
-        NO_COLOR: "1",
-        CI: "1",
-      },
-      ["doctor", "--fix", "--non-interactive", "--no-workspace-suggestions"],
-      60_000,
+    const result = await tempDirs.track(
+      runBuiltRuntime(
+        runtimeRoot,
+        {
+          PATH: process.env.PATH,
+          HOME: root,
+          USERPROFILE: root,
+          OPENCLAW_STATE_DIR: stateDir,
+          OPENCLAW_CONFIG_PATH: configPath,
+          OPENCLAW_DISABLE_BUNDLED_PLUGINS: "1",
+          OPENCLAW_SERVICE_REPAIR_POLICY: "external",
+          NO_COLOR: "1",
+          CI: "1",
+        },
+        ["doctor", "--fix", "--non-interactive", "--no-workspace-suggestions"],
+        60_000,
+      ),
     );
     const output = `${result.stdout}\n${result.stderr}`;
     expect(result.code, output).toBe(0);

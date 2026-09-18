@@ -1,12 +1,12 @@
 // Process regression for typed gateway startup-migration refusal and lease cleanup.
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterAll, describe, expect, it } from "vitest";
+import { createFixtureLifetime } from "../../test/helpers/fixture-lifetime.js";
 import { createOpenClawTestInstance } from "../../test/helpers/openclaw-test-instance.js";
-import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
+import { stopChildProcess } from "../../test/helpers/stop-child-process.js";
 import { getCliProcessTestTimeout } from "../cli/cli-process-child.test-helpers.js";
 import { resolveGatewayLockDir } from "../config/paths.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
@@ -33,7 +33,8 @@ const STARTUP_REFUSAL =
   "OpenClaw startup migrations did not complete cleanly; refusing to report the gateway ready.";
 const STARTUP_RECOVERY =
   'Run "openclaw doctor --fix" against the same state/config, then restart the gateway.';
-const tempDirs = useAutoCleanupTempDirTracker(afterAll);
+const tempDirs = createFixtureLifetime();
+afterAll(() => tempDirs.cleanup());
 const DOCTOR_CHILD_TIMEOUT_MS = 60_000;
 const LEGACY_APPROVAL_CHILD_TIMEOUT_MS = 45_000;
 function seedPluginStateConflict(stateDir: string): void {
@@ -114,7 +115,7 @@ describe("doctor invalid config process exit", () => {
   it(
     "repairs the v17 additive schema through doctor --fix",
     async () => {
-      const root = fs.realpathSync(tempDirs.make("openclaw-doctor-v17-additive-"));
+      const root = fs.realpathSync(tempDirs.createTempDir("openclaw-doctor-v17-additive-"));
       const stateDir = path.join(root, "state");
       const configPath = path.join(stateDir, "openclaw.json");
       fs.mkdirSync(path.join(stateDir, "agents", "main", "sessions"), { recursive: true });
@@ -131,7 +132,9 @@ describe("doctor invalid config process exit", () => {
       };
       const args = ["doctor", "--fix", "--non-interactive", "--yes", "--no-workspace-suggestions"];
 
-      const first = await runBuiltRuntime(runtimeRoot, env, args, DOCTOR_CHILD_TIMEOUT_MS);
+      const first = await tempDirs.track(
+        runBuiltRuntime(runtimeRoot, env, args, DOCTOR_CHILD_TIMEOUT_MS),
+      );
       expect(first.code, first.stderr).toBe(0);
       expect(`${first.stdout}\n${first.stderr}`).toContain(
         `v17 -> v${OPENCLAW_AGENT_SCHEMA_VERSION}`,
@@ -167,7 +170,9 @@ describe("doctor invalid config process exit", () => {
         repaired.close();
       }
 
-      const second = await runBuiltRuntime(runtimeRoot, env, args, DOCTOR_CHILD_TIMEOUT_MS);
+      const second = await tempDirs.track(
+        runBuiltRuntime(runtimeRoot, env, args, DOCTOR_CHILD_TIMEOUT_MS),
+      );
       expect(second.code, second.stderr).toBe(0);
       expect(`${second.stdout}\n${second.stderr}`).not.toMatch(
         /Skipped agent database migration|Upgraded agent database schema/u,
@@ -177,25 +182,27 @@ describe("doctor invalid config process exit", () => {
   );
 
   it("keeps Doctor UI checks inside the source runtime fixture", async () => {
-    const root = fs.realpathSync(tempDirs.make("openclaw-doctor-runtime-owner-"));
+    const root = fs.realpathSync(tempDirs.createTempDir("openclaw-doctor-runtime-owner-"));
     const runtimeRoot = createSourceRuntime(root);
     const uiIndexPath = path.join(runtimeRoot, "dist", "control-ui", "index.html");
     fs.writeFileSync(uiIndexPath, '<script src="./assets/missing-fixture.js"></script>\n');
-    const result = await runSourceRuntime(
-      runtimeRoot,
-      {
-        ...process.env,
-        HOME: root,
-        USERPROFILE: root,
-        OPENCLAW_STATE_DIR: path.join(root, "state"),
-      },
-      [
-        "--input-type=module",
-        "--eval",
-        `const { detectUiProtocolFreshnessIssues } = await import("./src/commands/doctor-ui.ts");
+    const result = await tempDirs.track(
+      runSourceRuntime(
+        runtimeRoot,
+        {
+          ...process.env,
+          HOME: root,
+          USERPROFILE: root,
+          OPENCLAW_STATE_DIR: path.join(root, "state"),
+        },
+        [
+          "--input-type=module",
+          "--eval",
+          `const { detectUiProtocolFreshnessIssues } = await import("./src/commands/doctor-ui.ts");
          console.log(JSON.stringify(await detectUiProtocolFreshnessIssues()));`,
-      ],
-      30_000,
+        ],
+        30_000,
+      ),
     );
     expect(result.code, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual([
@@ -206,7 +213,7 @@ describe("doctor invalid config process exit", () => {
   it(
     "migrates legacy exec approvals before repairing a partially valid config",
     async () => {
-      const root = fs.realpathSync(tempDirs.make("openclaw-doctor-legacy-approvals-"));
+      const root = fs.realpathSync(tempDirs.createTempDir("openclaw-doctor-legacy-approvals-"));
       const stateDir = path.join(root, "state");
       const configPath = path.join(stateDir, "openclaw.json");
       const approvalsPath = path.join(stateDir, "exec-approvals.json");
@@ -281,11 +288,13 @@ describe("doctor invalid config process exit", () => {
         }),
       );
       const runtimeRoot = createBuiltRuntime(root);
-      const result = await runBuiltRuntime(
-        runtimeRoot,
-        env,
-        ["doctor", "--repair", "--non-interactive", "--no-workspace-suggestions"],
-        LEGACY_APPROVAL_CHILD_TIMEOUT_MS,
+      const result = await tempDirs.track(
+        runBuiltRuntime(
+          runtimeRoot,
+          env,
+          ["doctor", "--repair", "--non-interactive", "--no-workspace-suggestions"],
+          LEGACY_APPROVAL_CHILD_TIMEOUT_MS,
+        ),
       );
       const output = `${result.stderr}\n${result.stdout}`;
 
@@ -331,7 +340,7 @@ describe("doctor invalid config process exit", () => {
   );
 
   it("exits after a complete best-effort report for an unparseable config", async () => {
-    const root = fs.realpathSync(tempDirs.make("openclaw-doctor-invalid-config-exit-"));
+    const root = fs.realpathSync(tempDirs.createTempDir("openclaw-doctor-invalid-config-exit-"));
     const stateDir = path.join(root, "state");
     const configPath = path.join(stateDir, "openclaw.json");
     const env: NodeJS.ProcessEnv = {
@@ -360,11 +369,13 @@ describe("doctor invalid config process exit", () => {
     fs.writeFileSync(configPath, '{"agents": {broken json');
 
     const runtimeRoot = createBuiltRuntime(root);
-    const result = await runBuiltRuntime(
-      runtimeRoot,
-      env,
-      ["doctor", "--non-interactive", "--no-workspace-suggestions"],
-      60_000,
+    const result = await tempDirs.track(
+      runBuiltRuntime(
+        runtimeRoot,
+        env,
+        ["doctor", "--non-interactive", "--no-workspace-suggestions"],
+        60_000,
+      ),
     );
     const output = `${result.stderr}\n${result.stdout}`;
 
@@ -475,7 +486,9 @@ describe("gateway startup-migration refusal", () => {
   }, 45_000);
 
   it("repairs the stable upgrade config and additive state schema despite advisory warnings", async () => {
-    const root = await fs.promises.realpath(tempDirs.make("openclaw-stable-upgrade-ready-"));
+    const root = await fs.promises.realpath(
+      tempDirs.createTempDir("openclaw-stable-upgrade-ready-"),
+    );
     const stateDir = path.join(root, "state");
     const configPath = path.join(root, "openclaw.json");
     const databasePath = path.join(stateDir, "state", "openclaw.sqlite");
@@ -572,7 +585,9 @@ describe("gateway startup-migration refusal", () => {
   }, 75_000);
 
   it("migrates retired Codex idle settings at startup without losing connection config", async () => {
-    const root = await fs.promises.realpath(tempDirs.make("openclaw-codex-startup-config-"));
+    const root = await fs.promises.realpath(
+      tempDirs.createTempDir("openclaw-codex-startup-config-"),
+    );
     const stateDir = path.join(root, "state");
     const configPath = path.join(root, "openclaw.json");
     const appServer = {
@@ -699,7 +714,7 @@ describe("gateway startup-migration refusal", () => {
   }, 75_000);
 
   it("reaches readiness while preserving a legacy agent database without an owner", () => {
-    const root = fs.realpathSync(tempDirs.make("openclaw-ownerless-agent-ready-"));
+    const root = fs.realpathSync(tempDirs.createTempDir("openclaw-ownerless-agent-ready-"));
     const stateDir = path.join(root, "state");
     const configPath = path.join(root, "openclaw.json");
     const config = {
@@ -763,7 +778,9 @@ describe("gateway startup-migration refusal", () => {
   }, 75_000);
 
   it("reaches readiness with unresolved legacy agent files left for Doctor", async () => {
-    const root = await fs.promises.realpath(tempDirs.make("openclaw-unresolved-agent-ready-"));
+    const root = await fs.promises.realpath(
+      tempDirs.createTempDir("openclaw-unresolved-agent-ready-"),
+    );
     const stateDir = path.join(root, "state");
     const configPath = path.join(root, "openclaw.json");
     const legacyPath = path.join(stateDir, "agent", "settings.json");
@@ -813,6 +830,7 @@ describe("gateway startup-migration refusal", () => {
   }, 75_000);
 
   it("refuses before relocating legacy state when a live gateway owns the state directory", async () => {
+    const root = fs.realpathSync(tempDirs.createTempDir("openclaw-live-owner-refusal-"));
     // Live owner fixture with gateway-shaped argv: on Windows no file-lock start
     // time exists, so the lock reader validates the owner through process argv
     // (isGatewayArgv); the Vitest process itself would read as a dead owner there.
@@ -821,10 +839,6 @@ describe("gateway startup-migration refusal", () => {
       ["-e", "setTimeout(() => {}, 120_000)", "src/entry.ts", "gateway"],
       { cwd: path.resolve("."), stdio: "ignore" },
     );
-    const temporaryRoot = await fs.promises.mkdtemp(
-      path.join(os.tmpdir(), "openclaw-live-owner-refusal-"),
-    );
-    const root = await fs.promises.realpath(temporaryRoot);
     const stateDir = path.join(root, "state");
     const configPath = path.join(root, "openclaw.json");
     const env: NodeJS.ProcessEnv = {
@@ -879,11 +893,13 @@ describe("gateway startup-migration refusal", () => {
       );
       const runtimeRoot = createBuiltRuntime(root);
 
-      const result = await runBuiltRuntime(
-        runtimeRoot,
-        env,
-        ["gateway", "run", "--port", "18720", "--allow-unconfigured"],
-        30_000,
+      const result = await tempDirs.track(
+        runBuiltRuntime(
+          runtimeRoot,
+          env,
+          ["gateway", "run", "--port", "18720", "--allow-unconfigured"],
+          30_000,
+        ),
       );
       const output = `${result.stderr}\n${result.stdout}`;
 
@@ -897,13 +913,14 @@ describe("gateway startup-migration refusal", () => {
       expect(result.stderr, output).toContain("already owns this state directory");
       expect(hasActiveStartupMigrationLease({ env })).toBe(false);
     } finally {
-      ownerChild.kill();
-      await fs.promises.rm(root, { recursive: true, force: true });
+      await tempDirs.verifyCleanup(() => stopChildProcess(ownerChild, 5_000));
     }
   }, 45_000);
 
   it("reloads tool ownership after updater-managed manifest repair", async () => {
-    const root = await fs.promises.realpath(tempDirs.make("openclaw-updater-manifest-repair-"));
+    const root = await fs.promises.realpath(
+      tempDirs.createTempDir("openclaw-updater-manifest-repair-"),
+    );
     const stateDir = path.join(root, "state");
     const configPath = path.join(root, "openclaw.json");
     const pluginId = "updater-tool-owner";

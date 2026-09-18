@@ -3,7 +3,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
+import { createFixtureLifetime } from "../../test/helpers/fixture-lifetime.js";
 import {
   createBuiltRuntime,
   createSourceRuntime,
@@ -24,10 +24,11 @@ import { cliRecoveryEntrypoints } from "./cli-entrypoint.test-support.js";
 import { getCliProcessTestTimeout } from "./cli-process-child.test-helpers.js";
 
 const CLI_CHILD_TIMEOUT_MS = 60_000;
-const tempDirs = useAutoCleanupTempDirTracker(afterEach);
+const tempDirs = createFixtureLifetime();
+afterEach(() => tempDirs.cleanup());
 
 function createFixture() {
-  const root = tempDirs.make("openclaw-service-capability-");
+  const root = tempDirs.createTempDir("openclaw-service-capability-");
   const stateDir = path.join(root, "state");
   const configPath = path.join(root, "openclaw.json");
   fs.writeFileSync(configPath, '{"gateway":{"mode":"local"}}\n');
@@ -61,13 +62,15 @@ function createFixture() {
     stateDir,
     run: (args: string[]) =>
       source
-        ? runSourceRuntime(
-            runtimeRoot,
-            env,
-            [path.join(runtimeRoot, "src/entry.ts"), ...args],
-            CLI_CHILD_TIMEOUT_MS,
+        ? tempDirs.track(
+            runSourceRuntime(
+              runtimeRoot,
+              env,
+              [path.join(runtimeRoot, "src/entry.ts"), ...args],
+              CLI_CHILD_TIMEOUT_MS,
+            ),
           )
-        : runBuiltRuntime(runtimeRoot, env, args, CLI_CHILD_TIMEOUT_MS),
+        : tempDirs.track(runBuiltRuntime(runtimeRoot, env, args, CLI_CHILD_TIMEOUT_MS)),
   };
 }
 

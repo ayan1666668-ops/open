@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
+import { createFixtureLifetime } from "../../test/helpers/fixture-lifetime.js";
 import { getCliProcessTestTimeout } from "../cli/cli-process-child.test-helpers.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { resolveRuntimeWorkerUrl } from "../infra/runtime-worker-url.js";
@@ -19,16 +19,19 @@ import { doctorConfigRuntimeEntrypoints } from "./doctor-config-runtime.test-sup
 
 const DOCTOR_CHILD_TIMEOUT_MS = 60_000;
 const VALIDATION_CHILD_TIMEOUT_MS = 30_000;
-const tempDirs = useAutoCleanupTempDirTracker(afterAll);
+const tempDirs = createFixtureLifetime();
+afterAll(() => tempDirs.cleanup());
 const doctorArgs = ["doctor", "--fix", "--non-interactive", "--no-workspace-suggestions"];
 let runtimeRoot: string;
 
 beforeAll(() => {
-  runtimeRoot = createBuiltRuntime(fs.realpathSync(tempDirs.make("doctor-plugin-config-runtime-")));
+  runtimeRoot = createBuiltRuntime(
+    fs.realpathSync(tempDirs.createTempDir("doctor-plugin-config-runtime-")),
+  );
 });
 
 async function createDoctorFixture() {
-  const root = fs.realpathSync(tempDirs.make("doctor-plugin-config-"));
+  const root = fs.realpathSync(tempDirs.createTempDir("doctor-plugin-config-"));
   const stateDir = path.join(root, "state");
   const configPath = path.join(stateDir, "openclaw.json");
   fs.mkdirSync(stateDir, { recursive: true });
@@ -82,7 +85,9 @@ describe("Doctor retired plugin install config", () => {
       expect(fs.existsSync(`${configPath}.last-good`)).toBe(false);
 
       for (const pass of ["repair", "repeat"]) {
-        const result = await runBuiltRuntime(runtimeRoot, env, doctorArgs, DOCTOR_CHILD_TIMEOUT_MS);
+        const result = await tempDirs.track(
+          runBuiltRuntime(runtimeRoot, env, doctorArgs, DOCTOR_CHILD_TIMEOUT_MS),
+        );
         const output = `${pass}: ${result.stdout}\n${result.stderr}`;
         expect(result.code, output).toBe(0);
         const repaired = JSON.parse(fs.readFileSync(configPath, "utf8")) as OpenClawConfig;
@@ -98,11 +103,8 @@ describe("Doctor retired plugin install config", () => {
         expect(readPersistedInstalledPluginIndexInstallRecords({ stateDir, env })).toEqual(
           empty ? { existing: durable } : { existing: durable, imported: legacy },
         );
-        const validation = await runBuiltRuntime(
-          runtimeRoot,
-          env,
-          ["config", "validate"],
-          VALIDATION_CHILD_TIMEOUT_MS,
+        const validation = await tempDirs.track(
+          runBuiltRuntime(runtimeRoot, env, ["config", "validate"], VALIDATION_CHILD_TIMEOUT_MS),
         );
         expect(validation.code, `${validation.stdout}\n${validation.stderr}`).toBe(0);
       }
@@ -164,7 +166,7 @@ describe("Doctor retired plugin install config", () => {
       plugins: { ...config.plugins, installs: { broken: { source: "invalid" } } },
     });
     fs.writeFileSync(configPath, raw);
-    const result = await runBuiltRuntime(runtimeRoot, env, doctorArgs, 60_000);
+    const result = await tempDirs.track(runBuiltRuntime(runtimeRoot, env, doctorArgs, 60_000));
     expect(`${result.stdout}\n${result.stderr}`).toContain(
       "plugins.installs contains invalid records",
     );
@@ -268,7 +270,7 @@ describe("Doctor retired plugin install config", () => {
       const original = fs.readFileSync(configPath, "utf8");
       const result =
         mode === "doctor"
-          ? await runBuiltRuntime(runtimeRoot, env, doctorArgs, 60_000)
+          ? await tempDirs.track(runBuiltRuntime(runtimeRoot, env, doctorArgs, 60_000))
           : await runIsolatedModuleScript(
               env,
               `

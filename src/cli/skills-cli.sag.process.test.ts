@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
+import { createFixtureLifetime } from "../../test/helpers/fixture-lifetime.js";
 import {
   createBuiltRuntime,
   createSourceRuntime,
@@ -14,10 +14,11 @@ import { resolveRuntimeWorkerUrl } from "../infra/runtime-worker-url.js";
 import { getFreePort } from "../test-utils/ports.js";
 import { cliRecoveryEntrypoints } from "./cli-entrypoint.test-support.js";
 
-const tempDirs = useAutoCleanupTempDirTracker(afterEach);
+const tempDirs = createFixtureLifetime();
+afterEach(() => tempDirs.cleanup());
 
 async function createSagCliFixture(binaryPresent: boolean, enabled?: boolean) {
-  const root = tempDirs.make("openclaw-sag-cli-");
+  const root = tempDirs.createTempDir("openclaw-sag-cli-");
   const configPath = path.join(root, "openclaw.json");
   const binDir = path.join(root, "bin");
   fs.mkdirSync(binDir);
@@ -79,14 +80,16 @@ async function createSagCliFixture(binaryPresent: boolean, enabled?: boolean) {
   };
   const cli = async (args: string[]) => {
     const result = source
-      ? await runSourceRuntime(
-          runtimeRoot,
-          env,
-          [path.join(runtimeRoot, "src", "entry.ts"), ...args],
-          60_000,
-          4 * 1024 * 1024,
+      ? await tempDirs.track(
+          runSourceRuntime(
+            runtimeRoot,
+            env,
+            [path.join(runtimeRoot, "src", "entry.ts"), ...args],
+            60_000,
+            4 * 1024 * 1024,
+          ),
         )
-      : await runBuiltRuntime(runtimeRoot, env, args, 60_000, 4 * 1024 * 1024);
+      : await tempDirs.track(runBuiltRuntime(runtimeRoot, env, args, 60_000, 4 * 1024 * 1024));
     const output = `${result.stderr}\n${result.stdout}`;
     expect(result.signal, output).toBeNull();
     expect(result.code, output).toBe(0);

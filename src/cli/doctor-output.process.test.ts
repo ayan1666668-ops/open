@@ -4,7 +4,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { afterAll, afterEach, describe, expect, it } from "vitest";
-import { createTempDirTracker, useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
+import { createFixtureLifetime } from "../../test/helpers/fixture-lifetime.js";
 import {
   createBuiltRuntime,
   createSourceRuntime,
@@ -28,13 +28,14 @@ import { cliRecoveryEntrypoints } from "./cli-entrypoint.test-support.js";
 import { getCliProcessTestTimeout } from "./cli-process-child.test-helpers.js";
 
 const DOCTOR_CHILD_TIMEOUT_MS = 60_000;
-const tempDirs = useAutoCleanupTempDirTracker(afterEach);
-const runtimeDirs = createTempDirTracker();
+const tempDirs = createFixtureLifetime();
+afterEach(() => tempDirs.cleanup());
+const runtimeDirs = createFixtureLifetime();
 let doctorRuntime: ReturnType<typeof createDoctorRuntime> | undefined;
 
 afterAll(() => {
   doctorRuntime = undefined;
-  runtimeDirs.cleanup();
+  return runtimeDirs.cleanup();
 });
 
 function createDoctorRuntime(root: string) {
@@ -46,14 +47,22 @@ function createDoctorRuntime(root: string) {
   // Keep package discovery and real UI checks inside the fixture in both modes.
   return (env: NodeJS.ProcessEnv, args: string[]) =>
     source
-      ? runSourceRuntime(
-          runtimeRoot,
-          env,
-          [path.join(runtimeRoot, "src", "entry.ts"), ...args],
-          DOCTOR_CHILD_TIMEOUT_MS,
-          4 * 1024 * 1024,
+      ? tempDirs.track(
+          runtimeDirs.track(
+            runSourceRuntime(
+              runtimeRoot,
+              env,
+              [path.join(runtimeRoot, "src", "entry.ts"), ...args],
+              DOCTOR_CHILD_TIMEOUT_MS,
+              4 * 1024 * 1024,
+            ),
+          ),
         )
-      : runBuiltRuntime(runtimeRoot, env, args, DOCTOR_CHILD_TIMEOUT_MS, 4 * 1024 * 1024);
+      : tempDirs.track(
+          runtimeDirs.track(
+            runBuiltRuntime(runtimeRoot, env, args, DOCTOR_CHILD_TIMEOUT_MS, 4 * 1024 * 1024),
+          ),
+        );
 }
 
 function runDoctor(params: {
@@ -63,7 +72,7 @@ function runDoctor(params: {
   env?: NodeJS.ProcessEnv;
 }) {
   // Only the immutable package is shared across cases; scenario state stays separate.
-  doctorRuntime ??= createDoctorRuntime(runtimeDirs.make("openclaw-doctor-runtime-"));
+  doctorRuntime ??= createDoctorRuntime(runtimeDirs.createTempDir("openclaw-doctor-runtime-"));
   return doctorRuntime(
     {
       ...process.env,
@@ -96,7 +105,7 @@ function runDoctor(params: {
 
 describe("Doctor report process output", () => {
   it("refuses an unfenced schema bump without publication metadata before CLI debug capture can write state", async () => {
-    const root = tempDirs.make("openclaw-doctor-update-schema-");
+    const root = tempDirs.createTempDir("openclaw-doctor-update-schema-");
     const configPath = path.join(root, "openclaw.json");
     const env = { OPENCLAW_STATE_DIR: path.join(root, "state"), OPENCLAW_CONFIG_PATH: configPath };
     fs.writeFileSync(configPath, "{}\n");
@@ -145,7 +154,7 @@ describe("Doctor report process output", () => {
   it(
     "reports deferred Doctor-only state after config refusal, then converges",
     async () => {
-      const root = tempDirs.make("openclaw-doctor-deferred-state-");
+      const root = tempDirs.createTempDir("openclaw-doctor-deferred-state-");
       const stateDir = path.join(root, "state");
       const workspaceDir = path.join(root, "workspace");
       const configPath = path.join(root, "openclaw.json");
@@ -249,7 +258,7 @@ describe("Doctor report process output", () => {
   );
 
   it("fails repair when session import leaves a startup-blocking legacy store", async () => {
-    const root = tempDirs.make("openclaw-doctor-session-convergence-");
+    const root = tempDirs.createTempDir("openclaw-doctor-session-convergence-");
     const stateDir = path.join(root, "state");
     const configPath = path.join(root, "openclaw.json");
     const storePath = path.join(stateDir, "agents", "main", "sessions", "sessions.json");
@@ -277,7 +286,7 @@ describe("Doctor report process output", () => {
     "explains and preserves retained custom agent databases in preview and repair",
     async () => {
       for (const repair of [false, true]) {
-        const root = tempDirs.make(
+        const root = tempDirs.createTempDir(
           `openclaw-doctor-retained-database-${repair ? "repair" : "preview"}-`,
         );
         const stateDir = path.join(root, "state");
@@ -372,7 +381,7 @@ describe("Doctor report process output", () => {
   );
 
   it("omits backup tips for Git-backed nested agent workspaces", () => {
-    const root = tempDirs.make("openclaw-doctor-workspace-git-");
+    const root = tempDirs.createTempDir("openclaw-doctor-workspace-git-");
     const repoRoot = path.join(root, "repo");
     const nestedWorkspace = path.join(
       repoRoot,
@@ -453,7 +462,7 @@ describe("Doctor report process output", () => {
     { name: "lint JSON", args: ["--lint", "--json"], exitCode: 1 },
     { name: "post-upgrade JSON", args: ["--post-upgrade", "--json"], exitCode: 1 },
   ])("drains the whole pipe before exiting for $name", ({ args, exitCode }) => {
-    const root = tempDirs.make("openclaw-doctor-output-");
+    const root = tempDirs.createTempDir("openclaw-doctor-output-");
     const payload = { ok: false, findings: [{ level: "error", message: "x".repeat(1024 * 1024) }] };
     const sourceUrl = (relative: string) => new URL(relative, import.meta.url).href;
     // Keep the parser, runtime, and exit lifecycle real. Synthetic report
