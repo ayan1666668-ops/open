@@ -11,8 +11,8 @@ import {
 } from "../../agents/tools/gateway-caller-context.js";
 import { resolveRequestedSessionAgentId } from "../session-request-agent.js";
 import { authorizeSessionSharingTarget } from "../session-sharing.js";
+import { summarizeWorkerEnvironment } from "../worker-environments/environment-summary.js";
 import type { WorkerEnvironmentSessionIdentity } from "../worker-environments/session-attachment.js";
-import { summarizeWorkerEnvironment } from "./environments.js";
 import { captureSessionEnvironmentToolPolicy } from "./environments.session-tool-policy.js";
 import { loadAccessorSessionEntryForGatewayTarget } from "./sessions-shared.js";
 import type { GatewayRequestHandlerOptions, GatewayRequestHandlers } from "./types.js";
