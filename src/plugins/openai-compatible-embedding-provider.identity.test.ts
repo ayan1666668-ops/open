@@ -46,9 +46,38 @@ describe("resolveIndexIdentity", () => {
         provider: "openai-compatible",
         baseUrl: "http://127.0.0.1:9001/v1",
         model: "text-embedding-bge-m3",
+        headers: {
+          accept: "application/json",
+          "content-type": "application/json",
+        },
       },
     });
     expect(JSON.stringify(identity)).not.toContain("sk-secret-value");
+  });
+
+  it("matches the runtime cache key slice so existing indexes are not flagged stale", async () => {
+    const options = createOptions({
+      config: {
+        models: {
+          providers: {
+            "openai-compatible": {
+              api: "openai-responses",
+              baseUrl: "http://127.0.0.1:9001/v1",
+              apiKey: "sk-secret-value",
+            },
+          },
+        },
+      } as unknown as EmbeddingProviderCreateOptions["config"],
+    });
+
+    const identity = resolveIndexIdentity(options);
+    const created = await openAICompatibleEmbeddingProviderAdapter.create(options);
+
+    // Plain status resolves the index identity through the synchronous mirror
+    // while the writer persists the runtime slice; if the two disagree, an
+    // unchanged configuration is reported as a provider_settings mismatch.
+    expect(identity?.cacheKeyData).not.toBeUndefined();
+    expect(identity?.cacheKeyData).toEqual(created.runtime?.cacheKeyData);
   });
 
   it("prefers the remote endpoint over the configured provider endpoint", () => {

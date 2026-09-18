@@ -109,11 +109,13 @@ describe("memory embedding provider requirement", () => {
       provider: "openai-compatible",
       baseUrl: "http://127.0.0.1:9001/v1",
       model: "text-embedding-bge-m3",
+      headers: { accept: "application/json", "content-type": "application/json" },
     });
     expect(second.indexIdentity).toEqual({
       provider: "openai-compatible",
       baseUrl: "http://127.0.0.1:9002/v1",
       model: "text-embedding-bge-m3",
+      headers: { accept: "application/json", "content-type": "application/json" },
     });
     expect(first).not.toEqual(second);
 
