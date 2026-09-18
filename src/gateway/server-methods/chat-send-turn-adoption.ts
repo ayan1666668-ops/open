@@ -112,6 +112,7 @@ export function createChatSendTurnAdoptionLifecycle(params: {
         ownerConnId: normalizeOptionalChatText(params.ownerConnId),
         ownerDeviceId: normalizeOptionalChatText(params.ownerDeviceId),
         onAborted: () => recordRefreshTerminal("aborted"),
+        onCancellationRequested: () => lifecycle.onCancellationRequested?.(),
       });
       if (enqueued && !releaseWorkAdmission) {
         // Retain the session fence until this detached queued ownership ends.
