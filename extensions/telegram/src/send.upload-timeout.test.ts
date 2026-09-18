@@ -1,5 +1,9 @@
 // Telegram tests cover size-aware upload deadlines through the real send stack.
+import { InputFile } from "grammy";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createTelegramBot } from "./bot.js";
+import { recordTelegramUploadBytes } from "./request-timeouts.js";
+import { withTelegramApiContext } from "./send-context.js";
 import { resetTelegramClientOptionsCacheForTests, sendMessageTelegram } from "./send.js";
 
 const { loadWebMedia, resolveTelegramTransport } = vi.hoisted(() => ({
@@ -78,6 +82,54 @@ describe("Telegram media upload deadline", () => {
         method: "sendDocument",
         afterMs: 35_000,
         reason: "Telegram senddocument timed out after 35000ms",
+      },
+    ]);
+    await expect(outcome).resolves.toBeInstanceOf(Error);
+  });
+
+  // grammY also races every call against its own client timer (500 s unless
+  // client.timeoutSeconds is set). The size tag stands in for a file too large
+  // to allocate here; prepareTelegramOutboundMedia records the same number.
+  const taggedUpload = (fileName: string, uploadBytes: number) =>
+    recordTelegramUploadBytes(new InputFile(Buffer.from("x"), fileName), uploadBytes);
+
+  it("keeps a 1 GiB send upload open past grammY's 500 s client timer", async () => {
+    const outcome = withTelegramApiContext({ cfg }, ({ api }) =>
+      api.sendDocument("123", taggedUpload("disk.img", 1024 * MIB)),
+    ).catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(530_000);
+
+    // 1 GiB at the assumed 2 MiB/s is 512s, plus the 15s response margin.
+    expect(aborts).toEqual([
+      {
+        method: "sendDocument",
+        afterMs: 527_000,
+        reason: "Telegram senddocument timed out after 527000ms",
+      },
+    ]);
+    await expect(outcome).resolves.toBeInstanceOf(Error);
+  });
+
+  it.each([
+    { size: "100 MiB", uploadBytes: 100 * MIB, afterMs: 65_000 },
+    { size: "1 GiB", uploadBytes: 1024 * MIB, afterMs: 527_000 },
+  ])("keeps a $size polling bot upload open until its size guard", async (upload) => {
+    // polling-session.ts passes the 45s getUpdates guard as this minimum.
+    const bot = createTelegramBot({
+      token: cfg.channels.telegram.botToken,
+      config: cfg,
+      minimumClientTimeoutSeconds: 45,
+    });
+    const outcome = bot.api
+      .sendVideo(123, taggedUpload("clip.mp4", upload.uploadBytes))
+      .catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(upload.afterMs + 5_000);
+
+    expect(aborts).toEqual([
+      {
+        method: "sendVideo",
+        afterMs: upload.afterMs,
+        reason: `Telegram sendvideo timed out after ${upload.afterMs}ms`,
       },
     ]);
     await expect(outcome).resolves.toBeInstanceOf(Error);

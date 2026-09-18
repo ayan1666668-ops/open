@@ -17,6 +17,11 @@ const TELEGRAM_LONG_POLL_ABORT_MARGIN_SECONDS = 5;
 const TELEGRAM_UPLOAD_ASSUMED_BYTES_PER_SECOND = 2 * 1024 * 1024;
 const TELEGRAM_UPLOAD_RESPONSE_MARGIN_MS = 15_000;
 const TELEGRAM_UPLOAD_MAX_TIMEOUT_MS = 30 * 60_000;
+// grammY races every API call against one client-wide timer (500 s unless
+// client.timeoutSeconds is set) and has no per-call override. Clients that
+// install createTelegramClientFetch set it past the longest guard here, so the
+// per-method guard decides: 45 s for getUpdates, up to 30 minutes for uploads.
+export const TELEGRAM_CLIENT_TIMEOUT_BACKSTOP_SECONDS = TELEGRAM_UPLOAD_MAX_TIMEOUT_MS / 1000 + 60;
 
 const TELEGRAM_REQUEST_TIMEOUTS_MS = {
   // Bound startup/control-plane calls so the gateway cannot report Telegram as
