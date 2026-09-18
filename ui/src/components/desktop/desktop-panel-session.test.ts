@@ -36,6 +36,122 @@ describe("session desktop connection", () => {
   });
 
   it.each([false, true])(
+    "preserves human control when showing the same source (explicit=%s)",
+    async (explicit) => {
+      const request = vi.fn(async (method: string, params?: { control?: boolean }) =>
+        method === "environments.status"
+          ? desktopEnvironment
+          : {
+              transport: "rfb",
+              wsPath: "/desktop/observe?token=synthetic",
+              control: params?.control ?? false,
+            },
+      );
+      const disconnect = vi.fn();
+      const connect = vi.fn(async (options: Parameters<DesktopClient["connect"]>[0]) => {
+        options.onConnect?.();
+        return createConnectionHandle({ disconnect });
+      });
+      const onFocusTargetChange = vi.fn();
+      const panel = createPanel();
+      Object.assign(panel, {
+        client: createGatewayClient(request).client,
+        available: true,
+        embedded: true,
+        presented: true,
+        sessionKey: "agent:main:preview",
+        requestedSource: desktopEnvironment.id,
+        desktopClientFactory: () => ({ connect }),
+        onFocusTargetChange,
+      });
+      document.body.append(panel);
+      await waitForFast(() => expect(connect).toHaveBeenCalledOnce());
+      clickPanelButton(panel, 'button[aria-label="Take control"]');
+      await waitForFast(() => expect(connect).toHaveBeenCalledTimes(2));
+      const controller = connect.mock.calls[1]![0];
+      const reads = request.mock.calls.length;
+      const disconnects = disconnect.mock.calls.length;
+      panel.handleToggleRequest(
+        new CustomEvent("openclaw:desktop-toggle", {
+          detail: { open: true, ...(explicit ? { environmentId: desktopEnvironment.id } : {}) },
+        }),
+      );
+      await settleTasks();
+      expect(request).toHaveBeenCalledTimes(reads);
+      expect(connect).toHaveBeenCalledTimes(2);
+      expect(disconnect).toHaveBeenCalledTimes(disconnects);
+      expect(controller.isCurrent()).toBe(true);
+      expect(onFocusTargetChange).toHaveBeenLastCalledWith({
+        kind: "desktop",
+        control: true,
+        ...(explicit ? { source: desktopEnvironment.id } : { session: "agent:main:preview" }),
+      });
+      expect(panel.renderRoot.textContent).toContain("Agent input is paused");
+      clickPanelButton(panel, 'button[aria-label="Switch to view only"]');
+      await waitForFast(() => expect(connect).toHaveBeenCalledTimes(3));
+      expect(request).toHaveBeenLastCalledWith("desktop.observe", {
+        source: { kind: "environment", environmentId: desktopEnvironment.id },
+        control: false,
+      });
+    },
+  );
+
+  it("preserves an opening source but retries a disconnected one and switches an explicit target", async () => {
+    const observed = createDeferred<{ transport: "rfb"; wsPath: string; control: boolean }>();
+    let first = true;
+    const request = vi.fn(async (method: string, params?: { environmentId?: string }) => {
+      if (method === "environments.status") {
+        return { ...desktopEnvironment, id: params?.environmentId ?? desktopEnvironment.id };
+      }
+      if (method === "desktop.observe" && first) {
+        first = false;
+        return observed.promise;
+      }
+      return { transport: "rfb", wsPath: "/desktop/observe?token=synthetic", control: false };
+    });
+    const connect = vi.fn(async (options: Parameters<DesktopClient["connect"]>[0]) => {
+      options.onConnect?.();
+      return createConnectionHandle();
+    });
+    const panel = createPanel();
+    Object.assign(panel, {
+      client: createGatewayClient(request).client,
+      available: true,
+      embedded: true,
+      presented: true,
+      sessionKey: "agent:main:preview",
+      requestedSource: desktopEnvironment.id,
+      desktopClientFactory: () => ({ connect }),
+    });
+    document.body.append(panel);
+    await waitForFast(() => expect(first).toBe(false));
+    const show = (environmentId: string = desktopEnvironment.id) =>
+      panel.handleToggleRequest(
+        new CustomEvent("openclaw:desktop-toggle", { detail: { open: true, environmentId } }),
+      );
+    const reads = request.mock.calls.length;
+    show();
+    await settleTasks();
+    expect(request).toHaveBeenCalledTimes(reads);
+    observed.resolve({
+      transport: "rfb",
+      wsPath: "/desktop/observe?token=synthetic",
+      control: false,
+    });
+    await waitForFast(() => expect(connect).toHaveBeenCalledOnce());
+    connect.mock.calls[0]![0].onDisconnect?.({ clean: true });
+    await panel.updateComplete;
+    show();
+    await waitForFast(() => expect(connect).toHaveBeenCalledTimes(2));
+    show("replacement");
+    await waitForFast(() => expect(connect).toHaveBeenCalledTimes(3));
+    expect(request).toHaveBeenLastCalledWith("desktop.observe", {
+      source: { kind: "environment", environmentId: "replacement" },
+      control: false,
+    });
+  });
+
+  it.each([false, true])(
     "keeps desktop pending with input disabled until ready (documentMode=%s)",
     async (documentMode) => {
       vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });

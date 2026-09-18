@@ -173,6 +173,79 @@ suite.define(() => {
     await rfb.send([createRfbRawFrame()]);
     expect(await other.gateway.getRequests("desktop.observe")).toHaveLength(0);
 
+    await requester.gateway.setMethodResponse("desktop.observe", {
+      transport: "rfb",
+      wsPath: "/desktop/observe?token=synthetic-control",
+      expiresAtMs: 60_000,
+      control: true,
+    });
+    await desktop.getByRole("button", { name: "Take control", exact: true }).click();
+    await expect.poll(rfb.events).toContain("authenticated:2");
+    await desktop
+      .getByText("You control this desktop. Agent input is paused until you switch to view only.", {
+        exact: true,
+      })
+      .waitFor();
+    const controlledCanvas = await desktop.locator("canvas").elementHandle();
+    const requestsBeforeShow = await Promise.all(
+      ["environments.status", "desktop.observe", "desktop.release"].map((method) =>
+        requester.gateway.getRequests(method),
+      ),
+    );
+    for (const [environmentId, dock] of [
+      ["preview-desktop", "bottom"],
+      [undefined, "right"],
+    ] as const) {
+      await screen.execute("show-current-desktop", {
+        action: "desktop_show",
+        sessionKey: destination,
+        dock,
+        ...(environmentId ? { environmentId } : {}),
+      });
+      await Promise.all(deliveries);
+      await requester.page.locator(`.sidebar-region--${dock}`).filter({ has: desktop }).waitFor();
+      await expect
+        .poll(() =>
+          desktop.evaluate(
+            (element) =>
+              (element as HTMLElementTagNameMap["openclaw-desktop-panel"]).refreshOnPresentation,
+          ),
+        )
+        .toBe(true);
+      expect(
+        await Promise.all(
+          ["environments.status", "desktop.observe", "desktop.release"].map((method) =>
+            requester.gateway.getRequests(method),
+          ),
+        ),
+      ).toEqual(requestsBeforeShow);
+      expect(await controlledCanvas?.evaluate((element) => element.isConnected)).toBe(true);
+      expect(await rfb.connectionCount()).toBe(2);
+      await desktop
+        .getByText(
+          "You control this desktop. Agent input is paused until you switch to view only.",
+          { exact: true },
+        )
+        .waitFor();
+    }
+    await captureUiProof(
+      suite,
+      requester.page,
+      "screen-requester-routing",
+      "human-control-preserved.png",
+    );
+    await requester.gateway.setMethodResponse("desktop.observe", {
+      transport: "rfb",
+      wsPath: "/desktop/observe?token=synthetic",
+      expiresAtMs: 60_000,
+      control: false,
+    });
+    await desktop.getByRole("button", { name: "Switch to view only", exact: true }).click();
+    await expect.poll(rfb.events).toContain("authenticated:3");
+    expect((await requester.gateway.getRequests("desktop.observe")).at(-1)?.params.control).toBe(
+      false,
+    );
+
     await screen.execute("prepare-web", {
       action: "portal_show",
       environmentId: "preview-desktop",

@@ -257,46 +257,34 @@ class OpenClawDesktopPanel extends OpenClawLitElement {
   }
 
   handleToggleRequest(event: Event): void {
-    if (this.documentMode || this.suppressed) {
+    if (this.documentMode || this.suppressed || (this.embedded && !this.presented)) {
       return;
     }
     const detail =
       event instanceof CustomEvent && typeof event.detail === "object" && event.detail !== null
         ? (event.detail as DesktopPanelToggleDetail)
         : null;
-    if (this.embedded) {
-      if (!this.presented) {
-        return;
-      }
-      if (detail?.open === false) {
-        this.returnToPicker();
-        return;
-      }
-      if (!this.available || !this.client) {
-        return;
-      }
-      if (detail?.environmentId) {
-        void this.connectRequestedEnvironment(detail.environmentId);
-      } else {
-        this.returnToPicker(this.sessionKey !== null ? "pending" : "picker");
-        void this.refreshEnvironments();
-      }
-      return;
-    }
-    if (detail?.dock === "right" || detail?.dock === "bottom") {
+    if (!this.embedded && (detail?.dock === "right" || detail?.dock === "bottom")) {
       this.dockLayout.setDock(detail.dock, false);
     }
     if (detail?.open === false) {
       this.closePanel();
       return;
     }
-    if (!this.available) {
+    if (!this.available || (this.embedded && !this.client)) {
       return;
     }
-    const wasOpen = this.dockLayout.open;
-    this.dockLayout.setOpen(true);
-    if (detail?.environmentId) {
-      void this.connectRequestedEnvironment(detail.environmentId);
+    const wasOpen = this.embedded || this.dockLayout.open;
+    if (!this.embedded) {
+      this.dockLayout.setOpen(true);
+    }
+    const environmentId =
+      detail?.environmentId ?? (detail?.open === true ? this.environmentId : null);
+    if (environmentId) {
+      void this.connectRequestedEnvironment(environmentId, Boolean(detail?.environmentId));
+    } else if (this.embedded) {
+      this.returnToPicker(this.sessionKey !== null ? "pending" : "picker");
+      void this.refreshEnvironments();
     } else if (!wasOpen) {
       void this.refreshEnvironments();
     } else if (detail?.open !== true) {
@@ -306,7 +294,9 @@ class OpenClawDesktopPanel extends OpenClawLitElement {
 
   private closePanel(): void {
     this.returnToPicker();
-    this.dockLayout.setOpen(false);
+    if (!this.embedded) {
+      this.dockLayout.setOpen(false);
+    }
   }
 
   private get usesAutomaticSource(): boolean {
@@ -402,8 +392,18 @@ class OpenClawDesktopPanel extends OpenClawLitElement {
     return refreshed;
   }
 
-  private async connectRequestedEnvironment(environmentId: string): Promise<void> {
-    this.returnToPicker("explicit");
+  private async connectRequestedEnvironment(environmentId: string, explicit = true): Promise<void> {
+    // Showing a live source must not release its current input controller.
+    if (
+      environmentId === this.environmentId &&
+      (this.state === "connecting" || this.state === "connected" || this.state === "credentials")
+    ) {
+      if (explicit) {
+        this.sourceSelection = "explicit";
+      }
+      return;
+    }
+    this.returnToPicker(explicit ? "explicit" : this.sourceSelection);
     this.environmentId = environmentId;
     this.state = "connecting";
     const operationId = this.operationId;
