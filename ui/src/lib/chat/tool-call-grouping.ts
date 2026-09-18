@@ -14,6 +14,7 @@ import {
 import { summarizeAgentActivity } from "../../../../src/agents/agent-activity-presentation.js";
 import { t } from "../../i18n/index.ts";
 import type { ToolCard } from "./chat-types.ts";
+import { resolveToolDisplay } from "./tool-display.ts";
 
 export type ToolCardGroup<Card = ToolCard> = {
   card: Card;
@@ -98,7 +99,9 @@ export function summarizeToolGroup(
       options.full
         ? items
         : items.map((item) =>
-            item.name?.toLowerCase() === "exec" && item.status ? { ...item, title: "Exec" } : item,
+            item.name?.toLowerCase() === "exec" && item.status
+              ? { ...item, title: resolveToolDisplay({ name: item.name }).title }
+              : item,
           ),
     ) || t("chat.toolCards.rawDetails");
   return options.full
