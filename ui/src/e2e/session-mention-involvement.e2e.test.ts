@@ -44,6 +44,40 @@ const mentioned = {
 const list = (rows: unknown[]) => ({ ...sessionsListResponse(rows), owners: [ada, bob] });
 
 suite.define(() => {
+  it.each([false, true])(
+    "offers personal visibility only with multiple identities (%s)",
+    async (multiple) => {
+      await suite.withPage(
+        { viewport: { width: 1200, height: 820 }, colorScheme: "dark" },
+        async ({ page }) => {
+          await installMockGateway(page, {
+            sessionKey: homeKey,
+            hasMultipleSessionSharingIdentities: multiple,
+            featureMethods: [...defaultControlUiFeatureMethods, "sessions.setInvolvement"],
+            historyMessages: [
+              { role: "assistant", content: [{ type: "text", text: "Ready for collaboration." }] },
+            ],
+            methodResponses: { "sessions.list": list([home, mentioned]) },
+          });
+          await page.goto(controlUiSessionUrl(suite.server.baseUrl, homeKey));
+          const target = page.locator('[data-session-key="' + sessionKey + '"]');
+          await expectBrowser(target).toBeVisible();
+          await target.hover();
+          await target.getByRole("button", { name: "Open session menu" }).click();
+          await expectBrowser(page.locator('openclaw-session-menu [value="rename"]')).toBeVisible();
+          await captureUiProof(
+            suite,
+            page,
+            multiple ? "06-multiple-identities-menu.png" : "05-single-identity-menu.png",
+          );
+          await expectBrowser(
+            page.locator('openclaw-session-menu [value="toggle-involving-me"]'),
+          ).toHaveCount(multiple ? 1 : 0);
+        },
+      );
+    },
+  );
+
   it("refreshes an involving-me list on mention and offers reversible personal hiding", async () => {
     await suite.withPage(
       { viewport: { width: 1200, height: 820 }, colorScheme: "dark" },

@@ -1,5 +1,6 @@
 /* @vitest-environment jsdom */
 
+import { ContextProvider } from "@lit/context";
 import { nothing } from "lit";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { createDeferred } from "../../../../test/helpers/promise.js";
@@ -9,7 +10,7 @@ import type {
   SessionCompactionCheckpoint,
   SessionsListResult,
 } from "../../api/types.ts";
-import type { ApplicationContext } from "../../app/context.ts";
+import { applicationContext, type ApplicationContext } from "../../app/context.ts";
 import { showConfirmDialog } from "../../components/confirm-dialog.ts";
 import type { SessionCapability } from "../../lib/sessions/index.ts";
 import {
@@ -238,10 +239,13 @@ describe("sessions page lifecycle", () => {
       const request = vi.fn(async () => ({ ok: true }));
       const mutable = createGateway({ request } as unknown as GatewayBrowserClient);
       mutable.emit({
-        hello: gatewayHelloForMethods(
-          [...SESSION_MUTATION_TEST_METHODS, "sessions.setInvolvement"],
-          ["operator.read"],
-        ),
+        hello: {
+          ...gatewayHelloForMethods(
+            [...SESSION_MUTATION_TEST_METHODS, "sessions.setInvolvement"],
+            ["operator.read"],
+          ),
+          policy: { hasMultipleSessionSharingIdentities: true },
+        },
       });
       const managed = createManagedSessions();
       const row = {
@@ -250,10 +254,9 @@ describe("sessions page lifecycle", () => {
         kind: "direct",
         hiddenFromInvolvingMe: hidden,
       } satisfies GatewaySessionRow;
-      const page = await createRenderedPage(
-        createContext(mutable.gateway, managed.sessions),
-        sessionsResult([row], 1),
-      );
+      const context = createContext(mutable.gateway, managed.sessions);
+      const page = await createRenderedPage(context, sessionsResult([row], 1));
+      new ContextProvider(page, { context: applicationContext }).setValue(context);
       page.openSessionMenu(row, { x: 10, y: 20 }, document.createElement("button"));
       await page.updateComplete;
       const menu = page.querySelector<TestSessionMenu>("openclaw-session-menu");
