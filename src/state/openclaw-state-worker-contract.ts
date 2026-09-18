@@ -1,3 +1,4 @@
+import type { AuthProfileRowRead, UserModelAuthProfile } from "../agents/auth-profiles/types.js";
 import type { NativeHookRelayStoreWorkerOperations } from "../agents/harness/native-hook-relay-store.worker-contract.js";
 import type { ClawInstallSchemaVersionRow } from "../claws/provenance-runtime-read.kernel.js";
 import type { readSqliteDatabaseBloat } from "../commands/doctor-db-bloat.read.js";
@@ -57,6 +58,12 @@ export type OpenClawStateWorkerOperations = WebPushWorkerOperations &
     "deviceAuth.list": { input: { deviceId: string }; output: DeviceAuthEntry[] };
     "apns.registration.read": { input: string; output: ApnsRegistration | null };
     "apns.registrations.read": { input: readonly string[]; output: Map<string, ApnsRegistration> };
+    "authProfiles.read": { input: { artifactPreserving: boolean }; output: AuthProfileRowRead };
+    "authProfiles.sharedOwnership": { input: { artifactPreserving: boolean }; output: unknown };
+    "authProfiles.personal": {
+      input: { profileId: string; artifactPreserving: boolean };
+      output: UserModelAuthProfile | undefined;
+    };
     "agentProvenance.readBatch": {
       input: { agentIds: readonly string[] };
       output: AgentProvenance[];

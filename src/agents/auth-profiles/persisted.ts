@@ -830,7 +830,7 @@ export function applyLegacyAuthStore(store: AuthProfileStore, legacy: LegacyAuth
   }
 }
 
-function mergePersistedAuthProfileState(
+export function mergePersistedAuthProfileState(
   raw: unknown,
   readState: () => unknown,
 ): AuthProfileStore | null {
