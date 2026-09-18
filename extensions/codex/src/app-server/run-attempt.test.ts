@@ -5457,43 +5457,44 @@ describe("runCodexAppServerAttempt", () => {
       const run = runCodexAppServerAttempt(params);
       await harness.waitForMethod("turn/start");
       const emptyAssistant = { type: "agentMessage", id: "empty-assistant", text: "" };
-      await harness.notify(itemNotification("item/started", emptyAssistant));
-      await harness.notify(itemNotification("item/completed", emptyAssistant));
-      await harness.notify(
-        itemNotification("item/started", {
-          type: "commandExecution",
-          id: "tool-settled",
-          command: "echo sent-to-alice",
-          cwd: workspaceDir,
-          processId: null,
-          source: "agent",
-          status: "inProgress",
-          commandActions: [],
-          aggregatedOutput: null,
-          exitCode: null,
-          durationMs: null,
-        }),
-      );
-      await harness.notify(
-        itemNotification("item/completed", {
-          type: "commandExecution",
-          id: "tool-settled",
-          command: "echo sent-to-alice",
-          cwd: workspaceDir,
-          processId: 42,
-          source: "agent",
-          status: "completed",
-          commandActions: [],
-          aggregatedOutput: "sent-to-alice\n",
-          exitCode: 0,
-          durationMs: 12,
-        }),
-      );
-      if (failure) {
-        await harness.notify(turnCompleted({ id: "turn-1", status: "failed", error: failure }));
-      } else {
-        await harness.completeTurn({ threadId: "thread-1", turnId: "turn-1" });
-      }
+      // Native events arrive in wire order; local projection must not delay terminal receipt.
+      await Promise.all([
+        harness.notify(itemNotification("item/started", emptyAssistant)),
+        harness.notify(itemNotification("item/completed", emptyAssistant)),
+        harness.notify(
+          itemNotification("item/started", {
+            type: "commandExecution",
+            id: "tool-settled",
+            command: "echo sent-to-alice",
+            cwd: workspaceDir,
+            processId: null,
+            source: "agent",
+            status: "inProgress",
+            commandActions: [],
+            aggregatedOutput: null,
+            exitCode: null,
+            durationMs: null,
+          }),
+        ),
+        harness.notify(
+          itemNotification("item/completed", {
+            type: "commandExecution",
+            id: "tool-settled",
+            command: "echo sent-to-alice",
+            cwd: workspaceDir,
+            processId: 42,
+            source: "agent",
+            status: "completed",
+            commandActions: [],
+            aggregatedOutput: "sent-to-alice\n",
+            exitCode: 0,
+            durationMs: 12,
+          }),
+        ),
+        failure
+          ? harness.notify(turnCompleted({ id: "turn-1", status: "failed", error: failure }))
+          : harness.completeTurn({ threadId: "thread-1", turnId: "turn-1" }),
+      ]);
       const result = await run;
       const selectedProfile = preserveNativeModel ? "openai:binding" : "openai:ordered";
       expect(onStart).toHaveBeenCalledWith(selectedProfile, expect.anything(), expect.anything());
@@ -5567,54 +5568,57 @@ describe("runCodexAppServerAttempt", () => {
     params.prompt = "Finish the task and report the result.";
     const run = runCodexAppServerAttempt(params);
     await harness.waitForMethod("turn/start");
-    await harness.notify(
-      itemNotification("item/started", {
-        type: "commandExecution",
-        id: "tool-settled",
-        command: "echo completed-work",
-        cwd: workspaceDir,
-        status: "inProgress",
-      }),
-    );
-    await harness.notify(
-      itemNotification("item/completed", {
-        type: "commandExecution",
-        id: "tool-settled",
-        command: "echo completed-work",
-        cwd: workspaceDir,
-        status: "completed",
-        aggregatedOutput: "completed-work\n",
-        exitCode: 0,
-        durationMs: 12,
-      }),
-    );
-    await harness.notify(
-      itemNotification("item/started", { type: "contextCompaction", id: "compact-failed" }),
-    );
-    await harness.notify({
-      method: "error",
-      params: {
-        threadId: "thread-1",
-        turnId: "turn-1",
-        error: {
-          message: "remote compaction failed",
-          codexErrorInfo: "other",
-          additionalDetails: null,
-        },
-        willRetry: false,
-      },
-    });
-    await harness.notify(
-      turnCompleted({
-        id: "turn-1",
-        status: "failed",
-        error: {
-          message: "remote compaction failed",
-          codexErrorInfo: "other",
-          additionalDetails: null,
+    // Native events arrive in wire order; local projection must not delay terminal receipt.
+    await Promise.all([
+      harness.notify(
+        itemNotification("item/started", {
+          type: "commandExecution",
+          id: "tool-settled",
+          command: "echo completed-work",
+          cwd: workspaceDir,
+          status: "inProgress",
+        }),
+      ),
+      harness.notify(
+        itemNotification("item/completed", {
+          type: "commandExecution",
+          id: "tool-settled",
+          command: "echo completed-work",
+          cwd: workspaceDir,
+          status: "completed",
+          aggregatedOutput: "completed-work\n",
+          exitCode: 0,
+          durationMs: 12,
+        }),
+      ),
+      harness.notify(
+        itemNotification("item/started", { type: "contextCompaction", id: "compact-failed" }),
+      ),
+      harness.notify({
+        method: "error",
+        params: {
+          threadId: "thread-1",
+          turnId: "turn-1",
+          error: {
+            message: "remote compaction failed",
+            codexErrorInfo: "other",
+            additionalDetails: null,
+          },
+          willRetry: false,
         },
       }),
-    );
+      harness.notify(
+        turnCompleted({
+          id: "turn-1",
+          status: "failed",
+          error: {
+            message: "remote compaction failed",
+            codexErrorInfo: "other",
+            additionalDetails: null,
+          },
+        }),
+      ),
+    ]);
 
     const result = await run;
 
