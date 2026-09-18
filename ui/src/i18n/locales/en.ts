@@ -2745,6 +2745,7 @@ export const en: TranslationMap & {
       active: "{running} running · {queued} queued · {failed} failed or stopped",
       finished: "{done} completed · {failed} failed or stopped",
       completed: "{done} completed",
+      failedOrStopped: "Failed or stopped",
       childOutcome: "Child runs finished. Check the conversation for the final response.",
       childOutcomeProcessing: "Child runs finished. The parent is processing their results.",
       details: "Child details",
@@ -3575,6 +3576,7 @@ export const en: TranslationMap & {
       offline: "Offline",
       unavailable: "Could not load people. Try again.",
       limit: "You can mention up to 10 people per message.",
+      selectedLabel: "Will notify",
       selected: "Will notify: {names}",
       remove: "Remove mention",
       restoreFailed:
