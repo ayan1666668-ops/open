@@ -264,6 +264,38 @@ it.each([":", "="])(
   },
 );
 
+it.each([
+  {
+    name: "unchanged audit fields",
+    fields: { kind: "forwarded", host: "example.invalid", substituted: false },
+    patterns: [],
+    expected: '{"kind":"forwarded","host":"example.invalid","substituted":false}',
+  },
+  {
+    name: "colliding masked property names",
+    fields: { keyA: "first", keyB: "last" },
+    patterns: ["/key[AB]/g"],
+    expected: '{"***":"last"}',
+  },
+  {
+    name: "masked integer property order",
+    fields: { "0": "zero", "1": "one", other: "tail" },
+    patterns: ['/"(0)":"zero"/g'],
+    expected: '{"1":"one","***":"zero","other":"tail"}',
+  },
+  {
+    name: "a masked surrogate half",
+    fields: { value: "😀" },
+    patterns: [String.raw`/\uDE00/g`],
+    expected: String.raw`{"value":"\ud83d***"}`,
+  },
+])("registered plugin logger preserves canonical file bytes for $name", async (fixture) => {
+  const result = await logFromPlugin("canonical proof", fixture.fields, fixture.patterns);
+  expect(result.lines).toHaveLength(1);
+  expect(result.lines[0]).toContain(`"1":${fixture.expected}`);
+  expect(result.records[0]["1"]).toEqual(JSON.parse(fixture.expected));
+});
+
 it("registered plugin service logger protects a credential-header receiver before one file conversion", async () => {
   let conversions = 0;
   const receiver = {
