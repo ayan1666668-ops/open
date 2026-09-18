@@ -3,7 +3,6 @@ title: Telegram subagent completion waits for requester lane release
 scenario:
   id: subagent-completion-busy-lane-telegram-live
   surface: subagents
-  runtimePairLane: core
   coverage:
     primary:
       - agent-runtime.subagent-turns-delivery
@@ -13,30 +12,44 @@ scenario:
   gatewayConfigPatch:
     tools:
       profile: full
-  objective: Prove a child that finishes while its requester is still running is delivered exactly once through Telegram only after the requester lane releases.
+  objective: Prove a child that finishes while its requester is still running is admitted as a distinct completion run after that run settles, and is delivered exactly once through Telegram.
   successCriteria:
+    - The requester runs on the Codex CLI harness, whose in-flight turn is not an embedded steer target, so the completion announce cannot be consumed by the original run.
     - A real Telegram inbound turn spawns one native child, then keeps the requester lane occupied in a foreground exec call that outlives the hold.
     - The child holds its reply behind a readiness barrier until that exec call has actually started, then reaches succeeded while it is still in flight.
-    - The requester's ordinary turn reply reaches Telegram before the deferred child completion reply.
-    - The deferred completion turn delivers through the message tool the direct-message completion route requires, after the lane released.
-    - The deferred child completion reaches Telegram exactly once after lane release.
+    - When the requester's own reply reaches Telegram, its session has still received exactly one user message, proving the completion was not steered into that run.
+    - The completion arrives afterwards as a distinct requester turn that performs exactly one message-tool send and no further orchestration.
+    - The deferred child completion reaches Telegram exactly once, after the requester reply.
   docsRefs:
     - docs/tools/subagents.md
     - docs/help/testing.md
   codeRefs:
     - src/process/command-queue.ts
+    - src/agents/session-placement-admission.ts
     - src/agents/subagents/announce/subagent-announce.ts
+    - src/agents/subagents/announce/subagent-announce-active-wake.ts
     - src/agents/subagents/announce/subagent-announce-direct-delivery.ts
     - src/agents/subagents/registry/subagent-registry-lifecycle.ts
   execution:
     kind: flow
+    # An embedded requester run always accepts an announce steer: the wake is
+    # attempted first (subagent-announce-direct-delivery.ts), it is sent with
+    # steeringMode "all", and resolveActiveWakeWithRetries strips a
+    # message_tool_only delivery-mode mismatch and retries
+    # (subagent-announce-active-wake.ts). Deferred admission through the
+    # requester's session lane is therefore only selected when the active run is
+    # not an embedded steer target, which is the Codex CLI harness case that
+    # session-placement-admission.ts admits through the shared session lane.
+    # Pinning the runtime establishes that precondition instead of assuming it.
+    runtime: codex
     suiteIsolation: isolated
     isolationReason: Exercises a real Telegram transport and a live child completion while the requester session lane is occupied.
     channel: telegram
     retryCount: 0
-    summary: Hold the requester lane with a foreground exec, release a barrier-gated child inside that window, and verify ordered exactly-once Telegram delivery after release.
+    summary: Hold the requester lane with a foreground exec on a non-steerable CLI requester, release a barrier-gated child inside that window, and verify a distinct completion run delivers once after settlement.
     config:
       requiredProviderMode: live-frontier
+      harnessRuntime: codex
       childLabelPrefix: telegram-busy-lane-child
       childResultPrefix: TELEGRAM_BUSY_CHILD_RESULT
       childVisiblePrefix: TELEGRAM_BUSY_CHILD_VISIBLE
@@ -114,7 +127,18 @@ flow:
                 2. Immediately after sessions_spawn succeeds, call exec exactly once with yieldMs ${config.execYieldMs} and this exact command: ${holdCommand}
                 3. Do not background that exec call and do not poll it with the process tool; let it return on its own.
                 4. After exec finishes, reply with exactly ${parentMarker} and nothing else.
-                5. If the child completion arrives in a later turn, deliver it by calling the message tool exactly once with action "send" and message exactly ${childVisible}. That send is the whole reply for that turn; do not call any other tool in it.`
+                5. The child's completion will reach you as a separate instruction after step 4. When it does, deliver it by calling the message tool exactly once with action "send" and message exactly ${childVisible}. That send is the whole reply for that turn; do not call any other tool in it, and never send ${childVisible} before your ${parentMarker} reply.`
+        # The requester session key is needed at the moment the requester's own
+        # reply reaches Telegram, so the registry row is resolved first. The row
+        # exists from spawn time; only its terminal fields are awaited later.
+        - call: waitForCondition
+          saveAs: spawnedChild
+          args:
+            - lambda:
+                async: true
+                expr: "(async () => { const payload = await runQaCli(env, ['tasks', 'list', '--json', '--runtime', 'subagent'], { timeoutMs: liveTurnTimeoutMs(env, 60000), json: true }); return (payload.tasks ?? []).find((task) => task.label === childLabel && task.createdAt >= attemptStartedAt && typeof task.requesterSessionKey === 'string' && task.requesterSessionKey.length > 0); })()"
+            - expr: liveTurnTimeoutMs(env, 120000)
+            - 250
         - call: waitForOutboundMessage
           saveAs: parentOutbound
           args:
@@ -125,6 +149,21 @@ flow:
             - expr: liveTurnTimeoutMs(env, 120000)
             - sinceIndex:
                 ref: outboundStartIndex
+        # Settlement evidence, captured at the boundary where the requester's own
+        # reply reached Telegram. An accepted announce steer commits its trigger
+        # as a user message on this session while the held exec is still running,
+        # so a second user message here means the completion was consumed by the
+        # original run and deferred admission was never selected. Failing on this
+        # names the wrong path instead of timing out on the missing later turn.
+        - call: readSessionTranscriptSummary
+          saveAs: settledTranscript
+          args:
+            - ref: env
+            - expr: spawnedChild.requesterSessionKey
+        - assert:
+            expr: "settledTranscript.userMessageCount === 1 && (settledTranscript.successfulToolCallCounts.message ?? 0) === 0"
+            message:
+              expr: "`requester run accepted completion steering instead of deferring admission; userMessages=${settledTranscript.userMessageCount} messageSends=${settledTranscript.successfulToolCallCounts.message ?? 0}`"
         - call: waitForOutboundMessage
           saveAs: childOutbound
           args:
@@ -153,6 +192,24 @@ flow:
           args:
             - ref: env
             - expr: completedChild.childSessionKey
+        # Everything the requester recorded after its own reply settled. One user
+        # message plus one message-tool send is the deferred completion run; zero
+        # spawn/exec calls confirm it is a new turn rather than a continuation of
+        # the original one.
+        - call: readSessionTranscriptSummary
+          saveAs: deferredTranscript
+          args:
+            - ref: env
+            - expr: completedChild.requesterSessionKey
+            - expr: "({ afterEventCursor: settledTranscript.eventCursor })"
+        - assert:
+            expr: "spawnedChild.requesterSessionKey === completedChild.requesterSessionKey"
+            message:
+              expr: "`requester session key changed between spawn and completion; spawned=${spawnedChild.requesterSessionKey} completed=${completedChild.requesterSessionKey}`"
+        - assert:
+            expr: "deferredTranscript.userMessageCount === 1 && (deferredTranscript.successfulToolCallCounts.message ?? 0) === 1 && (deferredTranscript.successfulToolCallCounts.sessions_spawn ?? 0) === 0 && (deferredTranscript.successfulToolCallCounts.exec ?? 0) === 0"
+            message:
+              expr: "`completion did not run as one distinct requester turn after settlement; userMessages=${deferredTranscript.userMessageCount} tools=${JSON.stringify(deferredTranscript.successfulToolCallCounts ?? {})}`"
         - set: parentToolEvents
           value:
             expr: parentTranscript.successfulToolCallEvents ?? []
@@ -232,4 +289,4 @@ flow:
             expr: duplicateMatches.length === 1
             message:
               expr: "`expected one deferred child completion during duplicate window, saw ${duplicateMatches.length}`"
-      detailsExpr: "JSON.stringify({ verdict: 'PASS', scenario: 'subagent-completion-busy-lane-telegram-live', requesterSessionKey: completedChild.requesterSessionKey, childSessionKey: completedChild.childSessionKey, execStartedAt: proofContents.startedAt, childEndedAt: completedChild.endedAt, execFinishedAt: proofContents.finishedAt, completionSendAt: completionSendEvent?.timestamp, parentOutboundId: parentOutbound.id, childOutboundId: childOutbound.id, deferredCompletionCount: duplicateMatches.length }, null, 2)"
+      detailsExpr: "JSON.stringify({ verdict: 'PASS', scenario: 'subagent-completion-busy-lane-telegram-live', requesterSessionKey: completedChild.requesterSessionKey, childSessionKey: completedChild.childSessionKey, execStartedAt: proofContents.startedAt, childEndedAt: completedChild.endedAt, execFinishedAt: proofContents.finishedAt, completionSendAt: completionSendEvent?.timestamp, settledUserMessages: settledTranscript.userMessageCount, settledEventCursor: settledTranscript.eventCursor, deferredUserMessages: deferredTranscript.userMessageCount, parentOutboundId: parentOutbound.id, childOutboundId: childOutbound.id, deferredCompletionCount: duplicateMatches.length }, null, 2)"
