@@ -11,12 +11,15 @@ import type {
 import type { UpdatePostInstallDoctorResult } from "../infra/update-doctor-result.js";
 import type { PluginMetadataSnapshotScopeRunner } from "../plugins/current-plugin-metadata-snapshot.js";
 import type { RuntimeEnv } from "../runtime.js";
+import type { AgentDatabaseAdmissionRefusal } from "../state/agent-database-admission.js";
 import type { DoctorHealthCheck } from "./health-check-runner-types.js";
 import type { HealthCheckContext } from "./health-checks.js";
 import type { FlowContribution } from "./types.js";
 
 type DoctorConfigResult = {
   cfg: OpenClawConfig;
+  /** Source before the first write; later writes use cfgForPersistence. */
+  sourceConfigForWrite?: OpenClawConfig;
   pluginInstallConfigImport?: ShippedPluginInstallConfigImport;
   path?: string;
   shouldWriteConfig?: boolean;
@@ -24,6 +27,10 @@ type DoctorConfigResult = {
   confirmedConfigSource?: { path: string; hash: string };
   /** Repair panels held back until the atomic config write commits. */
   pendingChangePanels?: readonly string[];
+  /** Billing changes reported once after the model migration is durable. */
+  modelBillingRouteWarnings?: readonly string[];
+  /** Successful retirement pass awaiting the config-write/no-change boundary. */
+  modelRetirementRepairRan?: boolean;
   sourceConfigValid?: boolean;
   sourceLastTouchedVersion?: string;
   skipPluginValidationOnWrite?: boolean;
@@ -67,11 +74,12 @@ export type DoctorHealthFlowContext = {
   env?: NodeJS.ProcessEnv;
   /** State migration owns service activation until final readiness passes. */
   gatewayMaintenanceActive?: boolean;
+  agentDatabaseRefusals?: readonly AgentDatabaseAdmissionRefusal[];
   gatewayDetails?: ReturnType<typeof buildGatewayConnectionDetails>;
   healthOk?: boolean;
   gatewayHealthAuthenticated?: boolean;
   gatewayHealthSkipped?: boolean;
-  gatewayStatus?: import("../status/types.js").StatusSummary;
+  gatewayStatus?: import("../status/summary.js").StatusSummary;
   gatewayMemoryProbe?: Awaited<ReturnType<typeof probeGatewayMemoryStatus>>;
   postInstallDoctorResult?: UpdatePostInstallDoctorResult;
   updateWarnings?: string[];
@@ -82,6 +90,7 @@ export type DoctorHealthFlowContext = {
 /** Internal facts carried through Doctor detect/repair/validate passes without widening the SDK. */
 export type DoctorHealthCheckContext = HealthCheckContext & {
   readonly runWithPluginMetadataSnapshot?: PluginMetadataSnapshotScopeRunner;
+  readonly agentDatabaseRefusals?: readonly AgentDatabaseAdmissionRefusal[];
 };
 
 export type DoctorHealthContribution = FlowContribution & {

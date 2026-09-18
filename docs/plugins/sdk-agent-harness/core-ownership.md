@@ -30,14 +30,29 @@ model discovery, auth preparation, or Responses parameters. An explicit
 observation, not a native ownership claim. Bound native sessions use the separate
 ownership contract below.
 
+Use `params.hostCapabilities.createToolSurface(options)` to construct OpenClaw
+tools. The host captures publication availability for the admitted attempt and
+applies it when building the surface; harnesses do not need to forward that fact,
+and plugin-supplied options cannot replace it. Tool profiles still filter the
+catalog, and each executable remains bound to the host's live authority.
+
 ### Native tool-policy enforcement
 
 Set `conversationToolPolicySupport: "exact"` only when `runAttempt` enforces every
 explicit OpenClaw tool-policy layer across native and built-in tools, OpenClaw
 tools, requester and configured MCP servers, apps, delegation, and resumed
 threads. Core passes `params.pluginHarnessToolPolicyRestricted` as the prepared
-decision that the native surface must be isolated. Default tool-profile narrowing
-does not set this flag.
+decision that the native surface must be isolated.
+
+If the native surface exposes several capabilities together, declare their
+canonical OpenClaw tool names in `conversationToolPolicyNativeTools`. Core checks
+every requirement against the effective tool profile and provider profile,
+including agent overrides and `alsoAllow`. A missing capability sets the same
+restriction flag. For example, Codex declares its shell and filesystem tools, so
+`messaging` and `minimal` profiles disable native code mode while `coding` and
+`full` keep it available. This declaration does not relax explicit allowlists,
+denylists, sandbox policy, or runtime caps. Omitting it preserves existing
+profile handling for harnesses that enforce native availability independently.
 
 Harnesses with an independently managed native surface can also declare
 `conversationToolPolicySafeDenyTools` using canonical OpenClaw tool names. Core

@@ -1,12 +1,13 @@
 import { normalizeUpdatePostInstallDoctorWarnings } from "../infra/update-doctor-result.js";
 import type {
   DoctorContributionHealthCheck,
+  DoctorHealthCheckContext,
   DoctorHealthContribution,
   DoctorHealthFlowContext,
 } from "./doctor-health-contribution-types.js";
 import { resolveDoctorWorkspaceDir } from "./doctor-health-contribution-utils.js";
 import type { DoctorHealthCheck } from "./health-check-runner-types.js";
-import type { HealthFinding } from "./health-checks.js";
+import type { HealthFinding, HealthRepairContext } from "./health-checks.js";
 
 export function createDoctorHealthContribution(params: {
   id: string;
@@ -97,18 +98,18 @@ async function runStructuredDoctorHealthContribution(params: {
   const { runDoctorHealthRepairs } = await import("./doctor-repair-flow.js");
   const workspaceDir = resolveDoctorWorkspaceDir(params.ctx.cfg, params.ctx.env);
   const dryRun = !params.ctx.prompter.shouldRepair;
-  const result = await runDoctorHealthRepairs(
-    {
-      mode: "fix",
-      runtime: params.ctx.runtime,
-      cfg: params.ctx.cfg,
-      cwd: workspaceDir,
-      configPath: params.ctx.configPath,
-      dryRun,
-      allowExecSecretRefs: params.ctx.options.allowExec === true,
-    },
-    { checks: params.checks, dryRun },
-  );
+  const configBeforeRepair = JSON.stringify(params.ctx.cfg);
+  const context: HealthRepairContext & DoctorHealthCheckContext = {
+    mode: "fix",
+    runtime: params.ctx.runtime,
+    cfg: params.ctx.cfg,
+    cwd: workspaceDir,
+    configPath: params.ctx.configPath,
+    dryRun,
+    allowExecSecretRefs: params.ctx.options.allowExec === true,
+    agentDatabaseRefusals: params.ctx.agentDatabaseRefusals,
+  };
+  const result = await runDoctorHealthRepairs(context, { checks: params.checks, dryRun });
   params.ctx.cfg = result.config;
   renderStructuredHealthFindings(params.ctx, result.findings);
   // Display retains original findings; finalization records only unresolved warnings.
@@ -120,8 +121,15 @@ async function runStructuredDoctorHealthContribution(params: {
   for (const warning of result.warnings) {
     params.ctx.runtime.error(warning);
   }
-  for (const change of result.changes) {
-    params.ctx.runtime.log(change);
+  if (configBeforeRepair !== JSON.stringify(result.config)) {
+    params.ctx.configResult.pendingChangePanels = [
+      ...(params.ctx.configResult.pendingChangePanels ?? []),
+      ...result.changes,
+    ];
+  } else {
+    for (const change of result.changes) {
+      params.ctx.runtime.log(change);
+    }
   }
 }
 

@@ -6,6 +6,7 @@ import { withTempHome } from "openclaw/plugin-sdk/test-env";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { migratePersistedImplicitMainRoster } from "../config/legacy.roster.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import type { MediaUnderstandingModelConfig } from "../config/types.tools.js";
 import { writeChannelPairingStateSnapshot } from "../pairing/pairing-store-sqlite.test-helpers.js";
 import type { PluginCapabilityConsentHandler } from "../plugins/capability-consent.js";
 import { buildPluginCapabilityConsentReview } from "../plugins/capability-summary.js";
@@ -800,7 +801,9 @@ vi.mock("./doctor/channel-capabilities.js", () => {
   };
 });
 
-vi.mock("../plugins/doctor-contract-registry.js", async () => {
+vi.mock("../plugins/doctor-contract-registry.js", async (importOriginal) => {
+  const { withDeferredPluginDoctorMigrations } =
+    await importOriginal<typeof import("../plugins/doctor-contract-registry.js")>();
   const { asNullableRecord: readNullableRecord } =
     await import("@openclaw/normalization-core/record-coerce");
 
@@ -946,6 +949,7 @@ vi.mock("../plugins/doctor-contract-registry.js", async () => {
   };
   return {
     collectRelevantDoctorPluginIds,
+    withDeferredPluginDoctorMigrations,
     collectDoctorConfigRepairPluginIds: collectRelevantDoctorPluginIds,
     applyPluginDoctorCompatibilityMigrations: normalizeDiscordStreamingAliasesForTest,
     listPluginDoctorLegacyConfigRules: () => [
@@ -1131,7 +1135,6 @@ vi.mock("./doctor/shared/channel-doctor.js", async () => {
 
   return {
     collectChannelDoctorCompatibilityMutations: vi.fn(collectCompatibilityMutations),
-    collectChannelDoctorEmptyAllowlistExtraWarnings: vi.fn(collectTelegramFirstTimeExtraWarnings),
     collectChannelDoctorMutableAllowlistWarnings: vi.fn(
       ({ cfg }: { cfg: { channels?: Record<string, unknown> } }) => {
         const zalouser = readNullableRecord(cfg.channels?.zalouser);
@@ -1386,49 +1389,19 @@ vi.mock("./doctor-config-preflight.js", async () => {
   };
 });
 
-vi.mock("./doctor-config-analysis.js", () => {
-  function formatConfigKeyPath(parts: Array<string | number>): string {
-    if (parts.length === 0) {
-      return "<root>";
-    }
-    let out = "";
-    for (const part of parts) {
-      if (typeof part === "number") {
-        out += `[${part}]`;
-      } else {
-        out = out ? `${out}.${part}` : part;
-      }
-    }
-    return out || "<root>";
-  }
-
-  function resolveConfigPathTarget(root: unknown, pathParts: Array<string | number>): unknown {
-    let current: unknown = root;
-    for (const part of pathParts) {
-      if (typeof part === "number") {
-        if (!Array.isArray(current)) {
-          return null;
-        }
-        current = current[part];
-        continue;
-      }
-      if (!current || typeof current !== "object" || Array.isArray(current)) {
-        return null;
-      }
-      current = (current as Record<string, unknown>)[part];
-    }
-    return current;
-  }
+vi.mock("./doctor-config-analysis.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./doctor-config-analysis.js")>();
 
   return {
-    collectImplicitFallbackClobberWarnings: collectImplicitFallbackClobberWarningsMock,
-    formatConfigKeyPath,
+    formatConfigKeyPath: actual.formatConfigKeyPath,
     noteImplicitFallbackClobberWarnings: noteImplicitFallbackClobberWarningsMock,
-    noteIncludeConfinementWarning: vi.fn(),
     noteOpencodeProviderOverrides: vi.fn(),
     noteMcpOriginWarning: vi.fn(),
+    noteDoctorHookConfigWarnings: actual.noteDoctorHookConfigWarnings,
+    noteMediaCliModelWarnings: actual.noteMediaCliModelWarnings,
+    noteMissingDefaultAgentOwner: actual.noteMissingDefaultAgentOwner,
     noteSandboxOriginProxyWarning: vi.fn(),
-    resolveConfigPathTarget,
+    resolveConfigPathTarget: actual.resolveConfigPathTarget,
     stripUnknownConfigKeys: vi.fn((config: Record<string, unknown>) => {
       const next = structuredClone(config);
       const removed: string[] = [];
@@ -1436,7 +1409,7 @@ vi.mock("./doctor-config-analysis.js", () => {
         delete next.bridge;
         removed.push("bridge");
       }
-      const gatewayAuth = resolveConfigPathTarget(next, ["gateway", "auth"]);
+      const gatewayAuth = actual.resolveConfigPathTarget(next, ["gateway", "auth"]);
       if (
         gatewayAuth &&
         typeof gatewayAuth === "object" &&
@@ -1801,6 +1774,27 @@ describe("doctor config flow", () => {
       },
     });
   });
+
+  it.each([false, true])(
+    "explains how to select a default for an ownerless explicit fleet (repair: %s)",
+    async (repair) => {
+      const config: OpenClawConfig = {
+        agents: { ownership: "explicit", entries: { ops: {}, research: {} } },
+      };
+      const result = await runDoctorConfigWithInput({
+        config,
+        parsedConfig: config,
+        repair,
+        run: loadAndMaybeMigrateDoctorConfig,
+      });
+      expect(result.cfg.agents).toEqual(config.agents);
+      expect(result.shouldWriteConfig).toBe(false);
+      expect(terminalNoteMock).toHaveBeenCalledWith(
+        expect.stringContaining("openclaw config set agents.defaults.systemAgent.agentId <id>"),
+        "Agent ownership",
+      );
+    },
+  );
 
   it("materializes ambient roles for a multi-agent configured default", async () => {
     const rawConfig = {
@@ -2398,29 +2392,36 @@ describe("doctor config flow", () => {
     expect(doctorWarnings.join("\n")).toContain("clobbers agents.defaults.model.fallbacks");
   });
 
-  it("warns when hooks transformsDir points outside the hook transforms root", async () => {
-    const doctorWarnings = await collectDoctorWarnings({
-      hooks: {
-        enabled: true,
-        token: "hook-secret",
-        transformsDir: "/virtual/.openclaw/workspace/skills/linear-webhook",
-        mappings: [
-          {
-            match: { path: "linear" },
-            action: "agent",
-            messageTemplate: "Linear event",
-            transform: { module: "./openclaw-linear-transform.js" },
-          },
-        ],
-      },
-    });
-
-    const warning = doctorWarnings.join("\n");
-    expect(warning).toContain("hooks.transformsDir:");
-    expect(warning).toContain("/virtual/.openclaw/workspace/skills/linear-webhook");
-    expect(warning).toContain("/virtual/.openclaw/hooks/transforms");
-    expect(warning).toContain("move custom transforms there or remove hooks.transformsDir");
-  });
+  it.each([false, true])(
+    "reports invalid CLI media models without repairing them (repair=%s)",
+    async (repair) => {
+      const models = [
+        { provider: "fixture-provider", capabilities: ["audio"] },
+        { type: "cli", capabilities: ["audio"] },
+        { type: "cli", command: "fixture-transcribe", capabilities: ["audio"] },
+        { type: "cli", command: "fixture-transcribe", args: ["{{AttachmentPath}}"] },
+        { command: "fixture-transcribe", args: ["/synthetic/audio.wav"] },
+      ] satisfies MediaUnderstandingModelConfig[];
+      const config: OpenClawConfig = { plugins: { enabled: false }, tools: { media: { models } } };
+      config.agents = { entries: { main: {} } };
+      const result = await runDoctorConfigWithInput({
+        config,
+        repair,
+        run: loadAndMaybeMigrateDoctorConfig,
+      });
+      const warnings = terminalNoteMock.mock.calls
+        .filter(([, title]) => title === "Doctor warnings")
+        .map(([message]) => message)
+        .join("\n");
+      expect(warnings).toContain("tools.media.models[1].command");
+      expect(warnings).toContain("tools.media.models[2].args");
+      expect(warnings).toContain("{{AttachmentPath}}");
+      expect(warnings).toContain("Doctor cannot choose");
+      expect(warnings).not.toMatch(/tools\.media\.models\[(?:0|3|4)\]/);
+      expect(result.cfg.tools?.media).toEqual(config.tools?.media);
+      expect(result.shouldWriteConfig, result.pendingChangePanels?.join("\n")).toBe(false);
+    },
+  );
 
   it("warns when internal hook entries include unsupported loader keys", async () => {
     const doctorWarnings = await collectDoctorWarnings({

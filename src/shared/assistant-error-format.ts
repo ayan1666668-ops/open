@@ -101,24 +101,16 @@ export function parseApiErrorPayload(raw?: string): ErrorPayload | null {
   if (!trimmed) {
     return null;
   }
-  const candidates = [trimmed];
-  if (ERROR_PAYLOAD_PREFIX_RE.test(trimmed)) {
-    candidates.push(trimmed.replace(ERROR_PAYLOAD_PREFIX_RE, "").trim());
+  const candidate = trimmed.replace(ERROR_PAYLOAD_PREFIX_RE, "").trim();
+  if (!candidate.startsWith("{") || !candidate.endsWith("}")) {
+    return null;
   }
-  for (const candidate of candidates) {
-    if (!candidate.startsWith("{") || !candidate.endsWith("}")) {
-      continue;
-    }
-    try {
-      const parsed = JSON.parse(candidate) as unknown;
-      if (isErrorPayloadObject(parsed)) {
-        return parsed;
-      }
-    } catch {
-      // ignore parse errors
-    }
+  try {
+    const parsed = JSON.parse(candidate) as unknown;
+    return isErrorPayloadObject(parsed) ? parsed : null;
+  } catch {
+    return null;
   }
-  return null;
 }
 
 function extractHttpStatusMatch(
@@ -222,9 +214,19 @@ export function parseApiErrorInfo(raw?: string): ApiErrorInfo | null {
     candidate = httpPrefix.rest;
   }
 
-  const payload = parseApiErrorPayload(candidate);
+  let payload = parseApiErrorPayload(candidate);
   if (!payload) {
     return null;
+  }
+  // A proxy can wrap the terminal upstream error in its ordered attempt history.
+  for (let depth = 0; depth < 4; depth++) {
+    const attempts: unknown = asOptionalRecord(payload.error)?.attempts;
+    const finalAttempt = Array.isArray(attempts) ? asOptionalRecord(attempts.at(-1)) : undefined;
+    const details = finalAttempt?.details;
+    if (!isErrorPayloadObject(details)) {
+      break;
+    }
+    payload = details;
   }
 
   const requestId =

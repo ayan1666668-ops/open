@@ -1,7 +1,8 @@
 /* @vitest-environment jsdom */
 
-import { createRequireRecord } from "openclaw/plugin-sdk/test-fixtures";
 import { describe, expect, it, vi } from "vitest";
+import { createDeferred as deferred } from "../../../test/helpers/promise.js";
+import { createRequireRecord } from "../../../test/helpers/record.js";
 import type { AgentsListResult, GatewaySessionRow, SessionsListResult } from "../api/types.ts";
 import {
   createAgentSelectionCapability,
@@ -15,7 +16,6 @@ import "../test-helpers/app-sidebar-suite.ts";
 import {
   createContext,
   createGatewayHarness,
-  deferred,
   mountSidebarContext,
 } from "../test-helpers/app-sidebar.ts";
 import { createTestGatewayClient } from "../test-helpers/gateway-client.ts";

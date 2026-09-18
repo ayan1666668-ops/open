@@ -4,6 +4,7 @@ import {
   parseTerminalToolCallArguments,
   type ToolArgumentPreviewSchedule,
 } from "@openclaw/ai/internal/runtime";
+import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import { WORKER_PROTOCOL_MAX_IDENTIFIER_LENGTH } from "../../packages/gateway-protocol/src/schema/worker-admission.js";
 import type {
   WorkerInferenceContext,
@@ -236,9 +237,55 @@ function transcriptSafeErrorMessage(
     return message;
   }
   const replacement = emptyAssistantMessage(modelRef);
+  replacement.api = message.api;
+  replacement.provider = message.provider;
+  replacement.model = message.model;
+  replacement.timestamp = message.timestamp;
   replacement.stopReason = message.stopReason === "aborted" ? "aborted" : "error";
-  replacement.errorMessage = "Worker inference result exceeds the transcript message limit.";
+  replacement.errorMessage = truncateUtf16Safe(
+    message.errorMessage ?? "Worker inference result exceeds the transcript message limit.",
+    256,
+  );
+  replacement.usage = structuredClone(message.usage);
   return replacement;
+}
+
+function createInferenceRequestMeasure(request: WorkerInferenceStartParams) {
+  const measureFull = (messages: WorkerInferenceContext["messages"]) =>
+    Buffer.byteLength(
+      JSON.stringify({
+        type: "req",
+        // The dispatcher creates UUID request IDs: this has the exact same encoded size.
+        id: "00000000-0000-4000-8000-000000000000",
+        method: "worker.inference.start",
+        params: { ...request, context: { ...request.context, messages } },
+      }),
+      "utf8",
+    );
+  let envelopeBytes = 0;
+  let messageBytes: WeakMap<WorkerInferenceContext["messages"][number], number> | undefined;
+  return (messages: WorkerInferenceContext["messages"]) => {
+    // Fitting requests keep the single full encoding; allocate only after pruning starts.
+    if (messages === request.context.messages) {
+      return measureFull(messages);
+    }
+    if (!messageBytes) {
+      envelopeBytes = measureFull([]);
+      messageBytes = new WeakMap();
+    }
+    let bytes = envelopeBytes + Math.max(0, messages.length - 1);
+    for (const message of messages) {
+      // The fitter replaces each changed message but reuses its candidate array.
+      // Cache message sizes only, scoped to this cloned request's synchronous fitting.
+      let size = messageBytes.get(message);
+      if (size === undefined) {
+        size = Buffer.byteLength(JSON.stringify(message), "utf8");
+        messageBytes.set(message, size);
+      }
+      bytes += size;
+    }
+    return bytes;
+  };
 }
 
 export function createWorkerInferenceStreamAdapter(
@@ -316,17 +363,7 @@ export function createWorkerInferenceStreamAdapter(
     try {
       const messages = fitWorkerReplayImages(
         request.context.messages,
-        (candidateMessages) =>
-          Buffer.byteLength(
-            JSON.stringify({
-              type: "req",
-              // The dispatcher creates UUID request IDs: this has the exact same encoded size.
-              id: "00000000-0000-4000-8000-000000000000",
-              method: "worker.inference.start",
-              params: { ...request, context: { ...request.context, messages: candidateMessages } },
-            }),
-            "utf8",
-          ),
+        createInferenceRequestMeasure(request),
         adapter.computerContextEpoch?.frameToolCallId,
       );
       if (!messages) {
@@ -377,6 +414,7 @@ export function createWorkerInferenceStreamAdapter(
             const message = emptyAssistantMessage(adapter.modelRef);
             message.stopReason = "error";
             message.errorMessage = "Worker inference result exceeds the transcript message limit.";
+            message.usage = structuredClone(outcome.message.usage);
             stream.push({ type: "error", reason: "error", error: message });
             stream.end();
             return;

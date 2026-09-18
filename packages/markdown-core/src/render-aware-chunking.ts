@@ -1,6 +1,7 @@
 import { resolveIntegerOption } from "@openclaw/normalization-core/number-coercion";
 import { avoidTrailingHighSurrogateBreak } from "./chunk-text.js";
 import { annotateAssistantTranscriptRoleMessageBoundary } from "./ir-annotations.js";
+import { sliceMarkdownIRRanges } from "./ir-slice.js";
 import { mergeAnnotationSpans, mergeStyleSpans } from "./ir-spans.js";
 import { appendMarkdownIR, sliceMarkdownIR, type MarkdownIR } from "./ir.js";
 
@@ -120,9 +121,6 @@ function splitMarkdownIRByRenderedLimit<TRendered>(
   options: RenderResolver<TRendered>,
 ): MarkdownIR[] {
   const currentTextLength = chunk.text.length;
-  if (currentTextLength <= 1) {
-    return [chunk];
-  }
 
   const splitLimit = findLargestChunkTextLengthWithinRenderedLimit(chunk, renderedLimit, options);
   if (splitLimit <= 0) {
@@ -147,9 +145,6 @@ function findLargestChunkTextLengthWithinRenderedLimit<TRendered>(
   options: RenderResolver<TRendered>,
 ): number {
   const currentTextLength = chunk.text.length;
-  if (currentTextLength <= 1) {
-    return currentTextLength;
-  }
 
   // Rendered length is not guaranteed to be monotonic after escaping/link or
   // file-reference rewriting, so test exact candidates from longest to shortest.
@@ -256,14 +251,14 @@ function splitMarkdownIRPreserveWhitespace(ir: MarkdownIR, limit: number): Markd
     return [ir];
   }
 
-  const chunks: MarkdownIR[] = [];
+  const ranges: SourceRange[] = [];
   let cursor = 0;
   while (cursor < ir.text.length) {
     const end = findMarkdownIRPreservedSplitIndex(ir.text, cursor, normalizedLimit);
-    chunks.push(sliceMarkdownIR(ir, cursor, end));
+    ranges.push({ start: cursor, end });
     cursor = end;
   }
-  return chunks;
+  return sliceMarkdownIRRanges(ir, ranges);
 }
 
 type SourceRange = { start: number; end: number };

@@ -6,7 +6,7 @@ import type { SessionPluginJsonValue } from "../../config/sessions/types.js";
 import type { HeartbeatRunResult } from "../../infra/heartbeat-wake.js";
 import type { LogLevel } from "../../logging/levels.js";
 import type { MediaUnderstandingRuntime } from "../../media-understanding/runtime-types.js";
-import type { PluginRuntimeTaskFlows, PluginRuntimeTaskRuns } from "./runtime-tasks.types.js";
+import type { PluginRuntimeTasks } from "./runtime-tasks.types.js";
 
 type TtsRuntimeApi = typeof import("../../tts/runtime-api.js");
 type ListSpeechVoices = TtsRuntimeApi["listSpeechVoices"];
@@ -318,7 +318,10 @@ export type LlmCompleteResult = {
 type RuntimeRunEmbeddedAgentParams = Omit<
   import("../../agents/embedded-agent-runner/run/params.js").RunEmbeddedAgentParams,
   "admittedRunContext" | "preparedRunAdmission"
->;
+> & {
+  /** @deprecated Ignored; the host derives availability. Retained until the next Plugin SDK major. */
+  githubPublicationAvailable?: boolean;
+};
 
 type RuntimeRunEmbeddedAgent = (
   params: RuntimeRunEmbeddedAgentParams,
@@ -419,7 +422,7 @@ export type PluginRuntimeCore = {
     }) => Promise<{ ok: true; runId: string } | { ok: false; reason: string }>;
   };
   system: {
-    enqueueSystemEvent: typeof import("../../infra/system-events.js").enqueueSystemEvent;
+    enqueueSystemEvent: typeof import("./system-events.js").enqueueSystemEventFromSdk;
     requestHeartbeat: typeof import("../../infra/heartbeat-wake.js").requestHeartbeat;
     /**
      * @deprecated Use `requestHeartbeat({ source, intent, reason })` so wake producers declare
@@ -539,11 +542,7 @@ export type PluginRuntimeCore = {
       },
     ) => import("../../channels/message/ingress-drain.js").ChannelIngressDrain;
   };
-  tasks: {
-    runs: PluginRuntimeTaskRuns;
-    flows: PluginRuntimeTaskFlows;
-    managedFlows: import("./runtime-taskflow.types.js").PluginRuntimeTaskFlow;
-  };
+  tasks: PluginRuntimeTasks;
   llm: {
     complete: (params: LlmCompleteParams) => Promise<LlmCompleteResult>;
     acquireLocalService: (
