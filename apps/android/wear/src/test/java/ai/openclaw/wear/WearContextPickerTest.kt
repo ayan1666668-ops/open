@@ -19,6 +19,7 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasScrollToIndexAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
@@ -77,7 +78,7 @@ class WearContextPickerTest {
   fun agentChoicesExposeSelectionAndBusyOptionsCannotSelect() {
     show()
     openContext()
-    reveal("AGENT").performClick()
+    reveal("AGENT").assert(button).assert(noSelection).performClick()
     reveal("Research assistant").assertIsSelected().assert(radio)
     reveal("Travel assistant").assertIsNotSelected().assert(radio)
     compose.runOnIdle { busy = true }
@@ -92,8 +93,8 @@ class WearContextPickerTest {
   fun modelSearchChoicesExposeSelectionAndPreserveRouting() {
     show()
     openContext()
-    reveal("MODEL").performClick()
-    reveal("Search models").performClick()
+    reveal("MODEL").assert(button).assert(noSelection).performClick()
+    reveal("Search models").assert(button).assert(noSelection).performClick()
     reveal("Long reasoning model").assertIsSelected().assert(radio)
     reveal("Search-only model").assertIsNotSelected().assert(radio)
     compose.runOnIdle { busy = true }
@@ -271,7 +272,9 @@ class WearContextPickerTest {
   }
 
   private companion object {
-    val radio = SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.RadioButton)
+    val radio =
+      SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.RadioButton) and
+        hasAnyAncestor(SemanticsMatcher.keyIsDefined(SemanticsProperties.SelectableGroup))
     val button = SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Button)
     val noSelection = SemanticsMatcher.keyNotDefined(SemanticsProperties.Selected)
 

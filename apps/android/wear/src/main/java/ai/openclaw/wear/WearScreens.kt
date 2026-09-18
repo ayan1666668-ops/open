@@ -35,6 +35,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
@@ -1937,6 +1938,7 @@ private fun ConnectionStateScreen(
 @Composable
 private fun WearPage(
   pageLabel: String,
+  modifier: Modifier = Modifier,
   listState: androidx.wear.compose.foundation.lazy.TransformingLazyColumnState? = null,
   content: androidx.wear.compose.foundation.lazy.TransformingLazyColumnScope.() -> Unit,
 ) {
@@ -1945,7 +1947,7 @@ private fun WearPage(
   ScreenScaffold(scrollState = resolvedListState) { contentPadding ->
     TransformingLazyColumn(
       modifier =
-        Modifier
+        modifier
           .fillMaxSize()
           .background(colors.canvas),
       state = resolvedListState,
@@ -2064,7 +2066,7 @@ private fun ContextPickerOverlay(
       WearContextPicker.Session -> stringResource(R.string.session)
       WearContextPicker.Model -> stringResource(R.string.model)
     }
-  WearPage(pageLabel = pageLabel) {
+  WearPage(pageLabel = pageLabel, modifier = Modifier.selectableGroup()) {
     item {
       SecondaryButton(
         label = stringResource(R.string.close),
