@@ -24,6 +24,12 @@ extension OpenClawChatViewModel {
                 }
                 self.sessions = updated
             } else {
+                // The active session's row can sit outside the capped sessions
+                // list; keep its authoritative reasoning level so visibility
+                // still follows the `/reasoning` directive on history reload.
+                if let reasoningLevel = sessionInfo.reasoningLevel {
+                    self.retainedActiveSessionReasoningLevel = reasoningLevel
+                }
                 self.updateActiveSessionRunIDs(sessionInfo.activeRunIds ?? [])
             }
         }
