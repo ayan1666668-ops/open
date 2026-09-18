@@ -27,6 +27,153 @@ async function* mediaBytes() {
 }
 
 describe("read-owned media publication", () => {
+  it.each(["buffer", "source"] as const)(
+    "rejects scoped %s publication when durable file sync fails",
+    async (kind) => {
+      await withOpenClawTestState({ layout: "state-only" }, async (state) => {
+        const source = state.statePath("source.pdf");
+        const mediaDir = state.statePath("media", "outbound");
+        await fs.writeFile(source, bytes);
+        await fs.mkdir(mediaDir, { recursive: true });
+        const realMediaDir = await fs.realpath(mediaDir);
+        const syncError = Object.assign(new Error("synthetic media sync failure"), { code: "EIO" });
+        const open = fs.open.bind(fs);
+        vi.spyOn(fs, "open").mockImplementation(async (...args) => {
+          const handle = await open(...args);
+          if (
+            typeof args[0] === "string" &&
+            path.dirname(args[0]) === realMediaDir &&
+            args[1] === "wx"
+          ) {
+            vi.spyOn(handle, "sync").mockRejectedValue(syncError);
+          }
+          return handle;
+        });
+        await expect(
+          withChannelReadAuthority(
+            () => {},
+            () =>
+              kind === "buffer"
+                ? saveMediaBuffer(bytes, "application/pdf", "outbound")
+                : saveMediaSource(source, undefined, "outbound"),
+          ),
+        ).rejects.toBe(syncError);
+        expect(await fs.readdir(mediaDir)).toEqual([]);
+        expect(await fs.readFile(source)).toEqual(bytes);
+      });
+    },
+  );
+
+  it.skipIf(process.platform === "win32").each([
+    ["buffer", false],
+    ["buffer", true],
+    ["source", false],
+    ["source", true],
+  ] as const)(
+    "syncs scoped %s content before publication and its parent afterward (directory fails=%s)",
+    async (kind, failDirectorySync) => {
+      await withOpenClawTestState({ layout: "state-only" }, async (state) => {
+        const source = state.statePath("source.pdf");
+        const mediaDir = state.statePath("media", "outbound");
+        await fs.writeFile(source, bytes);
+        await fs.mkdir(mediaDir, { recursive: true });
+        const realMediaDir = await fs.realpath(mediaDir);
+        const syncEvents: string[] = [];
+        const open = fs.open.bind(fs);
+        vi.spyOn(fs, "open").mockImplementation(async (...args) => {
+          const handle = await open(...args);
+          if (typeof args[0] !== "string") {
+            return handle;
+          }
+          const sync = handle.sync.bind(handle);
+          if (path.dirname(args[0]) === realMediaDir && args[1] === "wx") {
+            vi.spyOn(handle, "sync").mockImplementation(async () => {
+              expect((await fs.readdir(mediaDir)).every((name) => name.endsWith(".tmp"))).toBe(
+                true,
+              );
+              await sync();
+              syncEvents.push("file");
+            });
+          } else if (args[0] === realMediaDir) {
+            vi.spyOn(handle, "sync").mockImplementation(async () => {
+              expect(syncEvents).toEqual(["file"]);
+              const published = await fs.readdir(mediaDir);
+              expect(published).toHaveLength(1);
+              expect(published[0]).toMatch(/\.pdf$/);
+              if (failDirectorySync) {
+                syncEvents.push("directory");
+                throw Object.assign(new Error("synthetic directory sync failure"), { code: "EIO" });
+              }
+              await sync();
+              syncEvents.push("directory");
+            });
+          }
+          return handle;
+        });
+        const saved = await withChannelReadAuthority(
+          () => {},
+          () =>
+            kind === "buffer"
+              ? saveMediaBuffer(bytes, "application/pdf", "outbound")
+              : saveMediaSource(source, undefined, "outbound"),
+        );
+        expect(syncEvents).toEqual(["file", "directory"]);
+        expect(await fs.readFile(saved.path)).toEqual(bytes);
+        expect(await fs.readdir(mediaDir)).toEqual([saved.id]);
+      });
+    },
+  );
+
+  it.skipIf(process.platform === "win32").each(["file", "directory"] as const)(
+    "discards scoped media when authority changes during %s sync",
+    async (phase) => {
+      await withOpenClawTestState({ layout: "state-only" }, async (state) => {
+        const mediaDir = state.statePath("media", "outbound");
+        await fs.mkdir(mediaDir, { recursive: true });
+        const realMediaDir = await fs.realpath(mediaDir);
+        const syncing = createDeferred();
+        const release = createDeferred();
+        let active = true;
+        const revoked = new Error("Session media authority changed during sync");
+        const open = fs.open.bind(fs);
+        vi.spyOn(fs, "open").mockImplementation(async (...args) => {
+          const handle = await open(...args);
+          const match =
+            typeof args[0] === "string" &&
+            (phase === "file"
+              ? path.dirname(args[0]) === realMediaDir && args[1] === "wx"
+              : args[0] === realMediaDir);
+          if (match) {
+            const sync = handle.sync.bind(handle);
+            vi.spyOn(handle, "sync").mockImplementation(async () => {
+              await sync();
+              syncing.resolve();
+              await release.promise;
+            });
+          }
+          return handle;
+        });
+        const operation = withChannelReadAuthority(
+          () => {
+            if (!active) {
+              throw revoked;
+            }
+          },
+          () => saveMediaBuffer(bytes, "application/pdf", "outbound"),
+        );
+        const rejected = expect(operation).rejects.toBe(revoked);
+        try {
+          await syncing.promise;
+          active = false;
+        } finally {
+          release.resolve();
+        }
+        await rejected;
+        expect(await fs.readdir(mediaDir)).toEqual([]);
+      });
+    },
+  );
+
   it.each(["local-reader", "source-store"] as const)(
     "does not read source bytes after authority changes during %s file opening",
     async (reader) => {

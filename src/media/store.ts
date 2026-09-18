@@ -428,6 +428,7 @@ async function writeSavedMediaBuffer(params: {
         dir,
         tempPrefix: `.${params.id}`,
         scope: readScope,
+        durable: true,
         write: async (handle) => {
           readScope.assertCurrent();
           await handle.writeFile(params.buffer);
