@@ -106,6 +106,23 @@ function buildCliMcpBashElevated(
   };
 }
 
+/**
+ * The context budget the loopback tool surface sizes its model-facing projections
+ * by — the same value the embedded runner passes as `modelContextWindowTokens`
+ * (`contextTokenBudget ?? model.contextWindow`): the session's effective context
+ * cap when the run owner resolved one, else the model's native window. Absent
+ * when the run owner resolved neither, so the tools keep their conservative
+ * default instead of a guessed window.
+ */
+function resolveGrantModelContextWindowTokens(
+  run: Pick<RunCliAgentParams, "modelContextTokens" | "modelContextWindow">,
+): number | undefined {
+  const candidate = run.modelContextTokens ?? run.modelContextWindow;
+  return typeof candidate === "number" && Number.isFinite(candidate) && candidate > 0
+    ? Math.floor(candidate)
+    : undefined;
+}
+
 function buildCliMcpChannelContext(
   channelContext: RunCliAgentParams["channelContext"],
   senderId?: string | null,
@@ -156,6 +173,7 @@ export function buildCliMcpGrantContext(params: {
   const execSession = buildCliMcpExecSession(params.run.sessionEntry, params.run.execOverrides);
   const execOverrides = buildCliMcpExecOverrides(params.run.execOverrides);
   const bashElevated = buildCliMcpBashElevated(params.run.bashElevated);
+  const modelContextWindowTokens = resolveGrantModelContextWindowTokens(params.run);
   const channelContext = buildCliMcpChannelContext(params.run.channelContext, params.run.senderId);
   const senderName = normalizeOptionalMcpContextValue(params.run.senderName ?? undefined);
   const senderUsername = normalizeOptionalMcpContextValue(params.run.senderUsername ?? undefined);
@@ -213,6 +231,7 @@ export function buildCliMcpGrantContext(params: {
         }
       : {}),
     modelHasVision: params.run.modelHasVision,
+    ...(modelContextWindowTokens !== undefined ? { modelContextWindowTokens } : {}),
     messageProvider,
     clientCaps: clientCaps.length > 0 ? clientCaps : undefined,
     gatewayUiCommandTarget: params.run.gatewayUiCommandTarget,

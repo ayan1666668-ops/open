@@ -54,6 +54,19 @@ describe("buildCliMcpGrantContext source-reply authority", () => {
     expect(buildGrant({ modelHasVision: true }).modelHasVision).toBe(true);
   });
 
+  it("carries the run owner's effective context budget into the loopback grant", () => {
+    // The session cap wins over the native window, exactly like the embedded
+    // runner's `contextTokenBudget ?? model.contextWindow`.
+    expect(
+      buildGrant({ modelContextWindow: 1_000_000, modelContextTokens: 272_000 })
+        .modelContextWindowTokens,
+    ).toBe(272_000);
+    expect(buildGrant({ modelContextWindow: 200_000 }).modelContextWindowTokens).toBe(200_000);
+    // Nothing resolved: the grant carries no guess, so tools keep their default.
+    expect(buildGrant().modelContextWindowTokens).toBeUndefined();
+    expect(buildGrant({ modelContextWindow: 0 }).modelContextWindowTokens).toBeUndefined();
+  });
+
   it("snapshots only the resolved logical model into the loopback grant", () => {
     const requesterModel = {
       provider: "selected-provider",
