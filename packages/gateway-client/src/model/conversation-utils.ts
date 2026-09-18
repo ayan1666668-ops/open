@@ -1,6 +1,7 @@
 import {
   ControlModelCommandError,
   type ControlModelCommandCategory,
+  type ControlModelConversationMetadata,
 } from "./conversation-types.js";
 import type { ControlModelConnectionSnapshot } from "./model.js";
 
@@ -66,14 +67,18 @@ export function stableStringify(value: unknown, seen = new WeakSet<object>()): s
   }
   seen.add(value);
   if (Array.isArray(value)) {
-    return `[${value.map((item) => stableStringify(item, seen)).join(",")}]`;
+    const serialized = `[${value.map((item) => stableStringify(item, seen)).join(",")}]`;
+    seen.delete(value);
+    return serialized;
   }
   // SAFETY: the primitive and array branches above leave only plain object-like values.
   const objectValue = value as Record<string, unknown>;
-  return `{${Object.keys(objectValue)
+  const serialized = `{${Object.keys(objectValue)
     .toSorted()
     .map((key) => `${JSON.stringify(key)}:${stableStringify(objectValue[key], seen)}`)
     .join(",")}}`;
+  seen.delete(value);
+  return serialized;
 }
 
 export function hash(value: string): string {
@@ -259,4 +264,107 @@ export function boundedValue(
 
 export function normalizeStatus(value: unknown): string {
   return text(value)?.toLowerCase() ?? "unknown";
+}
+
+const STARTUP_METADATA_TRUNCATION_MARKER = Object.freeze({
+  kind: "truncated",
+  reason: "max-startup-metadata-bytes",
+});
+const STARTUP_METADATA_STRING_KEYS = ["sessionId", "thinkingLevel", "verboseLevel"] as const;
+const STARTUP_METADATA_OBJECT_KEYS = ["sessionInfo", "inFlightRun"] as const;
+const STARTUP_METADATA_KEYS = [
+  ...STARTUP_METADATA_STRING_KEYS,
+  "defaults",
+  "sessionInfo",
+  "agentsList",
+  "metadata",
+  "inFlightRun",
+] as const;
+
+function isFiniteJsonValue(value: unknown, seen = new WeakSet<object>(), depth = 0): boolean {
+  if (value === null || typeof value === "string" || typeof value === "boolean") {
+    return true;
+  }
+  if (typeof value === "number") {
+    return Number.isFinite(value);
+  }
+  if (typeof value !== "object" || depth > 32 || seen.has(value)) {
+    return false;
+  }
+  seen.add(value);
+  const valid = Array.isArray(value)
+    ? value.every((entry) => isFiniteJsonValue(entry, seen, depth + 1))
+    : Object.values(value).every((entry) => isFiniteJsonValue(entry, seen, depth + 1));
+  seen.delete(value);
+  return valid;
+}
+
+export type StartupMetadataReadResult = {
+  metadata: ControlModelConversationMetadata | null;
+  truncated: boolean;
+  malformed: boolean;
+};
+
+/**
+ * Retains only declared startup/history envelope fields, bounded by total serialized bytes.
+ * Oversized or non-JSON values are replaced rather than retained as raw payloads.
+ */
+export function readStartupMetadata(
+  response: Record<string, unknown>,
+  maxBytes: number,
+): StartupMetadataReadResult {
+  const result: Record<string, unknown> = {};
+  let truncated = false;
+  let malformed = false;
+  for (const key of STARTUP_METADATA_KEYS) {
+    const value = response[key];
+    if (value === undefined) {
+      continue;
+    }
+    if (
+      (STARTUP_METADATA_STRING_KEYS as readonly string[]).includes(key) &&
+      typeof value !== "string"
+    ) {
+      malformed = true;
+      continue;
+    }
+    if ((STARTUP_METADATA_OBJECT_KEYS as readonly string[]).includes(key) && !record(value)) {
+      malformed = true;
+      continue;
+    }
+    if (!isFiniteJsonValue(value)) {
+      malformed = true;
+      continue;
+    }
+    const candidate = { ...result, [key]: value };
+    if (byteLength(stableStringify(candidate)) <= maxBytes) {
+      result[key] = value;
+      continue;
+    }
+    truncated = true;
+    malformed = true;
+    if (typeof value === "string") {
+      const emptyCandidate = { ...result, [key]: "" };
+      const overhead = byteLength(stableStringify(emptyCandidate)) - byteLength(JSON.stringify(""));
+      const available = maxBytes - overhead;
+      if (available >= byteLength(JSON.stringify(""))) {
+        result[key] = truncateStringToSerializedBytes(value, available);
+      }
+    } else {
+      const markerCandidate = { ...result, [key]: STARTUP_METADATA_TRUNCATION_MARKER };
+      if (byteLength(stableStringify(markerCandidate)) <= maxBytes) {
+        result[key] = STARTUP_METADATA_TRUNCATION_MARKER;
+      }
+    }
+    break;
+  }
+  if (Object.keys(result).length === 0) {
+    return { metadata: null, truncated, malformed };
+  }
+  // SAFETY: only declared metadata keys are retained, each validated against its declared shape.
+  return {
+    metadata: cloneAndFreeze(result) as ControlModelConversationMetadata,
+    truncated,
+    malformed,
+  };
 }

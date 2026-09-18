@@ -5,7 +5,9 @@ import {
 } from "../browser.js";
 import type {
   ControlModelConversationHistory,
+  ControlModelConversationHistoryMethod,
   ControlModelConversationHost,
+  ControlModelConversationMetadata,
   ControlModelConversationStatus,
 } from "./conversation-types.js";
 import {
@@ -13,6 +15,7 @@ import {
   localError,
   normalizeGatewayError,
   record,
+  readStartupMetadata,
   safeInteger,
   stableStringify,
   text,
@@ -51,6 +54,8 @@ export class ConversationHistoryController {
   #loop: Promise<void> | null = null;
   #requested = false;
   #offsetRequested = 0;
+  #methodRequested: ControlModelConversationHistoryMethod = "chat.history";
+  #metadata: ControlModelConversationMetadata | null = null;
   #requestOptions: ControlModelRequestOptions | undefined;
   #generation = 0;
 
@@ -68,6 +73,10 @@ export class ConversationHistoryController {
 
   get window(): "newest" | "older" {
     return this.#window;
+  }
+
+  get metadata(): ControlModelConversationMetadata | null {
+    return this.#metadata;
   }
 
   snapshot(): ControlModelConversationHistory {
@@ -103,9 +112,13 @@ export class ConversationHistoryController {
     }
   }
 
-  refresh(options?: ControlModelRequestOptions): Promise<void> {
+  refresh(
+    options?: ControlModelRequestOptions,
+    method: ControlModelConversationHistoryMethod = "chat.history",
+  ): Promise<void> {
     this.#requested = true;
     this.#offsetRequested = 0;
+    this.#methodRequested = method;
     if (options !== undefined || this.#requestOptions === undefined) {
       this.#requestOptions = options;
     }
@@ -120,7 +133,18 @@ export class ConversationHistoryController {
     return this.#loop;
   }
 
-  loadMore(options?: ControlModelRequestOptions): Promise<void> {
+  async loadMore(options?: ControlModelRequestOptions): Promise<void> {
+    while (this.#loop) {
+      const activeLoop = this.#loop;
+      const activeOffset = this.#offsetRequested;
+      await activeLoop;
+      if (activeOffset > 0) {
+        return;
+      }
+      if (!this.#hasMore || this.#nextOffset === null) {
+        return;
+      }
+    }
     if (!this.#hasMore || this.#nextOffset === null) {
       throw localError(
         "conflict",
@@ -140,16 +164,18 @@ export class ConversationHistoryController {
     this.#requested = true;
     this.#offsetRequested = this.#nextOffset;
     this.#requestOptions = options;
+    this.#methodRequested = "chat.history";
     const loop = this.#drain().finally(() => {
       if (this.#loop === loop) {
         this.#loop = null;
       }
     });
     this.#loop = loop;
-    return loop;
+    await loop;
   }
 
   requestRefresh(): boolean {
+    this.#methodRequested = "chat.history";
     if (this.#requested || this.#loop) {
       this.#requested = true;
       this.#offsetRequested = 0;
@@ -170,9 +196,10 @@ export class ConversationHistoryController {
     while (this.#requested && !this.#options.isDisposed()) {
       this.#requested = false;
       const options = this.#requestOptions;
+      const method = this.#methodRequested;
       this.#requestOptions = undefined;
       try {
-        await this.#refreshOnce(this.#offsetRequested, options);
+        await this.#refreshOnce(this.#offsetRequested, options, method);
       } catch (error) {
         if (!hasError) {
           firstError = error;
@@ -187,11 +214,15 @@ export class ConversationHistoryController {
     }
   }
 
-  async #refreshOnce(offset: number, options?: ControlModelRequestOptions): Promise<void> {
+  async #refreshOnce(
+    offset: number,
+    options?: ControlModelRequestOptions,
+    method: ControlModelConversationHistoryMethod = "chat.history",
+  ): Promise<void> {
     if (this.#options.isDisposed()) {
       return;
     }
-    const epoch = this.#options.captureEpoch("chat.history");
+    const epoch = this.#options.captureEpoch(method);
     const generation = this.#generation;
     this.#status = "loading";
     this.#error = null;
@@ -199,7 +230,7 @@ export class ConversationHistoryController {
     this.#options.publish();
     try {
       const response = await this.#options.host.gateway.request<Record<string, unknown>>(
-        "chat.history",
+        method,
         {
           sessionKey: this.#options.sessionKey,
           ...(this.#options.host.agentId ? { agentId: this.#options.host.agentId } : {}),
@@ -208,11 +239,12 @@ export class ConversationHistoryController {
         },
         options,
       );
-      this.#options.assertEpoch(epoch, "chat.history");
+      this.#options.assertEpoch(epoch, method);
       if (generation !== this.#generation) {
         return;
       }
       const page = Array.isArray(response?.messages) ? response.messages : [];
+      this.#applyStartupMetadata(record(response) ?? {}, method);
       const mergedHistory = mergeHistory(offset > 0 ? [...page, ...this.#messages] : page);
       const maxMessages = this.#options.host.bounds.maxMessages;
       const locallyTruncated = mergedHistory.length > maxMessages;
@@ -259,8 +291,8 @@ export class ConversationHistoryController {
       this.#options.setStatus(this.#options.partialReasons.size > 0 ? "partial" : "ready");
       this.#options.publish();
     } catch (error) {
-      this.#options.assertEpoch(epoch, "chat.history");
-      const normalized = normalizeGatewayError(error, "chat.history");
+      this.#options.assertEpoch(epoch, method);
+      const normalized = normalizeGatewayError(error, method);
       this.#status = "error";
       this.#error = {
         code: normalized.code,
@@ -270,6 +302,44 @@ export class ConversationHistoryController {
       this.#options.setStatus("error");
       this.#options.publish();
       throw normalized;
+    }
+  }
+
+  /**
+   * Startup responses replace the retained envelope; ordinary history merges over it so a
+   * canonical refresh can advance fields such as the active leaf without dropping the rest.
+   */
+  #applyStartupMetadata(
+    response: Record<string, unknown>,
+    method: ControlModelConversationHistoryMethod,
+  ): void {
+    const maxBytes = this.#options.host.bounds.maxMetadataBytes;
+    const read = readStartupMetadata(response, maxBytes);
+    if (method === "chat.startup") {
+      this.#metadata = read.metadata;
+      this.#setMetadataReason("startup-metadata-truncated", read.truncated);
+      this.#setMetadataReason("startup-metadata-malformed", read.malformed);
+      return;
+    }
+    const merged = read.metadata
+      ? readStartupMetadata({ ...this.#metadata, ...read.metadata }, maxBytes)
+      : read;
+    if (merged.metadata) {
+      this.#metadata = merged.metadata;
+    }
+    if (merged.truncated) {
+      this.#options.partialReasons.add("startup-metadata-truncated");
+    }
+    if (merged.malformed) {
+      this.#options.partialReasons.add("startup-metadata-malformed");
+    }
+  }
+
+  #setMetadataReason(reason: string, present: boolean): void {
+    if (present) {
+      this.#options.partialReasons.add(reason);
+    } else {
+      this.#options.partialReasons.delete(reason);
     }
   }
 }

@@ -83,6 +83,7 @@ export function setViewerPresenceContext(page: ChatPage) {
     setSessionKey: vi.fn(),
     start: vi.fn(),
     stop: vi.fn(),
+    dispose: vi.fn(),
     subscribe: (listener) => {
       snapshotListeners.add(listener);
       return () => snapshotListeners.delete(listener);

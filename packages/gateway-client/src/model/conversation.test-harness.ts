@@ -2,13 +2,12 @@ import { expect, vi } from "vitest";
 import {
   createControlModel,
   type ControlModelConnectionSnapshot,
-  type ControlModelConversationSnapshot,
   type ControlModelGatewayBinding,
   type ControlModelGatewayEventFrame,
   type ControlModelRequestOptions,
 } from "./index.js";
 
-type RequestCall = {
+export type RequestCall = {
   method: string;
   params: Record<string, unknown>;
   options?: ControlModelRequestOptions;
@@ -38,9 +37,43 @@ export function message(sequence: number, content = `message-${sequence}`) {
   };
 }
 
-export function messageIds(snapshot: ControlModelConversationSnapshot) {
+export function uiArtifact(
+  revision = 1,
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    version: 1,
+    id: "artifact-calendar",
+    revision,
+    structuredContent: { title: "Team calendar" },
+    views: [
+      {
+        id: "calendar",
+        templateUri: "clawpilot://widgets/calendar",
+        dataVersion: 1,
+        availability: "inline",
+        data: { events: [] },
+      },
+    ],
+    state: "ready",
+    source: {
+      sessionKey: "agent:main:one",
+      messageId: "message-2",
+      toolCallId: "tool-calendar",
+      toolName: "calendar",
+    },
+    ...overrides,
+  };
+}
+
+export function messageIds(
+  snapshot: ReturnType<
+    ReturnType<ReturnType<typeof createControlModel>["conversation"]>["getSnapshot"]
+  >,
+) {
   return snapshot.messages.map((entry) =>
-    String((entry.raw as { __openclaw?: { id?: string } })["__openclaw"]?.id),
+    // oxlint-disable-next-line no-underscore-dangle -- Canonical Gateway message metadata field.
+    String((entry.raw as { __openclaw?: { id?: string } }).__openclaw?.id),
   );
 }
 
@@ -50,8 +83,8 @@ export function createHarness(
     questions?: unknown[];
     approvalReplay?: unknown;
     history?: unknown;
-    keysEquivalent?: (left: string, right: string) => boolean;
     materialize?: boolean;
+    sessionMessageKeysEquivalent?: (left: string, right: string) => boolean;
   } = {},
 ) {
   let connection = initial;
@@ -72,14 +105,14 @@ export function createHarness(
       method: string,
       params: Record<string, unknown>,
       requestOptions?: ControlModelRequestOptions,
-    ) => {
+    ): Promise<unknown> => {
       calls.push({ method, params, options: requestOptions });
       const queued = take(method);
       if (queued !== undefined) {
         if (queued instanceof Error) {
           throw queued;
         }
-        return await Promise.resolve(queued);
+        return queued;
       }
       if (method === "sessions.list") {
         return { sessions: [] };
@@ -98,7 +131,7 @@ export function createHarness(
       }
       if (method === "chat.history") {
         const offset = typeof params.offset === "number" ? params.offset : 0;
-        return await Promise.resolve(histories.get(offset)?.shift() ?? defaultHistory);
+        return histories.get(offset)?.shift() ?? defaultHistory;
       }
       if (method === "chat.send") {
         return { runId: "run-default", status: "accepted" };
@@ -115,13 +148,10 @@ export function createHarness(
       return {};
     },
   );
-  // SAFETY: the mock implements the generic gateway request contract; callers choose the response type.
-  const gatewayRequest = request as ControlModelGatewayBinding["request"];
   const materializeArtifactView = vi.fn(
     async (
       input: {
         sessionKey: string;
-        agentId?: string;
         artifactId: string;
         artifactRevision: number;
         viewId: string;
@@ -130,12 +160,18 @@ export function createHarness(
     ) => {
       calls.push({ method: "artifact.materialize", params: input, options: requestOptions });
       const queued = take("artifact.materialize");
-      return await Promise.resolve(queued ?? {});
+      if (queued instanceof Error) {
+        throw queued;
+      }
+      return await queued;
     },
   );
-  const subscriptionClient = { request: gatewayRequest };
+  const subscriptionClient = {
+    request: async <T>(method: string, params: Record<string, unknown>) =>
+      (await request(method, params)) as T,
+  };
   const sessionMessageKeysEquivalent =
-    options.keysEquivalent ?? ((left: string, right: string) => left === right);
+    options.sessionMessageKeysEquivalent ?? ((left: string, right: string) => left === right);
   const gateway: ControlModelGatewayBinding = {
     getSessionMessageSubscriptionClient: () => subscriptionClient,
     sessionMessageKeysEquivalent,
@@ -151,12 +187,18 @@ export function createHarness(
       eventListeners.add(listener);
       return () => eventListeners.delete(listener);
     },
-    request: gatewayRequest,
+    request: async <T>(
+      method: string,
+      params: Record<string, unknown>,
+      requestOptions?: ControlModelRequestOptions,
+    ) => (await request(method, params, requestOptions)) as T,
     ...(options.materialize === false ? {} : { materializeArtifactView }),
   };
 
   return {
     gateway,
+    subscriptionClient,
+    sessionMessageKeysEquivalent,
     calls,
     request,
     materializeArtifactView,
@@ -196,14 +238,9 @@ export function createHarness(
       }
     },
     emit(
-      frame: Omit<ControlModelGatewayEventFrame, "connectionEpoch"> & {
-        connectionEpoch?: number;
-      },
+      frame: Omit<ControlModelGatewayEventFrame, "connectionEpoch"> & { connectionEpoch?: number },
     ) {
-      const next = {
-        ...frame,
-        connectionEpoch: frame.connectionEpoch ?? connection.epoch,
-      };
+      const next = { ...frame, connectionEpoch: frame.connectionEpoch ?? connection.epoch };
       for (const listener of eventListeners) {
         listener(next);
       }

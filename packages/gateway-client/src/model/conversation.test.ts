@@ -1,14 +1,193 @@
 import { describe, expect, it, vi } from "vitest";
+import { getGatewaySessionMessageSubscriptionCoordinator } from "../session-subscriptions.js";
 import {
   activatedConversation,
   createHarness,
   flush,
   message,
   messageIds,
-} from "./conversation.test-support.js";
+  uiArtifact,
+} from "./conversation.test-harness.js";
 import { ControlModelCommandError, createControlModel } from "./index.js";
 
 describe("Control Model conversations", () => {
+  it("can defer canonical history to the selected route and retains startup metadata", async () => {
+    const harness = createHarness({ status: "connected", epoch: 1 });
+    harness.queue("chat.startup", {
+      messages: [message(1)],
+      sessionId: "session-one",
+      sessionInfo: { key: "agent:main:one", kind: "direct" },
+      defaults: { model: "test" },
+      completeSnapshot: true,
+    });
+    const model = createControlModel({
+      gateway: harness.gateway,
+      autoRefreshSessionCatalog: false,
+      autoLoadConversationHistory: false,
+    });
+    model.start();
+    const conversation = model.conversation("agent:main:one");
+    await flush();
+    expect(harness.callsFor("sessions.list")).toHaveLength(0);
+    expect(harness.callsFor("chat.history")).toHaveLength(0);
+
+    await conversation.refreshHistory(undefined, "chat.startup");
+    expect(harness.callsFor("chat.startup")).toHaveLength(1);
+    expect(harness.callsFor("chat.history")).toHaveLength(0);
+    expect(conversation.getSnapshot().metadata).toMatchObject({
+      sessionId: "session-one",
+      defaults: { model: "test" },
+    });
+    expect(conversation.getSnapshot().messages).toHaveLength(1);
+  });
+
+  it("bounds malformed startup metadata without retaining raw payloads", async () => {
+    const harness = createHarness({ status: "connected", epoch: 1 });
+    const oversized = "x".repeat(1_000);
+    harness.queue("chat.startup", {
+      messages: [],
+      sessionId: "session-one",
+      defaults: { model: oversized },
+      agentsList: [],
+      metadata: { commands: [] },
+      inFlightRun: { runId: "run-one", events: [{ payload: oversized }] },
+      completeSnapshot: true,
+    });
+    const model = createControlModel({
+      gateway: harness.gateway,
+      autoRefreshSessionCatalog: false,
+      autoLoadConversationHistory: false,
+      bounds: { maxConversationStartupMetadataBytes: 128 },
+    });
+    model.start();
+    const conversation = model.conversation("agent:main:one");
+
+    await conversation.refreshHistory(undefined, "chat.startup");
+
+    const snapshot = conversation.getSnapshot();
+    expect(snapshot.metadata?.defaults).toEqual({
+      kind: "truncated",
+      reason: "max-startup-metadata-bytes",
+    });
+    expect(snapshot.metadata?.agentsList).toBeUndefined();
+    expect(snapshot.partialReasons).toEqual(
+      expect.arrayContaining(["startup-metadata-truncated", "startup-metadata-malformed"]),
+    );
+    expect(JSON.stringify(snapshot.metadata)).not.toContain(oversized);
+    expect(
+      new TextEncoder().encode(JSON.stringify(snapshot.metadata)).byteLength,
+    ).toBeLessThanOrEqual(128);
+  });
+
+  it("bounds oversized startup metadata strings", async () => {
+    const harness = createHarness({ status: "connected", epoch: 1 });
+    const oversized = "s".repeat(1_000);
+    harness.queue("chat.startup", {
+      messages: [],
+      sessionId: oversized,
+      completeSnapshot: true,
+    });
+    const model = createControlModel({
+      gateway: harness.gateway,
+      autoRefreshSessionCatalog: false,
+      autoLoadConversationHistory: false,
+      bounds: { maxConversationStartupMetadataBytes: 64 },
+    });
+    model.start();
+    const conversation = model.conversation("agent:main:one");
+
+    await conversation.refreshHistory(undefined, "chat.startup");
+
+    const snapshot = conversation.getSnapshot();
+    expect(snapshot.metadata?.sessionId).not.toBe(oversized);
+    expect(snapshot.partialReasons).toEqual(
+      expect.arrayContaining(["startup-metadata-truncated", "startup-metadata-malformed"]),
+    );
+    expect(
+      new TextEncoder().encode(JSON.stringify(snapshot.metadata)).byteLength,
+    ).toBeLessThanOrEqual(64);
+  });
+
+  it("accepts acyclic startup metadata with shared references", async () => {
+    const harness = createHarness({ status: "connected", epoch: 1 });
+    const shared = { model: "test" };
+    harness.queue("chat.startup", {
+      messages: [],
+      defaults: shared,
+      metadata: { shared },
+      completeSnapshot: true,
+    });
+    const model = createControlModel({
+      gateway: harness.gateway,
+      autoRefreshSessionCatalog: false,
+      autoLoadConversationHistory: false,
+    });
+    model.start();
+    const conversation = model.conversation("agent:main:one");
+
+    await conversation.refreshHistory(undefined, "chat.startup");
+
+    expect(conversation.getSnapshot().partialReasons).not.toContain("startup-metadata-malformed");
+    expect(conversation.getSnapshot().metadata).toMatchObject({
+      defaults: { model: "test" },
+      metadata: { shared: { model: "test" } },
+    });
+    model.dispose();
+  });
+
+  it("counts repeated shared metadata against the retention bound", async () => {
+    const harness = createHarness({ status: "connected", epoch: 1 });
+    const shared = { model: "x".repeat(100) };
+    harness.queue("chat.startup", {
+      messages: [],
+      defaults: shared,
+      metadata: { shared },
+      completeSnapshot: true,
+    });
+    const model = createControlModel({
+      gateway: harness.gateway,
+      autoRefreshSessionCatalog: false,
+      autoLoadConversationHistory: false,
+      bounds: { maxConversationStartupMetadataBytes: 160 },
+    });
+    model.start();
+    const conversation = model.conversation("agent:main:one");
+
+    await conversation.refreshHistory(undefined, "chat.startup");
+
+    expect(
+      new TextEncoder().encode(JSON.stringify(conversation.getSnapshot().metadata)).byteLength,
+    ).toBeLessThanOrEqual(160);
+    expect(conversation.getSnapshot().partialReasons).toContain("startup-metadata-truncated");
+    model.dispose();
+  });
+
+  it("refreshes returned metadata with ordinary history snapshots", async () => {
+    const harness = createHarness({ status: "connected", epoch: 1 });
+    harness.queue("chat.startup", {
+      messages: [],
+      sessionInfo: { key: "agent:main:one", activeLeafEntryId: "leaf-one" },
+    });
+    harness.queue("chat.history", {
+      messages: [],
+      sessionInfo: { key: "agent:main:one", activeLeafEntryId: "leaf-two" },
+    });
+    const model = createControlModel({
+      gateway: harness.gateway,
+      autoRefreshSessionCatalog: false,
+      autoLoadConversationHistory: false,
+    });
+    model.start();
+    const conversation = model.conversation("agent:main:one");
+
+    await conversation.refreshHistory(undefined, "chat.startup");
+    await conversation.refreshHistory();
+
+    expect(conversation.getSnapshot().metadata?.sessionInfo).toMatchObject({
+      activeLeafEntryId: "leaf-two",
+    });
+  });
+
   it("activates exactly once per epoch and retires/release leases safely", async () => {
     const harness = createHarness();
     const model = createControlModel({ gateway: harness.gateway });
@@ -43,6 +222,77 @@ describe("Control Model conversations", () => {
       expect(harness.callsFor("sessions.messages.unsubscribe")).toHaveLength(1),
     );
     expect(model.conversation("agent:main:one")).not.toBe(conversation);
+    model.dispose();
+  });
+
+  it("releases the final observer when a connected model is disposed", async () => {
+    const harness = createHarness({ status: "connected", epoch: 1 });
+    const model = createControlModel({ gateway: harness.gateway });
+    model.start();
+    model.conversation("agent:main:one");
+
+    await vi.waitFor(() => expect(harness.callsFor("sessions.messages.subscribe")).toHaveLength(2));
+    model.dispose();
+
+    await vi.waitFor(() =>
+      expect(harness.callsFor("sessions.messages.unsubscribe")).toHaveLength(1),
+    );
+  });
+
+  it("shares one replacement coordinator when multiple models reconnect", async () => {
+    const harness = createHarness({ status: "connected", epoch: 1 });
+    const firstModel = createControlModel({ gateway: harness.gateway });
+    const secondModel = createControlModel({ gateway: harness.gateway });
+    firstModel.start();
+    secondModel.start();
+    const firstConversation = firstModel.conversation("agent:main:first");
+    const secondConversation = secondModel.conversation("agent:main:second");
+
+    await vi.waitFor(() => expect(harness.callsFor("sessions.messages.subscribe")).toHaveLength(4));
+    harness.setConnection({ status: "connected", epoch: 2 });
+
+    await vi.waitFor(() => expect(harness.callsFor("sessions.messages.subscribe")).toHaveLength(8));
+    expect(firstConversation.getSnapshot().status).not.toBe("error");
+    expect(secondConversation.getSnapshot().status).not.toBe("error");
+    firstModel.dispose();
+    secondModel.dispose();
+  });
+
+  it("shares observer refcounts with other owners of the same Gateway client", async () => {
+    const harness = createHarness({ status: "connected", epoch: 1 });
+    const coordinator = getGatewaySessionMessageSubscriptionCoordinator(
+      harness.subscriptionClient,
+      { keysEquivalent: harness.sessionMessageKeysEquivalent },
+    );
+    const external = await coordinator.acquire("agent:main:one");
+    const model = createControlModel({ gateway: harness.gateway });
+    model.start();
+    model.conversation("agent:main:one");
+
+    await vi.waitFor(() => expect(harness.callsFor("sessions.messages.subscribe")).toHaveLength(2));
+    model.dispose();
+    await flush();
+    expect(harness.callsFor("sessions.messages.unsubscribe")).toHaveLength(0);
+
+    await coordinator.release(external);
+    expect(harness.callsFor("sessions.messages.unsubscribe")).toHaveLength(1);
+  });
+
+  it("allows later owners to configure the model's shared key matcher", async () => {
+    const harness = createHarness({ status: "connected", epoch: 1 });
+    const model = createControlModel({ gateway: harness.gateway });
+    model.start();
+    model.conversation("agent:main:one");
+    await vi.waitFor(() => expect(harness.callsFor("sessions.messages.subscribe")).toHaveLength(2));
+
+    const coordinator = getGatewaySessionMessageSubscriptionCoordinator(
+      harness.subscriptionClient,
+      { keysEquivalent: harness.sessionMessageKeysEquivalent },
+    );
+    const external = await coordinator.acquire("agent:main:one");
+    expect(harness.callsFor("sessions.messages.subscribe")).toHaveLength(2);
+
+    await coordinator.release(external);
     model.dispose();
   });
 
@@ -88,18 +338,21 @@ describe("Control Model conversations", () => {
     const harness = createHarness(
       { status: "connected", epoch: 1 },
       {
-        keysEquivalent: (left, right) =>
+        sessionMessageKeysEquivalent: (left, right) =>
           left.replace("agent:main:main", "main") === right.replace("agent:main:main", "main"),
       },
     );
-    const hostLease = await harness.coordinator.acquire("agent:main:main");
+    const hostCoordinator = getGatewaySessionMessageSubscriptionCoordinator(
+      harness.subscriptionClient,
+      { keysEquivalent: harness.sessionMessageKeysEquivalent },
+    );
+    const hostLease = await hostCoordinator.acquire("agent:main:main");
     const model = createControlModel({ gateway: harness.gateway });
     model.start();
     const conversation = model.conversation("main");
     await vi.waitFor(() => expect(harness.callsFor("chat.history")).toHaveLength(1));
 
-    harness.emitProtocol({
-      type: "event",
+    harness.emit({
       event: "session.message",
       payload: { sessionKey: "agent:main:main", message: message(1) },
     });
@@ -108,7 +361,7 @@ describe("Control Model conversations", () => {
     expect(harness.callsFor("sessions.messages.subscribe")).toHaveLength(2);
     expect(messageIds(conversation.getSnapshot())).toEqual(["message-1"]);
     model.dispose();
-    await harness.coordinator.release(hostLease);
+    await hostCoordinator.release(hostLease);
   });
 
   it("bounds only inactive handles, pins subscriptions, and enforces subscriber limits", () => {
@@ -200,6 +453,50 @@ describe("Control Model conversations", () => {
     model.dispose();
   });
 
+  it("marks a gap partial, schedules authoritative history, and ignores retired event/history failures", async () => {
+    const harness = createHarness({ status: "connected", epoch: 1 });
+    const backgroundErrors: unknown[] = [];
+    const model = createControlModel({
+      gateway: harness.gateway,
+      onBackgroundError: (error) => backgroundErrors.push(error),
+    });
+    model.start();
+    const conversation = model.conversation("agent:main:one");
+    await vi.waitFor(() => expect(harness.callsFor("chat.history")).toHaveLength(1));
+
+    const authoritative = harness.defer("chat.history");
+    harness.emit({
+      event: "session.message",
+      gap: true,
+      payload: { sessionKey: "agent:main:one", message: message(2) },
+    });
+    await vi.waitFor(() => expect(harness.callsFor("chat.history")).toHaveLength(2));
+    expect(conversation.getSnapshot().partialReasons).toContain("transport-gap");
+    authoritative.resolve({ messages: [message(2)], completeSnapshot: true, totalMessages: 1 });
+    await vi.waitFor(() => expect(conversation.getSnapshot().history.status).toBe("ready"));
+    expect(conversation.getSnapshot().partialReasons).toContain("transport-gap");
+
+    const oldHistory = harness.defer("chat.history");
+    harness.emit({
+      event: "session.message",
+      payload: { sessionKey: "agent:main:one" },
+    });
+    await vi.waitFor(() => expect(harness.callsFor("chat.history")).toHaveLength(3));
+    harness.setConnection({ status: "connected", epoch: 2 });
+    harness.emit({
+      connectionEpoch: 1,
+      event: "session.message",
+      payload: { sessionKey: "agent:main:one", message: message(99) },
+    });
+    oldHistory.reject(Object.assign(new Error("retired"), { code: "UNAVAILABLE" }));
+    await vi.waitFor(() => expect(harness.callsFor("chat.history")).toHaveLength(4));
+    await flush();
+    expect(messageIds(conversation.getSnapshot())).not.toContain("message-99");
+    expect(conversation.getSnapshot().history.error).toBeNull();
+    expect(backgroundErrors).toEqual([]);
+    model.dispose();
+  });
+
   it("keeps a bounded observable older history window and restores the newest tail", async () => {
     const harness = createHarness({ status: "connected", epoch: 1 });
     const tail = {
@@ -264,47 +561,45 @@ describe("Control Model conversations", () => {
     model.dispose();
   });
 
-  it("marks a gap partial, schedules authoritative history, and ignores retired event/history failures", async () => {
+  it("queues older history behind an active newest-history refresh", async () => {
     const harness = createHarness({ status: "connected", epoch: 1 });
-    const backgroundErrors: unknown[] = [];
+    let resolveTail: (value: unknown) => void = () => undefined;
+    harness.setHistory(
+      0,
+      new Promise((resolve) => {
+        resolveTail = resolve;
+      }),
+    );
+    harness.setHistory(2, {
+      messages: [message(1), message(2)],
+      hasMore: false,
+      totalMessages: 4,
+    });
     const model = createControlModel({
       gateway: harness.gateway,
-      onBackgroundError: (error) => backgroundErrors.push(error),
+      autoLoadConversationHistory: false,
     });
     model.start();
     const conversation = model.conversation("agent:main:one");
-    await vi.waitFor(() => expect(harness.callsFor("chat.history")).toHaveLength(1));
 
-    const authoritative = harness.defer("chat.history");
-    harness.emit({
-      event: "session.message",
-      gap: true,
-      payload: { sessionKey: "agent:main:one", message: message(2) },
+    const refresh = conversation.refreshHistory();
+    const older = conversation.loadMoreHistory();
+    const concurrentOlder = conversation.loadMoreHistory();
+    resolveTail({
+      messages: [message(3), message(4)],
+      hasMore: true,
+      nextOffset: 2,
+      totalMessages: 4,
     });
-    await vi.waitFor(() => expect(harness.callsFor("chat.history")).toHaveLength(2));
-    expect(conversation.getSnapshot().partialReasons).toContain("transport-gap");
-    authoritative.resolve({ messages: [message(2)], completeSnapshot: true, totalMessages: 1 });
-    await vi.waitFor(() => expect(conversation.getSnapshot().history.status).toBe("ready"));
-    expect(conversation.getSnapshot().partialReasons).toContain("transport-gap");
+    await Promise.all([refresh, older, concurrentOlder]);
 
-    const oldHistory = harness.defer("chat.history");
-    harness.emit({
-      event: "session.message",
-      payload: { sessionKey: "agent:main:one" },
-    });
-    await vi.waitFor(() => expect(harness.callsFor("chat.history")).toHaveLength(3));
-    harness.setConnection({ status: "connected", epoch: 2 });
-    harness.emit({
-      connectionEpoch: 1,
-      event: "session.message",
-      payload: { sessionKey: "agent:main:one", message: message(99) },
-    });
-    oldHistory.reject(Object.assign(new Error("retired"), { code: "UNAVAILABLE" }));
-    await vi.waitFor(() => expect(harness.callsFor("chat.history")).toHaveLength(4));
-    await flush();
-    expect(messageIds(conversation.getSnapshot())).not.toContain("message-99");
-    expect(conversation.getSnapshot().history.error).toBeNull();
-    expect(backgroundErrors).toEqual([]);
+    expect(harness.callsFor("chat.history").map((call) => call.params.offset ?? 0)).toEqual([0, 2]);
+    expect(messageIds(conversation.getSnapshot())).toEqual([
+      "message-1",
+      "message-2",
+      "message-3",
+      "message-4",
+    ]);
     model.dispose();
   });
 
@@ -621,6 +916,31 @@ describe("Control Model conversations", () => {
     harness.emit({
       event: "agent",
       payload: {
+        runId: "constructor",
+        stream: "tool",
+        data: { phase: "start", name: "ignored", toolCallId: "prototype-key" },
+      },
+    });
+    harness.emit({
+      event: "session.approval",
+      payload: {
+        runId: "constructor",
+        approval: { id: "prototype-approval", status: "pending" },
+      },
+    });
+    harness.emit({
+      event: "question.requested",
+      payload: {
+        runId: "constructor",
+        question: { id: "prototype-question", status: "pending" },
+      },
+    });
+    expect(conversation.getSnapshot().tools).toHaveLength(1);
+    expect(conversation.getSnapshot().approvals).toEqual([]);
+    expect(conversation.getSnapshot().questions).toEqual([]);
+    harness.emit({
+      event: "agent",
+      payload: {
         sessionKey: "agent:main:one",
         runId: "early-run",
         stream: "tool",
@@ -683,6 +1003,73 @@ describe("Control Model conversations", () => {
     model.dispose();
   });
 
+  it("accepts canonical-key events and artifacts for an equivalent route alias", async () => {
+    const harness = createHarness(
+      { status: "connected", epoch: 1 },
+      {
+        sessionMessageKeysEquivalent: (left, right) =>
+          left === right ||
+          (left === "global" && right === "agent:main:main") ||
+          (right === "global" && left === "agent:main:main"),
+        history: {
+          messages: [
+            {
+              ...message(2),
+              role: "toolResult",
+              details: {
+                uiArtifacts: [
+                  uiArtifact(1, {
+                    source: { sessionKey: "global" },
+                  }),
+                ],
+              },
+            },
+          ],
+          completeSnapshot: true,
+        },
+      },
+    );
+    harness.queue("sessions.messages.subscribe", { key: "global" });
+    harness.queue("sessions.messages.subscribe", { key: "global" });
+    const model = createControlModel({ gateway: harness.gateway });
+    model.start();
+    const conversation = model.conversation("agent:main:main", { agentId: "main" });
+
+    await vi.waitFor(() => expect(conversation.getSnapshot().history.status).toBe("ready"));
+    harness.emit({
+      event: "chat",
+      payload: { sessionKey: "global", runId: "alias-run", state: "delta" },
+    });
+    harness.emit({
+      event: "session.approval",
+      payload: {
+        sessionKey: "global",
+        approval: { id: "alias-approval", status: "pending", sessionKey: "global" },
+      },
+    });
+    harness.emit({
+      event: "question.requested",
+      payload: {
+        sessionKey: "global",
+        question: { id: "alias-question", status: "pending", sessionKey: "global" },
+      },
+    });
+
+    expect(conversation.getSnapshot().activeRun?.runId).toBe("alias-run");
+    expect(conversation.getSnapshot().approvals).toContainEqual(
+      expect.objectContaining({ id: "alias-approval" }),
+    );
+    expect(conversation.getSnapshot().questions).toContainEqual(
+      expect.objectContaining({ id: "alias-question", sessionKey: "agent:main:main" }),
+    );
+    expect(conversation.getSnapshot().artifacts[0]).toMatchObject({
+      id: "artifact-calendar",
+      state: "ready",
+      source: { sessionKey: "agent:main:main" },
+    });
+    model.dispose();
+  });
+
   it("bounds tool progress by retained values and keeps oversized structured values typed", async () => {
     const { harness, model, conversation } = await activatedConversation(undefined, {
       maxConversationProgressBytes: 64,
@@ -715,42 +1102,6 @@ describe("Control Model conversations", () => {
     expect(replacement).toMatchObject({ output: "second" });
     expect(replacement?.progress.bytes).toBe(
       JSON.stringify("i").length + JSON.stringify("second").length,
-    );
-    model.dispose();
-  });
-
-  it("hydrates approvals, rejects forbidden decisions locally, and projects terminal approval events", async () => {
-    const approval = {
-      id: "approval-1",
-      status: "pending",
-      sessionKey: "agent:main:one",
-      presentation: { kind: "exec", allowedDecisions: ["allow-once", "deny"] },
-    };
-    const harness = createHarness(
-      { status: "connected", epoch: 1 },
-      {
-        approvalReplay: { approvals: [approval], truncated: false },
-      },
-    );
-    const { model, conversation } = await activatedConversation(harness);
-    expect(conversation.getSnapshot().approvals).toContainEqual(
-      expect.objectContaining({ id: "approval-1" }),
-    );
-    await expect(conversation.resolveApproval("approval-1", "maybe")).rejects.toMatchObject({
-      category: "forbidden",
-    });
-    await expect(conversation.resolveApproval("approval-1", "allow-once")).resolves.toEqual({
-      applied: true,
-    });
-    harness.emit({
-      event: "session.approval",
-      payload: { approval: { ...approval, status: "expired" } },
-    });
-    expect(conversation.getSnapshot().approvals).toContainEqual(
-      expect.objectContaining({
-        id: "approval-1",
-        status: "expired",
-      }),
     );
     model.dispose();
   });
@@ -892,9 +1243,14 @@ describe("Control Model conversations", () => {
     expect(Object.isFrozen(snapshot)).toBe(true);
     expect(Object.isFrozen(snapshot.messages)).toBe(true);
     expect(Object.isFrozen(snapshot.messages[0]?.raw)).toBe(true);
-    const raw = snapshot.messages[0]?.raw as { nested?: unknown } | undefined;
-    expect(Object.isFrozen(raw?.nested)).toBe(true);
+    const firstMessage = snapshot.messages[0];
+    if (!firstMessage) {
+      throw new Error("Expected a projected message");
+    }
+    expect(Object.isFrozen((firstMessage.raw as { nested?: unknown }).nested)).toBe(true);
     expect(later).not.toHaveBeenCalled();
     model.dispose();
   });
 });
+
+/* oxlint-disable max-lines -- TODO: split this grandfathered conversation test suite. */

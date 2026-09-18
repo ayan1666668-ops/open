@@ -19,11 +19,11 @@ import {
 import { ConversationToolStore } from "./conversation-tools.js";
 import {
   ControlModelCommandError,
+  type ControlModelConversationHistoryMethod,
   type ControlModelConversationHost,
   type ControlModelConversationSnapshot,
   type ControlModelConversationStatus,
   type ControlModelConversationSubscriber,
-  type ControlModelGatewayEventFrame,
   type ControlModelMaterializedView,
   type ControlModelMaterializeViewInput,
   type ControlModelSendInput,
@@ -38,7 +38,11 @@ import {
   record,
   text,
 } from "./conversation-utils.js";
-import type { ControlModelConnectionSnapshot, ControlModelRequestOptions } from "./model.js";
+import type {
+  ControlModelConnectionSnapshot,
+  ControlModelGatewayEventFrame,
+  ControlModelRequestOptions,
+} from "./model.js";
 
 export { ControlModelCommandError } from "./conversation-types.js";
 export type {
@@ -46,15 +50,16 @@ export type {
   ControlModelConversationApproval,
   ControlModelConversationBounds,
   ControlModelConversationHistory,
+  ControlModelConversationHistoryMethod,
   ControlModelConversationHost,
   ControlModelConversationMessage,
+  ControlModelConversationMetadata,
   ControlModelConversationQuestion,
   ControlModelConversationRun,
   ControlModelConversationSnapshot,
   ControlModelConversationStatus,
   ControlModelConversationSubscriber,
   ControlModelConversationTool,
-  ControlModelGatewayEventFrame,
   ControlModelSendInput,
   ControlModelSendResult,
   ControlModelToolStatus,
@@ -275,7 +280,7 @@ export class ControlModelConversation {
           this.#publish();
         }
         await Promise.allSettled([
-          this.refreshHistory(),
+          this.#host.autoLoadHistory === false ? Promise.resolve() : this.refreshHistory(),
           this.#interactions.hydrateQuestions(connection.epoch),
         ]);
         if (generation !== this.#activationGeneration || this.#disposed) {
@@ -399,9 +404,12 @@ export class ControlModelConversation {
     this.#publish();
   }
 
-  async refreshHistory(options?: ControlModelRequestOptions): Promise<void> {
-    this.#assertCommandReady("chat.history");
-    return this.#history.refresh(options);
+  async refreshHistory(
+    options?: ControlModelRequestOptions,
+    method: ControlModelConversationHistoryMethod = "chat.history",
+  ): Promise<void> {
+    this.#assertCommandReady(method);
+    return this.#history.refresh(options, method);
   }
 
   async loadMoreHistory(options?: ControlModelRequestOptions): Promise<void> {
@@ -538,7 +546,7 @@ export class ControlModelConversation {
     const data = record(payload.data);
     const runId = text(payload.runId) ?? text(data?.runId);
     if (event === "agent") {
-      return Boolean(runId && this.#projection.runs[runId]);
+      return Boolean(runId && Object.hasOwn(this.#projection.runs, runId));
     }
     if (
       event === "question.resolved" &&
@@ -547,7 +555,7 @@ export class ControlModelConversation {
     ) {
       return true;
     }
-    return Boolean(runId && this.#projection.runs[runId]);
+    return Boolean(runId && Object.hasOwn(this.#projection.runs, runId));
   }
 
   #handleChat(payload: Record<string, unknown>): void {
@@ -575,7 +583,7 @@ export class ControlModelConversation {
   }
 
   #handleAgent(payload: Record<string, unknown>): void {
-    if (this.#tools.handle(payload, (runId) => Boolean(this.#projection.runs[runId]))) {
+    if (this.#tools.handle(payload, (runId) => Object.hasOwn(this.#projection.runs, runId))) {
       this.#artifacts.ingestToolEvent(payload);
       this.#publish();
     }
@@ -603,7 +611,12 @@ export class ControlModelConversation {
   }
 
   #matchesSessionKey(key: string): boolean {
-    return key === this.#sessionKey || key === this.#canonicalSessionKey;
+    return (
+      key === this.#sessionKey ||
+      key === this.#canonicalSessionKey ||
+      this.#host.sessionMessageKeysEquivalent?.(key, this.#canonicalSessionKey) === true ||
+      this.#host.sessionMessageKeysEquivalent?.(key, this.#sessionKey) === true
+    );
   }
 
   #applyProjection(event: Parameters<typeof reduceSessionProjection>[1]): void {
@@ -666,6 +679,7 @@ export class ControlModelConversation {
       revision: this.#revision,
       connection: this.#connection,
       history: this.#history.snapshot(),
+      metadata: this.#history.metadata,
       projection: this.#projection,
       maxMessages: this.#host.bounds.maxMessages,
       maxRuns: this.#host.bounds.maxRuns,
@@ -693,6 +707,7 @@ export class ControlModelConversation {
       if (this.#disposed) {
         return;
       }
+      // Snapshot listeners so subscription changes cannot alter the current delivery pass.
       for (const subscriber of Array.from(this.#subscribers)) {
         if (this.#disposed) {
           break;

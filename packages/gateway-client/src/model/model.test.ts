@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { GatewaySessionMessageSubscriptionCoordinator } from "../browser.js";
 import {
   ControlModelDisposedError,
   ControlModelSubscriberLimitError,
@@ -11,9 +10,17 @@ import {
 } from "./index.js";
 
 type SessionListResult = {
+  ts?: number;
+  path?: string;
+  count?: number;
   sessions: Array<Record<string, unknown>>;
   totalCount?: number;
+  limitApplied?: number;
+  offset?: number;
+  nextOffset?: number | null;
   hasMore?: boolean;
+  creators?: Array<Record<string, unknown>>;
+  defaults?: unknown;
 };
 
 function deferred<T>() {
@@ -63,7 +70,6 @@ function createGatewayHarness(
     // SAFETY: this harness only services the session catalog's session.list request.
     return request(method, params, options) as Promise<T>;
   };
-  const coordinator = new GatewaySessionMessageSubscriptionCoordinator({ request: gatewayRequest });
   const gateway: ControlModelGatewayBinding = {
     getConnectionSnapshot: () => connection,
     subscribeConnection(listener) {
@@ -74,9 +80,6 @@ function createGatewayHarness(
     subscribeEvents(listener) {
       eventListeners.add(listener);
       return () => eventListeners.delete(listener);
-    },
-    getMessageSubscriptionCoordinator() {
-      return coordinator;
     },
     request: gatewayRequest,
   };
@@ -106,7 +109,7 @@ function createGatewayHarness(
       gap?: boolean;
     }) {
       for (const listener of eventListeners) {
-        listener({ type: "event", connectionEpoch: connection.epoch, ...frame });
+        listener({ connectionEpoch: connection.epoch, ...frame });
       }
     },
   };
@@ -300,6 +303,139 @@ describe("Control Model session catalog", () => {
     await refresh;
     await flushMicrotasks();
     expect(harness.requests).toHaveLength(2);
+  });
+
+  it("forwards bounded filtered pagination queries and preserves response metadata", async () => {
+    const harness = createGatewayHarness();
+    const model = createControlModel({
+      gateway: harness.gateway,
+      autoRefreshSessionCatalog: false,
+      bounds: { maxSessions: 10 },
+    });
+    model.start();
+    const refresh = model.refreshSessions(undefined, {
+      agentId: "main",
+      search: "needle",
+      offset: 20,
+      limit: 5,
+      includeGlobal: true,
+      includeDerivedTitles: true,
+      archived: "all",
+    });
+    await flushMicrotasks();
+    expect(harness.requestCalls[0]?.params).toEqual({
+      agentId: "main",
+      search: "needle",
+      offset: 20,
+      limit: 5,
+      includeGlobal: true,
+      includeDerivedTitles: true,
+      archived: "all",
+    });
+    harness.requests[0]?.resolve({
+      ts: 42,
+      path: "sessions.list",
+      count: 1,
+      offset: 20,
+      nextOffset: null,
+      creators: [{ id: "human" }],
+      defaults: { model: "test" },
+      sessions: [{ key: "agent:main:needle", kind: "direct" }],
+      totalCount: 21,
+    });
+    await refresh;
+    expect(model.getSnapshot().sessionCatalog.query).toMatchObject({
+      agentId: "main",
+      offset: 20,
+      limit: 5,
+      archived: "all",
+    });
+    expect(model.getSnapshot().sessionCatalog.defaults).toEqual({ model: "test" });
+    expect(model.getSnapshot().sessionCatalog.nextOffset).toBeNull();
+    expect(model.getSnapshot().sessionCatalog.hasMore).toBe(false);
+  });
+
+  it("uses the configured agent when the catalog query omits one", async () => {
+    const harness = createGatewayHarness();
+    const model = createControlModel({
+      gateway: harness.gateway,
+      agentId: "main",
+      autoRefreshSessionCatalog: false,
+    });
+    model.start();
+    const refresh = model.refreshSessions();
+    await flushMicrotasks();
+
+    expect(harness.requestCalls[0]?.params).toEqual({
+      agentId: "main",
+      limit: 200,
+    });
+    harness.requests[0]?.resolve({ sessions: [] });
+    await refresh;
+  });
+
+  it("does not let a completed offset page replace a newer queued query", async () => {
+    const harness = createGatewayHarness();
+    const model = createControlModel({
+      gateway: harness.gateway,
+      autoRefreshSessionCatalog: false,
+    });
+    model.start();
+    const first = model.refreshSessions(undefined, { agentId: "main", offset: 20, limit: 5 });
+    await flushMicrotasks();
+    const second = model.refreshSessions(undefined, { agentId: "other", limit: 10 });
+    harness.requests[0]?.resolve({
+      sessions: [{ key: "agent:main:old", kind: "direct" }],
+      offset: 20,
+      nextOffset: null,
+      totalCount: 21,
+    });
+    await flushMicrotasks();
+
+    expect(harness.requestCalls[1]?.params).toEqual({ agentId: "other", limit: 10 });
+    harness.requests[1]?.resolve({ sessions: [] });
+    await Promise.all([first, second]);
+  });
+
+  it("normalizes malformed runtime catalog queries to declared bounded fields", async () => {
+    const harness = createGatewayHarness();
+    const model = createControlModel({
+      gateway: harness.gateway,
+      autoRefreshSessionCatalog: false,
+      bounds: { maxSessions: 2_000 },
+    });
+    model.start();
+    const refresh = model.refreshSessions(undefined, {
+      agentId: "  main  ",
+      spawnedBy: "  agent:main:parent  ",
+      search: "   ",
+      creatorId: 42 as unknown as string,
+      boardFace: "invalid" as unknown as "chat",
+      activeMinutes: 1.9,
+      offset: 1_500_000.9,
+      limit: 2_000.9,
+      includeGlobal: "yes" as unknown as boolean,
+      includeUnknown: false,
+      configuredAgentsOnly: true,
+      includeDerivedTitles: null as unknown as boolean,
+      includeLastMessage: true,
+      archived: "invalid" as unknown as "all",
+      unexpected: { retain: false },
+    } as unknown as Parameters<typeof model.refreshSessions>[1]);
+    await flushMicrotasks();
+
+    expect(harness.requestCalls[0]?.params).toEqual({
+      agentId: "main",
+      spawnedBy: "agent:main:parent",
+      activeMinutes: 1,
+      offset: 1_000_000,
+      limit: 1_000,
+      includeUnknown: false,
+      configuredAgentsOnly: true,
+      includeLastMessage: true,
+    });
+    harness.requests[0]?.resolve({ sessions: [] });
+    await refresh;
   });
 
   it("publishes structured request failures", async () => {

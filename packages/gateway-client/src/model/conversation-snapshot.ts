@@ -8,6 +8,7 @@ import type { ConversationInteractionStore } from "./conversation-interactions.j
 import type { ConversationToolStore } from "./conversation-tools.js";
 import type {
   ControlModelConversationHistory,
+  ControlModelConversationMetadata,
   ControlModelConversationSnapshot,
   ControlModelConversationStatus,
 } from "./conversation-types.js";
@@ -25,6 +26,7 @@ type ConversationSnapshotInput = {
   revision: number;
   connection: ControlModelConnectionSnapshot;
   history: ControlModelConversationHistory;
+  metadata: ControlModelConversationMetadata | null;
   projection: SessionProjectionState;
   maxMessages: number;
   maxRuns: number;
@@ -132,6 +134,7 @@ export function buildConversationSnapshot(
     historyRevision: input.history.revision,
     connection: input.connection,
     history: input.history,
+    metadata: input.metadata,
     messages: visibleMessages,
     runs: visibleRuns,
     activeRun,

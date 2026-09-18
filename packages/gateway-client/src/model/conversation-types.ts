@@ -1,4 +1,4 @@
-import type { EventFrame, UiArtifact, UiArtifactViewOffer } from "@openclaw/gateway-protocol";
+import type { UiArtifact, UiArtifactViewOffer } from "@openclaw/gateway-protocol";
 import type { GatewaySessionMessageSubscriptionCoordinator } from "../browser.js";
 import type { ControlModelConversation } from "./conversation.js";
 import type {
@@ -105,12 +105,25 @@ export type ControlModelConversationBounds = Readonly<{
   maxQuestions: number;
   maxProgressUpdates: number;
   maxProgressBytes: number;
+  maxMetadataBytes: number;
   maxArtifacts: number;
   maxArtifactBytes: number;
   maxArtifactDepth: number;
   maxArtifactCollectionItems: number;
   maxArtifactStringBytes: number;
   maxArtifactViews: number;
+}>;
+export type ControlModelConversationHistoryMethod = "chat.history" | "chat.startup";
+/** Bounded startup/history envelope fields retained beside the message projection. */
+export type ControlModelConversationMetadata = Readonly<{
+  sessionId?: string;
+  thinkingLevel?: string;
+  verboseLevel?: string;
+  defaults?: DeepReadonly<unknown>;
+  sessionInfo?: DeepReadonly<Record<string, unknown>>;
+  agentsList?: DeepReadonly<unknown>;
+  metadata?: DeepReadonly<unknown>;
+  inFlightRun?: DeepReadonly<Record<string, unknown>>;
 }>;
 export type ControlModelConversationHistory = Readonly<{
   status: "idle" | "loading" | "ready" | "error";
@@ -131,6 +144,7 @@ export type ControlModelConversationSnapshot = Readonly<{
   historyRevision: number;
   connection: ControlModelConnectionSnapshot;
   history: ControlModelConversationHistory;
+  metadata: ControlModelConversationMetadata | null;
   messages: readonly ControlModelConversationMessage[];
   runs: readonly ControlModelConversationRun[];
   activeRun: ControlModelConversationRun | null;
@@ -189,15 +203,13 @@ export type ControlModelMaterializeViewInput = Readonly<{
 }>;
 export type ControlModelMaterializedView = DeepReadonly<UiArtifactViewOffer>;
 export type ControlModelConversationSubscriber = () => void | Promise<void>;
-export type ControlModelGatewayEventFrame = Readonly<
-  EventFrame & {
-    connectionEpoch: number;
-    gap?: boolean | Readonly<Record<string, unknown>>;
-  }
->;
 export type ControlModelConversationHost = Readonly<{
   gateway: ControlModelGatewayBinding;
   agentId?: string;
+  /** Control Model adoption hint: owners may defer the activation history load. */
+  autoLoadHistory?: boolean;
+  /** Canonical-key matcher shared with the owning model's subscription coordinator. */
+  sessionMessageKeysEquivalent?(left: string, right: string): boolean;
   getConnectionSnapshot(): ControlModelConnectionSnapshot;
   isRunning(): boolean;
   getMessageSubscriptionCoordinator(): GatewaySessionMessageSubscriptionCoordinator;
