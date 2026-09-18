@@ -94,22 +94,40 @@ it("measures 100 composed catalog lists against real session and plugin stores",
             limitPerHost: 32,
           },
         ];
+        const warmupDurations: number[] = [];
         for (const query of variants) {
           for (let warm = 0; warm < 3; warm++) {
+            const started = performance.now();
             await fixture.list(query);
+            warmupDurations.push(performance.now() - started);
           }
+        }
+        const warmupP50Ms = warmupDurations.toSorted((a, b) => a - b)[5];
+        if (warmupP50Ms === undefined) {
+          throw new Error("Expected warm-up catalog measurements");
         }
         do {
           await fixture.projection.ensureMaterialized();
         } while (fixture.projection.needsMaterialization);
         counters.begin();
         const durations: number[] = [];
+        const workPerList = [];
+        let previousIo = counters.snapshot();
         let minimumRows = Infinity;
         const cpuStart = process.threadCpuUsage();
         for (let index = 0; index < 100; index++) {
           const started = performance.now();
           const result = await fixture.list(variants[index % variants.length]);
           durations.push(performance.now() - started);
+          const currentIo = counters.snapshot();
+          workPerList.push({
+            sqliteReadCalls: currentIo.sqliteReadCalls - previousIo.sqliteReadCalls,
+            bindingAuthorityReads:
+              currentIo.bindingAuthorityReads - previousIo.bindingAuthorityReads,
+            pluginStateWorkerOperations:
+              currentIo.pluginStateWorkerOperations - previousIo.pluginStateWorkerOperations,
+          });
+          previousIo = currentIo;
           minimumRows = Math.min(minimumRows, result.sessions.length);
         }
         const cpu = process.threadCpuUsage(cpuStart);
@@ -148,6 +166,7 @@ it("measures 100 composed catalog lists against real session and plugin stores",
             adoptedRows: 3,
             lists: 100,
             p50Ms: durations[49],
+            warmupP50Ms,
             p95Ms: durations[94],
             threadCpuMsPerList: (cpu.user + cpu.system) / 100_000,
             sampledInstrumentedAllocationBytesPerList: sampledAllocationBytes / 100,
@@ -172,8 +191,16 @@ it("measures 100 composed catalog lists against real session and plugin stores",
         expect(io.pluginStateWorkerReadOperations).toBe(0);
         expect(io.sessionEntryReads).toBe(0);
         expect(io.sessionPayloadReads).toBe(0);
-        expect(io.bindingAuthorityReads).toBeGreaterThan(0);
-        expect(durations[49]).toBeLessThan(20);
+        // Revalidate all three adopted bindings without adding work to the resident list path.
+        for (const work of workPerList) {
+          expect(work).toEqual({
+            sqliteReadCalls: 20,
+            bindingAuthorityReads: 3,
+            pluginStateWorkerOperations: 0,
+          });
+        }
+        // Counts enforce the work budget; timing only guards runaway growth on this host.
+        expect(durations[49]).toBeLessThan(warmupP50Ms * 10);
       } finally {
         try {
           await fixture?.close();
