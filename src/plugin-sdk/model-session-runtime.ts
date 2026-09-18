@@ -8,18 +8,30 @@ import {
   normalizeOptionalAgentRuntimeId,
 } from "../agents/agent-runtime-id.js";
 import type { AgentModelPrimaryWriteTarget } from "../agents/agent-scope.js";
+import { resolveModelProviderAuthConfig } from "../agents/model-auth-provider-route.js";
 import type { ModelCatalogEntry } from "../agents/model-catalog.js";
 import type { ModelVisibilityPolicy } from "../agents/model-visibility-policy.js";
-import { resolvePersistedSessionRuntimeId as resolveAcceptedSessionRuntimeId } from "../agents/session-runtime-compat.js";
+import { resolveAcceptedSessionRuntimeId } from "../agents/session-runtime-compat.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import type { ApplySessionExecutionSelectionResult as OwnerSelectionResult } from "../model-picker/apply-session-model-selection.js";
+import {
+  stageSessionExecutionSelection,
+  type ApplySessionExecutionSelectionResult as OwnerSelectionResult,
+} from "../model-picker/apply-session-model-selection.js";
 import {
   isAcpExecutionSelection,
   isModelExecutionSelection,
   getCommittedSessionExecutionSelection,
 } from "../model-picker/execution-selection.js";
+import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
 import { resolveSessionPinnedHarnessId } from "../sessions/agent-harness-session-key.js";
+import { shouldPreserveSessionAuthProfileOverride } from "../sessions/auth-profile-preservation.js";
+import { assertModelSelectionUnlocked } from "../sessions/model-overrides.js";
 import type { SessionEntry as PublicSelectionEntry } from "./session-store-runtime-internal.js";
+type ModelOverrideSelection = {
+  provider: string;
+  model: string;
+  isDefault?: boolean;
+};
 
 export type SessionModelSelectionRequest = {
   provider: string;
@@ -83,11 +95,13 @@ export type ApplySessionModelSelectionResult =
 export async function applySessionModelSelection(
   params: ApplySessionModelSelectionParams,
 ): Promise<ApplySessionModelSelectionResult> {
+  const hadStoreEntry = Object.hasOwn(params.sessionStore, params.sessionKey);
+  const startingStoreEntry = params.sessionStore[params.sessionKey];
+  const original = startingStoreEntry ?? params.sessionEntry;
+  const initial = structuredClone(original);
   const { loadSessionEntryReadOnly } = await import("../config/sessions/session-accessor.js");
   const { projectPluginSessionEntry, projectPluginSessionEntryPatch } =
     await import("./session-store-runtime-internal.js");
-  const original = params.sessionStore[params.sessionKey] ?? params.sessionEntry;
-  const initial = structuredClone(original);
   const current = params.storePath
     ? loadSessionEntryReadOnly({
         storePath: params.storePath,
@@ -109,7 +123,7 @@ export async function applySessionModelSelection(
   };
   const sessionStore = { [params.sessionKey]: canonical };
   const acpInstruction =
-    "Use applySessionExecutionSelection for app-managed models; this API returns a concrete model route.";
+    "Use the owning app's model controls for app-managed models; this API requires a concrete provider/model route.";
   const selection = getCommittedSessionExecutionSelection(canonical);
   if (
     (selection && isAcpExecutionSelection(selection)) ||
@@ -145,16 +159,19 @@ export async function applySessionModelSelection(
               ? { executor: { kind: executorKind, id: request.runtime.runtime } }
               : {}),
           },
+    fallbackPermission: request.isDefault ? "configured" : "explicit",
     profileOverride: request.profileOverride,
     validateCommit: () =>
       params.validateAuthProfileSelection?.() ??
       (!isDeepStrictEqual(original, initial) ||
-      (params.sessionStore[params.sessionKey] !== undefined &&
-        params.sessionStore[params.sessionKey] !== original)
+      Object.hasOwn(params.sessionStore, params.sessionKey) !== hadStoreEntry ||
+      params.sessionStore[params.sessionKey] !== startingStoreEntry
         ? "The session changed. Retry the model selection."
         : undefined),
   });
-  if (result.status === "conflict") return result;
+  if (result.status === "conflict") {
+    return result;
+  }
   if (result.status === "rejected") {
     const reason =
       result.reason === "locked" || result.reason === "not-allowed"
@@ -169,7 +186,9 @@ export async function applySessionModelSelection(
     expectDefined(sessionStore[params.sessionKey], "Applied selection lost its session entry"),
   );
   for (const key of Object.keys(params.sessionEntry)) {
-    if (!Object.hasOwn(projected, key)) Reflect.deleteProperty(params.sessionEntry, key);
+    if (!Object.hasOwn(projected, key)) {
+      Reflect.deleteProperty(params.sessionEntry, key);
+    }
   }
   Object.assign(params.sessionEntry, projected);
   params.sessionStore[params.sessionKey] = projected;
@@ -213,15 +232,18 @@ export function resolvePersistedSessionRuntimeId(
     >
   >,
 ): string | undefined {
-  if (entry?.executionSelection?.state === "accepted")
+  if (entry?.executionSelection?.state === "accepted") {
     return resolveAcceptedSessionRuntimeId(entry);
+  }
   if (entry?.executionSelection?.state === "deferred") {
     const { executor, runtime } = entry.executionSelection.request;
     const requested = executor?.kind === "acp" ? undefined : (executor?.id ?? runtime);
     return requested && !isDefaultAgentRuntimeId(requested) ? requested : undefined;
   }
   const pinned = resolveSessionPinnedHarnessId(entry);
-  if (pinned && !isDefaultAgentRuntimeId(pinned)) return pinned;
+  if (pinned && !isDefaultAgentRuntimeId(pinned)) {
+    return pinned;
+  }
   const runtime = normalizeOptionalAgentRuntimeId(entry?.agentRuntimeOverride);
   return runtime && !isDefaultAgentRuntimeId(runtime)
     ? runtime
@@ -229,19 +251,66 @@ export function resolvePersistedSessionRuntimeId(
 }
 export { resolveSessionModelRef } from "../agents/session-model-ref.js";
 export {
-  applyModelOverrideToSessionEntry,
   isModelSelectionLocked,
   MODEL_SELECTION_LOCKED_MESSAGE,
   ModelSelectionLockedError,
 } from "../sessions/model-overrides.js";
-export { applyModelOverrideWithAuthProfileCompatibility } from "../sessions/auth-profile-preservation.js";
-
-export { applySessionExecutionSelection } from "../model-picker/apply-session-model-selection.js";
-export { getSessionExecutionSelection } from "../model-picker/execution-selection.js";
-export type { ApplySessionExecutionSelectionParams } from "../model-picker/apply-session-model-selection.js";
-export type {
-  ExecutionSelection,
-  ModelExecutionSelection,
-  NativeManagedExecutionSelection,
-  SessionExecutionSelection,
-} from "../model-picker/execution-selection.js";
+/** Released synchronous SDK intake; preparation validates the deferred request before execution. */
+export function applyModelOverrideToSessionEntry(params: {
+  entry: Parameters<typeof stageSessionExecutionSelection>[0]["entry"];
+  selection: ModelOverrideSelection;
+  profileOverride?: string;
+  profileOverrideSource?: "auto" | "user";
+  preserveAuthProfileOverride?: boolean;
+  selectionSource?: "auto" | "user";
+  explicitDefaultSelection?: boolean;
+  markLiveSwitchPending?: boolean;
+}): { updated: boolean } {
+  return stageSessionExecutionSelection(params);
+}
+/** Released synchronous SDK intake that preserves provider-scoped account intent. */
+export function applyModelOverrideWithAuthProfileCompatibility(params: {
+  cfg: OpenClawConfig;
+  agentDir: string;
+  entry: Parameters<typeof stageSessionExecutionSelection>[0]["entry"];
+  currentProvider: string;
+  selection: ModelOverrideSelection;
+  profileOverride?: string;
+  profileOverrideSource?: "auto" | "user";
+  selectionSource?: "auto" | "user";
+  explicitDefaultSelection?: boolean;
+  markLiveSwitchPending?: boolean;
+  metadataSnapshot?: Pick<PluginMetadataSnapshot, "plugins">;
+}): { updated: boolean } {
+  assertModelSelectionUnlocked(params.entry);
+  return stageSessionExecutionSelection({
+    entry: params.entry,
+    selection: params.selection,
+    ...(params.profileOverride ? { profileOverride: params.profileOverride } : {}),
+    ...(params.profileOverrideSource
+      ? { profileOverrideSource: params.profileOverrideSource }
+      : {}),
+    ...(params.selectionSource ? { selectionSource: params.selectionSource } : {}),
+    ...(params.explicitDefaultSelection
+      ? { explicitDefaultSelection: params.explicitDefaultSelection }
+      : {}),
+    ...(params.markLiveSwitchPending !== undefined
+      ? { markLiveSwitchPending: params.markLiveSwitchPending }
+      : {}),
+    preserveAuthProfileOverride:
+      !params.profileOverride &&
+      shouldPreserveSessionAuthProfileOverride({
+        cfg: resolveModelProviderAuthConfig({
+          config: params.cfg,
+          provider: params.selection.provider,
+          modelId: params.selection.model,
+          metadataSnapshot: params.metadataSnapshot,
+        }),
+        agentDir: params.agentDir,
+        entry: params.entry,
+        currentProvider: params.currentProvider,
+        provider: params.selection.provider,
+        ...(params.metadataSnapshot ? { metadataSnapshot: params.metadataSnapshot } : {}),
+      }),
+  });
+}

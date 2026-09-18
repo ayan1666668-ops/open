@@ -1,9 +1,9 @@
 import { isParentOwnedBackgroundAcpSession } from "@openclaw/acp-core/session-interaction-mode";
-import { readAcpSessionEntry } from "../../acp/runtime/session-meta.js";
+import { readAcpSessionEntryCore } from "../../acp/runtime/session-meta.js";
 import type { InternalSessionEntry } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
-import { resolveSendPolicy } from "../../sessions/send-policy.js";
+import { resolveSendPolicyCore } from "../../sessions/send-policy.js";
 import { onSessionIdentityMutation } from "../../sessions/session-lifecycle-events.js";
 import { resolveGlobalSingleton } from "../../shared/global-singleton.js";
 import { loadSessionStoreEntry } from "./dispatch-from-config.runtime.js";
@@ -53,7 +53,7 @@ export async function sendReplyRestartRecoveryNotice(params: {
     if (!entry || !recovery?.tombstone) {
       return;
     }
-    const currentAcpSession = readAcpSessionEntry({
+    const currentAcpSession = readAcpSessionEntryCore({
       cfg: params.cfg,
       agentId: params.agentId,
       sessionKey: params.sessionKey,
@@ -64,7 +64,7 @@ export async function sendReplyRestartRecoveryNotice(params: {
           ? { ...currentAcpSession.entry, acp: currentAcpSession.acp }
           : undefined,
       ) ||
-      resolveSendPolicy({
+      resolveSendPolicyCore({
         cfg: params.cfg,
         entry,
         sessionKey: params.sessionKey,

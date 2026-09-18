@@ -22,7 +22,7 @@ type StateRuntime = {
   };
   store: Pick<
     typeof import("openclaw/plugin-sdk/session-store-runtime"),
-    "resolveStorePath" | "upsertSessionEntry" | "loadTranscriptEventsSync"
+    "resolveStorePath" | "loadTranscriptEventsSync"
   >;
   transcript: Pick<
     typeof import("openclaw/plugin-sdk/session-transcript-runtime"),
@@ -30,6 +30,7 @@ type StateRuntime = {
   >;
   claimAgentSessionWriter: typeof import("../../../../src/agents/embedded-agent-runner/run/session-bootstrap.js").claimAgentSessionWriter;
   loadSessionEntry: typeof import("../../../../src/config/sessions/session-accessor.js").loadSessionEntry;
+  upsertSessionEntryCore: typeof import("../../../../src/config/sessions/session-accessor.js").upsertSessionEntryCore;
   resolveSessionTranscriptDatabasePath: typeof import("../../../../src/config/sessions/session-accessor.js").resolveSessionTranscriptDatabasePath;
 };
 type GatewayState = Pick<QaGatewayChild, "cfg" | "runtimeEnv" | "workspaceDir" | "tempRoot">;
@@ -313,14 +314,11 @@ export async function seedCompactionTranscript(
   const current = options.preserveSessionEntry
     ? runtime.loadSessionEntry({ ...target, readConsistency: "latest" })
     : undefined;
-  await runtime.store.upsertSessionEntry({
-    ...target,
-    entry: {
-      ...current,
-      sessionId: proof.sessionId,
-      updatedAt: now,
-      compactionCount: current?.compactionCount ?? 0,
-    },
+  await runtime.upsertSessionEntryCore(target, {
+    ...current,
+    sessionId: proof.sessionId,
+    updatedAt: now,
+    compactionCount: current?.compactionCount ?? 0,
   });
   for (const message of messages) {
     const result = await runtime.transcript.appendSessionTranscriptMessageByIdentity({
@@ -336,15 +334,16 @@ export async function patchCompactionSessionOwnership(
   runtime: StateRuntime,
   gateway: GatewayState,
   proof: ProofCase,
-  patch: { agentRuntimeOverride: string; agentHarnessId: string },
+  patch: { agentHarnessId: string },
 ) {
   const current = readCompactionEntry(runtime, gateway, proof);
-  await runtime.store.upsertSessionEntry({
-    ...targetFor(runtime, gateway, proof),
-    entry: { ...current, ...patch, updatedAt: Date.now() },
+  await runtime.upsertSessionEntryCore(targetFor(runtime, gateway, proof), {
+    ...current,
+    ...patch,
+    updatedAt: Date.now(),
   });
   const updated = readCompactionEntry(runtime, gateway, proof);
-  assert.equal(updated.agentRuntimeOverride, patch.agentRuntimeOverride);
+  assert.deepEqual(updated.executionSelection, current.executionSelection);
   assert.equal(updated.agentHarnessId, patch.agentHarnessId);
   return updated;
 }
@@ -388,7 +387,7 @@ export function snapshotCompactionSession(
     compactionCount: entry.compactionCount ?? 0,
     compactionCheckpoints: entry.compactionCheckpoints,
     transcriptByteCompactionLatch: entry.transcriptByteCompactionLatch,
-    agentRuntimeOverride: entry.agentRuntimeOverride,
+    executionSelection: entry.executionSelection,
     agentHarnessId: entry.agentHarnessId,
     activeWriterRunId: entry.activeWriterRunId,
     lifecycleRevision: entry.lifecycleRevision,

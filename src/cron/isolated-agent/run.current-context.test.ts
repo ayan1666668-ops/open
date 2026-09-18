@@ -20,7 +20,6 @@ import {
 } from "../../config/sessions/session-accessor.js";
 import type { SessionEntry } from "../../config/sessions/types.js";
 import { commitSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
-import { applyModelOverrideToSessionEntry } from "../../plugin-sdk/model-session-runtime.js";
 import { makeIsolatedAgentJobFixture, makeIsolatedAgentParamsFixture } from "./job-fixtures.js";
 import { setupRunCronIsolatedAgentTurnSuite } from "./run.suite-helpers.js";
 const runCronIsolatedAgentTurn = await loadRunCronIsolatedAgentTurn();
@@ -108,11 +107,12 @@ describe("runCronIsolatedAgentTurn — current conversation context", () => {
         sessionId: "source-session",
         lifecycleRevision: "source-revision",
         updatedAt: 1,
+        executionSelection: {
+          state: "deferred",
+          request: { defaultSelection: "inherit" },
+          fallbackPermission: "configured",
+        },
       };
-      applyModelOverrideToSessionEntry({
-        entry: source,
-        selection: { provider: "fixture", model: "default", isDefault: true },
-      });
       const sourceBefore = structuredClone(source);
       const session = makeCronSession({ store: { [threadKey]: source } });
       resolveCronSessionMock.mockReturnValue(session);

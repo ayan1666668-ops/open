@@ -353,10 +353,14 @@ it.each(["worker", "grouping"] as const)(
         {
           sessionId: "current-parent",
           updatedAt: Date.now(),
-          providerOverride: "openai",
-          modelOverride: "gpt-5.5",
-          modelOverrideSource: "user",
-          modelOverrideRouteResolution: "resolved",
+          executionSelection: {
+            state: "accepted",
+            selection: {
+              model: { provider: "openai", id: "gpt-5.5" },
+              executor: { kind: "harness", id: "openclaw" },
+            },
+            fallbackPermission: "explicit",
+          },
         },
       );
       const placements = createWorkerSessionPlacementStore();

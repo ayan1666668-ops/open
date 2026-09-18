@@ -12,6 +12,7 @@ import { readAgentRunTerminalOutcome } from "../channels/turn/agent-run-terminal
 import * as configIoModule from "../config/io.js";
 import { loadTranscriptEvents } from "../config/sessions/session-accessor.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import type { AcpExecutionSelection } from "../model-picker/execution-selection.js";
 import { parseAgentSessionKey } from "../routing/session-key.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { agentCommand } from "./agent.js";
@@ -143,7 +144,7 @@ vi.mock("../agents/command/attempt-execution.runtime.js", async () => {
 
 const loadConfigSpy = vi.spyOn(configIoModule, "loadConfig");
 const runEmbeddedAgentSpy = vi.spyOn(embeddedModule, "runEmbeddedAgent");
-const getAcpSessionManagerSpy = vi.spyOn(acpManagerModule, "getAcpSessionManager");
+const getAcpSessionManagerSpy = vi.spyOn(acpManagerModule, "getAcpSessionManagerCore");
 
 const runtime = createThrowingTestRuntime();
 
@@ -199,9 +200,15 @@ function writeAcpSessionStore(storePath: string, agent = "codex") {
       [sessionKey]: {
         sessionId: "acp-session-1",
         updatedAt: Date.now(),
+        executionSelection: {
+          state: "accepted",
+          selection: {
+            model: "native-managed",
+            executor: { kind: "acp", backend: "acpx", agent },
+          },
+          fallbackPermission: "explicit",
+        },
         acp: {
-          backend: "acpx",
-          agent,
           runtimeSessionName: sessionKey,
           mode: "oneshot",
           state: "idle",
@@ -215,18 +222,26 @@ function writeAcpSessionStore(storePath: string, agent = "codex") {
 function resolveReadySession(
   sessionKey: string,
   agent = "codex",
-): ReturnType<ReturnType<typeof acpManagerModule.getAcpSessionManager>["resolveSession"]> {
+): ReturnType<ReturnType<typeof acpManagerModule.getAcpSessionManagerCore>["resolveSession"]> {
   const owner = parseAgentSessionKey(sessionKey);
   if (!owner) {
     throw new Error("Expected an owner-qualified ACP fixture key");
   }
+  const selection: AcpExecutionSelection = {
+    model: "native-managed",
+    executor: { kind: "acp", backend: "acpx", agent },
+  };
   return {
     kind: "ready",
     sessionKey,
     agentId: owner.agentId,
+    selection,
+    entry: {
+      sessionId: "acp-session-1",
+      updatedAt: Date.now(),
+      executionSelection: { state: "accepted", selection, fallbackPermission: "explicit" },
+    },
     meta: {
-      backend: "acpx",
-      agent,
       runtimeSessionName: sessionKey,
       mode: "oneshot",
       state: "idle",
@@ -240,7 +255,7 @@ function mockAcpManager(params: {
   resolveSession?: (params: {
     cfg: OpenClawConfig;
     sessionKey: string;
-  }) => ReturnType<ReturnType<typeof acpManagerModule.getAcpSessionManager>["resolveSession"]>;
+  }) => ReturnType<ReturnType<typeof acpManagerModule.getAcpSessionManagerCore>["resolveSession"]>;
 }) {
   getAcpSessionManagerSpy.mockReturnValue({
     runTurn: params.runTurn,
@@ -249,7 +264,7 @@ function mockAcpManager(params: {
       ((input) => {
         return resolveReadySession(input.sessionKey);
       }),
-  } as unknown as ReturnType<typeof acpManagerModule.getAcpSessionManager>);
+  } as unknown as ReturnType<typeof acpManagerModule.getAcpSessionManagerCore>);
 }
 
 async function withAcpSessionEnv(fn: () => Promise<void>) {
@@ -416,7 +431,7 @@ describe("agentCommand ACP runtime routing", () => {
         let transcriptTarget: Parameters<typeof loadTranscriptEvents>[0] | undefined;
         const runTurn = vi.fn(async (input: unknown) => {
           const params = input as Parameters<
-            ReturnType<typeof acpManagerModule.getAcpSessionManager>["runTurn"]
+            ReturnType<typeof acpManagerModule.getAcpSessionManagerCore>["runTurn"]
           >[0];
           await params.onEvent?.({ type: "text_delta", text: "ACP reply" });
           if ("abort" in scenario && scenario.abort === "timeout") {

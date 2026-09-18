@@ -28,6 +28,7 @@ describe("commands session store persistence", () => {
 
       await expect(
         persistCommandSession({
+          agentId: "main",
           allowCreateSessionEntry: true,
           sessionEntry: entry,
           sessionStore,
@@ -61,6 +62,7 @@ describe("commands session store persistence", () => {
 
       await expect(
         persistCommandSession({
+          agentId: "main",
           sessionEntry: entry,
           sessionStore,
           sessionKey,
@@ -89,6 +91,7 @@ describe("commands session store persistence", () => {
       };
       const seedEntry = { ...entry };
       await persistCommandSession({
+        agentId: "main",
         allowCreateSessionEntry: true,
         sessionEntry: seedEntry,
         sessionStore: { [sessionKey]: seedEntry },
@@ -100,6 +103,7 @@ describe("commands session store persistence", () => {
 
       await expect(
         persistCommandSession({
+          agentId: "main",
           sessionEntry: entry,
           sessionStore,
           sessionKey,
@@ -148,6 +152,7 @@ describe("commands session store persistence", () => {
         pinnedAt: undefined,
       };
       await persistCommandSession({
+        agentId: "main",
         allowCreateSessionEntry: true,
         sessionEntry: concurrentEntry,
         sessionStore: { [sessionKey]: concurrentEntry },
@@ -161,6 +166,7 @@ describe("commands session store persistence", () => {
       try {
         await expect(
           persistCommandSession({
+            agentId: "main",
             sessionEntry: entry,
             sessionStore,
             sessionKey,
@@ -215,6 +221,7 @@ describe("commands session store persistence", () => {
 
       await expect(
         persistCommandSession({
+          agentId: "main",
           initialSessionEntry: initialEntry,
           sessionEntry,
           sessionStore,
@@ -247,6 +254,7 @@ describe("commands session store persistence", () => {
 
       await expect(
         persistCommandSession({
+          agentId: "main",
           initialSessionEntry: initialEntry,
           sessionEntry,
           sessionStore,
@@ -287,6 +295,7 @@ describe("commands session store persistence", () => {
 
       await expect(
         persistCommandSession({
+          agentId: "main",
           initialSessionEntry: initialEntry,
           sessionEntry,
           sessionStore,
@@ -314,6 +323,7 @@ describe("commands session store persistence", () => {
 
       await expect(
         persistCommandSession({
+          agentId: "main",
           initialSessionEntry: { ...persistedEntry },
           sessionEntry: entry,
           sessionStore,

@@ -20,7 +20,7 @@ import {
 import { resolveDefaultModelForAgent } from "../agents/model-selection.js";
 import { resolveConfiguredThinkingDefault } from "../agents/model-thinking-default.js";
 import { listOpenAIAuthProfileProvidersForAgentRuntime } from "../agents/openai-routing.js";
-import { resolvePersistedSessionRuntimeId } from "../agents/session-runtime-compat.js";
+import { resolveAcceptedSessionRuntimeId } from "../agents/session-runtime-compat.js";
 import {
   resolveInternalSessionKey,
   resolveMainSessionAlias,
@@ -36,8 +36,10 @@ import {
   loadProviderUsageSummary,
   resolveUsageProviderId,
 } from "../infra/provider-usage.js";
-import { getSessionExecutionSelection } from "../model-picker/execution-selection.js";
-import { isModelExecutionSelection } from "../model-picker/execution-selection.js";
+import {
+  getSessionExecutionSelection,
+  isModelExecutionSelection,
+} from "../model-picker/execution-selection.js";
 import { resolveActiveProviderThinkingProfile } from "../plugins/provider-thinking-active.js";
 import { normalizeAccountId } from "../routing/account-id.js";
 import { resolveNormalizedAccountEntry } from "../routing/account-lookup.js";
@@ -205,7 +207,7 @@ async function resolveStatusHarnessId(params: {
   sessionEntry?: SessionEntry;
 }): Promise<string | undefined> {
   try {
-    const sessionRuntime = resolvePersistedSessionRuntimeId(params.sessionEntry);
+    const sessionRuntime = resolveAcceptedSessionRuntimeId(params.sessionEntry);
     const configuredRuntime = resolveAgentHarnessPolicy({
       provider: params.provider,
       modelId: params.model,
@@ -227,8 +229,8 @@ async function resolveStatusHarnessId(params: {
     ) {
       return "openclaw";
     }
-    const { resolveEffectiveAgentRuntime } = await loadAgentThinkingRuntime();
-    const id = resolveEffectiveAgentRuntime({
+    const { resolveEffectiveAgentRuntimeCore } = await loadAgentThinkingRuntime();
+    const id = resolveEffectiveAgentRuntimeCore({
       cfg: params.cfg,
       provider: params.provider,
       modelId: params.model,
@@ -316,20 +318,16 @@ export async function buildStatusReplyParts(
     resolveAgentWorkspaceDir(cfg, statusAgentId);
   const selection = getSessionExecutionSelection(sessionEntry);
   const nativeManaged = selection?.model === "native-managed";
-  const selectedProvider = params.activeModel
-    ? (params.activeModel.provider ?? "")
-    : nativeManaged
-      ? (sessionEntry?.modelProvider ?? "")
-      : selection && isModelExecutionSelection(selection)
-        ? selection.model.provider
-        : provider;
-  const selectedModel =
-    params.activeModel?.model ??
-    (nativeManaged
-      ? (sessionEntry?.model ?? "")
-      : selection && selection.model !== "native-managed"
-        ? selection.model.id
-        : model);
+  const selectedProvider = nativeManaged
+    ? (sessionEntry?.modelProvider ?? "")
+    : selection && isModelExecutionSelection(selection)
+      ? selection.model.provider
+      : provider;
+  const selectedModel = nativeManaged
+    ? (sessionEntry?.model ?? "")
+    : selection && selection.model !== "native-managed"
+      ? selection.model.id
+      : model;
   const parseSelectedProvider = false;
   const modelParams = { selectedProvider, selectedModel, sessionEntry, parseSelectedProvider };
   const activeModel = params.activeModel
@@ -615,11 +613,13 @@ export async function buildStatusReplyParts(
     resolvedThinkLevel ??
     normalizeThinkLevel(sessionEntry?.thinkingLevel) ??
     configuredThinkingDefault ??
-    (hasModelIdentity ? await resolveDefaultThinkingLevel({
-      provider: selectedLookupProvider,
-      model: selectedLookupModel,
-      agentRuntime: effectiveHarness,
-    }) : undefined) ??
+    (hasModelIdentity
+      ? await resolveDefaultThinkingLevel({
+          provider: selectedLookupProvider,
+          model: selectedLookupModel,
+          agentRuntime: effectiveHarness,
+        })
+      : undefined) ??
     "off";
   // Active profiles can forbid `off` (for example, always-thinking models). Absence means
   // there is no prepared policy fact, so status must not fall back to manifest discovery.

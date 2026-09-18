@@ -133,23 +133,18 @@ accepts owner authority only from the exact active, trusted plugin registered fo
 Model-picker integrations use two focused runtime subpaths. Import the typed
 `ModelPickerAction` and `ModelPickerCapabilityProfile` contracts from
 `openclaw/plugin-sdk/interactive-runtime`. Import
-`applySessionExecutionSelection(...)` from
-`openclaw/plugin-sdk/model-session-runtime` to prepare and commit one model and
-executor selection. Its result carries the accepted selection, the previous
-selection, and the acknowledgment. The owner checks support, account access,
-placement, and current session authority before committing and publishing effects.
+`applySessionModelSelection(...)` from
+`openclaw/plugin-sdk/model-session-runtime` to prepare and commit a concrete model
+selection. Its released flat result remains compatible. The canonical owner checks
+support, account access, placement, and current session authority before committing.
 A model-only request keeps a supported executor. A reset resolves configured
 policy once; repeat the reset to follow later policy changes.
 
-The released `applySessionModelSelection(...)` method preserves its existing
-flat result for concrete models. App-managed selections require the pair API.
 The synchronous `applyModelOverrideToSessionEntry(...)` and
-`applyModelOverrideWithAuthProfileCompatibility(...)` setters remain deprecated
-adapters. They preserve model, runtime-pin, source, account, and lock semantics
+`applyModelOverrideWithAuthProfileCompatibility(...)` setters retain their released
+contracts. They preserve model, runtime-pin, source, account, and lock semantics
 and stage deferred intent without claiming that execution is ready. Existing
-callers still own persistence of the changed entry. Both setters will be removed
-in the first stable release after 2026.10; use
-`applySessionExecutionSelection(...)` for new integrations.
+callers still own persistence of the changed entry.
 
 A provider-only patch through the released session store remains an unfinished
 request beside the accepted selection. It survives completed turns and model

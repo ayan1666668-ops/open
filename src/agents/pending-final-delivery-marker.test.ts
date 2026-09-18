@@ -21,6 +21,7 @@ describe("persistPendingFinalDeliveryMarker", () => {
     const payloads = [{ text: "first" }, { text: "second" }];
 
     const result = await persistPendingFinalDeliveryMarker({
+      agentId: "main",
       deliver: true,
       sessionStore: { main: entry },
       sessionKey: "main",

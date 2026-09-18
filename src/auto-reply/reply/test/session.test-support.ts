@@ -1,4 +1,3 @@
-// Shared store and reset fixtures for session.test.ts.
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { OpenClawConfig } from "../../../config/config.js";
@@ -10,14 +9,22 @@ import {
   upsertSessionEntryCore,
 } from "../../../config/sessions/session-accessor.js";
 import { normalizeLegacySessionEntryDelivery } from "../../../infra/state-migrations.legacy-session-store.js";
+// Shared store and reset fixtures for session.test.ts.
+import { projectLegacyExecutionSelection } from "../../../model-picker/execution-selection-projection.js";
 import { projectSessionDeliveryFields } from "../../../utils/delivery-context.shared.js";
 import { finalizeInboundContext } from "../inbound-context.js";
 import { initSessionState as initSessionStateRaw } from "../session.js";
 
-type ProjectedSessionEntry = SessionEntry & ReturnType<typeof projectSessionDeliveryFields>;
+type ProjectedSessionEntry = SessionEntry &
+  ReturnType<typeof projectSessionDeliveryFields> &
+  ReturnType<typeof projectLegacyExecutionSelection>;
 
 function projectSessionEntry(entry: SessionEntry): ProjectedSessionEntry {
-  return { ...entry, ...projectSessionDeliveryFields(entry.delivery) };
+  return {
+    ...entry,
+    ...projectSessionDeliveryFields(entry.delivery),
+    ...projectLegacyExecutionSelection(entry.executionSelection),
+  };
 }
 
 export const initSessionState = async (

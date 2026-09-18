@@ -78,6 +78,13 @@ async function setupStop() {
     resolvedVerboseLevel: "off",
     resolvedReasoningLevel: "off",
     resolvedBlockStreamingBreak: "text_end",
+    prepareModelState: async () => {
+      throw new Error("This command fixture does not prepare models.");
+    },
+    resolveModelLevels: async () => ({
+      resolvedThinkLevel: undefined,
+      resolvedReasoningLevel: "off",
+    }),
     resolveDefaultThinkingLevel: async () => undefined,
     provider: "openai",
     model: "gpt-test",

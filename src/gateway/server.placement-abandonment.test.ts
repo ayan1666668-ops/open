@@ -254,7 +254,11 @@ it.for(cases)(
         {
           sessionId,
           updatedAt: Date.now(),
-          agentRuntimeOverride: "openclaw",
+          executionSelection: {
+            state: "deferred",
+            request: { runtime: "openclaw", defaultSelection: "inherit" },
+            fallbackPermission: "configured",
+          },
           worktree: { id: worktreeId, branch: "main", repoRoot: state.workspaceDir },
         },
       );

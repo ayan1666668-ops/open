@@ -9,6 +9,7 @@ import {
 } from "../../config/sessions/session-accessor.js";
 import { clearSessionStoreCacheForTest } from "../../config/sessions/store-writer-state.js";
 import type { SessionEntry } from "../../config/sessions/types.js";
+import { commitSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
 import { persistReplySessionEntry } from "./session-entry-persistence.js";
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
@@ -34,6 +35,7 @@ describe("persistReplySessionEntry", () => {
     await entered.promise;
     let authorized = true;
     const pending = persistReplySessionEntry({
+      agentId: "main",
       storePath,
       sessionKey,
       initialEntry,
@@ -79,6 +81,7 @@ describe("persistReplySessionEntry", () => {
       await replaceSessionEntry({ sessionKey, storePath }, currentEntry);
 
       const result = await persistReplySessionEntry({
+        agentId: "main",
         storePath,
         sessionKey,
         initialEntry,
@@ -127,6 +130,7 @@ describe("persistReplySessionEntry", () => {
       await replaceSessionEntry({ sessionKey, storePath }, currentEntry);
 
       const result = await persistReplySessionEntry({
+        agentId: "main",
         storePath,
         sessionKey,
         initialEntry,
@@ -155,6 +159,7 @@ describe("persistReplySessionEntry", () => {
         updatedAt: 100,
       };
       const result = await persistReplySessionEntry({
+        agentId: "main",
         storePath,
         sessionKey,
         initialEntry,
@@ -180,8 +185,11 @@ describe("persistReplySessionEntry", () => {
       const initialEntry: SessionEntry = {
         sessionId: "session-1",
         updatedAt: 100,
-        modelOverride: "gpt-5.5",
       };
+      commitSessionExecutionSelection(initialEntry, {
+        model: { provider: "fixture", id: "selected" },
+        executor: { kind: "harness", id: "openclaw" },
+      });
       const archivedEntry: SessionEntry = {
         ...initialEntry,
         updatedAt: 400,
@@ -191,11 +199,12 @@ describe("persistReplySessionEntry", () => {
       await replaceSessionEntry({ sessionKey, storePath }, archivedEntry);
 
       const result = await persistReplySessionEntry({
+        agentId: "main",
         storePath,
         sessionKey,
         initialEntry,
         entry: { ...initialEntry, updatedAt: 250 },
-        touchedFields: ["modelOverride"],
+        touchedFields: ["executionSelection"],
       });
 
       expect(result).toEqual({

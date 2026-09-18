@@ -14,8 +14,10 @@ import type { InternalSessionEntry as SessionEntry } from "../../config/sessions
 /** Resolves provider/model precedence for isolated cron runs. */
 import type { AgentConfig } from "../../config/types.agents.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
-import { getSessionExecutionSelection } from "../../model-picker/execution-selection.js";
-import { isModelExecutionSelection } from "../../model-picker/execution-selection.js";
+import {
+  getSessionExecutionSelection,
+  isModelExecutionSelection,
+} from "../../model-picker/execution-selection.js";
 import type { CronJob } from "../types.js";
 import { resolveCronAgentConfig } from "./run-config.js";
 import {

@@ -56,8 +56,9 @@ export async function runEmbeddedFallbackCandidate(
   bootstrapPromptWarningSignaturesSeen: string[];
 }> {
   const selection = params.candidateRun.executionSelection;
-  if (isAcpExecutionSelection(selection))
+  if (isAcpExecutionSelection(selection)) {
     throw new Error("This execution belongs to the native manager.");
+  }
   const model = isModelExecutionSelection(selection) ? selection.model : undefined;
   const turn = params.turn;
   let maintenanceAuthProfile: CompletedAgentAuthSelection | undefined;

@@ -430,6 +430,7 @@ export function materializeSessionRow(input: ReturnType<typeof readSessionRowInp
       ? entry.pinnedAt
       : undefined;
   const compactionSummary = resolveSessionCompactionSummary(entry);
+  const selection = entry?.executionSelection;
 
   const participants = input.participants.size ? [...input.participants.values()] : undefined;
   // Reserve temporal fields in wire order; presentation fills a fresh copy.
@@ -572,11 +573,17 @@ export function materializeSessionRow(input: ReturnType<typeof readSessionRowInp
     model: input.rowModelIdentity.model,
     activeModelProvider: undefined,
     activeModel: undefined,
-    modelOverrideSource: entry?.executionSelection
-      ? entry.executionSelection.fallbackPermission === "explicit"
-        ? "user"
-        : "auto"
-      : null,
+    modelOverrideSource:
+      input.selectedModel.storedOverrideSource === "parent"
+        ? "inherited"
+        : !selection ||
+            (selection.state === "accepted" &&
+              selection.selection.model === "native-managed" &&
+              !selection.legacyRequest)
+          ? null
+          : selection.fallbackPermission === "explicit"
+            ? "user"
+            : "auto",
     modelSelectionLocked: entry?.modelSelectionLocked,
     runtimeSelectionLocked: input.thinkingProjection.runtimeSelectionLocked,
     agentRuntime: input.agentRuntime,

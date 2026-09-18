@@ -24,12 +24,13 @@ External-plugin compatibility work follows this order:
 ### Retained helper contracts
 
 `model-session-runtime.applySessionModelSelection` retains its published input and
-required flat result fields for harness and CLI selections. Those fields project
-the same accepted pair returned in `selection`; use `selection` and `message` in
-new callers. ACP can use an agent-managed default with no provider/model reference,
-so this helper rejects ACP before mutation instead of inventing an execution
-identity or context budget. Use a dedicated single-session `sessions.patch` model
-request for ACP, without other editable fields.
+required flat result fields for harness and CLI selections. It rejects ACP before
+mutation rather than inventing a provider, model, or context budget.
+
+The released API delegates to the canonical selection owner. Internal initialization,
+fallback preparation, and app-managed model selection are not additional SDK
+operations. Read current state through `session-store-runtime.getSessionEntry`;
+its `executionSelection` distinguishes an accepted choice from a deferred request.
 
 Discord and llama.cpp retain their declared OpenClaw 2026.9.2 host support.
 They use the newer prepared-expiry, DM-policy refinement, and live-catalog outcome

@@ -3,14 +3,14 @@
 import type { SessionAcpMeta } from "@openclaw/acp-core/types";
 import {
   testing as managerTesting,
-  getAcpSessionManager as getInternalAcpSessionManager,
+  getAcpSessionManagerCore as getInternalAcpSessionManager,
 } from "../acp/control-plane/manager.js";
 import { requireAcpExecutionSelection } from "../acp/control-plane/manager.utils.js";
 import { resolveRuntimeOptionsForSelection } from "../acp/control-plane/runtime-options.js";
 import { resolveAcpAgentPolicyError, resolveAcpDispatchPolicyError } from "../acp/policy.js";
 import { testing as registryTesting, requireAcpRuntimeBackend } from "../acp/runtime/registry.js";
 import {
-  readAcpSessionEntry as readInternalAcpSessionEntry,
+  readAcpSessionEntryCore as readInternalAcpSessionEntry,
   type AcpSessionStoreEntry as InternalAcpSessionStoreEntry,
 } from "../acp/runtime/session-meta.js";
 import type { SessionAcpLifecycle } from "../config/sessions/types.js";
@@ -63,7 +63,9 @@ export function readAcpSessionEntry(
   params: Parameters<typeof readInternalAcpSessionEntry>[0],
 ): AcpSessionStoreEntry | null {
   const stored = readInternalAcpSessionEntry(params);
-  if (!stored) return null;
+  if (!stored) {
+    return null;
+  }
   const { entry, acp, ...location } = stored;
   return {
     ...location,
@@ -113,7 +115,9 @@ const publicManagers = new WeakMap<InternalManager, ReturnType<typeof createPubl
 export function getAcpSessionManager(): ReturnType<typeof createPublicAcpManager> {
   const manager = getInternalAcpSessionManager();
   const existing = publicManagers.get(manager);
-  if (existing) return existing;
+  if (existing) {
+    return existing;
+  }
   const facade = createPublicAcpManager(manager);
   publicManagers.set(manager, facade);
   return facade;

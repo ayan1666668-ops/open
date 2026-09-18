@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import { ANTHROPIC_CONTEXT_1M_TOKENS } from "../agents/context-resolution.js";
 import { migratePersistedImplicitMainRoster } from "../config/legacy.roster.js";
+import type { SessionEntry } from "../config/sessions/types.js";
 import { statusSummaryRuntime } from "../status/summary.runtime.js";
 
 function resolveSessionRuntime(
@@ -276,7 +277,7 @@ describe("statusSummaryRuntime.resolveSessionRuntime", () => {
     ).toEqual({ id: "codex", label: "OpenAI Codex (previous runtime: OpenClaw Default)" });
   });
 
-  it("reports the owning Codex harness for a locked session with stale OpenClaw metadata", () => {
+  it("reports accepted Codex ownership despite a conflicting configured runtime", () => {
     expect(
       resolveSessionRuntime({
         cfg: {
@@ -292,7 +293,14 @@ describe("statusSummaryRuntime.resolveSessionRuntime", () => {
           sessionId: "locked-codex-session",
           updatedAt: 0,
           agentHarnessId: "codex",
-          agentRuntimeOverride: "openclaw",
+          executionSelection: {
+            state: "accepted",
+            selection: {
+              model: { provider: "openai", id: "gpt-5.5" },
+              executor: { kind: "harness", id: "codex" },
+            },
+            fallbackPermission: "explicit",
+          },
           modelSelectionLocked: true,
         },
         provider: "openai",
@@ -306,11 +314,17 @@ describe("statusSummaryRuntime.resolveSessionRuntime", () => {
 describe("statusSummaryRuntime.resolveSessionModelRef", () => {
   const configured = { provider: "anthropic", model: "claude-sonnet-4-6" };
 
-  it("preserves explicit runtime providers for vendor-prefixed model ids", () => {
+  it("preserves the selected provider for vendor-prefixed model ids", () => {
     expect(
       statusSummaryRuntime.resolveSessionModelRef(configured, {
-        modelProvider: "openrouter",
-        model: "anthropic/claude-haiku-4.5",
+        executionSelection: {
+          state: "accepted",
+          selection: {
+            model: { provider: "openrouter", id: "anthropic/claude-haiku-4.5" },
+            executor: { kind: "harness", id: "openclaw" },
+          },
+          fallbackPermission: "explicit",
+        },
       }),
     ).toEqual({
       provider: "openrouter",
@@ -318,56 +332,49 @@ describe("statusSummaryRuntime.resolveSessionModelRef", () => {
     });
   });
 
-  it("splits legacy combined overrides when provider is missing", () => {
-    expect(
-      statusSummaryRuntime.resolveSessionModelRef(configured, {
-        modelOverride: "ollama-beelink2/qwen2.5-coder:7b",
-      }),
-    ).toEqual({
-      provider: "ollama-beelink2",
-      model: "qwen2.5-coder:7b",
-    });
-  });
-
-  it("uses the configured default provider for providerless runtime models", () => {
-    expect(
-      statusSummaryRuntime.resolveSessionModelRef(
-        { provider: "openai", model: "gpt-5.5" },
-        {
-          model: "gpt-5.5",
+  it.each([
+    { modelProvider: "openai", model: "gpt-5.5" },
+    {
+      executionSelection: {
+        state: "deferred",
+        request: { model: { provider: "ollama-beelink2", id: "qwen2.5-coder:7b" } },
+        fallbackPermission: "explicit",
+      },
+    },
+    {
+      executionSelection: {
+        state: "accepted",
+        selection: {
+          model: "native-managed",
+          executor: { kind: "harness", id: "codex" },
         },
-      ),
-    ).toEqual({
-      provider: "openai",
-      model: "gpt-5.5",
-    });
-  });
+        fallbackPermission: "explicit",
+      },
+    },
+  ] satisfies Partial<SessionEntry>[])(
+    "does not substitute history or an unselected model for configured defaults (%#)",
+    (entry) => {
+      expect(statusSummaryRuntime.resolveSessionModelRef(configured, entry)).toEqual(configured);
+    },
+  );
 
-  it("prefers explicit overrides ahead of fallback runtime fields", () => {
+  it("prefers the accepted model ahead of observed fallback output", () => {
     expect(
       statusSummaryRuntime.resolveSessionModelRef(configured, {
-        providerOverride: "openai",
-        modelOverride: "gpt-5.4",
+        executionSelection: {
+          state: "accepted",
+          selection: {
+            model: { provider: "openai", id: "gpt-5.4" },
+            executor: { kind: "harness", id: "codex" },
+          },
+          fallbackPermission: "explicit",
+        },
         modelProvider: "amazon-bedrock",
         model: "minimax.minimax-m2.5",
       }),
     ).toEqual({
       provider: "openai",
       model: "gpt-5.4",
-    });
-  });
-
-  it("falls back to configured defaults when persisted session model fields are malformed", () => {
-    expect(
-      statusSummaryRuntime.resolveSessionModelRef(configured, {
-        modelProvider: { provider: "openai" },
-        model: false,
-        providerOverride: ["anthropic"],
-        modelOverride: 123,
-      } as never),
-    ).toEqual({
-      provider: "anthropic",
-      model: "claude-sonnet-4-6",
     });
   });
 });

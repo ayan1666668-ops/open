@@ -11,7 +11,6 @@ import type { AgentModelConfig } from "../config/types.agents-shared.js";
 import type { AgentConfig } from "../config/types.agents.js";
 import type { OpenClawConfig } from "../config/types.js";
 import { isPathInside } from "../infra/path-guards.js";
-import type { ExecutionSelection } from "../model-picker/execution-selection.js";
 import {
   isSubagentSessionKey,
   normalizeAgentId,
@@ -394,15 +393,11 @@ export function modelFallbackOverrideFromAvailability(
   }
 }
 
-/**
- * Resolves fallback availability once for the run scope. A pinned model override disables the
- * configured ladder; splitting that fact from its models would report fallbacks that cannot run.
- */
+/** Resolve configured ladders; the session selection owner authorizes their use. */
 export function resolveModelFallbackAvailability(params: {
   cfg: OpenClawConfig;
   agentId: string;
   sessionKey?: string | null;
-  selection?: ExecutionSelection;
   modelSelectionLocked?: boolean;
   modelFallbacksOverride?: string[];
   /** Declared child lineage includes visible sessions with dashboard keys. */
@@ -414,15 +409,11 @@ export function resolveModelFallbackAvailability(params: {
   if (params.modelFallbacksOverride !== undefined) {
     return modelFallbackAvailabilityFromModels(params.modelFallbacksOverride, "explicit");
   }
-  if (params.selection) {
-    return { kind: "disabled_by_model_override" };
-  }
   const useSubagentFallbacks =
     !isSubagentSessionKey(params.sessionKey) && params.subagentSpawnLineage === true;
   const fallbacksOverride = useSubagentFallbacks
     ? resolveSubagentSpawnModelFallbacksOverride(params.cfg, params.agentId)
     : resolveAgentModelFallbacksOverride(params.cfg, params.agentId);
-  // Auto overrides consume an explicit list, preventing a configured-primary append.
   const source = fallbacksOverride !== undefined ? "explicit" : "inherited";
   return modelFallbackAvailabilityFromModels(
     fallbacksOverride ?? resolveAgentModelFallbackValues(params.cfg.agents?.defaults?.model),
@@ -434,7 +425,6 @@ export function resolveEffectiveModelFallbacks(params: {
   cfg: OpenClawConfig;
   agentId: string;
   sessionKey?: string | null;
-  selection?: ExecutionSelection;
   subagentSpawnLineage?: boolean;
 }): string[] | undefined {
   return modelFallbackOverrideFromAvailability(resolveModelFallbackAvailability(params));

@@ -6,14 +6,14 @@ import { isDefaultAgentRuntimeId } from "./agent-runtime-id.js";
 import { resolveAvailableAgentHarnessPolicy } from "./harness/availability.js";
 import type { AgentRuntimePolicyScope } from "./model-runtime-policy.js";
 import { resolveDefaultModelForAgent } from "./model-selection.js";
-import { resolvePersistedSessionRuntimeId } from "./session-runtime-compat.js";
+import { resolveAcceptedSessionRuntimeId } from "./session-runtime-compat.js";
 
 type ModelAgentRuntimeMetadataParams = {
   cfg: OpenClawConfig;
   provider?: string;
   model?: string;
   sessionKey?: string;
-  sessionEntry?: Parameters<typeof resolvePersistedSessionRuntimeId>[0];
+  sessionEntry?: Parameters<typeof resolveAcceptedSessionRuntimeId>[0];
   /** True only when persisted ACP metadata owns the session. */
   acpRuntime?: boolean;
   /** Persisted ACP backend id, falling back to acpx when absent. */
@@ -28,7 +28,7 @@ type ModelAgentRuntimeMetadataParams = {
 export function resolveModelAgentRuntimeMetadata(
   params: ModelAgentRuntimeMetadataParams,
 ): AgentRuntimeMetadata {
-  const persistedRuntimeId = resolvePersistedSessionRuntimeId(params.sessionEntry);
+  const persistedRuntimeId = resolveAcceptedSessionRuntimeId(params.sessionEntry);
   if (persistedRuntimeId && !isDefaultAgentRuntimeId(persistedRuntimeId)) {
     return applyAcpRuntimeOverlay(
       { id: persistedRuntimeId, source: "session" },
@@ -65,10 +65,15 @@ export function resolveCurrentSessionAgentRuntimeMetadata(
   const { sessionEntry, ...configuredParams } = params;
   const selection = getSessionExecutionSelection(sessionEntry);
   if (selection) {
-    return {
-      id: selection.executor.kind === "acp" ? selection.executor.backend : selection.executor.id,
-      source: "session",
-    };
+    return applyAcpRuntimeOverlay(
+      {
+        id: selection.executor.kind === "acp" ? selection.executor.backend : selection.executor.id,
+        source: "session",
+      },
+      params.sessionKey,
+      selection.executor.kind === "acp",
+      selection.executor.kind === "acp" ? selection.executor.backend : undefined,
+    );
   }
   return resolveModelAgentRuntimeMetadata(configuredParams);
 }

@@ -80,8 +80,8 @@ export async function prepareAcpSessionPatch(params: {
       "This app owns its account selection. Change accounts in the app.",
     );
   }
-  const { getAcpSessionManager } = await import("../../acp/control-plane/manager.js");
-  const manager = getAcpSessionManager();
+  const { getAcpSessionManagerCore } = await import("../../acp/control-plane/manager.js");
+  const manager = getAcpSessionManagerCore();
   const target = {
     cfg: params.cfg,
     sessionKey: params.sessionKey,
@@ -129,18 +129,20 @@ export async function prepareAcpSessionPatch(params: {
       return invalidSessionPatchOutcome("Changing apps requires a new conversation.");
     }
     const assertSelectionCurrent = () => {
-      const current = assertActive();
+      const latest = assertActive();
       if (
-        !isDeepStrictEqual(current.entry.executionSelection, params.entry.executionSelection) ||
-        sessionPatchExpectationsChanged(current.entry, params.patch) ||
-        resolveSessionUnreadAck(current.entry, params.patch).kind !== "apply"
-      )
+        !isDeepStrictEqual(latest.entry.executionSelection, params.entry.executionSelection) ||
+        sessionPatchExpectationsChanged(latest.entry, params.patch) ||
+        resolveSessionUnreadAck(latest.entry, params.patch).kind !== "apply"
+      ) {
         throw new SessionMutationAuthorizationChangedError(sessionChangedError(params.sessionKey));
+      }
       const error = prepared.validateCommit();
-      if (error)
+      if (error) {
         throw new SessionMutationAuthorizationChangedError(
           errorShape(ErrorCodes.INVALID_REQUEST, error),
         );
+      }
     };
     return {
       ok: true,
@@ -186,7 +188,9 @@ async function acpPatchError(
     ...target,
     selectionCommitted,
   });
-  if (!failure) return unexpectedPatchError(target.sessionKey, error);
+  if (!failure) {
+    return unexpectedPatchError(target.sessionKey, error);
+  }
   return errorShape(
     !selectionCommitted && (failure.reason === "unsupported" || failure.reason === "not-allowed")
       ? ErrorCodes.INVALID_REQUEST

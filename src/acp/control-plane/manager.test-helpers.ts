@@ -15,11 +15,12 @@ import type {
 } from "../../config/sessions/types.js";
 import { commitSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
 import type { AcpExecutionSelection } from "../../model-picker/execution-selection.js";
+import { resolveAgentIdFromSessionKey } from "../../routing/session-key.js";
 import { deleteTestEnvValue, setTestEnvValue } from "../../test-utils/env.js";
 import type { AcpSessionStoreEntry } from "../runtime/session-meta.js";
 import { resetAcpActiveTurnsForTests } from "./active-turns.test-support.js";
 import type { AcpSessionManagerDeps } from "./manager.types.js";
-import { requireAcpExecutionSelection, resolveAcpAgentFromSessionKey } from "./manager.utils.js";
+import { requireAcpExecutionSelection } from "./manager.utils.js";
 import { resolveRuntimeOptionsForSelection } from "./runtime-options.js";
 
 export type {
@@ -52,13 +53,14 @@ const hoistedMocks = vi.hoisted(() => {
 
 vi.mock("../runtime/session-meta.js", () => ({
   listAcpSessionEntries: (params: unknown) => hoistedMocks.listAcpSessionEntriesMock(params),
-  readAcpSessionEntry: (params: unknown) => hoistedMocks.readAcpSessionEntryMock(params),
+  readAcpSessionEntryCore: (params: unknown) => hoistedMocks.readAcpSessionEntryMock(params),
   upsertAcpSessionMeta: async (
     params: Parameters<AcpSessionManagerDeps["upsertSessionMeta"]>[0],
   ) => {
     const entry = await hoistedMocks.upsertAcpSessionMetaMock(params);
-    if (entry)
+    if (entry) {
       hoistedMocks.completedMetaWrites.push({ entry: structuredClone(entry), options: params });
+    }
     return entry;
   },
 }));
@@ -266,11 +268,15 @@ export function mockParentedAcpSessionEntries(params: {
     "child fixture reader",
   );
   hoisted.readAcpSessionEntryMock.mockImplementation((input: { sessionKey?: string }) => {
-    if (input.sessionKey === params.childSessionKey) return readChild(input);
-    if (input.sessionKey !== params.parentSessionKey) return null;
+    if (input.sessionKey === params.childSessionKey) {
+      return readChild(input);
+    }
+    if (input.sessionKey !== params.parentSessionKey) {
+      return null;
+    }
     return {
       cfg: baseCfg,
-      agentId: resolveAcpAgentFromSessionKey(params.parentSessionKey),
+      agentId: resolveAgentIdFromSessionKey(params.parentSessionKey, "main"),
       storePath: "/synthetic/agent.sqlite",
       sessionKey: params.parentSessionKey,
       storeSessionKey: params.parentSessionKey,
@@ -345,7 +351,9 @@ export function installAcpSessionStoreFixture(params: {
     params.entry ?? { sessionId: "session-1", updatedAt: 1 },
   );
   let meta = params.meta ? structuredClone(params.meta) : undefined;
-  if (params.selection) commitSessionExecutionSelection(entry, params.selection);
+  if (params.selection) {
+    commitSessionExecutionSelection(entry, params.selection);
+  }
   hoisted.readAcpSessionEntryMock.mockImplementation((): AcpSessionStoreEntry => ({
     cfg,
     storePath: "/synthetic/agent.sqlite",
@@ -362,10 +370,15 @@ export function installAcpSessionStoreFixture(params: {
         acp: structuredClone(meta),
       });
       input.assertCommitAllowed?.();
-      if (!input.preserveActivity) entry = { ...entry, updatedAt: Date.now() };
-      if (input.executionSelection)
+      if (!input.preserveActivity) {
+        entry = { ...entry, updatedAt: Date.now() };
+      }
+      if (input.executionSelection) {
         commitSessionExecutionSelection(entry, input.executionSelection);
-      if (next !== undefined) meta = next === null ? undefined : structuredClone(next);
+      }
+      if (next !== undefined) {
+        meta = next === null ? undefined : structuredClone(next);
+      }
       return { ...structuredClone(entry), ...(meta ? { acp: structuredClone(meta) } : {}) };
     },
   );
@@ -375,8 +388,10 @@ export function installAcpSessionStoreFixture(params: {
       const snapshot = structuredClone(entry);
       const patch = await update(structuredClone(entry), { existingEntry: structuredClone(entry) });
       options?.assertCommitAllowed?.();
-      if (!isDeepStrictEqual(entry, snapshot)) throw new Error("session snapshot changed");
-      if (patch)
+      if (!isDeepStrictEqual(entry, snapshot)) {
+        throw new Error("session snapshot changed");
+      }
+      if (patch) {
         entry = options?.replaceEntry
           ? {
               ...patch,
@@ -384,6 +399,7 @@ export function installAcpSessionStoreFixture(params: {
               updatedAt: expectDefined(patch.updatedAt, "replacement update timestamp"),
             }
           : { ...entry, ...patch };
+      }
       return { sessionKey, entry: structuredClone(entry) };
     });
   return {
@@ -402,7 +418,7 @@ export function installAcpSessionStoreFixture(params: {
 export function installReadyAcpSessionStoreFixture(sessionKey: string, entry?: SessionEntry) {
   return installAcpSessionStoreFixture({
     sessionKey,
-    agentId: resolveAcpAgentFromSessionKey(sessionKey),
+    agentId: resolveAgentIdFromSessionKey(sessionKey, "main"),
     ...(entry ? { entry } : {}),
     selection: {
       executor: { kind: "acp", backend: "acpx", agent: "codex" },
@@ -426,7 +442,7 @@ export function installPublicAcpSessionFixture(
   const { model, ...runtimeOptions } = meta?.runtimeOptions ?? {};
   const store = installAcpSessionStoreFixture({
     sessionKey,
-    agentId: resolveAcpAgentFromSessionKey(sessionKey),
+    agentId: resolveAgentIdFromSessionKey(sessionKey, "main"),
     ...(entry ? { entry } : {}),
     ...(meta
       ? {

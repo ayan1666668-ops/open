@@ -9,7 +9,9 @@ export function readSessionExecutionRepairModel(
   entry: Partial<SessionEntry>,
 ): { provider?: string; id: string } | undefined {
   const fact = entry.executionSelection;
-  if (!fact) return undefined;
+  if (!fact) {
+    return undefined;
+  }
   if (fact.state === "accepted") {
     return isModelExecutionSelection(fact.selection) ? fact.selection.model : undefined;
   }
@@ -79,16 +81,19 @@ export function repairSessionExecutionSelection(params: {
     params.model ??
     (!params.reset ? currentModel : undefined) ??
     (configured ? { provider: configured.provider, id: configured.model } : undefined);
-  if (!model) return { status: "unresolved" };
-  const runtime = readSessionExecutionRepairRef(params.entry).runtime;
+  if (!model) {
+    return { status: "unresolved" };
+  }
+  const runtime =
+    priorExecutor?.id ?? (fact?.state === "deferred" ? fact.request.runtime : undefined);
   const executor = runtime
     ? (params.runtimeMigration?.(runtime) ?? priorExecutor)
     : params.executor;
-  const before = structuredClone(params.entry);
+  const before = { ...params.entry };
   commitStoredSessionExecutionSelection(params.entry, {
     state: "deferred",
     request: {
-      model,
+      ...(params.reset && !params.model ? { defaultSelection: "configured" } : { model }),
       ...(executor ? { executor } : runtime ? { runtime } : {}),
     },
     fallbackPermission: params.reset ? "configured" : (fact?.fallbackPermission ?? "configured"),
@@ -104,7 +109,9 @@ export function repairSessionExecutionSelection(params: {
     delete params.entry.authProfileOverrideSource;
     delete params.entry.authProfileOverrideCompactionCount;
   }
-  if (isDeepStrictEqual(before, params.entry)) return { status: "unchanged" };
+  if (isDeepStrictEqual(before, params.entry)) {
+    return { status: "unchanged" };
+  }
   params.entry.updatedAt = Date.now();
   return { status: "repaired" };
 }

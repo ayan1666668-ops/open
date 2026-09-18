@@ -193,7 +193,9 @@ export function resolveChatModelUnavailableReason(
   provider: string | null | undefined,
   catalog: ModelCatalogEntry[],
 ): ModelCatalogEntry["unavailableReason"] {
-  if (!provider?.trim()) return undefined;
+  if (!provider?.trim()) {
+    return undefined;
+  }
   const value = resolvePreferredServerChatModelValue(model, provider, catalog);
   const key = normalizeChatModelAvailabilityKey(value);
   const matches = catalog.filter(

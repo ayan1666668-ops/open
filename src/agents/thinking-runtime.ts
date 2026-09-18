@@ -11,7 +11,7 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { resolveAvailableAgentHarnessPolicy } from "./harness/availability.js";
 import { resolveAutoAgentHarnessId } from "./harness/support.js";
 import type { AgentRuntimePolicyScope } from "./model-runtime-policy.js";
-import { resolvePersistedSessionRuntimeId } from "./session-runtime-compat.js";
+import { resolveAcceptedSessionRuntimeId } from "./session-runtime-compat.js";
 
 export function hasResolvedThinkingCatalogEntry(params: {
   catalog?: readonly ThinkingCatalogEntry[];
@@ -64,18 +64,20 @@ export function concretizeAgentRuntime(runtime: string): string {
 }
 
 /** Resolves an explicit session override before configured model/provider policy. */
-export function resolveEffectiveAgentRuntime(
+export function resolveEffectiveAgentRuntimeCore(
   params: {
     cfg: OpenClawConfig;
     provider: string;
     modelId: string;
     modelApi?: string | null;
     modelBaseUrl?: unknown;
-    sessionEntry?: Partial<SessionEntry>;
+    sessionEntry?: Pick<SessionEntry, "executionSelection" | "modelSelectionLocked">;
   } & AgentRuntimePolicyScope,
 ): string {
-  const sessionRuntime = resolvePersistedSessionRuntimeId(params.sessionEntry);
-  if (sessionRuntime) return sessionRuntime;
+  const sessionRuntime = resolveAcceptedSessionRuntimeId(params.sessionEntry);
+  if (sessionRuntime) {
+    return sessionRuntime;
+  }
   const runtime = resolveAvailableAgentHarnessPolicy({
     ...params,
     mode: "projection",
@@ -113,7 +115,7 @@ export function resolveCandidateThinkingLevel(params: {
   catalog?: ThinkingCatalogEntry[];
   agentId?: string;
   sessionKey?: string;
-  sessionEntry?: Partial<SessionEntry>;
+  sessionEntry?: Pick<SessionEntry, "executionSelection" | "modelSelectionLocked">;
   /** Concrete harness already selected by the caller, when selection is pinned. */
   agentRuntime?: string | null;
 }): ThinkLevel | undefined {
@@ -124,7 +126,7 @@ export function resolveCandidateThinkingLevel(params: {
   const agentRuntime =
     concreteRuntime && concreteRuntime !== "auto" && concreteRuntime !== "default"
       ? concreteRuntime
-      : resolveEffectiveAgentRuntime({
+      : resolveEffectiveAgentRuntimeCore({
           cfg: params.cfg ?? {},
           provider: params.provider,
           modelId: params.modelId,

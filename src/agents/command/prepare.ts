@@ -51,7 +51,7 @@ import type { ModelManifestNormalizationContext } from "../model-ref-shared.js";
 import { buildConfiguredModelCatalog, resolveConfiguredModelRef } from "../model-selection.js";
 import type { PreparedModelRuntimePluginGeneration } from "../prepared-model-runtime.types.js";
 import { normalizeSpawnedRunMetadata } from "../spawned-context.js";
-import { resolveEffectiveAgentRuntime } from "../thinking-runtime.js";
+import { resolveEffectiveAgentRuntimeCore } from "../thinking-runtime.js";
 import { resolveAgentTimeoutMs } from "../timeout.js";
 import { ensureAgentWorkspace } from "../workspace.js";
 import { acquireWorktreeRunLease, resolveWorktreeIdForPath } from "../worktrees/run-lease.js";
@@ -283,8 +283,8 @@ export async function prepareAgentCommandExecution(
   const workspaceDirRaw =
     normalizedSpawned.workspaceDir ?? resolveAgentWorkspaceDir(cfg, sessionAgentId);
   const workspaceDir = resolveUserPath(workspaceDirRaw);
-  const { getAcpSessionManager } = await loadAcpManagerRuntime();
-  const acpManager = getAcpSessionManager();
+  const { getAcpSessionManagerCore } = await loadAcpManagerRuntime();
+  const acpManager = getAcpSessionManagerCore();
   const acpResolution = sessionKey
     ? acpManager.resolveSession({ cfg, sessionKey, agentId: sessionAgentId })
     : null;
@@ -319,7 +319,7 @@ export async function prepareAgentCommandExecution(
     workspaceDir,
     ...modelManifestContext,
   });
-  const configuredThinkingRuntime = resolveEffectiveAgentRuntime({
+  const configuredThinkingRuntime = resolveEffectiveAgentRuntimeCore({
     cfg,
     provider: configuredModel.provider,
     modelId: configuredModel.model,

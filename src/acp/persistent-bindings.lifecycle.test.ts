@@ -18,7 +18,7 @@ const managerMocks = vi.hoisted(() => ({
 }));
 
 vi.mock("./control-plane/manager.js", () => ({
-  getAcpSessionManager: () => ({
+  getAcpSessionManagerCore: () => ({
     resolveSession: managerMocks.resolveSession,
     closeSession: managerMocks.closeSession,
     initializeSession: managerMocks.initializeSession,
@@ -153,9 +153,13 @@ describe("ensureConfiguredAcpBindingSession", () => {
         thinking: "high",
       });
       const resolution = managerMocks.resolveSession({ sessionKey });
-      if (resolution.kind !== "ready") throw new Error("expected a bound ACP session");
+      if (resolution.kind !== "ready") {
+        throw new Error("expected a bound ACP session");
+      }
       const accepted = resolution.selection;
-      if (!accepted) throw new Error("expected the accepted ACP pair");
+      if (!accepted) {
+        throw new Error("expected the accepted ACP pair");
+      }
       managerMocks.setSessionConfigOption.mockImplementation(
         async ({ key, value }: { key: string; value: string }) => {
           if (key === "model") {

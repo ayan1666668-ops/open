@@ -67,8 +67,8 @@ export async function runCliFallbackCandidate(
   );
   const modelHasVision = await resolveRunModelHasVision({
     run: params.candidateRun,
-    provider: provider,
-    model: model,
+    provider,
+    model,
   });
   const sessionKey = turn.sessionKey ?? turn.followupRun.run.sessionKey;
   const sessionTarget =
@@ -149,7 +149,7 @@ export async function runCliFallbackCandidate(
   const bridgeCliDurableCommentary =
     Boolean(params.presentation.blockReplyHandler) &&
     (turn.blockStreamingEnabled || turn.opts?.commentaryPayloadsEnabled === true);
-  const toolAuthorityRoute = { provider: provider, model: model };
+  const toolAuthorityRoute = { provider, model };
   const toolAuthorityFingerprint = turn.replyOperation?.bindToolAuthorityRoute(toolAuthorityRoute);
   const result = await params.timing.measure("cli_run", () =>
     withLocalSessionPlacementTurnSettlement(
@@ -214,6 +214,7 @@ export async function runCliFallbackCandidate(
                     return;
                   }
                   await clearCliSessionInStore({
+                    agentId: turn.followupRun.run.agentId,
                     provider: params.cliExecutionProvider,
                     expectedCliSessionId: cliSessionBinding.sessionId,
                     expectedSessionId: sessionEntry?.sessionId,
@@ -392,7 +393,7 @@ export async function runCliFallbackCandidate(
             provider: params.cliExecutionProvider,
             execOverrides: turn.followupRun.run.execOverrides,
             bashElevated: turn.followupRun.run.bashElevated,
-            model: model,
+            model,
             thinkLevel: params.candidateThinkLevel,
             fastMode: params.candidateFastMode.fastMode,
             fastModeStartedAtMs: params.fastModeStartedAtMs,
@@ -470,6 +471,7 @@ export async function runCliFallbackCandidate(
           // invalidation remains, and failure must retain the returned turn.
           return await settleCliSessionResult(candidateResult, async () => {
             await clearCliSessionInStore({
+              agentId: turn.followupRun.run.agentId,
               provider: params.cliExecutionProvider,
               expectedCliSessionId: cliSessionBinding?.sessionId,
               expectedSessionId: sessionEntry?.sessionId,
@@ -490,6 +492,7 @@ export async function runCliFallbackCandidate(
           )
         ) {
           return await persistCliSessionBindingResult({
+            agentId: turn.followupRun.run.agentId,
             provider: params.cliExecutionProvider,
             result: candidateResult,
             sessionKey,

@@ -11,6 +11,10 @@ import {
 } from "../config/sessions/session-accessor.js";
 import { resolveSqliteTargetFromSessionStorePath } from "../config/sessions/session-sqlite-target.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import {
+  commitSessionExecutionSelection,
+  commitStoredSessionExecutionSelection,
+} from "../model-picker/apply-session-model-selection.js";
 import { closeOpenClawAgentDatabasesForTest } from "../state/openclaw-agent-db.js";
 import {
   createPluginSessionStateDoctorScanner,
@@ -120,9 +124,6 @@ describe("doctor session state provider routes", () => {
         agentHarnessId: "codex",
         modelProvider: "openai",
         model: "gpt-5.5",
-        providerOverride: "openai",
-        modelOverride: "gpt-5.5",
-        modelOverrideSource: "auto",
         cliSessionBindings: { "codex-cli": { sessionId: "native-codex-session" } },
       }),
     };
@@ -204,7 +205,6 @@ describe("doctor session state provider routes", () => {
       global: entry({
         model: "gpt-5.4",
         modelProvider: "openai-codex",
-        providerOverride: "openai-codex",
       }),
     };
     const cfg = {
@@ -236,10 +236,6 @@ describe("doctor session state provider routes", () => {
     const sessionKey = "agent:main:telegram:direct:2";
     const store = {
       [sessionKey]: entry({
-        providerOverride: "openai-codex",
-        modelOverride: "gpt-5.4",
-        modelOverrideSource: "auto",
-        modelOverrideRouteResolution: "resolved",
         modelProvider: "openai-codex",
         model: "gpt-5.4",
         contextTokens: 1_050_000,
@@ -263,9 +259,6 @@ describe("doctor session state provider routes", () => {
     expect(result.confirmRuntimeRepair).toHaveBeenCalledOnce();
     expect(result.warnings.join("\n")).toContain("stale Codex session routing state");
     expect(result.changes.join("\n")).toContain("Cleared stale Codex session routing state");
-    expect(repaired.providerOverride).toBeUndefined();
-    expect(repaired.modelOverride).toBeUndefined();
-    expect(repaired.modelOverrideRouteResolution).toBeUndefined();
     expect(repaired.modelProvider).toBeUndefined();
     expect(repaired.agentHarnessId).toBeUndefined();
     expect(repaired.authProfileOverride).toBeUndefined();
@@ -274,16 +267,10 @@ describe("doctor session state provider routes", () => {
     });
   });
 
-  it("clears stale automatic OpenAI route state and fallback provenance", async () => {
+  it("clears stale automatic route observations and account state", async () => {
     const sessionKey = "agent:main:telegram:direct:openai";
     const store = {
       [sessionKey]: entry({
-        providerOverride: "openai",
-        modelOverride: "gpt-5.4",
-        modelOverrideSource: "auto",
-        modelOverrideFallbackOriginProvider: "anthropic",
-        modelOverrideFallbackOriginModel: "claude-sonnet-4-6",
-        modelOverrideRouteResolution: "resolved",
         modelProvider: "openai",
         model: "gpt-5.4",
         contextTokens: 1_050_000,
@@ -306,12 +293,6 @@ describe("doctor session state provider routes", () => {
     expect(repaired?.sessionId).toBe("session-1");
     expect(repaired?.updatedAt).toBeGreaterThan(1);
     for (const key of [
-      "providerOverride",
-      "modelOverride",
-      "modelOverrideSource",
-      "modelOverrideFallbackOriginProvider",
-      "modelOverrideFallbackOriginModel",
-      "modelOverrideRouteResolution",
       "modelProvider",
       "model",
       "contextTokens",
@@ -331,9 +312,6 @@ describe("doctor session state provider routes", () => {
       ownerState.owners = [anthropicOwner];
       const store = {
         "agent:main:canonical-provider": entry({
-          providerOverride: "google",
-          modelOverride: model,
-          modelOverrideSource: "user",
           modelProvider: "google",
           model,
           contextTokens: 128_000,
@@ -394,10 +372,7 @@ describe("doctor session state provider routes", () => {
     const sessionKey = "agent:ops:telegram:direct:2";
     const staleEntry = entry({
       model: "gpt-5.4",
-      modelOverride: "gpt-5.4",
-      modelOverrideSource: "auto",
       modelProvider: "openai-codex",
-      providerOverride: "openai-codex",
     });
     const cfg = {
       agents: {
@@ -431,8 +406,6 @@ describe("doctor session state provider routes", () => {
         sessionKey,
         storePath: sqliteStorePath,
       });
-      expect(repaired?.providerOverride).toBeUndefined();
-      expect(repaired?.modelOverride).toBeUndefined();
       expect(repaired?.modelProvider).toBeUndefined();
       expect(fsSync.existsSync(legacyStorePath)).toBe(false);
     } finally {
@@ -441,18 +414,23 @@ describe("doctor session state provider routes", () => {
     }
   });
 
-  it("leaves explicit user owner choices for manual review", async () => {
+  it("preserves an accepted user choice after configured preferences change", async () => {
     const sessionKey = "agent:main:telegram:direct:3";
     const store = {
       [sessionKey]: entry({
-        providerOverride: "openai-codex",
-        modelOverride: "gpt-5.4",
-        modelOverrideSource: "user",
         modelProvider: "openai-codex",
         model: "gpt-5.4",
         agentHarnessId: "codex",
       }),
     };
+    commitSessionExecutionSelection(
+      store[sessionKey],
+      {
+        model: { provider: "openai-codex", id: "gpt-5.4" },
+        executor: { kind: "harness", id: "codex" },
+      },
+      { cause: { kind: "user" } },
+    );
     const cfg = {
       agents: { defaults: { model: { primary: "github-copilot/gpt-5-mini" } } },
     } satisfies OpenClawConfig;
@@ -460,17 +438,14 @@ describe("doctor session state provider routes", () => {
     const result = await runDoctor({ cfg, store });
 
     expect(result.store).toEqual(store);
-    expect(result.warnings.join("\n")).toContain("explicit Codex model overrides");
+    expect(result.warnings).toEqual([]);
     expect(result.confirmRuntimeRepair).not.toHaveBeenCalled();
   });
 
-  it("keeps configured owner model state while clearing a stale runtime pin", async () => {
+  it("keeps configured owner model observations while clearing a stale harness observation", async () => {
     const sessionKey = "agent:main:telegram:direct:4";
     const store = {
       [sessionKey]: entry({
-        providerOverride: "openai-codex",
-        modelOverride: "gpt-5.4",
-        modelOverrideSource: "auto",
         modelProvider: "openai-codex",
         model: "gpt-5.4",
         agentHarnessId: "codex",
@@ -490,8 +465,6 @@ describe("doctor session state provider routes", () => {
     const result = await runDoctor({ cfg, store });
     const repaired = result.store[sessionKey] as unknown as Record<string, unknown>;
 
-    expect(repaired.providerOverride).toBe("openai-codex");
-    expect(repaired.modelOverride).toBe("gpt-5.4");
     expect(repaired.modelProvider).toBe("openai-codex");
     expect(repaired.agentHarnessId).toBeUndefined();
   });
@@ -517,8 +490,13 @@ describe("doctor session state provider routes", () => {
   it("preserves a provider-owned runtime pin when that runtime remains configured", async () => {
     ownerState.owners = [codexOwner, anthropicOwner];
     const store = {
-      "agent:main:telegram:direct:5": entry({ agentRuntimeOverride: "claude-cli" }),
+      "agent:main:telegram:direct:5": entry({}),
     };
+    commitStoredSessionExecutionSelection(store["agent:main:telegram:direct:5"], {
+      state: "deferred",
+      request: { runtime: "claude-cli" },
+      fallbackPermission: "explicit",
+    });
     const cfg = {
       agents: { defaults: { model: { primary: "anthropic/claude-opus-4.7" } } },
       models: {
@@ -544,7 +522,7 @@ describe("doctor session state provider routes", () => {
     const store = {
       [sessionKey]: entry({
         agentHarnessId: "codex",
-        agentRuntimeOverride: "claude-cli",
+        cliSessionBindings: { "claude-cli": { sessionId: "stale-cli-session" } },
       }),
     };
 
@@ -560,6 +538,6 @@ describe("doctor session state provider routes", () => {
     expect(result.changes.join("\n")).toContain("Cleared stale Codex session routing state");
     expect(result.changes.join("\n")).toContain("Cleared stale Anthropic session routing state");
     expect(repaired.agentHarnessId).toBeUndefined();
-    expect(repaired.agentRuntimeOverride).toBeUndefined();
+    expect(repaired.cliSessionBindings).toBeUndefined();
   });
 });

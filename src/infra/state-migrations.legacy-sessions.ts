@@ -215,7 +215,6 @@ export async function migrateLegacySessions(
     warnings.push(
       ambiguousAliasedKeys.size > 0
         ? aliasedSessionStoreMigrationWarning({
-            subject: "migration of",
             count: ambiguousAliasedKeys.size,
             storePath: detected.sessions.targetStorePath,
           })

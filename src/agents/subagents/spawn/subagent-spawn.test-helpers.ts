@@ -28,6 +28,172 @@ type SubagentSpawnModuleForTest = Awaited<typeof import("./subagent-spawn.js")> 
   resetSubagentRegistryForTests: MockFn;
 };
 
+/** Shared published facts for orchestration mocks; generation replacement invalidates prepared commits. */
+export async function installSpawnModelCatalogFixture(defaultWorkspaceDir?: string) {
+  let generation = 0;
+  const resetSubagentRegistryForTests = vi.fn(() => {
+    generation += 1;
+  });
+  const { setPreparedModelRuntimeAuthStore } = await import("../../prepared-model-runtime-auth.js");
+  const { AuthStorage, ModelRegistry } = await import("../../sessions/index.js");
+  const { getActivePluginRegistry, getActivePluginRegistryVersion } =
+    await import("../../../plugins/runtime.js");
+  const { getRuntimeAuthProfileStoreCredentialsRevision } =
+    await import("../../auth-profiles/runtime-snapshots.js");
+  const { capturePluginRegistryLifecycleEpoch, capturePluginRegistryLifecycleSignal } =
+    await import("../../../plugins/registry-lifecycle.js");
+  const registry = createEmptyPluginRegistry();
+  const publishedModels = {
+    openai: ["gpt-4", "gpt-5.4", "gpt-5.5", "gpt-5.6-luna"],
+    anthropic: ["claude-opus-4-7", "claude-sonnet-4-6"],
+    custom: ["custom/model", "middle", "final"],
+    "plugin-provider": ["new-model"],
+  };
+  const entries = Object.entries(publishedModels).flatMap(([provider, models]) =>
+    models.map((id) => ({
+      provider,
+      id,
+      name: id,
+      api: "openai-completions" as const,
+      baseUrl: "https://models.example.invalid/v1",
+    })),
+  );
+  const catalogRuntime = await import("../../prepared-model-catalog.js");
+  vi.spyOn(catalogRuntime, "getPublishedPreparedModelCatalogOwnerSnapshot").mockImplementation(
+    ({ config, agentId = "main", workspaceDir } = {}) => {
+      if (!config) {
+        return undefined;
+      }
+      const capturedGeneration = generation;
+      const capturedRegistry = getActivePluginRegistry();
+      const registryVersion = getActivePluginRegistryVersion();
+      const registrySignal = capturedRegistry
+        ? capturePluginRegistryLifecycleSignal(
+            capturedRegistry,
+            capturePluginRegistryLifecycleEpoch(capturedRegistry),
+            { scopedRuntime: true },
+          )
+        : undefined;
+      const authRevision = getRuntimeAuthProfileStoreCredentialsRevision();
+      const workspace = workspaceDir ?? defaultWorkspaceDir ?? os.tmpdir();
+      const owner: PreparedModelRuntimeSnapshot = {
+        config,
+        observationConfig: config,
+        catalogOwner: { agentId, workspaceDir: workspace },
+        agentId,
+        agentDir: path.join(workspace, "agent"),
+        workspaceDir: workspace,
+        activeProjectKeys: [],
+        authModes: {},
+        metadataSnapshot: createPluginMetadataSnapshotFixture(),
+        pluginRegistry: capturedRegistry ?? registry,
+        isCurrent: () =>
+          generation === capturedGeneration &&
+          capturedRegistry === getActivePluginRegistry() &&
+          (!capturedRegistry || (registrySignal !== undefined && !registrySignal.aborted)) &&
+          registryVersion === getActivePluginRegistryVersion() &&
+          authRevision === getRuntimeAuthProfileStoreCredentialsRevision(),
+        allowGatewaySubagentBinding: false,
+        modelCatalog: { entries, routeVariants: entries },
+        configuredRuntimeModels: [],
+        inlineProviderModels: [],
+        createStores() {
+          const authStorage = AuthStorage.inMemory({});
+          return { authStorage, modelRegistry: ModelRegistry.inMemory(authStorage) };
+        },
+      };
+      setPreparedModelRuntimeAuthStore(owner, {
+        version: 1,
+        profiles: Object.fromEntries(
+          [
+            ...new Set([
+              ...Object.keys(publishedModels),
+              ...Object.keys(config.models?.providers ?? {}),
+            ]),
+          ].map(
+            (provider) =>
+              [
+                `${provider}:test-profile`,
+                {
+                  type: "api_key" as const,
+                  provider,
+                  key: "synthetic-spawn-credential",
+                },
+              ] as const,
+          ),
+        ),
+      });
+      return owner;
+    },
+  );
+  vi.spyOn(catalogRuntime, "materializePreparedModelCatalogOwner").mockImplementation(
+    (owner) => owner,
+  );
+
+  return resetSubagentRegistryForTests;
+}
+
+/** Orchestration fixtures provide the complete prepared boundary; support policy uses real owner tests. */
+export async function supportedSpawnExecutionSelection(
+  params: Parameters<
+    typeof import("../../../model-picker/apply-session-model-selection.js").prepareSessionExecutionSelection
+  >[0],
+): ReturnType<
+  typeof import("../../../model-picker/apply-session-model-selection.js").prepareSessionExecutionSelection
+> {
+  const { resolveModelRefFromString, buildModelAliasIndex, resolveDefaultModelForAgent } =
+    await import("../../model-selection.js");
+  const { resolveEffectiveAgentRuntimeCore } = await import("../../thinking-runtime.js");
+  const { resolveExecutionSelectionExecutorKind } =
+    await import("../../../model-picker/apply-session-model-selection.js");
+  const { getPublishedPreparedModelCatalogOwnerSnapshot } =
+    await import("../../prepared-model-catalog.js");
+  const input = params.modelInput;
+  if (!input) {
+    throw new Error("Expected the creation model input.");
+  }
+  const defaults = resolveDefaultModelForAgent({ cfg: params.cfg, agentId: params.agentId });
+  const options = { cfg: params.cfg, agentId: params.agentId, defaultProvider: defaults.provider };
+  const selected = input.resolvedRef
+    ? { ref: input.resolvedRef }
+    : resolveModelRefFromString({
+        ...options,
+        raw: input.raw,
+        aliasIndex: buildModelAliasIndex(options),
+      });
+  if (!selected) {
+    throw new Error("Invalid test model " + input.raw);
+  }
+  const ref = selected.ref;
+  const id = resolveEffectiveAgentRuntimeCore({
+    cfg: params.cfg,
+    agentScope: { kind: "prepared", agentId: params.agentId },
+    provider: ref.provider,
+    modelId: ref.model,
+  });
+  const kind = resolveExecutionSelectionExecutorKind(params.cfg, id);
+  if (!kind) {
+    throw new Error("The fixture runtime is not registered: " + id);
+  }
+  const owner = getPublishedPreparedModelCatalogOwnerSnapshot({
+    config: params.cfg,
+    agentId: params.agentId,
+    workspaceDir: params.workspaceDir,
+  });
+  if (!owner) {
+    throw new Error("The fixture model owner is not published.");
+  }
+  return {
+    status: "ready",
+    selection: { model: { provider: ref.provider, id: ref.model }, executor: { kind, id } },
+    reason: params.request.kind === "initialize" ? "initialized" : "model",
+    message: "Prepared fixture selection.",
+    catalogEntry: { provider: ref.provider, id: ref.model, name: ref.model },
+    validateCommit: () =>
+      owner.isCurrent() ? undefined : "Fixture model configuration changed during preparation.",
+  };
+}
+
 /** Build a minimal runtime config for sessions_spawn tests. */
 export function createSubagentSpawnTestConfig(
   workspaceDir = os.tmpdir(),
@@ -154,8 +320,7 @@ export async function loadSubagentSpawnModuleForTest(params: {
   hasInProcessGatewayContextMock?: MockFn;
   getRuntimeConfig?: () => Record<string, unknown>;
   loadSessionStoreMock?: MockFn;
-  loadPreparedModelCatalogMock?: MockFn;
-  resolveProviderRefOwnershipMock?: MockFn;
+  prepareExecutionSelectionMock?: typeof supportedSpawnExecutionSelection;
   ensureContextEnginesInitializedMock?: MockFn;
   updateSessionStoreMock?: MockFn;
   forkSessionEntryFromParentMock?: MockFn;
@@ -230,103 +395,7 @@ export async function loadSubagentSpawnModuleForTest(params: {
     vi.resetModules();
   }
 
-  let generation = 0;
-  const resetSubagentRegistryForTests = vi.fn(() => {
-    generation += 1;
-  });
-  const { setPreparedModelRuntimeAuthStore } = await import("../../prepared-model-runtime-auth.js");
-  const { AuthStorage, ModelRegistry } = await import("../../sessions/index.js");
-  const { getActivePluginRegistry, getActivePluginRegistryVersion } =
-    await import("../../../plugins/runtime.js");
-  const { getRuntimeAuthProfileStoreCredentialsRevision } =
-    await import("../../auth-profiles/runtime-snapshots.js");
-  const { capturePluginRegistryLifecycleEpoch, capturePluginRegistryLifecycleSignal } =
-    await import("../../../plugins/registry-lifecycle.js");
-  const registry = createEmptyPluginRegistry();
-  const publishedModels = {
-    openai: ["gpt-4", "gpt-5.4", "gpt-5.5", "gpt-5.6-luna"],
-    anthropic: ["claude-opus-4-7", "claude-sonnet-4-6"],
-    custom: ["custom/model", "middle", "final"],
-    "plugin-provider": ["new-model"],
-  };
-  const entries = Object.entries(publishedModels).flatMap(([provider, models]) =>
-    models.map((id) => ({
-      provider,
-      id,
-      name: id,
-      api: "openai-completions" as const,
-      baseUrl: "https://models.example.invalid/v1",
-    })),
-  );
-  const catalogRuntime = await import("../../prepared-model-catalog.js");
-  vi.spyOn(catalogRuntime, "getPublishedPreparedModelCatalogOwnerSnapshot").mockImplementation(
-    ({ config, agentId = "main", workspaceDir } = {}) => {
-      if (!config) return undefined;
-      const capturedGeneration = generation;
-      const capturedRegistry = getActivePluginRegistry();
-      const registryVersion = getActivePluginRegistryVersion();
-      const registrySignal = capturedRegistry
-        ? capturePluginRegistryLifecycleSignal(
-            capturedRegistry,
-            capturePluginRegistryLifecycleEpoch(capturedRegistry),
-            { scopedRuntime: true },
-          )
-        : undefined;
-      const authRevision = getRuntimeAuthProfileStoreCredentialsRevision();
-      const workspace = workspaceDir ?? params.workspaceDir ?? os.tmpdir();
-      const owner: PreparedModelRuntimeSnapshot = {
-        config,
-        observationConfig: config,
-        catalogOwner: { agentId, workspaceDir: workspace },
-        agentId,
-        agentDir: path.join(workspace, "agent"),
-        workspaceDir: workspace,
-        activeProjectKeys: [],
-        authModes: {},
-        metadataSnapshot: createPluginMetadataSnapshotFixture(),
-        pluginRegistry: capturedRegistry ?? registry,
-        isCurrent: () =>
-          generation === capturedGeneration &&
-          capturedRegistry === getActivePluginRegistry() &&
-          (!capturedRegistry || (registrySignal !== undefined && !registrySignal.aborted)) &&
-          registryVersion === getActivePluginRegistryVersion() &&
-          authRevision === getRuntimeAuthProfileStoreCredentialsRevision(),
-        allowGatewaySubagentBinding: false,
-        modelCatalog: { entries, routeVariants: entries },
-        configuredRuntimeModels: [],
-        inlineProviderModels: [],
-        createStores() {
-          const authStorage = AuthStorage.inMemory({});
-          return { authStorage, modelRegistry: ModelRegistry.inMemory(authStorage) };
-        },
-      };
-      setPreparedModelRuntimeAuthStore(owner, {
-        version: 1,
-        profiles: Object.fromEntries(
-          [
-            ...new Set([
-              ...Object.keys(publishedModels),
-              ...Object.keys(config.models?.providers ?? {}),
-            ]),
-          ].map(
-            (provider) =>
-              [
-                `${provider}:test-profile`,
-                {
-                  type: "api_key" as const,
-                  provider,
-                  key: "synthetic-spawn-credential",
-                },
-              ] as const,
-          ),
-        ),
-      });
-      return owner;
-    },
-  );
-  vi.spyOn(catalogRuntime, "materializePreparedModelCatalogOwner").mockImplementation(
-    (owner) => owner,
-  );
+  const resetSubagentRegistryForTests = await installSpawnModelCatalogFixture(params.workspaceDir);
 
   vi.doMock("../../provider-model-normalization.runtime.js", () => ({
     normalizeProviderModelIdWithRuntime: () => undefined,
@@ -381,13 +450,8 @@ export async function loadSubagentSpawnModuleForTest(params: {
     getRuntimeConfig: () =>
       params.getRuntimeConfig?.() ??
       createSubagentSpawnTestConfig(params.workspaceDir ?? os.tmpdir()),
-    readPreparedModelCatalog: (...args: unknown[]) =>
-      params.loadPreparedModelCatalogMock?.(...args) ?? [],
-    resolveProviderRefOwnership: (...args: unknown[]) =>
-      params.resolveProviderRefOwnershipMock?.(...args) ?? {
-        status: "owned",
-        pluginIds: ["test-provider"],
-      },
+    prepareSessionExecutionSelection:
+      params.prepareExecutionSelectionMock ?? supportedSpawnExecutionSelection,
     loadSessionEntry: (scope: { storePath?: string; sessionKey: string }) =>
       ((params.loadSessionStoreMock?.(scope.storePath) ?? {}) as SessionStore)[scope.sessionKey],
     loadSessionStore: params.loadSessionStoreMock ?? (() => ({})),

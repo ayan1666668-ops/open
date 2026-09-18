@@ -17,8 +17,8 @@ import {
   commitSessionExecutionSelection,
   prepareSessionExecutionSelection,
 } from "../../model-picker/apply-session-model-selection.js";
-import { getSessionExecutionSelection } from "../../model-picker/execution-selection.js";
 import {
+  getSessionExecutionSelection,
   isAcpExecutionSelection,
   isModelExecutionSelection,
 } from "../../model-picker/execution-selection.js";
@@ -47,7 +47,6 @@ import {
 } from "./model-selection.js";
 import { resolveCronCommandPromptPreflight } from "./run-command-preflight.js";
 import { resolveCronActiveRuntimeConfig, resolveCronAgentConfig } from "./run-config.js";
-import { buildCurrentConversationContextBlock } from "./run-current-context.js";
 import {
   createCronToolsAllowPreflightDiagnostics,
   type ResolvedCronDeliveryTarget,
@@ -55,15 +54,13 @@ import {
 } from "./run-delivery-trace.js";
 import { resolveCronPreflight } from "./run-fallback-policy.js";
 import {
-  appendCronUnattendedRunPreamble,
   resolveCronAuthSelection,
-  loadCronExternalContentRuntime,
   loadSessionAccessorRuntime,
-  resolveCronAgentTurnMessage,
   retireRolledCronSessionMcpRuntime,
   type RunCronAgentTurnParams,
   type WithRunSession,
 } from "./run-prepare-runtime.js";
+import { buildCronCommandBody } from "./run-prompt.js";
 import {
   CronSessionLifecycleClaimError,
   createCronRunContinuationSession,
@@ -81,17 +78,14 @@ import {
 import { resolveCronRunTimeoutOverrideMs } from "./run-timeout.js";
 import {
   ensureAgentWorkspace,
-  isExternalHookSession,
   logWarn,
-  mapHookExternalContentSource,
   normalizeAgentId,
   resolveAgentConfig,
   resolveAgentDir,
   resolveAgentTimeoutMs,
   resolveAgentWorkspaceDir,
-  resolveCronStyleNow,
   resolveHookExternalContentSource,
-  resolvePersistedSessionRuntimeId,
+  resolveAcceptedSessionRuntimeId,
   resolveThinkingSelection,
 } from "./run.runtime.js";
 import type { RunCronAgentTurnResult } from "./run.types.js";
@@ -368,8 +362,26 @@ export async function prepareCronRunContext(params: {
       cronSession.sessionEntry.label = `Automation: ${labelSuffix}`;
     }
 
+    const modelSelectionParams = {
+      cfg: runtimeCfg,
+      owner: modelOwner,
+      agentConfigOverride,
+      sessionEntry: cronSession.sessionEntry,
+      payload: input.job.payload,
+      isGmailHook,
+      agentId,
+      agentDir,
+      workspaceDir: executionWorkspaceDir,
+    };
+    let resolvedModelSelection = await resolveCronModelSelection(modelSelectionParams);
     const selectionSource = sourceEntry ?? cronSession.initialSessionEntry;
-    if (selectionSource && !getSessionExecutionSelection(cronSession.sessionEntry)) {
+    if (
+      resolvedModelSelection.ok &&
+      resolvedModelSelection.modelSource !== "payload" &&
+      resolvedModelSelection.modelSource !== "hook" &&
+      selectionSource &&
+      !getSessionExecutionSelection(cronSession.sessionEntry)
+    ) {
       const initialSelection = await prepareSessionExecutionSelection({
         cfg: runtimeCfg,
         agentId,
@@ -386,18 +398,8 @@ export async function prepareCronRunContext(params: {
         cause: { kind: "initialize", fallbackPermission: initialSelection.fallbackPermission },
       });
       validateInitialSelection = initialSelection.validateCommit;
+      resolvedModelSelection = await resolveCronModelSelection(modelSelectionParams);
     }
-    const resolvedModelSelection = await resolveCronModelSelection({
-      cfg: runtimeCfg,
-      owner: modelOwner,
-      agentConfigOverride,
-      sessionEntry: cronSession.sessionEntry,
-      payload: input.job.payload,
-      isGmailHook,
-      agentId,
-      agentDir,
-      workspaceDir: executionWorkspaceDir,
-    });
     if (!resolvedModelSelection.ok) {
       sessionWorkAdmission.release();
       return {
@@ -478,7 +480,7 @@ export async function prepareCronRunContext(params: {
       throw new Error("This automation requires a direct execution selection.");
     }
     const executionSelection = preparedSelection.selection;
-    if (!getSessionExecutionSelection(cronSession.sessionEntry)) {
+    if (!cronSession.sessionEntry.executionSelection) {
       commitSessionExecutionSelection(cronSession.sessionEntry, executionSelection, {
         cause: { kind: "initialize", fallbackPermission: preparedSelection.fallbackPermission },
       });
@@ -524,7 +526,7 @@ export async function prepareCronRunContext(params: {
         workspaceDir,
         allowGatewaySubagentBinding: true,
         runtimePluginSelections: runtimePluginCandidates.map((candidate) => {
-          const runtime = resolvePersistedSessionRuntimeId(cronSession.sessionEntry);
+          const runtime = resolveAcceptedSessionRuntimeId(cronSession.sessionEntry);
           return runtime
             ? { provider: candidate.provider, modelId: candidate.model, runtime, agentId }
             : { provider: candidate.provider, modelId: candidate.model, agentId };
@@ -577,55 +579,17 @@ export async function prepareCronRunContext(params: {
         agentId,
       });
 
-    const { formattedTime, timeLine } = resolveCronStyleNow(runtimeCfg, now);
-    // Current jobs stay detached; a bounded tail preserves context without transcript continuation.
-    const currentConversationContext =
-      input.job.sessionTarget === "current" && agentPayload && sourceSessionKey && sourceEntry
-        ? await buildCurrentConversationContextBlock({
-            agentId,
-            sourceSessionEntry: sourceEntry,
-            sourceSessionKey,
-            storePath: cronSession.storePath,
-          })
-        : undefined;
-    const message = currentConversationContext
-      ? `${currentConversationContext}\n\n${resolveCronAgentTurnMessage(input)}`
-      : resolveCronAgentTurnMessage(input);
-    const base = `[cron:${input.job.id} ${input.job.name}] ${message}`.trim();
-    const isExternalHook =
-      hookExternalContentSource !== undefined || isExternalHookSession(baseSessionKey);
-    const allowUnsafeExternalContent =
-      agentPayload?.allowUnsafeExternalContent === true ||
-      (isGmailHook && input.cfg.hooks?.gmail?.allowUnsafeExternalContent === true);
-    const shouldWrapExternal = isExternalHook && !allowUnsafeExternalContent;
-    let commandBody: string;
-
-    if (isExternalHook) {
-      const { detectSuspiciousPatterns } = await loadCronExternalContentRuntime();
-      const suspiciousPatterns = detectSuspiciousPatterns(message);
-      if (suspiciousPatterns.length > 0) {
-        logWarn(
-          `[security] Suspicious patterns detected in external hook content ` +
-            `(session=${baseSessionKey}, patterns=${suspiciousPatterns.length}): ${suspiciousPatterns.slice(0, 3).join(", ")}`,
-        );
-      }
-    }
-
-    if (shouldWrapExternal) {
-      const { buildSafeExternalPrompt } = await loadCronExternalContentRuntime();
-      const hookType = mapHookExternalContentSource(hookExternalContentSource ?? "webhook");
-      const safeContent = buildSafeExternalPrompt({
-        content: message,
-        source: hookType,
-        jobName: input.job.name,
-        jobId: input.job.id,
-        timestamp: formattedTime,
-      });
-      commandBody = `${safeContent}\n\n${timeLine}`.trim();
-    } else {
-      commandBody = `${base}\n${timeLine}`.trim();
-    }
-    commandBody = appendCronUnattendedRunPreamble(commandBody, { externalHook: isExternalHook });
+    const commandBody = await buildCronCommandBody({
+      input,
+      runtimeCfg,
+      agentId,
+      baseSessionKey,
+      sourceSessionKey,
+      sourceEntry,
+      storePath: cronSession.storePath,
+      now,
+      hookExternalContentSource,
+    });
 
     const skillsSnapshot =
       input.skillsSnapshot ??
@@ -671,6 +635,7 @@ export async function prepareCronRunContext(params: {
             ? { configuredProfileId: resolvedModelSelection.configuredProfileId }
             : {}),
           harnessRuntime: effectiveAgentRuntime,
+          agentId,
           agentDir,
           cronSession,
           sessionKey: agentSessionKey,

@@ -186,6 +186,7 @@ async function resolveModelDirective(params: {
           isGroup: false,
           triggerBodyNormalized: body,
           resetTriggered: false,
+          isNewSession: false,
           commandAuthorized: authorized,
           defaultProvider: "anthropic",
           defaultModel: "claude-opus-4-6",

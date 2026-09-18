@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
 import path from "node:path";
 import { expect, test, vi } from "vitest";
+import { resolveDefaultModelForAgent } from "../agents/model-selection.js";
 import * as sessionDirs from "../agents/session-dirs.js";
 import * as runtimePaths from "../config/paths.js";
 import type { InternalSessionEntry } from "../config/sessions.js";
@@ -14,6 +15,7 @@ import {
 import { resolveSqliteTargetFromSessionStorePath } from "../config/sessions/session-sqlite-target.js";
 import * as agentDatabaseRegistry from "../state/openclaw-agent-db-registry.js";
 import { withEnvAsync } from "../test-utils/env.js";
+import { sessionSelectionFixture } from "./session-list.test-support.js";
 import { rpcReq, testState, writeSessionStore } from "./test-helpers.js";
 import {
   directSessionReq,
@@ -60,8 +62,11 @@ test("sessions.list reads completed models from each physical agent store", asyn
       updatedAt: 10,
       status: "done",
       lastRunId: runId,
-      providerOverride: "openai",
-      modelOverride: "gpt-5.4",
+      executionSelection: {
+        state: "deferred",
+        request: { model: { provider: "openai", id: "gpt-5.4" } },
+        fallbackPermission: "explicit",
+      },
       modelProvider: "openai",
       model: "gpt-5.4",
       fallbackNotice: {
@@ -264,11 +269,33 @@ test("automatic list and search projection reuse conventional state-directory pr
         await withPluginMetadataSnapshotScope(
           metadata,
           async () => {
+            const model = resolveDefaultModelForAgent({ cfg: config, agentId: agentIds[0] });
+            const selections: Array<{
+              executionSelection: InternalSessionEntry["executionSelection"];
+              environmentCaptures: number;
+            }> = [
+              {
+                executionSelection: sessionSelectionFixture({
+                  model: { provider: model.provider, id: model.model },
+                  executor: { kind: "harness", id: "openclaw" },
+                }),
+                environmentCaptures: 0,
+              },
+              {
+                executionSelection: {
+                  state: "deferred",
+                  request: { runtime: "openclaw", defaultSelection: "inherit" },
+                  fallbackPermission: "configured",
+                },
+                environmentCaptures: 1,
+              },
+              { executionSelection: undefined, environmentCaptures: 1 },
+            ];
             const observations = [];
             for (const search of [undefined, "unmatched-runtime-search", "openclaw"]) {
               const request = { configuredAgentsOnly: true, includeGlobal: false, search };
               const counts = [];
-              for (const agentRuntimeOverride of ["openclaw", undefined]) {
+              for (const { executionSelection, environmentCaptures } of selections) {
                 for (const agentId of agentIds) {
                   await writeSessionStore({
                     agentId,
@@ -276,7 +303,7 @@ test("automatic list and search projection reuse conventional state-directory pr
                       [`agent:${agentId}:main`]: {
                         sessionId: `session-${agentId}`,
                         updatedAt: 10,
-                        agentRuntimeOverride,
+                        executionSelection,
                       },
                     },
                     storePath: storeTemplate.replace("{agentId}", agentId),
@@ -302,7 +329,7 @@ test("automatic list and search projection reuse conventional state-directory pr
                   );
                   expect
                     .soft(environments.mock.calls.length, search ?? "list")
-                    .toBe(agentRuntimeOverride ? 0 : 1);
+                    .toBe(environmentCaptures);
                   counts.push({
                     exists: exists.mock.calls.length,
                     stateDirectoryExists: exists.mock.calls.filter(
@@ -322,12 +349,18 @@ test("automatic list and search projection reuse conventional state-directory pr
               }
               observations.push({
                 surface: search ? "search" : "list",
-                pinned: counts[0],
-                auto: counts[1],
+                committed: counts[0],
+                deferred: counts[1],
+                uninitialized: counts[2],
               });
             }
             expect(observations).toEqual(
-              observations.map(({ surface, pinned }) => ({ surface, pinned, auto: pinned })),
+              observations.map(({ surface, committed }) => ({
+                surface,
+                committed,
+                deferred: committed,
+                uninitialized: committed,
+              })),
             );
           },
           { config, trustConfigIdentity: true },

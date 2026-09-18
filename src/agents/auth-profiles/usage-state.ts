@@ -169,6 +169,25 @@ export function isProfileInCooldown(
   return unusableUntil ? ts < unusableUntil : false;
 }
 
+/** Model-scoped failures must not make an automatic account pin globally unavailable. */
+export function isProfileGloballyInCooldown(store: AuthProfileStore, profileId: string): boolean {
+  if (!isProfileInCooldown(store, profileId)) {
+    return false;
+  }
+  const usage = store.usageStats?.[profileId];
+  if (!usage) {
+    return true;
+  }
+  const now = Date.now();
+  return (
+    isActiveUnusableWindow(usage.disabledUntil, now) ||
+    (isActiveUnusableWindow(usage.blockedUntil, now) &&
+      (usage.blockedScope !== "model" || !usage.blockedModel)) ||
+    (isActiveUnusableWindow(usage.cooldownUntil, now) &&
+      (!isModelScopedCooldownReason(usage.cooldownReason) || !usage.cooldownModel))
+  );
+}
+
 /**
  * Return the soonest `unusableUntil` timestamp (ms epoch) among the given
  * profiles, or `null` when no profile has a recorded cooldown. Note: the

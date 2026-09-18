@@ -1,6 +1,7 @@
 // Doctor-only reader and writer for retired sessions.json stores.
 import fs from "node:fs";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { normalizeRestartRecoveryEntryFields } from "../config/sessions/restart-recovery-state.js";
 import {
@@ -26,11 +27,7 @@ import {
 } from "../config/sessions/store-maintenance.js";
 import { applySessionStoreMigrations } from "../config/sessions/store-migrations.js";
 import { runExclusiveSessionStoreWrite } from "../config/sessions/store-writer.js";
-import {
-  normalizeSessionRuntimeModelFields,
-  type SessionEntry,
-  type SessionOrigin,
-} from "../config/sessions/types.js";
+import type { SessionEntry, SessionOrigin } from "../config/sessions/types.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import type { ChannelRouteRef } from "../plugin-sdk/channel-route.js";
 import { isPluginJsonValue, type PluginJsonValue } from "../plugins/host-hook-json.js";
@@ -84,6 +81,11 @@ type LegacySessionStoreUpdateOptions<T> = LegacySessionStoreSaveOptions & {
   resolveSingleEntryPersistence?: (
     result: T,
   ) => { sessionKey: string; entry: SessionEntry } | null | undefined;
+};
+
+type LegacySessionStoreSource = {
+  raw: Record<string, unknown>;
+  normalized: Record<string, SessionEntry>;
 };
 
 const log = createSubsystemLogger("sessions/legacy-importer");
@@ -228,17 +230,11 @@ function normalizeLegacySessionStore(store: Record<string, SessionEntry>): void 
       delete store[key];
       continue;
     }
-    const runtimeFields = normalizeSessionRuntimeModelFields(shaped);
-    if (modelSelectionLocked && runtimeFields !== shaped) {
-      throw new Error(`Invalid model-selection-locked session entry: ${key}`);
-    }
     store[key] = stripRuntimeOnlySessionSkillsFields(
       normalizePluginExtensionSlotKeys(
         normalizePluginExtensions(
           normalizeRestartRecoveryFields(
-            normalizeLegacySessionEntryDelivery(
-              migrateLegacySessionCreator(modelSelectionLocked ? shaped : runtimeFields),
-            ),
+            normalizeLegacySessionEntryDelivery(migrateLegacySessionCreator(shaped)),
           ),
         ),
       ),
@@ -250,11 +246,11 @@ function normalizeLegacySessionStore(store: Record<string, SessionEntry>): void 
   }
 }
 
-export function loadLegacySessionStore(
+function prepareLegacySessionStore(
   storePath: string,
+  store: Record<string, unknown>,
   options: LegacySessionStoreLoadOptions = {},
 ): Record<string, SessionEntry> {
-  const { store } = readSessionStoreJson5(storePath);
   if (options.hydrateSkillPromptRefs !== false) {
     hydrateSessionStoreSkillPromptRefs({ storePath, store });
   }
@@ -280,6 +276,13 @@ export function loadLegacySessionStore(
     }
   }
   return sessionStore;
+}
+
+export function loadLegacySessionStore(
+  storePath: string,
+  options: LegacySessionStoreLoadOptions = {},
+): Record<string, SessionEntry> {
+  return prepareLegacySessionStore(storePath, readSessionStoreJson5(storePath).store, options);
 }
 
 function snapshotLockedEntries(
@@ -341,13 +344,31 @@ async function archiveRemovedSessionTranscripts(params: {
 async function persistLegacySessionStore(
   storePath: string,
   store: Record<string, SessionEntry>,
+  source?: LegacySessionStoreSource,
 ): Promise<void> {
   const persisted = projectSessionStoreForPersistence({
     storePath,
-    store,
+    store: source
+      ? Object.fromEntries(
+          Object.entries(store).filter(
+            ([key, entry]) => !isDeepStrictEqual(entry, source.normalized[key]),
+          ),
+        )
+      : store,
   });
+  // A scoped update owns changed rows, not the normalizer's view of its neighbors.
+  const output: Record<string, unknown> = source
+    ? { ...source.raw, ...persisted.store }
+    : persisted.store;
+  if (source) {
+    for (const key of Object.keys(source.normalized)) {
+      if (!Object.hasOwn(store, key)) {
+        delete output[key];
+      }
+    }
+  }
   await fs.promises.mkdir(path.dirname(storePath), { recursive: true });
-  await writeTextAtomic(storePath, JSON.stringify(persisted.store, null, 2), {
+  await writeTextAtomic(storePath, JSON.stringify(output, null, 2), {
     beforeRename: async () => {
       await ensureSessionStorePromptBlobsForPersistence({
         storePath,
@@ -366,6 +387,7 @@ async function writeLegacySessionStoreUnlocked(
   store: Record<string, SessionEntry>,
   lockedEntriesBefore: ReadonlyMap<string, SessionEntry>,
   options: LegacySessionStoreSaveOptions,
+  source?: LegacySessionStoreSource,
 ): Promise<void> {
   normalizeLegacySessionStore(store);
   assertLegacySessionStoreWriteIsValid({ lockedEntriesBefore, store });
@@ -379,7 +401,7 @@ async function writeLegacySessionStoreUnlocked(
       maintenanceOverride: options.maintenanceOverride,
       maintenanceConfig: options.maintenanceConfig,
       log,
-      commitReducedStore: () => persistLegacySessionStore(storePath, store),
+      commitReducedStore: () => persistLegacySessionStore(storePath, store, source),
       artifacts: {
         archiveRemovedSessionTranscripts,
         removeRemovedSessionTrajectoryArtifacts: async (params) => {
@@ -394,7 +416,7 @@ async function writeLegacySessionStoreUnlocked(
     });
   }
   assertLegacySessionStoreWriteIsValid({ lockedEntriesBefore, store });
-  await persistLegacySessionStore(storePath, store);
+  await persistLegacySessionStore(storePath, store, source);
 }
 
 export async function saveLegacySessionStore(
@@ -421,11 +443,19 @@ export async function updateLegacySessionStore<T>(
   return await runExclusiveSessionStoreWrite(
     storePath,
     async () => {
-      const store = loadLegacySessionStore(storePath);
+      const { store: raw } = readSessionStoreJson5(storePath);
+      const store = prepareLegacySessionStore(storePath, structuredClone(raw));
+      const source = { raw, normalized: structuredClone(store) };
       const lockedEntriesBefore = snapshotLockedEntries(store);
       const result = await mutator(store);
       if (!options.skipSaveWhenResult?.(result)) {
-        await writeLegacySessionStoreUnlocked(storePath, store, lockedEntriesBefore, options);
+        await writeLegacySessionStoreUnlocked(
+          storePath,
+          store,
+          lockedEntriesBefore,
+          options,
+          source,
+        );
       }
       return result;
     },

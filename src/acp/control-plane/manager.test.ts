@@ -78,7 +78,9 @@ describe("AcpSessionManager", () => {
       readySessionMeta({ agent: "main", runtimeSessionName: "agent:main:main" }),
     );
     const readMain = hoisted.readAcpSessionEntryMock.getMockImplementation();
-    if (!readMain) throw new Error("Main session fixture reader is missing");
+    if (!readMain) {
+      throw new Error("Main session fixture reader is missing");
+    }
     hoisted.readAcpSessionEntryMock.mockImplementation((input: { sessionKey: string }) =>
       input.sessionKey === "agent:main:main" ? readMain(input) : null,
     );
@@ -1107,7 +1109,7 @@ describe("AcpSessionManager", () => {
       },
     }) satisfies SessionAcpMeta;
 
-    const metaState = installPublicAcpSessionFixture(sessionKey, initialMeta);
+    installPublicAcpSessionFixture(sessionKey, initialMeta);
 
     const manager = new AcpSessionManager();
     await expect(

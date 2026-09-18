@@ -140,6 +140,9 @@ const createHandleInlineActionsInput = (params: {
     elevatedAllowed: false,
     elevatedFailures: [],
     defaultActivation: () => "always",
+    prepareModelState: async () => {
+      throw new Error("Skipped inline actions must not prepare models.");
+    },
     resolveModelLevels: async () => ({
       resolvedThinkLevel: undefined,
       resolvedReasoningLevel: "off",
@@ -161,13 +164,9 @@ function runTestInlineActions(params: Parameters<typeof createHandleInlineAction
   return handleInlineActions(createHandleInlineActionsInput(params));
 }
 
-async function expectInlineActionSkipped(params: {
-  ctx: ReturnType<typeof buildTestCtx>;
-  typing: TypingController;
-  cleanedBody: string;
-  command?: Partial<HandleInlineActionsInput["command"]>;
-  overrides?: Partial<Omit<HandleInlineActionsInput, "ctx" | "sessionCtx" | "typing" | "command">>;
-}) {
+async function expectInlineActionSkipped(
+  params: Parameters<typeof createHandleInlineActionsInput>[0],
+) {
   const result = await runTestInlineActions(params);
   expect(result).toEqual({ kind: "reply", reply: undefined });
   expect(params.typing.cleanup).toHaveBeenCalledTimes(1);
@@ -945,21 +944,19 @@ describe("handleInlineActions", () => {
       },
     ];
 
-    const result = await handleInlineActions(
-      createHandleInlineActionsInput({
-        ctx,
-        typing,
-        cleanedBody: body,
-        command: {
-          isAuthorizedSender: true,
-        },
-        overrides: {
-          allowTextCommands: true,
-          cfg: { commands: { text: true } },
-          skillCommands,
-        },
-      }),
-    );
+    const result = await runTestInlineActions({
+      ctx,
+      typing,
+      cleanedBody: body,
+      command: {
+        isAuthorizedSender: true,
+      },
+      overrides: {
+        allowTextCommands: true,
+        cfg: { commands: { text: true } },
+        skillCommands,
+      },
+    });
 
     expect(result).toMatchObject({
       kind: "continue",
@@ -988,24 +985,22 @@ describe("handleInlineActions", () => {
       Surface: "webchat",
     });
 
-    const result = await handleInlineActions(
-      createHandleInlineActionsInput({
-        ctx,
-        typing,
-        cleanedBody,
-        command: {
-          isAuthorizedSender: true,
-          rawBodyNormalized: body,
-          commandBodyNormalized: body,
-        },
-        overrides: {
-          allowTextCommands: true,
-          inlineStatusRequested: true,
-          cfg: { commands: { text: true } },
-          skillCommands: officeHoursInlineSkillCommands(),
-        },
-      }),
-    );
+    const result = await runTestInlineActions({
+      ctx,
+      typing,
+      cleanedBody,
+      command: {
+        isAuthorizedSender: true,
+        rawBodyNormalized: body,
+        commandBodyNormalized: body,
+      },
+      overrides: {
+        allowTextCommands: true,
+        inlineStatusRequested: true,
+        cfg: { commands: { text: true } },
+        skillCommands: officeHoursInlineSkillCommands(),
+      },
+    });
 
     const expected = expandedOfficeHoursRequest(body);
     expect(result).toMatchObject({ kind: "continue", cleanedBody: expected });
@@ -1024,21 +1019,19 @@ describe("handleInlineActions", () => {
       Surface: "webchat",
     });
 
-    const result = await handleInlineActions(
-      createHandleInlineActionsInput({
-        ctx,
-        typing,
-        cleanedBody: body,
-        command: {
-          isAuthorizedSender: false,
-        },
-        overrides: {
-          allowTextCommands: true,
-          cfg: { commands: { text: true } },
-          skillCommands: officeHoursInlineSkillCommands(),
-        },
-      }),
-    );
+    const result = await runTestInlineActions({
+      ctx,
+      typing,
+      cleanedBody: body,
+      command: {
+        isAuthorizedSender: false,
+      },
+      overrides: {
+        allowTextCommands: true,
+        cfg: { commands: { text: true } },
+        skillCommands: officeHoursInlineSkillCommands(),
+      },
+    });
 
     expect(result).toMatchObject({ kind: "continue", cleanedBody: body });
     expect(ctx.Body).toBe(body);
@@ -2386,6 +2379,7 @@ describe("sender command dispatch ownership", () => {
         isGroup: false,
         triggerBodyNormalized: ctx.commandText,
         resetTriggered: false,
+        isNewSession: false,
         commandAuthorized: true,
         defaultProvider: "openai",
         defaultModel: "gpt-4o-mini",

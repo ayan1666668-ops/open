@@ -497,17 +497,9 @@ function parseModelRefWithCompatAlias(
     allowPluginNormalization?: boolean;
   } & ModelManifestNormalizationContext,
 ): ModelRef | null {
-  const exactConfiguredProviderRef = resolveExactConfiguredProviderRef(params);
-  const exactDefaultProviderRef = params.raw.includes("/")
-    ? null
-    : resolveExactConfiguredProviderRef({
-        ...params,
-        raw: `${params.defaultProvider}/${params.raw}`,
-      });
   return (
     resolveConfiguredOpenRouterCompatAlias(params) ??
-    exactConfiguredProviderRef ??
-    exactDefaultProviderRef ??
+    resolveExactConfiguredProviderRef(params) ??
     parseModelRef(params.raw, params.defaultProvider, {
       allowManifestNormalization: params.allowManifestNormalization,
       allowPluginNormalization: params.allowPluginNormalization,
@@ -519,13 +511,14 @@ function parseModelRefWithCompatAlias(
 function findExactConfiguredProviderRefParts(params: {
   cfg?: OpenClawConfig;
   raw: string;
+  defaultProvider?: string;
 }): ExactConfiguredProviderRefParts | null {
   const slash = params.raw.indexOf("/");
-  if (slash <= 0 || !params.cfg?.models?.providers) {
+  if (slash === 0 || !params.cfg?.models?.providers) {
     return null;
   }
-  const providerRaw = params.raw.slice(0, slash).trim();
-  const modelRaw = params.raw.slice(slash + 1).trim();
+  const providerRaw = (slash < 0 ? params.defaultProvider : params.raw.slice(0, slash))?.trim();
+  const modelRaw = (slash < 0 ? params.raw : params.raw.slice(slash + 1)).trim();
   if (!providerRaw || !modelRaw) {
     return null;
   }
@@ -567,14 +560,12 @@ function resolveExactConfiguredProviderRef(
   params: {
     cfg?: OpenClawConfig;
     raw: string;
+    defaultProvider?: string;
     allowManifestNormalization?: boolean;
     allowPluginNormalization?: boolean;
   } & ModelManifestNormalizationContext,
 ): ModelRef | null {
-  const exactConfigured = findExactConfiguredProviderRefParts({
-    cfg: params.cfg,
-    raw: params.raw,
-  });
+  const exactConfigured = findExactConfiguredProviderRefParts(params);
   if (!exactConfigured) {
     return null;
   }

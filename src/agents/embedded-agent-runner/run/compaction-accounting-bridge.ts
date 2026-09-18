@@ -1,5 +1,6 @@
 import type { SessionTranscriptRuntimeTarget } from "../../../config/sessions/session-accessor.js";
 import type { ContextEngineRuntimeContext } from "../../../context-engine/types.js";
+import type { PreparedSessionExecutionSelection } from "../../../model-picker/execution-selection.js";
 import type { CompactionRequestConstraints } from "../../sessions/compaction/request-budget.js";
 import type { SessionManager } from "../../sessions/session-manager.js";
 import type { NormalizedUsage } from "../../usage.js";
@@ -11,6 +12,10 @@ export type CompactionAccountingReceipt = {
 };
 
 type CompactionAccountingRecorder = CompactionRequestConstraints & {
+  preparedSelection?: Pick<
+    Extract<PreparedSessionExecutionSelection, { status: "ready" }>,
+    "selection" | "auth"
+  >;
   /** A precheck can require budget recovery while its user request is still pending. */
   pendingRequestState?: "unresolved";
   /** The caller's buffer owns recovery; its portable identity grants no durable access. */

@@ -1,5 +1,6 @@
 // Agent command test mocks replace logging and runtime-heavy modules shared by agent command suites.
 import { vi } from "vitest";
+import type { PreparedModelRuntimeSnapshot } from "../agents/prepared-model-runtime.types.js";
 import { getAgentHarnessPluginMocks } from "./agent-command-state.test-mocks.js";
 
 // Harness/plugin selection has focused owner coverage in runtime-plugin.test.ts.
@@ -12,11 +13,14 @@ vi.mock("../agents/harness/runtime-plugin.js", () => ({
 
 vi.mock("../agents/runtime-plugins.js", async () => {
   const { createEmptyPluginRegistry } = await import("../plugins/registry-empty.js");
+  const { getPluginRegistryForContext } =
+    await import("../plugins/runtime/gateway-request-scope.js");
   return {
     withAgentPluginRegistry: ({ run }: { run: () => unknown }) => run(),
-    loadAgentRuntimePluginRegistryHandle: () => createEmptyPluginRegistry(),
+    loadAgentRuntimePluginRegistryHandle: () =>
+      getPluginRegistryForContext() ?? createEmptyPluginRegistry(),
     acquireAgentRuntimePluginRegistry: async () => {
-      const registry = createEmptyPluginRegistry();
+      const registry = getPluginRegistryForContext() ?? createEmptyPluginRegistry();
       return { registry, primaryRegistry: registry };
     },
   };
@@ -61,7 +65,7 @@ vi.mock("../acp/control-plane/manager.js", () => ({
       acpManagerMock.current = manager;
     }),
   },
-  getAcpSessionManager: vi.fn(() => acpManagerMock.current),
+  getAcpSessionManagerCore: vi.fn(() => acpManagerMock.current),
 }));
 
 vi.mock("../agents/embedded-agent.js", () => ({
@@ -75,6 +79,9 @@ vi.mock("../agents/model-catalog.js", () => ({
 }));
 
 vi.mock("../agents/prepared-model-catalog.js", () => ({
+  getPublishedPreparedModelCatalogOwnerSnapshot: vi.fn(),
+  preparePublishedModelCatalogOwnerSnapshot: vi.fn(async () => undefined),
+  materializePreparedModelCatalogOwner: (owner: PreparedModelRuntimeSnapshot) => owner,
   loadProviderScopedThinkingCatalog: vi.fn(async () => []),
   readPreparedModelCatalog: vi.fn(),
   loadPreparedModelCatalogSnapshot: vi.fn(async () => ({

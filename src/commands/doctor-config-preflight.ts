@@ -9,7 +9,6 @@ import type {
   MigrationCheckpointIdentity,
   StartupMigrationLease,
 } from "../infra/startup-migration-checkpoint.js";
-import { throwIfDoctorStateMigrationRefused } from "../infra/state-migrations.messages.js";
 import type {
   LegacyStateMigrationStepReceipt,
   MigrationMessages,
@@ -43,6 +42,7 @@ import {
   completeStartupMigrationPreflight,
   noteStateMigrationResult,
   prepareDoctorMigrationPlugins,
+  prepareDoctorPreflightStateSchema,
 } from "./doctor-config-preflight-startup.js";
 import { withDoctorConfigPreflightWorkerScope } from "./doctor-config-preflight-worker-scope.js";
 import * as cronMigration from "./doctor-config-preflight.cron.js";
@@ -377,29 +377,18 @@ async function runDoctorConfigPreflightOperation(
       freshConfigGuardAllowed &&
       !skipPristineCoreStateMigrations
     ) {
-      // Plugin obligations must survive later repair failures, but their writer needs current SQL.
-      const { prepareLegacyStateDatabaseSchema } =
-        await import("../infra/state-migrations.doctor.js");
       const migrationConfig = resolveStateMigrationConfigInput({
         snapshot,
         baseConfig: automaticConfigRepair?.config ?? baseConfig,
       })?.cfg;
-      const prepareSchema = () =>
-        prepareLegacyStateDatabaseSchema({ config: migrationConfig, env: startupMigrationEnv });
-      const receipt = await measurePreflightStep("state-schema", () =>
-        migrationConfig
-          ? pluginMetadata.run({ config: migrationConfig }, prepareSchema)
-          : prepareSchema(),
-      );
-      if (receipt.outcome !== "skipped") {
-        stateMigrationStepReceipts.push(receipt);
-        noteStartupStateMigrationResult({
-          changes: receipt.changes,
-          warnings: receipt.warnings,
-          notices: receipt.notices,
-        });
-        throwIfDoctorStateMigrationRefused(stateMigrationStepReceipts);
-      }
+      await prepareDoctorPreflightStateSchema({
+        cfg: migrationConfig,
+        env: startupMigrationEnv,
+        stepReceipts: stateMigrationStepReceipts,
+        report: noteStartupStateMigrationResult,
+        measure: measurePreflightStep,
+        runWithPluginMetadataSnapshot: pluginMetadata.run,
+      });
     }
     if (
       automaticConfigRepair &&

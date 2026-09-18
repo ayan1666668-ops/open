@@ -1,5 +1,4 @@
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
-import type { ContextEngineHostSupport } from "../../context-engine/host-compat.js";
 import {
   captureAgentRunLifecycleGeneration,
   emitAgentEvent,
@@ -11,7 +10,6 @@ import type {
   ModelExecutionSelection,
   NativeManagedExecutionSelection,
 } from "../../model-picker/execution-selection.js";
-import { requireActivePluginRegistry } from "../../plugins/runtime.js";
 import {
   createAssistantErrorTranscript,
   type AssistantErrorTranscript,
@@ -26,8 +24,6 @@ import {
   finalizeAcceptedContextEngineTurn,
   type ContextEngineTurnAttemptFacts,
 } from "../harness/context-engine-turn-attempt.js";
-import { ensureSelectedAgentHarnessPlugin } from "../harness/runtime-plugin.js";
-import { selectAgentHarness } from "../harness/selection.js";
 import type { ModelFallbackResultClassification } from "../model-fallback-attempt.js";
 import type { ModelFallbackStepFields } from "../model-fallback-observation.js";
 import { runWithModelFallback } from "../model-fallback-runner.js";
@@ -36,7 +32,6 @@ import type {
   ModelFallbackAttemptProvenance,
   ModelFallbackRouteResolution,
 } from "../model-fallback.types.js";
-import { modelKey } from "../model-ref-shared.js";
 import type { ModelManifestNormalizationContext } from "../model-ref-shared.js";
 import { resolveAgentRunAbortLifecycleFields } from "../run-termination.js";
 import {
@@ -54,6 +49,10 @@ import {
   classifyEmbeddedAgentRunResultForModelFallback,
   mergeEmbeddedAgentRunResultForModelFallbackExhaustion,
 } from "./result-fallback-classifier.js";
+import {
+  createRunEntrySelectionPreparation,
+  type RunEntryHarnessSelectionPreparation,
+} from "./run-entry-selection.js";
 import {
   buildRunEntryTerminal,
   canAdvanceContextEngineTurn,
@@ -85,13 +84,6 @@ type RunEntryCandidate<T> = {
   turnAttempt?: ContextEngineTurnAttemptFacts;
 };
 
-type RunEntryHarnessPreparation =
-  | { kind: "direct" }
-  | {
-      kind: "measured";
-      run: (prepare: () => Promise<void>) => Promise<void>;
-    };
-
 type RunEntryBehavior = RunEntryTerminalBehavior;
 
 type EmbeddedAgentRunEntryResult<T extends EmbeddedAgentRunResult> = {
@@ -102,11 +94,6 @@ type EmbeddedAgentRunEntryResult<T extends EmbeddedAgentRunResult> = {
   attempts: FallbackAttempt[];
   terminal: EmbeddedAgentRunEntryTerminal;
   selection: ExecutionSelection;
-};
-
-type PreparedRunEntrySelection = {
-  selection: ModelExecutionSelection;
-  validateCommit: () => string | undefined;
 };
 
 type RunEntryModelSelection = {
@@ -136,18 +123,7 @@ type EmbeddedAgentRunEntryParams<T extends EmbeddedAgentRunResult> = {
   | {
       kind?: "model";
       selection: RunEntryModelSelection;
-      harness: {
-        workspaceDir: string;
-        sessionKey?: string;
-        preparation: RunEntryHarnessPreparation;
-        prepareExecutionSelection: (
-          provider: string,
-          model: string,
-        ) => Promise<PreparedRunEntrySelection>;
-        resolveContextEngineHost?: (
-          selection: ModelExecutionSelection,
-        ) => ContextEngineHostSupport | undefined;
-      };
+      harness: RunEntryHarnessSelectionPreparation;
       runCandidate: (
         selection: ModelExecutionSelection,
         options: RunEntryCandidateOptions,
@@ -256,31 +232,14 @@ export async function runEmbeddedAgentEntry<T extends EmbeddedAgentRunResult>(
         }
       : undefined;
   const hasCommittedSideEffect = canFallback ? () => !canFallback() : undefined;
-  const preparedSelections = new Map<string, PreparedRunEntrySelection | Error>();
-  const readPreparedSelection = (provider: string, model: string): PreparedRunEntrySelection => {
-    const prepared = preparedSelections.get(modelKey(provider, model));
-    if (!prepared) {
-      throw new Error("Execution selection was not prepared before dispatch.");
-    }
-    if (prepared instanceof Error) {
-      throw prepared;
-    }
-    return prepared;
-  };
-  const validatePreparedSelection = (provider: string, model: string): ModelExecutionSelection => {
-    const prepared = readPreparedSelection(provider, model);
-    const error = prepared.validateCommit();
-    if (error) {
-      throw new Error(error);
-    }
-    return prepared.selection;
-  };
   const canFallbackAfterError = canFallback;
   try {
     const runSelectedExecution = async () => {
       if (params.kind === "native") {
         const error = params.selection.validateCommit();
-        if (error) throw new Error(error);
+        if (error) {
+          throw new Error(error);
+        }
         params.abortSignal?.throwIfAborted();
         try {
           const result = await params.runCandidate(params.selection.executionSelection, {
@@ -308,40 +267,18 @@ export async function runEmbeddedAgentEntry<T extends EmbeddedAgentRunResult>(
         workspaceDir: params.harness.workspaceDir,
       });
       contextEngineLogicalTurnLease = lease;
-      const preparedHarnessRuntimes = new Set<string>();
-      const prepareHarnessRuntime = async (candidate: {
-        provider: string;
-        model: string;
-        agentHarnessRuntimeOverride?: string;
-      }) => {
-        assistantErrorTranscript.clear();
-        const key = [
-          candidate.provider,
-          candidate.model,
-          candidate.agentHarnessRuntimeOverride ?? "",
-        ].join("\0");
-        if (preparedHarnessRuntimes.has(key)) {
-          return;
-        }
-        const prepare = () =>
-          ensureSelectedAgentHarnessPlugin({
-            config: params.selection.cfg,
-            provider: candidate.provider,
-            modelId: candidate.model,
-            agentId: params.identity.agentId,
-            sessionKey: params.harness.sessionKey,
-            agentHarnessId: candidate.agentHarnessRuntimeOverride,
-            agentHarnessRuntimeOverride: candidate.agentHarnessRuntimeOverride,
-            workspaceDir: params.harness.workspaceDir,
-            pluginRegistry: requireActivePluginRegistry(),
-          });
-        if (params.harness.preparation.kind === "measured") {
-          await params.harness.preparation.run(prepare);
-        } else {
-          await prepare();
-        }
-        preparedHarnessRuntimes.add(key);
-      };
+      const {
+        readPreparedSelection,
+        validatePreparedSelection,
+        prepareCandidateChain,
+        prepareHarnessRuntime,
+      } = createRunEntrySelectionPreparation({
+        config: params.selection.cfg,
+        agentId: params.identity.agentId,
+        harness: params.harness,
+        lease,
+        assistantErrorTranscript,
+      });
       let capturedCyberRefusal: { provider: string; model: string } | undefined;
       const runFallbackSearch = (
         selection: RunEntryModelSelection,
@@ -356,64 +293,7 @@ export async function runEmbeddedAgentEntry<T extends EmbeddedAgentRunResult>(
           prepareCandidate: async (provider, model) => {
             validatePreparedSelection(provider, model);
           },
-          prepareCandidateChain: async (candidates) => {
-            for (const candidate of candidates) {
-              try {
-                const prepared = await params.harness.prepareExecutionSelection(
-                  candidate.provider,
-                  candidate.model,
-                );
-                preparedSelections.set(modelKey(candidate.provider, candidate.model), prepared);
-              } catch (error) {
-                preparedSelections.set(
-                  modelKey(candidate.provider, candidate.model),
-                  error instanceof Error ? error : new Error(String(error)),
-                );
-              }
-            }
-            for (const candidate of candidates) {
-              try {
-                const preparedSelection = readPreparedSelection(
-                  candidate.provider,
-                  candidate.model,
-                ).selection;
-                const agentHarnessRuntimeOverride = preparedSelection.executor.id;
-                await prepareHarnessRuntime({
-                  provider: candidate.provider,
-                  model: candidate.model,
-                  ...(agentHarnessRuntimeOverride ? { agentHarnessRuntimeOverride } : {}),
-                });
-                const resolvedHost = params.harness.resolveContextEngineHost?.(preparedSelection);
-                const host =
-                  resolvedHost ??
-                  (() => {
-                    const harness = selectAgentHarness({
-                      provider: candidate.provider,
-                      modelId: candidate.model,
-                      config: params.selection.cfg,
-                      agentId: params.identity.agentId,
-                      sessionKey: params.harness.sessionKey,
-                      agentHarnessRuntimeOverride,
-                    });
-                    return {
-                      id: `agent-harness:${harness.id}`,
-                      label: `agent harness "${harness.id}"`,
-                      capabilities: harness.contextEngineHostCapabilities ?? [],
-                    };
-                  })();
-                lease.selectForHost({
-                  host,
-                  operation: "agent-run",
-                  requiresDurableCommit: false,
-                });
-              } catch {
-                lease.degradeBeforeStart(
-                  "a model fallback candidate harness could not be validated before dispatch",
-                );
-                return;
-              }
-            }
-          },
+          prepareCandidateChain,
           prepareAgentHarnessRuntime: prepareHarnessRuntime,
           onFallbackStep: params.onFallbackStep,
           ...(params.behavior.kind === "maintenance"

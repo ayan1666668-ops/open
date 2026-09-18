@@ -78,11 +78,15 @@ function createAgentRuntime(payloads: unknown[] = [{ text: "Speak this." }]) {
     async (scope, update, options) => {
       const persisted = sessionStore[scope.sessionKey];
       const entry = persisted ?? options?.fallbackEntry;
-      if (!entry) return null;
+      if (!entry) {
+        return null;
+      }
       const patch = await update(structuredClone(entry), {
         existingEntry: persisted ? structuredClone(persisted) : undefined,
       });
-      if (!patch) return persisted ?? null;
+      if (!patch) {
+        return persisted ?? null;
+      }
       options?.assertCommitAllowed?.();
       const next = { ...entry, ...patch };
       sessionStore[scope.sessionKey] = next;

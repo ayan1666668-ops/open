@@ -13,7 +13,6 @@ import {
   fallbackAttemptOptions,
   testModel,
   testAuthProfiles,
-  initialFallbackAttemptOptions,
   createMockReplyOperation,
   requireRecord,
   expectRecordFields,

@@ -74,9 +74,9 @@ function hasAmbiguousPeerShape(key?: string): boolean {
 }
 
 /** Resolves whether a session send is allowed by entry override and config rules. */
-export function resolveSendPolicy(params: {
+export function resolveSendPolicyCore(params: {
   cfg: OpenClawConfig;
-  entry?: SessionEntry;
+  entry?: Pick<SessionEntry, "sendPolicy" | "delivery" | "chatType">;
   sessionKey?: string;
   channel?: string;
   chatType?: SessionChatType;

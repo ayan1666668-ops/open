@@ -290,7 +290,7 @@ describe("dispatchReplyFromConfig ACP abort", () => {
         lastActivityAt: Date.now(),
       },
     });
-    sessionStoreMocks.currentEntry = storedAcpEntry.entry;
+    sessionStoreMocks.currentEntry = { ...storedAcpEntry.entry };
     acpMocks.readAcpSessionEntry.mockReturnValue(storedAcpEntry);
     acpMocks.requireAcpRuntimeBackend.mockReturnValue({
       id: "acpx",

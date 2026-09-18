@@ -50,6 +50,13 @@ export function buildCommandTestParams(
     defaultGroupActivation: () => "mention",
     resolvedVerboseLevel: "off",
     resolvedReasoningLevel: "off",
+    prepareModelState: async () => {
+      throw new Error("This command fixture does not prepare models.");
+    },
+    resolveModelLevels: async () => ({
+      resolvedThinkLevel: undefined,
+      resolvedReasoningLevel: "off",
+    }),
     resolveDefaultThinkingLevel: async () => undefined,
     provider: "whatsapp",
     model: "test-model",
@@ -127,5 +134,12 @@ export function buildPluginsCommandParams(params: {
       updatedAt: Date.now(),
     },
     workspaceDir: params.workspaceDir ?? "/tmp/plugins-workspace",
+    prepareModelState: async () => {
+      throw new Error("This command fixture does not prepare models.");
+    },
+    resolveModelLevels: async () => ({
+      resolvedThinkLevel: undefined,
+      resolvedReasoningLevel: "off",
+    }),
   } as unknown as HandleCommandsParams;
 }

@@ -71,3 +71,33 @@ export async function withModelFallbackPreparation<T, Result>(
     },
   });
 }
+export function makeCompletedFallbackRunner(
+  overrides: {
+    provider?: string;
+    model?: string;
+    attempts?: Awaited<ReturnType<typeof runWithModelFallback<unknown>>>["attempts"];
+  } = {},
+) {
+  const provider = overrides.provider ?? "openai";
+  const model = overrides.model ?? "gpt-5.5";
+  const attempts = overrides.attempts ?? [
+    {
+      provider: "lmstudio",
+      model: "gemma-4-e4b-it",
+      error: "Connection error.",
+      reason: "timeout",
+    },
+  ];
+  return async <T>(params: Parameters<typeof runWithModelFallback<T>>[0]) => ({
+    outcome: "completed" as const,
+    result: await runFallbackModelAttempt(
+      params,
+      provider,
+      model,
+      attempts.at(-1)?.reason ?? "unknown",
+    ),
+    provider,
+    model,
+    attempts,
+  });
+}

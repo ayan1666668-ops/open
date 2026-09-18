@@ -30,6 +30,7 @@ import {
 } from "../../tasks/task-executor.js";
 import { resetTaskRegistryForTests } from "../../tasks/task-runtime.test-helpers.js";
 import { withEnvAsync } from "../../test-utils/env.js";
+import { acceptedModelSelection } from "../../test-utils/session-execution-selection.js";
 import { buildStatusPluginsReply, buildStatusReply, buildStatusText } from "./commands-status.js";
 import {
   baseCommandTestConfig,
@@ -59,21 +60,16 @@ const activeProviderThinkingMock = vi.hoisted(() => ({
 type StatusPluginHealthSnapshot =
   import("../../status/status-plugin-health.js").StatusPluginHealthSnapshot;
 
+const createEmptyPluginHealthSnapshot = vi.hoisted(() => (): StatusPluginHealthSnapshot => ({
+  plugins: [],
+  diagnostics: [],
+  contextEngineQuarantines: [],
+  runtimeToolQuarantines: [],
+  channelPluginFailures: [],
+}));
 const pluginHealthRuntimeMock = vi.hoisted(() => ({
-  collectInstalledPluginHealthSnapshot: vi.fn(async (): Promise<StatusPluginHealthSnapshot> => ({
-    plugins: [],
-    diagnostics: [],
-    contextEngineQuarantines: [],
-    runtimeToolQuarantines: [],
-    channelPluginFailures: [],
-  })),
-  collectRuntimePluginHealthSnapshot: vi.fn((): StatusPluginHealthSnapshot => ({
-    plugins: [],
-    diagnostics: [],
-    contextEngineQuarantines: [],
-    runtimeToolQuarantines: [],
-    channelPluginFailures: [],
-  })),
+  collectInstalledPluginHealthSnapshot: vi.fn(async () => createEmptyPluginHealthSnapshot()),
+  collectRuntimePluginHealthSnapshot: vi.fn(createEmptyPluginHealthSnapshot),
 }));
 
 vi.mock("../../infra/provider-usage.js", async (importOriginal) => {
@@ -253,21 +249,13 @@ afterEach(() => {
   activeProviderThinkingMock.resolveThinkingProfile.mockReset();
   activeProviderThinkingMock.resolveThinkingProfile.mockReturnValue(undefined);
   pluginHealthRuntimeMock.collectInstalledPluginHealthSnapshot.mockReset();
-  pluginHealthRuntimeMock.collectInstalledPluginHealthSnapshot.mockResolvedValue({
-    plugins: [],
-    diagnostics: [],
-    contextEngineQuarantines: [],
-    runtimeToolQuarantines: [],
-    channelPluginFailures: [],
-  });
+  pluginHealthRuntimeMock.collectInstalledPluginHealthSnapshot.mockResolvedValue(
+    createEmptyPluginHealthSnapshot(),
+  );
   pluginHealthRuntimeMock.collectRuntimePluginHealthSnapshot.mockReset();
-  pluginHealthRuntimeMock.collectRuntimePluginHealthSnapshot.mockReturnValue({
-    plugins: [],
-    diagnostics: [],
-    contextEngineQuarantines: [],
-    runtimeToolQuarantines: [],
-    channelPluginFailures: [],
-  });
+  pluginHealthRuntimeMock.collectRuntimePluginHealthSnapshot.mockReturnValue(
+    createEmptyPluginHealthSnapshot(),
+  );
 });
 
 async function writeTranscriptUsageLog(params: {
@@ -1517,8 +1505,7 @@ describe("buildStatusReply subagent summary", () => {
       sessionEntry: {
         sessionId: "sess-status-legacy-fallback-usage",
         updatedAt: 0,
-        providerOverride: "xiaomi",
-        modelOverride: "mimo-v2-flash",
+        executionSelection: acceptedModelSelection("xiaomi", "mimo-v2-flash"),
         modelProvider: "minimax-portal",
         model: "MiniMax-M2.7",
         fallbackNotice: {
@@ -1576,8 +1563,7 @@ describe("buildStatusReply subagent summary", () => {
       sessionEntry: {
         sessionId: "sess-status-unresolved-fallback-context",
         updatedAt: 0,
-        providerOverride: "xiaomi",
-        modelOverride: "mimo-v2-flash",
+        executionSelection: acceptedModelSelection("xiaomi", "mimo-v2-flash"),
         modelProvider: "custom-runtime",
         model: "unknown-fallback-model",
         fallbackNotice: {
@@ -1718,8 +1704,7 @@ describe("buildStatusReply subagent summary", () => {
       sessionEntry: {
         sessionId: "sess-status-session-selected-usage",
         updatedAt: 0,
-        providerOverride: "openai",
-        modelOverride: "gpt-5.5",
+        executionSelection: acceptedModelSelection("openai", "gpt-5.5"),
       },
       ...createStatusSessionParams("telegram"),
       provider: "deepseek",
@@ -1732,8 +1717,8 @@ describe("buildStatusReply subagent summary", () => {
 
     const normalized = normalizeTestText(text);
     expect(normalized).toContain("Model: openai/gpt-5.5");
-    expect(normalized).toContain("pinned session; config primary deepseek/deepseek-v4-flash");
-    expect(normalized).toContain("clear /model default");
+    expect(normalized).toMatch(/Model: openai\/gpt-5\.5[^\n]*deepseek\/deepseek-v4-flash/);
+    expect(normalized).toContain("/model default");
     expect(normalized).toContain("Usage: 5h 91% left");
     expect(normalized).not.toContain("Usage: Balance ¥42.50");
     expect(providerUsageMock.loadProviderUsageSummary).toHaveBeenCalledWith(
@@ -1781,9 +1766,7 @@ describe("buildStatusReply subagent summary", () => {
       sessionEntry: {
         sessionId: "sess-status-stale-runtime-selected-usage",
         updatedAt: 0,
-        providerOverride: "openai",
-        modelOverride: "gpt-5.5",
-        modelOverrideSource: "user",
+        executionSelection: acceptedModelSelection("openai", "gpt-5.5"),
         modelProvider: "deepseek",
         model: "deepseek-v4-flash",
       },
@@ -1798,8 +1781,8 @@ describe("buildStatusReply subagent summary", () => {
 
     const normalized = normalizeTestText(text);
     expect(normalized).toContain("Model: openai/gpt-5.5");
-    expect(normalized).toContain("pinned session; config primary deepseek/deepseek-v4-flash");
-    expect(normalized).toContain("clear /model default");
+    expect(normalized).toMatch(/Model: openai\/gpt-5\.5[^\n]*deepseek\/deepseek-v4-flash/);
+    expect(normalized).toContain("/model default");
     expect(normalized).toContain("Usage: 5h 91% left");
     expect(normalized).not.toContain("Usage: Balance ¥42.50");
     expect(providerUsageMock.loadProviderUsageSummary).toHaveBeenCalledWith(
@@ -1864,7 +1847,7 @@ describe("buildStatusReply subagent summary", () => {
           sessionEntry: {
             sessionId: "sess-status-qualified-session-selected-usage",
             updatedAt: 0,
-            modelOverride: "openai/gpt-5.5",
+            executionSelection: acceptedModelSelection("openai", "gpt-5.5"),
           },
           ...createStatusSessionParams("telegram"),
           provider: "deepseek",
@@ -1875,8 +1858,8 @@ describe("buildStatusReply subagent summary", () => {
 
         const normalized = normalizeTestText(text);
         expect(normalized).toContain("Model: openai/gpt-5.5");
-        expect(normalized).toContain("pinned session; config primary deepseek/deepseek-v4-flash");
-        expect(normalized).toContain("clear /model default");
+        expect(normalized).toMatch(/Model: openai\/gpt-5\.5[^\n]*deepseek\/deepseek-v4-flash/);
+        expect(normalized).toContain("/model default");
         expect(normalized).toContain("oauth (openai:status)");
         expect(normalized).toContain("Context: ?/258k");
         expect(normalized).toContain("Usage: 5h 91% left");
@@ -2005,8 +1988,7 @@ describe("buildStatusReply subagent summary", () => {
       sessionEntry: {
         sessionId: "sess-status-claude-cli-env-key-shadow",
         updatedAt: 0,
-        providerOverride: "anthropic",
-        modelOverride: "claude-opus-4-7",
+        executionSelection: acceptedModelSelection("anthropic", "claude-opus-4-7"),
         modelProvider: "claude-cli",
         model: "claude-opus-4-7",
         fallbackNotice: {
@@ -2199,7 +2181,7 @@ describe("buildStatusReply subagent summary", () => {
         sessionId: "sess-status-pinned-agent",
         updatedAt: 0,
         fastMode: true,
-        agentRuntimeOverride: "openclaw",
+        executionSelection: acceptedModelSelection("openai", "gpt-5.4"),
         agentHarnessId: "codex",
       },
       ...createStatusSessionParams(),
@@ -2225,7 +2207,9 @@ describe("buildStatusReply subagent summary", () => {
         sessionId: "sess-status-luna-codex",
         updatedAt: 0,
         thinkingLevel: "ultra",
-        agentRuntimeOverride: "codex",
+        executionSelection: acceptedModelSelection("openai", "gpt-5.6-luna", {
+          executor: { kind: "harness", id: "codex" },
+        }),
       },
       ...createStatusSessionParams(),
       provider: "openai",

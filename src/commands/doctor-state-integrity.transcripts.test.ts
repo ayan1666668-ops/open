@@ -239,14 +239,11 @@ describe("doctor transcript and heartbeat session repairs", () => {
     const storePath = resolveSessionStorePathCore(cfg.session?.store, { agentId: "ops" });
     const mainKey = "agent:ops:main";
     await upsertSessionEntryCore(
-      { agentId: "ops", sessionKey: mainKey, storePath },
+      { agentId: "ops", sessionKey: mainKey, storePath, env: process.env },
       {
         heartbeatIsolatedBaseSessionKey: mainKey,
         model: "gpt-5.4",
-        modelOverride: "gpt-5.4",
-        modelOverrideSource: "auto",
         modelProvider: "openai-codex",
-        providerOverride: "openai-codex",
         sessionId: "sqlite-combined-ops",
         updatedAt: Date.now(),
       },
@@ -273,8 +270,7 @@ describe("doctor transcript and heartbeat session repairs", () => {
       storePath,
     });
     expect(recovered?.sessionId).toBe("sqlite-combined-ops");
-    expect(recovered?.providerOverride).toBeUndefined();
-    expect(recovered?.modelOverride).toBeUndefined();
+    expect(recovered?.model).toBeUndefined();
     expect(recovered?.modelProvider).toBeUndefined();
     expect(fs.existsSync(storePath)).toBe(false);
   });

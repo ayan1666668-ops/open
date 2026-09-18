@@ -92,7 +92,7 @@ vi.mock("./runtime-plan/resolve-auth.js", () => ({
   }),
 }));
 vi.mock("./thinking-runtime.js", () => ({
-  resolveEffectiveAgentRuntime: isolatedCompletionMocks.resolveEffectiveAgentRuntime,
+  resolveEffectiveAgentRuntimeCore: isolatedCompletionMocks.resolveEffectiveAgentRuntime,
 }));
 vi.mock("./cli-runner.runtime.js", () => ({ runCliAgent: isolatedCompletionMocks.runCliAgent }));
 vi.mock("../infra/private-temp-workspace.js", () => ({

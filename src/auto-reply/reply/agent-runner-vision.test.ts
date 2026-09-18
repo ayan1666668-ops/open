@@ -86,8 +86,10 @@ describe("ordinary reply model capability at cloud media admission", () => {
         sessionFile: "vision-session",
         workspaceDir: root,
         config: cfg,
-        provider: "acme",
-        model: "primary",
+        executionSelection: {
+          model: { provider: "acme", id: testCase.selected },
+          executor: { kind: "harness", id: "openclaw" },
+        },
         thinkLevel: testCase.thinkOff ? "off" : "medium",
         timeoutMs: 5_000,
         blockReplyBreak: "text_end",
@@ -105,10 +107,7 @@ describe("ordinary reply model capability at cloud media admission", () => {
       ]);
       const produced = await buildEmbeddedRunBaseParams({
         run,
-        provider: "acme",
-        model: testCase.selected,
         runId: "vision-run",
-        authProfile: {},
       });
       const images = [
         createSolidPngBuffer(2, 2, { r: 255, g: 0, b: 0 }),

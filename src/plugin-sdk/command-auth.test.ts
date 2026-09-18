@@ -1,11 +1,20 @@
 /**
  * Tests command authorization helpers and native command gating.
  */
-import { describe, expect, expectTypeOf, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
+import { registerAgentHarness } from "../agents/harness/registry.js";
+import type { AgentHarness } from "../agents/harness/types.js";
 import type { ChannelId } from "../channels/plugins/types.public.js";
 import type { OpenClawConfig } from "../config/config.js";
+import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
+import {
+  captureActivePluginRegistrySnapshot,
+  restoreActivePluginRegistrySnapshot,
+  setActivePluginRegistry,
+} from "../plugins/runtime.js";
 import {
   resolveCommandAuthorization as resolveNativeCommandAuthorization,
+  resolveEffectiveAgentRuntime,
   resolveStoredModelOverride as resolveNativeStoredModelOverride,
   type CommandAuthorization as NativeCommandAuthorization,
 } from "./command-auth-native.js";
@@ -22,6 +31,7 @@ import {
 } from "./command-status.js";
 import type { GatewayRequestHandlerOptions } from "./gateway-runtime.js";
 import { resolveSessionModelRef } from "./model-session-runtime.js";
+import type { SessionEntry } from "./session-store-runtime.js";
 
 const baseCfg = {
   commands: { useAccessGroups: true },
@@ -246,5 +256,172 @@ describe("plugin-sdk/command-auth", () => {
     expect(result.effectiveAllowFrom).toStrictEqual([]);
     expect(result.senderAllowedForCommands).toBe(false);
     expect(result.commandAuthorized).toBeUndefined();
+  });
+});
+
+describe("released command runtime projection", () => {
+  let registryBefore: ReturnType<typeof captureActivePluginRegistrySnapshot>;
+  beforeEach(() => {
+    registryBefore = captureActivePluginRegistrySnapshot();
+    setActivePluginRegistry(createEmptyPluginRegistry());
+  });
+  afterEach(() => restoreActivePluginRegistrySnapshot(registryBefore));
+
+  const cfg: OpenClawConfig = {
+    agents: {
+      defaults: {
+        models: { "fixture-route/fixture-model": { agentRuntime: { id: "configured-app" } } },
+      },
+    },
+  };
+  const request = { cfg, provider: "fixture-route", modelId: "fixture-model" };
+
+  it("accepts inline released runtime fields without selecting historical output", () => {
+    expect(
+      resolveEffectiveAgentRuntime({
+        ...request,
+        sessionEntry: { agentHarnessId: "observed-app", agentRuntimeOverride: "openclaw" },
+      }),
+    ).toBe("openclaw");
+    type ConflictingScope = typeof request & {
+      agentId: string;
+      agentScope: { kind: "prepared"; agentId: string };
+    };
+    type AcceptsConflictingScope = ConflictingScope extends Parameters<
+      typeof resolveEffectiveAgentRuntime
+    >[0]
+      ? true
+      : false;
+    expectTypeOf<AcceptsConflictingScope>().toEqualTypeOf<false>();
+  });
+
+  it.each([undefined, "auto", "default"])(
+    "ignores unlocked history when the legacy runtime is %s",
+    (runtime) => {
+      expect(
+        resolveEffectiveAgentRuntime({
+          ...request,
+          sessionEntry: { agentHarnessId: "observed-app", agentRuntimeOverride: runtime },
+        }),
+      ).toBe("configured-app");
+    },
+  );
+
+  it("does not apply an incompatible legacy runtime to another provider", () => {
+    expect(
+      resolveEffectiveAgentRuntime({
+        ...request,
+        sessionEntry: { agentHarnessId: "observed-app", agentRuntimeOverride: "codex" },
+      }),
+    ).toBe("configured-app");
+  });
+
+  it.each([
+    { pluginOwnerId: undefined, expected: "locked-app" },
+    { pluginOwnerId: "fixture-owner", expected: "openclaw" },
+  ])(
+    "preserves released lock ownership with plugin owner $pluginOwnerId",
+    ({ pluginOwnerId, expected }) => {
+      expect(
+        resolveEffectiveAgentRuntime({
+          ...request,
+          sessionEntry: {
+            agentHarnessId: "locked-app",
+            agentRuntimeOverride: "openclaw",
+            modelSelectionLocked: true,
+            pluginOwnerId,
+          },
+        }),
+      ).toBe(expected);
+    },
+  );
+
+  const canonicalCases: Array<{
+    name: string;
+    selection: NonNullable<SessionEntry["executionSelection"]>;
+    expected: string;
+  }> = [
+    {
+      name: "accepted model",
+      selection: {
+        state: "accepted",
+        selection: {
+          model: { provider: "fixture-route", id: "fixture-model" },
+          executor: { kind: "harness", id: "accepted-app" },
+        },
+        fallbackPermission: "explicit",
+      },
+      expected: "accepted-app",
+    },
+    {
+      name: "native-managed",
+      selection: {
+        state: "accepted",
+        selection: {
+          model: "native-managed",
+          executor: { kind: "harness", id: "accepted-app" },
+        },
+        fallbackPermission: "explicit",
+      },
+      expected: "accepted-app",
+    },
+    {
+      name: "deferred request",
+      selection: {
+        state: "deferred",
+        request: { runtime: "codex" },
+        fallbackPermission: "explicit",
+      },
+      expected: "configured-app",
+    },
+  ];
+  it.each(canonicalCases)(
+    "keeps $name authoritative over the legacy view",
+    ({ selection, expected }) => {
+      const before = structuredClone(selection);
+      expect(
+        resolveEffectiveAgentRuntime({
+          ...request,
+          sessionEntry: {
+            agentHarnessId: "observed-app",
+            agentRuntimeOverride: "openclaw",
+            executionSelection: selection,
+          },
+        }),
+      ).toBe(expected);
+      expect(selection).toEqual(before);
+    },
+  );
+
+  it("retains registered support projection for an unlocked explicit runtime", () => {
+    const supports = vi.fn<AgentHarness["supports"]>(() => ({
+      supported: false,
+      reason: "The fixture declares a fallback.",
+      fallbackRuntime: "openclaw",
+    }));
+    const runAttempt = vi.fn<AgentHarness["runAttempt"]>();
+    registerAgentHarness({ id: "codex", label: "Fixture app", supports, runAttempt });
+    expect(
+      resolveEffectiveAgentRuntime({
+        cfg: {},
+        provider: "openai",
+        modelId: "fixture-model",
+        modelApi: "openai-responses",
+        modelBaseUrl: " https://runtime.fixture.invalid/v1 ",
+        sessionEntry: { agentHarnessId: "observed-app", agentRuntimeOverride: "codex" },
+      }),
+    ).toBe("codex");
+    expect(supports).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        provider: "openai",
+        modelId: "fixture-model",
+        requestedRuntime: "codex",
+        modelProvider: expect.objectContaining({
+          api: "openai-responses",
+          baseUrl: "https://runtime.fixture.invalid/v1",
+        }),
+      }),
+    );
+    expect(runAttempt).not.toHaveBeenCalled();
   });
 });

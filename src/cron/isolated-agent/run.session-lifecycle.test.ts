@@ -10,7 +10,6 @@ import {
 } from "../../agents/harness/context-engine-turn-attempt.js";
 import { runInitialModelFallbackAttempt } from "../../agents/test-helpers/model-fallback-runner.test-support.js";
 import { setReplyPayloadMetadata } from "../../auto-reply/reply-payload.js";
-import type { SessionEntry } from "../../config/sessions.js";
 import type { ContextEngine } from "../../context-engine/types.js";
 import * as diagnostic from "../../logging/diagnostic.js";
 import { createEmptyPluginRegistry } from "../../plugins/registry-empty.js";
@@ -226,7 +225,9 @@ describe("runCronIsolatedAgentTurn session lifecycle", () => {
     });
     const registrySnapshot = captureActivePluginRegistrySnapshot();
     try {
-      if (cli) setActivePluginRegistry(registry);
+      if (cli) {
+        setActivePluginRegistry(registry);
+      }
       const params = makePersistentCronParams(target.sessionKey);
       if (cli) {
         params.cfg = {
@@ -269,7 +270,9 @@ describe("runCronIsolatedAgentTurn session lifecycle", () => {
         isSessionWorkAdmissionActive(target.storePath, [target.sessionKey, target.sessionId]),
       ).toBe(false);
     } finally {
-      if (cli) restoreActivePluginRegistrySnapshot(registrySnapshot);
+      if (cli) {
+        restoreActivePluginRegistrySnapshot(registrySnapshot);
+      }
       createLease.mockRestore();
     }
   });
@@ -316,7 +319,7 @@ describe("runCronIsolatedAgentTurn session lifecycle", () => {
       loadSessionEntryMock.mockImplementation(() => accessor.loadSessionEntry(target));
       resolveEffectiveAgentRuntimeMock.mockReturnValue("claude-cli");
       resolveAllowedModelRefMock.mockReturnValue({
-        ref: { provider: "claude-cli", model: "claude-sonnet-4-6" },
+        ref: { provider: "anthropic", model: "claude-sonnet-4-6" },
       });
       const controller = new AbortController();
       let interrupted = false;
@@ -340,7 +343,9 @@ describe("runCronIsolatedAgentTurn session lifecycle", () => {
         };
       });
       const patchSessionEntry = patchSessionEntryMock.getMockImplementation();
-      if (!patchSessionEntry) throw new Error("Expected guarded cron writer");
+      if (!patchSessionEntry) {
+        throw new Error("Expected guarded cron writer");
+      }
       const patchWithAbort: typeof accessor.patchSessionEntryCore = (scope, update, options) => {
         const assertCommitAllowed = options?.assertCommitAllowed;
         return patchSessionEntry(scope, update, {
@@ -371,7 +376,7 @@ describe("runCronIsolatedAgentTurn session lifecycle", () => {
             payload: {
               kind: "agentTurn",
               message: "Synthetic cron continuity prompt",
-              model: "claude-cli/claude-sonnet-4-6",
+              model: "anthropic/claude-sonnet-4-6",
             },
           }),
           abortSignal: controller.signal,
@@ -840,7 +845,9 @@ describe("runCronIsolatedAgentTurn session lifecycle", () => {
     type PatchSessionEntry =
       typeof import("../../config/sessions/session-accessor.js").patchSessionEntryCore;
     const persist: PatchSessionEntry | undefined = patchSessionEntryMock.getMockImplementation();
-    if (!persist) throw new Error("Expected the shared session writer");
+    if (!persist) {
+      throw new Error("Expected the shared session writer");
+    }
     patchSessionEntryMock.mockImplementation(
       (...[scope, update, options]: Parameters<PatchSessionEntry>) =>
         persist(

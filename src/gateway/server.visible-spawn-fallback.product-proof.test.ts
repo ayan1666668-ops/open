@@ -24,10 +24,16 @@ import {
   withGatewayToolCallerIdentity,
 } from "../agents/tools/gateway-caller-context.js";
 import { loadSessionEntryReadOnly } from "../config/sessions/session-accessor.js";
+import { projectPublicSessionEntry } from "../config/sessions/session-entry-projection.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import * as backoff from "../infra/backoff.js";
+import {
+  getSessionExecutionSelection,
+  isModelExecutionSelection,
+} from "../model-picker/execution-selection.js";
 import { extractTextFromChatContent } from "../shared/chat-content.js";
 import { setTestEnvValue } from "../test-utils/env.js";
+import { acceptedModelSelection } from "../test-utils/session-execution-selection.js";
 import { GATEWAY_CLIENT_MODES, GATEWAY_CLIENT_NAMES } from "../utils/message-channel.js";
 import {
   createGatewayConfigPath,
@@ -392,6 +398,10 @@ describe("sessions_spawn model fallback through the Gateway", () => {
           let terminal = await wait(spawn.runId);
           let requestOffset = 0;
           let historyOffset = 0;
+          const acceptedBeforeFollowup = loadSessionEntryReadOnly({
+            sessionKey: spawn.childSessionKey,
+            agentId: "main",
+          })?.executionSelection;
           if (scenario.directAgent) {
             expect(terminal.status).toBe("ok");
             const initialHistory = await client.request<History>("chat.history", {
@@ -455,38 +465,41 @@ describe("sessions_spawn model fallback through the Gateway", () => {
           const childRequests = provider.requests
             .slice(requestOffset)
             .filter((request) => request.child);
-          console.info(
-            JSON.stringify({
-              scenario: scenario.name,
-              ...(scenario.directAgent
-                ? { initialChildReply: INITIAL_SUCCESS, requestOffset, historyOffset }
-                : {}),
-              childRequests: childRequests.map(({ model }) => model),
-              ...(scenario.configuredAlias
-                ? {
-                    parentRequests: provider.requests
-                      .filter((request) => !request.child)
-                      .map(({ model }) => model),
-                  }
-                : {}),
-              terminal,
-              childSessionKey: spawn.childSessionKey,
-              modelOverrideSource: entry?.modelOverrideSource,
-              modelOverride: entry?.modelOverride,
-              childHistory: text,
+          const diagnostic = JSON.stringify({
+            scenario: scenario.name,
+            ...(scenario.directAgent
+              ? { initialChildReply: INITIAL_SUCCESS, requestOffset, historyOffset }
+              : {}),
+            requests: provider.requests,
+            childRequests,
+            terminal,
+            childSessionKey: spawn.childSessionKey,
+            executionSelection: entry?.executionSelection,
+            authProfileOverride: entry?.authProfileOverride,
+            authProfileOverrideSource: entry?.authProfileOverrideSource,
+            observedModel: entry?.model,
+            childHistory: text,
+          });
+          console.info(diagnostic);
+          expect(terminal.status, diagnostic).toBe(scenario.backup ? "ok" : "error");
+          if (!entry) {
+            throw new Error("Expected the completed child session");
+          }
+          expect(entry.executionSelection).toMatchObject(
+            acceptedModelSelection("proof-primary", "primary", {
+              fallbackPermission: scenario.model ? "explicit" : "configured",
             }),
           );
-          expect(terminal.status, JSON.stringify(provider.requests)).toBe(
-            scenario.backup ? "ok" : "error",
-          );
-          expect(entry?.modelOverrideSource).toBe(scenario.model ? "user" : "auto");
-          if (!scenario.model && !scenario.inherited) {
-            expect(entry).toMatchObject({
-              modelOverrideFallbackOriginProvider: "proof-primary",
-              modelOverrideFallbackOriginModel: "primary",
-            });
+          if (scenario.directAgent) {
+            expect(entry.executionSelection).toEqual(acceptedBeforeFollowup);
           }
-          expect(childRequests).toContainEqual(expect.objectContaining({ model: "primary" }));
+          // Released readback is a separate contract from the canonical fallback permission.
+          expect(projectPublicSessionEntry(entry).modelOverrideSource).toBe(
+            scenario.model ? "user" : undefined,
+          );
+          expect(childRequests, diagnostic).toContainEqual(
+            expect.objectContaining({ model: "primary" }),
+          );
           expect(childRequests.filter((request) => request.model === "primary")).toHaveLength(1);
           expect(provider.errors).toEqual([]);
           if (scenario.backup) {
@@ -499,10 +512,6 @@ describe("sessions_spawn model fallback through the Gateway", () => {
             expect(childRequests.every((request) => request.model === "primary")).toBe(true);
             expect(text).not.toContain(SUCCESS);
             expect(replies).toContainEqual(expect.objectContaining({ stopReason: "error" }));
-            expect(entry).toMatchObject({
-              modelOverride: "primary",
-              providerOverride: "proof-primary",
-            });
           }
           if (scenario.configuredProfile || scenario.model?.includes("@")) {
             expect(childRequests).toContainEqual(
@@ -517,7 +526,11 @@ describe("sessions_spawn model fallback through the Gateway", () => {
                 authProfileOverrideSource: "user",
               });
             }
-            expect(entry?.modelOverride).not.toContain("@");
+            const acceptedSelection = getSessionExecutionSelection(entry);
+            if (!acceptedSelection || !isModelExecutionSelection(acceptedSelection)) {
+              throw new Error("Expected a concrete child selection");
+            }
+            expect(acceptedSelection.model.id).not.toContain("@");
           }
         },
         () => gateway && disconnectGatewayClient(gateway.client),
@@ -641,7 +654,7 @@ async function withCliSpawnGrant(
         authorizeToolCall: currentGrant.isCurrent,
       }),
     );
-    expect(response).toMatchObject({
+    expect(response, JSON.stringify(response)).toMatchObject({
       result: { isError: false, content: [{ type: "text", text: expect.any(String) }] },
     });
     const payload = response as { result: { content: Array<{ type: string; text: string }> } };
@@ -737,18 +750,16 @@ describe("CLI model inheritance through MCP", () => {
                 sessionKey: spawn.childSessionKey,
               });
               expect(child).toMatchObject({
-                providerOverride: "proof-primary",
-                modelOverride: "primary",
-                modelOverrideSource: "auto",
+                executionSelection: acceptedModelSelection("proof-primary", "primary", {
+                  fallbackPermission: "configured",
+                }),
                 spawnedBy: parentKey,
                 spawnDepth: 1,
               });
               expect(
                 loadSessionEntryReadOnly({ agentId: "main", sessionKey: parentKey }),
               ).toMatchObject({
-                providerOverride: "proof-backup",
-                modelOverride: "backup",
-                modelOverrideSource: "user",
+                executionSelection: acceptedModelSelection("proof-backup", "backup"),
               });
               const transcript = await client.request<History>("chat.history", {
                 sessionKey: spawn.childSessionKey,

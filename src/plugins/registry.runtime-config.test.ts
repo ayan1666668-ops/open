@@ -737,7 +737,9 @@ describe("plugin registry runtime config scope", () => {
     async (method) => {
       let entry: SessionEntry = { sessionId: "session-1", updatedAt: 1, label: "before" };
       const commitPatch = (patch: Partial<PluginSessionEntry> | null) => {
-        if (patch) entry = { ...entry, ...projectPluginSessionEntryPatch(patch, entry) };
+        if (patch) {
+          entry = { ...entry, ...projectPluginSessionEntryPatch(patch, entry) };
+        }
         return projectPluginSessionEntry(entry);
       };
       const runtime = createPluginRuntime();

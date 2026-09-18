@@ -232,7 +232,9 @@ describe("executeAgentTurn: session state", () => {
         .mockImplementationOnce(async (params: RunEmbeddedAgentInternalParams) => {
           const successor = session.getActiveSessionEntry();
           successor.sessionId = "accepted-successor";
-          if (lifecycle === "replaced") successor.lifecycleRevision = "replacement-generation";
+          if (lifecycle === "replaced") {
+            successor.lifecycleRevision = "replacement-generation";
+          }
           expect(params.replyOperation).toBe(replyOperation);
           params.replyOperation?.updateSessionId(successor.sessionId);
           expect(followupRun.run.sessionId).toBe("session");

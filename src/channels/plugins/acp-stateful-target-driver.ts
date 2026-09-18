@@ -10,7 +10,7 @@ import {
 } from "../../acp/persistent-bindings.lifecycle.js";
 import { resolveConfiguredAcpBindingSpecBySessionKey } from "../../acp/persistent-bindings.resolve.js";
 import { resolveConfiguredAcpBindingSpecFromRecord } from "../../acp/persistent-bindings.types.js";
-import { readAcpSessionEntry } from "../../acp/runtime/session-meta.js";
+import { readAcpSessionEntryCore } from "../../acp/runtime/session-meta.js";
 import { resolveSessionEntryAccessTarget } from "../../config/sessions/session-accessor.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { performGatewaySessionReset } from "../../gateway/session-reset-service.js";
@@ -36,7 +36,7 @@ function toAcpStatefulBindingTargetDescriptor(params: {
     return null;
   }
   const target = resolveAcpSessionTarget(params);
-  const stored = readAcpSessionEntry({ cfg: params.cfg, ...target });
+  const stored = readAcpSessionEntryCore({ cfg: params.cfg, ...target });
   if (stored?.acp) {
     return {
       kind: "stateful",

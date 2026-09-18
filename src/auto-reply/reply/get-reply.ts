@@ -10,6 +10,7 @@ import {
 } from "../../agents/agent-scope.js";
 import { resolveConversationCapabilityProfile } from "../../agents/conversation-capability-profile.js";
 import { projectConversationToolNames } from "../../agents/conversation-tool-policy-pipeline.js";
+import { resolveFastModeState } from "../../agents/fast-mode.js";
 import type { ModelCatalogSnapshot } from "../../agents/model-catalog.types.js";
 import { splitTrailingAuthProfile } from "../../agents/model-ref-profile.js";
 import { resolveModelRefFromString } from "../../agents/model-selection.js";
@@ -37,8 +38,10 @@ import type { ApplyMediaUnderstandingResult } from "../../media-understanding/ap
 import type { ExtractedFileImage } from "../../media-understanding/extracted-file-images.js";
 import { hasStagedMediaFacts, normalizeMediaFacts } from "../../media/media-facts.js";
 import { hasSessionModelSelection } from "../../model-picker/apply-session-model-selection.js";
-import { getSessionExecutionSelection } from "../../model-picker/execution-selection.js";
-import { isModelExecutionSelection } from "../../model-picker/execution-selection.js";
+import {
+  getSessionExecutionSelection,
+  isModelExecutionSelection,
+} from "../../model-picker/execution-selection.js";
 import { defaultRuntime } from "../../runtime.js";
 import {
   isModelSelectionLocked,
@@ -79,6 +82,7 @@ import {
   hasInboundMediaForUnderstanding,
 } from "./inbound-media.js";
 import { emitPreAgentMessageHooks } from "./message-preprocess-hooks.js";
+import { ModelSelectionPreparationError } from "./model-selection.js";
 import { resolveOriginMessageProvider } from "./origin-routing.js";
 import {
   PENDING_FINAL_DELIVERY_CLEAR_PATCH,
@@ -369,7 +373,9 @@ export async function getReplyFromConfig(
       agentId,
       sessionKey: agentSessionKey,
     });
-    if (reset) return reset.reply;
+    if (reset) {
+      return reset.reply;
+    }
   }
   const preparedAgentDir = preparedReplyDispatchRuntime?.agentDir;
   const preparedWorkspaceDir = preparedReplyDispatchRuntime?.workspaceDir;
@@ -688,6 +694,7 @@ export async function getReplyFromConfig(
     try {
       const baselineEntry = await traceGetReplyPhase("reply.capture_session_diff_baseline", () =>
         ensureSessionDiffBaseline({
+          agentId,
           cwd:
             normalizeOptionalString(sessionState.sessionEntry.spawnedCwd) ??
             normalizeOptionalString(sessionState.sessionEntry.spawnedWorkspaceDir) ??
@@ -870,8 +877,6 @@ export async function getReplyFromConfig(
           aliasIndex,
         })
       : null;
-  const primaryProvider = resolvedChannelModelOverride?.ref.provider ?? defaultProvider;
-  const primaryModel = resolvedChannelModelOverride?.ref.model ?? defaultModel;
   const acceptedSelection = getSessionExecutionSelection(sessionEntry);
   const hasEffectiveStoredModelOverride = hasSessionModelSelection(sessionEntry);
   if (
@@ -917,11 +922,11 @@ export async function getReplyFromConfig(
       isGroup,
       triggerBodyNormalized,
       resetTriggered,
+      isNewSession,
+      heartbeatAuthProfile,
       commandAuthorized,
       defaultProvider,
       defaultModel,
-      primaryProvider,
-      primaryModel,
       aliasIndex,
       provider,
       model,
@@ -945,8 +950,6 @@ export async function getReplyFromConfig(
     elevatedAllowed,
     elevatedFailures,
     defaultActivation,
-    resolvedFastMode,
-    resolvedFastModeAutoOnSeconds,
     resolvedFastModeOverride,
     resolvedFastModeAutoOnSecondsOverride,
     resolvedVerboseLevel,
@@ -957,7 +960,6 @@ export async function getReplyFromConfig(
     resolvedBlockStreamingBreak,
     provider: resolvedProvider,
     model: resolvedModel,
-    requestedRouteResolution,
     modelState,
     resolveModelLevels,
     contextTokens,
@@ -1007,6 +1009,15 @@ export async function getReplyFromConfig(
       )
     : undefined;
 
+  let runModelState = modelState;
+  const prepareModelState: typeof modelState.refreshExecution = async (
+    entry,
+    validateCommit,
+    purpose,
+  ) => {
+    runModelState = await runModelState.refreshExecution(entry, validateCommit, purpose);
+    return runModelState;
+  };
   const inlineActionResult = await traceGetReplyPhase("reply.handle_inline_actions", () =>
     handleInlineActions({
       ctx,
@@ -1041,6 +1052,7 @@ export async function getReplyFromConfig(
       defaultActivation: () => defaultActivation,
       thinkingCatalog: statusThinkingCatalog,
       resolveModelLevels,
+      prepareModelState,
       resolvedVerboseLevel,
       resolvedElevatedLevel,
       blockReplyChunking,
@@ -1066,11 +1078,34 @@ export async function getReplyFromConfig(
   const queueModeOverride = inlineActionResult.queueModeOverride;
   const preparedReplyOpts = withExtractedFileImages(resolvedOpts, extractedFileImages);
   abortedLastRun = inlineActionResult.abortedLastRun ?? abortedLastRun;
-  const runProvider = provider;
-  const runModel = model;
-  const runModelState = modelState;
-  const resolveRunModelLevels = resolveModelLevels;
-  const { resolvedThinkLevel, resolvedReasoningLevel } = await resolveRunModelLevels();
+  try {
+    await prepareModelState(sessionEntry);
+  } catch (error) {
+    typing.cleanup();
+    if (error instanceof ModelSelectionLockedError) {
+      recordReplyPreRunRejection(resolveReplyOperationRunState(opts), "model-selection-locked");
+    } else if (
+      !isSessionWorkStartInvalidatedError(error) &&
+      !(error instanceof ModelSelectionPreparationError)
+    ) {
+      throw error;
+    }
+    return { text: error.message, isError: true };
+  }
+  const runProvider = runModelState.provider;
+  const runModel = runModelState.model;
+  const fastModeState = resolveFastModeState({
+    cfg,
+    provider: runProvider,
+    model: runModel,
+    agentId,
+    sessionEntry: directives.clearFastMode ? undefined : sessionEntry,
+  });
+  const resolvedFastMode =
+    resolvedOpts?.fastModeOverride ?? directives.fastMode ?? fastModeState.mode;
+  const resolvedFastModeAutoOnSeconds =
+    resolvedOpts?.fastModeAutoOnSecondsOverride ?? fastModeState.fastAutoOnSeconds;
+  const { resolvedThinkLevel, resolvedReasoningLevel } = await resolveModelLevels(runModelState);
 
   let stagedAttachmentPaths = hasStagedMediaFacts(finalized.media)
     ? collectStagedAttachmentPaths(finalized)
@@ -1161,12 +1196,7 @@ export async function getReplyFromConfig(
       modelState: runModelState,
       provider: runProvider,
       model: runModel,
-      ...(hasResolvedHeartbeatModelOverride &&
-      heartbeatAuthProfile?.provider === runProvider &&
-      heartbeatAuthProfile.model === runModel
-        ? { configuredProfileId: heartbeatAuthProfile.profileId }
-        : {}),
-      requestedRouteResolution,
+      requestedRouteResolution: runModelState.requestedRouteResolution,
       perMessageQueueMode,
       perMessageQueueOptions,
       typing,

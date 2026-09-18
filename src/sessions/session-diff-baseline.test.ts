@@ -60,12 +60,17 @@ function baseline(sessionId: string): SessionDiffBaseline {
 async function seedEntry(params: {
   entry: InternalSessionEntry;
   sessionKey?: string;
-}): Promise<{ entry: InternalSessionEntry; sessionKey: string; storePath: string }> {
+}): Promise<{
+  agentId: string;
+  entry: InternalSessionEntry;
+  sessionKey: string;
+  storePath: string;
+}> {
   const dir = tempDirs.make("openclaw-session-diff-owner-");
   const storePath = path.join(dir, "sessions.json");
   const sessionKey = params.sessionKey ?? "agent:main:diff-owner";
   await replaceSessionEntry({ sessionKey, storePath }, params.entry);
-  return { entry: params.entry, sessionKey, storePath };
+  return { agentId: "main", entry: params.entry, sessionKey, storePath };
 }
 
 function loadInternal(sessionKey: string, storePath: string): InternalSessionEntry | undefined {
@@ -452,6 +457,7 @@ describe("ensureSessionDiffBaseline", () => {
 
     const result = await Promise.allSettled([
       ensureSessionDiffBaseline({
+        agentId: "main",
         cwd: "/workspace",
         entry,
         isNewSession: true,

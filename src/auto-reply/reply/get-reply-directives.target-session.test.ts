@@ -40,9 +40,8 @@ const mocks = vi.hoisted(() => ({
 }));
 
 async function resolveHelloWithModelDefaults(params: {
-  defaultThinking: "off" | "low" | "medium";
+  defaultThinking?: "off" | "low" | "medium";
   defaultThinkingByModel?: Record<string, "off" | "low" | "medium">;
-  defaultReasoning: "on";
   cfg?: Parameters<typeof resolveReplyDirectives>[0]["cfg"];
   body?: string;
   sessionEntry?: SessionEntry;
@@ -65,9 +64,10 @@ async function resolveHelloWithModelDefaults(params: {
   const resolveDefaultThinkingLevel = vi.fn(
     async (selection?: { model?: string }) =>
       (selection?.model ? params.defaultThinkingByModel?.[selection.model] : undefined) ??
-      params.defaultThinking,
+      params.defaultThinking ??
+      "off",
   );
-  const resolveDefaultReasoningLevel = vi.fn(async () => params.defaultReasoning);
+  const resolveDefaultReasoningLevel = vi.fn(async () => "on");
   mocks.listAgentEntries.mockReturnValue(params.agentEntries ?? []);
   if (params.modelError) {
     mocks.createModelSelectionState.mockRejectedValueOnce(params.modelError);
@@ -133,6 +133,7 @@ async function resolveHelloWithModelDefaults(params: {
     isGroup: false,
     triggerBodyNormalized: "hello",
     resetTriggered: false,
+    isNewSession: false,
     commandAuthorized: params.commandAuthorized ?? false,
     defaultProvider: "openai",
     defaultModel: "gpt-4o-mini",
@@ -166,7 +167,7 @@ vi.mock("../../agents/sandbox/runtime-status.js", () => ({
 }));
 
 vi.mock("../../agents/thinking-runtime.js", () => ({
-  resolveEffectiveAgentRuntime: ({
+  resolveEffectiveAgentRuntimeCore: ({
     cfg,
     provider,
     modelId,
@@ -299,8 +300,6 @@ describe("resolveReplyDirectives", () => {
 
   it("passes one-turn model override state into model selection", async () => {
     await resolveHelloWithModelDefaults({
-      defaultThinking: "off",
-      defaultReasoning: "on",
       provider: "openai",
       model: "gpt-4o-mini",
       hasOneTurnModelOverride: true,
@@ -322,8 +321,6 @@ describe("resolveReplyDirectives", () => {
     });
 
     await resolveHelloWithModelDefaults({
-      defaultThinking: "off",
-      defaultReasoning: "on",
       sessionEntry: wrapperSessionEntry,
       sessionStore: { "agent:main:whatsapp:+2000": targetSessionEntry },
       ctx: { InternalTurnSource: "heartbeat" },
@@ -351,8 +348,6 @@ describe("resolveReplyDirectives", () => {
     });
 
     await resolveHelloWithModelDefaults({
-      defaultThinking: "off",
-      defaultReasoning: "on",
       conversation: prepareReplyConversation({
         ctx: { InternalTurnSource: "heartbeat" },
         sessionEntry: baseSessionEntry,
@@ -377,8 +372,6 @@ describe("resolveReplyDirectives", () => {
       'Session "agent:main:whatsapp:+2000" changed while starting work. Retry.',
     );
     const { result, typing } = await resolveHelloWithModelDefaults({
-      defaultThinking: "off",
-      defaultReasoning: "on",
       modelError: error,
     });
 
@@ -392,8 +385,6 @@ describe("resolveReplyDirectives", () => {
 
   it("returns a terminal rejection when locked model preparation cannot preserve its model", async () => {
     const { result, typing } = await resolveHelloWithModelDefaults({
-      defaultThinking: "off",
-      defaultReasoning: "on",
       modelError: new ModelSelectionLockedError(),
     });
 
@@ -444,8 +435,6 @@ describe("resolveReplyDirectives", () => {
       const { result } = await resolveHelloWithModelDefaults({
         body,
         commandAuthorized: true,
-        defaultThinking: "off",
-        defaultReasoning: "on",
         opts,
       });
 
@@ -467,8 +456,6 @@ describe("resolveReplyDirectives", () => {
     const { result } = await resolveHelloWithModelDefaults({
       body,
       commandAuthorized: true,
-      defaultThinking: "off",
-      defaultReasoning: "on",
       ctx: {
         CommandInterpretationSuppressed: true,
         CommandTurn: {
@@ -489,8 +476,6 @@ describe("resolveReplyDirectives", () => {
 
   it("keeps one-turn fast mode with the resolved fast mode", async () => {
     const { result } = await resolveHelloWithModelDefaults({
-      defaultThinking: "off",
-      defaultReasoning: "on",
       opts: {
         fastModeOverride: "auto",
       },
@@ -513,8 +498,6 @@ describe("resolveReplyDirectives", () => {
     );
 
     const { result } = await resolveHelloWithModelDefaults({
-      defaultThinking: "off",
-      defaultReasoning: "on",
       provider: "anthropic",
       model: "claude-opus-4-6",
       selectedProvider: "openai",
@@ -560,7 +543,6 @@ describe("resolveReplyDirectives", () => {
           "gpt-5.6-sol": "low",
           [targetModel]: expectedThinking,
         },
-        defaultReasoning: "on",
         selectedProvider: "openai",
         selectedModel: "gpt-5.6-sol",
         cfg: {
@@ -600,9 +582,7 @@ describe("resolveReplyDirectives", () => {
     const { result, resolveDefaultThinkingLevel } = await resolveHelloWithModelDefaults({
       body: "reply to this\n/model openai/gpt-5.6-sol",
       commandAuthorized: true,
-      defaultThinking: "off",
       defaultThinkingByModel: { "gpt-5.6-sol": "low" },
-      defaultReasoning: "on",
       selectedProvider: "openai",
       selectedModel: "gpt-4o-mini",
       cfg: {
@@ -674,6 +654,7 @@ describe("resolveReplyDirectives", () => {
       isGroup: false,
       triggerBodyNormalized: "hello",
       resetTriggered: false,
+      isNewSession: false,
       commandAuthorized: true,
       defaultProvider: "openai",
       defaultModel: "gpt-4o-mini",
@@ -753,6 +734,7 @@ describe("resolveReplyDirectives", () => {
       isGroup: false,
       triggerBodyNormalized: "/trace on",
       resetTriggered: false,
+      isNewSession: false,
       commandAuthorized: true,
       defaultProvider: "openai",
       defaultModel: "gpt-4o-mini",
@@ -774,10 +756,7 @@ describe("resolveReplyDirectives", () => {
   });
 
   it("uses the model reasoning default when thinking is off", async () => {
-    const { result, resolveDefaultReasoningLevel } = await resolveHelloWithModelDefaults({
-      defaultThinking: "off",
-      defaultReasoning: "on",
-    });
+    const { result, resolveDefaultReasoningLevel } = await resolveHelloWithModelDefaults({});
 
     await expectContinueResult(result, {
       resolvedThinkLevel: "off",
@@ -788,8 +767,6 @@ describe("resolveReplyDirectives", () => {
 
   it("does not re-enable model reasoning when thinking was explicitly disabled", async () => {
     const { result, resolveDefaultReasoningLevel } = await resolveHelloWithModelDefaults({
-      defaultThinking: "off",
-      defaultReasoning: "on",
       sessionEntry: makeSessionEntry({ thinkingLevel: "off" }),
     });
 
@@ -802,8 +779,6 @@ describe("resolveReplyDirectives", () => {
 
   it("does not re-enable model reasoning when thinking override explicitly disables thinking", async () => {
     const { result, resolveDefaultReasoningLevel } = await resolveHelloWithModelDefaults({
-      defaultThinking: "off",
-      defaultReasoning: "on",
       opts: { thinkingLevelOverride: "off" },
     });
 
@@ -816,8 +791,6 @@ describe("resolveReplyDirectives", () => {
 
   it("does not re-enable model reasoning when per-agent thinking default disables thinking", async () => {
     const { result, resolveDefaultReasoningLevel } = await resolveHelloWithModelDefaults({
-      defaultThinking: "off",
-      defaultReasoning: "on",
       agentEntries: [{ id: "main", thinkingDefault: "off" }],
     });
 
@@ -830,8 +803,6 @@ describe("resolveReplyDirectives", () => {
 
   it("does not re-enable model reasoning when per-model thinking config disables thinking", async () => {
     const { result, resolveDefaultReasoningLevel } = await resolveHelloWithModelDefaults({
-      defaultThinking: "off",
-      defaultReasoning: "on",
       hasConfiguredThinkingDefault: true,
     });
 
@@ -845,7 +816,6 @@ describe("resolveReplyDirectives", () => {
   it("skips the model reasoning default when thinking is active", async () => {
     const { result, resolveDefaultReasoningLevel } = await resolveHelloWithModelDefaults({
       defaultThinking: "low",
-      defaultReasoning: "on",
     });
 
     await expectContinueResult(result, {
@@ -857,8 +827,6 @@ describe("resolveReplyDirectives", () => {
 
   it("does not re-enable model reasoning when agentCfg reasoningDefault is explicitly off", async () => {
     const { result, resolveDefaultReasoningLevel } = await resolveHelloWithModelDefaults({
-      defaultThinking: "off",
-      defaultReasoning: "on",
       agentCfg: { reasoningDefault: "off" },
     });
 
@@ -871,8 +839,6 @@ describe("resolveReplyDirectives", () => {
 
   it("does not expose configured reasoning defaults to untrusted senders", async () => {
     const { result, resolveDefaultReasoningLevel } = await resolveHelloWithModelDefaults({
-      defaultThinking: "off",
-      defaultReasoning: "on",
       agentCfg: { reasoningDefault: "stream" },
     });
 
@@ -885,8 +851,6 @@ describe("resolveReplyDirectives", () => {
   it("ignores inline reasoning directives from untrusted senders", async () => {
     const { result, resolveDefaultReasoningLevel } = await resolveHelloWithModelDefaults({
       body: "/reasoning stream",
-      defaultThinking: "off",
-      defaultReasoning: "on",
     });
 
     await expectContinueResult(result, {
@@ -897,8 +861,6 @@ describe("resolveReplyDirectives", () => {
 
   it("does not expose session reasoning state to untrusted senders", async () => {
     const { result, resolveDefaultReasoningLevel } = await resolveHelloWithModelDefaults({
-      defaultThinking: "off",
-      defaultReasoning: "on",
       sessionEntry: makeSessionEntry({ reasoningLevel: "stream" }),
     });
 
@@ -910,8 +872,6 @@ describe("resolveReplyDirectives", () => {
 
   it("allows session reasoning state for authorized senders", async () => {
     const { result, resolveDefaultReasoningLevel } = await resolveHelloWithModelDefaults({
-      defaultThinking: "off",
-      defaultReasoning: "on",
       sessionEntry: makeSessionEntry({ reasoningLevel: "stream" }),
       commandAuthorized: true,
     });
@@ -924,8 +884,6 @@ describe("resolveReplyDirectives", () => {
 
   it("allows configured reasoning defaults for operator gateway clients", async () => {
     const { result, resolveDefaultReasoningLevel } = await resolveHelloWithModelDefaults({
-      defaultThinking: "off",
-      defaultReasoning: "on",
       agentCfg: { reasoningDefault: "stream" },
       ctx: { GatewayClientScopes: ["operator.admin"] },
     });
@@ -938,8 +896,6 @@ describe("resolveReplyDirectives", () => {
 
   it("allows configured reasoning defaults for authorized senders", async () => {
     const { result, resolveDefaultReasoningLevel } = await resolveHelloWithModelDefaults({
-      defaultThinking: "off",
-      defaultReasoning: "on",
       agentCfg: { reasoningDefault: "stream" },
       commandAuthorized: true,
     });
@@ -995,6 +951,7 @@ describe("resolveReplyDirectives", () => {
       isGroup: false,
       triggerBodyNormalized: "new session",
       resetTriggered: true,
+      isNewSession: false,
       commandAuthorized: true,
       defaultProvider: "openai",
       defaultModel: "gpt-4o-mini",
@@ -1018,8 +975,6 @@ describe("resolveReplyDirectives", () => {
   it("preserves prompt-facing context for transcript-backed text", async () => {
     const agentText = "trusted provenance\n\nhello";
     const { result } = await resolveHelloWithModelDefaults({
-      defaultThinking: "off",
-      defaultReasoning: "on",
       body: "hello",
       sessionCtx: { commandText: "hello", agentText, rawText: "hello" },
     });
@@ -1061,6 +1016,7 @@ describe("resolveReplyDirectives", () => {
       isGroup: false,
       triggerBodyNormalized: "new session",
       resetTriggered: true,
+      isNewSession: false,
       commandAuthorized: true,
       defaultProvider: "openai",
       defaultModel: "gpt-4o-mini",
@@ -1076,8 +1032,6 @@ describe("resolveReplyDirectives", () => {
 
   it("does not apply or remove directives when the command projection is explicitly empty", async () => {
     const { result } = await resolveHelloWithModelDefaults({
-      defaultThinking: "off",
-      defaultReasoning: "on",
       body: "/trace on",
       commandAuthorized: true,
       sessionCtx: {
@@ -1103,8 +1057,6 @@ describe("resolveReplyDirectives", () => {
       "Owner: hello /status",
     ].join("\n");
     const { result } = await resolveHelloWithModelDefaults({
-      defaultThinking: "off",
-      defaultReasoning: "on",
       body: "hello",
       commandAuthorized: true,
       sessionCtx: {

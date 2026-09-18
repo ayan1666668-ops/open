@@ -40,14 +40,18 @@ export function importLegacyAcpSessionMetadata(
         return "current";
       }
       const coreTarget = params.readVerifiedCoreImport(database.db, params.agentId);
-      if (!coreTarget) return "deferred";
+      if (!coreTarget) {
+        return "deferred";
+      }
       const { entry: canonical, sources } = readLegacyAcpMigrationContext({
         agentId: params.agentId,
         storePath: coreTarget.sqlitePath,
         sessionKey,
         env: params.env,
       });
-      if (!canonical) return "deferred";
+      if (!canonical) {
+        return "deferred";
+      }
       const imported =
         legacyAcpMigrationBindingMatches(source, canonical) &&
         !selectAcpSessionRowForStoreEntry(

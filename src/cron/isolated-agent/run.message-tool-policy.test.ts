@@ -5,6 +5,7 @@ import { createAgentLifecycleTerminalBackstop } from "../../auto-reply/reply/age
 import { getAgentEventLifecycleGeneration } from "../../infra/agent-events.js";
 import { createSourceDeliveryPlan } from "../../infra/outbound/source-delivery-plan.js";
 import type { SkillSnapshot } from "../../skills/types.js";
+import { acceptedModelSelection } from "../../test-utils/session-execution-selection.js";
 import { applyJobPatch } from "../service/jobs.js";
 import type { CronDeliveryMode } from "../types.js";
 import type { MutableCronSession } from "./run-session-state.js";
@@ -241,7 +242,7 @@ describe("runCronIsolatedAgentTurn message tool policy", () => {
   function mockCliAnnounceRun() {
     mockRunCronFallbackPassthrough();
     resolveCronDeliveryPlanMock.mockReturnValue(makeAnnounceDeliveryPlan());
-    resolveEffectiveAgentRuntimeMock.mockReturnValue("claude-cli");
+    resolveEffectiveAgentRuntimeMock.mockReturnValue("test-cli");
     runCliAgentMock.mockResolvedValue({
       payloads: [{ text: "done" }],
       meta: { agentMeta: { usage: { input: 10, output: 20 } } },
@@ -363,15 +364,11 @@ describe("runCronIsolatedAgentTurn message tool policy", () => {
 
   function createMessageToolExecutor(overrides: Record<string, unknown>) {
     const cronSession = makeCronSession();
-    const selection = {
-      model: { provider: "openai", id: "gpt-5.4" },
-      executor: { kind: "harness", id: "openclaw" },
-    } as const;
-    cronSession.sessionEntry.executionSelection = {
-      state: "accepted",
-      selection,
+    const accepted = acceptedModelSelection("openai", "gpt-5.4", {
       fallbackPermission: "configured",
-    };
+    });
+    cronSession.sessionEntry.executionSelection = accepted;
+    const { selection } = accepted;
     loadSessionEntryMock.mockImplementation((storePath: string, sessionKey: string) =>
       storePath === cronSession.storePath && sessionKey === "cron:message-tool-policy"
         ? cronSession.sessionEntry
@@ -1761,12 +1758,7 @@ describe("runCronIsolatedAgentTurn delivery instruction", () => {
 
   it("keeps default announce guidance aligned with the embedded toolset", async () => {
     mockRunCronFallbackPassthrough();
-    resolveCronDeliveryPlanMock.mockReturnValue({
-      requested: true,
-      mode: "announce",
-      channel: "messagechat",
-      to: "123",
-    });
+    resolveCronDeliveryPlanMock.mockReturnValue(makeAnnounceDeliveryPlan());
 
     await runCronIsolatedAgentTurn(makeParams());
 
@@ -1819,12 +1811,7 @@ describe("runCronIsolatedAgentTurn delivery instruction", () => {
 
   it("wraps injection-shaped delivery targets as untrusted prompt data", async () => {
     mockRunCronFallbackPassthrough();
-    resolveCronDeliveryPlanMock.mockReturnValue({
-      requested: true,
-      mode: "announce",
-      channel: "messagechat",
-      to: "123",
-    });
+    resolveCronDeliveryPlanMock.mockReturnValue(makeAnnounceDeliveryPlan());
     resolveDeliveryTargetMock.mockResolvedValue({
       ok: true,
       channel: "messagechat",
@@ -1991,12 +1978,7 @@ describe("runCronIsolatedAgentTurn delivery instruction", () => {
     // "summary" caused LLMs to condense structured output and drop fields
     // non-deterministically on every run.
     mockRunCronFallbackPassthrough();
-    resolveCronDeliveryPlanMock.mockReturnValue({
-      requested: true,
-      mode: "announce",
-      channel: "messagechat",
-      to: "123",
-    });
+    resolveCronDeliveryPlanMock.mockReturnValue(makeAnnounceDeliveryPlan());
 
     await runCronIsolatedAgentTurn(makeParams());
 

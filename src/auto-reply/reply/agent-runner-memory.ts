@@ -23,7 +23,7 @@ import { resolveContextConfigProviderForRuntime } from "../../agents/openai-rout
 import type { AgentMessage } from "../../agents/runtime/index.js";
 import { resolveSandboxConfigForAgent, resolveSandboxRuntimeStatus } from "../../agents/sandbox.js";
 import { createSessionMaintenanceFollowup } from "../../agents/session-maintenance/run.js";
-import { resolvePersistedSessionRuntimeId } from "../../agents/session-runtime-compat.js";
+import { resolveAcceptedSessionRuntimeId } from "../../agents/session-runtime-compat.js";
 import type { CompactionRequestBudget } from "../../agents/sessions/compaction/request-budget.js";
 import {
   deriveContextPromptTokens,
@@ -71,6 +71,7 @@ import { createLazyImportLoader } from "../../shared/lazy-promise.js";
 import { formatTokenCount } from "../../utils/token-format.js";
 import type { VerboseLevel } from "../thinking.js";
 import type { GetReplyOptions, ReplyPayload } from "../types.js";
+import { resolveRunAuthProfile } from "./agent-runner-auth-profile.js";
 import {
   buildEmbeddedRunExecutionParams,
   resolveModelFallbackOptions,
@@ -676,7 +677,9 @@ export async function runSessionCompactionIfNeeded(params: {
     params.sessionEntry ??
     (params.sessionKey ? params.sessionStore?.[params.sessionKey] : undefined);
   const selection = params.followupRun.run.executionSelection;
-  if (!isModelExecutionSelection(selection)) return entry ?? params.sessionEntry;
+  if (!isModelExecutionSelection(selection)) {
+    return entry ?? params.sessionEntry;
+  }
   if (!entry?.sessionId) {
     return entry ?? params.sessionEntry;
   }
@@ -687,7 +690,9 @@ export async function runSessionCompactionIfNeeded(params: {
     selection.executor.kind === "cli" ||
     (params.agentHarnessId !== undefined &&
       resolveExecutionSelectionExecutorKind(params.cfg, runtimeId) === "cli");
-  if (isCli) return entry ?? params.sessionEntry;
+  if (isCli) {
+    return entry ?? params.sessionEntry;
+  }
   const isCodexRuntime = normalizeLowercaseStringOrEmpty(runtimeId) === "codex";
 
   const compactionSessionKey = params.sessionKey ?? params.followupRun.run.sessionKey;
@@ -1027,7 +1032,7 @@ export async function runSessionCompactionIfNeeded(params: {
           params.agentHarnessId ??
           (entry.sessionId === params.followupRun.run.sessionId
             ? entry.modelSelectionLocked === true
-              ? resolvePersistedSessionRuntimeId(entry)
+              ? resolveAcceptedSessionRuntimeId(entry)
               : runtimeId
             : undefined),
         modelSelectionLocked: entry.modelSelectionLocked === true,
@@ -1238,8 +1243,9 @@ export async function runMemoryFlushIfNeeded(params: {
     params.sessionEntry ??
     (params.sessionKey ? params.sessionStore?.[params.sessionKey] : undefined);
   const executionSelection = params.followupRun.run.executionSelection;
-  if (!isModelExecutionSelection(executionSelection))
+  if (!isModelExecutionSelection(executionSelection)) {
     return { sessionEntry: entry, outcome: "skipped" };
+  }
   if (entry?.incognito === true || isIncognitoSessionKey(params.sessionKey)) {
     return { sessionEntry: entry, outcome: "skipped" };
   }
@@ -1663,6 +1669,7 @@ export async function runMemoryFlushIfNeeded(params: {
           await buildEmbeddedRunExecutionParams({
             run: {
               ...maintenanceRun,
+              ...resolveRunAuthProfile(maintenanceRun, provider, { config: params.cfg }),
               executionSelection: candidate,
               thinkLevel: candidateThinkLevel,
             },

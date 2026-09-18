@@ -1,12 +1,10 @@
 // Session creation, initial turns, and managed-worktree provisioning.
 import { randomUUID } from "node:crypto";
-import path from "node:path";
 import { expectDefined } from "@openclaw/normalization-core";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import {
   ErrorCodes,
   errorShape,
-  missingScopeErrorShape,
   validateSessionsCreateParams,
 } from "../../../packages/gateway-protocol/src/index.js";
 import { resolveAgentWorkspaceDir } from "../../agents/agent-scope.js";
@@ -15,12 +13,6 @@ import { resolveAgentMainSessionKey } from "../../config/sessions/main-session.j
 import { sessionEntryForkedFromParent } from "../../config/sessions/session-entry-lineage.js";
 import type { InternalSessionEntry } from "../../config/sessions/types.js";
 import { formatErrorMessage } from "../../infra/errors.js";
-import {
-  ProjectCheckoutError,
-  resolveProjectCheckout,
-  resolveProjectDirectory,
-  resolveProjectRegistry,
-} from "../../projects/project-registry.js";
 import { normalizeAgentId, parseAgentSessionKey } from "../../routing/session-key.js";
 import { assertPreparedSkillLibrarySelection } from "../../skills/library/selection.js";
 import {
@@ -33,6 +25,7 @@ import { ModelAccountConnectAuthorityError } from "../model-account-connect.js";
 import { resolveSessionCreateCatalogSelectionError } from "../session-create-model-selection.js";
 import { buildDashboardSessionKey, createGatewaySession } from "../session-create-service.js";
 import type { PreparedGatewaySessionLifecycle } from "../session-lifecycle-preparation.js";
+import { SessionMutationAuthorizationChangedError } from "../session-mutation-authorization-error.js";
 import { resolveRequestedSessionAgentId as resolveRequestedGlobalAgentId } from "../session-request-agent.js";
 import {
   loadGatewaySessionEntryReadOnly,
@@ -57,6 +50,8 @@ import {
   resolveSessionCreateInitialTurn,
   isFreshChatSendStarted,
 } from "./session-create-initial-turn.js";
+import { authorizeSessionCreatePathAccess } from "./session-create-path-access.js";
+import { resolveSessionCreateProjectRoot } from "./session-create-project-root.js";
 import {
   normalizeSessionProjectGitUrl,
   prepareSessionRepositoryWorkspace,
@@ -73,7 +68,6 @@ import { sessionLog } from "./sessions-shared.js";
 import type { GatewayRequestHandlers } from "./types.js";
 import { prepareSessionModelAccountAccess } from "./users-model-account-access.js";
 import { assertValidParams } from "./validation.js";
-import { resolveWorkspacePathContainment } from "./workspace-path-containment.js";
 
 export const sessionCreateHandlers: GatewayRequestHandlers = {
   "sessions.create": async ({
@@ -262,45 +256,20 @@ export const sessionCreateHandlers: GatewayRequestHandlers = {
       respond(false, undefined, projectPreparationError);
       return;
     }
-    // Agent tools expand `~` before RPC; the Gateway contract stays absolute-only.
-    // Remote nodes may use Windows paths; local cwd must match the Gateway host.
-    const cwdIsAbsolute =
-      !requestedCwd ||
-      (requestedExecNode
-        ? path.isAbsolute(requestedCwd) || path.win32.isAbsolute(requestedCwd)
-        : path.isAbsolute(requestedCwd));
-    if (!cwdIsAbsolute) {
-      respond(
-        false,
-        undefined,
-        errorShape(ErrorCodes.INVALID_REQUEST, "sessions.create cwd must be absolute"),
-      );
-      return;
-    }
     const clientScopes = Array.isArray(client?.connect?.scopes) ? client.connect.scopes : [];
-    if (p.permissionMode === "full" && client !== null && !clientScopes.includes(ADMIN_SCOPE)) {
-      respond(
-        false,
-        undefined,
-        missingScopeErrorShape({ missingScope: ADMIN_SCOPE, requiredScopes: [ADMIN_SCOPE] }),
-      );
+    const pathAccess = await authorizeSessionCreatePathAccess({
+      cfg,
+      cwd: requestedCwd,
+      execNode: requestedExecNode,
+      permissionMode: p.permissionMode,
+      clientScopes,
+      trustedCaller: client === null,
+    });
+    if (!pathAccess.ok) {
+      respond(false, undefined, pathAccess.error);
       return;
     }
-    if (requestedCwd && !requestedExecNode && !clientScopes.includes(ADMIN_SCOPE)) {
-      const containment = await resolveWorkspacePathContainment(requestedCwd, cfg);
-      if (!containment) {
-        respond(
-          false,
-          undefined,
-          missingScopeErrorShape({
-            missingScope: ADMIN_SCOPE,
-            requiredScopes: [ADMIN_SCOPE],
-          }),
-        );
-        return;
-      }
-      requestedCwd = containment.path;
-    }
+    requestedCwd = pathAccess.value;
     const worktreeBaseRef = normalizeOptionalString(p.worktreeBaseRef);
     const requestedWorktreeName = normalizeOptionalString(p.worktreeName);
     const explicitSessionLabel = normalizeOptionalString(p.label);
@@ -324,35 +293,12 @@ export const sessionCreateHandlers: GatewayRequestHandlers = {
       p.worktree === true && !emptyWorkspace && hasInitialTurn && !existingTargetEntry;
     let projectRoot: string | undefined;
     if (requestedProjectId) {
-      const project = resolveProjectRegistry(cfg, requestedProjectId);
-      if (!project) {
-        respond(
-          false,
-          undefined,
-          errorShape(ErrorCodes.INVALID_REQUEST, `unknown project id: ${requestedProjectId}`),
-        );
+      const project = await resolveSessionCreateProjectRoot(cfg, requestedProjectId, p.worktree);
+      if (!project.ok) {
+        respond(false, undefined, project.error);
         return;
       }
-      try {
-        const checkout =
-          p.worktree === true ? await resolveProjectCheckout(project.repoRoot) : undefined;
-        projectRoot = checkout?.path ?? (await resolveProjectDirectory(project.repoRoot));
-        if (checkout && project.source !== "workspace" && checkout.path !== checkout.repoRoot) {
-          throw new ProjectCheckoutError(`project root is no longer a git checkout`);
-        }
-      } catch (error) {
-        const detail =
-          error instanceof ProjectCheckoutError ? error.message : formatErrorMessage(error);
-        respond(
-          false,
-          undefined,
-          errorShape(
-            ErrorCodes.UNAVAILABLE,
-            `project ${requestedProjectId} is unavailable (${detail}); update the agent workspace path or re-register the project`,
-          ),
-        );
-        return;
-      }
+      projectRoot = project.value;
     }
     let sessionAgentId = catalogAgentId ?? explicitlyRequestedAgent.agentId;
     if (repository) {
@@ -502,10 +448,9 @@ export const sessionCreateHandlers: GatewayRequestHandlers = {
                             lifecycleTarget.titleModelSelection?.authProfileOverride,
                         }
                       : lifecycleTarget.entry,
-                  executionSelection:
-                    requestedModel && !personalModelSelection
-                      ? lifecycleTarget.titleModelSelection?.executionSelection
-                      : undefined,
+                  executionSelection: requestedModel
+                    ? lifecycleTarget.titleModelSelection?.executionSelection
+                    : undefined,
                   sessionId: lifecycleTarget.entry.sessionId,
                   sessionKey: lifecycleTarget.key,
                   storePath: lifecycleTarget.storePath,
@@ -514,7 +459,9 @@ export const sessionCreateHandlers: GatewayRequestHandlers = {
                   commitGuard: () => {
                     commitGuard?.();
                     const error = lifecycleTarget.titleModelSelection?.validate();
-                    if (error) throw new Error(error);
+                    if (error) {
+                      throw new Error(error);
+                    }
                   },
                   onError: (error) =>
                     sessionLog.warn(`worktree title failed: ${formatErrorMessage(error)}`),
@@ -660,6 +607,10 @@ export const sessionCreateHandlers: GatewayRequestHandlers = {
         });
       },
     }).catch((error: unknown) => {
+      if (error instanceof SessionMutationAuthorizationChangedError) {
+        respond(false, undefined, error.error);
+        return undefined;
+      }
       if (error instanceof ModelAccountConnectAuthorityError) {
         respond(false, undefined, errorShape(ErrorCodes.FORBIDDEN, error.message));
         return undefined;

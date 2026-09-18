@@ -1,13 +1,16 @@
 import { isDeepStrictEqual } from "node:util";
+import { resolveAgentDir } from "../agents/agent-scope.js";
+import { prepareSessionAuthSelection } from "../agents/auth-profiles/session-override.js";
 import { resolveModelCandidateChain } from "../agents/model-fallback-candidates.js";
 import { evaluatePublishedModelRuntimeChoice } from "../agents/model-runtime-choice.js";
 import { resolveDefaultModelForAgent } from "../agents/model-selection.js";
 import { createModelVisibilityPolicy } from "../agents/model-visibility-policy.js";
-import { resolveEffectiveAgentRuntime } from "../agents/thinking-runtime.js";
+import { resolveEffectiveAgentRuntimeCore } from "../agents/thinking-runtime.js";
 import { loadSessionEntryReadOnly } from "../config/sessions/session-accessor.js";
 import type { InternalSessionEntry } from "../config/sessions/types.js";
 import { resolveSessionWorkerPlacementContext } from "../gateway/session-worker-placement-context.js";
 import { resolveWorkerPlacementCapabilities } from "../gateway/worker-environments/placement-capabilities.js";
+import { resolveSessionPinnedHarnessId } from "../sessions/agent-harness-session-key.js";
 import { MODEL_SELECTION_LOCKED_MESSAGE } from "../sessions/model-overrides.js";
 import { resolveStoredModelOverrideCore } from "../sessions/stored-model-overrides.js";
 import {
@@ -29,11 +32,16 @@ import {
   type PrepareSessionExecutionSelectionParams,
 } from "./execution-selection.js";
 
-/** Prepare one accepted pair or one turn-local pair; persistence is an explicit later operation. */
-export async function prepareSessionExecutionSelection(
+export type CompactionPreparation = {
+  selection: ModelExecutionSelection;
+  expected: Pick<InternalSessionEntry, "sessionId" | "lifecycleRevision" | "activeWriterRunId">;
+};
+
+export async function prepareSelection(
   params: PrepareSessionExecutionSelectionParams,
+  compaction?: CompactionPreparation,
 ): Promise<PreparedSessionExecutionSelection> {
-  const sessionSnapshot = params.sessionEntry ? { ...params.sessionEntry } : undefined;
+  const sessionSnapshot = params.sessionEntry ? structuredClone(params.sessionEntry) : undefined;
   const configured = resolveDefaultModelForAgent({
     cfg: params.cfg,
     agentId: params.agentId,
@@ -47,9 +55,9 @@ export async function prepareSessionExecutionSelection(
     model: ModelExecutionSelection["model"],
   ): ModelExecutionSelection | undefined => {
     const entry = catalog.find(
-      (entry) => entry.provider === model.provider && entry.id === model.id,
+      (candidate) => candidate.provider === model.provider && candidate.id === model.id,
     );
-    const id = resolveEffectiveAgentRuntime({
+    const id = resolveEffectiveAgentRuntimeCore({
       cfg: params.cfg,
       agentScope: { kind: "prepared", agentId: params.agentId },
       sessionKey: params.sessionKey,
@@ -81,11 +89,15 @@ export async function prepareSessionExecutionSelection(
           },
         })
       : null;
-  const fallbackPermission = inheritedModel
-    ? parentRead?.entry?.executionSelection?.fallbackPermission
-    : undefined;
+  const fallbackPermission = stored?.legacyRequest
+    ? stored.fallbackPermission
+    : inheritedModel
+      ? parentRead?.entry?.executionSelection?.fallbackPermission
+      : undefined;
   const validateParent = () => {
-    if (!parentRead) return undefined;
+    if (!parentRead) {
+      return undefined;
+    }
     const current = loadParent(parentRead.sessionKey);
     return current?.sessionId !== parentRead.entry?.sessionId ||
       current?.lifecycleRevision !== parentRead.entry?.lifecycleRevision ||
@@ -166,29 +178,24 @@ export async function prepareSessionExecutionSelection(
     selection = params.request.selection;
     reason = params.request.kind === "fallback" ? "model" : "explicit";
   } else if (params.request.kind === "reset") {
+    const resetModel = params.request.model
+      ? params.request.model.provider
+        ? { provider: params.request.model.provider, id: params.request.model.id }
+        : undefined
+      : { provider: configured.provider, id: configured.model };
     selection =
       initial && isAcpExecutionSelection(initial)
         ? {
             ...initial,
             model: params.request.model ? { id: params.request.model.id } : "native-managed",
           }
-        : params.request.model
-          ? params.request.model.provider
-            ? chooseConfigured({
-                provider: params.request.model.provider,
-                id: params.request.model.id,
-              })
-            : undefined
-          : chooseConfigured({ provider: configured.provider, id: configured.model });
+        : resetModel
+          ? params.request.executor
+            ? { model: resetModel, executor: params.request.executor }
+            : chooseConfigured(resetModel)
+          : undefined;
     reason = "reset";
   } else {
-    if (initial && isAcpExecutionSelection(initial) && params.request.executor) {
-      return {
-        status: "rejected",
-        reason: "unsupported",
-        message: "Changing apps requires a new conversation.",
-      };
-    }
     const requestedModel = params.request.model.provider
       ? { provider: params.request.model.provider, id: params.request.model.id }
       : undefined;
@@ -206,39 +213,57 @@ export async function prepareSessionExecutionSelection(
           : undefined;
     reason = params.request.executor ? "explicit" : before ? "model" : "initialized";
   }
-  const unknown = (): PreparedSessionExecutionSelection => ({
+  const unknown = (message?: string): PreparedSessionExecutionSelection => ({
     status: "rejected",
     reason: "unknown",
-    message: `Could not confirm support for ${selection ? selectionDisplayNames(selection, catalog).model : "the selected model"}. Your selection is unchanged.`,
+    message:
+      message ??
+      `Could not confirm support for ${selection ? selectionDisplayNames(selection, catalog).model : "the selected model"}. Your selection is unchanged.`,
   });
   if (!selection) {
     return unknown();
   }
-  const lockedSelection = before ?? (pinned ? initial : undefined);
+  const acpOwner =
+    before && isAcpExecutionSelection(before)
+      ? before
+      : initial && isAcpExecutionSelection(initial)
+        ? initial
+        : undefined;
+  if (
+    acpOwner &&
+    (((params.request.kind === "model" || params.request.kind === "reset") &&
+      params.request.executor) ||
+      !isDeepStrictEqual(acpOwner.executor, selection.executor))
+  ) {
+    return {
+      status: "rejected",
+      reason: "unsupported",
+      message: "Changing apps requires a new conversation.",
+    };
+  }
+  const lockedSelection =
+    before ??
+    (pinned || (deferred?.model && deferred.model !== "native-managed") ? initial : undefined);
   if (params.sessionEntry?.modelSelectionLocked && !isDeepStrictEqual(lockedSelection, selection)) {
     return { status: "rejected", reason: "locked", message: MODEL_SELECTION_LOCKED_MESSAGE };
   }
   const fallbackRequest = params.request.kind === "fallback" ? params.request : undefined;
-  const explicitFallbackModels =
-    fallbackRequest?.explicitModels === undefined
-      ? undefined
-      : resolveModelCandidateChain({
-          cfg: params.cfg,
-          agentId: params.agentId,
-          provider:
-            before && isModelExecutionSelection(before)
-              ? before.model.provider
-              : fallbackRequest.selection.model.provider,
-          model:
-            before && isModelExecutionSelection(before)
-              ? before.model.id
-              : fallbackRequest.selection.model.id,
-          requestedRouteResolution: "resolved",
-          fallbacksOverride: fallbackRequest.explicitModels,
-        }).map(({ provider, model }) => ({ provider, id: model }));
-  const validateFallback = () => {
-    if (!fallbackRequest) return undefined;
-    const current = params.readSessionEntry
+  let explicitFallbackModels: ModelExecutionSelection["model"][] | undefined;
+  if (fallbackRequest?.explicitModels !== undefined) {
+    const primary =
+      fallbackRequest.userSelection ??
+      (before && isModelExecutionSelection(before) ? before : fallbackRequest.selection);
+    explicitFallbackModels = resolveModelCandidateChain({
+      cfg: params.cfg,
+      agentId: params.agentId,
+      provider: primary.model.provider,
+      model: primary.model.id,
+      requestedRouteResolution: "resolved",
+      fallbacksOverride: fallbackRequest.explicitModels,
+    }).map(({ provider, model }) => ({ provider, id: model }));
+  }
+  const readCurrentEntry = () =>
+    params.readSessionEntry
       ? params.readSessionEntry()
       : params.sessionKey
         ? loadSessionEntryReadOnly({
@@ -247,26 +272,45 @@ export async function prepareSessionExecutionSelection(
             storePath: params.storePath,
           })
         : params.sessionEntry;
+  const validateFallback = (current: Partial<InternalSessionEntry> | undefined) => {
+    if (!fallbackRequest && !compaction) {
+      return undefined;
+    }
+    const expected = compaction?.expected ?? sessionSnapshot;
     if (
       sessionSnapshot &&
       (!current ||
-        current.sessionId !== sessionSnapshot.sessionId ||
-        current.lifecycleRevision !== sessionSnapshot.lifecycleRevision ||
-        executionSelectionTransactionChanged(sessionSnapshot, current))
+        current.sessionId !== expected?.sessionId ||
+        current.lifecycleRevision !== expected?.lifecycleRevision ||
+        executionSelectionTransactionChanged(sessionSnapshot, current) ||
+        (compaction &&
+          (current.activeWriterRunId !== expected?.activeWriterRunId ||
+            current.modelSelectionLocked !== sessionSnapshot.modelSelectionLocked ||
+            current.pluginOwnerId !== sessionSnapshot.pluginOwnerId ||
+            resolveSessionPinnedHarnessId(current) !==
+              resolveSessionPinnedHarnessId(sessionSnapshot))))
     ) {
       return "The session selection changed. Retry the turn.";
+    }
+    if (!fallbackRequest) {
+      return undefined;
     }
     const admitted = admitSessionExecutionFallback({
       entry: current,
       candidate: fallbackRequest.selection,
       explicitModels: explicitFallbackModels,
+      userSelection: fallbackRequest.userSelection,
     });
     return admitted.status === "rejected"
       ? "This session does not permit that model fallback."
       : undefined;
   };
-  const fallbackError = validateFallback();
-  if (fallbackError) return { status: "rejected", reason: "not-allowed", message: fallbackError };
+  const fallbackError = validateFallback(
+    fallbackRequest || compaction ? readCurrentEntry() : undefined,
+  );
+  if (fallbackError) {
+    return { status: "rejected", reason: "not-allowed", message: fallbackError };
+  }
   const validatePlacement = (candidate: ExecutionSelection) =>
     resolveActivePlacementModelSelectionError({
       sessionId: params.sessionEntry?.sessionId,
@@ -283,12 +327,28 @@ export async function prepareSessionExecutionSelection(
       catalog: [...catalog],
       defaultProvider: configured.provider,
       defaultModel: configured,
+      // Policy refs are authored input; the accepted model identity below is already resolved.
+      allowManifestNormalization: true,
+      allowPluginNormalization: params.cfg.plugins?.enabled !== false,
+      manifestPlugins: params.manifestPlugins,
     });
+    const modelRef = { provider: selection.model.provider, model: selection.model.id };
+    const retainedInitialModel =
+      params.request.kind === "initialize" &&
+      isDeepStrictEqual(
+        policy.resolveSelection({ ...modelRef, routeResolution: "resolved" }),
+        modelRef,
+      );
     if (
+      !params.sessionEntry?.modelSelectionLocked &&
       !(params.request.kind === "reset" && !params.request.model) &&
-      params.request.kind !== "initialize" &&
+      !(
+        params.request.kind === "initialize" &&
+        (fallbackPermission ?? stored?.fallbackPermission) !== "explicit"
+      ) &&
       params.request.kind !== "fallback" &&
-      !policy.allows({ provider: selection.model.provider, model: selection.model.id })
+      !policy.allows(modelRef) &&
+      !retainedInitialModel
     ) {
       return {
         status: "rejected",
@@ -297,18 +357,84 @@ export async function prepareSessionExecutionSelection(
           "Could not change models. This model is not available for this agent. Your selection is unchanged.",
       };
     }
-    const evaluate = (pair: ModelExecutionSelection) =>
-      evaluatePublishedModelRuntimeChoice({
+    const evaluate = async (pair: ModelExecutionSelection) => {
+      const auth = params.replyAuth
+        ? await prepareSessionAuthSelection({
+            ...params.replyAuth,
+            cfg: params.cfg,
+            agentId: params.agentId,
+            agentDir: resolveAgentDir(params.cfg, params.agentId),
+            provider: pair.model.provider,
+            modelId: pair.model.id,
+            harnessRuntime: pair.executor.id,
+            sessionEntry: params.sessionEntry,
+            sessionKey: params.sessionKey,
+          })
+        : undefined;
+      const result = await evaluatePublishedModelRuntimeChoice({
         cfg: params.cfg,
         agentId: params.agentId,
-        workspaceDir: params.sessionEntry?.spawnedWorkspaceDir,
+        workspaceDir: params.workspaceDir ?? params.sessionEntry?.spawnedWorkspaceDir,
         provider: pair.model.provider,
         model: pair.model.id,
         runtimeId: pair.executor.id,
-        sessionEntry: sessionSnapshot,
+        sessionEntry: auth
+          ? {
+              ...sessionSnapshot,
+              ...auth.state,
+              ...(auth.selection
+                ? {
+                    authProfileOverride: auth.selection.profileId,
+                    authProfileOverrideSource: auth.selection.source,
+                  }
+                : {}),
+            }
+          : sessionSnapshot,
         profileProvider: params.profileProvider,
+        materialize: params.modelInput
+          ? params.request.kind === "initialize"
+            ? "automatic"
+            : "override"
+          : undefined,
       });
+      const accountError = auth?.validate(compaction ? readCurrentEntry() : params.sessionEntry);
+      if (accountError) {
+        return { kind: "forbidden" as const, message: accountError, auth };
+      }
+      return { ...result, auth };
+    };
     let evaluation = await evaluate(selection);
+    let validateCompactionSource:
+      | ((current: Partial<InternalSessionEntry> | undefined) => string | undefined)
+      | undefined;
+    if (
+      compaction &&
+      evaluation.kind === "unsupported" &&
+      evaluation.fallback?.runtime === "openclaw" &&
+      !resolveSessionPinnedHarnessId(sessionSnapshot)
+    ) {
+      const source = evaluation;
+      const fallback = evaluation.fallback;
+      const candidate: ModelExecutionSelection = {
+        model: compaction.selection.model,
+        executor: { kind: "harness", id: "openclaw" },
+      };
+      const alternative = await evaluate(candidate);
+      if (alternative.kind === "ready") {
+        if (source.auth?.selection?.profileId !== alternative.auth?.selection?.profileId) {
+          return {
+            status: "rejected",
+            reason: "not-allowed",
+            message: "Compaction cannot change this conversation's account.",
+          };
+        }
+        validateCompactionSource = (current) =>
+          fallback.validate() ?? source.auth?.validate(current);
+        selection = candidate;
+        evaluation = alternative;
+        reason = "unsupported";
+      }
+    }
     if (
       evaluation.kind === "unsupported" &&
       ((params.request.kind === "model" && !params.request.executor) ||
@@ -327,23 +453,113 @@ export async function prepareSessionExecutionSelection(
         }
       }
     }
+    if (evaluation.kind === "ready" && evaluation.ref) {
+      selection = {
+        ...selection,
+        model: { provider: evaluation.ref.provider, id: evaluation.ref.model },
+      };
+    }
+    if (compaction && !isDeepStrictEqual(selection.model, compaction.selection.model)) {
+      return {
+        status: "rejected",
+        reason: "not-allowed",
+        message: "Compaction cannot change this conversation's model.",
+      };
+    }
+    if (
+      params.modelInput &&
+      params.request.kind === "initialize" &&
+      !before &&
+      evaluation.kind !== "ready" &&
+      evaluation.kind !== "forbidden"
+    ) {
+      let usable:
+        | Extract<Awaited<ReturnType<typeof evaluate>>, { kind: "ready" | "pending" }>
+        | undefined = evaluation.kind === "pending" ? evaluation : undefined;
+      if (!usable) {
+        const candidates = resolveModelCandidateChain({
+          cfg: params.cfg,
+          agentId: params.agentId,
+          provider: selection.model.provider,
+          model: selection.model.id,
+          requestedRouteResolution: "resolved",
+          allowPluginNormalization: true,
+          manifestPlugins: params.manifestPlugins,
+          fallbacksOverride: params.modelInput.fallbacks ?? [],
+        }).slice(1);
+        for (const candidate of candidates) {
+          const pair = chooseConfigured({ provider: candidate.provider, id: candidate.model });
+          if (!pair) {
+            continue;
+          }
+          const supported = await evaluate(pair);
+          if (supported.kind === "ready" || supported.kind === "pending") {
+            usable = supported;
+            break;
+          }
+        }
+      }
+      if (usable) {
+        const support = usable;
+        const validateCommit = () => support.validate() ?? validateParent();
+        const error = validateCommit();
+        if (error) {
+          return { status: "rejected", reason: "unavailable", message: error };
+        }
+        return {
+          status: "deferred",
+          reason: evaluation.kind === "unavailable" ? "unavailable" : "unknown",
+          message: "The configured model will be prepared when this session starts.",
+          selection: {
+            state: "deferred",
+            request: { model: selection.model },
+            fallbackPermission: "configured",
+            ...(stored?.legacyRequest ? { legacyRequest: stored.legacyRequest } : {}),
+          },
+          validateCommit,
+        };
+      }
+    }
+    if (evaluation.kind === "pending") {
+      return unknown();
+    }
+    if (params.modelInput && evaluation.kind !== "ready") {
+      return {
+        status: "rejected",
+        reason: evaluation.kind === "forbidden" ? "not-allowed" : evaluation.kind,
+        message: evaluation.message,
+      };
+    }
+    if (evaluation.kind === "ready" && params.modelInput?.requiresTools && evaluation.model) {
+      const { supportsModelTools } = await import("../agents/model-tool-support.js");
+      if (!supportsModelTools(evaluation.model)) {
+        return {
+          status: "rejected",
+          reason: "unsupported",
+          message:
+            'sessions_spawn outputSchema requires a tool-capable target model; "' +
+            selection.model.provider +
+            "/" +
+            selection.model.id +
+            '" declares compat.supportsTools=false.',
+        };
+      }
+    }
     if (
       params.sessionEntry?.modelSelectionLocked &&
-      !isDeepStrictEqual(lockedSelection, selection)
+      !isDeepStrictEqual(lockedSelection, selection) &&
+      !validateCompactionSource
     ) {
       return { status: "rejected", reason: "locked", message: MODEL_SELECTION_LOCKED_MESSAGE };
     }
-    const labels = selectionDisplayNames(
-      selection,
-      evaluation.kind === "ready" ? [evaluation.entry, ...catalog] : catalog,
-    );
     if (evaluation.kind === "unknown") {
-      return unknown();
+      return unknown(evaluation.message);
     }
     if (evaluation.kind === "forbidden") {
       return { status: "rejected", reason: "not-allowed", message: evaluation.message };
     }
     if (evaluation.kind === "unsupported") {
+      const labels = selectionDisplayNames(selection, catalog);
       return {
         status: "rejected",
         reason: "unsupported",
@@ -354,7 +570,7 @@ export async function prepareSessionExecutionSelection(
       return {
         status: "rejected",
         reason: "unavailable",
-        message: `Could not change models. Sign in to ${labels.app}, then try again.`,
+        message: `Could not change models. Sign in to ${selectionDisplayNames(selection, catalog).app}, then try again.`,
       };
     }
     let message = formatExecutionSelectionAcknowledgment({
@@ -364,14 +580,20 @@ export async function prepareSessionExecutionSelection(
       catalog: evaluation.kind === "ready" ? [evaluation.entry, ...catalog] : catalog,
     });
     if (evaluation.kind === "unavailable") {
-      message += ` Sign in to ${labels.app}, then try again.`;
+      message += ` Sign in to ${selectionDisplayNames(selection, catalog).app}, then try again.`;
     }
     const accepted = selection;
-    const validateCommit = () =>
-      (evaluation.kind === "ready" ? evaluation.validate() : undefined) ??
-      validateFallback() ??
-      validateParent() ??
-      validatePlacement(accepted);
+    const validateCommit = () => {
+      const current = fallbackRequest || compaction ? readCurrentEntry() : params.sessionEntry;
+      return (
+        validateCompactionSource?.(current) ??
+        evaluation.auth?.validate(current) ??
+        evaluation.validate() ??
+        validateFallback(current) ??
+        validateParent() ??
+        validatePlacement(accepted)
+      );
+    };
     const commitError = validateCommit();
     if (commitError) {
       return { status: "rejected", reason: "not-allowed", message: commitError };
@@ -383,6 +605,7 @@ export async function prepareSessionExecutionSelection(
       reason,
       message,
       catalogEntry: evaluation.kind === "ready" ? evaluation.entry : undefined,
+      auth: evaluation.auth,
       fallbackPermission,
       validateCommit,
     };
@@ -404,7 +627,9 @@ export async function prepareSessionExecutionSelection(
         ? undefined
         : "Could not confirm this app's session ownership. Your selection is unchanged.";
     const error = validateNative();
-    if (error) return { status: "rejected", reason: "unknown", message: error };
+    if (error) {
+      return { status: "rejected", reason: "unknown", message: error };
+    }
   }
   const accepted = selection;
   return {

@@ -1,13 +1,6 @@
 // Session model override helpers normalize per-session provider model choices.
 import type { SessionEntry } from "../config/sessions/types.js";
-import { stageSessionExecutionSelection } from "../model-picker/apply-session-model-selection.js";
 import type { PublicSessionEntry } from "../model-picker/execution-selection-projection.js";
-
-type ModelOverrideSelection = {
-  provider: string;
-  model: string;
-  isDefault?: boolean;
-};
 
 export const MODEL_SELECTION_LOCKED_MESSAGE = "Model selection is locked for this session.";
 export const MODEL_SELECTION_LOCKED_RESET_MESSAGE =
@@ -37,18 +30,4 @@ export function assertModelSelectionUnlocked(
   if (isModelSelectionLocked(entry)) {
     throw new ModelSelectionLockedError(message);
   }
-}
-
-/** @deprecated Use applySessionExecutionSelection; removed in the first stable release after 2026.10. */
-export function applyModelOverrideToSessionEntry(params: {
-  entry: Parameters<typeof stageSessionExecutionSelection>[0]["entry"];
-  selection: ModelOverrideSelection;
-  profileOverride?: string;
-  profileOverrideSource?: "auto" | "user";
-  preserveAuthProfileOverride?: boolean;
-  selectionSource?: "auto" | "user";
-  explicitDefaultSelection?: boolean;
-  markLiveSwitchPending?: boolean;
-}): { updated: boolean } {
-  return stageSessionExecutionSelection(params);
 }

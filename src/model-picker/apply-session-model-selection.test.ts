@@ -115,7 +115,9 @@ beforeEach(() => {
       },
       validate: () => undefined,
     }));
-  for (const effect of Object.values(effects)) effect.mockReset();
+  for (const effect of Object.values(effects)) {
+    effect.mockReset();
+  }
   effects.getMany.mockReturnValue(new Map());
   effects.mutateConfigFileWithRetry.mockResolvedValue({ nextConfig: {}, result: "defaults" });
   lifecycleEvents = [];
@@ -153,6 +155,209 @@ describe("applySessionExecutionSelection public operation", () => {
     expect(reset).toMatchObject({ status: "applied", selection: pair(), reason: "reset" });
     expect(params.sessionEntry.executionSelection).not.toHaveProperty("legacyRequest");
   });
+
+  it.each(["accepted", "deferred"] as const)(
+    "refuses forbidden explicit %s intent before initialization",
+    async (state) => {
+      const params = createParams({
+        cfg: {
+          agents: {
+            defaults: {
+              model: "fixture/original",
+              modelPolicy: { allow: ["fixture/original"] },
+            },
+          },
+        },
+        sessionEntry: createEntry({
+          executionSelection:
+            state === "accepted"
+              ? { state, selection: pair("selected"), fallbackPermission: "explicit" }
+              : {
+                  state,
+                  request: { model: pair("selected").model },
+                  fallbackPermission: "explicit",
+                },
+        }),
+        request: { kind: "initialize" },
+      });
+      const initial = structuredClone(params.sessionEntry);
+      expect(await applySessionExecutionSelection(params)).toMatchObject({
+        status: "rejected",
+        reason: "not-allowed",
+      });
+      expect(params.sessionEntry).toEqual(initial);
+      expect(evaluatePublishedModelRuntimeChoice).not.toHaveBeenCalled();
+      expectNoEffects();
+    },
+  );
+
+  it.each([
+    { requestKind: "initialize", allow: ["fixture/visible"], admitted: true },
+    { requestKind: "initialize", allow: ["other/*"], admitted: false },
+    { requestKind: "model", allow: ["fixture/visible"], admitted: false },
+  ] as const)(
+    "retains the configured primary only for its initial exact policy: $requestKind $allow",
+    async ({ requestKind, allow, admitted }) => {
+      const params = createParams({
+        cfg: {
+          agents: {
+            defaults: {
+              model: "fixture/original",
+              modelPolicy: { allow: [...allow] },
+            },
+          },
+        },
+        sessionEntry: createEntry({
+          executionSelection: {
+            state: "deferred",
+            request: { model: pair().model },
+            fallbackPermission: "explicit",
+          },
+        }),
+        request:
+          requestKind === "initialize"
+            ? { kind: "initialize" }
+            : { kind: "model", model: pair().model },
+      });
+      const before = structuredClone(params.sessionEntry);
+      const result = await applySessionExecutionSelection(params);
+      if (admitted) {
+        expect(result).toMatchObject({ status: "applied", selection: pair() });
+        expect(params.sessionEntry.executionSelection).toMatchObject({
+          state: "accepted",
+          selection: pair(),
+          fallbackPermission: "explicit",
+        });
+      } else {
+        expect(result).toMatchObject({ status: "rejected", reason: "not-allowed" });
+        expect(params.sessionEntry).toEqual(before);
+        expect(evaluatePublishedModelRuntimeChoice).not.toHaveBeenCalled();
+        expectNoEffects();
+      }
+    },
+  );
+
+  it.each(["configured", "locked"] as const)(
+    "retains %s initialization authorization outside the manual picker",
+    async (authorization) => {
+      const params = createParams({
+        cfg: {
+          agents: {
+            defaults: {
+              model: "fixture/original",
+              modelPolicy: { allow: ["fixture/original"] },
+            },
+          },
+        },
+        sessionEntry: createEntry({
+          modelSelectionLocked: authorization === "locked",
+          executionSelection: {
+            state: "deferred",
+            request: { model: pair("selected").model },
+            fallbackPermission: authorization === "configured" ? "configured" : "explicit",
+          },
+        }),
+        request: { kind: "initialize" },
+      });
+      expect(await applySessionExecutionSelection(params)).toMatchObject({
+        status: "applied",
+        selection: pair("selected"),
+      });
+      expect(params.sessionEntry.executionSelection).toMatchObject({
+        state: "accepted",
+        selection: pair("selected"),
+      });
+    },
+  );
+
+  it.each(["configured", "explicit"] as const)(
+    "inherits the parent's %s authorization with its model",
+    async (fallbackPermission) => {
+      const storePath = path.join(
+        tempDirs.make("openclaw-selection-parent-policy-"),
+        "sessions.json",
+      );
+      const parentSessionKey = "agent:main:main";
+      const parent = createEntry({
+        executionSelection: { state: "accepted", selection: pair("selected"), fallbackPermission },
+      });
+      await replaceSessionEntry({ storePath, sessionKey: parentSessionKey }, parent);
+      const params = createParams({
+        cfg: {
+          agents: {
+            defaults: {
+              model: "fixture/original",
+              modelPolicy: { allow: ["fixture/original"] },
+            },
+          },
+        },
+        sessionKey: "agent:main:subagent:child",
+        storePath,
+        sessionEntry: createEntry({
+          sessionId: "child",
+          parentSessionKey,
+          executionSelection: {
+            state: "deferred",
+            request: { defaultSelection: "inherit" },
+            fallbackPermission: "configured",
+          },
+        }),
+        request: { kind: "initialize" },
+      });
+      await replaceSessionEntry({ storePath, sessionKey: params.sessionKey }, params.sessionEntry);
+      const initial = loadSessionEntryReadOnly({ storePath, sessionKey: params.sessionKey });
+      const result = await applySessionExecutionSelection(params);
+      if (fallbackPermission === "configured") {
+        expect(result).toMatchObject({ status: "applied", selection: pair("selected") });
+        expect(
+          loadSessionEntryReadOnly({ storePath, sessionKey: params.sessionKey })
+            ?.executionSelection,
+        ).toMatchObject({ state: "accepted", selection: pair("selected"), fallbackPermission });
+      } else {
+        expect(result).toMatchObject({ status: "rejected", reason: "not-allowed" });
+        expect(loadSessionEntryReadOnly({ storePath, sessionKey: params.sessionKey })).toEqual(
+          initial,
+        );
+        expectNoEffects();
+      }
+      expect(
+        loadSessionEntryReadOnly({ storePath, sessionKey: parentSessionKey })?.executionSelection,
+      ).toEqual(parent.executionSelection);
+    },
+  );
+
+  it.each(["model", "executor", "missing-model"] as const)(
+    "does not use deferred initialization to bypass a locked %s",
+    async (change) => {
+      const params = createParams({
+        sessionEntry: createEntry({
+          modelSelectionLocked: true,
+          executionSelection: {
+            state: "deferred",
+            request: change === "missing-model" ? {} : { model: pair().model },
+            fallbackPermission: "explicit",
+          },
+        }),
+        request:
+          change === "model"
+            ? { kind: "model", model: pair("selected").model }
+            : change === "executor"
+              ? {
+                  kind: "model",
+                  model: pair().model,
+                  executor: { kind: "harness", id: "other-app" },
+                }
+              : { kind: "initialize" },
+      });
+      const initial = structuredClone(params.sessionEntry);
+      expect(await applySessionExecutionSelection(params)).toMatchObject({
+        status: "rejected",
+        reason: "locked",
+      });
+      expect(params.sessionEntry).toEqual(initial);
+      expectNoEffects();
+    },
+  );
 
   it("retains the executor, invalidates context, and publishes the accepted pair once", async () => {
     const params = createParams({
@@ -284,12 +489,12 @@ describe("applySessionExecutionSelection public operation", () => {
         ? { status: "applied", selection: pair(), reason: "reset" }
         : { status: "rejected", reason: "not-allowed" },
     );
-    if (reset)
+    if (reset) {
       expect(params.sessionEntry.executionSelection).toMatchObject({
         selection: pair(),
         fallbackPermission: "configured",
       });
-    else {
+    } else {
       expect(params.sessionEntry).toEqual(before);
       expectNoEffects();
     }
@@ -301,6 +506,7 @@ describe("applySessionExecutionSelection public operation", () => {
       vi.mocked(evaluatePublishedModelRuntimeChoice).mockResolvedValue({
         kind,
         message: "Selection is forbidden.",
+        validate: () => undefined,
       });
       const params = createParams();
       const before = structuredClone(params.sessionEntry);
@@ -313,19 +519,27 @@ describe("applySessionExecutionSelection public operation", () => {
     },
   );
 
-  it("records a reset despite unavailable credentials without claiming readiness", async () => {
-    vi.mocked(evaluatePublishedModelRuntimeChoice).mockResolvedValue({
-      kind: "unavailable",
-      message: "Unavailable",
-    });
-    const params = createParams({ request: { kind: "reset" } });
-    expect(await applySessionExecutionSelection(params)).toMatchObject({
-      status: "applied",
-      selection: pair(),
-      message:
-        "Using the configured default: Original in OpenClaw. Sign in to OpenClaw, then try again.",
-    });
-  });
+  it.each([true, false])(
+    "records an unauthenticated reset only while its catalog is current=%s",
+    async (current) => {
+      vi.mocked(evaluatePublishedModelRuntimeChoice).mockResolvedValue({
+        kind: "unavailable",
+        message: "Unavailable",
+        validate: () => (current ? undefined : "The catalog was retired."),
+      });
+      const params = createParams({ request: { kind: "reset" } });
+      const before = structuredClone(params.sessionEntry);
+      const result = await applySessionExecutionSelection(params);
+      if (current) {
+        expect(result).toMatchObject({ status: "applied", selection: pair() });
+        expect(result.message).toMatch(/sign in/i);
+      } else {
+        expect(result.status).toBe("rejected");
+        expect(params.sessionEntry).toEqual(before);
+        expectNoEffects();
+      }
+    },
+  );
 
   it("uses the admitted route metadata outside the browse inventory for thinking and context", async () => {
     const selected: ModelCatalogEntry = {
@@ -499,8 +713,11 @@ describe("applySessionExecutionSelection public operation", () => {
                 ? { authProfileOverride: "fixture:new" }
                 : {},
       );
-      if (change === "permission") permitted = false;
-      else params.sessionStore[params.sessionKey] = concurrent;
+      if (change === "permission") {
+        permitted = false;
+      } else {
+        params.sessionStore[params.sessionKey] = concurrent;
+      }
       gate.resolve({ kind: "ready", entry: catalog[1]!, validate: () => undefined });
       expect(await pending).toMatchObject(
         change === "locked"
@@ -510,7 +727,9 @@ describe("applySessionExecutionSelection public operation", () => {
             : { status: "conflict" },
       );
       expect(params.sessionEntry).toEqual(original);
-      if (change !== "permission") expect(params.sessionStore[params.sessionKey]).toBe(concurrent);
+      if (change !== "permission") {
+        expect(params.sessionStore[params.sessionKey]).toBe(concurrent);
+      }
       expectNoEffects();
     },
   );
@@ -563,10 +782,11 @@ describe("applySessionExecutionSelection public operation", () => {
             }
           : {},
     );
-    if (guard === "placement")
+    if (guard === "placement") {
       effects.getMany.mockReturnValue(
         new Map([["session-1", { state: "active", executionMode: "remote-exec" }]]),
       );
+    }
     const initial = structuredClone(params.sessionEntry);
     expect(await applySessionExecutionSelection(params)).toMatchObject({
       status: "rejected",
@@ -609,11 +829,13 @@ describe("applySessionExecutionSelection public operation", () => {
         expect(
           await Promise.race([validated.promise.then(() => true), pending.then(() => false)]),
         ).toBe(true);
-        if (guard === "runtime") runtimeAvailable = false;
-        else
+        if (guard === "runtime") {
+          runtimeAvailable = false;
+        } else {
           effects.getMany.mockReturnValue(
             new Map([["session-1", { state: "active", executionMode: "remote-exec" }]]),
           );
+        }
       } finally {
         release.resolve();
         await writer;
@@ -663,23 +885,25 @@ describe("applySessionExecutionSelection public operation", () => {
           entries: { main: { model: "fixture/other" } },
         },
       };
-      if (fails)
+      if (fails) {
         effects.mutateConfigFileWithRetry.mockRejectedValueOnce(new Error("config write failed"));
-      else
+      } else {
         effects.mutateConfigFileWithRetry.mockImplementationOnce(
           async ({ mutate }: { mutate: (config: OpenClawConfig) => string }) => ({
             nextConfig: draft,
             result: mutate(draft),
           }),
         );
+      }
       const params = createParams({ cfg, canPersistStickyModelSelection: true });
       expect(await applySessionExecutionSelection(params)).toMatchObject({
         status: "applied",
         configuredDefaultUpdate: "requested",
       });
       expect(params.sessionEntry.executionSelection).toMatchObject({ selection: pair("selected") });
-      if (fails) await vi.waitFor(() => expect(effects.warn).toHaveBeenCalledOnce());
-      else {
+      if (fails) {
+        await vi.waitFor(() => expect(effects.warn).toHaveBeenCalledOnce());
+      } else {
         await vi.waitFor(() => expect(effects.info).toHaveBeenCalledOnce());
         expect(draft.agents?.defaults?.model).toBe("fixture/original");
         expect(draft.agents?.entries?.main?.model).toBe("fixture/selected");

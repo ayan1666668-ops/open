@@ -410,6 +410,10 @@ export async function applyInlineDirectiveOverrides(params: {
             "Could not confirm support for the selected app. Your selection is unchanged.",
           );
         }
+        const executor =
+          runtime.kind === "set" && executorKind
+            ? { kind: executorKind, id: runtime.runtime }
+            : undefined;
         const applied = await selectionOwner.applySessionExecutionSelection({
           cfg,
           agentId,
@@ -420,25 +424,18 @@ export async function applyInlineDirectiveOverrides(params: {
           currentProvider: provider,
           modelPolicy: modelState.modelPolicy,
           modelCatalog: modelState.allowedModelCatalog,
-          thinkingCatalog: modelState.allowedModelCatalog,
           canPersistStickyModelSelection,
           validateCommit: modelResolution.validateAuthProfileSelection,
           ...(stickyModelSelectionTarget ? { stickyModelSelectionTarget } : {}),
           profileOverride: modelResolution.profileOverride,
+          fallbackPermission: modelSelection.isDefault ? "configured" : "explicit",
           request: modelSelection.resetToDefault
-            ? { kind: "reset" }
-            : runtime.kind === "clear"
-              ? {
-                  kind: "reset",
-                  model: { provider: modelSelection.provider, id: modelSelection.model },
-                }
-              : {
-                  kind: "model",
-                  model: { provider: modelSelection.provider, id: modelSelection.model },
-                  ...(runtime.kind === "set" && executorKind
-                    ? { executor: { kind: executorKind, id: runtime.runtime } }
-                    : {}),
-                },
+            ? { kind: "reset", executor }
+            : {
+                kind: runtime.kind === "clear" ? "reset" : "model",
+                model: { provider: modelSelection.provider, id: modelSelection.model },
+                executor,
+              },
           patchModel: effectiveModelDirective,
           markLiveSwitchPending: true,
         });

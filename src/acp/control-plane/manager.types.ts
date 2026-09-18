@@ -22,7 +22,7 @@ import type { AcpRuntimeError } from "../runtime/errors.js";
 import { getAcpRuntimeBackend, requireAcpRuntimeBackend } from "../runtime/registry.js";
 import {
   listAcpSessionEntries,
-  readAcpSessionEntry,
+  readAcpSessionEntryCore,
   upsertAcpSessionMeta,
 } from "../runtime/session-meta.js";
 
@@ -171,7 +171,7 @@ export type TurnLatencyStats = {
 
 export type AcpSessionManagerDeps = {
   listAcpSessions: typeof listAcpSessionEntries;
-  loadSessionEntry: typeof readAcpSessionEntry;
+  loadSessionEntry: typeof readAcpSessionEntryCore;
   upsertSessionMeta: typeof upsertAcpSessionMeta;
   getRuntimeBackend: typeof getAcpRuntimeBackend;
   requireRuntimeBackend: typeof requireAcpRuntimeBackend;
@@ -240,7 +240,7 @@ export type WithManagerSessionActor = <T>(
 
 export const DEFAULT_DEPS: AcpSessionManagerDeps = {
   listAcpSessions: listAcpSessionEntries,
-  loadSessionEntry: readAcpSessionEntry,
+  loadSessionEntry: readAcpSessionEntryCore,
   upsertSessionMeta: upsertAcpSessionMeta,
   getRuntimeBackend: getAcpRuntimeBackend,
   requireRuntimeBackend: requireAcpRuntimeBackend,

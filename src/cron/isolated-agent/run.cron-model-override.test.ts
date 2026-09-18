@@ -3,6 +3,7 @@
 import { expectDefined } from "@openclaw/normalization-core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { SessionEntry } from "../../config/sessions.js";
+import { acceptedModelSelection } from "../../test-utils/session-execution-selection.js";
 import {
   clearFastTestEnv,
   runEmbeddedAgentMock,
@@ -16,6 +17,7 @@ import {
   resolveAllowedModelRefMock,
   resolveConfiguredModelRefMock,
   resolveCronSessionMock,
+  resolveHooksGmailModelMock,
   resetRunCronIsolatedAgentTurnHarness,
   resolveSessionAuthSelectionMock,
   restoreFastTestEnv,
@@ -144,7 +146,9 @@ describe("runCronIsolatedAgentTurn — cron model override (#21057)", () => {
     // previously committed row forward as existingEntry so the lifecycle claim
     // guard proves ownership across the run's successive persists.
     const persist = patchSessionEntryMock.getMockImplementation();
-    if (!persist) throw new Error("Expected the guarded session writer");
+    if (!persist) {
+      throw new Error("Expected the guarded session writer");
+    }
     patchSessionEntryMock.mockImplementation(
       async (
         ...args: Parameters<
@@ -152,8 +156,9 @@ describe("runCronIsolatedAgentTurn — cron model override (#21057)", () => {
         >
       ) => {
         const committed = await persist(...args);
-        if (committed && !args[0].sessionKey.includes(":run:"))
+        if (committed && !args[0].sessionKey.includes(":run:")) {
           persistedSnapshots.push(structuredClone(committed));
+        }
         return committed;
       },
     );
@@ -281,14 +286,7 @@ describe("runCronIsolatedAgentTurn — cron model override (#21057)", () => {
 
     // Session-level /model override set by user (e.g. via /model command)
     cronSession.sessionEntry = makeFreshSessionEntry({
-      executionSelection: {
-        state: "accepted",
-        fallbackPermission: "explicit",
-        selection: {
-          model: { provider: "anthropic", id: "claude-haiku-4-5" },
-          executor: { kind: "harness", id: "openclaw" },
-        },
-      },
+      executionSelection: acceptedModelSelection("anthropic", "claude-haiku-4-5"),
     });
     getModelRefStatusMock.mockReturnValue({ allowed: true });
     resolveCronSessionMock.mockReturnValue(cronSession);
@@ -309,6 +307,73 @@ describe("runCronIsolatedAgentTurn — cron model override (#21057)", () => {
     expect(cronSession.sessionEntry.modelProvider).toBe("anthropic");
   });
 
+  it.each(["payload", "hook", "session"] as const)(
+    "prepares only the consumed %s model while retaining deferred session intent",
+    async (source) => {
+      const executionSelection = {
+        state: "deferred",
+        request: {
+          model: { provider: "unavailable", id: "retired-model" },
+          executor: { kind: "harness", id: "codex" },
+        },
+        fallbackPermission: "explicit",
+      } satisfies SessionEntry["executionSelection"];
+      const sessionKey = "agent:default:existing-cron-session";
+      const initialEntry = makeCronSessionEntry({
+        lifecycleRevision: "previous-lifecycle-revision",
+        executionSelection,
+      });
+      cronSession = makeCronSession({
+        store: { [sessionKey]: { ...initialEntry } },
+        initialSessionEntry: initialEntry,
+        sessionEntry: { ...initialEntry, lifecycleRevision: "test-lifecycle-revision" },
+        isNewSession: false,
+      });
+      resolveCronSessionMock.mockReturnValue(cronSession);
+      loadSessionEntryMock.mockImplementation((storePath: string, requestedSessionKey: string) =>
+        storePath === cronSession.storePath && requestedSessionKey === sessionKey
+          ? cronSession.store[sessionKey]
+          : undefined,
+      );
+      getModelRefStatusMock.mockReturnValue({ allowed: true });
+      const selectedModel = { provider: "openai", model: "gpt-5.4" };
+      resolveAllowedModelRefMock.mockReturnValue({ ref: selectedModel });
+      if (source === "hook") {
+        resolveHooksGmailModelMock.mockReturnValue(selectedModel);
+      }
+      const running = runCronIsolatedAgentTurn(
+        makeParams({
+          sessionKey,
+          job: makeJob({
+            sessionTarget: `session:${sessionKey}`,
+            payload: {
+              kind: "agentTurn",
+              message: "run daily digest",
+              ...(source === "payload" ? { model: "openai/gpt-5.4" } : {}),
+              ...(source === "hook" ? { externalContentSource: "gmail" } : {}),
+            },
+          }),
+        }),
+      );
+      if (source === "session") {
+        await expect(running).rejects.toThrow("The test route is not registered");
+        expect(runEmbeddedAgentMock).not.toHaveBeenCalled();
+        expect(patchSessionEntryMock).not.toHaveBeenCalled();
+      } else {
+        const result = await running;
+        expect(result, JSON.stringify(result)).toMatchObject({ status: "ok" });
+        expect(runEmbeddedAgentMock).toHaveBeenCalledWith(
+          expect.objectContaining({
+            ...selectedModel,
+            agentHarnessRuntimeOverride: "codex",
+          }),
+        );
+      }
+      expect(cronSession.sessionEntry.executionSelection).toEqual(executionSelection);
+      expect(initialEntry.executionSelection).toEqual(executionSelection);
+    },
+  );
+
   it.each([false, true])(
     "blocks required work when pre-run persistence fails without configured roles (%s)",
     async (required) => {
@@ -327,15 +392,18 @@ describe("runCronIsolatedAgentTurn — cron model override (#21057)", () => {
       // persist is pre-existing code without a try-catch guard.
       let basePersistCount = 0;
       const persist = patchSessionEntryMock.getMockImplementation();
-      if (!persist) throw new Error("Expected the guarded session writer");
+      if (!persist) {
+        throw new Error("Expected the guarded session writer");
+      }
       patchSessionEntryMock.mockImplementation(
         async (
           ...args: Parameters<
             typeof import("../../config/sessions/session-accessor.js").patchSessionEntryCore
           >
         ) => {
-          if (!args[0].sessionKey.includes(":run:") && ++basePersistCount === 2)
+          if (!args[0].sessionKey.includes(":run:") && ++basePersistCount === 2) {
             throw new Error("ENOSPC: no space left on device");
+          }
           return persist(...args);
         },
       );

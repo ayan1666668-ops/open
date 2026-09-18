@@ -42,9 +42,14 @@ export function formatExecutionSelectionAcknowledgment(params: {
   catalog: readonly ModelCatalogEntry[];
 }): string {
   const { model, app } = selectionDisplayNames(params.selection, params.catalog);
-  if (params.reason === "reset") return `Using the configured default: ${model} in ${app}.`;
-  if (params.reason === "unsupported" && params.before)
+  if (params.reason === "reset") {
+    return `Using the configured default: ${model} in ${app}.`;
+  }
+  if (params.reason === "unsupported" && params.before) {
     return `Now using ${model} in ${app}; ${selectionDisplayNames(params.before, params.catalog).app} cannot run it.`;
-  if (params.reason === "explicit") return `Now using ${model} in ${app}.`;
+  }
+  if (params.reason === "explicit") {
+    return `Now using ${model} in ${app}.`;
+  }
   return `Model changed to ${model}. Still using ${app}.`;
 }

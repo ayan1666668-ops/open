@@ -746,16 +746,16 @@ describe("clearCliSessionInStore", () => {
       };
       const storedEntry = structuredClone(activeEntry);
       const storePath = path.join(tempDirs.make("cli-session-cleanup-"), "sessions.json");
-      await replaceSessionEntry({ storePath, sessionKey: "main" }, structuredClone(activeEntry));
+      const scope = { agentId: "ops", storePath, sessionKey: "global" };
+      await replaceSessionEntry(scope, structuredClone(activeEntry));
 
       let open = true;
       const clear = clearCliSessionInStore({
+        ...scope,
         provider: "claude-cli",
         expectedCliSessionId: "stale-session",
         expectedSessionId: activeEntry.sessionId,
-        sessionKey: "main",
-        sessionStore: { main: storedEntry },
-        storePath,
+        sessionStore: { global: storedEntry },
         activeSessionEntry: activeEntry,
         assertCommitAllowed: () => {
           if (!open) {
@@ -766,11 +766,7 @@ describe("clearCliSessionInStore", () => {
       if (owner === "closed") {
         open = false;
         await expect(clear).rejects.toThrow("owner closed");
-        for (const entry of [
-          activeEntry,
-          storedEntry,
-          loadSessionEntry({ storePath, sessionKey: "main" }),
-        ]) {
+        for (const entry of [activeEntry, storedEntry, loadSessionEntry(scope)]) {
           expect(entry?.cliSessionBindings?.["claude-cli"]?.sessionId).toBe("stale-session");
         }
         return;
@@ -783,7 +779,7 @@ describe("clearCliSessionInStore", () => {
         expect(entry.claudeCliSessionId).toBeUndefined();
         expect(entry.updatedAt).toBeGreaterThan(1);
       }
-      const persisted = loadSessionEntry({ storePath, sessionKey: "main" });
+      const persisted = loadSessionEntry(scope);
       expect(persisted?.cliSessionBindings?.["claude-cli"]).toBeUndefined();
       expect(persisted?.cliSessionIds?.["claude-cli"]).toBeUndefined();
       expect(persisted?.claudeCliSessionId).toBeUndefined();
@@ -800,6 +796,7 @@ describe("clearCliSessionInStore", () => {
     };
 
     await clearCliSessionInStore({
+      agentId: "main",
       provider: "claude-cli",
       expectedCliSessionId: "stale-session",
       activeSessionEntry: entry,

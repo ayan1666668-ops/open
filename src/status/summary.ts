@@ -222,17 +222,20 @@ async function prepareSessionStatusDetails(cfg: OpenClawConfig, now: number) {
         const model = nativeManaged
           ? resolvedModel.model || null
           : (resolvedModel.model ?? configuredSessionModel ?? null);
-        const lookupModel = nativeManaged
-          ? resolvedModel
-          : (resolveStatusModelLookupRef({
-              provider: resolvedModel.provider,
-              model,
-              defaultProvider: configuredForSession.provider ?? DEFAULT_PROVIDER,
-            }) ?? resolvedModel);
+        const opaqueModel = !nativeManaged && !resolvedModel.provider;
+        const lookupModel =
+          nativeManaged || opaqueModel
+            ? resolvedModel
+            : (resolveStatusModelLookupRef({
+                provider: resolvedModel.provider,
+                model,
+                defaultProvider: configuredForSession.provider ?? DEFAULT_PROVIDER,
+              }) ?? resolvedModel);
         const lookupModelId = lookupModel.model ?? model;
-        const modelContext = nativeManaged
-          ? undefined
-          : await resolveStaticModelContext(lookupModel.provider, lookupModelId ?? undefined);
+        const modelContext =
+          nativeManaged || opaqueModel
+            ? undefined
+            : await resolveStaticModelContext(lookupModel.provider, lookupModelId ?? undefined);
         const selectedModelLabel = nativeManaged
           ? "the app's default model"
           : resolvedModel.provider && model
@@ -243,11 +246,13 @@ async function prepareSessionStatusDetails(cfg: OpenClawConfig, now: number) {
           model: configuredSessionModel,
           defaultProvider: DEFAULT_PROVIDER,
         });
-        const selectedModelComparisonLabel = resolveStatusModelComparisonLabel({
-          provider: resolvedModel.provider,
-          model,
-          defaultProvider: configuredForSession.provider ?? DEFAULT_PROVIDER,
-        });
+        const selectedModelComparisonLabel = opaqueModel
+          ? null
+          : resolveStatusModelComparisonLabel({
+              provider: resolvedModel.provider,
+              model,
+              defaultProvider: configuredForSession.provider ?? DEFAULT_PROVIDER,
+            });
         const runtimeMatchesConfiguredModel =
           selectedModelComparisonLabel != null &&
           configuredSessionModelComparisonLabel != null &&
@@ -268,16 +273,17 @@ async function prepareSessionStatusDetails(cfg: OpenClawConfig, now: number) {
           Boolean(getSessionExecutionSelection(entry));
         // Session rows show the live selected model and warn for user-pinned
         // differences as well as runtime fallback selections (#96126).
-        const resolvedContextTokens = nativeManaged
-          ? undefined
-          : resolveContextTokensForModel({
-              cfg,
-              provider: lookupModel.provider,
-              model: lookupModelId,
-              ...modelContext,
-              fallbackContextTokens: configContextTokens ?? undefined,
-              allowAsyncLoad: false,
-            });
+        const resolvedContextTokens =
+          nativeManaged || opaqueModel
+            ? undefined
+            : resolveContextTokensForModel({
+                cfg,
+                provider: lookupModel.provider,
+                model: lookupModelId,
+                ...modelContext,
+                fallbackContextTokens: configContextTokens ?? undefined,
+                allowAsyncLoad: false,
+              });
         const runtime = resolveSessionRuntime({
           cfg,
           entry,
@@ -289,18 +295,20 @@ async function prepareSessionStatusDetails(cfg: OpenClawConfig, now: number) {
         const contextTokens =
           resolveProjectedSessionContextTokens({
             entry,
-            provider: lookupModel.provider,
+            // An ACP model ID is opaque; only its observed producer can supply context provenance.
+            provider: opaqueModel ? entry.modelProvider : lookupModel.provider,
             model: lookupModelId,
             agentHarnessId: runtime.id,
             resolvedContextTokens,
-            authoredContextTokens: nativeManaged
-              ? undefined
-              : resolveAuthoredModelContextTokens({
-                  cfg,
-                  provider: lookupModel.provider,
-                  modelProvider: contextModelProvider,
-                  model: lookupModelId,
-                }),
+            authoredContextTokens:
+              nativeManaged || opaqueModel
+                ? undefined
+                : resolveAuthoredModelContextTokens({
+                    cfg,
+                    provider: lookupModel.provider,
+                    modelProvider: contextModelProvider,
+                    model: lookupModelId,
+                  }),
           }) ?? null;
         const total = resolveSessionTotalTokens(entry);
         const freshTotal = resolveFreshSessionTotalTokens(entry);
@@ -481,11 +489,11 @@ export async function getStatusSummary(
 
   const sessionStores =
     options.sessionStores ??
-    readStatusSessionStores(
+    (await readStatusSessionStores(
       cfg,
       agentList.agents,
       includeSensitive ? STATUS_RECENT_SESSION_LIMIT : 0,
-    );
+    ));
   const byAgent = await Promise.all(
     sessionStores.byAgent.map(async ({ agent, path, count, recent }) => ({
       agentId: agent.id,

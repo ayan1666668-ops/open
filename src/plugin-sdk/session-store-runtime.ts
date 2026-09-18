@@ -39,6 +39,7 @@ import type { ResolvedSessionMaintenanceConfigInput } from "../config/sessions/s
 import type { AmbientTranscriptWatermark, InternalSessionEntry } from "../config/sessions/types.js";
 import { replaceFileAtomicSync } from "../infra/replace-file.js";
 import { resolveAgentIdFromSessionKey } from "../routing/session-key.js";
+import { resolveSendPolicyCore as resolveSessionSendPolicy } from "../sessions/send-policy.js";
 import {
   clearGenerationPrivateFieldsForRotatedSessionPatch,
   generationValidPrivateFieldsForSameSession,
@@ -661,6 +662,11 @@ export {
   resolveSessionResetType,
   resolveThreadFlag,
 } from "../config/sessions/reset.js";
-export { resolveSendPolicy } from "../sessions/send-policy.js";
+/** Released callers may pass inline full session rows to this read-only policy helper. */
+export function resolveSendPolicy(
+  params: Parameters<typeof resolveSessionSendPolicy>[0] & { entry?: SessionEntry },
+): ReturnType<typeof resolveSessionSendPolicy> {
+  return resolveSessionSendPolicy(params);
+}
 export type { SessionEntry } from "./session-store-runtime-internal.js";
 export type { SessionScope } from "../config/sessions/types.js";

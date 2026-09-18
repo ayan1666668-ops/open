@@ -241,8 +241,11 @@ export type AgentHarnessSideQuestionParams = {
   };
   question: string;
   images?: import("../../llm/types.js").ImageContent[];
-  sessionEntry: import("../../config/sessions.js").SessionEntry;
-  sessionStore?: Record<string, import("../../config/sessions.js").SessionEntry>;
+  sessionEntry: import("../../model-picker/execution-selection-projection.js").PublicSessionEntry;
+  sessionStore?: Record<
+    string,
+    import("../../model-picker/execution-selection-projection.js").PublicSessionEntry
+  >;
   sessionKey?: string;
   storePath?: string;
   resolvedThinkLevel?: import("../../auto-reply/thinking.js").ThinkLevel;

@@ -17,16 +17,12 @@ it("preserves prepared model facts and restrictive policy without foreground aut
     sessionEntry: { sessionId: "maintenance", updatedAt: 1 },
     sessionKey: "agent:main:maintenance",
     cfg: foreground.run.config,
-    provider: "test-provider",
-    model: "test-model",
+    executionSelection: foreground.run.executionSelection,
     auth: {},
   });
   const embedded = await buildEmbeddedRunBaseParams({
     run: maintenance.run,
-    provider: "test-provider",
-    model: "test-model",
     runId: "maintenance-run",
-    authProfile: {},
     isReasoningTagProvider: () => {
       throw new Error("Prepared runtime hints must not be rediscovered");
     },

@@ -86,6 +86,7 @@ export async function resolveDirectStatusReplyForSessionCore(
     provider: selectedProvider,
     model: selectedModel,
     hasModelDirective: false,
+    prepareExecution: false,
   });
   const {
     currentThinkLevel,

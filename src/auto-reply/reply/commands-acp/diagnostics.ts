@@ -3,14 +3,19 @@ import {
   normalizeLowercaseStringOrEmpty,
   normalizeOptionalString,
 } from "@openclaw/normalization-core/string-coerce";
-import { getAcpSessionManager } from "../../../acp/control-plane/manager.js";
+import { getAcpSessionManagerCore } from "../../../acp/control-plane/manager.js";
 import { formatAcpRuntimeErrorText, toAcpRuntimeError } from "../../../acp/runtime/errors.js";
 import { getAcpRuntimeBackend, requireAcpRuntimeBackend } from "../../../acp/runtime/registry.js";
-import { listAcpSessionEntries, readAcpSessionEntry } from "../../../acp/runtime/session-meta.js";
+import {
+  listAcpSessionEntries,
+  readAcpSessionEntryCore,
+} from "../../../acp/runtime/session-meta.js";
 import type { SessionEntry, SessionAcpLifecycle } from "../../../config/sessions/types.js";
 import { getSessionBindingService } from "../../../infra/outbound/session-binding-service.js";
-import { getCommittedSessionExecutionSelection } from "../../../model-picker/execution-selection.js";
-import { isAcpExecutionSelection } from "../../../model-picker/execution-selection.js";
+import {
+  getCommittedSessionExecutionSelection,
+  isAcpExecutionSelection,
+} from "../../../model-picker/execution-selection.js";
 import { commandReply } from "../command-gates.js";
 import type { CommandHandlerResult, HandleCommandsParams } from "../commands-types.js";
 import { resolveAcpCommandBindingContext } from "./context.js";
@@ -51,7 +56,7 @@ export async function handleAcpDoctorAction(
   const backendId = normalizeOptionalString(params.cfg.acp?.backend) ?? "acpx";
   const installHint = resolveAcpInstallCommandHint(params.cfg);
   const registeredBackend = getAcpRuntimeBackend(backendId);
-  const managerSnapshot = getAcpSessionManager().getObservabilitySnapshot();
+  const managerSnapshot = getAcpSessionManagerCore().getObservabilitySnapshot();
   const lines = ["ACP doctor:", "-----", `configuredBackend: ${backendId}`];
   lines.push(`activeRuntimeSessions: ${managerSnapshot.runtimeCache.activeSessions}`);
   lines.push(`runtimeIdleTtlMs: ${managerSnapshot.runtimeCache.idleTtlMs}`);
@@ -198,7 +203,7 @@ export async function handleAcpSessionsAction(
   const bindingService = getSessionBindingService();
   const currentEntry = params.command.senderIsOwner
     ? null
-    : readAcpSessionEntry({
+    : readAcpSessionEntryCore({
         cfg: params.cfg,
         sessionKey: currentSessionKey,
         agentId: target.agentId,

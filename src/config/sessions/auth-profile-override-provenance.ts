@@ -1,9 +1,20 @@
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
-import { getSessionExecutionSelection } from "../../model-picker/execution-selection.js";
-import { isModelExecutionSelection } from "../../model-picker/execution-selection.js";
+import {
+  getSessionExecutionSelection,
+  isModelExecutionSelection,
+} from "../../model-picker/execution-selection.js";
 import type { SessionEntry } from "./types.js";
 
-type ProviderLoginSessionEntry = Partial<SessionEntry>;
+type ProviderLoginSessionEntry = Partial<
+  Pick<
+    SessionEntry,
+    | "sessionId"
+    | "executionSelection"
+    | "authProfileOverride"
+    | "authProfileOverrideSource"
+    | "authProfileOverrideCompactionCount"
+  >
+>;
 
 type ProviderLoginSessionAdoption =
   | { status: "unchanged" }
@@ -118,7 +129,7 @@ export function decideProviderLoginSessionAdoption(params: {
 
 /** A persisted row proves a patch only when it carries the exact login profile we wrote. */
 export function isProviderLoginPatchPersisted(
-  persisted: ProviderLoginSessionEntry,
+  persisted: AuthProfileOverrideProvenance,
   nextProfileId: string,
 ): boolean {
   return (

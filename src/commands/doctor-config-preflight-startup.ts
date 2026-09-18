@@ -23,6 +23,7 @@ import type {
   LegacyStateMigrationStepReceipt,
   MigrationMessages,
 } from "../infra/state-migrations.types.js";
+import type { PluginMetadataSnapshotScopeRunner } from "../plugins/current-plugin-metadata-snapshot.js";
 import { withDeferredPluginDoctorMigrations } from "../plugins/doctor-contract-registry.js";
 import { setActiveDegradedPlugins } from "../plugins/runtime-degraded-state.js";
 import { ExitError } from "../runtime.js";
@@ -462,4 +463,30 @@ export function noteStateMigrationResult(
       note(result[key].map((entry) => `- ${entry}`).join("\n"), `Doctor ${key}`);
     }
   }
+}
+
+/** Schema readiness precedes the plugin-obligation writer and its durable refusal reporting. */
+export async function prepareDoctorPreflightStateSchema(params: {
+  cfg: OpenClawConfig | undefined;
+  env: NodeJS.ProcessEnv;
+  stepReceipts: LegacyStateMigrationStepReceipt[];
+  report: (result: MigrationMessages) => void;
+  measure: ConfigSnapshotReadMeasure;
+  runWithPluginMetadataSnapshot: PluginMetadataSnapshotScopeRunner;
+}): Promise<void> {
+  // Current-checkpoint/read-only preflight must not load migration runtime and plugin owners.
+  const { prepareLegacyStateDatabaseSchema } = await import("../infra/state-migrations.doctor.js");
+  const prepareSchema = () =>
+    prepareLegacyStateDatabaseSchema({ config: params.cfg, env: params.env });
+  const receipt = await params.measure("state-schema", () =>
+    params.cfg
+      ? params.runWithPluginMetadataSnapshot({ config: params.cfg }, prepareSchema)
+      : prepareSchema(),
+  );
+  if (receipt.outcome === "skipped") {
+    return;
+  }
+  params.stepReceipts.push(receipt);
+  params.report({ changes: receipt.changes, warnings: receipt.warnings, notices: receipt.notices });
+  throwIfDoctorStateMigrationRefused(params.stepReceipts);
 }

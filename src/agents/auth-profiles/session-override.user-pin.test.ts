@@ -1,6 +1,7 @@
 // Focused lifecycle coverage for explicit auth-profile pins.
 import { beforeEach, describe, expect, it } from "vitest";
 import type { SessionEntry } from "../../config/sessions/types.js";
+import { commitStoredSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
 import { createApiKeyCredential } from "./credential-fixtures.test-support.js";
 import {
   authStoreMocks,
@@ -92,10 +93,15 @@ describe("explicit auth-profile pin lifecycle", () => {
       const sessionEntry: SessionEntry = {
         sessionId: "s1",
         updatedAt: 1,
-        providerOverride: "openai",
         authProfileOverride: TEST_PRIMARY_PROFILE_ID,
         ...(source ? { authProfileOverrideSource: source } : {}),
       };
+      commitStoredSessionExecutionSelection(sessionEntry, {
+        state: "deferred",
+        request: {},
+        legacyRequest: { provider: "openai" },
+        fallbackPermission: "explicit",
+      });
       expect(await resolvePinnedSession(sessionEntry, false)).toBe(TEST_PRIMARY_PROFILE_ID);
       delete authStoreMocks.state.store.profiles[TEST_PRIMARY_PROFILE_ID];
 

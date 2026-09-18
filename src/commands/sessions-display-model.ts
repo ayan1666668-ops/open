@@ -128,9 +128,11 @@ export function resolveSessionDisplayModelRef(
   if (row.executionSelection?.model === "native-managed") {
     return { provider: row.modelProvider, model: row.model ?? "the app's default model" };
   }
-  if (row.executionSelection && isModelExecutionSelection(row.executionSelection)) {
+  if (row.executionSelection) {
     return {
-      provider: row.executionSelection.model.provider,
+      provider: isModelExecutionSelection(row.executionSelection)
+        ? row.executionSelection.model.provider
+        : undefined,
       model: row.executionSelection.model.id,
     };
   }

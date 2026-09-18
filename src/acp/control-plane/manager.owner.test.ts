@@ -10,11 +10,9 @@ import { closeOpenClawAgentDatabasesForTest } from "../../state/openclaw-agent-d
 import { closeOpenClawStateDatabaseForTest } from "../../state/openclaw-state-db.js";
 import { withTestDir } from "../../test-helpers/temp-dir.js";
 import { AcpRuntimeError } from "../runtime/errors.js";
-import { buildAcpDatabaseSessionKey } from "../runtime/session-meta-keys.js";
 import {
-  readAcpSessionEntry,
+  readAcpSessionEntryCore,
   readAcpSessionMetaForEntry,
-  writeAcpSessionMetaForMigration,
   upsertAcpSessionMeta,
 } from "../runtime/session-meta.js";
 import { AcpSessionManager } from "./manager.core.js";
@@ -44,6 +42,17 @@ describe("ACP manager with real owner-scoped metadata", () => {
         const runtime = {
           ownerAwareSessions: 1 as const,
           ensureSession,
+          getCapabilities: () => ({
+            controls: ["session/set_config_option"],
+            configOptionKeys: ["model"],
+          }),
+          async setConfigOption({ value }) {
+            return {
+              configOptions: [
+                { id: "model", category: "model", currentValue: `${value}-accepted` },
+              ],
+            };
+          },
           async *runTurn() {
             yield { type: "done" as const };
           },
@@ -53,7 +62,7 @@ describe("ACP manager with real owner-scoped metadata", () => {
         } satisfies AcpRuntime;
         const manager = new AcpSessionManager({
           ...DEFAULT_DEPS,
-          loadSessionEntry: (input) => readAcpSessionEntry({ ...input, databasePath }),
+          loadSessionEntry: (input) => readAcpSessionEntryCore({ ...input, databasePath }),
           upsertSessionMeta: (input) => upsertAcpSessionMeta({ ...input, databasePath }),
           requireRuntimeBackend: () => ({ id: "synthetic", runtime }),
         });
@@ -77,30 +86,28 @@ describe("ACP manager with real owner-scoped metadata", () => {
               updatedAt: 1,
             };
             replaceSessionEntrySync(scope, entry);
-            const meta = {
-              backend: "synthetic",
-              agent: "fixture-harness",
-              runtimeSessionName: `${agentId}/${sessionKey}`,
-              mode: "persistent" as const,
-              state: "idle" as const,
-              lastActivityAt: 1,
-            };
-            writeAcpSessionMetaForMigration({
-              sessionKey: buildAcpDatabaseSessionKey(sessionKey, agentId),
-              lifecycleRevision: entry.lifecycleRevision,
-              meta,
-              databasePath,
-            });
-            expect(readAcpSessionEntry({ ...input, databasePath })?.acp).toEqual(
-              readAcpSessionMetaForEntry({ ...input, entry, databasePath }),
+            await manager.initializeSession(input);
+            const persisted = readAcpSessionEntryCore({ ...input, databasePath });
+            expect(persisted?.acp).toEqual(
+              readAcpSessionMetaForEntry({
+                ...input,
+                entry: persisted?.entry,
+                databasePath,
+              }),
             );
             expect(manager.resolveSession(input)).toMatchObject({
               kind: "ready",
               agentId,
               sessionKey,
-              entry,
+              entry: {
+                sessionId: entry.sessionId,
+                lifecycleRevision: entry.lifecycleRevision,
+              },
+              selection: {
+                model: "native-managed",
+                executor: { kind: "acp", backend: "synthetic", agent: "fixture-harness" },
+              },
             });
-            await manager.initializeSession(input);
             expect(loadSessionEntryReadOnly(scope)?.sessionId).toBe(entry.sessionId);
           }
           for (const agentId of ["main", "work"]) {
@@ -110,14 +117,22 @@ describe("ACP manager with real owner-scoped metadata", () => {
               agentId,
               sessionKey,
               meta: {
-                agent: "fixture-harness",
                 runtimeSessionName: `${agentId}/${sessionKey}`,
+              },
+              selection: {
+                executor: { kind: "acp", backend: "synthetic", agent: "fixture-harness" },
               },
             });
             await manager.updateSessionRuntimeOptions({ ...target, patch: { model: agentId } });
             expect(
-              readAcpSessionEntry({ ...target, databasePath })?.acp?.runtimeOptions?.model,
-            ).toBe(agentId);
+              readAcpSessionEntryCore({ ...target, databasePath })?.entry?.executionSelection,
+            ).toMatchObject({
+              state: "accepted",
+              selection: {
+                model: { id: `${agentId}-accepted` },
+                executor: { kind: "acp", backend: "synthetic", agent: "fixture-harness" },
+              },
+            });
           }
           if (sessionKey === "global") {
             expect(manager.resolveSession({ cfg, sessionKey: "agent:work:main" })).toMatchObject({
@@ -215,8 +230,8 @@ it("retains canonical metadata when an unmigrated backend locator blocks status 
     } satisfies AcpRuntime;
     const deps = {
       ...DEFAULT_DEPS,
-      loadSessionEntry: (input: Parameters<typeof readAcpSessionEntry>[0]) =>
-        readAcpSessionEntry({ ...input, databasePath }),
+      loadSessionEntry: (input: Parameters<typeof readAcpSessionEntryCore>[0]) =>
+        readAcpSessionEntryCore({ ...input, databasePath }),
       upsertSessionMeta: (input: Parameters<typeof upsertAcpSessionMeta>[0]) =>
         upsertAcpSessionMeta({ ...input, databasePath }),
       requireRuntimeBackend: () => ({ id: "synthetic", runtime }),
@@ -228,7 +243,7 @@ it("retains canonical metadata when an unmigrated backend locator blocks status 
     } finally {
       await disposeAcpSessionManagerInstance(initial, "restart");
     }
-    const before = readAcpSessionEntry({ ...target, databasePath })?.acp;
+    const before = readAcpSessionEntryCore({ ...target, databasePath })?.acp;
     const repairError = new AcpRuntimeError(
       "ACP_SESSION_INIT_FAILED",
       "Run offline Doctor repair",
@@ -250,7 +265,7 @@ it("retains canonical metadata when an unmigrated backend locator blocks status 
             allowBackendUnavailable: true,
           }),
         ).rejects.toBe(repairError);
-        expect(readAcpSessionEntry({ ...target, databasePath })?.acp).toEqual(before);
+        expect(readAcpSessionEntryCore({ ...target, databasePath })?.acp).toEqual(before);
       }
       expect(runtime.close).not.toHaveBeenCalled();
     } finally {

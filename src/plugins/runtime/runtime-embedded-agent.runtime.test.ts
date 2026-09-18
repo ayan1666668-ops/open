@@ -3,6 +3,7 @@ import type { DecisionReceiptV1 } from "../../../packages/gateway-protocol/src/i
 import { createDeferred } from "../../../test/helpers/promise.js";
 import type { AdmittedRunContext } from "../../agents/admitted-run-context.js";
 import { configureRuntimeActionDecisionSink } from "../../audit/runtime-action-decision.js";
+import type { InternalSessionEntry } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { ExecutionSelectionRequest } from "../../model-picker/apply-session-model-selection.js";
 import { withPluginRuntimePluginScope } from "./gateway-request-scope.js";
@@ -16,6 +17,7 @@ const mocks = vi.hoisted(() => ({
     runId,
   })),
   getRuntimeConfig: vi.fn(() => ({}) as OpenClawConfig),
+  loadSessionEntryReadOnly: vi.fn<() => InternalSessionEntry | undefined>(),
   prepareAgentRunAdmission: vi.fn(),
   prepareExecutionSelection: vi.fn(),
   selection: {
@@ -37,18 +39,11 @@ vi.mock("../../agents/embedded-agent.js", () => ({
 }));
 vi.mock("../../config/config.js", () => ({ getRuntimeConfig: mocks.getRuntimeConfig }));
 vi.mock("../../config/sessions/session-accessor.js", () => ({
-  loadSessionEntryReadOnly: () => ({
-    sessionId: "session-plugin",
-    updatedAt: 1,
-    providerOverride: "qa-provider",
-    modelOverride: "qa-model",
-    agentRuntimeOverride: "openclaw",
-    modelOverrideSource: "user",
-    modelOverrideRouteResolution: "resolved",
-  }),
+  loadSessionEntryReadOnly: mocks.loadSessionEntryReadOnly,
 }));
 vi.mock("../../model-picker/apply-session-model-selection.js", () => ({
-  resolveSessionExecutionFallbacks: () => ({ kind: "disabled_by_model_override" }),
+  resolveExecutionSelectionExecutorKind: () => "harness",
+  resolveSessionModelFallbacks: () => ({ kind: "disabled_by_model_override" }),
   prepareSessionExecutionSelection: (...args: unknown[]) =>
     mocks.prepareExecutionSelection(...args),
 }));
@@ -75,15 +70,35 @@ describe("plugin embedded-agent runtime admission", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.authorityActive = true;
+    mocks.loadSessionEntryReadOnly.mockReturnValue({
+      sessionId: "session-plugin",
+      updatedAt: 1,
+      executionSelection: {
+        state: "accepted",
+        selection: mocks.selection,
+        fallbackPermission: "explicit",
+      },
+    });
     mocks.prepareExecutionSelection.mockImplementation(
-      async ({ request }: { request: ExecutionSelectionRequest }) => ({
+      async ({
+        request,
+        sessionEntry,
+      }: {
+        request: ExecutionSelectionRequest;
+        sessionEntry?: InternalSessionEntry;
+      }) => ({
         status: "ready",
         selection:
-          request.kind === "model"
-            ? { model: request.model, executor: request.executor ?? mocks.selection.executor }
-            : request.kind === "selection" || request.kind === "fallback"
-              ? request.selection
-              : mocks.selection,
+          sessionEntry?.executionSelection?.state === "accepted" &&
+          sessionEntry.executionSelection.selection.executor.kind === "acp"
+            ? sessionEntry.executionSelection.selection
+            : request.kind === "model"
+              ? { model: request.model, executor: request.executor ?? mocks.selection.executor }
+              : request.kind === "selection" || request.kind === "fallback"
+                ? request.selection
+                : sessionEntry?.executionSelection?.state === "accepted"
+                  ? sessionEntry.executionSelection.selection
+                  : mocks.selection,
         before: mocks.selection,
         reason: "model",
         message: "Selection prepared.",
@@ -328,6 +343,62 @@ describe("plugin embedded-agent runtime admission", () => {
       ).rejects.toThrow("cannot supply host run authority");
       expect(mocks.prepareAgentRunAdmission).not.toHaveBeenCalled();
       expect(mocks.runEmbeddedAgentCore).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    { name: "detached", mode: { sessionPersistence: "detached" as const }, executor: "qa-harness" },
+    { name: "raw model", mode: { modelRun: true }, executor: "openclaw" },
+    { name: "raw prompt", mode: { promptMode: "none" as const }, executor: "openclaw" },
+    { name: "session-bound", mode: {}, executor: undefined },
+  ])(
+    "keeps $name execution separate from an unrelated ACP selection",
+    async ({ mode, executor }) => {
+      mocks.loadSessionEntryReadOnly.mockReturnValue({
+        sessionId: "session-plugin",
+        updatedAt: 1,
+        executionSelection: {
+          state: "accepted",
+          selection: {
+            executor: { kind: "acp", agent: "qa-acp", backend: "qa-backend" },
+            model: "native-managed",
+          },
+          fallbackPermission: "explicit",
+        },
+      });
+      const run = withPluginRuntimePluginScope({ pluginId: "memory-plugin" }, () =>
+        runPluginEmbeddedAgent({
+          ...params,
+          ...mode,
+          ...(executor
+            ? {
+                provider: "independent-provider",
+                model: "independent-model",
+                agentHarnessId: "qa-harness",
+                authProfileId: "independent-profile",
+                authProfileIdSource: "user" as const,
+              }
+            : {}),
+        }),
+      );
+      if (executor) {
+        await expect(run).resolves.toEqual({ payloads: [] });
+        expect(mocks.runEmbeddedAgentCore).toHaveBeenCalledWith(
+          expect.objectContaining({
+            provider: "independent-provider",
+            model: "independent-model",
+            agentHarnessId: executor,
+            agentHarnessRuntimeOverride: executor,
+            authProfileId: "independent-profile",
+            authProfileIdSource: "user",
+            sessionTarget: params.sessionTarget,
+          }),
+        );
+      } else {
+        await expect(run).rejects.toThrow("cannot run this embedded operation");
+        expect(mocks.runEmbeddedAgentCore).not.toHaveBeenCalled();
+      }
+      expect(mocks.close).toHaveBeenCalledOnce();
     },
   );
 

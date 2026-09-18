@@ -386,8 +386,10 @@ describe("question response custody through reply adoption", () => {
           run: {
             ...run.run,
             // A next-turn route never replaces the still-active question creator.
-            provider: "next-provider",
-            model: "next-model",
+            executionSelection: {
+              model: { provider: "next-provider", id: "next-model" },
+              executor: { kind: "harness", id: "openclaw" },
+            },
             senderIsOwner: change !== "sender",
           },
         };

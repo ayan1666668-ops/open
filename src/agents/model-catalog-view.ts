@@ -449,7 +449,7 @@ export async function loadPreparedModelCatalogView(
     const { getPreparedModelRuntimeAuthLabels, getPreparedModelRuntimeAuthStore } =
       await import("./prepared-model-runtime-auth.js");
     const { formatModelCatalogAuthLabel } = await import("./model-catalog-auth-labels.js");
-    const { resolvePersistedSessionRuntimeId } = await import("./session-runtime-compat.js");
+    const { resolveAcceptedSessionRuntimeId } = await import("./session-runtime-compat.js");
     const { buildAgentRuntimeAuthPlan } = await import("./runtime-plan/auth.js");
     const owner = materializePreparedModelCatalogOwner(
       getPublishedPreparedModelCatalogOwnerSnapshot(params) ??
@@ -468,7 +468,7 @@ export async function loadPreparedModelCatalogView(
         continue;
       }
       const runtime =
-        resolvePersistedSessionRuntimeId(params.sessionEntry) ??
+        resolveAcceptedSessionRuntimeId(params.sessionEntry) ??
         resolveAgentHarnessPolicy({
           provider,
           modelId: entry.id,

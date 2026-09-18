@@ -343,6 +343,18 @@ describe("sessionsTailCommand", () => {
           sessionId: "session-one",
           updatedAt: 2,
           status: selection === "running" ? "running" : "done",
+          ...(selection === "acp"
+            ? {
+                executionSelection: {
+                  state: "accepted",
+                  selection: {
+                    model: "native-managed",
+                    executor: { kind: "acp", backend: "fixture", agent: "main" },
+                  },
+                  fallbackPermission: "explicit",
+                } satisfies SessionEntry["executionSelection"],
+              }
+            : {}),
         },
       );
       if (selection === "acp") {
@@ -351,8 +363,6 @@ describe("sessionsTailCommand", () => {
           sessionId: "session-one",
           now: () => 2,
           meta: {
-            backend: "fixture",
-            agent: "main",
             runtimeSessionName: "fixture",
             mode: "persistent",
             state: "running",

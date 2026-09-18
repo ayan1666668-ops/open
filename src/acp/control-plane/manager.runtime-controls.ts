@@ -245,8 +245,9 @@ export async function applyManagerRuntimeControls(params: {
             );
           }
           try {
-            if (normalizeLowercaseStringOrEmpty(key) === "model")
+            if (normalizeLowercaseStringOrEmpty(key) === "model") {
               await params.onBeforeModelControl();
+            }
             const result = await params.runtime.setConfigOption({
               handle: params.handle,
               key,

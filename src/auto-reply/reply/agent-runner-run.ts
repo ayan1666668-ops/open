@@ -111,6 +111,11 @@ export async function runReplyAgent(
   // One lifecycle for all adoption sites in this run.
   const turnAdoptionLifecycle = opts?.turnAdoptionLifecycle;
   const releaseAdmissionTicket = () => opts?.[REPLY_ADMISSION_TICKET]?.release();
+  const finishWithoutRun = (payload?: ReplyPayload) => {
+    releaseAdmissionTicket();
+    typing.cleanup();
+    return payload;
+  };
   let activeSessionEntry = sessionEntry;
   const activeSessionStore = sessionStore;
   let activeIsNewSession = isNewSession;
@@ -189,6 +194,7 @@ export async function runReplyAgent(
   const restartRecoveryEntry =
     sessionKey && storePath
       ? (loadSessionEntry({
+          agentId: followupRun.run.agentId,
           storePath,
           sessionKey,
           clone: false,
@@ -231,6 +237,7 @@ export async function runReplyAgent(
       hasRestartRecoverySourceClaim(restartRecoveryEntry, restartRecoverySourceTurnId)
     ) {
       const retired = await retireTerminalRestartRecoverySourceClaim({
+        agentId: followupRun.run.agentId,
         sessionId: restartRecoveryEntry.sessionId,
         sessionKey,
         sourceTurnId: restartRecoverySourceTurnId,
@@ -243,32 +250,24 @@ export async function runReplyAgent(
         }
       }
     }
-    releaseAdmissionTicket();
-    typing.cleanup();
-    return undefined;
+    return finishWithoutRun();
   }
 
   const questionInput = await runReplyQuestionInput(params);
   if (questionInput.handled) {
-    releaseAdmissionTicket();
-    typing.cleanup();
-    return questionInput.payload;
+    return finishWithoutRun(questionInput.payload);
   }
 
   if (messageInjectionDisposition === "accepted") {
     if (replyOperationRunState) {
       replyOperationRunState.admission = { status: "accepted", mode: "steer" };
     }
-    releaseAdmissionTicket();
-    typing.cleanup();
-    return undefined;
+    return finishWithoutRun();
   }
 
   const selectionRejection = params.validateExecutionSelection?.();
   if (selectionRejection) {
-    releaseAdmissionTicket();
-    typing.cleanup();
-    return selectionRejection;
+    return finishWithoutRun(selectionRejection);
   }
 
   const baseShouldEmitToolResult = createShouldEmitToolResult({
@@ -375,9 +374,7 @@ export async function runReplyAgent(
     if (replyOperationRunState) {
       replyOperationRunState.admission = { status: "skipped", reason: "active-run" };
     }
-    releaseAdmissionTicket();
-    typing.cleanup();
-    return undefined;
+    return finishWithoutRun();
   }
 
   if (activeRunQueueAction === "enqueue-followup") {
@@ -391,9 +388,7 @@ export async function runReplyAgent(
       false,
     );
     if (!enqueued) {
-      releaseAdmissionTicket();
-      typing.cleanup();
-      return undefined;
+      return finishWithoutRun();
     }
     if (replyOperationRunState) {
       replyOperationRunState.admission = { status: "accepted", mode: "followup" };
@@ -429,9 +424,7 @@ export async function runReplyAgent(
   });
   const configSelectionRejection = params.validateExecutionSelection?.();
   if (configSelectionRejection) {
-    releaseAdmissionTicket();
-    typing.cleanup();
-    return configSelectionRejection;
+    return finishWithoutRun(configSelectionRejection);
   }
   followupRun.run.agentId ??= resolveDefaultAgentId(followupRun.run.config);
 
@@ -549,8 +542,7 @@ export async function runReplyAgent(
           : { status: "skipped", reason: admission.reason };
     }
     if (admission.status === "skipped") {
-      releaseAdmissionTicket();
-      typing.cleanup();
+      finishWithoutRun();
       if (admission.reason !== "active-run" || replyTurnKind !== "visible") {
         return undefined;
       }
@@ -638,8 +630,10 @@ export async function runReplyAgent(
       },
     });
   try {
-    const selectionRejection = params.validateExecutionSelection?.();
-    if (selectionRejection) return selectionRejection;
+    const preExecutionRejection = params.validateExecutionSelection?.();
+    if (preExecutionRejection) {
+      return preExecutionRejection;
+    }
     return await executePreparedReplyAgentRun({
       activeSessionStore,
       admitUserTurn,

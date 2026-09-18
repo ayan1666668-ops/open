@@ -2,8 +2,8 @@ import { resolveEffectiveAgentDir } from "../../agents/agent-scope-config.js";
 import { resolveLegacyInheritedAuthAgentId } from "../../agents/legacy-inherited-auth-dir.js";
 import { resolveCliRuntimeExecutionProvider } from "../../agents/model-runtime-aliases.js";
 import { isCliProvider } from "../../agents/model-selection-cli.js";
-import { resolvePersistedSessionRuntimeId } from "../../agents/session-runtime-compat.js";
-import { resolveEffectiveAgentRuntime } from "../../agents/thinking-runtime.js";
+import { resolveAcceptedSessionRuntimeId } from "../../agents/session-runtime-compat.js";
+import { resolveEffectiveAgentRuntimeCore } from "../../agents/thinking-runtime.js";
 import { captureRuntimeStateEnvironment } from "../../config/paths.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
@@ -64,7 +64,7 @@ export function resolveWorkerPlacementModelRuntime(
     metadataSnapshot?: PluginMetadataSnapshot;
   },
 ): string {
-  const sessionRuntimeOverride = resolvePersistedSessionRuntimeId(params.entry);
+  const sessionRuntimeOverride = resolveAcceptedSessionRuntimeId(params.entry);
   const pinnedHarnessId = resolveSessionPinnedHarnessId(params.entry);
   const locksPersistedHarness =
     pinnedHarnessId !== undefined && pinnedHarnessId === sessionRuntimeOverride;
@@ -104,7 +104,7 @@ export function resolveWorkerPlacementModelRuntime(
       isCliProvider(cliExecutionProvider ?? params.provider, params.cfg, params.metadataSnapshot));
   return useCliExecution
     ? (cliExecutionProvider ?? params.provider)
-    : resolveEffectiveAgentRuntime({
+    : resolveEffectiveAgentRuntimeCore({
         cfg: params.cfg,
         provider: params.provider,
         modelId: params.model,

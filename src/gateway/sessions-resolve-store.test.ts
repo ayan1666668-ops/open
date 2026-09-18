@@ -11,6 +11,7 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { closeOpenClawAgentDatabasesForTest } from "../state/openclaw-agent-db.js";
 import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
 import { withStateDirEnv as withRawStateDirEnv } from "../test-helpers/state-dir-env.js";
+import { sessionSelectionFixture } from "./session-list.test-support.js";
 import { resolveSessionKeyFromResolveParams as resolveSessionKeyFromResolveParamsWithClient } from "./sessions-resolve.js";
 
 type ResolveParams = Parameters<typeof resolveSessionKeyFromResolveParamsWithClient>[0];
@@ -336,6 +337,10 @@ describe("resolveSessionKeyFromResolveParams store canonicalization", () => {
       await seedSessionStore(claudeStorePath, {
         [acpKey]: {
           sessionId: "sess-acp-harness",
+          executionSelection: sessionSelectionFixture({
+            executor: { kind: "acp", backend: "acpx", agent: "claude" },
+            model: "native-managed",
+          }),
           label: "claude-delegate",
           updatedAt: freshUpdatedAt(),
         },
@@ -344,8 +349,6 @@ describe("resolveSessionKeyFromResolveParams store canonicalization", () => {
         sessionKey: acpKey,
         lifecycleRevision: undefined,
         meta: {
-          backend: "acpx",
-          agent: "claude",
           runtimeSessionName: acpKey,
           mode: "oneshot",
           state: "idle",
@@ -389,6 +392,10 @@ describe("resolveSessionKeyFromResolveParams store canonicalization", () => {
       await seedSessionStore(claudeStorePath, {
         [acpKey]: {
           sessionId: "sess-acp-harness-partial",
+          executionSelection: sessionSelectionFixture({
+            executor: { kind: "acp", backend: "acpx", agent: "claude" },
+            model: "native-managed",
+          }),
           label: "claude-delegate-partial",
           updatedAt: freshUpdatedAt(),
         },
@@ -397,8 +404,6 @@ describe("resolveSessionKeyFromResolveParams store canonicalization", () => {
         sessionKey: legacyAcpKey,
         lifecycleRevision: undefined,
         meta: {
-          backend: "acpx",
-          agent: "claude",
           runtimeSessionName: legacyAcpKey,
           mode: "oneshot",
           state: "idle",

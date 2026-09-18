@@ -6,7 +6,6 @@ import { createRequireRecord } from "openclaw/plugin-sdk/test-fixtures";
 import { afterEach, assert, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../../test/helpers/promise.js";
 import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
-import { testing as cliBackendsTesting } from "../../agents/cli-backends.test-support.js";
 import { parseCliOutput } from "../../agents/cli-output.js";
 import type { RunEmbeddedAgentInternalParams } from "../../agents/embedded-agent-runner/run/internal-params.js";
 import {
@@ -65,6 +64,7 @@ import {
 import { normalizeVerboseLevel } from "../thinking.js";
 import type { VerboseLevel } from "../thinking.shared.js";
 import { SILENT_REPLY_TOKEN } from "../tokens.js";
+import { registerCliBackendsForTest } from "./agent-runner-cli.test-support.js";
 import {
   createTestQueueSettings,
   createTestQueuedFollowupRun,
@@ -88,50 +88,16 @@ const directModelCatalog: ModelCatalogEntry[] = (
     { provider: "anthropic", id: "claude-opus-4-6", input: ["text", "image"] },
     { provider: "google", id: "gemini-2.5-pro", input: ["text", "image"] },
     { provider: "amazon-bedrock", id: "us.anthropic.claude-sonnet-4-6", input: ["text", "image"] },
+    { provider: "claude-cli", id: "opus-4.5", input: ["text", "image"] },
   ] satisfies Pick<ModelCatalogEntry, "provider" | "id" | "input">[]
-).map((entry) => ({
-  ...entry,
-  name: entry.id,
+).map(({ provider, id, input }) => ({
+  provider,
+  id,
+  input,
+  name: id,
   api: "openai-completions",
   baseUrl: "https://fixture.example.invalid/v1",
 }));
-
-function createCliBackendTestConfig() {
-  return {};
-}
-
-function registerCliBackendsForTest(): void {
-  const backends = [
-    {
-      id: "claude-cli",
-      modelProvider: "anthropic",
-      pluginId: "anthropic",
-      config: { command: "claude" },
-      bundleMcp: false,
-    },
-    {
-      id: "google-gemini-cli",
-      modelProvider: "google",
-      pluginId: "google",
-      config: { command: "gemini" },
-      bundleMcp: false,
-    },
-  ] as const;
-  cliBackendsTesting.setDepsForTest({
-    resolvePluginSetupCliBackend: ({ backend }) => {
-      const resolved = backends.find((entry) => entry.id === backend);
-      return resolved ? { pluginId: resolved.pluginId, backend: resolved } : undefined;
-    },
-    resolvePluginSetupRegistry: () => ({
-      providers: [],
-      cliBackends: [],
-      configMigrations: [],
-      autoEnableProbes: [],
-      diagnostics: [],
-    }),
-    resolveRuntimeCliBackends: () => [...backends],
-  });
-}
 
 function registerMemoryFlushPlanResolverForTest(resolver: MemoryFlushPlanResolver): void {
   registerMemoryCapability("memory-core", { flushPlanResolver: resolver });
@@ -162,6 +128,7 @@ vi.mock("../../agents/model-fallback-runner.js", () => ({
           { type: "api_key" as const, provider, key: "synthetic-credential" },
         ]),
       ),
+      runtimeAuthModes: { "claude-cli": "token" },
     });
     return withModelFallbackPreparation(params, runWithModelFallbackMock);
   },
@@ -223,7 +190,7 @@ vi.mock("../../agents/thinking-runtime.js", async (importOriginal) => {
     resolveCandidateThinkingLevel: (
       params: Parameters<typeof actual.resolveCandidateThinkingLevel>[0],
     ) => params.level,
-    resolveEffectiveAgentRuntime: () => "openclaw",
+    resolveEffectiveAgentRuntimeCore: () => "openclaw",
   };
 });
 
@@ -293,7 +260,7 @@ vi.mock("../../cron/store.js", () => {
 });
 
 vi.mock("../../acp/control-plane/manager.js", () => ({
-  getAcpSessionManager: () => ({
+  getAcpSessionManagerCore: () => ({
     resolveSession: () => ({ kind: "none" }),
     cancelSession: async () => {},
   }),
@@ -372,7 +339,6 @@ function createBaseRun(options: BaseRunOptions = {}) {
       model: "claude",
       thinkingCatalog: [
         ...directModelCatalog,
-        { provider: "claude-cli", id: "opus-4.5", input: ["text", "image"] },
         { provider: "google-gemini-cli", id: "gemini-3", input: ["text", "image"] },
       ],
       verboseLevel: "off",
@@ -485,7 +451,6 @@ function setupAgentRunnerMocks(): void {
 beforeEach(setupAgentRunnerMocks);
 
 afterEach(() => {
-  cliBackendsTesting.resetDepsForTest();
   clearRuntimeConfigSnapshot();
   resetDiagnosticEventsForTest();
   resetSystemEventsForTest();
@@ -1744,7 +1709,10 @@ describe("runReplyAgent Active Memory inline debug", () => {
     expect(loadSessionEntry({ storePath, sessionKey })?.traceLevel).toBe(
       options.liveTraceLevel ?? sessionEntry.traceLevel,
     );
-    return result;
+    return {
+      result,
+      text: (Array.isArray(result) ? result : [result]).map((payload) => payload?.text).join("\n"),
+    };
   }
 
   it.each([
@@ -1758,13 +1726,10 @@ describe("runReplyAgent Active Memory inline debug", () => {
   ] as const)(
     "honors turn trace $override over stored $stored with authorization=$authorized",
     async ({ stored, override, authorized, trace, raw }) => {
-      const result = await runActiveMemoryDebugCase(
+      const { text } = await runActiveMemoryDebugCase(
         { sessionId: "session", updatedAt: Date.now(), traceLevel: stored },
         { run: { traceLevelOverride: override, traceAuthorized: authorized } },
       );
-      const text = (Array.isArray(result) ? result : [result])
-        .map((payload) => payload?.text)
-        .join("\n");
       expect(text).toContain("Normal reply");
       expect(text.includes("Active Memory Debug:")).toBe(trace);
       expect(text.includes("Model Input (User Role)")).toBe(raw);
@@ -1782,13 +1747,10 @@ describe("runReplyAgent Active Memory inline debug", () => {
   ] as const)(
     "uses live session trace $live after $stored unless turn override is $override",
     async ({ stored, live, override, trace }) => {
-      const result = await runActiveMemoryDebugCase(
+      const { text } = await runActiveMemoryDebugCase(
         { sessionId: "session", updatedAt: Date.now(), traceLevel: stored },
         { run: { traceLevelOverride: override }, liveTraceLevel: live },
       );
-      const text = (Array.isArray(result) ? result : [result])
-        .map((payload) => payload?.text)
-        .join("\n");
       expect(text.includes("Active Memory Debug:")).toBe(trace);
     },
   );
@@ -1799,13 +1761,10 @@ describe("runReplyAgent Active Memory inline debug", () => {
   ] as const)(
     "selects plugin status using turn verbosity $selected over stored $stored",
     async ({ stored, selected, traceLevel, status }) => {
-      const result = await runActiveMemoryDebugCase(
+      const { text } = await runActiveMemoryDebugCase(
         { sessionId: "session", updatedAt: Date.now(), verboseLevel: stored, traceLevel },
         { resolvedVerboseLevel: selected, run: { verboseLevelOverride: selected } },
       );
-      const text = (Array.isArray(result) ? result : [result])
-        .map((payload) => payload?.text)
-        .join("\n");
       expect(text.includes("🧩 Active Memory: status=ok")).toBe(status);
       expect(text.includes("Model Input (User Role)")).toBe(traceLevel === "raw");
     },
@@ -1850,53 +1809,41 @@ describe("runReplyAgent Active Memory inline debug", () => {
     }).run();
   }
 
-  it("appends inline Active Memory status payload when verbose is enabled", async () => {
-    const sessionEntry: SessionEntry = {
-      sessionId: "session",
-      updatedAt: Date.now(),
+  it.each([
+    {
+      mode: "status",
       verboseLevel: "on",
-    };
-    const result = await runActiveMemoryDebugCase(sessionEntry);
-
-    expect(Array.isArray(result)).toBe(true);
-    expect((result as { text?: string }[]).map((payload) => payload.text)).toEqual([
-      "Normal reply",
-      "🧩 Active Memory: status=ok elapsed=842ms query=recent summary=34 chars",
-    ]);
-  });
-
-  it("appends inline Active Memory status and trace payloads when verbose and trace are enabled", async () => {
-    const sessionEntry: SessionEntry = {
-      sessionId: "session",
-      updatedAt: Date.now(),
+      traceLevel: undefined,
+      diagnostic: "🧩 Active Memory: status=ok elapsed=842ms query=recent summary=34 chars",
+    },
+    {
+      mode: "status and trace",
       verboseLevel: "on",
       traceLevel: "on",
-    };
-
-    const result = await runActiveMemoryDebugCase(sessionEntry);
-
-    expect(Array.isArray(result)).toBe(true);
-    expect((result as { text?: string }[]).map((payload) => payload.text)).toEqual([
-      "Normal reply",
-      "🧩 Active Memory: status=ok elapsed=842ms query=recent summary=34 chars\n🔎 Active Memory Debug: Lemon pepper wings with blue cheese.",
-    ]);
-  });
-
-  it("appends inline Active Memory trace payload when only trace is enabled", async () => {
-    const sessionEntry: SessionEntry = {
-      sessionId: "session",
-      updatedAt: Date.now(),
+      diagnostic:
+        "🧩 Active Memory: status=ok elapsed=842ms query=recent summary=34 chars\n🔎 Active Memory Debug: Lemon pepper wings with blue cheese.",
+    },
+    {
+      mode: "trace",
+      verboseLevel: undefined,
       traceLevel: "on",
-    };
-
-    const result = await runActiveMemoryDebugCase(sessionEntry);
-
-    expect(Array.isArray(result)).toBe(true);
-    expect((result as { text?: string }[]).map((payload) => payload.text)).toEqual([
-      "Normal reply",
-      "🔎 Active Memory Debug: Lemon pepper wings with blue cheese.",
-    ]);
-  });
+      diagnostic: "🔎 Active Memory Debug: Lemon pepper wings with blue cheese.",
+    },
+  ] as const)(
+    "appends inline Active Memory $mode payloads",
+    async ({ verboseLevel, traceLevel, diagnostic }) => {
+      const { result } = await runActiveMemoryDebugCase({
+        sessionId: "session",
+        updatedAt: Date.now(),
+        ...(verboseLevel ? { verboseLevel } : {}),
+        ...(traceLevel ? { traceLevel } : {}),
+      });
+      if (!Array.isArray(result)) {
+        throw new Error("Expected separate reply and diagnostic payloads");
+      }
+      expect(result.map((payload) => payload.text)).toEqual(["Normal reply", diagnostic]);
+    },
+  );
 
   it("appends raw trace payloads when trace raw is enabled", async () => {
     const tmp = tempDirs.make("openclaw-trace-raw-usage-");
@@ -2256,8 +2203,10 @@ describe("runReplyAgent claude-cli routing", () => {
       },
       run: {
         messageProvider: "webchat",
-        provider: "claude-cli",
-        model: "opus-4.5",
+        executionSelection: {
+          model: { provider: "claude-cli", id: "opus-4.5" },
+          executor: { kind: "cli", id: "claude-cli" },
+        },
         thinkLevel: "low",
       },
       reply: { defaultModel: "claude-cli/opus-4.5" },
@@ -2337,10 +2286,12 @@ describe("runReplyAgent claude-cli routing", () => {
       run: {
         agentId: "main",
         messageProvider: "webchat",
-        config: createCliBackendTestConfig(),
+        config: {},
         traceAuthorized: true,
-        provider: "claude-cli",
-        model: "opus-4.5",
+        executionSelection: {
+          model: { provider: "claude-cli", id: "opus-4.5" },
+          executor: { kind: "cli", id: "claude-cli" },
+        },
         thinkLevel: "low",
       },
       reply: {
@@ -2388,17 +2339,10 @@ describe("runReplyAgent claude-cli routing", () => {
       },
       run: {
         messageProvider: "webchat",
-        config: {
-          agents: {
-            defaults: {
-              models: {
-                "anthropic/claude-opus-4-7": { agentRuntime: { id: "claude-cli" } },
-              },
-            },
-          },
+        executionSelection: {
+          model: { provider: "anthropic", id: "claude-opus-4-7" },
+          executor: { kind: "cli", id: "claude-cli" },
         },
-        provider: "anthropic",
-        model: "claude-opus-4-7",
         thinkLevel: "low",
       },
       reply: { sessionEntry, defaultModel: "anthropic/claude-opus-4-7" },
@@ -2430,7 +2374,7 @@ describe("runReplyAgent messaging tool dedupe", () => {
       run: {
         sessionKey,
         messageProvider,
-        config: createCliBackendTestConfig(),
+        config: {},
         thinkLevel: "low",
       },
       reply: { queueKey: "main", sessionKey, storePath: opts.storePath },
@@ -2522,7 +2466,7 @@ describe("runReplyAgent reminder commitment guard", () => {
       },
       run: {
         messageProvider: "telegram",
-        config: createCliBackendTestConfig(),
+        config: {},
         thinkLevel: "low",
       },
       reply: params?.omitSessionKey ? {} : { sessionKey: params?.sessionKey ?? "main" },
@@ -2823,7 +2767,7 @@ describe("runReplyAgent response usage footer", () => {
         agentId: "main",
         agentDir: path.join(rootDir, "agent"),
         sessionKey: params.sessionKey,
-        config: params.config ?? createCliBackendTestConfig(),
+        config: params.config ?? {},
         provider: params.provider ?? "anthropic",
         model: params.model ?? "claude",
         thinkLevel: "low",
@@ -3054,7 +2998,7 @@ describe("runReplyAgent transient HTTP failures", () => {
       context: { Provider: "telegram", MessageSid: "msg" },
       run: {
         messageProvider: "telegram",
-        config: createCliBackendTestConfig(),
+        config: {},
         thinkLevel: "low",
       },
     }).run();
@@ -3082,7 +3026,7 @@ describe("runReplyAgent billing error classification", () => {
       context: { Provider: "telegram", MessageSid: "msg" },
       run: {
         messageProvider: "telegram",
-        config: createCliBackendTestConfig(),
+        config: {},
         thinkLevel: "low",
       },
       reply: { defaultModel: "anthropic/claude" },
@@ -3100,7 +3044,7 @@ describe("runReplyAgent mid-turn rate-limit fallback", () => {
       context: { Provider: "telegram", MessageSid: "msg" },
       run: {
         messageProvider: "telegram",
-        config: createCliBackendTestConfig(),
+        config: {},
         thinkLevel: "low",
       },
       reply: { defaultModel: "anthropic/claude" },

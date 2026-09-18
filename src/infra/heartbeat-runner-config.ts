@@ -1,7 +1,7 @@
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { resolveAgentConfig } from "../agents/agent-scope.js";
 import { resolveModelRefFromString, type ModelRef } from "../agents/model-selection.js";
-import { resolveEffectiveAgentRuntime } from "../agents/thinking-runtime.js";
+import { resolveEffectiveAgentRuntimeCore } from "../agents/thinking-runtime.js";
 import {
   resolveHeartbeatPromptCore as resolveHeartbeatPromptText,
   resolveHeartbeatPromptForResponseTool,
@@ -87,7 +87,7 @@ function usesCodexHarness(params: {
     return selection?.executor.kind === "harness" && selection.executor.id === "codex";
   }
   return (
-    resolveEffectiveAgentRuntime({
+    resolveEffectiveAgentRuntimeCore({
       cfg: params.cfg,
       provider: modelRef.provider,
       modelId: modelRef.model,

@@ -30,7 +30,11 @@ import { createDeferredCore } from "../../shared/deferred.js";
 import { ensureGatewayOwnerProfile } from "../../state/user-profiles.js";
 import { withOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
 import { registerAcpRuntimeBackend, unregisterAcpRuntimeBackend } from "../runtime/registry.js";
-import { AcpSessionManager, getAcpSessionManager, testing as managerTesting } from "./manager.js";
+import {
+  AcpSessionManager,
+  getAcpSessionManagerCore,
+  testing as managerTesting,
+} from "./manager.js";
 import { disposeAcpSessionManagerInstance } from "./manager.lifecycle.js";
 import { DEFAULT_DEPS } from "./manager.types.js";
 import { cleanupFailedAcpSpawn } from "./spawn.js";
@@ -39,7 +43,7 @@ const backendId = "provisional-cleanup-fixture";
 const agentId = "main";
 const sessionKey = "agent:main:acp:provisional-cleanup";
 type Initialized = Awaited<
-  ReturnType<ReturnType<typeof getAcpSessionManager>["initializeSession"]>
+  ReturnType<ReturnType<typeof getAcpSessionManagerCore>["initializeSession"]>
 >;
 
 // This fixture opens no browser; browser ownership has its own lifecycle tests.
@@ -63,7 +67,7 @@ afterEach(() => vi.restoreAllMocks());
 async function withCleanupFixture(
   run: (fixture: {
     cfg: OpenClawConfig;
-    manager: ReturnType<typeof getAcpSessionManager>;
+    manager: ReturnType<typeof getAcpSessionManagerCore>;
     runtime: AcpRuntime;
     initialize: () => Promise<Initialized>;
     cleanup: (initialized: Initialized) => Promise<void>;
@@ -145,7 +149,7 @@ async function withCleanupFixture(
     registerSessionBindingAdapter(adapter);
     registerAcpRuntimeBackend({ id: backendId, runtime });
     managerTesting.resetAcpSessionManagerForTests();
-    const manager = getAcpSessionManager();
+    const manager = getAcpSessionManagerCore();
     const socket = vi
       .spyOn(gatewayCall, "callGateway")
       .mockRejectedValue(new Error("Raw WebSocket transport is unavailable"));

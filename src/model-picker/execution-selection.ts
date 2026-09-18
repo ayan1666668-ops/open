@@ -1,6 +1,10 @@
 import type { AgentModelPrimaryWriteTarget } from "../agents/agent-scope.js";
+import type {
+  PreparedSessionAuthSelection,
+  ReplySessionAuthContext,
+} from "../agents/auth-profiles/session-override.js";
 import type { ModelCatalogEntry } from "../agents/model-catalog.js";
-import type { ModelManifestNormalizationContext } from "../agents/model-ref-shared.js";
+import type { ModelManifestNormalizationContext, ModelRef } from "../agents/model-ref-shared.js";
 import type { ModelVisibilityPolicy } from "../agents/model-visibility-policy.js";
 import type { StickyModelSelectionDispatchOutcome } from "../agents/sticky-model-selection.js";
 import type { ThinkLevel } from "../auto-reply/thinking.shared.js";
@@ -108,11 +112,28 @@ export type ExecutionSelectionRequest =
       executor?: ModelExecutionSelection["executor"];
     }
   | { kind: "selection"; selection: ExecutionSelection }
-  | { kind: "fallback"; selection: ModelExecutionSelection; explicitModels?: string[] }
+  | {
+      kind: "fallback";
+      selection: ModelExecutionSelection;
+      explicitModels?: string[];
+      /** A validated one-turn user choice constrains fallback without changing stored intent. */
+      userSelection?: ModelExecutionSelection;
+    }
   | { kind: "initialize"; model?: ModelExecutionSelection["model"] }
-  | { kind: "reset"; model?: { provider?: string; id: string } };
+  | {
+      kind: "reset";
+      model?: { provider?: string; id: string };
+      executor?: ModelExecutionSelection["executor"];
+    };
 
 export type PreparedSessionExecutionSelection =
+  | {
+      status: "deferred";
+      reason: "unknown" | "unavailable";
+      message: string;
+      selection: Extract<SessionExecutionSelection, { state: "deferred" }>;
+      validateCommit: () => string | undefined;
+    }
   | {
       status: "ready";
       selection: ExecutionSelection;
@@ -120,6 +141,7 @@ export type PreparedSessionExecutionSelection =
       reason: "initialized" | "model" | "explicit" | "reset" | "unsupported";
       message: string;
       catalogEntry?: ModelCatalogEntry;
+      auth?: PreparedSessionAuthSelection;
       fallbackPermission?: ExecutionFallbackPermission;
       validateCommit: () => string | undefined;
     }
@@ -158,6 +180,8 @@ export type ApplySessionExecutionSelectionParams = {
   agentId: string;
   sessionKey: string;
   request: ExecutionSelectionRequest;
+  /** Preserve entry-specific fallback authorization without resetting the selected executor. */
+  fallbackPermission?: ExecutionFallbackPermission;
   storePath?: string;
   sessionEntry?: SessionEntry;
   sessionStore?: Record<string, SessionEntry>;
@@ -174,19 +198,36 @@ export type ApplySessionExecutionSelectionParams = {
   patchModel?: string;
 };
 export type PrepareSessionExecutionSelectionParams = ModelManifestNormalizationContext & {
+  workspaceDir?: string;
   cfg: OpenClawConfig;
   agentId: string;
   /** Owner of sessionEntry for inherited-parent reads; agentId remains the policy target. */
   sessionAgentId?: string;
-  sessionKey?: string;
   parentSessionKey?: string;
-  sessionEntry?: Partial<SessionEntry>;
   storePath?: string;
   readSessionEntry?: () => Partial<SessionEntry> | undefined;
   modelCatalog?: readonly ModelCatalogEntry[];
   profileProvider?: string;
   request: ExecutionSelectionRequest;
-};
+  /** Resolve raw input and account preference within the same prepared owner. */
+  modelInput?: {
+    raw: string;
+    resolvedRef?: ModelRef;
+    fallbacks?: string[];
+    requiresTools?: boolean;
+  };
+} & (
+    | {
+        replyAuth?: undefined;
+        sessionKey?: string;
+        sessionEntry?: Partial<SessionEntry>;
+      }
+    | {
+        replyAuth: ReplySessionAuthContext;
+        sessionKey: string;
+        sessionEntry: SessionEntry;
+      }
+  );
 export type PreparedSessionExecutionCommitParams<T> = {
   cfg: OpenClawConfig;
   agentId: string;
@@ -195,4 +236,19 @@ export type PreparedSessionExecutionCommitParams<T> = {
   assertActive: () => void;
   assertSelectionCurrent: () => void;
   commitAccepted: (selection: ExecutionSelection) => Promise<T>;
+};
+
+export type SessionModelFallbackParams = {
+  cfg: OpenClawConfig;
+  agentId?: string;
+  sessionKey?: string | null;
+  sessionEntry?: Partial<SessionEntry>;
+  model: ModelExecutionSelection["model"];
+  userSelection?: ModelExecutionSelection;
+  modelFallbacksOverride?: string[];
+  configuredFallbacksOverride?: string[];
+  modelSelectionLocked?: boolean;
+  /** A model request may own its chain before an executor has been admitted. */
+  ownsCandidateChain?: boolean;
+  subagentSpawnLineage?: boolean;
 };

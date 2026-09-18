@@ -3,6 +3,11 @@ import { expectDefined } from "@openclaw/normalization-core";
 import { describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../../test/helpers/promise.js";
 import type { OpenClawConfig } from "../../config/config.js";
+import { commitSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
+import type {
+  AcpExecutionSelection,
+  ExecutionFallbackPermission,
+} from "../../model-picker/execution-selection.js";
 import {
   AcpRuntimeError,
   AcpSessionManager,
@@ -12,6 +17,13 @@ import {
   installAcpSessionManagerTestLifecycle,
   installAcpSessionStoreFixture,
 } from "./manager.test-helpers.js";
+import { ACP_SELECTION_REPAIR_MESSAGE } from "./manager.utils.js";
+
+function failBeforeOutput(message = "backend unavailable") {
+  return async function* () {
+    yield await Promise.reject(new AcpRuntimeError("ACP_TURN_FAILED", message));
+  };
+}
 
 describe("AcpSessionManager backend failover", () => {
   installAcpSessionManagerTestLifecycle();
@@ -20,6 +32,8 @@ describe("AcpSessionManager backend failover", () => {
     params: {
       initialBackend?: "primary-backend" | "fallback-backend";
       primaryUnavailableError?: Error;
+      fallbackUnavailableError?: Error;
+      fallbackPermission?: ExecutionFallbackPermission;
       model?: string;
     } = {},
   ) {
@@ -48,6 +62,9 @@ describe("AcpSessionManager backend failover", () => {
         };
       }
       if (backendId === "fallback-backend") {
+        if (params.fallbackUnavailableError) {
+          throw params.fallbackUnavailableError;
+        }
         return {
           id: "fallback-backend",
           runtime: fallbackRuntime.runtime,
@@ -62,12 +79,21 @@ describe("AcpSessionManager backend failover", () => {
         fallbacks: ["fallback-backend"],
       },
     } as OpenClawConfig;
+    const selection: AcpExecutionSelection = {
+      executor: { kind: "acp", backend: initialBackend, agent: "qa-agent" },
+      model: params.model ? { id: params.model } : "native-managed",
+    };
     const store = installAcpSessionStoreFixture({
       cfg,
       sessionKey,
-      selection: {
-        executor: { kind: "acp", backend: initialBackend, agent: "qa-agent" },
-        model: params.model ? { id: params.model } : "native-managed",
+      entry: {
+        sessionId: "session-1",
+        updatedAt: 1,
+        executionSelection: {
+          state: "accepted",
+          selection,
+          fallbackPermission: params.fallbackPermission ?? "configured",
+        },
       },
       meta: {
         runtimeSessionName:
@@ -88,6 +114,7 @@ describe("AcpSessionManager backend failover", () => {
       },
       primaryRuntime,
       sessionKey,
+      store,
     };
   }
 
@@ -112,12 +139,7 @@ describe("AcpSessionManager backend failover", () => {
 
   it("closes turn-local fallback handles before returning and retains the primary selection", async () => {
     const harness = setupFailoverBackends();
-    harness.primaryRuntime.runTurn.mockImplementationOnce(async function* () {
-      if (Date.now() < 0) {
-        yield { type: "done" as const };
-      }
-      throw new AcpRuntimeError("ACP_TURN_FAILED", "backend unavailable");
-    });
+    harness.primaryRuntime.runTurn.mockImplementationOnce(failBeforeOutput());
 
     const manager = new AcpSessionManager();
     await manager.runTurn({
@@ -149,6 +171,87 @@ describe("AcpSessionManager backend failover", () => {
     expect(harness.selection.executor.backend).toBe("primary-backend");
   });
 
+  it.each([undefined, "qa-model"])(
+    "does not change an explicit ACP pair when its model is %s",
+    async (model) => {
+      const harness = setupFailoverBackends({
+        model,
+        fallbackPermission: "explicit",
+        primaryUnavailableError: new AcpRuntimeError(
+          "ACP_BACKEND_UNAVAILABLE",
+          "primary backend unavailable",
+        ),
+      });
+      const selected = harness.selection;
+      await expect(
+        new AcpSessionManager().runTurn({
+          cfg: harness.cfg,
+          sessionKey: harness.sessionKey,
+          provenance: "system",
+          text: "retain my selected pair",
+          mode: "prompt",
+          requestId: "strict-selection",
+        }),
+      ).rejects.toMatchObject({ code: "ACP_BACKEND_UNAVAILABLE" });
+      expect(harness.fallbackRuntime.ensureSession).not.toHaveBeenCalled();
+      expect(harness.selection).toEqual(selected);
+    },
+  );
+
+  it("revalidates fallback permission after closing the previous backend", async () => {
+    const harness = setupFailoverBackends();
+    harness.primaryRuntime.runTurn.mockImplementationOnce(failBeforeOutput());
+    harness.primaryRuntime.close.mockImplementationOnce(async () => {
+      await harness.store.patchEntry(
+        { agentId: "main", sessionKey: harness.sessionKey },
+        (entry) => {
+          commitSessionExecutionSelection(entry, harness.selection);
+          return entry;
+        },
+      );
+    });
+    await expect(
+      new AcpSessionManager().runTurn({
+        cfg: harness.cfg,
+        sessionKey: harness.sessionKey,
+        provenance: "system",
+        text: "keep the newly explicit pair",
+        mode: "prompt",
+        requestId: "revoked-fallback",
+      }),
+    ).rejects.toMatchObject({ code: "ACP_SESSION_INIT_FAILED" });
+    expect(harness.fallbackRuntime.ensureSession).not.toHaveBeenCalled();
+    expect(harness.currentMeta.lastError).not.toBe(ACP_SELECTION_REPAIR_MESSAGE);
+  });
+
+  it.each(["ACP_BACKEND_MISSING", "ACP_BACKEND_UNAVAILABLE"] as const)(
+    "allows primary recovery after an unused fallback fails with %s",
+    async (code) => {
+      const harness = setupFailoverBackends({
+        fallbackUnavailableError: new AcpRuntimeError(code, "fallback backend unavailable"),
+      });
+      harness.primaryRuntime.runTurn.mockImplementationOnce(failBeforeOutput());
+      const selected = harness.selection;
+      const input = {
+        cfg: harness.cfg,
+        sessionKey: harness.sessionKey,
+        provenance: "system" as const,
+        text: "continue",
+        mode: "prompt" as const,
+        requestId: "unavailable-fallback",
+      };
+      await expect(new AcpSessionManager().runTurn(input)).rejects.toMatchObject({ code });
+      expect(harness.fallbackRuntime.ensureSession).not.toHaveBeenCalled();
+      await new AcpSessionManager().runTurn({ ...input, requestId: "primary-recovered" });
+      expect(harness.primaryRuntime.runTurn).toHaveBeenCalledTimes(2);
+      expect(harness.selection).toEqual(selected);
+      expect(harness.currentMeta).toMatchObject({
+        state: "idle",
+        runtimeSessionName: "primary-runtime",
+      });
+    },
+  );
+
   it("pauses a reopened session when fallback cleanup cannot be confirmed", async () => {
     const harness = setupFailoverBackends({
       primaryUnavailableError: new AcpRuntimeError(
@@ -176,33 +279,45 @@ describe("AcpSessionManager backend failover", () => {
     expect(harness.fallbackRuntime.runTurn).toHaveBeenCalledOnce();
   });
 
-  it("does not treat successful close as settlement of a rejected fallback model control", async () => {
-    const harness = setupFailoverBackends({
-      model: "qa-model",
-      primaryUnavailableError: new AcpRuntimeError(
-        "ACP_BACKEND_UNAVAILABLE",
-        "primary backend unavailable",
-      ),
-    });
-    harness.fallbackRuntime.setConfigOption.mockRejectedValueOnce(new Error("control result lost"));
-    const input = {
-      cfg: harness.cfg,
-      sessionKey: harness.sessionKey,
-      provenance: "system" as const,
-      text: "continue",
-      mode: "prompt" as const,
-      requestId: "uncertain-fallback-control",
-    };
-    await expect(new AcpSessionManager().runTurn(input)).rejects.toThrow("control result lost");
-    expect(harness.fallbackRuntime.close).toHaveBeenCalledWith(
-      expect.objectContaining({ reason: "turn-local-fallback-complete" }),
-    );
-    await expect(
-      new AcpSessionManager().runTurn({ ...input, requestId: "after-uncertain-control" }),
-    ).rejects.toThrow("app did not confirm the last change");
-    expect(harness.fallbackRuntime.runTurn).not.toHaveBeenCalled();
-    expect(harness.selection.executor.backend).toBe("primary-backend");
-  });
+  it.each(["acquisition", "model control"] as const)(
+    "keeps a rejected fallback %s fenced after restart",
+    async (operation) => {
+      const harness = setupFailoverBackends({
+        model: "qa-model",
+        primaryUnavailableError: new AcpRuntimeError(
+          "ACP_BACKEND_UNAVAILABLE",
+          "primary backend unavailable",
+        ),
+      });
+      const failure = new Error(`${operation} result lost`);
+      if (operation === "acquisition") {
+        harness.fallbackRuntime.ensureSession.mockRejectedValueOnce(failure);
+      } else {
+        harness.fallbackRuntime.setConfigOption.mockRejectedValueOnce(failure);
+      }
+      const input = {
+        cfg: harness.cfg,
+        sessionKey: harness.sessionKey,
+        provenance: "system" as const,
+        text: "continue",
+        mode: "prompt" as const,
+        requestId: "uncertain-fallback",
+      };
+      await expect(new AcpSessionManager().runTurn(input)).rejects.toThrow(failure.message);
+      if (operation === "model control") {
+        expect(harness.fallbackRuntime.close).toHaveBeenCalledWith(
+          expect.objectContaining({ reason: "turn-local-fallback-complete" }),
+        );
+      } else {
+        expect(harness.fallbackRuntime.close).not.toHaveBeenCalled();
+      }
+      await expect(
+        new AcpSessionManager().runTurn({ ...input, requestId: "after-uncertain-operation" }),
+      ).rejects.toThrow("app did not confirm the last change");
+      expect(harness.fallbackRuntime.runTurn).not.toHaveBeenCalled();
+      expect(harness.selection.executor.backend).toBe("primary-backend");
+    },
+  );
 
   it("does not overlap unresolved fallback timeout cleanup with another close", async () => {
     vi.useFakeTimers();
@@ -259,12 +374,7 @@ describe("AcpSessionManager backend failover", () => {
 
   it("closes the previous persistent handle before switching fallback backends", async () => {
     const harness = setupFailoverBackends();
-    harness.primaryRuntime.runTurn.mockImplementation(async function* () {
-      if (Date.now() < 0) {
-        yield { type: "done" as const };
-      }
-      throw new AcpRuntimeError("ACP_TURN_FAILED", "backend unavailable");
-    });
+    harness.primaryRuntime.runTurn.mockImplementation(failBeforeOutput());
 
     const manager = new AcpSessionManager();
     await expect(
@@ -313,12 +423,7 @@ describe("AcpSessionManager backend failover", () => {
 
   it("fails over for common rate limit wording before output", async () => {
     const harness = setupFailoverBackends();
-    harness.primaryRuntime.runTurn.mockImplementation(async function* () {
-      if (Date.now() < 0) {
-        yield { type: "done" as const };
-      }
-      throw new AcpRuntimeError("ACP_TURN_FAILED", "rate limit exceeded");
-    });
+    harness.primaryRuntime.runTurn.mockImplementation(failBeforeOutput("rate limit exceeded"));
 
     const manager = new AcpSessionManager();
     await expect(

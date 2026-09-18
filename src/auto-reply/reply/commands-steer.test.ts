@@ -6,6 +6,7 @@ import {
 } from "../../agents/embedded-agent-runner/runs.js";
 import type { ChatType } from "../../channels/chat-type.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { isModelExecutionSelection } from "../../model-picker/execution-selection.js";
 import { buildCommandTestParams } from "./commands.test-harness.js";
 import type { ReplyBackendQueueMessageOptions, ReplyOperation } from "./reply-run-registry.js";
 import { createReplyOperation } from "./reply-run-registry.js";
@@ -34,10 +35,11 @@ function beginActiveOperation(
   authorityRun = createMockFollowupRun({ run: { sessionId, sessionKey } }),
 ) {
   const operation = createReplyOperation({ sessionKey, sessionId, resetTriggered: false });
-  const authorityRoute = {
-    provider: authorityRun.run.provider,
-    model: authorityRun.run.model,
-  };
+  const selection = authorityRun.run.executionSelection;
+  if (!isModelExecutionSelection(selection)) {
+    throw new Error("Expected concrete tool authority route.");
+  }
+  const authorityRoute = { provider: selection.model.provider, model: selection.model.id };
   operation.bindToolAuthoritySnapshot(prepareReplyToolAuthority(authorityRun));
   const toolAuthorityFingerprint = operation.bindToolAuthorityRoute(authorityRoute);
   operation.setPhase("running");

@@ -1,5 +1,5 @@
 // Live session model switch tests cover model changes during isolated cron runs.
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { FallbackRunnerParams } from "../../agents/embedded-agent-runner/run-entry.test-support.js";
 import { LiveSessionModelSwitchError } from "../../agents/live-model-switch-error.js";
 import { runInitialModelFallbackAttempt } from "../../agents/test-helpers/model-fallback-runner.test-support.js";

@@ -116,7 +116,14 @@ describe("resolveSessionEntryResetFreshness", () => {
         updatedAt: now,
         sessionStartedAt: now - 2 * DAY_MS,
         lastInteractionAt: now - 2 * DAY_MS,
-        providerOverride: "claude-cli",
+        executionSelection: {
+          state: "accepted",
+          selection: {
+            model: { provider: "anthropic", id: "claude-sonnet-4-6" },
+            executor: { kind: "cli", id: "claude-cli" },
+          },
+          fallbackPermission: "explicit",
+        },
         cliSessionBindings: {
           "claude-cli": { sessionId: "cli-session-provider-owned" },
         },
@@ -145,7 +152,14 @@ describe("resolveSessionEntryResetFreshness", () => {
         updatedAt: now,
         sessionStartedAt: now - 2 * DAY_MS,
         lastInteractionAt: now - 2 * DAY_MS,
-        providerOverride: "claude-cli",
+        executionSelection: {
+          state: "accepted",
+          selection: {
+            model: { provider: "anthropic", id: "claude-sonnet-4-6" },
+            executor: { kind: "cli", id: "claude-cli" },
+          },
+          fallbackPermission: "explicit",
+        },
         cliSessionBindings: {
           "claude-cli": { sessionId: "cli-session-provider-owned-configured" },
         },

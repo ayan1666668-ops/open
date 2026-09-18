@@ -1,9 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
 import {
-  isDefaultAgentRuntimeId,
-  normalizeOptionalAgentRuntimeId,
-} from "../agents/agent-runtime-id.js";
-import {
   resolveAgentDir,
   resolveSessionAgentId,
   resolveAgentModelFallbacksOverride,
@@ -12,9 +8,8 @@ import {
 } from "../agents/agent-scope.js";
 import { resolveModelProviderAuthConfig } from "../agents/model-auth-provider-route.js";
 import { resolveModelCandidateChain } from "../agents/model-fallback-candidates.js";
-import { modelKey, resolveDefaultModelForAgent } from "../agents/model-selection.js";
 import { resolveAgentModelFallbackValues } from "../config/model-input.js";
-import { loadSessionEntryReadOnly } from "../config/sessions/session-accessor.js";
+import { resolveSessionEntry } from "../config/sessions/session-accessor.sqlite-exact-read.js";
 import type { AgentPatchedSessionModelFallback } from "../config/sessions/session-model-fallback.js";
 import type { InternalSessionEntry as SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
@@ -24,11 +19,20 @@ import { getPluginRegistryForContext } from "../plugins/runtime/gateway-request-
 import { isSubagentSessionKey } from "../routing/session-key.js";
 import { shouldPreserveSessionAuthProfileOverride } from "../sessions/auth-profile-preservation.js";
 import { ModelSelectionLockedError } from "../sessions/model-overrides.js";
+import type {
+  RunSelectionResult,
+  SessionExecutionControlFailure,
+  SessionExecutionControlTarget,
+} from "./execution-selection-application.js";
+import type {
+  PreparedCompactionSelection,
+  PrepareSessionCompactionExecutionSelectionParams,
+} from "./execution-selection-compaction.js";
 import {
   LEGACY_SELECTION_VIEW_FIELDS,
   projectLegacyExecutionSelection,
-  projectExecutionSelectionEntry,
   type PublicSessionEntry,
+  reconcileSessionExecutionSelectionView,
 } from "./execution-selection-projection.js";
 import {
   type ExecutionSelectionCommitCause,
@@ -44,9 +48,9 @@ import {
   type SessionExecutionSelection,
   type ExecutionFallbackPermission,
   type DeferredExecutionSelectionRequest,
-  type AcpExecutionSelection,
   type ExecutionSelection,
   type ModelExecutionSelection,
+  type SessionModelFallbackParams,
 } from "./execution-selection.js";
 import { sessionExecutionSelectionSchema } from "./execution-selection.schema.js";
 
@@ -95,7 +99,7 @@ export function createAgentPatchedSessionModelFallback(params: {
       ? structuredClone(entry.executionSelection)
       : {
           state: "deferred",
-          request: { defaultSelection: "configured" },
+          request: { defaultSelection: "inherit" },
           fallbackPermission: "configured",
         },
     prevAuthProfileOverride: entry.authProfileOverride,
@@ -120,7 +124,9 @@ export function stageSessionExecutionSelection(params: {
   markLiveSwitchPending?: boolean;
 }): { updated: boolean } {
   const { entry, selection } = params;
-  if (entry.modelSelectionLocked) throw new ModelSelectionLockedError();
+  if (entry.modelSelectionLocked) {
+    throw new ModelSelectionLockedError();
+  }
   const initial = { ...entry };
   const pinInput = reconcileSessionExecutionSelectionView(
     {
@@ -163,15 +169,16 @@ export function stageSessionExecutionSelection(params: {
     pinInput.executionSelection.fallbackPermission === fallbackPermission;
   const preserveAcpDefault =
     selection.isDefault && !params.explicitDefaultSelection && executor?.kind === "acp";
-  if (preserveAcpDefault && pinInput.executionSelection)
+  if (preserveAcpDefault && pinInput.executionSelection) {
     commitStoredSessionExecutionSelection(entry, pinInput.executionSelection);
-  else if (!alreadyAccepted)
+  } else if (!alreadyAccepted) {
     commitStoredSessionExecutionSelection(entry, {
       state: "deferred",
       request,
       fallbackPermission,
       ...(previous ? { previous } : {}),
     });
+  }
   if (params.profileOverride) {
     entry.authProfileOverride = params.profileOverride;
     entry.authProfileOverrideSource = params.profileOverrideSource ?? "user";
@@ -200,204 +207,26 @@ export function stageSessionExecutionSelection(params: {
   const selectionChanged = executionSelectionTransactionChanged(initial, entry);
   const clearFallback = selectionChanged || params.selectionSource !== "auto";
   const hadFallback = entry.modelFallback !== undefined;
-  if (clearFallback) entry.modelFallback = undefined;
+  if (clearFallback) {
+    entry.modelFallback = undefined;
+  }
   const updated = selectionChanged || staleObservation || (clearFallback && hadFallback);
   if (updated) {
     delete entry.contextTokens;
     delete entry.contextTokensSource;
     delete entry.contextBudgetStatus;
     delete entry.fallbackNotice;
-    if (params.markLiveSwitchPending) entry.liveModelSwitchPending = true;
+    if (params.markLiveSwitchPending) {
+      entry.liveModelSwitchPending = true;
+    }
     entry.updatedAt = Date.now();
   }
   // These fields belong only to the caller's released SDK view, never the session encoding.
-  for (const key of LEGACY_SELECTION_VIEW_FIELDS) delete entry[key];
+  for (const key of LEGACY_SELECTION_VIEW_FIELDS) {
+    delete entry[key];
+  }
   Object.assign(entry, projected);
   return { updated };
-}
-
-/** Released partial input restricts fallback even before it identifies a runnable model. */
-export function resolveLegacyExecutionFallbackPermission(params: {
-  model?: string;
-  provider?: string;
-  source?: unknown;
-  originProvider?: string;
-  originModel?: string;
-}): ExecutionFallbackPermission {
-  const automatic =
-    params.source === "auto" ||
-    params.source === "default" ||
-    (params.source !== "user" && Boolean(params.originProvider && params.originModel));
-  return (params.model || params.provider) && !automatic ? "explicit" : "configured";
-}
-
-/** Released store inputs stage requests at the owner without making a readiness claim. */
-export function reconcileSessionExecutionSelectionView(
-  current: Partial<SessionEntry> | undefined,
-  patch: Partial<PublicSessionEntry> & Pick<SessionEntry, "executionSelection">,
-  options: { replace?: boolean } = {},
-): Pick<SessionEntry, "executionSelection" | "modelFallback"> {
-  const before = current?.executionSelection;
-  const projected = projectExecutionSelectionEntry(current ?? {});
-  const replace =
-    options.replace ||
-    (patch.sessionId !== undefined && patch.sessionId !== current?.sessionId) ||
-    (patch.lifecycleRevision !== undefined &&
-      patch.lifecycleRevision !== current?.lifecycleRevision);
-  const next = replace ? patch : { ...projected, ...patch };
-  const modelCleared = Object.hasOwn(patch, "modelOverride") && !patch.modelOverride;
-  const previous = before?.state === "accepted" ? before.selection : before?.previous;
-  const changed = LEGACY_SELECTION_VIEW_FIELDS.some(
-    (field) =>
-      (replace || Object.hasOwn(patch, field)) &&
-      !isDeepStrictEqual(patch[field], projected[field]),
-  );
-  const acpChanged =
-    patch.acp &&
-    (patch.acp.backend !== projected.acp?.backend ||
-      patch.acp.agent !== projected.acp?.agent ||
-      patch.acp.runtimeOptions?.model !== projected.acp?.runtimeOptions?.model);
-  const entry: Pick<SessionEntry, "executionSelection" | "modelFallback"> = {};
-  if (patch.executionSelection && !isDeepStrictEqual(before, patch.executionSelection)) {
-    const proposed = patch.executionSelection;
-    commitStoredSessionExecutionSelection(entry, {
-      state: "deferred",
-      request:
-        proposed.state === "deferred"
-          ? proposed.request
-          : { model: proposed.selection.model, executor: proposed.selection.executor },
-      fallbackPermission: proposed.fallbackPermission,
-      ...(proposed.legacyRequest ? { legacyRequest: proposed.legacyRequest } : {}),
-      ...(previous ? { previous } : {}),
-    });
-  } else if (changed || modelCleared || acpChanged) {
-    const normalizedRuntime = normalizeOptionalAgentRuntimeId(next.agentRuntimeOverride);
-    const runtime = isDefaultAgentRuntimeId(normalizedRuntime) ? undefined : normalizedRuntime;
-    const request: DeferredExecutionSelectionRequest =
-      acpChanged && patch.acp
-        ? {
-            executor: { kind: "acp", backend: patch.acp.backend, agent: patch.acp.agent },
-            model: patch.acp.runtimeOptions?.model
-              ? { id: patch.acp.runtimeOptions.model }
-              : "native-managed",
-          }
-        : {
-            ...(next.modelOverride
-              ? {
-                  model: {
-                    id: next.modelOverride,
-                    ...(next.providerOverride ? { provider: next.providerOverride } : {}),
-                  },
-                }
-              : {
-                  defaultSelection:
-                    modelCleared || next.modelOverrideSource === "default"
-                      ? ("configured" as const)
-                      : ("inherit" as const),
-                }),
-            ...(runtime ? { runtime } : {}),
-            ...(!replace && !Object.hasOwn(patch, "agentRuntimeOverride") && previous
-              ? { executor: previous.executor }
-              : {}),
-          };
-    const fallbackPermission = resolveLegacyExecutionFallbackPermission({
-      model: next.modelOverride,
-      provider: next.providerOverride,
-      source: next.modelOverrideSource,
-      originProvider: next.modelOverrideFallbackOriginProvider,
-      originModel: next.modelOverrideFallbackOriginModel,
-    });
-    const legacyRequest =
-      !acpChanged && !next.modelOverride && next.providerOverride
-        ? {
-            provider: next.providerOverride,
-            ...(next.modelOverrideSource ? { source: next.modelOverrideSource } : {}),
-          }
-        : undefined;
-    if (
-      legacyRequest &&
-      before?.state === "accepted" &&
-      !replace &&
-      !modelCleared &&
-      !Object.hasOwn(patch, "agentRuntimeOverride")
-    ) {
-      commitStoredSessionExecutionSelection(entry, {
-        ...before,
-        fallbackPermission,
-        legacyRequest,
-      });
-    } else
-      commitStoredSessionExecutionSelection(entry, {
-        state: "deferred",
-        request,
-        ...(legacyRequest ? { legacyRequest } : {}),
-        fallbackPermission,
-        ...(previous ? { previous } : {}),
-      });
-  } else if (before) {
-    commitStoredSessionExecutionSelection(entry, before);
-  }
-  if (current?.modelSelectionLocked && !isDeepStrictEqual(before, entry.executionSelection)) {
-    throw new ModelSelectionLockedError();
-  }
-  if (Object.hasOwn(patch, "modelFallback") || (replace && projected.modelFallback)) {
-    const fallback = patch.modelFallback;
-    if (!fallback) entry.modelFallback = undefined;
-    else if (isDeepStrictEqual(fallback, projected.modelFallback))
-      entry.modelFallback = current?.modelFallback;
-    else
-      entry.modelFallback = {
-        previous: {
-          state: "deferred",
-          request: {
-            ...(fallback.prevModelOverride
-              ? {
-                  model: {
-                    provider: fallback.prevProviderOverride,
-                    id: fallback.prevModelOverride,
-                  },
-                }
-              : { defaultSelection: "configured" as const }),
-          },
-          fallbackPermission: resolveLegacyExecutionFallbackPermission({
-            model: fallback.prevModelOverride,
-            provider: fallback.prevProviderOverride,
-            source: fallback.prevModelOverrideSource,
-            originProvider: fallback.prevModelOverrideFallbackOriginProvider,
-            originModel: fallback.prevModelOverrideFallbackOriginModel,
-          }),
-          ...(!fallback.prevModelOverride && fallback.prevProviderOverride
-            ? {
-                legacyRequest: {
-                  provider: fallback.prevProviderOverride,
-                  ...(fallback.prevModelOverrideSource
-                    ? { source: fallback.prevModelOverrideSource }
-                    : {}),
-                },
-              }
-            : {}),
-        },
-        prevModel: fallback.prevModel,
-        prevProvider: fallback.prevProvider,
-        prevAuthProfileOverride: fallback.prevAuthProfileOverride,
-        prevAuthProfileOverrideSource: fallback.prevAuthProfileOverrideSource,
-        prevAuthProfileOverrideCompactionCount: fallback.prevAuthProfileOverrideCompactionCount,
-        prevContextWindow: fallback.prevContextWindow,
-        prevThinkingLevel: fallback.prevThinkingLevel,
-        lastValidatedPatchTs: fallback.lastValidatedPatchTs,
-        ts: fallback.ts,
-        source: fallback.source,
-      };
-  } else if (!isDeepStrictEqual(before, entry.executionSelection)) {
-    entry.modelFallback = undefined;
-  } else if (
-    current?.modelFallback &&
-    (!patch.sessionId || patch.sessionId === current.sessionId) &&
-    (!patch.lifecycleRevision || patch.lifecycleRevision === current.lifecycleRevision)
-  ) {
-    entry.modelFallback = current.modelFallback;
-  }
-  return entry;
 }
 
 export function executionSelectionTransactionChanged(
@@ -435,72 +264,85 @@ export function resolveExecutionSelectionExecutorKind(
   cfg: OpenClawConfig | undefined,
   id: string,
 ): "harness" | "cli" | undefined {
-  if (id === "openclaw") return "harness";
+  if (id === "openclaw") {
+    return "harness";
+  }
   const registry = getPluginRegistryForContext();
   const metadata = getCurrentPluginMetadataSnapshot({
     config: cfg,
     allowSynchronousPolicyRead: false,
     allowWorkspaceScopedSnapshot: true,
   });
-  const harness =
+  const hasHarness =
     registry?.agentHarnesses.some(({ harness }) => harness.id === id) ||
     metadata?.plugins.some((plugin) => plugin.activation?.onAgentHarnesses?.includes(id));
-  const cli =
+  const hasCli =
     registry?.cliBackends.some(({ backend }) => backend.id === id) ||
     metadata?.owners.cliBackends.has(id);
-  return harness && !cli ? "harness" : cli && !harness ? "cli" : undefined;
+  return hasHarness && !hasCli ? "harness" : hasCli && !hasHarness ? "cli" : undefined;
 }
 
 function fallbackPermissionForCommit(
   entry: Partial<SessionEntry>,
   cause: ExecutionSelectionCommitCause,
 ): ExecutionFallbackPermission {
-  if (cause.kind === "user") return "explicit";
-  if (cause.kind === "reset") return "configured";
-  if (cause.kind === "initialize" && cause.fallbackPermission) return cause.fallbackPermission;
+  if (cause.kind === "user") {
+    return "explicit";
+  }
+  if (cause.kind === "reset") {
+    return "configured";
+  }
+  if (cause.kind === "initialize" && cause.fallbackPermission) {
+    return cause.fallbackPermission;
+  }
   return (
     (cause.kind === "inherit" ? cause.entry : entry).executionSelection?.fallbackPermission ??
     "configured"
   );
 }
 
+export type ExecutionFallbackAdmission =
+  | { status: "accepted" }
+  | { status: "rejected"; reason: "model-selection-locked" | "user-model-selection" };
+
 function admitSessionFallbackModel(params: {
   entry: Partial<SessionEntry> | undefined;
-  model: ModelExecutionSelection["model"];
+  model?: ModelExecutionSelection["model"];
   explicitModels?: readonly ModelExecutionSelection["model"][];
-}):
-  | { status: "accepted" }
-  | { status: "rejected"; reason: "model-selection-locked" | "user-model-selection" } {
-  if (params.entry?.modelSelectionLocked)
+  userSelection?: ModelExecutionSelection;
+  modelSelectionLocked?: boolean;
+}): ExecutionFallbackAdmission {
+  if (params.modelSelectionLocked || params.entry?.modelSelectionLocked) {
     return { status: "rejected", reason: "model-selection-locked" };
+  }
   const explicit = params.explicitModels?.some((model) => isDeepStrictEqual(model, params.model));
-  if (!explicit && params.entry?.executionSelection?.fallbackPermission === "explicit")
+  if (
+    !explicit &&
+    (params.userSelection || params.entry?.executionSelection?.fallbackPermission === "explicit")
+  ) {
     return { status: "rejected", reason: "user-model-selection" };
+  }
   return { status: "accepted" };
 }
 
 export function admitSessionExecutionFallback(params: {
   entry: Partial<SessionEntry> | undefined;
-  candidate: ModelExecutionSelection;
+  candidate: ExecutionSelection;
   explicitModels?: readonly ModelExecutionSelection["model"][];
-}): ReturnType<typeof admitSessionFallbackModel> {
+  userSelection?: ModelExecutionSelection;
+}): ExecutionFallbackAdmission {
   const current = getCommittedSessionExecutionSelection(params.entry);
-  if (isDeepStrictEqual(current, params.candidate)) return { status: "accepted" };
-  return admitSessionFallbackModel({ ...params, model: params.candidate.model });
+  if (
+    isDeepStrictEqual(params.userSelection ?? current, params.candidate) &&
+    (!params.entry?.modelSelectionLocked || isDeepStrictEqual(current, params.candidate))
+  ) {
+    return { status: "accepted" };
+  }
+  return admitSessionFallbackModel({
+    ...params,
+    model: isModelExecutionSelection(params.candidate) ? params.candidate.model : undefined,
+  });
 }
-
-type SessionModelFallbackParams = {
-  cfg: OpenClawConfig;
-  agentId?: string;
-  sessionKey?: string | null;
-  sessionEntry?: Partial<SessionEntry>;
-  model: ModelExecutionSelection["model"];
-  modelFallbacksOverride?: string[];
-  configuredFallbacksOverride?: string[];
-  /** A model request may own its chain before an executor has been admitted. */
-  ownsCandidateChain?: boolean;
-  subagentSpawnLineage?: boolean;
-};
 
 /** Plans retry models and permission without claiming executor readiness. */
 export function resolveSessionModelFallbacks(
@@ -514,7 +356,7 @@ export function resolveSessionModelFallbacks(
   const entry =
     params.sessionEntry ??
     (params.sessionKey
-      ? loadSessionEntryReadOnly({ agentId, sessionKey: params.sessionKey })
+      ? resolveSessionEntry({ agentId, sessionKey: params.sessionKey }, { readOnly: true }).existing
       : undefined);
   const configured =
     params.configuredFallbacksOverride ??
@@ -528,6 +370,7 @@ export function resolveSessionModelFallbacks(
   const source =
     params.modelFallbacksOverride !== undefined ||
     configured !== undefined ||
+    params.userSelection !== undefined ||
     (params.ownsCandidateChain ?? Boolean(getSessionExecutionSelection(entry)))
       ? "explicit"
       : "inherited";
@@ -542,30 +385,24 @@ export function resolveSessionModelFallbacks(
     .slice(1)
     .map(({ provider, model }) => ({ provider, id: model }));
   const explicitModels = params.modelFallbacksOverride === undefined ? undefined : candidates;
-  const admitted = candidates
-    .map((model) => admitSessionFallbackModel({ entry, model, explicitModels }))
-    .find((result) => result.status === "rejected");
-  if (admitted?.status === "rejected") {
-    return {
-      kind:
-        admitted.reason === "model-selection-locked"
-          ? "disabled_by_model_selection_lock"
-          : "disabled_by_model_override",
-    };
+  for (const model of candidates) {
+    const admitted = admitSessionFallbackModel({
+      entry,
+      model,
+      explicitModels,
+      userSelection: params.userSelection,
+      modelSelectionLocked: params.modelSelectionLocked,
+    });
+    if (admitted.status === "rejected") {
+      return {
+        kind:
+          admitted.reason === "model-selection-locked"
+            ? "disabled_by_model_selection_lock"
+            : "disabled_by_model_override",
+      };
+    }
   }
   return models.length ? { kind: "active", models, source } : { kind: "none_configured", source };
-}
-
-/** Resolve retry permission without exposing stored selection provenance to callers. */
-export function resolveSessionExecutionFallbacks(
-  params: Omit<
-    SessionModelFallbackParams,
-    "model" | "configuredFallbacksOverride" | "ownsCandidateChain"
-  > & {
-    selection: ModelExecutionSelection;
-  },
-): ModelFallbackAvailability {
-  return resolveSessionModelFallbacks({ ...params, model: params.selection.model });
 }
 
 /** Synchronous selection mutation; callers retain their existing store transaction and authority. */
@@ -615,7 +452,7 @@ export function commitSessionModelSelectionWithAuth(params: {
   agentId: string;
   entry: SessionEntry;
   currentProvider: string;
-  selection: Exclude<ExecutionSelection, AcpExecutionSelection>;
+  selection: ExecutionSelection;
   profileOverride?: string;
   markLiveSwitchPending?: boolean;
   metadataSnapshot?: Pick<PluginMetadataSnapshot, "plugins">;
@@ -624,14 +461,6 @@ export function commitSessionModelSelectionWithAuth(params: {
   if (!isModelExecutionSelection(params.selection)) {
     return commitSessionExecutionSelection(params.entry, params.selection, params);
   }
-  const configured = resolveDefaultModelForAgent({ cfg: params.cfg, agentId: params.agentId });
-  const cause =
-    (!params.cause || params.cause.kind === "user") &&
-    modelKey(params.selection.model.provider, params.selection.model.id) ===
-      modelKey(configured.provider, configured.model)
-      ? { kind: "reset" as const }
-      : params.cause;
-
   const preserve =
     !params.profileOverride &&
     shouldPreserveSessionAuthProfileOverride({
@@ -659,10 +488,7 @@ export function commitSessionModelSelectionWithAuth(params: {
     params.entry.authProfileOverride !== profile ||
     params.entry.authProfileOverrideSource !== source ||
     params.entry.authProfileOverrideCompactionCount !== count;
-  const applied = commitSessionExecutionSelection(params.entry, params.selection, {
-    ...params,
-    cause,
-  });
+  const applied = commitSessionExecutionSelection(params.entry, params.selection, params);
   if (profile) {
     params.entry.authProfileOverride = profile;
     params.entry.authProfileOverrideSource = source;
@@ -692,13 +518,18 @@ export type {
 } from "./execution-selection.js";
 export { formatExecutionSelectionAcknowledgment } from "./execution-selection-presentation.js";
 
-// Async preparation and persistence load only when requested; the stored fact is written above.
+// Static runtime imports would pull plugin execution and Gateway/store cycles into synchronous SDK intake.
 export async function prepareSessionExecutionSelection(
   params: PrepareSessionExecutionSelectionParams,
 ): Promise<PreparedSessionExecutionSelection> {
-  return (await import("./execution-selection-preparation.js")).prepareSessionExecutionSelection(
-    params,
-  );
+  return (await import("./execution-selection-input.js")).prepareSessionExecutionSelection(params);
+}
+export async function prepareSessionCompactionExecutionSelection(
+  params: PrepareSessionCompactionExecutionSelectionParams,
+): Promise<PreparedCompactionSelection> {
+  return (
+    await import("./execution-selection-compaction.js")
+  ).prepareSessionCompactionExecutionSelection(params);
 }
 export async function withPreparedSessionExecutionSelection<T>(
   params: PreparedSessionExecutionCommitParams<T>,
@@ -709,12 +540,8 @@ export async function withPreparedSessionExecutionSelection<T>(
 }
 export async function resolveSessionExecutionControlFailure(
   error: unknown,
-  target: Parameters<
-    typeof import("./execution-selection-application.js").resolveSessionExecutionControlFailure
-  >[1],
-): ReturnType<
-  typeof import("./execution-selection-application.js").resolveSessionExecutionControlFailure
-> {
+  target: SessionExecutionControlTarget,
+): Promise<SessionExecutionControlFailure | undefined> {
   return (
     await import("./execution-selection-application.js")
   ).resolveSessionExecutionControlFailure(error, target);
@@ -725,4 +552,14 @@ export async function applySessionExecutionSelection(
   return (await import("./execution-selection-application.js")).applySessionExecutionSelection(
     params,
   );
+}
+
+/** Internal run callers retain prepared account state without changing the public apply result. */
+export async function initializeSessionExecutionSelectionForRun(
+  params: Omit<ApplySessionExecutionSelectionParams, "request">,
+  purpose?: "compaction",
+): Promise<RunSelectionResult> {
+  return (
+    await import("./execution-selection-application.js")
+  ).initializeSessionExecutionSelectionForRun(params, purpose);
 }

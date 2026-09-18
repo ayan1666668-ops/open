@@ -31,7 +31,8 @@ type AgentCommandFn = (...args: unknown[]) => Promise<AgentCommandResult | void>
 type SendWhatsAppFn = (...args: unknown[]) => Promise<{ messageId: string; toJid: string }>;
 export type RunBtwSideQuestionFn = (...args: unknown[]) => Promise<unknown>;
 type DispatchInboundMessageFn = (...args: unknown[]) => Promise<unknown>;
-type CompactEmbeddedAgentSessionFn = (...args: unknown[]) => Promise<unknown>;
+type CompactEmbeddedAgentSessionFn =
+  typeof import("../agents/embedded-agent.js").compactEmbeddedAgentSession;
 
 const GATEWAY_TEST_CONFIG_ROOT_KEY = Symbol.for("openclaw.gatewayTestHelpers.configRoot");
 

@@ -7478,54 +7478,6 @@ describe("chat model controls", () => {
     expect(modelSelect.getAttribute("aria-disabled")).toBe("true");
   });
 
-  it.each([
-    { model: undefined, expected: "App default model" },
-    { model: "qa-model", expected: "qa-model" },
-    { model: "qa-provider/qa-model", expected: "qa-provider/qa-model" },
-  ])(
-    "renders the server-owned model label $expected without catalog inference",
-    ({ model, expected }) => {
-      const { state } = createChatHeaderState({
-        model: "qa-model",
-        modelProvider: "qa-provider",
-        models: [
-          {
-            id: "qa-model",
-            name: "Unrelated catalog model",
-            provider: "qa-provider",
-            supportsTools: false,
-            contextWindow: 4096,
-          },
-        ],
-      });
-      const session = expectDefined(state.sessionsResult?.sessions[0], "selected session");
-      delete session.modelProvider;
-      session.model = model;
-      session.agentRuntime = { id: "qa-app", source: "session" };
-      session.contextTokens = 123;
-      const container = renderModelControls(state);
-      const trigger = getChatModelSelect(container);
-      expect(trigger.textContent).toContain(expected);
-      expect(trigger.textContent).not.toContain("Unrelated catalog model");
-      expect(trigger.getAttribute("aria-label")).toBe(`Chat model: ${expected}`);
-      expect(trigger.dataset.chatSelectValue).toBeUndefined();
-      expect(trigger.dataset.chatModelTools).toBe("available");
-      expect(container.querySelector('[data-chat-model-option][aria-selected="true"]')).toBeNull();
-      expect(
-        container.querySelector('[data-chat-model-option="qa-provider/qa-model"]')?.textContent,
-      ).not.toContain("123 active");
-      const pendingLocal = renderModelControls(state, {
-        modelOverrides: { main: "qa-provider/qa-model" },
-      });
-      expect(
-        pendingLocal
-          .querySelector('[data-chat-model-option="qa-provider/qa-model"]')
-          ?.getAttribute("aria-selected"),
-      ).toBe("true");
-      expect(getChatModelSelect(pendingLocal).dataset.chatModelTools).toBe("unavailable");
-    },
-  );
-
   it("shows the selected model for an idle session with stale running status", () => {
     const { state } = createChatHeaderState({
       model: "primary",
@@ -7538,34 +7490,6 @@ describe("chat model controls", () => {
     expect(trigger.textContent).toContain("Primary");
     expect(trigger.textContent).not.toContain("Model pending");
     expect(trigger.dataset.chatSelectValue).toBe("example/primary");
-  });
-
-  it("shows the session's active fallback model without changing its selected preference", () => {
-    const { state } = createChatHeaderState({
-      model: "gpt-5.5",
-      modelProvider: "codex",
-      models: [
-        { id: "gpt-5.5", name: "GPT-5.5", provider: "codex" },
-        { id: "qwen3.5:9b", name: "Qwen 3.5 9B", provider: "ollama" },
-      ],
-    });
-    const selectedSession = expectDefined(state.sessionsResult?.sessions[0], "selected session");
-    Object.assign(selectedSession, {
-      activeModel: "qwen3.5:9b",
-      activeModelProvider: "ollama",
-    });
-
-    const container = renderModelControls(state);
-    const trigger = getChatModelSelect(container);
-
-    expect(trigger.textContent).toContain("Qwen 3.5 9B");
-    expect(trigger.getAttribute("aria-label")).toBe("Chat model: Qwen 3.5 9B");
-    expect(trigger.dataset.chatSelectValue).toBe("codex/gpt-5.5");
-    expect(
-      container
-        .querySelector('[data-chat-model-option="codex/gpt-5.5"]')
-        ?.getAttribute("aria-selected"),
-    ).toBe("true");
   });
 
   it("tracks the current run's primary and fallback model without changing its selection", () => {

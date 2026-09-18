@@ -915,6 +915,7 @@ export function runAgentAttempt(params: {
       async (assertSettlementCurrent) => {
         if (params.sessionKey && params.storePath) {
           params.sessionEntry = loadSessionEntry({
+            agentId: params.sessionAgentId,
             sessionKey: params.sessionKey,
             storePath: params.storePath,
             readConsistency: "latest",
@@ -975,6 +976,7 @@ export function runAgentAttempt(params: {
         const mutableCliSessionStore =
           params.sessionKey && params.sessionStore && params.storePath
             ? {
+                agentId: params.sessionAgentId,
                 sessionKey: params.sessionKey,
                 sessionStore: params.sessionStore,
                 storePath: params.storePath,
@@ -1072,7 +1074,9 @@ export function runAgentAttempt(params: {
             prompt: cliPrompt,
             transcriptPrompt: cliTranscriptPrompt,
             modelProvider: selectedModel?.provider,
-            requesterModel: selectedModel ? { provider: selectedModel.provider, model: selectedModel.id } : undefined,
+            requesterModel: selectedModel
+              ? { provider: selectedModel.provider, model: selectedModel.id }
+              : undefined,
             modelHasVision: selectedModel ? params.modelHasVision : undefined,
             provider: cliExecutionProvider,
             model: selectedModel?.id,
@@ -1215,6 +1219,7 @@ export function runAgentAttempt(params: {
                       ) ||
                       getCliSessionBinding(
                         loadSessionEntry({
+                          agentId: mutableCliSessionStore.agentId,
                           sessionKey: mutableCliSessionStore.sessionKey,
                           storePath: mutableCliSessionStore.storePath,
                           readConsistency: "latest",
@@ -1290,6 +1295,7 @@ export function runAgentAttempt(params: {
           (!classification || result.meta.agentMeta?.clearCliSessionBinding === true)
         ) {
           return await persistCliSessionBindingResult({
+            agentId: params.sessionAgentId,
             provider: cliExecutionProvider,
             result,
             sessionKey: params.sessionKey,
@@ -1343,8 +1349,7 @@ export function runAgentAttempt(params: {
     skillsSnapshot: params.skillsSnapshot,
     prompt: effectivePrompt,
     transcriptPrompt: continuationTranscriptBody,
-    // CLI-origin retries cannot rely on transcript replay: orphan-user repair
-    // removes the persisted CLI turn before the embedded prompt is submitted.
+    // CLI retries cannot replay a persisted turn after orphan-user repair removes it.
     images: shouldForwardImagesToEmbedded ? params.opts.images : undefined,
     imageOrder: shouldForwardImagesToEmbedded ? params.opts.imageOrder : undefined,
     media: params.opts.media,
@@ -1364,6 +1369,7 @@ export function runAgentAttempt(params: {
     fastModeAutoOnSeconds: params.fastModeAutoOnSeconds,
     isFinalFallbackAttempt: params.isFinalFallbackAttempt,
     verboseLevel: params.resolvedVerboseLevel,
+    execSession: params.sessionEntry,
     bashElevated: params.opts.bashElevated,
     execApprovalContinuationPromptRange: embeddedExecApprovalContinuationPromptRange,
     execApprovalContinuationTranscriptPromptRange: continuationTranscriptPromptRange,
@@ -1732,10 +1738,7 @@ function finalizeAcpToolsForRun(
 }
 
 function resolvePresentProxyEnvKeys(env: NodeJS.ProcessEnv = process.env): string[] {
-  return ACP_PROXY_ENV_KEYS.filter((key) => {
-    const value = env[key];
-    return typeof value === "string" && value.trim().length > 0;
-  });
+  return ACP_PROXY_ENV_KEYS.filter((key) => Boolean(env[key]?.trim()));
 }
 
 function sanitizeAcpDiagnosticText(value: string): string {

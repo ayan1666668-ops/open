@@ -1,7 +1,9 @@
 import type { SessionEntry } from "../../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
-import { getSessionExecutionSelection } from "../../../model-picker/execution-selection.js";
-import { isModelExecutionSelection } from "../../../model-picker/execution-selection.js";
+import {
+  getSessionExecutionSelection,
+  isModelExecutionSelection,
+} from "../../../model-picker/execution-selection.js";
 import type { FastMode } from "../../../shared/fast-mode.js";
 import { resolveFastModeState } from "../../fast-mode.js";
 import { resolveDefaultModelForAgent } from "../../model-selection.js";

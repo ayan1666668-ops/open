@@ -3,7 +3,7 @@ import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import { resolveAgentEffectiveModelPrimary } from "../agents/agent-scope.js";
 import { splitTrailingAuthProfile } from "../agents/model-ref-profile.js";
 import { resolveSessionModelRefCore as resolveSessionModelRef } from "../agents/session-model-ref.js";
-import { resolvePersistedSessionRuntimeId } from "../agents/session-runtime-compat.js";
+import { resolveAcceptedSessionRuntimeId } from "../agents/session-runtime-compat.js";
 import { resolveUtilityModelRefForAgent } from "../agents/utility-model.js";
 import { generateConversationLabelWithFallback } from "../auto-reply/reply/conversation-label-generator.js";
 import { stripInboundMetadata } from "../auto-reply/reply/strip-inbound-meta.js";
@@ -183,7 +183,7 @@ async function generateDashboardSessionTitle(params: {
       }
     : resolveSessionModelRef(params.cfg, params.entry, params.agentId);
   const agentHarnessRuntimeOverride =
-    params.executionSelection?.executor.id ?? resolvePersistedSessionRuntimeId(params.entry);
+    params.executionSelection?.executor.id ?? resolveAcceptedSessionRuntimeId(params.entry);
   const preferredProfile = resolveDashboardTitleAuthProfile({
     cfg: params.cfg,
     agentId: params.agentId,

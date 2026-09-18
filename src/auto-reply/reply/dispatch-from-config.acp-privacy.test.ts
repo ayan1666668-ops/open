@@ -44,7 +44,7 @@ describe("dispatchReplyFromConfig ACP reply privacy", () => {
     sessionStoreMocks.currentEntry = { sessionId: "privacy-session", updatedAt: Date.now() };
     const storedAcpEntry = createAcpSessionStoreEntryFixture({
       sessionKey,
-      entry: sessionStoreMocks.currentEntry,
+      entry: { sessionId: "privacy-session", updatedAt: Date.now() },
       acp: {
         backend: "acpx",
         agent: "codex",
@@ -54,7 +54,7 @@ describe("dispatchReplyFromConfig ACP reply privacy", () => {
         lastActivityAt: Date.now(),
       },
     });
-    sessionStoreMocks.currentEntry = storedAcpEntry.entry;
+    sessionStoreMocks.currentEntry = { ...storedAcpEntry.entry };
     acpMocks.readAcpSessionEntry.mockReturnValue(storedAcpEntry);
     acpMocks.requireAcpRuntimeBackend.mockReturnValue({ id: "acpx", runtime });
 

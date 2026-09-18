@@ -13,6 +13,7 @@ import { createDeferred } from "../../../../test/helpers/promise.js";
 import {
   clearConfigCache,
   clearRuntimeConfigSnapshot,
+  getRuntimeConfig,
   type OpenClawConfig,
 } from "../../../config/config.js";
 import {
@@ -57,6 +58,7 @@ import {
   createOpenClawTestState,
   type OpenClawTestState,
 } from "../../../test-utils/openclaw-test-state.js";
+import { acceptedModelSelection } from "../../../test-utils/session-execution-selection.js";
 import {
   createOperationalRunInstanceRef,
   getAdmittedRunDelegatedAuthority,
@@ -89,6 +91,8 @@ import {
 } from "../swarm/swarm-scheduler.js";
 import { cleanupProvisionalSession } from "./subagent-spawn-cleanup.js";
 import { callSubagentGateway } from "./subagent-spawn-gateway.js";
+import { registerNativeCancellationCases } from "./subagent-spawn.cancellation.test-support.js";
+import { configureSpawnRuntimeFixture } from "./subagent-spawn.production-boundary.test-support.js";
 
 const runEmbeddedAgent = vi.hoisted(() => vi.fn());
 
@@ -111,71 +115,12 @@ let state: OpenClawTestState;
 let stateDir = "";
 let runtimeConfig: OpenClawConfig;
 
-async function writeTestConfig() {
-  const config = {
-    logging: { audit: { enabled: true, executionIdentity: true } },
-    tools: { swarm: { enabled: true, maxConcurrent: 1 } },
-    agents: {
-      ownership: "explicit",
-      defaults: {
-        workspace: stateDir,
-        systemAgent: { agentId: "main" },
-        model: { primary: "custom/test-model" },
-      },
-      entries: { main: { workspace: stateDir } },
-    },
-    models: {
-      mode: "replace",
-      providers: {
-        custom: {
-          api: "openai-completions",
-          baseUrl: "https://example.invalid/v1",
-          models: [
-            {
-              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-              id: "test-model",
-              input: ["text"],
-              maxTokens: 1_024,
-              name: "Test model",
-              reasoning: false,
-            },
-          ],
-        },
-      },
-    },
-  } satisfies OpenClawConfig;
-  await state.writeConfig(config);
-  clearConfigCache();
-  clearRuntimeConfigSnapshot();
-  return config;
-}
-
 beforeEach(async () => {
   state = await createOpenClawTestState({ label: "spawn-production-boundary" });
   await resetPreparedModelRuntimeHarness(state);
   runEmbeddedAgent.mockReset();
   stateDir = state.stateDir;
-  runtimeConfig = await writeTestConfig();
-  const preparedRuntime = getPreparedModelRuntimeMocks();
-  const model = {
-    api: "openai-completions" as const,
-    baseUrl: "https://example.invalid/v1",
-    contextWindow: 4_096,
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    id: "test-model",
-    input: ["text" as const],
-    maxTokens: 1_024,
-    name: "Test model",
-    provider: "custom",
-    reasoning: false,
-  };
-  preparedRuntime.configuredAgentIds = ["main"];
-  preparedRuntime.configuredAgentDirs.set("main", state.agentDir("main"));
-  preparedRuntime.configuredWorkspaces.set("main", stateDir);
-  preparedRuntime.buildPreparedModelCatalogSnapshot.mockResolvedValue({
-    entries: [model],
-    routeVariants: [model],
-  });
+  runtimeConfig = await configureSpawnRuntimeFixture(state);
   resetSubagentRegistryForTests({ persist: false });
   resetTaskRegistryForTests({ persist: false });
   resetTaskFlowRegistryForTests({ persist: false });
@@ -205,7 +150,7 @@ afterEach(async ({ task }) => {
 });
 
 async function createBoundParent() {
-  const cfg = runtimeConfig;
+  const cfg = getRuntimeConfig();
   const storePath = await writeSubagentSessionEntry({
     stateDir,
     agentId: "main",
@@ -523,6 +468,16 @@ function throwBoundFailures(failures: unknown[]) {
 }
 
 describe("recursive spawn production boundary", () => {
+  registerNativeCancellationCases({
+    createBoundParent,
+    createBoundGateway,
+    closeBoundGateway,
+    throwBoundFailures,
+    parentSessionKey,
+    parentRunId,
+    assertNoModelExecution: () => expect(runEmbeddedAgent).not.toHaveBeenCalled(),
+  });
+
   it.each([
     {
       name: "configured child model",
@@ -582,14 +537,7 @@ describe("recursive spawn production boundary", () => {
     await upsertSessionEntryCore(
       { storePath: bound.storePath, sessionKey: parentSessionKey },
       {
-        executionSelection: {
-          state: "accepted",
-          selection: {
-            model: { provider: "custom", id: storedParentModel },
-            executor: { kind: "harness", id: "openclaw" },
-          },
-          fallbackPermission: "explicit",
-        },
+        executionSelection: acceptedModelSelection("custom", storedParentModel),
       },
     );
     const { context, runtime, identities, readAgentRuntimeExecutionLineage } =
@@ -645,14 +593,9 @@ describe("recursive spawn production boundary", () => {
       ).toMatchObject({
         spawnedBy: parentSessionKey,
         spawnDepth: 2,
-        executionSelection: {
-          state: "accepted",
-          selection: {
-            model: { provider: "custom", id: "child-model" },
-            executor: { kind: "harness", id: "openclaw" },
-          },
+        executionSelection: acceptedModelSelection("custom", "child-model", {
           fallbackPermission: "configured",
-        },
+        }),
       });
       expect(subagentRuns.get(details.runId)).toMatchObject({
         childSessionKey: details.childSessionKey,

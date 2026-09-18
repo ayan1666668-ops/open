@@ -53,8 +53,8 @@ it.each(
   [
     { agentId: "main", sessionKey: "agent:main:acp:reset-tail" },
     { agentId: "work", sessionKey: "shared-reset-tail" },
-  ].flatMap((target) =>
-    ["unlocked", "locked", "stale-admission"].map((custody) => ({ ...target, custody })),
+  ].flatMap(({ agentId, sessionKey }) =>
+    ["unlocked", "locked", "stale-admission"].map((custody) => ({ agentId, sessionKey, custody })),
   ),
 )(
   "routes an explicit ACP reset to $agentId/$sessionKey with $custody custody",
@@ -185,7 +185,9 @@ it.each(
     const delivered: string[] = [];
     const dispatcher = createReplyDispatcher({
       deliver: async (payload) => {
-        if (payload.text) delivered.push(payload.text);
+        if (payload.text) {
+          delivered.push(payload.text);
+        }
       },
     });
     const ctx = finalizeInboundContext({

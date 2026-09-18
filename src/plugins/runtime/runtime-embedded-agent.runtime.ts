@@ -18,11 +18,11 @@ import { getRuntimeConfig } from "../../config/config.js";
 import { loadSessionEntryReadOnly } from "../../config/sessions/session-accessor.js";
 import {
   prepareSessionExecutionSelection,
-  resolveSessionExecutionFallbacks,
+  resolveSessionModelFallbacks,
   resolveExecutionSelectionExecutorKind,
 } from "../../model-picker/apply-session-model-selection.js";
-import { getSessionExecutionSelection } from "../../model-picker/execution-selection.js";
 import {
+  getSessionExecutionSelection,
   isAcpExecutionSelection,
   isModelExecutionSelection,
 } from "../../model-picker/execution-selection.js";
@@ -53,6 +53,10 @@ export const runPluginEmbeddedAgent: PluginRuntime["agent"]["runEmbeddedAgent"] 
   let admittedRunContext: AdmittedRunContext | undefined;
   const config = params.config ?? getRuntimeConfig();
   const sessionKey = params.sessionKey ?? params.sessionTarget?.sessionKey;
+  const isRawModelRun = params.modelRun === true || params.promptMode === "none";
+  // Auxiliary runs borrow identity for authority, not the conversation's execution selection.
+  const selectionSessionKey =
+    params.sessionPersistence === "detached" || isRawModelRun ? undefined : sessionKey;
   const agentId = resolveSessionAgentId({
     config,
     sessionKey,
@@ -102,10 +106,10 @@ export const runPluginEmbeddedAgent: PluginRuntime["agent"]["runEmbeddedAgent"] 
   params.abortSignal?.addEventListener("abort", close, { once: true });
   try {
     params.abortSignal?.throwIfAborted();
-    const sessionEntry = sessionKey
+    const sessionEntry = selectionSessionKey
       ? loadSessionEntryReadOnly({
           agentId,
-          sessionKey,
+          sessionKey: selectionSessionKey,
           storePath: params.sessionTarget?.storePath,
           readConsistency: "latest",
         })
@@ -117,7 +121,7 @@ export const runPluginEmbeddedAgent: PluginRuntime["agent"]["runEmbeddedAgent"] 
         ? accepted.model
         : { provider: configured.provider, id: configured.model };
     const runtimeId = normalizeOptionalAgentRuntimeId(
-      params.agentHarnessId ?? params.agentHarnessRuntimeOverride,
+      isRawModelRun ? "openclaw" : (params.agentHarnessId ?? params.agentHarnessRuntimeOverride),
     );
     const explicitRuntime =
       runtimeId && !isDefaultAgentRuntimeId(runtimeId) ? runtimeId : undefined;
@@ -130,7 +134,7 @@ export const runPluginEmbeddedAgent: PluginRuntime["agent"]["runEmbeddedAgent"] 
     const prepared = await prepareSessionExecutionSelection({
       cfg: config,
       agentId,
-      sessionKey,
+      sessionKey: selectionSessionKey,
       storePath: params.sessionTarget?.storePath,
       sessionEntry,
       request:
@@ -173,12 +177,12 @@ export const runPluginEmbeddedAgent: PluginRuntime["agent"]["runEmbeddedAgent"] 
       agentHarnessId: prepared.selection.executor.id,
       agentHarnessRuntimeOverride: prepared.selection.executor.id,
       modelFallbackAvailability: isModelExecutionSelection(prepared.selection)
-        ? resolveSessionExecutionFallbacks({
+        ? resolveSessionModelFallbacks({
             cfg: config,
             agentId,
-            sessionKey,
+            sessionKey: selectionSessionKey,
             sessionEntry,
-            selection: prepared.selection,
+            model: prepared.selection.model,
             modelFallbacksOverride: params.modelFallbacksOverride,
           })
         : undefined,

@@ -12,19 +12,19 @@ import { createModelVisibilityPolicy } from "../../agents/model-visibility-polic
 import type { InternalSessionEntry as SessionEntry } from "../../config/sessions.js";
 import { SessionWorkStartInvalidatedError } from "../../config/sessions/lifecycle.js";
 import {
-  adoptPersistedSessionSnapshot,
   mergeSessionSnapshotChanges,
   SESSION_EXECUTION_SELECTION_TRANSACTION_FIELDS,
   sessionModelOverrideChangesApplied,
 } from "../../config/sessions/session-snapshot-merge.js";
+import { adoptPersistedSessionSnapshot } from "../../config/sessions/session-snapshot.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import {
   prepareSessionExecutionSelection,
   commitSessionModelSelectionWithAuth,
   executionSelectionTransactionChanged,
 } from "../../model-picker/apply-session-model-selection.js";
-import { getSessionExecutionSelection } from "../../model-picker/execution-selection.js";
 import {
+  getSessionExecutionSelection,
   isAcpExecutionSelection,
   isModelExecutionSelection,
 } from "../../model-picker/execution-selection.js";
@@ -94,7 +94,9 @@ async function applySelectionToSession(params: {
       : { kind: "model", model: { provider: selection.provider, id: selection.model } },
   });
   if (prepared.status !== "ready") {
-    if (prepared.reason === "locked") throw new ModelSelectionLockedError();
+    if (prepared.reason === "locked") {
+      throw new ModelSelectionLockedError();
+    }
     throw new Error(prepared.message);
   }
   if (isAcpExecutionSelection(prepared.selection)) {
@@ -110,13 +112,14 @@ async function applySelectionToSession(params: {
         ? previous.model.provider
         : params.defaultProvider,
     selection: prepared.selection,
-    cause: { kind: selection.resetToDefault ? "reset" : "user" },
+    cause: { kind: selection.isDefault ? "reset" : "user" },
   });
-  let appliedEntry = nextSessionEntry;
+  let appliedEntry: SessionEntry;
   let selectionApplied = true;
   if (storePath) {
     const { persistReplySessionEntry } = await import("./session-entry-persistence.js");
     const persistence = await persistReplySessionEntry({
+      agentId,
       storePath,
       sessionKey,
       initialEntry: initialSessionEntry,
@@ -144,8 +147,12 @@ async function applySelectionToSession(params: {
   } else {
     const current = sessionEntryHandle?.getCurrent() ?? sessionStore?.[sessionKey] ?? sessionEntry;
     const error = prepared.validateCommit();
-    if (error) throw new Error(error);
-    if (isModelSelectionLocked(current)) throw new ModelSelectionLockedError();
+    if (error) {
+      throw new Error(error);
+    }
+    if (isModelSelectionLocked(current)) {
+      throw new ModelSelectionLockedError();
+    }
     if (
       current !== sessionEntry ||
       current.sessionId !== initialSessionEntry.sessionId ||

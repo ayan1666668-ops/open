@@ -47,21 +47,27 @@ describe("worker placement runtime capabilities", () => {
     {
       name: "ignores a different historical runtime",
       observed: "previous-app",
-      model: { provider: "fixture", id: "model" },
-      runtime: "openclaw",
+      selection: {
+        model: { provider: "fixture", id: "model" },
+        executor: { kind: "harness", id: "openclaw" },
+      },
     },
     {
       name: "preserves the accepted native owner",
       observed: "previous-app",
-      model: "native-managed",
-      runtime: "native-app",
+      selection: {
+        model: "native-managed",
+        executor: { kind: "harness", id: "native-app" },
+      },
       locked: true,
     },
     {
       name: "keeps an explicit accepted executor over producer history",
       observed: "openclaw",
-      model: { provider: "fixture", id: "model" },
-      runtime: "selected-app",
+      selection: {
+        model: { provider: "fixture", id: "model" },
+        executor: { kind: "harness", id: "selected-app" },
+      },
     },
   ] as const)("$name", (scenario) => {
     expect(
@@ -74,17 +80,14 @@ describe("worker placement runtime capabilities", () => {
           ...("locked" in scenario ? { modelSelectionLocked: scenario.locked } : {}),
           executionSelection: {
             state: "accepted",
-            selection: {
-              model: scenario.model,
-              executor: { kind: "harness", id: scenario.runtime },
-            },
+            selection: scenario.selection,
             fallbackPermission: "explicit",
           },
         },
         agentId: "main",
         sessionKey: "agent:main:placement-runtime",
       }),
-    ).toBe(scenario.runtime);
+    ).toBe(scenario.selection.executor.id);
   });
 
   it.each([
@@ -301,11 +304,7 @@ describe("resolveWorkerPlacementSessionRuntimeCapabilities", () => {
     expect(caps.devicePlacement).toBeUndefined();
   });
 
-  it("honors a non-CLI session runtime override over a CLI-backed provider", () => {
-    // P1: when agentRuntimeOverride="openclaw" is active, dispatch skips CLI
-    // aliasing and runs the embedded runtime. The guard must agree — the
-    // CLI-backed provider must NOT be rejected because the override takes
-    // precedence (mirrors agent-runner-fallback-candidate.ts:113-119).
+  it("honors an accepted harness executor for a CLI-backed provider", () => {
     const registry = getActivePluginRegistry();
     if (registry) {
       registry.cliBackends.push({

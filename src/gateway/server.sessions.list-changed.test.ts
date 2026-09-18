@@ -7,6 +7,8 @@ import { afterEach, expect, test, vi } from "vitest";
 import { createDeferred } from "../../test/helpers/promise.js";
 import { resolveAgentDir, resolveAgentWorkspaceDir } from "../agents/agent-scope.js";
 import type { ModelCatalogEntry } from "../agents/model-catalog.js";
+import { resolveDefaultModelForAgent } from "../agents/model-selection.js";
+import { createSessionModelCatalogFixture } from "../agents/test-helpers/session-model-catalog.test-support.js";
 import { loadSessionEntry } from "../config/sessions/session-accessor.js";
 import { subscribePluginSessionsChanged } from "../plugins/gateway-events.js";
 import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
@@ -17,6 +19,15 @@ import {
 } from "../utils/delivery-context.shared.js";
 import { createGatewayBroadcaster } from "./server-broadcast.js";
 import type { GatewayModelCatalogSnapshot } from "./server-model-catalog.types.js";
+import {
+  expectChangedBroadcast,
+  expectFields,
+  expectRespondPayload,
+  findSession,
+  requireArray,
+  requireRecord,
+  transcriptMessageContents,
+} from "./server-sessions.list-changed-assertions.test-support.js";
 import { GatewayClientRegistry } from "./server/client-registry.js";
 import { embeddedRunMock, rpcReq, testState, writeSessionStore } from "./test-helpers.js";
 import {
@@ -39,86 +50,8 @@ afterEach(() => {
   setActivePluginRegistry(createEmptyPluginRegistry());
 });
 
-type MockCalls = {
-  mock: { calls: unknown[][] };
-};
 type SessionStoreEntryOptions = Parameters<typeof sessionStoreEntry>[1];
 type MutationMethod = "sessions.patch" | "sessions.compact";
-
-function isObjectRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
-function requireRecord(value: unknown, label: string): Record<string, unknown> {
-  expect(isObjectRecord(value), `${label} should be an object`).toBe(true);
-  if (!isObjectRecord(value)) {
-    throw new Error(`${label} should be an object`);
-  }
-  return value;
-}
-
-function requireArray(value: unknown, label: string): unknown[] {
-  expect(Array.isArray(value), `${label} should be an array`).toBe(true);
-  if (!Array.isArray(value)) {
-    throw new Error(`${label} should be an array`);
-  }
-  return value;
-}
-
-function expectFields(record: Record<string, unknown>, expected: Record<string, unknown>) {
-  for (const [key, value] of Object.entries(expected)) {
-    expect(record[key], key).toEqual(value);
-  }
-}
-
-function transcriptMessageContents(events: readonly unknown[]): unknown[] {
-  return events
-    .map((event) =>
-      isObjectRecord(event) && isObjectRecord(event.message) ? event.message.content : undefined,
-    )
-    .filter((content) => content !== undefined);
-}
-
-function expectRespondPayload(respond: MockCalls): Record<string, unknown> {
-  expect(respond.mock.calls).toHaveLength(1);
-  const [ok, payload, error] = respond.mock.calls[0] ?? [];
-  expect(ok).toBe(true);
-  expect(error).toBeUndefined();
-  return requireRecord(payload, "response payload");
-}
-
-function findSession(
-  payload: Record<string, unknown>,
-  sessionKey: string,
-): Record<string, unknown> {
-  const sessions = requireArray(payload.sessions, "response sessions");
-  const session = sessions.find(
-    (candidate): candidate is Record<string, unknown> =>
-      isObjectRecord(candidate) && candidate.key === sessionKey,
-  );
-  if (!session) {
-    throw new Error(`Missing session ${sessionKey}`);
-  }
-  return session;
-}
-
-function expectChangedBroadcast(
-  broadcastToConnIds: MockCalls,
-  expected: Record<string, unknown>,
-): Record<string, unknown> {
-  expect(broadcastToConnIds.mock.calls).toHaveLength(1);
-  const [event, payload, connIds, options] = broadcastToConnIds.mock.calls[0] ?? [];
-  expect(event).toBe("sessions.changed");
-  expect(connIds).toEqual(new Set(["conn-1"]));
-  expect(options).toEqual({
-    agentId: typeof expected.agentId === "string" ? expected.agentId : "main",
-    dropIfSlow: true,
-    ...(typeof expected.sessionKey === "string" ? { sessionKeys: [expected.sessionKey] } : {}),
-  });
-  const payloadRecord = requireRecord(payload, "broadcast payload");
-  expectFields(payloadRecord, expected);
-  return payloadRecord;
-}
 
 async function invokeSessionsList({
   requestId,
@@ -297,8 +230,11 @@ test("sessions.list keeps bulk rows lightweight and uses selected model fields",
       main: sessionStoreEntry("sess-parent"),
       "dashboard:child": sessionStoreEntry("sess-child", {
         updatedAt: Date.now() - 1_000,
-        providerOverride: "anthropic",
-        modelOverride: "test-model-without-catalog-context",
+        executionSelection: {
+          state: "deferred",
+          request: { model: { provider: "anthropic", id: "test-model-without-catalog-context" } },
+          fallbackPermission: "explicit",
+        },
         modelProvider: "anthropic",
         model: "test-model-without-catalog-context",
         modelSelectionLocked: true,
@@ -384,8 +320,11 @@ test.each([
       entries: {
         main: sessionStoreEntry("sess-parent"),
         "dashboard:child": sessionStoreEntry("sess-custom-provider", {
-          providerOverride: provider,
-          modelOverride: model,
+          executionSelection: {
+            state: "deferred",
+            request: { model: { provider, id: model } },
+            fallbackPermission: "explicit",
+          },
           modelProvider: provider,
           model,
           parentSessionKey: "agent:main:main",
@@ -951,8 +890,11 @@ test("sessions.changed mutation events include live usage metadata", async () =>
   await writeSessionStore({
     entries: {
       main: sessionStoreEntry("sess-main", {
-        providerOverride: "openai",
-        modelOverride: "gpt-5.3-codex-spark",
+        executionSelection: {
+          state: "deferred",
+          request: { model: { provider: "openai", id: "gpt-5.3-codex-spark" } },
+          fallbackPermission: "explicit",
+        },
         modelProvider: "openai",
         model: "gpt-5.3-codex-spark",
         agentHarnessId: "openclaw",
@@ -1370,6 +1312,21 @@ test("sessions.compact keeps manual trim no-transcript response shape", async ()
 
 test("sessions.compact passes the selected global agent into embedded compaction", async () => {
   const globalStores = await createConfiguredGlobalAgentSessionStore({ withTranscripts: true });
+  const cfg = globalStores.getRuntimeConfig();
+  const model = resolveDefaultModelForAgent({ cfg, agentId: "work" });
+  const entry = { provider: model.provider, id: model.model, name: "Compaction fixture" };
+  createSessionModelCatalogFixture().publish({
+    config: cfg,
+    agentId: "work",
+    catalog: { entries: [entry], routeVariants: [entry] },
+    profiles: {
+      "github-copilot:work": {
+        type: "api_key",
+        provider: model.provider,
+        key: "synthetic-compaction-credential",
+      },
+    },
+  });
   const { responsePayload } = await invokeSessionsCompact({
     getRuntimeConfig: globalStores.getRuntimeConfig,
     params: {
@@ -1410,6 +1367,21 @@ test("sessions.compact mounts a dashboard managed worktree as its workspace", as
     ],
   });
   const { getRuntimeConfig } = await getGatewayConfigModule();
+  const cfg = getRuntimeConfig();
+  const model = resolveDefaultModelForAgent({ cfg, agentId: "main" });
+  const entry = { provider: model.provider, id: model.model, name: "Compaction fixture" };
+  createSessionModelCatalogFixture().publish({
+    config: cfg,
+    agentId: "main",
+    catalog: { entries: [entry], routeVariants: [entry] },
+    profiles: {
+      "compaction:fixture": {
+        type: "api_key",
+        provider: model.provider,
+        key: "synthetic-compaction-credential",
+      },
+    },
+  });
 
   const { responsePayload } = await invokeSessionsCompact({
     getRuntimeConfig,

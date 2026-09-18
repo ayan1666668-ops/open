@@ -1,20 +1,32 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ModelCatalogEntry } from "../../agents/model-catalog.js";
+import type { createSessionModelCatalogFixture } from "../../agents/test-helpers/session-model-catalog.test-support.js";
+import { getFollowupQueue } from "../../auto-reply/reply/queue/state.js";
+import type { FollowupRun } from "../../auto-reply/reply/queue/types.js";
 import {
   loadSessionEntry,
   appendTranscriptMessageSync,
   upsertSessionEntryCore,
 } from "../../config/sessions/session-accessor.js";
+import type { InternalSessionEntry } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { commitSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
 import type { OpenClawTestState } from "../../test-utils/openclaw-test-state.js";
 import { createGatewaySession } from "../session-create-service.js";
 import { projectSessionPatchResult } from "../session-utils-model.js";
 import { buildGatewaySessionRow } from "../session-utils-row.js";
 import type { GatewayRequestContext, RespondFn } from "./types.js";
 
+type PublishedCatalog = ReturnType<ReturnType<typeof createSessionModelCatalogFixture>["publish"]>;
+
 export function registerSessionRuntimeWindowTests(harness: {
   getConfig: () => OpenClawConfig;
   getState: () => OpenClawTestState;
+  publishCatalog: (
+    entries: ModelCatalogEntry[],
+    routeVariants: ModelCatalogEntry[],
+  ) => PublishedCatalog;
+  publishDefaultCatalog: () => PublishedCatalog;
   patchSession: (
     request: Record<string, unknown>,
     scopes: string[],
@@ -24,8 +36,6 @@ export function registerSessionRuntimeWindowTests(harness: {
   const { patchSession } = harness;
   describe("runtime-specific session context windows", () => {
     function runtimeWindowFixture() {
-      const cfg = harness.getConfig();
-      const openClawTestState = harness.getState();
       const base: ModelCatalogEntry = {
         provider: "openai",
         id: "gpt-5.6-sol",
@@ -40,15 +50,7 @@ export function registerSessionRuntimeWindowTests(harness: {
         contextWindows: [{ id: "64k", label: "64K", contextWindow: 64_000 }],
         contextWindowDefault: "64k",
       };
-      const snapshot = {
-        entries: [base],
-        routeVariants: [base, native],
-        agentId: "main",
-        agentDir: openClawTestState.agentDir("main"),
-        workspaceDir: openClawTestState.workspaceDir,
-        config: cfg,
-        catalogComplete: true,
-      };
+      const snapshot = harness.publishCatalog([base], [base, native]);
       const requestContext = {
         loadGatewayModelCatalogSnapshot: vi.fn(async () => snapshot),
       };
@@ -78,21 +80,12 @@ export function registerSessionRuntimeWindowTests(harness: {
             entry: { contextWindow: "64k", agentRuntimeOverride: "codex" },
           });
         } else {
-          await upsertSessionEntryCore(
-            { agentId: "main", sessionKey },
-            {
-              sessionId: sessionKey,
-              updatedAt: 1,
-              executionSelection: {
-                state: "accepted",
-                selection: {
-                  model: { provider: base.provider, id: base.id },
-                  executor: { kind: "harness", id: "openclaw" },
-                },
-                fallbackPermission: "explicit",
-              },
-            },
-          );
+          const entry: InternalSessionEntry = { sessionId: sessionKey, updatedAt: 1 };
+          commitSessionExecutionSelection(entry, {
+            model: { provider: base.provider, id: base.id },
+            executor: { kind: "harness", id: "openclaw" },
+          });
+          await upsertSessionEntryCore({ agentId: "main", sessionKey }, entry);
           expect(
             (
               await patchSession(
@@ -109,7 +102,17 @@ export function registerSessionRuntimeWindowTests(harness: {
           ).toBe(true);
         }
         const stored = loadSessionEntry({ agentId: "main", sessionKey });
-        expect(stored).toMatchObject({ contextWindow: "64k", agentRuntimeOverride: "codex" });
+        expect(stored).toMatchObject({
+          contextWindow: "64k",
+          executionSelection: {
+            state: "accepted",
+            selection: {
+              model: { provider: base.provider, id: base.id },
+              executor: { kind: "harness", id: "codex" },
+            },
+            fallbackPermission: "explicit",
+          },
+        });
         if (!stored) {
           throw new Error("Session was not persisted");
         }
@@ -159,10 +162,13 @@ export function registerSessionRuntimeWindowTests(harness: {
         expect(invalid[0]).toBe(false);
         expect(invalid[2]?.message).toContain("use 64k");
         expect(loadSessionEntry({ agentId: "main", sessionKey })?.contextWindow).toBe("64k");
-        snapshot.routeVariants = [
-          base,
-          { ...native, contextWindows: undefined, contextWindowDefault: undefined },
-        ];
+        Object.assign(
+          snapshot,
+          harness.publishCatalog(snapshot.entries, [
+            base,
+            { ...native, contextWindows: undefined, contextWindowDefault: undefined },
+          ]),
+        );
         const missing = await patchSession(
           { key: sessionKey, contextWindow: "32k" },
           ["operator.admin"],
@@ -201,9 +207,11 @@ export function registerSessionRuntimeWindowTests(harness: {
         const { snapshot } = runtimeWindowFixture();
         const parentKey = `agent:main:window-parent-${parentTokens}`;
         const childKey = `agent:main:window-child-${parentTokens}`;
+        const parentSnapshot = harness.publishDefaultCatalog();
         const parent = await createGatewaySession({
           cfg,
           key: parentKey,
+          loadGatewayModelCatalogSnapshot: async () => parentSnapshot,
           commandSource: "test",
           operatorRoleActor: { kind: "system" },
         });
@@ -223,6 +231,7 @@ export function registerSessionRuntimeWindowTests(harness: {
           totalTokensFresh: true,
           totalTokensVersion: 1,
         });
+        const childSnapshot = harness.publishCatalog(snapshot.entries, snapshot.routeVariants);
         const child = await createGatewaySession({
           cfg,
           key: childKey,
@@ -231,7 +240,7 @@ export function registerSessionRuntimeWindowTests(harness: {
           model: "openai/gpt-5.6-sol",
           agentRuntime: "codex",
           contextWindow: "64k",
-          loadGatewayModelCatalogSnapshot: async () => snapshot,
+          loadGatewayModelCatalogSnapshot: async () => childSnapshot,
           commandSource: "test",
           operatorRoleActor: { kind: "system" },
         });
@@ -254,4 +263,29 @@ export function registerSessionRuntimeWindowTests(harness: {
       },
     );
   });
+}
+
+export function queueRuntimeSelection(
+  sessionKey: string,
+  cfg: OpenClawConfig,
+  openClawTestState: OpenClawTestState,
+) {
+  const queue = getFollowupQueue(sessionKey, { mode: "followup" });
+  const queued: FollowupRun["run"] = {
+    agentId: "main",
+    agentDir: openClawTestState.agentDir("main"),
+    sessionId: sessionKey,
+    sessionKey,
+    sessionFile: openClawTestState.statePath("queued-session.jsonl"),
+    workspaceDir: openClawTestState.workspaceDir,
+    config: cfg,
+    executionSelection: {
+      model: { provider: "anthropic", id: "claude-opus-4-6" },
+      executor: { kind: "harness", id: "openclaw" },
+    },
+    timeoutMs: 30_000,
+    blockReplyBreak: "message_end" as const,
+  };
+  queue.items.push({ prompt: "Queued work", enqueuedAt: 1, run: queued });
+  return queued;
 }

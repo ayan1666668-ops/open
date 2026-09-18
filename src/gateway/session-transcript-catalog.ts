@@ -301,7 +301,7 @@ export function readSessionTranscriptCatalogTitle(params: {
   agentId: string;
   sessionKey: string;
   storePath?: string;
-  entry: SessionEntry;
+  entry: Pick<SessionEntry, "sessionId" | "label" | "displayName" | "subject">;
 }): string | undefined {
   const title = deriveSessionTitle(params.entry);
   if (title) {

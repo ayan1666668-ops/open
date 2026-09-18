@@ -9,13 +9,14 @@ import { resolveFastModeState } from "../../agents/fast-mode.js";
 import type { ModelCatalogSnapshot } from "../../agents/model-catalog.types.js";
 import type { ModelAliasIndex } from "../../agents/model-selection.js";
 import { resolveSandboxRuntimeStatus } from "../../agents/sandbox/runtime-status.js";
-import { resolveEffectiveAgentRuntime } from "../../agents/thinking-runtime.js";
+import { resolveEffectiveAgentRuntimeCore } from "../../agents/thinking-runtime.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import { isSessionWorkStartInvalidatedError } from "../../config/sessions/lifecycle.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { isFastTestRuntimeEnv } from "../../infra/env.js";
 import { normalizeAgentId } from "../../routing/session-key.js";
 import { ModelSelectionLockedError } from "../../sessions/model-overrides.js";
+import { readSessionInputProfileId } from "../../sessions/session-participant-input.js";
 import { createLazyImportLoader } from "../../shared/lazy-promise.js";
 import {
   expandExplicitSkillReferences,
@@ -141,11 +142,11 @@ export async function resolveReplyDirectives(params: {
   isGroup: boolean;
   triggerBodyNormalized: string;
   resetTriggered: boolean;
+  isNewSession: boolean;
+  heartbeatAuthProfile?: { provider: string; model: string; profileId: string };
   commandAuthorized: boolean;
   defaultProvider: string;
   defaultModel: string;
-  primaryProvider?: string;
-  primaryModel?: string;
   aliasIndex: ModelAliasIndex;
   provider: string;
   model: string;
@@ -177,8 +178,6 @@ export async function resolveReplyDirectives(params: {
     commandAuthorized,
     defaultProvider,
     defaultModel,
-    primaryProvider,
-    primaryModel,
     provider: initialProvider,
     model: initialModel,
     hasOneTurnModelOverride,
@@ -433,46 +432,67 @@ export async function resolveReplyDirectives(params: {
     isFastTestEnv: isFastTestRuntimeEnv(),
   });
 
-  const prepareModelState = (hasModelDirective: boolean) =>
-    createModelSelectionState({
-      cfg,
-      agentId,
-      agentCfg,
-      sessionEntry: targetSessionEntry,
-      sessionStore,
-      sessionKey,
-      parentSessionKey:
-        targetSessionEntry?.parentSessionKey ?? ctx.ModelParentSessionKey ?? ctx.ParentSessionKey,
-      storePath,
-      defaultProvider,
-      defaultModel,
-      primaryProvider,
-      primaryModel,
-      provider,
-      model,
-      hasModelDirective,
-      hasOneTurnModelOverride,
-      skipStoredModelOverride,
-      hasResolvedHeartbeatModelOverride,
-      isHeartbeat: opts?.isHeartbeat === true,
-      preparedModelCatalog: params.preparedModelCatalog,
-    });
-  let modelState: Awaited<ReturnType<typeof createModelSelectionState>>;
-  try {
-    modelState = await prepareModelState(directives.hasModelDirective);
-  } catch (error) {
-    if (
-      !(error instanceof ModelSelectionLockedError) &&
-      !isSessionWorkStartInvalidatedError(error)
-    ) {
-      throw error;
+  const prepareModelState = async (
+    hasModelDirective: boolean,
+  ): Promise<
+    | { kind: "prepared"; state: Awaited<ReturnType<typeof createModelSelectionState>> }
+    | Extract<ReplyDirectiveResult, { kind: "reply" }>
+  > => {
+    try {
+      return {
+        kind: "prepared",
+        state: await createModelSelectionState({
+          cfg,
+          agentId,
+          agentCfg,
+          sessionEntry: targetSessionEntry,
+          sessionStore,
+          sessionKey,
+          parentSessionKey:
+            targetSessionEntry?.parentSessionKey ??
+            ctx.ModelParentSessionKey ??
+            ctx.ParentSessionKey,
+          storePath,
+          defaultProvider,
+          defaultModel,
+          provider,
+          model,
+          hasModelDirective,
+          prepareExecution: false,
+          abortSignal: opts?.abortSignal,
+          replyAuth: {
+            isNewSession: params.isNewSession,
+            requesterProfileId: readSessionInputProfileId(ctx),
+            ...(params.heartbeatAuthProfile?.provider === provider &&
+            params.heartbeatAuthProfile.model === model
+              ? { configuredProfileId: params.heartbeatAuthProfile.profileId }
+              : {}),
+          },
+          hasOneTurnModelOverride,
+          skipStoredModelOverride,
+          hasResolvedHeartbeatModelOverride,
+          preparedModelCatalog: params.preparedModelCatalog,
+        }),
+      };
+    } catch (error) {
+      if (
+        !(error instanceof ModelSelectionLockedError) &&
+        !isSessionWorkStartInvalidatedError(error)
+      ) {
+        throw error;
+      }
+      typing.cleanup();
+      if (error instanceof ModelSelectionLockedError) {
+        recordReplyPreRunRejection(resolveReplyOperationRunState(opts), "model-selection-locked");
+      }
+      return { kind: "reply", reply: { text: error.message, isError: true } };
     }
-    typing.cleanup();
-    if (error instanceof ModelSelectionLockedError) {
-      recordReplyPreRunRejection(resolveReplyOperationRunState(opts), "model-selection-locked");
-    }
-    return { kind: "reply", reply: { text: error.message, isError: true } };
+  };
+  const initialModelState = await prepareModelState(directives.hasModelDirective);
+  if (initialModelState.kind === "reply") {
+    return initialModelState;
   }
+  let modelState = initialModelState.state;
   provider = modelState.provider;
   model = modelState.model;
 
@@ -544,8 +564,12 @@ export async function resolveReplyDirectives(params: {
   modelState.executionSelection = applyResult.executionSelection;
   modelState.sessionExecutionSelection = applyResult.sessionExecutionSelection;
   contextTokens = applyResult.contextTokens;
-  if (!modelState.executionSelection) {
-    modelState = await prepareModelState(false);
+  if (effectiveModelDirective) {
+    const preparedModelState = await prepareModelState(false);
+    if (preparedModelState.kind === "reply") {
+      return preparedModelState;
+    }
+    modelState = preparedModelState.state;
     provider = modelState.provider;
     model = modelState.model;
     contextTokens = resolveContextTokens({
@@ -556,7 +580,7 @@ export async function resolveReplyDirectives(params: {
       modelContextTokens: modelState.modelContextTokens,
     });
   }
-  const thinkingRuntime = resolveEffectiveAgentRuntime({
+  const thinkingRuntime = resolveEffectiveAgentRuntimeCore({
     cfg,
     provider,
     modelId: model,
@@ -568,8 +592,7 @@ export async function resolveReplyDirectives(params: {
     thinkingLevelOverride !== undefined ||
     directives.thinkLevel !== undefined ||
     sessionThinkLevel !== undefined ||
-    configuredThinkingDefault !== undefined ||
-    modelState.hasConfiguredThinkingDefault === true;
+    configuredThinkingDefault !== undefined;
 
   // When neither directive nor session nor agent set reasoning, default to model capability
   // (e.g. OpenRouter with reasoning: true). Skip model default when thinking is active
@@ -596,7 +619,9 @@ export async function resolveReplyDirectives(params: {
   const resolvedFastModeAutoOnSeconds =
     opts?.fastModeAutoOnSecondsOverride ?? resolvedFastModeState.fastAutoOnSeconds;
   const resolvedFastModeOverride =
-    opts?.fastModeOverride !== undefined || directives.fastMode !== undefined;
+    opts?.fastModeOverride !== undefined ||
+    directives.fastMode !== undefined ||
+    directives.clearFastMode;
   const resolvedFastModeAutoOnSecondsOverride = opts?.fastModeAutoOnSecondsOverride !== undefined;
   const execOverrides = resolveReplyExecOverrides({
     directives,

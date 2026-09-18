@@ -182,9 +182,14 @@ it("connect negotiates snapshots and preserves draft and saved-session catalog s
         {
           sessionId: "saved-model-catalog-session",
           updatedAt: Date.now(),
-          providerOverride: "fixture",
-          modelOverride: "second",
-          modelOverrideRouteResolution: "resolved",
+          executionSelection: {
+            state: "accepted",
+            selection: {
+              model: { provider: "fixture", id: "second" },
+              executor: { kind: "harness", id: "openclaw" },
+            },
+            fallbackPermission: "explicit",
+          },
           authProfileOverride: "fixture:saved-account",
           authProfileOverrideSource: "user",
         },
@@ -239,7 +244,14 @@ it("connect negotiates snapshots and preserves draft and saved-session catalog s
               },
             ]);
           expect(publications).toHaveLength(1);
-          expect(loadSessionEntry({ agentId: "alpha", sessionKey })?.modelOverride).toBe("second");
+          expect(loadSessionEntry({ agentId: "alpha", sessionKey })?.executionSelection).toEqual({
+            state: "accepted",
+            selection: {
+              model: { provider: "fixture", id: "second" },
+              executor: { kind: "harness", id: "openclaw" },
+            },
+            fallbackPermission: "explicit",
+          });
         } finally {
           await disconnectGatewayClient(saved);
         }

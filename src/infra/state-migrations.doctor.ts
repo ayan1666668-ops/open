@@ -19,13 +19,8 @@ import { readCurrentConfigForResolution } from "../config/io.runtime.js";
 import { resolveSessionStoreCompatibilityAgentId } from "../config/legacy.default-agent-owner.js";
 import { resolveConfigPath, resolveOAuthDir, resolveStateDir } from "../config/paths.js";
 import { migrateLegacyMainSessionKeys } from "../config/sessions/legacy-main-session-migration.js";
-import { resolveSessionStorePathCore } from "../config/sessions/paths.js";
 import { isPerAgentSessionStoreConfig } from "../config/sessions/session-store-config.js";
-import {
-  listConfiguredSessionStoreAgentIds,
-  resolveAllAgentSessionStoreCandidateTargetsSync,
-  resolveConfiguredAgentDatabaseTargets,
-} from "../config/sessions/targets.js";
+import { resolveConfiguredAgentDatabaseTargets } from "../config/sessions/targets.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import {
   collectRelevantDoctorPluginIds,
@@ -120,6 +115,18 @@ import {
   migrateLegacyNodeHostConfig,
 } from "./state-migrations.node-host.js";
 import {
+  uniqueMigrationEndpoints,
+  listMigrationEndpointsOutsideRoot,
+  createSessionTargetOutsideSnapshotRefusal,
+  createDeferredPluginSessionStoreRefusal,
+  createDeferredPluginSessionStoreEndpoints,
+  createPluginMigrationPreparationRefusal,
+  resolveConfiguredSessionStoreEndpoints,
+  bindAgentDatabaseTargetsToStateRoot,
+  createConfigMigrationSources,
+  inspectOrphanSessionStoreEndpoints,
+} from "./state-migrations.plan-endpoints.js";
+import {
   captureLegacyStateSnapshotIdentity,
   createLegacyStateMigrationCallerEnv,
   createLegacyStateMigrationPlanEnv,
@@ -158,7 +165,6 @@ import {
 import {
   listLegacySessionKeys,
   mergeSessionStoreAliasPlans,
-  migrateLegacyAcpSessionMetadata,
   migrateOrphanedSessionKeys,
   resolveStaleLegacySessionFile,
   resolveSessionStoreOwnership,
@@ -1030,7 +1036,6 @@ const unresolvedMigrationStepLayout = [
   ["plugin-doctor-state", "final", "all"],
   ["sessions", "final", "doctor-agent"],
   ["legacy-main-session-keys", "final", "automatic"],
-  ["acp-session-metadata", "final", "doctor-agent"],
   ["agent-dir", "final", "agent"],
   ["plugin-doctor-post-session-state", "final", "doctor"],
 ] as const satisfies ReadonlyArray<
@@ -1181,21 +1186,27 @@ async function createStateSchemaMigrationStep(
     path: resolveOpenClawStateSqlitePath(stateEnv),
   };
   let selectionTargets = params.selectionEndpoints;
+  let selectionDiscoveryFailure: { error: unknown } | undefined;
   if (params.mode === "doctor" && !params.selectionEndpoints) {
-    const registeredDatabases = await inspectOpenClawRegisteredAgentDatabases({
-      env: stateEnv,
-      includeIncompatibleSchemaVersions: true,
-    });
-    selectionTargets = [
-      ...registeredDatabases,
-      ...resolveConfiguredAgentDatabaseTargets(params.config, {
+    try {
+      const registeredDatabases = await inspectOpenClawRegisteredAgentDatabases({
         env: stateEnv,
-        registeredDatabases,
-      }),
-    ].map(({ path: databasePath }): LegacyStateMigrationEndpoint => ({
-      kind: "sqlite",
-      path: databasePath,
-    }));
+        includeIncompatibleSchemaVersions: true,
+      });
+      selectionTargets = [
+        ...registeredDatabases,
+        ...resolveConfiguredAgentDatabaseTargets(params.config, {
+          env: stateEnv,
+          registeredDatabases,
+        }),
+      ].map(({ path: databasePath }): LegacyStateMigrationEndpoint => ({
+        kind: "sqlite",
+        path: databasePath,
+      }));
+    } catch (error) {
+      // Discovery is part of this step's admission, so its refusal must close the receipt tail.
+      selectionDiscoveryFailure = { error };
+    }
   }
   const selectionEndpoints: LegacyStateMigrationEndpoint[] =
     params.mode === "doctor"
@@ -1220,6 +1231,9 @@ async function createStateSchemaMigrationStep(
     requiredness: params.requiredness,
     reversibility: "checkpoint-required",
     run: async () => {
+      if (selectionDiscoveryFailure) {
+        throw selectionDiscoveryFailure.error;
+      }
       return params.mode === "doctor"
         ? (
             await import("./state-migrations.execution-selection.js")
@@ -1348,190 +1362,6 @@ function createPluginMigrationPreparationStep(params: {
     ...(params.refusal ? { refusal: params.refusal } : {}),
     run: params.run,
   };
-}
-
-function uniqueMigrationEndpoints(
-  endpoints: readonly LegacyStateMigrationEndpoint[],
-): LegacyStateMigrationEndpoint[] {
-  const seen = new Set<string>();
-  return endpoints.filter((endpoint) => {
-    const key =
-      endpoint.kind === "owner" ? `owner\0${endpoint.id}` : `${endpoint.kind}\0${endpoint.path}`;
-    if (seen.has(key)) {
-      return false;
-    }
-    seen.add(key);
-    return true;
-  });
-}
-
-function listMigrationEndpointsOutsideRoot(
-  endpoints: readonly LegacyStateMigrationEndpoint[],
-  root: string,
-): LegacyStateMigrationEndpoint[] {
-  const resolvedRoot = path.resolve(root);
-  const identityRoot = resolveIdentityPathViaExistingAncestorSync(resolvedRoot);
-  return uniqueMigrationEndpoints(
-    endpoints.filter((endpoint) => {
-      if (endpoint.kind === "owner") {
-        return false;
-      }
-      const resolvedPath = path.resolve(endpoint.path);
-      const identityPath = resolveIdentityPathViaExistingAncestorSync(resolvedPath);
-      return (
-        (resolvedPath !== resolvedRoot && !isPathInside(resolvedRoot, resolvedPath)) ||
-        (identityPath !== identityRoot && !isPathInside(identityRoot, identityPath))
-      );
-    }),
-  );
-}
-
-function createSessionTargetOutsideSnapshotRefusal(
-  endpoints: readonly LegacyStateMigrationEndpoint[],
-): NonNullable<PreparedLegacyStateMigrationStep["refusal"]> {
-  return {
-    code: "session-target-outside-snapshot",
-    message: `Configured session migration endpoints are outside the copied state root and require a separately bound snapshot: ${endpoints
-      .map((endpoint) => (endpoint.kind === "owner" ? endpoint.id : path.resolve(endpoint.path)))
-      .toSorted()
-      .join(", ")}`,
-  };
-}
-
-function createDeferredPluginSessionStoreRefusal(
-  endpoints: readonly LegacyStateMigrationEndpoint[],
-): PreparedLegacyStateMigrationStep["refusal"] | undefined {
-  return endpoints.length > 0
-    ? {
-        code: "plugin-planning-deferred",
-        message: "Plugin-owned session migration targets are deferred to candidate validation.",
-      }
-    : undefined;
-}
-
-function createDeferredPluginSessionStoreEndpoints(
-  config: OpenClawConfig,
-  inventory: PluginDoctorStateMigrationInventory,
-): LegacyStateMigrationEndpoint[] {
-  const knownPluginIds = new Set(inventory.knownPluginIds);
-  const sessionStoreOwnerPluginIds = new Set(inventory.sessionStoreOwnerPluginIds);
-  return collectRelevantDoctorPluginIds(config)
-    .filter((pluginId) => !knownPluginIds.has(pluginId) || sessionStoreOwnerPluginIds.has(pluginId))
-    .map((pluginId) => ({
-      kind: "owner",
-      id: `plugin:${pluginId}:session-store`,
-    }));
-}
-
-function createPluginMigrationPreparationRefusal(params: {
-  inventory: PluginDoctorStateMigrationInventory;
-  deferredSessionStoreEndpoints: readonly LegacyStateMigrationEndpoint[];
-}): PreparedLegacyStateMigrationStep["refusal"] | undefined {
-  if (
-    params.deferredSessionStoreEndpoints.length === 0 &&
-    params.inventory.unresolvedPluginIds.length === 0
-  ) {
-    return undefined;
-  }
-  return {
-    code: "plugin-planning-deferred",
-    message:
-      "Plugin migration preparation requires candidate-bound plugin and session-store descriptors.",
-  };
-}
-
-function resolveConfiguredSessionStoreEndpoints(
-  config: OpenClawConfig,
-  env: NodeJS.ProcessEnv,
-): LegacyStateMigrationEndpoint[] {
-  return uniqueMigrationEndpoints(
-    [
-      ...new Set([
-        ...listConfiguredSessionStoreAgentIds(config),
-        resolveSessionStoreCompatibilityAgentId(config),
-      ]),
-    ].map((agentId) => ({
-      kind: "path" as const,
-      path: resolveSessionStorePathCore(config.session?.store, { agentId, env }),
-    })),
-  );
-}
-
-function bindAgentDatabaseTargetsToStateRoot(
-  targets: readonly { agentId: string; path: string }[],
-  stateDir: string,
-): {
-  targets: Array<{ agentId: string; path: string }>;
-  outsideEndpoints: LegacyStateMigrationEndpoint[];
-  refusal?: PreparedLegacyStateMigrationStep["refusal"];
-} {
-  const outsideEndpoints = listMigrationEndpointsOutsideRoot(
-    targets.map(({ path: databasePath }) => ({
-      kind: "sqlite" as const,
-      path: databasePath,
-    })),
-    stateDir,
-  );
-  const outsidePaths = new Set(
-    outsideEndpoints.flatMap((endpoint) =>
-      endpoint.kind === "owner" ? [] : [path.resolve(endpoint.path)],
-    ),
-  );
-  if (outsidePaths.size === 0) {
-    return { targets: [...targets], outsideEndpoints: [] };
-  }
-  return {
-    targets: targets.filter((target) => !outsidePaths.has(path.resolve(target.path))),
-    outsideEndpoints,
-    refusal: createSessionTargetOutsideSnapshotRefusal(outsideEndpoints),
-  };
-}
-
-function createConfigMigrationSources(
-  configPath: string,
-  includedPaths: readonly string[],
-): LegacyStateMigrationEndpoint[] {
-  return uniqueMigrationEndpoints(
-    [configPath, ...includedPaths].map((inputPath) => ({
-      kind: "path" as const,
-      path: path.resolve(inputPath),
-    })),
-  );
-}
-
-function inspectOrphanSessionStoreEndpoints(params: {
-  config: OpenClawConfig;
-  env: NodeJS.ProcessEnv;
-  pluginSessionStoreAgentIds: readonly string[];
-  registeredDatabases?: readonly { agentId: string; path: string }[];
-}): { endpoints: LegacyStateMigrationEndpoint[]; warnings: string[] } {
-  try {
-    const paths = resolveAllAgentSessionStoreCandidateTargetsSync(params.config, {
-      env: params.env,
-      registeredDatabases: params.registeredDatabases,
-    }).map((target) => target.storePath);
-    for (const agentId of params.pluginSessionStoreAgentIds) {
-      paths.push(
-        resolveSessionStorePathCore(params.config.session?.store, {
-          agentId,
-          env: params.env,
-        }),
-      );
-    }
-    return {
-      endpoints: uniqueMigrationEndpoints(
-        paths
-          .filter((storePath) => !storePath.endsWith(".sqlite"))
-          .map((storePath) => ({ kind: "path" as const, path: storePath })),
-      ),
-      warnings: [],
-    };
-  } catch (error) {
-    return {
-      endpoints: [{ kind: "owner", id: "core:session-store-targets" }],
-      warnings: [`Could not inspect session migration targets: ${String(error)}`],
-    };
-  }
 }
 
 function buildLegacyStateMigrationPreludeSteps(params: {
@@ -1920,11 +1750,6 @@ async function buildLegacyStateMigrationSteps(
       pathEndpoints(detected.sessions.targetDir, detected.sessions.targetStorePath),
     ],
     "legacy-main-session-keys": [canonicalSessionStores, "conditional", canonicalSessionStores],
-    "acp-session-metadata": [
-      legacySessionStores,
-      "conditional",
-      uniqueMigrationEndpoints([...legacySessionStores, stateDatabase]),
-    ],
     "agent-dir": [
       pathEndpoints(...detected.agentDir.sources.map(({ legacyDir }) => legacyDir)),
       detected.agentDir.hasLegacy,
@@ -2197,22 +2022,6 @@ async function buildLegacyStateMigrationSteps(
             },
         true,
         legacySessionStoreRefusal,
-      ),
-      runWithoutFileDetection: true,
-    });
-  }
-  if (repairSessionFiles) {
-    // ACP metadata must run once after sessions are canonicalized; otherwise
-    // existing rows and newly imported rows generate conflicting repeat warnings.
-    finalSteps.push({
-      ...finalStep("acp-session-metadata", () =>
-        migrateLegacyAcpSessionMetadata({
-          cfg: params.sessionConfig ?? params.config,
-          env: isDoctor ? { ...env, OPENCLAW_STATE_DIR: stateDir } : env,
-          now,
-          pluginSessionStoreAgentIds,
-          legacySessionSurfaces: params.legacySessionSurfaces,
-        }),
       ),
       runWithoutFileDetection: true,
     });
@@ -2787,19 +2596,12 @@ export async function planLegacyStateMigrationsReadOnly(params: {
       };
     }
   }
-  if (sessionTargetRefusal) {
-    for (const step of steps) {
-      if (step.id === "acp-session-metadata") {
-        step.refusal = sessionTargetRefusal;
-      }
-    }
-  }
   const channelPairingStep = steps.find((step) => step.id === "channel-pairing");
   if (channelPairingStep && detected.channelPairing.accountDiscoveryDeferred) {
     channelPairingStep.requiredness = "conditional";
     channelPairingStep.refusal = {
       code: "plugin-planning-deferred",
-      message: "Channel pairing account discovery is deferred to candidate plugin validation.",
+      message: "Channel pairing accounts will be checked with the updated plugins.",
     };
   }
   const firstRefusalIndex = steps.findIndex((step) => step.refusal !== undefined);

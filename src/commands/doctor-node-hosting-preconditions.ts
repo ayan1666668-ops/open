@@ -4,7 +4,7 @@ import { normalizeOptionalString } from "@openclaw/normalization-core/string-coe
 import { OPENCLAW_AGENT_RUNTIME_ID } from "../agents/agent-runtime-id.js";
 import { listAgentIds } from "../agents/agent-scope-config.js";
 import { resolveDefaultModelForAgent } from "../agents/model-selection.js";
-import { resolveEffectiveAgentRuntime } from "../agents/thinking-runtime.js";
+import { resolveEffectiveAgentRuntimeCore } from "../agents/thinking-runtime.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { HealthFinding } from "../flows/health-checks.js";
 import { hasConfiguredGatewayAuthSecretInput } from "../gateway/auth-config-utils.js";
@@ -62,7 +62,7 @@ function lacksDeviceCapableRuntimeRoute(cfg: OpenClawConfig): boolean {
   const registry = getActivePluginRegistry();
   return listAgentIds(cfg).every((agentId) => {
     const model = resolveDefaultModelForAgent({ cfg, agentId });
-    const runtime = resolveEffectiveAgentRuntime({
+    const runtime = resolveEffectiveAgentRuntimeCore({
       cfg,
       provider: model.provider,
       modelId: model.model,

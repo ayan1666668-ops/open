@@ -7,10 +7,12 @@ import { getActivePluginRegistryVersion } from "../../plugins/runtime.js";
 import { getPluginRegistryForContext } from "../../plugins/runtime/gateway-request-scope.js";
 import type { PreparedAgentCredentialModes } from "../agent-auth-credential-modes.js";
 import { resolveAgentDir, resolveAgentWorkspaceDir } from "../agent-scope.js";
-import { setRuntimeAuthProfileStoreSnapshot } from "../auth-profiles/runtime-snapshots.js";
+import {
+  registerRuntimeAuthProfileStoreMutationListener,
+  setRuntimeAuthProfileStoreSnapshot,
+} from "../auth-profiles/runtime-snapshots.js";
 import {
   getRuntimeAuthProfileStoreSnapshot,
-  getRuntimeAuthProfileStoreSnapshotRevision,
   clearRuntimeAuthProfileStoreSnapshot,
 } from "../auth-profiles/store.js";
 import type { AuthProfileStore } from "../auth-profiles/types.js";
@@ -20,6 +22,7 @@ import {
   setPreparedModelFullCatalogAuth,
   setPreparedModelRuntimeAuthStore,
 } from "../prepared-model-runtime-auth.js";
+import { preparedModelRuntimeConfigsMatch } from "../prepared-model-runtime.owner.js";
 import type { PreparedModelRuntimeSnapshot } from "../prepared-model-runtime.types.js";
 import { AuthStorage, ModelRegistry } from "../sessions/index.js";
 
@@ -28,14 +31,18 @@ export function createSessionModelCatalogFixture() {
   const owners = new Map<string, PreparedModelRuntimeSnapshot>();
   let installed = false;
   const authBefore = new Map<string, ReturnType<typeof getRuntimeAuthProfileStoreSnapshot>>();
-  function publish(params: {
-    config: OpenClawConfig;
-    agentId: string;
-    catalog: ModelCatalogSnapshot;
-    profiles: AuthProfileStore["profiles"];
-    runtimeAuthModes?: PreparedAgentCredentialModes;
-    plugins?: readonly PluginManifestRecord[];
-  }) {
+  function publish(
+    params: {
+      config: OpenClawConfig;
+      agentId: string;
+      catalog: ModelCatalogSnapshot;
+      runtimeAuthModes?: PreparedAgentCredentialModes;
+      plugins?: readonly PluginManifestRecord[];
+    } & (
+      | { profiles: AuthProfileStore["profiles"]; authStore?: never }
+      | { authStore: AuthProfileStore; profiles?: never }
+    ),
+  ) {
     if (!installed) {
       installed = true;
       const read = vi
@@ -43,19 +50,29 @@ export function createSessionModelCatalogFixture() {
         .mockImplementation((request = {}) => {
           const owner = owners.get(request.agentId ?? "main");
           return owner &&
-            owner.config === request.config &&
+            request.config &&
+            preparedModelRuntimeConfigsMatch(owner.config, request.config) &&
             (!request.workspaceDir || owner.workspaceDir === request.workspaceDir)
             ? owner
             : undefined;
         });
+      const prepare = vi
+        .spyOn(catalogPublication, "preparePublishedModelCatalogOwnerSnapshot")
+        .mockImplementation(async (request = {}) =>
+          catalogPublication.getPublishedPreparedModelCatalogOwnerSnapshot(request),
+        );
       onTestFinished(() => {
         owners.clear();
         for (const [agentDir, store] of authBefore) {
-          if (store) setRuntimeAuthProfileStoreSnapshot(store, agentDir);
-          else clearRuntimeAuthProfileStoreSnapshot(agentDir);
+          if (store) {
+            setRuntimeAuthProfileStoreSnapshot(store, agentDir);
+          } else {
+            clearRuntimeAuthProfileStoreSnapshot(agentDir);
+          }
         }
         authBefore.clear();
         read.mockRestore();
+        prepare.mockRestore();
         installed = false;
       });
     }
@@ -65,11 +82,22 @@ export function createSessionModelCatalogFixture() {
     const workspaceDir = resolveAgentWorkspaceDir(config, agentId);
     const registry = getPluginRegistryForContext();
     const registryVersion = getActivePluginRegistryVersion();
-    const authStore: AuthProfileStore = { version: 1, profiles: params.profiles };
-    if (!authBefore.has(agentDir))
+    const authStore: AuthProfileStore = params.authStore ?? {
+      version: 1,
+      profiles: params.profiles,
+    };
+    if (!authBefore.has(agentDir)) {
       authBefore.set(agentDir, getRuntimeAuthProfileStoreSnapshot(agentDir));
+    }
     setRuntimeAuthProfileStoreSnapshot(authStore, agentDir);
-    const authRevision = getRuntimeAuthProfileStoreSnapshotRevision(agentDir);
+    let authCurrent = true;
+    onTestFinished(
+      registerRuntimeAuthProfileStoreMutationListener((event) => {
+        if (event.affectsInheritedStores || event.agentDir === agentDir) {
+          authCurrent = false;
+        }
+      }),
+    );
     const owner: PreparedModelRuntimeSnapshot = {
       config,
       observationConfig: config,
@@ -88,7 +116,7 @@ export function createSessionModelCatalogFixture() {
         isDeepStrictEqual(config, configured) &&
         getPluginRegistryForContext() === registry &&
         getActivePluginRegistryVersion() === registryVersion &&
-        getRuntimeAuthProfileStoreSnapshotRevision(agentDir) === authRevision,
+        authCurrent,
       allowGatewaySubagentBinding: true,
       modelCatalog: catalog,
       readFullModelCatalog: () => catalog,

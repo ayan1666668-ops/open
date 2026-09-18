@@ -12,6 +12,7 @@ import type { InternalSessionEntry } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { buildGatewaySessionRow } from "../../gateway/session-utils-row.js";
 import { disposeOpenClawAgentDatabaseByPath } from "../../state/openclaw-agent-db.js";
+import { acceptedModelSelection } from "../../test-utils/session-execution-selection.js";
 import { accountAgentTurn } from "./agent-runner-result-accounting.js";
 import { createMockFollowupRun } from "./test-helpers.js";
 
@@ -46,7 +47,6 @@ async function createFixture(selected = diagnostic) {
     activeSessionStore: { [sessionKey]: entry },
     blockReplyPipeline: null,
     cfg,
-    defaultModel: selected.model,
     followupRun: createMockFollowupRun({
       run: {
         sessionId: entry.sessionId,
@@ -227,7 +227,7 @@ it.each([false, true])(
       { status: "running" as const },
       { lastRunId: "another-run" },
       { sessionId: "another-session" },
-      { providerOverride: "another-provider", modelOverride: "another-model" },
+      { executionSelection: acceptedModelSelection("another-provider", "another-model") },
     ]) {
       const row = project({ ...stored, ...changed });
       expect(row.activeModel, JSON.stringify(changed)).toBeUndefined();

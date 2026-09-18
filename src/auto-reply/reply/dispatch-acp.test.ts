@@ -168,8 +168,8 @@ const bindingServiceMocks = vi.hoisted(() => ({
 }));
 
 vi.mock("./dispatch-acp-manager.runtime.js", () => ({
-  getAcpSessionManager: () => managerMocks,
-  readAcpSessionEntry: (params: { sessionKey: string; cfg?: OpenClawConfig }) =>
+  getAcpSessionManagerCore: () => managerMocks,
+  readAcpSessionEntryCore: (params: { sessionKey: string; cfg?: OpenClawConfig }) =>
     sessionMetaMocks.readAcpSessionEntry(params),
   getSessionBindingService: () => ({
     listBySession: (targetSessionKey: string) =>
@@ -478,6 +478,17 @@ function mockRoutedTextTurn(text: string) {
     async ({ onEvent }: { onEvent: (event: unknown) => Promise<void> }) => {
       await onEvent({ type: "text_delta", text, tag: "agent_message_chunk" });
       await onEvent({ type: "done" });
+    },
+  );
+}
+
+function mockCompletedTextChunks(texts: string[]) {
+  managerMocks.runTurn.mockImplementationOnce(
+    async ({ onEvent }: { onEvent: (event: unknown) => Promise<void> }) => {
+      for (const text of texts) {
+        await onEvent({ type: "text_delta", text, tag: "agent_message_chunk" });
+      }
+      await onEvent({ type: "done", status: "completed" });
     },
   );
 }
@@ -4096,14 +4107,7 @@ describe("tryDispatchAcpReplyCore", () => {
     setReadyAcpResolution();
     ttsCapabilityMocks.captionedFinalText = testCase.deferred;
     ttsMocks.maybeApplyTtsToPayload.mockResolvedValue({});
-    managerMocks.runTurn.mockImplementationOnce(
-      async ({ onEvent }: { onEvent: (event: unknown) => Promise<void> }) => {
-        for (const text of testCase.chunks) {
-          await onEvent({ type: "text_delta", text, tag: "agent_message_chunk" });
-        }
-        await onEvent({ type: "done", status: "completed" });
-      },
-    );
+    mockCompletedTextChunks(testCase.chunks);
     const delivered: ReplyPayload[] = [];
     const dispatcher = createReplyDispatcher({
       deliver: async (payload) => {
@@ -4454,21 +4458,7 @@ describe("tryDispatchAcpReplyCore", () => {
       mediaUrl: "/tmp/openclaw-media/acp-tts.ogg",
       audioAsVoice: true,
     } as MockTtsReply);
-    managerMocks.runTurn.mockImplementationOnce(
-      async ({ onEvent }: { onEvent: (event: unknown) => Promise<void> }) => {
-        await onEvent({
-          type: "text_delta",
-          text: "Visible. [[tts:text]]Private",
-          tag: "agent_message_chunk",
-        });
-        await onEvent({
-          type: "text_delta",
-          text: " speech.[[/tts:text]] Done.",
-          tag: "agent_message_chunk",
-        });
-        await onEvent({ type: "done", status: "completed" });
-      },
-    );
+    mockCompletedTextChunks(["Visible. [[tts:text]]Private", " speech.[[/tts:text]] Done."]);
     const { dispatcher } = createDispatcher();
 
     await runDispatch({
@@ -4670,14 +4660,7 @@ describe("tryDispatchAcpReplyCore", () => {
               } as MockTtsReply)
             : {},
         );
-        managerMocks.runTurn.mockImplementationOnce(
-          async ({ onEvent }: { onEvent: (event: unknown) => Promise<void> }) => {
-            for (const text of texts) {
-              await onEvent({ type: "text_delta", text: `${text} `, tag: "agent_message_chunk" });
-            }
-            await onEvent({ type: "done", status: "completed" });
-          },
-        );
+        mockCompletedTextChunks(texts.map((text) => `${text} `));
         const attempted: Array<{ kind: string; text?: string; mediaUrl?: string }> = [];
         const dispatcher = createReplyDispatcher({
           deliver: async (payload, info) => {
@@ -4773,14 +4756,7 @@ describe("tryDispatchAcpReplyCore", () => {
           .mockResolvedValueOnce(unownedFirst ? failure : outcome)
           .mockResolvedValueOnce(unownedFirst ? outcome : failure);
         queueTtsReplies({});
-        managerMocks.runTurn.mockImplementationOnce(
-          async ({ onEvent }: { onEvent: (event: unknown) => Promise<void> }) => {
-            for (const text of texts) {
-              await onEvent({ type: "text_delta", text: `${text} `, tag: "agent_message_chunk" });
-            }
-            await onEvent({ type: "done", status: "completed" });
-          },
-        );
+        mockCompletedTextChunks(texts.map((text) => `${text} `));
 
         const result = await runDispatch({
           bodyForAgent: "reply",
@@ -5084,26 +5060,11 @@ describe("tryDispatchAcpReplyCore", () => {
         Body: conversationContext,
         BodyForAgent: conversationContext,
       });
-      managerMocks.runTurn.mockImplementationOnce(
-        async ({ onEvent }: { onEvent: (event: unknown) => Promise<void> }) => {
-          await onEvent({
-            type: "text_delta",
-            text: "Visible answer before. ",
-            tag: "agent_message_chunk",
-          });
-          await onEvent({
-            type: "text_delta",
-            text: `${marker}\nPrivate secret. `,
-            tag: "agent_message_chunk",
-          });
-          await onEvent({
-            type: "text_delta",
-            text: "Keep hidden. Visible answer after.",
-            tag: "agent_message_chunk",
-          });
-          await onEvent({ type: "done", status: "completed" });
-        },
-      );
+      mockCompletedTextChunks([
+        "Visible answer before. ",
+        `${marker}\nPrivate secret. `,
+        "Keep hidden. Visible answer after.",
+      ]);
 
       await runDispatch({
         bodyForAgent: conversationContext,
@@ -5200,12 +5161,7 @@ describe("tryDispatchAcpReplyCore", () => {
         },
       },
     });
-    managerMocks.runTurn.mockImplementation(
-      async ({ onEvent }: { onEvent: (event: unknown) => Promise<void> }) => {
-        await onEvent({ type: "text_delta", text: "abcdef", tag: "agent_message_chunk" });
-        await onEvent({ type: "done" });
-      },
-    );
+    mockRoutedTextTurn("abcdef");
 
     const { dispatcher } = createDispatcher();
     await runDispatch({

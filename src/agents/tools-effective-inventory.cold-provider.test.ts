@@ -8,6 +8,7 @@ import { Type } from "typebox";
 import { describe, expect, it, vi } from "vitest";
 import { setRuntimeConfigSnapshot } from "../config/config.js";
 import { applySessionEntryLifecycleMutation } from "../config/sessions/session-accessor.js";
+import type { InternalSessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import {
   createToolsEffectiveHandlers,
@@ -16,6 +17,7 @@ import {
 import { toolsEffectiveTestDependencies } from "../gateway/server-methods/tools-effective.test-support.js";
 import type { GatewayRequestContext, RespondFn } from "../gateway/server-methods/types.js";
 import { planEffectiveModelCatalogRows } from "../model-catalog/index.js";
+import { commitSessionExecutionSelection } from "../model-picker/apply-session-model-selection.js";
 import { refreshPersistedInstalledPluginIndex } from "../plugins/installed-plugin-index-store-write.js";
 import { LegacyPluginSdkResourceHost } from "../plugins/legacy-sdk-resource-host.js";
 import { loadAndActivateRootPluginRegistry } from "../plugins/loader.js";
@@ -361,21 +363,19 @@ async function createInventoryInvocation(
 ) {
   setRuntimeConfigSnapshot(fixture.config);
   const sessionKey = "agent:main:cold-inventory";
+  const entry: InternalSessionEntry = {
+    sessionId: "cold-inventory-session",
+    updatedAt: 1,
+  };
+  commitSessionExecutionSelection(
+    entry,
+    { model: { provider, id: pinnedId }, executor: { kind: "harness", id: "openclaw" } },
+    { cause: { kind: "user" } },
+  );
   await applySessionEntryLifecycleMutation({
     agentId: "main",
     storePath: path.join(fixture.state.sessionsDir(), "sessions.json"),
-    upserts: [
-      {
-        sessionKey,
-        entry: {
-          sessionId: "cold-inventory-session",
-          updatedAt: 1,
-          providerOverride: provider,
-          modelOverride: pinnedId,
-          modelOverrideSource: "user",
-        },
-      },
-    ],
+    upserts: [{ sessionKey, entry }],
     skipMaintenance: true,
   });
   const respond = vi.fn<RespondFn>();

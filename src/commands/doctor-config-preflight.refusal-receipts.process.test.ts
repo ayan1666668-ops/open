@@ -75,7 +75,6 @@ describe("Doctor preflight refusal receipts", () => {
       "channel-pairing",
       "plugin-doctor-state",
       "sessions",
-      "acp-session-metadata",
       "agent-dir",
       "plugin-doctor-post-session-state",
     ]);

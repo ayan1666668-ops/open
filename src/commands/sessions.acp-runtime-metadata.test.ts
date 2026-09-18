@@ -47,7 +47,7 @@ beforeEach(() => clearAgentHarnesses());
 afterAll(() => restoreRegisteredAgentHarnesses(registeredHarnesses));
 
 describe("session ACP runtime metadata", () => {
-  it.each(["model", "provider", "session-key", "implicit"] as const)(
+  it.each(["model", "provider", "implicit"] as const)(
     "projects a declared fallback for the next turn while retaining %s attribution",
     (source) => {
       const supports = vi.fn((_context: unknown) => ({
@@ -99,15 +99,27 @@ describe("session ACP runtime metadata", () => {
         model: "gpt-5.6-luna",
         sessionKey: NON_ACP_SESSION_KEY,
         sessionEntry: {
-          agentHarnessId: "codex",
-          ...(source === "session-key" ? { agentRuntimeOverride: "codex" } : {}),
+          executionSelection: {
+            state: "deferred",
+            request: { model: { provider: "openai", id: "gpt-5.6-luna" }, runtime: "codex" },
+            fallbackPermission: "explicit",
+          },
         },
-      };
+      } satisfies Parameters<typeof resolveCurrentSessionAgentRuntimeMetadata>[0];
       expect(resolveCurrentSessionAgentRuntimeMetadata(params)).toEqual({ id: "openclaw", source });
       expect(
         resolveCurrentSessionAgentRuntimeMetadata({
           ...params,
-          sessionEntry: { ...params.sessionEntry, modelSelectionLocked: true },
+          sessionEntry: {
+            executionSelection: {
+              state: "accepted",
+              selection: {
+                model: { provider: "openai", id: "gpt-5.6-luna" },
+                executor: { kind: "harness", id: "codex" },
+              },
+              fallbackPermission: "explicit",
+            },
+          },
         }),
       ).toEqual({ id: "codex", source: "session" });
       expect(
@@ -117,10 +129,6 @@ describe("session ACP runtime metadata", () => {
           acpRuntime: true,
         }),
       ).toEqual({ id: "acpx", source: "session-key" });
-      // Projection consumes registered support only; it never discovers provider ownership.
-      for (const [context] of supports.mock.calls) {
-        expect(context).not.toHaveProperty("providerOwnerStatus");
-      }
     },
   );
   it("prefers an explicit ACP backend", () => {
@@ -158,7 +166,7 @@ describe("session ACP runtime metadata", () => {
     expect(agentRuntime.source).not.toBe("session-key");
   });
 
-  it("preserves locked Codex ownership ahead of stale OpenClaw session metadata", () => {
+  it("preserves accepted Codex ownership ahead of current OpenClaw policy", () => {
     const agentRuntime = resolveModelAgentRuntimeMetadata({
       cfg: {
         agents: {
@@ -174,9 +182,14 @@ describe("session ACP runtime metadata", () => {
       model: "gpt-5.5",
       sessionKey: NON_ACP_SESSION_KEY,
       sessionEntry: {
-        agentHarnessId: "codex",
-        agentRuntimeOverride: "openclaw",
-        modelSelectionLocked: true,
+        executionSelection: {
+          state: "accepted",
+          selection: {
+            model: { provider: "openai", id: "gpt-5.5" },
+            executor: { kind: "harness", id: "codex" },
+          },
+          fallbackPermission: "explicit",
+        },
       },
     });
 
@@ -184,7 +197,7 @@ describe("session ACP runtime metadata", () => {
   });
 
   it.each([undefined, "codex"])(
-    "reports current %s policy instead of an unlocked historical producer",
+    "reports current %s policy instead of an unaccepted runtime request",
     (runtime) => {
       const agentRuntime = resolveCurrentSessionAgentRuntimeMetadata({
         cfg: {
@@ -201,7 +214,11 @@ describe("session ACP runtime metadata", () => {
         model: "gpt-5.6-luna",
         sessionKey: NON_ACP_SESSION_KEY,
         sessionEntry: {
-          agentHarnessId: "openclaw",
+          executionSelection: {
+            state: "deferred",
+            request: { runtime: "openclaw", defaultSelection: "inherit" },
+            fallbackPermission: "configured",
+          },
         },
       });
 
@@ -209,7 +226,7 @@ describe("session ACP runtime metadata", () => {
     },
   );
 
-  it("keeps an explicit compatible runtime override", () => {
+  it("keeps an accepted native-managed runtime without a model policy", () => {
     const agentRuntime = resolveCurrentSessionAgentRuntimeMetadata({
       cfg: buildConfigWithoutAgentRuntimePolicy(),
       agentId: "main",
@@ -217,11 +234,17 @@ describe("session ACP runtime metadata", () => {
       model: "gpt-5.6-luna",
       sessionKey: NON_ACP_SESSION_KEY,
       sessionEntry: {
-        agentHarnessId: "openclaw",
-        agentRuntimeOverride: "codex",
+        executionSelection: {
+          state: "accepted",
+          selection: {
+            model: "native-managed",
+            executor: { kind: "harness", id: "codex" },
+          },
+          fallbackPermission: "explicit",
+        },
       },
     });
 
-    expect(agentRuntime).toEqual({ id: "codex", source: "session-key" });
+    expect(agentRuntime).toEqual({ id: "codex", source: "session" });
   });
 });

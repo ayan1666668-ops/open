@@ -1065,11 +1065,12 @@ describe("CLI attempt execution", () => {
   async function writeClaudeCliAssistantTranscript(
     cliSessionId: string,
     homeDir = path.join(tmpDir, `home-${cliSessionId}`),
+    workspaceDir = tmpDir,
   ) {
     // Claude stores resumable sessions under a workspace-derived project dir,
     // so stale-session tests must create the same on-disk shape.
     const projectsDir = resolveClaudeCliProjectDirForWorkspace({
-      workspaceDir: tmpDir,
+      workspaceDir,
       homeDir,
     });
     setTestEnvValue("HOME", homeDir);
@@ -1092,7 +1093,7 @@ describe("CLI attempt execution", () => {
     runId: string;
   }) {
     const [
-      { getAcpSessionManager },
+      { getAcpSessionManagerCore },
       { prepareAgentCommandExecutionIdentity },
       { runEmbeddedAgentAttempt },
     ] = await Promise.all([
@@ -1145,7 +1146,7 @@ describe("CLI attempt execution", () => {
       manifestMetadataSnapshot: undefined,
       modelManifestContext: { manifestPlugins: [] },
       isSubagentLane: false,
-      acpManager: getAcpSessionManager(),
+      acpManager: getAcpSessionManagerCore(),
       acpResolution: null,
       runLease: undefined,
     };
@@ -2243,36 +2244,8 @@ describe("CLI attempt execution", () => {
   it("keeps Claude CLI resume when the stored transcript has assistant content", async () => {
     const sessionKey = "agent:main:direct:claude-transcript-present";
     const cliSessionId = "existing-claude-session";
-    const homeDir = path.join(tmpDir, "home");
-    const projectsDir = resolveClaudeCliProjectDirForWorkspace({
-      workspaceDir: tmpDir,
-      homeDir,
-    });
-    setTestEnvValue("HOME", homeDir);
-    await fs.mkdir(projectsDir, { recursive: true });
-    await fs.writeFile(
-      path.join(projectsDir, `${cliSessionId}.jsonl`),
-      `${JSON.stringify({
-        type: "assistant",
-        message: {
-          role: "assistant",
-          content: [{ type: "text", text: "previous reply" }],
-        },
-      })}\n`,
-      "utf-8",
-    );
-    const sessionEntry: SessionEntry = {
-      sessionId: "openclaw-session-456",
-      updatedAt: Date.now(),
-      cliSessionBindings: {
-        "claude-cli": {
-          sessionId: cliSessionId,
-          authProfileId: "anthropic:claude-cli",
-        },
-      },
-      cliSessionIds: { "claude-cli": cliSessionId },
-      claudeCliSessionId: cliSessionId,
-    };
+    await writeClaudeCliAssistantTranscript(cliSessionId);
+    const sessionEntry = makeClaudeCliSessionEntry("openclaw-session-456", cliSessionId);
     const sessionStore: Record<string, SessionEntry> = { [sessionKey]: sessionEntry };
     await writeSessionStoreSeed(sessionStore);
     runCliAgentMock.mockResolvedValueOnce(makeCliResult("resumed cli response", cliSessionId));
@@ -2300,23 +2273,7 @@ describe("CLI attempt execution", () => {
     const cliSessionId = "existing-claude-cwd-session";
     const homeDir = path.join(tmpDir, "home");
     const cwd = path.join(tmpDir, "task");
-    const projectsDir = resolveClaudeCliProjectDirForWorkspace({
-      workspaceDir: cwd,
-      homeDir,
-    });
-    setTestEnvValue("HOME", homeDir);
-    await fs.mkdir(projectsDir, { recursive: true });
-    await fs.writeFile(
-      path.join(projectsDir, `${cliSessionId}.jsonl`),
-      `${JSON.stringify({
-        type: "assistant",
-        message: {
-          role: "assistant",
-          content: [{ type: "text", text: "previous reply" }],
-        },
-      })}\n`,
-      "utf-8",
-    );
+    await writeClaudeCliAssistantTranscript(cliSessionId, homeDir, cwd);
     const sessionEntry = makeClaudeCliSessionEntry("openclaw-session-cwd", cliSessionId);
     const sessionStore: Record<string, SessionEntry> = { [sessionKey]: sessionEntry };
     await writeSessionStoreSeed(sessionStore);

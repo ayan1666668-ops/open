@@ -17,7 +17,6 @@ import { acceptCompactionSuccessor } from "../../agents/embedded-agent-runner/co
 import type { runEmbeddedAgentEntry } from "../../agents/embedded-agent-runner/run-entry.js";
 import type { EmbeddedAgentRunResult } from "../../agents/embedded-agent-runner/types.js";
 import type { runWithModelFallback } from "../../agents/model-fallback-runner.js";
-import type { ModelFallbackAttemptProvenance } from "../../agents/model-fallback.types.js";
 import { evaluatePublishedModelRuntimeChoice } from "../../agents/model-runtime-choice.js";
 import { withSessionCompactionPersistence } from "../../agents/sessions/session-compaction-persistence.js";
 import { SessionManager } from "../../agents/sessions/session-manager.js";
@@ -31,7 +30,6 @@ import {
   readSessionTranscriptActiveStats,
   readTranscriptStatsSync,
   upsertSessionEntryCore,
-  waitForSessionTranscriptProjection,
 } from "../../config/sessions/session-accessor.js";
 import { replaceTranscriptEvents } from "../../config/sessions/session-accessor.sqlite-transcript-write.js";
 import { resolveSessionStorePathForScope } from "../../config/sessions/session-store-path.js";
@@ -43,24 +41,33 @@ import {
 import {
   clearMemoryPluginState,
   registerMemoryCapability,
-  type MemoryFlushPlan,
   type MemoryFlushPlanResolver,
 } from "../../plugins/memory-state.test-fixtures.js";
 import { createEmptyPluginRegistry } from "../../plugins/registry-empty.js";
 import { getActivePluginRegistryVersion, setActivePluginRegistry } from "../../plugins/runtime.js";
 import type { ReplyPayload } from "../types.js";
 import {
-  runMemoryFlushIfNeeded as runMemoryFlushIfNeededRaw,
-  runSessionCompactionIfNeeded as runSessionCompactionIfNeededRaw,
-} from "./agent-runner-memory.js";
-import {
-  createTestFollowupRun,
-  withTestModelContextTokens,
-  writeTestSessionStore,
-} from "./agent-runner.test-fixtures.js";
-import type { ReplyOperation } from "./reply-run-registry.js";
+  commitSourceCompaction,
+  createCompactionLifecycle,
+  createFlushSessionEntry,
+  createMemoryFlushPlan,
+  createModifiedMemoryFlushPlan,
+  createReplyOperation,
+  loadMainSessionEntry,
+  modelRoutingProvenance,
+  registerClaudeCliBackend,
+  registerMemoryFlushPlanResolverForTest,
+  runMemoryFlushIfNeeded,
+  runSessionCompactionIfNeeded,
+  writeTestSessionTranscript,
+  type CompactEmbeddedAgentSessionParams,
+  type EmbeddedAgentParams,
+  type MemoryFlushTestParams,
+  type ModelFallbackParams,
+  type PreflightCompactionTestParams,
+} from "./agent-runner-memory.test-support.js";
+import { createTestFollowupRun, writeTestSessionStore } from "./agent-runner.test-fixtures.js";
 import { createSourceReplyDeliveryRuntime } from "./source-reply-delivery-runtime.js";
-import { createMockReplyOperation } from "./test-helpers.js";
 
 const {
   compactEmbeddedAgentSessionMock,
@@ -142,8 +149,9 @@ vi.mock("../../agents/model-fallback-runner.js", () => ({
       },
     });
     const candidate = candidates.get(result.result);
-    if (!candidate)
+    if (!candidate) {
       throw new Error("The memory fixture returned a result without an admitted attempt.");
+    }
     return { ...result, outcome: result.outcome ?? "completed", result: candidate };
   },
 }));
@@ -173,222 +181,11 @@ beforeAll(async () => {
 
 const TEST_MAX_FLUSH_FAILURES = 3;
 
-type MemoryFlushTestParams = Parameters<typeof runMemoryFlushIfNeededRaw>[0] & {
-  modelContextTokens?: number;
-};
-
-async function runMemoryFlushIfNeeded(params: MemoryFlushTestParams) {
-  const { modelContextTokens, ...runParams } = params;
-  return await runMemoryFlushIfNeededRaw({
-    ...runParams,
-    cfg: withTestModelContextTokens({
-      cfg: runParams.cfg,
-      followupRun: runParams.followupRun,
-      defaultModel: runParams.defaultModel,
-      contextTokens: modelContextTokens,
-    }),
-  });
-}
-
-type PreflightCompactionTestParams = Parameters<typeof runSessionCompactionIfNeededRaw>[0] & {
-  modelContextTokens?: number;
-};
-
-async function runSessionCompactionIfNeeded(params: PreflightCompactionTestParams) {
-  const { modelContextTokens, ...runParams } = params;
-  return await runSessionCompactionIfNeededRaw({
-    ...runParams,
-    cfg: withTestModelContextTokens({
-      cfg: runParams.cfg,
-      followupRun: runParams.followupRun,
-      defaultModel: runParams.defaultModel,
-      contextTokens: modelContextTokens,
-    }),
-  });
-}
-
-function createMemoryFlushPlan(): MemoryFlushPlan {
-  return {
-    softThresholdTokens: 4_000,
-    forceFlushTranscriptBytes: 1_000_000_000,
-    reserveTokensFloor: 20_000,
-    prompt: "Pre-compaction memory flush.\nNO_REPLY",
-    systemPrompt: "Write memory to memory/YYYY-MM-DD.md.",
-    relativePath: "memory/2023-11-14.md",
-  };
-}
-
-function createModifiedMemoryFlushPlan(overrides: Partial<MemoryFlushPlan>): MemoryFlushPlan {
-  return { ...createMemoryFlushPlan(), ...overrides };
-}
-
 function acceptedMemorySelection(
   selection: ModelExecutionSelection,
 ): SessionEntry["executionSelection"] {
   return { state: "accepted", selection, fallbackPermission: "configured" };
 }
-
-function createFlushSessionEntry(overrides: Partial<SessionEntry> = {}): SessionEntry {
-  return {
-    sessionId: "session",
-    updatedAt: Date.now(),
-    totalTokens: 80_000,
-    totalTokensFresh: true,
-    totalTokensVersion: 1,
-    compactionCount: 1,
-    ...overrides,
-  };
-}
-
-function registerMemoryFlushPlanResolverForTest(resolver: MemoryFlushPlanResolver): void {
-  registerMemoryCapability("memory-core", { flushPlanResolver: resolver });
-}
-
-function registerClaudeCliBackend(ownsNativeCompaction = false): void {
-  cliBackendsTesting.setDepsForTest({
-    resolveRuntimeCliBackends: () => [
-      {
-        id: "claude-cli",
-        modelProvider: "anthropic",
-        pluginId: "anthropic",
-        config: { command: "claude" },
-        ownsNativeCompaction,
-      },
-    ],
-  });
-}
-
-type TestReplyOperation = ReplyOperation & {
-  setPhase: ReturnType<typeof vi.fn<ReplyOperation["setPhase"]>>;
-  updateSessionId: ReturnType<typeof vi.fn<ReplyOperation["updateSessionId"]>>;
-};
-
-function createReplyOperation(): TestReplyOperation {
-  const { replyOperation } = createMockReplyOperation({ key: "test" });
-  return Object.assign(replyOperation, {
-    phase: "queued" as const,
-    setPhase: vi.fn<ReplyOperation["setPhase"]>(),
-    updateSessionId: vi.fn<ReplyOperation["updateSessionId"]>(),
-  });
-}
-
-function createCompactionLifecycle(replyOperation: ReplyOperation) {
-  return {
-    abortSignal: replyOperation.abortSignal,
-    onCompactionStart: () => replyOperation.setPhase("preflight_compacting"),
-    onSessionIdChanged: (sessionId: string) => replyOperation.updateSessionId(sessionId),
-  };
-}
-
-function loadMainSessionEntry(storePath: string): SessionEntry {
-  const entry = loadSessionEntry({ storePath, sessionKey: "main" });
-  if (!entry) {
-    throw new Error("expected persisted main session entry");
-  }
-  return entry;
-}
-
-async function writeTestSessionTranscript(params: {
-  rootDir: string;
-  events: Parameters<typeof replaceTranscriptEvents>[1];
-  sessionKey?: string;
-  sessionId?: string;
-}): Promise<void> {
-  const sessionId = params.sessionId ?? "session";
-  const sessionKey = params.sessionKey ?? "main";
-  const scope = {
-    agentId: "main",
-    sessionId,
-    sessionKey,
-    storePath: path.join(params.rootDir, "sessions.json"),
-  };
-  await upsertSessionEntryCore(scope, { sessionId, updatedAt: 10 });
-  await replaceTranscriptEvents(scope, params.events);
-  await waitForSessionTranscriptProjection(scope);
-}
-
-type ModelFallbackParams = {
-  provider?: string;
-  model?: string;
-  abortSignal?: AbortSignal;
-  agentId?: string;
-  sessionId?: string;
-  sessionKey?: string;
-  fallbacksOverride?: unknown[];
-  requestedRouteResolution?: "raw" | "resolved";
-  userLockedAuthProfileId?: string;
-  resolveAgentHarnessRuntimeOverride?: (provider: string, model: string) => string | undefined;
-  prepareAgentHarnessRuntime?: (params: {
-    provider: string;
-    model: string;
-    agentHarnessRuntimeOverride?: string;
-  }) => Promise<void> | void;
-  run: (
-    provider: string,
-    model: string,
-    options: {
-      allowTransientCooldownProbe?: boolean;
-      isFinalFallbackAttempt?: boolean;
-      modelRoutingProvenance: ModelFallbackAttemptProvenance;
-    },
-  ) => Promise<EmbeddedAgentRunResult>;
-};
-
-function modelRoutingProvenance(
-  requestedProvider: string,
-  requestedModel: string,
-  stage: ModelFallbackAttemptProvenance["stage"] = "initial",
-): ModelFallbackAttemptProvenance {
-  return { requestedProvider, requestedModel, stage };
-}
-
-type EmbeddedAgentParams = {
-  preparedRunAdmission?: PreparedAgentRunAdmission;
-  sessionManager?: SessionManager;
-  provider?: string;
-  model?: string;
-  thinkLevel?: string;
-  agentHarnessId?: string;
-  agentHarnessRuntimeOverride?: string;
-  authProfileId?: unknown;
-  authProfileIdSource?: unknown;
-  prompt?: string;
-  transcriptPrompt?: string;
-  memoryFlushWritePath?: string;
-  silentExpected?: boolean;
-  allowEmptyAssistantReplyAsSilent?: boolean;
-  terminalReplyExpectation?: "required" | "optional";
-  extraSystemPrompt?: string;
-  bootstrapPromptWarningSignaturesSeen?: string[];
-  bootstrapPromptWarningSignature?: string;
-  abortSignal?: AbortSignal;
-  isFinalFallbackAttempt?: boolean;
-  onAgentEvent?: (evt: {
-    stream: string;
-    data: { completed?: boolean; isError?: boolean; name?: string; phase?: string };
-  }) => void;
-};
-
-type CompactEmbeddedAgentSessionParams = {
-  agentId?: string;
-  agentHarnessId?: string;
-  authProfileId?: string;
-  authProfileIdSource?: "auto" | "user";
-  contextTokenBudget?: number;
-  sessionKey?: string;
-  sandboxSessionKey?: string;
-  currentTokenCount?: number;
-  cwd?: string;
-  force?: boolean;
-  forcePreflight?: boolean;
-  modelSelectionLocked?: boolean;
-  preflightRequired?: boolean;
-  preflightCompactionTrigger?: string;
-  sessionEntry?: SessionEntry;
-  sessionFile?: string;
-  sessionId?: string;
-  trigger?: string;
-};
 
 function requireModelFallbackCall(index = 0) {
   const call = runWithModelFallbackMock.mock.calls[index]?.[0] as ModelFallbackParams | undefined;
@@ -414,33 +211,6 @@ function requireCompactEmbeddedAgentSessionCall(index = 0) {
     throw new Error(`compactEmbeddedAgentSession call ${index} missing`);
   }
   return call;
-}
-
-async function commitSourceCompaction(params: { sessionKey: string; storePath: string }) {
-  const entry = loadSessionEntry({ sessionKey: params.sessionKey, storePath: params.storePath });
-  if (!entry) {
-    throw new Error("expected compaction predecessor");
-  }
-  const accepted = await acceptCompactionSuccessor({
-    currentTarget: {
-      agentId: "main",
-      sessionId: entry.sessionId,
-      sessionKey: params.sessionKey,
-      storePath: params.storePath,
-    },
-    expectedEntry: {
-      sessionId: entry.sessionId,
-      lifecycleRevision: entry.lifecycleRevision,
-      activeWriterRunId: entry.activeWriterRunId,
-    },
-    assertActive: () => {},
-    result: {
-      ok: true,
-      compacted: true,
-      result: { sessionId: "session-rotated", tokensBefore: 120, tokensAfter: 42 },
-    },
-  });
-  return accepted;
 }
 
 describe("runMemoryFlushIfNeeded", () => {
@@ -749,6 +519,8 @@ describe("runMemoryFlushIfNeeded", () => {
     let admittedContext: AdmittedRunContext | undefined;
     runEmbeddedAgentMock
       .mockImplementationOnce(async (params: EmbeddedAgentParams) => {
+        expect(params.authProfileId).toBe("anthropic:memory-source");
+        expect(params.authProfileIdSource).toBe("user");
         admission = params.preparedRunAdmission;
         memorySession = params.sessionManager;
         if (!admission || !memorySession) {
@@ -762,6 +534,8 @@ describe("runMemoryFlushIfNeeded", () => {
         throw primaryError;
       })
       .mockImplementationOnce(async (params: EmbeddedAgentParams) => {
+        expect(params.authProfileId).toBeUndefined();
+        expect(params.authProfileIdSource).toBeUndefined();
         if (!memorySession || !admission || !admittedContext) {
           throw new Error("Missing first memory attempt");
         }
@@ -783,19 +557,21 @@ describe("runMemoryFlushIfNeeded", () => {
         }),
       ).rejects.toBe(primaryError);
       return {
-        result: await params.run("anthropic", "fallback", {
+        result: await params.run("openai", "fallback", {
           modelRoutingProvenance: modelRoutingProvenance("anthropic", "claude", "fallback"),
         }),
-        provider: "anthropic",
+        provider: "openai",
         model: "fallback",
         attempts: [],
       };
     });
     const result = await runDefaultMemoryFlush(sessionEntry, {
       followupRun: createTestFollowupRun({
+        authProfileId: "anthropic:memory-source",
+        authProfileIdSource: "user",
         thinkingCatalog: [
           { provider: "anthropic", id: "claude", input: ["text"] },
-          { provider: "anthropic", id: "fallback", input: ["text"] },
+          { provider: "openai", id: "fallback", input: ["text"] },
         ],
       }),
       sessionStore,
@@ -1473,76 +1249,81 @@ describe("runMemoryFlushIfNeeded", () => {
     );
   });
 
-  it("runs memory flush on the configured maintenance model without active fallbacks", async () => {
-    registerMemoryFlushPlanResolverForTest(() =>
-      createModifiedMemoryFlushPlan({ model: "ollama/qwen3:8b" }),
-    );
-    const sessionEntry = createFlushSessionEntry();
+  it.each(["auto", "user"] as const)(
+    "runs the configured maintenance model without source-provider %s auth or active fallbacks",
+    async (authProfileIdSource) => {
+      registerMemoryFlushPlanResolverForTest(() =>
+        createModifiedMemoryFlushPlan({ model: "ollama/qwen3:8b" }),
+      );
+      const sessionEntry = createFlushSessionEntry();
 
-    const replyOperation = createReplyOperation();
-    await runMemoryFlushIfNeeded({
-      cfg: {
-        agents: {
-          defaults: {
-            model: {
-              primary: "anthropic/claude",
-              fallbacks: ["openai/gpt-5.4"],
-            },
-            models: {
-              "ollama/qwen3:8b": { alias: "memory-flush" },
-              "openrouter/qwen3:8b": { alias: "qwen3:8b" },
-            },
-            compaction: {
-              memoryFlush: {
-                model: "ollama/qwen3:8b",
+      const replyOperation = createReplyOperation();
+      await runMemoryFlushIfNeeded({
+        cfg: {
+          agents: {
+            defaults: {
+              model: {
+                primary: "anthropic/claude",
+                fallbacks: ["openai/gpt-5.4"],
+              },
+              models: {
+                "ollama/qwen3:8b": { alias: "memory-flush" },
+                "openrouter/qwen3:8b": { alias: "qwen3:8b" },
+              },
+              compaction: {
+                memoryFlush: {
+                  model: "ollama/qwen3:8b",
+                },
               },
             },
           },
         },
-      },
-      followupRun: createTestFollowupRun({
-        provider: "anthropic",
-        model: "claude",
-        thinkingCatalog: [
-          { provider: "anthropic", id: "claude", input: ["text"] },
-          { provider: "ollama", id: "qwen3:8b", input: ["text"] },
-        ],
-      }),
-      defaultModel: "anthropic/claude",
-      modelContextTokens: 100_000,
-      resolvedVerboseLevel: "off",
-      sessionEntry,
-      sessionStore: { main: sessionEntry },
-      sessionKey: "main",
-      isHeartbeat: false,
-      replyOperation,
-    });
+        followupRun: createTestFollowupRun({
+          provider: "anthropic",
+          model: "claude",
+          authProfileId: "anthropic:memory-source",
+          authProfileIdSource,
+          thinkingCatalog: [
+            { provider: "anthropic", id: "claude", input: ["text"] },
+            { provider: "ollama", id: "qwen3:8b", input: ["text"] },
+          ],
+        }),
+        defaultModel: "anthropic/claude",
+        modelContextTokens: 100_000,
+        resolvedVerboseLevel: "off",
+        sessionEntry,
+        sessionStore: { main: sessionEntry },
+        sessionKey: "main",
+        isHeartbeat: false,
+        replyOperation,
+      });
 
-    expect(runWithModelFallbackMock).toHaveBeenCalledTimes(1);
-    const fallbackCall = requireModelFallbackCall();
-    expect(fallbackCall.provider).toBe("ollama");
-    expect(fallbackCall.model).toBe("qwen3:8b");
-    expect(fallbackCall.requestedRouteResolution).toBe("raw");
-    expect(fallbackCall.abortSignal?.aborted).toBe(false);
-    expect(fallbackCall.sessionId).toEqual(expect.any(String));
-    expect(fallbackCall.sessionId).not.toBe(sessionEntry.sessionId);
-    expect(isInternalSessionEffectsKey(fallbackCall.sessionKey ?? "")).toBe(true);
-    expect(fallbackCall.fallbacksOverride).toEqual([]);
-    expect(runEmbeddedAgentMock).toHaveBeenCalledTimes(1);
-    const agentCall = requireEmbeddedAgentCall();
-    expect(agentCall).toMatchObject({
-      sessionId: fallbackCall.sessionId,
-      sessionKey: fallbackCall.sessionKey,
-      sessionPersistence: "detached",
-      sandboxSessionKey: "main",
-    });
-    expect(agentCall.sessionManager?.getSessionTarget()).toBeUndefined();
-    expect(agentCall.provider).toBe("ollama");
-    expect(agentCall.model).toBe("qwen3:8b");
-    expect(agentCall.abortSignal).toBe(fallbackCall.abortSignal);
-    expect(agentCall.authProfileId).toBeUndefined();
-    expect(agentCall.authProfileIdSource).toBeUndefined();
-  });
+      expect(runWithModelFallbackMock).toHaveBeenCalledTimes(1);
+      const fallbackCall = requireModelFallbackCall();
+      expect(fallbackCall.provider).toBe("ollama");
+      expect(fallbackCall.model).toBe("qwen3:8b");
+      expect(fallbackCall.requestedRouteResolution).toBe("raw");
+      expect(fallbackCall.abortSignal?.aborted).toBe(false);
+      expect(fallbackCall.sessionId).toEqual(expect.any(String));
+      expect(fallbackCall.sessionId).not.toBe(sessionEntry.sessionId);
+      expect(isInternalSessionEffectsKey(fallbackCall.sessionKey ?? "")).toBe(true);
+      expect(fallbackCall.fallbacksOverride).toEqual([]);
+      expect(runEmbeddedAgentMock).toHaveBeenCalledTimes(1);
+      const agentCall = requireEmbeddedAgentCall();
+      expect(agentCall).toMatchObject({
+        sessionId: fallbackCall.sessionId,
+        sessionKey: fallbackCall.sessionKey,
+        sessionPersistence: "detached",
+        sandboxSessionKey: "main",
+      });
+      expect(agentCall.sessionManager?.getSessionTarget()).toBeUndefined();
+      expect(agentCall.provider).toBe("ollama");
+      expect(agentCall.model).toBe("qwen3:8b");
+      expect(agentCall.abortSignal).toBe(fallbackCall.abortSignal);
+      expect(agentCall.authProfileId).toBeUndefined();
+      expect(agentCall.authProfileIdSource).toBeUndefined();
+    },
+  );
 
   it.each([undefined, "model-owner"])(
     "prepares the requested memory runtime without pinning observations (owner %s)",

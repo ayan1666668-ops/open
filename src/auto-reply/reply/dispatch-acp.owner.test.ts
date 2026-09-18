@@ -1,6 +1,6 @@
 import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
 import { expect, it, vi } from "vitest";
-import { getAcpSessionManager, testing } from "../../acp/control-plane/manager.js";
+import { getAcpSessionManagerCore, testing } from "../../acp/control-plane/manager.js";
 import { disposeAcpSessionManagerInstance } from "../../acp/control-plane/manager.lifecycle.js";
 import {
   registerAcpRuntimeBackend,
@@ -82,7 +82,7 @@ it.each(
         },
       });
       testing.resetAcpSessionManagerForTests();
-      const manager = getAcpSessionManager();
+      const manager = getAcpSessionManagerCore();
       const delivered: string[] = [];
       const dispatcher = createReplyDispatcher({
         deliver: async (payload) => {

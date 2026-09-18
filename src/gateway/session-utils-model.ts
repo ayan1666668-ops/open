@@ -16,17 +16,15 @@ import {
 } from "../agents/model-catalog.js";
 import { resolveModelContextWindowProfile } from "../agents/model-context-window.js";
 import {
-  findNormalizedProviderValue,
   isCliProvider,
   parseModelRef,
   resolveConfiguredModelRef,
   resolveDefaultModelForAgent,
 } from "../agents/model-selection.js";
 import { resolveThinkingDefaultCore } from "../agents/model-thinking-default-core.js";
-import { publishedModelCatalogOwnerMatchesAgent } from "../agents/prepared-model-catalog-owner.js";
 import {
   concretizeAgentRuntime,
-  resolveEffectiveAgentRuntime,
+  resolveEffectiveAgentRuntimeCore,
 } from "../agents/thinking-runtime.js";
 import {
   normalizeThinkLevel,
@@ -43,6 +41,10 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
 import { LEGACY_IMPLICIT_AGENT_ID, normalizeAgentId } from "../routing/session-key.js";
 import type { GatewayModelCatalogSnapshot } from "./server-model-catalog.types.js";
+import {
+  isGatewayModelExplicitlyConfiguredTextOnly,
+  resolveGatewayProviderStaticModel,
+} from "./session-model-capabilities.js";
 import {
   createSessionRowModelCacheKey,
   type GatewayModelThinkingProfile,
@@ -164,7 +166,7 @@ export function resolveGatewayModelThinkingProfile(params: {
       : undefined;
   const agentRuntime =
     params.agentRuntime ??
-    resolveEffectiveAgentRuntime({
+    resolveEffectiveAgentRuntimeCore({
       cfg: params.cfg,
       provider: params.provider,
       modelId: params.model,
@@ -263,7 +265,7 @@ export function resolveGatewaySessionThinkingProjectionInternal(
     ? concretizeAgentRuntime(agentRuntime.id)
     : agentRuntime.source === "session"
       ? agentRuntime.id
-      : resolveEffectiveAgentRuntime({
+      : resolveEffectiveAgentRuntimeCore({
           cfg: params.cfg,
           provider: params.provider,
           modelId: params.model,
@@ -407,92 +409,6 @@ export function getSessionDefaults(
     thinkingOptions: thinkingProfile.thinkingLevels.map((level) => level.label),
     thinkingDefault: thinkingProfile.thinkingDefault,
   };
-}
-
-function normalizeGatewayModelCapabilityBaseUrl(value: string | undefined): string | undefined {
-  const baseUrl = normalizeOptionalString(value);
-  if (!baseUrl) {
-    return undefined;
-  }
-  try {
-    const parsed = new URL(baseUrl);
-    parsed.pathname = parsed.pathname.replace(/\/+$/u, "") || "/";
-    return parsed.toString();
-  } catch {
-    return baseUrl.replace(/\/+$/u, "");
-  }
-}
-
-function isGatewayModelExplicitlyConfiguredTextOnly(params: {
-  snapshot: GatewayModelCatalogSnapshot;
-  provider?: string;
-  model: string;
-}): boolean {
-  if (!params.provider) {
-    return false;
-  }
-  const configuredModel = findNormalizedProviderValue(
-    params.snapshot.config.models?.providers,
-    params.provider,
-  )?.models?.find(
-    (model) =>
-      normalizeLowercaseStringOrEmpty(model.id) === normalizeLowercaseStringOrEmpty(params.model),
-  );
-  return configuredModel?.input !== undefined && !configuredModel.input.includes("image");
-}
-
-function resolveGatewayProviderStaticModel(params: {
-  snapshot: GatewayModelCatalogSnapshot;
-  agentId?: string;
-  provider?: string;
-  model: string;
-  catalogEntry?: ModelCatalogEntry;
-}): ModelCatalogEntry | undefined {
-  if (
-    !params.agentId ||
-    !params.provider ||
-    !publishedModelCatalogOwnerMatchesAgent(params.snapshot, params.agentId)
-  ) {
-    return undefined;
-  }
-  const staticEntry = findModelCatalogEntry(params.snapshot.staticEntries ?? [], {
-    provider: params.provider,
-    modelId: params.model,
-  });
-  if (!staticEntry) {
-    return undefined;
-  }
-  if (params.catalogEntry?.api && params.catalogEntry.api !== staticEntry.api) {
-    return undefined;
-  }
-  const catalogBaseUrl = normalizeGatewayModelCapabilityBaseUrl(params.catalogEntry?.baseUrl);
-  const staticBaseUrl = normalizeGatewayModelCapabilityBaseUrl(staticEntry.baseUrl);
-  if (catalogBaseUrl && catalogBaseUrl !== staticBaseUrl) {
-    return undefined;
-  }
-
-  if (isGatewayModelExplicitlyConfiguredTextOnly(params)) {
-    return undefined;
-  }
-  const configuredProvider = findNormalizedProviderValue(
-    params.snapshot.config.models?.providers,
-    params.provider,
-  );
-  const normalizedModelId = normalizeLowercaseStringOrEmpty(params.model);
-  const configuredModel = configuredProvider?.models?.find(
-    (model) => normalizeLowercaseStringOrEmpty(model.id) === normalizedModelId,
-  );
-  const configuredApi = configuredModel?.api ?? configuredProvider?.api;
-  if (configuredApi && configuredApi !== staticEntry.api) {
-    return undefined;
-  }
-  const configuredBaseUrl = normalizeGatewayModelCapabilityBaseUrl(
-    configuredModel?.baseUrl ?? configuredProvider?.baseUrl,
-  );
-  if (configuredBaseUrl && configuredBaseUrl !== staticBaseUrl) {
-    return undefined;
-  }
-  return staticEntry;
 }
 
 export async function resolveGatewayModelSupportsImages(params: {

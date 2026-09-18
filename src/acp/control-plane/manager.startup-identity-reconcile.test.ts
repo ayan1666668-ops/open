@@ -81,7 +81,7 @@ describe("AcpSessionManager startup identity reconcile", () => {
       },
     };
     hoisted.listAcpSessionEntriesMock.mockResolvedValue([
-      createAcpSessionStoreEntryFixture({ cfg: baseCfg, sessionKey, acp: acp }),
+      createAcpSessionStoreEntryFixture({ cfg: baseCfg, sessionKey, acp }),
     ]);
 
     const manager = new AcpSessionManager();
@@ -139,7 +139,7 @@ describe("AcpSessionManager startup identity reconcile", () => {
       },
     };
     hoisted.listAcpSessionEntriesMock.mockResolvedValue([
-      createAcpSessionStoreEntryFixture({ cfg: baseCfg, sessionKey, acp: acp }),
+      createAcpSessionStoreEntryFixture({ cfg: baseCfg, sessionKey, acp }),
     ]);
 
     const result = await new AcpSessionManager().reconcilePendingSessionIdentities({

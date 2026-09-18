@@ -53,9 +53,8 @@ export async function handleCommands(params: CommandDispatchParams): Promise<Com
     config: params.cfg,
     fallbackAgentId: params.agentId,
   });
-  const { resolveModelLevels, ...dispatchParams } = params;
   const commandParams = {
-    ...dispatchParams,
+    ...params,
     agentId,
     agentDir: agentId === params.agentId ? params.agentDir : resolveAgentDir(params.cfg, agentId),
     initialSessionEntry,
@@ -68,7 +67,7 @@ export async function handleCommands(params: CommandDispatchParams): Promise<Com
 
   const handlerParams: HandleCommandsParams = {
     ...commandParams,
-    ...(await resolveModelLevels()),
+    ...(await params.resolveModelLevels()),
   };
   if (HANDLERS === null) {
     HANDLERS = (await loadCommandHandlersRuntime()).loadCommandHandlers();

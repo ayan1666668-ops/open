@@ -1,6 +1,7 @@
 // Isolated agent model formatting tests cover model metadata in cron prompts.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "../agents/defaults.js";
+import type { InternalSessionEntry as SessionEntry } from "../config/sessions/types.js";
 import type { AgentConfig } from "../config/types.agents.js";
 
 const {
@@ -85,13 +86,20 @@ type SelectModelOptions = {
   cfg?: Record<string, unknown>;
   agentConfigOverride?: Pick<AgentConfig, "model" | "subagents">;
   payload?: AgentTurnPayload;
-  sessionEntry?: {
-    modelOverride?: string;
-    providerOverride?: string;
-  };
+  sessionEntry?: Pick<SessionEntry, "executionSelection">;
   isGmailHook?: boolean;
   agentId?: string;
 };
+
+function selectedSession(provider: string, id: string): Pick<SessionEntry, "executionSelection"> {
+  return {
+    executionSelection: {
+      state: "accepted",
+      selection: { model: { provider, id }, executor: { kind: "harness", id: "openclaw" } },
+      fallbackPermission: "explicit",
+    },
+  };
+}
 
 function parseModelRef(raw: string): { provider: string; model: string } | { error: string } {
   const trimmed = raw.trim();
@@ -195,7 +203,7 @@ describe("cron model formatting and precedence edge cases", () => {
     loadFullModelCatalogMock.mockRejectedValue(
       new Error("cron model selection must not materialize the full model catalog"),
     );
-    getModelRefStatusMock.mockReturnValue({ allowed: false });
+    getModelRefStatusMock.mockReturnValue({ allowed: true });
     resolveHooksGmailModelMock.mockReturnValue(null);
     resolveConfiguredModelRefMock.mockImplementation(({ cfg }: { cfg?: Record<string, unknown> }) =>
       resolveConfiguredModelForTest(cfg ?? {}),
@@ -437,10 +445,7 @@ describe("cron model formatting and precedence edge cases", () => {
     it("session override applies when no job payload model is present", async () => {
       await expectSelectedModel(
         {
-          sessionEntry: {
-            providerOverride: "openai",
-            modelOverride: "gpt-4.1-mini",
-          },
+          sessionEntry: selectedSession("openai", "gpt-4.1-mini"),
         },
         { provider: "openai", model: "gpt-4.1-mini" },
       );
@@ -454,10 +459,7 @@ describe("cron model formatting and precedence edge cases", () => {
             message: DEFAULT_MESSAGE,
             model: "anthropic/claude-sonnet-4-6",
           },
-          sessionEntry: {
-            providerOverride: "openai",
-            modelOverride: "gpt-4.1-mini",
-          },
+          sessionEntry: selectedSession("openai", "gpt-4.1-mini"),
         },
         { provider: "anthropic", model: "claude-sonnet-4-6" },
       );
@@ -468,10 +470,7 @@ describe("cron model formatting and precedence edge cases", () => {
     });
 
     it("does not treat another chat session /model override as a global cron default", async () => {
-      const chatSessionAfterModelDirective = {
-        providerOverride: "openai",
-        modelOverride: "gpt-4.1-mini",
-      };
+      const chatSessionAfterModelDirective = selectedSession("openai", "gpt-4.1-mini");
 
       await expectSelectedModel(
         { sessionEntry: chatSessionAfterModelDirective },
@@ -507,10 +506,7 @@ describe("cron model formatting and precedence edge cases", () => {
 
       await expectSelectedModel(
         {
-          sessionEntry: {
-            providerOverride: "openai",
-            modelOverride: "gpt-4.1-mini",
-          },
+          sessionEntry: selectedSession("openai", "gpt-4.1-mini"),
         },
         { provider: "openai", model: "gpt-4.1-mini" },
       );
@@ -522,10 +518,7 @@ describe("cron model formatting and precedence edge cases", () => {
             message: DEFAULT_MESSAGE,
             model: "anthropic/claude-opus-4-6",
           },
-          sessionEntry: {
-            providerOverride: "openai",
-            modelOverride: "gpt-4.1-mini",
-          },
+          sessionEntry: selectedSession("openai", "gpt-4.1-mini"),
         },
         { provider: "anthropic", model: "claude-opus-4-6" },
       );
@@ -648,10 +641,7 @@ describe("cron model formatting and precedence edge cases", () => {
       await expect(
         selectModel({
           isGmailHook: true,
-          sessionEntry: {
-            providerOverride: "anthropic",
-            modelOverride: "claude-opus-4-6",
-          },
+          sessionEntry: selectedSession("anthropic", "claude-opus-4-6"),
         }),
       ).resolves.toMatchObject({
         ok: true,
@@ -686,11 +676,14 @@ describe("cron model formatting and precedence edge cases", () => {
       });
     });
 
-    it("whitespace-only session modelOverride is ignored", async () => {
+    it("does not route an unresolved session model request", async () => {
       await expectDefaultSelectedModel({
         sessionEntry: {
-          providerOverride: "openai",
-          modelOverride: "   ",
+          executionSelection: {
+            state: "deferred",
+            request: { model: { provider: "openai", id: "gpt-4.1-mini" } },
+            fallbackPermission: "explicit",
+          },
         },
       });
     });

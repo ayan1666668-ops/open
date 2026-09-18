@@ -6,7 +6,7 @@ import {
   buildCompactParams,
   compactEmbeddedAgentSession,
   enqueueSystemEvent,
-  handleCompactCommand,
+  runCompactCommand,
   incrementCompactionCount,
   resolveCurrentSessionEntry,
   isEmbeddedAgentRunAbortableForCompaction,
@@ -23,7 +23,7 @@ describe("handleCompactCommand lifecycle authority", () => {
     vi.mocked(resolveCurrentSessionEntry).mockReturnValueOnce(undefined);
     vi.mocked(isEmbeddedAgentRunAbortableForCompaction).mockReturnValueOnce(true);
 
-    const result = await handleCompactCommand(
+    const result = await runCompactCommand(
       {
         ...buildCompactParams("/compact", {
           commands: { text: true },
@@ -54,7 +54,7 @@ describe("handleCompactCommand lifecycle authority", () => {
       compacted: false,
     });
 
-    await handleCompactCommand(
+    await runCompactCommand(
       {
         ...buildCompactParams("/compact", {
           commands: { text: true },
@@ -86,7 +86,7 @@ describe("handleCompactCommand lifecycle authority", () => {
     });
 
     try {
-      await handleCompactCommand(
+      await runCompactCommand(
         {
           ...buildCompactParams("/compact", {
             commands: { text: true },
@@ -111,7 +111,7 @@ describe("handleCompactCommand lifecycle authority", () => {
     vi.mocked(isEmbeddedAgentRunAbortableForCompaction).mockReturnValueOnce(true);
     vi.mocked(waitForEmbeddedAgentRunEnd).mockResolvedValueOnce(false);
 
-    const result = await handleCompactCommand(
+    const result = await runCompactCommand(
       {
         ...buildCompactParams("/compact", {
           commands: { text: true },
@@ -176,7 +176,7 @@ describe("handleCompactCommand lifecycle authority", () => {
         return 1;
       });
 
-      const result = await handleCompactCommand(
+      const result = await runCompactCommand(
         {
           ...buildCompactParams("/compact", {}),
           sessionEntry: original,
@@ -240,7 +240,7 @@ describe("handleCompactCommand lifecycle authority", () => {
         };
       });
 
-      const result = await handleCompactCommand(
+      const result = await runCompactCommand(
         {
           ...buildCompactParams("/compact", {
             commands: { text: true },

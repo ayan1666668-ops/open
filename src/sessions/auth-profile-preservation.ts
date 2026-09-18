@@ -7,21 +7,12 @@ import {
   getRuntimeAuthProfileStoreSnapshot,
 } from "../agents/auth-profiles/store.js";
 import type { AuthProfileStore } from "../agents/auth-profiles/types.js";
-import { resolveModelProviderAuthConfig } from "../agents/model-auth-provider-route.js";
 import { resolveProviderIdForAuth } from "../agents/provider-auth-aliases.js";
 import type { SessionEntry } from "../config/sessions.js";
 import { resolveCollapsedSessionAuthPinSource } from "../config/sessions/auth-profile-override-provenance.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { stageSessionExecutionSelection } from "../model-picker/apply-session-model-selection.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
 import { isUserModelAuthProfileId } from "../state/user-model-account-id.js";
-import { assertModelSelectionUnlocked } from "./model-overrides.js";
-
-type ModelOverrideSelection = {
-  provider: string;
-  model: string;
-  isDefault?: boolean;
-};
 
 function resolvePinnedAuthProfileProvider(params: {
   cfg: OpenClawConfig;
@@ -100,51 +91,4 @@ export function shouldPreserveUnavailableSessionAuthProfileOverride(
     resolveCollapsedSessionAuthPinSource(params.entry) === "user" &&
     shouldPreserveSessionAuthProfileOverride(params),
   );
-}
-
-/** @deprecated Use applySessionExecutionSelection; removed in the first stable release after 2026.10. */
-export function applyModelOverrideWithAuthProfileCompatibility(params: {
-  cfg: OpenClawConfig;
-  agentDir: string;
-  entry: Parameters<typeof stageSessionExecutionSelection>[0]["entry"];
-  currentProvider: string;
-  selection: ModelOverrideSelection;
-  profileOverride?: string;
-  profileOverrideSource?: "auto" | "user";
-  selectionSource?: "auto" | "user";
-  explicitDefaultSelection?: boolean;
-  markLiveSwitchPending?: boolean;
-  metadataSnapshot?: Pick<PluginMetadataSnapshot, "plugins">;
-}): { updated: boolean } {
-  assertModelSelectionUnlocked(params.entry);
-  return stageSessionExecutionSelection({
-    entry: params.entry,
-    selection: params.selection,
-    ...(params.profileOverride ? { profileOverride: params.profileOverride } : {}),
-    ...(params.profileOverrideSource
-      ? { profileOverrideSource: params.profileOverrideSource }
-      : {}),
-    ...(params.selectionSource ? { selectionSource: params.selectionSource } : {}),
-    ...(params.explicitDefaultSelection
-      ? { explicitDefaultSelection: params.explicitDefaultSelection }
-      : {}),
-    ...(params.markLiveSwitchPending !== undefined
-      ? { markLiveSwitchPending: params.markLiveSwitchPending }
-      : {}),
-    preserveAuthProfileOverride:
-      !params.profileOverride &&
-      shouldPreserveSessionAuthProfileOverride({
-        cfg: resolveModelProviderAuthConfig({
-          config: params.cfg,
-          provider: params.selection.provider,
-          modelId: params.selection.model,
-          metadataSnapshot: params.metadataSnapshot,
-        }),
-        agentDir: params.agentDir,
-        entry: params.entry,
-        currentProvider: params.currentProvider,
-        provider: params.selection.provider,
-        ...(params.metadataSnapshot ? { metadataSnapshot: params.metadataSnapshot } : {}),
-      }),
-  });
 }

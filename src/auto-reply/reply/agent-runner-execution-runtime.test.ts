@@ -339,18 +339,12 @@ describe("executeAgentTurn: runtime selection", () => {
   });
 
   it("keeps the accepted executor during heartbeat despite another policy preference", async () => {
-    const [
-      { sessionBindingIdentity },
-      { readSessionRuntimeOwnership },
-      { commitSessionExecutionSelection },
-    ] = await Promise.all([
-      import("../../../extensions/codex/src/app-server/session-binding.test-helpers.js"),
-      import("../../agents/harness/session-runtime-ownership.js"),
-      import("../../model-picker/apply-session-model-selection.js"),
-    ]);
-    const { supervisedTestBinding } =
-      await import("../../../extensions/codex/src/commands.test-support.js");
-    const bindingStore = await configureTestNativeHarness();
+    const [{ readSessionRuntimeOwnership }, { commitSessionExecutionSelection }] =
+      await Promise.all([
+        import("../../agents/harness/session-runtime-ownership.js"),
+        import("../../model-picker/apply-session-model-selection.js"),
+      ]);
+    const nativeHarness = await configureTestNativeHarness();
     state.isCliProviderMock.mockImplementation((provider: unknown) => provider === "claude-cli");
     state.runEmbeddedAgentMock.mockResolvedValueOnce({
       payloads: [{ text: "heartbeat" }],
@@ -375,21 +369,15 @@ describe("executeAgentTurn: runtime selection", () => {
         },
       },
     };
-    const identity = sessionBindingIdentity({
-      agentId: followupRun.run.agentId,
-      sessionId: followupRun.run.sessionId,
-      sessionKey: followupRun.run.sessionKey,
-    });
     expect(
-      await bindingStore.mutate(identity, {
-        kind: "set",
-        if: { kind: "absent" },
-        binding: {
-          ...supervisedTestBinding("native-heartbeat-thread"),
-          cwd: followupRun.run.workspaceDir,
-          modelProvider: "anthropic",
-          model: "claude-opus-4-6",
-        },
+      await nativeHarness.bindNativeSession({
+        agentId: followupRun.run.agentId,
+        sessionId: followupRun.run.sessionId,
+        sessionKey: followupRun.run.sessionKey,
+        workspaceDir: followupRun.run.workspaceDir,
+        threadId: "native-heartbeat-thread",
+        provider: "anthropic",
+        modelId: "claude-opus-4-6",
       }),
     ).toBe(true);
     const entry: SessionEntry = {

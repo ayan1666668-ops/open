@@ -14,6 +14,7 @@ import {
   clearEmbeddedQuestionBroker,
   setEmbeddedQuestionBroker,
 } from "../infra/embedded-question-broker.js";
+import { isModelExecutionSelection } from "../model-picker/execution-selection.js";
 import { resetGlobalHookRunner } from "../plugins/hook-runner-global.js";
 import { dispatchInboundMessageWithRoutedChannelDispatcher } from "./dispatch.js";
 import { runReplyQuestionInput } from "./reply/agent-runner-question-input.js";
@@ -66,9 +67,13 @@ async function withQuestion(
     resetTriggered: false,
   });
   operation.bindToolAuthoritySnapshot(prepareReplyToolAuthority(run));
+  const selection = run.run.executionSelection;
+  if (!isModelExecutionSelection(selection)) {
+    throw new Error("Question fixture requires a concrete execution selection");
+  }
   const fingerprint = operation.bindToolAuthorityRoute({
-    provider: run.run.provider,
-    model: run.run.model,
+    provider: selection.model.provider,
+    model: selection.model.id,
   });
   const runId = "question-order-owner";
   const admission = prepareAgentRunAdmission({
@@ -89,7 +94,8 @@ async function withQuestion(
       {
         ...run.run,
         runId,
-        modelId: run.run.model,
+        provider: selection.model.provider,
+        modelId: selection.model.id,
         toolAuthorityFingerprint: fingerprint,
         abortSignal: operation.abortSignal,
       },

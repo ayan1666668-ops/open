@@ -140,8 +140,10 @@ describe("follow-up delivery custody", () => {
             sessionFile: `${tmpDir}/session.jsonl`,
             workspaceDir: tmpDir,
             config: {},
-            provider: "test",
-            model: "test",
+            executionSelection: {
+              model: { provider: "test", id: "test" },
+              executor: { kind: "harness", id: "openclaw" },
+            },
             messageProvider: "matrix",
             timeoutMs: 1000,
             blockReplyBreak: "message_end",

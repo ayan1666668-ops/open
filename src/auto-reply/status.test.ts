@@ -10,12 +10,14 @@ import {
   appendTranscriptMessageSync,
   replaceSessionEntrySync,
 } from "../config/sessions/session-accessor.js";
-import { applyModelOverrideToSessionEntry } from "../sessions/model-overrides.js";
+import type { SessionEntry } from "../config/sessions/types.js";
+import { applyModelOverrideToSessionEntry } from "../plugin-sdk/model-session-runtime.js";
 import {
   buildStatusMessage as buildStatusMessageRaw,
   type buildStatusMessage as BuildStatusMessage,
   statusModelRefs,
 } from "../status/status-message.test-support.js";
+import { acceptedModelSelection } from "../test-utils/session-execution-selection.js";
 import { normalizeSessionDeliveryState } from "../utils/delivery-context.shared.js";
 import { createSuccessfulImageMediaDecision } from "./media-understanding.test-fixtures.js";
 import { buildCommandsMessage, buildCommandsMessagePaginated, buildHelpMessage } from "./status.js";
@@ -149,8 +151,7 @@ function makeFallbackContextStatusArgs({
     sessionEntry: {
       sessionId,
       updatedAt: 0,
-      providerOverride: "xiaomi",
-      modelOverride: "mimo-v2-flash",
+      executionSelection: acceptedModelSelection("xiaomi", "mimo-v2-flash"),
       modelProvider: activeProvider,
       model: activeModel,
       fallbackNotice: {
@@ -228,9 +229,8 @@ describe("buildStatusMessage", () => {
       resolvedHarness: "openclaw",
       queue: { mode: "collect", depth: 0 },
       pluginHealthLine: "🔌 Plugins: OK",
-      modelAuth: "api-key",
       subagentsLine: "🤖 Subagents: 1\n- active run",
-      now: 4 * 60 * 60_000, // 4 hours after epoch
+      now: 4 * 60 * 60_000,
     });
     const normalized = normalizeTestText(text);
 
@@ -346,7 +346,6 @@ describe("buildStatusMessage", () => {
       sessionKey: "agent:main:main",
       sessionScope: "per-sender",
       queue: { mode: "collect", depth: 0 },
-      modelAuth: "api-key",
       now: 10 * 60_000,
     });
     const normalized = normalizeTestText(text);
@@ -374,7 +373,6 @@ describe("buildStatusMessage", () => {
       sessionKey: "agent:main:main",
       sessionScope: "per-sender",
       queue: { mode: "collect", depth: 0 },
-      modelAuth: "api-key",
       now: 10 * 60_000,
     });
     const normalized = normalizeTestText(text);
@@ -423,7 +421,6 @@ describe("buildStatusMessage", () => {
       sessionKey: "agent:main:main",
       sessionScope: "per-sender",
       queue: { mode: "collect", depth: 0 },
-      modelAuth: "api-key",
       now: 10 * 60_000,
     });
     const normalized = normalizeTestText(text);
@@ -519,9 +516,15 @@ describe("buildStatusMessage", () => {
       sessionEntry: {
         sessionId: "acp",
         updatedAt: 0,
+        executionSelection: {
+          state: "accepted",
+          selection: {
+            executor: { kind: "acp", backend: "acpx", agent: "gemini" },
+            model: "native-managed",
+          },
+          fallbackPermission: "configured",
+        },
         acp: {
-          backend: "acpx",
-          agent: "gemini",
           runtimeSessionName: "status-test",
           mode: "persistent",
           state: "idle",
@@ -544,9 +547,15 @@ describe("buildStatusMessage", () => {
       sessionEntry: {
         sessionId: "acp-sanitized",
         updatedAt: 0,
+        executionSelection: {
+          state: "accepted",
+          selection: {
+            executor: { kind: "acp", backend: "acpx\nrewritten", agent: "gemini\u001b[2K" },
+            model: "native-managed",
+          },
+          fallbackPermission: "configured",
+        },
         acp: {
-          backend: "acpx\nrewritten",
-          agent: "gemini\u001b[2K",
           runtimeSessionName: "status-test",
           mode: "persistent",
           state: "idle",
@@ -999,13 +1008,12 @@ describe("buildStatusMessage", () => {
     const sessionEntry = {
       sessionId: "switch-back",
       updatedAt: 0,
-      providerOverride: "local",
-      modelOverride: "small-model",
+      executionSelection: acceptedModelSelection("local", "small-model"),
       contextTokens: 4_096,
       totalTokens: 1_024,
       totalTokensFresh: true,
-      totalTokensVersion: 1 as const,
-    };
+      totalTokensVersion: 1,
+    } satisfies SessionEntry;
 
     applyModelOverrideToSessionEntry({
       entry: sessionEntry,
@@ -1070,7 +1078,6 @@ describe("buildStatusMessage", () => {
       sessionKey: "agent:main:main",
       sessionScope: "per-sender",
       queue: { mode: "collect", depth: 0 },
-      modelAuth: "api-key",
     });
 
     const normalized = normalizeTestText(text);
@@ -1113,7 +1120,6 @@ describe("buildStatusMessage", () => {
       sessionKey: "agent:main:main",
       sessionScope: "per-sender",
       queue: { mode: "collect", depth: 0 },
-      modelAuth: "api-key",
     });
 
     const normalized = normalizeTestText(text);
@@ -1184,8 +1190,7 @@ describe("buildStatusMessage", () => {
       sessionEntry: {
         sessionId: "claude-cli-runtime-alias",
         updatedAt: 0,
-        providerOverride: "anthropic",
-        modelOverride: "claude-opus-4-7",
+        executionSelection: acceptedModelSelection("anthropic", "claude-opus-4-7"),
         modelProvider: "claude-cli",
         model: "claude-opus-4-7",
         fallbackNotice: {
@@ -1245,8 +1250,7 @@ describe("buildStatusMessage", () => {
       sessionEntry: {
         sessionId: "claude-cli-runtime-alias-env-key",
         updatedAt: 0,
-        providerOverride: "anthropic",
-        modelOverride: "claude-opus-4-7",
+        executionSelection: acceptedModelSelection("anthropic", "claude-opus-4-7"),
         modelProvider: "claude-cli",
         model: "claude-opus-4-7",
         fallbackNotice: {
@@ -1546,8 +1550,13 @@ describe("buildStatusMessage", () => {
         sessionEntry: {
           sessionId: "override-1",
           updatedAt: 0,
-          providerOverride: selectedProvider,
-          modelOverride: selectedModel,
+          executionSelection: selectedProvider
+            ? acceptedModelSelection(selectedProvider, selectedModel)
+            : {
+                state: "deferred",
+                request: { model: { id: selectedModel } },
+                fallbackPermission: "explicit",
+              },
           modelProvider: activeProvider,
           model: activeModel,
           fallbackNotice: {
@@ -1561,7 +1570,6 @@ describe("buildStatusMessage", () => {
         sessionKey: "agent:main:main",
         sessionScope: "per-sender",
         queue: { mode: "collect", depth: 0 },
-        modelAuth: "api-key",
         activeModelAuth: "api-key di_123…abc (deepinfra:default)",
       });
 
@@ -1599,7 +1607,6 @@ describe("buildStatusMessage", () => {
       sessionKey: "agent:main:main",
       sessionScope: "per-sender",
       queue: { mode: "collect", depth: 0 },
-      modelAuth: "api-key",
       activeModelAuth: "api-key di_123…abc (deepinfra:default)",
     });
 
@@ -1624,7 +1631,6 @@ describe("buildStatusMessage", () => {
       sessionKey: "agent:main:main",
       sessionScope: "per-sender",
       queue: { mode: "collect", depth: 0 },
-      modelAuth: "api-key",
     });
 
     const normalized = normalizeTestText(text);
@@ -1644,7 +1650,6 @@ describe("buildStatusMessage", () => {
       sessionKey: "agent:main:main",
       sessionScope: "per-sender",
       queue: { mode: "collect", depth: 0 },
-      modelAuth: "api-key",
     });
 
     const normalized = normalizeTestText(text);
@@ -1670,13 +1675,11 @@ describe("buildStatusMessage", () => {
         updatedAt: 0,
         modelProvider: "google",
         model: "gemini-3.1-flash-lite",
-        modelOverride: "gemini-3.1-flash-lite",
-        modelOverrideSource: "user",
+        executionSelection: acceptedModelSelection("google", "gemini-3.1-flash-lite"),
       },
       sessionKey: "agent:main:main",
       sessionScope: "per-sender",
       queue: { mode: "collect", depth: 0 },
-      modelAuth: "api-key",
     });
 
     const normalized = normalizeTestText(text);
@@ -1694,7 +1697,6 @@ describe("buildStatusMessage", () => {
       sessionKey: "agent:main:main",
       sessionScope: "per-sender",
       queue: { mode: "collect", depth: 0 },
-      modelAuth: "api-key",
     });
 
     const normalized = normalizeTestText(text);
@@ -1709,43 +1711,9 @@ describe("buildStatusMessage", () => {
       },
       sessionScope: "per-sender",
       queue: { mode: "collect", depth: 0 },
-      modelAuth: "api-key",
     });
 
     expect(normalizeTestText(text)).toContain("Model: google-antigravity/claude-sonnet-4-6");
-  });
-
-  it("renders session-selected model overrides compactly", () => {
-    const text = buildStatusMessage({
-      modelRefs: statusModelRefs({ provider: "deepseek", model: "deepseek-v4-flash" }),
-      agent: {
-        model: "zhipu/glm-4.5-air",
-      },
-      configuredDefaultModelLabel: "zhipu/glm-4.5-air",
-      sessionEntry: {
-        sessionId: "pinned-session",
-        updatedAt: 0,
-        providerOverride: "deepseek",
-        modelOverride: "deepseek-v4-flash",
-        modelOverrideSource: "user",
-      },
-      sessionKey: "agent:main:main",
-      sessionScope: "per-sender",
-      queue: { mode: "collect", depth: 0 },
-      modelAuth: "api-key",
-    });
-
-    const normalized = normalizeTestText(text);
-    expect(normalized).toContain("Model: deepseek/deepseek-v4-flash");
-    expect(normalized).toContain("pinned session; config primary zhipu/glm-4.5-air");
-    expect(normalized).toContain("clear /model default");
-    expect(normalized).not.toContain("Configured default:");
-    expect(normalized).not.toContain("Session selected:");
-    expect(normalized).not.toContain("Reason: session override");
-    expect(normalized).not.toContain("This session is pinned");
-    expect(normalized).not.toContain(
-      "Docs: https://docs.openclaw.ai/concepts/models#selection-source-and-fallback-strictness",
-    );
   });
 
   it("does not warn when only the last runtime model differs from the configured default", () => {
@@ -1767,7 +1735,6 @@ describe("buildStatusMessage", () => {
       sessionKey: "agent:main:main",
       sessionScope: "per-sender",
       queue: { mode: "collect", depth: 0 },
-      modelAuth: "api-key",
     });
 
     const normalized = normalizeTestText(text);
@@ -1786,16 +1753,13 @@ describe("buildStatusMessage", () => {
       sessionEntry: {
         sessionId: "auto-fallback",
         updatedAt: 0,
-        providerOverride: "deepseek",
-        modelOverride: "deepseek-v4-flash",
-        modelOverrideSource: "auto",
-        modelOverrideFallbackOriginProvider: "zhipu",
-        modelOverrideFallbackOriginModel: "glm-4.5-air",
+        executionSelection: acceptedModelSelection("zhipu", "glm-4.5-air", {
+          fallbackPermission: "configured",
+        }),
       },
       sessionKey: "agent:main:main",
       sessionScope: "per-sender",
       queue: { mode: "collect", depth: 0 },
-      modelAuth: "api-key",
     });
 
     const normalized = normalizeTestText(text);
@@ -1810,7 +1774,6 @@ describe("buildStatusMessage", () => {
       agent: {},
       sessionScope: "per-sender",
       queue: { mode: "collect", depth: 0 },
-      modelAuth: "api-key",
     });
 
     const normalized = normalizeTestText(text);
@@ -1832,7 +1795,6 @@ describe("buildStatusMessage", () => {
       sessionKey: "agent:main:whatsapp:group:123@g.us",
       sessionScope: "per-sender",
       queue: { mode: "collect", depth: 0 },
-      modelAuth: "api-key",
     });
 
     expect(text).toContain("Activation: always");
@@ -1853,7 +1815,6 @@ describe("buildStatusMessage", () => {
         dropPolicy: "old",
         showDetails: true,
       },
-      modelAuth: "api-key",
     });
 
     expect(text).toContain("Queue: collect (depth 3 · debounce 2s · cap 5 · drop old)");
@@ -1869,7 +1830,6 @@ describe("buildStatusMessage", () => {
       sessionScope: "per-sender",
       queue: { mode: "collect", depth: 0 },
       usageLine: "📊 Usage: Claude 80% left (5h)",
-      modelAuth: "api-key",
     });
 
     const lines = normalizeTestText(text).split("\n");
@@ -1980,7 +1940,6 @@ describe("buildStatusMessage", () => {
       sessionScope: "per-sender",
       queue: { mode: "collect", depth: 0 },
       includeTranscriptUsage: true,
-      modelAuth: "api-key",
       resolvedHarness: "openclaw",
     });
   }
@@ -2055,7 +2014,6 @@ describe("buildStatusMessage", () => {
           sessionScope: "per-sender",
           queue: { mode: "collect", depth: 0 },
           includeTranscriptUsage: true,
-          modelAuth: "api-key",
         });
         const normalized = normalizeTestText(text);
 
@@ -2103,7 +2061,6 @@ describe("buildStatusMessage", () => {
           sessionScope: "per-sender",
           queue: { mode: "collect", depth: 0 },
           includeTranscriptUsage: true,
-          modelAuth: "api-key",
         });
         const normalized = normalizeTestText(text);
 
@@ -2152,7 +2109,6 @@ describe("buildStatusMessage", () => {
           sessionScope: "per-sender",
           queue: { mode: "collect", depth: 0 },
           includeTranscriptUsage: true,
-          modelAuth: "api-key",
           resolvedHarness: "openclaw",
         });
 
@@ -2229,7 +2185,6 @@ describe("buildStatusMessage", () => {
           sessionScope: "per-sender",
           queue: { mode: "collect", depth: 0 },
           includeTranscriptUsage: true,
-          modelAuth: "api-key",
         });
 
         expect(normalizeTestText(text)).toContain("Cache: 26% hit · 12 cached, 34 new");
@@ -2281,7 +2236,6 @@ describe("buildStatusMessage", () => {
           sessionScope: "per-sender",
           queue: { mode: "collect", depth: 0 },
           includeTranscriptUsage: true,
-          modelAuth: "api-key",
         });
 
         const normalized = normalizeTestText(text);
@@ -2320,7 +2274,6 @@ describe("buildStatusMessage", () => {
       sessionKey: "agent:main:main",
       sessionScope: "per-sender",
       queue: { mode: "collect", depth: 0 },
-      modelAuth: "api-key",
     });
 
     const normalized = normalizeTestText(text);
@@ -2354,8 +2307,7 @@ describe("buildStatusMessage", () => {
       sessionEntry: {
         sessionId: "sess-runtime-slash-id-fallback",
         updatedAt: 0,
-        providerOverride: "xiaomi",
-        modelOverride: "mimo-v2-flash",
+        executionSelection: acceptedModelSelection("xiaomi", "mimo-v2-flash"),
         model: "fake-minimax/FakeMiniMax-M2.5",
         fallbackNotice: {
           kind: "active",
@@ -2370,7 +2322,6 @@ describe("buildStatusMessage", () => {
       sessionKey: "agent:main:main",
       sessionScope: "per-sender",
       queue: { mode: "collect", depth: 0 },
-      modelAuth: "api-key",
       activeModelAuth: "api-key",
     });
 
@@ -2408,7 +2359,6 @@ describe("buildStatusMessage", () => {
       sessionKey: "agent:main:main",
       sessionScope: "per-sender",
       queue: { mode: "collect", depth: 0 },
-      modelAuth: "api-key",
       activeModelAuth: "api-key",
     });
 
@@ -2455,7 +2405,6 @@ describe("buildStatusMessage", () => {
           sessionScope: "per-sender",
           queue: { mode: "collect", depth: 0 },
           includeTranscriptUsage: true,
-          modelAuth: "api-key",
         });
 
         const normalized = normalizeTestText(text);
@@ -2488,7 +2437,6 @@ describe("buildStatusMessage", () => {
       sessionKey: "agent:main:main",
       sessionScope: "per-sender",
       queue: { mode: "collect", depth: 0 },
-      modelAuth: "api-key",
     });
 
     const normalized = normalizeTestText(text);

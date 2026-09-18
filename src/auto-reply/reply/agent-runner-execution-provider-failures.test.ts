@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { createCliTimeoutError } from "../../agents/cli-runner/no-output-timeout-policy.js";
 import { formatBillingErrorMessage } from "../../agents/embedded-agent-helpers.js";
+import type { EmbeddedAgentRunResult } from "../../agents/embedded-agent-runner/types.js";
 import { FailoverError } from "../../agents/failover-error.js";
 import { AgentHarnessPreflightError } from "../../agents/harness/errors.js";
 import { LiveSessionModelSwitchError } from "../../agents/live-model-switch-error.js";
 import { ProviderAuthError } from "../../agents/model-auth.js";
+import type { ModelFallbackRunResult } from "../../agents/model-fallback-attempt.js";
 import { getReplyPayloadMetadata } from "../reply-payload.js";
 import type { TemplateContext } from "../templating.js";
 import { SILENT_REPLY_TOKEN } from "../tokens.js";
@@ -130,7 +132,17 @@ describe("executeAgentTurn: provider failures", () => {
       state.runWithModelFallbackMock
         .mockImplementationOnce(async (params: FallbackRunnerParams) => {
           if (surface === "partial") {
-            return await params.run("anthropic", "claude", initialFallbackAttemptOptions(params));
+            return {
+              outcome: "completed",
+              result: await params.run(
+                "anthropic",
+                "claude",
+                initialFallbackAttemptOptions(params),
+              ),
+              provider: "anthropic",
+              model: "claude",
+              attempts: [],
+            };
           }
           throw error;
         })
@@ -686,8 +698,8 @@ describe("executeAgentTurn: provider failures", () => {
     "cancels the pending overload notice after %s",
     async (phase) => {
       vi.useFakeTimers();
-      let resolveRetry!: (value: unknown) => void;
-      const retryResult = new Promise<unknown>((resolve) => {
+      let resolveRetry!: (value: EmbeddedAgentRunResult) => void;
+      const retryResult = new Promise<EmbeddedAgentRunResult>((resolve) => {
         resolveRetry = resolve;
       });
       state.runEmbeddedAgentMock
@@ -706,7 +718,7 @@ describe("executeAgentTurn: provider failures", () => {
       expect(state.runEmbeddedAgentMock).toHaveBeenCalledTimes(1);
       expect(onBlockReply).not.toHaveBeenCalled();
 
-      resolveRetry({ payloads: [{ text: "recovered" }], meta: {} });
+      resolveRetry({ payloads: [{ text: "recovered" }], meta: { durationMs: 0 } });
       await expect(resultPromise).resolves.toMatchObject({ kind: "final" });
     },
   );
@@ -714,8 +726,8 @@ describe("executeAgentTurn: provider failures", () => {
   it("does not send a delayed overload notice", async () => {
     const executeAgentTurn = await getExecuteAgentTurnForTest();
     vi.useFakeTimers();
-    let resolveRetry!: (value: unknown) => void;
-    const retryResult = new Promise<unknown>((resolve) => {
+    let resolveRetry!: (value: ModelFallbackRunResult<unknown>) => void;
+    const retryResult = new Promise<ModelFallbackRunResult<unknown>>((resolve) => {
       resolveRetry = resolve;
     });
     state.runWithModelFallbackMock
@@ -746,7 +758,7 @@ describe("executeAgentTurn: provider failures", () => {
     const executeAgentTurn = await getExecuteAgentTurnForTest();
     vi.useFakeTimers();
     let rejectInitial!: (error: unknown) => void;
-    const initialResult = new Promise<unknown>((_resolve, reject) => {
+    const initialResult = new Promise<ModelFallbackRunResult<unknown>>((_resolve, reject) => {
       rejectInitial = reject;
     });
     state.runWithModelFallbackMock
@@ -831,8 +843,8 @@ describe("executeAgentTurn: provider failures", () => {
   it("does not leave an overload notice timer after an aborted failure", async () => {
     const executeAgentTurn = await getExecuteAgentTurnForTest();
     vi.useFakeTimers();
-    let resolveRetry!: (value: unknown) => void;
-    const retryResult = new Promise<unknown>((resolve) => {
+    let resolveRetry!: (value: ModelFallbackRunResult<unknown>) => void;
+    const retryResult = new Promise<ModelFallbackRunResult<unknown>>((resolve) => {
       resolveRetry = resolve;
     });
     state.runWithModelFallbackMock

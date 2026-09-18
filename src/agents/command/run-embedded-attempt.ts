@@ -6,7 +6,7 @@ import { clearAgentRunTerminalWriteContext } from "../../infra/agent-run-termina
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import {
   prepareSessionExecutionSelection,
-  resolveSessionExecutionFallbacks,
+  resolveSessionModelFallbacks,
 } from "../../model-picker/apply-session-model-selection.js";
 import {
   getSessionExecutionSelection,
@@ -47,10 +47,7 @@ import {
   resolveAgentRunErrorLifecycleFields,
 } from "../run-termination.js";
 import { measureAgentStartup } from "../startup-timing.js";
-import {
-  normalizeThinkingCatalogProviders,
-  needsThinkHydration,
-} from "../thinking-runtime.js";
+import { normalizeThinkingCatalogProviders, needsThinkHydration } from "../thinking-runtime.js";
 import {
   createAgentAttemptLifecycleCallbacks,
   type AgentAttemptLifecycleState,
@@ -99,6 +96,7 @@ export async function runEmbeddedAgentAttempt(params: RunEmbeddedAgentAttemptPar
   } = params.modelSelection;
   let {
     executionSelection,
+    userSelection,
     provider,
     model,
     providerForAuthProfileValidation,
@@ -196,8 +194,12 @@ export async function runEmbeddedAgentAttempt(params: RunEmbeddedAgentAttemptPar
   );
   const sessionStoreRuntime = await loadSessionStoreRuntime();
   const readSessionEntry = () => {
-    if (!sessionKey) return sessionEntryForAttempt;
-    if (!storePath && sessionStore) return sessionStore[sessionKey];
+    if (!sessionKey) {
+      return sessionEntryForAttempt;
+    }
+    if (!storePath && sessionStore) {
+      return sessionStore[sessionKey];
+    }
     return sessionStoreRuntime.loadSessionEntryReadOnly({
       agentId: sessionAgentId,
       sessionKey,
@@ -263,12 +265,13 @@ export async function runEmbeddedAgentAttempt(params: RunEmbeddedAgentAttemptPar
           : new Set<string>();
         const spawnedBy = normalizedSpawned.spawnedBy ?? sessionEntry?.spawnedBy;
         const fallbackAvailability = isModelExecutionSelection(executionSelection)
-          ? resolveSessionExecutionFallbacks({
+          ? resolveSessionModelFallbacks({
               cfg,
               agentId: sessionAgentId,
               sessionKey,
               sessionEntry,
-              selection: executionSelection,
+              model: executionSelection.model,
+              userSelection,
               modelFallbacksOverride: params.opts.modelFallbacksOverride,
               subagentSpawnLineage: (sessionEntry?.spawnDepth ?? 0) > 0,
             })
@@ -287,8 +290,9 @@ export async function runEmbeddedAgentAttempt(params: RunEmbeddedAgentAttemptPar
           candidateSelection: ExecutionSelection,
           runOptions: RunEntryCandidateOptions,
         ) => {
-          if (isAcpExecutionSelection(candidateSelection))
+          if (isAcpExecutionSelection(candidateSelection)) {
             throw new Error("This attempt requires the native manager.");
+          }
           const selectedModel = isModelExecutionSelection(candidateSelection)
             ? candidateSelection.model
             : undefined;
@@ -391,7 +395,9 @@ export async function runEmbeddedAgentAttempt(params: RunEmbeddedAgentAttemptPar
               [providerOverride, modelOverride, candidateRuntime],
             );
           }
-          if (candidateThinkLevel) effectiveTurnThinkLevel = candidateThinkLevel;
+          if (candidateThinkLevel) {
+            effectiveTurnThinkLevel = candidateThinkLevel;
+          }
           try {
             return await attemptExecutionRuntime.runAgentAttempt({
               preparedRunAdmission: params.preparedRunAdmission,
@@ -500,11 +506,13 @@ export async function runEmbeddedAgentAttempt(params: RunEmbeddedAgentAttemptPar
             agentId: sessionAgentId,
             sessionKey,
             storePath,
-            sessionEntry: sessionEntryForAttempt,
+            sessionEntry,
             readSessionEntry,
             request: { kind: "selection", selection: executionSelection },
           });
-          if (preparedNative.status !== "ready") throw new Error(preparedNative.message);
+          if (preparedNative.status !== "ready") {
+            throw new Error(preparedNative.message);
+          }
           fallbackResult = await runEmbeddedAgentEntry<AgentAttemptResult>({
             ...runEntry,
             kind: "native",
@@ -541,7 +549,7 @@ export async function runEmbeddedAgentAttempt(params: RunEmbeddedAgentAttemptPar
                   sessionKey,
                   storePath,
                   readSessionEntry,
-                  sessionEntry: sessionEntryForAttempt,
+                  sessionEntry,
                   request: {
                     kind: "fallback",
                     selection: {
@@ -549,6 +557,7 @@ export async function runEmbeddedAgentAttempt(params: RunEmbeddedAgentAttemptPar
                       executor: executionSelection.executor,
                     },
                     explicitModels: params.opts.modelFallbacksOverride,
+                    userSelection,
                   },
                 });
                 if (prepared.status !== "ready") {
@@ -624,8 +633,11 @@ export async function runEmbeddedAgentAttempt(params: RunEmbeddedAgentAttemptPar
           // A retry consumes saved intent, including reset fallback permission; it does not select again.
           sessionEntry = current;
           sessionEntryForAttempt = current;
-          if (sessionStore && sessionKey) sessionStore[sessionKey] = current;
+          if (sessionStore && sessionKey) {
+            sessionStore[sessionKey] = current;
+          }
           executionSelection = err.selection;
+          userSelection = undefined;
           provider = err.selection.model.provider;
           model = err.selection.model.id;
           providerForAuthProfileValidation = err.selection.model.provider;

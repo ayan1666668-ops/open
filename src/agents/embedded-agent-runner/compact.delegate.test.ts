@@ -5,6 +5,7 @@ import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js"
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { ContextEngine, ContextEngineRuntimeContext } from "../../context-engine/types.js";
 import { AsyncWorkScope } from "../../shared/async-work-scope.js";
+import type { AuthProfileStore } from "../auth-profiles/types.js";
 import {
   createAssistant,
   createAssistantResultStream,
@@ -13,6 +14,8 @@ import {
 import type { ProviderConfigInput } from "../sessions/model-registry.js";
 import {
   applyExtraParamsToAgentMock,
+  ensureAuthProfileStoreMock,
+  getApiKeyForModelMock,
   hookRunner,
   limitHistoryTurnsMock,
   loadCompactHooksHarness,
@@ -136,7 +139,7 @@ async function createFixture(operation: "summary" | "endpoint", globalAlias = fa
   modelRegistry.registerProvider(model.provider, { api: model.api, streamSimple: stream });
   resolveModelMock.mockImplementation((provider = model.provider, modelId = model.id) => ({
     logicalRef: { provider, model: modelId },
-    model,
+    model: { ...model, provider, id: modelId },
     error: null,
     authStorage,
     modelRegistry,
@@ -373,6 +376,154 @@ describe("direct compactor through the context-engine delegate", () => {
       { role: "user", content: "Unrelated store history", timestamp: 1 },
     ]);
   });
+
+  it.each(["same", "model", "provider", "executor"] as const)(
+    "scopes prepared account authority to the actual delegated target (%s)",
+    async (difference) => {
+      const fixture = await createFixture("summary");
+      // These owners must load after loadCompactHooksHarness installs the runtime mocks.
+      const [
+        { commitSessionExecutionSelection, prepareSessionCompactionExecutionSelection },
+        { createSessionModelCatalogFixture },
+        auth,
+      ] = await Promise.all([
+        import("../../model-picker/apply-session-model-selection.js"),
+        import("../test-helpers/session-model-catalog.test-support.js"),
+        import("../model-auth.js"),
+      ]);
+      const config: OpenClawConfig = {
+        ...fixture.runtimeContext.config,
+        agents: {
+          ...fixture.runtimeContext.config.agents,
+          defaults: { ...fixture.runtimeContext.config.agents.defaults, workspace: workspaceDir },
+          list: [{ id: "main", agentDir: join(workspaceDir, "agent") }],
+        },
+      };
+      const selection = {
+        model: { provider: model.provider, id: model.id },
+        executor: { kind: "harness" as const, id: "openclaw" },
+      };
+      const entry = accessor.loadSessionEntry(fixture.target);
+      if (!entry) {
+        throw new Error("Expected the queued compaction session");
+      }
+      commitSessionExecutionSelection(entry, selection);
+      entry.authProfileOverride = "openai:primary";
+      entry.authProfileOverrideSource = "user";
+      await accessor.upsertSessionEntryCore(fixture.target, entry);
+      const delegatedTarget = {
+        provider: difference === "provider" ? "compaction-provider" : model.provider,
+        model: difference === "model" ? "delegate-model" : model.id,
+        agentHarnessId: difference === "executor" ? "delegate-harness" : "openclaw",
+      };
+      const delegatedProfile = `${delegatedTarget.provider}:delegate`;
+      const authStore: AuthProfileStore = {
+        version: 1,
+        profiles: {
+          "openai:primary": { type: "api_key", provider: "openai", key: "primary-key" },
+          [delegatedProfile]: {
+            type: "api_key",
+            provider: delegatedTarget.provider,
+            key: "delegate-key",
+          },
+        },
+      };
+      ensureAuthProfileStoreMock.mockReturnValue(authStore);
+      vi.mocked(auth.ensureAuthProfileStoreWithoutExternalProfiles).mockReturnValue(authStore);
+      getApiKeyForModelMock.mockImplementation(async ({ profileId } = {}) => {
+        const profile = authStore.profiles[profileId ?? ""];
+        if (profile?.type !== "api_key" || !profile.key) {
+          throw new Error(`Missing compaction fixture credential: ${profileId}`);
+        }
+        return { apiKey: profile.key, mode: "api-key", source: `profile:${profileId}`, profileId };
+      });
+      const catalog = createSessionModelCatalogFixture().publish({
+        config,
+        agentId: "main",
+        catalog: { entries: [{ ...model, name: "Compaction fixture" }], routeVariants: [] },
+        authStore,
+      });
+      const prepared = await prepareSessionCompactionExecutionSelection({
+        cfg: config,
+        ...fixture.target,
+        workspaceDir,
+        sessionEntry: entry,
+        selection,
+        modelCatalog: catalog.entries,
+        readSessionEntry: () => accessor.loadSessionEntry(fixture.target),
+      });
+      if (prepared.status !== "ready") {
+        throw new Error(prepared.message);
+      }
+      expect(prepared.auth?.selection?.profileId).toBe("openai:primary");
+      resolveContextEngineMock.mockResolvedValueOnce({
+        info: { ownsCompaction: false },
+        compact: async (params: Parameters<ContextEngine["compact"]>[0]) => {
+          if (!params.runtimeContext) {
+            throw new Error("Expected the delegated runtime context");
+          }
+          Object.assign(params.runtimeContext, delegatedTarget, {
+            authProfileId: delegatedProfile,
+            authProfileIdSource: "user",
+          });
+          return delegate(params);
+        },
+      });
+      const work = new AsyncWorkScope();
+      try {
+        const result = await work.run(() =>
+          compactQueued(
+            {
+              ...fixture.target,
+              sessionTarget: fixture.target,
+              sessionFile: fixture.target.sessionKey,
+              workspaceDir,
+              config,
+              provider: model.provider,
+              model: model.id,
+              agentHarnessId: "openclaw",
+              trigger: "manual",
+              enqueue: async (task) => await task(),
+            },
+            {
+              preparedSelection: prepared,
+              onCommitted: prepared.onCommitted,
+              assertActive: () => {
+                const error = prepared.validateCommit();
+                if (error) {
+                  throw new Error(error);
+                }
+              },
+            },
+          ),
+        );
+        expect(result, result.reason).toMatchObject({ ok: true, compacted: true });
+        expect(fixture.stream).toHaveBeenCalledWith(
+          expect.objectContaining({
+            provider: delegatedTarget.provider,
+            id: delegatedTarget.model,
+          }),
+          expect.anything(),
+          expect.objectContaining({
+            apiKey: difference === "same" ? "primary-key" : "delegate-key",
+          }),
+        );
+        expect(
+          sessions.SessionManager.open(fixture.target)
+            .getBranch()
+            .filter((item) => item.type === "compaction"),
+        ).toHaveLength(1);
+        expect(accessor.loadSessionEntry(fixture.target)?.executionSelection).toEqual(
+          entry.executionSelection,
+        );
+      } finally {
+        await AsyncWorkScope.runWhenAllIdle(
+          () => [work],
+          () => work.drain(),
+        );
+      }
+    },
+  );
 
   it.each(["summary", "endpoint"] as const)(
     "keeps queued manual %s compaction countable when cancellation follows its commit during a post-compaction hook",

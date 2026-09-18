@@ -11,7 +11,10 @@ import { getPreparedReplyDispatchRuntime } from "./prepared-reply-dispatch-conte
 async function executePreparedReplyContext(
   context: Exclude<Awaited<ReturnType<typeof prepareReplyRunContext>>, { kind: "reply" }>,
 ) {
-  const admission = await prepareReplyRunAdmission(context);
+  const admission = await prepareReplyRunAdmission(context).catch((error: unknown) => {
+    context.params.typing.cleanup();
+    throw error;
+  });
   if (admission.kind === "reply") {
     return admission.reply;
   }

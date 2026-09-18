@@ -3,10 +3,32 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { expect } from "vitest";
+import { createOpenClawDatabaseMaintenanceScope } from "../state/openclaw-state-db-async-lifecycle.js";
+import { resolveOpenClawStateSqlitePath } from "../state/openclaw-state-db.paths.js";
+import { acquireGatewayMaintenanceCoordinator } from "./state-database-coordinator.js";
 import type {
   LegacyStateMigrationPlan,
   LegacyStateMigrationStepReceipt,
 } from "./state-migrations.types.js";
+
+export async function withDoctorMaintenance<T>(
+  env: NodeJS.ProcessEnv,
+  run: () => Promise<T>,
+): Promise<T> {
+  const coordinator = acquireGatewayMaintenanceCoordinator({
+    databasePath: resolveOpenClawStateSqlitePath(env),
+  });
+  const resources = createOpenClawDatabaseMaintenanceScope(coordinator.createSchemaFenceDelegate);
+  try {
+    return await resources.run(run);
+  } finally {
+    try {
+      await resources.close();
+    } finally {
+      coordinator.release();
+    }
+  }
+}
 
 export function writeLegacyStateSchemaV1(stateDatabasePath: string): void {
   fs.mkdirSync(path.dirname(stateDatabasePath), { recursive: true });

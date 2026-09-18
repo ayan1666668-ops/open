@@ -1,3 +1,4 @@
+import { normalizeProviderIdForAuth } from "@openclaw/model-catalog-core/provider-id";
 import {
   findConfiguredProviderModel,
   projectModelProviderConfig,
@@ -5,6 +6,7 @@ import {
 } from "../config/model-provider-config.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { createProviderModelCatalogIdNormalizer } from "../plugins/provider-model-routes.js";
+import { splitTrailingAuthProfile } from "./model-ref-profile.js";
 import {
   resolveProviderIdForAuth,
   type ProviderAuthAliasLookupParams,
@@ -46,4 +48,18 @@ export function resolveModelProviderAuthConfig(
     resolveProviderIdForAuth(params.provider, { ...params, config })
     ? params.config
     : config;
+}
+
+export function normalizeModelIdForProvider(provider: string, modelId: string): string | undefined {
+  const trimmed = splitTrailingAuthProfile(modelId).model.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  const slash = trimmed.indexOf("/");
+  if (slash <= 0) {
+    return trimmed;
+  }
+  return normalizeProviderIdForAuth(trimmed.slice(0, slash)) === provider
+    ? trimmed.slice(slash + 1).trim() || undefined
+    : undefined;
 }

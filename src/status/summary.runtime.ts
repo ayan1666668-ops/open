@@ -23,8 +23,10 @@ import { resolveAgentModelPrimaryValue } from "../config/model-input.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.js";
 import { resolveStoredSessionKeyForAgentStore } from "../gateway/session-store-key.js";
-import { getSessionExecutionSelection } from "../model-picker/execution-selection.js";
-import { isModelExecutionSelection } from "../model-picker/execution-selection.js";
+import {
+  getSessionExecutionSelection,
+  isModelExecutionSelection,
+} from "../model-picker/execution-selection.js";
 import { classifySessionKind } from "../sessions/classify-session-kind.js";
 import { resolveAgentRuntimeLabel } from "./agent-runtime-label.js";
 
@@ -143,17 +145,21 @@ function resolveStatusModelComparisonLabel(params: {
 function resolveSessionModelRef(
   resolved: { provider: string; model: string },
   entry?: Partial<SessionEntry>,
-): { provider: string; model: string } {
+): { provider?: string; model: string } {
   const selection = getSessionExecutionSelection(entry);
-  return selection && isModelExecutionSelection(selection)
-    ? { provider: selection.model.provider, model: selection.model.id }
-    : resolved;
+  if (!selection || selection.model === "native-managed") {
+    return resolved;
+  }
+  return {
+    provider: isModelExecutionSelection(selection) ? selection.model.provider : undefined,
+    model: selection.model.id,
+  };
 }
 
 function resolveSessionRuntime(params: {
   cfg: OpenClawConfig;
   entry?: SessionEntry;
-  provider: string;
+  provider?: string;
   model: string;
   agentId?: string;
   sessionKey: string;

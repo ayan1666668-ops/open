@@ -4,7 +4,7 @@ import { loadSessionEntryReadOnly } from "../../config/sessions/session-accessor
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { GatewayRecoveryRuntime } from "../../gateway/server-instance-runtime.types.js";
 import { getAgentEventLifecycleGeneration } from "../../infra/agent-events.js";
-import { resolveSendPolicy } from "../../sessions/send-policy.js";
+import { resolveSendPolicyCore } from "../../sessions/send-policy.js";
 import {
   deliveryContextFromSession,
   deliveryContextKey,
@@ -41,7 +41,7 @@ export function resolveRestartRecoveryDeliveryContext(params: {
   }
   if (
     params.cfg &&
-    resolveSendPolicy({
+    resolveSendPolicyCore({
       cfg: params.cfg,
       entry: params.entry,
       sessionKey: params.sessionKey,

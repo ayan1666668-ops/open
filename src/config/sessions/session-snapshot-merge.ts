@@ -1,12 +1,12 @@
+import { isDeepStrictEqual } from "node:util";
 import {
   executionSelectionRouteChanged,
   executionSelectionTransactionChanged,
   copyExecutionSelectionTransaction,
 } from "../../model-picker/apply-session-model-selection.js";
 import { SESSION_EXECUTION_SELECTION_TRANSACTION_FIELDS } from "../../model-picker/execution-selection.js";
-export { SESSION_EXECUTION_SELECTION_TRANSACTION_FIELDS } from "../../model-picker/execution-selection.js";
-import { isDeepStrictEqual } from "node:util";
 import type { InternalSessionEntry as SessionEntry } from "./types.js";
+export { SESSION_EXECUTION_SELECTION_TRANSACTION_FIELDS } from "../../model-picker/execution-selection.js";
 
 type SessionEntryRecord = Partial<Record<keyof SessionEntry, unknown>>;
 
@@ -296,20 +296,6 @@ export function sessionSnapshotTouchedFieldsConflict(params: {
       !isDeepStrictEqual(current[field], initial[field]) &&
       !isDeepStrictEqual(current[field], next[field]),
   );
-}
-
-/** Replaces a caller-held snapshot with the latest persisted row in place. */
-export function adoptPersistedSessionSnapshot(target: SessionEntry, current: SessionEntry): void {
-  const targetRecord = target as SessionEntryRecord;
-  const currentRecord = current as SessionEntryRecord;
-  for (const field of Object.keys(target) as Array<keyof SessionEntry>) {
-    if (!Object.hasOwn(current, field)) {
-      delete targetRecord[field];
-    }
-  }
-  for (const field of Object.keys(current) as Array<keyof SessionEntry>) {
-    targetRecord[field] = currentRecord[field];
-  }
 }
 
 /** Reports whether a model/auth selection transaction is the persisted winner. */

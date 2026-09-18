@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
+import type { SessionEntry } from "../config/sessions/types.js";
+import { acceptedModelSelection } from "../test-utils/session-execution-selection.js";
 import {
-  resolveDirectStoredModelOverride,
   resolveStoredModelOverride,
+  resolveStoredModelOverrideCore,
 } from "./stored-model-overrides.js";
 
 describe("resolveStoredModelOverride", () => {
@@ -117,7 +119,7 @@ describe("resolveStoredModelOverride", () => {
 
   it("rejects stale direct fields behind an explicit Default marker", () => {
     expect(
-      resolveDirectStoredModelOverride({
+      resolveStoredModelOverride({
         defaultProvider: "openai",
         sessionEntry: {
           sessionId: "default-session",
@@ -172,5 +174,71 @@ describe("resolveStoredModelOverride", () => {
         },
       }),
     ).toBeNull();
+  });
+});
+
+describe("resolveStoredModelOverrideCore", () => {
+  it.each([
+    {
+      name: "runtime-only inheritance",
+      executionSelection: {
+        state: "deferred",
+        request: { runtime: "openclaw", defaultSelection: "inherit" },
+        fallbackPermission: "configured",
+      },
+      inherits: true,
+    },
+    {
+      name: "configured reset",
+      executionSelection: {
+        state: "deferred",
+        request: { runtime: "openclaw", defaultSelection: "configured" },
+        fallbackPermission: "configured",
+      },
+      inherits: false,
+    },
+    {
+      name: "provider-only request",
+      executionSelection: {
+        state: "deferred",
+        request: { defaultSelection: "configured" },
+        fallbackPermission: "explicit",
+        legacyRequest: { provider: "requested-provider" },
+      },
+      inherits: false,
+    },
+  ] satisfies Array<{
+    name: string;
+    executionSelection: SessionEntry["executionSelection"];
+    inherits: boolean;
+  }>)("preserves $name when a parent has selected a model", ({ executionSelection, inherits }) => {
+    const parent: SessionEntry = {
+      sessionId: "parent-session",
+      updatedAt: 1,
+      executionSelection: acceptedModelSelection("anthropic", "claude-sonnet-4-6"),
+      modelProvider: "observed-provider",
+      model: "observed-model",
+    };
+    const loadSessionEntry = vi.fn(() => parent);
+    const result = resolveStoredModelOverrideCore({
+      sessionEntry: { executionSelection },
+      sessionKey: "agent:main:child",
+      parentSessionKey: "agent:main:parent",
+      defaultProvider: "openai",
+      loadSessionEntry,
+    });
+    expect(result).toEqual(
+      inherits
+        ? {
+            provider: "anthropic",
+            model: "claude-sonnet-4-6",
+            source: "parent",
+            routeResolution: "resolved",
+          }
+        : null,
+    );
+    if (!inherits) {
+      expect(loadSessionEntry).not.toHaveBeenCalled();
+    }
   });
 });

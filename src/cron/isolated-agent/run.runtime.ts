@@ -7,7 +7,7 @@ export {
 export { resolveCronStyleNow } from "../../agents/current-time.js";
 export { DEFAULT_CONTEXT_TOKENS } from "../../agents/defaults.js";
 export { resolveThinkingSelection } from "../../agents/model-thinking-default.js";
-export { resolvePersistedSessionRuntimeId } from "../../agents/session-runtime-compat.js";
+export { resolveAcceptedSessionRuntimeId } from "../../agents/session-runtime-compat.js";
 export { resolveAgentTimeoutMs } from "../../agents/timeout.js";
 export { deriveSessionTotalTokens, hasNonzeroUsage } from "../../agents/usage.js";
 export { ensureAgentWorkspace } from "../../agents/workspace.js";

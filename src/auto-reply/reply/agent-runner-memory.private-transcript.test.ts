@@ -3,6 +3,10 @@ import path from "node:path";
 import { expect, it } from "vitest";
 import { createDeferred } from "../../../test/helpers/promise.js";
 import { makeUserMessage } from "../../../test/helpers/user-message.js";
+import { upsertAuthProfile } from "../../agents/auth-profiles.js";
+import { createApiKeyCredential } from "../../agents/auth-profiles/credential-fixtures.test-support.js";
+import { loadPreparedModelCatalogOwnerSnapshot } from "../../agents/prepared-model-catalog.js";
+import { resetPreparedModelRuntimeSnapshotsForTest } from "../../agents/prepared-model-runtime.test-support.js";
 import { waitForSessionMaintenance } from "../../agents/session-maintenance/coordinator.js";
 import { createSessionMaintenanceFollowup } from "../../agents/session-maintenance/run.js";
 import { SessionManager } from "../../agents/sessions/session-manager.js";
@@ -25,6 +29,7 @@ import { clearMemoryPluginState, registerMemoryCapability } from "../../plugins/
 import { beginSessionWorkAdmission } from "../../sessions/session-lifecycle-admission.js";
 import { extractTextFromChatContent } from "../../shared/chat-content.js";
 import { withOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
+import { acceptedModelSelection } from "../../test-utils/session-execution-selection.js";
 import { runMemoryFlushIfNeeded } from "./agent-runner-memory.js";
 import { runReplyAgent } from "./agent-runner.js";
 import {
@@ -33,7 +38,10 @@ import {
 } from "./agent-runner.test-fixtures.js";
 import { createTypingController } from "./typing.js";
 
-type ModelRequest = { messages: Array<{ role: string; content: unknown }> };
+type ModelRequest = {
+  messages: Array<{ role: string; content: unknown }>;
+  authorization?: string;
+};
 const text = (content: unknown) =>
   extractTextFromChatContent(content, { joinWith: "\n", normalizeText: (value) => value }) ?? "";
 
@@ -43,6 +51,7 @@ it.each(["completed", "interrupted"] as const)(
     await withOpenClawTestState({ label: "private-memory-run" }, async (state) => {
       const entered = createDeferred();
       const interrupted = new AbortController();
+      const sourceProfileId = "test-provider:source";
       const human = "Reply only FOREGROUND_READY. Preserve ünicode 🦞.\nThis is the human request.";
       const requests: ModelRequest[] = [];
       const runtimeBudgets: number[] = [];
@@ -63,6 +72,7 @@ it.each(["completed", "interrupted"] as const)(
         });
         request.on("end", () => {
           const modelRequest = JSON.parse(body) as ModelRequest;
+          modelRequest.authorization = request.headers.authorization;
           requests.push(modelRequest);
           const isHuman = text(
             modelRequest.messages.findLast(
@@ -145,6 +155,13 @@ it.each(["completed", "interrupted"] as const)(
                   maxTokens: 8_192,
                   cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
                 },
+              ],
+            },
+            "memory-provider": {
+              api: "openai-completions",
+              apiKey: "synthetic-memory-key",
+              baseUrl: `http://127.0.0.1:${address.port}/v1`,
+              models: [
                 {
                   id: "test-model",
                   name: "Fixture",
@@ -165,9 +182,23 @@ it.each(["completed", "interrupted"] as const)(
       try {
         await state.writeConfig(cfg);
         setRuntimeConfigSnapshot(cfg);
+        upsertAuthProfile({
+          agentDir: state.agentDir(),
+          profileId: sourceProfileId,
+          credential: createApiKeyCredential("test-provider", "synthetic-source-profile-key"),
+        });
+        await loadPreparedModelCatalogOwnerSnapshot({
+          config: cfg,
+          agentId: "main",
+          workspaceDir: state.workspaceDir,
+          readOnly: false,
+        });
         await replaceSessionEntry(scope, {
           sessionId: scope.sessionId,
           updatedAt: Date.now(),
+          executionSelection: acceptedModelSelection("test-provider", "owner-model"),
+          authProfileOverride: sourceProfileId,
+          authProfileOverrideSource: "user",
           totalTokens: 120_000,
           totalTokensFresh: true,
           totalTokensVersion: SESSION_TOTAL_TOKENS_VERSION,
@@ -202,6 +233,8 @@ it.each(["completed", "interrupted"] as const)(
           config: cfg,
           provider: "test-provider",
           model: "owner-model",
+          authProfileId: sourceProfileId,
+          authProfileIdSource: "user",
           messageProvider: "webchat",
           thinkLevel: "off",
           timeoutMs: 30_000,
@@ -212,9 +245,8 @@ it.each(["completed", "interrupted"] as const)(
           sessionEntry: entry,
           cfg,
           sessionKey: scope.sessionKey,
-          provider: "test-provider",
-          model: "owner-model",
-          auth: {},
+          executionSelection: foreground.run.executionSelection,
+          auth: foreground.run,
         });
         registerMemoryCapability("memory-core", {
           flushPlanResolver: () => ({
@@ -224,7 +256,7 @@ it.each(["completed", "interrupted"] as const)(
             prompt: "Checkpoint durable notes. Reply NO_REPLY.",
             systemPrompt: "Write durable notes only.",
             relativePath: "memory/checkpoint.md",
-            model: "test-provider/test-model",
+            model: "memory-provider/test-model",
           }),
         });
         admission = await beginSessionWorkAdmission({
@@ -253,8 +285,10 @@ it.each(["completed", "interrupted"] as const)(
         );
         await Promise.race([
           entered.promise,
-          flush.then(() => {
-            throw new Error("Memory run ended before reaching inference");
+          flush.then((result) => {
+            throw new Error(
+              `Memory run ended before reaching inference: ${JSON.stringify(result)}`,
+            );
           }),
         ]);
         if (outcome === "interrupted") {
@@ -264,6 +298,10 @@ it.each(["completed", "interrupted"] as const)(
         admission.release();
         admission = undefined;
         expect(requests).toHaveLength(1);
+        expect(requests[0]?.authorization).toBe("Bearer synthetic-memory-key");
+        expect(loadSessionEntry(scope)?.executionSelection).toEqual(
+          acceptedModelSelection("test-provider", "owner-model"),
+        );
         expect(runtimeBudgets).toEqual([128_000]);
         expect.soft(await loadTranscriptEvents(scope)).toEqual(original);
         if (outcome === "interrupted") {
@@ -308,6 +346,7 @@ it.each(["completed", "interrupted"] as const)(
           ).endsWith(human),
         );
         expect(humanRequests).toHaveLength(1);
+        expect(humanRequests[0]?.authorization).toBe("Bearer synthetic-source-profile-key");
         const humanMessages = humanRequests[0]!.messages;
         const userIndex = humanMessages.findLastIndex(
           (message) => message.role === "user" && !isModelRuntimeContextCarrier(message),
@@ -336,6 +375,7 @@ it.each(["completed", "interrupted"] as const)(
         await waitForSessionMaintenance(scope.sessionKey);
         clearMemoryPluginState();
         clearRuntimeConfigSnapshot();
+        await resetPreparedModelRuntimeSnapshotsForTest();
         stopDiagnostics();
         server.closeAllConnections();
         await new Promise<void>((resolve, reject) => {

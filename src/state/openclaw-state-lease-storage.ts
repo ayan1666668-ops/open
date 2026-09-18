@@ -10,7 +10,7 @@ import {
   type OpenClawStateDatabaseOptions,
 } from "./openclaw-state-db.js";
 import { resolveOpenClawStateSqlitePath } from "./openclaw-state-db.paths.js";
-import { OPENCLAW_STATE_LEASE_SCHEMA } from "./openclaw-state-lease-schema.js";
+import { STATE_LEASE_SCHEMA_SQL } from "./openclaw-state-lease-schema.js";
 
 export type OpenClawStateLeaseDatabase = {
   scope: "shared";
@@ -48,7 +48,7 @@ export function withLeaseWriteTransaction<T>(
     return runExistingOpenClawStateWriteTransaction(
       ({ db }) => operation(db),
       database.options ?? {},
-      { operationLabel, busyTimeoutMs, schemaSql: OPENCLAW_STATE_LEASE_SCHEMA },
+      { operationLabel, busyTimeoutMs, schemaSql: STATE_LEASE_SCHEMA_SQL },
     );
   }
   const stateDatabase = openOpenClawStateDatabase(database.options);

@@ -1,16 +1,17 @@
 // Model-backed compaction request construction.
+import { isDeepStrictEqual } from "node:util";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { resolveAgentWorkspaceDir } from "../../agents/agent-scope.js";
 import { compactEmbeddedAgentSession } from "../../agents/embedded-agent.js";
-import { resolveManualCompactionCliTarget } from "../../agents/session-runtime-compat.js";
 import { preflightManualSessionCompaction } from "../../agents/sessions/manual-compaction-preflight.js";
 import { isIndexedSessionEntry } from "../../agents/sessions/session-manager-codec.js";
 import { resolveIngressWorkspaceOverrideForSessionRun } from "../../agents/spawned-context.js";
 import { normalizeReasoningLevel, normalizeThinkLevel } from "../../auto-reply/thinking.js";
-import type { SessionEntry } from "../../config/sessions.js";
-import { resolveCollapsedSessionAuthPinSource } from "../../config/sessions/auth-profile-override-provenance.js";
+import { resolveSessionWorkStartError } from "../../config/sessions.js";
+import { getCliSessionBinding } from "../../config/sessions/cli-session-binding.js";
 import { resolveCurrentSessionPrimaryConversation } from "../../config/sessions/conversation-registry.js";
 import {
+  loadSessionEntryReadOnly,
   loadTranscriptEvents,
   resolveSessionTranscriptRuntimeTarget,
 } from "../../config/sessions/session-accessor.js";
@@ -18,8 +19,12 @@ import {
   scanSessionTranscriptTree,
   selectSessionTranscriptTreePathNodes,
 } from "../../config/sessions/transcript-tree.js";
+import type { InternalSessionEntry as SessionEntry } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
-import { resolveSessionModelRef } from "../session-utils.js";
+import {
+  getSessionExecutionSelection,
+  isModelExecutionSelection,
+} from "../../model-picker/execution-selection.js";
 
 type GatewaySessionCompactionParams = {
   agentId: string;
@@ -33,17 +38,12 @@ type GatewaySessionCompactionParams = {
 };
 
 function usesLegacyOpenClawCompaction(params: GatewaySessionCompactionParams): boolean {
-  const resolvedModel = resolveSessionModelRef(params.cfg, params.entry, params.agentId);
-  const persistedRuntime = resolveManualCompactionCliTarget({
-    provider: resolvedModel.provider,
-    entry: params.entry,
-    cfg: params.cfg,
-  }).agentHarnessId;
+  const selected = getSessionExecutionSelection(params.entry);
+  if (!selected || selected.executor.kind !== "harness" || selected.executor.id !== "openclaw") {
+    return false;
+  }
   const contextEngine = params.cfg.plugins?.slots?.contextEngine?.trim();
-  return (
-    (!persistedRuntime || persistedRuntime === "openclaw") &&
-    (!contextEngine || contextEngine === "legacy")
-  );
+  return !contextEngine || contextEngine === "legacy";
 }
 
 async function resolveGatewayCompactionTranscriptTarget(params: GatewaySessionCompactionParams) {
@@ -89,19 +89,77 @@ export async function runGatewaySessionCompaction(
   params: GatewaySessionCompactionParams,
   host?: Parameters<typeof compactEmbeddedAgentSession>[1],
 ): Promise<Awaited<ReturnType<typeof compactEmbeddedAgentSession>>> {
+  let expectedEntry = structuredClone(params.entry);
+  let currentTarget = {
+    agentId: params.agentId,
+    sessionKey: params.sessionStoreKey,
+    storePath: params.storePath,
+  };
+  const readCurrent = () =>
+    loadSessionEntryReadOnly({ ...currentTarget, readConsistency: "latest" });
+  const validateAuthority = () => {
+    host?.assertActive?.();
+    const current = readCurrent();
+    if (
+      !current ||
+      current.sessionId !== expectedEntry.sessionId ||
+      current.lifecycleRevision !== expectedEntry.lifecycleRevision ||
+      current.activeWriterRunId !== expectedEntry.activeWriterRunId
+    ) {
+      return "The session changed. Retry compaction.";
+    }
+    return resolveSessionWorkStartError(params.sessionKey, current);
+  };
+  const initialError = validateAuthority();
+  if (initialError) {
+    return { ok: false, compacted: false, reason: initialError };
+  }
+  const { initializeSessionExecutionSelectionForRun } =
+    await import("../../model-picker/apply-session-model-selection.js");
+  const prepared = await initializeSessionExecutionSelectionForRun(
+    {
+      cfg: params.cfg,
+      agentId: params.agentId,
+      sessionKey: params.sessionStoreKey,
+      storePath: params.storePath,
+      sessionEntry: params.entry,
+      validateCommit: validateAuthority,
+    },
+    "compaction",
+  );
+  if (prepared.status !== "applied") {
+    return { ok: false, compacted: false, reason: prepared.message };
+  }
+  expectedEntry = structuredClone(params.entry);
+  const assertActive = () => {
+    const error = validateAuthority();
+    if (error) {
+      throw new Error(error);
+    }
+    const current = readCurrent();
+    if (!isDeepStrictEqual(current?.executionSelection, expectedEntry.executionSelection)) {
+      throw new Error("The session selection changed. Retry compaction.");
+    }
+    const accountError = prepared.validateExecution?.() ?? prepared.auth?.validate(current);
+    if (accountError) {
+      throw new Error(accountError);
+    }
+  };
+  assertActive();
   const transcriptTarget = await resolveGatewayCompactionTranscriptTarget(params);
-  const resolvedModel = resolveSessionModelRef(params.cfg, params.entry, params.agentId);
+  assertActive();
+  const selected = prepared.selection;
+  if (selected.executor.kind === "acp") {
+    throw new Error("App-owned compaction cannot enter the embedded runtime.");
+  }
+  const model = isModelExecutionSelection(selected) ? selected.model : undefined;
   const workspaceDir =
     resolveIngressWorkspaceOverrideForSessionRun({
       spawnedBy: params.entry.spawnedBy,
       workspaceDir: params.entry.spawnedWorkspaceDir,
       cwd: params.entry.spawnedCwd,
     }) ?? resolveAgentWorkspaceDir(params.cfg, params.agentId);
-  const compactionCliTarget = resolveManualCompactionCliTarget({
-    provider: resolvedModel.provider,
-    entry: params.entry,
-    cfg: params.cfg,
-  });
+  const cliSessionBinding = getCliSessionBinding(params.entry, selected.executor.id);
   const primaryConversation = resolveCurrentSessionPrimaryConversation(transcriptTarget);
   return await compactEmbeddedAgentSession(
     {
@@ -129,14 +187,13 @@ export async function runGatewaySessionCompaction(
           : undefined,
       conversationRoutePeerId: primaryConversation?.routeContext?.peerId,
       chatType: primaryConversation?.kind,
-      provider: resolvedModel.provider,
-      model: resolvedModel.model,
-      authProfileId:
-        compactionCliTarget.cliSessionBinding?.authProfileId ?? params.entry.authProfileOverride,
-      authProfileIdSource: resolveCollapsedSessionAuthPinSource(params.entry),
-      agentHarnessId: compactionCliTarget.agentHarnessId,
-      cliSessionId: compactionCliTarget.cliSessionId,
-      cliSessionBinding: compactionCliTarget.cliSessionBinding,
+      provider: model?.provider,
+      model: model?.id,
+      authProfileId: prepared.auth?.selection?.profileId,
+      authProfileIdSource: prepared.auth?.selection?.source,
+      agentHarnessId: selected.executor.id,
+      cliSessionId: cliSessionBinding?.sessionId,
+      cliSessionBinding,
       sessionEntry: params.entry,
       modelSelectionLocked: params.entry.modelSelectionLocked === true,
       thinkLevel: normalizeThinkLevel(params.entry.thinkingLevel),
@@ -148,6 +205,16 @@ export async function runGatewaySessionCompaction(
       },
       trigger: "manual",
     },
-    host,
+    {
+      ...host,
+      preparedSelection: { selection: selected, auth: prepared.auth },
+      assertActive,
+      onCommitted: (accepted) => {
+        prepared.onCommitted?.(accepted);
+        expectedEntry = structuredClone(accepted.entry);
+        currentTarget = accepted.sessionTarget;
+        host?.onCommitted?.(accepted);
+      },
+    },
   );
 }

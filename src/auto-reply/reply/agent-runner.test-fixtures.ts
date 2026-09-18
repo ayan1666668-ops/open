@@ -115,8 +115,9 @@ export function withTestModelContextTokens(params: {
     return params.cfg;
   }
   const selection = params.followupRun.run.executionSelection;
-  if (!isModelExecutionSelection(selection))
+  if (!isModelExecutionSelection(selection)) {
     throw new Error("Context limit fixtures require a concrete model.");
+  }
   const provider = selection.model.provider;
   const model = selection.model.id;
   const providerConfig = params.cfg.models?.providers?.[provider];

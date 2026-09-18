@@ -1,3 +1,4 @@
+import { expectDefined } from "@openclaw/normalization-core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { recordModelFallbackStop } from "../failover-error.js";
 import { resetFallbackSkipCacheForTest } from "../fallback-skip-cache.test-support.js";
@@ -107,7 +108,10 @@ describe("runEmbeddedAgentEntry cyber failover", () => {
           provider,
           model,
           isFallbackRetry: options.isFallbackRetry,
-          routingStage: options.modelRoutingProvenance.stage,
+          routingStage: expectDefined(
+            options.modelRoutingProvenance,
+            "candidate routing provenance",
+          ).stage,
         });
         if (model === "gpt-daybreak-blue-latest") {
           return makeResult({ provider, model });

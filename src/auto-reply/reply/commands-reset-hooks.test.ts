@@ -112,6 +112,13 @@ function buildResetParams(
     defaultGroupActivation: () => "mention",
     resolvedVerboseLevel: "off",
     resolvedReasoningLevel: "off",
+    prepareModelState: async () => {
+      throw new Error("This command fixture does not prepare models.");
+    },
+    resolveModelLevels: async () => ({
+      resolvedThinkLevel: undefined,
+      resolvedReasoningLevel: "off",
+    }),
     resolveDefaultThinkingLevel: async () => undefined,
     provider: "whatsapp",
     model: "test-model",

@@ -31,6 +31,7 @@ import {
   type SessionBindingRecord,
 } from "../../../infra/outbound/session-binding-service.js";
 import { setActivePluginRegistry } from "../../../plugins/runtime.js";
+import { createAcpSessionStoreEntryFixture } from "../../../test-utils/acp-session-store-entry.js";
 import {
   createChannelTestPluginBase,
   createTestRegistry,
@@ -43,32 +44,9 @@ import { withParentExecutionIdentity } from "./execution-identity-spawn-context.
 import { setSubagentSpawnDepsForTest } from "./subagent-spawn-deps.js";
 
 type SessionBindingAdapterCapabilities = NonNullable<SessionBindingAdapter["capabilities"]>;
-
-function createDefaultSpawnConfig(): OpenClawConfig {
-  return {
-    acp: {
-      enabled: true,
-      backend: "acpx",
-      allowedAgents: ["codex"],
-    },
-    agents: {
-      defaults: {
-        subagents: {
-          allowAgents: ["codex"],
-          maxSpawnDepth: 2,
-        },
-      },
-    },
-    session: {
-      mainKey: "main",
-      scope: "per-sender",
-      threadBindings: {
-        enabled: true,
-        spawnSessions: true,
-      },
-    },
-  };
-}
+const { createDefaultSpawnConfig } = await vi.hoisted(
+  async () => await import("./acp-spawn.test-support.js"),
+);
 
 const hoisted = vi.hoisted(() => {
   const callGatewayMock = vi.fn();
@@ -195,7 +173,7 @@ const hoisted = vi.hoisted(() => {
 });
 
 vi.mock("../../../acp/control-plane/manager.js", () => ({
-  getAcpSessionManager: hoisted.getAcpSessionManagerMock,
+  getAcpSessionManagerCore: hoisted.getAcpSessionManagerMock,
 }));
 
 vi.mock("../../../acp/control-plane/spawn.js", () => ({
@@ -753,26 +731,20 @@ describe("spawnAcpDirect", () => {
       const args = argsUnknown as AcpInitializeSessionInput;
       const runtimeSessionName = `${args.sessionKey}:runtime`;
       const cwd = typeof args.cwd === "string" ? args.cwd : undefined;
-      return {
-        closeRuntimeOnFailure: hoisted.closeRuntimeOnFailureMock,
-        runtime: {
-          close: vi.fn().mockResolvedValue(undefined),
-        },
-        handle: {
-          sessionKey: args.sessionKey,
-          backend: "acpx",
-          runtimeSessionName,
-          ...(cwd ? { cwd } : {}),
-          agentSessionId: "codex-inner-1",
-          backendSessionId: "acpx-1",
-        },
-        meta: {
-          backend: "acpx",
+      const backend = args.backendId ?? args.cfg.acp?.backend ?? "acpx";
+      const initialized = createAcpSessionStoreEntryFixture({
+        cfg: args.cfg,
+        sessionKey: args.sessionKey,
+        agentId: args.agentId,
+        entry: { sessionId: "sess-123", updatedAt: Date.now() },
+        acp: {
+          backend,
           agent: args.agent,
           runtimeSessionName,
-          ...(cwd ? { runtimeOptions: { cwd }, cwd } : {}),
+          runtimeOptions: { ...args.runtimeOptions, ...(cwd ? { cwd } : {}) },
+          ...(cwd ? { cwd } : {}),
           identity: {
-            state: "pending",
+            state: "resolved",
             source: "ensure",
             acpxSessionId: "acpx-1",
             agentSessionId: "codex-inner-1",
@@ -782,6 +754,22 @@ describe("spawnAcpDirect", () => {
           state: "idle",
           lastActivityAt: Date.now(),
         },
+      });
+      return {
+        closeRuntimeOnFailure: hoisted.closeRuntimeOnFailureMock,
+        runtime: {
+          close: vi.fn().mockResolvedValue(undefined),
+        },
+        handle: {
+          sessionKey: args.sessionKey,
+          backend,
+          runtimeSessionName,
+          ...(cwd ? { cwd } : {}),
+          agentSessionId: "codex-inner-1",
+          backendSessionId: "acpx-1",
+        },
+        meta: initialized.acp,
+        sessionEntry: { ...initialized.entry, acp: initialized.acp },
       };
     });
 
@@ -1159,32 +1147,33 @@ describe("spawnAcpDirect", () => {
 
       const resumeSessionId = "codex-inner-resume";
       const ownedSessionKey = "agent:codex:acp:owned";
-      hoisted.loadSessionStoreMock.mockReturnValue({
-        [ownedSessionKey]: {
+      const ownedSession = createAcpSessionStoreEntryFixture({
+        sessionKey: ownedSessionKey,
+        entry: {
           sessionId: "sess-owned",
           updatedAt: Date.now(),
           spawnedBy: "agent:main:main",
-        } satisfies SessionEntry,
+        },
+        acp: {
+          backend: persistedBackend,
+          agent: "codex",
+          runtimeSessionName: "codex",
+          identity: {
+            state: "resolved",
+            source: "ensure",
+            agentSessionId: resumeSessionId,
+            acpxSessionId: "acpx-owned",
+            lastUpdatedAt: Date.now(),
+          },
+          mode: "oneshot",
+          state: "idle",
+          lastActivityAt: Date.now(),
+        },
       });
+      hoisted.loadSessionStoreMock.mockReturnValue({ [ownedSessionKey]: ownedSession.entry });
       hoisted.readAcpSessionMetaMock.mockImplementation((paramsUnknown: unknown) => {
         const params = paramsUnknown as { sessionKey?: string };
-        return params.sessionKey === ownedSessionKey
-          ? {
-              backend: persistedBackend,
-              agent: "codex",
-              runtimeSessionName: "codex",
-              identity: {
-                state: "resolved",
-                source: "ensure",
-                agentSessionId: resumeSessionId,
-                acpxSessionId: "acpx-owned",
-                lastUpdatedAt: Date.now(),
-              },
-              mode: "oneshot",
-              state: "idle",
-              lastActivityAt: Date.now(),
-            }
-          : undefined;
+        return params.sessionKey === ownedSessionKey ? ownedSession.acp : undefined;
       });
 
       const result = await spawnAcpDirect(
@@ -1215,32 +1204,33 @@ describe("spawnAcpDirect", () => {
 
   it("rejects ACP resume IDs not recorded for the requester session", async () => {
     const otherSessionKey = "agent:codex:acp:other";
-    hoisted.loadSessionStoreMock.mockReturnValue({
-      [otherSessionKey]: {
+    const otherSession = createAcpSessionStoreEntryFixture({
+      sessionKey: otherSessionKey,
+      entry: {
         sessionId: "sess-other",
         updatedAt: Date.now(),
         spawnedBy: "agent:other:main",
-      } satisfies SessionEntry,
+      },
+      acp: {
+        backend: "acpx",
+        agent: "codex",
+        runtimeSessionName: "codex",
+        identity: {
+          state: "resolved",
+          source: "ensure",
+          agentSessionId: "codex-inner-other",
+          acpxSessionId: "acpx-other",
+          lastUpdatedAt: Date.now(),
+        },
+        mode: "oneshot",
+        state: "idle",
+        lastActivityAt: Date.now(),
+      },
     });
+    hoisted.loadSessionStoreMock.mockReturnValue({ [otherSessionKey]: otherSession.entry });
     hoisted.readAcpSessionMetaMock.mockImplementation((paramsUnknown: unknown) => {
       const params = paramsUnknown as { sessionKey?: string };
-      return params.sessionKey === otherSessionKey
-        ? {
-            backend: "acpx",
-            agent: "codex",
-            runtimeSessionName: "codex",
-            identity: {
-              state: "resolved",
-              source: "ensure",
-              agentSessionId: "codex-inner-other",
-              acpxSessionId: "acpx-other",
-              lastUpdatedAt: Date.now(),
-            },
-            mode: "oneshot",
-            state: "idle",
-            lastActivityAt: Date.now(),
-          }
-        : undefined;
+      return params.sessionKey === otherSessionKey ? otherSession.acp : undefined;
     });
 
     const result = await spawnAcpDirect(

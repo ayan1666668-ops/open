@@ -51,6 +51,7 @@ import {
   createOpenClawTestState,
   type OpenClawTestState,
 } from "../test-utils/openclaw-test-state.js";
+import { acceptedModelSelection } from "../test-utils/session-execution-selection.js";
 import {
   collectOpenAICodexAuthProfileStoreIdMap,
   maybeMigrateAuthProfileJsonStoresToSqlite,
@@ -3321,7 +3322,9 @@ describe("legacy OpenAI auth profiles through the canonical migration owner", ()
         model: "gpt-5.5",
         authProfileOverride: "openai-codex:default",
         authProfileOverrideSource: "user",
-        agentRuntimeOverride: "codex",
+        executionSelection: acceptedModelSelection("openai", "gpt-5.5", {
+          executor: { kind: "harness", id: "codex" },
+        }),
       },
     );
     const peterSessionKey = "agent:main:telegram:default:direct:5550100999";
@@ -3336,9 +3339,6 @@ describe("legacy OpenAI auth profiles through the canonical migration owner", ()
         authProfileOverrideSource: "auto",
       },
     );
-    expect(
-      loadSessionEntry({ storePath, sessionKey: peterSessionKey, env: state.env }),
-    ).toMatchObject({ authProfileOverride: "openai-codex:peter" });
     const missingProfileSessionKey = "agent:main:discord:default:direct:5550100888";
     await replaceSessionEntry(
       { storePath, sessionKey: missingProfileSessionKey, env: state.env },

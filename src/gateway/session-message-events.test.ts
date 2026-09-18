@@ -45,6 +45,14 @@ import {
   type OpenClawTestState,
 } from "../test-utils/openclaw-test-state.js";
 import { resolveCurrentUserProfileDisplay } from "./current-user-profile-display.js";
+import { sessionSelectionFixture } from "./session-list.test-support.js";
+import {
+  emitTranscriptUpdateAndCollectMessageEvent,
+  expectNoMessageWithin,
+  waitForSessionMessageEvent,
+  waitForSessionObserverEvent,
+  waitForSessionsChangedMessagePhase,
+} from "./session-message-events.test-support.js";
 import { testState } from "./test-helpers.runtime-state.js";
 import {
   connectOk,
@@ -115,89 +123,6 @@ async function withOperatorSessionSubscriber<T>(
     throw new Error("subscribed operator websocket is not ready");
   }
   return await run(subscribedOperatorWs);
-}
-
-function waitForSessionMessageEvent(
-  ws: Awaited<ReturnType<Awaited<ReturnType<typeof createGatewaySuiteHarness>>["openWs"]>>,
-  sessionKey: string,
-  timeoutMs?: number,
-) {
-  return onceMessage(
-    ws,
-    (message) =>
-      message.type === "event" &&
-      message.event === "session.message" &&
-      (message.payload as { sessionKey?: string } | undefined)?.sessionKey === sessionKey,
-    timeoutMs,
-  );
-}
-
-function waitForSessionObserverEvent(
-  ws: Awaited<ReturnType<Awaited<ReturnType<typeof createGatewaySuiteHarness>>["openWs"]>>,
-  runId: string,
-  timeoutMs?: number,
-) {
-  return onceMessage(
-    ws,
-    (message) =>
-      message.type === "event" &&
-      message.event === "session.observer" &&
-      (message.payload as { runId?: string } | undefined)?.runId === runId,
-    timeoutMs,
-  );
-}
-
-function waitForSessionsChangedMessagePhase(
-  ws: Awaited<ReturnType<Awaited<ReturnType<typeof createGatewaySuiteHarness>>["openWs"]>>,
-  sessionKey: string,
-) {
-  return onceMessage(
-    ws,
-    (message) =>
-      message.type === "event" &&
-      message.event === "sessions.changed" &&
-      (message.payload as { phase?: string; sessionKey?: string } | undefined)?.phase ===
-        "message" &&
-      (message.payload as { sessionKey?: string } | undefined)?.sessionKey === sessionKey,
-  );
-}
-
-async function emitTranscriptUpdateAndCollectMessageEvent(params: {
-  ws: Awaited<ReturnType<Awaited<ReturnType<typeof createGatewaySuiteHarness>>["openWs"]>>;
-  sessionKey: string;
-  sessionFile: string;
-  message: Record<string, unknown>;
-  messageId: string;
-  agentId?: string;
-  messageSeq?: number;
-}) {
-  const messageEventPromise = waitForSessionMessageEvent(params.ws, params.sessionKey);
-
-  emitSessionTranscriptUpdate({
-    sessionFile: params.sessionFile,
-    sessionKey: params.sessionKey,
-    ...(params.agentId ? { agentId: params.agentId } : {}),
-    message: params.message,
-    messageId: params.messageId,
-    ...(typeof params.messageSeq === "number" ? { messageSeq: params.messageSeq } : {}),
-  });
-
-  const messageEvent = await messageEventPromise;
-  return { messageEvent };
-}
-
-async function expectNoMessageWithin(params: {
-  action?: () => Promise<void> | void;
-  watch: (timeoutMs: number) => Promise<unknown>;
-  timeoutMs?: number;
-}): Promise<void> {
-  const timeoutMs = params.timeoutMs ?? 300;
-  const received = params.watch(timeoutMs).then(
-    () => true,
-    () => false,
-  );
-  await params.action?.();
-  await expect(received).resolves.toBe(false);
 }
 
 const requireRecord = createRequireRecord("object", "expected-label-object");
@@ -1949,8 +1874,10 @@ describe("session.message websocket events", () => {
         main: {
           sessionId: "sess-main",
           updatedAt: Date.now(),
-          providerOverride: "openai",
-          modelOverride: "gpt-5.4",
+          executionSelection: sessionSelectionFixture({
+            model: { provider: "openai", id: "gpt-5.4" },
+            executor: { kind: "harness", id: "openclaw" },
+          }),
           modelProvider: "openai",
           model: "gpt-5.4",
           agentHarnessId: "openclaw",

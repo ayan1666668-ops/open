@@ -1,10 +1,12 @@
 import path from "node:path";
 import { expect, it } from "vitest";
 import { loadSessionEntry, replaceSessionEntry } from "../../config/sessions/session-accessor.js";
+import { projectPublicSessionEntry } from "../../config/sessions/session-entry-projection.js";
 import type { SessionEntry } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { OpenClawSchema } from "../../config/zod-schema.js";
-import { applyModelOverrideWithAuthProfileCompatibility } from "../../sessions/auth-profile-preservation.js";
+import { commitSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
+import { applyModelOverrideWithAuthProfileCompatibility } from "../../plugin-sdk/model-session-runtime.js";
 import { withOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
 import { resolveModelWithRegistry } from "../embedded-agent-runner/model.registry-resolution.js";
 import { AuthStorage } from "../sessions/auth-storage.js";
@@ -125,12 +127,18 @@ it.each([
         const sessionEntry: SessionEntry = {
           sessionId: "endpoint-pin-session",
           updatedAt: 1,
-          providerOverride: "arcee",
-          modelOverride: "trinity-large-thinking",
           model: "trinity-large-thinking",
           authProfileOverride: pin,
           authProfileOverrideSource: source,
         };
+        commitSessionExecutionSelection(
+          sessionEntry,
+          {
+            model: { provider: "arcee", id: "trinity-large-thinking" },
+            executor: { kind: "harness", id: "openclaw" },
+          },
+          { cause: { kind: "user" } },
+        );
         const scope = {
           storePath: path.join(state.sessionsDir(agentId), "sessions.json"),
           sessionKey,
@@ -157,15 +165,16 @@ it.each([
           authProfileOverrideSource: expectedSource,
         });
         if (source === "user" && pin === "arcee:work") {
+          const publicEntry = projectPublicSessionEntry(sessionEntry);
           applyModelOverrideWithAuthProfileCompatibility({
             cfg,
             agentDir: state.agentDir(agentId),
-            entry: sessionEntry,
+            entry: publicEntry,
             currentProvider: "arcee",
             selection: { provider: "arcee", model: "trinity-large-thinking" },
           });
-          expect(sessionEntry.authProfileOverride).toBe("arcee:work");
-          expect(sessionEntry.authProfileOverrideSource).toBe("user");
+          expect(publicEntry.authProfileOverride).toBe("arcee:work");
+          expect(publicEntry.authProfileOverrideSource).toBe("user");
         }
       },
     );

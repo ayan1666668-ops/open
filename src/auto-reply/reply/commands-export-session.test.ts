@@ -790,10 +790,16 @@ describe("buildExportSessionReply", () => {
       "agent:target:session": {
         sessionId: "session-1",
         updatedAt: 1,
+        executionSelection: {
+          state: "accepted",
+          selection: {
+            executor: { kind: "acp", backend: "acpx", agent: "claude" },
+            model: "native-managed",
+          },
+          fallbackPermission: "configured",
+        },
         acp: {
-          backend: "acpx",
           mode: "persistent",
-          agent: "claude",
           runtimeSessionName: "backend-session-1",
           state: "idle",
           lastActivityAt: 1,

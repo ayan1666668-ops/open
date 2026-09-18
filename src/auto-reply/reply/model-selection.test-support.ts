@@ -12,6 +12,8 @@ export function createModelSelectionStateFixture(params: {
   sessionEntry?: Pick<SessionEntry, "executionSelection">;
 }): Awaited<ReturnType<typeof createModelSelectionState>> {
   return {
+    refreshExecution: async (entry) =>
+      createModelSelectionStateFixture({ ...params, sessionEntry: entry }),
     provider: params.provider,
     model: params.model,
     executionSelection: {

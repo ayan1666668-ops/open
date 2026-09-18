@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { ExecutionFallbackPermission } from "./execution-selection.js";
 
 const identity = z.string().min(1);
 const model = z.object({ provider: identity, id: identity }).strict();
@@ -51,3 +52,32 @@ export const sessionExecutionSelectionSchema = z.discriminatedUnion("state", [
     })
     .strict(),
 ]);
+
+/** Recover authored intent, not the route that happened to serve an automatic fallback. */
+export function resolveLegacyExecutionIntent(params: {
+  model?: string;
+  provider?: string;
+  source?: unknown;
+  originProvider?: string;
+  originModel?: string;
+}): {
+  model: { provider?: string; id: string } | undefined;
+  automatic: boolean;
+  fallbackPermission: ExecutionFallbackPermission;
+} {
+  const automatic =
+    params.source === "auto" ||
+    params.source === "default" ||
+    (params.source !== "user" && Boolean(params.originProvider && params.originModel));
+  const requestedModel =
+    automatic && params.originProvider && params.originModel
+      ? { provider: params.originProvider, id: params.originModel }
+      : params.model && params.source !== "default"
+        ? { ...(params.provider ? { provider: params.provider } : {}), id: params.model }
+        : undefined;
+  return {
+    model: requestedModel,
+    automatic,
+    fallbackPermission: (params.model || params.provider) && !automatic ? "explicit" : "configured",
+  };
+}

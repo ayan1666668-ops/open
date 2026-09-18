@@ -60,7 +60,7 @@ import * as sessionWatchMigration from "./openclaw-state-db-session-watch-migrat
 import * as retirements from "./openclaw-state-db-table-retirements.js";
 import { recoverOrphanTaskDeliveryRows } from "./openclaw-state-db-task-delivery-recovery.js";
 import { describeAgentPathMigration } from "./openclaw-state-db.paths.js";
-import { OPENCLAW_AGENT_DATABASE_LEASE_SCHEMA } from "./openclaw-state-lease-schema.js";
+import { AGENT_DATABASE_LEASE_SCHEMA_SQL } from "./openclaw-state-lease-schema.js";
 import {
   assertOpenClawStateWriteAllowed,
   OpenClawStateOwnershipError,
@@ -135,10 +135,12 @@ export function repairStateSchema(
               assertOpenClawStateDatabaseOwner(db, { pathname });
             }
             assertSqliteIntegrity(db, pathname);
-            migrateSqliteSchemaToStrictInTransaction(db, OPENCLAW_AGENT_DATABASE_LEASE_SCHEMA, {
+            migrateSqliteSchemaToStrictInTransaction(db, AGENT_DATABASE_LEASE_SCHEMA_SQL, {
               databaseLabel: pathname,
             });
-            writeDoctorStateSchemaMetadata(db, version);
+            if (historicalAuditOwner) {
+              writeDoctorStateSchemaMetadata(db, version);
+            }
             assertOpenClawStateDatabaseOwner(db, { pathname });
             return [
               "Prepared Doctor maintenance metadata and lease tables. Original schema version retained.",

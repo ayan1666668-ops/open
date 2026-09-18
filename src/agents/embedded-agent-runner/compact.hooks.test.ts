@@ -51,6 +51,7 @@ import { createEventBus } from "../sessions/event-bus.js";
 import { createExtensionRuntime, loadExtensionFromFactory } from "../sessions/extensions/loader.js";
 import { SessionManager } from "../sessions/session-manager.js";
 import { SettingsManager } from "../sessions/settings-manager.js";
+import { createNativeCompactCommandFixture } from "./compact.hooks.command-fixture.test-support.js";
 import {
   acquireAgentRunPreparedModelRuntimeMock,
   attemptServerEndpointCompactionMock,
@@ -4244,9 +4245,11 @@ describe("compactEmbeddedAgentSession hooks (ownsCompaction engine)", () => {
     { outcome: "waits for the active session lane", writerRunId: undefined },
     { outcome: "rejects a replaced writer claim", writerRunId: "replacement-run" },
   ])("shipped /compact $outcome before native compaction", async ({ writerRunId }) => {
-    const command = await import("../../auto-reply/reply/commands-compact.test-support.js");
-    vi.mocked(command.compactEmbeddedAgentSession).mockReset();
-    await nativeCompactionArgs({ agentHarnessId: "codex" });
+    const { command, commandParams, sessionScope } = await createNativeCompactCommandFixture({
+      workspaceDir: TEST_WORKSPACE_DIR,
+      sessionId: TEST_SESSION_ID,
+      sessionKey: TEST_SESSION_KEY,
+    });
     resolveContextEngineMock.mockResolvedValue({
       info: { ownsCompaction: false },
       compact: contextEngineCompactMock,
@@ -4256,8 +4259,10 @@ describe("compactEmbeddedAgentSession hooks (ownsCompaction engine)", () => {
       compacted: true,
       result: { summary: "harness", firstKeptEntryId: "entry-1", tokensBefore: 100 },
     });
+    const laneEntered = createDeferred();
     const laneRelease = createDeferred();
     enqueueCommandInLaneMock.mockImplementationOnce(async (_lane, task) => {
+      laneEntered.resolve();
       await laneRelease.promise;
       return await task();
     });
@@ -4265,49 +4270,37 @@ describe("compactEmbeddedAgentSession hooks (ownsCompaction engine)", () => {
       async (params, host) => await compactEmbeddedAgentSession(params, host),
     );
 
-    const pending = command.handleCompactCommand(
-      {
-        ...command.buildCompactParams("/compact", {
-          commands: { text: true },
-          channels: { whatsapp: { allowFrom: ["*"] } },
-          session: { store: join(TEST_WORKSPACE_DIR, "sessions.json") },
+    const pending = command.runCompactCommand(commandParams, true);
+    try {
+      await Promise.race([
+        laneEntered.promise,
+        pending.then((result) => {
+          throw new Error(
+            `Compaction finished before entering its session lane: ${JSON.stringify(result)}`,
+          );
         }),
-        provider: "openai",
-        model: "gpt-5.5",
-        workspaceDir: TEST_WORKSPACE_DIR,
-        agentDir: join(TEST_WORKSPACE_DIR, "agents/main/agent"),
-        sessionEntry: {
-          sessionId: TEST_SESSION_ID,
-          updatedAt: Date.now(),
-          agentHarnessId: "codex",
-          modelSelectionLocked: true,
-        },
-      },
-      true,
-    );
-    await vi.waitFor(() => {
+      ]);
       expect(enqueueCommandInLaneMock).toHaveBeenCalledOnce();
-    });
-    expect(maybeCompactAgentHarnessSessionMock).not.toHaveBeenCalled();
+      expect(maybeCompactAgentHarnessSessionMock).not.toHaveBeenCalled();
 
-    if (writerRunId) {
-      await patchSessionEntryCore(
-        {
-          agentId: "main",
-          sessionKey: TEST_SESSION_KEY,
-          storePath: join(TEST_WORKSPACE_DIR, "sessions.json"),
-        },
-        (entry) => ({ ...entry, activeWriterRunId: writerRunId }),
-      );
+      if (writerRunId) {
+        await patchSessionEntryCore(sessionScope, (entry) => ({
+          ...entry,
+          activeWriterRunId: writerRunId,
+        }));
+      }
+      laneRelease.resolve();
+      if (writerRunId) {
+        await expect(pending).rejects.toThrow("session writer claim changed");
+      } else {
+        await expect(pending).resolves.toMatchObject({ shouldContinue: false });
+      }
+      expect(command.compactEmbeddedAgentSession).toHaveBeenCalledOnce();
+      expect(maybeCompactAgentHarnessSessionMock).toHaveBeenCalledTimes(writerRunId ? 0 : 1);
+    } finally {
+      laneRelease.resolve();
+      await Promise.allSettled([pending]);
     }
-    laneRelease.resolve();
-    if (writerRunId) {
-      await expect(pending).rejects.toThrow("session writer claim changed");
-    } else {
-      await expect(pending).resolves.toMatchObject({ shouldContinue: false });
-    }
-    expect(command.compactEmbeddedAgentSession).toHaveBeenCalledOnce();
-    expect(maybeCompactAgentHarnessSessionMock).toHaveBeenCalledTimes(writerRunId ? 0 : 1);
   });
 
   it("preserves a summaryless server-endpoint result through the legacy engine delegate", async () => {

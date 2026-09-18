@@ -21,13 +21,11 @@ export async function resolveSessionCreateModelSelection(
   cfg: OpenClawConfig,
   agentId: string,
   input: string | { model: string; agentRuntime?: string } | undefined,
-  parent?: { entry: SessionEntry; agentId: string; sessionKey: string; storePath: string },
+  source?: { entry: SessionEntry; agentId: string; sessionKey: string; storePath: string },
   preparedModelSelection?: ModelRef,
 ): Promise<GatewaySessionTitleModelSelection | null> {
   const model = normalizeOptionalString(typeof input === "string" ? input : input?.model);
   const defaults = resolveDefaultModelForAgent({ cfg, agentId });
-  // Reuse patch policy with the config-owned catalog projection. Persisted creation
-  // remains the sole live-catalog availability validator.
   const resolved = model
     ? resolveSessionPatchModelSelection({
         cfg,
@@ -46,14 +44,23 @@ export async function resolveSessionCreateModelSelection(
     typeof input === "string" ? undefined : input?.agentRuntime,
   );
   const kind = runtime ? resolveExecutionSelectionExecutorKind(cfg, runtime) : undefined;
-  if (runtime && !kind) return null;
+  if (runtime && !kind) {
+    return null;
+  }
   const prepared = await prepareSessionExecutionSelection({
     cfg,
     agentId,
-    sessionEntry: parent?.entry,
-    sessionAgentId: parent?.agentId,
-    sessionKey: parent?.sessionKey,
-    storePath: parent?.storePath,
+    sessionEntry: resolved?.profile
+      ? {
+          ...source?.entry,
+          authProfileOverride: resolved.profile,
+          authProfileOverrideSource: "user",
+        }
+      : source?.entry,
+    profileProvider: resolved?.provider,
+    sessionAgentId: source?.agentId,
+    sessionKey: source?.sessionKey,
+    storePath: source?.storePath,
     request: resolved
       ? {
           kind: "model",
@@ -62,11 +69,13 @@ export async function resolveSessionCreateModelSelection(
         }
       : { kind: "initialize" },
   });
-  if (prepared.status !== "ready" || !isModelExecutionSelection(prepared.selection)) return null;
+  if (prepared.status !== "ready" || !isModelExecutionSelection(prepared.selection)) {
+    return null;
+  }
   return {
     executionSelection: prepared.selection,
     validate: prepared.validateCommit,
-    authProfileOverride: resolved?.profile ?? parent?.entry.authProfileOverride,
+    authProfileOverride: resolved?.profile ?? source?.entry.authProfileOverride,
   };
 }
 

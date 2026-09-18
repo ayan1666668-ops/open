@@ -1,6 +1,6 @@
 // Skill filter tests cover active skill selection for isolated cron runs.
 import { createRequireRecord } from "openclaw/plugin-sdk/test-fixtures";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import {
   runInitialModelFallbackAttempt,
   type TestModelFallbackRunnerParams,
@@ -20,6 +20,7 @@ import {
   resolveAgentConfigMock,
   resolveAgentSkillsFilterMock,
   resolveAllowedModelRefMock,
+  resolveConfiguredModelRefMock,
   resolveCronSessionMock,
   resolveEffectiveAgentRuntimeMock,
   runCliAgentMock,
@@ -340,6 +341,13 @@ describe("runCronIsolatedAgentTurn — skill filter", () => {
   });
 
   describe("CLI session handoff (issue #29774)", () => {
+    beforeEach(() => {
+      resolveConfiguredModelRefMock.mockReturnValue({
+        provider: "anthropic",
+        model: "claude-sonnet-4-6",
+      });
+    });
+
     it("passes the cron abort signal to CLI runs and drops late CLI results", async () => {
       const abortController = new AbortController();
       let markCliStarted: (() => void) | undefined;

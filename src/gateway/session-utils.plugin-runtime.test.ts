@@ -6,7 +6,10 @@ import type { OpenClawConfig } from "../config/config.js";
 import { resolveSessionStorePathCore, type SessionEntry } from "../config/sessions.js";
 import { replaceSessionEntry } from "../config/sessions/session-accessor.js";
 import { withStateDirEnv } from "../test-helpers/state-dir-env.js";
-import { sessionStoreTargetsFixture } from "./session-list.test-support.js";
+import {
+  sessionSelectionFixture,
+  sessionStoreTargetsFixture,
+} from "./session-list.test-support.js";
 
 const normalizeProviderModelIdWithPluginMock = vi.fn();
 const loadPluginManifestRegistryCoreMock = vi.hoisted(() =>
@@ -97,9 +100,10 @@ describe("gateway session list plugin runtime normalization", () => {
       const selectedEntry: SessionEntry = {
         sessionId: parentSessionKey ? "parent" : "child",
         updatedAt: 1,
-        providerOverride: "custom-provider",
-        modelOverride: "custom-legacy-model",
-        modelOverrideSource: "user",
+        executionSelection: sessionSelectionFixture({
+          model: { provider: "custom-provider", id: "custom-legacy-model" },
+          executor: { kind: "harness", id: "openclaw" },
+        }),
       };
       const childEntry: SessionEntry = {
         sessionId: "child",
@@ -142,10 +146,10 @@ describe("gateway session list plugin runtime normalization", () => {
     const selectedEntry: SessionEntry = {
       sessionId: parentSessionKey ? "parent" : "child",
       updatedAt: 1,
-      providerOverride: "custom-provider",
-      modelOverride: "custom-legacy-model",
-      modelOverrideSource: "user",
-      modelOverrideRouteResolution: "resolved",
+      executionSelection: sessionSelectionFixture({
+        model: { provider: "custom-provider", id: "custom-legacy-model" },
+        executor: { kind: "harness", id: "openclaw" },
+      }),
     };
     const childEntry: SessionEntry = {
       sessionId: "child",

@@ -20,7 +20,6 @@ import {
 } from "../../infra/legacy-acp-migration-source.js";
 import { commitSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
 import type { AcpExecutionSelection } from "../../model-picker/execution-selection.js";
-/** SQLite-backed ACP session metadata storage keyed through session-store entries. */
 import { withExistingOpenClawStateDatabaseReadOnly } from "../../state/openclaw-state-db-readonly.js";
 import {
   type OpenClawStateDatabaseOptions,
@@ -109,7 +108,7 @@ export function readAcpSessionMeta(params: {
   env?: NodeJS.ProcessEnv;
   databasePath?: string;
 }): SessionAcpLifecycle | undefined {
-  return readAcpSessionEntry({
+  return readAcpSessionEntryCore({
     ...params,
     sessionKey: params.sessionKey.trim(),
     clone: false,
@@ -369,7 +368,7 @@ function upsertAcpSessionMetaRow(db: DatabaseSync, row: Insertable<AcpSessionsTa
   );
 }
 
-export function readAcpSessionEntry(params: {
+export function readAcpSessionEntryCore(params: {
   sessionKey: string;
   agentId?: string;
   cfg?: OpenClawConfig;
@@ -463,13 +462,6 @@ export async function listAcpSessionEntries(params: {
   }
 
   return entries;
-}
-
-function mergeAcpForReturn(
-  entry: SessionEntry | undefined,
-  acp: SessionAcpLifecycle,
-): SessionEntry {
-  return mergeSessionEntry(entry, { acp });
 }
 
 function sessionStoreUpdateOptions(params: {
@@ -570,14 +562,14 @@ export async function upsertAcpSessionMeta(params: {
         params.preserveActivity && entry ? { ...entry } : mergeSessionEntry(entry, { updatedAt });
       nextMeta = params.mutate(
         current,
-        current ? mergeAcpForReturn(preparedEntry, current) : entry,
+        current ? mergeSessionEntry(preparedEntry, { acp: current }) : entry,
       );
     },
     { env: params.env, path: params.databasePath },
   );
   const metaToPersist = nextMeta;
   if (metaToPersist === undefined) {
-    return current ? mergeAcpForReturn(entry, current) : (entry ?? null);
+    return current ? mergeSessionEntry(entry, { acp: current }) : (entry ?? null);
   }
   if (metaToPersist === null) {
     const patched = entry
@@ -649,8 +641,9 @@ export async function upsertAcpSessionMeta(params: {
         ? { ...currentEntry }
         : mergeSessionEntry(currentEntry, { updatedAt });
       delete next.acp;
-      if (params.executionSelection)
+      if (params.executionSelection) {
         commitSessionExecutionSelection(next, params.executionSelection);
+      }
       return next;
     },
     {
@@ -725,5 +718,5 @@ export async function upsertAcpSessionMeta(params: {
     },
     { env: params.env, path: params.databasePath },
   );
-  return mergeAcpForReturn(persisted.entry, metaToPersist);
+  return mergeSessionEntry(persisted.entry, { acp: metaToPersist });
 }

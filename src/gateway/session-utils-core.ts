@@ -23,7 +23,7 @@ import {
 import type { GatewaySessionRow } from "./session-utils.types.js";
 
 export function deriveSessionTitle(
-  entry: SessionEntry | undefined,
+  entry: Pick<SessionEntry, "label" | "displayName" | "subject"> | undefined,
   firstUserMessage?: string | null,
   externalDisplayName?: string | null,
 ): string | undefined {

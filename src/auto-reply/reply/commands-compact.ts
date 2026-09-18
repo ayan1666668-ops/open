@@ -1,5 +1,5 @@
 // Implements compaction commands for session context and model state.
-import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
+import { isDeepStrictEqual } from "node:util";
 import {
   normalizeLowercaseStringOrEmpty,
   normalizeOptionalString,
@@ -10,24 +10,25 @@ import {
   classifyCompactionReason,
   isBenignCompactionSkipResult,
 } from "../../agents/embedded-agent-runner/compact-reasons.js";
-import { resolveAgentHarnessPolicy } from "../../agents/harness/policy.js";
-import {
-  OPENAI_CODEX_PROVIDER_ID,
-  OPENAI_PROVIDER_ID,
-  resolveContextConfigProviderForRuntime,
-} from "../../agents/openai-routing.js";
+import { resolveContextConfigProviderForRuntime } from "../../agents/openai-routing.js";
 import { resolveOwnerPromptNumbers } from "../../agents/owner-display.js";
-import { resolveManualCompactionCliTarget } from "../../agents/session-runtime-compat.js";
 import { normalizeChatType } from "../../channels/chat-type.js";
-import { resolveCollapsedSessionAuthPinSource } from "../../config/sessions/auth-profile-override-provenance.js";
+import { getCliSessionBinding } from "../../config/sessions/cli-session-binding.js";
+import { isSessionWorkStartInvalidatedError } from "../../config/sessions/lifecycle.js";
 import { resolveSessionStorePathCore } from "../../config/sessions/paths.js";
 import { resolveSessionStorePathForScope } from "../../config/sessions/session-store-path.js";
-import type { InternalSessionEntry } from "../../config/sessions/types.js";
+import {
+  resolveFreshSessionTotalTokens,
+  type InternalSessionEntry,
+} from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { ModelSelectionLockedError } from "../../sessions/model-overrides.js";
 import { createLazyImportLoader } from "../../shared/lazy-promise.js";
+import { formatTokenCount } from "../../utils/token-format.js";
 import { rejectUnauthorizedCommand } from "./command-gates.js";
 import type { CommandHandler, CommandHandlerResult } from "./commands-types.js";
 import { stripMentions, stripStructuralPrefixes } from "./mentions.js";
+import { ModelSelectionPreparationError, type ModelSelectionState } from "./model-selection.js";
 
 const compactRuntimeLoader = createLazyImportLoader(() => import("./commands-compact.runtime.js"));
 
@@ -95,6 +96,7 @@ function resolveManualCompactContextTokenBudget(params: {
   model?: string;
   agentId: string;
   sessionKey: string;
+  runtimeId?: string;
   liveContextTokens?: number;
   persistedContextTokens?: number;
 }): number | undefined {
@@ -112,26 +114,15 @@ function resolveManualCompactContextTokenBudget(params: {
     return liveContextTokens ?? resolvePersistedContextTokens(params.persistedContextTokens);
   }
 
-  const harnessPolicy = resolveAgentHarnessPolicy({
-    provider,
-    modelId: model,
-    config: params.cfg,
-    agentId: params.agentId,
-    sessionKey: params.sessionKey,
-  });
   const contextConfigProvider = resolveContextConfigProviderForRuntime({
     provider,
-    runtimeId: harnessPolicy.runtime,
+    runtimeId: params.runtimeId,
     config: params.cfg,
   });
   const configuredContextTokens = resolveContextTokensForModel({
     cfg: params.cfg,
     provider: contextConfigProvider,
-    model: resolveManualCompactContextModelId({
-      provider,
-      contextConfigProvider,
-      model,
-    }),
+    model,
     allowAsyncLoad: false,
   });
   if (typeof configuredContextTokens === "number" && configuredContextTokens > 0) {
@@ -152,36 +143,6 @@ function resolvePersistedContextTokens(value: number | undefined): number | unde
   return typeof value === "number" && Number.isFinite(value) && value > 0
     ? Math.floor(value)
     : undefined;
-}
-
-function resolveManualCompactContextModelId(params: {
-  provider: string;
-  contextConfigProvider: string;
-  model: string;
-}): string {
-  const model = params.model.trim();
-  const slashIndex = model.indexOf("/");
-  if (slashIndex <= 0) {
-    return model;
-  }
-
-  const modelProvider = normalizeProviderId(model.slice(0, slashIndex));
-  const selectedProvider = normalizeProviderId(params.provider);
-  const contextConfigProvider = normalizeProviderId(params.contextConfigProvider);
-  const modelId = model.slice(slashIndex + 1).trim();
-  if (!modelId) {
-    return model;
-  }
-
-  if (
-    modelProvider === selectedProvider ||
-    modelProvider === contextConfigProvider ||
-    (modelProvider === OPENAI_PROVIDER_ID && contextConfigProvider === OPENAI_CODEX_PROVIDER_ID)
-  ) {
-    return modelId;
-  }
-
-  return model;
 }
 
 export const handleCompactCommand: CommandHandler = async (params) => {
@@ -225,15 +186,6 @@ export const handleCompactCommand: CommandHandler = async (params) => {
     agentId: sessionAgentId,
     isGroup: params.isGroup,
   });
-  const contextTokenBudget = resolveManualCompactContextTokenBudget({
-    cfg: params.cfg,
-    provider: params.provider,
-    model: params.model,
-    agentId: sessionAgentId,
-    sessionKey: params.sessionKey,
-    liveContextTokens: params.contextTokens,
-    persistedContextTokens: targetSessionEntry.contextTokens,
-  });
   const compactionStorePath = resolveSessionStorePathForScope({
     agentId: sessionAgentId,
     sessionKey: params.sessionKey,
@@ -242,6 +194,7 @@ export const handleCompactCommand: CommandHandler = async (params) => {
       resolveSessionStorePathCore(params.cfg.session?.store, { agentId: sessionAgentId }),
   });
   let expectedSession: InternalSessionEntry = targetSessionEntry;
+  let modelState: ModelSelectionState | undefined;
   const resolveCurrentEntry = () =>
     runtime.resolveCurrentSessionEntry({
       agentId: sessionAgentId,
@@ -249,13 +202,24 @@ export const handleCompactCommand: CommandHandler = async (params) => {
       storePath: compactionStorePath,
       expected: expectedSession,
     });
+  const validateAuthority = () => {
+    if (params.commandInvocationSignal?.aborted || params.opts?.abortSignal?.aborted) {
+      return "command invocation closed";
+    }
+    const current = resolveCurrentEntry();
+    if (!current) {
+      return "command session changed";
+    }
+    if (modelState) {
+      if (!isDeepStrictEqual(modelState.sessionExecutionSelection, current.executionSelection)) {
+        return "session selection changed";
+      }
+      return modelState.validateExecution?.() ?? modelState.auth?.validate(current);
+    }
+    return undefined;
+  };
   const authorityFailure = () => {
-    const reason =
-      params.commandInvocationSignal?.aborted || params.opts?.abortSignal?.aborted
-        ? "command invocation closed"
-        : !resolveCurrentEntry()
-          ? "command session changed"
-          : undefined;
+    const reason = validateAuthority();
     return reason
       ? compactionUnavailable(reason, `⚙️ Compaction unavailable: ${reason}.`)
       : undefined;
@@ -264,6 +228,49 @@ export const handleCompactCommand: CommandHandler = async (params) => {
   if (failure) {
     return failure;
   }
+  try {
+    modelState = await params.prepareModelState(
+      targetSessionEntry,
+      validateAuthority,
+      "compaction",
+    );
+  } catch (error) {
+    const closed = authorityFailure();
+    if (closed) {
+      return closed;
+    }
+    if (
+      error instanceof ModelSelectionPreparationError ||
+      error instanceof ModelSelectionLockedError ||
+      isSessionWorkStartInvalidatedError(error)
+    ) {
+      return compactionUnavailable(error.message, `⚙️ Compaction unavailable: ${error.message}`);
+    }
+    throw error;
+  }
+  failure = authorityFailure();
+  if (failure) {
+    return failure;
+  }
+  const { provider, model, onCommitted } = modelState;
+  const selection = modelState.executionSelection;
+  if (!selection || selection.executor.kind === "acp") {
+    throw new Error("Compaction requires a prepared execution selection.");
+  }
+  const executor = selection.executor;
+  const contextTokenBudget = resolveManualCompactContextTokenBudget({
+    cfg: params.cfg,
+    provider,
+    model,
+    agentId: sessionAgentId,
+    sessionKey: params.sessionKey,
+    runtimeId: executor.id,
+    liveContextTokens:
+      modelState.modelContextTokens ??
+      modelState.modelContextWindow ??
+      (params.provider === provider && params.model === model ? params.contextTokens : undefined),
+    persistedContextTokens: targetSessionEntry.contextTokens,
+  });
   if (runtime.isEmbeddedAgentRunAbortableForCompaction(sessionId)) {
     runtime.abortEmbeddedAgentRun(sessionId);
     const drained = await runtime.waitForEmbeddedAgentRunEnd(sessionId, 15_000);
@@ -278,7 +285,7 @@ export const handleCompactCommand: CommandHandler = async (params) => {
       );
     }
   }
-  const thinkLevel = params.resolvedThinkLevel ?? (await params.resolveDefaultThinkingLevel());
+  const { resolvedThinkLevel: thinkLevel } = await params.resolveModelLevels(modelState);
   failure = authorityFailure();
   if (failure) {
     return failure;
@@ -296,11 +303,8 @@ export const handleCompactCommand: CommandHandler = async (params) => {
   if (params.sessionStore) {
     params.sessionStore[params.sessionKey] = refreshedEntry;
   }
-  const compactionCliTarget = resolveManualCompactionCliTarget({
-    provider: params.provider,
-    entry: refreshedEntry,
-    cfg: params.cfg,
-  });
+  const cliSessionBinding = getCliSessionBinding(refreshedEntry, executor.id);
+  const auth = modelState.auth?.selection;
   const replyOperation = params.opts?.replyOperation;
   replyOperation?.setPhase("preflight_compacting");
   const compaction = runtime.compactEmbeddedAgentSession(
@@ -339,15 +343,14 @@ export const handleCompactCommand: CommandHandler = async (params) => {
       conversationRoutePeerId: params.ctx.ConversationRoutePeerId,
       chatType: normalizeChatType(params.ctx.ChatType),
       skillsSnapshot: expectedSession.skillsSnapshot,
-      provider: params.provider,
-      model: params.model,
-      authProfileId:
-        compactionCliTarget.cliSessionBinding?.authProfileId ?? expectedSession.authProfileOverride,
-      authProfileIdSource: resolveCollapsedSessionAuthPinSource(expectedSession),
+      provider,
+      model,
+      authProfileId: auth?.profileId,
+      authProfileIdSource: auth?.source,
       contextTokenBudget,
-      agentHarnessId: compactionCliTarget.agentHarnessId,
-      cliSessionId: compactionCliTarget.cliSessionId,
-      cliSessionBinding: compactionCliTarget.cliSessionBinding,
+      agentHarnessId: executor.id,
+      cliSessionId: cliSessionBinding?.sessionId,
+      cliSessionBinding,
       sessionEntry: expectedSession,
       modelSelectionLocked: expectedSession.modelSelectionLocked === true,
       thinkLevel,
@@ -365,15 +368,19 @@ export const handleCompactCommand: CommandHandler = async (params) => {
       }),
     },
     {
+      preparedSelection: { selection, auth: modelState.auth },
       assertActive: () => {
-        params.opts?.abortSignal?.throwIfAborted();
-        params.commandInvocationSignal?.throwIfAborted();
+        const error = validateAuthority();
+        if (error) {
+          throw new Error(error);
+        }
         const current = resolveCurrentEntry();
         if (!current || current.activeWriterRunId !== expectedSession.activeWriterRunId) {
           throw new Error("command session changed");
         }
       },
       onCommitted: (accepted) => {
+        onCommitted?.(accepted);
         // Update the expectation before identity observers run, not from public result metadata.
         expectedSession = accepted.entry;
         if (params.sessionStore) {
@@ -392,11 +399,11 @@ export const handleCompactCommand: CommandHandler = async (params) => {
         ? result.compactionKind === "server-endpoint" &&
           typeof tokensAfterCompaction === "number" &&
           result.result?.tokensBefore != null
-          ? `Server-side compaction (${runtime.formatTokenCount(result.result.tokensBefore)} → ${runtime.formatTokenCount(tokensAfterCompaction)})`
+          ? `Server-side compaction (${formatTokenCount(result.result.tokensBefore)} → ${formatTokenCount(tokensAfterCompaction)})`
           : typeof tokensAfterCompaction !== "number"
             ? "Compaction finished (resulting context unknown)"
             : result.result?.tokensBefore != null
-              ? `Compacted (${runtime.formatTokenCount(result.result.tokensBefore)} → ${runtime.formatTokenCount(tokensAfterCompaction)})`
+              ? `Compacted (${formatTokenCount(result.result.tokensBefore)} → ${formatTokenCount(tokensAfterCompaction)})`
               : "Compacted"
         : "Compaction skipped"
       : "Compaction failed";
@@ -427,7 +434,7 @@ export const handleCompactCommand: CommandHandler = async (params) => {
   }
   const totalTokens = didCompact
     ? tokensAfterCompaction
-    : runtime.resolveFreshSessionTotalTokens(targetSessionEntry);
+    : resolveFreshSessionTotalTokens(targetSessionEntry);
   const contextSummary = runtime.formatContextUsageShort(
     typeof totalTokens === "number" && totalTokens > 0 ? totalTokens : null,
     contextTokenBudget ?? null,

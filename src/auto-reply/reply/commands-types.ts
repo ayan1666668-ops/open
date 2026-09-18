@@ -19,6 +19,7 @@ import type {
 import type { ReplyPayload } from "../types.js";
 import type { InlineDirectives } from "./directive-handling.parse.js";
 import type { InternalGetReplyOptions } from "./get-reply.types.js";
+import type { ModelSelectionState } from "./model-selection.js";
 import type { ReplyModelLevelResolver } from "./reply-model-levels.js";
 import type { TypingController } from "./typing.js";
 
@@ -83,6 +84,12 @@ export type HandleCommandsParams = {
   resolvedElevatedLevel?: ElevatedLevel;
   blockReplyChunking?: BlockReplyChunking;
   resolvedBlockStreamingBreak?: "text_end" | "message_end";
+  prepareModelState: (
+    entry: SessionEntry,
+    validateCommit?: () => string | undefined,
+    purpose?: "compaction",
+  ) => Promise<ModelSelectionState>;
+  resolveModelLevels: ReplyModelLevelResolver;
   resolveDefaultThinkingLevel: () => Promise<ThinkLevel | undefined>;
   provider: string;
   model: string;
@@ -102,7 +109,7 @@ export type HandleCommandsParams = {
 export type CommandDispatchParams = Omit<
   HandleCommandsParams,
   "resolvedThinkLevel" | "resolvedReasoningLevel"
-> & { resolveModelLevels: ReplyModelLevelResolver };
+>;
 
 /** Result returned by a command handler. */
 export type CommandHandlerResult = {

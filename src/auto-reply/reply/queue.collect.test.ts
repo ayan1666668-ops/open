@@ -16,6 +16,19 @@ import {
 } from "../../config/sessions/session-accessor.js";
 import { createUserTurnTranscriptRecorder } from "../../sessions/user-turn-transcript.js";
 import { createTestUserTurnTranscriptTarget } from "../../sessions/user-turn-transcript.test-support.js";
+import {
+  applyRunOverrides,
+  concreteSelection,
+  createDrainRecorder,
+  createQueueCase,
+  createQueueSettings,
+  drainRecordedQueue,
+  enqueueRoutedRuns,
+  enqueueSlackRun,
+  enqueueTestRun,
+  enqueueTestRuns,
+  type TestRunOverrides,
+} from "./queue.collect.test-support.js";
 import type { FollowupRun, QueueSettings } from "./queue.js";
 import {
   admitFollowupRunLifecycle,
@@ -42,109 +55,6 @@ type InternalFollowupRun = FollowupRun & {
 };
 
 installQueueRuntimeErrorSilencer();
-
-function createQueueSettings(overrides: Partial<QueueSettings> = {}): QueueSettings {
-  return {
-    mode: "collect",
-    debounceMs: 0,
-    cap: 50,
-    dropPolicy: "summarize",
-    ...overrides,
-  };
-}
-
-type TestRunOverrides = Partial<FollowupRun["run"]> & { provider?: string; model?: string };
-function applyRunOverrides(
-  run: FollowupRun["run"],
-  overrides: TestRunOverrides,
-): FollowupRun["run"] {
-  const { provider, model, ...fields } = overrides;
-  return {
-    ...run,
-    ...fields,
-    executionSelection: fields.executionSelection ?? {
-      ...run.executionSelection,
-      model: {
-        provider: provider ?? run.executionSelection.model.provider,
-        id: model ?? run.executionSelection.model.id,
-      },
-    },
-  };
-}
-
-function enqueueTestRun(
-  key: string,
-  params: Parameters<typeof createRun>[0],
-  settings: QueueSettings,
-  runOverrides?: TestRunOverrides,
-) {
-  const run = createRun(params);
-  if (runOverrides) {
-    run.run = applyRunOverrides(run.run, runOverrides);
-  }
-  return enqueueFollowupRun(key, run, settings);
-}
-
-function enqueueSlackRun(
-  key: string,
-  settings: QueueSettings,
-  prompt: string,
-  runOverrides: TestRunOverrides,
-  routeOverrides: Partial<Parameters<typeof createRun>[0]> = {},
-) {
-  return enqueueTestRun(
-    key,
-    { prompt, originatingChannel: "slack", originatingTo: "channel:A", ...routeOverrides },
-    settings,
-    runOverrides,
-  );
-}
-
-function createDrainRecorder(expectedCalls = 1) {
-  const calls: Array<FollowupRun & { currentTurnImagesPrepared?: true }> = [];
-  const done = createDeferred();
-  const runFollowup = async (run: FollowupRun) => {
-    calls.push(run);
-    if (calls.length >= expectedCalls) {
-      done.resolve();
-    }
-  };
-  return { calls, done, runFollowup };
-}
-
-function createQueueCase(key: string, overrides: Partial<QueueSettings> = {}, expectedCalls = 1) {
-  return { key, ...createDrainRecorder(expectedCalls), settings: createQueueSettings(overrides) };
-}
-
-function enqueueTestRuns(
-  key: string,
-  settings: QueueSettings,
-  ...runs: Parameters<typeof createRun>[0][]
-) {
-  for (const run of runs) {
-    enqueueTestRun(key, run, settings);
-  }
-}
-
-function enqueueRoutedRuns(
-  key: string,
-  settings: QueueSettings,
-  route: Omit<Parameters<typeof createRun>[0], "prompt">,
-  ...prompts: string[]
-) {
-  for (const prompt of prompts) {
-    enqueueTestRun(key, { prompt, ...route }, settings);
-  }
-}
-
-async function drainRecordedQueue(
-  key: string,
-  runFollowup: ReturnType<typeof createDrainRecorder>["runFollowup"],
-  done: ReturnType<typeof createDrainRecorder>["done"],
-) {
-  scheduleFollowupDrain(key, runFollowup);
-  await done.promise;
-}
 
 describe("followup queue collect routing", () => {
   it("carries queued local cron-authority unavailability through a followup drain", async () => {
@@ -1162,7 +1072,7 @@ describe("followup queue collect routing", () => {
     expect(calls[0]?.prompt).toContain("- direct B");
     expect(calls[0]?.prompt).toContain("- direct C");
     expect(calls[0]?.originatingChatType).toBe("direct");
-    expect(calls[0]?.run.executionSelection.model.id).toBe("model-c");
+    expect(calls[0]?.run.executionSelection).toMatchObject({ model: { id: "model-c" } });
     expect(calls[0]?.run.suppressNextUserMessagePersistence).toBeUndefined();
     expect(calls[0]?.run.suppressTranscriptOnlyAssistantPersistence).toBeUndefined();
     expect(calls[0]?.userTurnTranscriptRecorder?.isBlocked()).toBe(false);
@@ -1251,7 +1161,7 @@ describe("followup queue collect routing", () => {
 
     expect(calls[0]?.prompt).toContain("Dropped 1 message");
     expect(calls[0]?.prompt).toContain("- second");
-    expect(calls[0]?.run.executionSelection.model.id).toBe("model-b");
+    expect(calls[0]?.run.executionSelection).toMatchObject({ model: { id: "model-b" } });
     expect(calls[0]?.run.authProfileId).toBe("auth-b");
     expect(calls[1]?.prompt).toContain("- retained");
     expect(calls[2]?.prompt).toContain("survivor");
@@ -1425,7 +1335,10 @@ describe("followup queue collect routing", () => {
         currentInboundContext: { text: "private runtime context" },
         run: {
           ...droppedBase.run,
-          model: "old-model",
+          executionSelection: {
+            ...concreteSelection(droppedBase.run),
+            model: { provider: "openai", id: "old-model" },
+          },
           senderId: "guest",
           senderIsOwner: false,
         },
@@ -1451,7 +1364,7 @@ describe("followup queue collect routing", () => {
     await drainRecordedQueue(key, runFollowup, done);
 
     expect(calls).toHaveLength(1);
-    expect(calls[0]?.run.executionSelection.model.id).toBe("current-model");
+    expect(calls[0]?.run.executionSelection).toMatchObject({ model: { id: "current-model" } });
     expect(calls[0]?.run.executionSelection.executor).toEqual({ kind: "harness", id: "openclaw" });
     expect(calls[0]?.originatingChatType).toBe("channel");
     expect(calls[0]?.run.senderId).toBe("owner");
@@ -2358,18 +2271,18 @@ describe("followup queue collect routing", () => {
     const settings: QueueSettings = { mode: "collect", debounceMs: 0 };
     const route = { originatingChannel: "slack" as const, originatingTo: "channel:A" };
     const first = createRun({ prompt: "first route", ...route });
-    first.run.executionSelection.model.provider = "openai";
-    first.run.executionSelection.model.id = "gpt-primary";
+    concreteSelection(first.run).model.provider = "openai";
+    concreteSelection(first.run).model.id = "gpt-primary";
     const second = createRun({ prompt: "second route", ...route });
-    second.run.executionSelection.model.provider = "openai";
-    second.run.executionSelection.model.id = "gpt-fallback";
+    concreteSelection(second.run).model.provider = "openai";
+    concreteSelection(second.run).model.id = "gpt-fallback";
     const third = createRun({ prompt: "third route", ...route });
-    third.run.executionSelection.model.provider = "anthropic";
-    third.run.executionSelection.model.id = "gpt-fallback";
+    concreteSelection(third.run).model.provider = "anthropic";
+    concreteSelection(third.run).model.id = "gpt-fallback";
 
     const fourth = createRun({ prompt: "fourth route", ...route });
     fourth.run.executionSelection = {
-      model: { ...third.run.executionSelection.model },
+      model: { ...concreteSelection(third.run).model },
       executor: { kind: "harness", id: "another-app" },
     };
 
@@ -2383,8 +2296,8 @@ describe("followup queue collect routing", () => {
     expect(
       calls.map((call) => [
         call.prompt,
-        call.run.executionSelection.model.provider,
-        call.run.executionSelection.model.id,
+        concreteSelection(call.run).model.provider,
+        concreteSelection(call.run).model.id,
       ]),
     ).toEqual([
       [expect.stringContaining("first route"), "openai", "gpt-primary"],
@@ -2392,7 +2305,10 @@ describe("followup queue collect routing", () => {
       [expect.stringContaining("third route"), "anthropic", "gpt-fallback"],
       [expect.stringContaining("fourth route"), "anthropic", "gpt-fallback"],
     ]);
-    expect(calls[3]?.run.executionSelection.executor.id).toBe("another-app");
+    expect(calls[3]?.run.executionSelection.executor).toEqual({
+      kind: "harness",
+      id: "another-app",
+    });
   });
 
   it.each(["enabled", "disabled", "policy-deny", "runtime-cap", "non-owner"])(
@@ -2577,8 +2493,8 @@ describe("followup queue collect routing", () => {
     await drainRecordedQueue(key, runFollowup, done);
 
     expect(calls).toHaveLength(1);
-    expect(calls[0]?.run.executionSelection.model.provider).toBe("openai");
-    expect(calls[0]?.run.executionSelection.model.id).toBe("gpt-5.4");
+    expect(calls[0]?.run.executionSelection).toMatchObject({ model: { provider: "openai" } });
+    expect(calls[0]?.run.executionSelection).toMatchObject({ model: { id: "gpt-5.4" } });
     expect(calls[0]?.run.senderName).toBe("Newest Name");
   });
 

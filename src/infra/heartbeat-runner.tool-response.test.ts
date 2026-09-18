@@ -655,7 +655,14 @@ describe("runHeartbeatOnce heartbeat response tool", () => {
       session: {
         modelProvider: "anthropic",
         model: "claude-sonnet-4-6",
-        agentRuntimeOverride: "openclaw",
+        executionSelection: {
+          state: "accepted",
+          selection: {
+            model: { provider: "anthropic", id: "claude-sonnet-4-6" },
+            executor: { kind: "harness", id: "openclaw" },
+          },
+          fallbackPermission: "explicit",
+        },
       },
     });
 

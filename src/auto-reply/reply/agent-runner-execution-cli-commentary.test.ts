@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { testing as cliBackendsTesting } from "../../agents/cli-backends.test-support.js";
 import type { RunCliAgentParams } from "../../agents/cli-runner/types.js";
-import type { runEmbeddedAgentEntry } from "../../agents/embedded-agent-runner/run-entry.js";
 import type { TemplateContext } from "../templating.js";
 import type { GetReplyOptions } from "../types.js";
 import {
@@ -152,10 +151,11 @@ describe("executeAgentTurn: CLI durable commentary", () => {
     const result = await executeAgentTurn(createTurnParams({ onBlockReply }, true));
 
     expect(state.runCliAgentMock.mock.calls[0]?.[0]).toMatchObject({ emitCommentaryText: true });
-    const resolveContextEngineHost = state.runEmbeddedAgentEntryMock.mock.calls[0]?.[0]?.harness
-      ?.resolveContextEngineHost as Parameters<
-      typeof runEmbeddedAgentEntry
-    >[0]["harness"]["resolveContextEngineHost"];
+    const harness = state.runEmbeddedAgentEntryMock.mock.calls[0]?.[0]?.harness;
+    if (!harness || !("resolveContextEngineHost" in harness)) {
+      throw new Error("CLI execution must use model-selecting run entry.");
+    }
+    const { resolveContextEngineHost } = harness;
     expect(
       resolveContextEngineHost?.({
         model: { provider: "claude-cli", id: "claude-opus-4-6" },

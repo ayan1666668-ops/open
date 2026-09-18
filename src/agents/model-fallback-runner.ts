@@ -633,10 +633,10 @@ async function runWithModelFallbackInternal<T>(
     // refusing provider's quota rather than to any model's context window, so a
     // differently provisioned candidate is exactly what may still admit it.
     const errMessage = formatErrorMessage(err);
-    if (isLikelyContextOverflowError(errMessage) && !hasProviderRequestSizeCeiling(err)) {
-      throw err;
-    }
-    if (isMissingAgentHarnessError(err)) {
+    if (
+      (isLikelyContextOverflowError(errMessage) && !hasProviderRequestSizeCeiling(err)) ||
+      isMissingAgentHarnessError(err)
+    ) {
       throw err;
     }
     const normalized =
@@ -740,23 +740,18 @@ async function runWithModelFallbackInternal<T>(
   }
 
   if (exhaustionResult) {
-    if (latestClassifiedResult && params.mergeExhaustedResult) {
-      return {
-        outcome: "exhausted",
-        result: params.mergeExhaustedResult({
-          latestResult: latestClassifiedResult.result,
-          preferredResult: exhaustionResult.result,
-        }),
-        provider: latestClassifiedResult.provider,
-        model: latestClassifiedResult.model,
-        attempts,
-      };
-    }
+    const latest = params.mergeExhaustedResult ? latestClassifiedResult : undefined;
     return {
       outcome: "exhausted",
-      result: exhaustionResult.result,
-      provider: exhaustionResult.provider,
-      model: exhaustionResult.model,
+      result:
+        latest && params.mergeExhaustedResult
+          ? params.mergeExhaustedResult({
+              latestResult: latest.result,
+              preferredResult: exhaustionResult.result,
+            })
+          : exhaustionResult.result,
+      provider: latest?.provider ?? exhaustionResult.provider,
+      model: latest?.model ?? exhaustionResult.model,
       attempts,
     };
   }

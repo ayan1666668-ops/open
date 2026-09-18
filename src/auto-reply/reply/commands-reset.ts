@@ -1,5 +1,5 @@
 /** Handles /new and /reset command flows, including soft reset and ACP-bound sessions. */
-import { getAcpSessionManager } from "../../acp/control-plane/manager.js";
+import { getAcpSessionManagerCore } from "../../acp/control-plane/manager.js";
 import { clearBootstrapSnapshot } from "../../agents/bootstrap-cache.js";
 import { clearAllCliSessions } from "../../agents/cli-session.js";
 import { normalizeChatType } from "../../channels/chat-type.js";
@@ -271,8 +271,9 @@ export async function maybeHandleExplicitAcpResetCommand(params: {
     commandAuthorized: params.ctx.CommandAuthorized === true,
     isGroup,
   });
-  if (!resetAuthorized || resetCommand.softResetMatched || !resetCommand.matchedResetTriggerLower)
+  if (!resetAuthorized || resetCommand.softResetMatched || !resetCommand.matchedResetTriggerLower) {
     return null;
+  }
   const command = buildCommandContext({
     cfg: params.cfg,
     ctx: params.ctx,
@@ -283,14 +284,18 @@ export async function maybeHandleExplicitAcpResetCommand(params: {
     triggerBodyNormalized: resetCommand.triggerBodyNormalized,
   });
   const resetMatch = command.commandBodyNormalized.match(/^\/(new|reset)(?:\s|$)/i);
-  if (!resetMatch) return null;
+  if (!resetMatch) {
+    return null;
+  }
   params.opts?.abortSignal?.throwIfAborted();
-  const resolved = getAcpSessionManager().resolveSession({
+  const resolved = getAcpSessionManagerCore().resolveSession({
     cfg: params.cfg,
     agentId: params.agentId,
     sessionKey: params.sessionKey,
   });
-  if (resolved.kind === "none") return null;
+  if (resolved.kind === "none") {
+    return null;
+  }
   const entry =
     resolved.kind === "ready"
       ? resolved.entry

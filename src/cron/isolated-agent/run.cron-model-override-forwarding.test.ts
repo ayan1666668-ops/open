@@ -11,6 +11,7 @@ import {
   runInitialModelFallbackAttempt,
   type TestModelFallbackRunnerParams,
 } from "../../agents/test-helpers/model-fallback-runner.test-support.js";
+import { acceptedModelSelection } from "../../test-utils/session-execution-selection.js";
 import {
   clearFastTestEnv,
   getCliSessionBindingMock,
@@ -151,15 +152,7 @@ describe("runCronIsolatedAgentTurn — cron model override forwarding (#58065)",
     });
 
     resolveAgentConfigMock.mockReturnValue(undefined);
-    resolveCronSessionMock.mockReturnValue(
-      makeCronSession({
-        sessionEntry: makeCronSessionEntry({
-          model: undefined,
-          modelProvider: undefined,
-        }),
-        isNewSession: true,
-      }),
-    );
+    resolveCronSessionMock.mockReturnValue(makeCronSession());
   });
 
   afterEach(() => {
@@ -219,18 +212,6 @@ describe("runCronIsolatedAgentTurn — cron model override forwarding (#58065)",
     expect(runWithModelFallbackMock).not.toHaveBeenCalled();
   });
 
-  it("passes the cron payload model override to runWithModelFallback", async () => {
-    const captured = captureModelFallbackRun();
-
-    const result = await runCronIsolatedAgentTurn(makeParams());
-
-    expect(result.status).toBe("ok");
-    // The cron payload specifies google/gemini-2.0-flash — that must be
-    // what reaches runWithModelFallback, not the agent default (opus).
-    expect(captured.provider).toBe("google");
-    expect(captured.model).toBe("gemini-2.0-flash");
-  });
-
   it("passes the cron payload model to the embedded agent runner", async () => {
     // Use passthrough so runEmbeddedAgentMock actually gets called
     mockRunCronFallbackPassthrough();
@@ -283,7 +264,7 @@ describe("runCronIsolatedAgentTurn — cron model override forwarding (#58065)",
   });
 
   it("does not mark CLI cron runs as model-started before CLI session resolution", async () => {
-    const provider = "claude-cli";
+    const provider = "anthropic";
     const model = "fixture-cli-model";
     resolveEffectiveAgentRuntimeMock.mockReturnValue("claude-cli");
     resolveAllowedModelRefMock.mockReturnValue({ ref: { provider, model } });
@@ -380,7 +361,7 @@ describe("runCronIsolatedAgentTurn — cron model override forwarding (#58065)",
   it("clears stale CLI bindings when cron CLI replacement is unflushed", async () => {
     resolveEffectiveAgentRuntimeMock.mockReturnValue("claude-cli");
     resolveAllowedModelRefMock.mockReturnValue({
-      ref: { provider: "claude-cli", model: "claude-opus-4-6" },
+      ref: { provider: "anthropic", model: "claude-opus-4-6" },
     });
     mockRunCronFallbackPassthrough();
     const cronSession = makeCronSession({
@@ -397,7 +378,7 @@ describe("runCronIsolatedAgentTurn — cron model override forwarding (#58065)",
       payloads: [{ text: "summary done" }],
       meta: {
         agentMeta: {
-          provider: "claude-cli",
+          provider: "anthropic",
           model: "claude-opus-4-6",
           sessionId: "",
           clearCliSessionBinding: true,
@@ -430,10 +411,10 @@ describe("runCronIsolatedAgentTurn — cron model override forwarding (#58065)",
     const clear = outcome.startsWith("rejected-clear");
     const saveFails = outcome.endsWith("save-fails");
     resolveEffectiveAgentRuntimeMock.mockImplementation(({ provider }: { provider: string }) =>
-      provider === "claude-cli" ? "claude-cli" : "openclaw",
+      provider === "anthropic" ? "claude-cli" : "openclaw",
     );
     resolveAllowedModelRefMock.mockReturnValue({
-      ref: { provider: "claude-cli", model: "claude-opus-4-6" },
+      ref: { provider: "anthropic", model: "claude-opus-4-6" },
     });
     mockRunCronFallbackPassthrough();
     const cronSession = makeCronSession({
@@ -459,7 +440,7 @@ describe("runCronIsolatedAgentTurn — cron model override forwarding (#58065)",
         durationMs: 1,
         executionTrace: { runner: "cli" },
         agentMeta: {
-          provider: "claude-cli",
+          provider: "anthropic",
           model: "claude-opus-4-6",
           sessionId: "fresh-cli-session",
           cliSessionBinding,
@@ -520,7 +501,7 @@ describe("runCronIsolatedAgentTurn — cron model override forwarding (#58065)",
           payload: {
             kind: "agentTurn",
             message: "summarize",
-            model: "claude-cli/claude-opus-4-6",
+            model: "anthropic/claude-opus-4-6",
             fallbacks: ["google/gemini-2.0-flash"],
           },
         }),
@@ -649,14 +630,7 @@ describe("runCronIsolatedAgentTurn — cron model override forwarding (#58065)",
     resolveCronSessionMock.mockReturnValue(
       makeCronSession({
         sessionEntry: makeCronSessionEntry({
-          executionSelection: {
-            state: "accepted",
-            fallbackPermission: "explicit",
-            selection: {
-              model: { provider: "openai", id: "gpt-5.6-luna" },
-              executor: { kind: "harness", id: "openclaw" },
-            },
-          },
+          executionSelection: acceptedModelSelection("openai", "gpt-5.6-luna"),
           thinkingLevel: "ultra",
         }),
         isNewSession: true,
@@ -1065,14 +1039,7 @@ describe("runCronIsolatedAgentTurn — cron model override forwarding (#58065)",
     resolveCronSessionMock.mockReturnValue(
       makeCronSession({
         sessionEntry: makeCronSessionEntry({
-          executionSelection: {
-            state: "accepted",
-            fallbackPermission: "explicit",
-            selection: {
-              model: { provider: "openai", id: "gpt-5.4" },
-              executor: { kind: "harness", id: "openclaw" },
-            },
-          },
+          executionSelection: acceptedModelSelection("openai", "gpt-5.4"),
         }),
         isNewSession: false,
       }),

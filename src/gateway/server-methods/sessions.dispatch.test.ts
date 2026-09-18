@@ -8,6 +8,7 @@ import {
   resetPluginRuntimeStateForTest,
   setActivePluginRegistry,
 } from "../../plugins/runtime.js";
+import { acceptedModelSelection } from "../../test-utils/session-execution-selection.js";
 import { FORCED_WORKER_ABANDONMENT_ERROR } from "../worker-environments/placement-record.js";
 import type { WorkerSessionPlacementRecord } from "../worker-environments/placement-store.js";
 import type { WorkerPlacementDispatchRequest } from "../worker-environments/service-contract.js";
@@ -19,6 +20,7 @@ import {
   invokeSessionDispatch as invoke,
   invokeSessionMove,
   makeDispatchTestContext as makeContext,
+  makeActivePlacement as activePlacementRecord,
   makeFailedPlacement as failedPlacementRecord,
   makeReclaimedPlacement as reclaimedPlacementRecord,
   makeSessionTarget as targetWithEntry,
@@ -26,16 +28,6 @@ import {
 
 const mocks = getDispatchTestMocks();
 const originalPluginRegistry = getActivePluginRegistry();
-
-function activePlacementRecord(): Extract<WorkerSessionPlacementRecord, { state: "active" }> {
-  return {
-    ...reclaimedPlacementRecord(),
-    state: "active",
-    recoveryError: null,
-    terminalReason: null,
-    terminalAtMs: null,
-  };
-}
 
 describe("sessions.dispatch", () => {
   beforeEach(() => {
@@ -305,14 +297,9 @@ describe("sessions.dispatch", () => {
       mocks.resolveTarget.mockReturnValue(
         targetWithEntry({
           sessionId,
-          executionSelection: {
-            state: "accepted",
-            selection: {
-              model: { provider, id: "model-test" },
-              executor: { kind: "harness", id: runtime },
-            },
-            fallbackPermission: "explicit",
-          },
+          executionSelection: acceptedModelSelection(provider, "model-test", {
+            executor: { kind: "harness", id: runtime },
+          }),
           worktree: { id: "worktree-1", branch: "openclaw/cloud-test", repoRoot: "/repo" },
         }),
       );
@@ -420,14 +407,9 @@ describe("sessions.dispatch", () => {
     mocks.resolveTarget.mockReturnValue(
       targetWithEntry({
         sessionId,
-        executionSelection: {
-          state: "accepted",
-          selection: {
-            model: { provider: "openai", id: "gpt-test" },
-            executor: { kind: "harness", id: "codex" },
-          },
-          fallbackPermission: "explicit",
-        },
+        executionSelection: acceptedModelSelection("openai", "gpt-test", {
+          executor: { kind: "harness", id: "codex" },
+        }),
         worktree: { id: "worktree-1", branch: "openclaw/cloud-test", repoRoot: "/repo" },
       }),
     );
@@ -876,14 +858,10 @@ describe("sessions.dispatch", () => {
     mocks.resolveTarget.mockReturnValue(
       targetWithEntry({
         sessionId,
-        executionSelection: {
-          state: "accepted",
-          selection: {
-            model: { provider: "anthropic", id: "claude-test" },
-            executor: { kind: _kind === "CLI" ? "cli" : "harness", id: runtimeId },
-          },
+        executionSelection: acceptedModelSelection("anthropic", "claude-test", {
+          executor: { kind: _kind === "CLI" ? "cli" : "harness", id: runtimeId },
           fallbackPermission: "configured",
-        },
+        }),
         worktree: { id: "worktree-1", branch: "openclaw/cloud-test", repoRoot: "/repo" },
       }),
     );
@@ -971,7 +949,7 @@ describe("sessions.dispatch", () => {
       .fn()
       .mockRejectedValue(
         new Error(
-          "Worker environment is not dispatchable with the current execution-context contract: ready",
+          "Worker environment is not dispatchable with the current worker launch contract: ready",
         ),
       );
 
@@ -985,7 +963,7 @@ describe("sessions.dispatch", () => {
     const error = vi.mocked(respond).mock.calls[0]?.[2];
     expect(error).toMatchObject({
       code: ErrorCodes.UNAVAILABLE,
-      message: expect.stringContaining("current execution-context contract"),
+      message: expect.stringContaining("current worker launch contract"),
     });
   });
 

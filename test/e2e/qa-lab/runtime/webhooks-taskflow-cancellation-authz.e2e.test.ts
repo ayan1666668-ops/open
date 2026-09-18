@@ -13,7 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import acpxPlugin from "../../../../extensions/acpx/index.js";
 import webhooksPlugin from "../../../../extensions/webhooks/index.js";
 import {
-  getAcpSessionManager,
+  getAcpSessionManagerCore,
   testing as acpManagerTesting,
 } from "../../../../src/acp/control-plane/manager.js";
 import { createTestAdmittedRunContext } from "../../../../src/agents/admitted-run-context.test-support.js";
@@ -249,7 +249,7 @@ describe("webhooks TaskFlow child cancellation authority", () => {
         setTaskRegistryControlRuntimeForTests({
           cancelActiveCronTaskRun,
           cancelBackgroundExecSession,
-          getAcpSessionManager,
+          getAcpSessionManager: getAcpSessionManagerCore,
           killSubagentRunAdmin,
         });
         const routeCleanups: Array<() => void> = [];
@@ -465,7 +465,7 @@ describe("webhooks TaskFlow child cancellation authority", () => {
 
           const acpChild = "agent:main:acp:webhook-replacement";
           const reusedAcpRunId = "run-webhook-acp-reused";
-          const acpManager = getAcpSessionManager();
+          const acpManager = getAcpSessionManagerCore();
           replaceSessionEntrySync(
             {
               sessionKey: acpChild,

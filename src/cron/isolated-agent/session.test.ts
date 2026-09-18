@@ -1,8 +1,11 @@
 // Isolated agent session tests cover session creation and metadata for cron runs.
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { OpenClawConfig } from "../../config/config.js";
 import type { SessionEntry, SessionOrigin } from "../../config/sessions/types.js";
 import { normalizeLegacySessionEntryDelivery } from "../../infra/state-migrations.legacy-session-store.js";
+import type {
+  ExecutionFallbackPermission,
+  SessionExecutionSelection,
+} from "../../model-picker/execution-selection.js";
 import { projectSessionDeliveryFields } from "../../utils/delivery-context.shared.js";
 import type { DeliveryContext } from "../../utils/delivery-context.types.js";
 
@@ -54,7 +57,18 @@ type MockSessionStoreEntry = Partial<SessionEntry> & {
   lastAccountId?: string;
   lastThreadId?: string | number;
 };
-type ProjectedSessionEntry = SessionEntry & ReturnType<typeof projectSessionDeliveryFields>;
+
+function selectedModel(
+  provider: string,
+  id: string,
+  fallbackPermission: ExecutionFallbackPermission = "explicit",
+): SessionExecutionSelection {
+  return {
+    state: "accepted",
+    selection: { model: { provider, id }, executor: { kind: "harness", id: "openclaw" } },
+    fallbackPermission,
+  };
+}
 
 function resolveWithStoredEntry(params?: {
   sessionKey?: string;
@@ -67,15 +81,17 @@ function resolveWithStoredEntry(params?: {
   const sourceSessionKey = params?.sourceSessionKey;
   const store: SessionStore = params?.entry
     ? {
-        [sourceSessionKey ?? sessionKey]: normalizeLegacySessionEntryDelivery(
-          params.entry as SessionEntry,
-        ),
+        [sourceSessionKey ?? sessionKey]: normalizeLegacySessionEntryDelivery({
+          sessionId: "",
+          updatedAt: 0,
+          ...params.entry,
+        }),
       }
     : {};
   vi.mocked(evaluateSessionFreshness).mockReturnValue({ fresh: params?.fresh ?? true });
 
   const result = resolveCronSession({
-    cfg: {} as OpenClawConfig,
+    cfg: {},
     sessionKey,
     sourceSessionKey,
     agentId: "main",
@@ -88,7 +104,7 @@ function resolveWithStoredEntry(params?: {
     sessionEntry: {
       ...result.sessionEntry,
       ...projectSessionDeliveryFields(result.sessionEntry.delivery),
-    } as ProjectedSessionEntry,
+    },
   };
 }
 
@@ -97,27 +113,34 @@ describe("resolveCronSession", () => {
     vi.mocked(clearBootstrapSnapshot).mockReset();
   });
 
-  it("preserves modelOverride and providerOverride from existing session entry", () => {
-    const result = resolveWithStoredEntry({
-      sessionKey: "agent:main:cron:test-job",
-      entry: {
-        sessionId: "old-session-id",
-        updatedAt: 1000,
-        modelOverride: "deepseek-v3-4bit-mlx",
-        providerOverride: "inferencer",
-        thinkingLevel: "high",
-        model: "kimi-code",
-      },
-    });
+  it.each(["configured", "explicit"] as const)(
+    "preserves selected execution with %s fallback permission separately from run history",
+    (fallbackPermission) => {
+      const executionSelection = selectedModel(
+        "inferencer",
+        "deepseek-v3-4bit-mlx",
+        fallbackPermission,
+      );
+      const result = resolveWithStoredEntry({
+        sessionKey: "agent:main:cron:test-job",
+        entry: {
+          sessionId: "old-session-id",
+          updatedAt: 1000,
+          executionSelection,
+          thinkingLevel: "high",
+          model: "kimi-code",
+          modelProvider: "moonshot",
+        },
+      });
 
-    expect(result.sessionEntry.modelOverride).toBe("deepseek-v3-4bit-mlx");
-    expect(result.sessionEntry.providerOverride).toBe("inferencer");
-    expect(result.sessionEntry.thinkingLevel).toBe("high");
-    // The model field (last-used model) should also be preserved
-    expect(result.sessionEntry.model).toBe("kimi-code");
-  });
+      expect(result.sessionEntry.executionSelection).toEqual(executionSelection);
+      expect(result.sessionEntry.thinkingLevel).toBe("high");
+      expect(result.sessionEntry.model).toBe("kimi-code");
+      expect(result.sessionEntry.modelProvider).toBe("moonshot");
+    },
+  );
 
-  it("handles missing modelOverride gracefully", () => {
+  it("does not infer a selection from the last-used model", () => {
     const result = resolveWithStoredEntry({
       sessionKey: "agent:main:cron:test-job",
       entry: {
@@ -127,8 +150,7 @@ describe("resolveCronSession", () => {
       },
     });
 
-    expect(result.sessionEntry.modelOverride).toBeUndefined();
-    expect(result.sessionEntry.providerOverride).toBeUndefined();
+    expect(result.sessionEntry.executionSelection).toBeUndefined();
   });
 
   it("preserves an explicit configured-default selection", () => {
@@ -138,16 +160,19 @@ describe("resolveCronSession", () => {
       entry: {
         sessionId: "old-session-id",
         updatedAt: 1000,
-        modelOverrideSource: "default",
-        providerOverride: "anthropic",
-        modelOverride: "claude-sonnet-4-6",
-        modelOverrideFallbackOriginProvider: "openai",
-        modelOverrideFallbackOriginModel: "gpt-5.4",
+        executionSelection: {
+          state: "deferred",
+          request: { defaultSelection: "configured" },
+          fallbackPermission: "configured",
+        },
       },
     });
 
-    expect(result.sessionEntry.modelOverrideSource).toBe("default");
-    expect(result.sessionEntry.modelOverride).toBeUndefined();
+    expect(result.sessionEntry.executionSelection).toEqual({
+      state: "deferred",
+      request: { defaultSelection: "configured" },
+      fallbackPermission: "configured",
+    });
   });
 
   it("handles no existing session entry", () => {
@@ -155,8 +180,7 @@ describe("resolveCronSession", () => {
       sessionKey: "agent:main:cron:new-job",
     });
 
-    expect(result.sessionEntry.modelOverride).toBeUndefined();
-    expect(result.sessionEntry.providerOverride).toBeUndefined();
+    expect(result.sessionEntry.executionSelection).toBeUndefined();
     expect(result.sessionEntry.model).toBeUndefined();
     expect(result.isNewSession).toBe(true);
   });
@@ -239,7 +263,6 @@ describe("resolveCronSession", () => {
     );
   });
 
-  // New tests for session reuse behavior (#18027)
   describe("session reuse for webhooks/cron", () => {
     it("reuses existing sessionId when session is fresh", () => {
       const lastInteractionAt = NOW_MS - 30 * 60_000;
@@ -268,8 +291,7 @@ describe("resolveCronSession", () => {
           sessionFile: "/tmp/legacy-session.jsonl",
           updatedAt: NOW_MS - 86_400_000, // 1 day ago
           systemSent: true,
-          modelOverride: "gpt-4.1-mini",
-          providerOverride: "openai",
+          executionSelection: selectedModel("openai", "gpt-4.1-mini"),
           agentHarnessId: "codex",
           claudeCliSessionId: "native-before-boundary",
           compactionCount: 9,
@@ -282,8 +304,9 @@ describe("resolveCronSession", () => {
       expect(result.isNewSession).toBe(true);
       expect(result.previousSessionId).toBeUndefined();
       expect(result.systemSent).toBe(false);
-      expect(result.sessionEntry.modelOverride).toBe("gpt-4.1-mini");
-      expect(result.sessionEntry.providerOverride).toBe("openai");
+      expect(result.sessionEntry.executionSelection).toEqual(
+        selectedModel("openai", "gpt-4.1-mini"),
+      );
       expect(result.sessionEntry.agentHarnessId).toBeUndefined();
       expect(result.sessionEntry.claudeCliSessionId).toBeUndefined();
       expect(result.sessionEntry.compactionCount).toBe(0);
@@ -323,8 +346,7 @@ describe("resolveCronSession", () => {
           sessionId: "existing-session-id-456",
           updatedAt: NOW_MS - 1000,
           systemSent: true,
-          modelOverride: "sonnet-4",
-          providerOverride: "anthropic",
+          executionSelection: selectedModel("anthropic", "sonnet-4"),
         },
         fresh: true,
         forceNew: true,
@@ -334,8 +356,9 @@ describe("resolveCronSession", () => {
       expect(result.isNewSession).toBe(true);
       expect(result.previousSessionId).toBe("existing-session-id-456");
       expect(result.systemSent).toBe(false);
-      expect(result.sessionEntry.modelOverride).toBe("sonnet-4");
-      expect(result.sessionEntry.providerOverride).toBe("anthropic");
+      expect(result.sessionEntry.executionSelection).toEqual(
+        selectedModel("anthropic", "sonnet-4"),
+      );
       expect(clearBootstrapSnapshot).toHaveBeenCalledWith("webhook:stable-key");
     });
 
@@ -355,12 +378,11 @@ describe("resolveCronSession", () => {
       expect(result.sessionEntry.pinnedAt).toBe(pinnedAt);
     });
 
-    it("drops a standalone runtime override without a retained model selection", () => {
+    it("drops observed runtime history without creating a selection", () => {
       const result = resolveWithStoredEntry({
         entry: {
           sessionId: "existing-session-id-runtime",
           updatedAt: NOW_MS - 1000,
-          agentRuntimeOverride: "openclaw",
           agentHarnessId: "codex",
         },
         fresh: true,
@@ -368,7 +390,7 @@ describe("resolveCronSession", () => {
       });
 
       expect(result.isNewSession).toBe(true);
-      expect(result.sessionEntry.agentRuntimeOverride).toBeUndefined();
+      expect(result.sessionEntry.executionSelection).toBeUndefined();
       expect(result.sessionEntry.agentHarnessId).toBeUndefined();
     });
 
@@ -378,7 +400,7 @@ describe("resolveCronSession", () => {
           sessionId: "existing-session-id-456",
           updatedAt: NOW_MS - 1000,
           sessionFile: "/tmp/stale-session.jsonl",
-          modelOverride: "sonnet-4",
+          executionSelection: selectedModel("anthropic", "sonnet-4"),
         },
         fresh: true,
         forceNew: true,
@@ -387,7 +409,9 @@ describe("resolveCronSession", () => {
       expect(result.sessionEntry.sessionId).not.toBe("existing-session-id-456");
       expect(result.isNewSession).toBe(true);
       expect(result.sessionEntry.sessionFile).toBeUndefined();
-      expect(result.sessionEntry.modelOverride).toBe("sonnet-4");
+      expect(result.sessionEntry.executionSelection).toEqual(
+        selectedModel("anthropic", "sonnet-4"),
+      );
     });
 
     it("clears delivery routing metadata and deliveryContext when forceNew is true", () => {
@@ -396,7 +420,7 @@ describe("resolveCronSession", () => {
           sessionId: "existing-session-id-789",
           updatedAt: NOW_MS - 1000,
           systemSent: true,
-          lastChannel: "slack" as never,
+          lastChannel: "slack",
           lastTo: "channel:C0XXXXXXXXX",
           lastAccountId: "acct-123",
           lastThreadId: "1737500000.123456",
@@ -405,8 +429,7 @@ describe("resolveCronSession", () => {
             to: "channel:C0XXXXXXXXX",
             threadId: "1737500000.123456",
           },
-          modelOverride: "gpt-5.4",
-          agentRuntimeOverride: "openclaw",
+          executionSelection: selectedModel("openai", "gpt-5.4"),
           agentHarnessId: "codex",
         },
         fresh: true,
@@ -422,9 +445,7 @@ describe("resolveCronSession", () => {
       expect(result.sessionEntry.lastAccountId).toBeUndefined();
       expect(result.sessionEntry.lastThreadId).toBeUndefined();
       expect(result.sessionEntry.deliveryContext).toBeUndefined();
-      // Per-session overrides must be preserved
-      expect(result.sessionEntry.modelOverride).toBe("gpt-5.4");
-      expect(result.sessionEntry.agentRuntimeOverride).toBe("openclaw");
+      expect(result.sessionEntry.executionSelection).toEqual(selectedModel("openai", "gpt-5.4"));
       expect(result.sessionEntry.agentHarnessId).toBeUndefined();
     });
 
@@ -443,7 +464,6 @@ describe("resolveCronSession", () => {
           model: "claude-opus-4-6",
           modelProvider: "anthropic",
           agentHarnessId: "claude-cli",
-          agentRuntimeOverride: "claude-cli",
           cliSessionIds: { anthropic: "old-cli-session" },
           cliSessionBindings: {},
           claudeCliSessionId: "old-claude-session",
@@ -494,7 +514,7 @@ describe("resolveCronSession", () => {
           queueDebounceMs: 500,
           queueCap: 25,
           queueDrop: "old",
-          channel: "telegram" as never,
+          channel: "telegram",
           groupId: "group-1",
           subject: "old subject",
           groupChannel: "ops",
@@ -504,8 +524,6 @@ describe("resolveCronSession", () => {
             to: "old-chat",
           },
           acp: {
-            backend: "acpx",
-            agent: "codex",
             runtimeSessionName: "old-acp",
             mode: "persistent",
             state: "idle",
@@ -513,9 +531,14 @@ describe("resolveCronSession", () => {
           },
           authProfileOverride: "auto-auth",
           authProfileOverrideCompactionCount: 2,
-          modelOverride: "auto-model",
-          providerOverride: "anthropic",
-          modelOverrideSource: "auto",
+          executionSelection: {
+            state: "accepted",
+            selection: {
+              model: "native-managed",
+              executor: { kind: "acp", backend: "acpx", agent: "codex" },
+            },
+            fallbackPermission: "explicit",
+          },
         },
         fresh: true,
         forceNew: true,
@@ -532,7 +555,6 @@ describe("resolveCronSession", () => {
       expect(result.sessionEntry.model).toBeUndefined();
       expect(result.sessionEntry.modelProvider).toBeUndefined();
       expect(result.sessionEntry.agentHarnessId).toBeUndefined();
-      expect(result.sessionEntry.agentRuntimeOverride).toBeUndefined();
       expect(result.sessionEntry.cliSessionIds).toBeUndefined();
       expect(result.sessionEntry.cliSessionBindings).toBeUndefined();
       expect(result.sessionEntry.claudeCliSessionId).toBeUndefined();
@@ -574,9 +596,14 @@ describe("resolveCronSession", () => {
       expect(result.sessionEntry.authProfileOverride).toBeUndefined();
       expect(result.sessionEntry.authProfileOverrideSource).toBeUndefined();
       expect(result.sessionEntry.authProfileOverrideCompactionCount).toBeUndefined();
-      expect(result.sessionEntry.modelOverride).toBeUndefined();
-      expect(result.sessionEntry.providerOverride).toBeUndefined();
-      expect(result.sessionEntry.modelOverrideSource).toBeUndefined();
+      expect(result.sessionEntry.executionSelection).toEqual({
+        state: "accepted",
+        selection: {
+          model: "native-managed",
+          executor: { kind: "acp", backend: "acpx", agent: "codex" },
+        },
+        fallbackPermission: "explicit",
+      });
     });
 
     it("preserves user-selected model and auth overrides for fresh cron sessions", () => {
@@ -584,10 +611,7 @@ describe("resolveCronSession", () => {
         entry: {
           sessionId: "existing-session-id-654",
           updatedAt: NOW_MS - 1000,
-          modelOverride: "claude-sonnet-4-6",
-          providerOverride: "anthropic",
-          modelOverrideSource: "user",
-          agentRuntimeOverride: "openclaw",
+          executionSelection: selectedModel("anthropic", "claude-sonnet-4-6"),
           authProfileOverride: "work-profile",
           authProfileOverrideSource: "user",
           authProfileOverrideCompactionCount: 3,
@@ -597,10 +621,9 @@ describe("resolveCronSession", () => {
       });
 
       expect(result.isNewSession).toBe(true);
-      expect(result.sessionEntry.modelOverride).toBe("claude-sonnet-4-6");
-      expect(result.sessionEntry.providerOverride).toBe("anthropic");
-      expect(result.sessionEntry.modelOverrideSource).toBe("user");
-      expect(result.sessionEntry.agentRuntimeOverride).toBe("openclaw");
+      expect(result.sessionEntry.executionSelection).toEqual(
+        selectedModel("anthropic", "claude-sonnet-4-6"),
+      );
       expect(result.sessionEntry.authProfileOverride).toBe("work-profile");
       expect(result.sessionEntry.authProfileOverrideSource).toBe("user");
       expect(result.sessionEntry.authProfileOverrideCompactionCount).toBe(3);
@@ -630,7 +653,7 @@ describe("resolveCronSession", () => {
           elevatedLevel: "full",
           sendPolicy: "deny",
           queueMode: "collect",
-          channel: "discord" as never,
+          channel: "discord",
           origin: { provider: "discord", to: "old-channel" },
         },
         fresh: false,
@@ -649,7 +672,7 @@ describe("resolveCronSession", () => {
         entry: {
           sessionId: "old-session-id",
           updatedAt: NOW_MS - 86_400_000,
-          lastChannel: "slack" as never,
+          lastChannel: "slack",
           lastTo: "channel:C0XXXXXXXXX",
           lastThreadId: "1737500000.999999",
           deliveryContext: {
@@ -675,7 +698,7 @@ describe("resolveCronSession", () => {
           sessionId: "existing-session-id-101",
           updatedAt: NOW_MS - 1000,
           systemSent: true,
-          lastChannel: "slack" as never,
+          lastChannel: "slack",
           lastTo: "channel:C0XXXXXXXXX",
           lastThreadId: "1737500000.123456",
           deliveryContext: {
@@ -698,18 +721,20 @@ describe("resolveCronSession", () => {
       });
     });
 
-    it("creates new sessionId when entry exists but has no sessionId", () => {
+    it("creates new sessionId when the stored sessionId is empty", () => {
       const result = resolveWithStoredEntry({
         entry: {
           updatedAt: NOW_MS - 1000,
-          modelOverride: "some-model",
+          executionSelection: selectedModel("anthropic", "some-model"),
         },
       });
 
       expect(result.isNewSession).toBe(true);
       expect(typeof result.sessionEntry.sessionId).toBe("string");
       expect(result.sessionEntry.sessionId).not.toHaveLength(0);
-      expect(result.sessionEntry.modelOverride).toBe("some-model");
+      expect(result.sessionEntry.executionSelection).toEqual(
+        selectedModel("anthropic", "some-model"),
+      );
     });
   });
 });

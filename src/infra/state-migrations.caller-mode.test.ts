@@ -417,7 +417,7 @@ describe("legacy state migration caller mode", () => {
       env: fixture.env,
     });
     expect(first.warnings).toEqual([]);
-    const firstAgentStep = first.steps.find((step) => step.id === "acp-session-metadata");
+    const firstAgentStep = first.steps.find((step) => step.id === "orphan-session-keys");
     const configIncludedPaths = [
       ...new Set([
         includePath,
@@ -446,7 +446,6 @@ describe("legacy state migration caller mode", () => {
         kind: "path",
         path: path.join(fixture.stateDir, "agents", "atlas", "sessions", "sessions.json"),
       },
-      { kind: "sqlite", path: resolveOpenClawStateSqlitePath(fixture.env) },
     ]);
     const firstConfigDigest = first.snapshot.configDigest;
     if (!firstConfigDigest) {
@@ -477,14 +476,13 @@ describe("legacy state migration caller mode", () => {
       snapshot: createCallerModeSnapshot(fixture),
       env: fixture.env,
     });
-    const secondAgentStep = second.steps.find((step) => step.id === "acp-session-metadata");
+    const secondAgentStep = second.steps.find((step) => step.id === "orphan-session-keys");
     expect.soft(second.snapshot.configDigest).not.toBe(firstConfigDigest);
     expect.soft(secondAgentStep?.target).toEqual([
       {
         kind: "path",
         path: path.join(fixture.stateDir, "agents", "beacon", "sessions", "sessions.json"),
       },
-      { kind: "sqlite", path: resolveOpenClawStateSqlitePath(fixture.env) },
     ]);
 
     const execution = await autoMigrateLegacyState({
@@ -724,10 +722,8 @@ describe("legacy state migration caller mode", () => {
           ),
         ).toBe(false);
       }
-      for (const stepId of ["sessions", "acp-session-metadata"]) {
-        expect(plan.steps.find((step) => step.id === stepId)).toBeUndefined();
-        expect(result.stepReceipts.find((receipt) => receipt.id === stepId)).toBeUndefined();
-      }
+      expect(plan.steps.find((step) => step.id === "sessions")).toBeUndefined();
+      expect(result.stepReceipts.find((receipt) => receipt.id === "sessions")).toBeUndefined();
       if (overrideKey === "OPENCLAW_AGENT_DIR") {
         expect(plan.steps.find((step) => step.id === "agent-dir")).toBeDefined();
         expect(result.stepReceipts.find((receipt) => receipt.id === "agent-dir")).toMatchObject({
@@ -896,14 +892,6 @@ describe("legacy state migration caller mode", () => {
     expect(
       result.stepReceipts.find((receipt) => receipt.id === "shared-auth-store")?.source,
     ).toEqual(plan.steps.find((step) => step.id === "shared-auth-store")?.source);
-    const plannedAcp = plan.steps.find((step) => step.id === "acp-session-metadata");
-    expect(plannedAcp?.source).not.toContainEqual({
-      kind: "sqlite",
-      path: standardAgentDatabasePath,
-    });
-    expect(
-      result.stepReceipts.find((receipt) => receipt.id === "acp-session-metadata")?.source,
-    ).toEqual(plannedAcp?.source);
     for (const stepId of ["media-persistence", "transcript-directives"]) {
       expect(plan.steps.find((step) => step.id === stepId)?.source).toContainEqual({
         kind: "sqlite",
@@ -921,7 +909,7 @@ describe("legacy state migration caller mode", () => {
     expect(
       result.stepReceipts.find((receipt) => receipt.id === "meeting-transcripts")?.source,
     ).toEqual(plan.steps.find((step) => step.id === "meeting-transcripts")?.source);
-    for (const stepId of ["sessions", "acp-session-metadata", "agent-dir"]) {
+    for (const stepId of ["sessions", "agent-dir"]) {
       expect(plan.steps.find((step) => step.id === stepId)).toBeDefined();
       expect(result.stepReceipts.find((receipt) => receipt.id === stepId)).toBeDefined();
     }

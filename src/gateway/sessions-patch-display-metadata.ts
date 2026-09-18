@@ -7,7 +7,15 @@ import {
   SESSION_COLOR_IDS,
   SESSION_ICON_GLYPH_IDS,
 } from "../../packages/gateway-protocol/src/session-agent-status.js";
+import { isPinnableSessionEntry } from "../config/sessions/session-pin-policy.js";
 import type { InternalSessionEntry } from "../config/sessions/types.js";
+import {
+  isSessionAgentAttentionIconId,
+  resolveActiveSessionAgentStatus,
+  sanitizeSessionAgentStatusNote,
+  sessionAgentStatusExpiresAt,
+  SESSION_AGENT_STATUS_MAX_TTL_MINUTES,
+} from "../sessions/session-agent-status.js";
 import { parseSessionLabel, SESSION_LABEL_MAX_LENGTH } from "../sessions/session-label.js";
 
 /** Applies display-metadata patch fields onto the next entry; returns an error message on invalid input. */
@@ -102,5 +110,111 @@ export function applySessionsPatchDisplayMetadata(params: {
     }
   }
 
+  return undefined;
+}
+
+export function applySessionsPatchAgentStatus(
+  patch: SessionsPatchParams,
+  next: InternalSessionEntry,
+  now: number,
+): string | undefined {
+  if (!("statusNote" in patch || "attention" in patch || "ttlMinutes" in patch)) {
+    return undefined;
+  }
+  const rawNote = patch.statusNote;
+  const rawAttention = patch.attention;
+  const ttlMinutes = patch.ttlMinutes;
+  if (
+    ttlMinutes !== undefined &&
+    (!Number.isInteger(ttlMinutes) ||
+      ttlMinutes < 1 ||
+      ttlMinutes > SESSION_AGENT_STATUS_MAX_TTL_MINUTES)
+  ) {
+    return `invalid ttlMinutes (use 1-${SESSION_AGENT_STATUS_MAX_TTL_MINUTES})`;
+  }
+  if (rawNote === null || rawAttention === null) {
+    if (
+      (rawNote !== undefined && rawNote !== null) ||
+      (rawAttention !== undefined && rawAttention !== null)
+    ) {
+      return "cannot clear and set agent status in the same patch";
+    }
+    delete next.agentStatus;
+  } else {
+    const current = resolveActiveSessionAgentStatus(next.agentStatus, now);
+    const note = rawNote === undefined ? current?.note : sanitizeSessionAgentStatusNote(rawNote);
+    if (!note) {
+      return "statusNote required before setting attention or ttlMinutes";
+    }
+    if (rawAttention !== undefined && !isSessionAgentAttentionIconId(rawAttention)) {
+      return "invalid attention icon";
+    }
+    const attention = rawAttention ?? current?.attention;
+    next.agentStatus = {
+      note,
+      expiresAt: sessionAgentStatusExpiresAt(now, ttlMinutes),
+      ...(attention ? { attention } : {}),
+    };
+  }
+  return undefined;
+}
+
+export function applySessionsPatchListState(params: {
+  patch: SessionsPatchParams;
+  next: InternalSessionEntry;
+  storeKey: string;
+  now: number;
+  archivedBy?: InternalSessionEntry["archivedBy"];
+}): string | undefined {
+  const { patch, next, storeKey, now } = params;
+  if ("archived" in patch) {
+    if (patch.archived === true) {
+      // Archived sessions leave the active quick-access set in the same write.
+      if (next.archivedAt === undefined) {
+        next.archivedAt = now;
+        next.archiveReason = "manual";
+        if (params.archivedBy) {
+          next.archivedBy = params.archivedBy;
+        } else {
+          delete next.archivedBy;
+        }
+      }
+      delete next.pinnedAt;
+    } else {
+      delete next.archivedAt;
+      delete next.archivedBy;
+      delete next.archiveReason;
+    }
+  }
+
+  const pinnable = isPinnableSessionEntry(storeKey, next);
+  if (!pinnable) {
+    delete next.pinnedAt;
+  }
+  if ("pinned" in patch) {
+    if (patch.pinned === true) {
+      if (next.archivedAt !== undefined) {
+        return "cannot pin an archived session; restore it first";
+      }
+      if (!pinnable) {
+        return "cannot pin a child session; pin its parent session instead";
+      }
+      next.pinnedAt ??= now;
+    } else {
+      delete next.pinnedAt;
+    }
+  }
+
+  if ("unread" in patch) {
+    if (patch.unread === true) {
+      // This timestamp is also the conditional-ack revision. Repeated writes in
+      // one clock tick must still represent distinct manual unread intent.
+      next.markedUnreadAt = Math.max(now, (next.markedUnreadAt ?? 0) + 1);
+    } else {
+      next.lastReadAt = now;
+      delete next.markedUnreadAt;
+      delete next.agentStatus;
+    }
+  }
   return undefined;
 }

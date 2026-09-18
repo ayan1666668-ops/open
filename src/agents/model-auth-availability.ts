@@ -70,6 +70,7 @@ import {
   resolveProviderEntryApiKeyProfileReference,
   shouldPreferExplicitConfigApiKeyAuth,
 } from "./model-auth-provider-config.js";
+import { normalizeModelIdForProvider } from "./model-auth-provider-route.js";
 import { resolveManagedSecretRefRuntimeProviderAuth } from "./model-auth-runtime-config.js";
 import { hasAuthoredProviderRequestParams } from "./model-extra-params.js";
 import { splitTrailingAuthProfile } from "./model-ref-profile.js";
@@ -289,20 +290,6 @@ function modeAllowed(provider: string, target: AuthTarget, mode: string | undefi
         target.api === undefined ||
         target.api === OPENAI_CODEX_RESPONSES_API ||
         requirement === "api-key";
-}
-
-function normalizeModelIdForProvider(provider: string, modelId: string): string | undefined {
-  const trimmed = splitTrailingAuthProfile(modelId).model.trim();
-  if (!trimmed) {
-    return undefined;
-  }
-  const slash = trimmed.indexOf("/");
-  if (slash <= 0) {
-    return trimmed;
-  }
-  return normalizeProviderIdForAuth(trimmed.slice(0, slash)) === provider
-    ? trimmed.slice(slash + 1).trim() || undefined
-    : undefined;
 }
 
 /** Builds one snapshot-scoped read-only auth evaluator. */
@@ -1455,10 +1442,7 @@ export function createModelAuthAvailabilityResolver(
   };
   const providerDiscoveryProviderIds = new Set<string>();
   const addProviderDiscoveryProviderId = (provider: string | undefined) => {
-    if (!provider) {
-      return;
-    }
-    const normalized = normalizeProvider(provider);
+    const normalized = provider && normalizeProvider(provider);
     if (normalized) {
       providerDiscoveryProviderIds.add(normalized);
     }

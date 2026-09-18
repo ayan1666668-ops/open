@@ -943,28 +943,30 @@ module.exports = { stateMigrations: [{
       databasePath: resolveOpenClawStateSqlitePath(fixture.env),
     });
     const resources = createOpenClawDatabaseMaintenanceScope(coordinator.createSchemaFenceDelegate);
-    const result = await resources
-      .run(() =>
-        autoMigrateLegacyState({
-          cfg,
-          doctorOnlyStateMigrations: true,
-          env: fixture.env,
-          homedir: () => fixture.homeDir,
-          legacySessionSurfaces: EMPTY_LEGACY_SESSION_SURFACES,
-          onStepReceipt: (receipt) => {
-            if (receipt.id === "config-machine-state" && receipt.outcome === "completed") {
-              configMigrationCompleted = true;
-            }
-          },
-        }),
-      )
-      .finally(async () => {
+    const result = await (async () => {
+      try {
+        return await resources.run(() =>
+          autoMigrateLegacyState({
+            cfg,
+            doctorOnlyStateMigrations: true,
+            env: fixture.env,
+            homedir: () => fixture.homeDir,
+            legacySessionSurfaces: EMPTY_LEGACY_SESSION_SURFACES,
+            onStepReceipt: (receipt) => {
+              if (receipt.id === "config-machine-state" && receipt.outcome === "completed") {
+                configMigrationCompleted = true;
+              }
+            },
+          }),
+        );
+      } finally {
         try {
           await resources.close();
         } finally {
           coordinator.release();
         }
-      });
+      }
+    })();
     expectBlockedTailInPlanOrder({
       plan,
       receipts: result.stepReceipts,

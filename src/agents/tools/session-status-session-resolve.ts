@@ -91,7 +91,7 @@ function synthesizeImplicitCurrentSessionEntry(): SessionEntry {
   };
 }
 
-/** Returns a synthesized current-session entry without writing it to storage. */
+/** Uses the persisted fallback target before synthesizing a missing current session. */
 export function resolveImplicitCurrentSessionFallback(params: {
   agentId: string;
   allowFallback: boolean;
@@ -104,7 +104,7 @@ export function resolveImplicitCurrentSessionFallback(params: {
   }
   const resolved = resolveSessionEntryCandidateTarget({
     agentId: params.agentId,
-    candidateKeys: [],
+    candidateKeys: [fallbackKey],
     cfg: params.cfg,
     fallback: {
       sessionKey: fallbackKey,

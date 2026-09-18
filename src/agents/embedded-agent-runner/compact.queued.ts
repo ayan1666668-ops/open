@@ -54,6 +54,7 @@ import {
 } from "./compact.queued-execution.js";
 import type { CompactEmbeddedAgentSessionParams } from "./compact.types.js";
 import {
+  applyPreparedCompactionSelection,
   buildEmbeddedCompactionRuntimeContext,
   resolveCompactionContextTokenBudget,
 } from "./compaction-runtime-context.js";
@@ -192,9 +193,10 @@ async function deferOwningContextEngineBudgetCompaction(params: {
  * `compactEmbeddedAgentSessionDirect` to avoid deadlocks.
  */
 export async function compactEmbeddedAgentSession(
-  params: CompactEmbeddedAgentSessionParams,
+  paramsInput: CompactEmbeddedAgentSessionParams,
   host: QueuedCompactionHostOptions = {},
 ): Promise<EmbeddedAgentCompactResult> {
+  const params = applyPreparedCompactionSelection(paramsInput, host.preparedSelection);
   const projectedConfig = projectCodexHostTranscriptBytePreflightConfig(
     params.config,
     Boolean(host.transcriptBytePreflightHarness),
@@ -352,6 +354,7 @@ async function compactEmbeddedAgentSessionPrepared(
   // not incorrectly require an OpenClaw model API credential.
   const nativeCliResult = await compactNativeCliSession({
     runtime: runtimeSelection.selectedHarnessRuntime,
+    preparedSelection: host.preparedSelection,
     compactParams: {
       ...params,
       agentDir,

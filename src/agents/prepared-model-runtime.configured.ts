@@ -49,7 +49,7 @@ import type {
   PreparedModelRuntimeInput,
 } from "./prepared-model-runtime.types.js";
 import type { AuthStorageData } from "./sessions/auth-storage.js";
-import { resolveEffectiveAgentRuntime } from "./thinking-runtime.js";
+import { resolveEffectiveAgentRuntimeCore } from "./thinking-runtime.js";
 
 /** Collects defaults, global refs, and only the selected agent's overrides. */
 export function collectPreparedModelRuntimeConfiguredRefs(
@@ -241,7 +241,7 @@ export function prepareRuntimeCapabilityModels(params: {
     if (!provider || !modelId) {
       continue;
     }
-    const runtime = resolveEffectiveAgentRuntime({
+    const runtime = resolveEffectiveAgentRuntimeCore({
       cfg: params.config,
       provider,
       modelId,

@@ -71,6 +71,8 @@ export type DurableDeliveryCompletion =
     }
   | {
       kind: "pending-final";
+      /** Absent on durable queue entries created before owner capture. */
+      agentId?: string;
       deliveryId: string;
       intentId: string;
       sessionId: string;
@@ -164,6 +166,7 @@ export async function settlePendingFinalDelivery(
   let deliveredHarnessClaim: HarnessCompletionRecovery | undefined;
   await patchSessionEntryCore(
     {
+      agentId: completion.agentId,
       sessionKey: completion.sessionKey,
       storePath: completion.storePath,
       env: resolveDeliveryQueueStateEnv(options.stateDir, options.stateContext),
@@ -316,6 +319,7 @@ export async function settlePendingFinalDelivery(
     const { scheduleMainSessionRecoveryPendingTarget } =
       await import("../../agents/main-session-recovery/main-session-recovery-owner-release.js");
     scheduleMainSessionRecoveryPendingTarget({
+      agentId: completion.agentId,
       sessionId: completion.sessionId,
       sessionKey: completion.sessionKey,
       ...(options.stateDir !== undefined ? { stateDir: options.stateDir } : {}),

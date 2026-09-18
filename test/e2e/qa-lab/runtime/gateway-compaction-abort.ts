@@ -82,6 +82,7 @@ async function loadRuntime() {
     evidence,
     claimAgentSessionWriter: writer.claimAgentSessionWriter,
     loadSessionEntry: hostStore.loadSessionEntry,
+    upsertSessionEntryCore: hostStore.upsertSessionEntryCore,
     resolveSessionTranscriptDatabasePath: hostStore.resolveSessionTranscriptDatabasePath,
   };
 }

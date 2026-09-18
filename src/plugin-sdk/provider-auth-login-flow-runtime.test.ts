@@ -212,7 +212,6 @@ describe("provider channel login runtime", () => {
         snapshot: undefined,
         current: {
           sessionId: "created-during-login",
-          modelProvider: "acme-cloud",
           authProfileOverride: "acme-cloud:personal",
           authProfileOverrideSource: "user-link",
         },

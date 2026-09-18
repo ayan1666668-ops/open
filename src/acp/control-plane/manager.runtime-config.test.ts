@@ -61,7 +61,7 @@ describe("AcpSessionManager runtime config", () => {
       },
     } satisfies SessionAcpMeta;
 
-    const metaState = installPublicAcpSessionFixture("agent:codex:acp:session-1", initialMeta);
+    installPublicAcpSessionFixture("agent:codex:acp:session-1", initialMeta);
 
     const manager = new AcpSessionManager();
     await manager.setSessionConfigOption({

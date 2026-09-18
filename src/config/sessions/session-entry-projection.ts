@@ -42,23 +42,26 @@ export function stripPrivateSessionEntryFields(
   entry: Partial<InternalSessionEntry> & { thinkingLevelSelection?: unknown },
 ): Partial<SessionEntry> {
   const projected = { ...entry };
-  for (const key of PRIVATE_SESSION_ENTRY_KEYS) delete projected[key];
+  for (const key of PRIVATE_SESSION_ENTRY_KEYS) {
+    delete projected[key];
+  }
   delete projected.thinkingLevelSelection;
+  if (projected.modelFallback) {
+    const fallback: typeof projected.modelFallback & { prevThinkingLevelSelection?: unknown } = {
+      ...projected.modelFallback,
+    };
+    delete fallback.prevThinkingLevelSelection;
+    projected.modelFallback = fallback;
+  }
   return projected;
 }
 
 export function projectPublicSessionEntry(entry: InternalSessionEntry): PublicSessionEntry {
   return {
-    ...projectPublicSessionEntryPatch(entry),
+    ...projectExecutionSelectionEntry(stripPrivateSessionEntryFields(entry)),
     sessionId: entry.sessionId,
     updatedAt: entry.updatedAt,
   };
-}
-
-export function projectPublicSessionEntryPatch(
-  patch: Partial<InternalSessionEntry>,
-): Partial<PublicSessionEntry> {
-  return projectExecutionSelectionEntry(stripPrivateSessionEntryFields(patch));
 }
 
 // A completed context rewrite invalidates the previous run snapshot, not the transcript ledger.

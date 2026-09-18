@@ -39,6 +39,7 @@ import {
   resolveAgentRunSessionTarget,
 } from "../run-session-target.js";
 import { resolveSystemPromptRepoRoot } from "../system-prompt-params.js";
+import type { QueuedCompactionHostOptions } from "./compact.queued-execution.js";
 import type {
   CompactEmbeddedAgentSessionParams,
   CompactEmbeddedAgentSessionRuntimeParams,
@@ -51,7 +52,10 @@ import {
   runBeforeCompactionHooks,
   runPostCompactionSideEffects,
 } from "./compaction-hooks.js";
-import { resolveEmbeddedCompactionTarget } from "./compaction-runtime-context.js";
+import {
+  applyPreparedCompactionSelection,
+  resolveEmbeddedCompactionTarget,
+} from "./compaction-runtime-context.js";
 import {
   projectCodexHostTranscriptBytePreflightConfig,
   resolveCompactionRuntimeSelection,
@@ -82,6 +86,7 @@ function lockedHarnessCompactionFailure(runtime: string): EmbeddedAgentCompactRe
 
 export async function compactNativeCliSession(params: {
   runtime: string | undefined;
+  preparedSelection?: QueuedCompactionHostOptions["preparedSelection"];
   compactParams: CompactEmbeddedAgentSessionParamsWithSessionFile;
   runControlOperation?: (run: () => Promise<void>) => Promise<void>;
 }): Promise<EmbeddedAgentCompactResult | undefined> {
@@ -112,6 +117,18 @@ export async function compactNativeCliSession(params: {
       reason: `CLI backend "${runtime}" cannot manually compact without a resumable native session.`,
     };
   }
+  const preparedAuth = params.preparedSelection?.auth;
+  if (preparedAuth && !preparedAuth.selection && cliSessionBinding?.authProfileId) {
+    return {
+      ok: false,
+      compacted: false,
+      reason:
+        "Cannot compact this conversation because its account changed. Switch back to its account or start a new conversation.",
+    };
+  }
+  const authProfileId = preparedAuth
+    ? preparedAuth.selection?.profileId
+    : (cliSessionBinding?.authProfileId ?? params.compactParams.authProfileId);
   const { runCliAgent } = await import("../cli-runner.js");
   const runId = `${params.compactParams.runId ?? params.compactParams.sessionId}:native-compact`;
   const sessionAgentId = resolveSessionAgentIds({
@@ -146,11 +163,7 @@ export async function compactNativeCliSession(params: {
         runId,
         cliSessionId,
         ...(cliSessionBinding ? { cliSessionBinding } : {}),
-        ...(cliSessionBinding?.authProfileId
-          ? { authProfileId: cliSessionBinding.authProfileId }
-          : params.compactParams.authProfileId
-            ? { authProfileId: params.compactParams.authProfileId }
-            : {}),
+        authProfileId,
         ...(params.compactParams.sessionEntry
           ? { sessionEntry: params.compactParams.sessionEntry }
           : {}),
@@ -251,10 +264,12 @@ function fallbackFailureToCompactionResult(err: unknown): EmbeddedAgentCompactRe
 export async function compactEmbeddedAgentSessionDirect(
   paramsInput: CompactEmbeddedAgentSessionRuntimeParams,
 ): Promise<EmbeddedAgentCompactResult> {
-  const paramsBase = applyAgentRunSessionTargetIdentity(paramsInput);
-  const memoryTranscript = readCompactionAccountingRecorder(
-    paramsBase.contextEngineRuntimeContext,
-  )?.memoryTranscript;
+  const host = readCompactionAccountingRecorder(paramsInput.contextEngineRuntimeContext);
+  const paramsBase = applyPreparedCompactionSelection(
+    applyAgentRunSessionTargetIdentity(paramsInput),
+    host?.preparedSelection,
+  );
+  const memoryTranscript = host?.memoryTranscript;
   memoryTranscript?.assertActive();
   const runSessionTarget =
     memoryTranscript?.sessionTarget ??
@@ -317,6 +332,7 @@ export async function compactEmbeddedAgentSessionDirect(
   // not incorrectly require an OpenClaw model API credential.
   const nativeCliResult = await compactNativeCliSession({
     runtime: runtimeSelection.selectedHarnessRuntime,
+    preparedSelection: host?.preparedSelection,
     compactParams: {
       ...requestedParams,
       agentDir: requestedAgentDir,

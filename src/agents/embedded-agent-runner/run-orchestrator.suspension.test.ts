@@ -9,8 +9,10 @@ import {
   loadSessionEntryReadOnly as loadSessionEntry,
   upsertSessionEntryCore,
 } from "../../config/sessions/session-accessor.js";
+import type { InternalSessionEntry } from "../../config/sessions/types.js";
 import { closeOpenClawAgentDatabasesForTest } from "../../state/openclaw-agent-db.js";
 import { closeOpenClawStateDatabaseForTest } from "../../state/openclaw-state-db.js";
+import { acceptedModelSelection } from "../../test-utils/session-execution-selection.js";
 import {
   runWithDeferredSessionSuspension,
   suspendSession,
@@ -342,13 +344,13 @@ describe("embedded run detached session metadata", () => {
     "does not spend a durable pending switch during detached %s (%s)",
     async (outcome, modelOverride) => {
       const { params, scope } = await createRun("research", "detached");
-      await upsertSessionEntryCore(scope, {
+      const entry: InternalSessionEntry = {
         sessionId: params.sessionId,
         updatedAt: 1,
-        providerOverride: "openai",
-        modelOverride,
         liveModelSwitchPending: true,
-      });
+        executionSelection: acceptedModelSelection("openai", modelOverride),
+      };
+      await upsertSessionEntryCore(scope, entry);
       const before = loadSessionEntry(scope);
       if (outcome === "success") {
         runAttempt.mockResolvedValue(successfulAttempt(params.sessionId));
@@ -372,18 +374,17 @@ describe("embedded run detached session metadata", () => {
     "still applies and eagerly clears live switches for %s turns",
     async (sessionPersistence) => {
       const { params, scope } = await createRun("research", sessionPersistence);
-      await upsertSessionEntryCore(scope, {
+      const entry: InternalSessionEntry = {
         sessionId: params.sessionId,
         updatedAt: 1,
-        providerOverride: "openai",
-        modelOverride: "mock-2",
         liveModelSwitchPending: true,
-      });
+        executionSelection: acceptedModelSelection("openai", "mock-2"),
+      };
+      await upsertSessionEntryCore(scope, entry);
       failAttempt("prompt", params.sessionId);
       await expect(runEmbeddedAgent(params)).rejects.toMatchObject({
         name: "LiveSessionModelSwitchError",
-        provider: "openai",
-        model: "mock-2",
+        selection: acceptedModelSelection("openai", "mock-2").selection,
       });
       expect(loadSessionEntry(scope)?.liveModelSwitchPending).toBeUndefined();
       await upsertSessionEntryCore(scope, {
@@ -448,13 +449,13 @@ describe("embedded run detached session metadata", () => {
       );
       manager.appendMessage({ role: "user", content: "What is the project called?", timestamp: 3 });
       if (existing) {
-        await upsertSessionEntryCore(scope, {
+        const entry: InternalSessionEntry = {
           sessionId: params.sessionId,
           updatedAt: 1,
           liveModelSwitchPending: true,
-          providerOverride: "openai",
-          modelOverride: "mock-1",
-        });
+          executionSelection: acceptedModelSelection("openai", "mock-1"),
+        };
+        await upsertSessionEntryCore(scope, entry);
         SessionManager.open({ ...scope, sessionId: params.sessionId }).appendMessage(
           makeUserMessage("BORROWED DURABLE HISTORY MUST NOT BE READ", 1),
         );

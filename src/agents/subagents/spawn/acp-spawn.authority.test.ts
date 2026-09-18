@@ -5,7 +5,7 @@ import type { AcpRuntime } from "@openclaw/acp-core/runtime/types";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../../../test/helpers/promise.js";
 import {
-  getAcpSessionManager,
+  getAcpSessionManagerCore,
   testing as managerTesting,
 } from "../../../acp/control-plane/manager.js";
 import { disposeAcpSessionManagerInstance } from "../../../acp/control-plane/manager.lifecycle.js";
@@ -125,7 +125,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   try {
-    await disposeAcpSessionManagerInstance(getAcpSessionManager(), "test-cleanup");
+    await disposeAcpSessionManagerInstance(getAcpSessionManagerCore(), "test-cleanup");
     managerTesting.resetAcpSessionManagerForTests();
     unregisterAcpRuntimeBackend(backendId);
     await settleSubagentRegistryPersistenceWork();

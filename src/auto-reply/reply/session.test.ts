@@ -5,6 +5,7 @@ import path from "node:path";
 import { expectDefined } from "@openclaw/normalization-core";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { createDeferred } from "../../../test/helpers/promise.js";
 import { getOrCreateSessionMcpRuntime } from "../../agents/agent-bundle-mcp-manager.test-support.js";
 import { testing as sessionMcpTesting } from "../../agents/agent-bundle-mcp-runtime.js";
 import * as bootstrapCache from "../../agents/bootstrap-cache.js";
@@ -60,6 +61,7 @@ import {
 } from "../../test-utils/channel-plugins.js";
 import { withEnvAsync } from "../../test-utils/env.js";
 import { createSessionConversationTestRegistry } from "../../test-utils/session-conversation-registry.js";
+import { acceptedModelSelection } from "../../test-utils/session-execution-selection.js";
 import { buildCommandContext } from "./commands-context.js";
 import { maybeHandleResetCommand } from "./commands-reset.js";
 import { parseInlineSessionDirectives } from "./directive-handling.parse.js";
@@ -786,14 +788,8 @@ describe("initSessionState guarded initialization", () => {
       },
     });
     const cfg: OpenClawConfig = { session: { store: storePath } };
-    let releaseWriter = () => {};
-    const writerReleased = new Promise<void>((resolve) => {
-      releaseWriter = resolve;
-    });
-    let markWriterStarted = () => {};
-    const writerStarted = new Promise<void>((resolve) => {
-      markWriterStarted = resolve;
-    });
+    const { promise: writerReleased, resolve: releaseWriter } = createDeferred();
+    const { promise: writerStarted, resolve: markWriterStarted } = createDeferred();
     const heldWriter = runExclusiveSessionStoreWrite(storePath, async () => {
       markWriterStarted();
       await writerReleased;
@@ -1906,9 +1902,7 @@ describe("initSessionState RawBody", () => {
         lastInteractionAt: staleStartedAt,
         systemSent: true,
         // User-driven override (the thing /model writes).
-        providerOverride: "minimax",
-        modelOverride: "m2.7",
-        modelOverrideSource: "user",
+        executionSelection: acceptedModelSelection("minimax", "m2.7"),
       },
     });
 
@@ -1931,16 +1925,9 @@ describe("initSessionState RawBody", () => {
     expect(result.resetTriggered).toBe(false);
     expect(result.sessionId).toBe(existingSessionId);
     // The user override must survive.
-    expect(result.sessionEntry.providerOverride).toBe("minimax");
-    expect(result.sessionEntry.modelOverride).toBe("m2.7");
-    expect(result.sessionEntry.modelOverrideSource).toBe("user");
-
-    const store = readSessionStoreFast(storePath) as Record<
-      string,
-      { providerOverride?: string; modelOverride?: string; modelOverrideSource?: string }
-    >;
-    expect(store[sessionKey]?.modelOverride).toBe("m2.7");
-    expect(store[sessionKey]?.modelOverrideSource).toBe("user");
+    const selection = acceptedModelSelection("minimax", "m2.7");
+    expect(result.sessionEntry.executionSelection).toEqual(selection);
+    expect(readSessionStoreFast(storePath)[sessionKey]?.executionSelection).toEqual(selection);
   });
 
   it.each(["owed", "unresolved", "acknowledged"] as const)(
@@ -2307,8 +2294,20 @@ describe("initSessionState RawBody", () => {
     {
       name: "preserves explicit configured-default selection across daily rollover",
       slug: "explicit-default",
-      entry: { modelOverrideSource: "default" as const },
-      expected: { modelOverrideSource: "default" },
+      entry: {
+        executionSelection: {
+          state: "deferred" as const,
+          request: { defaultSelection: "configured" as const },
+          fallbackPermission: "configured" as const,
+        },
+      },
+      expected: {
+        executionSelection: {
+          state: "deferred",
+          request: { defaultSelection: "configured" },
+          fallbackPermission: "configured",
+        },
+      },
       persisted: true,
     },
     {
@@ -3658,20 +3657,19 @@ describe("initSessionState channel reset overrides", () => {
   });
 });
 
+async function seedSessionStore(params: {
+  storePath: string;
+  sessionKey: string;
+  sessionId: string;
+}): Promise<void> {
+  await writeSessionStoreFast(params.storePath, {
+    [params.sessionKey]: {
+      sessionId: params.sessionId,
+      updatedAt: Date.now(),
+    },
+  });
+}
 describe("initSessionState reset authorization", () => {
-  async function seedSessionStore(params: {
-    storePath: string;
-    sessionKey: string;
-    sessionId: string;
-  }): Promise<void> {
-    await writeSessionStoreFast(params.storePath, {
-      [params.sessionKey]: {
-        sessionId: params.sessionId,
-        updatedAt: Date.now(),
-      },
-    });
-  }
-
   function makeCfg(params: { storePath: string; allowFrom: string[] }): OpenClawConfig {
     return {
       session: { store: params.storePath, idleMinutes: 999 },
@@ -3887,6 +3885,13 @@ describe("initSessionState reset authorization", () => {
           workspaceDir: path.dirname(storePath),
           defaultGroupActivation: () => "mention",
           resolvedVerboseLevel: "off",
+          prepareModelState: async () => {
+            throw new Error("Reset authorization does not prepare models.");
+          },
+          resolveModelLevels: async () => ({
+            resolvedThinkLevel: undefined,
+            resolvedReasoningLevel: "off",
+          }),
           resolveDefaultThinkingLevel: async () => undefined,
           provider: "openai",
           model: "test-model",
@@ -4057,19 +4062,6 @@ describe("initSessionState reset authorization", () => {
 });
 
 describe("initSessionState reset triggers in Slack channels", () => {
-  async function seedSessionStore(params: {
-    storePath: string;
-    sessionKey: string;
-    sessionId: string;
-  }): Promise<void> {
-    await writeSessionStoreFast(params.storePath, {
-      [params.sessionKey]: {
-        sessionId: params.sessionId,
-        updatedAt: Date.now(),
-      },
-    });
-  }
-
   it("supports mention-prefixed Slack reset commands and preserves args", async () => {
     setMinimalCurrentConversationBindingRegistryForTests();
     const existingSessionId = "existing-session-123";
@@ -4327,8 +4319,7 @@ describe("initSessionState preserves behavior overrides across /new and /reset",
     const sessionKey = "agent:main:telegram:dm:user-model-auth";
     const existingSessionId = "existing-session-model-auth";
     const overrides = {
-      providerOverride: "openai",
-      modelOverride: "gpt-4o",
+      executionSelection: acceptedModelSelection("openai", "gpt-4o"),
       authProfileOverride: "20251001",
       authProfileOverrideSource: "user",
       authProfileOverrideCompactionCount: 2,
@@ -4352,8 +4343,8 @@ describe("initSessionState preserves behavior overrides across /new and /reset",
       expect(result.isNewSession, name).toBe(true);
       expect(result.resetTriggered, name).toBe(true);
       expect(result.sessionId, name).toBe(existingSessionId);
-      expect(result.sessionEntry.providerOverride, name).toBe(overrides.providerOverride);
-      expect(result.sessionEntry.modelOverride, name).toBe(overrides.modelOverride);
+      expect(result.sessionEntry.executionSelection, name).toEqual(overrides.executionSelection);
+      expect(stored[sessionKey]?.executionSelection, name).toEqual(overrides.executionSelection);
       expect(result.sessionEntry.authProfileOverride, name).toBe(overrides.authProfileOverride);
       expect(result.sessionEntry.authProfileOverrideSource, name).toBe(
         overrides.authProfileOverrideSource,
@@ -4531,9 +4522,7 @@ describe("initSessionState preserves behavior overrides across /new and /reset",
       verboseLevel: "on",
     } as const;
     const explicitUserOverride = {
-      providerOverride: "minimax",
-      modelOverride: "m2.7",
-      modelOverrideSource: "user",
+      executionSelection: acceptedModelSelection("minimax", "m2.7"),
     } as const;
     const cases = await runExplicitResetCases({
       storePath,
@@ -4552,12 +4541,8 @@ describe("initSessionState preserves behavior overrides across /new and /reset",
       expect(result.sessionEntry.cacheWrite, name).toBeUndefined();
       expect(result.sessionEntry.fallbackNotice, name).toBeUndefined();
       expect(result.sessionEntry.systemPromptReport, name).toBeUndefined();
-      expect(result.sessionEntry.providerOverride, name).toBe(
-        explicitUserOverride.providerOverride,
-      );
-      expect(result.sessionEntry.modelOverride, name).toBe(explicitUserOverride.modelOverride);
-      expect(result.sessionEntry.modelOverrideSource, name).toBe(
-        explicitUserOverride.modelOverrideSource,
+      expect(result.sessionEntry.executionSelection, name).toEqual(
+        explicitUserOverride.executionSelection,
       );
       expect(result.sessionEntry.verboseLevel, name).toBe(runtimeModelCache.verboseLevel);
       expect(stored[sessionKey]?.modelProvider, name).toBeUndefined();
@@ -4566,12 +4551,8 @@ describe("initSessionState preserves behavior overrides across /new and /reset",
       expect(stored[sessionKey]?.cacheWrite, name).toBeUndefined();
       expect(stored[sessionKey]?.fallbackNotice, name).toBeUndefined();
       expect(stored[sessionKey]?.systemPromptReport, name).toBeUndefined();
-      expect(stored[sessionKey]?.providerOverride, name).toBe(
-        explicitUserOverride.providerOverride,
-      );
-      expect(stored[sessionKey]?.modelOverride, name).toBe(explicitUserOverride.modelOverride);
-      expect(stored[sessionKey]?.modelOverrideSource, name).toBe(
-        explicitUserOverride.modelOverrideSource,
+      expect(stored[sessionKey]?.executionSelection, name).toEqual(
+        explicitUserOverride.executionSelection,
       );
       expect(stored[sessionKey]?.contextTokens, name).toBeUndefined();
       expect(stored[sessionKey]?.contextTokensSource, name).toBeUndefined();
@@ -5648,7 +5629,7 @@ describe("drainFormattedSystemEvents", () => {
 
 describe("persistSessionUsageUpdate", () => {
   const sessionKey = "agent:main:main";
-  async function seedSessionStore(
+  async function seedUsageSessionStore(
     storePath: string,
     targetSessionKey: string,
     entry: Record<string, unknown>,
@@ -5663,7 +5644,7 @@ describe("persistSessionUsageUpdate", () => {
     "persists the producing harness with its model and context window ($name)",
     async ({ usage }) => {
       const storePath = await createStorePath("openclaw-usage-harness-");
-      await seedSessionStore(storePath, sessionKey, {
+      await seedUsageSessionStore(storePath, sessionKey, {
         sessionId: "s1",
         updatedAt: 1,
         modelProvider: "openai",
@@ -5700,7 +5681,7 @@ describe("persistSessionUsageUpdate", () => {
     "preserves the complete producing-runtime tuple when model state is retained ($name)",
     async ({ usage }) => {
       const storePath = await createStorePath("openclaw-usage-preserved-runtime-");
-      await seedSessionStore(storePath, sessionKey, {
+      await seedUsageSessionStore(storePath, sessionKey, {
         sessionId: "s1",
         updatedAt: 1,
         modelProvider: "google",
@@ -5737,7 +5718,7 @@ describe("persistSessionUsageUpdate", () => {
     { name: "model-only accounting", usage: undefined },
   ])("clears stale harness provenance when a committed run omits it ($name)", async ({ usage }) => {
     const storePath = await createStorePath("openclaw-usage-harness-missing-");
-    await seedSessionStore(storePath, sessionKey, {
+    await seedUsageSessionStore(storePath, sessionKey, {
       sessionId: "s1",
       updatedAt: 1,
       modelProvider: "openai",
@@ -5767,7 +5748,7 @@ describe("persistSessionUsageUpdate", () => {
 
   it("accounts exhausted-run usage without committing its model or native binding", async () => {
     const storePath = await createStorePath("openclaw-usage-exhausted-");
-    await seedSessionStore(storePath, sessionKey, {
+    await seedUsageSessionStore(storePath, sessionKey, {
       sessionId: "s1",
       updatedAt: 1,
       modelProvider: "google",
@@ -5814,7 +5795,7 @@ describe("persistSessionUsageUpdate", () => {
 
   it("accounts goal usage when fresh token snapshots are persisted", async () => {
     const storePath = await createStorePath("openclaw-usage-goal-");
-    await seedSessionStore(storePath, sessionKey, {
+    await seedUsageSessionStore(storePath, sessionKey, {
       sessionId: "s1",
       updatedAt: 1,
       goal: {
@@ -6128,7 +6109,7 @@ describe("persistSessionUsageUpdate", () => {
     expected: Partial<SessionEntry>;
   }>)("$name", async ({ seed, update, expected, name }) => {
     const storePath = await createStorePath("openclaw-usage-");
-    await seedSessionStore(storePath, sessionKey, {
+    await seedUsageSessionStore(storePath, sessionKey, {
       sessionId: "s1",
       updatedAt: Date.now(),
       ...seed,
@@ -6149,7 +6130,7 @@ describe("persistSessionUsageUpdate", () => {
   });
   it("snapshots estimatedCostUsd instead of accumulating (fixes #69347)", async () => {
     const storePath = await createStorePath("openclaw-usage-cost-");
-    await seedSessionStore(storePath, sessionKey, {
+    await seedUsageSessionStore(storePath, sessionKey, {
       sessionId: "s1",
       updatedAt: Date.now(),
     });
@@ -6230,7 +6211,7 @@ describe("persistSessionUsageUpdate", () => {
     "replaces prior snapshot cost with current tiered run cost $total (tokens: $withTokens)",
     async ({ total, withTokens }) => {
       const storePath = await createStorePath("openclaw-usage-tiered-cost-");
-      await seedSessionStore(storePath, sessionKey, {
+      await seedUsageSessionStore(storePath, sessionKey, {
         sessionId: "s1",
         updatedAt: Date.now(),
         estimatedCostUsd: 0.5,
@@ -6290,7 +6271,7 @@ describe("persistSessionUsageUpdate", () => {
   it("preserves the displayed session model when an internal announce uses fallback", async () => {
     const storePath = await createStorePath("openclaw-usage-internal-announce-model-");
     const topicSessionKey = "agent:main:telegram:group:-1003871627242:topic:6823";
-    await seedSessionStore(storePath, topicSessionKey, {
+    await seedUsageSessionStore(storePath, topicSessionKey, {
       sessionId: "s1",
       updatedAt: Date.now(),
       modelProvider: "openai",
@@ -6357,7 +6338,7 @@ describe("persistSessionUsageUpdate", () => {
 
   it("persists zero estimatedCostUsd for free priced models", async () => {
     const storePath = await createStorePath("openclaw-usage-free-cost-");
-    await seedSessionStore(storePath, sessionKey, {
+    await seedUsageSessionStore(storePath, sessionKey, {
       sessionId: "s1",
       updatedAt: Date.now(),
     });

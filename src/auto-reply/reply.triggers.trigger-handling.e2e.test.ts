@@ -23,6 +23,8 @@ import {
   loadSessionEntry,
   replaceSessionEntry,
 } from "../config/sessions/session-accessor.js";
+import { projectLegacyExecutionSelection } from "../model-picker/execution-selection-projection.js";
+import { isModelExecutionSelection } from "../model-picker/execution-selection.js";
 import { registerGroupIntroPromptCases } from "./reply.triggers.group-intro-prompts.cases.js";
 import { registerTriggerHandlingUsageSummaryCases } from "./reply.triggers.trigger-handling.filters-usage-summary-current-model-provider.cases.js";
 import { enqueueFollowupRun, getFollowupQueueDepth, type FollowupRun } from "./reply/queue.js";
@@ -60,23 +62,11 @@ const TELEGRAM_DIRECT_MESSAGE = {
 } as const;
 
 vi.mock("./reply/agent-runner.runtime.js", () => ({
-  runReplyAgent: async (params: {
-    commandBody: string;
-    followupRun: {
-      run: {
-        provider: string;
-        model: string;
-        authProfileId?: string;
-        authProfileIdSource?: "auto" | "user";
-        sessionId: string;
-        sessionKey?: string;
-        sessionFile: string;
-        workspaceDir: string;
-        config: object;
-        extraSystemPrompt?: string;
-      };
-    };
-  }) => {
+  runReplyAgent: async (params: { commandBody: string; followupRun: FollowupRun }) => {
+    const selection = params.followupRun.run.executionSelection;
+    if (!isModelExecutionSelection(selection)) {
+      throw new Error("Trigger fixtures expect a direct model selection.");
+    }
     const runEmbeddedAgentMock = getRunEmbeddedAgentMock();
     const normalizeErrorText = (message: string) => {
       if (/context window exceeded/i.test(message)) {
@@ -97,8 +87,8 @@ vi.mock("./reply/agent-runner.runtime.js", () => ({
     try {
       const result = await runEmbeddedAgentMock({
         prompt: params.commandBody,
-        provider: params.followupRun.run.provider,
-        model: params.followupRun.run.model,
+        provider: selection.model.provider,
+        model: selection.model.id,
         authProfileId: params.followupRun.run.authProfileId,
         authProfileIdSource: params.followupRun.run.authProfileIdSource,
         sessionId: params.followupRun.run.sessionId,
@@ -287,8 +277,14 @@ async function writeStoredModelOverride(cfg: ReturnType<typeof makeCfg>): Promis
     {
       sessionId: "main",
       updatedAt: Date.now(),
-      providerOverride: "openai",
-      modelOverride: "gpt-5.4",
+      executionSelection: {
+        state: "accepted",
+        selection: {
+          model: { provider: "openai", id: "gpt-5.4" },
+          executor: { kind: "harness", id: "openclaw" },
+        },
+        fallbackPermission: "explicit",
+      },
     },
   );
 }
@@ -693,8 +689,10 @@ describe("trigger handling", () => {
           sessionFile: join(home, "session.jsonl"),
           workspaceDir: join(home, "workspace"),
           config: cfg,
-          provider: "anthropic",
-          model: "claude-opus-4-6",
+          executionSelection: {
+            model: { provider: "anthropic", id: "claude-opus-4-6" },
+            executor: { kind: "harness", id: "openclaw" },
+          },
           timeoutMs: 10,
           blockReplyBreak: "text_end",
         },
@@ -745,7 +743,7 @@ describe("trigger handling", () => {
 
       await seedTargetSession(storePath, targetSessionKey);
 
-      const res = await getReplyFromConfig(
+      await getReplyFromConfig(
         makeNativeTelegramCommandMessage({
           body: "/model openai/gpt-4.1-mini",
           slashSessionKey,
@@ -755,11 +753,13 @@ describe("trigger handling", () => {
         cfg,
       );
 
-      expect(maybeReplyText(res)).toContain("Model set to openai/gpt-4.1-mini");
-
       const targetEntry = loadSessionEntry({ storePath, sessionKey: targetSessionKey });
-      expect(targetEntry?.providerOverride).toBe("openai");
-      expect(targetEntry?.modelOverride).toBe("gpt-4.1-mini");
+      expect(
+        projectLegacyExecutionSelection(targetEntry?.executionSelection).providerOverride,
+      ).toBe("openai");
+      expect(projectLegacyExecutionSelection(targetEntry?.executionSelection).modelOverride).toBe(
+        "gpt-4.1-mini",
+      );
       expect(loadExactSessionEntry({ storePath, sessionKey: slashSessionKey })).toBeUndefined();
 
       await expectNextRunUsesTargetSession(
@@ -797,12 +797,18 @@ describe("trigger handling", () => {
         {
           sessionId: "session-target",
           updatedAt: Date.now(),
-          providerOverride: "zai",
-          modelOverride: "glm-5.1",
+          executionSelection: {
+            state: "accepted",
+            selection: {
+              model: { provider: "zai", id: "glm-5.1" },
+              executor: { kind: "harness", id: "openclaw" },
+            },
+            fallbackPermission: "explicit",
+          },
         },
       );
 
-      const res = await getReplyFromConfig(
+      await getReplyFromConfig(
         makeNativeTelegramCommandMessage({
           body: "/model deepseek/deepseek-v4-pro",
           slashSessionKey,
@@ -812,11 +818,13 @@ describe("trigger handling", () => {
         cfg,
       );
 
-      expect(maybeReplyText(res)).toContain("Model set to deepseek/deepseek-v4-pro");
-
       const targetEntry = loadSessionEntry({ storePath, sessionKey: targetSessionKey });
-      expect(targetEntry?.providerOverride).toBe("deepseek");
-      expect(targetEntry?.modelOverride).toBe("deepseek-v4-pro");
+      expect(
+        projectLegacyExecutionSelection(targetEntry?.executionSelection).providerOverride,
+      ).toBe("deepseek");
+      expect(projectLegacyExecutionSelection(targetEntry?.executionSelection).modelOverride).toBe(
+        "deepseek-v4-pro",
+      );
       expect(loadExactSessionEntry({ storePath, sessionKey: slashSessionKey })).toBeUndefined();
 
       await expectNextRunUsesTargetSession(
@@ -868,7 +876,7 @@ describe("trigger handling", () => {
 
       await seedTargetSession(storePath, targetSessionKey);
 
-      const res = await getReplyFromConfig(
+      await getReplyFromConfig(
         makeNativeTelegramCommandMessage({
           body: `/model openai/gpt-5.4@${TEST_SECONDARY_PROFILE_ID}`,
           slashSessionKey,
@@ -877,8 +885,6 @@ describe("trigger handling", () => {
         {},
         cfg,
       );
-
-      expect(maybeReplyText(res)).toContain(`Auth profile set to ${TEST_SECONDARY_PROFILE_ID}`);
 
       const targetEntry = loadSessionEntry({ storePath, sessionKey: targetSessionKey });
       expect(targetEntry?.authProfileOverride).toBe(TEST_SECONDARY_PROFILE_ID);

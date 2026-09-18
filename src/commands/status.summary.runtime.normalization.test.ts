@@ -62,7 +62,7 @@ describe("statusSummaryRuntime configured model normalization", () => {
     expect(normalizeProviderModelIdWithRuntimeMock).not.toHaveBeenCalled();
   });
 
-  it("skips manifest and plugin model normalization for providerless persisted session models", async () => {
+  it("skips manifest and plugin normalization when projecting accepted and deferred selections", async () => {
     const { statusSummaryRuntime } = await import("../status/summary.runtime.js");
     const configured = { provider: "anthropic", model: "claude-sonnet-4-6" };
 
@@ -70,7 +70,14 @@ describe("statusSummaryRuntime configured model normalization", () => {
 
     expect(
       statusSummaryRuntime.resolveSessionModelRef(configured, {
-        model: "opus-4.6",
+        executionSelection: {
+          state: "accepted",
+          selection: {
+            model: { provider: "anthropic", id: "opus-4.6" },
+            executor: { kind: "harness", id: "openclaw" },
+          },
+          fallbackPermission: "explicit",
+        },
       }),
     ).toEqual({
       provider: "anthropic",
@@ -80,11 +87,15 @@ describe("statusSummaryRuntime configured model normalization", () => {
     expect(
       statusSummaryRuntime.resolveSessionModelRef(configured, {
         model: "fallback-runtime-model",
-        modelOverride: "opus-4.6",
+        executionSelection: {
+          state: "deferred",
+          request: { model: { provider: "anthropic", id: "opus-4.6" } },
+          fallbackPermission: "explicit",
+        },
       }),
     ).toEqual({
       provider: "anthropic",
-      model: "opus-4.6",
+      model: "claude-sonnet-4-6",
     });
 
     expect(

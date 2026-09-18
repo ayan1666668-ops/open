@@ -7,8 +7,10 @@ import {
   type ModelCatalogSnapshot,
 } from "../agents/model-catalog.js";
 import type { InternalSessionEntry as SessionEntry } from "../config/sessions.js";
-import { getSessionExecutionSelection } from "../model-picker/execution-selection.js";
-import { isModelExecutionSelection } from "../model-picker/execution-selection.js";
+import {
+  getSessionExecutionSelection,
+  isModelExecutionSelection,
+} from "../model-picker/execution-selection.js";
 
 export function* applySessionContextWindowPatch(params: {
   defaultModel: string;

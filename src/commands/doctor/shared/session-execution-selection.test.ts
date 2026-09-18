@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { acceptedModelSelection } from "../../../test-utils/session-execution-selection.js";
 import { migrateSessionExecutionSelection } from "./session-execution-selection.js";
 
 const classifyExecutor = (id: string) => (id === "app-a" ? ("harness" as const) : undefined);
@@ -21,14 +22,9 @@ describe("Doctor execution selection conversion", () => {
       authProfileOverrideSource: "user",
       model: "observed-model",
       agentHarnessId: "observed-app",
-      executionSelection: {
-        state: "accepted",
-        fallbackPermission: "explicit",
-        selection: {
-          model: { provider: "provider-a", id: "provider-a/model-a" },
-          executor: { kind: "harness", id: "app-a" },
-        },
-      },
+      executionSelection: acceptedModelSelection("provider-a", "provider-a/model-a", {
+        executor: { kind: "harness", id: "app-a" },
+      }),
     });
     expect(entry.modelOverride).toBe("provider-a/model-a");
   });
@@ -43,6 +39,111 @@ describe("Doctor execution selection conversion", () => {
       request: { model: { provider: "provider-a", id: "model-a" } },
       fallbackPermission: "explicit",
     });
+  });
+
+  it.each([
+    { runtime: undefined, cliAvailable: true },
+    { runtime: undefined, cliAvailable: false },
+    { runtime: "app-a", cliAvailable: true },
+    { runtime: "missing-app", cliAvailable: true },
+  ])(
+    "canonicalizes a bound provider with runtime $runtime and CLI availability $cliAvailable",
+    ({ runtime, cliAvailable }) => {
+      const cliSessionBindings = { "runner-a": { sessionId: "native-session", forceReuse: true } };
+      const result = migrateSessionExecutionSelection({
+        entry: {
+          providerOverride: "runner-a",
+          modelOverride: "embedded/model-a",
+          modelOverrideRouteResolution: "resolved",
+          agentRuntimeOverride: runtime,
+          agentHarnessId: "runner-a",
+          cliSessionBindings,
+        },
+        classifyExecutor: (id) =>
+          id === "runner-a" && cliAvailable ? "cli" : classifyExecutor(id),
+        cliRuntimeProviders: new Map([["runner-a", "provider-a"]]),
+      });
+      const provider = "provider-a";
+      const id = "embedded/model-a";
+      const selectedRuntime = runtime ?? "runner-a";
+      expect(result.entry.executionSelection).toEqual(
+        selectedRuntime === "app-a" || (selectedRuntime === "runner-a" && cliAvailable)
+          ? acceptedModelSelection(provider, id, {
+              executor: {
+                kind: selectedRuntime === "runner-a" ? "cli" : "harness",
+                id: selectedRuntime,
+              },
+            })
+          : {
+              state: "deferred",
+              request: { model: { provider, id }, runtime: selectedRuntime },
+              fallbackPermission: "explicit",
+            },
+      );
+      expect(result.entry.cliSessionBindings).toEqual(cliSessionBindings);
+      expect(
+        migrateSessionExecutionSelection({
+          entry: result.entry,
+          classifyExecutor,
+          cliRuntimeProviders: new Map([["runner-a", "different-provider"]]),
+        }),
+      ).toEqual({ entry: result.entry, changed: false });
+    },
+  );
+
+  it.each(["missing-metadata", "unbound", "provider-only"])(
+    "does not complete a legacy runtime request with %s",
+    (missing) => {
+      const result = migrateSessionExecutionSelection({
+        entry: {
+          providerOverride: "runner-a",
+          ...(missing !== "provider-only" ? { modelOverride: "model-a" } : {}),
+          ...(missing !== "unbound"
+            ? { cliSessionBindings: { "runner-a": { sessionId: "native-session" } } }
+            : {}),
+        },
+        classifyExecutor,
+        cliRuntimeProviders: new Map(
+          missing === "missing-metadata" ? [] : [["runner-a", "provider-a"]],
+        ),
+      });
+      expect(result.entry.executionSelection).toEqual({
+        state: "deferred",
+        request:
+          missing === "provider-only"
+            ? { defaultSelection: "inherit" }
+            : { model: { provider: "runner-a", id: "model-a" } },
+        fallbackPermission: "explicit",
+        ...(missing === "provider-only" ? { legacyRequest: { provider: "runner-a" } } : {}),
+      });
+    },
+  );
+
+  it("uses the captured bound-provider mapping for fallback origin and previous selection", () => {
+    const result = migrateSessionExecutionSelection({
+      entry: {
+        providerOverride: "provider-b",
+        modelOverride: "temporary",
+        modelOverrideSource: "auto",
+        modelOverrideFallbackOriginProvider: "runner-a",
+        modelOverrideFallbackOriginModel: "model-a",
+        cliSessionBindings: { "runner-a": { sessionId: "native-session" } },
+        modelFallback: {
+          prevProviderOverride: "runner-a",
+          prevModelOverride: "model-a",
+          prevModelOverrideSource: "auto",
+        },
+      },
+      classifyExecutor,
+      cliRuntimeProviders: new Map([["runner-a", "provider-a"]]),
+    });
+    const selection = {
+      state: "deferred",
+      request: { model: { provider: "provider-a", id: "model-a" }, runtime: "runner-a" },
+      fallbackPermission: "configured",
+    };
+    expect(result.entry.executionSelection).toEqual(selection);
+    expect(result.entry.modelFallback).toEqual({ previous: selection });
   });
 
   it.each([undefined, "auto", "user", "default"])(
@@ -63,7 +164,7 @@ describe("Doctor execution selection conversion", () => {
         model: "observed-model",
         executionSelection: {
           state: "deferred",
-          request: {},
+          request: { defaultSelection: source === "default" ? "configured" : "inherit" },
           fallbackPermission: source === "auto" || source === "default" ? "configured" : "explicit",
           legacyRequest: {
             provider: "provider-later",
@@ -92,7 +193,7 @@ describe("Doctor execution selection conversion", () => {
       });
       expect(result.entry.executionSelection).toEqual({
         state: "deferred",
-        request: { runtime },
+        request: { runtime, defaultSelection: "inherit" },
         fallbackPermission: "explicit",
         legacyRequest: { provider: "provider-later" },
       });
@@ -126,10 +227,12 @@ describe("Doctor execution selection conversion", () => {
       },
       classifyExecutor,
     });
-    expect(result.entry.executionSelection).toEqual({
-      state: "deferred",
-      request: { model: { provider: "provider-original", id: "model-original" } },
-      fallbackPermission: "configured",
+    expect(result.entry).toEqual({
+      executionSelection: {
+        state: "deferred",
+        request: { model: { provider: "provider-original", id: "model-original" } },
+        fallbackPermission: "configured",
+      },
     });
   });
 
@@ -150,6 +253,19 @@ describe("Doctor execution selection conversion", () => {
     });
     expect(result.entry).not.toHaveProperty("modelOverride");
     expect(result.entry).not.toHaveProperty("providerOverride");
+  });
+
+  it("keeps a bare providerless request deferred instead of binding today's default", () => {
+    const result = migrateSessionExecutionSelection({
+      entry: { modelOverride: "bare-model", modelOverrideSource: "user" },
+      defaultProvider: "configured-provider",
+      classifyExecutor,
+    });
+    expect(result.entry.executionSelection).toEqual({
+      state: "deferred",
+      request: { model: { id: "bare-model" } },
+      fallbackPermission: "explicit",
+    });
   });
 
   it("restores pre-fallback intent and drops only an automatic account pin", () => {
@@ -271,7 +387,7 @@ describe("Doctor execution selection conversion", () => {
       prevProvider: "observed-provider",
       previous: {
         state: "deferred",
-        request: {},
+        request: { defaultSelection: "inherit" },
         fallbackPermission: "explicit",
         legacyRequest: { provider: "provider-later", source: "user" },
       },
@@ -308,7 +424,7 @@ describe("Doctor execution selection conversion", () => {
       prevThinkingLevel: "high",
       previous: {
         state: "deferred",
-        request: {},
+        request: { defaultSelection: "inherit" },
         fallbackPermission: "configured",
       },
     });

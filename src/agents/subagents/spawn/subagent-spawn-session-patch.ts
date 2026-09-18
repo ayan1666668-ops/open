@@ -6,7 +6,8 @@ import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import {
   commitSessionExecutionSelection,
   type ExecutionSelectionRequest,
-  prepareSessionExecutionSelection,
+  type PreparedSessionExecutionSelection,
+  commitStoredSessionExecutionSelection,
 } from "../../../model-picker/apply-session-model-selection.js";
 import { resolveIncognitoOpenClawAgentSqlitePath } from "../../../state/openclaw-agent-db.js";
 import { resolveUserPath } from "../../../utils.js";
@@ -113,6 +114,7 @@ export async function createInitialSubagentSession(params: {
   inheritedToolDenylist?: string[];
   modelPatch: Record<string, unknown>;
   executionRequest: ExecutionSelectionRequest;
+  preparedSelection: Exclude<PreparedSessionExecutionSelection, { status: "rejected" }>;
   swarmGroupId?: string;
   collect: boolean;
   outputSchema?: Record<string, unknown>;
@@ -162,18 +164,14 @@ export async function createInitialSubagentSession(params: {
           key: params.childSessionKey,
         });
     const childPatch = buildDirectChildSessionPatch(initialChildSessionPatch);
-    const preparedSelection = await prepareSessionExecutionSelection({
-      cfg: params.cfg,
-      agentId: params.targetAgentId,
-      sessionEntry: undefined,
-      request: params.executionRequest,
-    });
-    if (preparedSelection.status !== "ready") {
-      return { status: "error", error: preparedSelection.message };
+    const preparedSelection = params.preparedSelection;
+    if (preparedSelection.status === "deferred") {
+      commitStoredSessionExecutionSelection(childPatch, preparedSelection.selection);
+    } else {
+      commitSessionExecutionSelection(childPatch, preparedSelection.selection, {
+        cause: { kind: params.executionRequest.kind === "initialize" ? "initialize" : "user" },
+      });
     }
-    commitSessionExecutionSelection(childPatch, preparedSelection.selection, {
-      cause: { kind: params.executionRequest.kind === "initialize" ? "initialize" : "user" },
-    });
     const entry = await upsertSessionEntryCore(
       {
         storePath: target.storePath,
@@ -207,7 +205,7 @@ export async function createInitialSubagentSession(params: {
       {
         assertCommitAllowed: () => {
           params.assertActive?.();
-          const selectionError = preparedSelection.validateCommit?.();
+          const selectionError = preparedSelection.validateCommit();
           if (selectionError) {
             throw new Error(selectionError);
           }

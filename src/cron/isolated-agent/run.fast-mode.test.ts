@@ -157,7 +157,9 @@ async function runFastModeCase(params: {
       expect(retireSessionMcpRuntimeMock).not.toHaveBeenCalled();
     }
   } finally {
-    if (params.cli) restoreActivePluginRegistrySnapshot(registrySnapshot);
+    if (params.cli) {
+      restoreActivePluginRegistrySnapshot(registrySnapshot);
+    }
   }
 }
 

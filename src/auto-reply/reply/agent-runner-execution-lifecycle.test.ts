@@ -52,6 +52,7 @@ import {
 } from "./reply-run-registry.js";
 
 const state = await setupAgentRunnerExecutionTestState();
+const executeAgentTurn = await getExecuteAgentTurnForTest();
 const execution = await import("./agent-runner-execution.js");
 const { emitAgentEvent } = await import("../../infra/agent-events.js");
 const compactionTarget = {
@@ -190,7 +191,6 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
         return { payloads: [{ text: "ok" }], meta: {} };
       });
 
-      const executeAgentTurn = await getExecuteAgentTurnForTest();
       await executeAgentTurn({
         ...createMinimalRunAgentTurnParams({ followupRun }),
       });
@@ -230,7 +230,6 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
       meta: {},
     });
 
-    const executeAgentTurn = await getExecuteAgentTurnForTest();
     await executeAgentTurn({
       ...createMinimalRunAgentTurnParams(),
       replyOperation,
@@ -290,7 +289,6 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
       };
     });
 
-    const executeAgentTurn = await getExecuteAgentTurnForTest();
     const result = await executeAgentTurn(createMinimalRunAgentTurnParams({ followupRun }));
     expect(result, JSON.stringify(result)).toMatchObject({ kind: "success" });
 
@@ -333,7 +331,6 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
     });
 
     try {
-      const executeAgentTurn = await getExecuteAgentTurnForTest();
       await executeAgentTurn({
         ...createMinimalRunAgentTurnParams(),
         replyOperation,
@@ -397,7 +394,6 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
       );
       state.runEmbeddedAgentMock.mockResolvedValue({ payloads: [{ text: "ok" }], meta: {} });
 
-      const executeAgentTurn = await getExecuteAgentTurnForTest();
       await executeAgentTurn({
         ...createMinimalRunAgentTurnParams({ followupRun }),
       });
@@ -441,7 +437,6 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
     });
     state.runEmbeddedAgentMock.mockResolvedValue({ payloads: [{ text: "ok" }], meta: {} });
 
-    const executeAgentTurn = await getExecuteAgentTurnForTest();
     await executeAgentTurn({
       ...createMinimalRunAgentTurnParams({ followupRun }),
     });
@@ -484,7 +479,6 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
         meta: {},
       });
 
-    const executeAgentTurn = await getExecuteAgentTurnForTest();
     await executeAgentTurn({
       ...createMinimalRunAgentTurnParams({ followupRun }),
       replyOperation,
@@ -536,7 +530,6 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
       };
     });
 
-    const executeAgentTurn = await getExecuteAgentTurnForTest();
     const pending = executeAgentTurn({
       ...createMinimalRunAgentTurnParams(),
       replyOperation,
@@ -738,25 +731,11 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
         },
       );
 
+      const fallbackModels = Array.from({ length: 6 }, (_, index) => `fallback-${index + 1}`);
       const followupRun = createFollowupRun({
-        catalog: [
-          testModel("anthropic", "primary"),
-          testModel("anthropic", "fallback-1"),
-          testModel("anthropic", "fallback-2"),
-          testModel("anthropic", "fallback-3"),
-          testModel("anthropic", "fallback-4"),
-          testModel("anthropic", "fallback-5"),
-          testModel("anthropic", "fallback-6"),
-        ],
+        catalog: ["primary", ...fallbackModels].map((id) => testModel("anthropic", id)),
         profiles: testAuthProfiles("anthropic"),
-        fallbacks: [
-          "anthropic/fallback-1",
-          "anthropic/fallback-2",
-          "anthropic/fallback-3",
-          "anthropic/fallback-4",
-          "anthropic/fallback-5",
-          "anthropic/fallback-6",
-        ],
+        fallbacks: fallbackModels.map((id) => `anthropic/${id}`),
         selection: {
           model: { provider: "anthropic", id: "primary" },
           executor: { kind: "harness", id: "openclaw" },
@@ -796,7 +775,6 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
     followupRun.originatingAccountId = "work";
     followupRun.originatingChatType = "direct";
 
-    const executeAgentTurn = await getExecuteAgentTurnForTest();
     await executeAgentTurn(
       createMinimalRunAgentTurnParams({
         followupRun,
@@ -834,7 +812,6 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
     });
 
     try {
-      const executeAgentTurn = await getExecuteAgentTurnForTest();
       const result = await executeAgentTurn({
         ...createMinimalRunAgentTurnParams({
           opts: {
@@ -882,7 +859,6 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
     followupRun.media = [{ path: "/tmp/cli.png", contentType: "image/png" }];
     const typingSignals = createMockTypingSignaler();
 
-    const executeAgentTurn = await getExecuteAgentTurnForTest();
     const result = await executeAgentTurn(
       createMinimalRunAgentTurnParams({
         followupRun,
@@ -900,153 +876,58 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
     });
   });
 
-  it("requires explicit message targets on heartbeat CLI runs", async () => {
-    state.isCliProviderMock.mockReturnValue(true);
-    state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => ({
-      outcome: "completed",
-      result: await params.run("claude-cli", "sonnet-4.6", initialFallbackAttemptOptions(params)),
-      provider: "claude-cli",
-      model: "sonnet-4.6",
-      attempts: [],
-    }));
-    state.runCliAgentMock.mockResolvedValueOnce({
-      payloads: [{ text: "final" }],
-      meta: {},
-    });
-    const followupRun = createFollowupRun({
-      catalog: [testModel("claude-cli", "sonnet-4.6")],
-      profiles: testAuthProfiles("claude-cli"),
-      runtimeAuthModes: { "claude-cli": "token" },
-    });
-    followupRun.run.executionSelection = configureTestCliModel(
-      followupRun,
-      "claude-cli",
-      "sonnet-4.6",
-    );
-    const params = createMinimalRunAgentTurnParams({
-      followupRun,
-      opts: { isHeartbeat: true },
-    });
-    params.isHeartbeat = true;
+  it.each([
+    { backend: "CLI", cleanup: false },
+    { backend: "embedded", cleanup: false },
+    { backend: "CLI", cleanup: true },
+    { backend: "embedded", cleanup: true },
+  ])(
+    "requires explicit heartbeat targets for $backend with MCP retirement=$cleanup",
+    async ({ backend, cleanup }) => {
+      const isCli = backend === "CLI";
+      state.isCliProviderMock.mockReturnValue(isCli);
+      const runner = isCli ? state.runCliAgentMock : state.runEmbeddedAgentMock;
+      runner.mockResolvedValueOnce({
+        payloads: [{ text: isCli ? "final" : "HEARTBEAT_OK" }],
+        meta: {},
+      });
+      const followupRun = isCli
+        ? createFollowupRun({
+            catalog: [testModel("claude-cli", "sonnet-4.6")],
+            profiles: testAuthProfiles("claude-cli"),
+            runtimeAuthModes: { "claude-cli": "token" },
+          })
+        : createFollowupRun();
+      if (isCli) {
+        followupRun.run.executionSelection = configureTestCliModel(
+          followupRun,
+          "claude-cli",
+          "sonnet-4.6",
+        );
+      }
+      const opts: InternalGetReplyOptions = {
+        isHeartbeat: true,
+        ...(cleanup ? { cleanupBundleMcpOnRunEnd: true } : {}),
+      };
+      const params = createMinimalRunAgentTurnParams({ followupRun, opts });
+      params.isHeartbeat = true;
+      await executeAgentTurn(params);
 
-    const executeAgentTurn = await getExecuteAgentTurnForTest();
-    await executeAgentTurn(params);
-
-    expectMockCallArgFields(state.runCliAgentMock, 0, "CLI run params", {
-      trigger: "heartbeat",
-      requireExplicitMessageTarget: true,
-    });
-  });
-
-  it("requires explicit message targets on heartbeat embedded runs", async () => {
-    // Heartbeat ambient From/To must not become implicit message-tool recipients.
-    state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => ({
-      outcome: "completed",
-      result: await params.run("anthropic", "claude", initialFallbackAttemptOptions(params)),
-      provider: "anthropic",
-      model: "claude",
-      attempts: [],
-    }));
-    state.runEmbeddedAgentMock.mockResolvedValueOnce({
-      payloads: [{ text: "HEARTBEAT_OK" }],
-      meta: {},
-    });
-
-    const executeAgentTurn = await getExecuteAgentTurnForTest();
-    const params = createMinimalRunAgentTurnParams({
-      opts: { isHeartbeat: true },
-    });
-    params.isHeartbeat = true;
-
-    await executeAgentTurn(params);
-
-    expectMockCallArgFields(state.runEmbeddedAgentMock, 0, "heartbeat embedded run params", {
-      trigger: "heartbeat",
-      requireExplicitMessageTarget: true,
-    });
-  });
-
-  it("forwards bundle MCP retirement to isolated heartbeat embedded runs", async () => {
-    state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => ({
-      outcome: "completed",
-      result: await params.run("anthropic", "claude", initialFallbackAttemptOptions(params)),
-      provider: "anthropic",
-      model: "claude",
-      attempts: [],
-    }));
-    state.runEmbeddedAgentMock.mockResolvedValueOnce({
-      payloads: [{ text: "HEARTBEAT_OK" }],
-      meta: {},
-    });
-
-    const executeAgentTurn = await getExecuteAgentTurnForTest();
-    const opts: InternalGetReplyOptions = { isHeartbeat: true, cleanupBundleMcpOnRunEnd: true };
-    const params = createMinimalRunAgentTurnParams({ opts });
-    params.isHeartbeat = true;
-
-    await executeAgentTurn(params);
-
-    expectMockCallArgFields(
-      state.runEmbeddedAgentMock,
-      0,
-      "isolated heartbeat embedded run params",
-      {
+      // Heartbeat ambient From/To must not become implicit message-tool recipients.
+      expectMockCallArgFields(runner, 0, "heartbeat run params", {
         trigger: "heartbeat",
-        cleanupBundleMcpOnRunEnd: true,
-      },
-    );
-  });
-
-  it("forwards bundle MCP retirement to isolated heartbeat CLI runs", async () => {
-    state.isCliProviderMock.mockReturnValue(true);
-    state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => ({
-      outcome: "completed",
-      result: await params.run("claude-cli", "sonnet-4.6", initialFallbackAttemptOptions(params)),
-      provider: "claude-cli",
-      model: "sonnet-4.6",
-      attempts: [],
-    }));
-    state.runCliAgentMock.mockResolvedValueOnce({
-      payloads: [{ text: "final" }],
-      meta: {},
-    });
-    const followupRun = createFollowupRun({
-      catalog: [testModel("claude-cli", "sonnet-4.6")],
-      profiles: testAuthProfiles("claude-cli"),
-      runtimeAuthModes: { "claude-cli": "token" },
-    });
-    followupRun.run.executionSelection = configureTestCliModel(
-      followupRun,
-      "claude-cli",
-      "sonnet-4.6",
-    );
-    const opts: InternalGetReplyOptions = { isHeartbeat: true, cleanupBundleMcpOnRunEnd: true };
-    const params = createMinimalRunAgentTurnParams({ followupRun, opts });
-    params.isHeartbeat = true;
-
-    const executeAgentTurn = await getExecuteAgentTurnForTest();
-    await executeAgentTurn(params);
-
-    expectMockCallArgFields(state.runCliAgentMock, 0, "isolated heartbeat CLI run params", {
-      trigger: "heartbeat",
-      cleanupBundleMcpOnRunEnd: true,
-    });
-  });
+        requireExplicitMessageTarget: true,
+        ...(cleanup ? { cleanupBundleMcpOnRunEnd: true } : {}),
+      });
+    },
+  );
 
   it("omits requireExplicitMessageTarget on ordinary embedded runs", async () => {
-    state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => ({
-      outcome: "completed",
-      result: await params.run("anthropic", "claude", initialFallbackAttemptOptions(params)),
-      provider: "anthropic",
-      model: "claude",
-      attempts: [],
-    }));
     state.runEmbeddedAgentMock.mockResolvedValueOnce({
       payloads: [{ text: "ok" }],
       meta: {},
     });
 
-    const executeAgentTurn = await getExecuteAgentTurnForTest();
     await executeAgentTurn(createMinimalRunAgentTurnParams());
 
     const embeddedParams = requireMockCall(
@@ -1072,7 +953,6 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
       meta: {},
     });
 
-    const executeAgentTurn = await getExecuteAgentTurnForTest();
     const runPromise = executeAgentTurn(createMinimalRunAgentTurnParams());
 
     expect(registerAgentRunContext).toHaveBeenCalledWith(
@@ -1104,7 +984,6 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
       });
       state.resolveCurrentTurnImagesMock.mockRejectedValueOnce(new Error("invalid image metadata"));
 
-      const executeAgentTurn = await getExecuteAgentTurnForTest();
       await expect(
         executeAgentTurn(
           createMinimalRunAgentTurnParams({
@@ -1150,7 +1029,6 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
       meta: {},
     });
 
-    const executeAgentTurn = await getExecuteAgentTurnForTest();
     await executeAgentTurn(
       createMinimalRunAgentTurnParams({
         opts: {

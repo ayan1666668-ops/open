@@ -1,12 +1,17 @@
 import { resolveCollapsedSessionAuthPinSource } from "../config/sessions/auth-profile-override-provenance.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { getSessionExecutionSelection } from "../model-picker/execution-selection.js";
-import { isModelExecutionSelection } from "../model-picker/execution-selection.js";
+import {
+  getSessionExecutionSelection,
+  isModelExecutionSelection,
+} from "../model-picker/execution-selection.js";
+import type { ProviderRuntimeModel } from "../plugins/provider-runtime-model.types.js";
+import { FailoverError } from "./failover/error.js";
 import { resolveAgentHarnessPolicy } from "./harness/policy.js";
 import { buildAgentHarnessSupportContext } from "./harness/support.js";
+import { resolveModelProviderAuthConfig } from "./model-auth-provider-route.js";
 import type { ModelCatalogEntry } from "./model-catalog.types.js";
-import { modelKey } from "./model-ref-shared.js";
+import { modelKey, type ModelRef } from "./model-ref-shared.js";
 import { resolveProviderModelMaterializationAuthMode } from "./provider-model-route-auth.js";
 
 /** Bind runtime selection and its commit check to the current published model owner. */
@@ -20,19 +25,40 @@ export async function evaluatePublishedModelRuntimeChoice(params: {
   sessionEntry?: Pick<SessionEntry, "authProfileOverride" | "authProfileOverrideSource"> &
     Partial<SessionEntry>;
   profileProvider?: string;
+  materialize?: "override" | "automatic";
 }): Promise<
-  | { kind: "unavailable" | "unknown" | "unsupported" | "forbidden"; message: string }
-  | { kind: "ready"; entry: ModelCatalogEntry; validate: () => string | undefined }
+  | { kind: "unknown"; message: string }
+  | { kind: "forbidden"; message: string }
+  | { kind: "unavailable"; message: string; validate: () => string | undefined }
+  | {
+      kind: "unsupported";
+      message: string;
+      fallback?: { runtime: string; validate: () => string | undefined };
+    }
+  | { kind: "pending"; ref: ModelRef; validate: () => string | undefined }
+  | {
+      kind: "ready";
+      entry: ModelCatalogEntry;
+      ref?: ModelRef;
+      model?: ProviderRuntimeModel;
+      validate: () => string | undefined;
+    }
 > {
-  const { getPublishedPreparedModelCatalogOwnerSnapshot, materializePreparedModelCatalogOwner } =
-    await import("./prepared-model-catalog.js");
+  const {
+    getPublishedPreparedModelCatalogOwnerSnapshot,
+    preparePublishedModelCatalogOwnerSnapshot,
+    materializePreparedModelCatalogOwner,
+  } = await import("./prepared-model-catalog.js");
   const { getPreparedModelRuntimeAuthStore } = await import("./prepared-model-runtime-auth.js");
   const { createModelCatalogDecisions } = await import("./model-catalog-decisions.js");
-  const published = getPublishedPreparedModelCatalogOwnerSnapshot({
+  const catalogScope = {
     config: params.cfg,
     agentId: params.agentId,
     workspaceDir: params.workspaceDir,
-  });
+  };
+  const published =
+    getPublishedPreparedModelCatalogOwnerSnapshot(catalogScope) ??
+    (await preparePublishedModelCatalogOwnerSnapshot(catalogScope));
   const unavailable = `Runtime "${params.runtimeId}" is not available for ${params.provider}/${params.model}. Refresh the model catalog and choose again.`;
   if (!published) {
     return { kind: "unknown", message: unavailable };
@@ -44,7 +70,12 @@ export async function evaluatePublishedModelRuntimeChoice(params: {
   }
   const accepted = getSessionExecutionSelection(params.sessionEntry);
   const decisions = createModelCatalogDecisions({
-    cfg: owner.config,
+    cfg: resolveModelProviderAuthConfig({
+      config: owner.config,
+      provider: params.provider,
+      modelId: params.model,
+      metadataSnapshot: owner.metadataSnapshot,
+    }),
     agentId: owner.agentId ?? params.agentId,
     agentDir: owner.agentDir,
     workspaceDir: owner.workspaceDir,
@@ -64,48 +95,12 @@ export async function evaluatePublishedModelRuntimeChoice(params: {
       params.profileProvider ??
       (accepted && isModelExecutionSelection(accepted) ? accepted.model.provider : undefined),
   });
-  let entry = decisions.snapshot.entries.find(
+  const changed = "Model configuration changed during selection. Retry the request.";
+  const validateGeneration = () => (decisions.isCurrent() ? undefined : changed);
+  const catalogEntry = decisions.snapshot.entries.find(
     (row) => modelKey(row.provider, row.id) === modelKey(params.provider, params.model),
   );
-  if (!entry) {
-    // Explicit selections may be outside finite browse inventory. The normal
-    // resolver still owns the requested model's provider and physical route.
-    const { resolveModelAsync } = await import("./embedded-agent-runner/model.js");
-    const { modelCatalogRowToEntry } = await import("./model-catalog-entry.js");
-    const selectedAuth = await decisions.evaluateEntry(
-      { provider: params.provider, id: params.model },
-      undefined,
-      params.runtimeId,
-    );
-    const authProfileMode = resolveProviderModelMaterializationAuthMode(
-      selectedAuth.selectedAuthMode,
-    );
-    if (selectedAuth.availability !== true || !authProfileMode) {
-      return { kind: "unavailable", message: unavailable };
-    }
-    const resolved = await resolveModelAsync(
-      params.provider,
-      params.model,
-      owner.agentDir,
-      owner.config,
-      {
-        agentId: owner.agentId ?? params.agentId,
-        workspaceDir: owner.workspaceDir,
-        preparedModelRuntime: owner,
-        agentRuntimeId: params.runtimeId,
-        allowBundledStaticCatalogFallback: true,
-        // Discovery must retain the prepared account instead of rereading live auth stores.
-        authProfileMode,
-        ...(selectedAuth.selectedProfileId
-          ? { authProfileId: selectedAuth.selectedProfileId }
-          : {}),
-      },
-    );
-    if (!resolved.model) {
-      return { kind: "unknown", message: unavailable };
-    }
-    entry = modelCatalogRowToEntry(resolved.model);
-  }
+  const entry = catalogEntry ?? { provider: params.provider, id: params.model, name: params.model };
   const variants = decisions.snapshot.routeVariants.filter(
     (row) => modelKey(row.provider, row.id) === modelKey(entry.provider, entry.id),
   );
@@ -114,8 +109,14 @@ export async function evaluatePublishedModelRuntimeChoice(params: {
     variants.length ? variants : [entry],
     params.runtimeId,
   );
+  if (!decisions.isCurrent()) {
+    return { kind: "unknown", message: changed };
+  }
   const evaluation = decisions.evaluateNative(entry, host, params.runtimeId);
   const route = evaluation.selectedRoute;
+  if (evaluation.routeResolution?.kind === "incompatible") {
+    return { kind: "unsupported", message: evaluation.routeResolution.message };
+  }
   const policy = resolveAgentHarnessPolicy({
     config: owner.config,
     agentId: owner.agentId ?? params.agentId,
@@ -136,28 +137,100 @@ export async function evaluatePublishedModelRuntimeChoice(params: {
     };
   }
   const compatible = route?.runtimePolicy?.compatibleIds;
-  if (compatible && !compatible.includes(params.runtimeId)) {
-    return { kind: "unsupported", message: unavailable };
-  }
+  const routeExcluded = compatible !== undefined && !compatible.includes(params.runtimeId);
   const cli = owner.pluginRegistry?.cliBackends.find(
     ({ backend }) => backend.id === params.runtimeId,
   )?.backend;
   if (cli && cli.modelProvider !== params.provider && cli.id !== params.provider) {
     return { kind: "unsupported", message: unavailable };
   }
+  const harness =
+    params.runtimeId !== "openclaw" && !cli
+      ? owner.pluginRegistry?.agentHarnesses.find(
+          ({ harness: candidateHarness }) => candidateHarness.id === params.runtimeId,
+        )?.harness
+      : undefined;
+  if (routeExcluded && (!harness || evaluation.availability !== true || !decisions.isCurrent())) {
+    return { kind: "unsupported", message: unavailable };
+  }
   if (evaluation.availability !== true) {
     return {
       kind: evaluation.availability === false ? "unavailable" : "unknown",
-      message: unavailable,
+      message: params.sessionEntry?.authProfileOverride
+        ? `The selected account or native runtime is unavailable for ${params.provider}/${params.model}. Restore that account before spawning this model.`
+        : unavailable,
+      validate: validateGeneration,
     };
   }
-  if (params.runtimeId !== "openclaw" && !cli) {
-    const harness = owner.pluginRegistry?.agentHarnesses.find(
-      ({ harness }) => harness.id === params.runtimeId,
-    )?.harness;
-    if (!harness) {
-      return { kind: "unknown", message: unavailable };
+  if (params.runtimeId !== "openclaw" && !cli && !harness) {
+    return { kind: "unknown", message: unavailable };
+  }
+  const validate = () =>
+    decisions.isCurrent() &&
+    decisions.evaluateNative(entry, host, params.runtimeId).availability === true
+      ? undefined
+      : unavailable;
+
+  let materialized: { ref: ModelRef; model: ProviderRuntimeModel } | undefined;
+  let finalEntry = entry;
+  if (!routeExcluded && (params.materialize || !catalogEntry)) {
+    const { resolveModelAsync } = await import("./embedded-agent-runner/model.js");
+    const { modelCatalogRowToEntry } = await import("./model-catalog-entry.js");
+    const { projectProviderModelRouteConfig } = await import("./provider-model-route.js");
+    const { validatePreparedRuntimeModel } = await import("./runtime-plan/materialize-model.js");
+    const config = route
+      ? projectProviderModelRouteConfig({ provider: params.provider, config: owner.config, route })
+      : owner.config;
+    const resolution = await resolveModelAsync(
+      params.provider,
+      params.model,
+      owner.agentDir,
+      config,
+      {
+        agentId: owner.agentId ?? params.agentId,
+        workspaceDir: owner.workspaceDir,
+        preparedModelRuntime: owner,
+        modelIdSource: "selected",
+        authProfileId: evaluation.selectedProfileId,
+        authProfileMode: resolveProviderModelMaterializationAuthMode(evaluation.selectedAuthMode),
+        agentRuntimeId: params.runtimeId,
+        allowBundledStaticCatalogFallback: true,
+        deferProviderDynamicModelPreparation: params.materialize === "automatic",
+      },
+    );
+    if (!decisions.isCurrent()) {
+      return { kind: "unknown", message: changed };
     }
+    if (!resolution.model) {
+      return resolution.deferred === "provider-dynamic-model"
+        ? { kind: "pending", ref: { provider: params.provider, model: params.model }, validate }
+        : {
+            kind: params.materialize ? "unavailable" : "unknown",
+            message: resolution.error,
+            validate: validateGeneration,
+          };
+    }
+    try {
+      const model = validatePreparedRuntimeModel({
+        provider: params.provider,
+        modelId: params.model,
+        config,
+        workspaceDir: owner.workspaceDir,
+        metadataSnapshot: owner.metadataSnapshot,
+        route: route ? { ...route, provider: params.provider, modelId: params.model } : undefined,
+        model: resolution.model,
+      });
+      const ref = resolution.logicalRef;
+      materialized = { model, ref };
+      finalEntry = { ...modelCatalogRowToEntry(model), provider: ref.provider, id: ref.model };
+    } catch (error) {
+      if (error instanceof FailoverError && error.reason === "model_not_found") {
+        return { kind: "unavailable", message: error.message, validate: validateGeneration };
+      }
+      throw error;
+    }
+  }
+  if (harness) {
     const support = harness.supports(
       buildAgentHarnessSupportContext({
         config: owner.config,
@@ -167,8 +240,8 @@ export async function evaluatePublishedModelRuntimeChoice(params: {
         requestedRuntime: params.runtimeId,
         preparedModelProvider: true,
         modelProvider: {
-          api: route?.api ?? entry.api,
-          baseUrl: route?.baseUrl ?? entry.baseUrl,
+          api: materialized?.model.api ?? route?.api ?? entry.api,
+          baseUrl: materialized?.model.baseUrl ?? route?.baseUrl ?? entry.baseUrl,
           runtimePolicy: route?.runtimePolicy,
           requestTransportOverrides: route?.requestTransportOverrides,
           preparedAuth: evaluation.runtimeAuth
@@ -183,19 +256,21 @@ export async function evaluatePublishedModelRuntimeChoice(params: {
     );
     if (!support.supported) {
       // Older support hooks also return false when route metadata is absent.
-      // Only their declared lossless fallback proves incompatibility here;
-      // an explicit route exclusion was handled above.
-      return {
-        kind: support.fallbackRuntime ? "unsupported" : "unknown",
-        message: support.reason ?? unavailable,
-      };
+      // An explicit route exclusion or a declared lossless fallback proves
+      // incompatibility; missing route metadata alone does not.
+      return support.fallbackRuntime
+        ? {
+            kind: "unsupported",
+            message: support.reason ?? unavailable,
+            fallback: { runtime: support.fallbackRuntime, validate },
+          }
+        : {
+            kind: routeExcluded ? "unsupported" : "unknown",
+            message: support.reason ?? unavailable,
+          };
     }
   }
-  const validate = () =>
-    decisions.isCurrent() &&
-    decisions.evaluateNative(entry, host, params.runtimeId).availability === true
-      ? undefined
-      : unavailable;
-
-  return { kind: "ready", entry, validate };
+  return routeExcluded
+    ? { kind: "unsupported", message: unavailable }
+    : { kind: "ready", entry: finalEntry, ...materialized, validate };
 }

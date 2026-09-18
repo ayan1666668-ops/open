@@ -2,86 +2,28 @@
 // aliases, model catalog validation, and rejected invalid patch payloads.
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { SessionCreatedActor } from "../../packages/gateway-protocol/src/index.js";
-import { resolveSessionAgentId } from "../agents/agent-scope.js";
 import type { AuthProfileStore } from "../agents/auth-profiles/types.js";
 import type { ModelCatalogEntry } from "../agents/model-catalog.js";
-import { resolveDefaultModelForAgent } from "../agents/model-selection.js";
-import { createSessionModelCatalogFixture } from "../agents/test-helpers/session-model-catalog.test-support.js";
 import type { OpenClawConfig } from "../config/config.js";
 import type { InternalSessionEntry as SessionEntry } from "../config/sessions.js";
 import { contextBudgetStatusFixture } from "../config/sessions/context-budget.test-support.js";
 import { projectCanonicalSessionEntryShape } from "../config/sessions/store-entry-shape.js";
-import type { SessionExecutionSelection } from "../model-picker/execution-selection.js";
 import type { PluginManifestRecord } from "../plugins/manifest-registry.js";
 import { clearPluginMetadataLifecycleCaches } from "../plugins/plugin-metadata-lifecycle.js";
 import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
 import { resetPluginRuntimeStateForTest, setActivePluginRegistry } from "../plugins/runtime.js";
 import { AGENT_HARNESS_SESSION_KEY_RESERVED_MESSAGE } from "../sessions/agent-harness-session-key.js";
 import { MODEL_SELECTION_LOCKED_MESSAGE } from "../sessions/model-overrides.js";
+import { acceptedModelSelection } from "../test-utils/session-execution-selection.js";
 import { withAgentSessionModelPatchOrigin } from "./session-model-patch-origin.js";
 import { projectSessionsPatchEntry } from "./sessions-patch.js";
-
-const preparedCatalog = createSessionModelCatalogFixture();
-
-async function applySessionsPatchToStore(
-  params: Omit<
-    Parameters<typeof projectSessionsPatchEntry>[0],
-    "existingEntry" | "isLabelInUse"
-  > & {
-    store: Record<string, SessionEntry>;
-    loadGatewayModelCatalog?: () => Promise<ModelCatalogEntry[]>;
-    profiles?: AuthProfileStore["profiles"];
-  },
-) {
-  const load = params.loadGatewayModelCatalog;
-  const projected = await projectSessionsPatchEntry({
-    ...params,
-    loadGatewayModelCatalogSnapshot: load
-      ? async () => {
-          const entries = await load();
-          const agentId =
-            params.agentId ??
-            resolveSessionAgentId({ sessionKey: params.storeKey, config: params.cfg });
-          const configured = resolveDefaultModelForAgent({ cfg: params.cfg, agentId });
-          const providers = new Set([...entries.map((row) => row.provider), configured.provider]);
-          const profiles: AuthProfileStore["profiles"] = Object.fromEntries(
-            [...providers].map((provider) => [
-              provider + ":default",
-              { type: "api_key" as const, provider, key: "synthetic-credential" },
-            ]),
-          );
-          for (const [id, provider] of [
-            ["anthropic:default", "anthropic"],
-            ["openai:good", "openai"],
-            ["byteplus:work", "byteplus"],
-            ["work", "anthropic"],
-            ["myprofile", "anthropic"],
-            ["oldprofile", "anthropic"],
-            ["newprofile", "anthropic"],
-            ["openai:user@example.com", "anthropic"],
-          ] as const) {
-            profiles[id] = { type: "api_key", provider, key: "synthetic-credential" };
-          }
-          return preparedCatalog.publish({
-            config: params.cfg,
-            agentId,
-            catalog: { entries, routeVariants: entries },
-            profiles: { ...profiles, ...params.profiles },
-            plugins: params.providerAuthMetadataSnapshot?.plugins,
-          });
-        }
-      : undefined,
-    existingEntry: params.store[params.storeKey],
-    isLabelInUse: (label) =>
-      Object.entries(params.store).some(
-        ([sessionKey, entry]) => sessionKey !== params.storeKey && entry.label === label,
-      ),
-  });
-  if (projected.ok) {
-    params.store[params.storeKey] = projected.entry;
-  }
-  return projected;
-}
+import {
+  applySessionsPatchToStore,
+  catalogEntry,
+  loadCatalog,
+  expectModelSelection,
+  expectAuthOverride,
+} from "./sessions-patch.test-support.js";
 
 const providerThinkingMocks = vi.hoisted(() => ({
   resolveProviderThinkingProfile:
@@ -185,48 +127,11 @@ function mainStoreEntry(overrides: Partial<SessionEntry>): Record<string, Sessio
   };
 }
 
-function accepted(
-  provider: string,
-  id: string,
-  runtime = "openclaw",
-  fallbackPermission: "explicit" | "configured" = "explicit",
-): SessionExecutionSelection {
-  return {
-    state: "accepted",
-    selection: { model: { provider, id }, executor: { kind: "harness", id: runtime } },
-    fallbackPermission,
-  };
-}
-
 function mainAuthOverrideStore(overrides: Partial<SessionEntry>): Record<string, SessionEntry> {
   return mainStoreEntry({
-    executionSelection: accepted("anthropic", ANTHROPIC_OPUS_ID),
+    executionSelection: acceptedModelSelection("anthropic", ANTHROPIC_OPUS_ID),
     authProfileOverrideSource: "user",
     ...overrides,
-  });
-}
-
-function catalogEntry(ref: string, name?: string) {
-  const separator = ref.indexOf("/");
-  if (separator < 0) {
-    throw new Error(`model ref must include provider: ${ref}`);
-  }
-  const id = ref.slice(separator + 1);
-  return {
-    provider: ref.slice(0, separator),
-    id,
-    name: name ?? id,
-  };
-}
-
-function loadCatalog(...refs: string[]): ApplySessionsPatchArgs["loadGatewayModelCatalog"] {
-  return async () => refs.map((ref) => catalogEntry(ref));
-}
-
-function expectModelSelection(entry: SessionEntry, provider: string, model: string) {
-  expect(entry.executionSelection).toMatchObject({
-    state: "accepted",
-    selection: { model: { provider, id: model } },
   });
 }
 
@@ -258,28 +163,6 @@ async function expectProviderChangeClearsAuthOverride(store: Record<string, Sess
   });
   expectModelSelection(entry, "openai", OPENAI_GPT_ID);
   expectAuthOverride(entry, { profile: undefined });
-}
-
-function expectAuthOverride(
-  entry: SessionEntry,
-  expected: {
-    profile: string | undefined;
-    source?: string;
-    compactionCount?: number;
-  },
-) {
-  expect(entry.authProfileOverride).toBe(expected.profile);
-  if (expected.profile === undefined) {
-    expect(entry.authProfileOverrideSource).toBeUndefined();
-    expect(entry.authProfileOverrideCompactionCount).toBeUndefined();
-    return;
-  }
-  expect(entry.authProfileOverrideSource).toBe(expected.source ?? "user");
-  if (expected.compactionCount === undefined) {
-    expect(entry.authProfileOverrideCompactionCount).toBeUndefined();
-  } else {
-    expect(entry.authProfileOverrideCompactionCount).toBe(expected.compactionCount);
-  }
 }
 
 async function applySubagentModelPatch(cfg: OpenClawConfig, store: Record<string, SessionEntry>) {
@@ -1021,7 +904,7 @@ describe("gateway sessions patch", () => {
   test("preserves auth overrides for provider-auth aliases when model patch changes", async () => {
     const store = mainStoreEntry({
       sessionId: "sess-alias",
-      executionSelection: accepted("byteplus", "seedance-1-0-lite-t2v-250428"),
+      executionSelection: acceptedModelSelection("byteplus", "seedance-1-0-lite-t2v-250428"),
       authProfileOverride: "byteplus:work",
       authProfileOverrideSource: "user",
       authProfileOverrideCompactionCount: 2,
@@ -1100,7 +983,7 @@ describe("gateway sessions patch", () => {
   ])("rejects locked model $name patches before catalog loading", async ({ model }) => {
     const store = mainStoreEntry({
       sessionId: "sess-model-locked",
-      executionSelection: accepted("openai", OPENAI_GPT_ID),
+      executionSelection: acceptedModelSelection("openai", OPENAI_GPT_ID),
       modelSelectionLocked: true,
     });
     const before = { ...store[MAIN_SESSION_KEY] };
@@ -1138,7 +1021,7 @@ describe("gateway sessions patch", () => {
           ? undefined
           : mainStoreEntry({
               sessionId: sessionState === "existing" ? "sess-live" : undefined,
-              executionSelection: accepted("openai", OPENAI_GPT_ID),
+              executionSelection: acceptedModelSelection("openai", OPENAI_GPT_ID),
             });
       const entry = await applyMainModelPatch({
         store,
@@ -1156,7 +1039,7 @@ describe("gateway sessions patch", () => {
     const store = mainStoreEntry({
       sessionId: "sess-agent-model-patch",
       modelFallback: {
-        previous: accepted("openai", OPENAI_GPT_ID),
+        previous: acceptedModelSelection("openai", OPENAI_GPT_ID),
         prevModel: OPENAI_GPT_ID,
         prevProvider: "openai",
         ts: 1,
@@ -1175,7 +1058,9 @@ describe("gateway sessions patch", () => {
 
   test("atomically snapshots prior selection for agent model patches", async () => {
     const store = mainStoreEntry({
-      executionSelection: accepted("openai", OPENAI_GPT_ID, "openclaw", "configured"),
+      executionSelection: acceptedModelSelection("openai", OPENAI_GPT_ID, {
+        fallbackPermission: "configured",
+      }),
       authProfileOverride: "openai:good",
       authProfileOverrideSource: "user",
       thinkingLevel: "high",
@@ -1193,7 +1078,9 @@ describe("gateway sessions patch", () => {
     expect(entry.modelFallback).toMatchObject({
       prevModel: OPENAI_GPT_ID,
       prevProvider: "openai",
-      previous: accepted("openai", OPENAI_GPT_ID, "openclaw", "configured"),
+      previous: acceptedModelSelection("openai", OPENAI_GPT_ID, {
+        fallbackPermission: "configured",
+      }),
       prevAuthProfileOverride: "openai:good",
       prevThinkingLevel: "high",
       source: "agent-patch",
@@ -1207,7 +1094,7 @@ describe("gateway sessions patch", () => {
       async () =>
         await applyMainModelPatch({
           store: mainStoreEntry({
-            executionSelection: accepted("openai", OPENAI_GPT_ID),
+            executionSelection: acceptedModelSelection("openai", OPENAI_GPT_ID),
           }),
           cfg,
           model: ANTHROPIC_SONNET_MODEL,
@@ -1244,9 +1131,9 @@ describe("gateway sessions patch", () => {
         updatedAt: 1,
         delivery: { kind: "none" },
         thinkingLevel: "high",
-        executionSelection: accepted("anthropic", ANTHROPIC_SONNET_ID),
+        executionSelection: acceptedModelSelection("anthropic", ANTHROPIC_SONNET_ID),
         modelFallback: {
-          previous: accepted("openai", OPENAI_GPT_ID),
+          previous: acceptedModelSelection("openai", OPENAI_GPT_ID),
           prevModel: OPENAI_GPT_ID,
           prevProvider: "openai",
           prevThinkingLevel: "high",
@@ -1281,7 +1168,7 @@ describe("gateway sessions patch", () => {
         delivery: { kind: "none" },
         thinkingLevel: "high",
         modelFallback: {
-          previous: accepted("openai", OPENAI_GPT_ID),
+          previous: acceptedModelSelection("openai", OPENAI_GPT_ID),
           prevModel: OPENAI_GPT_ID,
           prevProvider: "openai",
           prevThinkingLevel: "high",
@@ -1308,7 +1195,7 @@ describe("gateway sessions patch", () => {
         thinkingLevel: "high",
         contextWindow: "extended",
         modelFallback: {
-          previous: accepted("openai", OPENAI_GPT_ID),
+          previous: acceptedModelSelection("openai", OPENAI_GPT_ID),
           prevModel: OPENAI_GPT_ID,
           prevProvider: "openai",
           prevThinkingLevel: "high",
@@ -1336,7 +1223,7 @@ describe("gateway sessions patch", () => {
     },
   );
 
-  test("retains configured fallback permission when selecting the configured default", async () => {
+  test("keeps a model-only choice explicit even when it equals the configured default", async () => {
     const entry = expectPatchOk(
       await runPatch({
         cfg: { agents: { defaults: { model: { primary: OPENAI_GPT_MODEL } } } },
@@ -1346,13 +1233,13 @@ describe("gateway sessions patch", () => {
     );
 
     expectModelSelection(entry, "openai", OPENAI_GPT_ID);
-    expect(entry.executionSelection?.fallbackPermission).toBe("configured");
+    expect(entry.executionSelection?.fallbackPermission).toBe("explicit");
   });
 
   test("resolves a model reset once and queues the changed accepted pair", async () => {
     const store = mainStoreEntry({
       sessionId: "sess-live-reset",
-      executionSelection: accepted("anthropic", ANTHROPIC_SONNET_ID),
+      executionSelection: acceptedModelSelection("anthropic", ANTHROPIC_SONNET_ID),
       liveModelSwitchPending: true,
     });
     const loadGatewayModelCatalog = vi.fn(async () => [
@@ -1390,7 +1277,7 @@ describe("gateway sessions patch", () => {
         await runPatch({
           cfg: { agents: { defaults: { model: ANTHROPIC_SONNET_MODEL } } },
           store: mainStoreEntry({
-            executionSelection: accepted("anthropic", ANTHROPIC_OPUS_ID),
+            executionSelection: acceptedModelSelection("anthropic", ANTHROPIC_OPUS_ID),
             thinkingLevel: "high",
             contextWindow: "extended",
           }),
@@ -1876,7 +1763,7 @@ describe("gateway sessions patch", () => {
           agents: { defaults: { model: { primary: "openai/gpt-5.6-luna" } } },
         } as OpenClawConfig,
         store: mainStoreEntry({
-          executionSelection: accepted("openai", "gpt-5.6-luna"),
+          executionSelection: acceptedModelSelection("openai", "gpt-5.6-luna"),
           agentHarnessId: "codex",
         }),
         patch: { key: MAIN_SESSION_KEY, thinkingLevel: "ultra" },
@@ -1887,23 +1774,27 @@ describe("gateway sessions patch", () => {
     expect(entry.thinkingLevel).toBe("ultra");
   });
 
-  test("clearing a runtime pin remaps thinking through configured routing and invalidates derived context", async () => {
+  test("clearing a runtime pin preserves the selected model while refreshing routing and context", async () => {
     const entry = expectPatchOk(
       await runPatch({
-        cfg: { agents: { defaults: { model: "openai/gpt-5.6-luna" } } },
+        cfg: { agents: { defaults: { model: "openai/gpt-5.6-sol" } } },
         store: mainStoreEntry({
-          executionSelection: accepted("openai", "gpt-5.6-luna"),
+          executionSelection: acceptedModelSelection("openai", "gpt-5.6-luna"),
           thinkingLevel: "ultra",
           contextTokens: 1000,
         }),
         patch: { key: MAIN_SESSION_KEY, agentRuntime: null },
-        loadGatewayModelCatalog: loadCatalog("openai/gpt-5.6-luna"),
+        loadGatewayModelCatalog: loadCatalog("openai/gpt-5.6-sol", "openai/gpt-5.6-luna"),
       }),
     );
     expect(entry).toMatchObject({ thinkingLevel: "max", liveModelSwitchPending: true });
     expect(entry.executionSelection).toMatchObject({
       state: "accepted",
-      selection: { executor: { kind: "harness", id: "codex" } },
+      selection: {
+        model: { provider: "openai", id: "gpt-5.6-luna" },
+        executor: { kind: "harness", id: "codex" },
+      },
+      fallbackPermission: "explicit",
     });
     expect(entry).not.toHaveProperty("contextTokens");
   });
@@ -1913,7 +1804,9 @@ describe("gateway sessions patch", () => {
     async (agentRuntime) => {
       const store = mainStoreEntry({
         modelSelectionLocked: true,
-        executionSelection: accepted("openai", "gpt-5.6-luna", "codex"),
+        executionSelection: acceptedModelSelection("openai", "gpt-5.6-luna", {
+          executor: { kind: "harness", id: "codex" },
+        }),
       });
       expectPatchError(
         await runPatch({
@@ -1927,7 +1820,9 @@ describe("gateway sessions patch", () => {
         MODEL_SELECTION_LOCKED_MESSAGE,
       );
       expect(store[MAIN_SESSION_KEY]?.executionSelection).toEqual(
-        accepted("openai", "gpt-5.6-luna", "codex"),
+        acceptedModelSelection("openai", "gpt-5.6-luna", {
+          executor: { kind: "harness", id: "codex" },
+        }),
       );
     },
   );
@@ -1964,7 +1859,9 @@ describe("gateway sessions patch", () => {
         agents: { defaults: { model: { primary: "openai/gpt-5.6-luna" } } },
       } as OpenClawConfig,
       store: mainStoreEntry({
-        executionSelection: accepted("openai", "gpt-5.6-luna", "codex"),
+        executionSelection: acceptedModelSelection("openai", "gpt-5.6-luna", {
+          executor: { kind: "harness", id: "codex" },
+        }),
         agentHarnessId: "openclaw",
       }),
       patch: { key: MAIN_SESSION_KEY, thinkingLevel: "ultra" },
@@ -2284,9 +2181,7 @@ describe("gateway sessions patch", () => {
     }
     const entry = expectPatchOk(result);
     expectModelSelection(entry, "synthetic", "hf:moonshotai/Kimi-K2.7-Code");
-    expect(entry.executionSelection?.fallbackPermission).toBe(
-      config.source === "target agent primary" ? "configured" : "explicit",
-    );
+    expect(entry.executionSelection?.fallbackPermission).toBe("explicit");
   });
 
   test("persists trailing @profile suffix as authProfileOverride on model patch", async () => {
@@ -2303,7 +2198,7 @@ describe("gateway sessions patch", () => {
   test("marks same-model @profile patches as pending live model switches", async () => {
     const store = mainStoreEntry({
       sessionId: "sess-live-profile-only",
-      executionSelection: accepted("anthropic", ANTHROPIC_SONNET_ID),
+      executionSelection: acceptedModelSelection("anthropic", ANTHROPIC_SONNET_ID),
       authProfileOverride: "oldprofile",
       authProfileOverrideSource: "user",
     });

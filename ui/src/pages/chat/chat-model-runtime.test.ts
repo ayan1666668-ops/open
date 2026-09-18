@@ -1,9 +1,15 @@
 /* @vitest-environment jsdom */
 
+import { expectDefined } from "@openclaw/normalization-core";
 import { render } from "lit";
 import { describe, expect, it, vi } from "vitest";
 import type { ModelCatalogEntry } from "../../api/types.ts";
-import { createSessionsListResult } from "../../test-helpers/chat-model.ts";
+import {
+  resolveChatFastModeSelectState,
+  resolveChatModelSelectState,
+  resolveChatModelUnavailableReason,
+} from "../../lib/chat/model-select-state.ts";
+import { createChatModelState, createSessionsListResult } from "../../test-helpers/chat-model.ts";
 import { makeChatHost } from "./chat-host.test-support.ts";
 import { switchChatModel } from "./chat-session.ts";
 import { renderChatModelControls } from "./components/chat-model-controls.ts";
@@ -20,8 +26,22 @@ const model: ModelCatalogEntry = {
   ],
 };
 
-function renderRuntimeModel(entry: ModelCatalogEntry, selectedRuntime?: string) {
-  const result = createSessionsListResult({ model: entry.id, defaultsModel: entry.id });
+function renderRuntimeModel(
+  entry: ModelCatalogEntry,
+  selectedRuntime?: string,
+  overrides: Partial<
+    Pick<
+      Parameters<typeof renderChatModelControls>[0],
+      "selectedSession" | "modelOverrides" | "sessionsResult" | "modelCatalog"
+    >
+  > = {},
+) {
+  const result = createSessionsListResult({
+    model: entry.id,
+    modelProvider: entry.provider,
+    defaultsModel: entry.id,
+    defaultsProvider: entry.provider,
+  });
   if (selectedRuntime) {
     result.sessions[0]!.agentRuntime = { id: selectedRuntime, source: "session-key" };
   }
@@ -39,6 +59,7 @@ function renderRuntimeModel(entry: ModelCatalogEntry, selectedRuntime?: string) 
       selectedSession: result.sessions[0],
       sessionsResult: result,
       stream: null,
+      ...overrides,
     }),
     container,
   );
@@ -46,6 +67,171 @@ function renderRuntimeModel(entry: ModelCatalogEntry, selectedRuntime?: string) 
 }
 
 describe("chat model runtime choices", () => {
+  it("does not gate an opaque app model on a colliding catalog route's credentials", () => {
+    const catalog = [
+      {
+        id: "qa-model",
+        name: "Catalog model",
+        provider: "qa-provider",
+        available: false,
+        unavailableReason: "missing-auth" as const,
+      },
+    ];
+    expect(
+      resolveChatModelUnavailableReason("qa-provider/qa-model", undefined, catalog),
+    ).toBeUndefined();
+    expect(resolveChatModelUnavailableReason("qa-model", "qa-provider", catalog)).toBe(
+      "missing-auth",
+    );
+  });
+
+  it.each([true, false])(
+    "uses catalog speed metadata only for local/concrete selection, server-managed=%s",
+    (serverManagedModel) => {
+      const state = resolveChatFastModeSelectState({
+        activeRunId: null,
+        connected: true,
+        gatewayAvailable: true,
+        loading: false,
+        sending: false,
+        stream: null,
+        sessionsResult: null,
+        currentModelOverride: "qa-provider/qa-model",
+        serverManagedModel,
+        fastModeTarget: {
+          model: "qa-provider/qa-model",
+          agentRuntime: { id: "qa-app", source: "session" },
+        },
+        catalog: [
+          {
+            id: "qa-model",
+            name: "Catalog model",
+            provider: "qa-provider",
+            supportsFastMode: true,
+          },
+        ],
+      });
+      expect(state.supported).toBe(!serverManagedModel);
+      expect(state.disabled).toBe(serverManagedModel);
+    },
+  );
+
+  it("keeps opaque server values and labels despite catalog collisions", () => {
+    const state = createChatModelState({
+      activeSession: {
+        key: "main",
+        kind: "direct",
+        updatedAt: null,
+        model: "qa-provider/QA-model",
+        agentRuntime: { id: "qa-app", source: "session" },
+      },
+      chatModelCatalog: [
+        { id: "qa-model", name: "Unrelated catalog model", provider: "qa-provider" },
+      ],
+    });
+    expect(resolveChatModelSelectState(state)).toMatchObject({
+      currentOverride: "qa-provider/QA-model",
+      appModelLabel: "qa-provider/QA-model",
+    });
+  });
+
+  it.each(["session", "implicit", "model", "session-key"] as const)(
+    "identifies app-managed defaults from server runtime source %s",
+    (source) => {
+      const state = createChatModelState({
+        activeSession: {
+          key: "main",
+          kind: "direct",
+          updatedAt: null,
+          agentRuntime: { id: "qa-app", source },
+        },
+        agentDefaultModel: "qa-provider/qa-default",
+      });
+      const resolved = resolveChatModelSelectState(state);
+      expect(resolved.appModelLabel).toBe(source === "session" ? "App default model" : undefined);
+      expect(resolved.defaultLabel).toBe("Default (qa-default · qa-provider)");
+      expect(
+        resolveChatModelSelectState({ ...state, modelOverrides: { main: null } }).appModelLabel,
+      ).toBeUndefined();
+    },
+  );
+  it.each([
+    { model: undefined, expected: "App default model" },
+    { model: "qa-model", expected: "qa-model" },
+    { model: "qa-provider/qa-model", expected: "qa-provider/qa-model" },
+  ])(
+    "renders the server-owned model label $expected without catalog inference",
+    ({ model: selectedModel, expected }) => {
+      const catalogEntry: ModelCatalogEntry = {
+        id: "qa-model",
+        name: "Unrelated catalog model",
+        provider: "qa-provider",
+        supportsTools: false,
+        contextWindow: 4096,
+      };
+      const sessions = createSessionsListResult({
+        model: selectedModel ?? null,
+        modelProvider: null,
+      });
+      const session = expectDefined(sessions.sessions[0], "selected session");
+      session.agentRuntime = { id: "qa-app", source: "session" };
+      session.contextTokens = 123;
+      const container = renderRuntimeModel(catalogEntry, undefined, { selectedSession: session });
+      const trigger = expectDefined(
+        container.querySelector<HTMLElement>('[data-chat-model-select="true"]'),
+        "model control",
+      );
+      expect(trigger.textContent).toContain(expected);
+      expect(trigger.textContent).not.toContain("Unrelated catalog model");
+      expect(trigger.getAttribute("aria-label")).toBe(`Chat model: ${expected}`);
+      expect(trigger.dataset.chatSelectValue).toBeUndefined();
+      expect(trigger.dataset.chatModelTools).toBe("available");
+      expect(container.querySelector('[data-chat-model-option][aria-selected="true"]')).toBeNull();
+      expect(
+        container.querySelector('[data-chat-model-option="qa-provider/qa-model"]')?.textContent,
+      ).not.toContain("123 active");
+      const pendingLocal = renderRuntimeModel(catalogEntry, undefined, {
+        selectedSession: session,
+        modelOverrides: { main: "qa-provider/qa-model" },
+      });
+      expect(
+        pendingLocal
+          .querySelector('[data-chat-model-option="qa-provider/qa-model"]')
+          ?.getAttribute("aria-selected"),
+      ).toBe("true");
+      expect(
+        pendingLocal.querySelector<HTMLElement>('[data-chat-model-select="true"]')?.dataset
+          .chatModelTools,
+      ).toBe("unavailable");
+    },
+  );
+
+  it("shows the active fallback model without changing the selected preference", () => {
+    const catalog = [
+      { id: "gpt-5.5", name: "GPT-5.5", provider: "codex" },
+      { id: "qwen3.5:9b", name: "Qwen 3.5 9B", provider: "ollama" },
+    ];
+    const sessions = createSessionsListResult({ model: "gpt-5.5", modelProvider: "codex" });
+    const session = expectDefined(sessions.sessions[0], "selected session");
+    Object.assign(session, { activeModel: "qwen3.5:9b", activeModelProvider: "ollama" });
+    const container = renderRuntimeModel(catalog[0]!, undefined, {
+      selectedSession: session,
+      modelCatalog: catalog,
+    });
+    const trigger = expectDefined(
+      container.querySelector<HTMLElement>('[data-chat-model-select="true"]'),
+      "model control",
+    );
+    expect(trigger.textContent).toContain("Qwen 3.5 9B");
+    expect(trigger.getAttribute("aria-label")).toBe("Chat model: Qwen 3.5 9B");
+    expect(trigger.dataset.chatSelectValue).toBe("codex/gpt-5.5");
+    expect(
+      container
+        .querySelector('[data-chat-model-option="codex/gpt-5.5"]')
+        ?.getAttribute("aria-selected"),
+    ).toBe("true");
+  });
+
   it.each([false, true])(
     "retains generic selection, honors explicit runtime and resets from Default with runtime locked: %s",
     async (runtimeLocked) => {

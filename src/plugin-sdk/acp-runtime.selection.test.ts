@@ -39,8 +39,9 @@ const stored: InternalStoreEntry = {
 const managers: AcpSessionManager[] = [];
 
 afterEach(async () => {
-  for (const manager of managers.splice(0))
+  for (const manager of managers.splice(0)) {
     await disposeAcpSessionManagerInstance(manager, "test-complete");
+  }
   testing.resetAcpSessionManagerForTests();
   vi.restoreAllMocks();
 });
@@ -54,7 +55,7 @@ function expectPublicMeta(meta: SessionAcpMeta) {
 }
 
 test("the public ACP store read projects the committed pair without adding selectors to lifecycle storage", () => {
-  vi.spyOn(acpStore, "readAcpSessionEntry").mockImplementation(() => structuredClone(stored));
+  vi.spyOn(acpStore, "readAcpSessionEntryCore").mockImplementation(() => structuredClone(stored));
   const projected = expectDefined(
     readAcpSessionEntry({ cfg, agentId: "main", sessionKey }),
     "projected ACP session",
@@ -72,7 +73,7 @@ test("the public manager keeps one actor and projects its released resolution sh
     upsertSessionMeta: async () => {
       throw new Error("read-only test");
     },
-    getRuntimeBackend: () => undefined,
+    getRuntimeBackend: () => null,
     requireRuntimeBackend: () => {
       throw new Error("read-only test");
     },
@@ -83,11 +84,15 @@ test("the public manager keeps one actor and projects its released resolution sh
   expect(getAcpSessionManager()).toBe(facade);
   const result = facade.resolveSession({ cfg, agentId: "main", sessionKey });
   expect(result.kind).toBe("ready");
-  if (result.kind !== "ready") throw new Error("expected ready session");
+  if (result.kind !== "ready") {
+    throw new Error("expected ready session");
+  }
   expectPublicMeta(result.meta);
   expect(facade.getObservabilitySnapshot()).toEqual(manager.getObservabilitySnapshot());
   const internal = manager.resolveSession({ cfg, agentId: "main", sessionKey });
-  if (internal.kind !== "ready") throw new Error("expected ready session");
+  if (internal.kind !== "ready") {
+    throw new Error("expected ready session");
+  }
   expect(internal.meta).not.toHaveProperty("backend");
   expect(internal.selection.model).toEqual({ id: "qa-model" });
 });

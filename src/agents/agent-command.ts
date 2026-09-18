@@ -19,7 +19,7 @@ import { createSubsystemLogger } from "../logging/subsystem.js";
 import { withPluginRuntimeGenerationScope } from "../plugins/runtime/generation-scope.js";
 import { isSubagentSessionKey } from "../routing/session-key.js";
 import { defaultRuntime, type RuntimeEnv } from "../runtime.js";
-import { resolveSendPolicy } from "../sessions/send-policy.js";
+import { resolveSendPolicyCore } from "../sessions/send-policy.js";
 import { ensureSessionDiffBaseline } from "../sessions/session-diff-baseline.js";
 import { beginSessionWorkAdmission } from "../sessions/session-lifecycle-admission.js";
 import { classifySessionStateActor } from "../sessions/session-state-events.js";
@@ -31,6 +31,7 @@ import {
   type AgentCommandAdmissionIngress,
 } from "./agent-command-execution-identity.js";
 import { runLocalAgentCommand } from "./agent-command-local.js";
+import type { AgentCommandRecovery } from "./agent-command-recovery-owner.js";
 import { runWithAgentCommandRecoveryOwner } from "./agent-command-recovery-owner.js";
 import {
   buildCurrentRunRestartRecoveryClaim,
@@ -66,7 +67,6 @@ import type {
 } from "./command/types.js";
 import { createInternalSessionEffectsCleanup } from "./internal-session-effects.js";
 import { AGENT_LANE_SUBAGENT } from "./lanes.js";
-import type { MainSessionRecoveryPendingTarget } from "./main-session-recovery/main-session-recovery-store.js";
 import { createAgentRunRestartAbortError, isAgentRunDirectAbortReason } from "./run-termination.js";
 import { withAgentPluginRegistry } from "./runtime-plugins.js";
 import { beginForegroundSessionMaintenance } from "./session-maintenance/coordinator.js";
@@ -193,6 +193,7 @@ async function agentCommandInternal(
         const currentEntry =
           sessionStoreRuntime && storePath && sessionKey
             ? sessionStoreRuntime.loadSessionEntry({
+                agentId: sessionAgentId,
                 storePath,
                 sessionKey,
                 readConsistency: "latest",
@@ -249,7 +250,7 @@ async function agentCommandInternal(
         }
       }
       if (opts.deliver === true) {
-        const sendPolicy = resolveSendPolicy({
+        const sendPolicy = resolveSendPolicyCore({
           cfg,
           entry: sessionEntry,
           sessionKey,
@@ -347,6 +348,7 @@ async function agentCommandInternal(
           }),
         };
         const persisted = await persistAgentSession({
+          agentId: sessionAgentId,
           sessionStore,
           sessionKey,
           storePath,
@@ -378,6 +380,7 @@ async function agentCommandInternal(
       if (sessionEntry && sessionKey && !suppressVisibleSessionEffects) {
         try {
           sessionEntry = await ensureSessionDiffBaseline({
+            agentId: sessionAgentId,
             cwd: cwd ?? workspaceDir,
             entry: sessionEntry,
             isNewSession,
@@ -638,9 +641,7 @@ async function agentCommandFromIngressInternal(
   opts: AgentCommandGatewayIngressOpts,
   runtime: RuntimeEnv = defaultRuntime,
   deps?: CliDeps,
-  recovery?: {
-    restoreAdmittedRecovery?: () => Promise<MainSessionRecoveryPendingTarget | undefined>;
-  },
+  recovery?: AgentCommandRecovery,
   runtimeContext?: PreparedAgentCommandRuntimeContext,
 ) {
   if (typeof opts.allowModelOverride !== "boolean") {
@@ -719,9 +720,7 @@ export async function agentCommandFromGatewayIngress(
   opts: AgentCommandGatewayIngressOpts,
   runtime: RuntimeEnv,
   deps: CliDeps | undefined,
-  recovery: {
-    restoreAdmittedRecovery?: () => Promise<MainSessionRecoveryPendingTarget | undefined>;
-  },
+  recovery: AgentCommandRecovery,
   runtimeContext?: PreparedAgentCommandRuntimeContext,
 ) {
   return await agentCommandFromIngressInternal(opts, runtime, deps, recovery, runtimeContext);

@@ -76,3 +76,38 @@ export function createSubagentSpawnLifecycleEmitter(params: {
     }
   };
 }
+
+export async function emitSubagentSpawnFailedHook(params: {
+  hookRunner: SubagentLifecycleHookRunner | null;
+  childSessionKey: string;
+  requesterInternalKey: string;
+  childSessionOrigin?: DeliveryContext;
+  childIdem: string;
+}): Promise<boolean> {
+  if (!params.hookRunner?.hasHooks("subagent_ended")) {
+    return false;
+  }
+  try {
+    await params.hookRunner.runSubagentEnded(
+      {
+        targetSessionKey: params.childSessionKey,
+        targetKind: "subagent",
+        reason: "spawn-failed",
+        sendFarewell: true,
+        accountId: params.childSessionOrigin?.accountId,
+        runId: params.childIdem,
+        outcome: "error",
+        error: "Session failed to start",
+      },
+      {
+        runId: params.childIdem,
+        childSessionKey: params.childSessionKey,
+        requesterSessionKey: params.requesterInternalKey,
+      },
+    );
+    return true;
+  } catch {
+    // Spawn cleanup continues even when presentation hooks fail.
+    return false;
+  }
+}

@@ -21,7 +21,7 @@ import { prepareSystemAgentRunAdmission } from "../../admitted-run-context.js";
 import { registerAgentHarness } from "../../harness/registry.js";
 import { withPreparedEmbeddedRunToolAuthority } from "../../harness/tool-authority.runtime.js";
 import type { AgentHarness } from "../../harness/types.js";
-import { resolvePersistedSessionRuntimeId } from "../../session-runtime-compat.js";
+import { resolveAcceptedSessionRuntimeId } from "../../session-runtime-compat.js";
 import { resolveExtraParams } from "../extra-params.js";
 import {
   createModelGenerationFixture,
@@ -112,7 +112,10 @@ async function createFixture(
     modelSelectionLocked: true,
     executionSelection: {
       state: "accepted",
-      selection: { model: selectedModel, executor: { kind: "harness", id: "codex" } },
+      selection:
+        selectedModel === "native-managed"
+          ? { model: "native-managed", executor: { kind: "harness", id: "codex" } }
+          : { model: selectedModel, executor: { kind: "harness", id: "codex" } },
       fallbackPermission: "explicit",
     },
     ...(nativeOwner ? { agentHarnessId: "codex" } : { pluginOwnerId: "catalog-owner" }),
@@ -221,7 +224,7 @@ describe("model chat and native model ownership", () => {
       const committedEntry = sessionStore[fixture.target.sessionKey];
       expect(committedEntry).toBeDefined();
       expect(committedEntry?.agentHarnessId).toBe(observation);
-      fixture.runParams.agentHarnessRuntimeOverride = resolvePersistedSessionRuntimeId(entry);
+      fixture.runParams.agentHarnessRuntimeOverride = resolveAcceptedSessionRuntimeId(entry);
       expect(fixture.runParams.agentHarnessRuntimeOverride).toBe("codex");
       const setup = await fixture.resolve();
       expect(setup.nativeModelOwned).toBe(false);

@@ -118,7 +118,9 @@ function entryMayContainPluginSessionRouteState(sessionKey: string, entry: Sessi
     return false;
   }
   // Accepted choices and imported requests survive later configuration changes.
-  if (entry.executionSelection || entry.acp) return false;
+  if (entry.executionSelection || entry.acp) {
+    return false;
+  }
   if (!isRecord(entry)) {
     return false;
   }
@@ -197,7 +199,7 @@ function routeAllowsOwnerState(params: {
 }
 
 function hasOwnedCliSession(params: {
-  entry: Record<string, unknown>;
+  entry: Pick<SessionEntry, "cliSessionBindings" | "cliSessionIds" | "claudeCliSessionId">;
   cliSessionKeys: readonly string[];
 }): boolean {
   const bindings = params.entry.cliSessionBindings;
@@ -210,11 +212,11 @@ function hasOwnedCliSession(params: {
       (bindings !== null &&
         typeof bindings === "object" &&
         normalized in bindings &&
-        (bindings as Record<string, unknown>)[normalized] !== undefined) ||
+        bindings[normalized] !== undefined) ||
       (ids !== null &&
         typeof ids === "object" &&
         normalized in ids &&
-        (ids as Record<string, unknown>)[normalized] !== undefined)
+        ids[normalized] !== undefined)
     );
   });
 }
@@ -330,26 +332,15 @@ export function createPluginSessionStateDoctorScanner(params: {
   };
 }
 
-function clearEntryKey(entry: Record<string, unknown>, key: string): boolean {
-  if (entry[key] !== undefined) {
-    delete entry[key];
-    return true;
-  }
-  return false;
-}
-
-function clearRecordKeys(
-  entry: Record<string, unknown>,
-  recordKey: string,
+function clearRecordKeys<T>(
+  value: Record<string, T> | undefined,
   ownedKeys: readonly string[],
-): boolean {
-  const value = entry[recordKey];
+): Record<string, T> | undefined {
   if (value === null || typeof value !== "object") {
-    return false;
+    return value;
   }
-  const record = value as Record<string, unknown>;
   let changed = false;
-  const next = { ...record };
+  const next = { ...value };
   for (const key of ownedKeys) {
     const normalized = normalizeProviderId(key);
     if (next[normalized] !== undefined) {
@@ -357,11 +348,7 @@ function clearRecordKeys(
       changed = true;
     }
   }
-  if (!changed) {
-    return false;
-  }
-  entry[recordKey] = Object.keys(next).length > 0 ? next : undefined;
-  return true;
+  return changed ? (Object.keys(next).length > 0 ? next : undefined) : value;
 }
 
 /** Clears stale plugin-owned routing fields from a session entry and refreshes updatedAt. */
@@ -380,8 +367,25 @@ function applySessionRouteStateRepair(params: {
     return false;
   }
   let changed = false;
-  const clear = (key: string) => {
-    changed = clearEntryKey(params.entry, key) || changed;
+  const clear = (
+    key: keyof Pick<
+      SessionEntry,
+      | "model"
+      | "modelProvider"
+      | "contextTokens"
+      | "systemPromptReport"
+      | "fallbackNotice"
+      | "agentHarnessId"
+      | "claudeCliSessionId"
+      | "authProfileOverride"
+      | "authProfileOverrideSource"
+      | "authProfileOverrideCompactionCount"
+    >,
+  ) => {
+    if (params.entry[key] !== undefined) {
+      delete params.entry[key];
+      changed = true;
+    }
   };
   if (params.repair.reasons.includes("runtime model state")) {
     clear("model");
@@ -396,10 +400,16 @@ function applySessionRouteStateRepair(params: {
     }
   }
   if (params.repair.reasons.includes("CLI session binding")) {
-    changed =
-      clearRecordKeys(params.entry, "cliSessionBindings", params.repair.cliSessionKeys) || changed;
-    changed =
-      clearRecordKeys(params.entry, "cliSessionIds", params.repair.cliSessionKeys) || changed;
+    const bindings = clearRecordKeys(params.entry.cliSessionBindings, params.repair.cliSessionKeys);
+    if (bindings !== params.entry.cliSessionBindings) {
+      params.entry.cliSessionBindings = bindings;
+      changed = true;
+    }
+    const ids = clearRecordKeys(params.entry.cliSessionIds, params.repair.cliSessionKeys);
+    if (ids !== params.entry.cliSessionIds) {
+      params.entry.cliSessionIds = ids;
+      changed = true;
+    }
     if (params.repair.cliSessionKeys.includes("claude-cli")) {
       // Doctor's later binding migration must not restore a conversation this repair cleared.
       clear("claudeCliSessionId");

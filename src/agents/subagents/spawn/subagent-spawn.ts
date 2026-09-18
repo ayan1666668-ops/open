@@ -3,8 +3,6 @@
  *
  * Validates spawn requests, prepares child sessions, stages attachments, binds delivery context, and registers runs.
  */
-import { promises as fs } from "node:fs";
-import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { isAcpRuntimeSpawnAvailable } from "../../../acp/runtime/availability.js";
 import { isExecutionIdentityCollectionEnabled } from "../../../audit/audit-config.js";
 import { resolveSessionStorePathCore } from "../../../config/sessions/paths.js";
@@ -20,7 +18,6 @@ import {
   recordSubagentSpawned,
 } from "../../../sessions/session-state-events.js";
 import { hasDeliveryTargetFields } from "../../../utils/delivery-context.shared.js";
-import { hasPromptUnsafeControlCharacter } from "../../sanitize-for-prompt.js";
 import {
   runSpawnPipeline,
   type SpawnBackendAdapter,
@@ -32,6 +29,7 @@ import {
   settleFailedQueuedSubagentLaunch,
   startQueuedSubagentRun,
 } from "../registry/subagent-registry.js";
+import { cleanupMaterializedSubagentAttachments } from "../subagent-attachment-cleanup.js";
 import { activateSwarmRun, removeQueuedSwarmRun } from "../swarm/swarm-scheduler.js";
 import { readParentExecutionIdentity } from "./execution-identity-spawn-context.js";
 import { materializeSubagentAttachments } from "./subagent-attachments.js";
@@ -60,7 +58,10 @@ import {
 } from "./subagent-spawn-execution-identity.js";
 import { callNativeSubagentGateway, readGatewayRunId } from "./subagent-spawn-gateway.js";
 import { buildSubagentLaunchRequest } from "./subagent-spawn-launch-request.js";
-import { createSubagentSpawnLifecycleEmitter } from "./subagent-spawn-lifecycle.js";
+import {
+  createSubagentSpawnLifecycleEmitter,
+  emitSubagentSpawnFailedHook,
+} from "./subagent-spawn-lifecycle.js";
 import { resolveSubagentSpawnRequest } from "./subagent-spawn-request.js";
 import { createInitialSubagentSession } from "./subagent-spawn-session-patch.js";
 import { bindThreadForSubagentSpawn } from "./subagent-spawn-thread-binding.js";
@@ -68,18 +69,6 @@ import { emitSessionLifecycleEvent, mergeDeliveryContext } from "./subagent-spaw
 import { buildSubagentSpawnEnvelope } from "./subagent-system-prompt.js";
 
 export { SUBAGENT_SPAWN_CONTEXT_MODES, SUBAGENT_SPAWN_MODES } from "./subagent-spawn.types.js";
-
-function sanitizeMountPathHint(value?: string): string | undefined {
-  const trimmed = normalizeOptionalString(value);
-  if (
-    !trimmed ||
-    hasPromptUnsafeControlCharacter(trimmed) ||
-    !/^[A-Za-z0-9._\-/:]+$/.test(trimmed)
-  ) {
-    return undefined;
-  }
-  return trimmed;
-}
 
 export async function spawnSubagentDirect(
   params: SpawnSubagentParams,
@@ -91,7 +80,6 @@ export async function spawnSubagentDirect(
   const label = params.label?.trim() || "";
   const requestThreadBinding = params.thread === true;
   const sandboxMode = params.sandbox === "require" ? "require" : "inherit";
-  const requesterSessionKey = ctx.agentSessionKey;
   const gatewayContextResolver = getGatewayToolCallerIdentity()?.gatewayContextResolver;
   const requestResolution = resolveSubagentSpawnRequest(params, ctx);
   if (!requestResolution.ok) {
@@ -167,7 +155,6 @@ export async function spawnSubagentDirect(
       resolvedModelMetadata,
     } = childPlan.resolved;
     let { childSessionOrigin } = childPlan.resolved;
-    const spawnedByKey = requesterInternalKey;
     const { resolvedModel, thinkingOverride } = plan;
     const initialSession = await createInitialSubagentSession({
       assertActive,
@@ -187,6 +174,7 @@ export async function spawnSubagentDirect(
       inheritedToolDenylist: ctx.inheritedToolDenylist,
       modelPatch: plan.initialSessionPatch,
       executionRequest: plan.executionRequest,
+      preparedSelection: plan.preparedSelection,
       swarmGroupId,
       collect: params.collect === true,
       outputSchema: params.outputSchema,
@@ -263,8 +251,6 @@ export async function spawnSubagentDirect(
       childSessionOrigin =
         mergeDeliveryContext(bindResult.deliveryOrigin, childSessionOrigin) ?? childSessionOrigin;
     }
-    const mountPathHint = sanitizeMountPathHint(params.attachMountPath);
-
     // Binding owns direct delivery. Resolve once afterward so the launch, child
     // instructions, and requester receipt cannot disagree about completion.
     const completionMode = params.collect
@@ -280,7 +266,7 @@ export async function spawnSubagentDirect(
       soleCollectorChild: soleImplicitMember,
       spawnMode,
       task,
-      requesterSessionKey,
+      requesterSessionKey: ctx.agentSessionKey,
       requesterOrigin: childSessionOrigin,
       childSessionKey,
       label: label || undefined,
@@ -301,16 +287,16 @@ export async function spawnSubagentDirect(
 
     let retainOnSessionKeep = false;
     let attachmentsReceipt: SpawnSubagentResult["attachments"];
-    let attachmentAbsDir: string | undefined;
-    let attachmentRootDir: string | undefined;
+    let attachmentId: string | undefined;
 
     const materializedAttachments = await materializeSubagentAttachments({
       assertActive,
       config: cfg,
+      childSessionKey,
       targetAgentId,
-      workspaceDir: spawnedCwd ?? spawnedWorkspaceDir,
+      sandboxed: childRuntimeSandboxed,
       attachments: params.attachments,
-      mountPathHint,
+      mountPathHint: params.attachMountPath,
     });
     if (materializedAttachments && materializedAttachments.status !== "ok") {
       await cleanupCreatedSession(threadBindingReady);
@@ -322,8 +308,7 @@ export async function spawnSubagentDirect(
     if (materializedAttachments?.status === "ok") {
       retainOnSessionKeep = materializedAttachments.retainOnSessionKeep;
       attachmentsReceipt = materializedAttachments.receipt;
-      attachmentAbsDir = materializedAttachments.absDir;
-      attachmentRootDir = materializedAttachments.rootDir;
+      attachmentId = materializedAttachments.attachmentId;
       childSystemPrompt = `${childSystemPrompt}\n\n${materializedAttachments.systemPromptSuffix}`;
     }
 
@@ -332,7 +317,7 @@ export async function spawnSubagentDirect(
         completionMode,
         spawnMode,
         message: envelope.message,
-        spawnedByKey,
+        spawnedByKey: requesterInternalKey,
         toolSpawnMetadata,
         spawnedWorkspaceDir,
         childSessionKey,
@@ -409,7 +394,7 @@ export async function spawnSubagentDirect(
     const cleanupFailedSpawn = (waitForSessionDeletion?: boolean) =>
       cleanupFailedSpawnBeforeAgentStart({
         childSessionKey,
-        attachmentAbsDir,
+        attachmentId,
         emitLifecycleHooks: threadBindingReady,
         deleteTranscript: true,
         ...provisionalSessionIdentity,
@@ -472,43 +457,27 @@ export async function spawnSubagentDirect(
           });
         }
         await rollbackPreparedContextEngine(state?.contextEnginePreparation);
-        if (attachmentAbsDir) {
+        if (attachmentId) {
           try {
-            await fs.rm(attachmentAbsDir, { recursive: true, force: true });
+            await cleanupMaterializedSubagentAttachments({
+              childSessionKey,
+              attachmentId,
+            });
           } catch {
             // Best-effort cleanup only.
           }
         }
-        let emitLifecycleHooks = threadBindingReady;
-        if (phase === "dispatch" && threadBindingReady) {
-          let endedHookEmitted = false;
-          if (hookRunner?.hasHooks("subagent_ended")) {
-            try {
-              await hookRunner.runSubagentEnded(
-                {
-                  targetSessionKey: childSessionKey,
-                  targetKind: "subagent",
-                  reason: "spawn-failed",
-                  sendFarewell: true,
-                  accountId: childSessionOrigin?.accountId,
-                  runId: childIdem,
-                  outcome: "error",
-                  error: "Session failed to start",
-                },
-                {
-                  runId: childIdem,
-                  childSessionKey,
-                  requesterSessionKey: requesterInternalKey,
-                },
-              );
-              endedHookEmitted = true;
-            } catch {
-              // Spawn cleanup continues even when presentation hooks fail.
-            }
-          }
-          emitLifecycleHooks = !endedHookEmitted;
-        }
-        await cleanupCreatedSession(emitLifecycleHooks);
+        const endedHookEmitted =
+          phase === "dispatch" &&
+          threadBindingReady &&
+          (await emitSubagentSpawnFailedHook({
+            hookRunner,
+            childSessionKey,
+            requesterInternalKey,
+            childSessionOrigin,
+            childIdem,
+          }));
+        await cleanupCreatedSession(threadBindingReady && !endedHookEmitted);
       },
     };
     const pipelineResult = await runSpawnPipeline({
@@ -562,8 +531,7 @@ export async function spawnSubagentDirect(
           queued: params.collect === true,
           taskRowOwnership,
           ...(gatewayContextResolver ? { gatewayContextResolver } : {}),
-          attachmentsDir: attachmentAbsDir,
-          attachmentsRootDir: attachmentRootDir,
+          attachmentId,
           retainAttachmentsOnKeep: retainOnSessionKeep,
         };
       },
@@ -723,12 +691,8 @@ export async function spawnSubagentDirect(
   }
 }
 
-const testing = {
-  setDepsForTest(overrides?: Parameters<typeof setSubagentSpawnDepsForTest>[0]) {
-    setSubagentSpawnDepsForTest(overrides);
-  },
-};
 if (process.env.VITEST || process.env.NODE_ENV === "test") {
-  (globalThis as Record<PropertyKey, unknown>)[Symbol.for("openclaw.subagentSpawnTestApi")] =
-    testing;
+  (globalThis as Record<PropertyKey, unknown>)[Symbol.for("openclaw.subagentSpawnTestApi")] = {
+    setDepsForTest: setSubagentSpawnDepsForTest,
+  };
 }

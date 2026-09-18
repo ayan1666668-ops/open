@@ -14,6 +14,7 @@ import type { ReasoningLevel, ThinkLevel } from "../auto-reply/thinking.js";
 import type { ChatType } from "../channels/chat-type.js";
 import type { SessionEntry as StoredSessionEntry } from "../config/sessions.js";
 import { resolveCollapsedSessionAuthPinSource } from "../config/sessions/auth-profile-override-provenance.js";
+import { projectPublicSessionEntry } from "../config/sessions/session-entry-projection.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { emitTrustedDiagnosticEvent, isDiagnosticsEnabled } from "../infra/diagnostic-events.js";
 import { streamWithPayloadPatch } from "../llm/providers/stream-wrappers/stream-payload-utils.js";
@@ -93,7 +94,7 @@ import type { AgentRuntimeAuthPlan } from "./runtime-plan/types.js";
 import { resolveSandboxContext } from "./sandbox/context.js";
 import { resolveSessionModelRefCore as resolveSessionModelRef } from "./session-model-ref.js";
 import { resolveSessionPlacementSandbox } from "./session-placement-admission.js";
-import { resolvePersistedSessionRuntimeId } from "./session-runtime-compat.js";
+import { resolveAcceptedSessionRuntimeId } from "./session-runtime-compat.js";
 import { stripToolResultDetails } from "./session-transcript-repair.js";
 import { getModelRegistryRuntime } from "./sessions/model-registry-runtime.js";
 import { resolveAgentTimeoutMs } from "./timeout.js";
@@ -729,7 +730,7 @@ export async function runBtwSideQuestion(
         : undefined;
       const agentHarnessRuntimeOverride = agentHarnessId
         ? undefined
-        : resolvePersistedSessionRuntimeId(params.sessionEntry);
+        : resolveAcceptedSessionRuntimeId(params.sessionEntry);
       const selectedHarnessId = agentHarnessId ?? agentHarnessRuntimeOverride ?? "configured";
       const key = [
         `${provider}/${modelId}/${selectedHarnessId}`,
@@ -745,17 +746,6 @@ export async function runBtwSideQuestion(
       if (cached) {
         return cached;
       }
-      await ensureSelectedAgentHarnessPlugin({
-        provider,
-        modelId,
-        config: params.cfg,
-        agentId: sessionAgentId,
-        sessionKey: params.sessionKey,
-        workspaceDir,
-        ...(agentHarnessId ? { agentHarnessId } : {}),
-        ...(agentHarnessRuntimeOverride ? { agentHarnessRuntimeOverride } : {}),
-        pluginRegistry: preparedModelRuntime.pluginRegistry!,
-      });
       const selectionParams = {
         provider,
         modelId,
@@ -765,6 +755,11 @@ export async function runBtwSideQuestion(
         ...(agentHarnessId ? { agentHarnessId } : {}),
         ...(agentHarnessRuntimeOverride ? { agentHarnessRuntimeOverride } : {}),
       };
+      await ensureSelectedAgentHarnessPlugin({
+        ...selectionParams,
+        workspaceDir,
+        pluginRegistry: preparedModelRuntime.pluginRegistry!,
+      });
       const harness = modelProvider
         ? selectAgentHarnessForPreparedModelProviders({
             ...selectionParams,
@@ -1018,6 +1013,15 @@ export async function runBtwSideQuestion(
         });
         const sideParams = {
           ...hostAttempt,
+          sessionEntry: projectPublicSessionEntry(params.sessionEntry),
+          sessionStore: params.sessionStore
+            ? Object.fromEntries(
+                Object.entries(params.sessionStore).map(([key, entry]) => [
+                  key,
+                  projectPublicSessionEntry(entry),
+                ]),
+              )
+            : undefined,
           images: params.images,
           hostCapabilities: host.capabilities,
           sandbox,

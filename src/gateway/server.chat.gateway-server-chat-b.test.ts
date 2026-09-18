@@ -50,9 +50,6 @@ import { getMediaDir } from "../media/store.js";
 // history limits, model overrides, inbound dispatch, and streaming event fanout.
 import { commitSessionExecutionSelection } from "../model-picker/apply-session-model-selection.js";
 import { withPluginMetadataSnapshotScope } from "../plugins/current-plugin-metadata-snapshot.js";
-import { resolveInstalledPluginIndexPolicyHash } from "../plugins/installed-plugin-index-policy.js";
-import { rebasePluginMetadataSnapshotManifestRegistry } from "../plugins/plugin-metadata-snapshot.js";
-import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
 import {
   isSessionWorkAdmissionActive,
   runExclusiveSessionLifecycleMutation,
@@ -74,6 +71,8 @@ import {
   createDirectChatContext,
   createTextTranscriptEvent,
 } from "./server-chat.agent-events.test-helpers.js";
+import { createChatVisionModelCatalogSnapshot } from "./server-chat.model-catalog.test-support.js";
+import { createGatewayPluginMetadataSnapshot } from "./server-chat.plugin-metadata.test-support.js";
 import { getMaxChatHistoryMessagesBytes } from "./server-constants.js";
 import { createGatewayChatMetadataRuntime } from "./server-methods/chat-metadata-runtime.js";
 import type {
@@ -174,106 +173,10 @@ function waitForFast<T>(
   return vi.waitFor(callback, { interval: 1, ...options });
 }
 
-function createChatVisionModelCatalogSnapshot(): Awaited<
-  ReturnType<GatewayRequestContext["loadGatewayModelCatalogSnapshot"]>
-> {
-  return {
-    agentId: "main",
-    agentDir: "/tmp/chat-attachment-vision-agent",
-    catalogComplete: false,
-    workspaceDir: "/tmp/chat-attachment-vision-workspace",
-    config: {},
-    entries: [
-      {
-        id: "vision-model",
-        name: "Vision Model",
-        provider: "test-provider",
-        input: ["text", "image"],
-      },
-    ],
-    routeVariants: [],
-  };
-}
-
 type GatewayHarness = Awaited<ReturnType<typeof createGatewaySuiteHarness>>;
 type GatewaySocket = Awaited<ReturnType<GatewayHarness["openWs"]>>;
 let harness: GatewayHarness;
 
-function createGatewayPluginMetadataSnapshot(config: OpenClawConfig): PluginMetadataSnapshot {
-  const policyHash = resolveInstalledPluginIndexPolicyHash(config);
-  const index: PluginMetadataSnapshot["index"] = {
-    version: 1,
-    hostContractVersion: "test",
-    compatRegistryVersion: "test",
-    migrationVersion: 1,
-    policyHash,
-    generatedAtMs: 0,
-    installRecords: {},
-    // Matches the real isolated bundled snapshot: no installed-index rows,
-    // with the selected bundled manifests supplied below.
-    plugins: [],
-    diagnostics: [],
-  };
-  const emptySnapshot: PluginMetadataSnapshot = {
-    policyHash,
-    index,
-    registryIndex: index,
-    registryDiagnostics: [],
-    manifestRegistry: { plugins: [], diagnostics: [] },
-    plugins: [],
-    diagnostics: [],
-    byPluginId: new Map(),
-    normalizePluginId: (pluginId) => pluginId,
-    declaredProviderOwners: new Map(),
-    owners: {
-      channels: new Map(),
-      channelConfigs: new Map(),
-      providers: new Map(),
-      modelCatalogProviders: new Map(),
-      cliBackends: new Map(),
-      setupProviders: new Map(),
-      commandAliases: new Map(),
-      contracts: new Map(),
-      modelIdNormalizationPolicies: new Map(),
-    },
-    metrics: {
-      registrySnapshotMs: 0,
-      manifestRegistryMs: 0,
-      ownerMapsMs: 0,
-      totalMs: 0,
-      indexPluginCount: 0,
-      manifestPluginCount: 0,
-    },
-  };
-  return rebasePluginMetadataSnapshotManifestRegistry(emptySnapshot, {
-    plugins: [
-      {
-        id: "openai",
-        channels: [],
-        providers: ["openai"],
-        cliBackends: [],
-        syntheticAuthRefs: [],
-        providerAuthChoices: [
-          { provider: "openai", method: "oauth", choiceId: "openai" },
-          {
-            provider: "openai",
-            method: "device-code",
-            choiceId: "openai-device-code",
-          },
-          { provider: "openai", method: "api-key", choiceId: "openai-api-key" },
-        ],
-        modelSupport: { modelPrefixes: ["gpt-", "o1", "o3", "o4"] },
-        skills: [],
-        hooks: [],
-        origin: "bundled",
-        rootDir: "/test/openai",
-        source: "/test/openai/index.ts",
-        manifestPath: "/test/openai/openclaw.plugin.json",
-      },
-    ],
-    diagnostics: [],
-  });
-}
 const autoCleanupTempDirs = createTempDirTracker();
 
 afterEach(async () => {
@@ -1426,8 +1329,11 @@ describe("gateway server chat", () => {
       const updatedAt = Date.now();
       await writeStoredMainSession({
         updatedAt,
-        providerOverride: "openai",
-        modelOverride: "gpt-5",
+        executionSelection: {
+          state: "deferred",
+          request: { model: { provider: "openai", id: "gpt-5" } },
+          fallbackPermission: "explicit",
+        },
         modelProvider: "openai",
         model: "gpt-5",
         agentHarnessId: "openclaw",

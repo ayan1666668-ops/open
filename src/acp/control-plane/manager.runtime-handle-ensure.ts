@@ -1,4 +1,5 @@
 /** Ensures or recreates a live ACP runtime handle for persisted session metadata. */
+import { isDeepStrictEqual } from "node:util";
 import {
   createIdentityFromEnsure,
   identityEquals,
@@ -12,8 +13,13 @@ import type { AcpRuntime, AcpRuntimeHandle } from "@openclaw/acp-core/runtime/ty
 import { resolveRuntimeConfigCacheKey } from "../../config/runtime-snapshot.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { logVerbose } from "../../globals.js";
+import { admitSessionExecutionFallback } from "../../model-picker/apply-session-model-selection.js";
 import type { AcpExecutionSelection } from "../../model-picker/execution-selection.js";
-import { toAcpRuntimeError, withAcpRuntimeErrorBoundary } from "../runtime/errors.js";
+import {
+  AcpRuntimeError,
+  toAcpRuntimeError,
+  withAcpRuntimeErrorBoundary,
+} from "../runtime/errors.js";
 import type { ManagerRuntimeHandleCache } from "./manager.runtime-handle-cache.js";
 import {
   assertAcpRuntimeOwnerSupport,
@@ -25,7 +31,11 @@ import type {
   SessionAcpLifecycle,
   WriteManagerSessionMeta,
 } from "./manager.types.js";
-import { hasLegacyAcpIdentityProjection } from "./manager.utils.js";
+import {
+  ACP_SELECTION_REPAIR_MESSAGE,
+  hasLegacyAcpIdentityProjection,
+  requireAcpExecutionSelection,
+} from "./manager.utils.js";
 import {
   normalizeRuntimeOptions,
   normalizeText,
@@ -59,6 +69,44 @@ export async function ensureManagerRuntimeHandle(params: {
   const backend = params.deps.requireRuntimeBackend(configuredBackend || undefined);
   const runtime = backend.runtime;
   assertAcpRuntimeOwnerSupport(runtime, params);
+  if (turnLocal) {
+    // Missing backends and unsupported owners cannot have started an external operation.
+    // Reserve only after those preconditions, but before any runtime call can become uncertain.
+    const reserved = await params.writeSessionMeta({
+      cfg: params.cfg,
+      sessionKey: params.sessionKey,
+      agentId: params.agentId,
+      mutate: (current, entry) => {
+        if (!current || !entry) {
+          return null;
+        }
+        if (
+          current.runtimeSessionName !== params.meta.runtimeSessionName ||
+          !isDeepStrictEqual(requireAcpExecutionSelection(entry), selection) ||
+          admitSessionExecutionFallback({
+            entry,
+            candidate: {
+              ...selection,
+              executor: { ...selection.executor, backend: configuredBackend },
+            },
+          }).status !== "accepted"
+        ) {
+          throw new AcpRuntimeError(
+            "ACP_SESSION_INIT_FAILED",
+            "The session selection no longer permits this fallback backend.",
+          );
+        }
+        return { ...current, state: "error", lastError: ACP_SELECTION_REPAIR_MESSAGE };
+      },
+      failOnError: true,
+    });
+    if (!reserved?.acp) {
+      throw new AcpRuntimeError(
+        "ACP_SESSION_INIT_FAILED",
+        "Could not reserve the temporary app selection.",
+      );
+    }
+  }
   const cached = params.runtimeHandles.get(params);
   if (cached) {
     const backendMatches = !configuredBackend || cached.backend === configuredBackend;

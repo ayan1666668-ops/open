@@ -19,6 +19,7 @@ import {
   beginSessionWorkAdmission,
   runExclusiveSessionLifecycleMutation,
 } from "../sessions/session-lifecycle-admission.js";
+import { sessionSelectionFixture } from "./session-list.test-support.js";
 import { embeddedRunMock, rpcReq, testState, writeSessionStore } from "./test-helpers.js";
 import {
   setupGatewaySessionsTestHarness,
@@ -771,14 +772,17 @@ test("sessions.delete closes ACP runtime handles before removing ACP sessions", 
   await writeSessionStore({
     entries: {
       main: sessionStoreEntry("sess-main"),
-      "discord:group:dev": sessionStoreEntry("sess-acp"),
+      "discord:group:dev": sessionStoreEntry("sess-acp", {
+        executionSelection: sessionSelectionFixture({
+          executor: { kind: "acp", backend: "acpx", agent: "codex" },
+          model: "native-managed",
+        }),
+      }),
     },
   });
   writeAcpSessionMetaForMigration({
     sessionKey: "agent:main:discord:group:dev",
     meta: {
-      backend: "acpx",
-      agent: "codex",
       runtimeSessionName: "runtime:delete",
       mode: "persistent",
       state: "idle",
@@ -828,9 +832,11 @@ test("sessions.delete closes child ACP runtimes spawned from the deleted parent"
   await writeSingleLineSession(dir, "sess-parent", "parent");
   await writeSingleLineSession(dir, "sess-child", "child");
 
+  const executionSelection = sessionSelectionFixture({
+    executor: { kind: "acp", backend: "acpx", agent: "codex" },
+    model: "native-managed",
+  });
   const acpMeta = (recordId: string) => ({
-    backend: "acpx",
-    agent: "codex",
     runtimeSessionName: `runtime:${recordId}`,
     mode: "oneshot" as const,
     state: "idle" as const,
@@ -840,8 +846,9 @@ test("sessions.delete closes child ACP runtimes spawned from the deleted parent"
   await writeSessionStore({
     entries: {
       main: sessionStoreEntry("sess-main"),
-      "acp-parent": sessionStoreEntry("sess-parent"),
+      "acp-parent": sessionStoreEntry("sess-parent", { executionSelection }),
       "acp-child": sessionStoreEntry("sess-child", {
+        executionSelection,
         spawnedBy: "agent:main:acp-parent",
       }),
     },

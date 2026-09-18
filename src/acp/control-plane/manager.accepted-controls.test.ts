@@ -162,7 +162,9 @@ describe("AcpSessionManager accepted controls", () => {
     let active = true;
     hoisted.upsertAcpSessionMetaMock.mockImplementation(async (input) => {
       const committed = await write(input);
-      if (committed?.acp?.lastError === ACP_SELECTION_REPAIR_MESSAGE) active = false;
+      if (committed?.acp?.lastError === ACP_SELECTION_REPAIR_MESSAGE) {
+        active = false;
+      }
       return committed;
     });
     const commitAccepted = vi.fn(async () => {});
@@ -173,7 +175,9 @@ describe("AcpSessionManager accepted controls", () => {
         commitAccepted,
         selection: { ...state.readSelection(), model: { id: "qa-next" } },
         assertActive: () => {
-          if (!active) throw new Error("selection authority expired");
+          if (!active) {
+            throw new Error("selection authority expired");
+          }
         },
       }),
     ).rejects.toThrow("selection authority expired");
@@ -339,7 +343,9 @@ describe("AcpSessionManager accepted controls", () => {
           model: { id: "qa-next" },
         },
         assertActive: () => {
-          if (!active) throw new Error("selection authority ended");
+          if (!active) {
+            throw new Error("selection authority ended");
+          }
         },
       }),
     ).rejects.toThrow("selection authority ended");

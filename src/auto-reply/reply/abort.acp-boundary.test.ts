@@ -2,7 +2,10 @@
 import type { AcpRuntime } from "@openclaw/acp-core/runtime/types";
 import { expect, it, vi } from "vitest";
 import { createDeferred } from "../../../test/helpers/promise.js";
-import { getAcpSessionManager, testing as acpTesting } from "../../acp/control-plane/manager.js";
+import {
+  getAcpSessionManagerCore,
+  testing as acpTesting,
+} from "../../acp/control-plane/manager.js";
 import { disposeAcpSessionManagerInstance } from "../../acp/control-plane/manager.lifecycle.js";
 import {
   registerAcpRuntimeBackend,
@@ -130,7 +133,7 @@ it.each(
       },
     });
     acpTesting.resetAcpSessionManagerForTests();
-    const manager = getAcpSessionManager();
+    const manager = getAcpSessionManagerCore();
     const native = createReplyOperation({
       sessionKey: sourceKey,
       sessionId: "source-session",

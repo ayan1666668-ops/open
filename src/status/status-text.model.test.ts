@@ -15,21 +15,10 @@ import * as transcriptUsage from "../gateway/session-transcript-usage.js";
 import { createPluginMetadataSnapshotFixture } from "../plugins/plugin-metadata.test-support.js";
 import { withPluginRuntimeGenerationScope } from "../plugins/runtime/generation-scope.js";
 import { attachSessionTranscriptRunId } from "../sessions/transcript-events.js";
+import { acceptedModelSelection } from "../test-utils/session-execution-selection.js";
 import { buildStatusReplyParts } from "./status-text.js";
 
 type StatusTextParams = Parameters<typeof buildStatusReplyParts>[0];
-
-function acceptedSelection(
-  provider: string,
-  id: string,
-  fallbackPermission: "configured" | "explicit" = "explicit",
-): NonNullable<InternalSessionEntry["executionSelection"]> {
-  return {
-    state: "accepted",
-    selection: { model: { provider, id }, executor: { kind: "harness", id: "openclaw" } },
-    fallbackPermission,
-  };
-}
 
 describe("buildStatusText prepared context windows", () => {
   afterEach(() => cliBackendsTesting.resetDepsForTest());
@@ -220,7 +209,7 @@ describe("buildStatusText prepared context windows", () => {
       "accepted provider and case-sensitive model",
       {
         entry: {
-          executionSelection: acceptedSelection("mixed", "Model:Case"),
+          executionSelection: acceptedModelSelection("mixed", "Model:Case"),
           fallbackNotice: {
             kind: "active",
             selectedModel: "MiXeD/Model:Case",
@@ -289,7 +278,7 @@ describe("buildStatusText prepared context windows", () => {
           ],
         },
         entry: {
-          executionSelection: acceptedSelection("mixed", "Model:Case"),
+          executionSelection: acceptedModelSelection("mixed", "Model:Case"),
           fallbackNotice: {
             kind: "active",
             selectedModel: "MiXeD/model:case",
@@ -341,7 +330,7 @@ describe("buildStatusText prepared context windows", () => {
 
   it("retains the incoming prepared cap when it already belongs to the terminal pair", async () => {
     const parts = await renderTerminalFallback({
-      entry: { executionSelection: acceptedSelection("deepseek", "deepseek-v4-flash") },
+      entry: { executionSelection: acceptedModelSelection("deepseek", "deepseek-v4-flash") },
       status: {
         provider: "fallback",
         model: "small-model",
@@ -439,14 +428,14 @@ describe("buildStatusText prepared context windows", () => {
       "explicit override",
       "candidate",
       "entry",
-      { executionSelection: acceptedSelection("candidate", "middle") },
+      { executionSelection: acceptedModelSelection("candidate", "middle") },
       "candidate/middle",
     ],
     [
       "accepted provider change",
       "candidate",
       "entry",
-      { executionSelection: acceptedSelection("fallback", "small-model") },
+      { executionSelection: acceptedModelSelection("fallback", "small-model") },
       "fallback/small-model",
     ],
   ] satisfies Array<[string, string, string, Partial<InternalSessionEntry>, string]>)(
@@ -486,6 +475,37 @@ describe("buildStatusText prepared context windows", () => {
     expect(parts.text).toContain("Model: deepseek/deepseek-v4-flash");
   });
 
+  it.each([false, true])(
+    "keeps the accepted model separate from a current-turn observation (fallback=%s)",
+    async (fallback) => {
+      const sessionEntry: InternalSessionEntry = {
+        sessionId: "current-turn",
+        updatedAt: 1,
+        executionSelection: acceptedModelSelection("deepseek", "deepseek-v4-flash"),
+        ...(fallback
+          ? {
+              fallbackNotice: {
+                kind: "active" as const,
+                selectedModel: "deepseek/deepseek-v4-flash",
+                activeModel: "fallback/small-model",
+                reason: "provider unavailable",
+              },
+            }
+          : {}),
+      };
+      const original = structuredClone(sessionEntry);
+      const parts = await renderPreparedStatus({
+        sessionEntry,
+        provider: "fallback",
+        model: "small-model",
+        activeModel: { provider: "fallback", model: "small-model" },
+      });
+      expect(parts.text).toContain("Model: deepseek/deepseek-v4-flash");
+      expect(parts.text.includes("Fallback: fallback/small-model")).toBe(fallback);
+      expect(sessionEntry).toEqual(original);
+    },
+  );
+
   it.each([
     {
       name: "configured CLI default with absent session model fields",
@@ -510,7 +530,7 @@ describe("buildStatusText prepared context windows", () => {
       input: { provider: "deepseek", model: "deepseek-v4-flash" },
       entry: {
         status: "running",
-        executionSelection: acceptedSelection("fallback", "small-model"),
+        executionSelection: acceptedModelSelection("fallback", "small-model"),
         modelProvider: "deepseek",
         model: "deepseek-v4-flash",
         liveModelSwitchPending: true,
@@ -532,7 +552,9 @@ describe("buildStatusText prepared context windows", () => {
       sessionKey: "agent:worker:subagent:configured",
       input: { provider: "deepseek", model: "deepseek-v4-flash" },
       entry: {
-        executionSelection: acceptedSelection("fallback", "small-model", "configured"),
+        executionSelection: acceptedModelSelection("fallback", "small-model", {
+          fallbackPermission: "configured",
+        }),
       },
       expectedModel: "fallback/small-model",
       absent: ["auto fallback", "check provider", "pinned session"],
@@ -636,7 +658,7 @@ describe("buildStatusText prepared context windows", () => {
       sessionEntry: {
         sessionId: "selected-prepared-context",
         updatedAt: 0,
-        executionSelection: acceptedSelection("deepseek", "deepseek-v4-flash"),
+        executionSelection: acceptedModelSelection("deepseek", "deepseek-v4-flash"),
         modelProvider: "fallback",
         model: "small-model",
         totalTokens: 45_000,
@@ -654,7 +676,7 @@ describe("buildStatusText prepared context windows", () => {
       sessionEntry: {
         sessionId: "active-prepared-context",
         updatedAt: 0,
-        executionSelection: acceptedSelection("deepseek", "deepseek-v4-flash"),
+        executionSelection: acceptedModelSelection("deepseek", "deepseek-v4-flash"),
         modelProvider: "fallback",
         model: "small-model",
         fallbackNotice: {

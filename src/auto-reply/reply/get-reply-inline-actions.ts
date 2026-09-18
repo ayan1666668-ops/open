@@ -180,6 +180,7 @@ export async function handleInlineActions(params: {
   elevatedFailures: Array<{ gate: string; key: string }>;
   defaultActivation: Parameters<typeof buildStatusReply>[0]["defaultGroupActivation"];
   thinkingCatalog?: ThinkingCatalogEntry[];
+  prepareModelState: Parameters<typeof handleCommands>[0]["prepareModelState"];
   resolveModelLevels: ReplyModelLevelResolver;
   resolvedVerboseLevel: VerboseLevel | undefined;
   resolvedElevatedLevel: ElevatedLevel;
@@ -227,6 +228,7 @@ export async function handleInlineActions(params: {
     elevatedFailures,
     defaultActivation,
     thinkingCatalog,
+    prepareModelState,
     resolveModelLevels,
     resolvedVerboseLevel,
     resolvedElevatedLevel,
@@ -583,6 +585,7 @@ export async function handleInlineActions(params: {
       opts,
       defaultGroupActivation: defaultActivation,
       thinkingCatalog,
+      prepareModelState,
       resolveModelLevels,
       resolvedVerboseLevel: resolvedVerboseLevel ?? "off",
       resolvedElevatedLevel,

@@ -8,27 +8,17 @@ import {
   normalizeStoredOverrideModel,
   resolvePersistedOverrideModelRef,
 } from "../../../agents/model-selection-persisted.js";
-import type { SessionEntry } from "../../../config/sessions/types.js";
-import {
-  commitStoredSessionExecutionSelection,
-  resolveLegacyExecutionFallbackPermission,
-} from "../../../model-picker/apply-session-model-selection.js";
+import { LEGACY_SELECTION_VIEW_FIELDS } from "../../../model-picker/execution-selection-projection.js";
 import type {
   LegacyExecutionRequest,
   SessionExecutionSelection,
 } from "../../../model-picker/execution-selection.js";
-import { sessionExecutionSelectionSchema } from "../../../model-picker/execution-selection.schema.js";
+import {
+  resolveLegacyExecutionIntent,
+  sessionExecutionSelectionSchema,
+} from "../../../model-picker/execution-selection.schema.js";
 import { resolveSessionPinnedHarnessId } from "../../../sessions/agent-harness-session-key.js";
 
-const RETIRED_SELECTION_FIELDS = [
-  "providerOverride",
-  "modelOverride",
-  "agentRuntimeOverride",
-  "modelOverrideSource",
-  "modelOverrideRouteResolution",
-  "modelOverrideFallbackOriginProvider",
-  "modelOverrideFallbackOriginModel",
-] as const;
 const RETIRED_FALLBACK_FIELDS = [
   "prevModelOverride",
   "prevProviderOverride",
@@ -46,11 +36,15 @@ export type LegacyAcpExecutionSelection = {
 
 /** Doctor alone interprets the retired selection family. No observed output supplies intent. */
 export function migrateSessionExecutionSelection(params: {
-  entry: Record<string, unknown>;
+  entry: unknown;
   acp?: LegacyAcpExecutionSelection;
   classifyExecutor: (id: string) => "harness" | "cli" | undefined;
   defaultProvider?: string;
+  cliRuntimeProviders?: ReadonlyMap<string, string>;
 }): { entry: Record<string, unknown>; changed: boolean } {
+  if (!isRecord(params.entry)) {
+    throw new Error("Session entry is not an object; original selection retained.");
+  }
   const entry = { ...params.entry };
   const legacyAcp = isRecord(entry.acp) ? entry.acp : undefined;
   const legacyOptions = isRecord(legacyAcp?.runtimeOptions) ? legacyAcp.runtimeOptions : undefined;
@@ -68,28 +62,19 @@ export function migrateSessionExecutionSelection(params: {
   const provider = normalizeOptionalString(entry.providerOverride);
   const normalizedRuntime = normalizeOptionalAgentRuntimeId(entry.agentRuntimeOverride);
   const nativeBindingOwner = resolveSessionPinnedHarnessId(entry);
-  const runtime = isDefaultAgentRuntimeId(normalizedRuntime)
-    ? nativeBindingOwner
-    : normalizedRuntime;
   const originProvider = normalizeOptionalString(entry.modelOverrideFallbackOriginProvider);
   const originModel = normalizeOptionalString(entry.modelOverrideFallbackOriginModel);
-  const automatic =
-    entry.modelOverrideSource === "auto" ||
-    entry.modelOverrideSource === "default" ||
-    (entry.modelOverrideSource !== "user" && Boolean(originProvider && originModel));
-  const fallbackPermission = resolveLegacyExecutionFallbackPermission({
+  const {
+    model: request,
+    automatic,
+    fallbackPermission,
+  } = resolveLegacyExecutionIntent({
     model,
     provider,
     source: entry.modelOverrideSource,
     originProvider,
     originModel,
   });
-  const request =
-    automatic && originProvider && originModel
-      ? { provider: originProvider, id: originModel }
-      : model && entry.modelOverrideSource !== "default"
-        ? { ...(provider ? { provider } : {}), id: model }
-        : undefined;
   const routeResolution =
     (automatic && originProvider && originModel) ||
     entry.modelOverrideRouteResolution === "resolved"
@@ -101,7 +86,7 @@ export function migrateSessionExecutionSelection(params: {
     routeResolution,
   });
   const ref =
-    request && (request.provider || params.defaultProvider)
+    request && (request.provider || (routeResolution === "raw" && request.id.includes("/")))
       ? resolvePersistedOverrideModelRef({
           defaultProvider: params.defaultProvider,
           overrideProvider: normalized.providerOverride,
@@ -109,7 +94,19 @@ export function migrateSessionExecutionSelection(params: {
           routeResolution,
         })
       : undefined;
-  const requestedModel = ref ? { provider: ref.provider, id: ref.model } : request;
+  let requestedModel = ref ? { provider: ref.provider, id: ref.model } : request;
+  const bindings = isRecord(entry.cliSessionBindings) ? entry.cliSessionBindings : undefined;
+  const cliRuntime =
+    requestedModel?.provider && bindings?.[requestedModel.provider] !== undefined
+      ? requestedModel.provider
+      : undefined;
+  const canonicalProvider = cliRuntime ? params.cliRuntimeProviders?.get(cliRuntime) : undefined;
+  if (requestedModel && canonicalProvider) {
+    requestedModel = { provider: canonicalProvider, id: requestedModel.id };
+  }
+  const runtime = isDefaultAgentRuntimeId(normalizedRuntime)
+    ? (nativeBindingOwner ?? (canonicalProvider ? cliRuntime : undefined))
+    : normalizedRuntime;
   const legacyRequest: LegacyExecutionRequest | undefined =
     provider && !model && !requestedModel
       ? {
@@ -154,13 +151,22 @@ export function migrateSessionExecutionSelection(params: {
           : {
               state: "deferred",
               request: {
-                ...(requestedModel ? { model: requestedModel } : {}),
+                ...(requestedModel
+                  ? { model: requestedModel }
+                  : {
+                      defaultSelection:
+                        entry.modelOverrideSource === "default"
+                          ? ("configured" as const)
+                          : ("inherit" as const),
+                    }),
                 ...(runtime ? { runtime } : {}),
               },
               fallbackPermission,
             };
     }
-    if (legacyRequest) selection = { ...selection, legacyRequest };
+    if (legacyRequest) {
+      selection = { ...selection, legacyRequest };
+    }
   }
   let fallbackChanged = false;
   if (isRecord(entry.modelFallback)) {
@@ -168,6 +174,7 @@ export function migrateSessionExecutionSelection(params: {
     if (fallback.previous === undefined) {
       const previous = migrateSessionExecutionSelection({
         entry: {
+          cliSessionBindings: entry.cliSessionBindings,
           modelOverride: fallback.prevModelOverride,
           providerOverride: fallback.prevProviderOverride,
           modelOverrideSource: fallback.prevModelOverrideSource,
@@ -177,6 +184,7 @@ export function migrateSessionExecutionSelection(params: {
         },
         classifyExecutor: params.classifyExecutor,
         defaultProvider: params.defaultProvider,
+        cliRuntimeProviders: params.cliRuntimeProviders,
       });
       fallback.previous = previous.entry.executionSelection;
       fallbackChanged = true;
@@ -192,14 +200,16 @@ export function migrateSessionExecutionSelection(params: {
   const changed =
     fallbackChanged ||
     params.entry.executionSelection === undefined ||
-    RETIRED_SELECTION_FIELDS.some((field) => Object.hasOwn(entry, field)) ||
+    LEGACY_SELECTION_VIEW_FIELDS.some((field) => Object.hasOwn(entry, field)) ||
     Boolean(
       legacyAcp &&
       (Object.hasOwn(legacyAcp, "backend") ||
         Object.hasOwn(legacyAcp, "agent") ||
         (legacyOptions && Object.hasOwn(legacyOptions, "model"))),
     );
-  for (const field of RETIRED_SELECTION_FIELDS) delete entry[field];
+  for (const field of LEGACY_SELECTION_VIEW_FIELDS) {
+    delete entry[field];
+  }
   if (legacyAcp) {
     const lifecycle = { ...legacyAcp };
     delete lifecycle.backend;
@@ -222,10 +232,6 @@ export function migrateSessionExecutionSelection(params: {
     delete entry.authProfileOverrideSource;
     delete entry.authProfileOverrideCompactionCount;
   }
-  const canonical: Pick<SessionEntry, "executionSelection"> = {};
-  commitStoredSessionExecutionSelection(
-    canonical,
-    sessionExecutionSelectionSchema.parse(selection),
-  );
-  return { entry: { ...entry, ...canonical }, changed };
+  entry.executionSelection = sessionExecutionSelectionSchema.parse(selection);
+  return { entry, changed };
 }

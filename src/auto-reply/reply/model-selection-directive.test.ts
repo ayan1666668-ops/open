@@ -120,6 +120,7 @@ describe("resolveModelDirectiveSelection", () => {
         provider: "anthropic",
         model: "claude-sonnet-4-6",
         hasModelDirective: true,
+        prepareExecution: false,
         preparedModelCatalog: { entries, routeVariants: entries },
       });
       const result = resolveModelDirectiveSelection({

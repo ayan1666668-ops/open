@@ -18,7 +18,8 @@ import {
   refreshPreparedModelRuntimeSnapshots,
   registerPreparedModelRuntimePublicationListener,
 } from "../agents/prepared-model-runtime.js";
-import { createModelSelectionState } from "../auto-reply/reply/model-selection.js";
+import { clearRuntimeConfigSnapshot, setRuntimeConfigSnapshot } from "../config/io.js";
+import { replaceSessionEntrySync, loadSessionEntry } from "../config/sessions/session-accessor.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { PluginInstance } from "../plugins/plugin-instance.js";
@@ -155,6 +156,7 @@ function configureHarnessOwnedUnresolvedAuth() {
 
 afterEach(async ({ task }) => {
   await sidecars.stop();
+  clearRuntimeConfigSnapshot();
   await cleanupPreparedModelRuntimeHarness(state, task.result?.state === "fail");
   vi.unstubAllEnvs();
 });
@@ -514,42 +516,45 @@ describe("gateway chat metadata lifecycle composition", () => {
           }),
         ).resolves.toBe(false);
         expect(imageCatalogLoader.mock.calls).toEqual([[{ agentId: "main", readOnly: true }]]);
+        let expectScopedNativeAvailable: ((available: boolean) => Promise<void>) | undefined;
         if (!wildcard) {
           const sessionKey = "agent:main:telegram:direct:pin-authority";
           const sessionEntry: SessionEntry = {
             sessionId: "native-noop-pin",
             updatedAt: Date.now(),
-            providerOverride: "openai",
-            modelOverride: "account-model-unavailable",
-            modelOverrideSource: "user",
+            executionSelection: {
+              state: "deferred",
+              request: { model: { provider: "openai", id: "account-model-unavailable" } },
+              fallbackPermission: "explicit",
+            },
           };
-          const selection = await createModelSelectionState({
-            cfg: currentConfig,
-            agentId: "main",
-            agentCfg: currentConfig.agents?.defaults,
-            sessionEntry,
-            sessionStore: { [sessionKey]: sessionEntry },
-            sessionKey,
-            defaultProvider: "openai",
-            defaultModel: "codex-latest",
-            provider: "openai",
-            model: "codex-latest",
-            hasModelDirective: true,
-            preparedModelCatalog: await loader({ agentId: "main", readOnly: true }),
-          });
-          expect(selection).toMatchObject({
-            model: "codex-latest",
-            resetModelOverride: authoritative !== false,
-            resetModelOverrideRef: "openai/account-model-unavailable",
-            resetModelOverrideReason:
-              authoritative === false ? "temporarily-unavailable" : "disallowed",
-          });
-          expect(sessionEntry.modelOverride).toBe(
-            authoritative === false ? "account-model-unavailable" : undefined,
-          );
-          expect(sessionEntry.modelOverrideSource).toBe(
-            authoritative === false ? "user" : undefined,
-          );
+          setRuntimeConfigSnapshot(currentConfig);
+          const access = { sessionKey, agentId: "main" };
+          replaceSessionEntrySync(access, sessionEntry);
+          const before = loadSessionEntry(access);
+          expectScopedNativeAvailable = async (available) => {
+            const respond = vi.fn();
+            const params = { sessionKey, agentId: "main", view: "configured", preparedOnly: true };
+            const handler = modelsHandlers["models.list"];
+            if (!handler) {
+              throw new Error("models.list handler missing");
+            }
+            await handler({
+              req: { type: "req", id: "native-noop-pin-metadata", method: "models.list", params },
+              params,
+              respond,
+              client: null,
+              isWebchatConnect: () => false,
+              context: nativeContext,
+            });
+            expect(respond).toHaveBeenCalledWith(
+              true,
+              expect.objectContaining({ models: expectedModels(available) }),
+              undefined,
+            );
+            expect(loadSessionEntry(access)).toEqual(before);
+          };
+          await expectScopedNativeAvailable(false);
         }
         expect(loadModelCatalog).not.toHaveBeenCalled();
         const builds = mocks.buildPreparedModelCatalogSnapshot.mock.calls.length;
@@ -557,6 +562,7 @@ describe("gateway chat metadata lifecycle composition", () => {
         await loadModelCatalog();
         await lifecycle.refresh(); // Matching prepared/auth facts must not freeze the old boolean.
         await expectNativeAvailable(true);
+        await expectScopedNativeAvailable?.(true);
         const lockedSession = {
           authProfileOverride: "openai:missing",
           authProfileOverrideSource: "user" as const,

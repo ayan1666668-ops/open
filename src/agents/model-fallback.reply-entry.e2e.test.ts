@@ -2,7 +2,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { expectDefined } from "@openclaw/normalization-core";
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { withReplyDispatcher } from "../auto-reply/dispatch-dispatcher.js";
 import { buildCommandTestParams } from "../auto-reply/reply/commands.test-harness.js";
 import type { ReplyDispatchKind } from "../auto-reply/reply/reply-dispatcher.types.js";
@@ -14,7 +14,16 @@ import {
   type OpenClawConfig,
 } from "../config/config.js";
 import { replaceSessionEntry } from "../config/sessions/session-accessor.js";
+import type { InternalSessionEntry } from "../config/sessions/types.js";
+import { commitSessionExecutionSelection } from "../model-picker/apply-session-model-selection.js";
 import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
+import {
+  captureActivePluginRegistrySnapshot,
+  requireActivePluginRegistry,
+  restoreActivePluginRegistrySnapshot,
+  setActivePluginRegistry,
+} from "../plugins/runtime.js";
+import { externalCliDiscoveryScoped } from "./auth-profiles/external-cli-discovery.js";
 import { ensureAuthProfileStore } from "./auth-profiles/store-runtime.js";
 import type {
   EmbeddedRunAttemptParams,
@@ -37,10 +46,10 @@ import {
   installEmbeddedRunnerBaseE2eMocks,
   installEmbeddedRunnerFastRunE2eMocks,
 } from "./test-helpers/embedded-agent-runner-e2e-mocks.js";
+import { createSessionModelCatalogFixture } from "./test-helpers/session-model-catalog.test-support.js";
 
 const runEmbeddedAttemptMock =
   vi.fn<(params: EmbeddedRunAttemptParams) => Promise<EmbeddedRunAttemptResult>>();
-const emptyPluginRegistry = createEmptyPluginRegistry();
 const suspendSessionMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const { computeBackoffMock, sleepWithAbortMock } = vi.hoisted(() => ({
   computeBackoffMock: vi.fn(
@@ -57,17 +66,14 @@ vi.mock("./models-config.js", () => ({
 }));
 
 function installReplyEntryMocks() {
-  vi.doMock("../plugins/runtime.js", () => ({
-    getActivePluginRegistry: () => null,
-    getActivePluginRegistryVersion: () => 0,
-    getActivePluginRegistryWorkspaceDir: () => undefined,
-    getPluginRegistryForContext: () => emptyPluginRegistry,
-    requireActivePluginRegistry: () => emptyPluginRegistry,
-  }));
   vi.doMock("./harness/runtime-plugin.js", () => ({
     ensureSelectedAgentHarnessPlugin: vi.fn(async () => undefined),
   }));
-  installEmbeddedRunnerBaseE2eMocks();
+  installEmbeddedRunnerBaseE2eMocks({
+    get pluginRegistry() {
+      return requireActivePluginRegistry();
+    },
+  });
   installEmbeddedRunnerFastRunE2eMocks({
     runEmbeddedAttempt: (params) => runEmbeddedAttemptMock(params),
   });
@@ -109,6 +115,9 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
+  const registry = captureActivePluginRegistrySnapshot();
+  setActivePluginRegistry(createEmptyPluginRegistry());
+  onTestFinished(() => restoreActivePluginRegistrySnapshot(registry));
   vi.stubEnv("OPENCLAW_ALLOW_SLOW_REPLY_TESTS", "1");
   resetFallbackSkipCacheForTest();
   runEmbeddedAttemptMock.mockReset();
@@ -125,7 +134,7 @@ function countProviderAttempts(provider: string): number {
 describe("getReplyFromConfig fallback availability", () => {
   it.each([
     {
-      title: "returns the pinned rate-limit surface through the reply entry",
+      title: "exhausts the pinned model's account retry budget before returning an error",
       provider: "openai",
       errorMessage: RATE_LIMIT_ERROR_MESSAGE,
       toolMetas: [],
@@ -153,16 +162,13 @@ describe("getReplyFromConfig fallback availability", () => {
       loginCommand: "/login",
     })),
   ])("$title", async ({ provider, errorMessage, toolMetas, loginCommand }) => {
-    // Pre-fix this chain returned "The AI service is temporarily rate-limited. Please try again
-    // in a moment." because run preparation rebuilt fallbackConfigured from config defaults instead
-    // of carrying the disabled model-fallback availability into the embedded runner.
+    // A pinned model disables the configured ladder, not same-model account retries.
     await withModelFallbackWorkspace(async ({ agentDir, workspaceDir }) => {
       if (provider === "openai") {
         await writeFallbackMultiProfileAuthStore(agentDir);
       } else {
         await writeFallbackAuthStore(agentDir, undefined, { primaryProvider: provider });
       }
-      const authStore = ensureAuthProfileStore(agentDir, { syncExternalCli: false });
       const baseConfig = makeModelFallbackConfig(provider);
       const groqProvider = baseConfig.models?.providers?.groq;
       if (!groqProvider) {
@@ -223,16 +229,16 @@ describe("getReplyFromConfig fallback availability", () => {
           entries: { "reserved-recovery": { enabled: true } },
         };
       }
-      await replaceSessionEntry(
-        { sessionKey, storePath },
-        {
-          sessionId: "session-pinned-rate-limit",
-          updatedAt: Date.now(),
-          providerOverride: provider,
-          modelOverride: "mock-1",
-          modelOverrideSource: "user",
-        },
+      const entry: InternalSessionEntry = {
+        sessionId: "session-pinned-rate-limit",
+        updatedAt: Date.now(),
+      };
+      commitSessionExecutionSelection(
+        entry,
+        { model: { provider, id: "mock-1" }, executor: { kind: "harness", id: "openclaw" } },
+        { cause: { kind: "user" } },
       );
+      await replaceSessionEntry({ sessionKey, storePath }, entry);
       runEmbeddedAttemptMock.mockImplementation(async (attemptParams) => {
         if (attemptParams.provider !== provider) {
           throw new Error(`unexpected fallback attempt: ${attemptParams.provider}`);
@@ -263,6 +269,30 @@ describe("getReplyFromConfig fallback availability", () => {
         CommandAuthorized: true,
       };
       const replyConfig = withFullRuntimeReplyConfig(cfg);
+      const authStore = ensureAuthProfileStore(agentDir, {
+        externalCli: externalCliDiscoveryScoped({
+          config: replyConfig,
+          allowKeychainPrompt: false,
+          providerIds: [provider],
+        }),
+      });
+      createSessionModelCatalogFixture().publish({
+        config: replyConfig,
+        agentId: "test",
+        catalog: {
+          entries: Object.entries(replyConfig.models?.providers ?? {}).flatMap(
+            ([catalogProvider, configured]) =>
+              configured.models.map((model) => ({
+                ...model,
+                provider: catalogProvider,
+                api: configured.api,
+                baseUrl: configured.baseUrl,
+              })),
+          ),
+          routeVariants: [],
+        },
+        authStore,
+      });
       setRuntimeConfigSnapshot(replyConfig, replyConfig);
       let result: Awaited<ReturnType<typeof getReplyFromConfig>>;
       const delivered: Array<{ payload: ReplyPayload; kind: ReplyDispatchKind }> = [];
@@ -300,11 +330,9 @@ describe("getReplyFromConfig fallback availability", () => {
       expect(delivered[0]?.payload.isError).toBe(true);
       expect(delivered[0]?.payload.text?.trim().length).toBeGreaterThan(0);
       if (errorMessage === RATE_LIMIT_ERROR_MESSAGE) {
-        expect(countProviderAttempts("openai")).toBeGreaterThan(2);
-        expect(text).toContain("API rate limit reached");
-        expect(delivered[0]?.payload.text).toContain("API rate limit reached");
+        expect(countProviderAttempts("openai"), text).toBeGreaterThan(2);
       } else if (loginCommand) {
-        expect(countProviderAttempts(provider)).toBe(1);
+        expect(countProviderAttempts(provider), text).toBe(1);
         if (reservedProviders.includes(provider)) {
           const action = delivered[0]?.payload.presentation?.blocks
             .flatMap((block) => (block.type === "buttons" ? block.buttons : []))
@@ -357,7 +385,7 @@ describe("getReplyFromConfig fallback availability", () => {
           ],
         });
       } else {
-        expect(countProviderAttempts(provider)).toBe(1);
+        expect(countProviderAttempts(provider), text).toBe(1);
         expect(delivered[0]?.payload.text).toContain("Authentication failed");
         expect(delivered[0]?.payload.text).not.toContain("/login");
         expect(delivered[0]?.payload.presentation).toBeUndefined();

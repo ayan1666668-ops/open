@@ -590,10 +590,15 @@ describe("worker launch capabilities", () => {
                 workspaceDir: root,
                 sessionKey: SESSION_KEY,
                 preparation: { kind: "direct" },
-                resolveRuntimeOverride: () => "openclaw",
+                prepareExecutionSelection: async (modelProvider, model) => ({
+                  selection: {
+                    model: { provider: modelProvider, id: model },
+                    executor: { kind: "harness", id: "openclaw" },
+                  },
+                  validateCommit: () => undefined,
+                }),
               },
               behavior: { kind: "command-rpc", hasCommittedSideEffect: () => false },
-              sessionOverride: { kind: "preserve" },
               runCandidate,
             });
             expect(runCandidate).toHaveBeenCalledOnce();

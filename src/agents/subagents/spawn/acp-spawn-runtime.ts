@@ -5,7 +5,7 @@ import {
 } from "@openclaw/acp-core/runtime/session-identifiers";
 import type { AcpRuntimeSessionMode } from "@openclaw/acp-core/runtime/types";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
-import { getAcpSessionManager } from "../../../acp/control-plane/manager.js";
+import { getAcpSessionManagerCore } from "../../../acp/control-plane/manager.js";
 import { requireAcpExecutionSelection } from "../../../acp/control-plane/manager.utils.js";
 import { formatThinkingLevels } from "../../../auto-reply/thinking.js";
 import {
@@ -63,7 +63,7 @@ export async function resolveRuntimeCwdForAcpSpawn(params: {
 }
 
 type AcpSpawnInitializedSession = Awaited<
-  ReturnType<ReturnType<typeof getAcpSessionManager>["initializeSession"]>
+  ReturnType<ReturnType<typeof getAcpSessionManagerCore>["initializeSession"]>
 >;
 
 export type AcpSpawnInitializedRuntime = {
@@ -192,7 +192,7 @@ export async function initializeAcpSpawnRuntime(params: {
     });
   }
 
-  const initialized = await getAcpSessionManager().initializeSession({
+  const initialized = await getAcpSessionManagerCore().initializeSession({
     assertActive: params.assertActive,
     cfg: params.cfg,
     sessionKey: params.sessionKey,

@@ -12,8 +12,12 @@ export function matchesFallbackNoticeModelRef(
   modelRef: string,
 ): boolean {
   const stored = normalizeOptionalString(notice);
-  if (!stored) return false;
-  if (stored === modelRef) return true;
+  if (!stored) {
+    return false;
+  }
+  if (stored === modelRef) {
+    return true;
+  }
   const selected = parseModelCatalogRef(modelRef);
   const recorded = parseModelCatalogRef(stored);
   return (

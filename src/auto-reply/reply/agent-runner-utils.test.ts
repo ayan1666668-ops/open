@@ -1,27 +1,16 @@
 // Tests agent runner utility decisions for fallbacks, channels, and reasoning tags.
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { resolveRunAuthProfile } from "./agent-runner-auth-profile.js";
 import type { FollowupRun } from "./queue.js";
 
 const hoisted = vi.hoisted(() => {
-  const resolveModelFallbackAvailabilityMock = vi.fn();
   const getChannelPluginMock = vi.fn();
   const isReasoningTagProviderMock = vi.fn();
   return {
-    resolveModelFallbackAvailabilityMock,
     getChannelPluginMock,
     isReasoningTagProviderMock,
   };
 });
-
-vi.mock("../../agents/agent-scope.js", async () => ({
-  modelFallbackOverrideFromAvailability: (
-    await vi.importActual<typeof import("../../agents/agent-scope.js")>(
-      "../../agents/agent-scope.js",
-    )
-  ).modelFallbackOverrideFromAvailability,
-  resolveModelFallbackAvailability: (...args: unknown[]) =>
-    hoisted.resolveModelFallbackAvailabilityMock(...args),
-}));
 
 vi.mock("../../channels/plugins/index.js", () => ({
   getChannelPlugin: (...args: unknown[]) => hoisted.getChannelPluginMock(...args),
@@ -31,9 +20,17 @@ vi.mock("../../utils/provider-utils.js", () => ({
   isReasoningTagProvider: (...args: unknown[]) => hoisted.isReasoningTagProviderMock(...args),
 }));
 
-const { buildThreadingToolContext, buildEmbeddedRunExecutionParams, resolveModelFallbackOptions } =
-  await import("./agent-runner-utils.js");
-const { resolveProviderScopedAuthProfile } = await import("./agent-runner-auth-profile.js");
+const {
+  buildThreadingToolContext,
+  buildEmbeddedRunExecutionParams,
+  mintReplyMessageActionTurnCapability,
+  resolveModelFallbackOptions,
+} = await import("./agent-runner-utils.js");
+const {
+  resolveMessageActionTurnAuthorization,
+  resolveMessageActionTurnCapability,
+  revokeMessageActionTurnCapability,
+} = await import("../../gateway/message-action-turn-capability.js");
 const { buildEmbeddedRunBaseParams: buildEmbeddedRunBaseParamsCore } =
   await import("./agent-runner-run-params.js");
 const { setChannelSourceTurnId } = await import("./source-turn-id.js");
@@ -51,203 +48,205 @@ function makeRun(overrides: Partial<FollowupRun["run"]> = {}): FollowupRun["run"
   return {
     sessionId: "session-1",
     agentId: "agent-1",
-    config: { models: { providers: {} } },
-    provider: "openai",
-    model: "gpt-4.1",
-    requestedRouteResolution: "resolved",
+    config: {
+      agents: {
+        defaults: { model: { primary: "openai/gpt-4.1", fallbacks: ["openai/fallback-model"] } },
+      },
+      models: { providers: {} },
+    },
+    executionSelection: {
+      model: { provider: "openai", id: "gpt-4.1" },
+      executor: { kind: "harness", id: "openclaw" },
+    },
     agentDir: "/tmp/agent",
-    sessionKey: "agent:test:session",
+    sessionKey: "agent:agent-1:session",
     sessionFile: "/tmp/session.json",
     workspaceDir: "/tmp/workspace",
-    skillsSnapshot: [],
+    skillsSnapshot: { prompt: "", skills: [] },
     ownerNumbers: ["+15550001"],
     enforceFinalTag: false,
     thinkingCatalog: [
+      { provider: "openai", id: "gpt-4.1", input: ["text"] },
       { provider: "openai", id: "gpt-4.1-mini", input: ["text"] },
       { provider: "minimax", id: "MiniMax-M2.7", input: ["text"] },
       { provider: "anthropic", id: "claude-sonnet-4-6", input: ["text"] },
     ],
     thinkLevel: "medium",
     verboseLevel: "off",
-    reasoningLevel: "none",
+    reasoningLevel: "off",
     execOverrides: {},
-    bashElevated: false,
+    bashElevated: { enabled: false, allowed: false, defaultLevel: "off" },
     timeoutMs: 60_000,
+    blockReplyBreak: "message_end",
     ...overrides,
-  } as unknown as FollowupRun["run"];
+  };
 }
 
 describe("agent-runner-utils", () => {
   beforeEach(() => {
-    hoisted.resolveModelFallbackAvailabilityMock.mockReset();
-    hoisted.resolveModelFallbackAvailabilityMock.mockReturnValue({ kind: "none_configured" });
     hoisted.getChannelPluginMock.mockReset();
     hoisted.isReasoningTagProviderMock.mockReset();
     hoisted.isReasoningTagProviderMock.mockReturnValue(false);
   });
 
-  it("resolves model fallback options from run context", () => {
-    hoisted.resolveModelFallbackAvailabilityMock.mockReturnValue({
-      kind: "active",
-      models: ["fallback-model"],
-    });
-    const run = makeRun({ hasSessionModelOverride: true, modelOverrideSource: "user" });
+  describe("message action turn capabilities", () => {
+    const source = {
+      agentId: "agent-1",
+      runId: "dashboard-run",
+      sessionKey: "agent:agent-1:dashboard:reads",
+      sessionId: "session-1",
+    };
+    function makeTurn(): Parameters<typeof mintReplyMessageActionTurnCapability>[0] {
+      return {
+        followupRun: {
+          prompt: "read channel",
+          enqueuedAt: 0,
+          run: makeRun({ sessionKey: source.sessionKey }),
+        },
+        sessionCtx: { Provider: "webchat" },
+        opts: {
+          runId: source.runId,
+          dashboardReadAdmission: { ...source, assertCurrent: vi.fn() },
+        },
+        isHeartbeat: false,
+      };
+    }
 
-    const resolved = resolveModelFallbackOptions(run);
-
-    expect(hoisted.resolveModelFallbackAvailabilityMock).toHaveBeenCalledWith({
-      cfg: run.config,
-      agentId: run.agentId,
-      sessionKey: run.sessionKey,
-      hasSessionModelOverride: true,
-      modelOverrideSource: "user",
-      hasAutoFallbackProvenance: false,
+    it("mints host-only dashboard authority for the original admitted identity", () => {
+      const turn = makeTurn();
+      const now = Date.now();
+      const token = mintReplyMessageActionTurnCapability(turn, source.runId);
+      const lookup = { ...source, token };
+      const clock = vi
+        .spyOn(Date, "now")
+        .mockReturnValue(now + turn.followupRun.run.timeoutMs + 60_001);
+      try {
+        const authority = resolveMessageActionTurnAuthorization(lookup);
+        expect(authority?.assertDashboardReadCurrent).toBeTypeOf("function");
+        authority?.assertDashboardReadCurrent?.();
+        expect(turn.opts?.dashboardReadAdmission?.assertCurrent).toHaveBeenCalled();
+        expect(resolveMessageActionTurnCapability(lookup)).not.toHaveProperty(
+          "assertDashboardReadCurrent",
+        );
+      } finally {
+        clock.mockRestore();
+        revokeMessageActionTurnCapability(token);
+      }
     });
-    expect(resolved).toEqual({
-      cfg: run.config,
-      provider: run.provider,
-      model: run.model,
-      requestedRouteResolution: "resolved",
-      agentDir: run.agentDir,
-      agentId: run.agentId,
-      sessionKey: run.sessionKey,
-      modelFallbackAvailability: { kind: "active", models: ["fallback-model"] },
-      fallbacksOverride: ["fallback-model"],
+
+    it("rejects inherited dashboard options outside their admitted source", () => {
+      const turn = makeTurn();
+      const queued = { ...turn, opts: { ...turn.opts, runId: "followup-run" } };
+      const mismatches = [
+        { agentId: "another-agent" },
+        { sessionKey: "agent:agent-1:dashboard:another" },
+        { sessionId: "another-session" },
+      ].map((change) => {
+        const mismatch = makeTurn();
+        Object.assign(mismatch.followupRun.run, change);
+        return mismatch;
+      });
+      for (const candidate of [
+        queued,
+        ...mismatches,
+        { ...turn, isHeartbeat: true },
+        { ...turn, opts: { runId: source.runId } },
+      ]) {
+        const token = mintReplyMessageActionTurnCapability(
+          candidate,
+          candidate.opts?.runId ?? source.runId,
+        );
+        revokeMessageActionTurnCapability(token);
+        expect(token).toBeUndefined();
+      }
+      expect(turn.opts?.dashboardReadAdmission?.assertCurrent).not.toHaveBeenCalled();
+    });
+
+    it("keeps native Discord context when dashboard options are present", () => {
+      const turn = makeTurn();
+      turn.sessionCtx = { Provider: "discord", To: "channel:123", AccountId: "work" };
+      const token = mintReplyMessageActionTurnCapability(turn, source.runId);
+      try {
+        const authority = resolveMessageActionTurnAuthorization({ ...source, token });
+        expect(authority).toMatchObject({
+          requesterAccountId: "work",
+          toolContext: { currentChannelProvider: "discord", currentChannelId: "channel:123" },
+        });
+        expect(authority?.assertDashboardReadCurrent).toBeUndefined();
+        expect(turn.opts?.dashboardReadAdmission?.assertCurrent).not.toHaveBeenCalled();
+      } finally {
+        revokeMessageActionTurnCapability(token);
+      }
     });
   });
 
-  it("passes through recovered auto fallback provenance for model fallback options", () => {
-    hoisted.resolveModelFallbackAvailabilityMock.mockReturnValue({
-      kind: "active",
-      models: ["fallback-model"],
-    });
-    const run = makeRun({
-      hasSessionModelOverride: true,
-      hasAutoFallbackProvenance: true,
-    });
+  it.each(["configured", "explicit"] as const)(
+    "resolves fallback permission from accepted intent: %s",
+    (fallbackPermission) => {
+      const run = makeRun();
+      const resolved = resolveModelFallbackOptions(run, run.config, {
+        executionSelection: {
+          state: "accepted",
+          selection: run.executionSelection,
+          fallbackPermission,
+        },
+      });
+      expect(resolved.provider).toBe("openai");
+      expect(resolved.model).toBe("gpt-4.1");
+      expect(resolved.requestedRouteResolution).toBe("resolved");
+      expect(resolved.agentId).toBe(run.agentId);
+      expect(resolved.sessionKey).toBe(run.sessionKey);
+      expect(resolved.fallbacksOverride).toEqual(
+        fallbackPermission === "configured" ? ["openai/fallback-model"] : [],
+      );
+      expect(resolved.modelFallbackAvailability.kind).toBe(
+        fallbackPermission === "configured" ? "active" : "disabled_by_model_override",
+      );
+    },
+  );
 
-    const resolved = resolveModelFallbackOptions(run);
-
-    expect(hoisted.resolveModelFallbackAvailabilityMock).toHaveBeenCalledWith({
-      cfg: run.config,
-      agentId: run.agentId,
-      sessionKey: run.sessionKey,
-      hasSessionModelOverride: true,
-      modelOverrideSource: undefined,
-      hasAutoFallbackProvenance: true,
-    });
-    expect(resolved.fallbacksOverride).toEqual(["fallback-model"]);
-  });
-
-  it("disables model fallback options for a model-locked run", () => {
-    const run = makeRun({ modelSelectionLocked: true });
-
-    const resolved = resolveModelFallbackOptions(run);
-
-    expect(hoisted.resolveModelFallbackAvailabilityMock).toHaveBeenCalledWith({
-      cfg: run.config,
-      agentId: run.agentId,
-      sessionKey: run.sessionKey,
-      hasSessionModelOverride: false,
-      modelOverrideSource: undefined,
-      hasAutoFallbackProvenance: false,
-      modelSelectionLocked: true,
-    });
-    expect(resolved.fallbacksOverride).toEqual([]);
-  });
-
-  it("passes through missing agentId for helper-based fallback resolution", () => {
-    hoisted.resolveModelFallbackAvailabilityMock.mockReturnValue({
-      kind: "active",
-      models: ["fallback-model"],
-    });
-    const run = makeRun({ agentId: undefined });
-
-    const resolved = resolveModelFallbackOptions(run);
-
-    expect(hoisted.resolveModelFallbackAvailabilityMock).toHaveBeenCalledWith({
-      cfg: run.config,
-      agentId: undefined,
-      sessionKey: run.sessionKey,
-      hasSessionModelOverride: false,
-      modelOverrideSource: undefined,
-      hasAutoFallbackProvenance: false,
-    });
-    expect(resolved.fallbacksOverride).toEqual(["fallback-model"]);
-  });
-
-  it("builds embedded run base params with auth profile and run metadata", async () => {
-    const run = makeRun({
-      enforceFinalTag: true,
-      cwd: "/tmp/task-repo",
-      taskSuggestionDeliveryMode: "gateway",
-      terminalReplyExpectation: "optional",
-      trustedInternalHandoff: {
-        kind: "subagent-completion",
-        sourceSessionKey: "agent:child",
-        targetSessionKey: "agent:parent",
-        targetSessionId: "session-1",
-        provider: "openai",
-        model: "gpt-5.6-luna",
+  it("uses accepted intent after a temporary fallback observation", () => {
+    const run = makeRun();
+    const resolved = resolveModelFallbackOptions(run, run.config, {
+      modelProvider: "another-provider",
+      model: "another-model",
+      executionSelection: {
+        state: "accepted",
+        selection: run.executionSelection,
+        fallbackPermission: "configured",
       },
-      scheduledToolPolicy: { version: 1, mode: "trusted" },
-      runtimePluginToolGrant: {
-        pluginId: "workboard",
-        toolNames: ["workboard_complete"],
-      },
     });
-    const authProfile = resolveProviderScopedAuthProfile({
-      provider: "openai",
-      primaryProvider: "openai",
-      authProfileId: "profile-openai",
-      authProfileIdSource: "user",
-    });
-
-    const resolved = await buildEmbeddedRunBaseParams({
-      run,
-      provider: "openai",
-      model: "gpt-4.1-mini",
-      runId: "run-1",
-      promptCacheKey: "webchat-cache-key",
-      authProfile,
-    });
-
-    expect(resolved.sessionFile).toBe(run.sessionFile);
-    expect(resolved.workspaceDir).toBe(run.workspaceDir);
-    expect(resolved.cwd).toBe("/tmp/task-repo");
-    expect(resolved.agentDir).toBe(run.agentDir);
-    expect(resolved.config).toBe(run.config);
-    expect(resolved.skillsSnapshot).toBe(run.skillsSnapshot);
-    expect(resolved.ownerNumbers).toBe(run.ownerNumbers);
-    expect(resolved.trustedInternalHandoff).toBe(run.trustedInternalHandoff);
-    expect(resolved.scheduledToolPolicy).toBe(run.scheduledToolPolicy);
-    expect(resolved.runtimePluginToolGrant).toBe(run.runtimePluginToolGrant);
-    expect(resolved.enforceFinalTag).toBe(true);
     expect(resolved.provider).toBe("openai");
-    expect(resolved.model).toBe("gpt-4.1-mini");
-    expect(resolved.authProfileId).toBe("profile-openai");
-    expect(resolved.authProfileIdSource).toBe("user");
-    expect(resolved.thinkLevel).toBe(run.thinkLevel);
-    expect(resolved.verboseLevel).toBe(run.verboseLevel);
-    expect(resolved.reasoningLevel).toBe(run.reasoningLevel);
-    expect(resolved.execOverrides).toBe(run.execOverrides);
-    expect(resolved.bashElevated).toBe(run.bashElevated);
-    expect(resolved.timeoutMs).toBe(run.timeoutMs);
-    expect(resolved.runId).toBe("run-1");
-    expect(resolved.promptCacheKey).toBe("webchat-cache-key");
-    expect(resolved.taskSuggestionDeliveryMode).toBe("gateway");
-    expect(resolved.terminalReplyExpectation).toBe("optional");
+    expect(resolved.model).toBe("gpt-4.1");
+    expect(resolved.fallbacksOverride).toEqual(["openai/fallback-model"]);
   });
+
+  it.each(["run", "entry"] as const)(
+    "disables fallback options for the %s's model lock",
+    (owner) => {
+      const run = makeRun({ modelSelectionLocked: owner === "run" });
+      const resolved = resolveModelFallbackOptions(run, run.config, {
+        modelSelectionLocked: owner === "entry",
+      });
+      expect(resolved.fallbacksOverride).toEqual([]);
+      expect(resolved.modelFallbackAvailability.kind).toBe("disabled_by_model_selection_lock");
+    },
+  );
 
   it("threads prompt cache affinity through embedded execution params", async () => {
     const run = makeRun();
 
     const resolved = await buildEmbeddedRunExecutionParams({
-      run,
+      run: {
+        ...run,
+        ...resolveRunAuthProfile(run, "openai"),
+        executionSelection: {
+          model: { provider: "openai", id: "gpt-4.1-mini" },
+          executor: { kind: "harness", id: "openclaw" },
+        },
+      },
       sessionCtx: { Provider: "webchat" },
       hasRepliedRef: undefined,
-      provider: "openai",
-      model: "gpt-4.1-mini",
       runId: "run-1",
       promptCacheKey: "stable-session-cache-key",
     });
@@ -261,14 +260,19 @@ describe("agent-runner-utils", () => {
     const run = makeRun({ conversationToolPolicy: { deny: ["exec"] } });
 
     const resolved = await buildEmbeddedRunExecutionParams({
-      run,
+      run: {
+        ...run,
+        ...resolveRunAuthProfile(run, "openai"),
+        executionSelection: {
+          model: { provider: "openai", id: "gpt-4.1-mini" },
+          executor: { kind: "harness", id: "openclaw" },
+        },
+      },
       sessionCtx: {
         Provider: "telegram",
         ConversationToolPolicy: { deny: ["write"] },
       },
       hasRepliedRef: undefined,
-      provider: "openai",
-      model: "gpt-4.1-mini",
       runId: "run-1",
     });
 
@@ -279,11 +283,16 @@ describe("agent-runner-utils", () => {
     const run = makeRun({ chatType: "direct" });
 
     const resolved = await buildEmbeddedRunExecutionParams({
-      run,
+      run: {
+        ...run,
+        ...resolveRunAuthProfile(run, "openai"),
+        executionSelection: {
+          model: { provider: "openai", id: "gpt-4.1-mini" },
+          executor: { kind: "harness", id: "openclaw" },
+        },
+      },
       sessionCtx: { Provider: "discord", ChatType: "Channel" },
       hasRepliedRef: undefined,
-      provider: "openai",
-      model: "gpt-4.1-mini",
       runId: "run-1",
     });
 
@@ -291,84 +300,34 @@ describe("agent-runner-utils", () => {
     expect("chatType" in resolved.runBaseParams).toBe(false);
   });
 
-  it("passes through recovered auto fallback provenance for embedded run params", async () => {
-    hoisted.resolveModelFallbackAvailabilityMock.mockReturnValue({
-      kind: "active",
-      models: ["fallback-model"],
-    });
-    const run = makeRun({
-      hasSessionModelOverride: true,
-      hasAutoFallbackProvenance: true,
-    });
-    const authProfile = resolveProviderScopedAuthProfile({
-      provider: "openai",
-      primaryProvider: "openai",
-    });
-
-    const resolved = await buildEmbeddedRunBaseParams({
-      run,
-      provider: "openai",
-      model: "gpt-4.1-mini",
-      runId: "run-1",
-      authProfile,
-    });
-
-    expect(hoisted.resolveModelFallbackAvailabilityMock).toHaveBeenCalledWith({
-      cfg: run.config,
-      agentId: run.agentId,
-      sessionKey: run.sessionKey,
-      hasSessionModelOverride: true,
-      modelOverrideSource: undefined,
-      hasAutoFallbackProvenance: true,
-    });
-    expect(resolved.modelFallbackAvailability).toEqual({
-      kind: "active",
-      models: ["fallback-model"],
-    });
-    expect(resolved.modelFallbacksOverride).toEqual(["fallback-model"]);
-  });
-
   it("disables embedded model fallbacks for a model-locked run", async () => {
     const run = makeRun({ modelSelectionLocked: true });
-    const authProfile = resolveProviderScopedAuthProfile({
-      provider: "openai",
-      primaryProvider: "openai",
-    });
-
     const resolved = await buildEmbeddedRunBaseParams({
-      run,
-      provider: "openai",
-      model: "gpt-4.1-mini",
+      run: {
+        ...run,
+        executionSelection: {
+          model: { provider: "openai", id: "gpt-4.1-mini" },
+          executor: { kind: "harness", id: "openclaw" },
+        },
+      },
       runId: "run-1",
-      authProfile,
     });
 
-    expect(hoisted.resolveModelFallbackAvailabilityMock).toHaveBeenCalledWith({
-      cfg: run.config,
-      agentId: run.agentId,
-      sessionKey: run.sessionKey,
-      hasSessionModelOverride: false,
-      modelOverrideSource: undefined,
-      hasAutoFallbackProvenance: false,
-      modelSelectionLocked: true,
-    });
     expect(resolved.modelFallbacksOverride).toEqual([]);
     expect(resolved.modelSelectionLocked).toBe(true);
   });
 
   it("does not force final-tag enforcement for minimax providers", async () => {
     const run = makeRun({ enforceFinalTag: false });
-    const authProfile = resolveProviderScopedAuthProfile({
-      provider: "minimax",
-      primaryProvider: "minimax",
-    });
-
     const resolved = await buildEmbeddedRunBaseParams({
-      run,
-      provider: "minimax",
-      model: "MiniMax-M2.7",
+      run: {
+        ...run,
+        executionSelection: {
+          model: { provider: "minimax", id: "MiniMax-M2.7" },
+          executor: { kind: "harness", id: "openclaw" },
+        },
+      },
       runId: "run-1",
-      authProfile,
     });
 
     expect(resolved.enforceFinalTag).toBe(false);
@@ -387,7 +346,14 @@ describe("agent-runner-utils", () => {
     });
 
     const resolved = await buildEmbeddedRunExecutionParams({
-      run,
+      run: {
+        ...run,
+        ...resolveRunAuthProfile(run, "anthropic"),
+        executionSelection: {
+          model: { provider: "anthropic", id: "claude-sonnet-4-6" },
+          executor: { kind: "harness", id: "openclaw" },
+        },
+      },
       sessionCtx: {
         Provider: "OpenAI",
         To: "channel-1",
@@ -401,8 +367,6 @@ describe("agent-runner-utils", () => {
         MemberRoleIds: ["admin", " ", "operator"],
       },
       hasRepliedRef: undefined,
-      provider: "anthropic",
-      model: "claude-sonnet-4-6",
       runId: "run-1",
     });
 
@@ -437,7 +401,14 @@ describe("agent-runner-utils", () => {
     });
 
     const resolved = await buildEmbeddedRunExecutionParams({
-      run,
+      run: {
+        ...run,
+        ...resolveRunAuthProfile(run, "openai"),
+        executionSelection: {
+          model: { provider: "openai", id: "gpt-4.1-mini" },
+          executor: { kind: "harness", id: "openclaw" },
+        },
+      },
       sessionCtx: {
         Provider: "heartbeat",
         OriginatingChannel: "Telegram",
@@ -445,8 +416,6 @@ describe("agent-runner-utils", () => {
         ConversationRoutePeerId: "later-peer",
       },
       hasRepliedRef: undefined,
-      provider: "openai",
-      model: "gpt-4.1-mini",
       runId: "run-1",
     });
 
@@ -483,7 +452,14 @@ describe("agent-runner-utils", () => {
     const run = makeRun({ agentAccountId: "work", chatType: "direct" });
 
     const resolved = await buildEmbeddedRunExecutionParams({
-      run,
+      run: {
+        ...run,
+        ...resolveRunAuthProfile(run, "openai"),
+        executionSelection: {
+          model: { provider: "openai", id: "gpt-4.1-mini" },
+          executor: { kind: "harness", id: "openclaw" },
+        },
+      },
       sessionCtx: {
         Provider: "cron-event",
         NativeChannelId: "D1",
@@ -498,8 +474,6 @@ describe("agent-runner-utils", () => {
         originatingThreadId: 42,
       },
       hasRepliedRef: undefined,
-      provider: "openai",
-      model: "gpt-4.1-mini",
       runId: "run-1",
     });
 
@@ -526,7 +500,14 @@ describe("agent-runner-utils", () => {
     >;
 
     const resolved = await buildEmbeddedRunExecutionParams({
-      run,
+      run: {
+        ...run,
+        ...resolveRunAuthProfile(run, "openai"),
+        executionSelection: {
+          model: { provider: "openai", id: "gpt-4.1-mini" },
+          executor: { kind: "harness", id: "openclaw" },
+        },
+      },
       replyRoute,
       sessionCtx: {
         Provider: "reef",
@@ -534,8 +515,6 @@ describe("agent-runner-utils", () => {
         MessageSid: "message-1",
       },
       hasRepliedRef: undefined,
-      provider: "openai",
-      model: "gpt-4.1-mini",
       runId: "run-1",
     });
 
@@ -551,7 +530,14 @@ describe("agent-runner-utils", () => {
     const run = makeRun();
 
     const resolved = await buildEmbeddedRunExecutionParams({
-      run,
+      run: {
+        ...run,
+        ...resolveRunAuthProfile(run, "openai"),
+        executionSelection: {
+          model: { provider: "openai", id: "gpt-4.1-mini" },
+          executor: { kind: "harness", id: "openclaw" },
+        },
+      },
       sessionCtx: {
         Provider: "telegram",
         To: "268300329",
@@ -559,8 +545,6 @@ describe("agent-runner-utils", () => {
         BodyForCommands: "",
       },
       hasRepliedRef: undefined,
-      provider: "openai",
-      model: "gpt-4.1-mini",
       runId: "run-1",
     });
 

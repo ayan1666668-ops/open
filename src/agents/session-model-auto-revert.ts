@@ -72,6 +72,7 @@ async function reconcileAgentPatchedSessionModel(params: {
             agentId: params.agentId,
           }),
           sessionKey: params.sessionKey,
+          storePath: params.storePath,
           sessionEntry: {
             ...rollbackEntry,
             executionSelection: rollbackMarker.previous,
@@ -147,7 +148,15 @@ async function reconcileAgentPatchedSessionModel(params: {
       }
       const next = { ...entry };
       commitSessionExecutionSelection(next, rollback.selection, {
-        cause: { kind: "inherit", entry: { executionSelection: marker.previous } },
+        cause: {
+          kind: "inherit",
+          entry: {
+            executionSelection: {
+              ...marker.previous,
+              fallbackPermission: rollback.fallbackPermission ?? marker.previous.fallbackPermission,
+            },
+          },
+        },
       });
       result = "reverted";
       note =

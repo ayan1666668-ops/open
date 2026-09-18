@@ -6,14 +6,15 @@ import {
   resolveAgentDirMock,
   resolveSessionAgentIdMock,
 } from "./commands-agent-scope.test-support.js";
+import { attachCompactModelPreparation } from "./commands-compact-model.test-support.js";
 import type { HandleCommandsParams } from "./commands-types.js";
+import { clearInlineDirectives } from "./get-reply-directives-utils.js";
 
 vi.mock("./commands-compact.runtime.js", () => ({
   abortEmbeddedAgentRun: vi.fn(),
   compactEmbeddedAgentSession: vi.fn(),
   enqueueSystemEvent: vi.fn(),
   formatContextUsageShort: vi.fn(() => "Context 12.1k"),
-  formatTokenCount: vi.fn((value: number) => `${value}`),
   incrementCompactionCount: vi.fn(),
   resolveCurrentSessionEntry: vi.fn(
     ({ expected }: { expected: Pick<SessionEntry, "sessionId" | "lifecycleRevision"> }) => ({
@@ -22,7 +23,6 @@ vi.mock("./commands-compact.runtime.js", () => ({
     }),
   ),
   isEmbeddedAgentRunAbortableForCompaction: vi.fn().mockReturnValue(false),
-  resolveFreshSessionTotalTokens: vi.fn(() => 12_345),
   waitForEmbeddedAgentRunEnd: vi.fn().mockResolvedValue(true),
 }));
 
@@ -36,7 +36,12 @@ export const {
   isEmbeddedAgentRunAbortableForCompaction,
   waitForEmbeddedAgentRunEnd,
 } = await import("./commands-compact.runtime.js");
-export const { handleCompactCommand } = await import("./commands-compact.js");
+const { handleCompactCommand } = await import("./commands-compact.js");
+
+export async function runCompactCommand(params: HandleCommandsParams, allowTextCommands: boolean) {
+  attachCompactModelPreparation(params);
+  return handleCompactCommand(params, allowTextCommands);
+}
 
 export function buildCompactParams(
   commandBodyNormalized: string,
@@ -52,6 +57,8 @@ export function buildCompactParams(
       commandText: commandBodyNormalized,
     },
     command: {
+      surface: "whatsapp",
+      rawBodyNormalized: commandBodyNormalized,
       commandBodyNormalized,
       isAuthorizedSender: true,
       senderIsOwner: false,
@@ -59,10 +66,28 @@ export function buildCompactParams(
       channel: "whatsapp",
       ownerList: [],
     },
+    agentId: "main",
+    workspaceDir: "/tmp/workspace",
+    provider: "fixture",
+    model: "compact-model",
+    contextTokens: 0,
+    isGroup: false,
+    directives: clearInlineDirectives(commandBodyNormalized),
+    elevated: { enabled: false, allowed: false, failures: [] },
+    defaultGroupActivation: () => "always",
+    resolvedVerboseLevel: "off",
+    resolvedReasoningLevel: "off",
+    prepareModelState: async () => {
+      throw new Error("Compaction fixture was not attached.");
+    },
+    resolveModelLevels: async () => ({
+      resolvedThinkLevel: "medium",
+      resolvedReasoningLevel: "off",
+    }),
     sessionKey: "agent:main:main",
     sessionStore: {},
     resolveDefaultThinkingLevel: async () => "medium",
-  } as unknown as HandleCommandsParams;
+  };
 }
 
 export function resetCompactCommandMocks() {

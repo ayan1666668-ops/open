@@ -513,7 +513,9 @@ export function syncCronSessionLiveSelection(params: {
   liveSelection: CronLiveSelection;
 }) {
   const selection = params.liveSelection.selection;
-  if (!isModelExecutionSelection(selection)) return;
+  if (!isModelExecutionSelection(selection)) {
+    return;
+  }
   setCronSessionRuntimeModel({
     entry: params.entry,
     provider: selection.model.provider,

@@ -128,10 +128,16 @@ describe("maybeGenerateDashboardSessionTitle", () => {
   });
 
   it("routes both attempts through the effective session model and auth profile", async () => {
-    const entry = {
+    const entry: SessionEntry = {
       ...baseEntry,
-      providerOverride: "anthropic",
-      modelOverride: "claude-fable-5",
+      executionSelection: {
+        state: "accepted",
+        selection: {
+          model: { provider: "anthropic", id: "claude-fable-5" },
+          executor: { kind: "harness", id: "openclaw" },
+        },
+        fallbackPermission: "explicit",
+      },
       authProfileOverride: "work",
     };
     resolveUtilityModelRefForAgent.mockReturnValue("anthropic/claude-haiku-4-5@work");
@@ -155,10 +161,17 @@ describe("maybeGenerateDashboardSessionTitle", () => {
   });
 
   it("preserves a locked session harness as the title runtime owner", async () => {
-    const entry = {
+    const entry: SessionEntry = {
       ...baseEntry,
+      executionSelection: {
+        state: "accepted",
+        selection: {
+          model: { provider: "openai", id: "gpt-5.5" },
+          executor: { kind: "harness", id: "codex" },
+        },
+        fallbackPermission: "explicit",
+      },
       agentHarnessId: "codex",
-      agentRuntimeOverride: "openclaw",
       modelSelectionLocked: true,
     };
     mockSessionUpdate(entry);
@@ -171,11 +184,16 @@ describe("maybeGenerateDashboardSessionTitle", () => {
   });
 
   it("preserves a compatible session runtime override for title generation", async () => {
-    const entry = {
+    const entry: SessionEntry = {
       ...baseEntry,
-      providerOverride: "anthropic",
-      modelOverride: "claude-fable-5",
-      agentRuntimeOverride: "claude-cli",
+      executionSelection: {
+        state: "accepted",
+        selection: {
+          model: { provider: "anthropic", id: "claude-fable-5" },
+          executor: { kind: "cli", id: "claude-cli" },
+        },
+        fallbackPermission: "explicit",
+      },
     };
     mockSessionUpdate(entry);
 

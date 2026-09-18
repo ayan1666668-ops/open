@@ -1194,7 +1194,7 @@ describe("runtime postbuild static assets", () => {
     await fs.mkdir(path.join(distDir, "web-fetch"), { recursive: true });
     await fs.writeFile(
       path.join(distDir, "acp", "control-plane", "manager.js"),
-      "export const getAcpSessionManager = true;\n",
+      "export const getAcpSessionManagerCore = true;\n",
       "utf8",
     );
     await fs.writeFile(

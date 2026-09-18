@@ -10,7 +10,10 @@ import {
 import { tableExists } from "../state/openclaw-state-db-schema-helpers.js";
 import { withSharedStateWriteCoordinator } from "../state/openclaw-state-db-write-coordination.js";
 import type { DB } from "../state/openclaw-state-db.generated.js";
-import { runOpenClawStateWriteTransaction } from "../state/openclaw-state-db.js";
+import {
+  runOpenClawStateWriteTransaction,
+  type OpenClawStateDatabase,
+} from "../state/openclaw-state-db.js";
 import { resolveOpenClawStateSqlitePath } from "../state/openclaw-state-db.paths.js";
 import { captureOpenClawStateWorkerContext } from "../state/openclaw-state-worker-context.js";
 import { executeSqliteQuerySync, getNodeSqliteKysely } from "./kysely-sync.js";
@@ -145,7 +148,10 @@ export function withDeferredPluginMigrationsCurrent<T>(
   params: {
     env?: NodeJS.ProcessEnv;
     expectedPending: readonly DeferredPluginMigration[];
-    onConflict?: (pending: readonly DeferredPluginMigration[]) => T;
+    onConflict?: (
+      pending: readonly DeferredPluginMigration[],
+      database: OpenClawStateDatabase,
+    ) => T;
   },
   publish: () => T,
 ): T {
@@ -163,11 +169,11 @@ export function withDeferredPluginMigrationsCurrent<T>(
       }
     }
     return runOpenClawStateWriteTransaction(
-      ({ db }) => {
-        const pending = pendingMigrationRecords(readMigrationRows(db));
+      (database) => {
+        const pending = pendingMigrationRecords(readMigrationRows(database.db));
         if (!isDeepStrictEqual(pending, params.expectedPending) && params.onConflict) {
           // Commit preservation facts against these rows; callers refuse publication after return.
-          return params.onConflict(pending);
+          return params.onConflict(pending, database);
         }
         assertPendingGeneration(pending, params.expectedPending);
         return publish();

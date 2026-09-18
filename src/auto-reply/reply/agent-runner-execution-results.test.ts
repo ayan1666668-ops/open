@@ -421,7 +421,6 @@ describe("executeAgentTurn: result and tool delivery", () => {
             provider: "openai",
             model: "gpt-5.4",
             reason: "format",
-            code: "empty_result",
             error: "The model ended without a visible assistant reply.",
           },
         ],

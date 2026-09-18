@@ -3,6 +3,7 @@
 import { beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { ErrorCodes } from "../../packages/gateway-protocol/src/index.js";
 import type { SessionEntry } from "../config/sessions/types.js";
+import { sessionSelectionFixture } from "./session-list.test-support.js";
 import * as sessionRows from "./session-utils-row.js";
 
 const hoisted = vi.hoisted(() => ({
@@ -163,9 +164,11 @@ describe("resolveSessionKeyFromResolveParams", () => {
         sessionId: "sess-acp",
         updatedAt: 1,
         label: "claude-delegate-test",
+        executionSelection: sessionSelectionFixture({
+          executor: { kind: "acp", backend: "acpx", agent: "claude" },
+          model: "native-managed",
+        }),
         acp: {
-          backend: "acpx",
-          agent: "claude",
           runtimeSessionName: acpKey,
           mode: "oneshot",
           state: "idle",

@@ -5,7 +5,7 @@ import { describe, beforeEach, expect, it } from "vitest";
 import type { ChannelConfiguredBindingProvider } from "../channels/plugins/types.adapters.js";
 import type { ChannelPlugin } from "../channels/plugins/types.public.js";
 import type { OpenClawConfig } from "../config/config.js";
-import type { SessionAcpMeta } from "../config/sessions/types.js";
+import type { SessionAcpLifecycle } from "../config/sessions/types.js";
 import { setActivePluginRegistry } from "../plugins/runtime.js";
 import { createChannelTestPluginBase, createTestRegistry } from "../test-utils/channel-plugins.js";
 import { resolveAcpAgentWorkspaceProvisioningForTurn } from "./acp-workspace-provisioning.js";
@@ -64,10 +64,8 @@ const baseCfg: OpenClawConfig = {
   },
 };
 
-function sessionAcpMeta(cwd?: string): SessionAcpMeta {
+function sessionAcpMeta(cwd?: string): SessionAcpLifecycle {
   return {
-    backend: "acpx",
-    agent: "codex",
     runtimeSessionName: "rs",
     mode: "persistent",
     ...(cwd ? { cwd } : {}),

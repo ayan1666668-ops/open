@@ -12,8 +12,8 @@ import {
 import { isCliProvider, type CliProviderClassifier } from "../agents/model-selection.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { getSessionExecutionSelection } from "../model-picker/execution-selection.js";
 import {
+  getSessionExecutionSelection,
   isAcpExecutionSelection,
   isModelExecutionSelection,
 } from "../model-picker/execution-selection.js";

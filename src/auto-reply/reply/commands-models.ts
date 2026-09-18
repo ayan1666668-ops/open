@@ -49,15 +49,20 @@ import { resolveDefaultAgentWorkspaceDir } from "../../agents/workspace.js";
 import { getChannelPlugin } from "../../channels/plugins/index.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
-import { getSessionExecutionSelection } from "../../model-picker/execution-selection.js";
-import { isModelExecutionSelection } from "../../model-picker/execution-selection.js";
+import {
+  getSessionExecutionSelection,
+  isModelExecutionSelection,
+} from "../../model-picker/execution-selection.js";
 import { resolveProviderChannelLoginChoice } from "../../plugins/provider-login-options.js";
 import { formatProviderLoginCommand } from "../../shared/provider-login-command.js";
 import { resolveAgentRuntimeLabel } from "../../status/agent-runtime-label.js";
 import type { ReplyPayload } from "../types.js";
 import { rejectUnauthorizedCommand } from "./command-gates.js";
 import type { CommandHandler } from "./commands-types.js";
-import { resolveRuntimeNormalization } from "./model-runtime-normalization.js";
+import {
+  normalizeRuntimeChoiceId,
+  resolveRuntimeNormalization,
+} from "./model-runtime-normalization.js";
 
 const PAGE_SIZE_DEFAULT = 20;
 const PAGE_SIZE_MAX = 100;
@@ -129,18 +134,6 @@ type ParsedModelsCommand =
       provider?: string;
       modelId?: string;
     };
-
-function isModelsBrowseVisibleProvider(provider: string): boolean {
-  return !isRetiredModelPickerProvider(provider);
-}
-
-function normalizeRuntimeChoiceId(runtime: string | undefined): string {
-  const normalized = normalizeLowercaseStringOrEmpty(runtime);
-  if (!normalized || normalized === "auto" || normalized === "default") {
-    return "openclaw";
-  }
-  return normalized;
-}
 
 function buildRuntimeChoice(params: { cfg: OpenClawConfig; runtime: string }): ModelsRuntimeChoice {
   const id = normalizeRuntimeChoiceId(params.runtime);
@@ -275,6 +268,7 @@ async function projectPreparedModelsProviderData(
         };
   const visibleCatalog = await resolveLogicalVisibleModelCatalog({
     cfg,
+    metadataSnapshot: owner.metadataSnapshot,
     catalog,
     defaultProvider: resolvedDefault.provider,
     defaultModel: resolvedDefault,
@@ -321,7 +315,7 @@ async function projectPreparedModelsProviderData(
   const byProvider = new Map<string, Set<string>>();
   const add = (p: string, m: string) => {
     const key = normalizeProviderId(p);
-    if (!isModelsBrowseVisibleProvider(key)) {
+    if (isRetiredModelPickerProvider(key)) {
       return;
     }
     if (
@@ -433,7 +427,7 @@ async function projectPreparedModelsProviderData(
 
   const pendingProviders = decisions.snapshot.pendingProviders?.filter(
     (provider) =>
-      isModelsBrowseVisibleProvider(provider) &&
+      !isRetiredModelPickerProvider(provider) &&
       (options.view === "all" ||
         visibilityPolicy.allowAny ||
         [...visibilityPolicy.allowedKeys].some((key) => key.startsWith(`${provider}/`))),
@@ -523,10 +517,6 @@ async function projectPreparedModelsProviderData(
     runtimeChoicesByModel,
     isCurrent: decisions.isCurrent,
   };
-}
-
-function formatProviderLine(params: { provider: string; count: number }): string {
-  return `- ${params.provider} (${params.count})`;
 }
 
 function parseListArgs(tokens: string[]): Extract<ParsedModelsCommand, { action: "list" }> {
@@ -717,11 +707,8 @@ function buildModelsMenuText(params: {
 }): string {
   return [
     "Providers:",
-    ...params.providers.map((provider) =>
-      formatProviderLine({
-        provider,
-        count: params.byProvider.get(provider)?.size ?? 0,
-      }),
+    ...params.providers.map(
+      (provider) => `- ${provider} (${params.byProvider.get(provider)?.size ?? 0})`,
     ),
     "",
     "Use: /models <provider>",

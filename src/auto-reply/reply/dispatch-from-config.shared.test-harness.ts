@@ -631,7 +631,7 @@ vi.mock("../../plugins/hook-runner-global.js", () => ({
 }));
 vi.mock("../../acp/runtime/session-meta.js", () => ({
   listAcpSessionEntries: acpMocks.listAcpSessionEntries,
-  readAcpSessionEntry: acpMocks.readAcpSessionEntry,
+  readAcpSessionEntryCore: acpMocks.readAcpSessionEntry,
   readAcpSessionMeta: acpMocks.readAcpSessionMeta,
   upsertAcpSessionMeta: acpMocks.upsertAcpSessionMeta,
 }));
@@ -712,9 +712,8 @@ vi.mock("../../plugins/conversation-binding.js", () => ({
   },
 }));
 vi.mock("./dispatch-acp-manager.runtime.js", () => ({
-  getAcpSessionManager: () => acpManagerRuntimeMocks.getAcpSessionManager(),
-  readAcpSessionEntry: (params: { sessionKey: string; agentId?: string; cfg?: OpenClawConfig }) =>
-    acpMocks.readAcpSessionEntry(params),
+  getAcpSessionManagerCore: acpManagerRuntimeMocks.getAcpSessionManager,
+  readAcpSessionEntryCore: acpMocks.readAcpSessionEntry,
   getSessionBindingService: () => ({
     listBySession: (targetSessionKey: string) =>
       sessionBindingMocks.listBySession(targetSessionKey),

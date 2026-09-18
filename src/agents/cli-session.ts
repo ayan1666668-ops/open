@@ -218,6 +218,36 @@ export function stripCliSessionDriftNote(text: string): string {
   return text;
 }
 
+/** Account continuity is independent of prompt and tool topology. */
+export function resolveCliSessionAuthInvalidation(params: {
+  binding?: CliSessionBinding;
+  authProfileId?: string;
+  authEpoch?: string;
+  authEpochVersion: number;
+}): "auth-profile" | "auth-epoch" | undefined {
+  const currentAuthProfileId = normalizeOptionalString(params.authProfileId);
+  const currentAuthEpoch = normalizeOptionalString(params.authEpoch);
+  const storedAuthProfileId = normalizeOptionalString(params.binding?.authProfileId);
+  const storedAuthEpoch = normalizeOptionalString(params.binding?.authEpoch);
+  const hasMatchingVersionedAuthEpoch =
+    params.binding?.authEpochVersion === params.authEpochVersion &&
+    storedAuthEpoch !== undefined &&
+    currentAuthEpoch !== undefined &&
+    storedAuthEpoch === currentAuthEpoch;
+  if (storedAuthProfileId !== currentAuthProfileId) {
+    if (!hasMatchingVersionedAuthEpoch) {
+      return "auth-profile";
+    }
+  }
+  if (
+    params.binding?.authEpochVersion === params.authEpochVersion &&
+    storedAuthEpoch !== currentAuthEpoch
+  ) {
+    return "auth-epoch";
+  }
+  return undefined;
+}
+
 /** Decide whether a stored CLI session can be reused for the current auth/prompt/cwd/MCP state. */
 export function resolveCliSessionReuse(params: {
   binding?: CliSessionBinding;
@@ -239,32 +269,16 @@ export function resolveCliSessionReuse(params: {
   if (binding?.forceReuse === true) {
     return { mode: "reuse", sessionId };
   }
-  const currentAuthProfileId = normalizeOptionalString(params.authProfileId);
-  const currentAuthEpoch = normalizeOptionalString(params.authEpoch);
+  const authInvalidation = resolveCliSessionAuthInvalidation(params);
+  if (authInvalidation) {
+    return { mode: "invalidate", invalidatedReason: authInvalidation };
+  }
   const currentExtraSystemPromptHash = normalizeOptionalString(params.extraSystemPromptHash);
   const currentMessageToolPolicyHash = normalizeOptionalString(params.messageToolPolicyHash);
   const currentPromptToolNamesHash = normalizeOptionalString(params.promptToolNamesHash);
   const currentCwdHash = normalizeOptionalString(params.cwdHash);
   const currentMcpConfigHash = normalizeOptionalString(params.mcpConfigHash);
   const currentMcpResumeHash = normalizeOptionalString(params.mcpResumeHash);
-  const storedAuthProfileId = normalizeOptionalString(binding?.authProfileId);
-  const storedAuthEpoch = normalizeOptionalString(binding?.authEpoch);
-  const hasMatchingVersionedAuthEpoch =
-    binding?.authEpochVersion === params.authEpochVersion &&
-    storedAuthEpoch !== undefined &&
-    currentAuthEpoch !== undefined &&
-    storedAuthEpoch === currentAuthEpoch;
-  if (storedAuthProfileId !== currentAuthProfileId) {
-    if (!hasMatchingVersionedAuthEpoch) {
-      return { mode: "invalidate", invalidatedReason: "auth-profile" };
-    }
-  }
-  if (
-    binding?.authEpochVersion === params.authEpochVersion &&
-    storedAuthEpoch !== currentAuthEpoch
-  ) {
-    return { mode: "invalidate", invalidatedReason: "auth-epoch" };
-  }
   const storedMessageToolPolicyHash = normalizeOptionalString(binding?.messageToolPolicyHash);
   if (storedMessageToolPolicyHash !== currentMessageToolPolicyHash) {
     return { mode: "invalidate", invalidatedReason: "message-policy" };

@@ -3,7 +3,7 @@ import { resolveAgentConfig } from "../../agents/agent-scope.js";
 import { resolveEmbeddedFullAccessState } from "../../agents/embedded-agent-runner/sandbox-info.js";
 import { resolveIngressWorkspaceOverrideForSessionRun } from "../../agents/spawned-context.js";
 import type { SilentReplyPromptMode } from "../../agents/system-prompt.types.js";
-import { resolveEffectiveAgentRuntime } from "../../agents/thinking-runtime.js";
+import { resolveEffectiveAgentRuntimeCore } from "../../agents/thinking-runtime.js";
 import { copyChannelParticipantAdmissionEvidence } from "../../channels/message-access/admission-evidence.js";
 import { loadSessionEntry } from "../../config/sessions/session-accessor.js";
 import { resolveSilentReplySettings } from "../../config/silent-reply.js";
@@ -153,7 +153,7 @@ export async function prepareReplyRunContext(params: RunPreparedReplyParams) {
     cfg,
     isFastTestEnv: isFastTestRuntimeEnv(),
   });
-  const thinkingRuntime = resolveEffectiveAgentRuntime({
+  const thinkingRuntime = resolveEffectiveAgentRuntimeCore({
     cfg,
     provider,
     modelId: model,

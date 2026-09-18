@@ -1,3 +1,4 @@
+import { expectDefined } from "@openclaw/normalization-core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import {
@@ -219,7 +220,9 @@ describe("runEmbeddedAgentEntry", () => {
           ).toBeNull();
           recordAgentRunModel("run-shared-fallback", { provider, model });
           candidateCalls.push({ provider, model, isFallbackRetry: options.isFallbackRetry });
-          candidateLeases.push(options.contextEngineLogicalTurnLease);
+          candidateLeases.push(
+            expectDefined(options.contextEngineLogicalTurnLease, "shared logical turn lease"),
+          );
           return makeResult({
             provider,
             model,
@@ -334,14 +337,14 @@ describe("runEmbeddedAgentEntry", () => {
     );
   });
 
-  it("preflights caller-resolved CLI hosts instead of the model harness", async () => {
-    const resolveContextEngineHost = vi.fn(({ model: { provider } }: ModelExecutionSelection) => ({
-      id: `cli:${provider}`,
-      label: `CLI backend "${provider}"`,
-      capabilities: [],
-    }));
-
-    await runEmbeddedAgentEntry({
+  it("runs CLI fallbacks with caller-resolved hosts when no model harness owns the executor", async () => {
+    state.ensureSelectedAgentHarnessPlugin.mockRejectedValue(
+      new Error("The selected CLI executor is not an agent harness."),
+    );
+    state.selectAgentHarness.mockImplementation(() => {
+      throw new Error("No agent harness owns the CLI executor.");
+    });
+    const result = await runEmbeddedAgentEntry({
       selection: { cfg: {}, provider: "primary-provider", model: "primary-model" },
       identity: { runId: "cli-host-preflight", agentId: "main", sessionId: "session-1" },
       harness: {
@@ -350,11 +353,15 @@ describe("runEmbeddedAgentEntry", () => {
         prepareExecutionSelection: async (provider: string, model: string) => ({
           selection: {
             model: { provider, id: model },
-            executor: { kind: "harness" as const, id: "openclaw" },
+            executor: { kind: "cli" as const, id: `${provider}-cli` },
           },
           validateCommit: () => undefined,
         }),
-        resolveContextEngineHost,
+        resolveContextEngineHost: ({ executor }) => ({
+          id: `cli:${executor.id}`,
+          label: `CLI backend "${executor.id}"`,
+          capabilities: [],
+        }),
       },
       behavior: { kind: "command-rpc", hasCommittedSideEffect: () => false },
       runCandidate: async ({ model: { provider, id: model } }) =>
@@ -365,15 +372,14 @@ describe("runEmbeddedAgentEntry", () => {
         }),
     });
 
-    expect(resolveContextEngineHost).toHaveBeenCalledWith({
-      model: { provider: "primary-provider", id: "primary-model" },
-      executor: { kind: "harness", id: "openclaw" },
+    expect(result).toMatchObject({
+      outcome: "completed",
+      selection: {
+        model: { provider: "fallback-provider", id: "fallback-model" },
+        executor: { kind: "cli", id: "fallback-provider-cli" },
+      },
+      result: { payloads: [{ text: "recovered" }] },
     });
-    expect(resolveContextEngineHost).toHaveBeenCalledWith({
-      model: { provider: "fallback-provider", id: "fallback-model" },
-      executor: { kind: "harness", id: "openclaw" },
-    });
-    expect(state.selectAgentHarness).not.toHaveBeenCalled();
   });
 
   it("registers lazy harness plugins before selecting preflight hosts", async () => {

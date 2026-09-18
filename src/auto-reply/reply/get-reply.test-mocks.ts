@@ -1,5 +1,6 @@
 /** Shared Vitest mocks for get-reply tests that need agent/session/runtime isolation. */
 import { vi } from "vitest";
+import type * as CommandAuth from "../command-auth.js";
 import { createMockTypingController } from "./reply.test-helpers.js";
 import type { StageSandboxMediaResult } from "./stage-sandbox-media.js";
 
@@ -47,9 +48,13 @@ vi.mock("../../runtime.js", () => ({
   defaultRuntime: { log: vi.fn(), error: vi.fn(), warn: vi.fn(), info: vi.fn() },
 }));
 
-vi.mock("../command-auth.js", () => ({
-  resolveCommandAuthorization: vi.fn(() => ({ isAuthorizedSender: true })),
-}));
+vi.mock("../command-auth.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof CommandAuth>();
+  return {
+    resolveCommandAuthorization: vi.fn(() => ({ isAuthorizedSender: true })),
+    isResetAuthorizedForContext: vi.fn(actual.isResetAuthorizedForContext),
+  };
+});
 
 vi.mock("./directive-handling.defaults.js", () => ({
   resolveDefaultModel: vi.fn(() => ({

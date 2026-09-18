@@ -17,7 +17,7 @@ import {
   resolveModelRefFromString,
 } from "../../agents/model-selection.js";
 import { RUNTIME_MODEL_VISIBILITY_NORMALIZATION } from "../../agents/model-visibility-policy.js";
-import { resolveEffectiveAgentRuntime } from "../../agents/thinking-runtime.js";
+import { resolveEffectiveAgentRuntimeCore } from "../../agents/thinking-runtime.js";
 import { getChannelPlugin } from "../../channels/plugins/index.js";
 import type { InternalSessionEntry } from "../../config/sessions.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
@@ -306,7 +306,7 @@ export async function maybeHandleModelDirectiveInfo(params: {
   });
   if (wantsSummary) {
     const current = modelRefs.selected.label;
-    const thinkingRuntime = resolveEffectiveAgentRuntime({
+    const thinkingRuntime = resolveEffectiveAgentRuntimeCore({
       cfg: params.cfg,
       provider: params.provider,
       modelId: params.model,

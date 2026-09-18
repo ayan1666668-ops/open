@@ -309,7 +309,7 @@ describe("runCronIsolatedAgentTurn isolated session identity", () => {
   });
 
   it("uses a run-scoped key for CLI isolated cron execution", async () => {
-    resolveEffectiveAgentRuntimeMock.mockReturnValue("claude-cli");
+    resolveEffectiveAgentRuntimeMock.mockReturnValue("test-cli");
     const cronSession = makeCronSession({
       sessionEntry: {
         ...makeCronSession().sessionEntry,
@@ -364,7 +364,7 @@ describe("runCronIsolatedAgentTurn isolated session identity", () => {
   });
 
   it("runs externally sourced CLI hook turns", async () => {
-    resolveEffectiveAgentRuntimeMock.mockReturnValue("claude-cli");
+    resolveEffectiveAgentRuntimeMock.mockReturnValue("test-cli");
     mockRunCronFallbackPassthrough();
     runCliAgentMock.mockResolvedValue({
       payloads: [{ text: "done" }],

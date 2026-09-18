@@ -23,10 +23,7 @@ import {
 import { readSessionGenerationIdsForKeys } from "./session-accessor.sqlite-lifecycle-state.js";
 import { projectSqliteSessionParticipantsBatch } from "./session-accessor.sqlite-participant-projection.js";
 import { readSessionEntriesByStatus } from "./session-accessor.sqlite-status.js";
-import {
-  projectPublicSessionEntry,
-  projectPublicSessionEntryPatch,
-} from "./session-entry-projection.js";
+import { projectPublicSessionEntry } from "./session-entry-projection.js";
 import type { InternalSessionEntry } from "./types.js";
 
 const tempDirs = createTempDirTracker();
@@ -38,6 +35,68 @@ afterEach(() => {
 });
 
 describe("SQLite session row persistence", () => {
+  it("replaces optional row projections independently across database handles and generations", () => {
+    const fixtures = ["first", "second"].map((name) => {
+      const env = {
+        ...process.env,
+        OPENCLAW_STATE_DIR: fs.realpathSync(tempDirs.make(`session-projection-${name}-`)),
+      };
+      const scope = { agentId: "main", env, sessionKey: "agent:main:projection" };
+      return { name, scope, database: openOpenClawAgentDatabase(scope) };
+    });
+    for (let round = 0; round < 4; round++) {
+      for (const { name, scope, database } of fixtures) {
+        const sessionId = `generation-${Math.floor(round / 2)}`;
+        const updatedAt = 10 + round;
+        const populated = round % 2 === 0;
+        replaceSessionEntrySync(scope, {
+          sessionId,
+          updatedAt,
+          ...(populated
+            ? {
+                label: `${name}-${round}`,
+                displayName: `display-${name}-${round}`,
+                lastReadAt: updatedAt + 1,
+                modelProvider: `provider-${name}-${round}`,
+                model: `model-${name}-${round}`,
+                startedAt: updatedAt + 2,
+              }
+            : {}),
+        });
+        expect(
+          database.db
+            .prepare(
+              "SELECT current_session_id, updated_at, label, last_read_at FROM session_nodes WHERE session_key = ?",
+            )
+            .get(scope.sessionKey),
+        ).toEqual({
+          current_session_id: sessionId,
+          updated_at: updatedAt,
+          label: populated ? `${name}-${round}` : null,
+          last_read_at: populated ? updatedAt + 1 : null,
+        });
+        expect(
+          database.db
+            .prepare(
+              "SELECT session_key, updated_at, model_provider, model, display_name, started_at FROM session_windows WHERE session_id = ?",
+            )
+            .get(sessionId),
+        ).toEqual({
+          session_key: scope.sessionKey,
+          updated_at: updatedAt,
+          model_provider: populated ? `provider-${name}-${round}` : null,
+          model: populated ? `model-${name}-${round}` : null,
+          display_name: populated ? `display-${name}-${round}` : null,
+          started_at: populated ? updatedAt + 2 : null,
+        });
+        expect(loadSessionEntry(scope)).toMatchObject({ sessionId, updatedAt });
+        if (!populated) {
+          expect(loadSessionEntry(scope)).not.toHaveProperty("label");
+        }
+      }
+    }
+  });
+
   it.each(["entry", "target"] as const)(
     "bounds saved-prompt decoding while publishing %s identity changes",
     async (kind) => {
@@ -408,7 +467,6 @@ describe("SQLite session row persistence", () => {
       expect(persisted[key]).toEqual(entry[key]);
       expect(loadSessionEntry({ agentId: "main", env, sessionKey })?.[key]).toEqual(entry[key]);
       expect(projectPublicSessionEntry(entry)).not.toHaveProperty(key);
-      expect(projectPublicSessionEntryPatch(entry)).not.toHaveProperty(key);
     }
     expect(persisted.skillsSnapshot).toEqual({
       prompt: "compact skill prompt",

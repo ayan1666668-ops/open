@@ -88,6 +88,7 @@ async function loadRuntime() {
     evidence,
     claimAgentSessionWriter: writer.claimAgentSessionWriter,
     loadSessionEntry: hostStore.loadSessionEntry,
+    upsertSessionEntryCore: hostStore.upsertSessionEntryCore,
     resolveSessionTranscriptDatabasePath: hostStore.resolveSessionTranscriptDatabasePath,
   };
 }
@@ -467,7 +468,6 @@ async function runCase(params: {
     await seedCompactionTranscript(runtime, gateway, proof, { preserveSessionEntry: true });
     if (mode === "heartbeat-upgraded-native-failure" || mode === "heartbeat-upgraded-restart") {
       evidence.upgradedEntry = await patchCompactionSessionOwnership(runtime, gateway, proof, {
-        agentRuntimeOverride: "codex",
         agentHarnessId: "openclaw",
       });
     }

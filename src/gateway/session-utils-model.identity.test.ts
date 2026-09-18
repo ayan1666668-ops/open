@@ -1,17 +1,21 @@
+import { expectDefined } from "@openclaw/normalization-core";
 import { afterEach, expect, test } from "vitest";
 import { resolveSessionModelRef } from "../agents/session-model-ref.js";
+import { migrateSessionExecutionSelection } from "../commands/doctor/shared/session-execution-selection.js";
 import { resetConfigRuntimeState, setRuntimeConfigSnapshot } from "../config/config.js";
 import type { SessionEntry } from "../config/sessions.js";
+import { normalizePersistedSessionEntryShape } from "../config/sessions/store-entry-shape.js";
 import type { ModelDefinitionConfig } from "../config/types.models.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { commitSessionExecutionSelection } from "../model-picker/apply-session-model-selection.js";
+import { applyModelOverrideToSessionEntry } from "../plugin-sdk/model-session-runtime.js";
 import { createPluginMetadataSnapshotFixture } from "../plugins/plugin-metadata.test-support.js";
 import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
 import { resetPluginRuntimeStateForTest, setActivePluginRegistry } from "../plugins/runtime.js";
 import { withPluginRuntimeGenerationScope } from "../plugins/runtime/generation-scope.js";
-import { applyModelOverrideToSessionEntry } from "../sessions/model-overrides.js";
-import { resolveDirectStoredModelOverride } from "../sessions/stored-model-overrides.js";
+import { resolveStoredModelOverride } from "../sessions/stored-model-overrides.js";
 import { withStateDirEnv } from "../test-helpers/state-dir-env.js";
-import { listSessionFixture } from "./session-list.test-support.js";
+import { sessionSelectionFixture, listSessionFixture } from "./session-list.test-support.js";
 import { resolveSessionSelectedModelRef } from "./session-utils-model-selection.js";
 import { getSessionDefaults, projectSessionPatchResult } from "./session-utils-model.js";
 import { buildSessionListRowMetadataContext } from "./session-utils-projection.js";
@@ -58,9 +62,10 @@ test.each(["selected", "custom/missing"])(
       const entry: SessionEntry = {
         sessionId: "context-projection",
         updatedAt: 1,
-        providerOverride: "custom",
-        modelOverride: selected,
-        modelOverrideRouteResolution: "resolved",
+        executionSelection: sessionSelectionFixture({
+          model: { provider: "custom", id: selected },
+          executor: { kind: "harness", id: "openclaw" },
+        }),
       };
       const key = "agent:main:context-projection";
       const params = {
@@ -91,7 +96,10 @@ test.each(["selected", "custom/missing"])(
       for (const model of providerConfig.models) {
         model.contextTokens = 96_000;
       }
-      entry.modelOverride = "selected";
+      commitSessionExecutionSelection(entry, {
+        model: { provider: "custom", id: "selected" },
+        executor: { kind: "harness", id: "openclaw" },
+      });
       expect(buildGatewaySessionRow(params)).toMatchObject({
         model: "selected",
         contextTokens: 96_000,
@@ -116,10 +124,16 @@ const identityMetadata = createPluginMetadataSnapshotFixture({
   ],
 });
 
-function writtenModelOverride(model: string): SessionEntry {
-  const entry: SessionEntry = { sessionId: "written-model", updatedAt: 1 };
+function writtenModelOverride(model: string) {
+  const entry: Parameters<typeof applyModelOverrideToSessionEntry>[0]["entry"] = {
+    sessionId: "written-model",
+    updatedAt: 1,
+  };
   applyModelOverrideToSessionEntry({ entry, selection: { provider: "custom", model } });
-  return structuredClone(entry);
+  return {
+    entry: expectDefined(normalizePersistedSessionEntryShape(entry), "canonical SDK selection"),
+    publicEntry: structuredClone(entry),
+  };
 }
 
 async function withIdentityScope(run: () => void): Promise<void> {
@@ -132,13 +146,13 @@ test.each(["custom/model", "middle"])(
   "preserves writer-resolved model %s across readers",
   async (model) => {
     await withIdentityScope(() => {
-      const entry = writtenModelOverride(model);
+      const { entry, publicEntry } = writtenModelOverride(model);
       const original = structuredClone(entry);
-      expect(entry.modelOverrideRouteResolution).toBe("resolved");
+      expect(publicEntry.modelOverrideRouteResolution).toBe("resolved");
       expect
         .soft(
-          resolveDirectStoredModelOverride({
-            sessionEntry: entry,
+          resolveStoredModelOverride({
+            sessionEntry: publicEntry,
             defaultProvider: "custom",
             allowPluginNormalization: false,
           }),
@@ -170,14 +184,23 @@ test.each([false, true])(
   "projects raw and resolved selections once (resolved first=%s)",
   async (resolvedFirst) => {
     await withIdentityScope(() => {
-      const resolved = { entry: writtenModelOverride("middle"), model: "middle" };
+      const resolved = { entry: writtenModelOverride("middle").entry, model: "middle" };
       const raw = {
-        entry: {
-          sessionId: "raw-model",
-          updatedAt: 1,
-          providerOverride: "custom",
-          modelOverride: "latest",
-        },
+        entry: expectDefined(
+          normalizePersistedSessionEntryShape(
+            migrateSessionExecutionSelection({
+              entry: {
+                sessionId: "raw-model",
+                updatedAt: 1,
+                providerOverride: "custom",
+                modelOverride: "latest",
+              },
+              defaultProvider: "custom",
+              classifyExecutor: (id) => (id === "openclaw" ? "harness" : undefined),
+            }).entry,
+          ),
+          "migrated raw selection",
+        ),
         model: "middle",
       };
       const rowContext = buildSessionListRowMetadataContext({ now: 1 });
@@ -238,13 +261,24 @@ test.each([
     };
     setRuntimeConfigSnapshot(cfg);
     const key = "agent:main:identity";
-    const entry: SessionEntry = {
-      sessionId: "identity",
-      updatedAt: 1,
-      providerOverride: fixture.provider,
-      modelOverride: fixture.model,
-      modelOverrideRouteResolution: "resolved",
-    };
+    const entry = expectDefined(
+      normalizePersistedSessionEntryShape(
+        migrateSessionExecutionSelection({
+          entry: {
+            sessionId: "identity",
+            updatedAt: 1,
+            providerOverride: fixture.provider,
+            modelOverride: fixture.model,
+            modelOverrideRouteResolution: "resolved",
+            agentRuntimeOverride: "openclaw",
+          },
+          defaultProvider: "unrelated",
+          classifyExecutor: (id) => (id === "openclaw" ? "harness" : undefined),
+          cliRuntimeProviders: new Map([["demo-cli", "demo-provider"]]),
+        }).entry,
+      ),
+      "migrated CLI identity",
+    );
     const store = { [key]: entry };
     const expected = { modelProvider: fixture.expectedProvider, model: "shared-model" };
     for (const lightweightListRow of [false, true]) {

@@ -1,26 +1,22 @@
 // Covers plugin-owned model id normalization through selection surfaces.
+import path from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { migrateSessionExecutionSelection } from "../commands/doctor/shared/session-execution-selection.js";
+import {
+  loadSessionEntryReadOnly,
+  replaceSessionEntry,
+} from "../config/sessions/session-accessor.js";
 import { normalizePersistedSessionEntryShape } from "../config/sessions/store-entry-shape.js";
+import type { SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { commitStoredSessionExecutionSelection } from "../model-picker/apply-session-model-selection.js";
+import { projectExecutionSelectionEntry } from "../model-picker/execution-selection-projection.js";
+import { withPluginMetadataSnapshotScope } from "../plugins/current-plugin-metadata-snapshot.js";
 import { createPluginMetadataSnapshotFixture } from "../plugins/plugin-metadata.test-support.js";
 import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
-import {
-  capturePluginRegistryLifecycleEpoch,
-  capturePluginRegistryLifecycleSignal,
-} from "../plugins/registry-lifecycle.js";
-import {
-  getActivePluginRegistry,
-  getActivePluginRegistryVersion,
-  resetPluginRuntimeStateForTest,
-  setActivePluginRegistry,
-} from "../plugins/runtime.js";
-import {
-  getPreparedModelRuntimeAuthStore,
-  setPreparedModelRuntimeAuthStore,
-} from "./prepared-model-runtime-auth.js";
-import type { PreparedModelRuntimeSnapshot } from "./prepared-model-runtime.types.js";
-import { AuthStorage, ModelRegistry } from "./sessions/index.js";
+import { resetPluginRuntimeStateForTest, setActivePluginRegistry } from "../plugins/runtime.js";
+import { createSessionModelCatalogFixture } from "./test-helpers/session-model-catalog.test-support.js";
 
 const normalizeProviderModelIdWithPluginMock = vi.fn();
 
@@ -57,27 +53,6 @@ const emptyPluginMetadataSnapshot = {
 };
 const getCurrentPluginMetadataSnapshotMock = vi.hoisted(() => vi.fn());
 const loadPreparedModelCatalogSnapshotMock = vi.hoisted(() => vi.fn());
-const publishedOwners = vi.hoisted(
-  () => new WeakMap<OpenClawConfig, PreparedModelRuntimeSnapshot>(),
-);
-
-vi.mock("./prepared-model-catalog.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("./prepared-model-catalog.js")>()),
-  getPublishedPreparedModelCatalogOwnerSnapshot: ({
-    config,
-    agentId,
-    workspaceDir,
-  }: { config?: OpenClawConfig; agentId?: string; workspaceDir?: string } = {}) => {
-    const owner = config ? publishedOwners.get(config) : undefined;
-    return owner &&
-      (!agentId || agentId === owner.agentId) &&
-      (!workspaceDir || workspaceDir === owner.workspaceDir) &&
-      owner.isCurrent()
-      ? owner
-      : undefined;
-  },
-}));
-
 vi.mock("./provider-model-normalization.runtime.js", () => ({
   normalizeProviderModelIdWithRuntime: (params: unknown) =>
     normalizeProviderModelIdWithPluginMock(params),
@@ -95,52 +70,29 @@ vi.mock("./model-catalog.runtime.js", () => ({
   loadPreparedModelCatalogSnapshot: loadPreparedModelCatalogSnapshotMock,
 }));
 
-function publishRuntimeOwner(cfg: OpenClawConfig, modelIds: string[], provider = "custom-provider") {
-  const registry = getActivePluginRegistry();
-  if (!registry) throw new Error("Expected the active fixture registry");
-  const version = getActivePluginRegistryVersion();
-  const epoch = capturePluginRegistryLifecycleEpoch(registry);
-  const signal = capturePluginRegistryLifecycleSignal(registry, epoch);
-  if (!signal) throw new Error("Expected the registry lifecycle signal");
+let catalogFixture: ReturnType<typeof createSessionModelCatalogFixture>;
+
+function publishRuntimeOwner(
+  cfg: OpenClawConfig,
+  modelIds: string[],
+  provider = "custom-provider",
+  metadata: ReturnType<typeof createPluginMetadataSnapshotFixture> = emptyPluginMetadataSnapshot,
+) {
   const entries = modelIds.map((id) => ({ provider, id, name: id }));
-  const authStore = Object.freeze({
-    version: 1,
-    profiles: Object.freeze({
-      [`${provider}:fixture`]: Object.freeze({
-        type: "api_key" as const,
+  return catalogFixture.publish({
+    config: cfg,
+    agentId: "main",
+    catalog: { entries, routeVariants: entries },
+    plugins: metadata.plugins,
+    runtimeAuthModes: { [provider]: "api_key" },
+    profiles: {
+      [`${provider}:fixture`]: {
+        type: "api_key",
         provider,
         key: "synthetic-normalization-credential",
-      }),
-    }),
-  });
-  const owner: PreparedModelRuntimeSnapshot = {
-    config: cfg,
-    observationConfig: cfg,
-    catalogOwner: { agentId: "main", workspaceDir: "/tmp/model-normalization" },
-    agentId: "main",
-    agentDir: "/tmp/model-normalization/agent",
-    workspaceDir: "/tmp/model-normalization",
-    activeProjectKeys: [],
-    authModes: { [provider]: "api_key" },
-    metadataSnapshot: emptyPluginMetadataSnapshot,
-    pluginRegistry: registry,
-    isCurrent: () =>
-      publishedOwners.get(cfg) === owner &&
-      getActivePluginRegistry() === registry &&
-      getActivePluginRegistryVersion() === version &&
-      !signal.aborted &&
-      getPreparedModelRuntimeAuthStore(owner) === authStore,
-    allowGatewaySubagentBinding: false,
-    modelCatalog: { entries, routeVariants: entries },
-    configuredRuntimeModels: [],
-    inlineProviderModels: [],
-    createStores() {
-      const authStorage = AuthStorage.inMemory({});
-      return { authStorage, modelRegistry: ModelRegistry.inMemory(authStorage) };
+      },
     },
-  };
-  setPreparedModelRuntimeAuthStore(owner, authStore);
-  publishedOwners.set(cfg, owner);
+  });
 }
 
 function migrateStoredModel(sessionId: string, model: string) {
@@ -150,7 +102,9 @@ function migrateStoredModel(sessionId: string, model: string) {
     classifyExecutor: (id) => (id === "openclaw" ? "harness" : undefined),
   });
   const entry = normalizePersistedSessionEntryShape(migrated.entry);
-  if (!entry) throw new Error("Expected Doctor's canonical session row");
+  if (!entry) {
+    throw new Error("Expected Doctor's canonical session row");
+  }
   return entry;
 }
 
@@ -158,6 +112,7 @@ let createModelSelectionStateForTest: typeof import("../auto-reply/reply/model-s
 let resolveSessionModelRef: typeof import("./session-model-ref.js").resolveSessionModelRef;
 
 describe("model-selection plugin runtime normalization", () => {
+  const tempDirs = useAutoCleanupTempDirTracker(afterEach);
   beforeAll(async () => {
     ({ createModelSelectionState: createModelSelectionStateForTest } =
       await import("../auto-reply/reply/model-selection.js"));
@@ -167,6 +122,7 @@ describe("model-selection plugin runtime normalization", () => {
   afterEach(() => resetPluginRuntimeStateForTest());
 
   beforeEach(() => {
+    catalogFixture = createSessionModelCatalogFixture();
     resetPluginRuntimeStateForTest();
     setActivePluginRegistry(createEmptyPluginRegistry());
     normalizeProviderModelIdWithPluginMock.mockReset();
@@ -283,6 +239,7 @@ describe("model-selection plugin runtime normalization", () => {
       provider: defaultProvider,
       model: defaultModel,
       hasModelDirective: false,
+      prepareExecution: true,
     });
 
     expect({ provider: state.provider, model: state.model }).toEqual({
@@ -295,23 +252,51 @@ describe("model-selection plugin runtime normalization", () => {
     normalizeProviderModelIdWithPluginMock.mockImplementation(normalizeLegacyFixtureModel);
     const cfg = { agents: { defaults: { model: "custom-provider/custom-legacy-model" } } };
     publishRuntimeOwner(cfg, ["custom-modern-model"]);
+    const { resolveDefaultModel } =
+      await import("../auto-reply/reply/directive-handling.defaults.js");
+    const { defaultProvider, defaultModel } = resolveDefaultModel({ cfg });
+    const request = {
+      cfg,
+      agentCfg: cfg.agents.defaults,
+      defaultProvider,
+      defaultModel,
+      provider: defaultProvider,
+      model: defaultModel,
+      hasModelDirective: false,
+      prepareExecution: true,
+    };
+    await expect(createModelSelectionStateForTest(request)).resolves.toMatchObject({
+      provider: "custom-provider",
+      model: "custom-modern-model",
+    });
+    const { ModelSelectionPreparationError } =
+      await import("../auto-reply/reply/model-selection.js");
+
     setActivePluginRegistry(createEmptyPluginRegistry());
 
-    await expect(
-      createModelSelectionStateForTest({
-        cfg,
-        agentCfg: cfg.agents.defaults,
-        defaultProvider: "custom-provider",
-        defaultModel: "custom-legacy-model",
-        provider: "custom-provider",
-        model: "custom-legacy-model",
-        hasModelDirective: false,
-      }),
-    ).rejects.toThrow("Could not confirm support");
+    await expect(createModelSelectionStateForTest(request)).rejects.toBeInstanceOf(
+      ModelSelectionPreparationError,
+    );
   });
 
   it("resolves bare reply defaults from the captured manifest once", async () => {
-    const cfg = { agents: { defaults: { model: "entry" } } };
+    const cfg: OpenClawConfig = {
+      agents: {
+        defaults: {
+          model: "entry",
+          models: { "openai/middle": { agentRuntime: { id: "openclaw" } } },
+        },
+      },
+      models: {
+        providers: {
+          openai: {
+            api: "openai-completions",
+            baseUrl: "https://normalization.fixture.invalid/v1",
+            models: [],
+          },
+        },
+      },
+    };
     const snapshot = createPluginMetadataSnapshotFixture({
       plugins: [
         {
@@ -329,15 +314,16 @@ describe("model-selection plugin runtime normalization", () => {
       await import("../auto-reply/reply/directive-handling.defaults.js");
     const { defaultProvider, defaultModel } = resolveDefaultModel({ cfg });
     expect(defaultModel).toBe("middle");
-    publishRuntimeOwner(cfg, ["middle"], defaultProvider);
+    publishRuntimeOwner(cfg, ["middle"], defaultProvider, snapshot);
     const selection = await createModelSelectionStateForTest({
       cfg,
-      agentCfg: cfg.agents.defaults,
+      agentCfg: cfg.agents?.defaults,
       defaultProvider,
       defaultModel,
       provider: defaultProvider,
       model: defaultModel,
       hasModelDirective: false,
+      prepareExecution: true,
     });
     expect(selection).toMatchObject({ provider: "openai", model: "middle" });
   });
@@ -372,6 +358,7 @@ describe("model-selection plugin runtime normalization", () => {
       provider: "custom-provider",
       model: "custom-legacy-model",
       hasModelDirective: false,
+      prepareExecution: true,
     });
 
     expect(state.provider).toBe("custom-provider");
@@ -389,7 +376,9 @@ describe("model-selection plugin runtime normalization", () => {
   it.each(["session", "parent"])(
     "resolves raw %s pins with captured manifest metadata",
     async (source) => {
+      const storePath = path.join(tempDirs.make("openclaw-normalized-parent-"), "sessions.json");
       const cfg = {
+        session: { store: storePath },
         agents: {
           defaults: {
             model: "snapshot-fixture/default",
@@ -414,19 +403,69 @@ describe("model-selection plugin runtime normalization", () => {
       );
       const sessionKey = "agent:main:snapshot-child";
       const parentSessionKey = "agent:main:snapshot-parent";
-      const storedEntry = {
+      const legacyEntry = {
         sessionId: "snapshot-pin",
         updatedAt: 1,
         providerOverride: "snapshot-fixture",
         modelOverride: "stored-legacy",
       };
-      const sessionEntry =
-        source === "session" ? storedEntry : { sessionId: sessionKey, updatedAt: 1 };
+      const converted = withPluginMetadataSnapshotScope(
+        metadataSnapshot,
+        () =>
+          migrateSessionExecutionSelection({
+            entry: legacyEntry,
+            defaultProvider: "snapshot-fixture",
+            classifyExecutor: (id) => (id === "openclaw" ? "harness" : undefined),
+          }),
+        { config: cfg },
+      );
+      const storedEntry = normalizePersistedSessionEntryShape(converted.entry);
+      if (!storedEntry) {
+        throw new Error("Expected Doctor's canonical stored model");
+      }
+      expect(storedEntry.executionSelection).toEqual({
+        state: "deferred",
+        request: { model: { provider: "snapshot-fixture", id: "stored-modern" } },
+        fallbackPermission: "explicit",
+      });
+      const targetEntry: SessionEntry =
+        source === "session"
+          ? storedEntry
+          : { sessionId: sessionKey, updatedAt: 1, parentSessionKey };
+      if (source === "parent") {
+        commitStoredSessionExecutionSelection(targetEntry, {
+          state: "deferred",
+          request: { defaultSelection: "inherit" },
+          fallbackPermission: "configured",
+        });
+        await replaceSessionEntry(
+          { agentId: "main", storePath, sessionKey: parentSessionKey },
+          storedEntry,
+        );
+      }
+      await replaceSessionEntry({ agentId: "main", storePath, sessionKey }, targetEntry);
+      const sessionEntry = loadSessionEntryReadOnly({ agentId: "main", storePath, sessionKey });
+      if (!sessionEntry) {
+        throw new Error("Expected the persisted target session");
+      }
+      const parentBefore = loadSessionEntryReadOnly({
+        agentId: "main",
+        storePath,
+        sessionKey: parentSessionKey,
+      });
+      const published = publishRuntimeOwner(
+        cfg,
+        ["default", "stored-modern"],
+        "snapshot-fixture",
+        metadataSnapshot,
+      );
       const state = await createModelSelectionStateForTest({
         cfg,
         agentCfg: cfg.agents.defaults,
         sessionEntry,
-        sessionStore: { [sessionKey]: sessionEntry, [parentSessionKey]: storedEntry },
+        sessionStore: { [sessionKey]: sessionEntry },
+        storePath,
+        preparedModelCatalog: published,
         sessionKey,
         parentSessionKey: source === "parent" ? parentSessionKey : undefined,
         defaultProvider: "snapshot-fixture",
@@ -434,14 +473,35 @@ describe("model-selection plugin runtime normalization", () => {
         provider: "snapshot-fixture",
         model: "default",
         hasModelDirective: false,
+        prepareExecution: true,
       });
 
       expect(state).toMatchObject({
         provider: "snapshot-fixture",
         model: "stored-modern",
-        resetModelOverride: false,
       });
-      expect(storedEntry.modelOverride).toBe("stored-legacy");
+      expect(legacyEntry.modelOverride).toBe("stored-legacy");
+      const accepted = loadSessionEntryReadOnly({ agentId: "main", storePath, sessionKey });
+      if (!accepted) {
+        throw new Error("Expected the accepted session selection");
+      }
+      expect(accepted.sessionId).toBe(sessionEntry.sessionId);
+      expect(accepted.executionSelection).toEqual({
+        state: "accepted",
+        selection: {
+          model: { provider: "snapshot-fixture", id: "stored-modern" },
+          executor: { kind: "harness", id: "openclaw" },
+        },
+        fallbackPermission: "explicit",
+      });
+      expect(projectExecutionSelectionEntry(accepted)).toMatchObject({
+        providerOverride: "snapshot-fixture",
+        modelOverride: "stored-modern",
+        modelOverrideRouteResolution: "resolved",
+      });
+      expect(
+        loadSessionEntryReadOnly({ agentId: "main", storePath, sessionKey: parentSessionKey }),
+      ).toEqual(parentBefore);
     },
   );
 
@@ -511,6 +571,7 @@ describe("model-selection plugin runtime normalization", () => {
       provider: "custom-provider",
       model: "model-0",
       hasModelDirective: false,
+      prepareExecution: true,
     });
 
     expect(state.allowedModelCatalog).toHaveLength(20);
@@ -558,6 +619,7 @@ describe("model-selection plugin runtime normalization", () => {
         provider: "custom-provider",
         model,
         hasModelDirective: true,
+        prepareExecution: false,
       });
 
     const firstPromise = select(firstConfig, "first");
@@ -621,6 +683,7 @@ describe("model-selection plugin runtime normalization", () => {
       provider: "custom-provider",
       model: "configured-legacy",
       hasModelDirective: false,
+      prepareExecution: true,
     });
 
     expect(state.provider).toBe("custom-provider");

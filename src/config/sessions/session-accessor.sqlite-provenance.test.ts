@@ -35,9 +35,15 @@ function createFixture() {
     skillsSnapshot: { prompt: retainedPrompt, skills: [] },
     pluginOwnerId: "plugin-owner",
     hookExternalContentSource: "webhook",
+    executionSelection: {
+      state: "accepted",
+      selection: {
+        model: "native-managed",
+        executor: { kind: "acp", backend: "acpx", agent: "test-agent" },
+      },
+      fallbackPermission: "explicit",
+    },
     acp: {
-      backend: "acpx",
-      agent: "test-agent",
       runtimeSessionName: "provenance-test",
       mode: "persistent",
       state: "idle",

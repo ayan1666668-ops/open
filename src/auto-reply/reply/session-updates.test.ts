@@ -1,6 +1,7 @@
 // Tests session update fanout and persisted lifecycle records.
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { SessionExecutionSelection } from "../../model-picker/execution-selection.js";
 import { createReplySessionEntryHandle } from "./session-entry-handle.js";
 
 const TEST_WORKSPACE_DIR = path.resolve("/tmp/workspace");
@@ -204,27 +205,36 @@ describe("ensureSkillSnapshot", () => {
   it("persists first-turn skill snapshots as a guarded partial update", async () => {
     vi.stubEnv("OPENCLAW_TEST_FAST", "0");
     const sessionKey = "agent:main:main";
+    const selection: SessionExecutionSelection = {
+      state: "deferred",
+      request: { model: { id: "sonnet-4.6" } },
+      fallbackPermission: "explicit",
+    };
     const sessionEntry = {
       sessionId: "session-1",
       updatedAt: 10,
-      modelOverride: "gpt-5.5",
+      executionSelection: {
+        state: "deferred",
+        request: { model: { id: "gpt-5.5" } },
+        fallbackPermission: "explicit",
+      } satisfies SessionExecutionSelection,
     };
     const sessionStore = { [sessionKey]: sessionEntry };
     updateSessionEntryMock.mockImplementationOnce(async (_scope, update) => {
       const patch = await update({
         ...sessionEntry,
         updatedAt: 20,
-        modelOverride: "sonnet-4.6",
+        executionSelection: selection,
       });
       expect(patch).toMatchObject({
         sessionId: "session-1",
         systemSent: true,
       });
-      expect(patch).not.toHaveProperty("modelOverride");
+      expect(patch).not.toHaveProperty("executionSelection");
       return {
         ...sessionEntry,
         ...patch,
-        modelOverride: "sonnet-4.6",
+        executionSelection: selection,
       };
     });
 
@@ -240,8 +250,8 @@ describe("ensureSkillSnapshot", () => {
       cfg: {},
     });
 
-    expect(result.sessionEntry?.modelOverride).toBe("sonnet-4.6");
-    expect(sessionStore[sessionKey]?.modelOverride).toBe("sonnet-4.6");
+    expect(result.sessionEntry?.executionSelection).toEqual(selection);
+    expect(sessionStore[sessionKey]?.executionSelection).toEqual(selection);
   });
 
   it("keeps a concurrent rename and unpin while persisting a skill snapshot", async () => {

@@ -21,8 +21,9 @@ const gatewayTestHoisted = getGatewayTestHoistedState();
 
 function createEmbeddedRunMockExports() {
   return {
-    compactEmbeddedAgentSession: (...args: unknown[]) =>
-      embeddedRunMock.compactEmbeddedAgentSession(...args),
+    compactEmbeddedAgentSession: (
+      ...args: Parameters<typeof embeddedRunMock.compactEmbeddedAgentSession>
+    ) => embeddedRunMock.compactEmbeddedAgentSession(...args),
     isEmbeddedAgentRunActive: (sessionId: string) => embeddedRunMock.activeIds.has(sessionId),
     isEmbeddedAgentRunInProgress: (sessionId: string) => embeddedRunMock.activeIds.has(sessionId),
     resolveEmbeddedAgentRunProgressState: (sessionId: string) =>

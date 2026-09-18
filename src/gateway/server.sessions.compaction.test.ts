@@ -7,11 +7,10 @@ import path from "node:path";
 import { expect, test, vi } from "vitest";
 import { closeGatewayTestWebSocket } from "../../test/helpers/gateway-websocket.js";
 import { createDeferred } from "../../test/helpers/promise.js";
-import type { QueuedCompactionHostOptions } from "../agents/embedded-agent-runner/compact.queued-execution.js";
 import { acceptCompactionSuccessor } from "../agents/embedded-agent-runner/compaction-successor.js";
 import { resolveEmbeddedSessionLane } from "../agents/embedded-agent-runner/lanes.js";
-import { resolveSessionModelRef } from "../agents/session-model-ref.js";
-import { resolveManualCompactionCliTarget } from "../agents/session-runtime-compat.js";
+import { registerAgentHarness } from "../agents/harness/registry.js";
+import { createSessionModelCatalogFixture } from "../agents/test-helpers/session-model-catalog.test-support.js";
 import { enqueueFollowupRun, type FollowupRun } from "../auto-reply/reply/queue.js";
 import {
   clearFollowupQueue,
@@ -48,6 +47,13 @@ import {
   setUserProfileRole,
 } from "../state/user-profiles.js";
 import { withTestDir } from "../test-helpers/temp-dir.js";
+import { acceptedModelSelection } from "../test-utils/session-execution-selection.js";
+import {
+  createCompactionClientOpener,
+  expectMainCompactionResult,
+  holdCompaction,
+  isCompactOperationEvent,
+} from "./server-sessions.compaction-runtime.test-support.js";
 import {
   embeddedRunMock,
   onceMessage,
@@ -66,46 +72,15 @@ import {
   expectNoSessionQueueCleanup,
 } from "./test/server-sessions.test-helpers.js";
 
-const { createSessionStoreDir, createSelectedGlobalSessionStore, openClient } =
-  setupGatewaySessionsTestHarness();
+const {
+  createSessionStoreDir,
+  createSelectedGlobalSessionStore,
+  openClient: openGatewayClient,
+} = setupGatewaySessionsTestHarness();
+
+const openClient = createCompactionClientOpener(openGatewayClient);
 
 type CheckpointFixture = Awaited<ReturnType<typeof createCheckpointFixture>>;
-
-type HeldCompactionResult = {
-  ok: true;
-  compacted: true;
-  result: {
-    summary: string;
-    firstKeptEntryId: string;
-    tokensBefore: number;
-    tokensAfter: number;
-    sessionId?: string;
-  };
-};
-
-function holdCompaction(result: HeldCompactionResult) {
-  const entered = createDeferred();
-  const terminal = createDeferred<HeldCompactionResult>();
-  embeddedRunMock.compactEmbeddedAgentSession.mockImplementationOnce(() => {
-    entered.resolve();
-    return terminal.promise;
-  });
-  return {
-    release: () => terminal.resolve(result),
-    waitForEntry: async (compactResult: Promise<unknown>) => {
-      // Admission can outlast waitFor's default; only backend entry makes the held result ready.
-      await Promise.race([
-        entered.promise,
-        compactResult.then((response) => {
-          throw new Error(
-            `Compaction RPC completed before backend entry: ${JSON.stringify(response)}`,
-          );
-        }),
-      ]);
-      expect(embeddedRunMock.compactEmbeddedAgentSession).toHaveBeenCalledTimes(1);
-    },
-  };
-}
 
 function buildSessionTranscriptLines(sessionId: string, totalLines: number): string[] {
   const header = JSON.stringify({
@@ -161,29 +136,6 @@ function compactionCheckpointEntry(
       entryId: fixture.postCompactionLeafId,
     },
   };
-}
-
-function isCompactOperationEvent(message: unknown, phase: "start" | "end") {
-  const candidate = message as {
-    event?: unknown;
-    payload?: { operation?: unknown; phase?: unknown };
-    type?: unknown;
-  };
-  return (
-    candidate.type === "event" &&
-    candidate.event === "session.operation" &&
-    candidate.payload?.operation === "compact" &&
-    candidate.payload?.phase === phase
-  );
-}
-
-function expectMainCompactionResult(
-  compacted: { ok?: boolean; payload?: { compacted?: boolean; key?: string } | null },
-  expectedCompacted: boolean,
-) {
-  expect(compacted.ok, JSON.stringify(compacted)).toBe(true);
-  expect(compacted.payload?.key).toBe("agent:main:main");
-  expect(compacted.payload?.compacted, JSON.stringify(compacted)).toBe(expectedCompacted);
 }
 
 async function seedSessionEntry(params: {
@@ -824,14 +776,7 @@ test("sessions.compact without maxLines runs embedded manual compaction for chec
     now: Date.parse("2026-06-19T12:00:02.000Z"),
   });
   embeddedRunMock.compactEmbeddedAgentSession.mockImplementationOnce(async (params) => {
-    const call = params as {
-      sessionTarget?: {
-        agentId?: string;
-        sessionId?: string;
-        sessionKey?: string;
-        storePath?: string;
-      };
-    };
+    const call = params;
     if (
       !call.sessionTarget?.agentId ||
       !call.sessionTarget.sessionId ||
@@ -930,37 +875,15 @@ test("sessions.compact without maxLines runs embedded manual compaction for chec
   expect(typeof startPayload.ts).toBe("number");
   expect(typeof endPayload.ts).toBe("number");
   expect(embeddedRunMock.compactEmbeddedAgentSession).toHaveBeenCalledTimes(1);
-  const compactionCall = embeddedRunMock.compactEmbeddedAgentSession.mock.calls.at(0)?.[0] as
-    | {
-        agentHarnessId?: string;
-        allowGatewaySubagentBinding?: boolean;
-        bashElevated?: unknown;
-        config?: unknown;
-        model?: string;
-        provider?: string;
-        reasoningLevel?: string;
-        runId?: string;
-        sessionFile?: string;
-        sessionId?: string;
-        sessionKey?: string;
-        sessionTarget?: {
-          agentId?: string;
-          sessionId?: string;
-          sessionKey?: string;
-          storePath?: string;
-        };
-        thinkLevel?: string;
-        trigger?: string;
-        workspaceDir?: string;
-        cwd?: string;
-      }
-    | undefined;
+  const compactionCall = embeddedRunMock.compactEmbeddedAgentSession.mock.calls.at(0)?.[0];
   if (!compactionCall) {
     throw new Error("expected embedded compaction call");
   }
-  const callConfig = compactionCall.config as {
-    agents?: { defaults?: { model?: { primary?: unknown }; workspace?: unknown } };
-  };
+  const callConfig = compactionCall.config;
+  const configuredModel = callConfig?.agents?.defaults?.model;
+  if (typeof configuredModel !== "object") {
+    throw new Error("Expected the configured primary model.");
+  }
   expect(compactionCall.sessionId).toBe("sess-main");
   expect(compactionCall.runId).toBe(startPayload.operationId);
   expect(compactionCall.sessionKey).toBe("agent:main:main");
@@ -976,14 +899,14 @@ test("sessions.compact without maxLines runs embedded manual compaction for chec
   });
   expect(compactionCall.workspaceDir).toBe("/tmp/task-repo");
   expect(compactionCall.cwd).toBe("/tmp/task-repo");
-  expect(callConfig.agents?.defaults?.model?.primary).toBe("anthropic/claude-opus-4-6");
-  expect(callConfig.agents?.defaults?.workspace).toBe(
+  expect(configuredModel.primary).toBe("anthropic/claude-opus-4-6");
+  expect(callConfig?.agents?.defaults?.workspace).toBe(
     path.join(os.tmpdir(), "openclaw-gateway-test"),
   );
   expect(compactionCall.provider).toBe("anthropic");
   expect(compactionCall.model).toBe("claude-opus-4-6");
   expect(compactionCall.allowGatewaySubagentBinding).toBe(true);
-  expect(compactionCall.agentHarnessId).toBeUndefined();
+  expect(compactionCall.agentHarnessId).toBe("openclaw");
   expect(compactionCall.thinkLevel).toBe("medium");
   expect(compactionCall.reasoningLevel).toBe("stream");
   expect(compactionCall.bashElevated).toEqual({
@@ -1049,7 +972,9 @@ test("sessions.compact accounts against the host-accepted successor before retur
     if (!entry) {
       throw new Error("expected gateway predecessor");
     }
-    const host = hostInput as QueuedCompactionHostOptions;
+    if (!hostInput?.onCommitted) {
+      throw new Error("Expected the host commit callback.");
+    }
     await acceptCompactionSuccessor({
       currentTarget: { agentId: "main", sessionId, sessionKey, storePath },
       expectedEntry: {
@@ -1063,13 +988,13 @@ test("sessions.compact accounts against the host-accepted successor before retur
         compacted: true,
         result: { sessionId: "gateway-compaction-successor", tokensBefore: 120 },
       },
-      onCommitted: host.onCommitted,
+      onCommitted: hostInput.onCommitted,
     });
     return {
       ok: true,
       compacted: true,
       compactionKind: "context-engine",
-      result: { sessionId: "gateway-compaction-successor", tokensAfter: 42 },
+      result: { sessionId: "gateway-compaction-successor", tokensBefore: 120, tokensAfter: 42 },
     };
   });
 
@@ -1114,7 +1039,12 @@ test("sessions.compact keeps prior usage stale when the compactor returns a nega
     ok: true,
     compacted: true,
     compactionKind: "context-engine",
-    result: { summary: "summary", firstKeptEntryId: "entry-1", tokensAfter: -1 },
+    result: {
+      summary: "summary",
+      firstKeptEntryId: "entry-1",
+      tokensBefore: 54_321,
+      tokensAfter: -1,
+    },
   });
 
   const { ws } = await openClient();
@@ -1135,11 +1065,28 @@ test("sessions.compact keeps prior usage stale when the compactor returns a nega
 });
 
 test("sessions.compact records terminal Codex native compaction", async () => {
+  registerAgentHarness({
+    id: "codex",
+    label: "Native app",
+    supports: () => ({ supported: true }),
+    resolveSessionRuntimeOwnership: (params) => {
+      params.assertCurrent();
+      return params.sessionId === "sess-codex" ? { model: "native", auth: "native" } : undefined;
+    },
+    runAttempt: async () => {
+      throw new Error("Compaction must use its registered control boundary.");
+    },
+  });
   const { storePath } = await createSessionStoreDir();
   await seedSessionEntry({
     entry: sessionStoreEntry("sess-codex", {
       agentHarnessId: "codex",
       modelSelectionLocked: true,
+      executionSelection: {
+        state: "accepted",
+        selection: { executor: { kind: "harness", id: "codex" }, model: "native-managed" },
+        fallbackPermission: "explicit",
+      },
       compactionCount: 2,
       totalTokens: 54_321,
       totalTokensFresh: true,
@@ -1234,8 +1181,9 @@ test("sessions.compact targets the persisted native CLI session", async () => {
   const { storePath } = await createSessionStoreDir();
   await seedSessionEntry({
     entry: sessionStoreEntry("sess-claude", {
-      providerOverride: "anthropic",
-      modelOverride: "claude-opus-4-6",
+      executionSelection: acceptedModelSelection("anthropic", "claude-opus-4-6", {
+        executor: { kind: "cli", id: "claude-cli" },
+      }),
       cliSessionBindings: {
         "claude-cli": { sessionId: "native-claude-session" },
       },
@@ -1257,23 +1205,13 @@ test("sessions.compact targets the persisted native CLI session", async () => {
     sessionKey: "agent:main:main",
     storePath,
   });
-  const cfg = (await getGatewayConfigModule()).loadConfig();
-  const selectedModel = resolveSessionModelRef(cfg, storedEntry, "main");
-  expect(selectedModel.provider).toBe("anthropic");
   expect(storedEntry).toMatchObject({
     cliSessionBindings: {
       "claude-cli": { sessionId: "native-claude-session" },
     },
   });
-  expect(
-    resolveManualCompactionCliTarget({ provider: selectedModel.provider, entry: storedEntry, cfg }),
-  ).toMatchObject({
-    agentHarnessId: "claude-cli",
-    cliSessionBinding: { sessionId: "native-claude-session" },
-    cliSessionId: "native-claude-session",
-  });
 
-  const { ws } = await openClient();
+  const { ws } = await openClient(undefined, { "claude-cli": "oauth" });
   try {
     await rpcReq(ws, "sessions.subscribe", {});
     const compacted = await rpcReq<{ ok: true; key: string; compacted: boolean }>(
@@ -1670,7 +1608,11 @@ test("sessions.compact returns a no-op without interrupting an active admission"
   const { storePath } = await createSessionStoreDir();
   const sessionId = "sess-compact-noop-active";
   await seedSessionEntry({
-    entry: sessionStoreEntry(sessionId),
+    entry: sessionStoreEntry(sessionId, {
+      executionSelection: acceptedModelSelection("anthropic", "claude-opus-4-6", {
+        fallbackPermission: "configured",
+      }),
+    }),
     sessionKey: "agent:main:main",
     storePath,
   });
@@ -2192,6 +2134,16 @@ test("sessions.patch preserves nested model ids under provider overrides", async
         list: [{ id: "main", default: true, workspace: dir }],
       },
       session: { mainKey: "main", store: storePath },
+      models: {
+        providers: {
+          nvidia: {
+            api: "openai-completions" as const,
+            auth: "api-key" as const,
+            baseUrl: "https://compaction.fixture.invalid/v1",
+            models: [],
+          },
+        },
+      },
     };
     await seedSessionEntry({
       entry: sessionStoreEntry("sess-main"),
@@ -2200,11 +2152,30 @@ test("sessions.patch preserves nested model ids under provider overrides", async
     });
 
     agentDiscoveryMock.enabled = true;
-    agentDiscoveryMock.models = [
-      { id: "moonshotai/kimi-k2.5", name: "Kimi K2.5 (NVIDIA)", provider: "nvidia" },
-    ];
-
-    const context = { getRuntimeConfig: () => runtimeConfig };
+    const row = {
+      id: "moonshotai/kimi-k2.5",
+      name: "Kimi K2.5 (NVIDIA)",
+      provider: "nvidia",
+      api: "openai-completions" as const,
+      baseUrl: "https://compaction.fixture.invalid/v1",
+    };
+    agentDiscoveryMock.models = [row];
+    const catalog = createSessionModelCatalogFixture().publish({
+      config: runtimeConfig,
+      agentId: "main",
+      catalog: { entries: [row], routeVariants: [row] },
+      profiles: {
+        "nvidia:compaction": {
+          type: "api_key",
+          provider: "nvidia",
+          key: "synthetic-compaction-credential",
+        },
+      },
+    });
+    const context = {
+      getRuntimeConfig: () => runtimeConfig,
+      loadGatewayModelCatalogSnapshot: async () => catalog,
+    };
     const patched = await directSessionReq<{
       entry: {
         modelOverride?: string;

@@ -5,6 +5,10 @@ import { vi, type Mock } from "vitest";
 import type { SessionRunStatus } from "../../packages/gateway-protocol/src/schema/sessions-row.js";
 import type { SubagentLifecycleHookRunner } from "../plugins/hooks.js";
 import { resolveRequesterStoreKey } from "./subagents/announce/subagent-requester-store-key.js";
+import {
+  installSpawnModelCatalogFixture,
+  supportedSpawnExecutionSelection,
+} from "./subagents/spawn/subagent-spawn.test-helpers.js";
 
 type SessionsSpawnTestConfig = ReturnType<
   (typeof import("../config/config.js"))["getRuntimeConfig"]
@@ -206,10 +210,12 @@ export async function getSessionsSpawnTool(opts: CreateOpenClawToolsOpts) {
         import("./subagents/spawn/subagent-spawn.test-support.js"),
         import("./subagents/registry/subagent-registry.test-helpers.js"),
       ]);
+    await installSpawnModelCatalogFixture();
     cachedSubagentSpawnTesting = subagentSpawnTesting;
     cachedSubagentRegistryTesting = subagentRegistryTesting;
   }
   cachedSubagentSpawnTesting.setDepsForTest({
+    prepareSessionExecutionSelection: supportedSpawnExecutionSelection,
     callGateway: (optsUnknown) => hoisted.callGatewayMock(optsUnknown),
     getGlobalHookRunner: () => hoisted.state.hookRunnerOverride,
     getRuntimeConfig: () => hoisted.state.configOverride,

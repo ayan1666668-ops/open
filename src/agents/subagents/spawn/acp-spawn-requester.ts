@@ -14,8 +14,10 @@ import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import { formatErrorMessage } from "../../../infra/errors.js";
 import { getSessionBindingService } from "../../../infra/outbound/session-binding-service.js";
 import { createSubsystemLogger } from "../../../logging/subsystem.js";
-import { getCommittedSessionExecutionSelection } from "../../../model-picker/execution-selection.js";
-import { isAcpExecutionSelection } from "../../../model-picker/execution-selection.js";
+import {
+  getCommittedSessionExecutionSelection,
+  isAcpExecutionSelection,
+} from "../../../model-picker/execution-selection.js";
 import { isSubagentSessionKey, parseAgentSessionKey } from "../../../routing/session-key.js";
 import { normalizeDeliveryContext } from "../../../utils/delivery-context.shared.js";
 import { resolveRequesterOriginForChild } from "../../spawn-requester-origin.js";
@@ -221,7 +223,9 @@ export function validateAcpResumeSessionOwnership(params: {
   for (const { sessionKey, entry } of listSessionEntriesReadOnly({ storePath, clone: false })) {
     const acp = readAcpSessionMeta({ sessionKey, cfg: params.cfg, agentId: params.targetAgentId });
     const selection = getCommittedSessionExecutionSelection(entry);
-    if (!selection || !isAcpExecutionSelection(selection)) continue;
+    if (!selection || !isAcpExecutionSelection(selection)) {
+      continue;
+    }
     // Resume identifiers are backend-local; requester ownership cannot authorize another backend.
     if (
       (configuredBackend &&

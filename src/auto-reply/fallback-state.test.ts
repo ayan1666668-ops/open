@@ -1,4 +1,5 @@
 /** Tests model fallback notice formatting and transition state tracking. */
+import { expectDefined } from "@openclaw/normalization-core";
 import { afterEach, describe, expect, it } from "vitest";
 import { testing as cliBackendsTesting } from "../agents/cli-backends.test-support.js";
 import { canonicalizeProviderModelId } from "../agents/provider-model-route.js";
@@ -175,8 +176,8 @@ describe("fallback-state", () => {
     const state: FallbackNoticeState = {
       fallbackNotice: {
         kind: "active",
-        selectedModel: activated.selectedModelRef,
-        activeModel: activated.activeModelRef,
+        selectedModel: expectDefined(activated.selectedModelRef, "selected fallback model"),
+        activeModel: expectDefined(activated.activeModelRef, "active fallback model"),
         reason: activated.reasonSummary,
       },
     };

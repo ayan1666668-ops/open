@@ -33,8 +33,10 @@ function addCombinedCarrierFacts(run: FollowupRun): void {
   run.disableTools = true;
   run.run = {
     ...run.run,
-    provider: "openai",
-    model: "gpt-route",
+    executionSelection: {
+      model: { provider: "openai", id: "gpt-route" },
+      executor: { kind: "harness", id: "openclaw" },
+    },
     memberRoleIds: ["operator", "member"],
     trustedInternalHandoff: {
       kind: "subagent-completion",
@@ -61,8 +63,10 @@ function expectCombinedCarrierFacts(run: FollowupRun | undefined): void {
   ]);
   expect(run?.disableTools).toBe(true);
   expect(run?.run).toMatchObject({
-    provider: "openai",
-    model: "gpt-route",
+    executionSelection: {
+      model: { provider: "openai", id: "gpt-route" },
+      executor: { kind: "harness", id: "openclaw" },
+    },
     memberRoleIds: ["operator", "member"],
     trustedInternalHandoff: {
       kind: "subagent-completion",

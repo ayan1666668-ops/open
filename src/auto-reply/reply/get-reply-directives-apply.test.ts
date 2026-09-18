@@ -77,6 +77,7 @@ describe("applyInlineDirectiveOverrides", () => {
       isGroup: false,
       triggerBodyNormalized: "/elevated on",
       resetTriggered: false,
+      isNewSession: false,
       commandAuthorized: true,
       defaultProvider: "openai",
       defaultModel: "gpt-5.5",

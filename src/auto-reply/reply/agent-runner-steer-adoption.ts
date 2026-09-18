@@ -134,7 +134,9 @@ export async function runActiveReplySteer(
   };
   const fallback = async (reason?: string): Promise<"handled" | ReplyPayload> => {
     const rejection = rejectChangedSelection();
-    if (rejection) return rejection;
+    if (rejection) {
+      return rejection;
+    }
     parked.fallback();
     if (replyOperationRunState) {
       replyOperationRunState.admission = { status: "accepted", mode: "followup" };
@@ -186,7 +188,9 @@ export async function runActiveReplySteer(
       return await fallback("terminal source-reply delivery is closed");
     }
     const selectionRejection = rejectChangedSelection();
-    if (selectionRejection) return selectionRejection;
+    if (selectionRejection) {
+      return selectionRejection;
+    }
     const injectionAttempt = beginReplyMessageInjectionTarget(injectionTarget, followupRun.prompt, {
       steeringMode: "all",
       isInboundUserMessage: true,

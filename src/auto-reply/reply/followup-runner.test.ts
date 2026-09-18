@@ -74,8 +74,10 @@ function createQueuedRun(overrides: Partial<FollowupRun> = {}): FollowupRun {
       sessionFile: "/tmp/session.jsonl",
       workspaceDir: "/tmp",
       config: {},
-      provider: "anthropic",
-      model: "claude",
+      executionSelection: {
+        model: { provider: "anthropic", id: "claude" },
+        executor: { kind: "harness", id: "openclaw" },
+      },
       timeoutMs: 1_000,
       blockReplyBreak: "message_end",
     },

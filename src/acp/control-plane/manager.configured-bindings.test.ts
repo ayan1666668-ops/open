@@ -42,7 +42,7 @@ describe("AcpSessionManager configured bindings", () => {
     const sessionKey = buildConfiguredAcpSessionKey(spec);
     const store = installAcpSessionStoreFixture({ sessionKey, agentId: spec.agentId });
     const manager = new AcpSessionManager();
-    const getManager = vi.spyOn(managerModule, "getAcpSessionManager").mockReturnValue(manager);
+    const getManager = vi.spyOn(managerModule, "getAcpSessionManagerCore").mockReturnValue(manager);
     const ensure = (thinking?: string) =>
       ensureConfiguredAcpBindingSession({ cfg: baseCfg, spec: { ...spec, thinking } });
     const runTurn = (requestId: string) =>

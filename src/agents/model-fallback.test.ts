@@ -15,6 +15,7 @@ import {
 import { resetLogger, setLoggerOverride } from "../logging/logger.js";
 import { createWarnLogCapture } from "../logging/test-helpers/warn-log-capture.js";
 import { GatewayDrainingError } from "../process/gateway-work-admission.js";
+import { acceptedModelSelection } from "../test-utils/session-execution-selection.js";
 import { AgentRunTerminalOutcomeError } from "./agent-run-terminal-error.js";
 import { resolveEffectiveModelFallbacks } from "./agent-scope.js";
 import { AUTH_STORE_VERSION, MINIMAX_CLI_PROFILE_ID } from "./auth-profiles/constants.js";
@@ -2783,10 +2784,7 @@ describe("runWithModelFallback", () => {
   it("treats LiveSessionModelSwitchError as failover on last candidate (#58496 family)", async () => {
     const cfg = makeCfg();
     const switchError = new LiveSessionModelSwitchError({
-      selection: {
-        model: { provider: "anthropic", id: "claude-sonnet-4-6" },
-        executor: { kind: "harness", id: "openclaw" },
-      },
+      selection: acceptedModelSelection("anthropic", "claude-sonnet-4-6").selection,
     });
     const run = vi.fn().mockRejectedValue(switchError);
 
@@ -2812,10 +2810,7 @@ describe("runWithModelFallback", () => {
 
   it("returns an unconfigured live switch target to the retry owner (#101676)", async () => {
     const switchError = new LiveSessionModelSwitchError({
-      selection: {
-        model: { provider: "anthropic", id: "claude-sonnet-4-6" },
-        executor: { kind: "harness", id: "openclaw" },
-      },
+      selection: acceptedModelSelection("anthropic", "claude-sonnet-4-6").selection,
     });
     const run = vi.fn().mockRejectedValue(switchError);
 
@@ -2837,10 +2832,7 @@ describe("runWithModelFallback", () => {
       "deepseek/deepseek-chat",
     ]);
     const switchError = new LiveSessionModelSwitchError({
-      selection: {
-        model: { provider: "openai", id: "gpt-4.1-mini" },
-        executor: { kind: "harness", id: "openclaw" },
-      },
+      selection: acceptedModelSelection("openai", "gpt-4.1-mini").selection,
     });
     const run = vi
       .fn()
@@ -2874,10 +2866,7 @@ describe("runWithModelFallback", () => {
       "openrouter/deepseek-chat",
     ]);
     const switchError = new LiveSessionModelSwitchError({
-      selection: {
-        model: { provider: "anthropic", id: "claude-sonnet-4-6" },
-        executor: { kind: "harness", id: "openclaw" },
-      },
+      selection: acceptedModelSelection("anthropic", "claude-sonnet-4-6").selection,
     });
     const run = vi.fn(async (provider: string, model: string) => {
       if (provider === "openai" && model === "gpt-4.1-mini") {
@@ -2913,10 +2902,9 @@ describe("runWithModelFallback", () => {
   it("returns runtime-changing live switches to the retry owner before redirecting", async () => {
     const cfg = createModelFallbackConfig("anthropic/claude-haiku-3-5", ["openai/gpt-5.6-luna"]);
     const switchError = new LiveSessionModelSwitchError({
-      selection: {
-        model: { provider: "openai", id: "gpt-5.6-luna" },
+      selection: acceptedModelSelection("openai", "gpt-5.6-luna", {
         executor: { kind: "harness", id: "codex" },
-      },
+      }).selection,
     });
     const run = vi.fn().mockRejectedValue(switchError);
 
@@ -2925,8 +2913,6 @@ describe("runWithModelFallback", () => {
         cfg,
         provider: "anthropic",
         model: "claude-haiku-3-5",
-        resolveAgentHarnessRuntimeOverride: (provider) =>
-          provider === "openai" ? "openclaw" : undefined,
         resolveAgentHarnessRuntimeOverride: () => "openclaw",
         run,
       }),
@@ -2936,10 +2922,9 @@ describe("runWithModelFallback", () => {
 
   it("returns same-model runtime switches to the retry owner", async () => {
     const switchError = new LiveSessionModelSwitchError({
-      selection: {
-        model: { provider: "openai", id: "gpt-4.1-mini" },
+      selection: acceptedModelSelection("openai", "gpt-4.1-mini", {
         executor: { kind: "harness", id: "codex" },
-      },
+      }).selection,
     });
     const run = vi.fn().mockRejectedValue(switchError);
 
@@ -2950,7 +2935,6 @@ describe("runWithModelFallback", () => {
         model: "gpt-4.1-mini",
         fallbacksOverride: [],
         resolveAgentHarnessRuntimeOverride: () => "openclaw",
-        resolveAgentHarnessRuntimeOverride: () => "openclaw",
         run,
       }),
     ).rejects.toBe(switchError);
@@ -2960,10 +2944,7 @@ describe("runWithModelFallback", () => {
   it("does not redirect stale live-session switch errors back to the current candidate (#58496 family)", async () => {
     const cfg = makeCfg();
     const switchError = new LiveSessionModelSwitchError({
-      selection: {
-        model: { provider: "openai", id: "gpt-4.1-mini" },
-        executor: { kind: "harness", id: "openclaw" },
-      },
+      selection: acceptedModelSelection("openai", "gpt-4.1-mini").selection,
     });
     const run = vi.fn().mockRejectedValueOnce(switchError).mockResolvedValueOnce("ok");
 
@@ -3880,11 +3861,7 @@ describe("runWithModelFallback", () => {
     // Reply/command preparation must project inherited fallbacks to `undefined`
     // so the candidate resolver owns the ladder and appends the configured
     // primary as the final candidate (C -> B -> A, not C -> B).
-    const fallbacksOverride = resolveEffectiveModelFallbacks({
-      cfg,
-      agentId: "main",
-      hasSessionModelOverride: false,
-    });
+    const fallbacksOverride = resolveEffectiveModelFallbacks({ cfg, agentId: "main" });
     expect(fallbacksOverride).toBeUndefined();
 
     expect(

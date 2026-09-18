@@ -364,7 +364,7 @@ vi.mock("../../infra/outbound/agent-delivery.js", async () => {
 });
 
 vi.mock("../../sessions/send-policy.js", () => ({
-  resolveSendPolicy: (...args: unknown[]) =>
+  resolveSendPolicyCore: (...args: unknown[]) =>
     (mocks.resolveSendPolicy as (...args: unknown[]) => unknown)(...args),
 }));
 

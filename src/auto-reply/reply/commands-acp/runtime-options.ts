@@ -2,7 +2,7 @@
 import { resolveAcpSessionIdentifierLinesFromIdentity } from "@openclaw/acp-core/runtime/session-identifiers";
 import { timestampMsToIsoString } from "@openclaw/normalization-core/number-coercion";
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
-import { getAcpSessionManager } from "../../../acp/control-plane/manager.js";
+import { getAcpSessionManagerCore } from "../../../acp/control-plane/manager.js";
 import type { AcpSessionTarget } from "../../../acp/control-plane/manager.types.js";
 import { requireReadySession } from "../../../acp/control-plane/manager.utils.js";
 import {
@@ -158,7 +158,7 @@ export async function handleAcpStatusAction(
 
   return await withAcpCommandErrorBoundary({
     run: async () =>
-      await getAcpSessionManager().getSessionStatus({
+      await getAcpSessionManagerCore().getSessionStatus({
         cfg: params.cfg,
         ...target,
       }),
@@ -234,7 +234,7 @@ export async function handleAcpSetModeAction(
     optionLabel: "runtime mode",
     parseValue: validateRuntimeModeInput,
     update: async (target, value) =>
-      await getAcpSessionManager().setSessionRuntimeMode({
+      await getAcpSessionManagerCore().setSessionRuntimeMode({
         cfg: params.cfg,
         ...target,
         runtimeMode: value,
@@ -265,7 +265,7 @@ export async function handleAcpSetAction(
       const lowerKey = normalizeLowercaseStringOrEmpty(key);
       if (lowerKey === "cwd") {
         const cwd = validateRuntimeCwdInput(value);
-        const options = await getAcpSessionManager().updateSessionRuntimeOptions({
+        const options = await getAcpSessionManagerCore().updateSessionRuntimeOptions({
           cfg: params.cfg,
           ...target,
           patch: { cwd },
@@ -278,7 +278,7 @@ export async function handleAcpSetAction(
       if (lowerKey === "model") {
         return { text: await selectAcpModel(params, target, validateRuntimeModelInput(value)) };
       }
-      const options = await getAcpSessionManager().setSessionConfigOption({
+      const options = await getAcpSessionManagerCore().setSessionConfigOption({
         cfg: params.cfg,
         ...target,
         key: validated.key,
@@ -303,7 +303,7 @@ export async function handleAcpCwdAction(
     optionLabel: "cwd",
     parseValue: validateRuntimeCwdInput,
     update: async (target, value) =>
-      await getAcpSessionManager().updateSessionRuntimeOptions({
+      await getAcpSessionManagerCore().updateSessionRuntimeOptions({
         cfg: params.cfg,
         ...target,
         patch: { cwd: value },
@@ -320,7 +320,7 @@ export async function handleAcpPermissionsAction(
     optionLabel: "permissions profile",
     parseValue: validateRuntimePermissionProfileInput,
     update: async (target, value) =>
-      await getAcpSessionManager().setSessionConfigOption({
+      await getAcpSessionManagerCore().setSessionConfigOption({
         cfg: params.cfg,
         ...target,
         key: "approval_policy",
@@ -339,7 +339,7 @@ export async function handleAcpTimeoutAction(
     parseValue: parseRuntimeTimeoutSecondsInput,
     formatValue: (value) => `${value}s`,
     update: async (target, value) =>
-      await getAcpSessionManager().setSessionConfigOption({
+      await getAcpSessionManagerCore().setSessionConfigOption({
         cfg: params.cfg,
         ...target,
         key: "timeout",
@@ -381,7 +381,7 @@ export async function handleAcpResetOptionsAction(
 
   return await withAcpCommandErrorBoundary({
     run: async () =>
-      await getAcpSessionManager().resetSessionRuntimeOptions({
+      await getAcpSessionManagerCore().resetSessionRuntimeOptions({
         cfg: params.cfg,
         ...target,
       }),
@@ -396,7 +396,7 @@ async function selectAcpModel(
   target: AcpSessionTarget,
   model: string,
 ): Promise<string> {
-  const manager = getAcpSessionManager();
+  const manager = getAcpSessionManagerCore();
   const resolution = manager.resolveSession({ cfg: params.cfg, ...target });
   const ready = requireReadySession(resolution);
   const result = await applySessionExecutionSelection({

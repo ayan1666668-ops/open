@@ -337,13 +337,15 @@ export async function sessionsCommand(
   const rows = sessionEntries.map(({ acpSessionKey, agentId, entry, row }) => {
     const acpMeta = acpSessionMetaByEntry.get(entry);
     const selected = getSessionExecutionSelection(entry);
+    const acpBackend = selected?.executor.kind === "acp" ? selected.executor.backend : undefined;
+    const hasOpaqueModel = acpBackend !== undefined && selected?.model !== "native-managed";
     const acpRuntime = acpMeta != null;
     // ACP rows need stored-key metadata before model/runtime resolution so
     // bridge sessions and true ACP runtime sessions display differently.
     const modelRef = applyAcpModelOverlayIfNeeded(
       resolveSessionDisplayModelRef(cfg, row, classifyCliProvider, agentId),
       acpSessionKey,
-      acpRuntime,
+      acpRuntime && (!selected || selected.model === "native-managed"),
     );
     const agentRuntime = resolveModelAgentRuntimeMetadata({
       cfg,
@@ -353,7 +355,7 @@ export async function sessionsCommand(
       model: modelRef.model,
       sessionKey: acpSessionKey,
       acpRuntime,
-      acpBackend: selected?.executor.kind === "acp" ? selected.executor.backend : undefined,
+      acpBackend,
     });
     const hasPersistedContextTokens =
       typeof entry.contextTokens === "number" && entry.contextTokens > 0;
@@ -362,7 +364,7 @@ export async function sessionsCommand(
     const usesCliContextFallback =
       !hasPersistedContextTokens && classifyCliProvider(agentRuntime.id);
     const modelContext =
-      selected?.model === "native-managed"
+      selected?.model === "native-managed" || hasOpaqueModel
         ? { contextTokens: undefined, authoredContextTokens: undefined }
         : usesCliContextFallback
           ? {
@@ -379,14 +381,16 @@ export async function sessionsCommand(
               model: modelRef.model,
               allowAsyncLoad: false,
             });
-    const contextTokens = resolveProjectedSessionContextTokens({
-      entry,
-      provider: modelRef.provider,
-      model: modelRef.model,
-      agentHarnessId: agentRuntime.id,
-      resolvedContextTokens: modelContext.contextTokens,
-      authoredContextTokens: modelContext.authoredContextTokens,
-    });
+    const contextTokens =
+      resolveProjectedSessionContextTokens({
+        entry,
+        // An opaque ACP ID can use matching telemetry, but never a provider/model lookup.
+        provider: hasOpaqueModel ? entry.modelProvider : modelRef.provider,
+        model: modelRef.model,
+        agentHarnessId: hasOpaqueModel ? acpBackend : agentRuntime.id,
+        resolvedContextTokens: modelContext.contextTokens,
+        authoredContextTokens: modelContext.authoredContextTokens,
+      }) ?? (hasOpaqueModel ? null : configContextTokens);
     return Object.assign({}, row, {
       agentId,
       acpRuntime,
@@ -435,7 +439,7 @@ export async function sessionsCommand(
           ...r,
           totalTokens: resolveSessionTotalTokens(r) ?? null,
           totalTokensFresh: resolveFreshSessionTotalTokens(r) !== undefined,
-          contextTokens: r.contextTokens ?? configContextTokens ?? null,
+          contextTokens: r.contextTokens,
           modelProvider: modelRef.provider,
           model: modelRef.model,
         };
@@ -494,7 +498,7 @@ export async function sessionsCommand(
         tokens: formatTokensCell(
           resolveSessionTotalTokens(row),
           resolveFreshSessionTotalTokens(row),
-          row.contextTokens ?? configContextTokens,
+          row.contextTokens,
           rich,
         ),
         flags: formatSessionFlagsCell(row, rich),

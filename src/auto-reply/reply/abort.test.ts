@@ -20,6 +20,7 @@ import {
 } from "../../config/sessions/session-accessor.js";
 import { getSessionBindingService } from "../../infra/outbound/session-binding-service.js";
 import { createSuiteTempRootTracker } from "../../test-helpers/temp-dir.js";
+import { acceptedModelSelection } from "../../test-utils/session-execution-selection.js";
 import { resolveAbortCutoffFromContext, shouldSkipMessageByAbortCutoff } from "./abort-cutoff.js";
 import { stopSubagentsForRequester } from "./abort-operation.js";
 import {
@@ -94,7 +95,7 @@ vi.mock("../../config/sessions/session-accessor.js", async (importOriginal) => {
 });
 
 vi.mock("../../acp/control-plane/manager.js", () => ({
-  getAcpSessionManager: () => ({
+  getAcpSessionManagerCore: () => ({
     resolveSession: acpManagerMocks.resolveSession,
     cancelSession: acpManagerMocks.cancelSession,
   }),
@@ -110,13 +111,8 @@ describe("abort detection", () => {
     setAbortMemory(key, value);
   }
 
-  beforeAll(async () => {
-    await suiteTempDirs.setup();
-  });
-
-  afterAll(async () => {
-    await suiteTempDirs.cleanup();
-  });
+  beforeAll(() => suiteTempDirs.setup());
+  afterAll(() => suiteTempDirs.cleanup());
 
   async function writeSessionStore(
     storePath: string,
@@ -220,8 +216,7 @@ describe("abort detection", () => {
         sessionFile: path.join(params.root, "session.jsonl"),
         workspaceDir: path.join(params.root, "workspace"),
         config: params.cfg,
-        provider: "anthropic",
-        model: "claude-opus-4-6",
+        executionSelection: acceptedModelSelection("anthropic", "claude-opus-4-6").selection,
         timeoutMs: 1000,
         blockReplyBreak: "text_end",
       },

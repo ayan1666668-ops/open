@@ -84,7 +84,7 @@ describe("plugin session writer claim projection", () => {
           updatedAt,
         },
       );
-      const mutate = async (entry: InternalSessionEntry) => {
+      const mutate = async (entry: SessionEntry & Pick<InternalSessionEntry, "publicShare">) => {
         if (method === "patch") {
           await patchSessionEntry({
             sessionKey,
@@ -142,6 +142,8 @@ describe("plugin session writer claim projection", () => {
       },
       model: "observed-current",
       modelFallback: {
+        prevModel: "previous",
+        prevProvider: "fixture",
         previous: {
           state: "deferred",
           request: { model: { provider: "fixture", id: "previous" } },
@@ -197,9 +199,11 @@ describe("plugin session writer claim projection", () => {
     expect(projectPluginSessionEntryPatch(patch)).toEqual({
       model: "observed-next",
       modelFallback: {
+        prevModel: "earlier",
+        prevProvider: "fixture",
         previous: {
           state: "deferred",
-          request: { model: { provider: "fixture", id: "earlier" } },
+          request: { defaultSelection: "inherit" },
           fallbackPermission: "configured",
         },
         source: "agent-patch",

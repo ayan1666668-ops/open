@@ -3,8 +3,10 @@ import { normalizeOptionalString } from "@openclaw/normalization-core/string-coe
 import type { SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { PublicSessionEntry } from "../model-picker/execution-selection-projection.js";
-import { getSessionExecutionSelection } from "../model-picker/execution-selection.js";
-import { isModelExecutionSelection } from "../model-picker/execution-selection.js";
+import {
+  getSessionExecutionSelection,
+  isModelExecutionSelection,
+} from "../model-picker/execution-selection.js";
 import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "./defaults.js";
 import {
   inferUniqueProviderFromConfiguredModels,
@@ -104,14 +106,16 @@ export function resolveSessionModelRefCore(
     manifestPlugins: options?.manifestPlugins,
   });
   const selected = getSessionExecutionSelection(entry);
-  if (selected && isModelExecutionSelection(selected))
+  if (selected && isModelExecutionSelection(selected)) {
     return { provider: selected.model.provider, model: selected.model.id };
+  }
   const requested =
     entry?.executionSelection?.state === "deferred"
       ? entry.executionSelection.request.model
       : undefined;
-  if (requested && requested !== "native-managed")
+  if (requested && requested !== "native-managed") {
     return { provider: requested.provider ?? configured.provider, model: requested.id };
+  }
   return configured;
 }
 

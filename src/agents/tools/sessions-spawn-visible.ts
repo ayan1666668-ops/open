@@ -255,32 +255,6 @@ export async function maybeSpawnVisibleSession(params: {
   if (!targetPolicy.ok) {
     return { status: "forbidden", error: targetPolicy.error };
   }
-  const modelPlan = resolveSubagentModelAndThinkingPlan({
-    cfg,
-    targetAgentId,
-    modelOverride,
-    inheritedModel:
-      targetAgentId === requesterAgentId
-        ? (params.options?.requesterModel ??
-          readRequesterModel({
-            cfg,
-            requesterInternalKey: requesterKey,
-            requesterAgentId,
-          }))
-        : undefined,
-  });
-  if (modelPlan.status === "error") {
-    return { status: "error", error: modelPlan.error };
-  }
-  const { resolvedModel, inheritedModel, initialSessionPatch } = modelPlan;
-  const { authProfileOverride } = initialSessionPatch;
-  // Creation validates the complete profile-qualified selection.
-  const resolvedModelRef = authProfileOverride
-    ? `${resolvedModel}@${authProfileOverride}`
-    : resolvedModel;
-  const spawnModelAutoSelection = !modelOverride
-    ? { model: resolvedModelRef, hasFallbackOrigin: true }
-    : undefined;
   const runTimeoutSeconds = resolveConfiguredSubagentRunTimeoutSeconds({
     cfg,
     runTimeoutSeconds: params.runTimeoutSeconds,
@@ -326,6 +300,35 @@ export async function maybeSpawnVisibleSession(params: {
     };
   }
 
+  const modelPlan = await resolveSubagentModelAndThinkingPlan({
+    cfg,
+    targetAgentId,
+    modelOverride,
+    workspaceDir: spawnedWorkspaceDir,
+    inheritedModel:
+      targetAgentId === requesterAgentId
+        ? (params.options?.requesterModel ??
+          readRequesterModel({
+            cfg,
+            requesterInternalKey: requesterKey,
+            requesterAgentId,
+          }))
+        : undefined,
+  });
+  if (modelPlan.status === "error") {
+    return { status: "error", error: modelPlan.error };
+  }
+  const { resolvedModel, inheritedModel, initialSessionPatch } = modelPlan;
+  const { authProfileOverride } = initialSessionPatch;
+  const resolvedModelRef = authProfileOverride
+    ? `${resolvedModel}@${authProfileOverride}`
+    : resolvedModel;
+  const spawnModelAutoSelection = !modelOverride
+    ? {
+        model: resolvedModelRef,
+        hasFallbackOrigin: true,
+      }
+    : undefined;
   const reservation = reserveChildAdmissionSlot({
     controllerSessionKey: requesterKey,
     resolveAdmission: (pendingChildren) => {
@@ -345,8 +348,12 @@ export async function maybeSpawnVisibleSession(params: {
     };
   }
   // Successful admission reserves a child before Gateway work can start.
-  params.options?.onSpawnEffectsStart?.();
   try {
+    const selectionError = modelPlan.preparedSelection.validateCommit();
+    if (selectionError) {
+      return { status: "error", error: selectionError };
+    }
+    params.options?.onSpawnEffectsStart?.();
     const gatewayCall = params.options?.callGateway ?? callInProcessGatewayTool;
     const createGatewayCall: InProcessGatewayCaller =
       params.options?.callGateway ??

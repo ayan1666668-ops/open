@@ -3,12 +3,12 @@ import {
   loadPreparedModelCatalog,
   resolveDefaultModelForAgent,
 } from "openclaw/plugin-sdk/agent-runtime";
-import { getRuntimeConfig } from "openclaw/plugin-sdk/config-runtime";
 import {
   applySessionModelSelection,
   ModelSelectionLockedError,
   resolveSessionModelRef,
 } from "openclaw/plugin-sdk/model-session-runtime";
+import { getRuntimeConfig } from "openclaw/plugin-sdk/runtime-config-snapshot";
 import {
   getSessionEntry,
   patchSessionEntry,

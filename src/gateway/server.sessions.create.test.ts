@@ -9,15 +9,19 @@ import { promisify } from "node:util";
 import { expectDefined } from "@openclaw/normalization-core";
 import { asNullableRecord } from "@openclaw/normalization-core/record-coerce";
 import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
-import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, expect, onTestFinished, test, vi } from "vitest";
 import { sanitizeForLog } from "../../packages/terminal-core/src/ansi.js";
 import { closeGatewayTestWebSocket } from "../../test/helpers/gateway-websocket.js";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
+import type { AuthProfileStore } from "../agents/auth-profiles/types.js";
 import { getContextWindowCaches } from "../agents/context-cache.js";
 import {
   applyDiscoveredContextWindows,
   resetContextWindowCacheForTest,
 } from "../agents/context.js";
+import type { ModelCatalogEntry } from "../agents/model-catalog.types.js";
+import { resolveSessionModelRefCore } from "../agents/session-model-ref.js";
+import { createSessionModelCatalogFixture } from "../agents/test-helpers/session-model-catalog.test-support.js";
 import { findGitCheckoutRoot } from "../agents/worktrees/git.js";
 import {
   findLiveRegistryWorktreeByOwner,
@@ -43,13 +47,10 @@ import {
 import { addSessionMember, removeSessionMember } from "../config/sessions/session-sharing-store.js";
 import { resolveSqliteTargetFromSessionStorePath } from "../config/sessions/session-sqlite-target.js";
 import type { GatewayOperatorRoleDefinition } from "../config/types.gateway.js";
+import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { withTimeout } from "../infra/fs-safe.js";
 import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
 import { setActivePluginRegistry } from "../plugins/runtime.js";
-import {
-  createColdPluginFixture,
-  isColdPluginRuntimeLoaded,
-} from "../plugins/test-helpers/cold-plugin-fixtures.js";
 import {
   beginSessionWorkAdmission,
   getSessionWorkAdmissionRelease,
@@ -70,7 +71,7 @@ import {
   closeOpenClawStateDatabaseForTest,
   openOpenClawStateDatabase,
 } from "../state/openclaw-state-db.js";
-import { connectUserModelAccount } from "../state/user-model-accounts.js";
+import { clearUserProfileAuthLink, connectUserModelAccount } from "../state/user-model-accounts.js";
 import {
   ensureGatewayOwnerProfile,
   ensureProfileForEmail,
@@ -91,7 +92,9 @@ import { createMentionInbox } from "./mention-inbox.js";
 import { sessionLog } from "./server-methods/sessions-shared.js";
 import { identifiedClient, soloClient } from "./server-methods/sessions-sharing.test-support.js";
 import type { GatewayClient } from "./server-methods/types.js";
+import { registerSessionCreateModelSelectionTests } from "./server-sessions.model-selection.test-support.js";
 import { listSessionGroups } from "./session-groups.js";
+import { sessionSelectionFixture } from "./session-list.test-support.js";
 import {
   resolveSessionMutationAuthorization,
   SessionMutationAuthorizationChangedError,
@@ -122,7 +125,6 @@ import {
 } from "./test/server-sessions.test-helpers.js";
 import { createWorkerSessionPlacementStore } from "./worker-environments/placement-store.js";
 import { seedAttachedPlacementEnvironment } from "./worker-environments/placement-test-fixtures.js";
-
 type EnsureSessionDiffBaseline =
   (typeof import("../sessions/session-diff-baseline.js"))["ensureSessionDiffBaseline"];
 type CaptureSessionDiffBaseline =
@@ -324,7 +326,61 @@ function describeSessionStoreForensics(storePath: string): string {
   return JSON.stringify({ storeDir, files, resolvedTargetPath: target.path, rows });
 }
 
+function useProviderPolicyArtifacts() {
+  const previous = {
+    disabled: process.env.OPENCLAW_DISABLE_BUNDLED_PLUGINS,
+    root: process.env.OPENCLAW_BUNDLED_PLUGINS_DIR,
+  };
+  onTestFinished(() => {
+    if (previous.disabled === undefined) {
+      delete process.env.OPENCLAW_DISABLE_BUNDLED_PLUGINS;
+    } else {
+      process.env.OPENCLAW_DISABLE_BUNDLED_PLUGINS = previous.disabled;
+    }
+    if (previous.root === undefined) {
+      delete process.env.OPENCLAW_BUNDLED_PLUGINS_DIR;
+    } else {
+      process.env.OPENCLAW_BUNDLED_PLUGINS_DIR = previous.root;
+    }
+  });
+  const root = path.resolve(import.meta.dirname, "../../extensions");
+  process.env.OPENCLAW_DISABLE_BUNDLED_PLUGINS = "0";
+  process.env.OPENCLAW_BUNDLED_PLUGINS_DIR = root;
+  return root;
+}
+
+async function prepareCreationCatalog(params: {
+  config: OpenClawConfig;
+  agentId: string;
+  models: ModelCatalogEntry[];
+  profiles: AuthProfileStore["profiles"];
+}) {
+  const { loadPluginMetadataSnapshot } = await import("../plugins/plugin-metadata-snapshot.js");
+  const metadata = loadPluginMetadataSnapshot({
+    config: params.config,
+    allowCurrent: false,
+    preferPersisted: false,
+  });
+  const entries: ModelCatalogEntry[] = params.models.map((model) => ({
+    ...model,
+    api: "openai-responses",
+    baseUrl: "https://api.openai.com/v1",
+  }));
+  const snapshot = createSessionModelCatalogFixture().publish({
+    config: params.config,
+    agentId: params.agentId,
+    catalog: { entries, routeVariants: entries },
+    profiles: params.profiles,
+    plugins: metadata.plugins,
+  });
+  return {
+    getRuntimeConfig: () => params.config,
+    loadGatewayModelCatalogSnapshot: async () => snapshot,
+  };
+}
+
 async function createPersonalAccountSessionFixture() {
+  useProviderPolicyArtifacts();
   const { storePath } = await createSessionStoreDir();
   const owner = ensureProfileForEmail("session-account-owner@example.test");
   const connectAccount = (email: string, profileId = owner.id) =>
@@ -358,26 +414,47 @@ async function createPersonalAccountSessionFixture() {
     },
   };
   const clients = new Set([client]);
-  const catalog = [
-    { id: "gpt-5.6-sol", name: "GPT 5.6 Sol", provider: "openai" },
-    { id: "gpt-5.6-luna", name: "GPT 5.6 Luna", provider: "openai" },
+  const catalog: ModelCatalogEntry[] = [
+    { id: "gpt-5.6-sol", name: "GPT 5.6 Sol", provider: "openai", api: "openai-responses" },
+    { id: "gpt-5.6-luna", name: "GPT 5.6 Luna", provider: "openai", api: "openai-responses" },
   ];
+  testState.agentConfig = {
+    ...testState.agentConfig,
+    models: {
+      "openai/gpt-5.6-sol": { agentRuntime: { id: "openclaw" } },
+      "openai/gpt-5.6-luna": { agentRuntime: { id: "openclaw" } },
+    },
+  };
   const gatewayConfig = await getGatewayConfigModule();
   // Real account setup can warm config IO before the Gateway fixture applies its workspace.
   gatewayConfig.clearRuntimeConfigSnapshot();
   const cfg = gatewayConfig.getRuntimeConfig();
+  const catalogFixture = createSessionModelCatalogFixture();
+  const snapshot = catalogFixture.publish({
+    config: cfg,
+    agentId: "main",
+    catalog: { entries: catalog, routeVariants: catalog },
+    profiles: {},
+  });
   const context = {
     getRuntimeConfig: () => cfg,
-    loadGatewayModelCatalogSnapshot: vi.fn(async () => ({
-      entries: catalog,
-      routeVariants: catalog,
-    })),
+    loadGatewayModelCatalogSnapshot: vi.fn(async () => snapshot),
     getClientConnIds: (filter?: (current: GatewayClient) => boolean) =>
       new Set(
         [...clients].filter((current) => !filter || filter(current)).map(({ connId }) => connId),
       ),
   };
-  return { storePath, owner, authProfileId, connectAccount, client, clients, catalog, context };
+  return {
+    storePath,
+    owner,
+    authProfileId,
+    connectAccount,
+    client,
+    clients,
+    catalog,
+    catalogFixture,
+    context,
+  };
 }
 
 test("sessions.create assigns and registers its requested group", async () => {
@@ -603,10 +680,15 @@ test.each([
           provider: "arcee",
           key: "synthetic-direct-arcee-key",
         } as const;
-        await state.writeAuthProfiles({
-          version: 1,
-          profiles: { "arcee:work": credential },
-        });
+        const profiles = {
+          "arcee:work": credential,
+          "openrouter:route": {
+            type: "api_key",
+            provider: "openrouter",
+            key: "synthetic-route-key",
+          } as const,
+        };
+        await state.writeAuthProfiles({ version: 1, profiles });
         const gatewayConfig = await getGatewayConfigModule();
         // The Gateway fixture reads its own config root; bind this case through the real snapshot.
         gatewayConfig.setRuntimeConfigSnapshot(inputConfig);
@@ -617,15 +699,11 @@ test.each([
           await import("../plugins/current-plugin-metadata-snapshot.js");
         const { resolveProviderIdForAuth } = await import("../agents/provider-auth-aliases.js");
         const { resolveSessionModelRef } = await import("../agents/session-model-ref.js");
-        const bundledRoot = path.resolve(import.meta.dirname, "../../extensions");
+        const bundledRoot = useProviderPolicyArtifacts();
         const metadata = loadPluginMetadataSnapshot({
           config: cfg,
           workspaceDir: state.workspaceDir,
-          env: {
-            ...process.env,
-            OPENCLAW_DISABLE_BUNDLED_PLUGINS: "0",
-            OPENCLAW_BUNDLED_PLUGINS_DIR: bundledRoot,
-          },
+          env: process.env,
           allowCurrent: false,
           preferPersisted: false,
         });
@@ -671,19 +749,34 @@ test.each([
             adminClient.connect.scopes = ["operator.admin"];
             const clients = new Set([client, adminClient]);
             const service = createModelAccountConnectService({ getConfig: () => cfg });
+            const catalogFixture = createSessionModelCatalogFixture();
             const context = {
               getRuntimeConfig: () => cfg,
               modelAccountConnectService: service,
               loadGatewayModelCatalogSnapshot: async () => {
-                const entries = [
-                  { id: "trinity-large-thinking", name: "Direct Arcee model", provider: "arcee" },
+                const entries: ModelCatalogEntry[] = [
+                  {
+                    id: "trinity-large-thinking",
+                    name: "Direct Arcee model",
+                    provider: "arcee",
+                    api: "openai-completions",
+                    baseUrl: "https://api.arcee.ai/api/v1",
+                  },
                   {
                     id: "trinity-large-preview",
                     name: "Arcee model through OpenRouter",
                     provider: "arcee",
+                    api: "openai-completions",
+                    baseUrl: "https://openrouter.ai/api/v1",
                   },
                 ];
-                return { entries, routeVariants: entries };
+                return catalogFixture.publish({
+                  config: cfg,
+                  agentId: "main",
+                  catalog: { entries, routeVariants: entries },
+                  profiles,
+                  plugins: metadata.plugins,
+                });
               },
               getClientConnIds: (filter?: (current: GatewayClient) => boolean) =>
                 new Set(
@@ -791,6 +884,83 @@ test.each([
   },
 );
 
+test.each([false, true])(
+  "sessions.create rechecks a staged personal default but retains an inherited pin (inherited=%s)",
+  async (inherited) => {
+    await withOpenClawTestState({ layout: "state-only" }, async () => {
+      testState.agentConfig = { model: { primary: "openai/gpt-5.6-sol" } };
+      const { storePath, authProfileId, connectAccount, client, context } =
+        await createPersonalAccountSessionFixture();
+      const key = "agent:main:dashboard:default-link-race";
+      const parentSessionKey = "agent:main:dashboard:established-default";
+      if (inherited) {
+        await writeSessionStore({
+          entries: {
+            [parentSessionKey]: sessionStoreEntry("established-default", {
+              executionSelection: {
+                state: "deferred",
+                request: { model: { provider: "openai", id: "gpt-5.6-sol" } },
+                fallbackPermission: "explicit",
+              },
+              authProfileOverride: authProfileId,
+              authProfileOverrideSource: "user-link",
+            }),
+          },
+        });
+      }
+      const runtime = await import("./server-methods/sessions-patch-model-selection.js");
+      const prepare = runtime.prepareSessionPatchRuntimeSelection;
+      const boundary = vi
+        .spyOn(runtime, "prepareSessionPatchRuntimeSelection")
+        .mockImplementation(async (params) => {
+          const prepared = await prepare(params);
+          if (params.patch.key === key) {
+            connectAccount("changed-default@example.test");
+          }
+          return prepared;
+        });
+      try {
+        const result = await directSessionReq(
+          "sessions.create",
+          { key, ...(inherited ? { parentSessionKey } : {}) },
+          { client, context },
+        );
+        expect(boundary).toHaveBeenCalled();
+        if (inherited) {
+          expect(result.ok, JSON.stringify(result.error)).toBe(true);
+          expect(loadSessionEntry({ sessionKey: key, storePath })).toMatchObject({
+            authProfileOverride: authProfileId,
+            authProfileOverrideSource: "user-link",
+          });
+        } else {
+          expect(result.ok).toBe(false);
+          expect(result.error?.message).toContain("Your default model account changed. Try again.");
+          expect(loadSessionEntry({ sessionKey: key, storePath })).toBeUndefined();
+        }
+      } finally {
+        boundary.mockRestore();
+      }
+    });
+  },
+);
+
+test("sessions.create without a model request does not require an unlinked configured account", async () => {
+  await withOpenClawTestState({ layout: "state-only" }, async () => {
+    testState.agentConfig = { model: { primary: "openai/gpt-5.6-sol@missing-account" } };
+    const { storePath, owner, client, context } = await createPersonalAccountSessionFixture();
+    clearUserProfileAuthLink({ profileId: owner.id, provider: "openai" });
+    const key = "agent:main:dashboard:no-model-account-readiness";
+    const result = await directSessionReq("sessions.create", { key }, { client, context });
+    expect(result.ok, JSON.stringify(result.error)).toBe(true);
+    const entry = expectDefined(
+      loadSessionEntry({ sessionKey: key, storePath }),
+      "new unpinned session",
+    );
+    expect(entry.authProfileOverride).toBeUndefined();
+    expect(context.loadGatewayModelCatalogSnapshot).not.toHaveBeenCalled();
+  });
+});
+
 test("sessions.create does not donate a personal default to an unpinned adoption or fork", async () => {
   await withOpenClawTestState({ layout: "state-only" }, async () => {
     const { storePath, client, context } = await createPersonalAccountSessionFixture();
@@ -799,8 +969,11 @@ test("sessions.create does not donate a personal default to an unpinned adoption
     await writeSessionStore({
       entries: {
         [key]: sessionStoreEntry(sessionId, {
-          providerOverride: "openai",
-          modelOverride: "gpt-5.6-sol",
+          executionSelection: {
+            state: "deferred",
+            request: { model: { provider: "openai", id: "gpt-5.6-sol" } },
+            fallbackPermission: "explicit",
+          },
         }),
       },
     });
@@ -818,13 +991,16 @@ test("sessions.create does not donate a personal default to an unpinned adoption
         { client, context },
       );
       expect(result.ok, JSON.stringify(result.error)).toBe(true);
-      expect(loadSessionEntry({ sessionKey: target, storePath })).toMatchObject({
-        providerOverride: "openai",
-        modelOverride: "gpt-5.6-sol",
+      const entry = expectDefined(
+        loadSessionEntry({ sessionKey: target, storePath }),
+        "adopted or forked session",
+      );
+      expect(entry.executionSelection).toBeDefined();
+      expect(resolveSessionModelRefCore(getRuntimeConfig(), entry, "main")).toEqual({
+        provider: "openai",
+        model: "gpt-5.6-sol",
       });
-      expect(
-        loadSessionEntry({ sessionKey: target, storePath })?.authProfileOverride,
-      ).toBeUndefined();
+      expect(entry.authProfileOverride).toBeUndefined();
     }
   });
 });
@@ -901,7 +1077,7 @@ test.each([
   "sessions.create rejects a personal $selection when $loss while the model catalog is loading",
   async ({ loss, selection }) => {
     await withOpenClawTestState({ layout: "state-only" }, async () => {
-      const { storePath, authProfileId, client, clients, catalog, context } =
+      const { storePath, authProfileId, client, clients, catalog, catalogFixture, context } =
         await createPersonalAccountSessionFixture();
       const writer: GatewayOperatorRoleDefinition = {
         agents: "*",
@@ -912,10 +1088,16 @@ test.each([
         ...getRuntimeConfig(),
         gateway: { roles: { default: "writer", definitions: { writer } } },
       };
+      const snapshot = catalogFixture.publish({
+        config: cfg,
+        agentId: "main",
+        catalog: { entries: catalog, routeVariants: catalog },
+        profiles: {},
+      });
       const catalogGate = createDeferredCore();
       context.loadGatewayModelCatalogSnapshot.mockImplementationOnce(async () => {
         await catalogGate.promise;
-        return { entries: catalog, routeVariants: catalog };
+        return snapshot;
       });
       const key = "agent:main:dashboard:personal-revoked";
       const creating = directSessionReq(
@@ -2109,6 +2291,7 @@ test("sessions.create fences the first workspace write behind its diff baseline"
         throw new Error("expected the precreated session entry");
       }
       await ensureSessionDiffBaseline({
+        agentId: "main",
         cwd: workspace,
         entry,
         isNewSession: false,
@@ -2760,7 +2943,7 @@ test("sessions.create runs an existing managed worktree cwd for initial and foll
     await import("../agents/spawned-context.js");
   const acpManagerModule = await import("../acp/control-plane/manager.js");
   const getAcpSessionManager = vi
-    .spyOn(acpManagerModule, "getAcpSessionManager")
+    .spyOn(acpManagerModule, "getAcpSessionManagerCore")
     .mockReturnValue({ resolveSession: () => null } as never);
   const { defaultRuntime } = await import("../runtime.js");
   const prepareInitialRun = createDeferredCore();
@@ -2985,10 +3168,10 @@ test.each([
     request: { parentSessionKey: "main" },
     catalogTarget: undefined,
     parentEntry: {
-      providerOverride: "openai",
-      modelOverride: "gpt-5.6-sol",
-      modelOverrideSource: "user" as const,
-      agentRuntimeOverride: "codex",
+      executionSelection: sessionSelectionFixture({
+        model: { provider: "openai", id: "gpt-5.6-sol" },
+        executor: { kind: "harness", id: "codex" },
+      }),
       authProfileOverride: "parent-work",
       authProfileOverrideSource: "user" as const,
     },
@@ -3057,7 +3240,58 @@ test.each([
     let worktreeId: string | undefined;
     let sessionKey: string | undefined;
     const pastedText = `Pasted deployment plan ${"x".repeat(2_000)}`;
-    const context = { chatAbortControllers: new Map<string, ChatAbortControllerEntry>() };
+    useProviderPolicyArtifacts();
+    const gatewayConfig = await getGatewayConfigModule();
+    gatewayConfig.clearRuntimeConfigSnapshot();
+    const cfg = gatewayConfig.getRuntimeConfig();
+    const { loadPluginMetadataSnapshot } = await import("../plugins/plugin-metadata-snapshot.js");
+    const metadata = loadPluginMetadataSnapshot({
+      config: cfg,
+      allowCurrent: false,
+      preferPersisted: false,
+    });
+    const entries: ModelCatalogEntry[] = [
+      {
+        provider: "openai",
+        id: "gpt-5.6-luna",
+        name: "Default model",
+        api: "openai-responses",
+        baseUrl: "https://api.openai.com/v1",
+      },
+      {
+        provider: "openai",
+        id: "gpt-5.6-sol",
+        name: "Parent model",
+        api: "openai-responses",
+        baseUrl: "https://api.openai.com/v1",
+      },
+      {
+        provider: "anthropic",
+        id: "claude-sonnet-4-6",
+        name: "Selected model",
+        api: "anthropic-messages",
+        baseUrl: "https://api.anthropic.com",
+      },
+    ];
+    const snapshot = createSessionModelCatalogFixture().publish({
+      config: cfg,
+      agentId: "main",
+      catalog: { entries, routeVariants: entries },
+      plugins: metadata.plugins,
+      profiles: {
+        work: { type: "api_key", provider: "anthropic", key: "synthetic-title-key" },
+        "catalog-work": {
+          type: "api_key",
+          provider: "anthropic",
+          key: "synthetic-catalog-title-key",
+        },
+        "parent-work": { type: "api_key", provider: "openai", key: "synthetic-parent-title-key" },
+      },
+    });
+    const context = {
+      chatAbortControllers: new Map<string, ChatAbortControllerEntry>(),
+      loadGatewayModelCatalogSnapshot: async () => snapshot,
+    };
     const message = "Review this rollout [[reply_to_current]]";
     const attachment = {
       type: "file",
@@ -3146,9 +3380,11 @@ test("sessions.create names an adopted worktree with its committed account befor
     await writeSessionStore({
       entries: {
         [key]: sessionStoreEntry(sessionId, {
-          providerOverride: "openai",
-          modelOverride: "gpt-5.6-luna",
-          modelOverrideSource: "user",
+          executionSelection: {
+            state: "deferred",
+            request: { model: { provider: "openai", id: "gpt-5.6-luna" } },
+            fallbackPermission: "explicit",
+          },
           authProfileOverride: previousAuthProfileId,
           authProfileOverrideSource: "user",
         }),
@@ -3723,6 +3959,7 @@ test("sessions.create rejects a Fast Mode change completed by draining work befo
   );
   await writerEntered.promise;
   const persisted = persistReplySessionEntry({
+    agentId: "main",
     storePath,
     sessionKey: key,
     initialEntry,
@@ -4381,11 +4618,32 @@ test("sessions.create stores dashboard model, thinking, fast mode, and parent li
   const { storePath } = await createSessionStoreDir();
   testState.agentsConfig = { list: [{ id: "main", default: true }, { id: "ops" }] };
   agentDiscoveryMock.enabled = true;
-  agentDiscoveryMock.models = [{ id: "gpt-test-a", name: "A", provider: "openai" }];
+  const models = [{ id: "gpt-test-a", name: "A", provider: "openai", reasoning: true }];
+  agentDiscoveryMock.models = models;
   await writeSessionStore({
     entries: {
       main: sessionStoreEntry("sess-parent"),
     },
+  });
+  useProviderPolicyArtifacts();
+  const cfg = getRuntimeConfig();
+  const context = await prepareCreationCatalog({
+    config: {
+      ...cfg,
+      agents: {
+        ...cfg.agents,
+        defaults: {
+          ...cfg.agents?.defaults,
+          models: {
+            ...cfg.agents?.defaults?.models,
+            "openai/gpt-test-a": { agentRuntime: { id: "openclaw" } },
+          },
+        },
+      },
+    },
+    agentId: "ops",
+    models,
+    profiles: { work: { type: "api_key", provider: "openai", key: "synthetic-creation-key" } },
   });
   const created = await directSessionReq<{
     key?: string;
@@ -4399,16 +4657,20 @@ test("sessions.create stores dashboard model, thinking, fast mode, and parent li
       parentSessionKey?: string;
       sessionFile?: string;
     };
-  }>("sessions.create", {
-    agentId: "ops",
-    label: "Dashboard Chat",
-    model: "openai/gpt-test-a",
-    thinkingLevel: "high",
-    fastMode: true,
-    parentSessionKey: "main",
-  });
+  }>(
+    "sessions.create",
+    {
+      agentId: "ops",
+      label: "Dashboard Chat",
+      model: "openai/gpt-test-a",
+      thinkingLevel: "high",
+      fastMode: true,
+      parentSessionKey: "main",
+    },
+    { context },
+  );
 
-  expect(created.ok).toBe(true);
+  expect(created.ok, created.error?.message).toBe(true);
   expect(created.payload?.key).toMatch(/^agent:ops:dashboard:/);
   expect(created.payload?.entry?.label).toBe("Dashboard Chat");
   expect(created.payload?.entry?.providerOverride).toBe("openai");
@@ -4425,8 +4687,10 @@ test("sessions.create stores dashboard model, thinking, fast mode, and parent li
   const storedEntry = loadSessionEntry({ agentId: "ops", sessionKey: key, storePath });
   expect(storedEntry?.sessionId).toBe(created.payload?.sessionId);
   expect(storedEntry?.label).toBe("Dashboard Chat");
-  expect(storedEntry?.providerOverride).toBe("openai");
-  expect(storedEntry?.modelOverride).toBe("gpt-test-a");
+  expect(storedEntry?.executionSelection).toMatchObject({
+    state: "accepted",
+    selection: { model: { provider: "openai", id: "gpt-test-a" } },
+  });
   expect(storedEntry?.thinkingLevel).toBe("high");
   expect(storedEntry?.fastMode).toBe(true);
   expect(storedEntry?.parentSessionKey).toBe("agent:main:main");
@@ -4449,14 +4713,19 @@ test.each([undefined, "main"])(
   async (dmScope) => {
     const { storePath } = await createSessionStoreDir();
     testState.sessionConfig = dmScope ? { dmScope } : undefined;
-    testState.agentConfig = { model: { primary: "openai/current-model" } };
+    testState.agentConfig = {
+      model: { primary: "openai/current-model" },
+      models: { "openai/current-model": { agentRuntime: { id: "openclaw" } } },
+    };
     await writeSessionStore({
       entries: {
         "agent:main:main": {
           ...sessionStoreEntry("sess-grouping-parent"),
-          providerOverride: "anthropic",
-          modelOverride: "parent-model",
-          modelOverrideSource: "user",
+          executionSelection: {
+            state: "deferred",
+            request: { model: { provider: "anthropic", id: "parent-model" } },
+            fallbackPermission: "explicit",
+          },
         },
       },
     });
@@ -4485,12 +4754,30 @@ test.each([undefined, "main"])(
     );
     const { createModelSelectionState } = await import("../auto-reply/reply/model-selection.js");
     const cfg = getRuntimeConfig();
+    useProviderPolicyArtifacts();
+    const model: ModelCatalogEntry = {
+      provider: "openai",
+      id: "current-model",
+      name: "Configured child model",
+      api: "openai-responses",
+      baseUrl: "https://api.openai.com/v1",
+    };
+    createSessionModelCatalogFixture().publish({
+      config: cfg,
+      agentId: "main",
+      catalog: { entries: [model], routeVariants: [model] },
+      profiles: {
+        "openai:fixture": { type: "api_key", provider: "openai", key: "synthetic-child-key" },
+      },
+    });
     const reply = await createModelSelectionState({
       cfg,
+      prepareExecution: true,
+      storePath,
       agentId: "main",
       agentCfg: cfg.agents?.defaults,
       sessionEntry: child,
-      sessionStore: { "agent:main:main": parent },
+      sessionStore: { "agent:main:main": parent, [key]: child },
       sessionKey: key,
       parentSessionKey: child.parentSessionKey,
       defaultProvider: "openai",
@@ -5151,503 +5438,7 @@ test("sessions.create does not parent the main session to itself", async () => {
   expect(created.payload?.entry?.parentSessionKey).toBeUndefined();
 });
 
-test.each(["cli", "enabled", "disabled"] as const)(
-  "sessions.create resolves a catalog target server-side with a %s harness",
-  async (harness) => {
-    const { dir, storePath } = await createSessionStoreDir();
-    testState.agentConfig = {
-      model: { primary: "anthropic/claude-opus-4-8" },
-      models: { "anthropic/claude-opus-4-8": { agentRuntime: { id: "missing-harness" } } },
-    };
-    agentDiscoveryMock.enabled = true;
-    agentDiscoveryMock.models = [
-      { id: "claude-opus-4-8", name: "Claude Opus 4.8", provider: "anthropic" },
-    ];
-    const agentRuntime = harness === "cli" ? "claude-cli" : "fixture-harness";
-    let fixture: ReturnType<typeof createColdPluginFixture> | undefined;
-    if (harness !== "cli") {
-      const rootDir = await fs.mkdtemp(path.join(dir, "catalog-harness-"));
-      fixture = createColdPluginFixture({
-        rootDir,
-        pluginId: "fixture-harness",
-        manifest: { activation: { onAgentHarnesses: ["fixture-harness"] } },
-      });
-      const { writeConfigFile } = await getGatewayConfigModule();
-      await writeConfigFile({
-        plugins: {
-          load: { paths: [rootDir] },
-          entries: { "fixture-harness": { enabled: harness === "enabled" } },
-        },
-      });
-    }
-    const resolveCreateSession = vi.fn(() => ({
-      model: "anthropic/claude-opus-4-8",
-      agentRuntime,
-    }));
-    const registry = createEmptyPluginRegistry();
-    if (harness === "cli") {
-      registry.cliBackends.push({
-        pluginId: "anthropic",
-        source: "test",
-        backend: {
-          id: "claude-cli",
-          modelProvider: "anthropic",
-          config: { command: "claude" },
-          bundleMcp: false,
-        },
-      });
-    }
-    registry.sessionCatalogs.push({
-      pluginId: "anthropic",
-      source: "test",
-      provider: {
-        id: "claude",
-        label: "Claude Code",
-        resolveCreateSession,
-        list: vi.fn(async () => []),
-        read: vi.fn(async ({ hostId, threadId }) => ({ hostId, threadId, items: [] })),
-      },
-    });
-    setActivePluginRegistry(registry);
-
-    try {
-      const created = await directSessionReq<{
-        entry?: {
-          providerOverride?: string;
-          modelOverride?: string;
-          agentRuntimeOverride?: string;
-          modelSelectionLocked?: boolean;
-          pluginOwnerId?: string;
-        };
-        key?: string;
-      }>("sessions.create", { agentId: "main", catalogId: "claude" });
-
-      if (fixture) {
-        expect(isColdPluginRuntimeLoaded(fixture)).toBe(false);
-      }
-      if (harness === "disabled") {
-        expect(created.ok).toBe(false);
-        expect(created.error?.message).toContain('requires agent harness "fixture-harness"');
-        expect(created.payload).toBeUndefined();
-        return;
-      }
-      expect(created.ok, JSON.stringify(created.error)).toBe(true);
-      expect(created.payload?.entry).toMatchObject({
-        providerOverride: "anthropic",
-        modelOverride: "claude-opus-4-8",
-        agentRuntimeOverride: agentRuntime,
-        modelSelectionLocked: true,
-        pluginOwnerId: "anthropic",
-      });
-      expect(resolveCreateSession).toHaveBeenCalledWith({ agentId: "main" });
-
-      const patched = await directSessionReq("sessions.patch", {
-        key: created.payload?.key,
-        agentId: "main",
-        model: "anthropic/claude-opus-4-8",
-      });
-      expect(patched.ok).toBe(false);
-      expect(patched.error).toMatchObject({
-        code: "INVALID_REQUEST",
-        message: "Model selection is locked for this session.",
-      });
-
-      const deleted = await directSessionReq("sessions.delete", {
-        key: created.payload?.key,
-        agentId: "main",
-        deleteTranscript: false,
-      });
-      expect(deleted.ok).toBe(true);
-      expect(
-        loadSessionEntry({
-          agentId: "main",
-          sessionKey: created.payload?.key ?? "",
-          storePath,
-        }),
-      ).toBeUndefined();
-    } finally {
-      testState.agentConfig = undefined;
-      setActivePluginRegistry(createEmptyPluginRegistry());
-    }
-  },
-);
-
-test("sessions.create rejects a caller-supplied key for a catalog target", async () => {
-  const { storePath } = await createSessionStoreDir();
-  const existing = sessionStoreEntry("sess-existing-catalog-target", {
-    providerOverride: "openai",
-    modelOverride: "gpt-existing",
-  });
-  await writeSessionStore({ entries: { main: existing } });
-  const registry = createEmptyPluginRegistry();
-  registry.sessionCatalogs.push({
-    pluginId: "anthropic",
-    source: "test",
-    provider: {
-      id: "claude",
-      label: "Claude Code",
-      resolveCreateSession: () => ({
-        model: "anthropic/claude-opus-4-8",
-        agentRuntime: "claude-cli",
-      }),
-      list: vi.fn(async () => []),
-      read: vi.fn(async ({ hostId, threadId }) => ({ hostId, threadId, items: [] })),
-    },
-  });
-  setActivePluginRegistry(registry);
-
-  try {
-    const created = await directSessionReq("sessions.create", {
-      key: "main",
-      agentId: "main",
-      catalogId: "claude",
-    });
-
-    expect(created.ok).toBe(false);
-    expect(created.error).toMatchObject({
-      code: "INVALID_REQUEST",
-      message: "sessions.create catalogId cannot include key",
-    });
-    expect(
-      loadSessionEntry({ agentId: "main", sessionKey: "agent:main:main", storePath }),
-    ).toMatchObject({
-      sessionId: existing.sessionId,
-      providerOverride: "openai",
-      modelOverride: "gpt-existing",
-    });
-  } finally {
-    setActivePluginRegistry(createEmptyPluginRegistry());
-  }
-});
-
-test("sessions.create authorizes a catalog target for the requested agent", async () => {
-  await createSessionStoreDir();
-  testState.agentsConfig = {
-    list: [{ id: "main", default: true }, { id: "research" }],
-  };
-  const resolveCreateSession = vi.fn(({ agentId }: { agentId?: string }) =>
-    agentId === "research"
-      ? undefined
-      : {
-          model: "anthropic/claude-opus-4-8",
-          agentRuntime: "claude-cli",
-        },
-  );
-  const registry = createEmptyPluginRegistry();
-  registry.sessionCatalogs.push({
-    pluginId: "anthropic",
-    source: "test",
-    provider: {
-      id: "claude",
-      label: "Claude Code",
-      resolveCreateSession,
-      list: vi.fn(async () => []),
-      read: vi.fn(async ({ hostId, threadId }) => ({ hostId, threadId, items: [] })),
-    },
-  });
-  setActivePluginRegistry(registry);
-
-  try {
-    const created = await directSessionReq("sessions.create", {
-      agentId: "research",
-      catalogId: "claude",
-    });
-
-    expect(created.ok).toBe(false);
-    expect(created.error).toMatchObject({
-      code: "UNAVAILABLE",
-      message: "session catalog claude cannot create sessions",
-    });
-    expect(resolveCreateSession).toHaveBeenCalledWith({ agentId: "research" });
-  } finally {
-    testState.agentsConfig = undefined;
-    setActivePluginRegistry(createEmptyPluginRegistry());
-  }
-});
-
-test("sessions.create bypasses main-session reset for a catalog target", async () => {
-  await createSessionStoreDir();
-  testState.agentConfig = { model: { primary: "anthropic/claude-opus-4-8" } };
-  testState.sessionConfig = { dmScope: "main" };
-  agentDiscoveryMock.enabled = true;
-  agentDiscoveryMock.models = [
-    { id: "claude-opus-4-8", name: "Claude Opus 4.8", provider: "anthropic" },
-  ];
-  await writeSessionStore({
-    entries: {
-      main: sessionStoreEntry("sess-parent-catalog"),
-    },
-  });
-  const registry = createEmptyPluginRegistry();
-  registry.cliBackends.push({
-    pluginId: "anthropic",
-    source: "test",
-    backend: {
-      id: "claude-cli",
-      modelProvider: "anthropic",
-      config: { command: "claude" },
-      bundleMcp: false,
-    },
-  });
-  registry.sessionCatalogs.push({
-    pluginId: "anthropic",
-    source: "test",
-    provider: {
-      id: "claude",
-      label: "Claude Code",
-      resolveCreateSession: () => ({
-        model: "anthropic/claude-opus-4-8",
-        agentRuntime: "claude-cli",
-      }),
-      list: vi.fn(async () => []),
-      read: vi.fn(async ({ hostId, threadId }) => ({ hostId, threadId, items: [] })),
-    },
-  });
-  setActivePluginRegistry(registry);
-
-  try {
-    const created = await directSessionReq<{
-      key?: string;
-      entry?: {
-        parentSessionKey?: string;
-        providerOverride?: string;
-        modelOverride?: string;
-        agentRuntimeOverride?: string;
-        modelSelectionLocked?: boolean;
-      };
-    }>("sessions.create", {
-      agentId: "main",
-      catalogId: "claude",
-      parentSessionKey: "main",
-      emitCommandHooks: true,
-    });
-
-    expect(created.ok).toBe(true);
-    expect(created.payload?.key).toMatch(/^agent:main:dashboard:/);
-    expect(created.payload?.entry).toMatchObject({
-      parentSessionKey: "agent:main:main",
-      providerOverride: "anthropic",
-      modelOverride: "claude-opus-4-8",
-      agentRuntimeOverride: "claude-cli",
-      modelSelectionLocked: true,
-    });
-  } finally {
-    testState.agentConfig = undefined;
-    testState.sessionConfig = undefined;
-    setActivePluginRegistry(createEmptyPluginRegistry());
-  }
-});
-
-test("sessions.create inherits explicit selection without runtime model identity", async () => {
-  const { storePath } = await createSessionStoreDir();
-  await writeSessionStore({
-    entries: {
-      main: sessionStoreEntry("sess-parent", {
-        providerOverride: "codex",
-        modelOverride: "gpt-5.5",
-        modelOverrideSource: "user",
-        agentRuntimeOverride: "codex",
-        modelProvider: "codex",
-        model: "gpt-5.5",
-        contextTokens: 272000,
-        inputTokens: 12000,
-        outputTokens: 340,
-        totalTokens: 12340,
-        totalTokensFresh: false,
-        contextBudgetStatus: {
-          schemaVersion: 1,
-          source: "pre-prompt-estimate",
-          updatedAt: 1,
-          provider: "codex",
-          model: "gpt-5.5",
-          route: "compact_then_truncate",
-          shouldCompact: true,
-          estimatedPromptTokens: 250000,
-          contextTokenBudget: 128000,
-          promptBudgetBeforeReserve: 112000,
-          reserveTokens: 16000,
-          effectiveReserveTokens: 16000,
-          remainingPromptBudgetTokens: 0,
-          overflowTokens: 138000,
-          toolResultReducibleChars: 5000,
-          messageCount: 12,
-          unwindowedMessageCount: 12,
-        },
-        thinkingLevel: "off",
-        fastMode: "auto",
-        traceLevel: "debug",
-        authProfileOverride: "codex-oauth",
-        authProfileOverrideSource: "user",
-      }),
-    },
-  });
-
-  const created = await directSessionReq<{
-    key?: string;
-    resolved?: { modelProvider?: string; model?: string };
-    entry?: {
-      providerOverride?: string;
-      modelOverride?: string;
-      modelOverrideSource?: string;
-      agentRuntimeOverride?: string;
-      modelProvider?: string;
-      model?: string;
-      contextTokens?: number;
-      inputTokens?: number;
-      outputTokens?: number;
-      totalTokens?: number;
-      totalTokensFresh?: boolean;
-      contextBudgetStatus?: unknown;
-      thinkingLevel?: string;
-      fastMode?: string;
-      traceLevel?: string;
-      authProfileOverride?: string;
-      authProfileOverrideSource?: string;
-      parentSessionKey?: string;
-    };
-  }>("sessions.create", {
-    agentId: "main",
-    label: "Fresh Chat",
-    parentSessionKey: "main",
-  });
-
-  expect(created.ok).toBe(true);
-  expect(created.payload?.entry?.parentSessionKey).toBe("agent:main:main");
-  expect(created.payload?.entry?.providerOverride).toBe("codex");
-  expect(created.payload?.entry?.modelOverride).toBe("gpt-5.5");
-  expect(created.payload?.entry?.modelOverrideSource).toBe("user");
-  expect(created.payload?.entry?.agentRuntimeOverride).toBe("codex");
-  expect(created.payload?.entry?.modelProvider).toBeUndefined();
-  expect(created.payload?.entry?.model).toBeUndefined();
-  expect(created.payload?.resolved).toEqual({ modelProvider: "codex", model: "gpt-5.5" });
-  expect(created.payload?.entry?.contextTokens).toBeUndefined();
-  expect(created.payload?.entry?.inputTokens).toBeUndefined();
-  expect(created.payload?.entry?.outputTokens).toBeUndefined();
-  expect(created.payload?.entry?.totalTokens).toBeUndefined();
-  expect(created.payload?.entry?.totalTokensFresh).toBeUndefined();
-  expect(created.payload?.entry?.contextBudgetStatus).toBeUndefined();
-  expect(created.payload?.entry?.thinkingLevel).toBe("off");
-  expect(created.payload?.entry?.fastMode).toBe("auto");
-  expect(created.payload?.entry?.traceLevel).toBe("debug");
-  expect(created.payload?.entry?.authProfileOverride).toBe("codex-oauth");
-  expect(created.payload?.entry?.authProfileOverrideSource).toBe("user");
-
-  const key = created.payload?.key as string;
-  const storedEntry = loadSessionEntry({ agentId: "main", sessionKey: key, storePath });
-  expect(storedEntry?.providerOverride).toBe("codex");
-  expect(storedEntry?.modelOverride).toBe("gpt-5.5");
-  expect(storedEntry?.modelProvider).toBeUndefined();
-  expect(storedEntry?.model).toBeUndefined();
-  expect(storedEntry?.parentSessionKey).toBe("agent:main:main");
-
-  const overridden = await directSessionReq<{
-    entry?: { fastMode?: boolean | "auto" };
-  }>("sessions.create", {
-    agentId: "main",
-    fastMode: false,
-    parentSessionKey: "main",
-  });
-  expect(overridden.ok, JSON.stringify(overridden.error)).toBe(true);
-  expect(overridden.payload?.entry?.fastMode).toBe(false);
-});
-
-test("sessions.create skips inherited active auto fallback model overrides", async () => {
-  const { storePath } = await createSessionStoreDir();
-  testState.agentConfig = { model: { primary: "openai/gpt-primary" } };
-  await writeSessionStore({
-    entries: {
-      main: sessionStoreEntry("sess-parent-auto-fallback", {
-        providerOverride: "google-vertex",
-        modelOverride: "gemini-fallback",
-        modelOverrideSource: "auto",
-        modelOverrideFallbackOriginProvider: "openai",
-        modelOverrideFallbackOriginModel: "gpt-primary",
-        agentRuntimeOverride: "vertex-runtime",
-        contextWindow: "1m",
-        authProfileOverride: "google-vertex:fallback",
-        authProfileOverrideSource: "auto",
-        thinkingLevel: "high",
-      }),
-    },
-  });
-
-  const created = await directSessionReq<{
-    key?: string;
-    resolved?: { modelProvider?: string; model?: string };
-    entry?: {
-      parentSessionKey?: string;
-      providerOverride?: string;
-      modelOverride?: string;
-      modelOverrideSource?: string;
-      agentRuntimeOverride?: string;
-      contextWindow?: string;
-      authProfileOverride?: string;
-      authProfileOverrideSource?: string;
-      thinkingLevel?: string;
-    };
-  }>("sessions.create", {
-    agentId: "main",
-    parentSessionKey: "main",
-  });
-
-  expect(created.ok).toBe(true);
-  expect(created.payload?.entry?.parentSessionKey).toBe("agent:main:main");
-  expect(created.payload?.entry?.providerOverride).toBeUndefined();
-  expect(created.payload?.entry?.modelOverride).toBeUndefined();
-  expect(created.payload?.entry?.modelOverrideSource).toBeUndefined();
-  expect(created.payload?.entry?.agentRuntimeOverride).toBeUndefined();
-  expect(created.payload?.entry?.contextWindow).toBe("1m");
-  expect(created.payload?.entry?.authProfileOverride).toBeUndefined();
-  expect(created.payload?.entry?.authProfileOverrideSource).toBeUndefined();
-  expect(created.payload?.entry?.thinkingLevel).toBe("high");
-  expect(created.payload?.resolved).toEqual({ modelProvider: "openai", model: "gpt-primary" });
-
-  const key = created.payload?.key as string;
-  const storedEntry = loadSessionEntry({ agentId: "main", sessionKey: key, storePath });
-  expect(storedEntry?.parentSessionKey).toBe("agent:main:main");
-  expect(storedEntry?.providerOverride).toBeUndefined();
-  expect(storedEntry?.modelOverride).toBeUndefined();
-  expect(storedEntry?.agentRuntimeOverride).toBeUndefined();
-  expect(storedEntry?.contextWindow).toBe("1m");
-  expect(storedEntry?.authProfileOverride).toBeUndefined();
-  expect(storedEntry?.authProfileOverrideSource).toBeUndefined();
-  expect(storedEntry?.thinkingLevel).toBe("high");
-});
-
-test("sessions.create resolves the current default instead of inherited runtime identity", async () => {
-  const { storePath } = await createSessionStoreDir();
-  testState.agentConfig = { model: { primary: "anthropic/current-model" } };
-  await writeSessionStore({
-    entries: {
-      main: sessionStoreEntry("sess-parent-stale", {
-        modelProvider: "openai",
-        model: "stale-model",
-      }),
-    },
-  });
-
-  const created = await directSessionReq<{
-    key?: string;
-    resolved?: { modelProvider?: string; model?: string };
-    entry?: { modelProvider?: string; model?: string };
-  }>("sessions.create", {
-    agentId: "main",
-    parentSessionKey: "main",
-  });
-
-  expect(created.ok).toBe(true);
-  expect(created.payload?.entry?.modelProvider).toBeUndefined();
-  expect(created.payload?.entry?.model).toBeUndefined();
-  expect(created.payload?.resolved).toEqual({
-    modelProvider: "anthropic",
-    model: "current-model",
-  });
-
-  const key = created.payload?.key as string;
-  const storedEntry = loadSessionEntry({ agentId: "main", sessionKey: key, storePath });
-  expect(storedEntry?.modelProvider).toBeUndefined();
-  expect(storedEntry?.model).toBeUndefined();
-});
+registerSessionCreateModelSelectionTests({ createSessionStoreDir });
 
 test("sessions.create accepts an explicit key for persistent dashboard sessions", async () => {
   await createSessionStoreDir();
@@ -5676,11 +5467,39 @@ test("sessions.create accepts an explicit key for persistent dashboard sessions"
 test("sessions.create preserves write-scoped fresh selection but gates adopted rows", async () => {
   const { storePath } = await createSessionStoreDir();
   agentDiscoveryMock.enabled = true;
-  agentDiscoveryMock.models = [
+  const models = [
     { id: "gpt-test-a", name: "A", provider: "openai" },
     { id: "gpt-test-b", name: "B", provider: "openai" },
   ];
-  testState.agentConfig = { subagents: { model: "openai/gpt-test-a" } };
+  agentDiscoveryMock.models = models;
+  useProviderPolicyArtifacts();
+  testState.agentConfig = {
+    subagents: { model: "openai/gpt-test-a" },
+    models: {
+      "openai/gpt-test-a": { agentRuntime: { id: "openclaw" } },
+      "openai/gpt-test-b": { agentRuntime: { id: "openclaw" } },
+    },
+  };
+  const gatewayConfig = await getGatewayConfigModule();
+  const catalogFixture = createSessionModelCatalogFixture();
+  const context = {
+    loadGatewayModelCatalogSnapshot: async () => {
+      const entries: ModelCatalogEntry[] = models.map(({ id, name, provider }) => ({
+        id,
+        name,
+        provider,
+        api: "openai-responses",
+        baseUrl: "https://api.openai.com/v1",
+        reasoning: true,
+      }));
+      return catalogFixture.publish({
+        config: gatewayConfig.getRuntimeConfig(),
+        agentId: "main",
+        catalog: { entries, routeVariants: entries },
+        profiles: { work: { type: "api_key", provider: "openai", key: "synthetic-creation-key" } },
+      });
+    },
+  };
   const writeClient = { connect: { scopes: ["operator.write"] } } as never;
   const adminClient = { connect: { scopes: ["operator.admin"] } } as never;
   const unscopedClient = { connect: {} } as never;
@@ -5691,14 +5510,20 @@ test("sessions.create preserves write-scoped fresh selection but gates adopted r
   await writeSessionStore({
     entries: {
       [existingKey]: sessionStoreEntry("sess-existing", {
-        providerOverride: "openai",
-        modelOverride: "gpt-test-a",
+        executionSelection: {
+          state: "deferred",
+          request: { model: { provider: "openai", id: "gpt-test-a" } },
+          fallbackPermission: "explicit",
+        },
         thinkingLevel: "low",
         fastMode: false,
       }),
       [existingProfileKey]: sessionStoreEntry("sess-existing-profile", {
-        providerOverride: "openai",
-        modelOverride: "gpt-test-a",
+        executionSelection: {
+          state: "deferred",
+          request: { model: { provider: "openai", id: "gpt-test-a" } },
+          fallbackPermission: "explicit",
+        },
         authProfileOverride: "work",
         authProfileOverrideSource: "user",
       }),
@@ -5711,7 +5536,7 @@ test("sessions.create preserves write-scoped fresh selection but gates adopted r
   }>(
     "sessions.create",
     { key: freshKey, model: "openai/gpt-test-a", fastMode: true },
-    { client: writeClient },
+    { client: writeClient, context },
   );
   expect(fresh.ok, JSON.stringify(fresh.error)).toBe(true);
   expect(fresh.payload?.entry).toMatchObject({
@@ -5730,7 +5555,7 @@ test("sessions.create preserves write-scoped fresh selection but gates adopted r
   }>(
     "sessions.create",
     { key: existingKey, model: "openai/gpt-test-a", thinkingLevel: "low", fastMode: false },
-    { client: writeClient },
+    { client: writeClient, context },
   );
   expect(sameSelection.ok, JSON.stringify(sameSelection.error)).toBe(true);
   expect(sameSelection.payload?.entry).toMatchObject({
@@ -5745,7 +5570,7 @@ test("sessions.create preserves write-scoped fresh selection but gates adopted r
   }>(
     "sessions.create",
     { key: existingSubagentKey, model: "openai/gpt-test-a" },
-    { client: writeClient },
+    { client: writeClient, context },
   );
   expect(sameSubagentSelection.ok, JSON.stringify(sameSubagentSelection.error)).toBe(true);
   expect(sameSubagentSelection.payload?.entry).toMatchObject({
@@ -5758,7 +5583,7 @@ test("sessions.create preserves write-scoped fresh selection but gates adopted r
   }>(
     "sessions.create",
     { key: existingProfileKey, model: "openai/gpt-test-a" },
-    { client: writeClient },
+    { client: writeClient, context },
   );
   expect(sameSelectionWithProfile.ok, JSON.stringify(sameSelectionWithProfile.error)).toBe(true);
   expect(sameSelectionWithProfile.payload?.entry).toMatchObject({
@@ -5770,7 +5595,7 @@ test("sessions.create preserves write-scoped fresh selection but gates adopted r
   const profileDenied = await directSessionReq(
     "sessions.create",
     { key: existingProfileKey, model: "openai/gpt-test-a@other" },
-    { client: writeClient },
+    { client: writeClient, context },
   );
   expect(profileDenied.ok).toBe(false);
   expect(profileDenied.error).toMatchObject({
@@ -5781,7 +5606,7 @@ test("sessions.create preserves write-scoped fresh selection but gates adopted r
   const denied = await directSessionReq(
     "sessions.create",
     { key: existingKey, model: "openai/gpt-test-b" },
-    { client: writeClient },
+    { client: writeClient, context },
   );
   expect(denied.ok).toBe(false);
   expect(denied.error).toMatchObject({
@@ -5792,7 +5617,7 @@ test("sessions.create preserves write-scoped fresh selection but gates adopted r
   const unscopedDenied = await directSessionReq(
     "sessions.create",
     { key: existingKey, model: "openai/gpt-test-b" },
-    { client: unscopedClient },
+    { client: unscopedClient, context },
   );
   expect(unscopedDenied.ok).toBe(false);
   expect(unscopedDenied.error).toMatchObject({
@@ -5802,13 +5627,14 @@ test("sessions.create preserves write-scoped fresh selection but gates adopted r
 
   testState.agentConfig = {
     models: {
-      "openai/gpt-test-b": { alias: "gpt-test-a" },
+      "openai/gpt-test-b": { alias: "gpt-test-a", agentRuntime: { id: "openclaw" } },
     },
   };
+  gatewayConfig.clearRuntimeConfigSnapshot();
   const aliasDenied = await directSessionReq(
     "sessions.create",
     { key: existingKey, model: "gpt-test-a" },
-    { client: writeClient },
+    { client: writeClient, context },
   );
   expect(aliasDenied.ok).toBe(false);
   expect(aliasDenied.error).toMatchObject({
@@ -5818,21 +5644,25 @@ test("sessions.create preserves write-scoped fresh selection but gates adopted r
 
   expect(loadSessionEntry({ sessionKey: existingKey, storePath })).toMatchObject({
     sessionId: "sess-existing",
-    providerOverride: "openai",
-    modelOverride: "gpt-test-a",
+    executionSelection: {
+      state: "accepted",
+      selection: { model: { provider: "openai", id: "gpt-test-a" } },
+    },
     thinkingLevel: "low",
   });
   expect(loadSessionEntry({ sessionKey: existingProfileKey, storePath })).toMatchObject({
     sessionId: "sess-existing-profile",
-    providerOverride: "openai",
-    modelOverride: "gpt-test-a",
+    executionSelection: {
+      state: "accepted",
+      selection: { model: { provider: "openai", id: "gpt-test-a" } },
+    },
     authProfileOverride: "work",
   });
 
   const thinkingDenied = await directSessionReq(
     "sessions.create",
     { key: existingKey, thinkingLevel: "high" },
-    { client: writeClient },
+    { client: writeClient, context },
   );
   expect(thinkingDenied.ok).toBe(false);
   expect(thinkingDenied.error).toMatchObject({
@@ -5843,7 +5673,7 @@ test("sessions.create preserves write-scoped fresh selection but gates adopted r
   const fastModeDenied = await directSessionReq(
     "sessions.create",
     { key: existingKey, fastMode: true },
-    { client: writeClient },
+    { client: writeClient, context },
   );
   expect(fastModeDenied.ok).toBe(false);
   expect(fastModeDenied.error).toMatchObject({
@@ -5861,7 +5691,7 @@ test("sessions.create preserves write-scoped fresh selection but gates adopted r
   }>(
     "sessions.create",
     { key: existingKey, model: "openai/gpt-test-b", thinkingLevel: "high", fastMode: true },
-    { client: adminClient },
+    { client: adminClient, context },
   );
   expect(admin.ok, JSON.stringify(admin.error)).toBe(true);
   expect(admin.payload?.entry).toMatchObject({
@@ -5875,7 +5705,7 @@ test("sessions.create preserves write-scoped fresh selection but gates adopted r
 test("sessions.create model change clears a selection the new model does not support", async () => {
   const { storePath } = await createSessionStoreDir();
   agentDiscoveryMock.enabled = true;
-  agentDiscoveryMock.models = [
+  const models: ModelCatalogEntry[] = [
     {
       id: "gpt-test-a",
       name: "A",
@@ -5888,28 +5718,60 @@ test("sessions.create model change clears a selection the new model does not sup
     },
     { id: "gpt-test-b", name: "B", provider: "openai" },
   ];
+  agentDiscoveryMock.models = models;
+
   const adminClient = { connect: { scopes: ["operator.admin"] } } as never;
   const existingKey = "agent:main:dashboard:selected-window";
   await writeSessionStore({
     entries: {
       [existingKey]: sessionStoreEntry("sess-selected-window", {
-        providerOverride: "openai",
-        modelOverride: "gpt-test-a",
+        executionSelection: {
+          state: "deferred",
+          request: { model: { provider: "openai", id: "gpt-test-a" } },
+          fallbackPermission: "explicit",
+        },
         contextWindow: "200k",
       }),
     },
   });
 
+  useProviderPolicyArtifacts();
+  const cfg = getRuntimeConfig();
+  const context = await prepareCreationCatalog({
+    config: {
+      ...cfg,
+      agents: {
+        ...cfg.agents,
+        defaults: {
+          ...cfg.agents?.defaults,
+          models: {
+            ...cfg.agents?.defaults?.models,
+            "openai/gpt-test-b": { agentRuntime: { id: "openclaw" } },
+          },
+        },
+      },
+    },
+    agentId: "main",
+    models,
+    profiles: { work: { type: "api_key", provider: "openai", key: "synthetic-creation-key" } },
+  });
   // Create-with-key adoption omits contextWindow, so the model change must take
   // the clearing branch for the now-unsupported selection instead of rejecting.
   const changed = await directSessionReq<{
     entry?: { modelOverride?: string; contextWindow?: string };
-  }>("sessions.create", { key: existingKey, model: "openai/gpt-test-b" }, { client: adminClient });
+  }>(
+    "sessions.create",
+    { key: existingKey, model: "openai/gpt-test-b" },
+    { client: adminClient, context },
+  );
   expect(changed.ok, JSON.stringify(changed.error)).toBe(true);
   expect(changed.payload?.entry?.modelOverride).toBe("gpt-test-b");
   expect(changed.payload?.entry?.contextWindow).toBeUndefined();
   const stored = loadSessionEntry({ sessionKey: existingKey, storePath });
-  expect(stored?.modelOverride).toBe("gpt-test-b");
+  expect(stored?.executionSelection).toMatchObject({
+    state: "accepted",
+    selection: { model: { provider: "openai", id: "gpt-test-b" } },
+  });
   expect(stored?.contextWindow).toBeUndefined();
 });
 
@@ -6470,8 +6332,11 @@ test("sessions.create loads selected global parent from the requested agent stor
       storePath: mainStorePath,
       entries: {
         global: sessionStoreEntry("sess-main-parent", {
-          providerOverride: "codex",
-          modelOverride: "main-model",
+          executionSelection: {
+            state: "deferred",
+            request: { model: { provider: "codex", id: "main-model" } },
+            fallbackPermission: "explicit",
+          },
         }),
       },
     });
@@ -6480,8 +6345,11 @@ test("sessions.create loads selected global parent from the requested agent stor
       agentId: "work",
       entries: {
         global: sessionStoreEntry("sess-work-parent", {
-          providerOverride: "openai",
-          modelOverride: "work-model",
+          executionSelection: {
+            state: "deferred",
+            request: { model: { provider: "openai", id: "work-model" } },
+            fallbackPermission: "explicit",
+          },
           thinkingLevel: "high",
         }),
       },
@@ -7103,9 +6971,11 @@ test("sessions.create retains the 100K fallback when only another provider has m
     entries: {
       main: sessionStoreEntry(parent.sessionId, {
         sessionFile: parent.sessionFile,
-        providerOverride: "unresolved-provider",
-        modelOverride: "unresolved-model",
-        modelOverrideSource: "user",
+        executionSelection: {
+          state: "deferred",
+          request: { model: { provider: "unresolved-provider", id: "unresolved-model" } },
+          fallbackPermission: "explicit",
+        },
         // Fresh persisted usage above DEFAULT_PARENT_FORK_MAX_TOKENS (100K).
         totalTokens: 200_000,
         totalTokensFresh: true,
@@ -7142,8 +7012,11 @@ test("sessions.create admits an explicit fork within the child model context win
     entries: {
       main: sessionStoreEntry(parent.sessionId, {
         sessionFile: parent.sessionFile,
-        providerOverride: "openai",
-        modelOverride: "gpt-large",
+        executionSelection: {
+          state: "deferred",
+          request: { model: { provider: "openai", id: "gpt-large" } },
+          fallbackPermission: "explicit",
+        },
         totalTokens: 391_869,
         totalTokensFresh: true,
         totalTokensVersion: 1,
@@ -7165,9 +7038,9 @@ test("sessions.create admits an explicit fork within the child model context win
 test("sessions.create rejects an explicit fork above the selected child model window", async () => {
   const { dir } = await createSessionStoreDir();
   testState.sessionConfig = { scope: "per-sender" };
-  agentDiscoveryMock.models = [
-    { id: "gpt-small", name: "Small", provider: "openai", contextWindow: 128_000 },
-  ];
+  const models = [{ id: "gpt-small", name: "Small", provider: "openai", contextWindow: 128_000 }];
+  agentDiscoveryMock.models = models;
+
   const parent = await createCheckpointFixture(dir);
   await writeSessionStore({
     entries: {
@@ -7180,12 +7053,36 @@ test("sessions.create rejects an explicit fork above the selected child model wi
     },
   });
 
-  const created = await directSessionReq("sessions.create", {
+  useProviderPolicyArtifacts();
+  const cfg = getRuntimeConfig();
+  const context = await prepareCreationCatalog({
+    config: {
+      ...cfg,
+      agents: {
+        ...cfg.agents,
+        defaults: {
+          ...cfg.agents?.defaults,
+          models: {
+            ...cfg.agents?.defaults?.models,
+            "openai/gpt-small": { agentRuntime: { id: "openclaw" } },
+          },
+        },
+      },
+    },
     agentId: "main",
-    model: "openai/gpt-small",
-    parentSessionKey: "main",
-    fork: true,
+    models,
+    profiles: { work: { type: "api_key", provider: "openai", key: "synthetic-creation-key" } },
   });
+  const created = await directSessionReq(
+    "sessions.create",
+    {
+      agentId: "main",
+      model: "openai/gpt-small",
+      parentSessionKey: "main",
+      fork: true,
+    },
+    { context },
+  );
 
   expect(created.ok).toBe(false);
   expect((created.error as { message?: string } | undefined)?.message ?? "").toContain(
@@ -7198,7 +7095,7 @@ test("sessions.create rejects an explicit fork above the selected child model wi
 test("sessions.create clamps configured capacity to the selected child model window", async () => {
   const { dir } = await createSessionStoreDir();
   testState.sessionConfig = { scope: "per-sender" };
-  agentDiscoveryMock.models = [
+  const models: ModelCatalogEntry[] = [
     {
       id: "gpt-selectable",
       name: "Selectable",
@@ -7210,6 +7107,7 @@ test("sessions.create clamps configured capacity to the selected child model win
       contextWindowDefault: "1m",
     },
   ];
+  agentDiscoveryMock.models = models;
   const parent = await createCheckpointFixture(dir);
   await writeSessionStore({
     entries: {
@@ -7221,7 +7119,45 @@ test("sessions.create clamps configured capacity to the selected child model win
       }),
     },
   });
+  useProviderPolicyArtifacts();
   const cfg = getRuntimeConfig();
+  const context = await prepareCreationCatalog({
+    config: {
+      ...cfg,
+      agents: {
+        ...cfg.agents,
+        defaults: {
+          ...cfg.agents?.defaults,
+          models: {
+            ...cfg.agents?.defaults?.models,
+            "openai/gpt-selectable": { agentRuntime: { id: "openclaw" } },
+          },
+        },
+      },
+      models: {
+        providers: {
+          openai: {
+            baseUrl: "https://api.openai.com/v1",
+            api: "openai-responses",
+            models: [
+              {
+                id: "gpt-selectable",
+                name: "Selectable",
+                contextTokens: 1_000_000,
+                reasoning: false,
+                input: ["text"],
+                maxTokens: 1024,
+                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+              },
+            ],
+          },
+        },
+      },
+    },
+    agentId: "main",
+    models,
+    profiles: { work: { type: "api_key", provider: "openai", key: "synthetic-creation-key" } },
+  });
 
   const created = await directSessionReq(
     "sessions.create",
@@ -7232,18 +7168,7 @@ test("sessions.create clamps configured capacity to the selected child model win
       model: "openai/gpt-selectable",
       parentSessionKey: "main",
     },
-    {
-      context: {
-        getRuntimeConfig: () => ({
-          ...cfg,
-          models: {
-            providers: {
-              openai: { models: [{ id: "gpt-selectable", contextTokens: 1_000_000 }] },
-            },
-          },
-        }),
-      },
-    },
+    { context },
   );
 
   expect(created.ok).toBe(false);

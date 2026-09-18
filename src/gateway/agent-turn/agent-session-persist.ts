@@ -29,7 +29,7 @@ import {
   restoreCronPinnedExecGrant,
 } from "../../cron/scheduled-tool-policy.js";
 import { assertAgentRunLifecycleGenerationCurrent } from "../../infra/agent-events.js";
-import { resolveSendPolicy } from "../../sessions/send-policy.js";
+import { resolveSendPolicyCore } from "../../sessions/send-policy.js";
 import { recordSessionCreated } from "../../sessions/session-state-events.js";
 import { assertPreparedSkillLibrarySelection } from "../../skills/library/selection.js";
 import { getGeneratedMediaTaskIdsForSessionKey } from "../../tasks/task-status-access.js";
@@ -399,7 +399,7 @@ export async function persistAgentSessionPhase(params: {
             }
             if (
               params.request.deliver === true &&
-              resolveSendPolicy({
+              resolveSendPolicyCore({
                 cfg: params.cfg,
                 entry: merged,
                 sessionKey: params.canonicalSessionKey,
@@ -569,7 +569,7 @@ export async function persistAgentSessionPhase(params: {
   }
   if (
     params.request.deliver === true &&
-    resolveSendPolicy({
+    resolveSendPolicyCore({
       cfg: params.cfg,
       entry: sessionEntry,
       sessionKey: params.canonicalSessionKey,

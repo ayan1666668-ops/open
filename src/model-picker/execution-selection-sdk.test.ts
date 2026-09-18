@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { evaluatePublishedModelRuntimeChoice } from "../agents/model-runtime-choice.js";
+import { createAgentPatchedSessionModelRunGuard } from "../agents/session-model-auto-revert.js";
 import {
   loadSessionEntryReadOnly,
   replaceSessionEntry,
@@ -8,7 +9,6 @@ import { resolveStoredModelOverride } from "../plugin-sdk/command-auth-native.js
 import {
   applyModelOverrideToSessionEntry,
   applyModelOverrideWithAuthProfileCompatibility,
-  applySessionExecutionSelection,
   ModelSelectionLockedError,
   resolvePersistedSessionRuntimeId,
   resolveSessionModelRef,
@@ -22,7 +22,10 @@ import {
 } from "../plugin-sdk/session-store-runtime.js";
 import { getActivePluginRegistryVersion } from "../plugins/runtime.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
-import { createAgentPatchedSessionModelFallback } from "./apply-session-model-selection.js";
+import {
+  applySessionExecutionSelection,
+  createAgentPatchedSessionModelFallback,
+} from "./apply-session-model-selection.js";
 import type { AcpExecutionSelection } from "./execution-selection.js";
 
 vi.mock("../agents/model-runtime-choice.js", async (importOriginal) => ({
@@ -111,7 +114,9 @@ describe("released model-selection SDK entry points", () => {
         { shape: "raw", existing: false, write: "patch" },
         { shape: "raw", existing: true, write: "upsert" },
         { shape: "projected", existing: true, write: "upsert" },
-      ].flatMap((row) => [false, true].map((isDefault) => ({ ...row, authAware, isDefault }))),
+      ].flatMap(({ shape, existing, write }) =>
+        [false, true].map((isDefault) => ({ shape, existing, write, authAware, isDefault })),
+      ),
     ),
   )(
     "preserves ACP selection through a $shape row, existing=$existing, write=$write, auth-aware=$authAware, default=$isDefault",
@@ -154,7 +159,9 @@ describe("released model-selection SDK entry points", () => {
           });
         }
         const row = shape === "projected" ? getSessionEntry(scope) : raw;
-        if (!row) throw new Error("Expected released ACP session view");
+        if (!row) {
+          throw new Error("Expected released ACP session view");
+        }
         const originalAcp = structuredClone(row.acp);
         const setter = authAware
           ? applyModelOverrideWithAuthProfileCompatibility
@@ -184,7 +191,9 @@ describe("released model-selection SDK entry points", () => {
           await upsertSessionEntry({ ...scope, entry: row });
         }
         const stored = loadSessionEntryReadOnly(scope);
-        if (!stored) throw new Error("Expected stored ACP session");
+        if (!stored) {
+          throw new Error("Expected stored ACP session");
+        }
         if (shape === "projected" && isDefault) {
           expect(stored.executionSelection).toEqual({
             state: "accepted",
@@ -450,7 +459,7 @@ describe("released model-selection SDK entry points", () => {
               selection: { provider: "fixture", model: "default", isDefault: true },
               explicitDefaultSelection: explicit,
             };
-            if (authAware)
+            if (authAware) {
               applyModelOverrideWithAuthProfileCompatibility({
                 ...params,
                 cfg,
@@ -458,7 +467,9 @@ describe("released model-selection SDK entry points", () => {
                 currentProvider: "fixture",
                 metadataSnapshot: { plugins: [] },
               });
-            else applyModelOverrideToSessionEntry(params);
+            } else {
+              applyModelOverrideToSessionEntry(params);
+            }
             expect(row.modelOverrideSource).toBe(explicit ? "default" : undefined);
             return row;
           },
@@ -491,7 +502,9 @@ describe("released model-selection SDK entry points", () => {
               },
         );
         const canonical = loadSessionEntryReadOnly(scope);
-        if (!canonical) throw new Error("Expected deferred default selection");
+        if (!canonical) {
+          throw new Error("Expected deferred default selection");
+        }
         const result = await applySessionExecutionSelection({
           cfg,
           ...scope,
@@ -535,7 +548,9 @@ describe("released model-selection SDK entry points", () => {
       });
       await upsertSessionEntry({ ...scope, entry: child });
       const canonical = loadSessionEntryReadOnly(scope);
-      if (!canonical) throw new Error("Expected deferred inherited selection");
+      if (!canonical) {
+        throw new Error("Expected deferred inherited selection");
+      }
       const before = structuredClone(canonical.executionSelection);
       vi.mocked(evaluatePublishedModelRuntimeChoice).mockImplementationOnce(async (params) => {
         const generation = getActivePluginRegistryVersion();
@@ -574,7 +589,7 @@ describe("released model-selection SDK entry points", () => {
   });
 
   it.each([false, true])(
-    "round-trips fallback observations separately from a previous provider-only request; edited=%s",
+    "round-trips fallback observations without rewriting previous selection; edited=%s",
     async (edited) => {
       await withOpenClawTestState({ label: "sdk-fallback-partial-request" }, async (testState) => {
         const scope = {
@@ -592,7 +607,9 @@ describe("released model-selection SDK entry points", () => {
           }),
         });
         const staged = loadSessionEntryReadOnly(scope);
-        if (!staged) throw new Error("Expected the staged session");
+        if (!staged) {
+          throw new Error("Expected the staged session");
+        }
         const applied = await applySessionExecutionSelection({
           cfg: { agents: { defaults: { model: "fixture/default" } } },
           ...scope,
@@ -614,7 +631,9 @@ describe("released model-selection SDK entry points", () => {
         });
         await replaceSessionEntry(scope, { ...previous, modelFallback: snapshot });
         const view = getSessionEntry(scope);
-        if (!view?.modelFallback) throw new Error("Expected the released fallback view");
+        if (!view?.modelFallback) {
+          throw new Error("Expected the released fallback view");
+        }
         expect(view.modelFallback).toMatchObject({
           prevProvider: "observed-provider",
           prevModel: "observed-model",
@@ -639,18 +658,83 @@ describe("released model-selection SDK entry points", () => {
         expect(stored?.executionSelection).toEqual(previous.executionSelection);
         const restored = stored?.modelFallback?.previous;
         expect(restored?.legacyRequest).toEqual({ provider: "pending" });
-        if (edited) {
-          expect(restored).toMatchObject({
-            state: "deferred",
-            request: { defaultSelection: "configured" },
-          });
-          expect(restored?.state === "deferred" && restored.request.model).toBeUndefined();
-        } else {
-          expect(restored).toEqual(previous.executionSelection);
-        }
+        expect(restored).toEqual(previous.executionSelection);
       });
     },
   );
+
+  it("rolls back an SDK auto-fallback marker to its requested origin, not its observed route", async () => {
+    await withOpenClawTestState({ label: "sdk-rollback-origin" }, async (testState) => {
+      const scope = {
+        agentId: "main",
+        sessionKey: "agent:main:sdk-rollback",
+        storePath: testState.path("alternate", "sessions.json"),
+      };
+      const cfg = {
+        agents: {
+          defaults: {
+            model: "fixture/origin",
+            models: {
+              "fixture/origin": {},
+              "fixture/before": {},
+              "alternate/fallback": {},
+            },
+          },
+        },
+      };
+      await upsertSessionEntry({
+        ...scope,
+        entry: {
+          ...entry(false),
+          providerOverride: "alternate",
+          modelOverride: "fallback",
+          modelOverrideSource: "auto",
+          modelOverrideFallbackOriginProvider: "fixture",
+          modelOverrideFallbackOriginModel: "origin",
+        },
+      });
+      expect(resolveSessionModelRef(cfg, getSessionEntry(scope), "main")).toEqual({
+        provider: "fixture",
+        model: "origin",
+      });
+      await patchSessionEntry({
+        ...scope,
+        update: () => ({
+          providerOverride: "fixture",
+          modelOverride: "before",
+          modelFallback: {
+            prevModel: "observed-model",
+            prevProvider: "observed-provider",
+            prevModelOverride: "fallback",
+            prevProviderOverride: "alternate",
+            prevModelOverrideSource: "auto",
+            prevModelOverrideFallbackOriginProvider: "fixture",
+            prevModelOverrideFallbackOriginModel: "origin",
+            ts: 10,
+            source: "agent-patch",
+          },
+        }),
+      });
+      expect(getSessionEntry(scope)?.modelFallback).toMatchObject({
+        prevModel: "observed-model",
+        prevProvider: "observed-provider",
+        prevModelOverride: "origin",
+        prevProviderOverride: "fixture",
+      });
+      const run = createAgentPatchedSessionModelRunGuard({ cfg, ...scope });
+      await run.fail(new Error("Selected model does not exist"), "model_not_found");
+      const restored = getSessionEntry(scope);
+      expect(resolveSessionModelRef(cfg, restored, "main")).toEqual({
+        provider: "fixture",
+        model: "origin",
+      });
+      expect(restored).toMatchObject({
+        modelProvider: "observed-provider",
+        model: "observed-model",
+      });
+      expect(restored?.modelFallback).toBeUndefined();
+    });
+  });
 
   it.each([false, true])(
     "keeps provider-only input incomplete after configured preparation; explicit=%s",
@@ -673,7 +757,9 @@ describe("released model-selection SDK entry points", () => {
           });
           const prepare = async () => {
             const current = loadSessionEntryReadOnly(scope);
-            if (!current) throw new Error("Expected the stored session");
+            if (!current) {
+              throw new Error("Expected the stored session");
+            }
             const result = await applySessionExecutionSelection({
               ...scope,
               cfg,
@@ -747,7 +833,9 @@ describe("released model-selection SDK entry points", () => {
         request: { defaultSelection: "configured", runtime: "openclaw" },
         legacyRequest: { provider: "fixture" },
       });
-      if (!current) throw new Error("Expected the reset session");
+      if (!current) {
+        throw new Error("Expected the reset session");
+      }
       const result = await applySessionExecutionSelection({
         ...scope,
         cfg,
@@ -778,7 +866,9 @@ describe("released model-selection SDK entry points", () => {
         const scope = { agentId: "main", sessionKey };
         await upsertSessionEntry({ ...scope, entry: row });
         const canonical = loadSessionEntryReadOnly(scope);
-        if (!canonical) throw new Error("Expected staged session");
+        if (!canonical) {
+          throw new Error("Expected staged session");
+        }
         const sessionStore = { [sessionKey]: canonical };
         const result = await applySessionExecutionSelection({
           cfg: {

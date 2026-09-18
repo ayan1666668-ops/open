@@ -4,7 +4,7 @@ import {
   resolveAcpLifecycleDetailLines,
 } from "@openclaw/acp-core/runtime/session-identifiers";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
-import { getAcpSessionManager } from "../../../acp/control-plane/manager.js";
+import { getAcpSessionManagerCore } from "../../../acp/control-plane/manager.js";
 import { resolveChannelDefaultBindingPlacement } from "../../../channels/conversation-resolution.js";
 import { getChannelPlugin, normalizeChannelId } from "../../../channels/plugins/index.js";
 import {
@@ -75,7 +75,7 @@ function buildSpawnedAcpBindingMetadata(params: {
   senderId: string;
   sessionMeta?: SessionAcpLifecycle;
 }): Record<string, unknown> {
-  const resolution = getAcpSessionManager().resolveSession({
+  const resolution = getAcpSessionManagerCore().resolveSession({
     cfg: params.cfg,
     sessionKey: params.sessionKey,
     agentId: params.agentId,

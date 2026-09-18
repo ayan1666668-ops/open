@@ -41,7 +41,7 @@ function makeParams(): RunCronAgentTurnParams {
       schedule: { kind: "cron", expr: "0 9 * * *", tz: "UTC" },
       sessionTarget: "session:existing-cron-session",
       wakeMode: "now",
-      payload: { kind: "agentTurn", message: "summarize", model: "test-cli/test-model" },
+      payload: { kind: "agentTurn", message: "summarize", model: "openai/test-model" },
       state: {},
     },
     message: "summarize",
@@ -56,9 +56,9 @@ describe("cron project: runCronIsolatedAgentTurn CLI ownership", () => {
     previousFastTestEnv = clearFastTestEnv();
     resetRunCronIsolatedAgentTurnHarness();
     resolveEffectiveAgentRuntimeMock.mockReturnValue("test-cli");
-    resolveConfiguredModelRefMock.mockReturnValue({ provider: "test-cli", model: "test-model" });
+    resolveConfiguredModelRefMock.mockReturnValue({ provider: "openai", model: "test-model" });
     resolveAllowedModelRefMock.mockReturnValue({
-      ref: { provider: "test-cli", model: "test-model" },
+      ref: { provider: "openai", model: "test-model" },
     });
     resolveThinkingDefaultMock.mockReturnValue("off");
     resolveCronSessionMock.mockReturnValue(
@@ -123,7 +123,7 @@ describe("cron project: runCronIsolatedAgentTurn CLI ownership", () => {
           durationMs: 1,
           executionTrace: { runner: "cli" },
           agentMeta: {
-            provider: "test-cli",
+            provider: "openai",
             model: "test-model",
             cliSessionBinding: binding,
             usage: { input: 1, output: 1 },

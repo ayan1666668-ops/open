@@ -319,7 +319,18 @@ describe("resolveCronAgentConfig model policy preservation", () => {
               ...(source === "payload" ? { model: "custom/legacy" } : {}),
             },
             sessionEntry:
-              source === "session" ? { providerOverride: "custom", modelOverride: "legacy" } : {},
+              source === "session"
+                ? {
+                    executionSelection: {
+                      state: "accepted",
+                      selection: {
+                        model: { provider: "custom", id: "selected" },
+                        executor: { kind: "harness", id: "openclaw" },
+                      },
+                      fallbackPermission: "explicit",
+                    },
+                  }
+                : {},
             isGmailHook: source === "hook",
           }),
         );

@@ -90,50 +90,53 @@ afterEach(() => {
 });
 
 describe("native CLI manual compaction", () => {
-  it("resumes the bound backend session with the backend-owned command", async () => {
-    registerBackend();
+  it.each([undefined, "anthropic:prepared"])(
+    "retains the bound native account for released input %s",
+    async (authProfileId) => {
+      registerBackend();
 
-    const result = await testing.compactNativeCliSession({
-      runtime: "claude-cli",
-      compactParams: compactParams(),
-    });
+      const result = await testing.compactNativeCliSession({
+        runtime: "claude-cli",
+        compactParams: compactParams({ authProfileId }),
+      });
 
-    expect(result).toEqual({
-      ok: true,
-      compacted: true,
-      reason: 'CLI backend "claude-cli" compacted its native session.',
-    });
-    expect(runCliAgentMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        preparedRunAdmission: expect.objectContaining({
-          operationalRunInstance: expect.objectContaining({
-            runId: "openclaw-session:native-compact",
+      expect(result).toEqual({
+        ok: true,
+        compacted: true,
+        reason: 'CLI backend "claude-cli" compacted its native session.',
+      });
+      expect(runCliAgentMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          preparedRunAdmission: expect.objectContaining({
+            operationalRunInstance: expect.objectContaining({
+              runId: "openclaw-session:native-compact",
+            }),
           }),
-        }),
-        prompt: "/compact keep decisions",
-        provider: "claude-cli",
-        modelProvider: "anthropic",
-        cliSessionId: "native-session",
-        cliSessionBinding: {
-          sessionId: "native-session",
+          prompt: "/compact keep decisions",
+          provider: "claude-cli",
+          modelProvider: "anthropic",
+          cliSessionId: "native-session",
+          cliSessionBinding: {
+            sessionId: "native-session",
+            authProfileId: "anthropic:subscription",
+          },
           authProfileId: "anthropic:subscription",
-        },
-        authProfileId: "anthropic:subscription",
-        sessionEntry: { execHost: "node", execNode: "paired-node" },
-        controlOperation: "compact",
-        disableCliLiveSession: true,
-        cleanupCliLiveSessionOnRunEnd: true,
-        allowEmptyAssistantReplyAsSilent: true,
-      }),
-    );
-    const preparedRunAdmission = runCliAgentMock.mock.calls[0]?.[0]?.preparedRunAdmission;
-    if (!preparedRunAdmission) {
-      throw new Error("native compaction did not prepare run admission");
-    }
-    await expect(preparedRunAdmission.admit("embedded")).rejects.toThrow(
-      "prepared execution context is already closed",
-    );
-  });
+          sessionEntry: { execHost: "node", execNode: "paired-node" },
+          controlOperation: "compact",
+          disableCliLiveSession: true,
+          cleanupCliLiveSessionOnRunEnd: true,
+          allowEmptyAssistantReplyAsSilent: true,
+        }),
+      );
+      const preparedRunAdmission = runCliAgentMock.mock.calls[0]?.[0]?.preparedRunAdmission;
+      if (!preparedRunAdmission) {
+        throw new Error("native compaction did not prepare run admission");
+      }
+      await expect(preparedRunAdmission.admit("embedded")).rejects.toThrow(
+        "prepared execution context is already closed",
+      );
+    },
+  );
 
   it("fails explicitly when an owning backend has no resumable session", async () => {
     registerBackend();

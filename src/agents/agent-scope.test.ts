@@ -16,7 +16,6 @@ import {
   resolveAgentSkillsFilter,
   modelFallbackOverrideFromAvailability,
   resolveEffectiveModelFallbacks,
-  resolveModelFallbackAvailability,
   resolveAgentModelFallbacksOverride,
   resolveRunModelFallbacksOverride,
   resolveSubagentModelFallbacksOverride,
@@ -27,11 +26,6 @@ import {
   resolveAgentModelPrimaryWriteTarget,
   setAgentEffectiveModelPrimary,
 } from "./agent-scope.js";
-
-const acceptedSelection = {
-  model: { provider: "fixture", id: "primary" },
-  executor: { kind: "harness" as const, id: "openclaw" },
-};
 
 describe("resolveAgentConfig", () => {
   it("should return undefined when agent id does not exist", () => {
@@ -180,53 +174,6 @@ describe("resolveAgentConfig", () => {
     expect(resolveAgentEffectiveModelPrimary(cfgNoDefaults, "main")).toBeUndefined();
   });
 
-  describe("resolveModelFallbackAvailability", () => {
-    const cfgWithFallbacks: OpenClawConfig = {
-      agents: {
-        defaults: { model: { fallbacks: ["anthropic/claude-sonnet-4-6"] } },
-        list: [{ id: "main" }],
-      },
-    };
-
-    it.each([
-      {
-        name: "disables configured fallbacks for every accepted selection",
-        params: {
-          selection: acceptedSelection,
-        },
-        expected: { kind: "disabled_by_model_override" as const },
-      },
-      {
-        name: "reports no configured fallbacks",
-        params: {},
-        expected: { kind: "none_configured" as const, source: "inherited" as const },
-      },
-    ])("$name", ({ params, expected }) => {
-      const cfg =
-        expected.kind === "none_configured"
-          ? { agents: { list: [{ id: "main" }] } }
-          : cfgWithFallbacks;
-      expect(
-        resolveModelFallbackAvailability({
-          cfg,
-          agentId: "main",
-          ...params,
-        }),
-      ).toEqual(expected);
-    });
-
-    it("shares the disabled result with the empty ladder consumed by a run", () => {
-      const availability = resolveModelFallbackAvailability({
-        cfg: cfgWithFallbacks,
-        agentId: "main",
-        selection: acceptedSelection,
-      });
-
-      expect(availability).toEqual({ kind: "disabled_by_model_override" });
-      expect(availability.kind === "active" ? availability.models : []).toEqual([]);
-    });
-  });
-
   describe("modelFallbackOverrideFromAvailability", () => {
     const projectionRows: Array<{
       name: string;
@@ -370,47 +317,6 @@ describe("resolveAgentConfig", () => {
         agentId: "linus",
       }),
     ).toEqual(["openai/gpt-5.4"]);
-
-    expect(
-      resolveEffectiveModelFallbacks({
-        cfg,
-        agentId: "linus",
-        selection: acceptedSelection,
-      }),
-    ).toStrictEqual([]);
-    expect(
-      resolveEffectiveModelFallbacks({
-        cfg,
-        agentId: "linus",
-        selection: acceptedSelection,
-      }),
-    ).toStrictEqual([]);
-
-    expect(
-      resolveEffectiveModelFallbacks({
-        cfg,
-        agentId: "linus",
-        selection: acceptedSelection,
-      }),
-    ).toStrictEqual([]);
-    expect(
-      resolveEffectiveModelFallbacks({
-        cfg: cfgNoOverride,
-        agentId: "linus",
-        selection: acceptedSelection,
-      }),
-    ).toStrictEqual([]);
-
-    const cfgInheritDefaultsWithoutAgentModel: OpenClawConfig = {
-      agents: {
-        defaults: {
-          model: {
-            fallbacks: ["openai/gpt-5.4"],
-          },
-        },
-        list: [{ id: "linus" }],
-      },
-    };
   });
 
   it("updates the effective model primary at the winning config layer", () => {
@@ -601,52 +507,6 @@ describe("resolveAgentConfig", () => {
       "zai/glm-5",
     ]);
     expect(resolveSubagentModelFallbacksOverride(cfg, "strict")).toStrictEqual([]);
-  });
-
-  it("uses subagent model fallbacks for auto-selected spawned subagent models", () => {
-    const cfg: OpenClawConfig = {
-      agents: {
-        defaults: {
-          model: {
-            fallbacks: ["openai/gpt-5.4"],
-          },
-          subagents: {
-            model: {
-              primary: "kimi/kimi-code",
-              fallbacks: ["openai/gpt-5.4", "zai/glm-5"],
-            },
-          },
-        },
-        list: [
-          {
-            id: "research",
-            model: {
-              primary: "anthropic/claude-sonnet-4-6",
-              fallbacks: ["google/gemini-3-pro"],
-            },
-          },
-          {
-            id: "fallback-only-subagent",
-            model: {
-              primary: "anthropic/claude-sonnet-4-6",
-              fallbacks: ["google/gemini-3-pro"],
-            },
-            subagents: {
-              model: { fallbacks: ["zai/glm-5"] },
-            },
-          },
-        ],
-      },
-    };
-
-    expect(
-      resolveEffectiveModelFallbacks({
-        cfg,
-        agentId: "research",
-        sessionKey: "agent:research:subagent:child",
-        selection: acceptedSelection,
-      }),
-    ).toStrictEqual([]);
   });
 
   it("should return agent-specific sandbox config", () => {
@@ -1147,4 +1007,3 @@ describe("resolveAgentSkillsFilter", () => {
     expect(resolveAgentSkillsFilter(cfg, "writer")).toStrictEqual([]);
   });
 });
-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

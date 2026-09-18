@@ -604,10 +604,14 @@ it.each(["configured", "inherited"] as const)(
           { agentId: "work", sessionKey: "global" },
           {
             sessionId: "work-parent",
-            providerOverride: "selected-provider",
-            modelOverride: "selected-model",
-            modelOverrideSource: "user",
-            modelOverrideRouteResolution: "resolved",
+            executionSelection: {
+              state: "accepted",
+              selection: {
+                model: { provider: "selected-provider", id: "selected-model" },
+                executor: { kind: "harness", id: "openclaw" },
+              },
+              fallbackPermission: "explicit",
+            },
           },
         );
         const scope = { agentId: "main", sessionKey };

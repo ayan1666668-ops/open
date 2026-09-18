@@ -392,7 +392,9 @@ describe("runCronIsolatedAgentTurn terminal lifecycle", () => {
         clearActiveEmbeddedRun(sessionId, stream.queueHandle, sessionKey);
       }
     });
-    if (cliFallback) setActivePluginRegistry(registry);
+    if (cliFallback) {
+      setActivePluginRegistry(registry);
+    }
     const run = runCronIsolatedAgentTurn({
       ...makeIsolatedAgentParamsFixture({
         agentId: "main",
@@ -518,7 +520,9 @@ describe("runCronIsolatedAgentTurn terminal lifecycle", () => {
       unsubscribe();
       handler.dispose();
       vi.useRealTimers();
-      if (cliFallback) restoreActivePluginRegistrySnapshot(registrySnapshot);
+      if (cliFallback) {
+        restoreActivePluginRegistrySnapshot(registrySnapshot);
+      }
     }
   });
 });

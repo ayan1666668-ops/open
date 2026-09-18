@@ -286,7 +286,7 @@ vi.mock("../../acp/runtime/registry.js", async () => {
 });
 
 vi.mock("../../acp/control-plane/manager.js", () => ({
-  getAcpSessionManager: () =>
+  getAcpSessionManagerCore: () =>
     acpManagerMocks.getManager() ?? {
       cancelSession: acpManagerMocks.cancelSession,
       closeSession: acpManagerMocks.closeSession,

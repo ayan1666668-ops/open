@@ -8,7 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { asNullableRecord } from "@openclaw/normalization-core/record-coerce";
 import { describe, expect, it } from "vitest";
-import { getAcpSessionManager } from "../acp/control-plane/manager.js";
+import { getAcpSessionManagerCore } from "../acp/control-plane/manager.js";
 import { getAcpRuntimeBackend } from "../acp/runtime/registry.js";
 import { prepareSystemAgentRunAdmission } from "../agents/admitted-run-context.js";
 import { isLiveTestEnabled, readLiveTestConfig } from "../agents/live-test-helpers.js";
@@ -19,6 +19,7 @@ import { loadSessionEntry } from "../config/sessions/session-accessor.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { isTruthyEnvValue } from "../infra/env.js";
+import { getSessionExecutionSelection } from "../model-picker/execution-selection.js";
 import { clearPluginLoaderCache } from "../plugins/loader.test-fixtures.js";
 import { resetPluginRuntimeStateForTest } from "../plugins/runtime.js";
 import { setTestEnvValue } from "../test-utils/env.js";
@@ -236,7 +237,7 @@ async function runOpenCodeThinkingControlProof(params: {
   sessionKeys: string[];
 }): Promise<void> {
   const sessionKey = `agent:opencode:acp:${randomUUID()}`;
-  const manager = getAcpSessionManager();
+  const manager = getAcpSessionManagerCore();
   await manager.initializeSession({
     cfg: params.cfg,
     sessionKey,
@@ -293,7 +294,7 @@ async function runCodexThinkingControlProof(params: {
   sessionKeys: string[];
 }): Promise<void> {
   const sessionKey = `agent:codex:acp:${randomUUID()}`;
-  const manager = getAcpSessionManager();
+  const manager = getAcpSessionManagerCore();
   const baselineReasoningEffort = resolveHarnessBaselineReasoningEffort();
   await manager.initializeSession({
     cfg: params.cfg,
@@ -530,10 +531,10 @@ describeLive("gateway live (ACP spawn defaults)", () => {
           cfg: runtimeCfg,
           sessionKey: configuredDefaultResult.childSessionKey,
         });
-        expect(configuredDefaultEntry.acp?.runtimeOptions).toMatchObject({
-          model: subagentModel,
-          thinking,
+        expect(getSessionExecutionSelection(configuredDefaultEntry)?.model).toEqual({
+          id: subagentModel,
         });
+        expect(configuredDefaultEntry.acp?.runtimeOptions).toMatchObject({ thinking });
         const primaryOnlyResult = await spawnAcpDirect(
           {
             task: "Reply with exactly LIVE-ACP-SPAWN-PRIMARY-DEFAULT-OK",
@@ -553,16 +554,18 @@ describeLive("gateway live (ACP spawn defaults)", () => {
           cfg: runtimeCfg,
           sessionKey: primaryOnlyResult.childSessionKey,
         });
-        expect(primaryOnlyEntry.acp?.runtimeOptions).toMatchObject({
-          model: subagentModel,
-          thinking,
+        expect(getSessionExecutionSelection(primaryOnlyEntry)?.model).toEqual({
+          id: subagentModel,
         });
-        expect(primaryOnlyEntry.acp?.runtimeOptions?.model).not.toBe("anthropic/claude-sonnet-4-6");
+        expect(primaryOnlyEntry.acp?.runtimeOptions).toMatchObject({ thinking });
+        expect(getSessionExecutionSelection(primaryOnlyEntry)?.model).not.toEqual({
+          id: "anthropic/claude-sonnet-4-6",
+        });
       } finally {
         try {
           const runtimeCfg = await readLiveTestConfig();
           for (const sessionKey of sessionKeys) {
-            await getAcpSessionManager()
+            await getAcpSessionManagerCore()
               .closeSession({
                 cfg: runtimeCfg,
                 sessionKey,

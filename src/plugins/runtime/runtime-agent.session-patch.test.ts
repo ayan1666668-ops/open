@@ -33,10 +33,11 @@ describe("plugin runtime session patches", () => {
         entry: ReturnType<typeof runtime.session.getSessionEntry> | null,
       ) => {
         expect(entry).toMatchObject({
-          providerOverride: "qa-provider",
-          modelOverride: "qa-model",
+          executionSelection: canonical.executionSelection,
           agentRuntimeOverride: "openclaw",
         });
+        expect(entry).not.toHaveProperty("providerOverride");
+        expect(entry).not.toHaveProperty("modelOverride");
         expect(entry).not.toHaveProperty("activeWriterRunId");
       };
       assertPublicView(runtime.session.getSessionEntry(scope));
@@ -63,7 +64,9 @@ describe("plugin runtime session patches", () => {
         },
       });
       assertPublicView(updated);
-      if (!updated) throw new Error("Expected the updated session");
+      if (!updated) {
+        throw new Error("Expected the updated session");
+      }
       await runtime.session.upsertSessionEntry({
         ...scope,
         entry: { ...updated, displayName: "Replaced title" },

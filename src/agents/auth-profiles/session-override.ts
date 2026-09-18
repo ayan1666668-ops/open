@@ -1,15 +1,22 @@
 /** Keeps automatic auth profiles stable within sessions while rotating at lifecycle boundaries. */
+import { isDeepStrictEqual } from "node:util";
 import { resolveSessionAuthProfileOverrideSource } from "../../config/sessions/auth-profile-override-provenance.js";
+import { adoptPersistedSessionSnapshot } from "../../config/sessions/session-snapshot.js";
 import type { SessionEntry } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
-import { getSessionExecutionSelection } from "../../model-picker/execution-selection.js";
-import { isModelExecutionSelection } from "../../model-picker/execution-selection.js";
+import {
+  getSessionExecutionSelection,
+  isModelExecutionSelection,
+} from "../../model-picker/execution-selection.js";
 import type { ProviderModelRouteAuthRequirement } from "../../plugin-sdk/provider-model-types.js";
 import { resolveProviderModelRoutes } from "../../plugins/provider-model-routes.js";
 import { shouldPreserveUnavailableSessionAuthProfileOverride } from "../../sessions/auth-profile-preservation.js";
 import { createLazyImportLoader } from "../../shared/lazy-promise.js";
 import { isUserModelAuthProfileId } from "../../state/user-model-account-id.js";
-import { resolveUserProfileAuthLink } from "../../state/user-model-accounts.js";
+import {
+  readUserModelAuthProfile,
+  resolveUserProfileAuthLink,
+} from "../../state/user-model-accounts.js";
 import { resolveAgentEffectiveModelPrimary } from "../agent-scope.js";
 import {
   isConfiguredAwsSdkAuthProfileForProvider,
@@ -17,11 +24,6 @@ import {
   resolveAuthProfileOrderWithMetadata,
 } from "../auth-profiles/order.js";
 import { hasAnyAuthProfileStoreSource } from "../auth-profiles/store.js";
-import {
-  isActiveUnusableWindow,
-  isModelScopedCooldownReason,
-} from "../auth-profiles/usage-state.js";
-import { isProfileInCooldown } from "../auth-profiles/usage.js";
 import { resolveModelProviderAuthConfig } from "../model-auth-provider-route.js";
 import { splitTrailingAuthProfile } from "../model-ref-profile.js";
 import { resolveModelRouteIntent } from "../model-runtime-policy.js";
@@ -31,21 +33,31 @@ import { listOpenAIAuthProfileProvidersForAgentRuntime } from "../openai-routing
 import { resolveProviderModelRouteAuthRequirement } from "../provider-model-route-auth.js";
 import { createSelectedAuthProfileUnavailableError } from "./selection-error.js";
 import { ensureAuthProfileStore } from "./store-runtime.js";
+import { isProfileGloballyInCooldown, isProfileInCooldown } from "./usage-state.js";
 
-const sessionAccessorLoader = createLazyImportLoader(
-  () => import("../../config/sessions/session-accessor.js"),
-);
+const PERSONAL_ACCOUNT_UNAVAILABLE_MESSAGE =
+  "This session's personal model account is unavailable. Select another account for this session, or reconnect your account and start a new session.";
 
 // Session accessor writes are lazy-loaded so read-only auth resolution paths do
 // not import persistence code unless an override must be updated.
-function loadSessionAccessor() {
-  return sessionAccessorLoader.load();
-}
+const sessionAccessorLoader = createLazyImportLoader(
+  () => import("../../config/sessions/session-accessor.js"),
+);
 
 type SessionAuthProfileOverrideState = Pick<
   SessionEntry,
   "authProfileOverride" | "authProfileOverrideSource" | "authProfileOverrideCompactionCount"
 >;
+export function readSessionAuthProfileOverrideState(
+  entry: Partial<SessionEntry> | undefined,
+): SessionAuthProfileOverrideState {
+  return {
+    authProfileOverride: entry?.authProfileOverride,
+    authProfileOverrideSource: entry?.authProfileOverrideSource,
+    authProfileOverrideCompactionCount: entry?.authProfileOverrideCompactionCount,
+  };
+}
+
 type SessionAuthProfileOverrideSnapshot = SessionAuthProfileOverrideState &
   Pick<SessionEntry, "sessionId">;
 type SessionAuthProfileOverrideResult = {
@@ -99,19 +111,11 @@ function matchesSessionAuthProfileOverrideSnapshot(
   );
 }
 
-function synchronizeSessionEntry(entry: SessionEntry, latest: SessionEntry): void {
-  for (const key of Object.keys(entry)) {
-    if (!Object.hasOwn(latest, key)) {
-      Reflect.deleteProperty(entry, key);
-    }
-  }
-  Object.assign(entry, latest);
-}
-
 async function persistSessionAuthProfileOverrideState(params: {
   sessionEntry: SessionEntry;
   sessionStore: Record<string, SessionEntry>;
   sessionKey: string;
+  agentId?: string;
   state: SessionAuthProfileOverrideState;
   storePath?: string;
   expectedSnapshot?: SessionAuthProfileOverrideSnapshot;
@@ -124,13 +128,13 @@ async function persistSessionAuthProfileOverrideState(params: {
     }
     const latest = sessionStore[sessionKey] ?? sessionEntry;
     if (expectedSnapshot && !matchesSessionAuthProfileOverrideSnapshot(latest, expectedSnapshot)) {
-      synchronizeSessionEntry(sessionEntry, latest);
+      adoptPersistedSessionSnapshot(sessionEntry, latest);
       return latest;
     }
     const target = expectedSnapshot ? latest : sessionEntry;
     applySessionAuthProfileOverrideState(target, state, updatedAt);
     if (target !== sessionEntry) {
-      synchronizeSessionEntry(sessionEntry, target);
+      adoptPersistedSessionSnapshot(sessionEntry, target);
     }
     sessionStore[sessionKey] = target;
     return target;
@@ -140,9 +144,9 @@ async function persistSessionAuthProfileOverrideState(params: {
     sessionStore[sessionKey] = sessionEntry;
   }
   const persisted = await (
-    await loadSessionAccessor()
+    await sessionAccessorLoader.load()
   ).patchSessionEntryCore(
-    { storePath, sessionKey },
+    { agentId: params.agentId, storePath, sessionKey },
     (current) => {
       // Compare inside the canonical SQLite writer so a concurrent /model pin
       // cannot be erased by a stale automatic-selection snapshot.
@@ -161,7 +165,7 @@ async function persistSessionAuthProfileOverrideState(params: {
   );
   if (persisted) {
     if (expectedSnapshot) {
-      synchronizeSessionEntry(sessionEntry, persisted);
+      adoptPersistedSessionSnapshot(sessionEntry, persisted);
     }
     sessionStore[sessionKey] = persisted;
   }
@@ -200,15 +204,12 @@ function isProfileForProvider(params: {
 
 function uniqueProviders(provider: string, acceptedProviderIds?: readonly string[]): string[] {
   const providers = new Set<string>();
-  const push = (value: string | undefined) => {
-    const normalized = value?.trim();
+  for (const value of acceptedProviderIds?.length ? acceptedProviderIds : [provider]) {
+    const normalized = value.trim();
     if (normalized) {
       providers.add(normalized);
     }
-  };
-  const candidates =
-    acceptedProviderIds && acceptedProviderIds.length > 0 ? acceptedProviderIds : [provider];
-  candidates.forEach(push);
+  }
   return [...providers];
 }
 
@@ -238,45 +239,17 @@ export function resolveUserLinkedAuthProfile(params: {
     : undefined;
 }
 
-function isProfileGloballyInCooldown(
-  store: ReturnType<typeof ensureAuthProfileStore>,
-  profileId: string,
-): boolean {
-  if (!isProfileInCooldown(store, profileId)) {
-    return false;
-  }
-  const usage = store.usageStats?.[profileId];
-  if (!usage) {
-    return true;
-  }
-  const now = Date.now();
-  return (
-    isActiveUnusableWindow(usage.disabledUntil, now) ||
-    (isActiveUnusableWindow(usage.blockedUntil, now) &&
-      (usage.blockedScope !== "model" || !usage.blockedModel)) ||
-    (isActiveUnusableWindow(usage.cooldownUntil, now) &&
-      (!isModelScopedCooldownReason(usage.cooldownReason) || !usage.cooldownModel))
-  );
-}
-
 /** Clears an auth-profile override from a session and persists it when possible. */
 export async function clearSessionAuthProfileOverride(params: {
   sessionEntry: SessionEntry;
   sessionStore: Record<string, SessionEntry>;
   sessionKey: string;
+  agentId?: string;
   storePath?: string;
 }) {
-  const { sessionEntry, sessionStore, sessionKey, storePath } = params;
   await persistSessionAuthProfileOverrideState({
-    sessionEntry,
-    sessionStore,
-    sessionKey,
-    state: {
-      authProfileOverride: undefined,
-      authProfileOverrideSource: undefined,
-      authProfileOverrideCompactionCount: undefined,
-    },
-    storePath,
+    ...params,
+    state: readSessionAuthProfileOverrideState(undefined),
   });
 }
 
@@ -330,7 +303,7 @@ async function resolveSessionAuthProfileOverride(params: {
       cfg,
       store,
       provider: candidateProvider,
-      forModel: sessionEntry.model,
+      forModel: params.modelId,
     }),
   );
   const order = [...new Set(orderResolutions.flatMap((resolution) => resolution.profileIds))];
@@ -351,9 +324,7 @@ async function resolveSessionAuthProfileOverride(params: {
   ) {
     if (isUserModelAuthProfileId(currentProfileId)) {
       // A missing personal owner must not let the next participant claim this session's billing.
-      throw new Error(
-        "This session's personal model account is unavailable. Select another account for this session, or reconnect your account and start a new session.",
-      );
+      throw new Error(PERSONAL_ACCOUNT_UNAVAILABLE_MESSAGE);
     }
     const acceptedSelection = getSessionExecutionSelection(sessionEntry);
     if (
@@ -373,12 +344,24 @@ async function resolveSessionAuthProfileOverride(params: {
     ) {
       return { profileId: currentProfileId, store };
     }
-    await clearSessionAuthProfileOverride({ sessionEntry, sessionStore, sessionKey, storePath });
+    await clearSessionAuthProfileOverride({
+      sessionEntry,
+      sessionStore,
+      sessionKey,
+      agentId: params.agentId,
+      storePath,
+    });
     current = undefined;
   }
 
   if (current && !isProfileForProvider({ cfg, providers, profileId: current, store })) {
-    await clearSessionAuthProfileOverride({ sessionEntry, sessionStore, sessionKey, storePath });
+    await clearSessionAuthProfileOverride({
+      sessionEntry,
+      sessionStore,
+      sessionKey,
+      agentId: params.agentId,
+      storePath,
+    });
     current = undefined;
   }
 
@@ -403,6 +386,7 @@ async function resolveSessionAuthProfileOverride(params: {
         sessionEntry,
         sessionStore,
         sessionKey,
+        agentId: params.agentId,
         state: {
           authProfileOverride: linked.profileId,
           authProfileOverrideSource: "user-link",
@@ -416,7 +400,13 @@ async function resolveSessionAuthProfileOverride(params: {
 
   // Automatic pins must stay inside the currently configured rotation order.
   if (current && order.length > 0 && !order.includes(current)) {
-    await clearSessionAuthProfileOverride({ sessionEntry, sessionStore, sessionKey, storePath });
+    await clearSessionAuthProfileOverride({
+      sessionEntry,
+      sessionStore,
+      sessionKey,
+      agentId: params.agentId,
+      storePath,
+    });
     current = undefined;
   }
 
@@ -431,17 +421,12 @@ async function resolveSessionAuthProfileOverride(params: {
         sessionEntry,
         sessionStore,
         sessionKey,
-        state: {
-          authProfileOverride: undefined,
-          authProfileOverrideSource: undefined,
-          authProfileOverrideCompactionCount: undefined,
-        },
+        agentId: params.agentId,
+        state: readSessionAuthProfileOverrideState(undefined),
         storePath,
         expectedSnapshot: {
           sessionId: sessionEntry.sessionId,
-          authProfileOverride: sessionEntry.authProfileOverride,
-          authProfileOverrideSource: sessionEntry.authProfileOverrideSource,
-          authProfileOverrideCompactionCount: sessionEntry.authProfileOverrideCompactionCount,
+          ...readSessionAuthProfileOverrideState(sessionEntry),
         },
       });
       const latestProfileId = latest?.authProfileOverride;
@@ -553,6 +538,7 @@ async function resolveSessionAuthProfileOverride(params: {
       sessionEntry,
       sessionStore,
       sessionKey,
+      agentId: params.agentId,
       state: {
         authProfileOverride: next,
         authProfileOverrideSource: "auto",
@@ -572,7 +558,7 @@ type SessionAuthSelection = {
 };
 
 /** Resolves the session credential and its prepared route facts. */
-export async function resolveSessionAuthSelection(params: {
+type SessionAuthSelectionParams = {
   cfg: OpenClawConfig;
   provider: string;
   modelId: string;
@@ -586,7 +572,11 @@ export async function resolveSessionAuthSelection(params: {
   storePath?: string;
   isNewSession: boolean;
   requesterProfileId?: string;
-}): Promise<SessionAuthSelection | undefined> {
+};
+
+export async function resolveSessionAuthSelection(
+  params: SessionAuthSelectionParams,
+): Promise<SessionAuthSelection | undefined> {
   const modelId = splitTrailingAuthProfile(params.modelId).model;
   const cfg = resolveModelProviderAuthConfig({
     config: params.cfg,
@@ -665,4 +655,103 @@ export async function resolveSessionAuthSelection(params: {
     source: rotatedPinnedProfileId || configuredProfileId ? "user" : "auto",
     routeRequirement: profileAuthRequirement({ cfg, store: authStore, profileId }),
   };
+}
+
+/** Reply account scope is transient; only authenticated ingress supplies requester identity. */
+export type ReplySessionAuthContext = {
+  isNewSession: boolean;
+  requesterProfileId?: string;
+  configuredProfileId?: string;
+};
+
+export type PreparedSessionAuthSelection = {
+  selection: SessionAuthSelection | undefined;
+  state: SessionAuthProfileOverrideState;
+  validate: (
+    current?: Partial<SessionEntry>,
+    expected?: SessionAuthProfileOverrideState,
+  ) => string | undefined;
+};
+
+/** Stages the existing account policy without mutating the live session before model readiness. */
+export async function prepareSessionAuthSelection(
+  params: SessionAuthSelectionParams & { sessionEntry: SessionEntry; sessionKey: string },
+): Promise<PreparedSessionAuthSelection> {
+  const entry = { ...params.sessionEntry };
+  const initial = readSessionAuthProfileOverrideState(params.sessionEntry);
+  const selection = await resolveSessionAuthSelection({
+    ...params,
+    sessionEntry: entry,
+    sessionStore: { [params.sessionKey]: entry },
+    storePath: undefined,
+  });
+  const profileId = selection?.profileId;
+  const personal =
+    profileId && isUserModelAuthProfileId(profileId)
+      ? readUserModelAuthProfile(profileId)
+      : undefined;
+  const linkedRequester =
+    params.isNewSession &&
+    entry.authProfileOverrideSource === "user-link" &&
+    entry.authProfileOverride !== initial.authProfileOverride
+      ? params.requesterProfileId
+      : undefined;
+  const providers = uniqueProviders(
+    params.provider,
+    listOpenAIAuthProfileProvidersForAgentRuntime({
+      provider: params.provider,
+      harnessRuntime: params.harnessRuntime,
+      config: params.cfg,
+    }),
+  );
+  const state = readSessionAuthProfileOverrideState(entry);
+  return {
+    selection,
+    state,
+    validate: (currentEntry, expected = initial) => {
+      const currentState = readSessionAuthProfileOverrideState(currentEntry);
+      if (!isDeepStrictEqual(currentState, expected)) {
+        return "The selected account changed. Try again.";
+      }
+      if (profileId && isUserModelAuthProfileId(profileId)) {
+        const current = readUserModelAuthProfile(profileId);
+        if (!current) {
+          return PERSONAL_ACCOUNT_UNAVAILABLE_MESSAGE;
+        }
+        if (!isDeepStrictEqual(current, personal)) {
+          return "The selected account changed. Try again.";
+        }
+      }
+      const establishedPin =
+        currentState.authProfileOverride === profileId &&
+        (currentState.authProfileOverrideSource === "user" ||
+          currentState.authProfileOverrideSource === "user-link");
+      if (
+        linkedRequester &&
+        !establishedPin &&
+        resolveUserProfileAuthLink({
+          profileId: linkedRequester,
+          providers,
+        }) !== profileId
+      ) {
+        return "Your default model account changed. Try again.";
+      }
+      return undefined;
+    },
+  };
+}
+
+/** The session-selection transaction applies only the staged account fields. */
+export function commitPreparedSessionAuthSelection(
+  entry: SessionEntry,
+  prepared: PreparedSessionAuthSelection,
+): boolean {
+  const changed =
+    entry.authProfileOverride !== prepared.state.authProfileOverride ||
+    entry.authProfileOverrideSource !== prepared.state.authProfileOverrideSource ||
+    entry.authProfileOverrideCompactionCount !== prepared.state.authProfileOverrideCompactionCount;
+  if (changed) {
+    applySessionAuthProfileOverrideState(entry, prepared.state, Date.now());
+  }
+  return changed;
 }

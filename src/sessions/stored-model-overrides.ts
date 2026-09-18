@@ -1,7 +1,6 @@
 // Resolves persisted per-session model choices across child and parent sessions.
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import type { ModelFallbackRouteResolution } from "../agents/model-fallback.types.js";
-import type { ModelManifestNormalizationContext } from "../agents/model-ref-shared.js";
 import {
   normalizeStoredOverrideModel,
   resolvePersistedOverrideModelRef,
@@ -9,8 +8,10 @@ import {
 import { resolveSessionParentSessionKey } from "../channels/plugins/session-conversation.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import type { PublicSessionEntry } from "../model-picker/execution-selection-projection.js";
-import { getSessionExecutionSelection } from "../model-picker/execution-selection.js";
-import { isModelExecutionSelection } from "../model-picker/execution-selection.js";
+import {
+  getSessionExecutionSelection,
+  isModelExecutionSelection,
+} from "../model-picker/execution-selection.js";
 
 type SessionModelView = PublicSessionEntry & Pick<SessionEntry, "executionSelection">;
 
@@ -37,14 +38,12 @@ export type StoredModelOverride = {
   routeResolution: ModelFallbackRouteResolution;
 };
 
-function resolveStoredOverrideFromEntry(
-  params: {
-    entry?: SessionModelView;
-    defaultProvider: string;
-    source: StoredModelOverride["source"];
-    allowPluginNormalization?: boolean;
-  } & ModelManifestNormalizationContext,
-): StoredModelOverride | null {
+function resolveStoredOverrideFromEntry(params: {
+  entry?: SessionModelView;
+  defaultProvider: string;
+  source: StoredModelOverride["source"];
+  allowPluginNormalization?: boolean;
+}): StoredModelOverride | null {
   if (params.entry?.executionSelection) {
     const resolved = resolveStoredModelOverrideCore({
       sessionEntry: { executionSelection: params.entry.executionSelection },
@@ -67,7 +66,6 @@ function resolveStoredOverrideFromEntry(
     overrideModel: normalized.modelOverride,
     routeResolution,
     allowPluginNormalization: params.allowPluginNormalization,
-    manifestPlugins: params.manifestPlugins,
   });
   return ref
     ? {
@@ -76,23 +74,6 @@ function resolveStoredOverrideFromEntry(
         routeResolution,
       }
     : null;
-}
-
-/** Resolves only the current session's persisted model override. */
-export function resolveDirectStoredModelOverride(
-  params: {
-    sessionEntry?: SessionModelView;
-    defaultProvider: string;
-    allowPluginNormalization?: boolean;
-  } & ModelManifestNormalizationContext,
-): StoredModelOverride | null {
-  return resolveStoredOverrideFromEntry({
-    entry: params.sessionEntry,
-    defaultProvider: params.defaultProvider,
-    source: "session",
-    allowPluginNormalization: params.allowPluginNormalization,
-    manifestPlugins: params.manifestPlugins,
-  });
 }
 
 function resolveParentSessionKeyCandidate(params: {
@@ -120,18 +101,29 @@ export function resolveStoredModelOverride(params: {
   defaultProvider: string;
   allowPluginNormalization?: boolean;
 }): StoredModelOverride | null {
-  if (params.sessionEntry?.modelOverrideSource === "default") return null;
-  const direct = resolveDirectStoredModelOverride(params);
+  if (params.sessionEntry?.modelOverrideSource === "default") {
+    return null;
+  }
+  const direct = resolveStoredOverrideFromEntry({
+    ...params,
+    entry: params.sessionEntry,
+    source: "session",
+  });
   const stored = params.sessionEntry?.executionSelection;
   if (
     direct ||
     (stored && !(stored.state === "deferred" && stored.request.defaultSelection === "inherit"))
-  )
+  ) {
     return direct;
+  }
   const parentKey = resolveParentSessionKeyCandidate(params);
-  if (!parentKey) return null;
+  if (!parentKey) {
+    return null;
+  }
   const entry = params.loadSessionEntry?.(parentKey) ?? params.sessionStore?.[parentKey];
-  if (legacyViewMetadata(entry).activeFallback) return null;
+  if (legacyViewMetadata(entry).activeFallback) {
+    return null;
+  }
   return resolveStoredOverrideFromEntry({ ...params, entry, source: "parent" });
 }
 
@@ -165,7 +157,10 @@ export function resolveStoredModelOverrideCore(params: {
         }
       : null;
   };
-  if (params.sessionEntry?.executionSelection) return project(params.sessionEntry, "session");
+  const stored = params.sessionEntry?.executionSelection;
+  if (stored && !(stored.state === "deferred" && stored.request.defaultSelection === "inherit")) {
+    return project(params.sessionEntry, "session");
+  }
   const parentKey = resolveParentSessionKeyCandidate(params);
   return parentKey
     ? project(params.loadSessionEntry?.(parentKey) ?? params.sessionStore?.[parentKey], "parent")

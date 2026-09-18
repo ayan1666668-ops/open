@@ -40,7 +40,7 @@ vi.mock("../../config/sessions/session-accessor.js", () => ({
 }));
 
 vi.mock("../../sessions/send-policy.js", () => ({
-  resolveSendPolicy: (...args: unknown[]) => state.resolveSendPolicy(...args),
+  resolveSendPolicyCore: (...args: unknown[]) => state.resolveSendPolicy(...args),
 }));
 
 vi.mock("./inbound-meta.js", () => ({
@@ -71,8 +71,10 @@ function createRun(overrides: Partial<FollowupRun> = {}): FollowupRun {
       sessionFile: "/tmp/queued.jsonl",
       workspaceDir: "/tmp",
       config: {},
-      provider: "anthropic",
-      model: "claude",
+      executionSelection: {
+        model: { provider: "anthropic", id: "claude" },
+        executor: { kind: "harness", id: "openclaw" },
+      },
       timeoutMs: 1_000,
       blockReplyBreak: "message_end",
     },

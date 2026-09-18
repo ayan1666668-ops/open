@@ -21,7 +21,7 @@ import { claimSessionPendingInputDedupeRecovery } from "../../config/sessions/se
 import { logVerbose } from "../../globals.js";
 import { getSessionBindingService } from "../../infra/outbound/session-binding-service.js";
 import { toPluginConversationBinding } from "../../plugins/conversation-binding.js";
-import { resolveSendPolicy } from "../../sessions/send-policy.js";
+import { resolveSendPolicyCore } from "../../sessions/send-policy.js";
 import { resolveSilentReplyPolicyFromPolicies } from "../../shared/silent-reply-policy.js";
 import { sessionDeliveryChannel } from "../../utils/delivery-context.shared.js";
 import { resolveCommandTurnContext } from "../command-turn-context.js";
@@ -182,7 +182,7 @@ export async function prepareDispatchOperationContext(state: PrepareDispatchDeli
   // below (plugin-binding notices, fast-abort, normal dispatch) honors it. The
   // agent still processes inbound, but automatic replies/notices/indicators are
   // blocked; explicit message tool sends remain available.
-  const sendPolicy = resolveSendPolicy({
+  const sendPolicy = resolveSendPolicyCore({
     cfg,
     entry: sessionStoreEntry.entry,
     sessionKey: sessionStoreEntry.sessionKey ?? sessionKey,

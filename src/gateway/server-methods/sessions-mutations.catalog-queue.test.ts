@@ -2,6 +2,7 @@ import { performance } from "node:perf_hooks";
 import { afterEach, expect, test, vi } from "vitest";
 import {
   markPreparedModelRuntimeSnapshotsStale,
+  prepareModelRuntimeSnapshot,
   rejectPendingPreparedModelRuntimeReplacement,
 } from "../../agents/prepared-model-runtime.js";
 import { resetPreparedModelRuntimeSnapshotsForTest } from "../../agents/prepared-model-runtime.test-support.js";
@@ -82,8 +83,19 @@ test("catalog reload releases the agent writer while preserving same-session ord
     });
     expect(replacement).toBeDefined();
     const loadGatewayModelCatalog = vi.fn(async () => {
-      entered.resolve();
-      return await loadActualGatewayModelCatalog({ agentId: "main", getConfig: () => ({}) });
+      return await loadActualGatewayModelCatalog({
+        agentId: "main",
+        getConfig: () => ({}),
+        loadPublishedPreparedModelCatalogOwnerSnapshot: (params) => {
+          // The catalog loader yields before owner lookup; signal only after the gate has a waiter.
+          const pending = prepareModelRuntimeSnapshot({
+            ...params,
+            agentDir: state.agentDir("main"),
+          });
+          entered.resolve();
+          return pending;
+        },
+      });
     });
     const context = patchContext(loadGatewayModelCatalog);
     const catalogResponse = vi.fn();
@@ -176,7 +188,7 @@ test("catalog reload releases the agent writer while preserving same-session ord
   });
 });
 
-test.each(["identity", "label", "alias", "cleared-selection"] as const)(
+test.each(["identity", "label", "alias", "cleared-preferences"] as const)(
   "catalog preparation revalidates fresh %s before using the prepared result",
   async (change) => {
     await withOpenClawTestState({ scenario: "minimal" }, async () => {
@@ -186,9 +198,15 @@ test.each(["identity", "label", "alias", "cleared-selection"] as const)(
       const existing: SessionEntry = {
         sessionId: "before",
         updatedAt: 1,
-        providerOverride: "anthropic",
-        modelOverride: "claude-sonnet-4-6",
-        ...(change === "cleared-selection"
+        executionSelection: {
+          state: "accepted",
+          selection: {
+            model: { provider: "anthropic", id: "claude-sonnet-4-6" },
+            executor: { kind: "harness", id: "openclaw" },
+          },
+          fallbackPermission: "explicit",
+        },
+        ...(change === "cleared-preferences"
           ? { thinkingLevel: "high", contextWindow: "extended" }
           : {}),
       };
@@ -217,7 +235,7 @@ test.each(["identity", "label", "alias", "cleared-selection"] as const)(
       );
       const response = vi.fn();
       const pending = patch(
-        change === "cleared-selection"
+        change === "cleared-preferences"
           ? { key, model: null }
           : {
               key,
@@ -258,11 +276,14 @@ test.each(["identity", "label", "alias", "cleared-selection"] as const)(
       }
       expect(loadGatewayModelCatalog).toHaveBeenCalledOnce();
       const stored = loadSessionEntry({ agentId: "main", sessionKey: storedKey });
-      if (change === "cleared-selection") {
-        expect(response).toHaveBeenCalledWith(true, expect.any(Object), undefined);
+      if (change === "cleared-preferences") {
+        expect(response).toHaveBeenCalledWith(
+          false,
+          undefined,
+          expect.objectContaining({ code: "UNAVAILABLE", retryable: true }),
+        );
         expect(stored).toMatchObject({ sessionId: "before" });
-        expect(stored?.modelOverride).toBeUndefined();
-        expect(stored?.providerOverride).toBeUndefined();
+        expect(stored?.executionSelection).toEqual(existing.executionSelection);
         expect(stored?.thinkingLevel).toBeUndefined();
         expect(stored?.contextWindow).toBeUndefined();
       } else if (change === "identity") {

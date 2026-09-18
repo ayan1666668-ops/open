@@ -106,9 +106,9 @@ describe("legacy state migration plan identity", () => {
     const plan = await planFixture(fixture);
 
     const schema = plan.steps.find((step) => step.id === "state-schema");
-    const targets = [configuredPath, retiredPath].map((databasePath) => ({
+    const targets = [configuredPath, retiredPath].map((targetPath) => ({
       kind: "sqlite",
-      path: databasePath,
+      path: targetPath,
     }));
     expect(schema?.source).toEqual(expect.arrayContaining(targets));
     expect(schema?.target).toEqual(expect.arrayContaining(targets));

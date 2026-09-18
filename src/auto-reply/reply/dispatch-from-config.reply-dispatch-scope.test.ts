@@ -1,4 +1,5 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import type { SessionEntry } from "../../config/sessions/types.js";
 import { commitSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
 import type { PluginHookReplyDispatchContext } from "../../plugins/hook-types.js";
 import { createUserTurnTranscriptRecorder } from "../../sessions/user-turn-transcript.js";
@@ -33,6 +34,7 @@ describe("dispatchReplyFromConfig reply hook scope", () => {
     expectedKind: "agent" | "acp";
     sourceKey?: string;
     metadata?: boolean;
+    pending?: "harness" | "acp";
     missing?: boolean;
     bound?: boolean;
     tail?: boolean;
@@ -50,6 +52,26 @@ describe("dispatchReplyFromConfig reply hook scope", () => {
       targetKey: "agent:test:session",
       metadata: true,
       expectedKind: "acp",
+    },
+    {
+      name: "stored ACP session with a pending harness model",
+      targetKey: "agent:test:session",
+      metadata: true,
+      pending: "harness",
+      expectedKind: "acp",
+    },
+    {
+      name: "plugin-key ACP session with a pending harness model",
+      targetKey: "agent:test:plugin:conversation",
+      metadata: true,
+      pending: "harness",
+      expectedKind: "acp",
+    },
+    {
+      name: "unaccepted ACP request",
+      targetKey: "agent:test:session",
+      pending: "acp",
+      expectedKind: "agent",
     },
     {
       name: "ACP command target",
@@ -84,7 +106,7 @@ describe("dispatchReplyFromConfig reply hook scope", () => {
     });
     const sourceKey = scenario.sourceKey ?? scenario.targetKey;
     const sourceEntry = { sessionId: "source-session", updatedAt: Date.now() };
-    const targetEntry = scenario.missing
+    const targetEntry: SessionEntry | undefined = scenario.missing
       ? undefined
       : {
           sessionId: "target-session",
@@ -99,6 +121,24 @@ describe("dispatchReplyFromConfig reply hook scope", () => {
           executor: { kind: "acp", backend: "acpx", agent: "qa-agent" },
           model: "native-managed",
         });
+      }
+      if (scenario.pending) {
+        const previous =
+          targetEntry.executionSelection?.state === "accepted"
+            ? targetEntry.executionSelection.selection
+            : undefined;
+        targetEntry.executionSelection = {
+          state: "deferred",
+          request: {
+            model: { id: "pending-model" },
+            executor:
+              scenario.pending === "acp"
+                ? { kind: "acp", backend: "acpx", agent: "qa-agent" }
+                : { kind: "harness", id: "codex" },
+          },
+          previous,
+          fallbackPermission: "explicit",
+        };
       }
       sessionStoreMocks.entriesBySessionKey.set(scenario.targetKey, targetEntry);
     }
@@ -187,6 +227,14 @@ describe("dispatchReplyFromConfig reply hook scope", () => {
     expect(userTurnTranscriptRecorder.message?.content).toBe(
       scenario.expectedKind === "acp" ? "accepted user turn" : "source user turn",
     );
+    if (scenario.pending) {
+      expect(
+        sessionStoreMocks.entriesBySessionKey.get(scenario.targetKey)?.executionSelection,
+      ).toMatchObject({
+        state: "deferred",
+        request: { model: { id: "pending-model" } },
+      });
+    }
   });
 
   it("refuses restricted ACP takeover before invoking reply hooks", async () => {

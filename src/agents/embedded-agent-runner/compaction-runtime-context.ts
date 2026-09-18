@@ -4,6 +4,10 @@
 import type { ThinkLevel, ThinkingCatalogEntry } from "../../auto-reply/thinking.js";
 import type { ChatType } from "../../channels/chat-type.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import {
+  isModelExecutionSelection,
+  type PreparedSessionExecutionSelection,
+} from "../../model-picker/execution-selection.js";
 import type { ProviderRuntimeModel } from "../../plugins/provider-runtime-model.types.js";
 import { isDefaultAgentRuntimeId, normalizeOptionalAgentRuntimeId } from "../agent-runtime-id.js";
 import {
@@ -23,7 +27,10 @@ import { resolveSelectedOpenAIRuntimeProvider } from "../openai-routing.js";
 import { agentRuntimeAuthPlanMatchesTarget } from "../runtime-plan/prepare-auth.js";
 import type { AgentRuntimePlan } from "../runtime-plan/types.js";
 import { resolveCandidateThinkingLevel } from "../thinking-runtime.js";
-import type { CompactEmbeddedAgentSessionParams } from "./compact.types.js";
+import type {
+  CompactEmbeddedAgentSessionParams,
+  CompactEmbeddedAgentSessionRuntimeParams,
+} from "./compact.types.js";
 import { readAgentModelContextTokens } from "./model-context-tokens.js";
 import { normalizeContextTokenBudget } from "./utils.js";
 
@@ -61,6 +68,34 @@ type EmbeddedCompactionRuntimeContextParams = Omit<
   harnessRuntime?: string | null;
   activeProcessSessions?: ActiveProcessSessionReference[];
 };
+
+/** Projects the selection owner's accepted fact across the released compaction parameters. */
+export function applyPreparedCompactionSelection<
+  T extends CompactEmbeddedAgentSessionRuntimeParams,
+>(
+  params: T,
+  prepared:
+    | Pick<Extract<PreparedSessionExecutionSelection, { status: "ready" }>, "selection" | "auth">
+    | undefined,
+): T {
+  if (!prepared) {
+    return params;
+  }
+  const { selection, auth } = prepared;
+  if (selection.executor.kind === "acp") {
+    throw new Error("This app manages compaction for this conversation.");
+  }
+  return {
+    ...params,
+    ...(isModelExecutionSelection(selection)
+      ? { provider: selection.model.provider, model: selection.model.id }
+      : {}),
+    agentHarnessId: selection.executor.id,
+    ...(auth
+      ? { authProfileId: auth.selection?.profileId, authProfileIdSource: auth.selection?.source }
+      : {}),
+  };
+}
 
 /** Resolve the configured compaction override against the actual model/runtime candidate. */
 export function resolveEmbeddedCompactionThinkingLevel(params: {

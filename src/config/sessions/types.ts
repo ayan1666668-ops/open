@@ -696,7 +696,7 @@ export function resolveSessionPluginTraceLines(
   return resolveSessionPluginLines(entry, isSessionPluginTraceLine);
 }
 
-export function normalizeSessionRuntimeModelFields(entry: SessionEntry): SessionEntry {
+function normalizeSessionRuntimeModelFields(entry: SessionEntry): SessionEntry {
   const normalizedModel = normalizeOptionalString(entry.model);
   const normalizedProvider = normalizeOptionalString(entry.modelProvider);
   let next = entry;

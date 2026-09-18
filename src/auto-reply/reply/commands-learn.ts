@@ -73,7 +73,9 @@ function resolveWorkshopSurface(
   try {
     const targetSessionEntry = params.sessionStore?.[params.sessionKey] ?? params.sessionEntry;
     const selection = getSessionExecutionSelection(targetSessionEntry);
-    if (selection?.executor.kind === "acp") return undefined;
+    if (selection?.executor.kind === "acp") {
+      return undefined;
+    }
     const runtimeOverride = selection?.executor.id;
     const cliProvider = isCliRuntimeAliasForProvider({
       provider: params.provider,

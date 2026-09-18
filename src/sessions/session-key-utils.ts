@@ -10,7 +10,7 @@ import {
 } from "@openclaw/session-url-contract";
 import type { SessionEntry } from "../config/sessions/types.js";
 import { pruneMapToMaxSize } from "../infra/map-size.js";
-import { getSessionExecutionSelection } from "../model-picker/execution-selection.js";
+import { getCommittedSessionExecutionSelection } from "../model-picker/execution-selection.js";
 import { escapeRegExp } from "../shared/regexp.js";
 
 export type { ParsedAgentSessionKey };
@@ -345,7 +345,8 @@ export function resolveSessionDispatchKind(
   sessionKey: string | undefined | null,
   entry?: Pick<SessionEntry, "executionSelection">,
 ): "agent" | "acp" {
-  return getSessionExecutionSelection(entry)?.executor.kind === "acp" || isAcpSessionKey(sessionKey)
+  return getCommittedSessionExecutionSelection(entry)?.executor.kind === "acp" ||
+    isAcpSessionKey(sessionKey)
     ? "acp"
     : "agent";
 }

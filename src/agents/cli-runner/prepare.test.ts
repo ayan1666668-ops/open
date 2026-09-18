@@ -89,6 +89,7 @@ import {
 import {
   createApiKeyCredential,
   createAuthProfileStoreFixture,
+  oauthCred,
 } from "../auth-profiles/credential-fixtures.test-support.js";
 import { resolveApiKeyForProfile as resolveApiKeyForProfileImpl } from "../auth-profiles/oauth.js";
 import {
@@ -267,25 +268,33 @@ function createCliBackendConfig(params: TestCliBackendParams = {}): OpenClawConf
 const SHARED_CHAT_MESSAGE_TOOL_ETIQUETTE =
   "- Group/channel: stale/joke/light ack/low-value chatter => reaction or silence. Needed reply => `message(action=send)`; final text private.";
 
+function createLoopbackRuntime() {
+  return {
+    port: 31783,
+    ownerToken: "loopback-owner-token",
+    nonOwnerToken: "loopback-non-owner-token",
+  };
+}
+
+function createMessageToolScope() {
+  return {
+    agentId: "main",
+    tools: [
+      {
+        name: "message",
+        label: "Message",
+        description: "Send a message",
+        parameters: { type: "object", properties: {} },
+        execute: vi.fn(),
+      },
+    ],
+  };
+}
+
 function createBundledMessageToolConfig(): OpenClawConfig {
   setCliRunnerPrepareTestDeps({
-    getActiveMcpLoopbackRuntime: vi.fn(() => ({
-      port: 31783,
-      ownerToken: "loopback-owner-token",
-      nonOwnerToken: "loopback-non-owner-token",
-    })),
-    resolveMcpLoopbackScopedTools: vi.fn(() => ({
-      agentId: "main",
-      tools: [
-        {
-          name: "message",
-          label: "Message",
-          description: "Send a message",
-          parameters: { type: "object", properties: {} },
-          execute: vi.fn(),
-        },
-      ],
-    })),
+    getActiveMcpLoopbackRuntime: vi.fn(createLoopbackRuntime),
+    resolveMcpLoopbackScopedTools: vi.fn(createMessageToolScope),
   });
   return createCliBackendConfig({ bundleMcp: true });
 }
@@ -322,7 +331,6 @@ function setCliBackendForPrepareTest(
         ...(params.autoSelectAuthProfile !== undefined
           ? { autoSelectAuthProfile: params.autoSelectAuthProfile }
           : {}),
-        ...(params.authEpochMode ? { authEpochMode: params.authEpochMode } : {}),
         ...(params.prepareExecution ? { prepareExecution: params.prepareExecution } : {}),
         config: {
           command: params.command ?? "claude",
@@ -447,11 +455,7 @@ describe("prepareCliRunContext", () => {
     const projectNativeToolAuthority = vi.fn((_tools: readonly string[]) => capabilities);
     const captureNativeToolAuthority = vi.fn((_names: readonly string[] | null) => true);
     setCliRunnerPrepareTestDeps({
-      getActiveMcpLoopbackRuntime: vi.fn(() => ({
-        port: 31783,
-        ownerToken: "loopback-owner-token",
-        nonOwnerToken: "loopback-non-owner-token",
-      })),
+      getActiveMcpLoopbackRuntime: vi.fn(createLoopbackRuntime),
       mintMcpLoopbackClientGrant,
       activateMcpLoopbackClientGrantCapture: vi.fn(() => ({ captureNativeToolAuthority })),
     });
@@ -1373,23 +1377,21 @@ describe("prepareCliRunContext", () => {
     const agentDir = path.join(dir, "agents", "main", "agent");
     const authProfileId = "anthropic:openclaw-managed";
     const prepareExecution = vi.fn(async () => undefined);
-    const refreshedCredential = {
-      type: "oauth" as const,
+    const refreshedCredential = oauthCred({
       provider: "anthropic",
       access: "refreshed-access-token",
       refresh: "refreshed-refresh-token",
       expires: Date.now() + 60 * 60_000,
-    };
+    });
     fs.mkdirSync(agentDir, { recursive: true });
     saveAuthProfileStore(
       createAuthProfileStoreFixture({
-        [authProfileId]: {
-          type: "oauth",
+        [authProfileId]: oauthCred({
           provider: "anthropic",
           access: "expired-access-token",
           refresh: "stored-refresh-token",
           expires: Date.now() - 60_000,
-        },
+        }),
       }),
       agentDir,
     );
@@ -1529,13 +1531,12 @@ describe("prepareCliRunContext", () => {
     fs.mkdirSync(agentDir, { recursive: true });
     saveAuthProfileStore(
       createAuthProfileStoreFixture({
-        [authProfileId]: {
-          type: "oauth",
+        [authProfileId]: oauthCred({
           provider: "anthropic",
           access: "expired-access-token",
           refresh: "expired-refresh-token",
           expires: Date.now() - 60_000,
-        },
+        }),
       }),
       agentDir,
     );
@@ -1575,20 +1576,18 @@ describe("prepareCliRunContext", () => {
     fs.mkdirSync(agentDir, { recursive: true });
     saveAuthProfileStore(
       createAuthProfileStoreFixture({
-        [authProfileId]: {
-          type: "oauth",
+        [authProfileId]: oauthCred({
           provider: "anthropic",
           access: "expired-account-a-access",
           refresh: "account-a-refresh",
           expires: Date.now() - 60_000,
-        },
-        [fallbackProfileId]: {
-          type: "oauth",
+        }),
+        [fallbackProfileId]: oauthCred({
           provider: "anthropic",
           access: "account-b-access",
           refresh: "account-b-refresh",
           expires: Date.now() + 60 * 60_000,
-        },
+        }),
       }),
       agentDir,
     );
@@ -1599,13 +1598,12 @@ describe("prepareCliRunContext", () => {
         provider: "anthropic",
         profileId: fallbackProfileId,
         profileType: "oauth",
-        credential: {
-          type: "oauth",
+        credential: oauthCred({
           provider: "anthropic",
           access: "account-b-access",
           refresh: "account-b-refresh",
           expires: Date.now() + 60 * 60_000,
-        },
+        }),
       })),
     });
 
@@ -1630,13 +1628,12 @@ describe("prepareCliRunContext", () => {
     fs.mkdirSync(agentDir, { recursive: true });
     saveAuthProfileStore(
       createAuthProfileStoreFixture({
-        [authProfileId]: {
-          type: "oauth",
+        [authProfileId]: oauthCred({
           provider: "anthropic",
           access: "expired-access-token",
           refresh: "expired-refresh-token",
           expires: Date.now() - 60_000,
-        },
+        }),
       }),
       agentDir,
     );
@@ -1679,11 +1676,7 @@ describe("prepareCliRunContext", () => {
     fs.mkdirSync(agentDir, { recursive: true });
     saveAuthProfileStore(
       createAuthProfileStoreFixture({
-        [authProfileId]: {
-          type: "api_key",
-          provider: "claude-cli",
-          key: "stored-key",
-        },
+        [authProfileId]: createApiKeyCredential("claude-cli", "stored-key"),
       }),
       agentDir,
     );
@@ -1754,11 +1747,7 @@ describe("prepareCliRunContext", () => {
       },
     });
     setCliRunnerPrepareTestDeps({
-      getActiveMcpLoopbackRuntime: vi.fn(() => ({
-        port: 31783,
-        ownerToken: "loopback-owner-token",
-        nonOwnerToken: "loopback-non-owner-token",
-      })),
+      getActiveMcpLoopbackRuntime: vi.fn(createLoopbackRuntime),
       resolveMcpLoopbackScopedTools: vi.fn(() => ({
         agentId: "main",
         tools: [
@@ -1786,11 +1775,7 @@ describe("prepareCliRunContext", () => {
   it("lets Gemini CLI preparation override generated MCP system settings auth", async () => {
     const { dir } = fixture.session;
     const profileSystemSettingsPath = path.join(dir, "profile-system-settings.json");
-    const getActiveMcpLoopbackRuntime = vi.fn(() => ({
-      port: 31783,
-      ownerToken: "loopback-owner-token",
-      nonOwnerToken: "loopback-non-owner-token",
-    }));
+    const getActiveMcpLoopbackRuntime = vi.fn(createLoopbackRuntime);
     const prepareExecution = vi.fn(async (_ctx: unknown) => ({
       env: {
         GEMINI_CLI_SYSTEM_SETTINGS_PATH: profileSystemSettingsPath,
@@ -1877,11 +1862,7 @@ describe("prepareCliRunContext", () => {
 
   it("cleans generated Gemini MCP settings when auth preparation fails", async () => {
     let generatedSystemSettingsPath: string | undefined;
-    const getActiveMcpLoopbackRuntime = vi.fn(() => ({
-      port: 31783,
-      ownerToken: "loopback-owner-token",
-      nonOwnerToken: "loopback-non-owner-token",
-    }));
+    const getActiveMcpLoopbackRuntime = vi.fn(createLoopbackRuntime);
     const prepareExecution = vi.fn(async (ctx: unknown) => {
       generatedSystemSettingsPath = (ctx as { env?: Record<string, string> }).env
         ?.GEMINI_CLI_SYSTEM_SETTINGS_PATH;
@@ -1976,11 +1957,7 @@ describe("prepareCliRunContext", () => {
     setTestEnvValue("TMPDIR", tempRoot);
     setTestEnvValue("TMP", tempRoot);
     setTestEnvValue("TEMP", tempRoot);
-    const getActiveMcpLoopbackRuntime = vi.fn(() => ({
-      port: 31783,
-      ownerToken: "loopback-owner-token",
-      nonOwnerToken: "loopback-non-owner-token",
-    }));
+    const getActiveMcpLoopbackRuntime = vi.fn(createLoopbackRuntime);
     setCliRunnerPrepareTestDeps({
       getActiveMcpLoopbackRuntime,
       ensureMcpLoopbackServer: vi.fn(createTestMcpLoopbackServer),
@@ -2986,11 +2963,7 @@ describe("prepareCliRunContext", () => {
       registerTestContextEngine(engineId, factory);
       const config = createCliBackendConfig({ bundleMcp: true });
       setCliRunnerPrepareTestDeps({
-        getActiveMcpLoopbackRuntime: vi.fn(() => ({
-          port: 31783,
-          ownerToken: "loopback-owner-token",
-          nonOwnerToken: "loopback-non-owner-token",
-        })),
+        getActiveMcpLoopbackRuntime: vi.fn(createLoopbackRuntime),
         resolveMcpLoopbackScopedTools: vi.fn(() => ({
           agentId: "main",
           tools: [
@@ -3493,23 +3466,8 @@ describe("prepareCliRunContext", () => {
     "reuses CLI session bindings across new inbound messages with stable binding facts for $name",
     async ({ stableMode, staticPrompt, expectedStrongPrompt }) => {
       const { dir } = fixture.session;
-      const getActiveMcpLoopbackRuntime = vi.fn(() => ({
-        port: 31783,
-        ownerToken: "loopback-owner-token",
-        nonOwnerToken: "loopback-non-owner-token",
-      }));
-      const resolveMcpLoopbackScopedTools = vi.fn(() => ({
-        agentId: "main",
-        tools: [
-          {
-            name: "message",
-            label: "Message",
-            description: "Send a message",
-            parameters: { type: "object", properties: {} },
-            execute: vi.fn(),
-          },
-        ],
-      }));
+      const getActiveMcpLoopbackRuntime = vi.fn(createLoopbackRuntime);
+      const resolveMcpLoopbackScopedTools = vi.fn(createMessageToolScope);
       setCliRunnerPrepareTestDeps({
         getActiveMcpLoopbackRuntime,
         resolveMcpLoopbackScopedTools,
@@ -3654,21 +3612,11 @@ describe("prepareCliRunContext", () => {
 
   it("invalidates CLI session bindings when owner policy changes prompt tool scope", async () => {
     const { dir } = fixture.session;
-    const getActiveMcpLoopbackRuntime = vi.fn(() => ({
-      port: 31783,
-      ownerToken: "loopback-owner-token",
-      nonOwnerToken: "loopback-non-owner-token",
-    }));
+    const getActiveMcpLoopbackRuntime = vi.fn(createLoopbackRuntime);
     const resolveMcpLoopbackScopedTools = vi.fn((scope: McpProjectionParams) => ({
       agentId: "main",
       tools: [
-        {
-          name: "message",
-          label: "Message",
-          description: "Send a message",
-          parameters: { type: "object", properties: {} },
-          execute: vi.fn(),
-        },
+        ...createMessageToolScope().tools,
         ...(scope.context.senderIsOwner === false
           ? []
           : [
@@ -3826,11 +3774,7 @@ describe("prepareCliRunContext", () => {
     async (pluginExecution) => {
       const config = createCliBackendConfig({ bundleMcp: true });
       setCliRunnerPrepareTestDeps({
-        getActiveMcpLoopbackRuntime: vi.fn(() => ({
-          port: 31783,
-          ownerToken: "loopback-owner-token",
-          nonOwnerToken: "loopback-non-owner-token",
-        })),
+        getActiveMcpLoopbackRuntime: vi.fn(createLoopbackRuntime),
         resolveMcpLoopbackScopedTools: vi.fn(() => ({
           agentId: "main",
           tools: ["image_generate", "video_generate"].map((name) => ({
@@ -3913,11 +3857,7 @@ describe("prepareCliRunContext", () => {
   );
 
   it("skips bundle MCP preparation when tools are disabled", async () => {
-    const getActiveMcpLoopbackRuntime = vi.fn(() => ({
-      port: 31783,
-      ownerToken: "loopback-owner-token",
-      nonOwnerToken: "loopback-non-owner-token",
-    }));
+    const getActiveMcpLoopbackRuntime = vi.fn(createLoopbackRuntime);
     const ensureMcpLoopbackServer = vi.fn(createTestMcpLoopbackServer);
     const createMcpLoopbackServerConfig = vi.fn(createTestMcpLoopbackServerConfig);
     setCliRunnerPrepareTestDeps({
@@ -3940,11 +3880,7 @@ describe("prepareCliRunContext", () => {
   });
 
   it("binds the exact late prepared admission to the CLI MCP grant", async () => {
-    const getActiveMcpLoopbackRuntime = vi.fn(() => ({
-      port: 31783,
-      ownerToken: "loopback-owner-token",
-      nonOwnerToken: "loopback-non-owner-token",
-    }));
+    const getActiveMcpLoopbackRuntime = vi.fn(createLoopbackRuntime);
     const bindMcpLoopbackClientGrantAdmission = vi.fn(() => true);
     setCliRunnerPrepareTestDeps({
       getActiveMcpLoopbackRuntime,
@@ -3984,11 +3920,7 @@ describe("prepareCliRunContext", () => {
         ? ["## Memory Recall", `tools=${[...availableTools].toSorted().join(",")}`, ""]
         : [],
     );
-    const getActiveMcpLoopbackRuntime = vi.fn(() => ({
-      port: 31783,
-      ownerToken: "loopback-owner-token",
-      nonOwnerToken: "loopback-non-owner-token",
-    }));
+    const getActiveMcpLoopbackRuntime = vi.fn(createLoopbackRuntime);
     const ensureMcpLoopbackServer = vi.fn(createTestMcpLoopbackServer);
     const createMcpLoopbackServerConfig = vi.fn(createTestMcpLoopbackServerConfig);
     const activateMcpLoopbackClientGrantCapture = vi.fn(() => ({
@@ -4174,11 +4106,7 @@ describe("prepareCliRunContext", () => {
     "binds current turn context into the bundle MCP client grant with explicit %s owner",
     async (explicitAgentId) => {
       const messageActionTurnCapability = "test-current-message-authority";
-      const getActiveMcpLoopbackRuntime = vi.fn(() => ({
-        port: 31783,
-        ownerToken: "loopback-owner-token",
-        nonOwnerToken: "loopback-non-owner-token",
-      }));
+      const getActiveMcpLoopbackRuntime = vi.fn(createLoopbackRuntime);
       const activateMcpLoopbackClientGrantCapture = vi.fn(() => ({
         captureNativeToolAuthority: vi.fn((_names: readonly string[] | null) => true),
       }));
@@ -4186,18 +4114,7 @@ describe("prepareCliRunContext", () => {
       const transferMcpLoopbackClientGrant = vi.fn(() => true);
       const mintMcpLoopbackClientGrant = vi.fn(createTestMcpLoopbackClientGrant);
       const revokeMcpLoopbackClientGrant = vi.fn(() => true);
-      const resolveMcpLoopbackScopedTools = vi.fn(() => ({
-        agentId: "main",
-        tools: [
-          {
-            name: "message",
-            label: "Message",
-            description: "Send a message",
-            parameters: { type: "object", properties: {} },
-            execute: vi.fn(),
-          },
-        ],
-      }));
+      const resolveMcpLoopbackScopedTools = vi.fn(createMessageToolScope);
       setCliRunnerPrepareTestDeps({
         getActiveMcpLoopbackRuntime,
         activateMcpLoopbackClientGrantCapture,
@@ -4421,11 +4338,7 @@ describe("prepareCliRunContext", () => {
 
   it("enables gateway delivery capture for Claude-style JSONL bundle MCP", async () => {
     setCliRunnerPrepareTestDeps({
-      getActiveMcpLoopbackRuntime: vi.fn(() => ({
-        port: 31783,
-        ownerToken: "loopback-owner-token",
-        nonOwnerToken: "loopback-non-owner-token",
-      })),
+      getActiveMcpLoopbackRuntime: vi.fn(createLoopbackRuntime),
       createMcpLoopbackServerConfig: vi.fn(createTestMcpLoopbackServerConfig),
     });
     setRawCliBackendForPrepareTest({
@@ -4525,11 +4438,7 @@ describe("prepareCliRunContext", () => {
     const mintMcpLoopbackClientGrant = vi.fn(createTestMcpLoopbackClientGrant);
     const projectNativeToolAuthority = vi.fn(() => ["read", "exec"]);
     setCliRunnerPrepareTestDeps({
-      getActiveMcpLoopbackRuntime: vi.fn(() => ({
-        port: 31783,
-        ownerToken: "loopback-owner-token",
-        nonOwnerToken: "loopback-non-owner-token",
-      })),
+      getActiveMcpLoopbackRuntime: vi.fn(createLoopbackRuntime),
       createMcpLoopbackServerConfig: vi.fn(createTestMcpLoopbackServerConfig),
       mintMcpLoopbackClientGrant,
     });
@@ -4613,11 +4522,7 @@ describe("prepareCliRunContext", () => {
   );
 
   it("fails closed with upgrade guidance when a backend cannot enforce a runtime toolsAllow", async () => {
-    const getActiveMcpLoopbackRuntime = vi.fn(() => ({
-      port: 31783,
-      ownerToken: "loopback-owner-token",
-      nonOwnerToken: "loopback-non-owner-token",
-    }));
+    const getActiveMcpLoopbackRuntime = vi.fn(createLoopbackRuntime);
     setCliRunnerPrepareTestDeps({
       getActiveMcpLoopbackRuntime,
     });
@@ -4947,21 +4852,28 @@ describe("prepareCliRunContext", () => {
     }
   });
 
-  it("translates disableTools into an exact empty cap for selectable backends", async () => {
+  it.each([
+    {
+      name: "translates disableTools into an exact empty cap for selectable backends",
+      bundleMcp: true,
+      toolsAllow: undefined,
+    },
+    {
+      name: "lets disableTools override a selectable backend toolsAllow projection",
+      bundleMcp: false,
+      toolsAllow: ["write"],
+    },
+  ])("$name", async ({ bundleMcp, toolsAllow }) => {
     const resolveExecutionArgs = vi.fn((context: { baseArgs: readonly string[] }) => [
       ...context.baseArgs,
     ]);
-    const getActiveMcpLoopbackRuntime = vi.fn(() => ({
-      port: 31783,
-      ownerToken: "loopback-owner-token",
-      nonOwnerToken: "loopback-non-owner-token",
-    }));
+    const getActiveMcpLoopbackRuntime = vi.fn(createLoopbackRuntime);
     setCliRunnerPrepareTestDeps({ getActiveMcpLoopbackRuntime });
     setRawCliBackendForPrepareTest({
       id: "selectable-cli",
       pluginId: "selectable-plugin",
-      bundleMcp: true,
-      bundleMcpMode: "claude-config-file",
+      bundleMcp,
+      ...(bundleMcp ? { bundleMcpMode: "claude-config-file" as const } : {}),
       nativeToolMode: "selectable",
       toolAvailabilityEnforcement: "execution-args",
       resolveExecutionArgs,
@@ -4971,33 +4883,11 @@ describe("prepareCliRunContext", () => {
     const context = await fixture.prepare({
       provider: "selectable-cli",
       disableTools: true,
+      toolsAllow,
     });
 
     expect(context.params.cliToolAvailability).toEqual({ native: [], openClaw: [] });
     expect(getActiveMcpLoopbackRuntime).not.toHaveBeenCalled();
-  });
-
-  it("lets disableTools override a selectable backend toolsAllow projection", async () => {
-    const resolveExecutionArgs = vi.fn((context: { baseArgs: readonly string[] }) => [
-      ...context.baseArgs,
-    ]);
-    setRawCliBackendForPrepareTest({
-      id: "selectable-cli",
-      pluginId: "selectable-plugin",
-      bundleMcp: false,
-      nativeToolMode: "selectable",
-      toolAvailabilityEnforcement: "execution-args",
-      resolveExecutionArgs,
-      config: createJsonlStdinBackendConfig("selectable-cli"),
-    });
-
-    const context = await fixture.prepare({
-      provider: "selectable-cli",
-      disableTools: true,
-      toolsAllow: ["write"],
-    });
-
-    expect(context.params.cliToolAvailability).toEqual({ native: [], openClaw: [] });
   });
 
   it.each([false, true])(
@@ -5287,11 +5177,7 @@ describe("prepareCliRunContext", () => {
         config: createJsonlStdinBackendConfig("claude"),
       });
       setCliRunnerPrepareTestDeps({
-        getActiveMcpLoopbackRuntime: vi.fn(() => ({
-          port: 31783,
-          ownerToken: "loopback-owner-token",
-          nonOwnerToken: "loopback-non-owner-token",
-        })),
+        getActiveMcpLoopbackRuntime: vi.fn(createLoopbackRuntime),
         createMcpLoopbackServerConfig: vi.fn(createTestMcpLoopbackServerConfig),
         mintMcpLoopbackClientGrant,
         resolveMcpLoopbackScopedTools: vi.fn(() => ({
@@ -5387,11 +5273,7 @@ describe("prepareCliRunContext", () => {
       },
     });
     setCliRunnerPrepareTestDeps({
-      getActiveMcpLoopbackRuntime: vi.fn(() => ({
-        port: 31783,
-        ownerToken: "loopback-owner-token",
-        nonOwnerToken: "loopback-non-owner-token",
-      })),
+      getActiveMcpLoopbackRuntime: vi.fn(createLoopbackRuntime),
       ensureMcpLoopbackServer: vi.fn(createTestMcpLoopbackServer),
       createMcpLoopbackServerConfig: vi.fn(createTestMcpLoopbackServerConfig),
       mintMcpLoopbackClientGrant,
@@ -5482,11 +5364,7 @@ describe("prepareCliRunContext", () => {
       },
     });
     setCliRunnerPrepareTestDeps({
-      getActiveMcpLoopbackRuntime: vi.fn(() => ({
-        port: 31783,
-        ownerToken: "loopback-owner-token",
-        nonOwnerToken: "loopback-non-owner-token",
-      })),
+      getActiveMcpLoopbackRuntime: vi.fn(createLoopbackRuntime),
       ensureMcpLoopbackServer: vi.fn(createTestMcpLoopbackServer),
       createMcpLoopbackServerConfig: vi.fn(createTestMcpLoopbackServerConfig),
       mintMcpLoopbackClientGrant,
@@ -5561,11 +5439,7 @@ describe("prepareCliRunContext", () => {
       },
     });
     setCliRunnerPrepareTestDeps({
-      getActiveMcpLoopbackRuntime: vi.fn(() => ({
-        port: 31783,
-        ownerToken: "loopback-owner-token",
-        nonOwnerToken: "loopback-non-owner-token",
-      })),
+      getActiveMcpLoopbackRuntime: vi.fn(createLoopbackRuntime),
       ensureMcpLoopbackServer: vi.fn(createTestMcpLoopbackServer),
       createMcpLoopbackServerConfig: vi.fn(createTestMcpLoopbackServerConfig),
       mintMcpLoopbackClientGrant: vi.fn(createTestMcpLoopbackClientGrant),
@@ -5734,11 +5608,7 @@ describe("prepareCliRunContext", () => {
   });
 
   it("fails closed for native tool-capable CLI backends when tools are disabled", async () => {
-    const getActiveMcpLoopbackRuntime = vi.fn(() => ({
-      port: 31783,
-      ownerToken: "loopback-owner-token",
-      nonOwnerToken: "loopback-non-owner-token",
-    }));
+    const getActiveMcpLoopbackRuntime = vi.fn(createLoopbackRuntime);
     setCliRunnerPrepareTestDeps({
       getActiveMcpLoopbackRuntime,
     });
@@ -5875,6 +5745,136 @@ describe("prepareCliRunContext", () => {
       mode: "reuse",
       sessionId: "native-claude-session",
     });
+  });
+
+  it.each([
+    {
+      name: "same account",
+      profile: "control:a",
+      sharedIdentity: true,
+      changedIdentity: false,
+      forceReuse: false,
+      accepted: true,
+    },
+    {
+      name: "profile alias with the same versioned identity",
+      profile: "control:b",
+      sharedIdentity: true,
+      changedIdentity: false,
+      forceReuse: false,
+      accepted: true,
+    },
+    {
+      name: "different account",
+      profile: "control:b",
+      sharedIdentity: false,
+      changedIdentity: false,
+      forceReuse: false,
+      accepted: false,
+    },
+    {
+      name: "changed identity on the same profile",
+      profile: "control:a",
+      sharedIdentity: true,
+      changedIdentity: true,
+      forceReuse: false,
+      accepted: false,
+    },
+    {
+      name: "different account despite forced topology reuse",
+      profile: "control:b",
+      sharedIdentity: false,
+      changedIdentity: false,
+      forceReuse: true,
+      accepted: false,
+    },
+  ])("checks native control account continuity: $name", async (testCase) => {
+    const { dir, sessionTarget } = fixture.session;
+    const agentDir = path.join(dir, "agents", "main", "agent");
+    const credential = (identity: string) =>
+      oauthCred({
+        provider: "anthropic",
+        access: "synthetic-control-access",
+        refresh: "synthetic-control-refresh",
+        expires: Date.now() + 3_600_000,
+        accountId: identity,
+      });
+    const profiles = {
+      "control:a": credential("account-a"),
+      "control:b": credential(testCase.sharedIdentity ? "account-a" : "account-b"),
+    };
+    saveAuthProfileStore(createAuthProfileStoreFixture(profiles), agentDir);
+    const authEpoch = await resolveCliAuthEpoch({
+      provider: "claude-cli",
+      agentDir,
+      authProfileId: "control:a",
+      skipLocalCredential: true,
+    });
+    expect(authEpoch).toBeDefined();
+    if (testCase.changedIdentity) {
+      profiles["control:a"] = credential("replacement-account");
+      saveAuthProfileStore(createAuthProfileStoreFixture(profiles), agentDir);
+    }
+    const binding = {
+      sessionId: "native-control-session",
+      authProfileId: "control:a",
+      authEpoch,
+      authEpochVersion: CLI_AUTH_EPOCH_VERSION,
+      forceReuse: testCase.forceReuse,
+      mcpConfigHash: "bound-turn-topology",
+      cwdHash: "bound-turn-workspace",
+    };
+    replaceSessionEntrySync(sessionTarget, {
+      sessionId: sessionTarget.sessionId,
+      updatedAt: 1,
+      cliSessionBindings: { "claude-cli": binding },
+    });
+    const before = loadSessionEntryReadOnly(sessionTarget);
+    const transcriptBefore = loadTranscriptEventsSync(sessionTarget);
+    const execute = vi.fn<CliBackendExecute>(async function* () {
+      yield {
+        type: "result",
+        subtype: "success",
+        result: "compacted",
+        is_error: false,
+        session_id: binding.sessionId,
+      };
+    });
+    setCliBackendForPrepareTest({
+      authEpochMode: "profile-only",
+      autoSelectAuthProfile: false,
+      prepareExecution: async () => ({ execute }),
+    });
+    const preparation = fixture.prepare({
+      agentDir,
+      sessionKey: sessionTarget.sessionKey,
+      prompt: "/compact",
+      provider: "claude-cli",
+      model: "test-model",
+      authProfileId: testCase.profile,
+      cliSessionBinding: binding,
+      cliSessionId: binding.sessionId,
+      controlOperation: "compact",
+    });
+    if (testCase.accepted) {
+      const prepared = await preparation;
+      try {
+        expect(prepared.reusableCliSession).toEqual({
+          mode: "reuse",
+          sessionId: binding.sessionId,
+        });
+        expect(prepared.effectiveAuthProfileId).toBe(testCase.profile);
+      } finally {
+        await prepared.preparedBackend.cleanup?.();
+      }
+    } else {
+      await expect(preparation).rejects.toThrow(
+        "Cannot compact this conversation because its account changed.",
+      );
+    }
+    expect(execute).not.toHaveBeenCalled();
+    expect(loadSessionEntryReadOnly(sessionTarget)).toEqual(before);
+    expect(loadTranscriptEventsSync(sessionTarget)).toEqual(transcriptBefore);
   });
 
   it.each(["test:a", "test:b"])(
@@ -6593,11 +6593,7 @@ describe("prepareCliRunContext", () => {
     });
     setCliRunnerPrepareTestDeps({
       prepareClaudeCliSkillsPlugin,
-      getActiveMcpLoopbackRuntime: vi.fn(() => ({
-        port: 31783,
-        ownerToken: "loopback-owner-token",
-        nonOwnerToken: "loopback-non-owner-token",
-      })),
+      getActiveMcpLoopbackRuntime: vi.fn(createLoopbackRuntime),
       revokeMcpLoopbackClientGrant,
     });
 

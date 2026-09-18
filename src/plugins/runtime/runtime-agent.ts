@@ -10,7 +10,7 @@ import {
 } from "../../agents/model-selection.js";
 import {
   concretizeAgentRuntime,
-  resolveEffectiveAgentRuntime,
+  resolveEffectiveAgentRuntimeCore,
 } from "../../agents/thinking-runtime.js";
 import { resolveAgentTimeoutMs } from "../../agents/timeout.js";
 import { ensureAgentWorkspace } from "../../agents/workspace.js";
@@ -185,7 +185,9 @@ async function createSessionEntry(
             readConsistency: "latest",
           });
           const expectedEntry = { ...context.entry };
-          if (acpSelection) commitSessionExecutionSelection(expectedEntry, acpSelection);
+          if (acpSelection) {
+            commitSessionExecutionSelection(expectedEntry, acpSelection);
+          }
           if (!persistedEntry || !matchesExceptUpdatedAt(persistedEntry, expectedEntry)) {
             throw new Error(`created ACP session ${context.key} changed during initialization`);
           }
@@ -392,7 +394,9 @@ async function createSessionEntry(
             commitGuard: assertCreationOwner,
             afterCreate: async (context) => {
               callbackContext = context;
-              if (initializesAfterCreate) await runAfterCreate(context);
+              if (initializesAfterCreate) {
+                await runAfterCreate(context);
+              }
             },
           });
           if (!result.ok) {
@@ -602,7 +606,7 @@ export function createRuntimeAgent(): PluginRuntime["agent"] {
       const effectiveRuntime = params.agentRuntime
         ? concretizeAgentRuntime(params.agentRuntime)
         : params.provider && params.model
-          ? resolveEffectiveAgentRuntime({
+          ? resolveEffectiveAgentRuntimeCore({
               cfg,
               provider: params.provider,
               modelId: params.model,

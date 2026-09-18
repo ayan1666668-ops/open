@@ -10,7 +10,7 @@ import {
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { resolveAgentDeliveryPlanWithSessionRoute } from "../../infra/outbound/agent-delivery.js";
 import { defaultRuntime } from "../../runtime.js";
-import { resolveSendPolicy } from "../../sessions/send-policy.js";
+import { resolveSendPolicyCore } from "../../sessions/send-policy.js";
 import { sessionDeliveryChannel } from "../../utils/delivery-context.shared.js";
 import { performGatewaySessionReset } from "../session-reset-service.js";
 import { loadSessionEntry } from "../session-utils.js";
@@ -187,7 +187,7 @@ export async function resolveBareSessionResetResult(params: {
       ackText: params.ackText,
     });
   }
-  const sendPolicy = resolveSendPolicy({
+  const sendPolicy = resolveSendPolicyCore({
     cfg: params.cfg,
     entry: params.sessionEntry,
     sessionKey: params.sessionKey,

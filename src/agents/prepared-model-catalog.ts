@@ -243,6 +243,13 @@ export function getPublishedPreparedModelCatalogOwnerSnapshot(
   return getPreparedModelRuntimeSnapshot(activationFull);
 }
 
+/** Waits for an owned publication without activating another catalog generation. */
+export async function preparePublishedModelCatalogOwnerSnapshot(
+  params: GetPublishedPreparedModelCatalogOwnerParams = {},
+): Promise<PreparedModelRuntimeSnapshot | undefined> {
+  return (await resolveReadOnlyPublishedModelCatalogOwner(params, "published"))?.snapshot;
+}
+
 /** Returns the newest published catalog while expired inventory renews in the background. */
 export function getPreparedModelCatalogSnapshot(
   params: LoadPreparedModelCatalogParams = {},

@@ -158,9 +158,13 @@ function createReplyOperation(): TestReplyOperation {
 function createDirectRuntimeReplyParams({
   shouldFollowup,
   isActive,
+  executionSelection,
 }: {
   shouldFollowup: boolean;
   isActive: boolean;
+  executionSelection?: NonNullable<
+    Parameters<typeof createTestFollowupRun>[0]
+  >["executionSelection"];
 }) {
   const followupRun = createTestFollowupRun({
     sessionId: "session-1",
@@ -169,6 +173,7 @@ function createDirectRuntimeReplyParams({
     config: staleCfg,
     provider: "openai",
     model: "gpt-5.4",
+    executionSelection,
   });
   const resolvedQueue = { mode: "interrupt" } as QueueSettings;
   const replyParams: Parameters<typeof runReplyAgent>[0] = {
@@ -402,6 +407,10 @@ describe("runReplyAgent runtime config", () => {
         const { replyParams, followupRun } = createDirectRuntimeReplyParams({
           shouldFollowup: false,
           isActive: false,
+          executionSelection: {
+            model: { provider: "anthropic", id: "claude-sonnet-4-6" },
+            executor: { kind: "harness", id: "openclaw" },
+          },
         });
         const sessionKey = "agent:main:telegram:default:direct:test";
         const sessionEntry: SessionEntry = {
@@ -433,8 +442,6 @@ describe("runReplyAgent runtime config", () => {
         // A file blocks the memory directory: optional maintenance fails without token pressure.
         await writeFile(join(tempDir, "memory"), "not a directory");
         followupRun.run.workspaceDir = tempDir;
-        followupRun.run.provider = "anthropic";
-        followupRun.run.model = "claude-sonnet-4-6";
         replyParams.sessionKey = sessionKey;
         replyParams.storePath = storePath;
         replyParams.sessionEntry = sessionEntry;
@@ -501,6 +508,10 @@ describe("runReplyAgent runtime config", () => {
         const { replyParams, followupRun } = createDirectRuntimeReplyParams({
           shouldFollowup: false,
           isActive: false,
+          executionSelection: {
+            model: { provider: "anthropic", id: "claude-sonnet-4-6" },
+            executor: { kind: "harness", id: "openclaw" },
+          },
         });
         const sessionKey = "agent:main:telegram:default:direct:test";
         const sessionEntry: SessionEntry = {
@@ -512,8 +523,6 @@ describe("runReplyAgent runtime config", () => {
         };
         const storePath = join(tempDir, "sessions.json");
         await replaceSessionEntry({ agentId: "main", sessionKey, storePath }, sessionEntry);
-        followupRun.run.provider = "anthropic";
-        followupRun.run.model = "claude-sonnet-4-6";
         const abort = new AbortController();
         const operationAbort = new AbortController();
         const lifecycle = {

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
 import type { SessionEntry } from "../config/sessions.js";
 import { buildAgentPeerSessionKey } from "../routing/session-key.js";
-import { resolveSendPolicy } from "./send-policy.js";
+import { resolveSendPolicyCore } from "./send-policy.js";
 
 describe("resolveSendPolicy", () => {
   const cfgWithRules = (
@@ -20,7 +20,7 @@ describe("resolveSendPolicy", () => {
 
   it("defaults to allow", () => {
     const cfg = {} as OpenClawConfig;
-    expect(resolveSendPolicy({ cfg })).toBe("allow");
+    expect(resolveSendPolicyCore({ cfg })).toBe("allow");
   });
 
   it("entry override wins", () => {
@@ -32,7 +32,7 @@ describe("resolveSendPolicy", () => {
       updatedAt: 0,
       sendPolicy: "deny",
     };
-    expect(resolveSendPolicy({ cfg, entry })).toBe("deny");
+    expect(resolveSendPolicyCore({ cfg, entry })).toBe("deny");
   });
 
   it.each([
@@ -154,7 +154,7 @@ describe("resolveSendPolicy", () => {
       expected: "allow",
     },
   ])("$name", ({ cfg, entry, sessionKey, expected }) => {
-    expect(resolveSendPolicy({ cfg, entry, sessionKey })).toBe(expected);
+    expect(resolveSendPolicyCore({ cfg, entry, sessionKey })).toBe(expected);
   });
 
   it("does not apply channel allow rules to nested opaque identities", () => {
@@ -171,13 +171,13 @@ describe("resolveSendPolicy", () => {
     } as OpenClawConfig;
 
     expect(
-      resolveSendPolicy({
+      resolveSendPolicyCore({
         cfg,
         sessionKey: "agent:voice:agent:other:matrix:channel:!room:example.org",
       }),
     ).toBe("deny");
     expect(
-      resolveSendPolicy({
+      resolveSendPolicyCore({
         cfg,
         sessionKey: "agent:voice:agent:voice::matrix:channel:!roomabc:example.org",
       }),
@@ -203,6 +203,6 @@ describe("resolveSendPolicy", () => {
       },
     } as OpenClawConfig;
 
-    expect(resolveSendPolicy({ cfg, sessionKey })).toBe("deny");
+    expect(resolveSendPolicyCore({ cfg, sessionKey })).toBe("deny");
   });
 });

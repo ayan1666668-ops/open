@@ -85,6 +85,16 @@ export function makeReclaimedPlacement(): Extract<
   };
 }
 
+export function makeActivePlacement(): Extract<WorkerSessionPlacementRecord, { state: "active" }> {
+  return {
+    ...makeReclaimedPlacement(),
+    state: "active",
+    recoveryError: null,
+    terminalReason: null,
+    terminalAtMs: null,
+  };
+}
+
 export function makeFailedPlacement(): Extract<WorkerSessionPlacementRecord, { state: "failed" }> {
   return {
     ...makeReclaimedPlacement(),

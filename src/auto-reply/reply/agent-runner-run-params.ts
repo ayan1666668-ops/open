@@ -8,7 +8,7 @@ import {
   resolveMergedModelProviderConfig,
 } from "../../config/model-provider-config.js";
 import type { SessionEntry } from "../../config/sessions/types.js";
-import { resolveSessionExecutionFallbacks } from "../../model-picker/apply-session-model-selection.js";
+import { resolveSessionModelFallbacks } from "../../model-picker/apply-session-model-selection.js";
 import {
   isAcpExecutionSelection,
   isModelExecutionSelection,
@@ -33,14 +33,16 @@ export function resolveModelFallbackOptions(
 ) {
   const config = configOverride;
   const selection = run.executionSelection;
-  if (!isModelExecutionSelection(selection))
+  if (!isModelExecutionSelection(selection)) {
     throw new Error("Native execution does not use host model fallbacks.");
-  const modelFallbackAvailability = resolveSessionExecutionFallbacks({
+  }
+  const modelFallbackAvailability = resolveSessionModelFallbacks({
     cfg: config,
     agentId: run.agentId,
     sessionKey: run.sessionKey,
     sessionEntry,
-    selection,
+    modelSelectionLocked: run.modelSelectionLocked,
+    model: selection.model,
     subagentSpawnLineage: run.subagentSpawnLineage,
   });
   return {
@@ -124,15 +126,17 @@ export async function buildEmbeddedRunBaseParams(params: {
 }) {
   const config = params.run.config;
   const selection = params.run.executionSelection;
-  if (isAcpExecutionSelection(selection))
+  if (isAcpExecutionSelection(selection)) {
     throw new Error("This execution belongs to the native manager.");
+  }
   const model = isModelExecutionSelection(selection) ? selection.model : undefined;
   const modelFallbackAvailability = isModelExecutionSelection(selection)
-    ? resolveSessionExecutionFallbacks({
+    ? resolveSessionModelFallbacks({
         cfg: config,
         agentId: params.run.agentId,
         sessionKey: params.run.sessionKey,
-        selection,
+        model: selection.model,
+        modelSelectionLocked: params.run.modelSelectionLocked,
         subagentSpawnLineage: params.run.subagentSpawnLineage,
       })
     : undefined;

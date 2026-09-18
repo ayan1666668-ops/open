@@ -38,6 +38,9 @@ const [
   { compactionCheckpointStore },
   { resolveGatewaySessionStoreTarget },
   { markRuntimeCompactionDelegate },
+  { prepareSessionCompactionExecutionSelection },
+  { getSessionExecutionSelection, isModelExecutionSelection },
+  { createSessionModelCatalogFixture },
 ] = await Promise.all([
   import("../../auto-reply/reply/session-updates.js"),
   import("../../config/sessions/session-accessor.js"),
@@ -50,6 +53,9 @@ const [
   import("./compaction-checkpoint.js"),
   import("../../gateway/session-utils.js"),
   import("../../context-engine/compaction-watchdog.js"),
+  import("../../model-picker/apply-session-model-selection.js"),
+  import("../../model-picker/execution-selection.js"),
+  import("../test-helpers/session-model-catalog.test-support.js"),
 ]);
 
 const tempDirs = useAutoCleanupTempDirTracker((cleanup) =>
@@ -173,25 +179,20 @@ beforeEach(async () => {
 
 describe("queued compaction successor ownership", () => {
   it.each([
-    { nativePinned: false, observedHarness: "openclaw" },
-    { nativePinned: false, observedHarness: "codex" },
-    { nativePinned: true, observedHarness: "codex" },
+    { nativePinned: false, observedHarness: "openclaw", successorId: sessionId },
+    { nativePinned: false, observedHarness: "codex", successorId: sessionId },
+    { nativePinned: true, observedHarness: "codex", successorId: sessionId },
+    { nativePinned: false, observedHarness: "codex", successorId: "successor" },
   ])(
-    "keeps manual compaction with its transcript owner after authored runtime fallback (nativePinned=$nativePinned, observed=$observedHarness)",
-    async ({ nativePinned, observedHarness }) => {
-      const [
-        { resolveManualCompactionCliTarget },
-        registry,
-        selection,
-        actualSelection,
-        { requireActivePluginRegistry },
-      ] = await Promise.all([
-        import("../session-runtime-compat.js"),
-        import("../harness/registry.js"),
-        import("../harness/selection.js"),
-        vi.importActual<typeof import("../harness/selection.js")>("../harness/selection.js"),
-        import("../../plugins/runtime.js"),
-      ]);
+    "keeps manual compaction with its transcript owner after authored runtime fallback (nativePinned=$nativePinned, observed=$observedHarness, successor=$successorId)",
+    async ({ nativePinned, observedHarness, successorId }) => {
+      const [registry, selection, actualSelection, { requireActivePluginRegistry }] =
+        await Promise.all([
+          import("../harness/registry.js"),
+          import("../harness/selection.js"),
+          vi.importActual<typeof import("../harness/selection.js")>("../harness/selection.js"),
+          import("../../plugins/runtime.js"),
+        ]);
       const select = vi.mocked(selection.selectAgentHarness);
       const selectPrepared = vi.mocked(selection.selectAgentHarnessForPreparedModelProviders);
       const previousSelect = select.getMockImplementation()!;
@@ -244,38 +245,98 @@ describe("queued compaction successor ownership", () => {
             }
           : {}),
       };
+      config.agents = {
+        ...config.agents,
+        defaults: { ...config.agents?.defaults, workspace: workspaceDir },
+        list: [{ id: "main", agentDir: join(workspaceDir, "agent") }],
+      };
       const entry: SessionEntry = {
         ...owner,
         updatedAt: 1,
         modelSelectionLocked: true,
+        authProfileOverride: "openai:test",
+        authProfileOverrideSource: "user",
         modelProvider: "openai",
         model: "gpt-5.6-luna",
-        agentRuntimeOverride: nativePinned ? "openclaw" : "codex",
+        executionSelection: {
+          state: "accepted",
+          selection: {
+            model: { provider: "openai", id: "gpt-5.6-luna" },
+            executor: { kind: "harness", id: nativePinned ? "openclaw" : "codex" },
+          },
+          fallbackPermission: "explicit",
+        },
         agentHarnessId: observedHarness,
         ...(!nativePinned ? { pluginOwnerId: "model-owner" } : {}),
       };
       try {
         replaceSessionEntrySync(target(), entry);
-        contextEngineCompactMock.mockResolvedValueOnce(completed(sessionId));
-        const manualTarget = resolveManualCompactionCliTarget({
-          provider: "openai",
-          entry,
-          cfg: config,
-        });
-        const result = await compact({
-          ...compactParams(),
-          ...manualTarget,
-          provider: "openai",
-          model: "gpt-5.6-luna",
-          authProfileId: "openai:test",
-          authProfileIdSource: "user",
-          // A stale caller cannot add or remove the durable native owner.
-          sessionEntry: { ...entry, pluginOwnerId: nativePinned ? "stale-owner" : undefined },
-          agentHarnessId: nativePinned ? "openclaw" : manualTarget.agentHarnessId,
-          modelSelectionLocked: true,
+        contextEngineCompactMock.mockResolvedValueOnce(completed(successorId));
+        const accepted = getSessionExecutionSelection(entry);
+        if (!accepted || !isModelExecutionSelection(accepted)) {
+          throw new Error("The fixture requires a concrete accepted selection.");
+        }
+        const catalog = createSessionModelCatalogFixture().publish({
           config,
-          trigger: "manual",
+          agentId: "main",
+          catalog: {
+            entries: [
+              {
+                provider: accepted.model.provider,
+                id: accepted.model.id,
+                name: "Compaction fixture",
+                api: "openai-responses",
+                baseUrl: "https://api.openai.com/v1",
+              },
+            ],
+            routeVariants: [],
+          },
+          profiles: {
+            "openai:test": { type: "api_key", provider: "openai", key: "synthetic-compaction-key" },
+          },
+          runtimeAuthModes: { codex: "oauth" },
         });
+        const prepared = nativePinned
+          ? undefined
+          : await prepareSessionCompactionExecutionSelection({
+              cfg: config,
+              ...target(),
+              workspaceDir,
+              sessionEntry: entry,
+              selection: accepted,
+              modelCatalog: catalog.entries,
+              readSessionEntry: () => loadSessionEntry(target()),
+            });
+        if (prepared && prepared.status !== "ready") {
+          throw new Error(prepared.message);
+        }
+        const result = await compact(
+          {
+            ...compactParams(),
+            provider: "openai",
+            model: "gpt-5.6-luna",
+            authProfileId: "openai:test",
+            authProfileIdSource: "user",
+            // A stale caller cannot add or remove the durable native owner.
+            sessionEntry: { ...entry, pluginOwnerId: nativePinned ? "stale-owner" : undefined },
+            agentHarnessId: nativePinned ? "openclaw" : "codex",
+            modelSelectionLocked: true,
+            config,
+            trigger: "manual",
+          },
+          prepared?.status === "ready"
+            ? {
+                preparedSelection: { selection: prepared.selection, auth: prepared.auth },
+                onCommitted: prepared.onCommitted,
+                assertActive: () => {
+                  const error = prepared.validateCommit();
+                  if (error) {
+                    throw new Error(error);
+                  }
+                },
+              }
+            : undefined,
+        );
 
         expect(result).toMatchObject(
           nativePinned
@@ -293,10 +354,17 @@ describe("queued compaction successor ownership", () => {
             modelSelectionLocked: true,
           });
         }
+        if (prepared?.status === "ready") {
+          expect(maintain).toHaveBeenCalledWith(
+            expect.objectContaining({ sessionId: successorId }),
+          );
+          expect(hookRunner.runAfterCompaction).toHaveBeenCalledOnce();
+          expect(prepared.validateCommit()).toBeUndefined();
+        }
         expect(loadSessionEntry(target())).toMatchObject({
-          sessionId,
+          sessionId: successorId,
           modelSelectionLocked: true,
-          agentRuntimeOverride: entry.agentRuntimeOverride,
+          executionSelection: entry.executionSelection,
           agentHarnessId: entry.agentHarnessId,
           ...(!nativePinned ? { pluginOwnerId: "model-owner" } : {}),
         });

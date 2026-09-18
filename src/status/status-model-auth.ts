@@ -6,8 +6,10 @@ import { getPreparedModelRuntimeAuthStore } from "../agents/prepared-model-runti
 import type { PreparedModelRuntimeSnapshot } from "../agents/prepared-model-runtime.types.js";
 import type { SessionEntry } from "../config/sessions.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { getSessionExecutionSelection } from "../model-picker/execution-selection.js";
-import { isModelExecutionSelection } from "../model-picker/execution-selection.js";
+import {
+  getSessionExecutionSelection,
+  isModelExecutionSelection,
+} from "../model-picker/execution-selection.js";
 import { isUserModelAuthProfileId } from "../state/user-model-account-id.js";
 
 /** Native status uses the same prepared account and route as model selection. */
@@ -47,13 +49,13 @@ export function createStatusModelAuthResolver(params: {
               : undefined,
         })
       : undefined;
-  return async (selection: {
+  return async (requestedModel: {
     provider: string;
     model: string;
     runtimeId?: string;
     acceptedProviderIds: readonly string[];
   }): Promise<string | undefined> => {
-    const { provider, model, runtimeId } = selection;
+    const { provider, model, runtimeId } = requestedModel;
     // SDK renderers without a prepared owner retain host-profile diagnostics.
     // A native observation, when present, never falls back to a different account.
     if (
@@ -65,7 +67,7 @@ export function createStatusModelAuthResolver(params: {
     ) {
       return resolveModelAuthLabel({
         provider,
-        acceptedProviderIds: selection.acceptedProviderIds,
+        acceptedProviderIds: requestedModel.acceptedProviderIds,
         cfg: params.cfg,
         sessionEntry,
         agentDir: params.agentDir,

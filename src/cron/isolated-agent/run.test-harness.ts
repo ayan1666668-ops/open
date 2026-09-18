@@ -1,7 +1,6 @@
 // Isolated run test harness builds cron run inputs, mocks, and assertions.
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { vi, type Mock } from "vitest";
-import { getRuntimeAuthProfileStoreCredentialsRevision } from "../../agents/auth-profiles/runtime-snapshots.js";
 import {
   type ContextTokenResolutionParams,
   resolveAuthoredModelContextTokens,
@@ -9,7 +8,6 @@ import {
 import type { FallbackRunnerParams } from "../../agents/embedded-agent-runner/run-entry.test-support.js";
 import { resolveFastModeState as resolveFastModeStateImpl } from "../../agents/fast-mode.js";
 import { LiveSessionModelSwitchError } from "../../agents/live-model-switch-error.js";
-import { evaluatePublishedModelRuntimeChoice } from "../../agents/model-runtime-choice.js";
 import {
   runInitialModelFallbackAttempt,
   withModelFallbackPreparation,
@@ -21,10 +19,11 @@ import {
   mergeSessionEntryPreserveActivity,
 } from "../../config/sessions/types.js";
 import { withPluginMetadataSnapshotScope } from "../../plugins/current-plugin-metadata-snapshot.js";
-import { createPluginMetadataSnapshotFixture } from "../../plugins/plugin-metadata.test-support.js";
-import { createEmptyPluginRegistry } from "../../plugins/registry-empty.js";
-import { getActivePluginRegistry, getActivePluginRegistryVersion } from "../../plugins/runtime.js";
 import { isSameOpenClawAgentDatabasePath } from "../../state/openclaw-agent-db-registry.js";
+import {
+  resetCronModelRuntimeFixture,
+  selectionMetadata,
+} from "./run.model-runtime.test-support.js";
 
 // Central mock harness for isolated cron agent run orchestration tests.
 type CronSessionEntry = {
@@ -84,8 +83,9 @@ function resolveSyntheticSessionStoreKey(
     !synthetic.path ||
     !requested.path ||
     !isSameOpenClawAgentDatabasePath(synthetic.path, requested.path)
-  )
+  ) {
     return undefined;
+  }
   return JSON.stringify([synthetic.path, synthetic.sessionKey]);
 }
 
@@ -101,7 +101,7 @@ export const getModelRefStatusMock = createMock();
 export const isCliProviderMock = createMock();
 export const resolveAllowedModelRefMock = createMock();
 export const resolveConfiguredModelRefMock = createMock();
-const resolveHooksGmailModelMock = createMock();
+export const resolveHooksGmailModelMock = createMock();
 export const resolveThinkingDefaultMock = createMock();
 export const resolveEffectiveAgentRuntimeMock = createMock();
 export const runWithModelFallbackMock = createMock();
@@ -164,38 +164,12 @@ const getRemoteSkillEligibilityMock = createMock();
 
 vi.mock("../../agents/thinking-runtime.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../agents/thinking-runtime.js")>()),
-  resolveEffectiveAgentRuntime: resolveEffectiveAgentRuntimeMock,
+  resolveEffectiveAgentRuntimeCore: resolveEffectiveAgentRuntimeMock,
 }));
 
 vi.mock("../../agents/model-runtime-choice.js", () => ({
   evaluatePublishedModelRuntimeChoice: vi.fn(),
 }));
-
-const selectionMetadata = createPluginMetadataSnapshotFixture({
-  plugins: [
-    { id: "cron-harness", activation: { onAgentHarnesses: ["codex"] } },
-    { id: "cron-cli", cliBackends: ["claude-cli", "test-cli"] },
-  ],
-});
-const selectionRoutes: Record<string, readonly string[]> = {
-  openai: ["openclaw", "codex", "claude-cli", "test-cli"],
-  anthropic: ["openclaw", "codex", "claude-cli"],
-  "claude-cli": ["claude-cli"],
-  "test-cli": ["test-cli"],
-  "rooted-only": ["codex"],
-  google: ["openclaw"],
-  gateway: ["openclaw"],
-  deepseek: ["openclaw"],
-  ollama: ["openclaw"],
-  openrouter: ["openclaw"],
-  vllm: ["openclaw"],
-  custom: ["openclaw"],
-  fixture: ["openclaw"],
-  mock: ["openclaw"],
-  "test-provider": ["openclaw"],
-  "fallback-provider": ["openclaw"],
-};
-let selectionGeneration = 0;
 
 vi.mock("../../agents/prepared-model-runtime.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../agents/prepared-model-runtime.js")>()),
@@ -220,12 +194,11 @@ vi.mock("./run.runtime.js", async () => ({
       supported,
     };
   },
-  resolveEffectiveAgentRuntime: resolveEffectiveAgentRuntimeMock,
-  resolvePersistedSessionRuntimeId: (
+  resolveAcceptedSessionRuntimeId: (
     await vi.importActual<typeof import("../../agents/session-runtime-compat.js")>(
       "../../agents/session-runtime-compat.js",
     )
-  ).resolvePersistedSessionRuntimeId,
+  ).resolveAcceptedSessionRuntimeId,
   buildWorkspaceSkillSnapshot: buildWorkspaceSkillSnapshotMock,
   getSkillsSnapshotVersion: getSkillsSnapshotVersionMock,
   resolveAgentTimeoutMs: resolveAgentTimeoutMsMock,
@@ -353,7 +326,6 @@ vi.mock("./run-execution.runtime.js", () => ({
   resolveFastModeState: resolveFastModeStateMock,
   resolveCronAgentLane: resolveCronAgentLaneMock,
   LiveSessionModelSwitchError,
-  isCliProvider: isCliProviderMock,
   runEmbeddedAgent: runEmbeddedAgentMock,
   countActiveDescendantRuns: countActiveDescendantRunsMock,
   listDescendantRunsForRequester: listDescendantRunsForRequesterMock,
@@ -577,45 +549,14 @@ function resetRunConfigMocks(): void {
   isExternalHookSessionMock.mockReturnValue(false);
   resolveHookExternalContentSourceMock.mockReturnValue(undefined);
   getSkillsSnapshotVersionMock.mockReturnValue(42);
-  loadModelCatalogMock.mockResolvedValue([]);
-  preparedRunPluginRegistryMock.mockReturnValue(createEmptyPluginRegistry());
-  loadPublishedReplyDispatchRuntimeMock.mockResolvedValue(undefined);
-  acquirePreparedModelRuntimeMock.mockImplementation(async (input, options) => {
-    const registry = preparedRunPluginRegistryMock();
-    const metadata =
-      options?.pluginGeneration?.pluginMetadataSnapshot ??
-      options?.pluginMetadataSnapshot ??
-      selectionMetadata;
-    return {
-      snapshot: { ...input, metadataSnapshot: metadata, pluginRegistry: registry },
-      pluginGeneration: {
-        ...options?.pluginGeneration,
-        pluginMetadataSnapshot: metadata,
-        pluginRegistry: registry,
-      },
-      [Symbol.asyncDispose]: vi.fn(async () => {}),
-    };
+  resetCronModelRuntimeFixture({
+    loadModelCatalog: loadModelCatalogMock,
+    loadModelCatalogOwner: loadModelCatalogOwnerMock,
+    loadPublishedReplyDispatchRuntime: loadPublishedReplyDispatchRuntimeMock,
+    acquirePreparedModelRuntime: acquirePreparedModelRuntimeMock,
+    preparedRunPluginRegistry: preparedRunPluginRegistryMock,
+    resolveAgentWorkspaceDir: resolveAgentWorkspaceDirMock,
   });
-  loadModelCatalogOwnerMock.mockImplementation(
-    async (params: {
-      agentId?: string;
-      agentDir?: string;
-      config: object;
-      workspaceDir?: string;
-    }) => {
-      const agentId = params.agentId ?? "default";
-      return {
-        agentId,
-        agentDir: params.agentDir ?? "/tmp/agent-dir",
-        workspaceDir: params.workspaceDir ?? resolveAgentWorkspaceDirMock(params.config, agentId),
-        config: params.config,
-        modelCatalog: {
-          entries: await loadModelCatalogMock(params),
-          routeVariants: [],
-        },
-      };
-    },
-  );
   getRemoteSkillEligibilityMock.mockResolvedValue({ remoteSkillsEnabled: false });
 }
 
@@ -797,7 +738,9 @@ function installPatchSessionEntryStore(): void {
     async (...args: Parameters<SessionAccessorModule["replaceSessionEntry"]>) => {
       const [scope, entry] = args;
       const key = resolveSyntheticSessionStoreKey(scope);
-      if (key === undefined) return actualReplaceSessionEntry(...args);
+      if (key === undefined) {
+        return actualReplaceSessionEntry(...args);
+      }
       rows.set(key, structuredClone(entry));
       return structuredClone(entry);
     },
@@ -805,7 +748,9 @@ function installPatchSessionEntryStore(): void {
   loadSessionEntryReadOnlyMock.mockImplementation(
     (scope: Parameters<SessionAccessorModule["loadSessionEntryReadOnly"]>[0]) => {
       const key = resolveSyntheticSessionStoreKey(scope);
-      if (key === undefined) return actualLoadSessionEntryReadOnly(scope);
+      if (key === undefined) {
+        return actualLoadSessionEntryReadOnly(scope);
+      }
       const entry: SessionEntry | undefined =
         rows.get(key) ?? loadSessionEntryMock(SYNTHETIC_STORE_PATH, scope.sessionKey);
       return entry ? structuredClone(entry) : undefined;
@@ -815,17 +760,25 @@ function installPatchSessionEntryStore(): void {
     async (...args: Parameters<SessionAccessorModule["patchSessionEntryCore"]>) => {
       const [scope, update, options = {}] = args;
       const key = resolveSyntheticSessionStoreKey(scope);
-      if (key === undefined) return actualPatchSessionEntryCore(...args);
+      if (key === undefined) {
+        return actualPatchSessionEntryCore(...args);
+      }
       const existingEntry: SessionEntry | undefined =
         rows.get(key) ?? loadSessionEntryMock(SYNTHETIC_STORE_PATH, scope.sessionKey);
       const writeBase = existingEntry ?? options.fallbackEntry;
-      if (!writeBase) return null;
+      if (!writeBase) {
+        return null;
+      }
       const patch = await update(structuredClone(writeBase), {
         existingEntry: existingEntry ? structuredClone(existingEntry) : undefined,
       });
-      if (options.shouldCommit?.() === false) return null;
+      if (options.shouldCommit?.() === false) {
+        return null;
+      }
       options.assertCommitAllowed?.();
-      if (!patch) return structuredClone(writeBase);
+      if (!patch) {
+        return structuredClone(writeBase);
+      }
       const creationPatch = existingEntry ? patch : { ...writeBase, ...patch };
       const mergeBase = existingEntry ? writeBase : undefined;
       // The accessor's replaceEntry contract supplies a complete session snapshot.
@@ -843,52 +796,6 @@ function installPatchSessionEntryStore(): void {
 
 export function resetRunCronIsolatedAgentTurnHarness(): void {
   vi.clearAllMocks();
-  selectionGeneration++;
-  vi.mocked(evaluatePublishedModelRuntimeChoice).mockImplementation(
-    async ({ provider, model, runtimeId }) => {
-      if (!["openclaw", "codex", "claude-cli", "test-cli"].includes(runtimeId)) {
-        return { kind: "unknown", message: "The test runtime is not registered." };
-      }
-      const supportedExecutors = selectionRoutes[provider.toLowerCase()];
-      if (!supportedExecutors) {
-        return { kind: "unknown", message: "The test route is not registered." };
-      }
-      if (!supportedExecutors.includes(runtimeId)) {
-        return {
-          kind: "unsupported",
-          message: "This test executor cannot run the selected route.",
-        };
-      }
-      const generation = selectionGeneration;
-      const registry = getActivePluginRegistry();
-      const registryVersion = getActivePluginRegistryVersion();
-      const authRevision = getRuntimeAuthProfileStoreCredentialsRevision();
-      const catalogResult = loadModelCatalogOwnerMock.mock.results.at(-1);
-      const catalogOwner = catalogResult?.type === "return" ? await catalogResult.value : undefined;
-      const dispatchResult = loadPublishedReplyDispatchRuntimeMock.mock.results.at(-1);
-      const dispatchOwner =
-        dispatchResult?.type === "return" ? await dispatchResult.value : undefined;
-      const loadCatalog = loadModelCatalogMock.getMockImplementation();
-      const catalog = catalogOwner?.modelCatalog;
-      return {
-        kind: "ready",
-        entry: { provider, id: model, name: model },
-        validate: () =>
-          generation === selectionGeneration &&
-          registry === getActivePluginRegistry() &&
-          registryVersion === getActivePluginRegistryVersion() &&
-          authRevision === getRuntimeAuthProfileStoreCredentialsRevision() &&
-          catalogResult === loadModelCatalogOwnerMock.mock.results.at(-1) &&
-          dispatchResult === loadPublishedReplyDispatchRuntimeMock.mock.results.at(-1) &&
-          loadCatalog === loadModelCatalogMock.getMockImplementation() &&
-          catalog === catalogOwner?.modelCatalog &&
-          catalogOwner?.isCurrent?.() !== false &&
-          dispatchOwner?.isCurrent?.() !== false
-            ? undefined
-            : "The model catalog changed. Try again.",
-      };
-    },
-  );
   resetRunConfigMocks();
   resetRunExecutionMocks();
   resetRunOutcomeMocks();

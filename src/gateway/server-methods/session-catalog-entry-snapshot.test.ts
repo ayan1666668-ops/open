@@ -98,8 +98,9 @@ describe("session catalog entry snapshots", () => {
     const projected = snapshot.sessionEntries.entriesForAgent("main")[0]?.entry;
     expect(projected).toMatchObject({ providerOverride: "qa-provider", modelOverride: "qa-model" });
     expect(projected).not.toHaveProperty("activeWriterRunId");
-    if (!projected?.pluginExtensions?.fixture)
+    if (!projected?.pluginExtensions?.fixture) {
       throw new Error("Expected projected plugin metadata");
+    }
     projected.pluginExtensions.fixture.value = "external mutation";
     expect(snapshot.entryForSession("agent:main:qa")).toEqual(entry);
     expect(entry.pluginExtensions?.fixture?.value).toBe("original");

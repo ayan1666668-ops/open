@@ -66,7 +66,6 @@ import { hasAgentRosterProperty, resolveAgentWorkspaceDir } from "../agent-scope
 import { resolveAgentDir, resolveSessionAgentIds } from "../agent-scope.js";
 import { hasUsableOAuthCredential } from "../auth-profiles/credential-state.js";
 import { externalCliDiscoveryForProviderAuth } from "../auth-profiles/external-cli-discovery.js";
-import { buildOAuthRefreshFailureLoginCommand } from "../auth-profiles/oauth-refresh-failure.js";
 import { resolveApiKeyForProfile } from "../auth-profiles/oauth.js";
 import { resolveAuthProfileOrder } from "../auth-profiles/order.js";
 import { isSetupCredentialAccessible } from "../auth-profiles/setup-access.js";
@@ -94,6 +93,7 @@ import { resolveCliBackendConfig } from "../cli-backends.js";
 import {
   buildCliSessionDriftNote,
   hashCliSessionText,
+  resolveCliSessionAuthInvalidation,
   resolveCliSessionReuse,
 } from "../cli-session.js";
 import {
@@ -147,7 +147,10 @@ import {
   DEFAULT_BOOTSTRAP_FILENAME,
   isWorkspaceBootstrapPending as isWorkspaceBootstrapPendingImpl,
 } from "../workspace.js";
-import { CliAuthProfilePreparationError } from "./auth-profile-preparation-error.js";
+import {
+  buildCliAuthProfileResolutionError,
+  CliAuthProfilePreparationError,
+} from "./auth-profile-preparation-error.js";
 import { prepareCliBundleMcpConfig } from "./bundle-mcp.js";
 import { prepareClaudeCliSkillsPlugin } from "./claude-skills-plugin.js";
 import { runCliCleanup } from "./cleanup.js";
@@ -161,12 +164,12 @@ import {
   resolveCliExecutionTarget,
   retainCliPluginExecutionConsumer,
 } from "./execution-target.js";
-import { buildCliAgentSystemPrompt, isClaudeCliBackendId, normalizeCliModel } from "./helpers.js";
+import { isClaudeCliBackendId, normalizeCliModel } from "./helpers.js";
 import { prepareCliHistoryBoundary } from "./history-boundary.js";
 import { cliBackendLog } from "./log.js";
 import { buildCliMcpGrantContext, normalizeOptionalMcpContextValue } from "./mcp-grant-context.js";
 import { CLAUDE_CLI_CONTEXT_MODEL_ALIASES, detectNodeClaudePlacement } from "./prepare-claude.js";
-import { composeCliPromptContext } from "./prompt-context.js";
+import { composeCliPromptContext, prepareCliSystemPrompt } from "./prompt-context.js";
 import {
   buildCliSessionHistoryPrompt,
   hasCliSessionTranscript,
@@ -453,42 +456,6 @@ function shouldResolveAuthProfileForExecution(params: {
     return params.policy.oauthRefreshOwner === "core";
   }
   return params.authCredential.type === "api_key" || params.authCredential.type === "token";
-}
-
-type CliAuthProfileResolutionFailure =
-  | { kind: "unmaterialized" }
-  | { kind: "resolved-as-other"; resolvedProfileId: string };
-
-function describeCliAuthProfileResolutionFailure(
-  profileId: string,
-  failure: CliAuthProfileResolutionFailure,
-): string {
-  switch (failure.kind) {
-    case "resolved-as-other":
-      return `selected auth profile "${profileId}" resolved as "${failure.resolvedProfileId}"`;
-    case "unmaterialized":
-      return `could not materialize selected auth profile "${profileId}"`;
-  }
-  return failure satisfies never;
-}
-
-function buildCliAuthProfileResolutionError(params: {
-  backendId: string;
-  profileId: string;
-  provider: string;
-  agentDir: string;
-  failure: CliAuthProfileResolutionFailure;
-}): CliAuthProfilePreparationError {
-  const loginCommand = buildOAuthRefreshFailureLoginCommand(params.provider, {
-    profileId: params.profileId,
-  });
-  const reason = describeCliAuthProfileResolutionFailure(params.profileId, params.failure);
-  return new CliAuthProfilePreparationError({
-    message: `CLI backend "${params.backendId}" ${reason}. Re-authenticate with: ${loginCommand}. OpenClaw did not start the run.`,
-    profileId: params.profileId,
-    provider: params.provider,
-    agentDir: params.agentDir,
-  });
 }
 
 /** Builds the complete context required to execute a CLI-backed agent run. */
@@ -1902,6 +1869,20 @@ async function prepareCliRunContextWithinReadFence(
     const controlOperationCliSessionId = isControlOperation
       ? params.cliSessionBinding?.sessionId?.trim() || params.cliSessionId?.trim()
       : undefined;
+    if (
+      controlOperationCliSessionId &&
+      params.cliSessionBinding &&
+      resolveCliSessionAuthInvalidation({
+        binding: params.cliSessionBinding,
+        authProfileId: effectiveAuthProfileId,
+        authEpoch,
+        authEpochVersion: CLI_AUTH_EPOCH_VERSION,
+      })
+    ) {
+      throw new Error(
+        "Cannot compact this conversation because its account changed. Switch back to its account or start a new conversation.",
+      );
+    }
     const reusableCliSessionCandidate: CliReusableSession = ignoreCliSessionCandidate
       ? { mode: "none" }
       : controlOperationCliSessionId
@@ -2029,7 +2010,7 @@ async function prepareCliRunContextWithinReadFence(
       ? ""
       : isSideQuestion
         ? extraSystemPrompt
-        : buildCliAgentSystemPrompt({
+        : await prepareCliSystemPrompt({
             workspaceDir,
             cwd,
             config: params.config,

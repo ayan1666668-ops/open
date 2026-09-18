@@ -1,5 +1,8 @@
 // Tests model selection resolution from directives, config, and session state.
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import * as authProfileStoreRuntime from "../../agents/auth-profiles/store-runtime.js";
+import type { AuthProfileStore } from "../../agents/auth-profiles/types.js";
 import {
   getContextWindowCaches,
   providerContextTokenCacheKey,
@@ -9,14 +12,24 @@ import {
   loadProviderScopedThinkingCatalog,
   readPreparedModelCatalog as loadModelCatalogLocal,
 } from "../../agents/model-catalog.runtime.js";
-import type { ModelCatalogSnapshot } from "../../agents/model-catalog.types.js";
+import type { ModelCatalogEntry, ModelCatalogSnapshot } from "../../agents/model-catalog.types.js";
 import { evaluatePublishedModelRuntimeChoice } from "../../agents/model-runtime-choice.js";
+import { createSessionModelCatalogFixture } from "../../agents/test-helpers/session-model-catalog.test-support.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import type { SessionEntry } from "../../config/sessions.js";
+import {
+  loadSessionEntryReadOnly,
+  replaceSessionEntry,
+} from "../../config/sessions/session-accessor.js";
+import { adoptPersistedSessionSnapshot } from "../../config/sessions/session-snapshot.js";
 import { prepareSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
 import { createPluginMetadataSnapshotFixture } from "../../plugins/plugin-metadata.test-support.js";
 import * as activeThinkingPolicy from "../../plugins/provider-thinking-active.js";
 import { prepareModelCatalogThinkingPolicies } from "../../plugins/provider-thinking.js";
+import { createEmptyPluginRegistry } from "../../plugins/registry-empty.js";
+import { resetPluginRuntimeStateForTest, setActivePluginRegistry } from "../../plugins/runtime.js";
+import { withPluginRuntimeGenerationScope } from "../../plugins/runtime/generation-scope.js";
+import { createOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
 import { isThinkingLevelSupported } from "../thinking.js";
 import { resolveDefaultModel } from "./directive-handling.defaults.js";
 import {
@@ -29,6 +42,7 @@ vi.mock("../../agents/model-runtime-choice.js", () => ({
   evaluatePublishedModelRuntimeChoice: vi.fn(),
 }));
 beforeEach(() => {
+  vi.spyOn(authProfileStoreRuntime, "ensureAuthProfileStore");
   runtimeChoiceFixture.generation++;
   vi.mocked(evaluatePublishedModelRuntimeChoice)
     .mockReset()
@@ -36,7 +50,7 @@ beforeEach(() => {
       const generation = runtimeChoiceFixture.generation;
       return {
         kind: "ready",
-        entry: { provider, id: model },
+        entry: { provider, id: model, name: model },
         validate: () =>
           generation === runtimeChoiceFixture.generation
             ? undefined
@@ -101,7 +115,8 @@ const catalogRuntimeMocks = vi.hoisted(() => {
   };
 });
 
-vi.mock("../../agents/cli-backends.js", () => ({
+vi.mock("../../agents/cli-backends.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../agents/cli-backends.js")>()),
   resolveCliRuntimeCanonicalProvider: cliBackendsMocks.resolveCliRuntimeCanonicalProvider,
 }));
 
@@ -133,72 +148,94 @@ vi.mock("./session-entry-persistence.js", () => ({
   persistReplySessionEntry: sessionPersistenceMocks.persistReplySessionEntry,
 }));
 
-const authProfileStoreMock = vi.hoisted(() => {
-  let store = { version: 1, profiles: {} } as {
-    version: 1;
-    profiles: Record<string, { type: "api_key"; provider: string; key: string }>;
-  };
-  const ensureAuthProfileStore = vi.fn(() => store);
-  return {
-    get store() {
-      return store;
-    },
-    set store(next) {
-      store = next;
-    },
-    ensureAuthProfileStore,
-    reset() {
-      store = { version: 1, profiles: {} };
-      ensureAuthProfileStore.mockClear();
-    },
-  };
-});
-
-vi.mock("../../agents/auth-profiles.runtime.js", () => ({
-  ensureAuthProfileStore: authProfileStoreMock.ensureAuthProfileStore,
-}));
-
-// Alias-aware stub: mirrors the real isStoredCredentialCompatibleWithAuthProvider
-// but inlines the claude-cli->anthropic alias so tests don't need live plugin metadata.
-vi.mock("../../agents/auth-profiles/order.js", () => ({
-  isStoredCredentialCompatibleWithAuthProvider: ({
-    provider,
-    credential,
-  }: {
-    provider: string;
-    credential: { type: string; provider: string };
-  }) => {
-    const normalize = (v: string) => v.toLowerCase().replace(/[^a-z0-9]+/g, "");
-    const resolveAuthKey = (v: string) => {
-      const n = normalize(v);
-      // claude-cli is a deprecated choice id that resolves to the anthropic auth key
-      if (n === "claudecli") {
-        return "anthropic";
-      }
-      return n;
-    };
-    const providerKey = resolveAuthKey(provider);
-    const credentialKey = resolveAuthKey(credential.provider);
-    if (credentialKey === providerKey) {
-      return true;
-    }
-    // OpenAI Codex compat: openai api_key credential works for openai-codex provider
-    if (providerKey === "openaiapicodex" || providerKey === "openaicodex") {
-      return credentialKey === "openai" && credential.type === "api_key";
-    }
-    return false;
-  },
-}));
-
 afterEach(() => {
   getContextWindowCaches().discoveredTokenCache.clear();
   cliBackendsMocks.resolveCliRuntimeCanonicalProvider.mockClear();
   sessionPersistenceMocks.persistReplySessionEntry.mockReset();
   vi.mocked(loadManifestModelCatalog).mockReset();
   vi.mocked(loadManifestModelCatalog).mockReturnValue([]);
-  authProfileStoreMock.reset();
+  vi.mocked(authProfileStoreRuntime.ensureAuthProfileStore).mockRestore();
+  resetPluginRuntimeStateForTest();
   vi.mocked(loadProviderScopedThinkingCatalog).mockReset().mockResolvedValue([]);
 });
+
+async function storedSelectionFixture(entry: SessionEntry, sessionKey = "agent:main:selection") {
+  const state = await createOpenClawTestState({ scenario: "minimal" });
+  onTestFinished(() => state.cleanup());
+  const storePath = path.join(state.sessionsDir(), "sessions.json");
+  const persisted = await replaceSessionEntry({ storePath, sessionKey }, entry);
+  if (!persisted) {
+    throw new Error("Expected the session fixture to persist");
+  }
+  adoptPersistedSessionSnapshot(entry, persisted);
+  const persistence = await vi.importActual<typeof import("./session-entry-persistence.js")>(
+    "./session-entry-persistence.js",
+  );
+  sessionPersistenceMocks.persistReplySessionEntry.mockImplementation(
+    persistence.persistReplySessionEntry,
+  );
+  return { state, storePath, sessionKey, persistence };
+}
+
+async function withAccountSelectionFixture(
+  params: {
+    entry: SessionEntry;
+    cfg: OpenClawConfig;
+    provider: string;
+    models: string[];
+    profiles: AuthProfileStore["profiles"];
+  },
+  run: (fixture: {
+    cfg: OpenClawConfig;
+    catalog: ModelCatalogSnapshot;
+    storePath: string;
+    sessionKey: string;
+  }) => Promise<void>,
+) {
+  const { state, storePath, sessionKey } = await storedSelectionFixture(params.entry);
+  await state.writeAuthProfiles({ version: 1, profiles: params.profiles });
+  const cfg: OpenClawConfig = {
+    ...params.cfg,
+    plugins: { entries: { "account-fixture": { enabled: true } } },
+  };
+  const metadataSnapshot = createPluginMetadataSnapshotFixture({
+    plugins: [{ id: "account-fixture", providers: [params.provider] }],
+  });
+  const registry = createEmptyPluginRegistry();
+  setActivePluginRegistry(registry);
+  const catalog: ModelCatalogSnapshot = {
+    entries: params.models.map((id): ModelCatalogEntry => ({
+      provider: params.provider,
+      id,
+      name: id,
+      api: "openai-responses",
+      baseUrl:
+        params.cfg.models?.providers?.[params.provider]?.baseUrl ?? "https://fixture.invalid/v1",
+      reasoning: false,
+    })),
+    routeVariants: [],
+    authoritative: true,
+  };
+  await withPluginRuntimeGenerationScope(
+    { metadataSnapshot, pluginRegistry: registry },
+    async () => {
+      createSessionModelCatalogFixture().publish({
+        config: cfg,
+        agentId: "main",
+        catalog,
+        plugins: metadataSnapshot.plugins,
+        profiles: params.profiles,
+      });
+      const actual = await vi.importActual<typeof import("../../agents/model-runtime-choice.js")>(
+        "../../agents/model-runtime-choice.js",
+      );
+      vi.mocked(evaluatePublishedModelRuntimeChoice).mockImplementation(
+        actual.evaluatePublishedModelRuntimeChoice,
+      );
+      await run({ cfg, catalog, storePath, sessionKey });
+    },
+  );
+}
 
 const makeConfiguredModel = (overrides: Record<string, unknown> = {}) => ({
   id: "gpt-5.4",
@@ -216,7 +253,7 @@ describe("createModelSelectionState catalog loading", () => {
     cfg: OpenClawConfig,
     provider: string,
     model: string,
-    options: Partial<Parameters<typeof createModelSelectionState>[0]> = {},
+    options: Partial<Omit<Parameters<typeof createModelSelectionState>[0], "replyAuth">> = {},
   ) {
     return createModelSelectionState({
       cfg,
@@ -226,6 +263,7 @@ describe("createModelSelectionState catalog loading", () => {
       provider,
       model,
       hasModelDirective: false,
+      prepareExecution: true,
       ...options,
     });
   }
@@ -260,10 +298,12 @@ describe("createModelSelectionState catalog loading", () => {
         provider: "qa-provider",
         model: "qa-model",
         hasModelDirective: true,
+        prepareExecution: false,
       });
       expect(entry).toEqual(initial);
       expect(sessionStore.main.authProfileOverride).toBe("qa-provider:missing-account");
-      expect(authProfileStoreMock.ensureAuthProfileStore).not.toHaveBeenCalled();
+      expect(authProfileStoreRuntime.ensureAuthProfileStore).not.toHaveBeenCalled();
+      expect(evaluatePublishedModelRuntimeChoice).not.toHaveBeenCalled();
     },
   );
 
@@ -539,6 +579,7 @@ describe("createModelSelectionState catalog loading", () => {
     const nativeCatalog = [{ ...embedded, nativeRuntime: "fixture-app", reasoning: true }];
     const state = await createInitialState(cfg, "fixture", "reset-model", {
       hasModelDirective: true,
+      prepareExecution: false,
       sessionEntry,
       preparedModelCatalog: { entries: nativeCatalog, routeVariants: nativeCatalog },
       agentId: "main",
@@ -560,7 +601,9 @@ describe("createModelSelectionState catalog loading", () => {
       request: { kind: "reset" },
     });
     expect(prepared.status).toBe("ready");
-    if (prepared.status !== "ready") throw new Error(prepared.message);
+    if (prepared.status !== "ready") {
+      throw new Error(prepared.message);
+    }
     expect(prepared.selection.executor).toEqual({ kind: "harness", id: "openclaw" });
     if (prepared.selection.executor.kind !== "harness") {
       throw new Error("Expected the reset harness");
@@ -774,15 +817,27 @@ describe("createModelSelectionState catalog loading", () => {
   });
 
   it.each([
-    { hasModelDirective: false, capturedPolicy: true, expected: "ultra" },
-    { hasModelDirective: true, capturedPolicy: true, expected: "ultra" },
-    { hasModelDirective: false, capturedPolicy: false, expected: "medium" },
-    { hasModelDirective: true, capturedPolicy: false, expected: "medium" },
-    { hasModelDirective: false, capturedPolicy: true, expected: "ultra", unrestricted: true },
-    { hasModelDirective: false, capturedPolicy: false, expected: "medium", unrestricted: true },
+    { hasModelDirective: false, prepareExecution: true, capturedPolicy: true, expected: "ultra" },
+    { hasModelDirective: true, prepareExecution: false, capturedPolicy: true, expected: "ultra" },
+    { hasModelDirective: false, prepareExecution: true, capturedPolicy: false, expected: "medium" },
+    { hasModelDirective: true, prepareExecution: false, capturedPolicy: false, expected: "medium" },
+    {
+      hasModelDirective: false,
+      prepareExecution: true,
+      capturedPolicy: true,
+      expected: "ultra",
+      unrestricted: true,
+    },
+    {
+      hasModelDirective: false,
+      prepareExecution: true,
+      capturedPolicy: false,
+      expected: "medium",
+      unrestricted: true,
+    },
   ])(
     "keeps prepared thinking ownership through reply selection (directive=$hasModelDirective policy=$capturedPolicy unrestricted=$unrestricted)",
-    async ({ hasModelDirective, capturedPolicy, expected, unrestricted }) => {
+    async ({ hasModelDirective, prepareExecution, capturedPolicy, expected, unrestricted }) => {
       const provider = "fixture-provider";
       const model = "fixture-model";
       const cfg: OpenClawConfig = {
@@ -827,6 +882,7 @@ describe("createModelSelectionState catalog loading", () => {
       try {
         const state = await createInitialState(cfg, provider, model, {
           hasModelDirective,
+          prepareExecution,
           preparedModelCatalog,
         });
         await expect(
@@ -944,6 +1000,7 @@ describe("createModelSelectionState catalog loading", () => {
 
     const state = await createInitialState(cfg, "vllm", "Qwen/Qwen3-8B", {
       hasModelDirective: true,
+      prepareExecution: false,
     });
 
     await expect(state.resolveThinkingCatalog()).resolves.toEqual([
@@ -999,6 +1056,7 @@ describe("createModelSelectionState catalog loading", () => {
 
     const state = await createInitialState(cfg, "openai", "gpt-4o", {
       hasModelDirective: true,
+      prepareExecution: false,
     });
 
     expect(loadModelCatalogLocal).toHaveBeenCalledOnce();
@@ -1027,6 +1085,7 @@ describe("createModelSelectionState catalog loading", () => {
       provider: "openai",
       model: "gpt-5.5",
       hasModelDirective: true,
+      prepareExecution: false,
     });
 
     expect(
@@ -1101,6 +1160,7 @@ describe("createModelSelectionState catalog loading", () => {
 
     const state = await createInitialState(cfg, "anthropic", "claude-opus-4-5", {
       hasModelDirective: true,
+      prepareExecution: false,
     });
 
     expect(state.provider).toBe("anthropic");
@@ -1153,44 +1213,67 @@ describe("createModelSelectionState catalog loading", () => {
   });
 
   it("preserves OpenAI API-key session auth when model policy explicitly pins OpenClaw", async () => {
-    authProfileStoreMock.store = {
-      version: 1,
-      profiles: {
-        "openai:work": { type: "api_key", provider: "openai", key: "sk-test" },
-      },
-    };
     const sessionEntry: SessionEntry = {
       sessionId: "s1",
       updatedAt: 1,
       authProfileOverride: "openai:work",
     };
-    const sessionStore = { main: sessionEntry };
-
-    await createModelSelectionState({
-      cfg: {
-        models: {
-          providers: {
-            openai: {
-              baseUrl: "https://api.openai.com/v1",
-              agentRuntime: { id: "openclaw" },
-              models: [],
+    await withAccountSelectionFixture(
+      {
+        entry: sessionEntry,
+        cfg: {
+          agents: { defaults: { model: "openai/gpt-5.5" } },
+          models: {
+            providers: {
+              openai: {
+                baseUrl: "https://api.openai.com/v1",
+                agentRuntime: { id: "openclaw" },
+                models: [],
+              },
             },
           },
         },
-      } as OpenClawConfig,
-      agentCfg: undefined,
-      defaultProvider: "openai",
-      defaultModel: "gpt-5.5",
-      provider: "openai",
-      model: "gpt-5.5",
-      hasModelDirective: false,
-      sessionEntry,
-      sessionStore,
-      sessionKey: "main",
-    });
-
-    expect(sessionEntry.authProfileOverride).toBe("openai:work");
-    expect(sessionStore.main.authProfileOverride).toBe("openai:work");
+        provider: "openai",
+        models: ["gpt-5.5"],
+        profiles: {
+          "openai:work": { type: "api_key", provider: "openai", key: "synthetic-test-key" },
+        },
+      },
+      async ({ cfg, catalog, storePath, sessionKey }) => {
+        const sessionStore = { [sessionKey]: sessionEntry };
+        const state = await createModelSelectionState({
+          cfg,
+          agentId: "main",
+          agentCfg: cfg.agents?.defaults,
+          defaultProvider: "openai",
+          defaultModel: "gpt-5.5",
+          provider: "openai",
+          model: "gpt-5.5",
+          hasModelDirective: false,
+          prepareExecution: true,
+          preparedModelCatalog: catalog,
+          sessionEntry,
+          sessionStore,
+          sessionKey,
+          storePath,
+          replyAuth: { isNewSession: false },
+        });
+        expect(state.auth?.selection).toEqual({
+          profileId: "openai:work",
+          source: "user",
+          routeRequirement: "api-key",
+        });
+        expect(state.executionSelection).toEqual({
+          model: { provider: "openai", id: "gpt-5.5" },
+          executor: { kind: "harness", id: "openclaw" },
+        });
+        expect(sessionEntry.authProfileOverride).toBe("openai:work");
+        expect(sessionStore[sessionKey]?.authProfileOverride).toBe("openai:work");
+        expect(loadSessionEntryReadOnly({ storePath, sessionKey })).toEqual(sessionEntry);
+        expect(authProfileStoreRuntime.ensureAuthProfileStore).toHaveBeenCalled();
+        expect(state.auth?.validate(sessionEntry)).toBeUndefined();
+      },
+    );
   });
 });
 
@@ -1245,6 +1328,7 @@ function prepareAcceptedState(
     provider: "fixture",
     model: "default",
     hasModelDirective: false,
+    prepareExecution: true,
     ...overrides,
   });
 }
@@ -1309,11 +1393,7 @@ describe("createModelSelectionState accepted selection", () => {
     expect(entry).toEqual(before);
   });
 
-  it("retains a locked CLI selection, its binding and its compatible account", async () => {
-    authProfileStoreMock.store = {
-      version: 1,
-      profiles: { "anthropic:cli": { type: "api_key", provider: "anthropic", key: "synthetic" } },
-    };
+  it("retains a locked CLI selection, its binding and its account", async () => {
     const entry = acceptedEntry({
       executionSelection: {
         state: "accepted",
@@ -1340,7 +1420,7 @@ describe("createModelSelectionState accepted selection", () => {
     });
     expect(entry).toEqual(before);
     expect(cliBackendsMocks.resolveCliRuntimeCanonicalProvider).not.toHaveBeenCalled();
-    expect(authProfileStoreMock.ensureAuthProfileStore).not.toHaveBeenCalled();
+    expect(authProfileStoreRuntime.ensureAuthProfileStore).not.toHaveBeenCalled();
   });
 
   it("keeps canonical nested model identity ahead of a colliding alias", async () => {
@@ -1358,7 +1438,10 @@ describe("createModelSelectionState accepted selection", () => {
       agents: {
         defaults: {
           model: "fixture/default",
-          models: { "other/alternative": { alias: "namespace/selected" } },
+          models: {
+            "fixture/namespace/selected": {},
+            "other/alternative": { alias: "namespace/selected" },
+          },
         },
       },
     };
@@ -1380,38 +1463,98 @@ describe("createModelSelectionState accepted selection", () => {
         authProfileOverride: "fixture:account",
         authProfileOverrideSource: "user",
       });
-      const before = structuredClone(entry);
-      const state = await prepareAcceptedState(entry, {
-        model: "temporary",
-        ...(kind === "heartbeat"
-          ? { isHeartbeat: true, hasResolvedHeartbeatModelOverride: true }
-          : kind === "recovery"
-            ? { skipStoredModelOverride: true }
-            : { hasOneTurnModelOverride: true }),
-      });
-      expect(state).toMatchObject({
-        provider: "fixture",
-        model: "temporary",
-        executionSelection: {
-          model: { provider: "fixture", id: "temporary" },
-          executor: { kind: "harness", id: "openclaw" },
+      await withAccountSelectionFixture(
+        {
+          entry,
+          cfg: { agents: { defaults: { model: "fixture/default" } } },
+          provider: "fixture",
+          models: ["default", "selected", "temporary"],
+          profiles: {
+            "fixture:account": { type: "api_key", provider: "fixture", key: "synthetic-test-key" },
+          },
         },
-      });
-      expect(entry).toEqual(before);
+        async ({ cfg, catalog, storePath, sessionKey }) => {
+          const before = structuredClone(entry);
+          const state = await prepareAcceptedState(entry, {
+            cfg,
+            agentCfg: cfg.agents?.defaults,
+            sessionKey,
+            storePath,
+            preparedModelCatalog: catalog,
+            replyAuth: { isNewSession: false },
+            model: "temporary",
+            ...(kind === "heartbeat"
+              ? { hasResolvedHeartbeatModelOverride: true }
+              : kind === "recovery"
+                ? { skipStoredModelOverride: true }
+                : { hasOneTurnModelOverride: true }),
+          });
+          expect(state).toMatchObject({
+            provider: "fixture",
+            model: "temporary",
+            executionSelection: {
+              model: { provider: "fixture", id: "temporary" },
+              executor: { kind: "harness", id: "openclaw" },
+            },
+          });
+          expect(state.auth?.selection).toEqual({
+            profileId: "fixture:account",
+            source: "user",
+            routeRequirement: "api-key",
+          });
+          expect(state.auth?.validate(entry)).toBeUndefined();
+          expect(authProfileStoreRuntime.ensureAuthProfileStore).toHaveBeenCalled();
+          expect(entry).toEqual(before);
+          expect(loadSessionEntryReadOnly({ storePath, sessionKey })).toEqual(before);
+          expect(sessionPersistenceMocks.persistReplySessionEntry).not.toHaveBeenCalled();
+        },
+      );
     },
   );
 
   it.each(["user", "user-link", undefined] as const)(
-    "retains a missing explicit account (%s) on an accepted pair",
+    "refuses a missing explicit account (%s) without changing an accepted pair",
     async (source) => {
       const entry = acceptedEntry({
         authProfileOverride: "fixture:missing",
         authProfileOverrideSource: source,
       });
-      const before = structuredClone(entry);
-      await prepareAcceptedState(entry);
-      expect(entry).toEqual(before);
-      expect(authProfileStoreMock.ensureAuthProfileStore).not.toHaveBeenCalled();
+      await withAccountSelectionFixture(
+        {
+          entry,
+          cfg: { agents: { defaults: { model: "fixture/default" } } },
+          provider: "fixture",
+          models: ["default", "selected"],
+          profiles: {
+            "fixture:other": { type: "api_key", provider: "fixture", key: "synthetic-test-key" },
+          },
+        },
+        async ({ cfg, catalog, storePath, sessionKey }) => {
+          const before = structuredClone(entry);
+          await expect(
+            prepareAcceptedState(entry, {
+              cfg,
+              agentCfg: cfg.agents?.defaults,
+              sessionKey,
+              storePath,
+              preparedModelCatalog: catalog,
+              replyAuth: { isNewSession: false },
+            }),
+          ).rejects.toThrow("Could not change models. Sign in to OpenClaw, then try again.");
+          expect(authProfileStoreRuntime.ensureAuthProfileStore).toHaveBeenCalled();
+          expect(evaluatePublishedModelRuntimeChoice).toHaveBeenCalledWith(
+            expect.objectContaining({
+              sessionEntry: expect.objectContaining({
+                authProfileOverride: "fixture:missing",
+                authProfileOverrideSource: "user",
+              }),
+            }),
+          );
+          expect(entry).toEqual(before);
+          expect(loadSessionEntryReadOnly({ storePath, sessionKey })).toEqual(before);
+          expect(sessionPersistenceMocks.persistReplySessionEntry).not.toHaveBeenCalled();
+        },
+      );
     },
   );
 
@@ -1423,6 +1566,7 @@ describe("createModelSelectionState accepted selection", () => {
       vi.mocked(evaluatePublishedModelRuntimeChoice).mockResolvedValueOnce({
         kind,
         message: "Selection is not available.",
+        validate: () => undefined,
       });
       await expect(prepareAcceptedState(entry)).rejects.toThrow();
       expect(entry).toEqual(before);
@@ -1446,15 +1590,24 @@ describe("createModelSelectionState accepted selection", () => {
       lifecycleRevision: "initial-generation",
       updatedAt: 1,
     };
+    const { storePath, sessionKey, persistence } = await storedSelectionFixture(entry);
     const before = structuredClone(entry);
-    sessionPersistenceMocks.persistReplySessionEntry.mockResolvedValueOnce({
-      status: "lifecycle-invalidated",
-      error: "Session changed while starting work. Retry.",
-      entry: { ...entry, sessionId: "replacement-session" },
+    const replacement = {
+      ...entry,
+      sessionId: "replacement-session",
+      lifecycleRevision: "replacement-generation",
+    };
+    sessionPersistenceMocks.persistReplySessionEntry.mockImplementationOnce(async (params) => {
+      const persisted = await replaceSessionEntry({ storePath, sessionKey }, replacement);
+      if (!persisted) {
+        throw new Error("Expected the replacement session to persist");
+      }
+      adoptPersistedSessionSnapshot(replacement, persisted);
+      return persistence.persistReplySessionEntry(params);
     });
-    await expect(
-      prepareAcceptedState(entry, { storePath: "/synthetic/selection-store" }),
-    ).rejects.toThrow(/changed while starting work/i);
+    await expect(prepareAcceptedState(entry, { storePath, sessionKey })).rejects.toThrow(
+      /changed while starting work/i,
+    );
     expect(sessionPersistenceMocks.persistReplySessionEntry).toHaveBeenCalledOnce();
     const request = sessionPersistenceMocks.persistReplySessionEntry.mock.calls[0]?.[0];
     expect(request?.initialEntry).toEqual(before);
@@ -1463,24 +1616,30 @@ describe("createModelSelectionState accepted selection", () => {
       selection: { model: { provider: "fixture", id: "default" } },
     });
     expect(entry).toEqual(before);
+    expect(loadSessionEntryReadOnly({ storePath, sessionKey })).toEqual(replacement);
+    expect(replacement.sessionId).toBe("replacement-session");
+    expect(replacement.executionSelection).toBeUndefined();
   });
 
   it("passes the published generation validator into the session transaction", async () => {
     const entry: SessionEntry = { sessionId: "pending-session", updatedAt: 1 };
+    const { storePath, sessionKey, persistence } = await storedSelectionFixture(entry);
     const before = structuredClone(entry);
-    sessionPersistenceMocks.persistReplySessionEntry.mockImplementationOnce(
-      async ({ validateCommit }) => {
-        runtimeChoiceFixture.generation++;
-        const error = validateCommit?.();
-        expect(error).toBe("The model catalog changed. Try again.");
-        if (!error) throw new Error("Expected the published generation to reject commit");
-        return { status: "commit-rejected", error, entry: before };
-      },
+    sessionPersistenceMocks.persistReplySessionEntry.mockImplementationOnce(async (params) => {
+      runtimeChoiceFixture.generation++;
+      const error = params.validateCommit?.();
+      expect(error).toBe("The model catalog changed. Try again.");
+      if (!error) {
+        throw new Error("Expected the published generation to reject commit");
+      }
+      return persistence.persistReplySessionEntry(params);
+    });
+    await expect(prepareAcceptedState(entry, { storePath, sessionKey })).rejects.toThrow(
+      "The model catalog changed. Try again.",
     );
-    await expect(
-      prepareAcceptedState(entry, { storePath: "/synthetic/selection-store" }),
-    ).rejects.toThrow("The model catalog changed. Try again.");
+    expect(sessionPersistenceMocks.persistReplySessionEntry).toHaveBeenCalledOnce();
     expect(entry).toEqual(before);
+    expect(loadSessionEntryReadOnly({ storePath, sessionKey })).toEqual(before);
   });
 });
 
@@ -1499,6 +1658,7 @@ describe("createModelSelectionState resolveDefaultReasoningLevel", () => {
       provider: "local",
       model: "fast-reasoner",
       hasModelDirective: false,
+      prepareExecution: true,
     });
 
     await expect(state.resolveDefaultReasoningLevel()).resolves.toBe("on");
@@ -1519,6 +1679,7 @@ describe("createModelSelectionState resolveDefaultReasoningLevel", () => {
       provider: "openrouter",
       model: "x-ai/grok-4.1-fast",
       hasModelDirective: false,
+      prepareExecution: true,
     });
     await expect(state.resolveDefaultReasoningLevel()).resolves.toBe("on");
   });
@@ -1532,7 +1693,10 @@ describe("createModelSelectionState resolveDefaultReasoningLevel", () => {
       provider: "openai",
       model: "gpt-4o-mini",
       hasModelDirective: false,
+      prepareExecution: true,
     });
     await expect(state.resolveDefaultReasoningLevel()).resolves.toBe("off");
   });
 });
+
+/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

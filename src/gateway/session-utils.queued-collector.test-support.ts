@@ -11,11 +11,13 @@ import { spawnSubagentDirect } from "../agents/subagents/spawn/subagent-spawn.js
 import { testing as spawnTesting } from "../agents/subagents/spawn/subagent-spawn.test-support.js";
 import { closeSwarmScheduler, reserveSwarmRun } from "../agents/subagents/swarm/swarm-scheduler.js";
 import { testing as schedulerTesting } from "../agents/subagents/swarm/swarm-scheduler.test-support.js";
+import { createSessionModelCatalogFixture } from "../agents/test-helpers/session-model-catalog.test-support.js";
 import { getRuntimeConfig } from "../config/config.js";
 import { resolveSessionResetPolicy } from "../config/sessions.js";
 import { upsertSessionEntryCore } from "../config/sessions/session-accessor.js";
 import { emitAgentEvent, resetAgentEventsForTest } from "../infra/agent-events.js";
 import { clearAgentRunContext, registerAgentRunContext } from "../infra/agent-run-registry.js";
+import { prepareSessionExecutionSelection } from "../model-picker/apply-session-model-selection.js";
 import { resetGatewayWorkAdmission } from "../process/gateway-work-admission.js";
 import { onSessionLifecycleEvent } from "../sessions/session-lifecycle-events.js";
 import {
@@ -50,9 +52,43 @@ export function useQueuedCollectorFixture() {
     await state.writeConfig({
       session: { mainKey: "main", scope: "per-sender" },
       tools: { swarm: { enabled: true, maxConcurrent: 1 } },
+      models: {
+        providers: {
+          fixture: {
+            api: "openai-responses",
+            baseUrl: "https://collector.example.invalid/v1",
+            models: [
+              {
+                id: "collector",
+                name: "Collector",
+                reasoning: false,
+                input: ["text"],
+                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                contextWindow: 4096,
+                maxTokens: 1024,
+              },
+            ],
+          },
+        },
+      },
       agents: {
-        defaults: { workspace: state.workspaceDir },
+        defaults: {
+          workspace: state.workspaceDir,
+          model: "fixture/collector",
+          models: { "fixture/collector": { agentRuntime: { id: "openclaw" } } },
+        },
         entries: { main: { workspace: state.workspaceDir } },
+      },
+    });
+    createSessionModelCatalogFixture().publish({
+      config: getRuntimeConfig(),
+      agentId: "main",
+      catalog: {
+        entries: [{ provider: "fixture", id: "collector", name: "Collector" }],
+        routeVariants: [],
+      },
+      profiles: {
+        "fixture:work": { type: "api_key", provider: "fixture", key: "synthetic-collector" },
       },
     });
     registryTesting.setDepsForTest({
@@ -211,10 +247,20 @@ export function useQueuedCollectorFixture() {
     const childSessionKey = `agent:main:subagent:${name}`;
     const runId = `${name}-collector`;
     const groupId = `swarm:${parentKey}:parent-turn`;
+    const cfg = getRuntimeConfig();
+    const preparedSelection = await prepareSessionExecutionSelection({
+      cfg,
+      agentId: "main",
+      sessionKey: childSessionKey,
+      request: { kind: "initialize" },
+    });
+    if (preparedSelection.status !== "ready") {
+      throw new Error(preparedSelection.message);
+    }
     reserveSwarmRun({ runId, groupId, maxConcurrent: 1, activeRunIds: [] });
     expect(
       await createInitialSubagentSession({
-        cfg: getRuntimeConfig(),
+        cfg,
         targetAgentId: "main",
         childSessionKey,
         label: "Reserved collector",
@@ -224,6 +270,7 @@ export function useQueuedCollectorFixture() {
         creationPolicy: { actor: { type: "agent", id: "main" } },
         modelPatch: {},
         executionRequest: { kind: "initialize" },
+        preparedSelection,
         swarmGroupId: groupId,
         collect: true,
       }),

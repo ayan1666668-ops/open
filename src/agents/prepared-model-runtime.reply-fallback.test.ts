@@ -11,8 +11,12 @@ import { runPreparedReply } from "../auto-reply/reply/get-reply-run.js";
 import type { RunPreparedReplyParams } from "../auto-reply/reply/get-reply-run.types.js";
 import { bindPreparedReplyDispatchRuntime } from "../auto-reply/reply/prepared-reply-dispatch-context.js";
 import type { FollowupRun } from "../auto-reply/reply/queue.js";
+import { createQueueTestRun } from "../auto-reply/reply/queue.test-helpers.js";
 import { createPluginMetadataSnapshot } from "../config/plugin-auto-enable.test-helpers.js";
+import type { InternalSessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { commitSessionExecutionSelection } from "../model-picker/apply-session-model-selection.js";
+import type { ModelExecutionSelection } from "../model-picker/execution-selection.js";
 import { listRuntimePluginIdsFromRegistry } from "../plugins/active-runtime-registry.js";
 import type { PluginManifestRecord } from "../plugins/manifest-registry.js";
 import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
@@ -206,24 +210,35 @@ describe("prepared reply fallback ownership", () => {
         pluginMetadataSnapshot: metadata,
       });
       const dispatch = (await loadPublishedGatewayReplyDispatchRuntime({ agentId: "default" }))!;
-      const run = {
+      const selection: ModelExecutionSelection = {
+        model: { provider: "selected", id: "model" },
+        executor: { kind: "harness", id: "openclaw" },
+      };
+      const run: FollowupRun["run"] = {
+        ...createQueueTestRun({ prompt: "prepared fallback" }).run,
         config,
         agentId: "default",
         agentDir: dispatch.agentDir,
         workspaceDir: dispatch.workspaceDir,
-        provider: "selected",
-        model: "model",
         sessionKey: scope === "agent" ? "agent:default:main" : "agent:default:subagent:test",
-        hasSessionModelOverride: true,
-        modelOverrideSource: source,
+        executionSelection: selection,
+      };
+      const entry: InternalSessionEntry = {
+        sessionId: run.sessionId,
+        updatedAt: 1,
         modelSelectionLocked: locked,
-        hasAutoFallbackProvenance: true,
-      } as FollowupRun["run"];
+      };
+      commitSessionExecutionSelection(entry, selection, {
+        cause:
+          source === "user"
+            ? { kind: "user" }
+            : { kind: "initialize", fallbackPermission: "configured" },
+      });
       reply.context.mockResolvedValue({ kind: "run", workspaceDir: dispatch.workspaceDir });
       reply.execute.mockImplementation(async () => {
         const pluginGeneration = getPreparedModelRuntimePluginGeneration()!;
         const candidates = resolveModelCandidateChain({
-          ...resolveModelFallbackOptions(run),
+          ...resolveModelFallbackOptions(run, config, entry),
           manifestPlugins: metadata.plugins,
         });
         expect(candidates.map((candidate) => candidate.provider)).toEqual(
@@ -247,8 +262,8 @@ describe("prepared reply fallback ownership", () => {
           await expect(
             ensureSelectedAgentHarnessPlugin({
               config,
-              provider: run.provider,
-              modelId: run.model,
+              provider: selection.model.provider,
+              modelId: selection.model.id,
               workspaceDir: dispatch.workspaceDir,
               pluginRegistry: nested.snapshot.pluginRegistry,
             }),
@@ -258,7 +273,10 @@ describe("prepared reply fallback ownership", () => {
         return { text: "fallback admitted" };
       });
       const execute = bindPreparedReplyDispatchRuntime(dispatch, () =>
-        runPreparedReply({ provider: run.provider, model: run.model } as RunPreparedReplyParams),
+        runPreparedReply({
+          provider: selection.model.provider,
+          model: selection.model.id,
+        } as RunPreparedReplyParams),
       );
 
       await expect(execute()).resolves.toEqual({ text: "fallback admitted" });

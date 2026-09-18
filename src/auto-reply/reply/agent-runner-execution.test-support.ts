@@ -4,21 +4,15 @@ import { afterEach, beforeEach, expect, onTestFinished, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
 import type { AuthProfileStore } from "../../agents/auth-profiles/types.js";
 import { testing as cliBackendsTesting } from "../../agents/cli-backends.test-support.js";
-import type { runEmbeddedAgentEntry } from "../../agents/embedded-agent-runner/run-entry.js";
 import type { DeferredEmbeddedRunLifecycleOwner } from "../../agents/embedded-agent-runner/run/deferred-lifecycle-owner.js";
 import type { RunEmbeddedAgentInternalParams } from "../../agents/embedded-agent-runner/run/internal-params.js";
-import type { EmbeddedAgentRunResult } from "../../agents/embedded-agent-runner/types.js";
 import { FailoverError, type FallbackAttemptRecord } from "../../agents/failover-error.js";
 import { AUTH_INVALID_TOKEN_USER_TEXT } from "../../agents/failover/user-copy.js";
 import { registerAgentHarness } from "../../agents/harness/registry.js";
 import type { LiveSessionModelSwitchError } from "../../agents/live-model-switch-error.js";
 import type { ModelCatalogEntry } from "../../agents/model-catalog.types.js";
-import type { ModelFallbackRunResult } from "../../agents/model-fallback-attempt.js";
 import type { runWithModelFallback } from "../../agents/model-fallback-runner.js";
-import {
-  initialModelFallbackAttemptOptions,
-  withModelFallbackPreparation,
-} from "../../agents/test-helpers/model-fallback-runner.test-support.js";
+import { loadNativeHarnessFixture } from "../../agents/test-helpers/bundled-native-harness.test-support.js";
 import { createSessionModelCatalogFixture } from "../../agents/test-helpers/session-model-catalog.test-support.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import type { ModelDefinitionConfig } from "../../config/types.models.js";
@@ -42,18 +36,13 @@ import {
 import { createTestUserTurnTranscriptTarget } from "../../sessions/user-turn-transcript.test-support.js";
 import type { TemplateContext } from "../templating.js";
 import type { GetReplyOptions, ReplyPayload } from "../types.js";
+// Register mocks before fixture dependencies can load their production targets.
+import { state, resetExecutionMocks } from "./agent-runner-execution-mocks.test-support.js";
 import type { AgentTurnParams } from "./agent-runner-execution.types.js";
-import type {
-  buildEmbeddedRunExecutionParams,
-  mintReplyMessageActionTurnCapability,
-} from "./agent-runner-utils.js";
 import type { FollowupRun } from "./queue.js";
 import type { ReplyOperation } from "./reply-run-registry.js";
 import type { TypingSignaler } from "./typing-mode.js";
 
-type RunEntryParams = Parameters<typeof runEmbeddedAgentEntry<EmbeddedAgentRunResult>>[0];
-type RunEntryResult = Awaited<ReturnType<typeof runEmbeddedAgentEntry<EmbeddedAgentRunResult>>>;
-type RunEntryDelegate = (params: RunEntryParams) => Promise<RunEntryResult>;
 type RunCliAgent = typeof import("../../agents/cli-runner.js").runCliAgent;
 
 export const PROVIDER_AUTHENTICATION_ERROR_USER_MESSAGE = `⚠️ ${AUTH_INVALID_TOKEN_USER_TEXT}`;
@@ -82,28 +71,6 @@ export function createTestFallbackSummaryError(params: {
   });
 }
 
-const state = vi.hoisted(() => ({
-  runEmbeddedAgentMock: vi.fn(),
-  runEmbeddedAgentEntryMock: vi.fn(),
-  runCliAgentMock: vi.fn(),
-  runWithModelFallbackMock:
-    vi.fn<(params: FallbackRunnerParams) => Promise<ModelFallbackRunResult<unknown>>>(),
-  isCliProviderMock: vi.fn((_provider: unknown) => false),
-  isInternalMessageChannelMock: vi.fn((_channel: unknown) => false),
-  createBlockReplyDeliveryHandlerMock: vi.fn(),
-  isCompactionFailureErrorMock: vi.fn((_message: string | undefined) => false),
-  isContextOverflowErrorMock: vi.fn((_message: string | undefined) => false),
-  isLikelyContextOverflowErrorMock: vi.fn((_message: string | undefined) => false),
-  updateSessionStoreMock: vi.fn(),
-  resolveCurrentTurnImagesMock: vi.fn(),
-  peekSessionMcpRuntimeMock: vi.fn(),
-  recordMessageToolRunOutcomeMock: vi.fn(),
-  mintReplyMessageActionTurnCapabilityMock: vi.fn<typeof mintReplyMessageActionTurnCapability>(),
-  productionBuildEmbeddedRunExecutionParams: undefined as
-    | typeof buildEmbeddedRunExecutionParams
-    | undefined,
-}));
-
 export const GENERIC_RUN_FAILURE_TEXT =
   "⚠️ Something went wrong while processing your request. Please try again, or use /new to start a fresh session.";
 export function makeTestModel(id: string, contextTokens: number): ModelDefinitionConfig {
@@ -119,215 +86,11 @@ export function makeTestModel(id: string, contextTokens: number): ModelDefinitio
   };
 }
 
-vi.mock("../../agents/embedded-agent.js", () => ({
-  runEmbeddedAgent: (params: unknown) => state.runEmbeddedAgentMock(params),
-}));
-
-vi.mock("../../agents/embedded-agent-runner/run-entry.js", async () => {
-  const actual = await vi.importActual<
-    typeof import("../../agents/embedded-agent-runner/run-entry.js")
-  >("../../agents/embedded-agent-runner/run-entry.js");
-  return {
-    ...actual,
-    runEmbeddedAgentEntry: (params: RunEntryParams) =>
-      state.runEmbeddedAgentEntryMock(params, actual.runEmbeddedAgentEntry as RunEntryDelegate),
-  };
-});
-
-vi.mock("../../agents/agent-bundle-mcp-manager-api.js", () => ({
-  peekSessionMcpRuntime: (params: unknown) => state.peekSessionMcpRuntimeMock(params),
-}));
-
-vi.mock("../../agents/cli-runner.js", () => ({
-  runCliAgent: (params: unknown) => state.runCliAgentMock(params),
-}));
-
-vi.mock("../../agents/harness/runtime-plugin.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../../agents/harness/runtime-plugin.js")>()),
-  ensureSelectedAgentHarnessPlugin: vi.fn(),
-}));
-vi.mock("../../agents/model-fallback-runner.js", () => ({
-  runWithModelFallback: async (params: Parameters<typeof runWithModelFallback<unknown>>[0]) => {
-    return withModelFallbackPreparation(params, state.runWithModelFallbackMock);
-  },
-}));
-
-vi.mock("../../agents/model-fallback-attempt.js", () => ({
-  isFallbackSummaryError: (err: unknown) =>
-    err instanceof Error &&
-    err.name === "FallbackSummaryError" &&
-    Array.isArray((err as { attempts?: unknown[] }).attempts),
-}));
-
-vi.mock("../../agents/model-selection.js", async () => {
-  const actual = await vi.importActual<typeof import("../../agents/model-selection.js")>(
-    "../../agents/model-selection.js",
-  );
-  return {
-    ...actual,
-    isCliProvider: (provider: unknown) => state.isCliProviderMock(provider),
-  };
-});
-
-vi.mock("../../agents/bootstrap-budget.js", async () => ({
-  ...(await vi.importActual<typeof import("../../agents/bootstrap-budget.js")>(
-    "../../agents/bootstrap-budget.js",
-  )),
-  resolveBootstrapWarningSignaturesSeen: () => [],
-}));
-
-vi.mock("../../agents/embedded-agent-helpers.js", async () => {
-  const actual = await vi.importActual<typeof import("../../agents/embedded-agent-helpers.js")>(
-    "../../agents/embedded-agent-helpers.js",
-  );
-  return {
-    ...actual,
-    formatBillingErrorMessage: actual.formatBillingErrorMessage,
-    isCompactionFailureError: (message?: string) => state.isCompactionFailureErrorMock(message),
-    isContextOverflowError: (message?: string) => state.isContextOverflowErrorMock(message),
-    isLikelyContextOverflowError: (message?: string) =>
-      state.isLikelyContextOverflowErrorMock(message),
-    sanitizeUserFacingText: (text?: string) => text ?? "",
-  };
-});
-
-vi.mock("../../config/sessions.js", () => ({
-  resolveGroupSessionKey: vi.fn(() => null),
-  resolveSessionTranscriptPath: vi.fn(),
-  updateSessionStore: state.updateSessionStoreMock,
-}));
-
-vi.mock("../../globals.js", async () => ({
-  ...(await vi.importActual<typeof import("../../globals.js")>("../../globals.js")),
-  logVerbose: vi.fn(),
-}));
-
-vi.mock("../../infra/agent-events.js", async () => {
-  const actual = await vi.importActual<typeof import("../../infra/agent-events.js")>(
-    "../../infra/agent-events.js",
-  );
-  const emitAgentEvent = vi.fn((...args: Parameters<typeof actual.emitAgentEvent>) =>
-    actual.emitAgentEvent(...args),
-  );
-  return {
-    ...actual,
-    clearAgentRunContext: vi.fn(),
-    emitAgentEvent,
-    registerAgentRunContext: vi.fn(),
-  };
-});
-vi.mock("../../infra/agent-run-registry.js", async () => {
-  const actual = await vi.importActual<typeof import("../../infra/agent-run-registry.js")>(
-    "../../infra/agent-run-registry.js",
-  );
-  return {
-    ...actual,
-    clearAgentRunContext: vi.fn(),
-    registerAgentRunContext: vi.fn(),
-  };
-});
-
-vi.mock("../../infra/message-tool-run-outcome-store.js", () => ({
-  recordMessageToolRunOutcome: (params: unknown) => state.recordMessageToolRunOutcomeMock(params),
-}));
-
-vi.mock("../../runtime.js", () => ({
-  defaultRuntime: {
-    error: vi.fn(),
-  },
-}));
-
-vi.mock("../../utils/message-channel.js", async () => ({
-  ...(await vi.importActual<typeof import("../../utils/message-channel.js")>(
-    "../../utils/message-channel.js",
-  )),
-  isMarkdownCapableMessageChannel: () => true,
-  resolveMessageChannel: () => "whatsapp",
-  isInternalMessageChannel: (value: unknown) => state.isInternalMessageChannelMock(value),
-}));
-
-vi.mock("../heartbeat.js", async () => {
-  const actual = await vi.importActual<typeof import("../heartbeat.js")>("../heartbeat.js");
-  return {
-    ...actual,
-    stripHeartbeatToken: (text: string) => ({
-      text,
-      didStrip: false,
-      shouldSkip: false,
-    }),
-  };
-});
-
-vi.mock("./current-turn-images.js", () => ({
-  resolveCurrentTurnImages: (params: unknown) => state.resolveCurrentTurnImagesMock(params),
-}));
-
-vi.mock("./agent-runner-utils.js", async () => ({
-  ...(await vi.importActual<typeof import("./agent-runner-utils.js")>("./agent-runner-utils.js")),
-  mintReplyMessageActionTurnCapability: state.mintReplyMessageActionTurnCapabilityMock,
-  buildEmbeddedRunExecutionParams: (
-    params: Parameters<typeof buildEmbeddedRunExecutionParams>[0],
-  ) =>
-    // Most execution tests isolate fallback policy from config/channel discovery. Ownership
-    // regressions opt into the production builder so queue metadata must cross the real boundary.
-    state.productionBuildEmbeddedRunExecutionParams
-      ? state.productionBuildEmbeddedRunExecutionParams(params)
-      : {
-          embeddedContext: {
-            ...params.run,
-            messageProvider: params.replyRoute?.originatingChannel,
-            messageTo: params.replyRoute?.originatingTo,
-            agentAccountId:
-              params.replyRoute?.originatingAccountId ??
-              params.sessionCtx.AccountId ??
-              params.run.agentAccountId,
-            chatType:
-              params.replyRoute?.originatingChatType ??
-              params.sessionCtx.ChatType ??
-              params.run.chatType,
-          },
-          senderContext: {},
-          runBaseParams: {
-            runId: params.runId,
-            provider: isModelExecutionSelection(params.run.executionSelection)
-              ? params.run.executionSelection.model.provider
-              : undefined,
-            model: isModelExecutionSelection(params.run.executionSelection)
-              ? params.run.executionSelection.model.id
-              : undefined,
-            thinkLevel: params.run.thinkLevel,
-            authProfileId: isModelExecutionSelection(params.run.executionSelection)
-              ? params.run.authProfileId
-              : undefined,
-            authProfileIdSource: isModelExecutionSelection(params.run.executionSelection)
-              ? params.run.authProfileIdSource
-              : undefined,
-          },
-        },
-  resolveQueuedReplyRuntimeConfig: <T>(config: T) => config,
-  resolveRunFastModeForFallbackCandidate: (params: {
-    run: { fastMode?: unknown; fastModeAutoOnSeconds?: unknown };
-  }) => ({
-    fastMode: params.run.fastMode,
-    fastModeAutoOnSeconds: params.run.fastModeAutoOnSeconds,
-  }),
-}));
-
-vi.mock("./reply-delivery.js", () => ({
-  createBlockReplyDeliveryHandler: (params: unknown) =>
-    state.createBlockReplyDeliveryHandlerMock(params),
-}));
-
-vi.mock("./reply-media-paths.runtime.js", () => ({
-  createReplyMediaContext: () => ({
-    normalizePayload: (payload: unknown) => payload,
-  }),
-  createReplyMediaPathNormalizer: () => (payload: unknown) => payload,
-}));
-
 function publishTestExecutionCatalog(followupRun: FollowupRun): void {
   const fixture = executionFixtures.get(followupRun);
-  if (!fixture) throw new Error("The execution test must declare its catalog and accounts.");
+  if (!fixture) {
+    throw new Error("The execution test must declare its catalog and accounts.");
+  }
   const cfg = followupRun.run.config;
   const agentId = followupRun.run.agentId;
   followupRun.run.config = {
@@ -505,8 +268,8 @@ export function createMockTypingSignaler(): TypingSignaler {
 
 type ExecutionCatalogFixture = Pick<
   Parameters<ReturnType<typeof createSessionModelCatalogFixture>["publish"]>[0],
-  "catalog" | "profiles" | "runtimeAuthModes"
-> & { fallbacks?: string[] };
+  "catalog" | "runtimeAuthModes"
+> & { profiles: AuthProfileStore["profiles"]; fallbacks?: string[] };
 const executionFixtures = new WeakMap<FollowupRun, ExecutionCatalogFixture>();
 const publishedExecutionCatalog = createSessionModelCatalogFixture();
 
@@ -538,8 +301,12 @@ export function configureTestExecution(
     runtimeAuthModes?: ExecutionCatalogFixture["runtimeAuthModes"];
   },
 ): void {
-  if (fixture.config) followupRun.run.config = fixture.config;
-  if (fixture.selection) followupRun.run.executionSelection = fixture.selection;
+  if (fixture.config) {
+    followupRun.run.config = fixture.config;
+  }
+  if (fixture.selection) {
+    followupRun.run.executionSelection = fixture.selection;
+  }
   executionFixtures.set(followupRun, {
     catalog: { entries: fixture.catalog, routeVariants: fixture.catalog },
     profiles: fixture.profiles,
@@ -549,15 +316,9 @@ export function configureTestExecution(
 }
 
 export async function configureTestNativeHarness() {
-  const [{ createCodexAppServerAgentHarness }, { createCodexTestBindingStore }] = await Promise.all(
-    [
-      import("../../../extensions/codex/harness.js"),
-      import("../../../extensions/codex/src/app-server/session-binding.test-helpers.js"),
-    ],
-  );
-  const bindingStore = createCodexTestBindingStore();
-  registerAgentHarness(createCodexAppServerAgentHarness({ bindingStore }));
-  return bindingStore;
+  const fixture = await loadNativeHarnessFixture();
+  registerAgentHarness(fixture.harness);
+  return fixture;
 }
 
 export function configureTestHarness(
@@ -570,8 +331,9 @@ export function configureTestHarness(
     id,
     label: "Execution test app",
     supports: ({ provider, modelId }) => {
-      if (models.some((model) => model.provider === provider && model.id === modelId))
+      if (models.some((model) => model.provider === provider && model.id === modelId)) {
         return { supported: true };
+      }
       const fallback = fallbackModels.find(
         (model) => model.provider === provider && model.id === modelId,
       );
@@ -585,8 +347,9 @@ export function configureTestHarness(
       throw new Error("This test observes the embedded runner boundary.");
     },
   });
-  if (!isModelExecutionSelection(followupRun.run.executionSelection))
+  if (!isModelExecutionSelection(followupRun.run.executionSelection)) {
     throw new Error("Expected a concrete fixture selection.");
+  }
   followupRun.run.executionSelection = {
     ...followupRun.run.executionSelection,
     executor: { kind: "harness", id },
@@ -681,7 +444,9 @@ export function createFollowupRun(
     catalog: { entries: [entry], routeVariants: [entry] },
     profiles: testAuthProfiles("anthropic"),
   });
-  if (fixture) configureTestExecution(followupRun, fixture);
+  if (fixture) {
+    configureTestExecution(followupRun, fixture);
+  }
   return followupRun;
 }
 
@@ -737,27 +502,6 @@ export function expectNoMockCallWithFields(mock: unknown, fields: Record<string,
     return Object.entries(fields).every(([key, expected]) => record[key] === expected);
   });
   expect(hasMatchingCall).toBe(false);
-}
-
-export function requireMockCallArgWithFields(
-  mock: unknown,
-  fields: Record<string, unknown>,
-  label: string,
-) {
-  const calls = (mock as { mock?: { calls?: unknown[][] } }).mock?.calls ?? [];
-  const found = calls
-    .map((call) => call[0])
-    .find((value) => {
-      if (typeof value !== "object" || value === null) {
-        return false;
-      }
-      const record = value as Record<string, unknown>;
-      return Object.entries(fields).every(([key, expected]) => record[key] === expected);
-    });
-  if (!found) {
-    throw new Error(`missing ${label}`);
-  }
-  return requireRecord(found, label);
 }
 
 export function expectBlockReplyCall(
@@ -896,48 +640,7 @@ export async function setupAgentRunnerExecutionTestState() {
     const registry = captureActivePluginRegistrySnapshot();
     setActivePluginRegistry(createEmptyPluginRegistry());
     onTestFinished(() => restoreActivePluginRegistrySnapshot(registry));
-    state.runEmbeddedAgentMock.mockReset();
-    state.runEmbeddedAgentEntryMock
-      .mockReset()
-      .mockImplementation((params: RunEntryParams, delegate: RunEntryDelegate) => delegate(params));
-    state.runCliAgentMock.mockReset();
-    state.runWithModelFallbackMock.mockReset();
-    state.isCliProviderMock.mockReset();
-    state.isCliProviderMock.mockReturnValue(false);
-    state.isInternalMessageChannelMock.mockReset();
-    state.isInternalMessageChannelMock.mockReturnValue(false);
-    state.createBlockReplyDeliveryHandlerMock.mockReset();
-    state.createBlockReplyDeliveryHandlerMock.mockReturnValue(undefined);
-    state.isCompactionFailureErrorMock.mockReset();
-    state.isCompactionFailureErrorMock.mockReturnValue(false);
-    state.isContextOverflowErrorMock.mockReset();
-    state.isContextOverflowErrorMock.mockReturnValue(false);
-    state.isLikelyContextOverflowErrorMock.mockReset();
-    state.isLikelyContextOverflowErrorMock.mockReturnValue(false);
-    state.updateSessionStoreMock.mockReset();
-    state.resolveCurrentTurnImagesMock.mockReset();
-    state.peekSessionMcpRuntimeMock.mockReset();
-    state.recordMessageToolRunOutcomeMock.mockReset();
-    state.mintReplyMessageActionTurnCapabilityMock.mockReset();
-    state.productionBuildEmbeddedRunExecutionParams = undefined;
-    state.peekSessionMcpRuntimeMock.mockReturnValue(undefined);
-    state.resolveCurrentTurnImagesMock.mockImplementation(
-      async (params: { images?: unknown[]; imageOrder?: unknown[] }) => ({
-        images: params.images,
-        imageOrder: params.imageOrder,
-      }),
-    );
-    state.runWithModelFallbackMock.mockImplementation(async (params: FallbackRunnerParams) => ({
-      outcome: "completed",
-      result: await params.run(
-        params.provider,
-        params.model,
-        initialModelFallbackAttemptOptions(params),
-      ),
-      provider: params.provider,
-      model: params.model,
-      attempts: [],
-    }));
+    resetExecutionMocks();
   });
 
   afterEach(() => {

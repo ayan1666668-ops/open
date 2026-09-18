@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { readAcpSessionMeta, upsertAcpSessionMeta } from "../../acp/runtime/session-meta.js";
+import {
+  loadSessionEntryReadOnly,
+  replaceSessionEntry,
+} from "../../config/sessions/session-accessor.js";
 import { writeSessionEntry } from "../../config/sessions/session-accessor.sqlite-entry-store.js";
+import { projectPluginSessionEntry } from "../../plugin-sdk/session-store-runtime-internal.js";
 import { runOpenClawAgentWriteTransaction } from "../../state/openclaw-agent-db.js";
 import { openOpenClawStateDatabase } from "../../state/openclaw-state-db.js";
 import { withOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
@@ -14,21 +19,22 @@ describe("plugin runtime ACP session creation", () => {
       let successor: ReturnType<typeof runtime.session.getSessionEntry>;
       const database = openOpenClawStateDatabase();
       database.db.function("replace_prepared_child", () => {
-        const current = runtime.session.getSessionEntry({
+        const current = loadSessionEntryReadOnly({
           sessionKey: key,
           readConsistency: "latest",
         });
         if (!current) {
           throw new Error("expected the freshly created ACP child");
         }
-        successor = {
+        const replacement = {
           ...current,
           sessionId: "successor",
           lifecycleRevision: "successor-generation",
         };
+        successor = projectPluginSessionEntry(replacement);
         runOpenClawAgentWriteTransaction(
           (agentDatabase) => {
-            writeSessionEntry(agentDatabase, key, successor!);
+            writeSessionEntry(agentDatabase, key, replacement);
           },
           { agentId: "main" },
         );
@@ -80,11 +86,16 @@ describe("plugin runtime ACP session creation", () => {
         pluginOwnerId: "acpx",
         label: "Pi source",
         spawnedCwd: "/workspace/pi",
+        executionSelection: {
+          state: "accepted",
+          selection: {
+            model: "native-managed",
+            executor: { kind: "acp", backend: "acpx", agent: "pi" },
+          },
+        },
       });
       expect(created.entry.initializationPending).toBeUndefined();
       expect(readAcpSessionMeta({ cfg: {}, sessionKey: created.key })).toMatchObject({
-        backend: "acpx",
-        agent: "pi",
         runtimeSessionName: created.key,
         identity: {
           state: "resolved",
@@ -103,29 +114,29 @@ describe("plugin runtime ACP session creation", () => {
       const runtime = createRuntimeAgent();
       const key = "agent:main:plugin:opencode:catalog-adopt:source";
       const storePath = runtime.session.resolveStorePath(undefined, { agentId: "main" });
-      await runtime.session.upsertSessionEntry({
-        storePath,
-        sessionKey: key,
-        entry: {
+      await replaceSessionEntry(
+        { storePath, sessionKey: key },
+        {
           sessionId: "interrupted-acp-initializer",
           updatedAt: Date.now(),
           delivery: { kind: "none" },
           initializationPending: true,
           pluginOwnerId: "opencode",
           spawnedCwd: "/workspace/opencode",
-          acpSessionBinding: {
-            acpBackendId: "acpx",
-            acpAgentId: "opencode",
-            agentSessionId: "expected-source",
+          executionSelection: {
+            state: "accepted",
+            selection: {
+              model: "native-managed",
+              executor: { kind: "acp", backend: "acpx", agent: "opencode" },
+            },
+            fallbackPermission: "explicit",
           },
         },
-      });
+      );
       await upsertAcpSessionMeta({
         cfg: {},
         sessionKey: key,
         mutate: () => ({
-          backend: "acpx",
-          agent: "opencode",
           runtimeSessionName: key,
           identity: {
             state: "resolved",
@@ -175,10 +186,9 @@ describe("plugin runtime ACP session creation", () => {
       const key = "agent:main:plugin:acpx:catalog-adopt:pi:recovery";
       const storePath = runtime.session.resolveStorePath(undefined, { agentId: "main" });
       const marker = { acpx: { piSessionCatalog: { sourceThreadId: "pi-source" } } };
-      await runtime.session.upsertSessionEntry({
-        storePath,
-        sessionKey: key,
-        entry: {
+      await replaceSessionEntry(
+        { storePath, sessionKey: key },
+        {
           sessionId: "interrupted-before-acp-meta",
           updatedAt: Date.now(),
           delivery: { kind: "none" },
@@ -186,13 +196,16 @@ describe("plugin runtime ACP session creation", () => {
           pluginOwnerId: "acpx",
           spawnedCwd: "/workspace/pi",
           pluginExtensions: marker,
-          acpSessionBinding: {
-            acpBackendId: "acpx",
-            acpAgentId: "pi",
-            agentSessionId: "pi-source",
+          executionSelection: {
+            state: "accepted",
+            selection: {
+              model: "native-managed",
+              executor: { kind: "acp", backend: "acpx", agent: "pi" },
+            },
+            fallbackPermission: "explicit",
           },
         },
-      });
+      );
 
       const recovered = await runtime.session.createSessionEntry({
         cfg: {},
@@ -211,8 +224,7 @@ describe("plugin runtime ACP session creation", () => {
       expect(recovered.entry.initializationPending).toBeUndefined();
       expect(recovered.entry.acpSessionBinding).toBeUndefined();
       expect(readAcpSessionMeta({ cfg: {}, sessionKey: key })).toMatchObject({
-        backend: "acpx",
-        agent: "pi",
+        runtimeSessionName: key,
         identity: { agentSessionId: "pi-source" },
       });
     });

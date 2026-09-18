@@ -99,7 +99,9 @@ export function createSessionCatalogRequestEntrySnapshot(params: {
   const publicEntriesForAgent: SessionCatalogEntrySnapshot["entriesForAgent"] = (rawAgentId) => {
     const agentId = normalizeAgentId(rawAgentId);
     const cached = publicEntriesByAgentId.get(agentId);
-    if (cached) return cached;
+    if (cached) {
+      return cached;
+    }
     const entries = entriesForAgent(agentId).map(({ sessionKey, entry }) => ({
       sessionKey,
       entry: projectPluginSessionEntry(structuredClone(entry)),

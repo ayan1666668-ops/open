@@ -1,9 +1,10 @@
 /** Prepared plugin metadata handoff for runtime model normalization. */
+import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core";
 import type { ModelCatalogEntry } from "../../agents/model-catalog.js";
 import {
   findNormalizedProviderKey,
   modelKey,
-  normalizeModelRef,
+  type normalizeModelRef,
   normalizeProviderId,
 } from "../../agents/model-selection.js";
 import { RUNTIME_MODEL_VISIBILITY_NORMALIZATION } from "../../agents/model-visibility-policy.js";
@@ -13,6 +14,14 @@ import {
   isManifestPluginAvailableForControlPlane,
   loadManifestMetadataSnapshot,
 } from "../../plugins/manifest-contract-eligibility.js";
+
+export function normalizeRuntimeChoiceId(runtime: string | undefined): string {
+  const normalized = normalizeLowercaseStringOrEmpty(runtime);
+  if (!normalized || normalized === "auto" || normalized === "default") {
+    return "openclaw";
+  }
+  return normalized;
+}
 
 export type RuntimeModelNormalization = NonNullable<Parameters<typeof normalizeModelRef>[2]>;
 
@@ -25,14 +34,6 @@ export function resolveRuntimeNormalization(cfg: OpenClawConfig): RuntimeModelNo
       allowWorkspaceScopedSnapshot: true,
     }),
   };
-}
-
-export function normalizeRuntimeRef(
-  provider: string,
-  model: string,
-  normalization: RuntimeModelNormalization = RUNTIME_MODEL_VISIBILITY_NORMALIZATION,
-) {
-  return normalizeModelRef(provider, model, normalization);
 }
 
 export function findSelectedCatalogEntry(params: {

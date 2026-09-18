@@ -14,6 +14,7 @@ import {
 } from "../../logging/diagnostic-run-activity.js";
 import { markDiagnosticModelStartedForTest } from "../../logging/diagnostic-run-activity.test-support.js";
 import { diagnosticLogger } from "../../logging/diagnostic-runtime.js";
+import { isModelExecutionSelection } from "../../model-picker/execution-selection.js";
 import { enqueueCommandInLane, setCommandLaneConcurrency } from "../../process/command-queue.js";
 import { resetCommandQueueStateForTest } from "../../process/command-queue.test-support.js";
 import { createUserTurnTranscriptRecorder } from "../../sessions/user-turn-transcript.js";
@@ -539,10 +540,7 @@ describe("reply run registry", () => {
     const operation = createTestReplyOperation({
       sessionId: "session-deferred",
     });
-    let releaseBarrier: () => void = () => {};
-    const barrier = new Promise<void>((resolve) => {
-      releaseBarrier = resolve;
-    });
+    const { promise: barrier, resolve: releaseBarrier } = createDeferred();
     const afterClear = vi.fn();
     runAfterReplyOperationClear(operation, afterClear);
 
@@ -574,10 +572,7 @@ describe("reply run registry", () => {
     await Promise.resolve();
     expect(settled).toBe(false);
 
-    let releaseCompletion: () => void = () => {};
-    const completionBarrier = new Promise<void>((resolve) => {
-      releaseCompletion = resolve;
-    });
+    const { promise: completionBarrier, resolve: releaseCompletion } = createDeferred();
     operation.completeWithAfterClearBarrier(completionBarrier);
     await Promise.resolve();
     expect(settled).toBe(false);
@@ -694,10 +689,7 @@ describe("reply run registry", () => {
       cancel: () => operation.complete(),
       isStreaming: () => true,
     });
-    let releaseRecovery: () => void = () => {};
-    const recoveryBarrier = new Promise<void>((resolve) => {
-      releaseRecovery = resolve;
-    });
+    const { promise: recoveryBarrier, resolve: releaseRecovery } = createDeferred();
     const afterClear = vi.fn();
     runAfterReplyOperationClear(operation, afterClear);
 
@@ -718,10 +710,7 @@ describe("reply run registry", () => {
   });
 
   it("settles a reentrant completion independently of its recovery fence", async () => {
-    let releaseCompletion: () => void = () => {};
-    const completionBarrier = new Promise<void>((resolve) => {
-      releaseCompletion = resolve;
-    });
+    const { promise: completionBarrier, resolve: releaseCompletion } = createDeferred();
     const operation = createTestReplyOperation({ sessionId: "session-sync-durable-completion" });
     operation.setPhase("running");
     operation.attachBackend({
@@ -729,10 +718,7 @@ describe("reply run registry", () => {
       cancel: () => operation.completeWithAfterClearBarrier(completionBarrier),
       isStreaming: () => true,
     });
-    let releaseRecovery: () => void = () => {};
-    const recoveryBarrier = new Promise<void>((resolve) => {
-      releaseRecovery = resolve;
-    });
+    const { promise: recoveryBarrier, resolve: releaseRecovery } = createDeferred();
     const afterClear = vi.fn();
     runAfterReplyOperationClear(operation, afterClear);
 
@@ -1033,10 +1019,7 @@ describe("reply run registry", () => {
     const first = createTestReplyOperation({
       sessionId: "first-session",
     });
-    let releaseFirst: () => void = () => {};
-    const firstBarrier = new Promise<void>((resolve) => {
-      releaseFirst = resolve;
-    });
+    const { promise: firstBarrier, resolve: releaseFirst } = createDeferred();
     const firstAfterClear = vi.fn();
     runAfterReplyOperationClear(first, firstAfterClear);
     first.completeWithAfterClearBarrier(firstBarrier);
@@ -1044,10 +1027,7 @@ describe("reply run registry", () => {
     const second = createTestReplyOperation({
       sessionId: "second-session",
     });
-    let releaseSecond: () => void = () => {};
-    const secondBarrier = new Promise<void>((resolve) => {
-      releaseSecond = resolve;
-    });
+    const { promise: secondBarrier, resolve: releaseSecond } = createDeferred();
     const secondAfterClear = vi.fn();
     runAfterReplyOperationClear(second, secondAfterClear);
     second.completeWithAfterClearBarrier(secondBarrier);
@@ -1069,10 +1049,7 @@ describe("reply run registry", () => {
       const operation = createTestReplyOperation({
         sessionId: "hung-session",
       });
-      let releaseBarrier: () => void = () => {};
-      const barrier = new Promise<void>((resolve) => {
-        releaseBarrier = resolve;
-      });
+      const { promise: barrier, resolve: releaseBarrier } = createDeferred();
       const afterClear = vi.fn();
       runAfterReplyOperationClear(operation, afterClear);
       operation.completeWithAfterClearBarrier(barrier, 35 * 60_000);
@@ -2277,7 +2254,14 @@ describe("reply run registry", () => {
     const queueMessage = vi.fn(async () => {});
     const operation = createTestReplyOperation({ sessionId: "screen-unavailable" });
     operation.bindToolAuthoritySnapshot(prepareReplyToolAuthority(run));
-    operation.bindToolAuthorityRoute({ provider: run.run.provider, model: run.run.model });
+    const selection = run.run.executionSelection;
+    if (!isModelExecutionSelection(selection)) {
+      throw new Error("Expected concrete tool authority route.");
+    }
+    operation.bindToolAuthorityRoute({
+      provider: selection.model.provider,
+      model: selection.model.id,
+    });
     operation.attachBackend({
       kind: "embedded",
       cancel: vi.fn(),

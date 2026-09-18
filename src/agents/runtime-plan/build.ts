@@ -108,7 +108,9 @@ export function buildAgentRuntimeDeliveryPlan(
       );
     },
     resolveFollowupRoute(routeParams) {
-      if (!params) return undefined;
+      if (!params) {
+        return undefined;
+      }
       return resolveProviderFollowupFallbackRoute({
         provider: params.provider,
         config,

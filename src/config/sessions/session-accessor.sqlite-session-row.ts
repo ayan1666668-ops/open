@@ -1,8 +1,5 @@
 import { asFiniteNumber } from "@openclaw/normalization-core/number-coercion";
-import {
-  LEGACY_SELECTION_VIEW_FIELDS,
-  type LegacySelectionView,
-} from "../../model-picker/execution-selection-projection.js";
+import { LEGACY_SELECTION_VIEW_FIELDS } from "../../model-picker/execution-selection-projection.js";
 import { sessionExecutionSelectionSchema } from "../../model-picker/execution-selection.schema.js";
 import {
   deliveryContextFromSession,
@@ -92,8 +89,9 @@ export function bindSessionNode(params: {
   updatedAt: number;
 }) {
   const canonicalEntry = projectCanonicalSessionEntryShape({ ...params.entry });
-  const releasedView: typeof canonicalEntry & LegacySelectionView = canonicalEntry;
-  for (const key of LEGACY_SELECTION_VIEW_FIELDS) delete releasedView[key];
+  for (const key of LEGACY_SELECTION_VIEW_FIELDS) {
+    Reflect.deleteProperty(canonicalEntry, key);
+  }
   if (canonicalEntry.executionSelection) {
     canonicalEntry.executionSelection = sessionExecutionSelectionSchema.parse(
       canonicalEntry.executionSelection,

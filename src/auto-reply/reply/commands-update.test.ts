@@ -73,6 +73,13 @@ function updateCommandParams(): HandleCommandsParams {
     defaultGroupActivation: () => "mention",
     resolvedVerboseLevel: "off",
     resolvedReasoningLevel: "off",
+    prepareModelState: async () => {
+      throw new Error("This command fixture does not prepare models.");
+    },
+    resolveModelLevels: async () => ({
+      resolvedThinkLevel: undefined,
+      resolvedReasoningLevel: "off",
+    }),
     resolveDefaultThinkingLevel: async () => undefined,
     provider: "openai",
     model: "gpt-5.6-luna",

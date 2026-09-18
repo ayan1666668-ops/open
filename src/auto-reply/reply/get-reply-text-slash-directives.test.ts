@@ -93,6 +93,7 @@ async function resolveTextSlashDirective(
     isGroup: false,
     triggerBodyNormalized: body,
     resetTriggered: false,
+    isNewSession: false,
     commandAuthorized: options?.authorized ?? true,
     defaultProvider: "openai",
     defaultModel: "gpt-5.5",

@@ -515,10 +515,14 @@ describe("buildStatusMessage context window", () => {
       sessionEntry: {
         sessionId: "pending-live-switch",
         updatedAt: 0,
-        providerOverride: "openai",
-        modelOverride: "gpt-5.5",
-        agentRuntimeOverride: "openclaw",
-        modelOverrideRouteResolution: "resolved",
+        executionSelection: {
+          state: "accepted",
+          selection: {
+            model: { provider: "openai", id: "gpt-5.5" },
+            executor: { kind: "harness", id: "openclaw" },
+          },
+          fallbackPermission: "explicit",
+        },
         liveModelSwitchPending: true,
       },
       sessionKey: "agent:main:main",
@@ -618,10 +622,14 @@ describe("buildStatusMessage context window", () => {
       sessionEntry: {
         sessionId: "active-fallback",
         updatedAt: 0,
-        providerOverride: "qa-route",
-        modelOverride: "qa-primary",
-        agentRuntimeOverride: "openclaw",
-        modelOverrideRouteResolution: "resolved",
+        executionSelection: {
+          state: "accepted",
+          selection: {
+            model: { provider: "qa-route", id: "qa-primary" },
+            executor: { kind: "harness", id: "openclaw" },
+          },
+          fallbackPermission: "explicit",
+        },
         modelProvider: "qa-route",
         model: "qa-fallback",
         agentHarnessId: "openclaw",
@@ -670,10 +678,14 @@ describe("buildStatusMessage context window", () => {
       sessionEntry: {
         sessionId: "configured-subagent",
         updatedAt: 0,
-        providerOverride: "ollama-cloud",
-        modelOverride: "qwen3.6-blue",
-        agentRuntimeOverride: "openclaw",
-        modelOverrideRouteResolution: "resolved",
+        executionSelection: {
+          state: "accepted",
+          selection: {
+            model: { provider: "ollama-cloud", id: "qwen3.6-blue" },
+            executor: { kind: "harness", id: "openclaw" },
+          },
+          fallbackPermission: "explicit",
+        },
       },
       sessionKey: "agent:worker:subagent:configured",
       sessionScope: "per-sender",

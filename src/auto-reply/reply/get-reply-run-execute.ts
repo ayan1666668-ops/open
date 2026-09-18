@@ -387,6 +387,10 @@ export async function executePreparedReplyRun(state: PreparedReplyRunAdmission) 
         isError: true,
       };
     }
+    const accountError = state.preparedAuth?.validate(currentSessionEntry);
+    if (accountError) {
+      return { text: accountError, isError: true };
+    }
     return undefined;
   };
   const followupRun = {
@@ -504,11 +508,12 @@ export async function executePreparedReplyRun(state: PreparedReplyRunAdmission) 
         if (useFastReplyRuntime) {
           return { fastMode: false, fastModeAutoOnSeconds: undefined, fastModeOverride: true };
         }
-        if (!isModelExecutionSelection(runExecutionSelection))
+        if (!isModelExecutionSelection(runExecutionSelection)) {
           return {
             fastMode: params.resolvedFastMode,
             fastModeAutoOnSeconds: params.resolvedFastModeAutoOnSeconds,
           };
+        }
         const fastModeState = resolveFastModeState({
           cfg,
           provider,

@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTtsTool } from "../agents/tools/tts-tool.js";
 import { handleTtsCommands } from "../auto-reply/reply/commands-tts.js";
 import type { HandleCommandsParams } from "../auto-reply/reply/commands-types.js";
+import { buildCommandTestParams } from "../auto-reply/reply/commands.test-harness.js";
 import { parseInlineSessionDirectives } from "../auto-reply/reply/directive-handling.parse.js";
 import { resolveChannelTtsVoiceDelivery } from "../channels/plugins/tts-capabilities.js";
 import type { ChannelTtsVoiceDeliveryCapabilities } from "../channels/plugins/types.core.js";
@@ -96,9 +97,13 @@ function installFixture(voice: ChannelTtsVoiceDeliveryCapabilities, compatible =
 function commandParams(): HandleCommandsParams {
   const body = `/tts audio ${SPOKEN}`;
   return {
-    cfg,
+    ...buildCommandTestParams(
+      body,
+      cfg,
+      { Provider: CHANNEL, Surface: CHANNEL },
+      { workspaceDir: state.workspaceDir },
+    ),
     ctx: {},
-    agentId: "main",
     command: {
       surface: CHANNEL,
       channel: CHANNEL,
@@ -112,15 +117,10 @@ function commandParams(): HandleCommandsParams {
     directives: parseInlineSessionDirectives(""),
     elevated: { enabled: false, allowed: false, failures: [] },
     sessionKey: "agent:main:tts-metadata-proof",
-    workspaceDir: state.workspaceDir,
     defaultGroupActivation: () => "always",
-    resolvedVerboseLevel: "off",
-    resolvedReasoningLevel: "off",
-    resolveDefaultThinkingLevel: async () => undefined,
     provider: PROVIDER,
     model: "synthetic",
     contextTokens: 4096,
-    isGroup: false,
   };
 }
 

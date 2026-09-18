@@ -223,11 +223,25 @@ describe("sessions.patch", () => {
         await upsertSessionEntryCore(scope, {
           sessionId: "rollback-preferences",
           updatedAt: 1,
-          providerOverride: "anthropic",
-          modelOverride: "claude-sonnet-4-6",
+          executionSelection: {
+            state: "accepted",
+            selection: {
+              model: { provider: "anthropic", id: "claude-sonnet-4-6" },
+              executor: { kind: "harness", id: "openclaw" },
+            },
+            fallbackPermission: "explicit",
+          },
           thinkingLevel: "high",
           contextWindow: "extended",
           modelFallback: {
+            previous: {
+              state: "accepted",
+              selection: {
+                model: { provider: "openai", id: "gpt-5.4" },
+                executor: { kind: "harness", id: "openclaw" },
+              },
+              fallbackPermission: "explicit",
+            },
             prevProvider: "openai",
             prevModel: "gpt-5.4",
             prevThinkingLevel: "high",
@@ -252,6 +266,14 @@ describe("sessions.patch", () => {
         expect(entry?.thinkingLevel).toBe(field === "context" ? "high" : undefined);
         expect(entry?.contextWindow).toBe(field === "thinking" ? "extended" : undefined);
         expect(entry?.modelFallback).toMatchObject({
+          previous: {
+            state: "accepted",
+            selection: {
+              model: { provider: "openai", id: "gpt-5.4" },
+              executor: { kind: "harness", id: "openclaw" },
+            },
+            fallbackPermission: "explicit",
+          },
           prevProvider: "openai",
           prevModel: "gpt-5.4",
           ts: 1,

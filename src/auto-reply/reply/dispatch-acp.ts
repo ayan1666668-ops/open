@@ -128,22 +128,6 @@ const dispatchAcpTranscriptRuntimeLoader = createLazyImportLoader(
   () => import("./dispatch-acp-transcript.runtime.js"),
 );
 
-function loadDispatchAcpManagerRuntime() {
-  return dispatchAcpManagerRuntimeLoader.load();
-}
-
-function loadDispatchAcpAuditRuntime() {
-  return dispatchAcpAuditRuntimeLoader.load();
-}
-
-function loadDispatchAcpTtsRuntime() {
-  return dispatchAcpTtsRuntimeLoader.load();
-}
-
-function loadDispatchAcpTranscriptRuntime() {
-  return dispatchAcpTranscriptRuntimeLoader.load();
-}
-
 type DispatchProcessedRecorder = (
   outcome: "completed" | "skipped" | "error",
   opts?: {
@@ -209,7 +193,7 @@ async function hasBoundConversationForSession(params: {
   const configuredDefaultAccountId = channels?.[channel]?.defaultAccount;
   const normalizedAccountId =
     accountId || normalizeOptionalLowercaseString(configuredDefaultAccountId) || "default";
-  const { getSessionBindingService } = await loadDispatchAcpManagerRuntime();
+  const { getSessionBindingService } = await dispatchAcpManagerRuntimeLoader.load();
   const bindingService = getSessionBindingService();
   const bindings = bindingService.listBySession(params.sessionKey);
   return bindings.some((binding) => {
@@ -289,7 +273,7 @@ async function maybeUnbindStaleBoundConversations(params: {
     return;
   }
   try {
-    const { getSessionBindingService } = await loadDispatchAcpManagerRuntime();
+    const { getSessionBindingService } = await dispatchAcpManagerRuntimeLoader.load();
     const removed = await getSessionBindingService().unbind({
       targetSessionKey: params.targetSessionKey,
       reason: ACP_STALE_BINDING_UNBIND_REASON,
@@ -362,7 +346,7 @@ async function finalizeAcpTurnOutput(params: {
     !params.delivery.hasDeliveredFinalTtsMedia()
   ) {
     try {
-      const { maybeApplyTtsToPayload } = await loadDispatchAcpTtsRuntime();
+      const { maybeApplyTtsToPayload } = await dispatchAcpTtsRuntimeLoader.load();
       if (params.abortSignal?.aborted) {
         return queuedFinal;
       }
@@ -418,8 +402,8 @@ async function finalizeAcpTurnOutput(params: {
     (await params.delivery.recoverBlockText({ onlyUndelivered: ttsMode === "all" })) || queuedFinal;
 
   if (params.shouldEmitResolvedIdentityNotice) {
-    const { readAcpSessionEntry } = await loadDispatchAcpManagerRuntime();
-    const current = readAcpSessionEntry({
+    const { readAcpSessionEntryCore } = await dispatchAcpManagerRuntimeLoader.load();
+    const current = readAcpSessionEntryCore({
       cfg: params.cfg,
       sessionKey: params.sessionKey,
       agentId: params.agentId,
@@ -485,8 +469,8 @@ export async function tryDispatchAcpReplyCore(params: {
   }
   prepareChannelParticipantObservation(params.ctx);
 
-  const { getAcpSessionManager } = await loadDispatchAcpManagerRuntime();
-  const acpManager = getAcpSessionManager();
+  const { getAcpSessionManagerCore } = await dispatchAcpManagerRuntimeLoader.load();
+  const acpManager = getAcpSessionManagerCore();
   const acpResolution = acpManager.resolveSession({
     cfg: params.cfg,
     sessionKey,
@@ -683,7 +667,7 @@ export async function tryDispatchAcpReplyCore(params: {
   const auditOnly = existingRunId === undefined;
   let completionSource: ReplyDispatchRun["completionSource"] | undefined;
   const auditRunId = existingRunId ?? generateSecureUuid();
-  const auditRuntime = await loadDispatchAcpAuditRuntime();
+  const auditRuntime = await dispatchAcpAuditRuntimeLoader.load();
   const auditToolTracker = auditRuntime.createAcpToolLifecycleTracker();
   let auditStarted = false;
   let auditFinished = false;
@@ -774,7 +758,7 @@ export async function tryDispatchAcpReplyCore(params: {
       phase: "end",
       data: resolveAuditEndFields(),
     });
-    const { persistAcpDispatchTranscript } = await loadDispatchAcpTranscriptRuntime();
+    const { persistAcpDispatchTranscript } = await dispatchAcpTranscriptRuntimeLoader.load();
     assistantTranscript = await persistAcpDispatchTranscript({
       cfg: params.cfg,
       sessionKey: canonicalSessionKey,

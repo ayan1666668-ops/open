@@ -1,15 +1,13 @@
-import { Buffer } from "node:buffer";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
-import type { Message } from "openclaw/plugin-sdk/llm";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import {
   readPersistedAuthProfileStateRaw,
   writePersistedAuthProfileStateRaw,
 } from "../../agents/auth-profiles/sqlite.js";
 import { executeSqliteQueryTakeFirstSync, getNodeSqliteKysely } from "../../infra/kysely-sync.js";
+import { getSessionExecutionSelection } from "../../model-picker/execution-selection.js";
 import { resetPluginRuntimeStateForTest, setActivePluginRegistry } from "../../plugins/runtime.js";
 import { beginSessionWorkAdmission } from "../../sessions/session-lifecycle-admission.js";
 import { onSessionTranscriptUpdate } from "../../sessions/transcript-events.js";
@@ -24,6 +22,7 @@ import {
   closeOpenClawStateDatabaseForTest,
 } from "../../state/openclaw-state-db.js";
 import { createTestRegistry } from "../../test-utils/channel-plugins.js";
+import { acceptedModelSelection } from "../../test-utils/session-execution-selection.js";
 import { appendSqliteTrajectoryRuntimeEvents } from "../../trajectory/runtime-store.sqlite.js";
 import { normalizeSessionDeliveryState } from "../../utils/delivery-context.shared.js";
 import {
@@ -34,29 +33,15 @@ import { isSessionArchiveArtifactName } from "./artifacts.js";
 import {
   appendTranscriptEvent,
   appendTranscriptMessage,
-  cleanupSessionLifecycleArtifactsCore,
-  listSessionEntriesCore,
-  loadExactSessionEntry,
   loadSessionEntry,
   loadTranscriptEvents,
   onSessionIdentityMutation,
   patchSessionEntryCore,
-  publishTranscriptUpdate,
-  readSessionUpdatedAtCore,
   replaceSessionEntry,
   resolveSessionTranscriptRuntimeTarget,
-  updateSessionEntry,
   upsertSessionEntryCore,
-  type ExactSessionEntry,
   type SessionAccessScope,
-  type SessionEntrySummary,
   type SessionTranscriptAccessScope,
-  type SessionTranscriptReadScope,
-  type SessionTranscriptWriteScope,
-  type TranscriptEvent,
-  type TranscriptMessageAppendOptions,
-  type TranscriptMessageAppendResult,
-  type TranscriptUpdatePayload,
 } from "./session-accessor.js";
 import {
   branchCompactionCheckpointSession,
@@ -68,10 +53,7 @@ import {
   replaceSessionEntrySync,
 } from "./session-accessor.sqlite-entry.js";
 import { forkSessionEntryFromParentTarget } from "./session-accessor.sqlite-parent-session.js";
-import {
-  loadTranscriptEventsSync,
-  readTranscriptStatsSync,
-} from "./session-accessor.sqlite-read.js";
+import { loadTranscriptEventsSync } from "./session-accessor.sqlite-read.js";
 import { replaceTranscriptEvents } from "./session-accessor.sqlite-transcript-write.js";
 import { setCanonicalSqliteSessionMainKey } from "./session-canonical-key.js";
 import type { InternalSessionEntry, SessionCompactionCheckpoint, SessionEntry } from "./types.js";
@@ -83,132 +65,11 @@ vi.mock("../config.js", async () => ({
 }));
 
 import { getRuntimeConfig } from "../config.js";
-
-type AccessorAdapter = {
-  name: string;
-  entryScope(paths: TestPaths): SessionAccessScope;
-  transcriptReadScope(paths: TestPaths, id?: string): SessionTranscriptReadScope;
-  transcriptScope(paths: TestPaths, id?: string): SessionTranscriptAccessScope;
-  loadExactSessionEntry(scope: SessionAccessScope): ExactSessionEntry | undefined;
-  loadSessionEntry(scope: SessionAccessScope): SessionEntry | undefined;
-  listSessionEntriesCore(
-    scope: Partial<Omit<SessionAccessScope, "sessionKey">>,
-  ): SessionEntrySummary[];
-  readSessionUpdatedAtCore(scope: SessionAccessScope): number | undefined;
-  upsertSessionEntry(
-    scope: SessionAccessScope,
-    patch: Partial<SessionEntry>,
-  ): Promise<SessionEntry | null>;
-  replaceSessionEntry(scope: SessionAccessScope, entry: SessionEntry): Promise<SessionEntry | null>;
-  patchSessionEntryCore(
-    scope: SessionAccessScope,
-    update: (
-      entry: SessionEntry,
-      context: { existingEntry?: SessionEntry },
-    ) => Promise<Partial<SessionEntry> | null> | Partial<SessionEntry> | null,
-    options?: { fallbackEntry?: SessionEntry; preserveActivity?: boolean; replaceEntry?: boolean },
-  ): Promise<SessionEntry | null>;
-  updateSessionEntry(
-    scope: SessionAccessScope,
-    update: (entry: SessionEntry) => Partial<SessionEntry> | null,
-  ): Promise<SessionEntry | null>;
-  cleanupSessionLifecycleArtifactsCore(params: {
-    storePath: string;
-    sessionKeySegmentPrefix: string;
-    transcriptContentMarker: string;
-    orphanTranscriptMinAgeMs: number;
-    nowMs?: number;
-  }): Promise<{ removedEntries: number; archivedTranscriptArtifacts: number }>;
-  loadTranscriptEvents(scope: SessionTranscriptReadScope): Promise<TranscriptEvent[]>;
-  appendTranscriptEvent(scope: SessionTranscriptAccessScope, event: TranscriptEvent): Promise<void>;
-  appendTranscriptMessage<TMessage>(
-    scope: SessionTranscriptWriteScope,
-    options: TranscriptMessageAppendOptions<TMessage>,
-  ): Promise<TranscriptMessageAppendResult<TMessage> | undefined>;
-  publishTranscriptUpdate(
-    scope: SessionTranscriptWriteScope,
-    update?: TranscriptUpdatePayload,
-  ): Promise<void>;
-};
-
-type TestPaths = {
-  sqlitePath: string;
-  stateDir: string;
-  storePath: string;
-  tempDir: string;
-};
-
-const publicAccessorAdapter: AccessorAdapter = {
-  name: "public-accessor",
-  entryScope: (paths) => ({
-    agentId: "main",
-    env: { ...process.env, OPENCLAW_STATE_DIR: paths.stateDir },
-    sessionKey: "agent:main:main",
-    storePath: paths.sqlitePath,
-  }),
-  transcriptScope: (paths, id = "session-1") => ({
-    agentId: "main",
-    env: { ...process.env, OPENCLAW_STATE_DIR: paths.stateDir },
-    sessionId: id,
-    sessionKey: "agent:main:main",
-    storePath: paths.sqlitePath,
-  }),
-  transcriptReadScope: (paths, id = "session-1") => ({
-    agentId: "main",
-    env: { ...process.env, OPENCLAW_STATE_DIR: paths.stateDir },
-    sessionId: id,
-    storePath: paths.sqlitePath,
-  }),
-  loadSessionEntry,
-  loadExactSessionEntry,
-  listSessionEntriesCore,
-  readSessionUpdatedAtCore,
-  upsertSessionEntry: upsertSessionEntryCore,
-  replaceSessionEntry,
-  patchSessionEntryCore,
-  updateSessionEntry,
-  cleanupSessionLifecycleArtifactsCore,
-  loadTranscriptEvents,
-  appendTranscriptEvent,
-  appendTranscriptMessage,
-  publishTranscriptUpdate,
-};
-
-const sqliteAdapter: AccessorAdapter = {
-  name: "sqlite",
-  entryScope: (paths) => ({
-    agentId: "main",
-    env: { ...process.env, OPENCLAW_STATE_DIR: paths.stateDir },
-    sessionKey: "agent:main:main",
-    storePath: paths.sqlitePath,
-  }),
-  transcriptScope: (paths, id = "session-1") => ({
-    agentId: "main",
-    env: { ...process.env, OPENCLAW_STATE_DIR: paths.stateDir },
-    sessionId: id,
-    sessionKey: "agent:main:main",
-    storePath: paths.sqlitePath,
-  }),
-  transcriptReadScope: (paths, id = "session-1") => ({
-    agentId: "main",
-    env: { ...process.env, OPENCLAW_STATE_DIR: paths.stateDir },
-    sessionId: id,
-    storePath: paths.sqlitePath,
-  }),
-  loadSessionEntry,
-  loadExactSessionEntry,
-  listSessionEntriesCore: listSessionEntryRows,
-  readSessionUpdatedAtCore,
-  upsertSessionEntry: upsertSessionEntryCore,
-  replaceSessionEntry,
-  patchSessionEntryCore,
-  updateSessionEntry: patchSessionEntryCore,
-  cleanupSessionLifecycleArtifactsCore,
-  loadTranscriptEvents,
-  appendTranscriptEvent,
-  appendTranscriptMessage,
-  publishTranscriptUpdate,
-};
+import {
+  publicAccessorAdapter,
+  sqliteAdapter,
+  type TestPaths,
+} from "./session-accessor.conformance.test-support.js";
 
 beforeEach(() => {
   vi.mocked(getRuntimeConfig).mockReturnValue({});
@@ -249,6 +110,9 @@ describe.each([publicAccessorAdapter, sqliteAdapter])(
 
     it("conforms for entry load/list/timestamp/upsert/update/replace/patch", async () => {
       const scope = adapter.entryScope(paths);
+      const selected = acceptedModelSelection("openai", "gpt-5.5", {
+        executor: { kind: "harness", id: "codex" },
+      });
 
       await adapter.upsertSessionEntry(scope, {
         model: "gpt-5.5",
@@ -280,13 +144,13 @@ describe.each([publicAccessorAdapter, sqliteAdapter])(
       });
 
       await adapter.replaceSessionEntry(scope, {
-        providerOverride: "openai",
+        executionSelection: selected,
         sessionId: "session-1",
         updatedAt: 30,
       });
 
       expect(adapter.loadSessionEntry(scope)).toMatchObject({
-        providerOverride: "openai",
+        executionSelection: selected,
         sessionId: "session-1",
       });
       expect(adapter.loadSessionEntry(scope)?.model).toBeUndefined();
@@ -304,17 +168,26 @@ describe.each([publicAccessorAdapter, sqliteAdapter])(
         { replaceEntry: true },
       );
 
-      expect(existingContext).toMatchObject({ providerOverride: "openai" });
+      expect(existingContext).toMatchObject({ executionSelection: selected });
       expect(adapter.loadSessionEntry(scope)).toMatchObject({
         model: "gpt-5.5",
         sessionId: "session-1",
       });
 
       const beforePreservePatch = adapter.loadSessionEntry(scope);
+      const deferred = {
+        state: "deferred",
+        request: {
+          model: { provider: "anthropic", id: "claude-sonnet-4-6" },
+          executor: { kind: "harness", id: "openclaw" },
+        },
+        previous: selected.selection,
+        fallbackPermission: "explicit",
+      } satisfies NonNullable<SessionEntry["executionSelection"]>;
       await adapter.patchSessionEntryCore(
         scope,
         () => ({
-          providerOverride: "anthropic",
+          executionSelection: deferred,
           updatedAt: 40,
         }),
         { preserveActivity: true },
@@ -322,7 +195,7 @@ describe.each([publicAccessorAdapter, sqliteAdapter])(
 
       expect(adapter.loadSessionEntry(scope)).toMatchObject({
         model: "gpt-5.5",
-        providerOverride: "anthropic",
+        executionSelection: deferred,
         sessionId: "session-1",
         updatedAt: beforePreservePatch?.updatedAt,
       });
@@ -772,8 +645,11 @@ describe.each([publicAccessorAdapter, sqliteAdapter])(
       });
     });
 
-    t("serializes concurrent SQLite entry patches", async () => {
+    t("serializes concurrent SQLite execution selection transactions", async () => {
       const scope = sqliteAdapter.entryScope(paths);
+      const selected = acceptedModelSelection("openai", "gpt-5.5", {
+        executor: { kind: "harness", id: "codex" },
+      });
 
       await upsertSessionEntryCore(scope, {
         model: "base",
@@ -790,20 +666,51 @@ describe.each([publicAccessorAdapter, sqliteAdapter])(
         firstPatch = patchSessionEntryCore(scope, async () => {
           resolve();
           await blockedPatch;
-          return { model: "first" };
+          return {
+            label: "first",
+            executionSelection: selected,
+            authProfileOverride: "openai:first",
+            authProfileOverrideSource: "user",
+            authProfileOverrideCompactionCount: 2,
+          };
         });
       });
       await patchStarted;
-      const secondPatch = patchSessionEntryCore(scope, () => ({
-        providerOverride: "openai",
+      const secondPatch = patchSessionEntryCore(scope, (entry) => ({
+        executionSelection: {
+          state: "deferred",
+          request: {
+            model: { provider: "anthropic", id: "claude-sonnet-4-6" },
+            executor: { kind: "harness", id: "openclaw" },
+          },
+          previous: getSessionExecutionSelection(entry),
+          fallbackPermission: "explicit",
+        },
+        authProfileOverride: undefined,
+        authProfileOverrideSource: undefined,
+        authProfileOverrideCompactionCount: undefined,
       }));
       releasePatch();
       await Promise.all([firstPatch, secondPatch]);
 
-      expect(loadSessionEntry(scope)).toMatchObject({
-        model: "first",
-        providerOverride: "openai",
+      const stored = loadSessionEntry(scope);
+      expect(stored).toMatchObject({
+        sessionId: "patch-session",
+        model: "base",
+        label: "first",
+        executionSelection: {
+          state: "deferred",
+          request: {
+            model: { provider: "anthropic", id: "claude-sonnet-4-6" },
+            executor: { kind: "harness", id: "openclaw" },
+          },
+          previous: selected.selection,
+          fallbackPermission: "explicit",
+        },
       });
+      expect(stored?.authProfileOverride).toBeUndefined();
+      expect(stored?.authProfileOverrideSource).toBeUndefined();
+      expect(stored?.authProfileOverrideCompactionCount).toBeUndefined();
     });
 
     t("does not hold a write transaction while awaiting a SQLite entry updater", async () => {
@@ -1628,7 +1535,7 @@ describe("sqlite session normalization", () => {
     const unsubscribe = onSessionIdentityMutation(notify);
     onTestFinished(unsubscribe);
     await patchSessionEntryCore(scopeFor("agent:main:active"), () => ({
-      providerOverride: "openai",
+      label: "maintenance-trigger",
     }));
     let archivedStale: string[] = [];
     await vi.waitFor(
@@ -2157,7 +2064,7 @@ describe("sqlite session normalization", () => {
     );
 
     await patchSessionEntryCore(scopeFor("agent:main:active-budget"), () => ({
-      modelOverride: "gpt-5.5",
+      label: "budget-maintenance-trigger",
     }));
 
     // Live sessions are never save-time budget victims: byte pressure is
@@ -2715,157 +2622,4 @@ describe("sqlite session normalization", () => {
   });
 });
 
-describe("SQLite transcript reader byte budget", () => {
-  let tempDir: string;
-  let storePath: string;
-
-  beforeEach(() => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-transcript-byte-"));
-    storePath = path.join(tempDir, "sessions.json");
-  });
-
-  afterEach(() => {
-    closeOpenClawAgentDatabasesForTest();
-    closeOpenClawStateDatabaseForTest();
-    fs.rmSync(tempDir, { recursive: true, force: true });
-  });
-
-  function userMessage(content: string): Message {
-    return { role: "user", content, timestamp: 1 };
-  }
-
-  it("counts JSONL row separators in the transcript byte budget", async () => {
-    const sessionId = "session-transcript-separator";
-    const sessionKey = "agent:main:session-transcript-separator";
-    await replaceTranscriptEvents({ agentId: "main", sessionId, sessionKey, storePath }, [
-      {
-        type: "session",
-        version: 3,
-        id: sessionId,
-        timestamp: "2026-04-01T05:46:39.000Z",
-        cwd: tempDir,
-      },
-      {
-        type: "message",
-        id: "entry-separator-0",
-        parentId: null,
-        timestamp: "2026-04-01T05:46:40.000Z",
-        message: userMessage("separator-row-0"),
-      },
-      {
-        type: "message",
-        id: "entry-separator-1",
-        parentId: null,
-        timestamp: "2026-04-01T05:46:41.000Z",
-        message: userMessage("separator-row-1"),
-      },
-    ]);
-    const stats = readTranscriptStatsSync({
-      agentId: "main",
-      sessionId,
-      sessionKey,
-      storePath,
-    });
-    expect(() =>
-      loadTranscriptEventsSync({
-        agentId: "main",
-        sessionId,
-        sessionKey,
-        storePath,
-        maxEventBytes: stats.sizeBytes - 1,
-      }),
-    ).toThrow(/transcript store is too large to export/u);
-    expect(
-      loadTranscriptEventsSync({
-        agentId: "main",
-        sessionId,
-        sessionKey,
-        storePath,
-        maxEventBytes: stats.sizeBytes,
-      }).length,
-    ).toBe(3);
-  });
-
-  // OCTET_LENGTH measures the database encoding, so a UTF-16 store would otherwise
-  // reject an ASCII transcript near half the documented UTF-8 cap and undercount
-  // CJK-heavy text. Admission must measure the UTF-8 byte budget across encodings.
-  it.each([
-    { encoding: "UTF-8" as const, payload: "a".repeat(200), label: "ascii" },
-    { encoding: "UTF-16le" as const, payload: "a".repeat(200), label: "ascii" },
-    { encoding: "UTF-16be" as const, payload: "a".repeat(200), label: "ascii" },
-    { encoding: "UTF-8" as const, payload: "日本語🦞".repeat(40), label: "cjk" },
-    { encoding: "UTF-16le" as const, payload: "日本語🦞".repeat(40), label: "cjk" },
-    { encoding: "UTF-16be" as const, payload: "日本語🦞".repeat(40), label: "cjk" },
-  ])(
-    "measures the UTF-8 byte budget in $encoding for $label payloads",
-    async ({ encoding, payload, label }) => {
-      const sessionId = `session-transcript-${encoding}-${label}`;
-      const sessionKey = `agent:main:${sessionId}`;
-      if (encoding !== "UTF-8") {
-        storePath = path.join(tempDir, `${encoding}.sqlite`);
-        const seed = new DatabaseSync(storePath);
-        try {
-          seed.exec(
-            `PRAGMA encoding = '${encoding}'; CREATE TABLE encoding_seed (id INTEGER); DROP TABLE encoding_seed;`,
-          );
-        } finally {
-          seed.close();
-        }
-        await replaceSessionEntry(
-          { agentId: "main", sessionKey, storePath },
-          { sessionId, updatedAt: 10 },
-        );
-      }
-      const events = [
-        {
-          type: "session",
-          version: 3,
-          id: sessionId,
-          timestamp: "2026-04-01T05:46:39.000Z",
-          cwd: tempDir,
-        },
-        {
-          type: "message",
-          id: "entry-utf16-0",
-          parentId: null,
-          timestamp: "2026-04-01T05:46:40.000Z",
-          message: userMessage(payload),
-        },
-        {
-          type: "message",
-          id: "entry-utf16-1",
-          parentId: null,
-          timestamp: "2026-04-01T05:46:41.000Z",
-          message: userMessage(payload),
-        },
-      ];
-      await replaceTranscriptEvents({ agentId: "main", sessionId, sessionKey, storePath }, events);
-      const jsonlSize = events.reduce(
-        (total, event, index) =>
-          total + Buffer.byteLength(JSON.stringify(event), "utf8") + (index > 0 ? 1 : 0),
-        0,
-      );
-      // Budget equals the true UTF-8 size: admission must accept it in every encoding.
-      expect(
-        loadTranscriptEventsSync({
-          agentId: "main",
-          sessionId,
-          sessionKey,
-          storePath,
-          maxEventBytes: jsonlSize,
-        }).length,
-      ).toBe(events.length);
-      // One byte below the UTF-8 size must reject in every encoding.
-      expect(() =>
-        loadTranscriptEventsSync({
-          agentId: "main",
-          sessionId,
-          sessionKey,
-          storePath,
-          maxEventBytes: jsonlSize - 1,
-        }),
-      ).toThrow(/transcript store is too large to export/u);
-    },
-  );
-});
 /* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

@@ -138,7 +138,7 @@ vi.mock("../acp/control-plane/manager.lifecycle.js", () => ({
 }));
 
 vi.mock("../acp/control-plane/manager.js", () => ({
-  getAcpSessionManager: mocks.getAcpSessionManager,
+  getAcpSessionManagerCore: mocks.getAcpSessionManager,
 }));
 
 vi.mock("../plugin-state/plugin-state-store.js", async () => ({

@@ -50,7 +50,7 @@ import {
 } from "./runtime-plan/prepare-auth.js";
 import { scopeAuthProfileStoreToPreparedPlan } from "./runtime-plan/resolve-auth.js";
 import { prepareSimpleCompletionModel } from "./simple-completion-runtime.js";
-import { resolveEffectiveAgentRuntime } from "./thinking-runtime.js";
+import { resolveEffectiveAgentRuntimeCore } from "./thinking-runtime.js";
 import type { UsageLike } from "./usage.js";
 
 type RunIsolatedCompletionParams = {
@@ -449,7 +449,12 @@ async function runIsolatedCompletionOwned(
       assertCurrent();
       const runtime =
         runtimeOverride ??
-        resolveEffectiveAgentRuntime({ cfg: config, provider, modelId: request.model, agentId });
+        resolveEffectiveAgentRuntimeCore({
+          cfg: config,
+          provider,
+          modelId: request.model,
+          agentId,
+        });
       const cliOwner = resolveCliOwner({
         request,
         provider,

@@ -4,7 +4,7 @@ import { openOpenClawAgentDatabase } from "../state/openclaw-agent-db.js";
 
 export function insertLegacySession(params: {
   agentId: string;
-  entry: SessionEntry;
+  entry: Pick<SessionEntry, "sessionId" | "updatedAt"> & Record<string, unknown>;
   env: NodeJS.ProcessEnv;
   eventText?: string;
   sessionKey: string;

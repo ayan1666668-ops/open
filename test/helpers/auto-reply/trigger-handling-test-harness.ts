@@ -4,9 +4,12 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, expect, vi } from "vitest";
+import { resolveAgentDir, resolveSessionAgentId } from "../../../src/agents/agent-scope.js";
 import { clearRuntimeAuthProfileStoreSnapshots } from "../../../src/agents/auth-profiles.js";
+import { ensureAuthProfileStore } from "../../../src/agents/auth-profiles/store-runtime.js";
 import type { EmbeddedAgentQueueMessageOutcome } from "../../../src/agents/embedded-agent-runner/runs.js";
-import { withFastReplyConfig } from "../../../src/auto-reply/reply/get-reply-fast-path.test-support.js";
+import type { ModelCatalogEntry } from "../../../src/agents/model-catalog.types.js";
+import { withFullRuntimeReplyConfig } from "../../../src/auto-reply/reply/get-reply-fast-path.js";
 import type { OpenClawConfig } from "../../../src/config/types.openclaw.js";
 import { captureEnv } from "../../../src/test-utils/env.js";
 
@@ -119,7 +122,20 @@ const DEFAULT_MODEL_CATALOG = [
   { provider: "openai", id: "gpt-5.5", name: "GPT-5.5" },
   { provider: "openai", id: "gpt-5.5", name: "GPT-5.5 (Codex)" },
   { provider: "minimax", id: "MiniMax-M2.7", name: "MiniMax M2.7" },
-];
+  { provider: "anthropic", id: "claude-haiku-4-5-20251001", name: "Claude Haiku 4.5" },
+  { provider: "openai", id: "gpt-4.1-mini", name: "GPT 4.1 mini" },
+  { provider: "openai", id: "gpt-5.4", name: "GPT 5.4" },
+  { provider: "deepseek", id: "deepseek-v4-pro", name: "DeepSeek V4 Pro" },
+  { provider: "zai", id: "glm-5.1", name: "GLM 5.1" },
+].map(({ provider, id, name, contextWindow }): ModelCatalogEntry => ({
+  provider,
+  id,
+  name,
+  contextWindow,
+  api: "openai-completions",
+  baseUrl: "https://fixture.example.invalid/v1",
+  input: ["text"],
+}));
 
 const modelCatalogMocks = getSharedMocks("openclaw.trigger-handling.model-catalog-mocks", () => ({
   loadManifestModelCatalog: vi.fn(() => DEFAULT_MODEL_CATALOG),
@@ -133,6 +149,8 @@ installModelCatalogMock();
 
 vi.doMock("../../../src/agents/prepared-model-catalog.js", () => ({
   getPreparedModelCatalogOwnerSnapshot: () => undefined,
+  getPublishedPreparedModelCatalogOwnerSnapshot: () => undefined,
+  preparePublishedModelCatalogOwnerSnapshot: async () => undefined,
   materializePreparedModelCatalogOwner: (owner: object) => owner,
   readPreparedModelCatalog: (...args: unknown[]) =>
     modelCatalogMocks.readPreparedModelCatalog(...args),
@@ -278,7 +296,7 @@ export async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise
 }
 
 export function makeCfg(home: string): OpenClawConfig {
-  return withFastReplyConfig({
+  return withFullRuntimeReplyConfig({
     agents: {
       defaults: {
         model: { primary: "anthropic/claude-opus-4-7" },
@@ -320,7 +338,39 @@ export function installTriggerHandlingReplyHarness(
   ) => void,
 ): void {
   beforeAll(async () => {
-    setGetReplyFromConfig(await loadGetReplyFromConfig());
+    const getReplyFromConfig = await loadGetReplyFromConfig();
+    // Load after doMock so publication spies attach to this harness's catalog module.
+    const { createSessionModelCatalogFixture } =
+      await import("../../../src/agents/test-helpers/session-model-catalog.test-support.js");
+    const catalog = createSessionModelCatalogFixture();
+    setGetReplyFromConfig(async (ctx, opts, config) => {
+      if (!config) {
+        throw new Error("Trigger scenarios must supply their test config.");
+      }
+      const agentId = resolveSessionAgentId({
+        config,
+        sessionKey: ctx.CommandTargetSessionKey ?? ctx.SessionKey,
+      });
+      const authStore = ensureAuthProfileStore(resolveAgentDir(config, agentId), {
+        syncExternalCli: false,
+      });
+      const entries = await modelCatalogMocks.readPreparedModelCatalog();
+      catalog.publish({
+        config,
+        agentId,
+        catalog: { entries, routeVariants: entries },
+        profiles: {
+          ...Object.fromEntries(
+            DEFAULT_MODEL_CATALOG.map(({ provider }) => [
+              `${provider}:fixture`,
+              { type: "api_key" as const, provider, key: "synthetic-credential" },
+            ]),
+          ),
+          ...authStore.profiles,
+        },
+      });
+      return getReplyFromConfig(ctx, opts, config);
+    });
   });
   installTriggerHandlingE2eTestHooks();
 }

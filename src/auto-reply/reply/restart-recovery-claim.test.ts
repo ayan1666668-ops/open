@@ -71,6 +71,7 @@ describe("createReplyRestartRecoveryClaimController", () => {
       };
       await replaceSessionEntry({ storePath, sessionKey }, entry);
       const controller = createReplyRestartRecoveryClaimController({
+        agentId: "main",
         lifecycleGeneration: getAgentEventLifecycleGeneration(),
         admissionRunId: "recovery-run",
         getEntry: () => entry,
@@ -118,6 +119,7 @@ describe("createReplyRestartRecoveryClaimController", () => {
     };
     await replaceSessionEntry({ storePath, sessionKey }, entry);
     const controller = createReplyRestartRecoveryClaimController({
+      agentId: "main",
       lifecycleGeneration: getAgentEventLifecycleGeneration(),
       admissionRunId: "recovery-run",
       getEntry: () => entry,
@@ -170,6 +172,7 @@ describe("createReplyRestartRecoveryClaimController", () => {
       };
       await replaceSessionEntry(scope, entry);
       const controller = createReplyRestartRecoveryClaimController({
+        agentId: "main",
         lifecycleGeneration:
           interruption === "missing-generation" ? undefined : lifecycleGeneration,
         admissionRunId: "recovery-run",
@@ -286,6 +289,7 @@ describe("createReplyRestartRecoveryClaimController", () => {
     };
     await replaceSessionEntry(scope, entry);
     const controller = createReplyRestartRecoveryClaimController({
+      agentId: "main",
       lifecycleGeneration: getAgentEventLifecycleGeneration(),
       admissionRunId: "recovery-run",
       getEntry: () => entry,
@@ -336,6 +340,7 @@ describe("createReplyRestartRecoveryClaimController", () => {
     };
     await replaceSessionEntry({ storePath, sessionKey }, entry);
     const controller = createReplyRestartRecoveryClaimController({
+      agentId: "main",
       lifecycleGeneration: getAgentEventLifecycleGeneration(),
       admissionRunId: "recovery-run",
       getEntry: () => entry,
@@ -368,7 +373,7 @@ describe("createReplyRestartRecoveryClaimController", () => {
     const sessionKey = "plugin-binding:codex:target";
     const sessionId = "bound-session-id";
     const entry = { sessionId, updatedAt: Date.now() };
-    await replaceSessionEntry({ storePath, sessionKey }, entry);
+    await replaceSessionEntry({ agentId: "main", storePath, sessionKey }, entry);
 
     let persistedTarget: UserTurnTranscriptTarget | undefined;
     const admission = createTestAdmission({
@@ -405,6 +410,7 @@ describe("createReplyRestartRecoveryClaimController", () => {
       persistFallback: async () => undefined,
     } satisfies UserTurnTranscriptRecorder;
     const controller = createReplyRestartRecoveryClaimController({
+      agentId: "main",
       lifecycleGeneration: getAgentEventLifecycleGeneration(),
       getEntry: () => entry,
       getSessionId: () => sessionId,
@@ -489,6 +495,7 @@ describe("createReplyRestartRecoveryClaimController", () => {
       persistFallback: async () => undefined,
     } satisfies UserTurnTranscriptRecorder;
     const controller = createReplyRestartRecoveryClaimController({
+      agentId: "main",
       lifecycleGeneration: getAgentEventLifecycleGeneration(),
       getEntry: () => entry,
       getSessionId: () => sessionId,
@@ -584,6 +591,7 @@ describe("createReplyRestartRecoveryClaimController", () => {
       persistFallback: async () => undefined,
     } satisfies UserTurnTranscriptRecorder;
     const controller = createReplyRestartRecoveryClaimController({
+      agentId: "main",
       lifecycleGeneration: getAgentEventLifecycleGeneration(),
       getEntry: () => entry,
       getSessionId: () => sessionId,
@@ -685,6 +693,7 @@ describe("createReplyRestartRecoveryClaimController", () => {
       },
     } satisfies UserTurnTranscriptRecorder;
     const controller = createReplyRestartRecoveryClaimController({
+      agentId: "main",
       lifecycleGeneration: getAgentEventLifecycleGeneration(),
       getEntry: () => entry,
       getSessionId: () => sessionId,

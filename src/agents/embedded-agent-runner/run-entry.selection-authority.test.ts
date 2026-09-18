@@ -53,8 +53,8 @@ describe("prepared fallback authority", () => {
     async (window) => {
       const entry: SessionEntry = { sessionId: "qa-session", updatedAt: 1 };
       commitSessionExecutionSelection(entry, primary, { cause: { kind: "initialize" } });
-      const reached = createDeferred<void>();
-      const release = createDeferred<void>();
+      const reached = createDeferred();
+      const release = createDeferred();
       const dispatched: ModelExecutionSelection[] = [];
       if (window === "harness preparation") {
         boundary.prepareHarness.mockImplementation(async (params: { modelId: string }) => {
@@ -121,7 +121,9 @@ describe("prepared fallback authority", () => {
               readSessionEntry: () => entry,
               request: { kind: "fallback", selection },
             });
-            if (prepared.status !== "ready") throw new Error(prepared.message);
+            if (prepared.status !== "ready") {
+              throw new Error(prepared.message);
+            }
             return { selection, validateCommit: prepared.validateCommit };
           },
         },

@@ -2,7 +2,7 @@
 import { asFiniteNumber } from "@openclaw/normalization-core/number-coercion";
 import type { IsolatedCompletionResult } from "../../agents/isolated-completion.js";
 import { buildConfiguredModelCatalog } from "../../agents/model-selection-shared.js";
-import { resolveEffectiveAgentRuntime } from "../../agents/thinking-runtime.js";
+import { resolveEffectiveAgentRuntimeCore } from "../../agents/thinking-runtime.js";
 import { resolveThinkingProfile } from "../../auto-reply/thinking.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { createLlmCompleteError as completionError } from "./runtime-llm-error.js";
@@ -92,7 +92,7 @@ function assertIsolatedReasoningSupported(params: {
   const profile = resolveThinkingProfile({
     provider: params.provider,
     model: params.model,
-    agentRuntime: resolveEffectiveAgentRuntime({
+    agentRuntime: resolveEffectiveAgentRuntimeCore({
       cfg: params.cfg,
       agentId: params.agentId,
       provider: params.provider,

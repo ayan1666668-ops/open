@@ -90,7 +90,7 @@ export type DoctorSessionSqliteOptions = {
   importDatabase?: NonNullable<
     Parameters<typeof import("../state/openclaw-agent-db.js").runOpenClawAgentWriteTransaction>[3]
   > & {
-    transformEntry?: (entry: SessionEntry, sessionKey: string) => SessionEntry;
+    transformEntry?: (entry: unknown, sessionKey: string) => SessionEntry;
   };
   allAgents?: boolean;
   agent?: string;

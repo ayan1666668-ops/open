@@ -9,10 +9,7 @@ import {
 import { withPluginRuntimeRegistryScope } from "openclaw/plugin-sdk/channel-test-helpers";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
-import {
-  getSessionExecutionSelection,
-  MODEL_SELECTION_LOCKED_MESSAGE,
-} from "openclaw/plugin-sdk/model-session-runtime";
+import { MODEL_SELECTION_LOCKED_MESSAGE } from "openclaw/plugin-sdk/model-session-runtime";
 import {
   createEmptyPluginRegistry,
   createPluginRecord,
@@ -118,8 +115,9 @@ async function withDirectModelCatalog(
           models: [
             { id: "gpt-5.4", name: "Original" },
             { id: "gpt-5.5", name: "Selected" },
-          ].map((model) => ({
-            ...model,
+          ].map(({ id, name }) => ({
+            id,
+            name,
             reasoning: false,
             input: ["text" as const],
             cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -174,8 +172,11 @@ async function withDirectModelCatalog(
     try {
       expect(await owner.close()).toEqual({ memoryErrors: [], pluginFailures: [] });
     } finally {
-      if (previousConfig) setRuntimeConfigSnapshot(previousConfig);
-      else clearRuntimeConfigSnapshot();
+      if (previousConfig) {
+        setRuntimeConfigSnapshot(previousConfig);
+      } else {
+        clearRuntimeConfigSnapshot();
+      }
     }
   }
 }
@@ -733,7 +734,9 @@ describe("codex conversation controls", () => {
 
       const binding = testCodexAppServerBindingStore.read(identity);
       const before = getSessionEntry({ agentId: "main", storePath, sessionKey });
-      if (!before) throw new Error("Expected the persisted direct-session fixture");
+      if (!before) {
+        throw new Error("Expected the persisted direct-session fixture");
+      }
       await expect(
         setCodexConversationModelImpl({
           identity,
@@ -758,10 +761,13 @@ describe("codex conversation controls", () => {
         liveModelSwitchPending: true,
       });
       expect(
-        getSessionExecutionSelection(getSessionEntry({ agentId: "main", storePath, sessionKey })),
-      ).toEqual({
-        model: { provider: "openai", id: "gpt-5.5" },
-        executor: { kind: "harness", id: "codex" },
+        getSessionEntry({ agentId: "main", storePath, sessionKey })?.executionSelection,
+      ).toMatchObject({
+        state: "accepted",
+        selection: {
+          model: { provider: "openai", id: "gpt-5.5" },
+          executor: { kind: "harness", id: "codex" },
+        },
       });
       expect(testCodexAppServerBindingStore.read(identity)).toMatchObject({
         threadId: "thread-model-authority",
@@ -808,7 +814,9 @@ describe("codex conversation controls", () => {
 
       const binding = testCodexAppServerBindingStore.read(identity);
       const before = getSessionEntry({ agentId: "main", storePath, sessionKey });
-      if (!before) throw new Error("Expected the persisted direct-session fixture");
+      if (!before) {
+        throw new Error("Expected the persisted direct-session fixture");
+      }
       await expect(
         setCodexConversationModelImpl({
           identity,
@@ -828,10 +836,13 @@ describe("codex conversation controls", () => {
       ).resolves.toBe("Now using Selected in Codex agent harness.");
 
       expect(
-        getSessionExecutionSelection(getSessionEntry({ agentId: "main", storePath, sessionKey })),
-      ).toEqual({
-        model: { provider: "openai", id: "gpt-5.5" },
-        executor: { kind: "harness", id: "codex" },
+        getSessionEntry({ agentId: "main", storePath, sessionKey })?.executionSelection,
+      ).toMatchObject({
+        state: "accepted",
+        selection: {
+          model: { provider: "openai", id: "gpt-5.5" },
+          executor: { kind: "harness", id: "codex" },
+        },
       });
       expect(testCodexAppServerBindingStore.read(identity)).toMatchObject({
         threadId: "thread-provider-switch",

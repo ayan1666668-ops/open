@@ -110,7 +110,14 @@ describe("executeAgentTurn: CLI admission", () => {
           result: await params.run("openai", "gpt-5.4", fallbackAttemptOptions(params, "format")),
           provider: "openai",
           model: "gpt-5.4",
-          attempts: [{ provider: "claude-cli", model: "claude-sonnet-4-6", reason: "format" }],
+          attempts: [
+            {
+              provider: "claude-cli",
+              model: "claude-sonnet-4-6",
+              error: "Command rejected",
+              reason: "format",
+            },
+          ],
         };
       }
       return {

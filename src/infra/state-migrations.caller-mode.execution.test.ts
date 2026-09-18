@@ -9,7 +9,11 @@ import {
   EMPTY_LEGACY_SESSION_SURFACES,
   type PreparedLegacySessionSurfaces,
 } from "../plugins/legacy-session-surfaces.types.js";
-import { closeOpenClawAgentDatabasesForTest } from "../state/openclaw-agent-db.js";
+import {
+  closeOpenClawAgentDatabasesForTest,
+  OPENCLAW_AGENT_SCHEMA_VERSION,
+  resolveOpenClawAgentSqlitePath,
+} from "../state/openclaw-agent-db.js";
 import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
 import { resolveOpenClawStateSqlitePath } from "../state/openclaw-state-db.paths.js";
 import { createTrackedTempDirs } from "../test-utils/tracked-temp-dirs.js";
@@ -17,6 +21,7 @@ import {
   createCallerModeSnapshot,
   expectBlockedTailInPlanOrder,
   expectPlanReceiptDescriptorsToMatch,
+  withDoctorMaintenance,
   writeLegacyStateSchemaV1,
 } from "./state-migrations.caller-mode.test-helpers.js";
 import {
@@ -25,7 +30,11 @@ import {
   planLegacyStateMigrationsReadOnly,
   runLegacyStateMigrations,
 } from "./state-migrations.doctor.js";
-import { createLegacyDatabaseFixture } from "./state-migrations.media-persistence.test-support.js";
+import {
+  createEvent,
+  createLegacyDatabaseFixture,
+  writeArchive,
+} from "./state-migrations.media-persistence.test-support.js";
 import {
   readLegacyMigrationReceipt,
   resolveLegacyMigrationSourceKey,
@@ -159,6 +168,7 @@ describe("legacy state migration caller execution", () => {
       })}\n`,
     );
     const stateDatabasePath = resolveOpenClawStateSqlitePath(fixture.env);
+    const agentDatabasePath = resolveOpenClawAgentSqlitePath({ agentId: "main", env: fixture.env });
     writeLegacyStateSchemaV1(stateDatabasePath);
     const plan = await planLegacyStateMigrationsReadOnly({
       mode: "doctor",
@@ -167,13 +177,15 @@ describe("legacy state migration caller execution", () => {
       env: fixture.env,
     });
 
-    const result = await autoMigrateLegacyState({
-      cfg,
-      doctorOnlyStateMigrations: true,
-      env: fixture.env,
-      homedir: () => fixture.homeDir,
-      legacySessionSurfaces: EMPTY_LEGACY_SESSION_SURFACES,
-    });
+    const result = await withDoctorMaintenance(fixture.env, () =>
+      autoMigrateLegacyState({
+        cfg,
+        doctorOnlyStateMigrations: true,
+        env: fixture.env,
+        homedir: () => fixture.homeDir,
+        legacySessionSurfaces: EMPTY_LEGACY_SESSION_SURFACES,
+      }),
+    );
 
     expect(result.mode).toBe("doctor");
     expect(result.warnings).toEqual([]);
@@ -240,16 +252,25 @@ describe("legacy state migration caller execution", () => {
     expect(plan.steps[0]).toMatchObject({
       id: "state-schema",
       phase: "shared",
-      source: [{ kind: "sqlite", path: stateDatabasePath }],
-      target: [{ kind: "sqlite", path: stateDatabasePath }],
+      source: [
+        { kind: "sqlite", path: stateDatabasePath },
+        { kind: "path", path: path.join(fixture.stateDir, "agents") },
+        { kind: "sqlite", path: agentDatabasePath },
+      ],
+      target: [
+        { kind: "sqlite", path: stateDatabasePath },
+        { kind: "path", path: path.join(fixture.stateDir, "agents") },
+        { kind: "sqlite", path: agentDatabasePath },
+        { kind: "path", path: path.join(fixture.stateDir, "backups", "execution-selection") },
+      ],
       requiredness: "required",
       reversibility: "checkpoint-required",
       outcome: "planned",
     });
     expect(result.stepReceipts[0]).toMatchObject({
       id: "state-schema",
-      source: [{ kind: "sqlite", path: stateDatabasePath }],
-      target: [{ kind: "sqlite", path: stateDatabasePath }],
+      source: plan.steps[0]?.source,
+      target: plan.steps[0]?.target,
       outcome: "completed",
       warnings: [],
     });
@@ -503,16 +524,38 @@ describe("legacy state migration caller execution", () => {
       agentId: "healthy",
       env: fixture.env,
       eventsBySession: {},
+      schemaVersion: OPENCLAW_AGENT_SCHEMA_VERSION,
     });
-    const brokenDatabasePath = path.join(
+    const brokenDatabasePath = createLegacyDatabaseFixture({
+      agentId: "broken",
+      env: fixture.env,
+      eventsBySession: {},
+      schemaVersion: OPENCLAW_AGENT_SCHEMA_VERSION,
+    });
+    const archivePath = path.join(
       fixture.stateDir,
       "agents",
-      "broken",
-      "agent",
-      "openclaw-agent.sqlite",
+      "healthy",
+      "sessions",
+      "legacy-media.jsonl.deleted.2026-09-02T00-00-00.000Z",
     );
-    fs.mkdirSync(path.dirname(brokenDatabasePath), { recursive: true });
-    fs.writeFileSync(brokenDatabasePath, "not sqlite");
+    writeArchive(
+      archivePath,
+      [
+        createEvent({
+          id: "legacy-media",
+          parentId: null,
+          timestamp: 1000,
+          message: {
+            role: "user",
+            content: "legacy attachment",
+            MediaPath: "/media/attachment.png",
+            MediaType: "image/png",
+          },
+        }),
+      ],
+      false,
+    );
     const { execPath } = writeLegacyDoctorSources(fixture.stateDir);
     const plan = await planLegacyStateMigrationsReadOnly({
       mode: "doctor",
@@ -521,19 +564,26 @@ describe("legacy state migration caller execution", () => {
       env: fixture.env,
     });
 
-    const result = await autoMigrateLegacyState({
-      cfg,
-      doctorOnlyStateMigrations: true,
-      env: fixture.env,
-      homedir: () => fixture.homeDir,
-      legacySessionSurfaces: EMPTY_LEGACY_SESSION_SURFACES,
-    });
+    const result = await withDoctorMaintenance(fixture.env, () =>
+      autoMigrateLegacyState({
+        cfg,
+        doctorOnlyStateMigrations: true,
+        env: fixture.env,
+        homedir: () => fixture.homeDir,
+        legacySessionSurfaces: EMPTY_LEGACY_SESSION_SURFACES,
+        onStepReceipt(receipt) {
+          if (receipt.id === "state-schema" && receipt.outcome !== "refused") {
+            fs.writeFileSync(brokenDatabasePath, "not sqlite");
+          }
+        },
+      }),
+    );
 
     expect(result.stepReceipts.find((receipt) => receipt.id === "media-persistence")).toMatchObject(
       {
         requiredness: "conditional",
         outcome: "refused",
-        changes: [expect.stringContaining("Upgraded agent database schema")],
+        changes: [expect.stringContaining(archivePath)],
         warnings: [expect.stringContaining(brokenDatabasePath)],
         refusal: { code: "step-refused" },
       },
@@ -544,6 +594,13 @@ describe("legacy state migration caller execution", () => {
       blockerId: "media-persistence",
     });
     expect(fs.existsSync(execPath)).toBe(true);
+    const archived = JSON.parse(fs.readFileSync(archivePath, "utf8").trim());
+    expect(archived.message).not.toHaveProperty("MediaPath");
+    expect(archived.message).toMatchObject({
+      __openclaw: {
+        media: [{ path: "/media/attachment.png", contentType: "image/png" }],
+      },
+    });
   });
 
   it("reports a completed profile move when plugin preparation refuses", async () => {
@@ -814,58 +871,6 @@ describe("legacy state migration caller execution", () => {
       refusal: { code: "blocked-by-prior-refusal" },
     });
     expect(fs.existsSync(execPath)).toBe(true);
-  });
-
-  it("blocks later Doctor repairs after a conditional ACP metadata refusal", async () => {
-    const fixture = await makeFixture();
-    const { cfg } = writeAliasedSessionStore({
-      fixture,
-      store: {
-        "agent:main:main": {
-          sessionId: "main-session",
-          updatedAt: 1,
-          acp: {
-            backend: "test",
-            agent: "main",
-            runtimeSessionName: "legacy-runtime",
-            mode: "persistent",
-            state: "idle",
-            lastActivityAt: 1,
-          },
-        },
-      },
-    });
-    const legacyAgentDir = path.join(fixture.stateDir, "agent");
-    fs.mkdirSync(legacyAgentDir, { recursive: true });
-    fs.writeFileSync(path.join(legacyAgentDir, "settings.json"), "{}\n");
-    const plan = await planLegacyStateMigrationsReadOnly({
-      mode: "doctor",
-      candidate: { root: fixture.root, version: "test" },
-      snapshot: createCallerModeSnapshot(fixture),
-      env: fixture.env,
-    });
-
-    const result = await autoMigrateLegacyState({
-      cfg,
-      doctorOnlyStateMigrations: true,
-      env: fixture.env,
-      homedir: () => fixture.homeDir,
-      legacySessionSurfaces: EMPTY_LEGACY_SESSION_SURFACES,
-    });
-
-    expect(
-      result.stepReceipts.find((receipt) => receipt.id === "acp-session-metadata"),
-    ).toMatchObject({ requiredness: "conditional", outcome: "refused" });
-    expectBlockedTailInPlanOrder({
-      plan,
-      receipts: result.stepReceipts,
-      blockerId: "acp-session-metadata",
-    });
-    expect(result.stepReceipts.find((receipt) => receipt.id === "agent-dir")).toMatchObject({
-      outcome: "refused",
-      refusal: { code: "blocked-by-prior-refusal" },
-    });
-    expect(fs.existsSync(legacyAgentDir)).toBe(true);
   });
 
   it("halts direct Doctor execution after an unanticipated state-schema refusal", async () => {

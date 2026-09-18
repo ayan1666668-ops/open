@@ -7,8 +7,8 @@ import type { AcpRuntime, AcpRuntimeHandle } from "@openclaw/acp-core/runtime/ty
 import { resolveRuntimeConfigCacheKey } from "../../config/runtime-snapshot.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { logVerbose } from "../../globals.js";
-import { getCommittedSessionExecutionSelection } from "../../model-picker/execution-selection.js";
 import {
+  getCommittedSessionExecutionSelection,
   isAcpExecutionSelection,
   type AcpExecutionSelection,
 } from "../../model-picker/execution-selection.js";

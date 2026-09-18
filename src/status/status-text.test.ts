@@ -195,7 +195,11 @@ describe("Codex usage after runtime fallback", () => {
       sessionEntry: {
         sessionId: `fallback-${agentHarnessId}`,
         updatedAt: 0,
-        agentRuntimeOverride: "openclaw",
+        executionSelection: {
+          state: "deferred",
+          request: { runtime: "openclaw", defaultSelection: "inherit" },
+          fallbackPermission: "configured",
+        },
         agentHarnessId,
       },
       sessionKey: "agent:main:main",
@@ -370,8 +374,11 @@ describe("buildStatusText thinking facts", () => {
         sessionId: "wa-ollama-think",
         updatedAt: 0,
         thinkingLevel: "high",
-        modelOverride: "glm-5.2:cloud",
-        providerOverride: "ollama",
+        executionSelection: {
+          state: "deferred",
+          request: { model: { provider: "ollama", id: "glm-5.2:cloud" } },
+          fallbackPermission: "explicit",
+        },
       },
       sessionKey: "agent:main:main",
       statusChannel: "whatsapp",

@@ -6,9 +6,9 @@ import {
   SESSION_ENTRY_PRIVATE_CLEAR_PATCH,
 } from "../config/sessions/session-entry-projection.js";
 import type { InternalSessionEntry } from "../config/sessions/types.js";
-import { reconcileSessionExecutionSelectionView } from "../model-picker/apply-session-model-selection.js";
 import {
   LEGACY_SELECTION_VIEW_FIELDS,
+  reconcileSessionExecutionSelectionView,
   type PublicSessionEntry,
 } from "../model-picker/execution-selection-projection.js";
 import type { SessionExecutionSelection } from "../model-picker/execution-selection.js";
@@ -55,9 +55,11 @@ export function projectPluginSessionEntryPatch(
   existing?: InternalSessionEntry,
   options: { replace?: boolean } = {},
 ): Partial<InternalSessionEntry> {
-  const { acp, modelFallback, executionSelection: _selection, ...fields } = patch;
+  const { acp, modelFallback: _modelFallback, executionSelection: _selection, ...fields } = patch;
   const selectionPatch = reconcileSessionExecutionSelectionView(existing, patch, options);
-  for (const field of LEGACY_SELECTION_VIEW_FIELDS) delete fields[field];
+  for (const field of LEGACY_SELECTION_VIEW_FIELDS) {
+    delete fields[field];
+  }
   const metadata = stripPrivateSessionEntryFields(fields);
   return {
     ...metadata,
@@ -73,7 +75,7 @@ export function projectPluginSessionEntryPatch(
                   ...lifecycle
                 }) => lifecycle)(acp),
                 runtimeOptions: acp.runtimeOptions
-                  ? (({ model: _model, ...options }) => options)(acp.runtimeOptions)
+                  ? (({ model: _model, ...runtimeOptions }) => runtimeOptions)(acp.runtimeOptions)
                   : undefined,
               }
             : undefined,

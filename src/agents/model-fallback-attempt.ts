@@ -529,19 +529,23 @@ export function resolveModelFallbackCandidateAgentRuntime(
   };
 }
 
-function resolveCandidateAttemptError(
+function describeFailedCandidateAttempt(
   described: ReturnType<typeof describeFailoverError>,
   candidate: ModelCandidate,
-): string {
-  if (
-    described.rawError &&
-    (!described.provider ||
-      (described.provider === candidate.provider &&
-        (!described.model || described.model === candidate.model)))
-  ) {
-    return described.rawError;
-  }
-  return described.message;
+): FallbackAttempt {
+  const matchesCandidate =
+    !described.provider ||
+    (described.provider === candidate.provider &&
+      (!described.model || described.model === candidate.model));
+  return {
+    provider: candidate.provider,
+    model: candidate.model,
+    error: described.rawError && matchesCandidate ? described.rawError : described.message,
+    reason: described.reason ?? "unknown",
+    authMode: described.authMode,
+    status: described.status,
+    code: described.code,
+  };
 }
 
 export function recordFailedCandidateAttempt(params: {
@@ -561,16 +565,8 @@ export function recordFailedCandidateAttempt(params: {
   fallbackConfigured: boolean;
 }): ModelFallbackStepFields | undefined {
   const described = describeFailoverError(params.error);
-  const error = resolveCandidateAttemptError(described, params.candidate);
-  params.attempts.push({
-    provider: params.candidate.provider,
-    model: params.candidate.model,
-    error,
-    reason: described.reason ?? "unknown",
-    authMode: described.authMode,
-    status: described.status,
-    code: described.code,
-  });
+  const attempt = describeFailedCandidateAttempt(described, params.candidate);
+  params.attempts.push(attempt);
   return logModelFallbackDecision({
     decision: "candidate_failed",
     runId: params.runId,
@@ -584,7 +580,7 @@ export function recordFailedCandidateAttempt(params: {
     reason: described.reason,
     status: described.status,
     code: described.code,
-    error,
+    error: attempt.error,
     nextCandidate: params.nextCandidate,
     isPrimary: params.isPrimary,
     requestedModelMatched: params.requestedModelMatched,
@@ -597,16 +593,9 @@ export function appendFailedCandidateAttempt(params: {
   candidate: ModelCandidate;
   error: unknown;
 }): void {
-  const described = describeFailoverError(params.error);
-  params.attempts.push({
-    provider: params.candidate.provider,
-    model: params.candidate.model,
-    error: resolveCandidateAttemptError(described, params.candidate),
-    reason: described.reason ?? "unknown",
-    authMode: described.authMode,
-    status: described.status,
-    code: described.code,
-  });
+  params.attempts.push(
+    describeFailedCandidateAttempt(describeFailoverError(params.error), params.candidate),
+  );
 }
 
 export function resolveLiveSessionModelSwitchRedirectIndex(params: {

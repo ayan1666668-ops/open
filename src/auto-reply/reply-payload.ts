@@ -236,6 +236,7 @@ export type ReplyPayloadMetadata = {
   continuationStatus?: true;
   /** Exact persisted delivery owner; WeakMap-only and never serialized. */
   pendingFinalDeliveryCompletion?: {
+    agentId?: string;
     deliveryId: string;
     intentId: string;
     recoveryRunId?: string;

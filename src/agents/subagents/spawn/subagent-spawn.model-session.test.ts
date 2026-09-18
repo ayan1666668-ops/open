@@ -13,6 +13,7 @@ import {
 const callGatewayMock = vi.fn();
 const loadSessionStoreMock = vi.fn();
 const updateSessionStoreMock = vi.fn();
+let configOverride: Record<string, unknown> = {};
 
 let resetSubagentRegistryForTests: typeof import("../registry/subagent-registry.test-helpers.js").resetSubagentRegistryForTests;
 let spawnSubagentDirect: typeof import("./subagent-spawn.js").spawnSubagentDirect;
@@ -21,7 +22,7 @@ describe("spawnSubagentDirect runtime model persistence", () => {
   beforeAll(async () => {
     ({ resetSubagentRegistryForTests, spawnSubagentDirect } = await loadSubagentSpawnModuleForTest({
       callGatewayMock,
-      getRuntimeConfig: () => createSubagentSpawnTestConfig(os.tmpdir()),
+      getRuntimeConfig: () => createSubagentSpawnTestConfig(os.tmpdir(), configOverride),
       loadSessionStoreMock,
       updateSessionStoreMock,
       workspaceDir: os.tmpdir(),
@@ -30,6 +31,7 @@ describe("spawnSubagentDirect runtime model persistence", () => {
 
   beforeEach(() => {
     resetSubagentRegistryForTests();
+    configOverride = {};
     callGatewayMock.mockReset();
     loadSessionStoreMock.mockReset().mockReturnValue({});
     updateSessionStoreMock.mockReset();
@@ -100,38 +102,48 @@ describe("spawnSubagentDirect runtime model persistence", () => {
     );
   });
 
-  it("persists an explicit auth profile separately from the child model id", async () => {
-    let persistedStore: Record<string, Record<string, unknown>> | undefined;
-    installSessionStoreCaptureMock(updateSessionStoreMock, {
-      onStore: (store) => {
-        persistedStore = store;
-      },
-    });
+  it.each([
+    { origin: "explicit", source: "user" },
+    { origin: "configured", source: "auto" },
+  ] as const)(
+    "persists an $origin auth profile with its selection authority",
+    async ({ origin, source }) => {
+      const model = "openai/gpt-5.6-luna@openai:test-profile";
+      if (origin === "configured") {
+        configOverride = { agents: { defaults: { subagents: { model } } } };
+      }
+      let persistedStore: Record<string, Record<string, unknown>> | undefined;
+      installSessionStoreCaptureMock(updateSessionStoreMock, {
+        onStore: (store) => {
+          persistedStore = store;
+        },
+      });
 
-    const result = await spawnSubagentDirect(
-      {
-        task: "test",
-        model: "openai/gpt-5.6-luna@openai:test-profile",
-      },
-      {
-        agentSessionKey: "agent:main:main",
-        agentChannel: "guildchat",
-      },
-    );
+      const result = await spawnSubagentDirect(
+        {
+          task: "test",
+          ...(origin === "explicit" ? { model } : {}),
+        },
+        {
+          agentSessionKey: "agent:main:main",
+          agentChannel: "guildchat",
+        },
+      );
 
-    expect(result.status).toBe("accepted");
-    expect(result.resolvedModel).toBe("openai/gpt-5.6-luna");
-    expectPersistedRuntimeModel({
-      persistedStore,
-      sessionKey: /^agent:main:subagent:/,
-      provider: "openai",
-      model: "gpt-5.6-luna",
-      overrideSource: "user",
-    });
-    const [, persistedEntry] = Object.entries(persistedStore ?? {})[0] ?? [];
-    expect(persistedEntry?.authProfileOverride).toBe("openai:test-profile");
-    expect(persistedEntry?.authProfileOverrideSource).toBe("user");
-  });
+      expect(result.status).toBe("accepted");
+      expect(result.resolvedModel).toBe("openai/gpt-5.6-luna");
+      expectPersistedRuntimeModel({
+        persistedStore,
+        sessionKey: /^agent:main:subagent:/,
+        provider: "openai",
+        model: "gpt-5.6-luna",
+        overrideSource: source,
+      });
+      const [, persistedEntry] = Object.entries(persistedStore ?? {})[0] ?? [];
+      expect(persistedEntry?.authProfileOverride).toBe("openai:test-profile");
+      expect(persistedEntry?.authProfileOverrideSource).toBe(source);
+    },
+  );
 
   it.each([
     { source: "active", model: "custom/model" },
@@ -287,6 +299,6 @@ describe("spawnSubagentDirect runtime model persistence", () => {
     });
     const [, persistedEntry] = Object.entries(persistedStore ?? {})[0] ?? [];
     expect(persistedEntry?.authProfileOverride).toBe("openai:test-profile");
-    expect(persistedEntry?.authProfileOverrideSource).toBe("user");
+    expect(persistedEntry?.authProfileOverrideSource).toBe("auto");
   });
 });

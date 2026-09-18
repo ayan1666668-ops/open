@@ -1,6 +1,7 @@
 // Tests media-only get-reply runs and sandboxed media attachment handling.
 import { expectDefined } from "@openclaw/normalization-core";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { createDeferred } from "../../../test/helpers/promise.js";
 import { createTestAdmittedRunContext } from "../../agents/admitted-run-context.test-support.js";
 import {
   createCronCreatorAuthorityCapability,
@@ -53,6 +54,7 @@ import {
   loadEmbeddedAgentRuntime,
   loadSessionUpdatesRuntime,
 } from "./get-reply-run-helpers.js";
+import * as replyHelpers from "./get-reply-run-helpers.js";
 import { runPreparedReply } from "./get-reply-run.js";
 import { buildDirectChatContext, buildGroupChatContext, buildGroupIntro } from "./groups.js";
 import { finalizeInboundContext, finalizeInboundContextForSdk } from "./inbound-context.js";
@@ -61,6 +63,8 @@ import {
   buildInboundUserContextPrefix,
   resolveInboundUserContextPromptJoiner,
 } from "./inbound-meta.js";
+import { createModelSelectionStateFixture } from "./model-selection.test-support.js";
+import { preparedAuthFixture } from "./prepared-session-auth.test-support.js";
 import { prepareReplyConversation } from "./prompt-session-context.js";
 import { REPLY_RUN_IDLE_SETTLE_TIMEOUT_MS, createReplyOperation } from "./reply-run-registry.js";
 import { getActiveReplyRunCount } from "./reply-run-registry.registry.js";
@@ -75,10 +79,6 @@ import {
 import { buildChannelSourceTurnId } from "./source-turn-id.js";
 import { withReplySystemEventContext } from "./system-event-session-key.js";
 import { resolveTypingMode } from "./typing-mode.js";
-
-vi.mock("../../agents/auth-profiles/session-override.js", () => ({
-  resolveSessionAuthSelection: vi.fn().mockResolvedValue(undefined),
-}));
 
 vi.mock("../../agents/embedded-agent.runtime.js", () => ({
   abortEmbeddedAgentRun: vi.fn().mockReturnValue(false),
@@ -209,7 +209,7 @@ const resolvePersistedSessionRuntimeIdMock = vi.hoisted(() =>
   }),
 );
 vi.mock("../../agents/session-runtime-compat.js", () => ({
-  resolvePersistedSessionRuntimeId: resolvePersistedSessionRuntimeIdMock,
+  resolveAcceptedSessionRuntimeId: resolvePersistedSessionRuntimeIdMock,
 }));
 
 // Provider policy projection belongs to its adapter and provider-local suites. These tests
@@ -462,11 +462,17 @@ function baseParams(
     ...defaults,
     ...overrides,
     modelState: {
-      sessionExecutionSelection: structuredClone(
-        (
+      ...createModelSelectionStateFixture({
+        agentCfg: defaults.agentCfg,
+        provider: overrides.provider ?? defaults.provider,
+        model: overrides.model ?? defaults.model,
+        sessionEntry:
           overrides.sessionStore?.[overrides.sessionKey ?? defaults.sessionKey] ??
-          overrides.sessionEntry
-        )?.executionSelection,
+          overrides.sessionEntry,
+      }),
+      auth: preparedAuthFixture(
+        overrides.sessionStore?.[overrides.sessionKey ?? defaults.sessionKey] ??
+          overrides.sessionEntry,
       ),
       executionSelection: {
         executor: { kind: "harness", id: "openclaw" },
@@ -2706,27 +2712,17 @@ describe("runPreparedReply media-only handling", () => {
     expect(vi.mocked(routeReply)).not.toHaveBeenCalled();
   });
 
-  it("does not register a reply operation before auth setup succeeds", async () => {
-    const { resolveSessionAuthSelection } =
-      await import("../../agents/auth-profiles/session-override.js");
-    const sessionId = "reply-operation-auth-failure";
+  it("does not register a reply operation after its prepared account becomes unavailable", async () => {
+    const params = baseParams({ sessionId: "reply-operation-auth-failure" });
     const activeBefore = getActiveReplyRunCount();
-    vi.mocked(resolveSessionAuthSelection).mockRejectedValueOnce(new Error("auth failed"));
-
-    await expect(
-      runPrepared({
-        sessionId,
-      }),
-    ).rejects.toThrow("auth failed");
-
+    params.modelState.auth = { ...preparedAuthFixture(), validate: () => "auth failed" };
+    await expect(runPreparedReply(params)).rejects.toThrow("auth failed");
     expect(getActiveReplyRunCount()).toBe(activeBefore);
   });
 
   it.each([false, true])(
-    "validates the configured heartbeat profile before dispatch (fast: %s)",
+    "uses the prepared heartbeat account without changing the session pin (fast: %s)",
     async (fast) => {
-      const { resolveSessionAuthSelection } =
-        await import("../../agents/auth-profiles/session-override.js");
       vi.mocked(shouldUseReplyFastTestRuntime).mockReturnValueOnce(fast);
       const sessionEntry: SessionEntry = {
         sessionId: "heartbeat-profile-session",
@@ -2734,57 +2730,35 @@ describe("runPreparedReply media-only handling", () => {
         authProfileOverride: "openai:subscription",
         authProfileOverrideSource: "auto",
       };
-      vi.mocked(resolveSessionAuthSelection).mockImplementationOnce(
-        async ({ configuredProfileId, sessionEntry: selectedSession }) => {
-          if (!configuredProfileId) {
-            return undefined;
-          }
-          if (selectedSession) {
-            selectedSession.authProfileOverride = configuredProfileId;
-          }
-          return { profileId: configuredProfileId, source: "user", routeRequirement: "api-key" };
-        },
-      );
-      const params = {
-        ...baseParams({
-          provider: "openai",
-          model: "gpt-5.5",
-          opts: { isHeartbeat: true },
-          sessionEntry,
-          sessionStore: { "session-key": sessionEntry },
-        }),
-        configuredProfileId: "openai:metered",
+      const params = baseParams({
+        provider: "openai",
+        model: "gpt-5.5",
+        opts: { isHeartbeat: true },
+        sessionEntry,
+        sessionStore: { "session-key": sessionEntry },
+      });
+      params.modelState.auth = {
+        ...preparedAuthFixture(sessionEntry),
+        selection: { profileId: "openai:metered", source: "user", routeRequirement: "api-key" },
       };
       await runPreparedReply(params);
-      expect(resolveSessionAuthSelection).toHaveBeenCalledWith(
-        expect.objectContaining({
-          provider: "openai",
-          modelId: "gpt-5.5",
-          configuredProfileId: "openai:metered",
-        }),
-      );
-      expect(requireRunReplyAgentCall().followupRun.run).toMatchObject({
-        authProfileId: "openai:metered",
-        authProfileIdSource: "user",
-      });
+      expect(requireLastRunReplyAgentCall().followupRun.run.authProfileId).toBe("openai:metered");
       expect(sessionEntry.authProfileOverride).toBe("openai:subscription");
     },
   );
 
-  it("does not bypass heartbeat profile rejection on the fast reply path", async () => {
-    const { resolveSessionAuthSelection } =
-      await import("../../agents/auth-profiles/session-override.js");
+  it("does not bypass heartbeat account invalidation on the fast reply path", async () => {
     vi.mocked(shouldUseReplyFastTestRuntime).mockReturnValueOnce(true);
-    vi.mocked(resolveSessionAuthSelection).mockRejectedValueOnce(
-      new Error("Auth profile is not configured for openai."),
-    );
-    const params = {
-      ...baseParams({ provider: "openai", model: "gpt-5.5", opts: { isHeartbeat: true } }),
-      configuredProfileId: "anthropic:other",
+    const params = baseParams({
+      provider: "openai",
+      model: "gpt-5.5",
+      opts: { isHeartbeat: true },
+    });
+    params.modelState.auth = {
+      ...preparedAuthFixture(),
+      validate: () => "The selected account changed. Try again.",
     };
-    await expect(runPreparedReply(params)).rejects.toThrow(
-      "Auth profile is not configured for openai.",
-    );
+    await expect(runPreparedReply(params)).rejects.toThrow("The selected account changed.");
     expect(runReplyAgent).not.toHaveBeenCalled();
   });
   it("waits for the previous active run to clear before registering a new reply operation", async () => {
@@ -2956,10 +2930,7 @@ describe("runPreparedReply media-only handling", () => {
       resetTriggered: false,
     });
     let embeddedRunActive = true;
-    let releaseDrain: (() => void) | undefined;
-    const drainBarrier = new Promise<void>((resolve) => {
-      releaseDrain = resolve;
-    });
+    const { promise: drainBarrier, resolve: releaseDrain } = createDeferred();
     vi.mocked(queueSettings.resolveQueueSettings).mockReturnValueOnce({ mode: "steer" });
     vi.mocked(embeddedAgentRuntime.resolveActiveEmbeddedRunSessionId).mockImplementation(() =>
       embeddedRunActive ? "session-pre-dispatch-heartbeat" : undefined,
@@ -3272,18 +3243,17 @@ describe("runPreparedReply media-only handling", () => {
   });
 
   it("rechecks same-session ownership after async prep before registering a new reply operation", async () => {
-    const { resolveSessionAuthSelection } =
-      await import("../../agents/auth-profiles/session-override.js");
     const queueSettings = await import("./queue/settings-runtime.js");
 
-    let resolveAuth: (() => void) | undefined;
-    const authPromise = new Promise<void>((resolve) => {
-      resolveAuth = resolve;
-    });
+    const { promise: authPromise, resolve: resolveAuth } = createDeferred();
 
-    vi.mocked(resolveSessionAuthSelection).mockImplementationOnce(
-      async () => await authPromise.then(() => undefined),
-    );
+    const originalLoad = replyHelpers.loadAgentRunnerRuntime;
+    const load = vi
+      .spyOn(replyHelpers, "loadAgentRunnerRuntime")
+      .mockImplementationOnce(async () => {
+        await authPromise;
+        return originalLoad();
+      });
     vi.mocked(queueSettings.resolveQueueSettings).mockReturnValueOnce({ mode: "interrupt" });
 
     const runPromise = runPrepared({
@@ -3301,7 +3271,7 @@ describe("runPreparedReply media-only handling", () => {
     });
     intruderRun.setPhase("running");
     if (!resolveAuth) {
-      throw new Error("Expected auth profile resolver to be initialized");
+      throw new Error("Expected asynchronous runner preparation to be initialized");
     }
     resolveAuth();
 
@@ -3312,6 +3282,7 @@ describe("runPreparedReply media-only handling", () => {
 
     await expect(runPromise).resolves.toEqual({ text: "ok" });
     expect(vi.mocked(runReplyAgent)).toHaveBeenCalledOnce();
+    load.mockRestore();
   });
 
   it("does not queue a run behind its provided pre-dispatch reply operation", async () => {
@@ -3446,70 +3417,78 @@ describe("runPreparedReply media-only handling", () => {
     }
   });
 
-  it("re-resolves auth profile after waiting for a prior run", async () => {
-    const { resolveSessionAuthSelection } =
-      await import("../../agents/auth-profiles/session-override.js");
-    const queueSettings = await import("./queue/settings-runtime.js");
-    const sessionStore: Record<string, SessionEntry> = {
-      "session-key": {
+  it.each([
+    { fast: false, resetTriggered: false, wait: "configured interrupt" },
+    { fast: true, resetTriggered: true, wait: "reset interrupt" },
+  ])(
+    "re-resolves the automatic account after $wait (fast: $fast)",
+    async ({ fast, resetTriggered }) => {
+      vi.mocked(shouldUseReplyFastTestRuntime).mockReturnValueOnce(fast);
+      const queueSettings = await import("./queue/settings-runtime.js");
+      const sessionStore: Record<string, SessionEntry> = {
+        "session-key": {
+          sessionId: "session-auth-profile",
+          sessionFile: "/tmp/session-auth-profile.jsonl",
+          authProfileOverride: "profile-before-wait",
+          authProfileOverrideSource: "auto",
+          updatedAt: 1,
+        },
+      };
+      if (!fast) {
+        vi.mocked(queueSettings.resolveQueueSettings).mockReturnValueOnce({ mode: "interrupt" });
+      }
+      const previousRun = createReplyOperation({
         sessionId: "session-auth-profile",
-        sessionFile: "/tmp/session-auth-profile.jsonl",
-        authProfileOverride: "profile-before-wait",
-        authProfileOverrideSource: "auto",
-        updatedAt: 1,
-      },
-    };
-    vi.mocked(resolveSessionAuthSelection).mockImplementation(async ({ sessionEntry }) => {
-      return sessionEntry?.authProfileOverride
-        ? {
-            profileId: sessionEntry.authProfileOverride,
-            source: sessionEntry.authProfileOverrideSource === "auto" ? "auto" : "user",
-            routeRequirement: undefined,
-          }
-        : undefined;
-    });
-    vi.mocked(queueSettings.resolveQueueSettings).mockReturnValueOnce({ mode: "interrupt" });
-    const previousRun = createReplyOperation({
-      sessionId: "session-auth-profile",
-      sessionKey: "session-key",
-      resetTriggered: false,
-    });
-    previousRun.setPhase("running");
+        sessionKey: "session-key",
+        resetTriggered: false,
+      });
+      previousRun.setPhase("running");
 
-    const runPromise = runPrepared({
-      isNewSession: false,
-      sessionId: "session-auth-profile",
-      sessionEntry: expectDefined(sessionStore["session-key"], "stored session entry"),
-      sessionStore,
-    });
+      const params = baseParams({
+        isNewSession: false,
+        resetTriggered,
+        sessionId: "session-auth-profile",
+        sessionEntry: expectDefined(sessionStore["session-key"], "stored session entry"),
+        sessionStore,
+      });
+      const refresh = vi.fn(async (entry: SessionEntry) => ({
+        ...params.modelState,
+        auth: preparedAuthFixture(entry),
+        sessionExecutionSelection: structuredClone(entry.executionSelection),
+      }));
+      params.modelState.refreshExecution = refresh;
+      const interrupted = createDeferred();
+      const onAbort = () => interrupted.resolve();
+      previousRun.abortSignal.addEventListener("abort", onAbort, { once: true });
+      const runPromise = runPreparedReply(params);
+      try {
+        await Promise.race([interrupted.promise, runPromise]);
+        expect(previousRun.abortSignal.aborted).toBe(true);
+        sessionStore["session-key"] = {
+          ...expectDefined(sessionStore["session-key"], "stored session entry"),
+          authProfileOverride: "profile-after-wait",
+          authProfileOverrideSource: "auto",
+          updatedAt: 2,
+        };
+        previousRun.complete();
 
-    await Promise.resolve();
-    sessionStore["session-key"] = {
-      ...expectDefined(sessionStore["session-key"], "stored session entry"),
-      authProfileOverride: "profile-after-wait",
-      authProfileOverrideSource: "auto",
-      updatedAt: 2,
-    };
-    previousRun.complete();
-
-    await expect(runPromise).resolves.toEqual({ text: "ok" });
-    const call = requireLastRunReplyAgentCall();
-    expect(call?.followupRun.run.authProfileId).toBe("profile-after-wait");
-    expect(vi.mocked(resolveSessionAuthSelection)).toHaveBeenCalledTimes(1);
-    expect(resolveSessionAuthSelection).toHaveBeenCalledWith(
-      expect.objectContaining({ agentId: "default" }),
-    );
-  });
+        await expect(runPromise).resolves.toEqual({ text: "ok" });
+        const call = requireLastRunReplyAgentCall();
+        expect(call?.followupRun.run.authProfileId).toBe("profile-after-wait");
+        expect(refresh).toHaveBeenCalledTimes(1);
+        expect(refresh).toHaveBeenCalledWith(sessionStore["session-key"]);
+      } finally {
+        previousRun.abortSignal.removeEventListener("abort", onAbort);
+        previousRun.complete();
+        await Promise.allSettled([runPromise]);
+      }
+    },
+  );
 
   it("re-resolves same-session ownership after session-id rotation during async prep", async () => {
-    const { resolveSessionAuthSelection } =
-      await import("../../agents/auth-profiles/session-override.js");
     const queueSettings = await import("./queue/settings-runtime.js");
 
-    let resolveAuth: (() => void) | undefined;
-    const authPromise = new Promise<void>((resolve) => {
-      resolveAuth = resolve;
-    });
+    const { promise: authPromise, resolve: resolveAuth } = createDeferred();
     const sessionStore: Record<string, SessionEntry> = {
       "session-key": {
         sessionId: "session-before-rotation",
@@ -3518,9 +3497,13 @@ describe("runPreparedReply media-only handling", () => {
       },
     };
 
-    vi.mocked(resolveSessionAuthSelection).mockImplementationOnce(
-      async () => await authPromise.then(() => undefined),
-    );
+    const originalLoad = replyHelpers.loadAgentRunnerRuntime;
+    const load = vi
+      .spyOn(replyHelpers, "loadAgentRunnerRuntime")
+      .mockImplementationOnce(async () => {
+        await authPromise;
+        return originalLoad();
+      });
     vi.mocked(queueSettings.resolveQueueSettings).mockReturnValueOnce({ mode: "interrupt" });
     const onSessionPrepared = vi.fn();
 
@@ -3549,7 +3532,7 @@ describe("runPreparedReply media-only handling", () => {
     rotatedRun.updateSessionId("session-after-rotation");
 
     if (!resolveAuth) {
-      throw new Error("Expected auth profile resolver to be initialized");
+      throw new Error("Expected asynchronous runner preparation to be initialized");
     }
     resolveAuth();
 
@@ -3566,6 +3549,7 @@ describe("runPreparedReply media-only handling", () => {
       sessionId: "session-after-rotation",
       storePath: "/tmp/sessions.json",
     });
+    load.mockRestore();
   });
   it("reports still shutting down when a new owner appears after waiting", async () => {
     vi.useFakeTimers();
@@ -4161,14 +4145,9 @@ describe("runPreparedReply media-only handling", () => {
           RawBody: heartbeatPrompt,
           CommandBody: heartbeatPrompt,
           InternalTurnSource: source,
-          ...(suppliedSourceTool
-            ? {
-                InputProvenance: {
-                  kind: "internal_system" as const,
-                  sourceTool: suppliedSourceTool,
-                },
-              }
-            : {}),
+          InputProvenance: suppliedSourceTool
+            ? { kind: "internal_system", sourceTool: suppliedSourceTool }
+            : undefined,
           ChatType: "direct",
           OriginatingChannel: "discord",
           OriginatingTo: "discord:channel-123",
@@ -4192,8 +4171,12 @@ describe("runPreparedReply media-only handling", () => {
         OriginatingChannel: "discord",
         OriginatingTo: "discord:channel-123",
       });
-      expect(call?.transcriptCommandBody).toBe(transcriptPrompt);
-      expect(call?.followupRun.transcriptPrompt).toBe(transcriptPrompt);
+      const expectedTranscript =
+        expectedSourceTool === "exec" || expectedSourceTool === "exec-event"
+          ? `${transcriptPrompt}\nDisable automatic completion turns with tools.exec.notifyOnExit=false; check per-agent overrides. Background exec and process poll remain available.`
+          : transcriptPrompt;
+      expect(call?.transcriptCommandBody).toBe(expectedTranscript);
+      expect(call?.followupRun.transcriptPrompt).toBe(expectedTranscript);
       expect(call?.followupRun.userTurnTranscriptRecorder?.message).toMatchObject({
         provenance: { kind: "internal_system", sourceTool: expectedSourceTool },
       });

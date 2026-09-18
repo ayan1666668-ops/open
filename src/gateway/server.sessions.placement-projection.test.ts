@@ -103,8 +103,11 @@ test.each([
             sessionId: "repository-session",
             updatedAt: 200,
             repositoryWorkspaceId: "repository-workspace",
-            providerOverride: "repository-provider",
-            modelOverride: "repository-model",
+            executionSelection: {
+              state: "deferred",
+              request: { model: { provider: "repository-provider", id: "repository-model" } },
+              fallbackPermission: "explicit",
+            },
           },
         },
       });

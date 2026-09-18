@@ -24,6 +24,10 @@ import {
 import type { CapturedCompactionCheckpointSnapshot } from "../../gateway/session-compaction-checkpoints.js";
 import { isAbortError } from "../../infra/abort-signal.js";
 import { formatErrorMessage } from "../../infra/errors.js";
+import {
+  isModelExecutionSelection,
+  type PreparedSessionExecutionSelection,
+} from "../../model-picker/execution-selection.js";
 import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
 import type { ProviderRuntimeModel } from "../../plugins/provider-runtime-model.types.js";
 import { enqueueCommandInLane } from "../../process/command-queue.js";
@@ -66,6 +70,10 @@ type QueuedCompactionHostCommit = {
 
 /** Host-only bookkeeping, deliberately separate from plugin compaction parameters. */
 export type QueuedCompactionHostOptions = CompactionRequestConstraints & {
+  preparedSelection?: Pick<
+    Extract<PreparedSessionExecutionSelection, { status: "ready" }>,
+    "selection" | "auth"
+  >;
   assertActive?: () => void;
   transcriptBytePreflightHarness?: "codex";
   withCompactionPersistence?: TranscriptByteCompactionPersistence;
@@ -331,7 +339,20 @@ export async function executeQueuedContextEngineCompaction(input: {
           info: contextEngine.info,
           compact: inheritRuntimeCompactionDelegate(compact, (backendParams) => {
             if (backendParams.runtimeContext) {
-              attachCompactionAccountingRecorder(backendParams.runtimeContext, {
+              const delegatedContext = backendParams.runtimeContext;
+              attachCompactionAccountingRecorder(delegatedContext, {
+                get preparedSelection() {
+                  // Engines may retarget this context before invoking the runtime delegate.
+                  const selection = host.preparedSelection?.selection;
+                  return selection &&
+                    selection.executor.kind !== "acp" &&
+                    selection.executor.id === delegatedContext.agentHarnessId &&
+                    (!isModelExecutionSelection(selection) ||
+                      (selection.model.provider === delegatedContext.provider &&
+                        selection.model.id === delegatedContext.model))
+                    ? host.preparedSelection
+                    : undefined;
+                },
                 requestBudget: host.requestBudget,
                 pendingUserEntryId: host.pendingUserEntryId,
                 recordCompaction: (receipt) => {

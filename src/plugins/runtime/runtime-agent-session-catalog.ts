@@ -3,7 +3,7 @@ import {
   resolveAllowedModelRef,
   resolveDefaultModelForAgent,
 } from "../../agents/model-selection.js";
-import { resolveEffectiveAgentRuntime } from "../../agents/thinking-runtime.js";
+import { resolveEffectiveAgentRuntimeCore } from "../../agents/thinking-runtime.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { SessionCatalogCreateTarget } from "../session-catalog.js";
 
@@ -26,7 +26,7 @@ export function resolveAgentCatalogCreateTarget(
   const defaultModel = resolveDefaultModelForAgent({ cfg: params.config, agentId });
   for (const modelId of params.modelIds) {
     if (
-      resolveEffectiveAgentRuntime({
+      resolveEffectiveAgentRuntimeCore({
         cfg: params.config,
         provider: params.provider,
         modelId,

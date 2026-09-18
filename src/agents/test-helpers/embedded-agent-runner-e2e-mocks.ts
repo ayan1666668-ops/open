@@ -14,6 +14,7 @@ import type {
   PreparedModelRuntimeInput,
   PreparedModelRuntimeSnapshot,
 } from "../prepared-model-runtime.types.js";
+import type * as RuntimeModelMaterialization from "../runtime-plan/materialize-model.js";
 
 type EmbeddedRunnerFastRunMockOptions = {
   runEmbeddedAttempt: (params: EmbeddedRunAttemptParams) => unknown;
@@ -158,7 +159,10 @@ export function installEmbeddedRunnerBaseE2eMocks(options?: {
       () => options?.pluginRegistry ?? createEmptyPluginRegistry(),
     ),
   }));
-  vi.doMock("../prepared-model-runtime.js", () => {
+  vi.doMock("../prepared-model-runtime.js", async () => {
+    const { getPreparedModelRuntimeSnapshot } = await vi.importActual<
+      typeof import("../prepared-model-runtime.js")
+    >("../prepared-model-runtime.js");
     const acquire = async (input: PreparedModelRuntimeInput) => {
       if (!input.readOnly) {
         const { ensureOpenClawModelsJson } = await import("../models-config.js");
@@ -174,6 +178,7 @@ export function installEmbeddedRunnerBaseE2eMocks(options?: {
       };
     };
     return {
+      getPreparedModelRuntimeSnapshot,
       acquireAgentRunPreparedModelRuntime: vi.fn(acquire),
       acquireReadOnlyPreparedModelRuntime: vi.fn(acquire),
       prepareModelRuntimeSnapshot: vi.fn(async (input: PreparedModelRuntimeInput) =>
@@ -369,11 +374,17 @@ export function installEmbeddedRunnerFastRunE2eMocks(
       ),
     };
   });
-  vi.doMock("../runtime-plan/materialize-model.js", () => ({
-    materializePreparedRuntimeModel: vi.fn(
-      async <Model>(params: { model?: Model }): Promise<Model | undefined> => params.model,
-    ),
-  }));
+  vi.doMock("../runtime-plan/materialize-model.js", async () => {
+    const { validatePreparedRuntimeModel } = await vi.importActual<
+      typeof RuntimeModelMaterialization
+    >("../runtime-plan/materialize-model.js");
+    return {
+      validatePreparedRuntimeModel,
+      materializePreparedRuntimeModel: vi.fn(
+        async <Model>(params: { model?: Model }): Promise<Model | undefined> => params.model,
+      ),
+    };
+  });
   vi.doMock("../embedded-agent-runner/run/attempt.js", () => ({
     runEmbeddedAttempt: (params: EmbeddedRunAttemptParams) => options.runEmbeddedAttempt(params),
   }));

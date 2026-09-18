@@ -27,7 +27,6 @@ import { canonicalizeProviderModelId } from "./provider-model-route.js";
 
 /** Canonical provider id for OpenAI-hosted model routes. */
 export const OPENAI_PROVIDER_ID = "openai";
-export const OPENAI_CODEX_PROVIDER_ID = OPENAI_PROVIDER_ID;
 
 /** Returns true for provider ids that normalize to OpenAI. */
 export function isOpenAIProvider(provider: string | undefined): boolean {

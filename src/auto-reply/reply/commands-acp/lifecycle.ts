@@ -2,7 +2,7 @@
 import { randomUUID } from "node:crypto";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
-import { getAcpSessionManager } from "../../../acp/control-plane/manager.js";
+import { getAcpSessionManagerCore } from "../../../acp/control-plane/manager.js";
 import type { AcpSessionTarget } from "../../../acp/control-plane/manager.types.js";
 import {
   requireAcpExecutionSelection,
@@ -129,7 +129,7 @@ export async function handleAcpSpawnAction(
     );
   }
 
-  const acpManager = getAcpSessionManager();
+  const acpManager = getAcpSessionManagerCore();
   const sessionKey = `agent:${spawn.agentId}:acp:${randomUUID()}`;
   const resolvedCwd = resolveSpawnedWorkspaceInheritance({
     config: params.cfg,
@@ -270,7 +270,7 @@ export async function handleAcpSpawnAction(
 }
 
 function resolveAcpSessionForCommandOrStop(params: {
-  acpManager: ReturnType<typeof getAcpSessionManager>;
+  acpManager: ReturnType<typeof getAcpSessionManagerCore>;
   cfg: OpenClawConfig;
   sessionKey: string;
   agentId: string;
@@ -312,12 +312,12 @@ async function withResolvedAcpSessionTarget(params: {
   commandParams: HandleCommandsParams;
   restTokens: string[];
   run: (ctx: {
-    acpManager: ReturnType<typeof getAcpSessionManager>;
+    acpManager: ReturnType<typeof getAcpSessionManagerCore>;
     sessionKey: string;
     agentId: string;
   }) => Promise<CommandHandlerResult>;
 }): Promise<CommandHandlerResult> {
-  const acpManager = getAcpSessionManager();
+  const acpManager = getAcpSessionManagerCore();
   const target = await resolveAcpTokenTargetSessionKeyOrStop({
     commandParams: params.commandParams,
     restTokens: params.restTokens,
@@ -370,7 +370,7 @@ async function runAcpSteer(params: {
   requestId: string;
   channelAdmissionEvidence?: ChannelAdmissionEvidence;
 }): Promise<string> {
-  const acpManager = getAcpSessionManager();
+  const acpManager = getAcpSessionManagerCore();
   let output = "";
   const channelAdmission = consumeChannelRunAdmission(params.channelAdmissionEvidence);
   const admittedRunContext = await prepareAgentRunAdmission({
@@ -439,7 +439,7 @@ export async function handleAcpSteerAction(
   if (!parsed.ok) {
     return commandReply(`⚠️ ${parsed.error}`);
   }
-  const acpManager = getAcpSessionManager();
+  const acpManager = getAcpSessionManagerCore();
 
   const target = await resolveAcpTargetSessionKey({
     commandParams: params,

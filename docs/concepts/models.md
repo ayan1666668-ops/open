@@ -33,8 +33,10 @@ HTTP endpoints are rejected. See [OpenAI implicit agent runtime](/providers/open
 
 Subscription Copilot refs (`github-copilot/*`) can be opted into the external
 GitHub Copilot agent runtime plugin, but that path is always explicit (never
-selected by `auto`). Runtime overrides belong on provider/model policy, not on
-the whole agent or session. Runtime selection does not determine billing:
+selected by `auto`). Configured runtime preferences belong on provider/model
+policy. A session retains its accepted model and executor together; changing
+configured routing does not silently switch an existing conversation. Runtime
+selection does not determine billing:
 OpenAI API-key and ChatGPT/Codex subscription credentials remain distinct. See
 [Agent runtimes](/concepts/agent-runtimes) and
 [GitHub Copilot agent runtime](/plugins/copilot).
@@ -76,16 +78,16 @@ Removing an explicit default model policy from an included config preserves an e
 
 The same `provider/model` behaves differently depending on where it came from:
 
-| Source                                                                  | Behavior                                                                                                                                                                                                                                                       |
-| ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Configured default (`agents.defaults.model.primary`, per-agent primary) | Normal starting point; uses `agents.defaults.model.fallbacks`.                                                                                                                                                                                                 |
-| Auto fallback                                                           | Temporary recovery state, stored as `modelOverrideSource: "auto"`. OpenClaw periodically reprobes the original primary, clears the auto selection on recovery, and announces fallback/recovery transitions once per state change.                              |
-| User session selection                                                  | Exact and strict. `/model`, the model picker, `session_status(model=...)`, and `sessions.patch` store `modelOverrideSource: "user"`. If that provider/model becomes unreachable, the run fails visibly instead of falling through to another configured model. |
-| Cron `--model` / payload `model`                                        | Per-job primary. Still uses configured fallbacks unless the job supplies its own payload `fallbacks` (`fallbacks: []` forces a strict run).                                                                                                                    |
+| Source                                                                  | Behavior                                                                                                                                                                                                           |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Configured default (`agents.defaults.model.primary`, per-agent primary) | Prepared once for the session; configured model fallbacks remain available.                                                                                                                                        |
+| Auto fallback                                                           | Temporary execution recovery. The requested model and executor remain selected; observed output records the model that actually ran.                                                                               |
+| User session selection                                                  | Exact and strict. `/model`, the model picker, `session_status(model=...)`, and `sessions.patch` preserve the accepted pair. An unreachable model fails visibly instead of silently choosing a configured fallback. |
+| Cron `--model` / payload `model`                                        | Per-job primary. Uses configured fallbacks unless the job supplies its own payload `fallbacks` (`fallbacks: []` forces a strict run).                                                                              |
 
 Other selection rules:
 
-- Changing `agents.defaults.model.primary` does not rewrite existing session pins. If status reports `This session is pinned to X; config primary Y will apply to new/unpinned sessions.`, run `/model default` to clear the pin.
+- Changing configured model or runtime preferences does not rewrite accepted session choices. `/model default` resolves the current preferences once and restores configured fallback behavior; repeat it to adopt later configuration changes.
 - CLI default-model and allowlist pickers respect `models.mode: "replace"` by listing only `models.providers.*.models` instead of the full built-in catalog.
 - The Control UI starts from the Gateway's prepared configured model view, so opening chat does not start provider discovery. Opening the chat model picker reads published rows, including rows matched by a trailing `provider/*` policy entry. Use its explicit Refresh action to discover provider models. Default and configured picker views hide catalog rows marked `deprecated` or `disabled`. There is one exception: a row stays visible when that exact model is configured as a primary, fallback, utility or tool model, alias or settings key, or exact policy entry. Hidden rows remain selectable by exact `provider/model` ref. The full built-in catalog, including hidden rows, is reserved for explicit browse views (`models.list` with `view: "all"`, or `openclaw models list --all`).
 - Provider inventory UIs use `models.list` with `view: "provider-config"` to show source-authored `models.providers.*.models` rows without applying picker allowlists.
@@ -154,6 +156,12 @@ checked independently. An unrestricted policy does not make an unknown
 provider or an unsupported runtime usable. If the policy is omitted, unmigrated
 legacy model-map restrictions described above still apply.
 
+Aliases and policy entries do not prove that a model works on a provider endpoint.
+Native endpoints need a supported model definition or provider-owned resolution.
+Explicit custom and local endpoints can use unlisted model names. Subagent spawns
+check the same support before creating child state. An automatic selection keeps
+its original primary and fallback order when at least one candidate is supported.
+
 The same policy applies to explicit `provider/model` and configured-alias hints
 after `/new` or `/reset`. Unrecognized leading text stays in the prompt.
 
@@ -163,8 +171,8 @@ An exact entry permits only that model. Configured defaults and automatic
 fallbacks do not grant extra manual choices. Updated pickers use the same
 policy as explicit model commands while retaining current-model controls.
 Older clients can still show a forbidden choice; the server rejects its selection.
-Resetting to Default clears the session pin
-and keeps the existing automatic selection behavior.
+Resetting to Default prepares the current configured model and executor and
+restores configured fallback behavior.
 
 ```text
 Model override "provider/model" is not allowed by agents.defaults.modelPolicy.allow.
@@ -244,6 +252,11 @@ The Gateway keeps one canonical model and checks each additional runtime against
 the current account, route, and enabled harness. A choice does not grant access,
 change credentials, or rename the upstream model. Each runtime supplies its own
 availability, reasoning controls, context window, and placement capabilities.
+A model-only choice keeps the accepted executor while it supports that model.
+An explicit runtime choice changes the pair after validation. If the current
+executor cannot support a new model, the owner checks the configured alternative
+before accepting it. App-managed defaults remain labeled **App default model**;
+the picker does not substitute a configured provider/model.
 Additional choices must also support explicit session runtime selection; a
 registered harness that cannot be selected explicitly remains disabled here.
 ACP sessions keep their existing model controls; they cannot select a different

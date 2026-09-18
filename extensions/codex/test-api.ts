@@ -5,6 +5,7 @@
 import {
   isSubagentSessionKey,
   type AnyAgentTool,
+  type AgentHarnessSupportContext,
   type EmbeddedRunAttemptParamsV2 as EmbeddedRunAttemptParams,
 } from "openclaw/plugin-sdk/agent-harness-runtime";
 import type { PluginRuntime } from "openclaw/plugin-sdk/plugin-runtime";
@@ -39,6 +40,40 @@ export async function createCodexSessionInitializationFixtureForTest(params: {
   const { createCodexSessionInitializationFixture } =
     await import("./src/app-server/session-initialization.test-support.js");
   return await createCodexSessionInitializationFixture(params);
+}
+
+/** Keeps binding construction and native ownership inside the plugin test boundary. */
+export async function createCodexHarnessFixtureForTest(options: { label?: string } = {}) {
+  const [
+    { createCodexAppServerAgentHarness },
+    { createCodexTestBindingStore, sessionBindingIdentity },
+    { supervisedTestBinding },
+  ] = await Promise.all([
+    import("./harness.js"),
+    import("./src/app-server/session-binding.test-helpers.js"),
+    import("./src/commands.test-support.js"),
+  ]);
+  const bindingStore = createCodexTestBindingStore();
+  return {
+    harness: createCodexAppServerAgentHarness({ bindingStore, label: options.label }),
+    bindNativeSession: (
+      params: Pick<
+        EmbeddedRunAttemptParams,
+        "agentId" | "sessionId" | "sessionKey" | "workspaceDir"
+      > &
+        Required<Pick<AgentHarnessSupportContext, "provider" | "modelId">> & { threadId: string },
+    ) =>
+      bindingStore.mutate(sessionBindingIdentity(params), {
+        kind: "set",
+        if: { kind: "absent" },
+        binding: {
+          ...supervisedTestBinding(params.threadId),
+          cwd: params.workspaceDir,
+          modelProvider: params.provider,
+          model: params.modelId,
+        },
+      }),
+  };
 }
 
 type CodexHarnessPromptSnapshot = {

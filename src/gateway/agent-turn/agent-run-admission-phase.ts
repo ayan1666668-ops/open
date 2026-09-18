@@ -25,7 +25,7 @@ import {
   resolveExactSubagentCompletionEvent,
   type TrustedSubagentCompletionHandoff,
 } from "../../agents/subagents/announce/subagent-announce-handoff.js";
-import { resolveEffectiveAgentRuntime } from "../../agents/thinking-runtime.js";
+import { resolveEffectiveAgentRuntimeCore } from "../../agents/thinking-runtime.js";
 import { resolveAgentTimeoutMs } from "../../agents/timeout.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
@@ -216,7 +216,7 @@ export async function prepareAgentRunDispatch(params: {
         model: sessionModel.model,
       };
   const resolvedRuntime = {
-    harness: resolveEffectiveAgentRuntime({
+    harness: resolveEffectiveAgentRuntimeCore({
       cfg: runtimeConfig,
       provider: activeModel.provider,
       modelId: activeModel.model,

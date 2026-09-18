@@ -9,6 +9,7 @@ import { persistReplySessionEntry } from "./session-entry-persistence.js";
 type CommandParams = Parameters<CommandHandler>[0];
 type PersistSessionEntryParams = Pick<
   CommandParams,
+  | "agentId"
   | "allowCreateSessionEntry"
   | "initialSessionEntry"
   | "sessionEntry"
@@ -50,6 +51,7 @@ export async function persistCommandSession(params: PersistSessionEntryParams): 
     // maintenance avoids scanning the whole sessions directory for simple
     // command-only writes.
     const persistence = await persistReplySessionEntry({
+      agentId: params.agentId,
       storePath: params.storePath,
       sessionKey: params.sessionKey,
       allowCreate: creatingSession,

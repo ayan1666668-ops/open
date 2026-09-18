@@ -8,6 +8,7 @@ import {
 } from "../../config/sessions/session-snapshot-merge.js";
 
 type PersistReplySessionEntryParams = {
+  agentId: string;
   allowCreate?: boolean;
   entry: SessionEntry;
   initialEntry: SessionEntry;
@@ -39,7 +40,7 @@ export async function persistReplySessionEntry(
   let persisted: SessionEntry | null;
   try {
     persisted = await patchSessionEntryCore(
-      { sessionKey: params.sessionKey, storePath: params.storePath },
+      { agentId: params.agentId, sessionKey: params.sessionKey, storePath: params.storePath },
       (_entry, context) => {
         commitEntry = context.existingEntry ?? params.initialEntry;
         if (!context.existingEntry) {

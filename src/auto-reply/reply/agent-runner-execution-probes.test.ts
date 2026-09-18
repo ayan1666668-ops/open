@@ -118,7 +118,7 @@ describe("executeAgentTurn: fallback terminal ownership", () => {
       fallbackModel: probe.model,
       runResult: exhaustedResult,
     });
-    expect(activeSessionStore[sessionKey].executionSelection).toEqual(acceptedSelection);
+    expect(activeSessionStore[sessionKey]?.executionSelection).toEqual(acceptedSelection);
     expect(retainFailureUntilCompleteMock).toHaveBeenCalledTimes(1);
     expect(failMock).toHaveBeenCalledWith("run_failed", expect.any(Error));
     expect(
@@ -210,7 +210,7 @@ describe("executeAgentTurn: fallback terminal ownership", () => {
     {
       label: "exhausted",
       outcome: "exhausted" as const,
-      attempts: [{ error: "missing tool result" }],
+      attempts: [{ provider: "anthropic", model: "claude", error: "missing tool result" }],
       isHeartbeat: false,
       expectedText: GENERIC_RUN_FAILURE_TEXT,
     },
@@ -369,7 +369,13 @@ describe("executeAgentTurn: fallback terminal ownership", () => {
     state.isCliProviderMock.mockReturnValue(true);
     state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => {
       try {
-        return await params.run("codex-cli", "gpt-5.4", initialFallbackAttemptOptions(params));
+        return {
+          outcome: "completed",
+          result: await params.run("codex-cli", "gpt-5.4", initialFallbackAttemptOptions(params)),
+          provider: "codex-cli",
+          model: "gpt-5.4",
+          attempts: [],
+        };
       } catch (cause) {
         throw new Error("All model fallback candidates failed", { cause });
       }

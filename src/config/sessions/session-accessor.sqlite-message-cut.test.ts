@@ -398,7 +398,9 @@ describe("SQLite session message cuts", () => {
         targetKey: `${sessionKey}:offline-fork`,
       });
       expect(result.status).toBe("created");
-      if (result.status !== "created") throw new Error("Expected an offline fork.");
+      if (result.status !== "created") {
+        throw new Error("Expected an offline fork.");
+      }
       expect(result.entry.executionSelection).toEqual(executionSelection);
       expect(loadSessionEntry(scope)).toEqual(source);
       expect(result.entry.cliSessionBindings).toBeUndefined();

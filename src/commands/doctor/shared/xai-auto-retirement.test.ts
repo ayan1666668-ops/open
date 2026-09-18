@@ -10,8 +10,8 @@ import {
 import {
   createRetiredModelRefRepairResolver,
   repairRetiredConfigModelRefs,
-  repairRetiredSessionModelRef,
 } from "./retired-model-ref-repair.js";
+import { repairRetiredSessionModelRef } from "./retired-session-model-repair.js";
 
 let state: OpenClawTestState;
 beforeEach(async () => {
@@ -73,14 +73,21 @@ it("repairs a session override without changing its selected profile", async () 
   const entry: SessionEntry = {
     sessionId: "xai-upgrade-session",
     updatedAt: 1,
-    providerOverride: "xai",
-    modelOverride: "auto",
+    executionSelection: {
+      state: "deferred",
+      request: { model: { provider: "xai", id: "auto" } },
+      fallbackPermission: "explicit",
+    },
     authProfileOverride: "xai:fixture",
     authProfileOverrideSource: "user",
   };
   const resolve = createRetiredModelRefRepairResolver({ cfg, env: state.env });
-  expect(repairRetiredSessionModelRef(entry, "main", resolve, "xai/grok-4.6", [])).toBe(true);
-  expect(entry.modelOverride).toBe("grok-4.6");
+  expect(repairRetiredSessionModelRef(entry, "main", resolve, "xai/grok-4.6", [], cfg)).toBe(true);
+  expect(entry.executionSelection).toEqual({
+    state: "deferred",
+    request: { model: { provider: "xai", id: "grok-4.6" } },
+    fallbackPermission: "explicit",
+  });
   expect(entry.authProfileOverride).toBe("xai:fixture");
   expect(entry.authProfileOverrideSource).toBe("user");
 });
@@ -103,7 +110,7 @@ it("preserves a custom endpoint's explicit auto model", async () => {
   expect(repairRetiredConfigModelRefs(cfg, resolve).config).toBe(cfg);
 });
 
-it("repairs an unpinned config on its declared subscription route without credentials", async () => {
+it("repairs an unpinned config for its declared owner without credentials", async () => {
   const cfg = configForRoute("https://cli-chat-proxy.grok.com/v1");
   await state.writeConfig(cfg);
   await state.writeAuthProfiles({ version: 1, profiles: {} });
@@ -113,7 +120,7 @@ it("repairs an unpinned config on its declared subscription route without creden
     kind: "replace",
     modelRef: "xai/grok-4.6",
     reason: "retirement",
-    retirementScope: "route",
+    retirementScope: "owner",
   });
   expect(warnings).toEqual([]);
 });
@@ -148,8 +155,11 @@ it("keeps a pinned session when its successor is outside the allowed models", as
   const entry: SessionEntry = {
     sessionId: "restricted-xai-session",
     updatedAt: 1,
-    providerOverride: "xai",
-    modelOverride: "auto",
+    executionSelection: {
+      state: "deferred",
+      request: { model: { provider: "xai", id: "auto" } },
+      fallbackPermission: "explicit",
+    },
     authProfileOverride: "xai:fixture",
     authProfileOverrideSource: "user",
   };
@@ -159,10 +169,14 @@ it("keeps a pinned session when its successor is outside the allowed models", as
     warnings,
     checkModelPolicy: true,
   });
-  expect(repairRetiredSessionModelRef(entry, "main", resolve, "xai/grok-4.6", warnings)).toBe(
+  expect(repairRetiredSessionModelRef(entry, "main", resolve, "xai/grok-4.6", warnings, cfg)).toBe(
     false,
   );
-  expect(entry.modelOverride).toBe("auto");
+  expect(entry.executionSelection).toEqual({
+    state: "deferred",
+    request: { model: { provider: "xai", id: "auto" } },
+    fallbackPermission: "explicit",
+  });
   expect(entry.authProfileOverride).toBe("xai:fixture");
   expect(warnings).toEqual([expect.stringContaining("not permitted")]);
 });

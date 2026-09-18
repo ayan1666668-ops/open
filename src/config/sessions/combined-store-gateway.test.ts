@@ -292,10 +292,14 @@ it.each([
           {
             sessionId: `${agentId}-${sessionKey}`,
             updatedAt: 1,
-            providerOverride: "ollama",
-            modelOverride: selectedModel,
-            modelOverrideSource: "user",
-            modelOverrideRouteResolution: "resolved",
+            executionSelection: {
+              state: "accepted",
+              selection: {
+                model: { provider: "ollama", id: selectedModel },
+                executor: { kind: "harness", id: "openclaw" },
+              },
+              fallbackPermission: "explicit",
+            },
           },
         );
       }
@@ -342,10 +346,14 @@ it("reads a raw parent from the child's captured shared physical store", async (
       {
         sessionId: "ops-parent",
         updatedAt: 1,
-        providerOverride: "ollama",
-        modelOverride: "qwen3:14b",
-        modelOverrideSource: "user",
-        modelOverrideRouteResolution: "resolved",
+        executionSelection: {
+          state: "accepted",
+          selection: {
+            model: { provider: "ollama", id: "qwen3:14b" },
+            executor: { kind: "harness", id: "openclaw" },
+          },
+          fallbackPermission: "explicit",
+        },
       },
     );
     const key = "agent:work:dashboard:shared-child";

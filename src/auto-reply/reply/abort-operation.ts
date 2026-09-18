@@ -1,6 +1,6 @@
 // Handles abort requests and active reply run cancellation.
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
-import { getAcpSessionManager } from "../../acp/control-plane/manager.js";
+import { getAcpSessionManagerCore } from "../../acp/control-plane/manager.js";
 import { retireSessionMcpRuntime } from "../../agents/agent-bundle-mcp-manager-api.js";
 import { resolveSessionAgentId } from "../../agents/agent-scope.js";
 import { resolveActiveEmbeddedRunSessionId } from "../../agents/embedded-agent-runner/active-run-projections.js";
@@ -297,7 +297,7 @@ export async function executeFastAbortRequest(
           } finally {
             // The tree already holds queued reservations. Initiate ACP without awaiting
             // either backend so native cleanup cannot delay signal-less ACP steer turns.
-            const acpManager = getAcpSessionManager();
+            const acpManager = getAcpSessionManagerCore();
             for (const acpTargetKey of abortTargetKeys) {
               const resolution = acpManager.resolveSession({
                 cfg,

@@ -6,14 +6,16 @@ import {
   resolveModelRefFromString,
   type ModelAliasIndex,
 } from "../../agents/model-selection.js";
-import { resolvePersistedSessionRuntimeId } from "../../agents/session-runtime-compat.js";
+import { resolveAcceptedSessionRuntimeId } from "../../agents/session-runtime-compat.js";
 import { resolveChannelModelOverride } from "../../channels/model-overrides.js";
 import type { SessionEntry } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { logVerbose } from "../../globals.js";
 import { formatErrorMessage } from "../../infra/errors.js";
-import { getSessionExecutionSelection } from "../../model-picker/execution-selection.js";
-import { isModelExecutionSelection } from "../../model-picker/execution-selection.js";
+import {
+  getSessionExecutionSelection,
+  isModelExecutionSelection,
+} from "../../model-picker/execution-selection.js";
 import { resolveSessionPinnedHarnessId } from "../../sessions/agent-harness-session-key.js";
 import {
   sessionDeliveryChannel,
@@ -268,7 +270,7 @@ function resolveHarnessSourceVisibleRepliesDefault(params: {
       modelOverride: params.turnModelOverride,
     });
     const resolveCandidateDefault = (candidate: { provider: string; model?: string }) => {
-      const agentHarnessRuntimeOverride = resolvePersistedSessionRuntimeId(params.entry);
+      const agentHarnessRuntimeOverride = resolveAcceptedSessionRuntimeId(params.entry);
       const defaults = resolveAgentHarnessDeliveryDefaults({
         provider: candidate.provider,
         modelId: candidate.model,

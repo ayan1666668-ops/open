@@ -39,8 +39,9 @@ const missingKey = "agent:main:missing-proof";
 const managers: AcpSessionManager[] = [];
 
 afterEach(async () => {
-  for (const manager of managers.splice(0))
+  for (const manager of managers.splice(0)) {
     await disposeAcpSessionManagerInstance(manager, "test-complete");
+  }
   vi.restoreAllMocks();
 });
 
@@ -116,7 +117,9 @@ async function setupSelection(
     getRuntimeBackend,
     requireRuntimeBackend: (id) => {
       const selected = getRuntimeBackend(id);
-      if (!selected) throw new AcpRuntimeError("ACP_BACKEND_MISSING", "Unknown fixture backend.");
+      if (!selected) {
+        throw new AcpRuntimeError("ACP_BACKEND_MISSING", "Unknown fixture backend.");
+      }
       return selected;
     },
   };
@@ -141,7 +144,9 @@ async function setupSelection(
 
 async function applyAcpDirective(state: Awaited<ReturnType<typeof setupSelection>>, body: string) {
   const sessionEntry = state.readEntry();
-  if (!sessionEntry) throw new Error("missing ACP fixture entry");
+  if (!sessionEntry) {
+    throw new Error("missing ACP fixture entry");
+  }
   return applyMixedDirectives({
     body,
     cfg: state.cfg,
@@ -261,7 +266,9 @@ test.each(["other-generation", "unreadable"] as const)(
       agentId: "main",
       sessionKey: acpKey,
       mutate: (meta) => {
-        if (!meta) throw new Error("missing ACP fixture lifecycle");
+        if (!meta) {
+          throw new Error("missing ACP fixture lifecycle");
+        }
         return { ...meta, state: "error", lastError: ACP_SELECTION_REPAIR_MESSAGE };
       },
     });
@@ -321,14 +328,17 @@ test.each([false, true])(
 test.each(["/model qa-next", "/model qa-next /verbose on", "sessions.patch"])(
   "reports the saved ACP selection when confirmation storage fails: %s",
   async (operation) => {
-    let state: Awaited<ReturnType<typeof setupSelection>>;
-    state = await setupSelection("qa-before", false, async (input) => {
-      const accepted = getCommittedSessionExecutionSelection(state.readEntry());
-      if (accepted?.model !== "native-managed" && accepted?.model.id === "qa-accepted") {
-        throw new Error("confirmation storage unavailable");
-      }
-      return upsertAcpSessionMeta(input);
-    });
+    const state: Awaited<ReturnType<typeof setupSelection>> = await setupSelection(
+      "qa-before",
+      false,
+      async (input) => {
+        const accepted = getCommittedSessionExecutionSelection(state.readEntry());
+        if (accepted?.model !== "native-managed" && accepted?.model.id === "qa-accepted") {
+          throw new Error("confirmation storage unavailable");
+        }
+        return upsertAcpSessionMeta(input);
+      },
+    );
     let message: string | undefined;
     if (operation === "sessions.patch") {
       const result = await directSessionReq("sessions.patch", { key: acpKey, model: "qa-next" });
@@ -353,13 +363,19 @@ test.each(["/model qa-next", "/model qa-next /verbose on", "sessions.patch"])(
 );
 
 test("a later ACP actor confirmation failure preserves every committed batch outcome", async () => {
-  let state: Awaited<ReturnType<typeof setupSelection>>;
-  state = await setupSelection("qa-before", false, async (input) => {
-    if (input.sessionKey === ordinaryKey && state.readEntry(ordinaryKey)?.pinnedAt !== undefined) {
-      throw new Error("inner confirmation storage unavailable");
-    }
-    return upsertAcpSessionMeta(input);
-  });
+  const state: Awaited<ReturnType<typeof setupSelection>> = await setupSelection(
+    "qa-before",
+    false,
+    async (input) => {
+      if (
+        input.sessionKey === ordinaryKey &&
+        state.readEntry(ordinaryKey)?.pinnedAt !== undefined
+      ) {
+        throw new Error("inner confirmation storage unavailable");
+      }
+      return upsertAcpSessionMeta(input);
+    },
+  );
   await upsertAcpSessionMeta({
     cfg: state.cfg,
     sessionKey: ordinaryKey,
@@ -422,7 +438,9 @@ test("a later batch catalog read does not replay a settled failed ACP model cont
   };
   const catalog = createSessionModelCatalogFixture();
   const placements = resolveSessionWorkerPlacementContext().workerSessionPlacementService;
-  if (!placements) throw new Error("missing placement owner");
+  if (!placements) {
+    throw new Error("missing placement owner");
+  }
   const readPlacements = placements.getMany.bind(placements);
   let failPlacementRead = false;
   vi.spyOn(placements, "getMany").mockImplementation((keys) => {

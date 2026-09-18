@@ -17,6 +17,7 @@ import { installSessionPlacementAdmissionProvider } from "../../agents/session-p
 import { makeAgentAssistantMessage } from "../../agents/test-helpers/agent-message-fixtures.js";
 import { getAgentEventLifecycleGeneration } from "../../infra/agent-events.js";
 import { claimAgentRunContext, releaseAgentRunContext } from "../../infra/agent-run-registry.js";
+import type { ModelExecutionSelection } from "../../model-picker/execution-selection.js";
 import type { SpawnResult } from "../../process/exec.js";
 import { openOpenClawStateDatabase } from "../../state/openclaw-state-db.js";
 import {
@@ -341,19 +342,21 @@ describe("worker turn launcher terminal results", () => {
         };
         let mediaTasks = getGeneratedMediaTaskIdsForSessionKey(SESSION_KEY);
         const candidateFailures: unknown[] = [];
-        const runCandidate = vi.fn((candidateProvider: string, model: string) => {
-          mediaTasks = getGeneratedMediaTaskIdsForSessionKey(SESSION_KEY);
-          return runEmbeddedAgent({
-            ...workerTurn,
-            config,
-            provider: candidateProvider,
-            model,
-            suppressNextUserMessagePersistence: launchedModels.length > 0,
-          }).catch((error: unknown) => {
-            candidateFailures.push(error);
-            throw error;
-          });
-        });
+        const runCandidate = vi.fn(
+          ({ model: { provider: modelProvider, id: model } }: ModelExecutionSelection) => {
+            mediaTasks = getGeneratedMediaTaskIdsForSessionKey(SESSION_KEY);
+            return runEmbeddedAgent({
+              ...workerTurn,
+              config,
+              provider: modelProvider,
+              model,
+              suppressNextUserMessagePersistence: launchedModels.length > 0,
+            }).catch((error: unknown) => {
+              candidateFailures.push(error);
+              throw error;
+            });
+          },
+        );
         const runOuterEntry = () =>
           runEmbeddedAgentEntry({
             selection: {
@@ -368,7 +371,13 @@ describe("worker turn launcher terminal results", () => {
               workspaceDir: root,
               sessionKey: SESSION_KEY,
               preparation: { kind: "direct" },
-              resolveRuntimeOverride: () => "openclaw",
+              prepareExecutionSelection: async (modelProvider, model) => ({
+                selection: {
+                  model: { provider: modelProvider, id: model },
+                  executor: { kind: "harness", id: "openclaw" },
+                },
+                validateCommit: () => undefined,
+              }),
             },
             // Use the command/RPC producer, not a test veto derived from the answer.
             behavior: {
@@ -376,7 +385,6 @@ describe("worker turn launcher terminal results", () => {
               hasCommittedSideEffect: () =>
                 hasNewGeneratedMediaTaskForSessionKey(SESSION_KEY, mediaTasks),
             },
-            sessionOverride: { kind: "preserve" },
             runCandidate,
           });
         const observed = await (

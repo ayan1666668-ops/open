@@ -40,8 +40,8 @@ describe("scoped session mutation authority", () => {
   it("rejects a mutation after cancellation during asynchronous preparation", async () => {
     const scope = await createScope();
     const controller = new AbortController();
-    const entered = createDeferred<void>();
-    const resume = createDeferred<void>();
+    const entered = createDeferred();
+    const resume = createDeferred();
     let mutated = false;
     const operation = runWithScopedSessionAccess({
       ...scope,

@@ -18,8 +18,10 @@ describe("resolveCompactionLiveModelSelection", () => {
       resolveCompactionLiveModelSelection({
         current,
         requested: {
-          provider: "openai",
-          model: "gpt-5.5",
+          selection: {
+            model: { provider: "openai", id: "gpt-5.5" },
+            executor: { kind: "harness", id: "openclaw" },
+          },
           authProfileId: "openai:p1",
           authProfileIdSource: "user",
         },
@@ -36,7 +38,12 @@ describe("resolveCompactionLiveModelSelection", () => {
     expect(
       resolveCompactionLiveModelSelection({
         current,
-        requested: { provider: "openai", model: "gpt-5.5" },
+        requested: {
+          selection: {
+            model: { provider: "openai", id: "gpt-5.5" },
+            executor: { kind: "harness", id: "openclaw" },
+          },
+        },
       }),
     ).toEqual({
       provider: "openai",
@@ -49,7 +56,12 @@ describe("resolveCompactionLiveModelSelection", () => {
     expect(
       resolveCompactionLiveModelSelection({
         current,
-        requested: { provider: "Anthropic", model: "claude-opus-4-6" },
+        requested: {
+          selection: {
+            model: { provider: "Anthropic", id: "claude-opus-4-6" },
+            executor: { kind: "harness", id: "openclaw" },
+          },
+        },
       }),
     ).toEqual({
       ...current,

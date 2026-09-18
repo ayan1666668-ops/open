@@ -33,6 +33,81 @@ describe("session-store-runtime recovery boundary", () => {
     tempDir = tempDirs.make("openclaw-sdk-session-recovery-");
     storePath = path.join(tempDir, "sessions.json");
   });
+  it("hides core recovery state and preserves it across public mutations", async () => {
+    const sessionKey = "agent:main:recovery-owned";
+    const mainRestartRecovery = {
+      chargedAttempts: 1,
+      cycleId: "cycle-1",
+      reservation: {
+        attempt: 1,
+        lifecycleGeneration: "generation-1",
+        runId: "run-1",
+      },
+      revision: 1,
+    };
+    await replaceInternalSessionEntry(
+      { sessionKey, storePath },
+      {
+        abortedLastRun: true,
+        mainRestartRecovery,
+        model: "gpt-5.5",
+        restartRecoveryRuns: [{ lifecycleGeneration: "generation-1", runId: "run-1" }],
+        sessionId: "session-recovery",
+        updatedAt: 10,
+      },
+    );
+
+    expect(getSessionEntry({ sessionKey, storePath })).not.toHaveProperty("mainRestartRecovery");
+    expect(listSessionEntries({ storePath })[0]?.entry).not.toHaveProperty("mainRestartRecovery");
+
+    await patchSessionEntry({
+      sessionKey,
+      storePath,
+      update: (entry) => {
+        entry.restartRecoveryRuns?.splice(0);
+        return {
+          abortedLastRun: false,
+          mainRestartRecovery: undefined,
+          model: "gpt-5.6",
+          restartRecoveryRuns: undefined,
+        };
+      },
+    });
+    expect(loadInternalSessionEntry({ sessionKey, storePath })).toMatchObject({
+      abortedLastRun: true,
+      mainRestartRecovery,
+      model: "gpt-5.6",
+      restartRecoveryRuns: [{ lifecycleGeneration: "generation-1", runId: "run-1" }],
+    });
+
+    await updateSessionStoreEntry({
+      sessionKey,
+      storePath,
+      update: () => ({ abortedLastRun: false, restartRecoveryRuns: undefined }),
+    });
+    expect(loadInternalSessionEntry({ sessionKey, storePath })).toMatchObject({
+      abortedLastRun: true,
+      mainRestartRecovery,
+      restartRecoveryRuns: [{ lifecycleGeneration: "generation-1", runId: "run-1" }],
+    });
+
+    await upsertSessionEntry({
+      sessionKey,
+      storePath,
+      entry: {
+        sessionId: "session-recovery",
+        updatedAt: 20,
+      },
+    });
+    expect(loadInternalSessionEntry({ sessionKey, storePath })).toMatchObject({
+      abortedLastRun: true,
+      mainRestartRecovery,
+      restartRecoveryRuns: [{ lifecycleGeneration: "generation-1", runId: "run-1" }],
+      sessionId: "session-recovery",
+      updatedAt: 20,
+    });
+    expect(loadInternalSessionEntry({ sessionKey, storePath })?.model).toBeUndefined();
+  });
 
   it("allows public recovery fields to change without an active core transaction", async () => {
     const sessionKey = "agent:main:healthy-public-recovery";
@@ -156,4 +231,43 @@ describe("session-store-runtime recovery boundary", () => {
       loadInternalSessionEntry({ sessionKey: upsertSessionKey, storePath }),
     ).not.toHaveProperty("pendingProjectGitUrl");
   });
+
+  it.each(["replace", "upsert", "patch", "update"] as const)(
+    "clears core recovery when public %s changes session identity",
+    async (operation) => {
+      const scope = { sessionKey: `agent:main:${operation}-rotation`, storePath };
+      const recovery = {
+        abortedLastRun: true,
+        restartRecoveryRuns: [{ lifecycleGeneration: "generation", runId: "run" }],
+      };
+      await replaceInternalSessionEntry(scope, {
+        ...recovery,
+        mainRestartRecovery: { chargedAttempts: 1, cycleId: "rotation-cycle", revision: 1 },
+        sessionId: "before",
+        updatedAt: 10,
+      });
+      const replacement = { sessionId: "after", updatedAt: 20 };
+      if (operation === "upsert") {
+        await upsertSessionEntry({ ...scope, entry: { ...recovery, ...replacement } });
+      } else if (operation === "update") {
+        await updateSessionStoreEntry({
+          ...scope,
+          skipMaintenance: true,
+          update: () => replacement,
+        });
+      } else {
+        await patchSessionEntry({
+          ...scope,
+          replaceEntry: operation === "replace",
+          skipMaintenance: true,
+          update: () => replacement,
+        });
+      }
+      const entry = loadInternalSessionEntry(scope);
+      expect(entry).toMatchObject({ sessionId: "after" });
+      expect(entry?.abortedLastRun).not.toBe(true);
+      expect(entry?.restartRecoveryRuns).toBeUndefined();
+      expect(entry).not.toHaveProperty("mainRestartRecovery");
+    },
+  );
 });

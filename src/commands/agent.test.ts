@@ -5,18 +5,20 @@ import path from "node:path";
 import { expectDefined } from "@openclaw/normalization-core";
 import { withTempHome as withTempHomeBase } from "openclaw/plugin-sdk/test-env";
 import { beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
-// Register shared mocks before imports bind their production exports.
-import "./agent-command.test-mocks.js";
+// Register command-only mocks before shared fixtures bind runtime dependencies.
 import "./agent-command-attempt.test-mocks.js";
+import "./agent-command.test-mocks.js";
 import { testing as acpManagerTesting } from "../acp/control-plane/manager.js";
 import { executionIdentity } from "../agents/agent-command-execution-identity.js";
 import { createHostWorkspaceWriteTool } from "../agents/agent-tools.read.js";
-import * as authProfileStoreModule from "../agents/auth-profiles/store-runtime.js";
+import type { AuthProfileStore } from "../agents/auth-profiles/types.js";
 import * as attemptExecutionRuntime from "../agents/command/attempt-execution.runtime.js";
 import { deliverAgentCommandResult } from "../agents/command/delivery.runtime.js";
 import { prepareAgentCommandExecution } from "../agents/command/prepare.js";
 import { runEmbeddedAgent } from "../agents/embedded-agent.js";
+import { registerAgentHarness } from "../agents/harness/registry.js";
 import { loadManifestModelCatalog } from "../agents/model-catalog.js";
+import type { ModelCatalogEntry } from "../agents/model-catalog.types.js";
 import * as modelSelectionModule from "../agents/model-selection.js";
 import {
   loadProviderScopedThinkingCatalog,
@@ -28,7 +30,8 @@ import {
   isAgentRunDirectAbortReason,
   isAgentRunRestartAbortReason,
 } from "../agents/run-termination.js";
-import { resolveEffectiveAgentRuntime } from "../agents/thinking-runtime.js";
+import { createSessionModelCatalogFixture } from "../agents/test-helpers/session-model-catalog.test-support.js";
+import { resolveEffectiveAgentRuntimeCore } from "../agents/thinking-runtime.js";
 import { callInProcessGatewayTool } from "../agents/tools/in-process-gateway.js";
 import { ensureAgentWorkspace } from "../agents/workspace.js";
 import { managedWorktrees } from "../agents/worktrees/service.js";
@@ -81,6 +84,7 @@ import {
 } from "../utils/delivery-context.shared.js";
 import { getAgentAttemptExecutionMocks } from "./agent-command-state.test-mocks.js";
 import { agentCommand, agentCommandFromIngress } from "./agent.js";
+import { migrateSessionExecutionSelection } from "./doctor/shared/session-execution-selection.js";
 import { createThrowingTestRuntime } from "./test-runtime-config-helpers.js";
 
 const configIoMocks = vi.hoisted(() => ({
@@ -92,136 +96,6 @@ vi.mock("../config/io.js", () => ({
   getRuntimeConfig: configIoMocks.loadConfig,
   loadConfig: configIoMocks.loadConfig,
   readConfigFileSnapshotForWrite: configIoMocks.readConfigFileSnapshotForWrite,
-}));
-
-vi.mock("../agents/auth-profiles/store.js", async (importOriginal) => {
-  return {
-    ...(await importOriginal<typeof import("../agents/auth-profiles/store.js")>()),
-    hasAnyAuthProfileStoreSource: vi.fn(() => false),
-  };
-});
-vi.mock("../agents/auth-profiles/store-runtime.js", () => {
-  const createEmptyStore = () => ({ version: 1, profiles: {} });
-  return {
-    ensureAuthProfileStore: vi.fn(createEmptyStore),
-    ensureAuthProfileStoreForLocalUpdate: vi.fn(createEmptyStore),
-    loadAuthProfileStore: vi.fn(createEmptyStore),
-    loadAuthProfileStoreForRuntime: vi.fn(createEmptyStore),
-    loadAuthProfileStoreForSecretsRuntime: vi.fn(createEmptyStore),
-    loadAuthProfileStoreWithoutExternalProfiles: vi.fn(createEmptyStore),
-    saveAuthProfileStore: vi.fn(),
-    updateAuthProfileStoreWithLock: vi.fn(async () => createEmptyStore()),
-  };
-});
-
-vi.mock("../agents/auth-profiles/source-check.js", () => ({
-  hasAnyAuthProfileStoreSource: vi.fn(() => false),
-}));
-
-vi.mock("../auto-reply/reply/session-stable-reply-mode.js", () => ({
-  // Session-stable policy has owner coverage in the reply resolver suite. This
-  // command suite only owns forwarding its result into CLI binding facts.
-  resolveSessionStableReplyMode: vi.fn(() => "automatic"),
-}));
-
-vi.mock("../auto-reply/reply/source-reply-delivery-mode.js", () => ({
-  // Source-reply policy has focused owner coverage. Command preparation only
-  // needs to distinguish synthetic turns before forwarding stable facts.
-  isSyntheticSourceReplyTurn: (params: {
-    inputProvenance?: { kind?: string };
-    isHeartbeat?: boolean;
-  }) =>
-    params.isHeartbeat === true ||
-    params.inputProvenance?.kind === "inter_session" ||
-    params.inputProvenance?.kind === "internal_system",
-}));
-
-vi.mock("../agents/harness/selection.js", () => ({
-  // Availability fallback has focused owner coverage in selection.test.ts. The
-  // command suite only needs a stable policy for auth-profile validation.
-  resolveAvailableAgentHarnessPolicy: vi.fn(() => ({
-    runtime: "openclaw",
-    runtimeSource: "implicit",
-  })),
-}));
-
-vi.mock("../agents/harness/hook-helpers.js", () => ({
-  // Tool and transcript hook dispatch are exercised by their integration
-  // suites. No command fixture in this file registers either hook.
-  runAgentHarnessAfterToolCallHook: vi.fn(async () => undefined),
-  runAgentHarnessBeforeMessageWriteHook: ({ message }: { message: unknown }) => message,
-}));
-
-vi.mock("../agents/thinking-runtime.js", () => ({
-  // Runtime selection and catalog normalization have focused owner coverage in
-  // thinking-runtime.test.ts. Command tests only need stable policy handoffs.
-  hasResolvedThinkingCatalogEntry: (params: {
-    catalog?: Array<{ id: string; provider: string; reasoning?: boolean }>;
-    provider: string;
-    model: string;
-  }) =>
-    params.catalog?.some(
-      (entry) =>
-        entry.provider.toLowerCase() === params.provider.toLowerCase() &&
-        entry.id === params.model &&
-        entry.reasoning !== undefined,
-    ) ?? false,
-  needsThinkHydration: (
-    catalog: Array<{ id: string; provider: string; reasoning?: boolean }> | undefined,
-    provider: string,
-    model: string,
-    agentRuntime: string,
-  ) =>
-    agentRuntime !== "openclaw" ||
-    !catalog?.some(
-      (entry) =>
-        entry.provider.toLowerCase() === provider.toLowerCase() &&
-        entry.id === model &&
-        entry.reasoning !== undefined,
-    ),
-  normalizeThinkingCatalogProviders: <T extends { provider: string }>(catalog: T[]) =>
-    catalog.map((entry) => ({ ...entry, provider: entry.provider.toLowerCase() })),
-  resolveCandidateThinkingLevel: ({ level }: { level?: string }) => level,
-  resolveEffectiveAgentRuntime: vi.fn(() => "openclaw"),
-}));
-
-vi.mock("../agents/main-session-recovery/main-session-recovery-store.js", () => ({
-  // Recovery-store fencing has dedicated store-backed coverage. None of these
-  // command cases enters a persisted recovery cycle.
-  claimMainSessionRecoveryOwner: vi.fn(async () => ({ kind: "not_required" })),
-  commitMainSessionRecovery: vi.fn(async () => undefined),
-  inspectMainSessionRecoveryRequired: vi.fn(async () => ({ kind: "not_required" })),
-  refreshMainSessionRecoveryOwner: vi.fn(async () => undefined),
-  releaseMainSessionRecoveryOwner: vi.fn(async () => undefined),
-}));
-
-vi.mock("../cli/command-secret-targets.js", () => ({
-  // Secret target discovery has dedicated owner coverage. These command
-  // fixtures contain no SecretRefs and only need empty discovery results.
-  getAgentRuntimeCommandSecretTargetIds: () => new Set<string>(),
-  getAgentRuntimeOptionalCommandSecretPaths: () => new Set<string>(),
-  getScopedChannelsCommandSecretTargets: () => ({ targetIds: new Set<string>() }),
-}));
-
-vi.mock("../infra/outbound/channel-bootstrap.runtime.js", () => ({
-  // Every channel fixture in this suite is already active. Bootstrap discovery
-  // and its plugin-loader graph have focused owner coverage.
-  bootstrapOutboundChannelPlugin: vi.fn(() => undefined),
-  resetOutboundChannelBootstrapStateForTests: vi.fn(),
-}));
-
-vi.mock("../config/sessions/inbound.runtime.js", () => ({
-  // Explicit-recipient cases own route selection, not the downstream session
-  // persistence exercised by outbound-session owner tests.
-  resolveSessionStorePathCore: vi.fn(() => ""),
-  updateSessionLastRoute: vi.fn(async () => null),
-}));
-
-vi.mock("../agents/command/assistant-transcript-repair.js", () => ({
-  // Repair persistence, replay, and failure barriers have a focused owner
-  // suite. These command cases contain no pending transcript repair records.
-  persistAssistantTranscriptRepairRecord: vi.fn(async () => undefined),
-  repairPendingAssistantTranscriptTurns: vi.fn(async () => undefined),
 }));
 
 vi.mock("../agents/command/delivery.runtime.js", () => {
@@ -273,37 +147,6 @@ vi.mock("../agents/command/delivery.runtime.js", () => {
   };
 });
 
-vi.mock("../config/sessions/transcript-resolve.runtime.js", () => {
-  return {
-    resolveSessionTranscriptFile: vi.fn(
-      async (params: {
-        sessionId: string;
-        sessionKey: string;
-        sessionEntry?: { sessionFile?: string; sessionId?: string };
-        sessionStore?: Record<string, { sessionFile?: string; sessionId?: string }>;
-        storePath?: string;
-        agentId: string;
-        threadId?: string | number;
-      }) => {
-        const sessionFile =
-          params.sessionEntry?.sessionFile ??
-          `sqlite:${params.agentId}:${params.sessionId}:${params.storePath ?? ""}`;
-        let sessionEntry = params.sessionEntry;
-        if (params.sessionStore && params.sessionKey) {
-          const existingEntry = params.sessionStore[params.sessionKey] ?? {};
-          sessionEntry = {
-            ...existingEntry,
-            sessionId: params.sessionId,
-            sessionFile,
-          };
-          params.sessionStore[params.sessionKey] = sessionEntry;
-        }
-        return { sessionFile, sessionEntry };
-      },
-    ),
-  };
-});
-
 const attemptExecutionMocks = getAgentAttemptExecutionMocks();
 
 const runtime = createThrowingTestRuntime();
@@ -312,6 +155,44 @@ async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
   return withTempHomeBase(fn, {
     prefix: "openclaw-agent-",
   });
+}
+
+const commandModelCatalog = createSessionModelCatalogFixture();
+const commandCatalogEntries: ModelCatalogEntry[] = [
+  { provider: "anthropic", id: "claude-opus-4-6", name: "Opus" },
+  {
+    provider: "openai",
+    id: "gpt-4.1-mini",
+    name: "GPT-4.1 Mini",
+    api: "openai-responses",
+    baseUrl: "https://api.openai.com/v1",
+  },
+  { provider: "openai", id: "gpt-5.4", name: "GPT-5.4" },
+  { provider: "openrouter", id: "openrouter/auto", name: "Auto" },
+  { provider: "ollama", id: "qwen3.5:27b", name: "Qwen" },
+];
+
+function publishCommandModelCatalog(
+  config: OpenClawConfig = configIoMocks.loadConfig(),
+  entries: ModelCatalogEntry[] = commandCatalogEntries,
+  profiles: AuthProfileStore["profiles"] = Object.fromEntries(
+    [...new Set(entries.map((entry) => entry.provider))].map((provider) => [
+      `${provider}:work`,
+      { type: "api_key" as const, provider, key: "synthetic-command-credential" },
+    ]),
+  ),
+) {
+  for (const agentId of new Set([
+    "main",
+    ...(config.agents?.list?.map((agent) => agent.id) ?? []),
+  ])) {
+    commandModelCatalog.publish({
+      config,
+      agentId,
+      catalog: { entries, routeVariants: entries },
+      profiles,
+    });
+  }
 }
 
 function mockConfig(
@@ -338,6 +219,7 @@ function mockConfig(
     },
   } as OpenClawConfig;
   configIoMocks.loadConfig.mockReturnValue(cfg);
+  publishCommandModelCatalog(cfg);
   return cfg;
 }
 
@@ -389,7 +271,10 @@ async function writeSessionStoreSeed(
   for (const [sessionKey, entry] of Object.entries(sessions)) {
     const sessionId = typeof entry.sessionId === "string" ? entry.sessionId : sessionKey;
     await replaceSessionEntry({ sessionKey, storePath }, {
-      ...entry,
+      ...migrateSessionExecutionSelection({
+        entry,
+        classifyExecutor: (id) => (id === "openclaw" ? "harness" : undefined),
+      }).entry,
       sessionId,
       updatedAt: typeof entry.updatedAt === "number" ? entry.updatedAt : Date.now(),
     } as SessionEntry);
@@ -501,11 +386,11 @@ beforeEach(() => {
   resetAgentEventsForTest();
   acpManagerTesting.resetAcpSessionManagerForTests();
   runtimeSnapshotModule.clearRuntimeConfigSnapshot();
-  vi.mocked(runEmbeddedAgent).mockResolvedValue(createDefaultAgentResult());
+  vi.mocked(runEmbeddedAgent).mockReset().mockResolvedValue(createDefaultAgentResult());
   vi.mocked(loadManifestModelCatalog).mockReturnValue([]);
   vi.mocked(loadProviderScopedThinkingCatalog).mockResolvedValue([]);
   vi.mocked(readPreparedModelCatalog).mockResolvedValue([]);
-  vi.mocked(resolveEffectiveAgentRuntime).mockReturnValue("openclaw");
+  vi.mocked(resolveEffectiveAgentRuntimeCore).mockReturnValue("openclaw");
   vi.mocked(loadEnabledClaudeBundleCommands).mockReturnValue([]);
   vi.mocked(modelSelectionModule.isCliProvider).mockImplementation(() => false);
   configIoMocks.readConfigFileSnapshotForWrite.mockResolvedValue({
@@ -1025,6 +910,7 @@ describe("agentCommand", () => {
       const store = path.join(home, "sessions.json");
       const cfg = mockConfig(home, store);
       cfg.agents!.defaults!.skills = ["allowed-skill"];
+      publishCommandModelCatalog(cfg);
       vi.mocked(resolveEffectiveAgentSkillFilter).mockReturnValueOnce(["allowed-skill"]);
       mockUserInvocableSkills({ home, skills: [{ name: "hidden-skill" }] });
 
@@ -1045,6 +931,7 @@ describe("agentCommand", () => {
       const store = path.join(home, "sessions.json");
       const cfg = mockConfig(home, store);
       cfg.skills = { limits: { maxSkillsPromptChars: 1 } };
+      publishCommandModelCatalog(cfg);
       mockUserInvocableSkills({ home, skills: [{ name: "release-notes" }] });
 
       await agentCommandFromIngress(
@@ -1199,6 +1086,14 @@ describe("agentCommand", () => {
           sessionId: "existing-harness-session",
           updatedAt: Date.now(),
           agentHarnessId: "openclaw",
+          executionSelection: {
+            state: "accepted",
+            selection: {
+              executor: { kind: "harness", id: "openclaw" },
+              model: { provider: "anthropic", id: "claude-opus-4-6" },
+            },
+            fallbackPermission: "configured",
+          },
           modelSelectionLocked: true,
         },
       });
@@ -1282,6 +1177,7 @@ describe("agentCommand", () => {
       const staleStartedAt = Date.now() - 2 * 24 * 60 * 60_000;
       const cfg = mockConfig(home, store);
       cfg.session = { ...cfg.session, reset: { mode: "daily" } };
+      publishCommandModelCatalog(cfg);
       await writeSessionStoreSeed(store, {
         [sessionKey]: {
           sessionId: "stale-voice-session",
@@ -1673,6 +1569,7 @@ describe("agentCommand", () => {
           }),
         },
       ]);
+      publishCommandModelCatalog();
       const sendMessageTelegram = vi.fn(async () => undefined);
       const base = createDefaultAgentResult({ payloads: [{ text: "assistant-visible" }] });
       vi.mocked(runEmbeddedAgent).mockResolvedValueOnce({
@@ -1739,6 +1636,11 @@ describe("agentCommand", () => {
           compat: { supportedReasoningEfforts: ["max"] },
         },
       ]);
+      const selectionConfig = configIoMocks.loadConfig();
+      publishCommandModelCatalog(selectionConfig, [
+        ...commandCatalogEntries,
+        ...loadManifestModelCatalog({ config: selectionConfig }),
+      ]);
 
       await agentCommand(
         {
@@ -1778,6 +1680,17 @@ describe("agentCommand", () => {
           },
         });
         setActivePluginRegistry(registry);
+        registerAgentHarness({
+          id: "codex",
+          label: "Native thinking fixture",
+          supports: ({ provider, modelId }) =>
+            provider === "openai" && modelId === "account-reasoner"
+              ? { supported: true }
+              : { supported: false },
+          runAttempt: async () => {
+            throw new Error("Thinking validation must reject before native execution.");
+          },
+        });
         vi.mocked(loadManifestModelCatalog).mockReturnValue([
           {
             provider: "openai",
@@ -1788,7 +1701,7 @@ describe("agentCommand", () => {
             compat: { supportedReasoningEfforts: ["none", "high", "max"] },
           },
         ]);
-        vi.mocked(resolveEffectiveAgentRuntime).mockReturnValue("codex");
+        vi.mocked(resolveEffectiveAgentRuntimeCore).mockReturnValue("codex");
         vi.mocked(loadProviderScopedThinkingCatalog).mockResolvedValue([
           {
             provider: "openai",
@@ -1799,6 +1712,20 @@ describe("agentCommand", () => {
             compat: { supportedReasoningEfforts: ["high"] },
           },
         ]);
+        const selectionConfig = configIoMocks.loadConfig();
+        publishCommandModelCatalog(
+          selectionConfig,
+          loadManifestModelCatalog({ config: selectionConfig }),
+          {
+            "openai:work": {
+              type: "oauth",
+              provider: "openai",
+              access: "synthetic-command-access",
+              refresh: "synthetic-command-refresh",
+              expires: 9_999_999_999_999,
+            },
+          },
+        );
 
         await expect(
           agentCommand(
@@ -2096,11 +2023,14 @@ describe("agentCommand", () => {
         [sessionKey]: {
           sessionId: "session-locked-model",
           updatedAt: Date.now(),
-          providerOverride: "anthropic",
-          modelOverride: "claude-opus-4-6",
-          modelOverrideSource: "auto",
-          modelOverrideFallbackOriginProvider: "openai",
-          modelOverrideFallbackOriginModel: "gpt-4.1-mini",
+          executionSelection: {
+            state: "accepted",
+            selection: {
+              executor: { kind: "harness", id: "openclaw" },
+              model: { provider: "anthropic", id: "claude-opus-4-6" },
+            },
+            fallbackPermission: "configured",
+          },
           modelSelectionLocked: true,
         },
       });
@@ -2133,7 +2063,7 @@ describe("agentCommand", () => {
     });
   });
 
-  it("clears legacy auto session model overrides without origin metadata", async () => {
+  it("preserves a migrated model selection without fallback origin metadata", async () => {
     await withTempHome(async (home) => {
       const store = path.join(home, "sessions-legacy-auto-override.json");
       await writeSessionStoreSeed(store, {
@@ -2175,30 +2105,35 @@ describe("agentCommand", () => {
       const attempts = vi
         .mocked(runEmbeddedAgent)
         .mock.calls.map((call) => ({ provider: call[0]?.provider, model: call[0]?.model }));
-      expect(attempts).toEqual([{ provider: "openai", model: "gpt-4.1-mini" }]);
+      expect(attempts).toEqual([{ provider: "anthropic", model: "claude-opus-4-6" }]);
 
-      const cleared = readSessionStore<{
-        providerOverride?: string;
-        modelOverride?: string;
-        modelOverrideSource?: string;
-      }>(store);
-      const entry = cleared["agent:main:subagent:legacy-auto"];
-      expect(entry?.providerOverride).toBeUndefined();
-      expect(entry?.modelOverride).toBeUndefined();
-      expect(entry?.modelOverrideSource).toBeUndefined();
+      const entry = readSessionStore<SessionEntry>(store)["agent:main:subagent:legacy-auto"];
+      expect(entry?.executionSelection).toEqual({
+        state: "accepted",
+        selection: {
+          executor: { kind: "harness", id: "openclaw" },
+          model: { provider: "anthropic", id: "claude-opus-4-6" },
+        },
+        fallbackPermission: "configured",
+      });
     });
   });
 
-  it("does not repair locked legacy auto session model overrides", async () => {
+  it("preserves a locked configured model selection after a successful run", async () => {
     await withTempHome(async (home) => {
       const store = path.join(home, "sessions-locked-legacy-auto-override.json");
       await writeSessionStoreSeed(store, {
         "agent:main:subagent:locked-legacy-auto": {
           sessionId: "session-locked-legacy-auto",
           updatedAt: Date.now(),
-          providerOverride: "anthropic",
-          modelOverride: "claude-opus-4-6",
-          modelOverrideSource: "auto",
+          executionSelection: {
+            state: "accepted",
+            selection: {
+              executor: { kind: "harness", id: "openclaw" },
+              model: { provider: "anthropic", id: "claude-opus-4-6" },
+            },
+            fallbackPermission: "configured",
+          },
           modelSelectionLocked: true,
         },
       });
@@ -2231,16 +2166,17 @@ describe("agentCommand", () => {
 
       expect(runEmbeddedAgent).toHaveBeenCalledTimes(1);
       expectLastRunProviderModel("anthropic", "claude-opus-4-6");
-      const persisted = readSessionStore<{
-        providerOverride?: string;
-        modelOverride?: string;
-        modelOverrideSource?: string;
-        modelSelectionLocked?: boolean;
-      }>(store)["agent:main:subagent:locked-legacy-auto"];
+      const persisted =
+        readSessionStore<SessionEntry>(store)["agent:main:subagent:locked-legacy-auto"];
       expect(persisted).toMatchObject({
-        providerOverride: "anthropic",
-        modelOverride: "claude-opus-4-6",
-        modelOverrideSource: "auto",
+        executionSelection: {
+          state: "accepted",
+          selection: {
+            executor: { kind: "harness", id: "openclaw" },
+            model: { provider: "anthropic", id: "claude-opus-4-6" },
+          },
+          fallbackPermission: "configured",
+        },
         modelSelectionLocked: true,
       });
     });
@@ -2295,7 +2231,7 @@ describe("agentCommand", () => {
     });
   });
 
-  it("clears disallowed stored override fields", async () => {
+  it("preserves explicit stored intent when the model allowlist rejects it", async () => {
     await withTempHome(async (home) => {
       const clearStore = path.join(home, "sessions-clear-overrides.json");
       await writeSessionStoreSeed(clearStore, {
@@ -2332,25 +2268,29 @@ describe("agentCommand", () => {
         { id: "gpt-4.1-mini", name: "GPT-4.1 Mini", provider: "openai" },
       ]);
 
-      await runAgentWithSessionKey("agent:main:subagent:clear-overrides");
+      await expect(runAgentWithSessionKey("agent:main:subagent:clear-overrides")).rejects.toThrow(
+        /model is not available for this agent/i,
+      );
+      expect(runEmbeddedAgent).not.toHaveBeenCalled();
 
-      expectLastRunProviderModel("openai", "gpt-4.1-mini");
-
-      const cleared = readSessionStore<{
-        providerOverride?: string;
-        modelOverride?: string;
-        authProfileOverride?: string;
-        authProfileOverrideSource?: string;
-        authProfileOverrideCompactionCount?: number;
-        fallbackNotice?: unknown;
-      }>(clearStore);
-      const entry = cleared["agent:main:subagent:clear-overrides"];
-      expect(entry?.providerOverride).toBeUndefined();
-      expect(entry?.modelOverride).toBeUndefined();
-      expect(entry?.authProfileOverride).toBeUndefined();
-      expect(entry?.authProfileOverrideSource).toBeUndefined();
-      expect(entry?.authProfileOverrideCompactionCount).toBeUndefined();
-      expect(entry?.fallbackNotice).toBeUndefined();
+      const entry =
+        readSessionStore<SessionEntry>(clearStore)["agent:main:subagent:clear-overrides"];
+      expect(entry).toMatchObject({
+        executionSelection: {
+          state: "deferred",
+          request: { model: { provider: "anthropic", id: "claude-opus-4-6" } },
+          fallbackPermission: "explicit",
+        },
+        authProfileOverride: "profile-legacy",
+        authProfileOverrideSource: "user",
+        authProfileOverrideCompactionCount: 2,
+        fallbackNotice: {
+          kind: "active",
+          selectedModel: "anthropic/claude-opus-4-6",
+          activeModel: "openai/gpt-4.1-mini",
+          reason: "fallback",
+        },
+      });
     });
   });
 
@@ -2362,9 +2302,14 @@ describe("agentCommand", () => {
         [sessionKey]: {
           sessionId: "session-locked-disallowed",
           updatedAt: Date.now(),
-          providerOverride: "anthropic",
-          modelOverride: "claude-opus-4-6",
-          modelOverrideSource: "user",
+          executionSelection: {
+            state: "accepted",
+            selection: {
+              executor: { kind: "harness", id: "openclaw" },
+              model: { provider: "anthropic", id: "claude-opus-4-6" },
+            },
+            fallbackPermission: "explicit",
+          },
           modelSelectionLocked: true,
         },
       });
@@ -2385,17 +2330,15 @@ describe("agentCommand", () => {
       await runAgentWithSessionKey(sessionKey);
       expect(runEmbeddedAgent).toHaveBeenCalledTimes(1);
       expectLastRunProviderModel("anthropic", "claude-opus-4-6");
-      expect(
-        readSessionStore<{
-          providerOverride?: string;
-          modelOverride?: string;
-          modelOverrideSource?: string;
-          modelSelectionLocked?: boolean;
-        }>(store)[sessionKey],
-      ).toMatchObject({
-        providerOverride: "anthropic",
-        modelOverride: "claude-opus-4-6",
-        modelOverrideSource: "user",
+      expect(readSessionStore<SessionEntry>(store)[sessionKey]).toMatchObject({
+        executionSelection: {
+          state: "accepted",
+          selection: {
+            executor: { kind: "harness", id: "openclaw" },
+            model: { provider: "anthropic", id: "claude-opus-4-6" },
+          },
+          fallbackPermission: "explicit",
+        },
         modelSelectionLocked: true,
       });
     });
@@ -2409,9 +2352,14 @@ describe("agentCommand", () => {
         [sessionKey]: {
           sessionId: "session-locked-one-off",
           updatedAt: Date.now(),
-          providerOverride: "anthropic",
-          modelOverride: "claude-opus-4-6",
-          modelOverrideSource: "user",
+          executionSelection: {
+            state: "accepted",
+            selection: {
+              executor: { kind: "harness", id: "openclaw" },
+              model: { provider: "anthropic", id: "claude-opus-4-6" },
+            },
+            fallbackPermission: "explicit",
+          },
           modelSelectionLocked: true,
         },
       });
@@ -2450,11 +2398,26 @@ describe("agentCommand", () => {
           "openai/gpt-4.1-mini": {},
         },
       });
+      const sessionKey = "agent:main:subagent:run-override";
+      const storedSelection = {
+        state: "accepted",
+        selection: {
+          executor: { kind: "harness", id: "openclaw" },
+          model: { provider: "anthropic", id: "claude-opus-4-6" },
+        },
+        fallbackPermission: "explicit",
+      } as const;
+      await writeSessionStoreSeed(store, {
+        [sessionKey]: {
+          sessionId: "session-run-override",
+          executionSelection: storedSelection,
+        },
+      });
 
       await agentCommand(
         {
           message: "use the override",
-          sessionKey: "agent:main:subagent:run-override",
+          sessionKey,
           provider: "openai",
           model: "gpt-4.1-mini",
         },
@@ -2463,12 +2426,9 @@ describe("agentCommand", () => {
 
       expectLastRunProviderModel("openai", "gpt-4.1-mini");
 
-      const saved = readSessionStore<{
-        providerOverride?: string;
-        modelOverride?: string;
-      }>(store);
-      expect(saved["agent:main:subagent:run-override"]?.providerOverride).toBeUndefined();
-      expect(saved["agent:main:subagent:run-override"]?.modelOverride).toBeUndefined();
+      expect(readSessionStore<SessionEntry>(store)[sessionKey]?.executionSelection).toEqual(
+        storedSelection,
+      );
 
       await writeSessionStoreSeed(store, {
         "agent:main:subagent:temp-openai-run": {
@@ -2479,14 +2439,6 @@ describe("agentCommand", () => {
           authProfileOverrideCompactionCount: 2,
         },
       });
-      vi.mocked(authProfileStoreModule.ensureAuthProfileStore).mockReturnValue({
-        version: 1,
-        profiles: {
-          "anthropic:work": {
-            provider: "anthropic",
-          },
-        },
-      } as never);
 
       await agentCommand(
         {
@@ -2655,6 +2607,7 @@ describe("agentCommand", () => {
         },
       ]);
       cfg.session = { ...cfg.session, dmScope: "per-account-channel-peer" };
+      publishCommandModelCatalog(cfg);
       await agentCommand(
         {
           message: "hi",
@@ -2683,6 +2636,7 @@ describe("agentCommand", () => {
       expect(callArgs?.sessionKey).toBe("agent:ops:whatsapp:group:120363040000000000@g.us");
 
       cfg.session = { ...cfg.session, dmScope: "main", mainKey: "work" };
+      publishCommandModelCatalog(cfg);
       await agentCommand(
         {
           message: "hi",
@@ -2775,6 +2729,7 @@ describe("agentCommand", () => {
           }),
         },
       ]);
+      publishCommandModelCatalog();
 
       await agentCommand(
         { message: "hi", to: sessionKey, deliver: true, channel: "telegram" },

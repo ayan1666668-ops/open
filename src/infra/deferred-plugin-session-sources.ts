@@ -31,8 +31,13 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { runExistingOpenClawStateWriteTransaction } from "../state/openclaw-state-db-existing-write.js";
 import { withExistingOpenClawStateDatabaseReadOnly } from "../state/openclaw-state-db-readonly.js";
 import { tableExists } from "../state/openclaw-state-db-schema-helpers.js";
+import {
+  runOpenClawStateWriteTransaction,
+  type OpenClawStateDatabase,
+} from "../state/openclaw-state-db.js";
 import { OPENCLAW_STATE_SCHEMA_SQL } from "../state/openclaw-state-schema.js";
 import type { DeferredPluginMigration } from "./deferred-plugin-migrations.js";
+import { assertSqliteSchemaContains } from "./sqlite-schema-contract.js";
 import { extractSqliteTableSchema } from "./sqlite-schema-sql.js";
 import {
   readLegacyMigrationReceiptFromDatabase,
@@ -343,11 +348,15 @@ export function prepareDeferredPluginSessionImportReader(params: {
   >();
   return (database: DatabaseSync, agentId: string): SessionImportTarget | undefined => {
     const sourceTarget = { ...params.target, agentId };
-    const sqlite = resolveSqliteTargetFromSessionStorePath(sourceTarget.storePath, {
-      agentId,
-      env: params.env,
-    });
-    const target = { ...sourceTarget, sqlitePath: sqlite.path };
+    const target = {
+      ...sourceTarget,
+      sqlitePath:
+        sourceTarget.sqlitePath ??
+        resolveSqliteTargetFromSessionStorePath(sourceTarget.storePath, {
+          agentId,
+          env: params.env,
+        }).path,
+    };
     const key = sourceKey(target);
     const receipt = readLegacyMigrationReceiptFromDatabase(database, key);
     let prepared = verified.get(key);
@@ -357,7 +366,7 @@ export function prepareDeferredPluginSessionImportReader(params: {
         imported: readDeferredPluginSessionImport({
           cfg: params.cfg,
           target: sourceTarget,
-          sqlitePath: sqlite.path,
+          sqlitePath: target.sqlitePath,
           env: params.env,
           database,
         }),
@@ -383,6 +392,7 @@ export function recordDeferredPluginSessionImport(
     sources: Array<{ path: string; identity: MigrationArtifactIdentity }>;
     recordCount: number;
   },
+  transaction?: OpenClawStateDatabase,
 ): void {
   const report: DeferredPluginSessionImport = {
     databaseIdentity: databaseIdentity(params.sqlitePath),
@@ -395,27 +405,43 @@ export function recordDeferredPluginSessionImport(
   if (!index) {
     throw new Error("A deferred session import requires its verified original index.");
   }
-  runExistingOpenClawStateWriteTransaction(
-    ({ db }) => {
-      assertVerifiedSessionSources(params, report);
-      if (report.databaseIdentity !== databaseIdentity(params.sqlitePath)) {
-        throw new Error("Session import database changed before its receipt was recorded.");
-      }
-      const key = sourceKey({ ...params.target, sqlitePath: params.sqlitePath });
-      recordLegacyMigrationReceipt(db, {
-        sourceKey: key,
-        migrationKind: RECEIPT_KIND,
-        sourcePath: path.resolve(params.target.storePath),
-        targetTable: "session_nodes",
-        sourceSha256: index.identity.sha256,
-        sourceSizeBytes: index.identity.size,
-        sourceRecordCount: params.recordCount,
-        runId: key,
-        reportJson: JSON.stringify(report),
-        now: Date.now(),
-      });
-    },
-    { env: params.env },
-    { operationLabel: "state.retain-plugin-session-source", schemaSql: receiptStorageSchema },
-  );
+  const write = ({ db }: Pick<OpenClawStateDatabase, "db">) => {
+    assertVerifiedSessionSources(params, report);
+    if (report.databaseIdentity !== databaseIdentity(params.sqlitePath)) {
+      throw new Error("Session import database changed before its receipt was recorded.");
+    }
+    const key = sourceKey({ ...params.target, sqlitePath: params.sqlitePath });
+    recordLegacyMigrationReceipt(db, {
+      sourceKey: key,
+      migrationKind: RECEIPT_KIND,
+      sourcePath: path.resolve(params.target.storePath),
+      targetTable: "session_nodes",
+      sourceSha256: index.identity.sha256,
+      sourceSizeBytes: index.identity.size,
+      sourceRecordCount: params.recordCount,
+      runId: key,
+      reportJson: JSON.stringify(report),
+      now: Date.now(),
+    });
+  };
+  const operationLabel = "state.retain-plugin-session-source";
+  if (transaction) {
+    if (!transaction.db.isTransaction) {
+      throw new Error("Deferred session import preservation requires its publication transaction.");
+    }
+    runOpenClawStateWriteTransaction(
+      (database) => {
+        assertSqliteSchemaContains(database.db, database.path, receiptStorageSchema);
+        write(database);
+      },
+      { env: params.env, database: transaction },
+      { operationLabel },
+    );
+  } else {
+    runExistingOpenClawStateWriteTransaction(
+      write,
+      { env: params.env },
+      { operationLabel, schemaSql: receiptStorageSchema },
+    );
+  }
 }

@@ -313,14 +313,14 @@ export function reconcileAcceptedRuntimeOptions(
   const model = result.configOptions.find(
     (option) => option.category === "model" || option.id === "model",
   );
-  if (options.model) {
-    options = normalizeRuntimeOptions({
-      ...options,
-      model: typeof model?.currentValue === "string" ? model.currentValue : undefined,
-    });
-  }
-  if (!options.thinking) {
-    return options;
+  const reconciledOptions = options.model
+    ? normalizeRuntimeOptions({
+        ...options,
+        model: typeof model?.currentValue === "string" ? model.currentValue : undefined,
+      })
+    : options;
+  if (!reconciledOptions.thinking) {
+    return reconciledOptions;
   }
   const thinking = result.configOptions.find(
     (option) => option.category === "thought_level" || isThinkingConfigKey(option.id),
@@ -335,10 +335,10 @@ export function reconcileAcceptedRuntimeOptions(
           : choice.value === pendingThinking,
       ))
   ) {
-    return options;
+    return reconciledOptions;
   }
   return normalizeRuntimeOptions({
-    ...options,
+    ...reconciledOptions,
     thinking: typeof thinking?.currentValue === "string" ? thinking.currentValue : undefined,
   });
 }

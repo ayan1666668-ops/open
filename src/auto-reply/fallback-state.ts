@@ -102,8 +102,9 @@ export function buildFallbackNotice(params: {
     !params.selectedModel ||
     !params.activeProvider ||
     !params.activeModel
-  )
+  ) {
     return null;
+  }
   const selected = buildModelCatalogRef(params.selectedProvider, params.selectedModel);
   const active = buildModelCatalogRef(params.activeProvider, params.activeModel);
   if (areRuntimeModelRefsEquivalent(selected, active, { config: params.cfg })) {
@@ -134,7 +135,9 @@ export function buildFallbackClearedNotice(params: {
   selectedModel?: string;
   previousActiveModel?: string;
 }): string | null {
-  if (!params.selectedProvider || !params.selectedModel) return null;
+  if (!params.selectedProvider || !params.selectedModel) {
+    return null;
+  }
   const selected = buildModelCatalogRef(params.selectedProvider, params.selectedModel);
   const previous = normalizeOptionalString(params.previousActiveModel);
   if (previous && previous !== selected) {

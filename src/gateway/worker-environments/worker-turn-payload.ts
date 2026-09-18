@@ -26,7 +26,7 @@ import {
 import { resolveDefaultModelForAgent } from "../../agents/model-selection-config.js";
 import type { AgentMessage } from "../../agents/runtime/index.js";
 import type { SessionPlacementTurnParams } from "../../agents/session-placement-admission.js";
-import { resolveEffectiveAgentRuntime } from "../../agents/thinking-runtime.js";
+import { resolveEffectiveAgentRuntimeCore } from "../../agents/thinking-runtime.js";
 import { hasNonzeroUsage, normalizeUsage } from "../../agents/usage.js";
 import { emitTrustedDiagnosticEvent, isDiagnosticsEnabled } from "../../infra/diagnostic-events.js";
 import type { WorkerLaunchPlan } from "../../worker/launch-descriptor.js";
@@ -359,7 +359,7 @@ export function assertSupportedTurn(params: SessionPlacementTurnParams): {
   const runtime =
     explicitRuntime && !isDefaultAgentRuntimeId(explicitRuntime)
       ? explicitRuntime
-      : resolveEffectiveAgentRuntime({
+      : resolveEffectiveAgentRuntimeCore({
           cfg: params.config ?? {},
           provider: modelRef.provider,
           modelId: modelRef.model,

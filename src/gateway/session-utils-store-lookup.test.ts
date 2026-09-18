@@ -1,9 +1,11 @@
 import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { createSessionModelCatalogFixture } from "../agents/test-helpers/session-model-catalog.test-support.js";
 import { resetConfigRuntimeState, setRuntimeConfigSnapshot } from "../config/config.js";
 import { loadSessionEntry, replaceSessionEntry } from "../config/sessions/session-accessor.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { getSessionExecutionSelection } from "../model-picker/execution-selection.js";
 import {
   closeOpenClawAgentDatabasesForTest,
   openOpenClawAgentDatabase,
@@ -33,6 +35,7 @@ import type {
   GatewayRequestHandler,
   RespondFn,
 } from "./server-methods/types.js";
+import { sessionSelectionFixture } from "./session-list.test-support.js";
 import {
   createGatewaySessionEntryReader,
   prepareGatewaySessionStoreTargetsReadOnly,
@@ -431,7 +434,7 @@ describe("exact session model projections", () => {
   it.each([
     { selection: "inherited", model: "gpt-5.5", source: "inherited" },
     { selection: "direct", model: "gpt-5.6-sol", source: "user" },
-    { selection: "default", model: "gpt-5.4", source: null },
+    { selection: "default", model: "gpt-5.4", source: "auto" },
   ] as const)(
     "keeps $selection model selection aligned across list, exact rows and events",
     async ({ selection, model, source }) => {
@@ -450,10 +453,10 @@ describe("exact session model projections", () => {
           {
             sessionId: "model-parent",
             updatedAt: 1,
-            providerOverride: "openai",
-            modelOverride: "gpt-5.5",
-            modelOverrideSource: "user",
-            modelOverrideRouteResolution: "resolved",
+            executionSelection: sessionSelectionFixture({
+              model: { provider: "openai", id: "gpt-5.5" },
+              executor: { kind: "harness", id: "openclaw" },
+            }),
           },
         );
         await replaceSessionEntry(
@@ -464,13 +467,21 @@ describe("exact session model projections", () => {
             parentSessionKey: parentKey,
             ...(selection === "direct"
               ? {
-                  providerOverride: "openai",
-                  modelOverride: "gpt-5.6-sol",
-                  modelOverrideSource: "user" as const,
-                  modelOverrideRouteResolution: "resolved" as const,
+                  executionSelection: sessionSelectionFixture({
+                    model: { provider: "openai", id: "gpt-5.6-sol" },
+                    executor: { kind: "harness", id: "openclaw" },
+                  }),
                 }
               : selection === "default"
-                ? { modelOverrideSource: "default" as const }
+                ? {
+                    executionSelection: sessionSelectionFixture(
+                      {
+                        model: { provider: "openai", id: "gpt-5.4" },
+                        executor: { kind: "harness", id: "openclaw" },
+                      },
+                      "configured",
+                    ),
+                  }
                 : {}),
           },
         );
@@ -534,7 +545,7 @@ describe("exact session model projections", () => {
 it.each([
   { selection: "inherited", layout: "separate", model: "qwen3:14b", source: "inherited" },
   { selection: "direct", layout: "separate", model: "llama3.1:8b", source: "user" },
-  { selection: "default", layout: "separate", model: "llama3.1:8b", source: null },
+  { selection: "default", layout: "separate", model: "llama3.1:8b", source: "auto" },
   { selection: "inherited", layout: "shared", model: "qwen3:14b", source: "inherited" },
   { selection: "inherited", layout: "cross-agent", model: "qwen3:8b", source: "inherited" },
 ] as const)(
@@ -546,6 +557,16 @@ it.each([
       const parentAgent = shared ? "ops" : "work";
       const cfg: OpenClawConfig = {
         session: { scope: "global", ...(storePath ? { store: storePath } : {}) },
+        models: {
+          providers: {
+            ollama: {
+              api: "openai-completions",
+              baseUrl: "https://physical-parent.invalid/v1",
+              auth: "api-key",
+              models: [],
+            },
+          },
+        },
         agents: {
           ...(shared ? { ownership: "explicit" } : {}),
           entries: { main: { default: true }, work: {}, ...(shared ? { ops: {} } : {}) },
@@ -564,18 +585,25 @@ it.each([
         name: id,
         provider: "ollama",
         contextWindow: 32768,
+        api: "openai-completions" as const,
+        baseUrl: "https://physical-parent.invalid/v1",
       }));
+      const catalogFixture = createSessionModelCatalogFixture();
       const context = createDirectChatContext({
         getRuntimeConfig: () => cfg,
-        loadGatewayModelCatalogSnapshot: async () => ({
-          entries: catalog,
-          routeVariants: catalog,
-          agentId: "main",
-          agentDir: "/tmp/fixture-agent",
-          workspaceDir: "/tmp/fixture-workspace",
-          config: cfg,
-          catalogComplete: true,
-        }),
+        loadGatewayModelCatalogSnapshot: async (options) =>
+          catalogFixture.publish({
+            config: cfg,
+            agentId: options?.agentId ?? "main",
+            catalog: { entries: catalog, routeVariants: catalog },
+            profiles: {
+              "ollama:fixture": {
+                type: "api_key",
+                provider: "ollama",
+                key: "synthetic-credential",
+              },
+            },
+          }),
         readPreparedGatewayModelCatalog: async () => ({ entries: catalog }),
       });
       const request = async (
@@ -627,9 +655,7 @@ it.each([
         parentSessionKey: foreignParent?.key ?? "global",
         parentSessionId: foreignParent?.sessionId ?? `${parentAgent}-parent`,
       });
-      for (const field of ["providerOverride", "modelOverride", "modelOverrideSource"] as const) {
-        expect(unpinned?.[field]).toBeUndefined();
-      }
+      expect(unpinned?.executionSelection).toBeUndefined();
 
       // The child predates these pins, so creation cannot have copied a direct selection.
       for (const agentId of parentAgents) {
@@ -646,17 +672,22 @@ it.each([
           model: "ollama/qwen3:8b",
         });
       }
-      expect(loadSessionEntry(childScope)?.modelOverride).toBeUndefined();
+      expect(loadSessionEntry(childScope)?.executionSelection).toBeUndefined();
       if (selection !== "inherited") {
         await request(sessionMutationHandlers["sessions.patch"]!, "sessions.patch", {
           key: created.key,
           agentId: "work",
           model: selection === "default" ? null : "ollama/llama3.1:8b",
         });
+        expect(loadSessionEntry(childScope)?.executionSelection?.fallbackPermission).toBe(
+          selection === "default" ? "configured" : "explicit",
+        );
       }
       const combined = loadCombinedSessionStoreForGatewayCore(cfg);
       expect(combined.targetsBySessionKey.get("global")?.agentId).toBe(shared ? "ops" : "main");
-      expect(combined.store.global?.modelOverride).toBe(shared ? "qwen3:14b" : "qwen3:8b");
+      expect(getSessionExecutionSelection(combined.store.global)).toMatchObject({
+        model: { provider: "ollama", id: shared ? "qwen3:14b" : "qwen3:8b" },
+      });
 
       const expected = {
         agentId: "work",
@@ -716,9 +747,11 @@ it.each([
       resolveGatewaySessionStoreTargetWithStore(cachedRequest);
       const cached = resolveGatewaySessionStoreTargetWithStore(cachedRequest);
       for (const selected of [batched!, cached]) {
-        expect(createGatewaySessionEntryReader({ cfg, ...selected })("global")?.modelOverride).toBe(
-          "qwen3:14b",
-        );
+        expect(
+          getSessionExecutionSelection(
+            createGatewaySessionEntryReader({ cfg, ...selected })("global"),
+          ),
+        ).toMatchObject({ model: { provider: "ollama", id: "qwen3:14b" } });
       }
     });
   },

@@ -4,6 +4,7 @@ import type { AcpRuntime, AcpRuntimeHandle } from "@openclaw/acp-core/runtime/ty
 import { expectDefined } from "@openclaw/normalization-core";
 import { resolveAdmittedRunActiveAssertion } from "../../agents/admitted-run-context.js";
 import { logVerbose } from "../../globals.js";
+import { admitSessionExecutionFallback } from "../../model-picker/apply-session-model-selection.js";
 import type { AcpExecutionSelection } from "../../model-picker/execution-selection.js";
 import {
   recordSessionHumanDirectMessage,
@@ -124,24 +125,33 @@ export async function runManagerTurn(params: {
     sessionKey,
     agentId,
   });
-  const { selection: initialSelection } = requireReadySession(initialResolution);
+  const { selection: initialSelection, entry: initialEntry } =
+    requireReadySession(initialResolution);
   recordSessionHumanDirectMessage({
     sessionKey,
-    entry: initialResolution.kind === "ready" ? initialResolution.entry : undefined,
+    entry: initialEntry,
     actor: { actorType: input.provenance },
     channel: "acp",
     runId: input.requestId,
   });
   // ACP children bypass the subagent registry; terminal outcomes are projected into
   // the signal log here so changesSince histories are not spawn-only for ACP runs.
-  const spawnedByWatcher =
-    initialResolution.kind === "ready"
-      ? (initialResolution.entry?.spawnedBy ?? initialResolution.entry?.parentSessionKey)
-      : undefined;
-  const { candidateBackends, describeBackendCandidate } = resolveBackendCandidatePlan({
-    resolvedPrimaryBackend: initialSelection.executor.backend,
-    fallbackBackends: input.cfg.acp?.fallbacks,
-  });
+  const spawnedByWatcher = initialEntry.spawnedBy ?? initialEntry.parentSessionKey;
+  const { candidateBackends: plannedBackends, describeBackendCandidate } =
+    resolveBackendCandidatePlan({
+      resolvedPrimaryBackend: initialSelection.executor.backend,
+      fallbackBackends: input.cfg.acp?.fallbacks,
+    });
+  const candidateBackends = plannedBackends.filter(
+    (backend) =>
+      admitSessionExecutionFallback({
+        entry: initialEntry,
+        candidate: {
+          ...initialSelection,
+          executor: { ...initialSelection.executor, backend },
+        },
+      }).status === "accepted",
+  );
   const backendAttempts: BackendAttempt[] = [];
   const recordBackendFailure = async (error: AcpRuntimeError) => {
     const failedBackends = backendAttempts
@@ -161,15 +171,16 @@ export async function runManagerTurn(params: {
     });
     if (taskContext) {
       const failureStatus = resolveBackgroundTaskFailureStatus(errorToRecord);
-      markBackgroundTaskTerminal(taskContext.runId, {
-        sessionKey,
-        status: failureStatus,
-        endedAt: Date.now(),
-        lastEventAt: Date.now(),
-        error: formatAcpErrorChain(errorToRecord),
-        progressSummary: taskProgressSummary || null,
-        terminalSummary: failureStatus === "timed_out" ? taskProgressSummary || null : null,
-      });
+      if (taskRecord) {
+        markBackgroundTaskTerminal(taskRecord, {
+          status: failureStatus,
+          endedAt: Date.now(),
+          lastEventAt: Date.now(),
+          error: formatAcpErrorChain(errorToRecord),
+          progressSummary: taskProgressSummary || null,
+          terminalSummary: failureStatus === "timed_out" ? taskProgressSummary || null : null,
+        });
+      }
       if (spawnedByWatcher) {
         recordSubagentTerminalState({
           childSessionKey: sessionKey,
@@ -230,24 +241,6 @@ export async function runManagerTurn(params: {
         const resolvedMeta = ready.meta;
         let acceptedSelection = ready.selection;
         let acceptedEntry = ready.entry;
-        if (turnLocal) {
-          const reserved = await params.writeSessionMeta({
-            cfg: input.cfg,
-            sessionKey,
-            agentId,
-            mutate: (current, entry) =>
-              current && entry
-                ? { ...current, state: "error", lastError: ACP_SELECTION_REPAIR_MESSAGE }
-                : null,
-            failOnError: true,
-          });
-          if (!reserved?.acp) {
-            throw new AcpRuntimeError(
-              "ACP_SESSION_INIT_FAILED",
-              "Could not reserve the temporary app selection.",
-            );
-          }
-        }
         let runtime: AcpRuntime | undefined;
         let handle: AcpRuntimeHandle | undefined;
         let meta: SessionAcpLifecycle | undefined;
@@ -305,11 +298,12 @@ export async function runManagerTurn(params: {
                       : null,
                   failOnError: true,
                 });
-                if (!paused?.acp)
+                if (!paused?.acp) {
                   throw new AcpRuntimeError(
                     "ACP_SESSION_INIT_FAILED",
                     "The session disappeared before model preparation.",
                   );
+                }
               },
               getCachedRuntimeState: () => params.runtimeHandles.get(params),
               onOptionsChanged: async (runtimeOptions) => {
@@ -345,12 +339,15 @@ export async function runManagerTurn(params: {
                       input.signal,
                     ),
                     mutate: (current, entry) => {
-                      if (!current || !entry) return null;
-                      if (!isDeepStrictEqual(requireAcpExecutionSelection(entry), accepted))
+                      if (!current || !entry) {
+                        return null;
+                      }
+                      if (!isDeepStrictEqual(requireAcpExecutionSelection(entry), accepted)) {
                         throw new AcpRuntimeError(
                           "ACP_SESSION_INIT_FAILED",
                           "The session changed during model preparation.",
                         );
+                      }
                       const next = { ...current, runtimeOptions: options, state: "idle" as const };
                       delete next.lastError;
                       return next;
@@ -431,9 +428,8 @@ export async function runManagerTurn(params: {
                   }
                 }
               }
-              if (taskContext) {
-                markBackgroundTaskRunning(taskContext.runId, {
-                  sessionKey,
+              if (taskRecord) {
+                markBackgroundTaskRunning(taskRecord, {
                   lastEventAt: Date.now(),
                   progressSummary: taskProgressSummary || null,
                 });
@@ -491,16 +487,17 @@ export async function runManagerTurn(params: {
                         "Required completion output exceeded the 100 KB verification limit; inspect the child session for the final deliverable.",
                     }
                   : resolveBackgroundTaskTerminalResult(completionEvidenceText);
-            markBackgroundTaskTerminal(taskContext.runId, {
-              sessionKey,
-              status: turnOutcome.terminalStatus === "cancelled" ? "cancelled" : "succeeded",
-              endedAt: Date.now(),
-              lastEventAt: Date.now(),
-              error: undefined,
-              progressSummary: taskProgressSummary || null,
-              terminalSummary: terminalResult.terminalSummary ?? null,
-              terminalOutcome: terminalResult.terminalOutcome,
-            });
+            if (taskRecord) {
+              markBackgroundTaskTerminal(taskRecord, {
+                status: turnOutcome.terminalStatus === "cancelled" ? "cancelled" : "succeeded",
+                endedAt: Date.now(),
+                lastEventAt: Date.now(),
+                error: undefined,
+                progressSummary: taskProgressSummary || null,
+                terminalSummary: terminalResult.terminalSummary ?? null,
+                terminalOutcome: terminalResult.terminalOutcome,
+              });
+            }
             if (spawnedByWatcher) {
               recordSubagentTerminalState({
                 childSessionKey: sessionKey,
@@ -599,7 +596,9 @@ export async function runManagerTurn(params: {
               sessionKey,
               agentId,
               mutate: (current, entry) => {
-                if (!current || !entry) return null;
+                if (!current || !entry) {
+                  return null;
+                }
                 if (
                   !controlsConfirmed ||
                   current.lastError !== ACP_SELECTION_REPAIR_MESSAGE ||

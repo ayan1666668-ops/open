@@ -10,8 +10,10 @@ import type { SessionEntry, SessionAcpLifecycle } from "../../config/sessions/ty
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { executeSqliteQuerySync } from "../../infra/kysely-sync.js";
 import type { PluginDoctorRepairAuthority } from "../../infra/state-migrations.types.js";
-import { getCommittedSessionExecutionSelection } from "../../model-picker/execution-selection.js";
-import { isAcpExecutionSelection } from "../../model-picker/execution-selection.js";
+import {
+  getCommittedSessionExecutionSelection,
+  isAcpExecutionSelection,
+} from "../../model-picker/execution-selection.js";
 import type {
   PluginDoctorAcpSessionClaim,
   PluginDoctorStateMigrationContext,
@@ -99,8 +101,9 @@ export async function inspectAcpSessionClaimsForDoctor(
             !selection ||
             !isAcpExecutionSelection(selection) ||
             selection.executor.backend !== scope.pluginId
-          )
+          ) {
             continue;
+          }
           const { sessionId, lifecycleRevision, sessionStartedAt } = entry;
           const binding = { sessionId, lifecycleRevision, sessionStartedAt };
           if (row.session_id == null || !acpSessionRowMatchesEntry(row, binding)) {
@@ -193,8 +196,9 @@ function projectDoctorAcpMeta(
   meta: SessionAcpLifecycle,
 ): PluginDoctorAcpSessionClaim["meta"] {
   const selection = getCommittedSessionExecutionSelection(entry);
-  if (!selection || !isAcpExecutionSelection(selection))
+  if (!selection || !isAcpExecutionSelection(selection)) {
     throw new Error("ACP identity repair requires a committed execution selection.");
+  }
   return {
     ...meta,
     backend: selection.executor.backend,

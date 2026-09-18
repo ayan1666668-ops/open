@@ -3,7 +3,7 @@ import type { EmbeddedAgentRunResult } from "../../agents/embedded-agent-runner/
 import { resolveModelAuthMode } from "../../agents/model-auth.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
-import { resolveSessionExecutionFallbacks } from "../../model-picker/apply-session-model-selection.js";
+import { resolveSessionModelFallbacks } from "../../model-picker/apply-session-model-selection.js";
 import { isModelExecutionSelection } from "../../model-picker/execution-selection.js";
 import { normalizeVerboseLevel, type VerboseLevel } from "../thinking.js";
 import type { ReplyPayload } from "../types.js";
@@ -98,12 +98,12 @@ export async function buildReplyDiagnosticsPayload(params: {
       fallbackEligible:
         runResult.meta?.requestShaping?.fallbackEligible ??
         (isModelExecutionSelection(followupRun.run.executionSelection) &&
-          resolveSessionExecutionFallbacks({
+          resolveSessionModelFallbacks({
             cfg: cfg ?? {},
             agentId: followupRun.run.agentId,
             sessionKey: followupRun.run.sessionKey,
             sessionEntry: activeSessionEntry,
-            selection: followupRun.run.executionSelection,
+            model: followupRun.run.executionSelection.model,
             subagentSpawnLineage: followupRun.run.subagentSpawnLineage,
           }).kind === "active"),
       blockStreaming:

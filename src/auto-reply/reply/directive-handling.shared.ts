@@ -4,11 +4,11 @@ import type { AgentModelPrimaryWriteTarget } from "../../agents/agent-scope.js";
 import type { StickyModelSelectionDispatchOutcome } from "../../agents/sticky-model-selection.js";
 import { formatCliCommand } from "../../cli/command-format.js";
 import {
-  adoptPersistedSessionSnapshot,
   SESSION_EXECUTION_SELECTION_TRANSACTION_FIELDS,
   sessionModelOverrideChangesApplied,
   sessionSnapshotChangesApplied,
 } from "../../config/sessions/session-snapshot-merge.js";
+import { adoptPersistedSessionSnapshot } from "../../config/sessions/session-snapshot.js";
 import type { InternalSessionEntry as SessionEntry } from "../../config/sessions/types.js";
 import { SYSTEM_MARK, prefixSystemMessage } from "../../infra/system-message.js";
 import { applyTraceOverride, applyVerboseOverride } from "../../sessions/level-overrides.js";
@@ -302,6 +302,7 @@ export function applySessionDirectiveFields(params: {
 
 /** Commits a directive snapshot only when its touched fields still win the session transaction. */
 export async function persistSessionDirectiveSnapshot(params: {
+  agentId: string;
   storePath: string;
   sessionKey: string;
   initialEntry: SessionEntry;
@@ -317,6 +318,7 @@ export async function persistSessionDirectiveSnapshot(params: {
 > {
   const { sessionEntry, sessionKey, sessionStore } = params;
   const persistence = await persistReplySessionEntry({
+    agentId: params.agentId,
     storePath: params.storePath,
     sessionKey,
     initialEntry: params.initialEntry,

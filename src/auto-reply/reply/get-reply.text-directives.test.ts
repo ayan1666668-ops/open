@@ -1,6 +1,7 @@
 /** Exercises text directive policy and prompt handling through the complete reply pipeline. */
 import { afterEach, expect, it, vi } from "vitest";
 import { createDeferred } from "../../../test/helpers/promise.js";
+import { createApiKeyCredential } from "../../agents/auth-profiles/credential-fixtures.test-support.js";
 import * as sessionAuth from "../../agents/auth-profiles/session-override.js";
 import { runEmbeddedAgent } from "../../agents/embedded-agent.js";
 import * as questionInput from "../../agents/harness/gateway-question.js";
@@ -16,6 +17,7 @@ import {
 } from "../../config/sessions/session-accessor.js";
 import type { SessionEntry } from "../../config/sessions/types.js";
 import type { ModelDefinitionConfig } from "../../config/types.models.js";
+import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import {
   applySessionExecutionSelection,
   commitSessionExecutionSelection,
@@ -33,11 +35,18 @@ import {
 import type { ReplyPayload } from "../types.js";
 import { withFullRuntimeReplyConfig } from "./get-reply-fast-path.js";
 import { getReplyFromConfig } from "./get-reply.js";
+import type { InternalGetReplyOptions } from "./get-reply.types.js";
 import { finalizeInboundContext } from "./inbound-context.js";
+import * as replyModelSelection from "./model-selection.js";
 import { bindPreparedReplyDispatchRuntime } from "./prepared-reply-dispatch-context.js";
 import { clearSessionQueues } from "./queue.js";
 import { getExistingFollowupQueue } from "./queue/state.js";
+import {
+  REPLY_OPERATION_RUN_STATE,
+  type ReplyOperationRunState,
+} from "./reply-operation-run-state.js";
 import { createReplyOperation } from "./reply-run-registry.js";
+import type { TypingController } from "./typing.js";
 
 vi.mock("../../agents/embedded-agent.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../agents/embedded-agent.js")>()),
@@ -93,13 +102,15 @@ function fixtureReplyConfig(workspace: string, storePath?: string) {
   });
 }
 
-async function prepareFixtureReply(cfg: ReturnType<typeof fixtureReplyConfig>) {
+async function prepareFixtureReply(cfg: OpenClawConfig) {
   await refreshPreparedModelRuntimeSnapshots(cfg, {
     gatewayLifecycle: true,
     catalogMode: "static",
   });
   const runtime = await loadPublishedGatewayReplyDispatchRuntime({ agentId: "main" });
-  if (!runtime) throw new Error("Expected the published reply runtime");
+  if (!runtime) {
+    throw new Error("Expected the published reply runtime");
+  }
   return bindPreparedReplyDispatchRuntime(runtime, getReplyFromConfig);
 }
 
@@ -180,7 +191,9 @@ it.each([false, true])(
       entry: { sessionId: "reply-child", updatedAt: Date.now() },
     });
     const view = getSessionEntry(childScope);
-    if (!view) throw new Error("Expected the released child view");
+    if (!view) {
+      throw new Error("Expected the released child view");
+    }
     applyModelOverrideToSessionEntry({
       entry: view,
       selection: { provider: "fixture", model: "default", isDefault: true },
@@ -202,7 +215,9 @@ it.each([false, true])(
       async (params) => {
         const result = await evaluate(params);
         if (params.provider === "fixture" && params.model === "parent") {
-          if (result.kind !== "ready") throw new Error(result.message);
+          if (result.kind !== "ready") {
+            throw new Error(`Expected ready fixture, got ${result.kind}`);
+          }
           evaluating.resolve();
           await release.promise;
         }
@@ -225,18 +240,22 @@ it.each([false, true])(
       }),
     ).then(
       (value) => ({ kind: "completed" as const, value }),
-      (error) => ({ kind: "failed" as const, error }),
+      (error: unknown) => ({ kind: "failed" as const, error }),
     );
     try {
       const first = await Promise.race([
         evaluating.promise.then(() => ({ kind: "evaluating" as const })),
         reply,
       ]);
-      if (first.kind === "failed") throw first.error;
+      if (first.kind === "failed") {
+        throw first.error;
+      }
       expect(first.kind).toBe("evaluating");
       if (changeParent) {
         const current = loadSessionEntryReadOnly(parentScope);
-        if (!current) throw new Error("Expected the actual parent row");
+        if (!current) {
+          throw new Error("Expected the actual parent row");
+        }
         commitSessionExecutionSelection(
           current,
           {
@@ -251,8 +270,8 @@ it.each([false, true])(
       const outcome = await reply;
       if (changeParent) {
         expect(outcome).toMatchObject({
-          kind: "failed",
-          error: new Error("The parent session selection changed. Retry the turn."),
+          kind: "completed",
+          value: { text: "The parent session selection changed. Retry the turn.", isError: true },
         });
         expect(runEmbeddedAgent).not.toHaveBeenCalled();
         expect(loadSessionEntryReadOnly(childScope)?.executionSelection).toEqual(
@@ -476,8 +495,8 @@ it.each(
       }
     };
     if (boundary === "auth") {
-      const resolveAuth = sessionAuth.resolveSessionAuthSelection;
-      vi.spyOn(sessionAuth, "resolveSessionAuthSelection").mockImplementation(async (params) => {
+      const resolveAuth = sessionAuth.prepareSessionAuthSelection;
+      vi.spyOn(sessionAuth, "prepareSessionAuthSelection").mockImplementation(async (params) => {
         const result = await resolveAuth(params);
         await pause(params.sessionKey);
         return result;
@@ -519,17 +538,21 @@ it.each(
       }),
     ).then(
       (value) => ({ kind: "completed" as const, value }),
-      (error) => ({ kind: "failed" as const, error }),
+      (error: unknown) => ({ kind: "failed" as const, error }),
     );
     try {
       const first = await Promise.race([
         admitted.promise.then(() => ({ kind: "admitted" as const })),
         pending,
       ]);
-      if (first.kind === "failed") throw first.error;
+      if (first.kind === "failed") {
+        throw first.error;
+      }
       expect(first.kind).toBe("admitted");
       const current = loadSessionEntryReadOnly(scope);
-      if (!current) throw new Error("Expected the admitted session");
+      if (!current) {
+        throw new Error("Expected the admitted session");
+      }
       expect(current.executionSelection).toMatchObject({
         state: "accepted",
         selection: { model: { provider: "fixture", id: mixedDirective ? "parent" : "default" } },
@@ -548,11 +571,16 @@ it.each(
       const committed = loadSessionEntryReadOnly(scope)?.executionSelection;
       release.resolve();
       const result = await pending;
-      if (result.kind === "failed") throw result.error;
+      if (result.kind === "failed") {
+        throw result.error;
+      }
       if (changeDuringAdmission) {
         expect([result.value].flat()).toContainEqual(
           expect.objectContaining({
-            text: "Session settings changed while preparing this reply. Please try again.",
+            text:
+              boundary === "auth"
+                ? "The session changed during model preparation. Try again."
+                : "Session settings changed while preparing this reply. Please try again.",
             isError: true,
           }),
         );
@@ -604,7 +632,9 @@ it.each(["new", "deferred", "accepted"])(
         entry: { sessionId: "model-info-continuation", updatedAt: Date.now() },
       });
       const entry = getSessionEntry(scope);
-      if (!entry) throw new Error("Expected the released session view");
+      if (!entry) {
+        throw new Error("Expected the released session view");
+      }
       applyModelOverrideToSessionEntry({
         entry,
         selection: { provider: "fixture", model: "parent", isDefault: false },
@@ -658,5 +688,325 @@ it.each(["new", "deferred", "accepted"])(
       expect(loadSessionEntryReadOnly(scope)?.executionSelection).toEqual(before);
     }
     expect(notices).toEqual([]);
+  },
+);
+
+it.each(["abort", "replace", "queued-abort"] as const)(
+  "does not commit selection or account when %s invalidates actual reply preparation",
+  async (change) => {
+    state = await createOpenClawTestState({
+      label: "reply-preparation-lifetime",
+      env: { OPENCLAW_TEST_FAST: "0" },
+    });
+    const scope = {
+      agentId: "main",
+      sessionKey: "agent:main:preparation-lifetime",
+      storePath: state.path("sessions.json"),
+    };
+    await upsertSessionEntry({
+      ...scope,
+      entry: { sessionId: "preparation-lifetime", updatedAt: Date.now() },
+    });
+    const view = getSessionEntry(scope);
+    if (!view) {
+      throw new Error("Expected the released session view");
+    }
+    applyModelOverrideToSessionEntry({
+      entry: view,
+      selection: { provider: "fixture", model: "parent", isDefault: false },
+    });
+    await upsertSessionEntry({ ...scope, entry: view });
+    await state.writeAuthProfiles({
+      version: 1,
+      profiles: { "fixture:shared": createApiKeyCredential("fixture", "synthetic-shared-key") },
+    });
+    const cfg = {
+      ...fixtureReplyConfig(state.workspaceDir, scope.storePath),
+      messages: { queue: { mode: "interrupt" as const } },
+    };
+    await state.writeConfig(cfg);
+    const resolveReply = await prepareFixtureReply(cfg);
+    const before = loadSessionEntryReadOnly(scope);
+    expect(before?.executionSelection?.state).toBe("deferred");
+    expect(before?.authProfileOverride).toBeUndefined();
+    const authSpy = vi.spyOn(sessionAuth, "prepareSessionAuthSelection");
+    const waiting = createDeferred();
+    const activeOperation =
+      change === "queued-abort"
+        ? createReplyOperation({
+            agentId: "main",
+            sessionKey: scope.sessionKey,
+            sessionId: view.sessionId,
+            resetTriggered: false,
+          })
+        : undefined;
+    activeOperation?.setPhase("running");
+    activeOperation?.abortSignal.addEventListener("abort", () => waiting.resolve(), { once: true });
+    let preparationParams:
+      | Parameters<typeof replyModelSelection.createModelSelectionState>[0]
+      | undefined;
+    const createModelState = replyModelSelection.createModelSelectionState;
+    vi.spyOn(replyModelSelection, "createModelSelectionState").mockImplementation(
+      async (params) => {
+        preparationParams = params;
+        return createModelState(params);
+      },
+    );
+    let holdReadiness = change !== "queued-abort";
+    const evaluating = createDeferred();
+    const release = createDeferred();
+    const evaluate = runtimeChoice.evaluatePublishedModelRuntimeChoice;
+    vi.spyOn(runtimeChoice, "evaluatePublishedModelRuntimeChoice").mockImplementation(
+      async (params) => {
+        const result = await evaluate(params);
+        if (holdReadiness && params.provider === "fixture" && params.model === "parent") {
+          if (result.kind !== "ready") {
+            throw new Error(`Expected ready fixture, got ${result.kind}`);
+          }
+          evaluating.resolve();
+          await release.promise;
+        }
+        return result;
+      },
+    );
+    const abort = new AbortController();
+    const runState: ReplyOperationRunState = {};
+    let typing: TypingController | undefined;
+    const options: InternalGetReplyOptions = {
+      abortSignal: abort.signal,
+      [REPLY_OPERATION_RUN_STATE]: runState,
+      onTypingController: (controller) => {
+        typing = controller;
+        vi.spyOn(controller, "cleanup");
+      },
+    };
+    const pending = resolveReply(
+      finalizeInboundContext({
+        Body: "Continue this task.",
+        CommandSource: "text",
+        CommandAuthorized: true,
+        Provider: "webchat",
+        Surface: "webchat",
+        ChatType: "direct",
+        SessionKey: scope.sessionKey,
+      }),
+      options,
+    ).then(
+      (value) => ({ kind: "completed" as const, value }),
+      (error: unknown) => ({ kind: "failed" as const, error }),
+    );
+    try {
+      if (activeOperation) {
+        const wait = await Promise.race([
+          waiting.promise.then(() => ({ kind: "waiting" as const })),
+          pending,
+        ]);
+        if (wait.kind === "failed") {
+          throw wait.error;
+        }
+        expect(wait.kind).toBe("waiting");
+        if (!preparationParams?.sessionEntry || !preparationParams.sessionStore) {
+          throw new Error("Expected the actual reply session working set");
+        }
+        expect(preparationParams.sessionEntry.authProfileOverride).toBe("fixture:shared");
+        await sessionAuth.clearSessionAuthProfileOverride({
+          sessionEntry: preparationParams.sessionEntry,
+          sessionStore: preparationParams.sessionStore,
+          sessionKey: scope.sessionKey,
+          storePath: scope.storePath,
+        });
+        holdReadiness = true;
+        activeOperation.complete();
+      }
+      const first = await Promise.race([
+        evaluating.promise.then(() => ({ kind: "evaluating" as const })),
+        pending,
+      ]);
+      if (first.kind === "failed") {
+        throw first.error;
+      }
+      expect(first.kind).toBe("evaluating");
+      await expect(authSpy.mock.results.at(-1)?.value).resolves.toMatchObject({
+        selection: { profileId: "fixture:shared", source: "auto" },
+      });
+      if (change !== "replace") {
+        abort.abort(new Error("Canceled by the caller"));
+      } else {
+        await replaceSessionEntry(scope, {
+          sessionId: "replacement-session",
+          updatedAt: Date.now(),
+        });
+      }
+      const unchanged = loadSessionEntryReadOnly(scope);
+      release.resolve();
+      const outcome = await pending;
+      if (change !== "replace") {
+        expect(outcome).toMatchObject({ kind: "failed", error: { name: "AbortError" } });
+        if (change === "abort") {
+          expect(unchanged?.executionSelection).toEqual(before?.executionSelection);
+        } else {
+          expect(unchanged?.executionSelection?.state).toBe("accepted");
+        }
+      } else {
+        expect(outcome).toMatchObject({
+          kind: "completed",
+          value: {
+            isError: true,
+            text: "The session changed during model preparation. Try again.",
+          },
+        });
+      }
+      const after = loadSessionEntryReadOnly(scope);
+      expect(after?.sessionId).toBe(unchanged?.sessionId);
+      expect(after?.executionSelection).toEqual(unchanged?.executionSelection);
+      expect(after?.authProfileOverride).toBeUndefined();
+      expect(after?.authProfileOverrideSource).toBeUndefined();
+      expect(after?.authProfileOverrideCompactionCount).toBeUndefined();
+      expect(runEmbeddedAgent).not.toHaveBeenCalled();
+      expect(typing?.cleanup).toHaveBeenCalled();
+      expect(runState.preRunRejection).toBeUndefined();
+    } finally {
+      activeOperation?.complete();
+      release.resolve();
+      await pending;
+    }
+  },
+);
+
+it("returns a locked initialization refusal with typing cleanup and the existing rejection marker", async () => {
+  state = await createOpenClawTestState({
+    label: "reply-locked-initialization",
+    env: { OPENCLAW_TEST_FAST: "0" },
+  });
+  const scope = {
+    agentId: "main",
+    sessionKey: "agent:main:locked-initialization",
+    storePath: state.path("sessions.json"),
+  };
+  await replaceSessionEntry(scope, {
+    sessionId: "locked-initialization",
+    updatedAt: Date.now(),
+    modelSelectionLocked: true,
+  });
+  const cfg = fixtureReplyConfig(state.workspaceDir, scope.storePath);
+  await state.writeConfig(cfg);
+  const resolveReply = await prepareFixtureReply(cfg);
+  const runState: ReplyOperationRunState = {};
+  let typing: TypingController | undefined;
+  const options: InternalGetReplyOptions = {
+    [REPLY_OPERATION_RUN_STATE]: runState,
+    onTypingController: (controller) => {
+      typing = controller;
+      vi.spyOn(controller, "cleanup");
+    },
+  };
+  const reply = await resolveReply(
+    finalizeInboundContext({
+      Body: "Continue this task.",
+      CommandSource: "text",
+      CommandAuthorized: true,
+      Provider: "webchat",
+      Surface: "webchat",
+      ChatType: "direct",
+      SessionKey: scope.sessionKey,
+    }),
+    options,
+  );
+  expect(reply).toEqual({ text: "Model selection is locked for this session.", isError: true });
+  expect(runState.preRunRejection).toBe("model-selection-locked");
+  expect(typing?.cleanup).toHaveBeenCalled();
+  expect(runEmbeddedAgent).not.toHaveBeenCalled();
+  const after = loadSessionEntryReadOnly(scope);
+  expect(after?.modelSelectionLocked).toBe(true);
+  expect(after?.executionSelection).toBeUndefined();
+  expect(after?.authProfileOverride).toBeUndefined();
+});
+
+it.each(["default", "session", "option", "clear"] as const)(
+  "uses the prepared deferred model's fast defaults with %s settings",
+  async (setting) => {
+    state = await createOpenClawTestState({
+      label: "reply-prepared-fast-mode",
+      env: { OPENCLAW_TEST_FAST: "0" },
+    });
+    const scope = {
+      agentId: "main",
+      sessionKey: "agent:main:prepared-fast-mode",
+      storePath: state.path("sessions.json"),
+    };
+    await upsertSessionEntry({
+      ...scope,
+      entry: {
+        sessionId: "prepared-fast-mode",
+        updatedAt: Date.now(),
+        ...(setting === "session" || setting === "clear" ? { fastMode: false } : {}),
+      },
+    });
+    const view = getSessionEntry(scope);
+    if (!view) {
+      throw new Error("Expected the released session view");
+    }
+    applyModelOverrideToSessionEntry({
+      entry: view,
+      selection: { provider: "fixture", model: "parent", isDefault: false },
+    });
+    await upsertSessionEntry({ ...scope, entry: view });
+    const base = fixtureReplyConfig(state.workspaceDir, scope.storePath);
+    const cfg = withFullRuntimeReplyConfig({
+      ...base,
+      agents: {
+        ...base.agents,
+        defaults: {
+          ...base.agents.defaults,
+          models: {
+            ...base.agents.defaults.models,
+            "fixture/default": {
+              ...base.agents.defaults.models["fixture/default"],
+              params: { fastMode: false, fastAutoOnSeconds: 11 },
+            },
+            "fixture/parent": {
+              ...base.agents.defaults.models["fixture/parent"],
+              params: { fastMode: "auto", fastAutoOnSeconds: 23 },
+            },
+          },
+        },
+      },
+    });
+    await state.writeConfig(cfg);
+    const resolveReply = await prepareFixtureReply(cfg);
+    const body = setting === "clear" ? "Continue this task.\n/fast default" : "Continue this task.";
+    const reply = await resolveReply(
+      finalizeInboundContext({
+        Body: body,
+        RawBody: body,
+        BodyForAgent: body,
+        CommandBody: body,
+        CommandSource: "text",
+        CommandAuthorized: true,
+        Provider: "webchat",
+        Surface: "webchat",
+        ChatType: "direct",
+        SessionKey: scope.sessionKey,
+      }),
+      setting === "option"
+        ? { fastModeOverride: true, fastModeAutoOnSecondsOverride: 37 }
+        : undefined,
+    );
+    expect(runEmbeddedAgent, JSON.stringify(reply)).toHaveBeenCalledOnce();
+    expect(runEmbeddedAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "fixture",
+        model: "parent",
+        fastMode: setting === "option" ? true : setting === "session" ? false : "auto",
+        fastModeAutoOnSeconds: setting === "option" ? 37 : 23,
+        prompt: expect.stringContaining("Continue this task."),
+      }),
+    );
+    const after = loadSessionEntryReadOnly(scope);
+    expect(after?.executionSelection).toMatchObject({
+      state: "accepted",
+      selection: { model: { provider: "fixture", id: "parent" } },
+    });
+    expect(after?.fastMode).toBe(setting === "session" || setting === "clear" ? false : undefined);
   },
 );

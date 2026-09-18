@@ -57,8 +57,10 @@ function createTurn(overrides: Partial<AdmittedFollowupTurn> = {}): AdmittedFoll
         sessionFile: "/tmp/session.jsonl",
         workspaceDir: "/tmp",
         config: {},
-        provider: "anthropic",
-        model: "claude",
+        executionSelection: {
+          model: { provider: "anthropic", id: "claude" },
+          executor: { kind: "harness", id: "openclaw" },
+        },
         messageProvider: "discord",
         timeoutMs: 1_000,
         blockReplyBreak: "message_end",

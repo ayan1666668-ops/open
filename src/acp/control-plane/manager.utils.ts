@@ -7,18 +7,11 @@ import {
   isAcpExecutionSelection,
   type AcpExecutionSelection,
 } from "../../model-picker/execution-selection.js";
-import { normalizeAgentId, parseAgentSessionKey } from "../../routing/session-key.js";
 /** Shared ACP manager normalization, resolution, and error helpers. */
 import { ACP_ERROR_CODES, AcpRuntimeError } from "../runtime/errors.js";
 import { buildAcpDatabaseSessionKey } from "../runtime/session-meta-keys.js";
 import { resolveSessionStorePathForAcp } from "../runtime/session-meta-store.js";
 import type { AcpSessionResolution, AcpSessionTarget } from "./manager.types.js";
-
-/** Resolves the agent id encoded in an ACP session key. */
-export function resolveAcpAgentFromSessionKey(sessionKey: string, fallback = "main"): string {
-  const parsed = parseAgentSessionKey(sessionKey);
-  return normalizeAgentId(parsed?.agentId ?? fallback);
-}
 
 /** Builds the stale-session error shown when ACP metadata is missing. */
 export function resolveMissingMetaError(sessionKey: string): AcpRuntimeError {

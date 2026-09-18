@@ -2,6 +2,11 @@ import { expectDefined } from "@openclaw/normalization-core";
 import { listAgentIds } from "../agents/agent-scope-config.js";
 import type { SessionEntry } from "../config/sessions.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { commitSessionExecutionSelection } from "../model-picker/apply-session-model-selection.js";
+import type {
+  ExecutionSelection,
+  ExecutionFallbackPermission,
+} from "../model-picker/execution-selection.js";
 import { parseAgentSessionKey } from "../routing/session-key.js";
 import { listSessionsFromStoreAsync } from "./session-utils-list.js";
 import { buildGatewaySessionRow } from "./session-utils-row.js";
@@ -62,4 +67,16 @@ export function listSessionFixture(
     agentId: input.opts.agentId ?? fixtureAgentId,
   });
   return listSessionsFromStoreAsync({ ...input, targetsBySessionKey });
+}
+
+/** Build canonical fixture intent through the same writer as session transactions. */
+export function sessionSelectionFixture(
+  selection: ExecutionSelection,
+  fallbackPermission: ExecutionFallbackPermission = "explicit",
+) {
+  const entry: SessionEntry = { sessionId: "selected-fixture", updatedAt: 1 };
+  commitSessionExecutionSelection(entry, selection, {
+    cause: { kind: "initialize", fallbackPermission },
+  });
+  return expectDefined(entry.executionSelection, "committed fixture selection");
 }

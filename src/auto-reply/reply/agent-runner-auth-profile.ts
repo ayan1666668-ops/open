@@ -7,29 +7,6 @@ import {
 import { isModelExecutionSelection } from "../../model-picker/execution-selection.js";
 import type { FollowupRun } from "./queue.js";
 
-/** Keeps an auth profile only when the current provider shares the primary auth scope. */
-export function resolveProviderScopedAuthProfile(params: {
-  provider: string;
-  primaryProvider: string;
-  authProfileId?: string;
-  authProfileIdSource?: "auto" | "user";
-  config?: ProviderAuthAliasLookupParams["config"];
-  workspaceDir?: ProviderAuthAliasLookupParams["workspaceDir"];
-}): { authProfileId?: string; authProfileIdSource?: "auto" | "user" } {
-  const aliasParams = { config: params.config, workspaceDir: params.workspaceDir };
-  const providerId = normalizeProviderId(params.provider);
-  const primaryProviderId = normalizeProviderId(params.primaryProvider);
-  const sharesAuthScope =
-    (providerId !== "" && providerId === primaryProviderId) ||
-    resolveProviderIdForAuth(params.provider, aliasParams) ===
-      resolveProviderIdForAuth(params.primaryProvider, aliasParams);
-  const authProfileId = sharesAuthScope ? params.authProfileId : undefined;
-  return {
-    authProfileId,
-    authProfileIdSource: authProfileId ? params.authProfileIdSource : undefined,
-  };
-}
-
 /** Resolves the auth profile override for a queued follow-up run. */
 export function resolveRunAuthProfile(
   run: FollowupRun["run"],
@@ -37,13 +14,22 @@ export function resolveRunAuthProfile(
   params?: { config?: ProviderAuthAliasLookupParams["config"] },
 ) {
   const selection = run.executionSelection;
-  if (!isModelExecutionSelection(selection)) return {};
-  return resolveProviderScopedAuthProfile({
-    provider,
-    primaryProvider: selection.model.provider,
-    authProfileId: run.authProfileId,
-    authProfileIdSource: run.authProfileIdSource,
+  if (!isModelExecutionSelection(selection)) {
+    return {};
+  }
+  const aliasParams = {
     config: params?.config ?? run.config,
     workspaceDir: run.workspaceDir,
-  });
+  };
+  const providerId = normalizeProviderId(provider);
+  const primaryProviderId = normalizeProviderId(selection.model.provider);
+  const sharesAuthScope =
+    (providerId !== "" && providerId === primaryProviderId) ||
+    resolveProviderIdForAuth(provider, aliasParams) ===
+      resolveProviderIdForAuth(selection.model.provider, aliasParams);
+  const authProfileId = sharesAuthScope ? run.authProfileId : undefined;
+  return {
+    authProfileId,
+    authProfileIdSource: authProfileId ? run.authProfileIdSource : undefined,
+  };
 }

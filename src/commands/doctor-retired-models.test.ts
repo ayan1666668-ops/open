@@ -506,7 +506,10 @@ describe("doctor retired model references", () => {
         });
         expect(entry?.executionSelection).toEqual({
           state: "deferred",
-          request: { model: { provider, id: "current-model" } },
+          request:
+            action === "replace"
+              ? { model: { provider, id: "current-model" } }
+              : { defaultSelection: "configured" },
           fallbackPermission: action === "replace" ? "explicit" : "configured",
         });
         expect(entry?.authProfileOverride).toBe(provider === "openai" ? "chatgpt" : undefined);
@@ -552,7 +555,9 @@ describe("doctor retired model references", () => {
       const entry = loadSessionEntry({ storePath, sessionKey, env: state.env });
       expect(entry?.executionSelection).toMatchObject({
         state: "deferred",
-        request: { model: { provider: "openai", id: "current-model" } },
+        request: keepsRequest
+          ? { model: { provider: "openai", id: "current-model" } }
+          : { defaultSelection: "configured" },
       });
       expect(entry?.executionSelection?.legacyRequest).toEqual(
         keepsRequest ? legacyRequest : undefined,
@@ -683,7 +688,7 @@ describe("doctor retired model references", () => {
     });
     expect(cleared?.executionSelection).toEqual({
       state: "deferred",
-      request: { model: { provider: "openai", id: "current-model" } },
+      request: { defaultSelection: "configured" },
       fallbackPermission: "configured",
     });
     expect(cleared?.authProfileOverride).toBe(personal);

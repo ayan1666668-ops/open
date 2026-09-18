@@ -7,7 +7,11 @@ import {
 import { resolveSessionAgentId } from "../../agents/agent-scope.js";
 import type { ModelCatalogEntry } from "../../agents/model-catalog.js";
 import { splitTrailingAuthProfile } from "../../agents/model-ref-profile.js";
-import { getModelRefStatus, resolveAllowedModelRef, type ModelRef } from "../../agents/model-selection.js";
+import {
+  getModelRefStatus,
+  resolveAllowedModelRef,
+  type ModelRef,
+} from "../../agents/model-selection.js";
 import { resolveSessionModelRefCore as resolveSessionModelRef } from "../../agents/session-model-ref.js";
 import { persistStickyModelSelectionBestEffort } from "../../agents/sticky-model-selection.js";
 import { refreshQueuedFollowupSession } from "../../auto-reply/reply/queue.js";
@@ -15,8 +19,10 @@ import type { SessionEntry } from "../../config/sessions.js";
 import { resolveCollapsedSessionAuthPinSource } from "../../config/sessions/auth-profile-override-provenance.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { PreparedSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
-import { getSessionExecutionSelection } from "../../model-picker/execution-selection.js";
-import { isAcpExecutionSelection } from "../../model-picker/execution-selection.js";
+import {
+  getSessionExecutionSelection,
+  isAcpExecutionSelection,
+} from "../../model-picker/execution-selection.js";
 import type { SessionWorkerPlacementContext } from "../worker-environments/session-placement-lifecycle.js";
 import { resolveGatewayModelSelectionPolicy } from "./session-model-selection-policy.js";
 import { resolveSessionWorkerPlacementPatchError } from "./sessions-shared.js";

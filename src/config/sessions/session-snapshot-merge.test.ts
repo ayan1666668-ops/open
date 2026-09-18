@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { SESSION_EXECUTION_SELECTION_TRANSACTION_FIELDS } from "../../model-picker/execution-selection.js";
 import {
   mergeSessionSnapshotChanges,
   projectSessionSnapshotChanges,
@@ -12,6 +13,23 @@ const initial: SessionEntry = {
   modelProvider: "anthropic",
   model: "claude-opus-4-6",
 };
+
+const firstSelection = {
+  state: "accepted",
+  selection: {
+    model: { provider: "openai", id: "gpt-5.4" },
+    executor: { kind: "harness", id: "openclaw" },
+  },
+  fallbackPermission: "explicit",
+} satisfies NonNullable<SessionEntry["executionSelection"]>;
+const nextSelection = {
+  state: "accepted",
+  selection: {
+    model: { provider: "openai", id: "gpt-5.5" },
+    executor: { kind: "harness", id: "codex" },
+  },
+  fallbackPermission: "explicit",
+} satisfies NonNullable<SessionEntry["executionSelection"]>;
 
 describe("session snapshot merge", () => {
   it("projects same-provider model changes as an atomic pair", () => {
@@ -61,42 +79,44 @@ describe("session snapshot merge", () => {
     });
   });
 
-  it("keeps a concurrent model and auth override family atomically", () => {
+  it("keeps a concurrent deferred execution and auth transaction atomically", () => {
     const initialOverride: SessionEntry = {
       ...initial,
-      providerOverride: "openai",
-      modelOverride: "gpt-old",
-      modelOverrideSource: "auto",
-      modelOverrideFallbackOriginProvider: "anthropic",
-      modelOverrideFallbackOriginModel: "claude-opus-4-6",
+      executionSelection: { ...firstSelection, fallbackPermission: "configured" },
       authProfileOverride: "openai:fallback",
       authProfileOverrideSource: "auto",
+      authProfileOverrideCompactionCount: 1,
       fallbackNotice: {
         kind: "active",
-        selectedModel: "openai/gpt-old",
+        selectedModel: "openai/gpt-5.4",
         activeModel: "openai/gpt-fallback",
       },
     };
     const next = {
       ...initialOverride,
       updatedAt: 2,
-      providerOverride: undefined,
-      modelOverride: undefined,
-      modelOverrideSource: undefined,
-      modelOverrideFallbackOriginProvider: undefined,
-      modelOverrideFallbackOriginModel: undefined,
+      executionSelection: undefined,
       authProfileOverride: undefined,
       authProfileOverrideSource: undefined,
+      authProfileOverrideCompactionCount: undefined,
       fallbackNotice: undefined,
       liveModelSwitchPending: true,
     };
     const current: SessionEntry = {
       ...initialOverride,
       updatedAt: 3,
-      modelOverride: "gpt-new",
-      modelOverrideSource: "user",
+      executionSelection: {
+        state: "deferred",
+        request: {
+          model: { provider: "openai", id: "gpt-new" },
+          executor: { kind: "harness", id: "codex" },
+        },
+        previous: firstSelection.selection,
+        fallbackPermission: "explicit",
+      },
       authProfileOverride: "openai:user",
       authProfileOverrideSource: "user",
+      authProfileOverrideCompactionCount: 2,
       fallbackNotice: {
         kind: "active",
         selectedModel: "openai/gpt-new",
@@ -112,15 +132,13 @@ describe("session snapshot merge", () => {
   it("re-arms a winning explicit model switch after the prior signal clears", () => {
     const initialOverride: SessionEntry = {
       ...initial,
-      providerOverride: "openai",
-      modelOverride: "gpt-5.4",
-      modelOverrideSource: "user",
+      executionSelection: firstSelection,
       liveModelSwitchPending: true,
     };
     const next: SessionEntry = {
       ...initialOverride,
       updatedAt: 2,
-      modelOverride: "gpt-5.5",
+      executionSelection: nextSelection,
     };
     const current = { ...initialOverride, updatedAt: 3 };
     delete current.liveModelSwitchPending;
@@ -133,9 +151,7 @@ describe("session snapshot merge", () => {
         reassertLiveModelSwitchPending: true,
       }),
     ).toMatchObject({
-      providerOverride: "openai",
-      modelOverride: "gpt-5.5",
-      modelOverrideSource: "user",
+      executionSelection: nextSelection,
       liveModelSwitchPending: true,
     });
   });
@@ -143,16 +159,14 @@ describe("session snapshot merge", () => {
   it("preserves concurrently consumed unchanged model-dependent state", () => {
     const initialOverride: SessionEntry = {
       ...initial,
-      providerOverride: "openai",
-      modelOverride: "gpt-5.4",
-      modelOverrideSource: "user",
+      executionSelection: firstSelection,
       liveModelSwitchPending: true,
       thinkingLevel: "high",
     };
     const next: SessionEntry = {
       ...initialOverride,
       updatedAt: 2,
-      modelOverride: "gpt-5.5",
+      executionSelection: nextSelection,
     };
     const current: SessionEntry = {
       ...initialOverride,
@@ -164,18 +178,16 @@ describe("session snapshot merge", () => {
     const merged = mergeSessionSnapshotChanges({ initial: initialOverride, next, current });
 
     expect(merged).toMatchObject({
-      modelOverride: "gpt-5.5",
+      executionSelection: nextSelection,
       thinkingLevel: "low",
     });
     expect(merged.liveModelSwitchPending).toBeUndefined();
   });
 
-  it("clears stale model-dependent state with the winning model selection", () => {
+  it("preserves observed output while clearing stale state for the winning selection", () => {
     const initialOverride: SessionEntry = {
       ...initial,
-      providerOverride: "openai",
-      modelOverride: "gpt-5.4",
-      modelOverrideSource: "user",
+      executionSelection: firstSelection,
       modelProvider: "openai",
       model: "gpt-5.4",
       fallbackNotice: {
@@ -209,9 +221,7 @@ describe("session snapshot merge", () => {
     const next: SessionEntry = {
       ...initialOverride,
       updatedAt: 2,
-      modelOverride: "gpt-5.5",
-      modelProvider: undefined,
-      model: undefined,
+      executionSelection: nextSelection,
       fallbackNotice: undefined,
       contextTokens: undefined,
       contextTokensSource: undefined,
@@ -234,30 +244,26 @@ describe("session snapshot merge", () => {
     const merged = mergeSessionSnapshotChanges({ initial: initialOverride, next, current });
 
     expect(merged).toMatchObject({
-      providerOverride: "openai",
-      modelOverride: "gpt-5.5",
-      modelOverrideSource: "user",
+      executionSelection: nextSelection,
     });
-    expect(merged.modelProvider).toBeUndefined();
-    expect(merged.model).toBeUndefined();
+    expect(merged.modelProvider).toBe("openai");
+    expect(merged.model).toBe("gpt-5.4-mini");
     expect(merged.fallbackNotice).toBeUndefined();
     expect(merged.contextTokens).toBeUndefined();
     expect(merged.contextTokensSource).toBeUndefined();
     expect(merged.contextBudgetStatus).toBeUndefined();
   });
 
-  it("clears runtime metadata added concurrently for the previous model", () => {
+  it("keeps concurrent observed output but clears context added for the previous selection", () => {
     const initialOverride: SessionEntry = {
       sessionId: "session-1",
       updatedAt: 1,
-      providerOverride: "openai",
-      modelOverride: "gpt-5.4",
-      modelOverrideSource: "user",
+      executionSelection: firstSelection,
     };
     const next: SessionEntry = {
       ...initialOverride,
       updatedAt: 2,
-      modelOverride: "gpt-5.5",
+      executionSelection: nextSelection,
     };
     const current: SessionEntry = {
       ...initialOverride,
@@ -275,12 +281,10 @@ describe("session snapshot merge", () => {
     const merged = mergeSessionSnapshotChanges({ initial: initialOverride, next, current });
 
     expect(merged).toMatchObject({
-      providerOverride: "openai",
-      modelOverride: "gpt-5.5",
-      modelOverrideSource: "user",
+      executionSelection: nextSelection,
     });
-    expect(merged.modelProvider).toBeUndefined();
-    expect(merged.model).toBeUndefined();
+    expect(merged.modelProvider).toBe("openai");
+    expect(merged.model).toBe("gpt-5.4");
     expect(merged.fallbackNotice).toBeUndefined();
     expect(merged.contextTokens).toBeUndefined();
   });
@@ -288,16 +292,12 @@ describe("session snapshot merge", () => {
   it("does not reject a model switch after concurrent runtime metadata refresh", () => {
     const initialOverride: SessionEntry = {
       ...initial,
-      providerOverride: "openai",
-      modelOverride: "gpt-5.4",
-      modelOverrideSource: "user",
+      executionSelection: firstSelection,
       contextTokens: 100_000,
     };
     const next: SessionEntry = {
       ...initialOverride,
-      modelOverride: "gpt-5.5",
-      modelProvider: undefined,
-      model: undefined,
+      executionSelection: nextSelection,
       contextTokens: undefined,
     };
     const current: SessionEntry = {
@@ -312,7 +312,7 @@ describe("session snapshot merge", () => {
         initial: initialOverride,
         next,
         current,
-        touchedFields: ["providerOverride", "modelOverride", "modelOverrideSource"],
+        touchedFields: SESSION_EXECUTION_SELECTION_TRANSACTION_FIELDS,
       }),
     ).toBe(false);
   });
@@ -320,14 +320,12 @@ describe("session snapshot merge", () => {
   it("rejects a model switch after a concurrent thinking override", () => {
     const initialOverride: SessionEntry = {
       ...initial,
-      providerOverride: "openai",
-      modelOverride: "gpt-5.4",
-      modelOverrideSource: "user",
+      executionSelection: firstSelection,
       thinkingLevel: "xhigh",
     };
     const next: SessionEntry = {
       ...initialOverride,
-      modelOverride: "gpt-5.5",
+      executionSelection: nextSelection,
       thinkingLevel: "high",
     };
     const current: SessionEntry = {
@@ -341,7 +339,7 @@ describe("session snapshot merge", () => {
         initial: initialOverride,
         next,
         current,
-        touchedFields: ["providerOverride", "modelOverride", "modelOverrideSource"],
+        touchedFields: SESSION_EXECUTION_SELECTION_TRANSACTION_FIELDS,
       }),
     ).toBe(true);
   });
@@ -363,9 +361,7 @@ describe("session snapshot merge", () => {
     const current: SessionEntry = {
       ...initial,
       updatedAt: 3,
-      providerOverride: "openai",
-      modelOverride: "gpt-5.5",
-      modelOverrideSource: "user",
+      executionSelection: nextSelection,
     };
 
     expect(mergeSessionSnapshotChanges({ initial, next, current })).toEqual(current);

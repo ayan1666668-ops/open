@@ -2,6 +2,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import "./subagent-spawn-model.mocks.shared.js";
 import { createDeferred } from "../../../../test/helpers/promise.js";
 import { forkSessionEntryFromParent } from "../../../auto-reply/reply/session-fork.js";
 import {
@@ -43,6 +44,7 @@ import {
 } from "../../tools/gateway-caller-context.js";
 import { createSessionsSpawnTool } from "../../tools/sessions-spawn-tool.js";
 import { subagentRuns } from "../registry/subagent-registry-memory.js";
+import { resolveSubagentAttachmentDir } from "../subagent-attachment-paths.js";
 import { enqueueSwarmRun } from "../swarm/swarm-scheduler.js";
 import {
   installSpawnAuthorityFixture,
@@ -210,12 +212,17 @@ describe("pending spawn preparation authority", () => {
           }),
         ]);
         expect(subagentRuns.size).toBe(0);
-        expect(loadSessionEntry({ storePath, sessionKey: childSessionKey })).toMatchObject({
-          model: "gpt-5.4",
-          modelProvider: "openai",
-          modelOverride: "gpt-5.4",
-          providerOverride: "openai",
-        });
+        const selectedModel = {
+          state: "accepted",
+          selection: {
+            model: { id: "gpt-5.4", provider: "openai" },
+            executor: { kind: "harness", id: "codex" },
+          },
+          fallbackPermission: "configured",
+        };
+        expect(
+          loadSessionEntry({ storePath, sessionKey: childSessionKey })?.executionSelection,
+        ).toEqual(selectedModel);
         if (closure === "closed") {
           admission.close();
           expect(parent.controller.signal.aborted).toBe(false);
@@ -241,7 +248,7 @@ describe("pending spawn preparation authority", () => {
         } else {
           expect(result).toMatchObject({ status: "forked" });
           expect(entry.sessionId).not.toBe(initialSessionId);
-          expect(entry).toMatchObject({ model: "gpt-5.4", modelProvider: "openai" });
+          expect(entry.executionSelection).toEqual(selectedModel);
           expect(transcript).toEqual(
             expect.arrayContaining([
               expect.objectContaining({
@@ -266,7 +273,14 @@ describe("pending spawn preparation authority", () => {
           const details = (outcome as { details: { attachments: { relDir: string } } }).details;
           expect(
             await fs.readFile(
-              path.join(fixture.stateDir, details.attachments.relDir, "synthetic.txt"),
+              path.join(
+                resolveSubagentAttachmentDir(
+                  "main",
+                  childSessionKey,
+                  path.basename(details.attachments.relDir),
+                ),
+                "synthetic.txt",
+              ),
               "utf8",
             ),
           ).toBe("synthetic attachment");
@@ -517,8 +531,10 @@ describe("pending spawn preparation authority", () => {
       // A rejected spawn never enters preparation; report it instead of waiting for the test timeout.
       const childSessionKey = await Promise.race([
         entered.promise,
-        wrapped.then(() => {
-          throw new Error("Spawn settled before entering context preparation");
+        wrapped.then((result) => {
+          throw new Error(
+            `Spawn settled before entering context preparation: ${JSON.stringify(result)}`,
+          );
         }),
       ]);
       expect(subagentRuns.size, "no ownership transfer before preparation resolves").toBe(0);
@@ -602,7 +618,7 @@ describe("pending spawn preparation authority", () => {
         .toEqual([]);
       expect(bindingFixture?.bindings ?? []).toEqual([]);
       for (const directory of attachmentFixture?.attachmentDirs ?? []) {
-        await expect(fs.stat(directory)).rejects.toMatchObject({ code: "ENOENT" });
+        await expect(fs.stat(directory), directory).rejects.toMatchObject({ code: "ENOENT" });
       }
       expect(deleted).toEqual([childSessionKey]);
       expect(loadSessionEntry({ storePath, sessionKey: childSessionKey })).toBeUndefined();

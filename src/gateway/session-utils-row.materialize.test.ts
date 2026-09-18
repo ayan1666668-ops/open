@@ -2,10 +2,12 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { expectDefined } from "@openclaw/normalization-core";
 import { afterEach, expect, test, vi } from "vitest";
 import { createSubagentRunRecord } from "../agents/subagent-test-fixtures.test-helpers.js";
 import { buildSubagentRunReadIndexFromRuns } from "../agents/subagents/registry/subagent-registry-queries.js";
 import type { SubagentRunRecord } from "../agents/subagents/registry/subagent-registry.types.js";
+import { migrateSessionExecutionSelection } from "../commands/doctor/shared/session-execution-selection.js";
 import { resetConfigRuntimeState, setRuntimeConfigSnapshot } from "../config/config.js";
 import type { InternalSessionEntry, SessionEntry } from "../config/sessions.js";
 import { ACTIVITY_SUMMARY_FORMAT_REVISION } from "../config/sessions/activity-summary.js";
@@ -13,6 +15,7 @@ import {
   appendTranscriptMessageSync,
   replaceSessionEntry,
 } from "../config/sessions/session-accessor.js";
+import { normalizePersistedSessionEntryShape } from "../config/sessions/store-entry-shape.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { clearAgentRunContext, registerAgentRunContext } from "../infra/agent-run-registry.js";
 import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
@@ -38,11 +41,6 @@ import type { WorkerSessionPlacementRecord } from "./worker-environments/placeme
 const START = Date.UTC(2026, 8, 15);
 const TIMES = [START + 29_999, START + 30_000, START + 7_200_001] as const;
 const GOLDEN_HASHES: Record<string, readonly [string, string, string]> = {
-  "ACP metadata owns the runtime": [
-    "8663e7d988e076ebebce9c1e3a657ef210162af9db649e4efe887a5fdd53508b",
-    "8663e7d988e076ebebce9c1e3a657ef210162af9db649e4efe887a5fdd53508b",
-    "8663e7d988e076ebebce9c1e3a657ef210162af9db649e4efe887a5fdd53508b",
-  ],
   "activity current and active correlated placement": [
     "4ccd175adb58b964bfe852c187cc6d1846eba8594910339707fb522e9e9d4312",
     "4ccd175adb58b964bfe852c187cc6d1846eba8594910339707fb522e9e9d4312",
@@ -188,13 +186,21 @@ function config(): OpenClawConfig {
 function fixtures(): RowFixture[] {
   const ended = "agent:main:subagent:ended";
   const unknown = "agent:main:subagent:unknown";
-  const parentEntry: SessionEntry = {
-    ...BASE_ENTRY,
-    sessionId: "parent-session",
-    providerOverride: "row-fixture",
-    modelOverride: "newer",
-    modelOverrideSource: "user",
-  };
+  const parentEntry = expectDefined(
+    normalizePersistedSessionEntryShape(
+      migrateSessionExecutionSelection({
+        entry: {
+          ...BASE_ENTRY,
+          sessionId: "parent-session",
+          providerOverride: "row-fixture",
+          modelOverride: "newer",
+          modelOverrideSource: "user",
+        },
+        classifyExecutor: (id) => (id === "openclaw" ? "harness" : undefined),
+      }).entry,
+    ),
+    "migrated unpinned parent",
+  );
   const childStore: Record<string, SessionEntry> = {
     [PARENT]: parentEntry,
     [LIVE]: {
@@ -383,19 +389,29 @@ function fixtures(): RowFixture[] {
       ),
     },
     {
-      name: "ACP metadata owns the runtime",
+      name: "ACP native ownership does not borrow observed model history",
       key: "agent:main:acp:golden",
-      entry: {
-        ...BASE_ENTRY,
-        acp: {
-          backend: "acpx",
-          agent: "fixture",
-          runtimeSessionName: "golden-acp",
-          mode: "persistent",
-          state: "idle",
-          lastActivityAt: START,
-        },
-      },
+      entry: expectDefined(
+        normalizePersistedSessionEntryShape(
+          migrateSessionExecutionSelection({
+            entry: {
+              ...BASE_ENTRY,
+              modelProvider: "row-fixture",
+              model: "older",
+              acp: {
+                backend: "acpx",
+                agent: "fixture",
+                runtimeSessionName: "golden-acp",
+                mode: "persistent",
+                state: "idle",
+                lastActivityAt: START,
+              },
+            },
+            classifyExecutor: () => undefined,
+          }).entry,
+        ),
+        "migrated delegated ACP default",
+      ),
     },
     {
       name: "activity current and active correlated placement",
@@ -621,6 +637,16 @@ test("preserves complete base rows across time and caller presentation fixtures"
       expect(materialized.row.snapshotAt).toBeUndefined();
       rows.forEach((row, index) => {
         expect(row.snapshotAt).toBe(TIMES[index]);
+        if (fixture.key === "agent:main:acp:golden") {
+          expect(row).toMatchObject({
+            runtimeSelectionLocked: true,
+            agentRuntime: { id: "acpx" },
+            modelOverrideSource: null,
+          });
+          expect(row.modelProvider).toBeUndefined();
+          expect(row.model).toBeUndefined();
+          return;
+        }
         // Sampling metadata is additive; retain golden coverage of every existing wire field.
         const { snapshotAt: _snapshotAt, ...previousWireFields } = row;
         const json = JSON.stringify(previousWireFields);

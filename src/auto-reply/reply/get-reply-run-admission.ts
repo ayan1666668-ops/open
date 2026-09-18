@@ -1,10 +1,7 @@
 import crypto from "node:crypto";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
-import { resolveSessionAuthSelection } from "../../agents/auth-profiles/session-override.js";
-import { resolveAgentHarnessPolicy } from "../../agents/harness/policy.js";
 import { MAIN_SESSION_RECOVERY_WORK_ADMISSION_OWNER } from "../../agents/main-session-recovery/main-session-recovery-admission.js";
 import { hasResolvedThinkingCatalogEntry } from "../../agents/thinking-runtime.js";
-import { resolveCollapsedSessionAuthPinSource } from "../../config/sessions/auth-profile-override-provenance.js";
 import { formatSqliteSessionFileMarker } from "../../config/sessions/legacy-sqlite-marker.js";
 import {
   resolveSessionFilePathCore,
@@ -19,7 +16,6 @@ import {
   getSessionWorkAdmissionOwnerRelease,
   interruptSessionWorkAdmissions,
 } from "../../sessions/session-lifecycle-admission.js";
-import { readSessionInputProfileId } from "../../sessions/session-participant-input.js";
 import { resolveCommandTurnTargetSessionKey } from "../command-turn-context.js";
 import {
   formatThinkingLevels,
@@ -87,7 +83,6 @@ export async function prepareReplyRunAdmission(context: PreparedReplyRunContext)
     sessionCtx,
     cfg,
     agentId,
-    agentDir,
     directives,
     modelState,
     provider,
@@ -399,60 +394,18 @@ export async function prepareReplyRunAdmission(context: PreparedReplyRunContext)
     const cleared = clearCommandLane(sessionLaneKey);
     logVerbose(`Cleared ${cleared} queued command(s) before interrupting ${sessionLaneKey}`);
   }
-  const agentHarnessPolicy = useFastReplyRuntime
-    ? undefined
-    : resolveAgentHarnessPolicy({
-        provider,
-        modelId: model,
-        config: cfg,
-        agentId,
-        sessionKey: context.runtimePolicySessionKey,
-      });
-  const resolveRuntimeAuthProfile = async () => {
-    if (useFastReplyRuntime && !params.configuredProfileId) {
-      return {
-        authProfileId: preparedSessionState.sessionEntry?.authProfileOverride,
-        authProfileIdSource: resolveCollapsedSessionAuthPinSource(
-          preparedSessionState.sessionEntry,
-        ),
-      };
+  let preparedAuth = modelState.auth;
+  const readPreparedAuth = () => {
+    const error = preparedAuth?.validate(preparedSessionState.sessionEntry);
+    if (error) {
+      throw new Error(error);
     }
-    const shouldUseEphemeralSession = params.configuredProfileId !== undefined;
-    const authSessionKey = shouldUseEphemeralSession ? (sessionKey ?? sessionIdFinal) : sessionKey;
-    const authSessionEntry =
-      shouldUseEphemeralSession && preparedSessionState.sessionEntry
-        ? { ...preparedSessionState.sessionEntry }
-        : preparedSessionState.sessionEntry;
-    const authSessionStore =
-      shouldUseEphemeralSession && authSessionEntry
-        ? { [authSessionKey]: authSessionEntry }
-        : sessionStore;
-    const selection = await resolveSessionAuthSelection({
-      cfg,
-      provider,
-      modelId: model,
-      agentId,
-      configuredProfileId: params.configuredProfileId,
-      ...(agentHarnessPolicy ? { harnessRuntime: agentHarnessPolicy.runtime } : {}),
-      agentDir,
-      sessionEntry: authSessionEntry,
-      sessionStore: authSessionStore,
-      sessionKey: authSessionKey,
-      storePath: shouldUseEphemeralSession ? undefined : storePath,
-      isNewSession,
-      // Only an authenticated Gateway profile establishes a person-linked pin;
-      // channel senders read as observations and resolve to undefined here.
-      requesterProfileId: readSessionInputProfileId(ctx),
-    });
     return {
-      authProfileId: selection?.profileId,
-      authProfileIdSource: selection?.source,
+      authProfileId: preparedAuth?.selection?.profileId,
+      authProfileIdSource: preparedAuth?.selection?.source,
     };
   };
-  let { authProfileId, authProfileIdSource } = await traceRunPhase(
-    "reply.resolve_auth_profile",
-    () => resolveRuntimeAuthProfile(),
-  );
+  readPreparedAuth();
   const { runReplyAgent } = await traceRunPhase("reply.load_agent_runner_runtime", () =>
     loadAgentRunnerRuntime(),
   );
@@ -604,7 +557,11 @@ export async function prepareReplyRunAdmission(context: PreparedReplyRunContext)
             Promise.resolve(undefined)),
       refreshPreparedState: async () => {
         preparedSessionState = resolvePreparedSessionState();
-        ({ authProfileId, authProfileIdSource } = await resolveRuntimeAuthProfile());
+        if (preparedSessionState.sessionEntry) {
+          const refreshed = await modelState.refreshExecution(preparedSessionState.sessionEntry);
+          preparedAuth = refreshed.auth;
+        }
+        readPreparedAuth();
         preparedSessionState = resolvePreparedSessionState();
         // The interrupted run may have changed goal or suggestion state while admission waited.
         await refreshInboundContextAfterAdmissionWait();
@@ -624,6 +581,9 @@ export async function prepareReplyRunAdmission(context: PreparedReplyRunContext)
     await traceRunPhase("reply.drain_system_events", () => drainSystemEventBlocks());
     promptBodies = await traceRunPhase("reply.build_prompt_bodies", () => rebuildPromptBodies());
   }
+
+  preparedSessionState = resolvePreparedSessionState();
+  const { authProfileId, authProfileIdSource } = readPreparedAuth();
 
   const {
     prefixedCommandBody,
@@ -665,6 +625,7 @@ export async function prepareReplyRunAdmission(context: PreparedReplyRunContext)
     isActive,
     authProfileId,
     authProfileIdSource,
+    preparedAuth,
   } as const;
 }
 

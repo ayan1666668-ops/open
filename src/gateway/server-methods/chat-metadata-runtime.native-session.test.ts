@@ -14,7 +14,7 @@ import {
 
 describe("gateway chat metadata native session ownership", () => {
   test.each([false, true])(
-    "keeps runtime-only startup projections scoped to their provider (default model: %s)",
+    "keeps accepted runtime projections scoped to their provider (native-managed model: %s)",
     async (defaultModel) => {
       const config: OpenClawConfig = {
         plugins: { entries: { copilot: { enabled: true } } },
@@ -58,10 +58,38 @@ describe("gateway chat metadata native session ownership", () => {
           },
         },
       });
-      const provider = defaultModel ? {} : { providerOverride: "github-copilot" };
-      const native = { ...provider, agentRuntimeOverride: "copilot" };
-      const host = { ...provider, agentRuntimeOverride: "openclaw" };
-      const otherProvider = { providerOverride: "unrelated", agentRuntimeOverride: "copilot" };
+      const native = {
+        executionSelection: {
+          state: "accepted",
+          selection: defaultModel
+            ? { model: "native-managed", executor: { kind: "harness", id: "copilot" } }
+            : {
+                model: { provider: "github-copilot", id: "fixture-model" },
+                executor: { kind: "harness", id: "copilot" },
+              },
+          fallbackPermission: "explicit",
+        },
+      } satisfies Partial<InternalSessionEntry>;
+      const host = {
+        executionSelection: {
+          state: "accepted",
+          selection: {
+            model: { provider: "github-copilot", id: "fixture-model" },
+            executor: { kind: "harness", id: "openclaw" },
+          },
+          fallbackPermission: "explicit",
+        },
+      } satisfies Partial<InternalSessionEntry>;
+      const otherProvider = {
+        executionSelection: {
+          state: "accepted",
+          selection: {
+            model: { provider: "unrelated", id: "fixture-model" },
+            executor: { kind: "harness", id: "copilot" },
+          },
+          fallbackPermission: "explicit",
+        },
+      } satisfies Partial<InternalSessionEntry>;
       try {
         await harness.runtime.refresh();
         await expect(
@@ -137,6 +165,14 @@ describe("gateway chat metadata native session ownership", () => {
       updatedAt: 1,
       agentHarnessId: "test-native",
       modelSelectionLocked: true,
+      executionSelection: {
+        state: "accepted",
+        selection: {
+          model: "native-managed",
+          executor: { kind: "harness", id: "test-native" },
+        },
+        fallbackPermission: "explicit",
+      },
     };
     const request = {
       agentId: "main",
@@ -251,6 +287,14 @@ describe("gateway chat metadata native session ownership", () => {
         updatedAt: 1,
         agentHarnessId: "test-native",
         modelSelectionLocked: true,
+        executionSelection: {
+          state: "accepted",
+          selection: {
+            model: "native-managed",
+            executor: { kind: "harness", id: "test-native" },
+          },
+          fallbackPermission: "explicit",
+        },
         authProfileOverride: "openai:fixture",
         authProfileOverrideSource: "user",
       };

@@ -337,7 +337,12 @@ describe("handleLoginCommand", () => {
     runModelsAuthLoginFlowMock.mockImplementationOnce(async () => {
       params.sessionStore![params.sessionKey] = {
         ...params.sessionEntry!,
-        providerOverride: "anthropic",
+        executionSelection: {
+          state: "deferred",
+          request: {},
+          legacyRequest: { provider: "anthropic", source: "user" },
+          fallbackPermission: "explicit",
+        },
         authProfileOverride: "anthropic:selected",
       };
       return {

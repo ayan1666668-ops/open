@@ -335,8 +335,12 @@ async function installDefaultPluginRegistry(): Promise<void> {
   const { resetPluginRuntimeStateForTest, setActivePluginRegistry } = await vi.importActual<
     typeof import("../src/plugins/runtime.js")
   >("../src/plugins/runtime.js");
+  const { waitForPluginCacheRetirement } = await vi.importActual<
+    typeof import("../src/plugins/plugin-cache.js")
+  >("../src/plugins/plugin-cache.js");
   workerRuntimeState.materializedDefaultPluginRegistry = null;
   resetPluginRuntimeStateForTest();
+  await waitForPluginCacheRetirement();
   setActivePluginRegistry(resolveDefaultPluginRegistryProxy());
 }
 

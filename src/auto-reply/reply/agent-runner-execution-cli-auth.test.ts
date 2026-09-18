@@ -170,7 +170,7 @@ describe("executeAgentTurn: CLI credential selection", () => {
       catalog: [testModel(testCase.primary, model), testModel(testCase.provider, model)],
       profiles,
       runtimeAuthModes: {
-        [testCase.backend]: testCase.backend === "google-gemini-cli" ? "api-key" : "token",
+        [testCase.backend]: testCase.backend === "google-gemini-cli" ? "api_key" : "token",
       },
     });
     state.isCliProviderMock.mockImplementation((provider) => provider === testCase.backend);

@@ -1,11 +1,10 @@
 // Reconciles stale or lost task registry records during maintenance passes.
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { isAcpTurnActive } from "../acp/control-plane/active-turns.js";
-import { getAcpSessionManager } from "../acp/control-plane/manager.js";
 import { acpSessionActorKey, resolveAcpSessionTarget } from "../acp/control-plane/manager.utils.js";
 import {
   listAcpSessionEntries,
-  readAcpSessionEntry,
+  readAcpSessionEntryCore,
   type AcpSessionStoreEntry,
 } from "../acp/runtime/session-meta.js";
 import { isBackgroundExecSessionActive } from "../agents/bash-process-control.js";
@@ -21,7 +20,6 @@ import {
   listSessionEntriesReadOnly,
   type SessionEntrySummary,
 } from "../config/sessions/session-accessor.js";
-import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { isCronJobActive } from "../cron/active-jobs.js";
 import { resolveCronTaskRecordTimestamp } from "../cron/task-run-detail.js";
 import { getAgentRunContext } from "../infra/agent-run-registry.js";
@@ -65,6 +63,7 @@ import {
 } from "./runtime-internal.js";
 import { readTaskBackingInstance } from "./task-backing-authority.js";
 import { runTaskFlowRegistryMaintenance } from "./task-flow-registry.maintenance.js";
+import { loadTaskAcpSessionCloser, type CloseAcpSession } from "./task-registry-acp-cleanup.js";
 import { getTaskRegistryMaintenanceSnapshot } from "./task-registry-maintenance-snapshot.js";
 import { withTaskRegistryMutation } from "./task-registry-state.js";
 import {
@@ -107,13 +106,8 @@ let configuredRuntimeAuthoritative = false;
 
 type TaskRegistryMaintenanceRuntime = {
   listAcpSessionEntries: typeof listAcpSessionEntries;
-  readAcpSessionEntry: typeof readAcpSessionEntry;
-  closeAcpSession?: (params: {
-    cfg: OpenClawConfig;
-    sessionKey: string;
-    agentId?: string;
-    reason: string;
-  }) => Promise<void>;
+  readAcpSessionEntry: typeof readAcpSessionEntryCore;
+  loadCloseAcpSession?: () => Promise<CloseAcpSession | undefined>;
   listSessionBindingsBySession?: ReturnType<typeof getSessionBindingService>["listBySession"];
   unbindSessionBindings?: ReturnType<typeof getSessionBindingService>["unbind"];
   listSessionEntries: typeof listSessionEntriesReadOnly;
@@ -142,19 +136,8 @@ type TaskRegistryMaintenanceRuntime = {
 
 const defaultTaskRegistryMaintenanceRuntime: TaskRegistryMaintenanceRuntime = {
   listAcpSessionEntries,
-  readAcpSessionEntry,
-  closeAcpSession: async ({ cfg, sessionKey, agentId, reason }) => {
-    await getAcpSessionManager().closeSession({
-      cfg,
-      sessionKey,
-      agentId,
-      reason,
-      discardPersistentState: true,
-      clearMeta: true,
-      allowBackendUnavailable: true,
-      requireAcpSession: false,
-    });
-  },
+  readAcpSessionEntry: readAcpSessionEntryCore,
+  loadCloseAcpSession: loadTaskAcpSessionCloser,
   listSessionBindingsBySession: (sessionKey) =>
     getSessionBindingService().listBySession(sessionKey),
   unbindSessionBindings: (input) => getSessionBindingService().unbind(input),
@@ -586,7 +569,7 @@ function getAcpSessionParentKeys(acpEntry: Pick<AcpSessionStoreEntry, "entry">):
 
 function isParentOwnedAcpSessionTask(
   task: TaskRecord,
-  acpEntry: ReturnType<typeof readAcpSessionEntry>,
+  acpEntry: ReturnType<typeof readAcpSessionEntryCore>,
 ): boolean {
   const entry = acpEntry?.entry;
   if (!entry) {
@@ -666,7 +649,10 @@ function shouldCloseOrphanedParentOwnedAcpSession(acpEntry: AcpSessionStoreEntry
   return !hasActiveSessionBinding(sessionKey);
 }
 
-async function cleanupTerminalAcpSession(task: TaskRecord): Promise<void> {
+async function cleanupTerminalAcpSession(
+  task: TaskRecord,
+  closeAcpSession: CloseAcpSession | undefined,
+): Promise<void> {
   if (!shouldCloseTerminalAcpSession(task)) {
     return;
   }
@@ -679,7 +665,6 @@ async function cleanupTerminalAcpSession(task: TaskRecord): Promise<void> {
     agentId: task.agentId,
     clone: false,
   });
-  const closeAcpSession = taskRegistryMaintenanceRuntime.closeAcpSession;
   if (!acpEntry || !closeAcpSession) {
     return;
   }
@@ -712,7 +697,9 @@ async function cleanupTerminalAcpSession(task: TaskRecord): Promise<void> {
   }
 }
 
-async function cleanupOrphanedParentOwnedAcpSessions(): Promise<void> {
+async function cleanupOrphanedParentOwnedAcpSessions(
+  closeAcpSession: CloseAcpSession | undefined,
+): Promise<void> {
   let acpSessions: AcpSessionStoreEntry[];
   try {
     acpSessions = await taskRegistryMaintenanceRuntime.listAcpSessionEntries({ clone: false });
@@ -736,7 +723,6 @@ async function cleanupOrphanedParentOwnedAcpSessions(): Promise<void> {
     if (!shouldCloseOrphanedParentOwnedAcpSession(acpEntry)) {
       continue;
     }
-    const closeAcpSession = taskRegistryMaintenanceRuntime.closeAcpSession;
     if (!closeAcpSession) {
       continue;
     }
@@ -1174,6 +1160,13 @@ function startScheduledSweep() {
 }
 
 export async function runTaskRegistryMaintenance(): Promise<TaskRegistryMaintenanceSummary> {
+  // Load cleanup code before selecting tasks and checking live session ownership.
+  let closeAcpSession: CloseAcpSession | undefined;
+  try {
+    closeAcpSession = await taskRegistryMaintenanceRuntime.loadCloseAcpSession?.();
+  } catch (error) {
+    log.warn("Failed to load ACP session cleanup during task maintenance", { error });
+  }
   taskRegistryMaintenanceRuntime.ensureTaskRegistryReady();
   const now = Date.now();
   let reconciled = 0;
@@ -1242,7 +1235,7 @@ export async function runTaskRegistryMaintenance(): Promise<TaskRegistryMaintena
       }
       continue;
     }
-    await cleanupTerminalAcpSession(current);
+    await cleanupTerminalAcpSession(current, closeAcpSession);
     if (
       shouldPruneTerminalTask(current, now, cronHistoryOverflowTaskIds) &&
       taskRegistryMaintenanceRuntime.deleteTaskRecordById(current.taskId)
@@ -1269,7 +1262,7 @@ export async function runTaskRegistryMaintenance(): Promise<TaskRegistryMaintena
       await yieldToEventLoop();
     }
   }
-  await cleanupOrphanedParentOwnedAcpSessions();
+  await cleanupOrphanedParentOwnedAcpSessions(closeAcpSession);
   try {
     // Task-registry readiness has already opened the shared state database.
     // Sweep plugin TTL rows even when no plugin namespace was opened this process,

@@ -1,17 +1,32 @@
 // Tests compact command behavior for session compaction and reply status.
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
 import { testing as cliBackendsTesting } from "../../agents/cli-backends.test-support.js";
+import { createSessionModelCatalogFixture } from "../../agents/test-helpers/session-model-catalog.test-support.js";
 import type { OpenClawConfig } from "../../config/config.js";
+import { upsertSessionEntryCore } from "../../config/sessions/session-accessor.js";
+import type { SessionEntry } from "../../config/sessions/types.js";
+import { commitSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
+import { createPluginMetadataSnapshotFixture } from "../../plugins/plugin-metadata.test-support.js";
+import { createEmptyPluginRegistry } from "../../plugins/registry-empty.js";
+import {
+  captureActivePluginRegistrySnapshot,
+  restoreActivePluginRegistrySnapshot,
+  setActivePluginRegistry,
+} from "../../plugins/runtime.js";
+import { closeOpenClawAgentDatabasesForTest } from "../../state/openclaw-agent-db.js";
 import {
   resolveAgentDirMock,
   resolveSessionAgentIdMock,
 } from "./commands-agent-scope.test-support.js";
+import { handleCompactCommand } from "./commands-compact.js";
 import {
   abortEmbeddedAgentRun,
   buildCompactParams,
   compactEmbeddedAgentSession,
   formatContextUsageShort,
-  handleCompactCommand,
+  runCompactCommand,
   incrementCompactionCount,
   requireCompactEmbeddedAgentSessionCall,
   requireIncrementCompactionCountCall,
@@ -21,12 +36,20 @@ import {
   waitForEmbeddedAgentRunEnd,
 } from "./commands-compact.test-support.js";
 import type { HandleCommandsParams } from "./commands-types.js";
+import { createModelSelectionState } from "./model-selection.js";
+
+const tempDirs = useAutoCleanupTempDirTracker((cleanup) =>
+  afterEach(() => {
+    closeOpenClawAgentDatabasesForTest();
+    cleanup();
+  }),
+);
 
 describe("handleCompactCommand", () => {
   beforeEach(resetCompactCommandMocks);
 
   it("returns null when command is not /compact", async () => {
-    const result = await handleCompactCommand(
+    const result = await runCompactCommand(
       buildCompactParams("/status", {
         commands: { text: true },
         channels: { whatsapp: { allowFrom: ["*"] } },
@@ -38,13 +61,155 @@ describe("handleCompactCommand", () => {
     expect(vi.mocked(compactEmbeddedAgentSession)).not.toHaveBeenCalled();
   });
 
+  it("uses the complete prepared turn-local route without repinning the human session", async () => {
+    const priorRegistry = captureActivePluginRegistrySnapshot();
+    onTestFinished(() => {
+      restoreActivePluginRegistrySnapshot(priorRegistry);
+      cliBackendsTesting.resetDepsForTest();
+    });
+    const backend = {
+      id: "claude-cli",
+      pluginId: "anthropic",
+      modelProvider: "anthropic",
+      config: { command: process.execPath },
+      bundleMcp: false,
+    };
+    const registry = createEmptyPluginRegistry();
+    registry.cliBackends = [{ pluginId: "anthropic", source: "fixture", backend }];
+    setActivePluginRegistry(registry);
+    cliBackendsTesting.setDepsForTest({ resolveRuntimeCliBackends: () => [backend] });
+    const cfg: OpenClawConfig = {
+      commands: { text: true },
+      agents: {
+        defaults: {
+          model: "fixture/temporary",
+          models: { "fixture/temporary": { agentRuntime: { id: "openclaw" } } },
+        },
+      },
+      models: {
+        providers: {
+          fixture: {
+            api: "openai-completions",
+            baseUrl: "https://compaction-fixture.invalid/v1",
+            models: [
+              {
+                id: "temporary",
+                name: "Temporary",
+                reasoning: false,
+                input: ["text"],
+                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                contextWindow: 32000,
+                maxTokens: 4096,
+              },
+            ],
+          },
+        },
+      },
+    };
+    const published = createSessionModelCatalogFixture().publish({
+      config: cfg,
+      agentId: "main",
+      catalog: {
+        entries: [
+          {
+            provider: "fixture",
+            id: "temporary",
+            name: "Temporary",
+            api: "openai-completions",
+            contextWindow: 32000,
+          },
+        ],
+        routeVariants: [],
+      },
+      profiles: {
+        "anthropic:human": { type: "api_key", provider: "anthropic", key: "synthetic-human-key" },
+        "fixture:temporary": {
+          type: "api_key",
+          provider: "fixture",
+          key: "synthetic-temporary-key",
+        },
+      },
+      plugins: createPluginMetadataSnapshotFixture({
+        plugins: [
+          { id: "anthropic", cliBackends: ["claude-cli"], syntheticAuthRefs: ["claude-cli"] },
+        ],
+      }).plugins,
+      runtimeAuthModes: { "claude-cli": "oauth" },
+    });
+    const entry: SessionEntry = {
+      sessionId: "temporary-compact",
+      updatedAt: 1,
+      authProfileOverride: "anthropic:human",
+      authProfileOverrideSource: "auto",
+      cliSessionBindings: {
+        "claude-cli": { sessionId: "human-native-session", authProfileId: "anthropic:human" },
+      },
+    };
+    commitSessionExecutionSelection(entry, {
+      model: { provider: "anthropic", id: "human-model" },
+      executor: { kind: "cli", id: "claude-cli" },
+    });
+    const before = structuredClone(entry);
+    const params = buildCompactParams("/compact", cfg);
+    params.sessionEntry = entry;
+    params.sessionStore = { [params.sessionKey]: entry };
+    let state = await createModelSelectionState({
+      cfg,
+      agentId: "main",
+      agentCfg: cfg.agents?.defaults,
+      sessionEntry: entry,
+      sessionKey: params.sessionKey,
+      sessionStore: params.sessionStore,
+      defaultProvider: "fixture",
+      defaultModel: "temporary",
+      provider: "fixture",
+      model: "temporary",
+      hasModelDirective: false,
+      prepareExecution: false,
+      hasOneTurnModelOverride: true,
+      preparedModelCatalog: published,
+      replyAuth: { isNewSession: false },
+    });
+    params.prepareModelState = async (current, guard) => {
+      state = await state.refreshExecution(current, guard);
+      return state;
+    };
+    vi.mocked(compactEmbeddedAgentSession).mockResolvedValueOnce({ ok: true, compacted: false });
+    await handleCompactCommand(params, true);
+    expect(compactEmbeddedAgentSession).toHaveBeenCalledOnce();
+    expect(requireCompactEmbeddedAgentSessionCall()).toMatchObject({
+      provider: "fixture",
+      model: "temporary",
+      agentHarnessId: "openclaw",
+      authProfileId: "fixture:temporary",
+      authProfileIdSource: "auto",
+      cliSessionId: undefined,
+      cliSessionBinding: undefined,
+      contextTokenBudget: 32000,
+    });
+    expect(
+      vi.mocked(compactEmbeddedAgentSession).mock.calls[0]?.[1]?.preparedSelection,
+    ).toMatchObject({
+      selection: {
+        model: { provider: "fixture", id: "temporary" },
+        executor: { kind: "harness", id: "openclaw" },
+      },
+      auth: {
+        selection: { profileId: "fixture:temporary", source: "auto" },
+        validate: expect.any(Function),
+      },
+    });
+    expect(entry).toEqual(before);
+    expect(params.sessionStore[params.sessionKey]).toEqual(before);
+  });
+
   it("rejects unauthorized /compact commands", async () => {
     const params = buildCompactParams("/compact", {
       commands: { text: true },
       channels: { whatsapp: { allowFrom: ["*"] } },
     } as OpenClawConfig);
 
-    const result = await handleCompactCommand(
+    const result = await runCompactCommand(
       {
         ...params,
         command: {
@@ -67,7 +232,7 @@ describe("handleCompactCommand", () => {
     });
     const abortController = new AbortController();
 
-    const result = await handleCompactCommand(
+    const result = await runCompactCommand(
       {
         ...buildCompactParams("/compact", {
           commands: { text: true },
@@ -148,7 +313,7 @@ describe("handleCompactCommand", () => {
       updatedAt: Date.now(),
     };
 
-    await handleCompactCommand(params, true);
+    await runCompactCommand(params, true);
 
     const call = requireCompactEmbeddedAgentSessionCall();
     expect(call.ownerNumbers).toHaveLength(16);
@@ -164,7 +329,7 @@ describe("handleCompactCommand", () => {
       reason: "already under target",
     });
 
-    const result = await handleCompactCommand(
+    const result = await runCompactCommand(
       {
         ...buildCompactParams("/compact", {
           commands: { text: true },
@@ -192,7 +357,7 @@ describe("handleCompactCommand", () => {
       reason: "no real conversation messages",
     });
 
-    const result = await handleCompactCommand(
+    const result = await runCompactCommand(
       {
         ...buildCompactParams("/compact", {
           commands: { text: true },
@@ -219,7 +384,7 @@ describe("handleCompactCommand", () => {
       reason: "already_compacted",
     });
 
-    const result = await handleCompactCommand(
+    const result = await runCompactCommand(
       {
         ...buildCompactParams("/compact", {
           commands: { text: true },
@@ -251,7 +416,7 @@ describe("handleCompactCommand", () => {
       session: { store: "/tmp/openclaw-session-store.json" },
     } as OpenClawConfig;
 
-    await handleCompactCommand(
+    await runCompactCommand(
       {
         ...buildCompactParams("/compact", cfg),
         agentId: "main",
@@ -264,7 +429,7 @@ describe("handleCompactCommand", () => {
       true,
     );
 
-    expect(resolveSessionAgentIdMock).toHaveBeenCalledOnce();
+    expect(compactEmbeddedAgentSession).toHaveBeenCalledOnce();
     const resolveCall = requireResolveSessionAgentIdCall();
     expect(resolveCall.sessionKey).toBe("agent:target:whatsapp:direct:12345");
     expect(resolveCall.config).toBe(cfg);
@@ -291,7 +456,7 @@ describe("handleCompactCommand", () => {
       },
     } as OpenClawConfig;
 
-    await handleCompactCommand(
+    await runCompactCommand(
       {
         ...buildCompactParams("/compact", cfg),
         agentId: "marie-clawndo",
@@ -319,27 +484,30 @@ describe("handleCompactCommand", () => {
       ok: true,
       compacted: false,
     });
-    const cfg = {
+    const dir = tempDirs.make("openclaw-compact-command-store-");
+    const storePath = join(dir, "scoped-sessions.sqlite");
+    const sessionEntry = { sessionId: "session-1", updatedAt: Date.now() };
+    await upsertSessionEntryCore(
+      { agentId: "main", sessionKey: "agent:main:main", storePath },
+      sessionEntry,
+    );
+    const cfg: OpenClawConfig = {
       commands: { text: true },
       channels: { whatsapp: { allowFrom: ["*"] } },
-      session: { store: "/tmp/default-sessions.json" },
-    } as OpenClawConfig;
+      session: { store: join(dir, "default-sessions.sqlite") },
+    };
 
-    await handleCompactCommand(
+    const result = await runCompactCommand(
       {
         ...buildCompactParams("/compact", cfg),
-        storePath: "/tmp/scoped-sessions.json",
-        sessionEntry: {
-          sessionId: "session-1",
-          updatedAt: Date.now(),
-        },
+        storePath,
+        sessionEntry,
       } as HandleCommandsParams,
       true,
     );
 
-    expect(requireCompactEmbeddedAgentSessionCall().sessionTarget?.storePath).toBe(
-      "/tmp/scoped-sessions.json",
-    );
+    expect(compactEmbeddedAgentSession, result?.reply?.text).toHaveBeenCalledOnce();
+    expect(requireCompactEmbeddedAgentSessionCall().sessionTarget?.storePath).toBe(storePath);
   });
 
   it("uses the canonical session agent directory for compaction runtime inputs", async () => {
@@ -354,7 +522,7 @@ describe("handleCompactCommand", () => {
       channels: { whatsapp: { allowFrom: ["*"] } },
     } as OpenClawConfig;
 
-    await handleCompactCommand(
+    await runCompactCommand(
       {
         ...buildCompactParams("/compact", cfg),
         agentId: "main",
@@ -369,7 +537,7 @@ describe("handleCompactCommand", () => {
     );
 
     expect(requireCompactEmbeddedAgentSessionCall().agentDir).toBe("/tmp/target-agent");
-    expect(resolveAgentDirMock).toHaveBeenCalledOnce();
+    expect(compactEmbeddedAgentSession).toHaveBeenCalledOnce();
     const [configArg, agentIdArg] = requireResolveAgentDirCall();
     expect(configArg).toBe(cfg);
     expect(agentIdArg).toBe("target");
@@ -381,7 +549,7 @@ describe("handleCompactCommand", () => {
       compacted: false,
     });
 
-    await handleCompactCommand(
+    await runCompactCommand(
       {
         ...buildCompactParams("/compact", {
           commands: { text: true },
@@ -423,39 +591,37 @@ describe("handleCompactCommand", () => {
     expect(call.skillsSnapshot).toEqual({ prompt: "target", skills: [] });
   });
 
-  it("carries a model-locked session's persisted native runtime into compaction", async () => {
-    vi.mocked(compactEmbeddedAgentSession).mockResolvedValueOnce({
-      ok: false,
-      compacted: false,
-      reason: "no codex app-server thread binding",
-    });
-
-    await handleCompactCommand(
-      {
-        ...buildCompactParams("/compact", {
-          commands: { text: true },
-          channels: { whatsapp: { allowFrom: ["*"] } },
-        } as OpenClawConfig),
-        sessionEntry: {
-          sessionId: "locked-session",
-          updatedAt: Date.now(),
-          agentHarnessId: "codex",
-          executionSelection: {
-            state: "accepted",
-            selection: { model: "native-managed", executor: { kind: "harness", id: "codex" } },
-            fallbackPermission: "explicit",
-          },
-          modelSelectionLocked: true,
-        },
-      } as HandleCommandsParams,
-      true,
-    );
-
-    expect(requireCompactEmbeddedAgentSessionCall()).toMatchObject({
+  it("refuses an unbound native-managed selection without unlocking or compacting it", async () => {
+    const entry = {
       sessionId: "locked-session",
-      agentHarnessId: "codex",
+      updatedAt: 1,
+      executionSelection: {
+        state: "accepted",
+        selection: { model: "native-managed", executor: { kind: "harness", id: "codex" } },
+        fallbackPermission: "explicit",
+      },
       modelSelectionLocked: true,
+    } satisfies NonNullable<HandleCommandsParams["sessionEntry"]>;
+    const before = structuredClone(entry);
+    await expect(
+      runCompactCommand(
+        {
+          ...buildCompactParams("/compact", {}),
+          sessionEntry: entry,
+        },
+        true,
+      ),
+    ).resolves.toMatchObject({
+      shouldContinue: false,
+      sessionCompaction: {
+        compacted: false,
+        reason: expect.stringContaining("Could not confirm this app's session ownership"),
+      },
+      reply: { text: expect.stringContaining("Compaction unavailable") },
     });
+    expect(entry).toEqual(before);
+    expect(compactEmbeddedAgentSession).not.toHaveBeenCalled();
+    expect(abortEmbeddedAgentRun).not.toHaveBeenCalled();
   });
 
   it("targets the persisted native CLI session for manual compaction", async () => {
@@ -476,7 +642,7 @@ describe("handleCompactCommand", () => {
     });
 
     try {
-      await handleCompactCommand(
+      await runCompactCommand(
         {
           ...buildCompactParams("/compact", {
             commands: { text: true },
@@ -548,7 +714,7 @@ describe("handleCompactCommand", () => {
       });
 
       try {
-        await handleCompactCommand(
+        const result = await runCompactCommand(
           {
             ...buildCompactParams("/compact", {
               commands: { text: true },
@@ -579,7 +745,16 @@ describe("handleCompactCommand", () => {
           true,
         );
 
-        expect(requireCompactEmbeddedAgentSessionCall().agentHarnessId).toBe(expectedRuntime);
+        expect(compactEmbeddedAgentSession, result?.reply?.text).toHaveBeenCalledOnce();
+        expect(requireCompactEmbeddedAgentSessionCall().agentHarnessId).toBe(
+          expectedRuntime ?? "openclaw",
+        );
+        expect(
+          requireCompactEmbeddedAgentSessionCall().sessionEntry?.executionSelection,
+        ).toMatchObject({
+          state: "accepted",
+          selection: { executor: { id: expectedRuntime ?? "openclaw" } },
+        });
       } finally {
         cliBackendsTesting.resetDepsForTest();
         vi.mocked(compactEmbeddedAgentSession).mockReset();
@@ -600,7 +775,7 @@ describe("handleCompactCommand", () => {
       },
     });
 
-    await handleCompactCommand(
+    await runCompactCommand(
       {
         ...buildCompactParams("/compact", {
           commands: { text: true },
@@ -636,7 +811,7 @@ describe("handleCompactCommand", () => {
       compacted: false,
     });
 
-    const result = await handleCompactCommand(
+    const result = await runCompactCommand(
       {
         ...buildCompactParams("/compact", {
           commands: { text: true },
@@ -654,33 +829,6 @@ describe("handleCompactCommand", () => {
 
     expect(vi.mocked(incrementCompactionCount)).not.toHaveBeenCalled();
     expect(result?.reply?.text).toContain("Compaction skipped");
-  });
-
-  it("reports server-side compaction with before and after tokens", async () => {
-    vi.mocked(compactEmbeddedAgentSession).mockResolvedValueOnce({
-      ok: true,
-      compacted: true,
-      compactionKind: "server-endpoint",
-      result: {
-        kind: "server-endpoint",
-        tokensBefore: 8_614,
-        tokensAfter: 736,
-      },
-    });
-
-    const result = await handleCompactCommand(
-      {
-        ...buildCompactParams("/compact", {
-          commands: { text: true },
-          channels: { whatsapp: { allowFrom: ["*"] } },
-        } as OpenClawConfig),
-        sessionEntry: { sessionId: "server-session", updatedAt: Date.now() },
-      } as HandleCommandsParams,
-      true,
-    );
-
-    expect(result?.reply?.text).toContain("Server-side compaction (8614 → 736)");
-    expect(requireIncrementCompactionCountCall().compactionKind).toBe("server-endpoint");
   });
 
   it.each([
@@ -708,7 +856,7 @@ describe("handleCompactCommand", () => {
       },
     });
 
-    const result = await handleCompactCommand(
+    const result = await runCompactCommand(
       {
         ...buildCompactParams("/compact", {
           commands: { text: true },
@@ -751,7 +899,7 @@ describe("handleCompactCommand", () => {
     params.ctx.ConversationRoutePeerId = "peer";
     params.ctx.ChatType = "direct";
 
-    await handleCompactCommand(params, true);
+    await runCompactCommand(params, true);
 
     expect(requireCompactEmbeddedAgentSessionCall().agentAccountId).toBe("work");
     expect(requireCompactEmbeddedAgentSessionCall()).toMatchObject({

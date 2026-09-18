@@ -7,7 +7,7 @@ import {
 } from "../../config/sessions/goals-operations.js";
 import { SESSION_ROUTING_CHANGED_ERROR_REASON } from "../../config/sessions/main-session.js";
 import { readSessionSubmittedInput } from "../../config/sessions/session-accessor.js";
-import { resolveSendPolicy } from "../../sessions/send-policy.js";
+import { resolveSendPolicyCore } from "../../sessions/send-policy.js";
 import { extractTextFromChatContent } from "../../shared/chat-content.js";
 import { sessionDeliveryChannel } from "../../utils/delivery-context.shared.js";
 import { setGatewayDedupeEntry } from "../agent-turn/agent-job.js";
@@ -355,7 +355,7 @@ export async function runChatSendPreAdmission(
     sessionRoutingChanged,
   } = session;
 
-  const sendPolicy = resolveSendPolicy({
+  const sendPolicy = resolveSendPolicyCore({
     cfg,
     entry,
     sessionKey,

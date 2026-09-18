@@ -11,7 +11,7 @@ import { loadSessionEntryReadOnly } from "../../config/sessions/session-accessor
 import type { TypingMode } from "../../config/types.js";
 import { logVerbose } from "../../globals.js";
 import { CommandLaneClearedError, GatewayDrainingError } from "../../process/command-queue.js";
-import { resolveSendPolicy } from "../../sessions/send-policy.js";
+import { resolveSendPolicyCore } from "../../sessions/send-policy.js";
 import {
   sessionDeliveryChannel,
   type DeliveryContext,
@@ -99,7 +99,9 @@ export function buildSilentFallbackFailurePayload(params: {
   }
   const selected = params.fallbackTransition.selectedModelRef;
   const active = params.fallbackTransition.activeModelRef;
-  if (!selected || !active) return undefined;
+  if (!selected || !active) {
+    return undefined;
+  }
   const attempts = params.fallbackAttempts;
   const selectedAttempts = attempts.filter((attempt) =>
     areRuntimeModelRefsEquivalent(`${attempt.provider}/${attempt.model}`, selected, {
@@ -139,7 +141,7 @@ export function resolveSourceReplyPolicy(params: {
   runtimePolicySessionKey?: string;
   opts?: GetReplyOptions;
 }): ReturnType<typeof resolveSourceReplyVisibilityPolicy> {
-  const sendPolicy = resolveSendPolicy({
+  const sendPolicy = resolveSendPolicyCore({
     cfg: params.cfg,
     entry: params.sessionEntry,
     sessionKey: params.runtimePolicySessionKey ?? params.sessionKey,

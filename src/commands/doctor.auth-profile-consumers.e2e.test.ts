@@ -376,6 +376,11 @@ describe("doctor auth-profile consumers", () => {
             authProfileOverride: reference,
             authProfileOverrideSource: "user" as const,
             modelFallback: {
+              previous: {
+                state: "deferred" as const,
+                request: { defaultSelection: "inherit" as const },
+                fallbackPermission: "configured" as const,
+              },
               prevModel: "test-model",
               prevProvider: "anthropic",
               prevAuthProfileOverride: reference,

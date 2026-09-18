@@ -35,9 +35,9 @@ import { resolveSqliteTargetFromSessionStorePath } from "../config/sessions/sess
 import { getSessionExecutionSelection } from "../model-picker/execution-selection.js";
 import { createDeferredCore } from "../shared/deferred.js";
 import { openOpenClawAgentDatabase } from "../state/openclaw-agent-db.js";
-import { withOpenClawStateLease } from "../state/openclaw-state-lease.js";
 import { flushPendingSessionsChangedEvents } from "./server-methods/session-change-event.js";
 import { worktreesHandlers } from "./server-methods/worktrees.js";
+import { holdWorktreeAllocation } from "./server-sessions.worktree-allocation.test-support.js";
 import { isSessionPermissionChangePending } from "./session-permission-change.js";
 import { SessionMutationAuthorizationChangedError } from "./session-sharing.js";
 import { embeddedRunMock } from "./test-helpers.runtime-state.js";
@@ -86,33 +86,8 @@ test.each([
       ).toMatchObject({ ok: true });
     }
 
-    const entered = createDeferredCore();
-    const release = createDeferredCore();
-    const operationEntered = createDeferredCore();
-    // The same capacity lease serializes real worktree create, remove, and restore operations.
-    const allocation = withOpenClawStateLease(
-      {
-        scope: "core:managed-worktrees:create",
-        key: "capacity",
-        database: { scope: "shared" },
-        leaseMs: 60_000,
-        waitMs: 5_000,
-      },
-      async () => {
-        entered.resolve();
-        await release.promise;
-      },
-    );
-    const originalRemove = managedWorktrees.remove.bind(managedWorktrees);
-    const originalRestore = managedWorktrees.restore.bind(managedWorktrees);
-    const remove = vi.spyOn(managedWorktrees, "remove").mockImplementation((params) => {
-      operationEntered.resolve();
-      return originalRemove(params);
-    });
-    const restore = vi.spyOn(managedWorktrees, "restore").mockImplementation((params) => {
-      operationEntered.resolve();
-      return originalRestore(params);
-    });
+    const { entered, release, operationEntered, allocation, remove, restore } =
+      holdWorktreeAllocation();
     let mutation: ReturnType<typeof directSessionReq> | undefined;
     let independent: ReturnType<typeof directSessionReq> | undefined;
     let successor: ReturnType<typeof directSessionReq> | undefined;

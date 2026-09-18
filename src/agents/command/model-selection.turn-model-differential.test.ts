@@ -14,43 +14,9 @@ import {
 } from "../../test-utils/turn-model-selection-differential.js";
 import type { AgentCommandOpts, AgentRunContext } from "./types.js";
 
-vi.mock("../agent-scope.js", () => ({
-  resolveAgentConfig: () => undefined,
-  resolveAgentEffectiveModelPrimary: () => undefined,
-}));
 vi.mock("../../auto-reply/thinking.js", () => ({
   formatThinkingLevels: () => "",
   normalizeThinkLevel: (value: string | undefined) => value,
-}));
-vi.mock("../../channels/model-overrides.js", () => ({
-  resolveChannelModelOverride: (params: {
-    cfg: OpenClawConfig;
-    channel?: string | null;
-    groupId?: string | null;
-    groupChatType?: string | null;
-    groupChannel?: string | null;
-    groupSubject?: string | null;
-    directUserIds?: (string | null | undefined)[];
-  }) => {
-    const channel = params.channel?.trim().toLowerCase();
-    const entries = channel ? params.cfg.channels?.modelByChannel?.[channel] : undefined;
-    if (!channel || !entries) {
-      return null;
-    }
-    const candidates =
-      params.groupChatType === "direct"
-        ? [params.groupId, ...(params.directUserIds ?? [])]
-        : [params.groupId, params.groupChannel, params.groupSubject];
-    const matchKey = candidates.find((candidate) => candidate && entries[candidate] !== undefined);
-    const wildcard = entries["*"];
-    const model = matchKey ? entries[matchKey] : wildcard;
-    return model
-      ? { channel, model, matchKey: matchKey ?? "*", matchSource: matchKey ? "exact" : "wildcard" }
-      : null;
-  },
-}));
-vi.mock("../../utils/message-channel.js", () => ({
-  isDeliverableMessageChannel: (value: string) => value !== "internal",
 }));
 
 vi.mock("../auth-profiles/order.js", () => ({
@@ -81,8 +47,9 @@ vi.mock("../model-runtime-choice.js", () => ({
         (ref) => ref.provider === provider && ref.model === model,
       ),
     );
-    if (!declared || runtimeId !== "openclaw")
+    if (!declared || runtimeId !== "openclaw") {
       return { kind: "unknown", message: "Undeclared fixture selection." };
+    }
     const generation = getActivePluginRegistryVersion();
     return {
       kind: "ready",
@@ -111,16 +78,6 @@ vi.mock("../model-thinking-default.js", () => ({
   resolveConfiguredThinkingDefault: () => undefined,
   resolveThinkingSelection: () => ({ requestedLevel: "off", level: "off", supported: true }),
 }));
-vi.mock("../model-visibility-policy.js", () => ({
-  createModelVisibilityPolicy: () => ({
-    allowAny: true,
-    catalog: [],
-    allowedCatalog: [],
-    selectionAliasIndex: { byAlias: new Map(), byKey: new Map() },
-    allows: () => true,
-    resolveSelection: (ref: { provider: string; model: string }) => ref,
-  }),
-}));
 vi.mock("../openai-routing.js", () => ({
   listOpenAIAuthProfileProvidersForAgentRuntime: ({ provider }: { provider: string }) => [provider],
 }));
@@ -130,14 +87,7 @@ vi.mock("../provider-auth-aliases.js", () => ({
 vi.mock("../thinking-runtime.js", () => ({
   needsThinkHydration: () => false,
   normalizeThinkingCatalogProviders: (catalog: unknown) => catalog,
-  resolveEffectiveAgentRuntime: () => "openclaw",
-}));
-vi.mock("../../sessions/agent-harness-session-key.js", () => ({
-  isValidAgentHarnessSessionStoreEntry: () => false,
-}));
-vi.mock("../../sessions/model-overrides.js", () => ({
-  isModelSelectionLocked: (entry?: SessionEntry) => entry?.modelSelectionLocked === true,
-  ModelSelectionLockedError: class ModelSelectionLockedError extends Error {},
+  resolveEffectiveAgentRuntimeCore: () => "openclaw",
 }));
 vi.mock("./attempt-execution.shared.js", () => ({
   persistAgentSession: async ({ entry }: { entry?: SessionEntry }) => entry,
@@ -226,7 +176,7 @@ async function observeCommandSelection(fixture: TurnModelDifferentialFixture) {
     sessionAgentId: "main",
     workspaceDir: suiteTempRoot,
     pluginsEnabled: false,
-    modelManifestContext: {},
+    modelManifestContext: { manifestPlugins: [] },
     configuredThinkingCatalog: [],
     isSubagentLane: false,
     suppressVisibleSessionEffects: true,

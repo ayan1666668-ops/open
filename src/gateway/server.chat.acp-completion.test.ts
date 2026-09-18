@@ -6,6 +6,11 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import type { WebSocket } from "ws";
 import { createDeferred } from "../../test/helpers/promise.js";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
+import type { AcpSessionResolution } from "../acp/control-plane/manager.types.js";
+import {
+  requireAcpExecutionSelection,
+  resolveMissingMetaError,
+} from "../acp/control-plane/manager.utils.js";
 import { AcpRuntimeError } from "../acp/runtime/errors.js";
 import type { dispatchInboundMessage } from "../auto-reply/dispatch.js";
 import { createDispatchReplyOperationCoordinator } from "../auto-reply/reply/dispatch-from-config.lifecycle.js";
@@ -17,8 +22,10 @@ import {
 } from "../config/sessions/session-accessor.js";
 import { emitAgentEvent } from "../infra/agent-events.js";
 import { tryDispatchAcpReplyHook } from "../plugin-sdk/acpx.js";
+import { resolveSessionDispatchKind } from "../sessions/session-key-utils.js";
 import { readAssistantDisplayContent } from "../shared/assistant-display-content.js";
 import { extractFirstTextBlock } from "../shared/chat-message-content.js";
+import { sessionSelectionFixture } from "./session-list.test-support.js";
 import {
   dispatchInboundMessageMock,
   installGatewayTestHooks,
@@ -46,17 +53,32 @@ vi.mock("../auto-reply/reply/dispatch-acp-transcript.runtime.js", async (importO
 });
 
 vi.mock("../auto-reply/reply/dispatch-acp-manager.runtime.js", () => ({
-  getAcpSessionManager: () => ({
-    resolveSession: ({ sessionKey }: { sessionKey: string }) => ({
-      kind: "ready",
-      sessionKey,
-      meta: createAcpSessionMeta({ agent: "main" }),
-      entry: loadSessionEntryReadOnly({
+  getAcpSessionManagerCore: () => ({
+    resolveSession: ({ sessionKey }: { sessionKey: string }): AcpSessionResolution => {
+      const entry = loadSessionEntryReadOnly({
         agentId: "main",
         sessionKey,
         storePath: testState.sessionStorePath,
-      }),
-    }),
+      });
+      if (!entry?.acp) {
+        return resolveSessionDispatchKind(sessionKey, entry) === "acp"
+          ? {
+              kind: "stale",
+              sessionKey,
+              agentId: "main",
+              error: resolveMissingMetaError(sessionKey),
+            }
+          : { kind: "none", sessionKey, agentId: "main" };
+      }
+      return {
+        kind: "ready",
+        sessionKey,
+        agentId: "main",
+        meta: entry.acp,
+        entry,
+        selection: requireAcpExecutionSelection(entry),
+      };
+    },
     runTurn: runtime.runTurn,
     getObservabilitySnapshot: () => ({
       turns: { queueDepth: 0 },
@@ -174,14 +196,22 @@ describe("Gateway ACP completion ownership", () => {
         [sessionKey]: {
           sessionId: scenario.bound ? `source-${sessionId}` : sessionId,
           updatedAt: Date.now(),
-          acp: createAcpSessionMeta({ agent: "main" }),
+          executionSelection: sessionSelectionFixture({
+            executor: { kind: "acp", backend: "acpx", agent: "main" },
+            model: "native-managed",
+          }),
+          acp: createAcpSessionMeta(),
         },
         ...(scenario.bound
           ? {
               [targetSessionKey]: {
                 sessionId,
                 updatedAt: Date.now(),
-                acp: createAcpSessionMeta({ agent: "main" }),
+                executionSelection: sessionSelectionFixture({
+                  executor: { kind: "acp", backend: "acpx", agent: "main" },
+                  model: "native-managed",
+                }),
+                acp: createAcpSessionMeta(),
               },
             }
           : {}),
@@ -238,7 +268,11 @@ describe("Gateway ACP completion ownership", () => {
               [targetSessionKey]: {
                 sessionId: `${sessionId}-replaced-${runtime.runTurn.mock.calls.length}`,
                 updatedAt: Date.now(),
-                acp: createAcpSessionMeta({ agent: "main" }),
+                executionSelection: sessionSelectionFixture({
+                  executor: { kind: "acp", backend: "acpx", agent: "main" },
+                  model: "native-managed",
+                }),
+                acp: createAcpSessionMeta(),
               },
             },
           });

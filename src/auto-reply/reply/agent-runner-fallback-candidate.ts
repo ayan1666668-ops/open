@@ -95,8 +95,9 @@ export async function runAgentFallbackCandidates(params: AgentFallbackCycleParam
     milestone: "before_model_fallback",
   });
   const resolveCandidateRuntime = (candidate: ExecutionSelection) => {
-    if (isAcpExecutionSelection(candidate))
+    if (isAcpExecutionSelection(candidate)) {
       throw new Error("This reply belongs to the native manager.");
+    }
     return {
       candidateRun: {
         ...params.effectiveRun,
@@ -116,8 +117,9 @@ export async function runAgentFallbackCandidates(params: AgentFallbackCycleParam
     candidate: ExecutionSelection,
     runOptions: RunEntryCandidateOptions,
   ) => {
-    if (isAcpExecutionSelection(candidate))
+    if (isAcpExecutionSelection(candidate)) {
       throw new Error("This reply belongs to the native manager.");
+    }
     const selectedModel = isModelExecutionSelection(candidate) ? candidate.model : undefined;
     const provider = selectedModel?.provider;
     const model = selectedModel?.id;
@@ -152,11 +154,10 @@ export async function runAgentFallbackCandidates(params: AgentFallbackCycleParam
       fastModeAutoOnSeconds: candidateRun.fastModeAutoOnSeconds,
     };
     if (selectedModel) {
-      const { provider, id: model } = selectedModel;
       candidateThinkLevel = resolveRunThinkingLevelForFallbackCandidate({
         cfg: params.runtimeConfig,
-        provider,
-        modelId: model,
+        provider: selectedModel.provider,
+        modelId: selectedModel.id,
         run: turn.followupRun.run,
         catalog: turn.followupRun.run.thinkingCatalog,
         agentId: turn.followupRun.run.agentId,
@@ -167,11 +168,15 @@ export async function runAgentFallbackCandidates(params: AgentFallbackCycleParam
       candidateFastMode = resolveRunFastModeForFallbackCandidate({
         run: candidateRun,
         config: params.runtimeConfig,
-        provider,
-        model,
+        provider: selectedModel.provider,
+        model: selectedModel.id,
         sessionEntry: turn.getActiveSessionEntry(),
       });
-      turn.opts?.onModelSelected?.({ provider, model, thinkLevel: candidateThinkLevel });
+      turn.opts?.onModelSelected?.({
+        provider: selectedModel.provider,
+        model: selectedModel.id,
+        thinkLevel: candidateThinkLevel,
+      });
     }
     const signalExecutionPhaseForCandidate: AgentFallbackCandidateCommonParams["signalExecutionPhaseForTyping"] =
       (info) => {
@@ -225,17 +230,17 @@ export async function runAgentFallbackCandidates(params: AgentFallbackCycleParam
         deferredLifecycle: params.state.deferredLifecycle,
       } satisfies AgentFallbackCandidateCommonParams;
       if (runtime.cliExecutionProvider !== undefined) {
-        const candidate = await runCliFallbackCandidate({
+        const cliResult = await runCliFallbackCandidate({
           ...common,
           cliExecutionProvider: runtime.cliExecutionProvider,
           classifyResult: runOptions.classifyResult,
           lifecycleGeneration: params.state.lifecycleGeneration,
         });
         params.state.bootstrapPromptWarningSignaturesSeen =
-          candidate.bootstrapPromptWarningSignaturesSeen;
-        return candidate.result;
+          cliResult.bootstrapPromptWarningSignaturesSeen;
+        return cliResult.result;
       }
-      const candidate = await runEmbeddedFallbackCandidate({
+      const embeddedResult = await runEmbeddedFallbackCandidate({
         ...common,
         githubPublicationAvailable: await (githubPublicationAvailability ??=
           turn.sessionKey && params.effectiveRun.agentId
@@ -261,11 +266,11 @@ export async function runAgentFallbackCandidates(params: AgentFallbackCycleParam
         },
       });
       params.state.bootstrapPromptWarningSignaturesSeen =
-        candidate.bootstrapPromptWarningSignaturesSeen;
-      params.state.maintenanceAuthProfile = candidate.maintenanceAuthProfile;
+        embeddedResult.bootstrapPromptWarningSignaturesSeen;
+      params.state.maintenanceAuthProfile = embeddedResult.maintenanceAuthProfile;
       params.state.maintenanceExecutionSelection = candidateRun.executionSelection;
-      params.state.compactionRequestBudget = candidate.compactionRequestBudget;
-      return candidate.result;
+      params.state.compactionRequestBudget = embeddedResult.compactionRequestBudget;
+      return embeddedResult.result;
     } finally {
       revokeMessageActionTurnCapability(messageActionTurnCapability);
     }
@@ -303,8 +308,9 @@ export async function runAgentFallbackCandidates(params: AgentFallbackCycleParam
     runCandidate,
   };
   const accepted = params.effectiveRun.executionSelection;
-  if (isAcpExecutionSelection(accepted))
+  if (isAcpExecutionSelection(accepted)) {
     throw new Error("This reply requires a direct execution selection.");
+  }
   if (accepted.model === "native-managed") {
     return params.timing.measure("native_execution", async () => {
       const prepared = await prepareSessionExecutionSelection({
@@ -316,7 +322,9 @@ export async function runAgentFallbackCandidates(params: AgentFallbackCycleParam
         sessionEntry: params.liveModelSwitchRuntimeEntry ?? turn.getActiveSessionEntry(),
         request: { kind: "selection", selection: accepted },
       });
-      if (prepared.status !== "ready") throw new Error(prepared.message);
+      if (prepared.status !== "ready") {
+        throw new Error(prepared.message);
+      }
       return runEmbeddedAgentEntry<EmbeddedAgentRunResult>({
         ...common,
         kind: "native",

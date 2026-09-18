@@ -41,7 +41,7 @@ import {
   resolveOpenClawStateSqlitePath,
   resolveOpenClawStateDirForDatabasePath,
 } from "./openclaw-state-db.paths.js";
-import { OPENCLAW_AGENT_DATABASE_LEASE_SCHEMA } from "./openclaw-state-lease-schema.js";
+import { AGENT_DATABASE_LEASE_SCHEMA_SQL } from "./openclaw-state-lease-schema.js";
 import type { OpenClawStateLeaseContext } from "./openclaw-state-lease.js";
 
 type AgentDatabaseLeaseDatabase = Pick<
@@ -477,7 +477,7 @@ function withExistingAgentLeaseWrite<T>(
     options,
     {
       operationLabel: "agent.database.maintenance.admission",
-      schemaSql: OPENCLAW_AGENT_DATABASE_LEASE_SCHEMA,
+      schemaSql: AGENT_DATABASE_LEASE_SCHEMA_SQL,
       busyTimeoutMs: 0,
     },
   );

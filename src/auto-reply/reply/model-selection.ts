@@ -1,15 +1,18 @@
 /** Model selection state for reply runs, including catalog and override handling. */
-import { resolveAgentConfig, resolveAgentDir } from "../../agents/agent-scope.js";
-import { isStoredCredentialCompatibleWithAuthProvider } from "../../agents/auth-profiles/order.js";
-import { clearSessionAuthProfileOverride } from "../../agents/auth-profiles/session-override.js";
-import { resolveAgentHarnessPolicy } from "../../agents/harness/policy.js";
-import { resolveModelProviderAuthConfig } from "../../agents/model-auth-provider-route.js";
+import { isDeepStrictEqual } from "node:util";
+import { resolveAgentConfig } from "../../agents/agent-scope.js";
+import {
+  commitPreparedSessionAuthSelection,
+  readSessionAuthProfileOverrideState,
+  type PreparedSessionAuthSelection,
+  type ReplySessionAuthContext,
+} from "../../agents/auth-profiles/session-override.js";
+import type { AcceptedCompactionSuccessor } from "../../agents/embedded-agent-runner/compaction-successor.js";
 import type { ModelCatalogEntry } from "../../agents/model-catalog.js";
 import type { ModelCatalogSnapshot } from "../../agents/model-catalog.types.js";
 import type { ModelFallbackRouteResolution } from "../../agents/model-fallback.types.js";
 import {
   type ModelAliasIndex,
-  normalizeProviderId,
   resolveReasoningDefault,
   resolveThinkingDefault,
 } from "../../agents/model-selection.js";
@@ -18,26 +21,30 @@ import {
   createModelVisibilityPolicy,
   type ModelVisibilityPolicy,
 } from "../../agents/model-visibility-policy.js";
-import { listOpenAIAuthProfileProvidersForAgentRuntime } from "../../agents/openai-routing.js";
 import {
   needsThinkHydration,
-  resolveEffectiveAgentRuntime,
+  resolveEffectiveAgentRuntimeCore,
 } from "../../agents/thinking-runtime.js";
-import { resolveCollapsedSessionAuthPinSource } from "../../config/sessions/auth-profile-override-provenance.js";
-import { SessionWorkStartInvalidatedError } from "../../config/sessions/lifecycle.js";
-import { adoptPersistedSessionSnapshot } from "../../config/sessions/session-snapshot-merge.js";
+import {
+  resolveSessionWorkStartError,
+  SessionWorkStartInvalidatedError,
+} from "../../config/sessions/lifecycle.js";
+import { mergeSessionSnapshotChanges } from "../../config/sessions/session-snapshot-merge.js";
+import { adoptPersistedSessionSnapshot } from "../../config/sessions/session-snapshot.js";
 import type { SessionEntry } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { createAbortError } from "../../infra/abort-signal.js";
 import { isDiagnosticFlagEnabled } from "../../infra/diagnostic-flags.js";
-import { getSessionExecutionSelection } from "../../model-picker/execution-selection.js";
 import {
+  getSessionExecutionSelection,
   isAcpExecutionSelection,
   isModelExecutionSelection,
   type ExecutionSelection,
   type SessionExecutionSelection,
+  type PrepareSessionExecutionSelectionParams,
 } from "../../model-picker/execution-selection.js";
+import { ModelSelectionLockedError } from "../../sessions/model-overrides.js";
 import { createLazyImportLoader } from "../../shared/lazy-promise.js";
-import { isUserModelAuthProfileId } from "../../state/user-model-account-id.js";
 import type { ThinkLevel } from "../thinking.shared.js";
 import {
   findSelectedCatalogEntry,
@@ -50,6 +57,8 @@ export {
 } from "./model-selection-directive.js";
 export { resolveContextTokens } from "./model-selection-context.js";
 
+export class ModelSelectionPreparationError extends Error {}
+
 type ModelCatalog = ModelCatalogEntry[];
 
 type ThinkingDefaultSelection = {
@@ -58,10 +67,18 @@ type ThinkingDefaultSelection = {
   agentRuntime?: string | null;
 };
 
-type ModelSelectionState = {
+export type ModelSelectionState = {
   provider: string;
   model: string;
   executionSelection?: ExecutionSelection;
+  auth?: PreparedSessionAuthSelection;
+  validateExecution?: () => string | undefined;
+  onCommitted?: (accepted: AcceptedCompactionSuccessor) => void;
+  refreshExecution: (
+    entry: SessionEntry,
+    validateCommit?: () => string | undefined,
+    purpose?: "compaction",
+  ) => Promise<ModelSelectionState>;
   sessionExecutionSelection: SessionExecutionSelection | undefined;
   requestedRouteResolution: ModelFallbackRouteResolution;
   modelPolicy: ModelVisibilityPolicy;
@@ -98,30 +115,34 @@ function loadSessionPersistenceRuntime() {
 }
 
 /** Resolves provider/model, allowlist, catalog, and thinking defaults for a reply run. */
-export async function createModelSelectionState(params: {
-  cfg: OpenClawConfig;
-  agentId?: string;
-  agentCfg: NonNullable<NonNullable<OpenClawConfig["agents"]>["defaults"]> | undefined;
-  sessionEntry?: SessionEntry;
-  sessionStore?: Record<string, SessionEntry>;
-  sessionKey?: string;
-  parentSessionKey?: string;
-  storePath?: string;
-  defaultProvider: string;
-  defaultModel: string;
-  primaryProvider?: string;
-  primaryModel?: string;
-  provider: string;
-  model: string;
-  hasModelDirective: boolean;
-  hasOneTurnModelOverride?: boolean;
-  skipStoredModelOverride?: boolean;
-  /** True when heartbeat.model was explicitly resolved for this run.
-   *  In that case, skip session-stored overrides so the heartbeat selection wins. */
-  hasResolvedHeartbeatModelOverride?: boolean;
-  isHeartbeat?: boolean;
-  preparedModelCatalog?: ModelCatalogSnapshot;
-}): Promise<ModelSelectionState> {
+export async function createModelSelectionState(
+  params: {
+    cfg: OpenClawConfig;
+    agentId?: string;
+    agentCfg: NonNullable<NonNullable<OpenClawConfig["agents"]>["defaults"]> | undefined;
+    sessionStore?: Record<string, SessionEntry>;
+    parentSessionKey?: string;
+    storePath?: string;
+    defaultProvider: string;
+    defaultModel: string;
+    provider: string;
+    model: string;
+    hasModelDirective: boolean;
+    prepareExecution: boolean;
+    preparationPurpose?: "compaction";
+    abortSignal?: AbortSignal;
+    validateCommit?: () => string | undefined;
+    hasOneTurnModelOverride?: boolean;
+    skipStoredModelOverride?: boolean;
+    /** True when heartbeat.model was explicitly resolved for this run.
+     *  In that case, skip session-stored overrides so the heartbeat selection wins. */
+    hasResolvedHeartbeatModelOverride?: boolean;
+    preparedModelCatalog?: ModelCatalogSnapshot;
+  } & (
+    | { replyAuth?: undefined; sessionEntry?: SessionEntry; sessionKey?: string }
+    | { replyAuth: ReplySessionAuthContext; sessionEntry: SessionEntry; sessionKey: string }
+  ),
+): Promise<ModelSelectionState> {
   const timingEnabled = isDiagnosticFlagEnabled("ingress.timing", params.cfg);
   const startMs = timingEnabled ? Date.now() : 0;
   const logStage = (stage: string, extra?: string) => {
@@ -143,6 +164,9 @@ export async function createModelSelectionState(params: {
     defaultProvider,
     defaultModel,
   } = params;
+  const initialEntry = sessionEntry
+    ? { ...sessionEntry, executionSelection: structuredClone(sessionEntry.executionSelection) }
+    : undefined;
   const loadRuntimeCatalogSnapshot = async (): Promise<ModelCatalogSnapshot> =>
     params.preparedModelCatalog ??
     (await (
@@ -186,15 +210,12 @@ export async function createModelSelectionState(params: {
   let allowedModelKeys = new Set<string>();
   let allowedModelCatalog: ModelCatalog = configuredModelCatalog;
   let modelCatalog: ModelCatalog | null = null;
-  // Whether the loaded catalog is a complete/live snapshot. A degraded catalog
-  // (discovery threw, static/empty fallback) must not destroy a pinned override.
-  let catalogAuthoritative = true;
-  const acceptedSelection = getSessionExecutionSelection(sessionEntry);
+  const acceptedSelection = getSessionExecutionSelection(initialEntry);
   if (needsModelCatalog) {
     const catalogSnapshot = await loadRuntimeCatalogSnapshot();
     modelCatalog = catalogSnapshot.entries;
     // Only an explicit false is degraded; absent means authoritative.
-    catalogAuthoritative = catalogSnapshot.authoritative !== false;
+    const catalogAuthoritative = catalogSnapshot.authoritative !== false;
     logStage(
       "catalog-loaded",
       `entries=${modelCatalog.length} authoritative=${catalogAuthoritative}`,
@@ -242,125 +263,195 @@ export async function createModelSelectionState(params: {
     provider = executionSelection.model.provider;
     model = executionSelection.model.id;
   }
-  if (!params.hasModelDirective) {
-    const { prepareSessionExecutionSelection, commitSessionExecutionSelection } =
-      await import("../../model-picker/apply-session-model-selection.js");
+  let auth: PreparedSessionAuthSelection | undefined;
+  let validateExecution: (() => string | undefined) | undefined;
+  let onCommitted: ((accepted: AcceptedCompactionSuccessor) => void) | undefined;
+  if (params.prepareExecution) {
+    const validateInvocation = () => {
+      if (params.abortSignal?.aborted) {
+        throw createAbortError("Reply canceled during model preparation", {
+          cause: params.abortSignal.reason,
+        });
+      }
+      return params.validateCommit?.();
+    };
+    const invocationError = validateInvocation();
+    if (invocationError) {
+      throw new SessionWorkStartInvalidatedError(invocationError);
+    }
+    const {
+      prepareSessionExecutionSelection,
+      prepareSessionCompactionExecutionSelection,
+      commitSessionExecutionSelection,
+      executionSelectionTransactionChanged,
+    } = await import("../../model-picker/apply-session-model-selection.js");
     const { resolveSessionAgentId } = await import("../../agents/agent-scope.js");
-    const prepared = await prepareSessionExecutionSelection({
+    const agentId = resolveSessionAgentId({ config: cfg, agentId: params.agentId, sessionKey });
+    const loadSessionEntry = storePath
+      ? (await import("../../config/sessions/session-accessor.js")).loadSessionEntry
+      : undefined;
+    const readCurrentEntry = () =>
+      loadSessionEntry && storePath && sessionKey
+        ? loadSessionEntry({ agentId, storePath, sessionKey, readConsistency: "latest" })
+        : sessionStore && sessionKey
+          ? sessionStore[sessionKey]
+          : sessionEntry;
+    const preparation = {
       cfg,
-      agentId: resolveSessionAgentId({ config: cfg, agentId: params.agentId, sessionKey }),
-      sessionKey,
+      agentId,
+      ...(params.replyAuth
+        ? {
+            replyAuth: params.replyAuth,
+            sessionEntry: params.sessionEntry,
+            sessionKey: params.sessionKey,
+          }
+        : { sessionEntry, sessionKey }),
       storePath: params.storePath,
+      readSessionEntry: readCurrentEntry,
       parentSessionKey: params.parentSessionKey,
-      sessionEntry,
       modelCatalog: modelCatalog ?? allowedModelCatalog,
       manifestPlugins: runtimeModelNormalization.manifestPlugins,
       request: turnLocalSelection
-        ? { kind: "model", model: { provider, id: model } }
-        : { kind: "initialize", model: { provider, id: model } },
-    });
+        ? { kind: "model" as const, model: { provider, id: model } }
+        : { kind: "initialize" as const, model: { provider, id: model } },
+    } satisfies PrepareSessionExecutionSelectionParams;
+    const compactionSource =
+      params.preparationPurpose === "compaction" &&
+      !turnLocalSelection &&
+      acceptedSelection &&
+      isModelExecutionSelection(acceptedSelection)
+        ? acceptedSelection
+        : undefined;
+    const temporaryCompaction = Boolean(compactionSource && sessionEntry && sessionKey);
+    const compactionPrepared =
+      compactionSource && sessionEntry && sessionKey
+        ? await prepareSessionCompactionExecutionSelection({
+            ...preparation,
+            sessionEntry,
+            sessionKey,
+            selection: compactionSource,
+          })
+        : undefined;
+    const prepared = compactionPrepared ?? (await prepareSessionExecutionSelection(preparation));
+    const invocationErrorAfterPreparation = validateInvocation();
+    if (invocationErrorAfterPreparation) {
+      throw new SessionWorkStartInvalidatedError(invocationErrorAfterPreparation);
+    }
     if (prepared.status !== "ready") {
-      throw new Error(prepared.message);
+      if (prepared.status === "rejected" && prepared.reason === "locked") {
+        throw new ModelSelectionLockedError(prepared.message);
+      }
+      throw new ModelSelectionPreparationError(prepared.message);
+    }
+    const validateCommit = () => validateInvocation() ?? prepared.validateCommit();
+    const preparationError = validateCommit();
+    if (preparationError) {
+      throw new SessionWorkStartInvalidatedError(preparationError);
     }
     if (isAcpExecutionSelection(prepared.selection)) {
-      throw new Error("This reply requires its bound app to prepare the model.");
+      throw new ModelSelectionPreparationError(
+        "This reply requires its bound app to prepare the model.",
+      );
+    }
+    if (initialEntry) {
+      const current = readCurrentEntry();
+      if (
+        !current ||
+        (sessionKey &&
+          resolveSessionWorkStartError(sessionKey, current, {
+            expectedSessionId: initialEntry.sessionId,
+          })) ||
+        current.sessionId !== initialEntry.sessionId ||
+        executionSelectionTransactionChanged(initialEntry, current)
+      ) {
+        throw new SessionWorkStartInvalidatedError(
+          "The session changed during model preparation. Try again.",
+        );
+      }
     }
     executionSelection = prepared.selection;
+    auth = prepared.auth;
+    if (compactionPrepared?.status === "ready") {
+      validateExecution = compactionPrepared.validateCommit;
+      onCommitted = compactionPrepared.onCommitted;
+    }
     if (isModelExecutionSelection(executionSelection)) {
       provider = executionSelection.model.provider;
       model = executionSelection.model.id;
     }
-    if (!acceptedSelection && !turnLocalSelection && sessionEntry && sessionStore && sessionKey) {
-      const initialEntry = { ...sessionEntry };
-      const nextEntry = { ...sessionEntry };
-      commitSessionExecutionSelection(nextEntry, executionSelection, {
-        cause: { kind: "initialize", fallbackPermission: prepared.fallbackPermission },
-      });
-      if (storePath) {
-        const { persistReplySessionEntry } = await loadSessionPersistenceRuntime();
-        const persistence = await persistReplySessionEntry({
-          storePath,
-          sessionKey,
-          initialEntry,
-          entry: nextEntry,
-          validateCommit: prepared.validateCommit,
+    if (
+      !turnLocalSelection &&
+      !temporaryCompaction &&
+      !params.replyAuth?.configuredProfileId &&
+      initialEntry &&
+      sessionEntry &&
+      sessionStore &&
+      sessionKey
+    ) {
+      const nextEntry = { ...initialEntry };
+      const selectionChanged = !acceptedSelection;
+      if (selectionChanged) {
+        commitSessionExecutionSelection(nextEntry, executionSelection, {
+          cause: { kind: "initialize", fallbackPermission: prepared.fallbackPermission },
         });
-        if (
-          persistence.status === "lifecycle-invalidated" ||
-          persistence.status === "commit-rejected"
-        ) {
-          throw new SessionWorkStartInvalidatedError(persistence.error);
-        }
-        adoptPersistedSessionSnapshot(sessionEntry, persistence.entry);
-      } else {
-        const error = prepared.validateCommit?.();
-        if (error) {
-          throw new Error(error);
-        }
-        adoptPersistedSessionSnapshot(sessionEntry, nextEntry);
       }
-      sessionStore[sessionKey] = sessionEntry;
+      const authChanged = auth && commitPreparedSessionAuthSelection(nextEntry, auth);
+      if (selectionChanged || authChanged) {
+        if (storePath) {
+          const { persistReplySessionEntry } = await loadSessionPersistenceRuntime();
+          const persistence = await persistReplySessionEntry({
+            agentId,
+            storePath,
+            sessionKey,
+            initialEntry,
+            entry: nextEntry,
+            validateCommit,
+          });
+          if (
+            persistence.status === "lifecycle-invalidated" ||
+            persistence.status === "commit-rejected"
+          ) {
+            throw new SessionWorkStartInvalidatedError(persistence.error);
+          }
+          adoptPersistedSessionSnapshot(sessionEntry, persistence.entry);
+        } else {
+          const error = validateCommit();
+          if (error) {
+            throw new Error(error);
+          }
+          const current = sessionStore[sessionKey];
+          if (
+            !current ||
+            resolveSessionWorkStartError(sessionKey, current, {
+              expectedSessionId: initialEntry.sessionId,
+            }) ||
+            executionSelectionTransactionChanged(initialEntry, current)
+          ) {
+            throw new SessionWorkStartInvalidatedError(
+              "The session changed during model preparation. Try again.",
+            );
+          }
+          adoptPersistedSessionSnapshot(
+            sessionEntry,
+            mergeSessionSnapshotChanges({ initial: initialEntry, next: nextEntry, current }),
+          );
+        }
+        sessionStore[sessionKey] = sessionEntry;
+      }
     }
+  }
+
+  if (auth) {
+    const preparedAuth = auth;
+    const committedAuthState = readSessionAuthProfileOverrideState(sessionEntry);
+    auth = {
+      ...preparedAuth,
+      validate: (current) => preparedAuth.validate(current, committedAuthState),
+    };
   }
 
   // Admission may wait after this choice; later snapshots must not move the comparison baseline.
   const sessionExecutionSelection = structuredClone(sessionEntry?.executionSelection);
-  if (
-    !params.skipStoredModelOverride &&
-    executionSelection &&
-    isModelExecutionSelection(executionSelection) &&
-    sessionEntry &&
-    sessionStore &&
-    sessionKey &&
-    sessionEntry.authProfileOverride &&
-    resolveCollapsedSessionAuthPinSource(sessionEntry) === "auto"
-  ) {
-    const { ensureAuthProfileStore } = await import("../../agents/auth-profiles.runtime.js");
-    const store = ensureAuthProfileStore(
-      params.agentId ? resolveAgentDir(cfg, params.agentId) : undefined,
-      {
-        allowKeychainPrompt: false,
-        profileId: sessionEntry.authProfileOverride,
-      },
-    );
-    logStage("auth-profile-store-loaded", `profiles=${Object.keys(store.profiles).length}`);
-    const profile = store.profiles[sessionEntry.authProfileOverride];
-    const authConfig = resolveModelProviderAuthConfig({ config: cfg, provider, modelId: model });
-    const harnessPolicy = resolveAgentHarnessPolicy({
-      provider,
-      modelId: model,
-      config: cfg,
-      agentId: params.agentId,
-      sessionKey,
-    });
-    const acceptedAuthProviders = listOpenAIAuthProfileProvidersForAgentRuntime({
-      provider,
-      harnessRuntime: executionSelection?.executor.id ?? harnessPolicy.runtime,
-      config: cfg,
-    }).map(normalizeProviderId);
-    // Provider aliases must preserve the same credential across native and embedded runtimes.
-    const overrideStillEligible =
-      profile != null &&
-      acceptedAuthProviders.some((accepted) =>
-        isStoredCredentialCompatibleWithAuthProvider({
-          cfg: authConfig,
-          provider: accepted,
-          credential: profile,
-        }),
-      );
-    // Admission rejects a missing personal account; clearing its pin here would bill the next participant.
-    const missingPersonalProfile =
-      !profile && isUserModelAuthProfileId(sessionEntry.authProfileOverride);
-    if (!overrideStillEligible && !missingPersonalProfile) {
-      await clearSessionAuthProfileOverride({
-        sessionEntry,
-        sessionStore,
-        sessionKey,
-        storePath,
-      });
-    }
-  }
-
   const buildThinkingCatalog = (catalog: ModelCatalog): ModelCatalog =>
     createModelVisibilityPolicy({
       cfg,
@@ -376,7 +467,7 @@ export async function createModelSelectionState(params: {
       ...selection,
       agentRuntime:
         selection.agentRuntime ??
-        resolveEffectiveAgentRuntime({
+        resolveEffectiveAgentRuntimeCore({
           cfg,
           provider: selection.provider,
           modelId: selection.model,
@@ -468,6 +559,34 @@ export async function createModelSelectionState(params: {
     provider,
     model,
     executionSelection,
+    auth,
+    validateExecution,
+    onCommitted,
+    refreshExecution: async (entry, validateCommit, purpose) => {
+      if (
+        params.prepareExecution &&
+        !isDeepStrictEqual(sessionExecutionSelection, entry.executionSelection)
+      ) {
+        throw new SessionWorkStartInvalidatedError("The session changed while waiting. Try again.");
+      }
+      return createModelSelectionState({
+        ...params,
+        sessionEntry: entry,
+        validateCommit,
+        ...(params.replyAuth
+          ? {
+              replyAuth: {
+                ...params.replyAuth,
+                isNewSession: params.prepareExecution ? false : params.replyAuth.isNewSession,
+              },
+              sessionKey: params.sessionKey,
+            }
+          : { replyAuth: undefined }),
+        hasModelDirective: false,
+        preparationPurpose: purpose,
+        prepareExecution: true,
+      });
+    },
     sessionExecutionSelection,
     requestedRouteResolution: "resolved",
     modelPolicy: visibilityPolicy,

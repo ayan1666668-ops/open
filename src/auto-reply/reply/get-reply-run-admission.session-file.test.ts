@@ -6,9 +6,6 @@ import type { PreparedReplyRunContext } from "./get-reply-run-context.js";
 import { createQueueTestRun } from "./queue.test-helpers.js";
 import { resolveFollowupRunToolAuthorityFingerprint } from "./reply-tool-authority.js";
 
-vi.mock("../../agents/auth-profiles/session-override.js", () => ({
-  resolveSessionAuthSelection: async () => undefined,
-}));
 vi.mock("./session-system-events.js", () => ({
   drainFormattedSystemEvents: async () => undefined,
 }));

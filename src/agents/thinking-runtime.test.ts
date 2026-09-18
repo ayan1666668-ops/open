@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import type { SessionEntry } from "../config/sessions.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import {
   clearAgentHarnesses,
@@ -11,7 +12,7 @@ import {
   hasResolvedThinkingCatalogEntry,
   needsThinkHydration,
   resolveCandidateThinkingLevel,
-  resolveEffectiveAgentRuntime,
+  resolveEffectiveAgentRuntimeCore,
 } from "./thinking-runtime.js";
 
 describe("hasResolvedThinkingCatalogEntry", () => {
@@ -120,7 +121,7 @@ describe("resolveEffectiveAgentRuntime", () => {
         },
       };
       expect(
-        resolveEffectiveAgentRuntime({
+        resolveEffectiveAgentRuntimeCore({
           cfg,
           provider: "openai",
           modelId: "gpt-5.6-luna",
@@ -142,7 +143,7 @@ describe("resolveEffectiveAgentRuntime", () => {
 
   it("keeps cold-start official OpenAI Luna on implicit Codex policy", () => {
     expect(
-      resolveEffectiveAgentRuntime({
+      resolveEffectiveAgentRuntimeCore({
         cfg: {},
         provider: "openai",
         modelId: "gpt-5.6-luna",
@@ -152,7 +153,7 @@ describe("resolveEffectiveAgentRuntime", () => {
 
   it("resolves residual auto to OpenClaw when no plugin harness is registered", () => {
     expect(
-      resolveEffectiveAgentRuntime({
+      resolveEffectiveAgentRuntimeCore({
         cfg: {
           models: {
             providers: {
@@ -182,7 +183,7 @@ describe("resolveEffectiveAgentRuntime", () => {
     });
 
     expect(
-      resolveEffectiveAgentRuntime({
+      resolveEffectiveAgentRuntimeCore({
         cfg: {},
         provider: "deepseek",
         modelId: "deepseek-v4-pro",
@@ -206,7 +207,7 @@ describe("resolveEffectiveAgentRuntime", () => {
     registerAgentHarness(codexHarness);
 
     expect(
-      resolveEffectiveAgentRuntime({
+      resolveEffectiveAgentRuntimeCore({
         cfg: {
           models: {
             providers: {
@@ -237,22 +238,23 @@ describe("resolveEffectiveAgentRuntime", () => {
         },
       });
       const cfg = openAIConfig("openclaw");
+      const sessionEntry: Partial<SessionEntry> = {
+        agentHarnessId: "openclaw",
+        executionSelection: {
+          state: "accepted",
+          selection: {
+            model: { provider: "openai", id: "fixture-model" },
+            executor: { kind: "harness", id: "codex" },
+          },
+          fallbackPermission: "explicit",
+        },
+      };
       expect(
-        resolveEffectiveAgentRuntime({
+        resolveEffectiveAgentRuntimeCore({
           cfg,
           provider: "openai",
           modelId: "gpt-5.6-luna",
-          sessionEntry: {
-            agentHarnessId: "openclaw",
-            executionSelection: {
-              state: "accepted",
-              selection: {
-                model: { provider: "openai", id: "fixture-model" },
-                executor: { kind: "harness", id: "codex" },
-              },
-              fallbackPermission: "explicit",
-            },
-          },
+          sessionEntry,
         }),
       ).toBe("codex");
     },
@@ -260,12 +262,13 @@ describe("resolveEffectiveAgentRuntime", () => {
 
   it("ignores legacy harness ids when choosing a runtime", () => {
     const cfg = openAIConfig("openclaw");
+    const sessionEntry: Partial<SessionEntry> = { agentHarnessId: "codex" };
     expect(
-      resolveEffectiveAgentRuntime({
+      resolveEffectiveAgentRuntimeCore({
         cfg,
         provider: "openai",
         modelId: "gpt-5.6-luna",
-        sessionEntry: { agentHarnessId: "codex" },
+        sessionEntry,
       }),
     ).toBe("openclaw");
   });
@@ -273,7 +276,7 @@ describe("resolveEffectiveAgentRuntime", () => {
   it("uses configured runtime policy without session hints", () => {
     const cfg = openAIConfig("openclaw");
     expect(
-      resolveEffectiveAgentRuntime({
+      resolveEffectiveAgentRuntimeCore({
         cfg,
         provider: "openai",
         modelId: "gpt-5.6-luna",
@@ -282,22 +285,23 @@ describe("resolveEffectiveAgentRuntime", () => {
   });
 
   it("lets an explicit OpenClaw override replace configured Codex policy", () => {
+    const sessionEntry: Partial<SessionEntry> = {
+      agentHarnessId: "codex",
+      executionSelection: {
+        state: "accepted",
+        selection: {
+          model: { provider: "openai", id: "fixture-model" },
+          executor: { kind: "harness", id: "openclaw" },
+        },
+        fallbackPermission: "explicit",
+      },
+    };
     expect(
-      resolveEffectiveAgentRuntime({
+      resolveEffectiveAgentRuntimeCore({
         cfg: openAIConfig("codex"),
         provider: "openai",
         modelId: "gpt-5.6-luna",
-        sessionEntry: {
-          agentHarnessId: "codex",
-          executionSelection: {
-            state: "accepted",
-            selection: {
-              model: { provider: "openai", id: "fixture-model" },
-              executor: { kind: "harness", id: "openclaw" },
-            },
-            fallbackPermission: "explicit",
-          },
-        },
+        sessionEntry,
       }),
     ).toBe("openclaw");
   });

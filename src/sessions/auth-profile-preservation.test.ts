@@ -2,15 +2,13 @@ import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { saveAuthProfileStore } from "../agents/auth-profiles/store-runtime.js";
-import type { SessionEntry } from "../config/sessions.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { applyModelOverrideWithAuthProfileCompatibility } from "../plugin-sdk/model-session-runtime.js";
+import type { SessionEntry } from "../plugin-sdk/session-store-runtime.js";
 import type { PluginManifestRecord } from "../plugins/manifest-registry.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
-import {
-  applyModelOverrideWithAuthProfileCompatibility,
-  shouldPreserveSessionAuthProfileOverride,
-} from "./auth-profile-preservation.js";
+import { shouldPreserveSessionAuthProfileOverride } from "./auth-profile-preservation.js";
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 

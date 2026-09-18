@@ -61,7 +61,6 @@ async function runDirectiveStatus(
     aliasIndex: emptyAliasIndex,
     allowedModelKeys: new Set(["anthropic/claude-opus-4-6"]),
     allowedModelCatalog: [],
-    resetModelOverride: false,
     provider: "anthropic",
     model: "claude-opus-4-6",
     initialModelLabel: "anthropic/claude-opus-4-6",

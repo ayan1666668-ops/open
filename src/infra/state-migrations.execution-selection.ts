@@ -4,6 +4,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { isDeepStrictEqual } from "node:util";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { selectAcpSessionRowForStoreEntry } from "../acp/runtime/session-meta-keys.js";
+import { listCliRuntimeModelBackendBindings } from "../agents/cli-backends.js";
 import { resolveDefaultModelForAgent } from "../agents/model-selection.js";
 import {
   resolveTargetSqliteOptions,
@@ -34,6 +35,7 @@ import { readOpenClawAgentDatabaseRegistryRows } from "../state/openclaw-agent-d
 import { assertSupportedAgentSchemaVersion } from "../state/openclaw-agent-db-schema-read.js";
 import { ensureOpenClawAgentSchema } from "../state/openclaw-agent-db-schema.js";
 import type { DB as AgentDatabase } from "../state/openclaw-agent-db.generated.js";
+import { preflightOpenClawDatabaseSchemas } from "../state/openclaw-database-preflight.js";
 import {
   getOpenClawDatabaseMaintenanceScope,
   type OpenClawDatabaseMaintenanceScope,
@@ -41,7 +43,10 @@ import {
 import { OPENCLAW_STATE_STRICT_SCHEMA_VERSION } from "../state/openclaw-state-db-contract.js";
 import { tableHasColumn } from "../state/openclaw-state-db-schema-helpers.js";
 import { assertSupportedStateSchemaVersion } from "../state/openclaw-state-db-schema-version.js";
-import { repairOpenClawStateDatabaseSchema } from "../state/openclaw-state-db.js";
+import {
+  repairOpenClawStateDatabaseSchema,
+  repairOpenClawStateDatabaseSchemaIfNeeded,
+} from "../state/openclaw-state-db.js";
 import {
   resolveOpenClawRegisteredAgentDatabasePath,
   resolveOpenClawAgentDatabaseStoredPath,
@@ -83,7 +88,9 @@ type LegacySharedDatabase = {
 
 function parseEntry(json: string): Record<string, unknown> {
   const value: unknown = JSON.parse(json);
-  if (!isRecord(value)) throw new Error("Session migration requires an object row.");
+  if (!isRecord(value)) {
+    throw new Error("Session migration requires an object row.");
+  }
   return value;
 }
 
@@ -126,12 +133,16 @@ async function prepareLegacyMaintenanceTables(
   } finally {
     database.close();
   }
-  if (version >= OPENCLAW_STATE_STRICT_SCHEMA_VERSION) return undefined;
+  if (version >= OPENCLAW_STATE_STRICT_SCHEMA_VERSION) {
+    return undefined;
+  }
   const owner = scope.createSchemaFenceDelegate({
     databasePath: sharedPath,
     actorId: "execution-selection-maintenance-prerequisite",
   });
-  if (!owner) throw new Error("Doctor maintenance prerequisite has no live schema owner.");
+  if (!owner) {
+    throw new Error("Doctor maintenance prerequisite has no live schema owner.");
+  }
   try {
     const directory = createSelectionBackupDirectory(env);
     const assertCurrent = await backUpMigrationDatabase(
@@ -139,7 +150,9 @@ async function prepareLegacyMaintenanceTables(
       path.join(directory, "shared.sqlite"),
       () => {
         scope.assertAdmission();
-        if (owner.closed) throw new Error("Doctor schema owner closed before migration.");
+        if (owner.closed) {
+          throw new Error("Doctor schema owner closed before migration.");
+        }
       },
     );
     const result = repairOpenClawStateDatabaseSchema(
@@ -152,7 +165,9 @@ async function prepareLegacyMaintenanceTables(
       },
       "lease-prerequisite",
     );
-    if (result.warnings.length) throw new Error(result.warnings.join("\n"));
+    if (result.warnings.length) {
+      throw new Error(result.warnings.join("\n"));
+    }
     return { directory, assertCurrent, changes: result.changes, release: () => owner.release() };
   } catch (error) {
     owner.release();
@@ -168,9 +183,27 @@ export async function migrateLegacyExecutionSelections(params: {
 }): Promise<MigrationMessages> {
   const env = params.env ?? process.env;
   const sharedPath = resolveOpenClawStateSqlitePath(env);
-  if (!fs.existsSync(sharedPath)) return { changes: [], warnings: [] };
+  if (!fs.existsSync(sharedPath)) {
+    return { changes: [], warnings: [] };
+  }
   const scope = getOpenClawDatabaseMaintenanceScope();
   if (!scope?.ownsSchemaMaintenance) {
+    const preflight = await preflightOpenClawDatabaseSchemas({
+      env,
+      agentAdmissionConfig: params.cfg,
+      configuredAgentDatabaseTargets:
+        params.configuredAgentDatabaseTargets ??
+        ((registeredDatabases) =>
+          resolveConfiguredAgentDatabaseTargets(params.cfg, { env, registeredDatabases })),
+    });
+    if (
+      !preflight.pendingMigrations?.length &&
+      !preflight.incompatible.length &&
+      !preflight.indeterminate.length &&
+      !preflight.agentRefusals?.length
+    ) {
+      return repairOpenClawStateDatabaseSchemaIfNeeded({ env });
+    }
     throw new Error("Execution selection migration requires stopped-writer Doctor maintenance.");
   }
   scope.assertAdmission();
@@ -219,7 +252,9 @@ export async function migrateLegacyExecutionSelections(params: {
             database.close();
           }
         });
-        if (sharedVersion >= 18 && !pending) return repairOpenClawStateDatabaseSchema({ env });
+        if (sharedVersion >= 18 && !pending) {
+          return repairOpenClawStateDatabaseSchema({ env });
+        }
         const backupDirectory = prerequisite?.directory ?? createSelectionBackupDirectory(env);
         const assertSharedCurrent =
           prerequisite?.assertCurrent ??
@@ -243,12 +278,14 @@ export async function migrateLegacyExecutionSelections(params: {
         try {
           const classifyExecutor = (id: string) =>
             resolveExecutionSelectionExecutorKind(params.cfg, id);
+          const cliRuntimeProviders = new Map(
+            listCliRuntimeModelBackendBindings({
+              config: params.cfg,
+              includeSetupRegistry: true,
+            }).map(({ runtime, provider }) => [runtime, provider]),
+          );
           const defaultProviders = new Map<string, string>();
-          const convert = (
-            entry: Record<string, unknown>,
-            sessionKey: string,
-            databaseAgentId: string,
-          ) => {
+          const convert = (entry: unknown, sessionKey: string, databaseAgentId: string) => {
             const agentId = parseAgentSessionKey(sessionKey)?.agentId ?? databaseAgentId;
             let defaultProvider = defaultProviders.get(agentId);
             if (!defaultProvider) {
@@ -256,8 +293,9 @@ export async function migrateLegacyExecutionSelections(params: {
               defaultProviders.set(agentId, defaultProvider);
             }
             const binding = normalizePersistedSessionEntryShape(entry, { sessionKey });
-            if (!binding)
+            if (!binding) {
               throw new Error("Session binding is invalid; original selection retained.");
+            }
             const sourceKey = sources.length
               ? selectAcpSessionRowForStoreEntry(
                   sourceDatabase,
@@ -284,6 +322,7 @@ export async function migrateLegacyExecutionSelections(params: {
                 acp,
                 classifyExecutor,
                 defaultProvider,
+                cliRuntimeProviders,
               }),
               source,
             };
@@ -303,21 +342,25 @@ export async function migrateLegacyExecutionSelections(params: {
             ).rows;
             const targetPath = fs.realpathSync(target.path);
             for (const row of rows) {
-              if (row.entry_json === "{}") continue;
+              if (row.entry_json === "{}") {
+                continue;
+              }
               const entry = parseEntry(row.entry_json);
-              if (entry.sessionId !== row.current_session_id)
+              if (entry.sessionId !== row.current_session_id) {
                 throw new Error(
                   "Session identity is inconsistent; migration retained the original row.",
                 );
+              }
               const result = convert(entry, row.session_key, target.agentId);
               if (result.source) {
                 const owner = copied.get(result.source.session_key);
-                if (owner && owner !== targetPath)
+                if (owner && owner !== targetPath) {
                   throw new Error(
                     "ACP selection has multiple owning database candidates; its shared source was retained.",
                   );
+                }
               }
-              if (result.changed)
+              if (result.changed) {
                 executeSqliteQuerySync(
                   database,
                   db
@@ -326,7 +369,10 @@ export async function migrateLegacyExecutionSelections(params: {
                     .where("session_key", "=", row.session_key)
                     .where("entry_json", "=", row.entry_json),
                 );
-              if (result.source) copied.set(result.source.session_key, targetPath);
+              }
+              if (result.source) {
+                copied.set(result.source.session_key, targetPath);
+              }
             }
             assertCurrent();
           };
@@ -371,7 +417,9 @@ export async function migrateLegacyExecutionSelections(params: {
               { env, registeredDatabases: registered },
             );
             for (const store of stores) {
-              if (store.storePath.endsWith(".sqlite") || !fs.existsSync(store.storePath)) continue;
+              if (store.storePath.endsWith(".sqlite") || !fs.existsSync(store.storePath)) {
+                continue;
+              }
               const options = resolveTargetSqliteOptions(store, env);
               const pathname = resolveTargetSqlitePath(store, env);
               let assertCurrent = agentFences.get(pathname);
@@ -427,20 +475,22 @@ export async function migrateLegacyExecutionSelections(params: {
                       const result = normalizePersistedSessionEntryShape(converted.entry, {
                         sessionKey: key,
                       });
-                      if (!result)
+                      if (!result) {
                         throw new Error(
                           "Legacy session conversion is invalid; original source retained.",
                         );
+                      }
                       return result;
                     },
                   },
                 });
                 assertImportCurrent();
                 const failures = report.targets
-                  .flatMap((target) => target.issues)
+                  .flatMap((reportedTarget) => reportedTarget.issues)
                   .filter((issue) => !isSessionSqliteMigrationWarning(issue));
-                if (failures.length)
+                if (failures.length) {
                   throw new Error(failures.map((issue) => issue.message).join("\n"));
+                }
                 runSqliteImmediateTransactionSync(db, () =>
                   migrateRows(db, target, assertImportCurrent),
                 );
@@ -449,7 +499,9 @@ export async function migrateLegacyExecutionSelections(params: {
                   wal?.close();
                 } finally {
                   clearNodeSqliteKyselyCacheForDatabase(db);
-                  if (db.isOpen) db.close();
+                  if (db.isOpen) {
+                    db.close();
+                  }
                 }
               }
             }
@@ -462,7 +514,9 @@ export async function migrateLegacyExecutionSelections(params: {
           assertSharedCurrent();
           const repaired = repairOpenClawStateDatabaseSchema({ env }, (database) => {
             assertSharedCurrent();
-            for (const assertCurrent of agentFences.values()) assertCurrent();
+            for (const assertCurrent of agentFences.values()) {
+              assertCurrent();
+            }
             maintenance.assertOwnedInTransaction(database);
             const db = getNodeSqliteKysely<LegacySharedDatabase>(database);
             if (tableHasColumn(database, "acp_sessions", "backend")) {
@@ -516,7 +570,9 @@ export async function migrateLegacyExecutionSelections(params: {
             maintenance.assertOwnedInTransaction(database);
             assertSharedCurrent();
           });
-          if (repaired.warnings.length) throw new Error(repaired.warnings.join("\n"));
+          if (repaired.warnings.length) {
+            throw new Error(repaired.warnings.join("\n"));
+          }
           return {
             changes: [
               ...(prerequisite?.changes ?? []),

@@ -176,10 +176,6 @@ export function resetCliCompactionTestDeps(): void {
   });
 }
 
-function resolveSessionTokenSnapshot(sessionEntry: SessionEntry | undefined): number | undefined {
-  return normalizeSessionTokenCount(resolveFreshSessionTotalTokens(sessionEntry));
-}
-
 function isNativeHarnessCompactionSession(
   sessionEntry: SessionEntry | undefined,
   provider: string,
@@ -657,10 +653,9 @@ export async function runCliTurnCompactionLifecycle(
       contextWindowTokens: contextTokenBudget,
     }),
   });
-  const tokenSnapshot = resolveSessionTokenSnapshot(params.sessionEntry);
   const currentTokenCount = Math.max(
     preemptiveCompaction.estimatedPromptTokens,
-    tokenSnapshot ?? 0,
+    normalizeSessionTokenCount(resolveFreshSessionTotalTokens(params.sessionEntry)) ?? 0,
   );
   if (
     !preemptiveCompaction.shouldCompact &&
@@ -813,6 +808,7 @@ export async function runCliTurnCompactionLifecycle(
         assertActive();
         return (
           (await cliCompactionDeps.clearCliSessionInStore({
+            agentId: params.sessionAgentId,
             provider: params.provider,
             sessionKey: params.sessionKey,
             sessionStore: params.sessionStore,
@@ -828,6 +824,7 @@ export async function runCliTurnCompactionLifecycle(
       }
 
       const recorded = await cliCompactionDeps.recordCliCompactionInStore({
+        agentId: params.sessionAgentId,
         compactionKind,
         sessionKey: params.sessionKey,
         sessionStore: params.sessionStore,

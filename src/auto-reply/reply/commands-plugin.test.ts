@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { expectDefined } from "@openclaw/normalization-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as runtimeChoice from "../../agents/model-runtime-choice.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import { parseSqliteSessionFileMarker } from "../../config/sessions/legacy-sqlite-marker.js";
 import {
@@ -23,10 +24,12 @@ import { resetPluginRuntimeStateForTest, setActivePluginRegistry } from "../../p
 import type { PluginCommandContext, PluginCommandResult } from "../../plugins/types.js";
 import { resolveIncognitoOpenClawAgentSqlitePath } from "../../state/openclaw-agent-db.js";
 import { withEnvAsync } from "../../test-utils/env.js";
+import { attachCompactModelPreparation } from "./commands-compact-model.test-support.js";
 import { buildCommandContext } from "./commands-context.js";
 import { handlePluginCommand } from "./commands-plugin.js";
 import type { HandleCommandsParams } from "./commands-types.js";
 import { shouldBypassPluginOwnedBindingForCommand } from "./dispatch-from-config.plugin-binding.js";
+import { clearInlineDirectives } from "./get-reply-directives-utils.js";
 import { finalizeInboundContext } from "./inbound-context.js";
 
 const compactEmbeddedAgentSessionMock = vi.hoisted(() => vi.fn());
@@ -63,7 +66,7 @@ function buildPluginParams(
   commandBodyNormalized: string,
   cfg: OpenClawConfig,
 ): HandleCommandsParams {
-  return {
+  const params: HandleCommandsParams = {
     cfg,
     ctx: {
       Provider: "whatsapp",
@@ -73,6 +76,10 @@ function buildPluginParams(
       AccountId: undefined,
     },
     command: {
+      surface: "whatsapp",
+      rawBodyNormalized: commandBodyNormalized,
+      ownerList: [],
+      senderIsOwner: true,
       commandBodyNormalized,
       isAuthorizedSender: true,
       senderId: "owner",
@@ -91,9 +98,23 @@ function buildPluginParams(
     model: "gpt-5.4",
     workspaceDir: "/tmp/openclaw-plugin-command",
     contextTokens: 10_000,
+    directives: clearInlineDirectives(commandBodyNormalized),
+    elevated: { enabled: false, allowed: false, failures: [] },
+    defaultGroupActivation: () => "always",
+    resolvedVerboseLevel: "off",
+    resolvedReasoningLevel: "off",
+    prepareModelState: async () => {
+      throw new Error("Compaction fixture was not attached.");
+    },
+    resolveModelLevels: async () => ({
+      resolvedThinkLevel: "medium",
+      resolvedReasoningLevel: "off",
+    }),
     isGroup: false,
     resolveDefaultThinkingLevel: async () => "medium",
-  } as unknown as HandleCommandsParams;
+  };
+  attachCompactModelPreparation(params);
+  return params;
 }
 
 async function withDeclaredCommandPlugin(
@@ -318,6 +339,95 @@ describe("handlePluginCommand", () => {
         totalTokensFresh: true,
       });
     } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps informational plugin commands independent of model preparation", async () => {
+    registerTestCommand({ text: "Available commands" });
+    const params = buildPluginParams("/card", { commands: { text: true } });
+    const prepare = vi.fn(params.prepareModelState);
+    params.prepareModelState = prepare;
+    await expect(handlePluginCommand(params, true)).resolves.toMatchObject({
+      shouldContinue: false,
+      reply: { text: "Available commands" },
+    });
+    expect(prepare).not.toHaveBeenCalled();
+    expect(compactEmbeddedAgentSessionMock).not.toHaveBeenCalled();
+  });
+
+  it("does not commit a selection or account when its plugin invocation closes during readiness", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-plugin-compact-readiness-"));
+    const storePath = path.join(tempDir, "sessions.json");
+    const params = buildPluginParams("/card", {
+      commands: { text: true },
+      session: { store: storePath },
+    });
+    params.storePath = storePath;
+    const sessionKey = params.sessionKey;
+    await replaceSessionEntry(
+      { storePath, sessionKey },
+      { sessionId: "session-plugin-command", updatedAt: 1 },
+    );
+    const entry = expectDefined(
+      loadSessionEntry({ storePath, sessionKey }),
+      "stored plugin session",
+    );
+    params.sessionEntry = entry;
+    params.sessionStore = { [sessionKey]: entry };
+    const before = structuredClone(entry);
+    let entered = () => {};
+    let release = () => {};
+    const evaluating = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const resume = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const evaluate = runtimeChoice.evaluatePublishedModelRuntimeChoice;
+    const spy = vi
+      .spyOn(runtimeChoice, "evaluatePublishedModelRuntimeChoice")
+      .mockImplementationOnce(async (request) => {
+        const result = await evaluate(request);
+        expect(result.kind).toBe("ready");
+        entered();
+        await resume;
+        return result;
+      });
+    let compacting:
+      | ReturnType<
+          NonNullable<NonNullable<PluginCommandContext["runtimeContext"]>["compactCurrent"]>
+        >
+      | undefined;
+    registerTestCommand(undefined, {
+      handler: async (ctx) => {
+        compacting = expectDefined(ctx.runtimeContext?.compactCurrent, "compact capability")();
+        await Promise.race([
+          evaluating,
+          compacting.then(() => {
+            throw new Error("Compaction ended before readiness evaluation.");
+          }),
+        ]);
+        return { text: "Command settled" };
+      },
+    });
+    try {
+      await handlePluginCommand(params, true);
+      release();
+      await expect(expectDefined(compacting, "pending compact result")).resolves.toEqual({
+        compacted: false,
+        reason: "command invocation closed",
+      });
+      expect(loadSessionEntry({ storePath, sessionKey })).toEqual(before);
+      expect(params.sessionStore[sessionKey]).toEqual(before);
+      expect(compactEmbeddedAgentSessionMock).not.toHaveBeenCalled();
+      expect(spy).toHaveBeenCalledOnce();
+    } finally {
+      release();
+      if (compacting) {
+        await Promise.allSettled([compacting]);
+      }
+      spy.mockRestore();
       await fs.rm(tempDir, { recursive: true, force: true });
     }
   });

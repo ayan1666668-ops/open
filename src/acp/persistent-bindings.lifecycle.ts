@@ -5,7 +5,7 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { logVerbose } from "../globals.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import type { AcpExecutionSelection } from "../model-picker/execution-selection.js";
-import { getAcpSessionManager } from "./control-plane/manager.js";
+import { getAcpSessionManagerCore } from "./control-plane/manager.js";
 import { requireReadySession } from "./control-plane/manager.utils.js";
 import {
   buildConfiguredAcpSessionKey,
@@ -60,7 +60,7 @@ export async function ensureConfiguredAcpBindingSession(params: {
   spec: ConfiguredAcpBindingSpec;
 }): Promise<{ ok: true; sessionKey: string } | { ok: false; sessionKey: string; error: string }> {
   const sessionKey = buildConfiguredAcpSessionKey(params.spec);
-  const acpManager = getAcpSessionManager();
+  const acpManager = getAcpSessionManagerCore();
   const runtimeOptions = {
     ...(params.spec.model ? { model: params.spec.model } : {}),
     ...(params.spec.thinking ? { thinking: params.spec.thinking } : {}),
@@ -83,18 +83,18 @@ export async function ensureConfiguredAcpBindingSession(params: {
       })
     ) {
       // Configured model preferences initialize once; the accepted model survives later ensures.
-      let currentOptions = resolution.meta.runtimeOptions;
-      for (const key of ["thinking"] as const) {
-        const value = runtimeOptions[key];
-        if (value !== undefined && normalizeText(currentOptions?.[key]) !== value) {
-          currentOptions = await acpManager.setSessionConfigOption({
-            cfg: params.cfg,
-            agentId: params.spec.agentId,
-            sessionKey,
-            key,
-            value,
-          });
-        }
+      const thinking = runtimeOptions.thinking;
+      if (
+        thinking !== undefined &&
+        normalizeText(resolution.meta.runtimeOptions?.thinking) !== thinking
+      ) {
+        await acpManager.setSessionConfigOption({
+          cfg: params.cfg,
+          agentId: params.spec.agentId,
+          sessionKey,
+          key: "thinking",
+          value: thinking,
+        });
       }
       return {
         ok: true,

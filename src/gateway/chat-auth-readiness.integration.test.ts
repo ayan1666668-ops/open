@@ -12,10 +12,15 @@ import {
 } from "../../ui/src/pages/chat/chat-state-refresh.ts";
 import { createTestGatewayClient } from "../../ui/src/test-helpers/gateway-client.ts";
 import { waitForFast } from "../../ui/src/test-helpers/wait-for.ts";
-import { getRuntimeConfig } from "../config/io.js";
+import { createSessionModelCatalogFixture } from "../agents/test-helpers/session-model-catalog.test-support.js";
+import { getRuntimeConfig, setRuntimeConfigSnapshot } from "../config/config.js";
 import { resolveSessionStorePathCore } from "../config/sessions.js";
 import { upsertSessionEntryCore } from "../config/sessions/session-accessor.js";
-import { applySessionModelSelection } from "../model-picker/apply-session-model-selection.js";
+import type { SessionEntry } from "../config/sessions/types.js";
+import {
+  applySessionExecutionSelection,
+  commitSessionExecutionSelection,
+} from "../model-picker/apply-session-model-selection.js";
 import { onSessionLifecycleEvent } from "../sessions/session-lifecycle-events.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import { createLifecycleEventBroadcastHandler } from "./server-session-events.js";
@@ -29,19 +34,47 @@ it("refreshes a retained pane from a persisted profile-only selection through th
       id: "claude-opus-4-6",
       name: "Model",
       reasoning: false,
+      api: "anthropic-messages" as const,
+      baseUrl: "https://profile-readiness.invalid/v1",
     };
+    const cfg = {
+      ...getRuntimeConfig(),
+      models: {
+        providers: {
+          [model.provider]: {
+            api: model.api,
+            baseUrl: model.baseUrl,
+            auth: "api-key" as const,
+            models: [],
+          },
+        },
+      },
+    };
+    setRuntimeConfigSnapshot(cfg);
+    createSessionModelCatalogFixture().publish({
+      config: cfg,
+      agentId: "main",
+      catalog: { entries: [model], routeVariants: [model] },
+      profiles: {
+        "anthropic:restored": {
+          type: "api_key",
+          provider: model.provider,
+          key: "synthetic-credential",
+        },
+      },
+    });
     const sessionKey = "agent:main:profile";
     const otherKey = "agent:main:other";
-    const entry = {
+    const entry: SessionEntry = {
       sessionId: "profile-session",
       updatedAt: 1,
-      providerOverride: model.provider,
-      modelOverride: model.id,
-      modelOverrideSource: "user" as const,
-      modelOverrideRouteResolution: "resolved" as const,
       authProfileOverride: "anthropic:missing",
       authProfileOverrideSource: "user" as const,
     };
+    commitSessionExecutionSelection(entry, {
+      model: { provider: model.provider, id: model.id },
+      executor: { kind: "harness", id: "openclaw" },
+    });
     await upsertSessionEntryCore({ agentId: "main", sessionKey }, entry);
     await upsertSessionEntryCore(
       { agentId: "main", sessionKey: otherKey },
@@ -99,27 +132,19 @@ it("refreshes a retained pane from a persisted profile-only selection through th
     );
     try {
       await expect(
-        applySessionModelSelection({
-          cfg: getRuntimeConfig(),
+        applySessionExecutionSelection({
+          cfg,
           agentId: "main",
           sessionKey,
           storePath: resolveSessionStorePathCore(undefined, { agentId: "main" }),
           sessionEntry: entry,
           sessionStore: { [sessionKey]: entry },
           currentProvider: model.provider,
-          currentModel: model.id,
-          defaultProvider: model.provider,
-          defaultModel: model.id,
           modelCatalog: [model],
           canPersistStickyModelSelection: false,
           markLiveSwitchPending: true,
-          request: {
-            provider: model.provider,
-            model: model.id,
-            isDefault: false,
-            profileOverride: "anthropic:restored",
-            runtime: { kind: "unchanged" },
-          },
+          profileOverride: "anthropic:restored",
+          request: { kind: "model", model: { provider: model.provider, id: model.id } },
         }),
       ).resolves.toMatchObject({ status: "applied", changed: true });
       await waitForFast(() => expect(retained.chatModelCatalog[0]?.available).toBe(true));

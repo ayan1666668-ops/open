@@ -8,6 +8,7 @@ import {
   resolveFollowupRunToolAuthorityFingerprint,
 } from "../../auto-reply/reply/reply-tool-authority.js";
 import { rotateAgentEventLifecycleGeneration } from "../../infra/agent-events.js";
+import { isModelExecutionSelection } from "../../model-picker/execution-selection.js";
 import { controlRealtimeVoiceAgentRun } from "../../talk/agent-run-control.js";
 import {
   createOperationalRunInstanceRef,
@@ -734,10 +735,14 @@ describe("host-prepared embedded tool authority", () => {
             return snapshot.project(overlay, selectedRoute);
           },
         });
+        const selected = original.run.executionSelection;
+        if (!isModelExecutionSelection(selected)) {
+          throw new Error("Expected concrete reply selection");
+        }
         const initialRoute =
           selectionPhase === "candidate"
             ? route
-            : { provider: original.run.provider, model: original.run.model };
+            : { provider: selected.model.provider, model: selected.model.id };
         if (selectionPhase !== "unprepared") {
           operation.bindToolAuthorityRoute(initialRoute);
         }

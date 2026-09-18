@@ -5,6 +5,7 @@ import type {
   SessionsListResult,
   SessionsPatchResult,
 } from "../api/types.ts";
+import type { resolveChatModelSelectState } from "../lib/chat/model-select-state.ts";
 
 const OPENAI_GPT5_MODEL: ModelCatalogEntry = {
   id: "gpt-5",
@@ -123,5 +124,22 @@ export function createResolvedModelPatch(
       model,
       modelProvider: modelProvider ?? undefined,
     },
+  };
+}
+
+type ChatModelStateInput = Parameters<typeof resolveChatModelSelectState>[0];
+
+export function createChatModelState(
+  params: Partial<Omit<ChatModelStateInput, "sessionKey">> = {},
+): ChatModelStateInput {
+  const sessionsResult =
+    params.sessionsResult ?? createSessionsListResult({ model: null, modelProvider: null });
+  return {
+    activeSession: params.activeSession ?? sessionsResult.sessions[0],
+    sessionKey: "main",
+    modelOverrides: {},
+    chatModelCatalog: [],
+    sessionsResult,
+    ...params,
   };
 }

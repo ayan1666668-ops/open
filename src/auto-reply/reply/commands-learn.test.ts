@@ -174,7 +174,14 @@ describe("learn command", () => {
           updatedAt: 1,
           execHost: "node",
           execNode: "paired-node",
-          agentRuntimeOverride: "claude-cli",
+          executionSelection: {
+            state: "accepted",
+            selection: {
+              model: { provider: params.provider, id: params.model },
+              executor: { kind: "cli", id: "claude-cli" },
+            },
+            fallbackPermission: "explicit",
+          },
         };
       }
       const result = await handleLearnCommand(params, true);

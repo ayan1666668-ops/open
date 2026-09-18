@@ -56,8 +56,14 @@ async function withImportedHistory(
     await upsertSessionEntryCore(scope, {
       sessionId: scope.sessionId,
       updatedAt: timestamp,
-      providerOverride: "claude-cli",
-      modelOverride: "claude-sonnet-4-6",
+      executionSelection: {
+        state: "accepted",
+        selection: {
+          model: { provider: "claude-cli", id: "claude-sonnet-4-6" },
+          executor: { kind: "cli", id: "claude-cli" },
+        },
+        fallbackPermission: "explicit",
+      },
       cliSessionBindings: { "claude-cli": { sessionId: cliSessionId } },
     });
     await appendTranscriptMessage(scope, {
@@ -128,7 +134,14 @@ async function withImportedSnapshot(
     await upsertSessionEntryCore(scope, {
       sessionId: scope.sessionId,
       updatedAt: 1,
-      providerOverride: "claude-cli",
+      executionSelection: {
+        state: "accepted",
+        selection: {
+          model: { provider: "claude-cli", id: "claude-sonnet-4-6" },
+          executor: { kind: "cli", id: "claude-cli" },
+        },
+        fallbackPermission: "explicit",
+      },
       cliSessionBindings: { "claude-cli": { sessionId: randomUUID() } },
     });
     const snapshot = vi
@@ -376,8 +389,14 @@ describe("CLI-imported history anchors", () => {
       await upsertSessionEntryCore(scope, {
         sessionId: scope.sessionId,
         updatedAt: timestamp,
-        providerOverride: "claude-cli",
-        modelOverride: "claude-sonnet-4-6",
+        executionSelection: {
+          state: "accepted",
+          selection: {
+            model: { provider: "claude-cli", id: "claude-sonnet-4-6" },
+            executor: { kind: "cli", id: "claude-cli" },
+          },
+          fallbackPermission: "explicit",
+        },
         cliSessionBindings: { "claude-cli": { sessionId: cliSessionId } },
       });
       const local = await appendTranscriptMessage(scope, {
@@ -433,8 +452,14 @@ describe("CLI-imported history anchors", () => {
       await upsertSessionEntryCore(scope, {
         sessionId: scope.sessionId,
         updatedAt: timestamp,
-        providerOverride: "claude-cli",
-        modelOverride: "claude-sonnet-4-6",
+        executionSelection: {
+          state: "accepted",
+          selection: {
+            model: { provider: "claude-cli", id: "claude-sonnet-4-6" },
+            executor: { kind: "cli", id: "claude-cli" },
+          },
+          fallbackPermission: "explicit",
+        },
         cliSessionBindings: { "claude-cli": { sessionId: cliSessionId } },
       });
       const localIds: string[] = [];
@@ -504,8 +529,14 @@ describe("CLI-imported history anchors", () => {
       await upsertSessionEntryCore(scope, {
         sessionId: scope.sessionId,
         updatedAt: timestamp,
-        providerOverride: "claude-cli",
-        modelOverride: "claude-sonnet-4-6",
+        executionSelection: {
+          state: "accepted",
+          selection: {
+            model: { provider: "claude-cli", id: "claude-sonnet-4-6" },
+            executor: { kind: "cli", id: "claude-cli" },
+          },
+          fallbackPermission: "explicit",
+        },
         cliSessionBindings: { "claude-cli": { sessionId: cliSessionId } },
       });
       const localUser = await appendTranscriptMessage(scope, {

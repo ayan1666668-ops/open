@@ -1,4 +1,3 @@
-import { buildModelCatalogRef } from "@openclaw/model-catalog-core/model-catalog-refs";
 import { sanitizeForLog } from "../../../packages/terminal-core/src/ansi.js";
 import {
   formatThinkingLevels,
@@ -13,8 +12,8 @@ import {
   hasSessionModelSelection,
   prepareSessionExecutionSelection,
 } from "../../model-picker/apply-session-model-selection.js";
-import { getSessionExecutionSelection } from "../../model-picker/execution-selection.js";
 import {
+  getSessionExecutionSelection,
   isAcpExecutionSelection,
   isModelExecutionSelection,
 } from "../../model-picker/execution-selection.js";
@@ -23,8 +22,8 @@ import { requireActivePluginRegistry } from "../../plugins/runtime.js";
 import { isSubagentSessionKey } from "../../routing/session-key.js";
 import { shouldPreserveUnavailableSessionAuthProfileOverride } from "../../sessions/auth-profile-preservation.js";
 import {
-  ModelSelectionLockedError,
   isModelSelectionLocked,
+  ModelSelectionLockedError,
 } from "../../sessions/model-overrides.js";
 import {
   sessionDeliveryChannel,
@@ -58,7 +57,7 @@ import { resolveProviderIdForAuth } from "../provider-auth-aliases.js";
 import {
   needsThinkHydration,
   normalizeThinkingCatalogProviders,
-  resolveEffectiveAgentRuntime,
+  resolveEffectiveAgentRuntimeCore,
 } from "../thinking-runtime.js";
 import { persistAgentSession } from "./attempt-execution.shared.js";
 import { normalizeAgentCommandModelRef, parseAgentCommandModelRef } from "./model-ref.js";
@@ -223,20 +222,6 @@ export async function resolveEmbeddedModelSelection(params: {
     provider = explicitRef.provider;
     model = explicitRef.model;
   }
-  const allowedInitialSelection =
-    isModelSelectionLocked(sessionEntry) ||
-    (acceptedSelection?.model === "native-managed" && !hasExplicitRunOverride)
-      ? { provider, model }
-      : visibilityPolicy.resolveSelection({ provider, model, routeResolution: "resolved" });
-  if (!allowedInitialSelection) {
-    const policyPath = visibilityPolicy.allowConfigPath ?? "modelPolicy.allow";
-    throw new Error(
-      `Configured default model "${buildModelCatalogRef(provider, model)}" is not allowed by ${policyPath}, and no allowed model is available.`,
-    );
-  }
-  provider = allowedInitialSelection.provider;
-  model = allowedInitialSelection.model;
-  const providerForAuthProfileValidation = provider;
   const preparedSelection = await prepareSessionExecutionSelection({
     cfg: params.cfg,
     agentId: params.sessionAgentId,
@@ -244,6 +229,7 @@ export async function resolveEmbeddedModelSelection(params: {
     storePath: params.storePath,
     sessionEntry,
     modelCatalog,
+    manifestPlugins: params.modelManifestContext.manifestPlugins,
     request:
       params.opts.modelRun === true || params.opts.promptMode === "none"
         ? {
@@ -266,6 +252,7 @@ export async function resolveEmbeddedModelSelection(params: {
     provider = executionSelection.model.provider;
     model = executionSelection.model.id;
   }
+  const providerForAuthProfileValidation = provider;
   if (
     !acceptedSelection &&
     !hasExplicitRunOverride &&
@@ -279,6 +266,7 @@ export async function resolveEmbeddedModelSelection(params: {
       cause: { kind: "initialize", fallbackPermission: preparedSelection.fallbackPermission },
     });
     sessionEntry = await persistAgentSession({
+      agentId: params.sessionAgentId,
       sessionStore: params.sessionStore,
       sessionKey: params.sessionKey,
       storePath: params.storePath,
@@ -382,6 +370,7 @@ export async function resolveEmbeddedModelSelection(params: {
         !params.suppressVisibleSessionEffects
       ) {
         await clearSessionAuthProfileOverride({
+          agentId: params.sessionAgentId,
           sessionEntry: entry,
           sessionStore: params.sessionStore,
           sessionKey: params.sessionKey,
@@ -403,7 +392,7 @@ export async function resolveEmbeddedModelSelection(params: {
       provider,
       model,
     });
-  const thinkingRuntime = resolveEffectiveAgentRuntime({
+  const thinkingRuntime = resolveEffectiveAgentRuntimeCore({
     cfg: params.cfg,
     provider,
     modelId: model,
@@ -485,6 +474,7 @@ export async function resolveEmbeddedModelSelection(params: {
     };
     sessionEntry =
       (await persistAgentSession({
+        agentId: params.sessionAgentId,
         sessionStore: params.sessionStore,
         sessionKey: params.sessionKey,
         storePath: params.storePath,
@@ -536,6 +526,9 @@ export async function resolveEmbeddedModelSelection(params: {
     providerForAuthProfileValidation,
     hasExplicitRunOverride,
     executionSelection,
+    ...(hasExplicitRunOverride && isModelExecutionSelection(executionSelection)
+      ? { userSelection: executionSelection }
+      : {}),
     sessionEntryForAttempt,
     thinkingCatalog,
     immutableThinkLevel,
