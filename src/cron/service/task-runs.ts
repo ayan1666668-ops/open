@@ -1,10 +1,12 @@
 /** Detached task-ledger integration for cron runs. */
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
+import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import {
   createExecutionStartedOwnerBinding,
   isRetainedExecutionOwnerBinding,
 } from "../../audit/execution-owner-binding.js";
+import { formatErrorMessage } from "../../infra/errors.js";
 import { normalizeAgentId, resolveAgentIdFromSessionKey } from "../../routing/session-key.js";
 import { CRON_TASK_KIND } from "../../tasks/cron-task-contract.js";
 import {
@@ -33,6 +35,7 @@ import {
   cronRunLogEntryToTaskDetail,
   cronRunStatusToTaskStatus,
   cronQuietTriggerTaskDetail,
+  cronTaskDetailWithFailureAlertOutcome,
   cronTaskRecordStoreKey,
   cronTaskRecordToRunLogEntry,
   cronTaskRecordToScriptRunResult,
@@ -42,6 +45,7 @@ import {
 import { cronRunLogEntryFromEvent } from "../task-run-event-codec.js";
 import type {
   CronCompletionStatus,
+  CronFailureNotificationDelivery,
   CronJob,
   CronRunErrorClassification,
   CronRunStatus,
@@ -535,6 +539,77 @@ export function tryFinishCronTaskRun(
     state.deps.log.warn(
       { runId: candidateRunId, jobStatus: entry.status, error },
       "cron: failed to update task ledger record",
+    );
+  }
+}
+
+/** Mirrors the live-job cap so both audit surfaces bound the same redacted error. */
+const CRON_FAILURE_ALERT_HISTORY_ERROR_MAX_LENGTH = 1_000;
+
+/**
+ * Settles the transport-owned failure-alert outcome on the already-finalized
+ * run-history row. `cron runs` projects the stored history detail rather than
+ * live job state, so the detached alert completion must land here too or the
+ * two audit surfaces report different outcomes for the same failed run.
+ * The settled tri-state is stored as-is: an uncertain send stays `unknown`
+ * rather than being promoted to delivered or demoted to not-delivered, and the
+ * transport error crosses the same redaction and length boundary as the job row.
+ * Idempotent: a terminally settled history row is never overwritten, so a late
+ * duplicate completion cannot downgrade a recipient that was reached.
+ */
+export function settleCronTaskRunFailureAlertOutcome(
+  state: CronServiceState,
+  result: {
+    taskRunId?: string;
+    outcome: CronFailureNotificationDelivery;
+  },
+): void {
+  if (!result.taskRunId) {
+    return;
+  }
+  try {
+    const task = findTaskByRunId(result.taskRunId);
+    if (task?.runtime !== "cron") {
+      return;
+    }
+    const entry = cronTaskRecordToRunLogEntry(task);
+    if (!entry) {
+      return;
+    }
+    const settledStatus = entry.failureNotificationDelivery?.status;
+    if (settledStatus === "delivered" || settledStatus === "not-delivered") {
+      return;
+    }
+    const detail = cronTaskDetailWithFailureAlertOutcome(task, {
+      status: result.outcome.status,
+      ...(result.outcome.delivered !== undefined ? { delivered: result.outcome.delivered } : {}),
+      ...(result.outcome.error !== undefined
+        ? {
+            error: truncateUtf16Safe(
+              formatErrorMessage(result.outcome.error),
+              CRON_FAILURE_ALERT_HISTORY_ERROR_MAX_LENGTH,
+            ),
+          }
+        : {}),
+    });
+    if (!detail) {
+      return;
+    }
+    finalizeTaskRunByRunIdCore({
+      runId: result.taskRunId,
+      runtime: "cron",
+      // SAFETY: finished cron rows only carry terminal statuses; this patch must not change the row's terminal state.
+      status: task.status as Extract<
+        TaskStatus,
+        "succeeded" | "failed" | "timed_out" | "cancelled"
+      >,
+      endedAt: resolveCronTaskRecordTimestamp(task),
+      detail,
+    });
+  } catch (cause) {
+    state.deps.log.warn(
+      { runId: result.taskRunId, err: cause },
+      "cron: failed to settle failure-alert outcome on run history",
     );
   }
 }

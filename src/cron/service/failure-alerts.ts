@@ -26,6 +26,7 @@ import type {
 import { locked } from "./locked.js";
 import { applyCronRuntimeRowsToState, commitCronRuntimeRows } from "./runtime-store.js";
 import type { CronServiceState, DeferredCronNotifications } from "./state.js";
+import { settleCronTaskRunFailureAlertOutcome } from "./task-runs.js";
 import { enqueueCronNotification } from "./wake.js";
 
 const DEFAULT_FAILURE_ALERT_AFTER = 2;
@@ -268,6 +269,7 @@ function transportFailureAlert(
     payload: ReplyPayload;
     runAtMs?: number;
     route: ResolvedFailureAlert;
+    taskRunId?: string;
   },
 ): void {
   const jobId = params.job.id;
@@ -279,6 +281,8 @@ function transportFailureAlert(
     // No transport means no send whose outcome could be recorded: the alert
     // goes straight to the in-app fallback queue and the intent stays
     // "unknown", matching the pre-existing contract for transport-less setups.
+    // The run-history row keeps the same pending snapshot published at terminal
+    // time; settling here would race finalization and get overwritten by it.
     enqueueCronNotification(state, params.job, params.payload.text ?? "", "failure-alert");
     return;
   }
@@ -302,6 +306,14 @@ function transportFailureAlert(
         if (recordResult !== "stale" && outcome.status === "not-delivered") {
           enqueueCronNotification(state, params.job, params.payload.text ?? "", "failure-alert");
         }
+        // Store the transport's settled tri-state as-is so an uncertain send
+        // (possible duplicate, not a confirmed delivery) stays uncertain on
+        // the history row too; errors cross the same redaction boundary as
+        // the job row inside the settlement writer.
+        settleCronTaskRunFailureAlertOutcome(state, {
+          taskRunId: params.taskRunId,
+          outcome,
+        });
       },
     })
     .catch((err: unknown) => {
@@ -323,6 +335,7 @@ function emitFailureAlert(
     consecutiveErrors: number;
     route: ResolvedFailureAlert;
     status: "error" | "skipped";
+    taskRunId?: string;
   },
 ) {
   const safeJobName = params.job.name || params.job.id;
@@ -360,6 +373,7 @@ function emitFailureAlert(
     payload,
     runAtMs: params.runAtMs,
     route: params.route,
+    taskRunId: params.taskRunId,
   });
 }
 
@@ -453,6 +467,7 @@ export function maybeEmitFailureAlert(
     runAtMs?: number;
     consecutiveCount: number;
     deferredNotifications?: DeferredCronNotifications;
+    taskRunId?: string;
   },
 ) {
   recordUnresolvedFailure(params.job, params.failureNotificationDetail);
@@ -487,6 +502,7 @@ export function maybeEmitFailureAlert(
       consecutiveErrors: params.consecutiveCount,
       route: alertConfig,
       status: params.status,
+      taskRunId: params.taskRunId,
     });
   if (params.deferredNotifications) {
     params.deferredNotifications.push(notify);
@@ -557,6 +573,7 @@ export function finalizeCronFailureNotifications(
     autoDisableNotificationOwnsFailure: boolean;
     replay?: boolean;
     deferredNotifications?: DeferredCronNotifications;
+    taskRunId?: string;
   },
 ): void {
   if (params.result.status === "ok" && params.completionStatus === "succeeded") {
@@ -585,6 +602,7 @@ export function finalizeCronFailureNotifications(
       runAtMs: params.result.startedAt,
       consecutiveCount: params.job.state.consecutiveErrors ?? 0,
       deferredNotifications: params.deferredNotifications,
+      taskRunId: params.taskRunId,
     });
   } else if (
     params.result.status === "ok" &&
@@ -624,6 +642,7 @@ export function finalizeCronFailureNotifications(
         payload,
         runAtMs: params.result.startedAt,
         route,
+        taskRunId: params.taskRunId,
       });
     if (params.deferredNotifications) {
       params.deferredNotifications.push(notify);
