@@ -36,11 +36,17 @@ export type HeaderMenuQuickAction = {
   id: string;
   label: string;
   icon: TemplateResult;
-  active?: boolean;
-  badge?: number;
-  disabled?: boolean;
-  onActivate: () => void;
-};
+  description?: string;
+} & (
+  | { kind: "status" }
+  | {
+      kind?: "action";
+      active?: boolean;
+      badge?: number;
+      disabled?: boolean;
+      onActivate: () => void;
+    }
+);
 
 const EMPTY_SETTINGS = {} as UiSettings;
 
@@ -157,7 +163,7 @@ class ChatHeaderSessionMenu extends OpenClawLightDomElement {
       const [, group, id] = value.split(":");
       const actions = group === "panels" ? this.panelActions : this.layoutActions;
       const action = actions.find((candidate) => candidate.id === id);
-      if (action && !action.disabled) {
+      if (action && action.kind !== "status" && !action.disabled) {
         action.onActivate();
       }
       return;
@@ -205,6 +211,24 @@ class ChatHeaderSessionMenu extends OpenClawLightDomElement {
     inline = false,
   ) {
     return actions.map((action) => {
+      const label = html`<span class="session-menu__text"
+        >${action.label}${
+          action.description
+            ? html`<span class="session-menu__description">${action.description}</span>`
+            : nothing
+        }</span
+      >`;
+      if (action.kind === "status") {
+        return html`<div
+          slot=${inline ? nothing : "submenu"}
+          class="session-menu__status"
+          data-menu-status=${action.id}
+          role="note"
+        >
+          <span class="session-menu__check" aria-hidden="true">${action.icon}</span>
+          ${label}
+        </div>`;
+      }
       const detail =
         typeof action.badge === "number" && action.badge > 0
           ? html`<span slot="details" class="session-menu__sub">${action.badge}</span>`
@@ -219,8 +243,7 @@ class ChatHeaderSessionMenu extends OpenClawLightDomElement {
           ?disabled=${action.disabled}
         >
           <span slot="icon" class="session-menu__icon" aria-hidden="true">${action.icon}</span>
-          <span class="session-menu__text">${action.label}</span>
-          ${detail}
+          ${label} ${detail}
         </wa-dropdown-item>
       `;
     });
