@@ -1623,6 +1623,48 @@ button.chat-reply-attribution__mobile-target:focus-visible {
 }
 
 @media (max-width: 768px), (max-width: 932px) and (max-height: 500px) and (orientation: landscape) {
+  .chat-group-footer {
+    flex-wrap: nowrap;
+  }
+
+  .chat-group-footer__meta {
+    min-height: 24px;
+  }
+
+  .chat-group-footer__meta :is(.chat-group-timestamp, .msg-meta) {
+    flex-shrink: 0;
+  }
+
+  .chat-group.user:not(.chat-group--peer)
+    .chat-group-footer--persistent-identity
+    :is(.chat-sender-name, .chat-message-source) {
+    order: 0;
+  }
+
+  .chat-group.user .chat-group-footer__meta > .chat-group-footer-actions {
+    order: 1;
+  }
+
+  .chat-group.user.chat-group--peer .chat-group-footer-actions {
+    flex-basis: auto;
+    justify-content: flex-start;
+  }
+
+  /* Keep the metadata line compact while its buttons retain a full touch target. */
+  .chat-group-footer-actions :is(.chat-copy-btn, .chat-reply-btn) {
+    position: relative;
+    min-height: 24px;
+  }
+
+  .chat-group-footer-actions :is(.chat-copy-btn, .chat-reply-btn)::after {
+    content: "";
+    position: absolute;
+    inset-inline: 0;
+    top: 50%;
+    height: 44px;
+    transform: translateY(-50%);
+  }
+
   .chat-reply-attribution--reply {
     --chat-reply-attribution-gap: 8px;
     grid-template-columns: max-content minmax(0, 1fr);

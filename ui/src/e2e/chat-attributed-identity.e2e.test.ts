@@ -53,11 +53,11 @@ async function readFooterGeometry(group: Locator) {
         top: actionsRect.top,
       },
       identity: {
-        bottom: identityRect.bottom,
+        top: identityRect.top,
         left: identityRect.left,
         right: identityRect.right,
       },
-      footer: { right: footerRect.right },
+      footer: { height: footerRect.height },
       name: { left: nameRect.left - footerRect.left, top: nameRect.top - footerRect.top },
     };
   });
@@ -454,10 +454,12 @@ suite.define(() => {
     const revealedTouchGeometry = await readFooterGeometry(longNamePeerGroup);
     const revealedTouchHeight = (await longNamePeerGroup.boundingBox())?.height;
     expectStableNamePosition(revealedTouchGeometry.name, restingTouchGeometry.name);
-    expect(revealedTouchGeometry.actions.top).toBeGreaterThanOrEqual(
-      revealedTouchGeometry.identity.bottom,
+    expect(revealedTouchGeometry.actions.top).toBeCloseTo(revealedTouchGeometry.identity.top, 0);
+    expect(revealedTouchGeometry.actions.left - revealedTouchGeometry.identity.right).toBeCloseTo(
+      8,
+      0,
     );
-    expect(revealedTouchGeometry.actions.right).toBeCloseTo(revealedTouchGeometry.footer.right, 0);
+    expect(revealedTouchGeometry.footer.height).toBe(24);
     await expect(longNamePeerGroup.getByRole("button", { name: "Reply to message" })).toHaveCSS(
       "opacity",
       "0.6",
@@ -508,6 +510,27 @@ suite.define(() => {
           expect(frame).toEqual(frames[0]);
         }
         await expect(group.locator(".chat-group-timestamp")).toHaveCSS("opacity", "1");
+        const actionLayout = await group.evaluate((element) => {
+          const footer = element.querySelector<HTMLElement>(".chat-group-footer")!;
+          const meta = footer.querySelector<HTMLElement>(".chat-group-footer__meta")!;
+          const time = footer.querySelector<HTMLElement>(".chat-group-timestamp")!;
+          const button = footer.querySelector<HTMLButtonElement>(".chat-reply-btn")!;
+          const bounds = button.getBoundingClientRect();
+          const centerX = bounds.left + bounds.width / 2;
+          const centerY = bounds.top + bounds.height / 2;
+          return {
+            footerHeight: footer.getBoundingClientRect().height,
+            lineOffset: bounds.top - meta.getBoundingClientRect().top,
+            afterText: bounds.left - time.getBoundingClientRect().right,
+            hitEdges: [-21, 21].map((offset) =>
+              button.contains(document.elementFromPoint(centerX, centerY + offset)),
+            ),
+          };
+        });
+        expect(actionLayout.footerHeight).toBe(24);
+        expect(Math.abs(actionLayout.lineOffset)).toBeLessThanOrEqual(2);
+        expect(actionLayout.afterText).toBeGreaterThanOrEqual(0);
+        expect(actionLayout.hitEdges).toEqual([true, true]);
       }
     }
 
