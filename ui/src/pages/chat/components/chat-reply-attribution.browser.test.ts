@@ -107,6 +107,32 @@ describe.each(cells)("reply attribution ($theme, $width px)", ({ theme, width })
     host.style.width = `${width - 32}px`;
   });
 
+  it.each(["ltr", "rtl"])("connects the avatar to the label in %s layout", async (direction) => {
+    host.dir = direction;
+    const { row } = await draw("Casey Morgan", "Original question");
+    await expect
+      .poll(() => {
+        const group = row.closest(".chat-group")!;
+        const path = group.querySelector<SVGPathElement>(".chat-reply-connector path")!;
+        const svg = path.ownerSVGElement!.getBoundingClientRect();
+        const avatar = group
+          .querySelector(":scope > .chat-avatar, :scope > .chat-avatar-slot")!
+          .getBoundingClientRect();
+        const label = row.querySelector(".chat-reply-attribution__label")!.getBoundingClientRect();
+        const start = path.getPointAtLength(0);
+        const end = path.getPointAtLength(path.getTotalLength());
+        const labelEdge = direction === "rtl" ? label.right : label.left;
+        const expectedEndX = labelEdge + (direction === "rtl" ? 5 : -5);
+        return Math.max(
+          Math.abs(svg.left + start.x - avatar.left - avatar.width / 2),
+          Math.abs(svg.top + start.y - avatar.top - avatar.height / 2),
+          Math.abs(svg.left + end.x - expectedEndX),
+          Math.abs(svg.top + end.y - label.top - label.height / 2),
+        );
+      })
+      .toBeLessThanOrEqual(1);
+  });
+
   it("keeps Casey Morgan complete with an emoji and sacrifices a long excerpt first", async () => {
     const short = await draw("Casey Morgan", "👩🏽‍💻");
     expectSingleLine(short.row);

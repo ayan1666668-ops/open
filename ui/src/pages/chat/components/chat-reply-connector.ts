@@ -29,11 +29,7 @@ function replyConnectorRef() {
         const text = label.getBoundingClientRect();
         const startX = identity.left + identity.width / 2 - bounds.left;
         const startY = identity.top + identity.height / 2 - bounds.top;
-        const direction =
-          group.classList.contains("chat-message--reply") &&
-          getComputedStyle(group).direction === "rtl"
-            ? -1
-            : 1;
+        const direction = getComputedStyle(group).direction === "rtl" ? -1 : 1;
         const rowBounds = row.getBoundingClientRect();
         const endX =
           (direction === 1 ? rowBounds.left : rowBounds.right) - bounds.left - direction * 5;
