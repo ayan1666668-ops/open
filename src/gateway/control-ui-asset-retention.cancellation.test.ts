@@ -31,6 +31,7 @@ describe("Control UI retention cancellation", () => {
               size: 128 * 1024,
             });
       const target = path.join(cache, build.manifest.generation);
+      const assetSuffix = path.join(path.sep, build.assetPath);
       const stale = [".staging-1-aaaa", ".staging-2-bbbb"].map((name) => path.join(cache, name));
       for (const directory of stale) {
         await fs.mkdir(directory);
@@ -100,7 +101,7 @@ describe("Control UI retention cancellation", () => {
           if (
             boundary === "asset-write" &&
             file.includes(".staging-") &&
-            file.endsWith(build.assetPath)
+            file.endsWith(assetSuffix)
           ) {
             cancel();
           }
@@ -177,7 +178,7 @@ describe("Control UI retention cancellation", () => {
       if (boundary === "source-read" || boundary === "asset-write") {
         expect(closed).toContain(path.join(build.root, build.assetPath));
         expect(
-          [...closed].some((file) => file.includes(".staging-") && file.endsWith(build.assetPath)),
+          [...closed].some((file) => file.includes(".staging-") && file.endsWith(assetSuffix)),
         ).toBe(true);
       }
       vi.restoreAllMocks();

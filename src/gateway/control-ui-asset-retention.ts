@@ -305,9 +305,10 @@ async function publishGeneration(params: {
     try {
       await fs.rename(staging, target);
     } catch (error) {
-      // Node forwards native rename errno; nonempty directory collisions are
-      // ENOTEMPTY on macOS and may be EEXIST on other filesystems.
-      if (!isErrno(error) || (error.code !== "EEXIST" && error.code !== "ENOTEMPTY")) {
+      // Windows reports EPERM for a nonempty destination; verify the winner below.
+      const collisionCodes =
+        process.platform === "win32" ? ["EEXIST", "ENOTEMPTY", "EPERM"] : ["EEXIST", "ENOTEMPTY"];
+      if (!isErrno(error) || !collisionCodes.includes(error.code ?? "")) {
         throw error;
       }
       collision = error;
