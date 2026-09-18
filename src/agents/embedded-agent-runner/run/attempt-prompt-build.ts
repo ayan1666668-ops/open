@@ -17,7 +17,7 @@ import {
 } from "../../../infra/heartbeat-summary.js";
 import {
   buildAgentHookContextChannelFields,
-  buildAgentHookContextIdentityFields,
+  buildAgentHookContextIdentityFieldsForRun,
 } from "../../../plugins/hook-agent-context.js";
 import type { getGlobalHookRunner } from "../../../plugins/hook-runner-global.js";
 import { buildInterSessionPromptContext } from "../../../sessions/input-provenance.js";
@@ -156,12 +156,7 @@ export async function prepareEmbeddedAttemptPromptAssembly(input: {
     trigger: attempt.trigger,
     inputProvenance: attempt.inputProvenance,
     ...buildAgentHookContextChannelFields(attempt),
-    ...buildAgentHookContextIdentityFields({
-      trigger: attempt.trigger,
-      senderId: attempt.senderId,
-      chatId: attempt.chatId,
-      channelContext: attempt.channelContext,
-    }),
+    ...buildAgentHookContextIdentityFieldsForRun(attempt),
   };
   const promptBuildMessages =
     pruneProcessedHistoryImages(input.activeSession.messages) ?? input.activeSession.messages;

@@ -323,6 +323,16 @@ export type PluginHookAgentContext = {
   chatId?: string;
   /** Sender identity for channel-originated runs when available. */
   senderId?: string;
+  /**
+   * Host-resolved owner bit for `senderId` on user turns. `false` is a resolved
+   * non-owner; absence means unresolved, not "not owner".
+   */
+  senderIsOwner?: boolean;
+  /**
+   * Authenticated provider-native id of the inbound message that started a user
+   * turn, when the channel supplies one. Numeric provider ids are stringified.
+   */
+  messageId?: string;
   trigger?: string;
   channelId?: string;
   /**

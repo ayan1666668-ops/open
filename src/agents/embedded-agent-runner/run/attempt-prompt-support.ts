@@ -10,7 +10,7 @@ import {
 } from "../../../infra/diagnostic-trace-context.js";
 import {
   buildAgentHookContextChannelFields,
-  buildAgentHookContextIdentityFields,
+  buildAgentHookContextIdentityFieldsForRun,
 } from "../../../plugins/hook-agent-context.js";
 import type { PluginHookLlmInputEvent } from "../../../plugins/hook-types.js";
 import type { HookRunner } from "../../../plugins/hooks.js";
@@ -181,6 +181,7 @@ type AttemptPromptObservabilityParams = Pick<
   | "channelContext"
   | "chatId"
   | "currentChannelId"
+  | "currentMessageId"
   | "messageChannel"
   | "messageProvider"
   | "messageTo"
@@ -190,6 +191,7 @@ type AttemptPromptObservabilityParams = Pick<
   | "provider"
   | "runId"
   | "senderId"
+  | "senderIsOwner"
   | "sessionFile"
   | "sessionId"
   | "sessionKey"
@@ -366,12 +368,7 @@ export function observeEmbeddedAttemptPrompt(input: {
           workspaceDir: attempt.workspaceDir,
           trigger: attempt.trigger,
           ...buildAgentHookContextChannelFields(attempt),
-          ...buildAgentHookContextIdentityFields({
-            trigger: attempt.trigger,
-            senderId: attempt.senderId,
-            chatId: attempt.chatId,
-            channelContext: attempt.channelContext,
-          }),
+          ...buildAgentHookContextIdentityFieldsForRun(attempt),
         },
       )
       .catch((err: unknown) => {

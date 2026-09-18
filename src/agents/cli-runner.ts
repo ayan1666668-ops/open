@@ -19,7 +19,7 @@ import {
 } from "../plugins/before-agent-reply.js";
 import {
   buildAgentHookContextChannelFields,
-  buildAgentHookContextIdentityFields,
+  buildAgentHookContextIdentityFieldsForRun,
 } from "../plugins/hook-agent-context.js";
 import { resolveBlockMessage } from "../plugins/hook-decision-types.js";
 import { getGlobalHookRunner } from "../plugins/hook-runner-global.js";
@@ -182,12 +182,7 @@ async function runCliAgentInternal(
             workspaceDir: params.workspaceDir,
             trigger: params.trigger,
             ...buildAgentHookContextChannelFields(params),
-            ...buildAgentHookContextIdentityFields({
-              trigger: params.trigger,
-              senderId: params.senderId,
-              chatId: params.chatId,
-              channelContext: params.channelContext,
-            }),
+            ...buildAgentHookContextIdentityFieldsForRun(params),
           },
           onDispatch: () =>
             params.onExecutionPhase?.({
@@ -301,12 +296,7 @@ async function runPreparedCliAgentOwned(
       ? { contextWindowReferenceTokens: context.contextWindowInfo.referenceTokens }
       : {}),
     ...buildAgentHookContextChannelFields(params),
-    ...buildAgentHookContextIdentityFields({
-      trigger: params.trigger,
-      senderId: params.senderId,
-      chatId: params.chatId,
-      channelContext: params.channelContext,
-    }),
+    ...buildAgentHookContextIdentityFieldsForRun(params),
   } as const;
 
   const buildAgentEndMessages = (lastAssistant?: unknown): unknown[] => [
