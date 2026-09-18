@@ -17,7 +17,12 @@ const missingCases = [
   { marketplaceName: "missing-marketplace", code: "marketplace_missing" },
 ].flatMap((missing) =>
   [false, "ask" as const].flatMap((actions) =>
-    [true, false].map((enabled) => ({ ...missing, actions, enabled })),
+    [true, false].map((enabled) => ({
+      marketplaceName: missing.marketplaceName,
+      code: missing.code,
+      actions,
+      enabled,
+    })),
   ),
 );
 
@@ -117,8 +122,12 @@ function inventoryRequest(isMissingAvailable: () => boolean) {
     const summaries = ["healthy", ...(isMissingAvailable() ? ["missing"] : [])].map((name) =>
       pluginSummary(name, { installed: true, enabled: true }),
     );
-    if (method === "plugin/installed") return pluginInstalled(summaries);
-    if (method === "plugin/list") return pluginList(summaries);
+    if (method === "plugin/installed") {
+      return pluginInstalled(summaries);
+    }
+    if (method === "plugin/list") {
+      return pluginList(summaries);
+    }
     if (method === "plugin/read") {
       const name = (params as { pluginName: string }).pluginName;
       return pluginDetail(name, [appSummary(name === "healthy" ? "healthy-app" : "account-app")]);
@@ -129,7 +138,9 @@ function inventoryRequest(isMissingAvailable: () => boolean) {
         { ...appInfo("account-app", true), pluginDisplayNames: ["missing"] },
       ]);
     }
-    if (method === "config/read") return { config: {}, layers: [] };
+    if (method === "config/read") {
+      return { config: {}, layers: [] };
+    }
     throw new Error(`Unexpected request: ${method}`);
   });
 }
