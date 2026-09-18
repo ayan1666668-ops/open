@@ -1,15 +1,27 @@
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   chmodSync,
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readFileSync,
   realpathSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import {
+  isProcessAlive,
+  waitForChildClose,
+  waitForDead,
+  waitForFile,
+  waitForFixtureFile,
+  waitForPidFile,
+} from "../helpers/process-wait.js";
+import { runQaGatewayFixture } from "../helpers/qa-gateway-cleanup.js";
 import { useAutoCleanupTempDirTracker } from "../helpers/temp-dir.js";
 import { copyDockerSchedulerHarness } from "./docker-all-harness.test-support.js";
 
@@ -27,10 +39,11 @@ function setupFixture(
   mode: "split" | "override" | "local",
   missingTargetScript = false,
   corepack = false,
+  makeTempDir: typeof tempDirs.make = (prefix, root) => tempDirs.make(prefix, root),
 ) {
   const artifactRoot = path.resolve(".artifacts");
   mkdirSync(artifactRoot, { recursive: true });
-  const root = realpathSync(tempDirs.make("docker-harness-", artifactRoot));
+  const root = realpathSync(makeTempDir("docker-harness-", artifactRoot));
   const target = path.join(root, "frozen pnpm target");
   mkdirSync(target);
   const harness = mode === "local" ? target : path.join(target, ".release-harness");
@@ -99,6 +112,7 @@ fs.appendFileSync(${JSON.stringify(marker)}, JSON.stringify({
           : {
               "test:docker:gateway-network": "node marker.cjs",
               "test:docker:package-install": "node marker.cjs",
+              "test:docker:cli-installer-distribution": "node marker.cjs",
               "test:docker:e2e-build": "node marker.cjs package-image",
               "test:docker:cleanup": "node marker.cjs cleanup",
               "test:docker:all": `node ${quote(path.join(harness, "scripts/test-docker-all.mjs"))}`,
@@ -225,7 +239,725 @@ function runFixture(
   return { result, logDir };
 }
 
+function startOwnedScheduler(
+  fixture: ReturnType<typeof setupFixture>,
+  env: NodeJS.ProcessEnv,
+  probe = "",
+  pidFiles: readonly string[] = [],
+) {
+  const childrenPath = path.join(fixture.root, "scheduler-children.jsonl");
+  const events = path.join(fixture.root, "scheduler-events");
+  const preload = path.join(fixture.root, "scheduler-observer.mjs");
+  mkdirSync(events);
+  const entries = ["mjs", "mts"].map((extension) =>
+    path.join(fixture.harness, `scripts/test-docker-all.${extension}`),
+  );
+  writeFileSync(
+    preload,
+    [
+      "import fs from 'node:fs';",
+      "import cp from 'node:child_process';",
+      "import { syncBuiltinESMExports } from 'node:module';",
+      `if (${JSON.stringify(entries)}.includes(process.argv[1])) {`,
+      "  const spawn = cp.spawn;",
+      "  cp.spawn = (...args) => {",
+      "    const child = spawn(...args);",
+      "    if (args[2]?.detached && child.pid) {",
+      `      fs.appendFileSync(${JSON.stringify(childrenPath)}, JSON.stringify({ owner: process.pid, pid: child.pid }) + '\\n');`,
+      "      for (const event of ['exit', 'close']) child.once(event, (code, signal) => {",
+      `        const file = ${JSON.stringify(events)} + '/' + child.pid + '.' + event;`,
+      "        fs.writeFileSync(file + '.pending', JSON.stringify({ code, signal }));",
+      "        fs.renameSync(file + '.pending', file);",
+      "      });",
+      "    }",
+      "    return child;",
+      "  };",
+      "  syncBuiltinESMExports();",
+      "}",
+      `if (process.argv[1] === ${JSON.stringify(entries[1])}) {`,
+      "  for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => {",
+      `    fs.writeFileSync(${JSON.stringify(events)} + '/' + signal, String(process.pid));`,
+      "  });",
+      probe,
+      "}",
+    ].join("\n"),
+  );
+  const shim = spawn(process.execPath, [entries[0]!], {
+    cwd: fixture.target,
+    stdio: ["ignore", "pipe", "pipe"],
+    env: {
+      ...process.env,
+      OPENCLAW_DOCKER_ALL_BUILD: "0",
+      OPENCLAW_DOCKER_ALL_PREFLIGHT: "0",
+      OPENCLAW_DOCKER_ALL_TIMINGS: "0",
+      OPENCLAW_DOCKER_ALL_START_STAGGER_MS: "0",
+      OPENCLAW_DOCKER_ALL_STATUS_INTERVAL_MS: "0",
+      OPENCLAW_DOCKER_ALL_LIVE_RETRIES: "0",
+      OPENCLAW_DOCKER_ALL_LANES: laneNames.join(","),
+      OPENCLAW_DOCKER_ALL_LOG_DIR: path.join(fixture.root, "logs"),
+      OPENCLAW_DOCKER_ALL_PNPM_COMMAND: fixture.pinnedPnpm,
+      OPENCLAW_DOCKER_E2E_REPO_ROOT: fixture.target,
+      OPENCLAW_DOCKER_E2E_TRUSTED_HARNESS_DIR: fixture.selectedHarness,
+      OPENCLAW_DOCKER_E2E_SELECTED_SHA: fixture.selectedSha,
+      OPENCLAW_CURRENT_PACKAGE_TGZ: fixture.tarball,
+      OPENCLAW_CURRENT_PACKAGE_VERSION: "2026.8.1",
+      OPENCLAW_CURRENT_PACKAGE_SHA256: fixture.sha256,
+      OPENCLAW_PREPUBLISH_PLUGIN_REGISTRY_DIR: fixture.registry,
+      OPENCLAW_PREPUBLISH_PLUGIN_REGISTRY_CANDIDATE_VERSION: "2026.8.1",
+      OPENCLAW_PREPUBLISH_PLUGIN_REGISTRY_MANIFEST_SHA256: fixture.registrySha256,
+      ...env,
+      NODE_OPTIONS:
+        `${process.env.NODE_OPTIONS ?? ""} --import ${pathToFileURL(preload).href}`.trim(),
+    },
+  });
+  let stderr = "";
+  shim.stdout.resume();
+  shim.stderr.on("data", (chunk) => {
+    stderr = `${stderr}${chunk}`.slice(-8192);
+  });
+  let didClose = false;
+  const closed = new Promise<void>((resolve) => {
+    shim.once("close", () => {
+      didClose = true;
+      resolve();
+    });
+  });
+  const exited = new Promise<void>((resolve) => {
+    shim.once("exit", () => resolve());
+    shim.once("error", () => resolve());
+  });
+  let observationTimedOut = false;
+  const result = waitForChildClose(shim, 25_000).catch((error: unknown) => {
+    observationTimedOut = true;
+    throw error;
+  });
+  void result.catch(() => undefined);
+  const ownedPids = new Set<number>();
+  const children = () => {
+    const rows: Array<{ owner: number; pid: number }> = existsSync(childrenPath)
+      ? readFileSync(childrenPath, "utf8")
+          .trim()
+          .split("\n")
+          .filter(Boolean)
+          .map((line) => JSON.parse(line))
+      : [];
+    const owners = new Set([shim.pid]);
+    for (let remaining = rows.length; remaining > 0; remaining -= 1) {
+      for (const row of rows) {
+        if (owners.has(row.owner)) {
+          owners.add(row.pid);
+        }
+      }
+    }
+    for (const row of rows) {
+      expect(Number.isSafeInteger(row.pid) && row.pid > 1 && row.pid !== process.pid).toBe(true);
+      expect(owners.has(row.owner)).toBe(true);
+    }
+    return rows;
+  };
+  const stopGroups = (pids: number[]) =>
+    runQaGatewayFixture(
+      async () => {},
+      ...Array.from(new Set(pids), (pid) => async () => {
+        try {
+          process.kill(-pid, "SIGKILL");
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ESRCH") {
+            throw error;
+          }
+        }
+        await waitForDead(pid, 5_000);
+      }),
+    );
+  return {
+    shim,
+    result,
+    events,
+    children,
+    stderr: () => stderr,
+    async ready(file: string) {
+      try {
+        return await waitForPidFile(file, 5_000);
+      } catch (error) {
+        throw new Error(
+          `scheduler fixture readiness failed (exit=${String(shim.exitCode)}, signal=${String(shim.signalCode)}):\n${stderr}`,
+          { cause: error },
+        );
+      }
+    },
+    captureGroup(startPid: number) {
+      let pid = startPid;
+      let group: number | undefined;
+      for (let depth = 0; depth < 8 && pid !== shim.pid; depth += 1) {
+        const [observed, parent, pgid] = execFileSync(
+          "ps",
+          ["-o", "pid=,ppid=,pgid=", "-p", String(pid)],
+          { encoding: "utf8" },
+        )
+          .trim()
+          .split(/\s+/u)
+          .map(Number);
+        expect(observed).toBe(pid);
+        group ??= pgid;
+        ownedPids.add(pid);
+        pid = parent!;
+      }
+      expect(pid).toBe(shim.pid);
+      expect(children().some((row) => row.pid === group)).toBe(true);
+      return group!;
+    },
+    async cleanup() {
+      // Stop admission, then reread acquisitions. Failed joins retain the inputs.
+      await runQaGatewayFixture(
+        async () => {
+          if (!didClose) {
+            if (shim.exitCode === null && shim.signalCode === null) {
+              shim.kill("SIGTERM");
+            }
+            if (!observationTimedOut) {
+              await waitForChildClose(shim).catch(() => undefined);
+            }
+          }
+        },
+        async () => {
+          if (shim.exitCode === null && shim.signalCode === null) {
+            shim.kill("SIGKILL");
+          }
+          await exited;
+        },
+        () =>
+          stopGroups(
+            children()
+              .filter((row) => row.owner === shim.pid)
+              .map((row) => row.pid),
+          ),
+        () => stopGroups(children().map((row) => row.pid)),
+        () =>
+          Promise.all(
+            [
+              ...ownedPids,
+              ...pidFiles.filter(existsSync).map((file) => Number(readFileSync(file, "utf8"))),
+            ]
+              .filter((pid) => Number.isSafeInteger(pid) && pid > 1)
+              .map((pid) => waitForDead(pid, 5_000)),
+          ),
+        () => closed,
+      );
+      rmSync(fixture.root, { recursive: true, force: true });
+    },
+  };
+}
+
 describe("Docker scheduler trusted harness execution", () => {
+  posixIt.each(
+    (["foreground", "version", "remove", "smoke"] as const).flatMap((phase) =>
+      (["exit-first", "signal-first"] as const).map((order) => ({ phase, order })),
+    ),
+  )(
+    "preserves $phase terminal ordering when $order in actual main",
+    async ({ phase, order }) => {
+      const fixture = setupFixture("split", false, true, (prefix, root) =>
+        mkdtempSync(path.join(root!, prefix)),
+      );
+      const leaderPath = path.join(fixture.root, "terminal-leader.pid");
+      const leafPath = path.join(fixture.root, "terminal-leaf.pid");
+      const leaf = [
+        "for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(signal, () => {});",
+        "process.once('SIGUSR1', () => process.exit(0));",
+        `require('node:fs').writeFileSync(${JSON.stringify(leafPath)}, String(process.pid));`,
+        "process.send('ready'); setInterval(() => {}, 1000);",
+      ].join("\n");
+      const commandBody = [
+        `fs.appendFileSync(${JSON.stringify(fixture.marker)}, JSON.stringify({ phase }) + '\\n');`,
+        `if (phase === ${JSON.stringify(phase)}) {`,
+        "  for (const signal of ['SIGINT', 'SIGTERM', 'SIGUSR1']) process.on(signal, () => process.exit(3));",
+        `  fs.writeFileSync(${JSON.stringify(leaderPath)}, String(process.pid));`,
+        `  const child = spawn(process.execPath, ['-e', ${JSON.stringify(leaf)}], { stdio: ${JSON.stringify(phase === "version" ? ["ignore", "inherit", "inherit", "ipc"] : ["ignore", "ignore", "ignore", "ipc"])} });`,
+        "  child.once('message', () => child.disconnect()); child.unref();",
+        "  setInterval(() => {}, 1000);",
+        "} else if (phase === 'list') console.log('openclaw-fixture-e2e-123 Exited');",
+        "else console.log('fixture');",
+      ].join("\n");
+      writeFileSync(
+        path.join(fixture.selectedHarness, "marker.cjs"),
+        `const fs = require('node:fs');\nconst { spawn } = require('node:child_process');\nconst phase = process.argv[2] === 'live-build' ? 'foreground' : process.argv[2] ?? 'lane';\n${commandBody}\n`,
+      );
+      const bin = path.join(fixture.root, "bin");
+      mkdirSync(bin);
+      const docker = path.join(bin, "docker");
+      writeFileSync(
+        docker,
+        `#!${process.execPath}\nimport fs from 'node:fs';\nimport { spawn } from 'node:child_process';\nconst phase = { version: 'version', ps: 'list', rm: 'remove', run: 'smoke' }[process.argv[2]];\n${commandBody}\n`,
+      );
+      chmodSync(docker, 0o755);
+      const owner = startOwnedScheduler(
+        fixture,
+        {
+          OPENCLAW_DOCKER_ALL_BUILD: "1",
+          OPENCLAW_DOCKER_ALL_PREFLIGHT: phase === "foreground" ? "0" : "1",
+          OPENCLAW_DOCKER_ALL_PREFLIGHT_CLEANUP: "1",
+          PATH: `${bin}${path.delimiter}${process.env.PATH}`,
+        },
+        "",
+        [leaderPath, leafPath],
+      );
+      await runQaGatewayFixture(
+        async () => {
+          const leafPid = await owner.ready(leafPath);
+          const group = owner.captureGroup(leafPid);
+          const leaderPid = await owner.ready(leaderPath);
+          const signal = phase === "foreground" ? "SIGINT" : "SIGTERM";
+          if (order === "exit-first") {
+            process.kill(leaderPid, "SIGUSR1");
+            const exitFile = path.join(owner.events, `${group}.exit`);
+            await waitForFile(exitFile, 5_000);
+            expect(JSON.parse(readFileSync(exitFile, "utf8"))).toEqual({ code: 3, signal: null });
+            if (phase === "version") {
+              expect(existsSync(path.join(owner.events, `${group}.close`))).toBe(false);
+            } else {
+              await waitForFile(path.join(owner.events, `${group}.close`), 5_000);
+            }
+          }
+          owner.shim.kill(signal);
+          const schedulerPid = await owner.ready(path.join(owner.events, signal));
+          expect(owner.children()).toContainEqual({ owner: owner.shim.pid, pid: schedulerPid });
+          if (order === "signal-first") {
+            await waitForFile(path.join(owner.events, `${group}.exit`), 5_000);
+          }
+          expect(isProcessAlive(leafPid)).toBe(true);
+          expect(owner.shim.exitCode).toBeNull();
+          expect(owner.shim.signalCode).toBeNull();
+          process.kill(leafPid, "SIGUSR1");
+          expect(await owner.result).toEqual({
+            code: order === "exit-first" ? 1 : signal === "SIGINT" ? 130 : 143,
+            signal: null,
+          });
+          expect(isProcessAlive(leafPid)).toBe(false);
+          const phases = readFileSync(fixture.marker, "utf8")
+            .trim()
+            .split("\n")
+            .map((line) => JSON.parse(line).phase);
+          expect(phases).toEqual(
+            phase === "foreground"
+              ? ["foreground"]
+              : phase === "version"
+                ? ["version"]
+                : phase === "remove"
+                  ? ["version", "list", "remove"]
+                  : ["version", "list", "remove", "smoke"],
+          );
+          const diagnostic = {
+            foreground: "shared live-test image once failed with status 3",
+            version: "Docker preflight failed: docker version status=3",
+            remove: "Docker preflight cleanup failed with status 3",
+            smoke: "Docker preflight failed: docker run --rm --platform",
+          }[phase];
+          if (order === "exit-first") {
+            expect(owner.stderr()).toContain(diagnostic);
+            if (phase === "smoke") {
+              expect(owner.stderr()).toContain("status=3");
+            }
+          } else {
+            expect(owner.stderr()).not.toContain(diagnostic);
+          }
+        },
+        () => owner.cleanup(),
+      );
+    },
+    30_000,
+  );
+
+  posixIt.each([
+    { outcome: "fatal rejection", fatal: true, failFast: false },
+    { outcome: "ordinary failure with fail-fast", fatal: false, failFast: true },
+    { outcome: "ordinary failure without fail-fast", fatal: false, failFast: false },
+  ])(
+    "fences staggered lane admission after $outcome in actual main",
+    async ({ fatal, failFast }) => {
+      const fixture = setupFixture("split", false, true, (prefix, root) =>
+        mkdtempSync(path.join(root!, prefix)),
+      );
+      const leaderPath = path.join(fixture.root, "stagger-leader.pid");
+      const gatePath = path.join(fixture.root, "stagger-gate.pid");
+      const groupPath = path.join(fixture.root, "stagger-group.pid");
+      const faultPath = path.join(fixture.root, "stagger-probe-rejected");
+      const laneOrder = ["gateway-concurrency", "live-models"];
+      writeFileSync(
+        path.join(fixture.selectedHarness, "marker.cjs"),
+        [
+          "const fs = require('node:fs');",
+          `fs.appendFileSync(${JSON.stringify(fixture.marker)}, JSON.stringify({ lane: process.env.OPENCLAW_DOCKER_ALL_LANE_NAME }) + '\\n');`,
+          `if (process.env.OPENCLAW_DOCKER_ALL_LANE_NAME === ${JSON.stringify(laneOrder[0])}) {`,
+          `  fs.writeFileSync(${JSON.stringify(leaderPath)}, String(process.pid));`,
+          `  process.once('SIGUSR1', () => process.exit(${fatal ? 0 : 3}));`,
+          "  setInterval(() => {}, 1000);",
+          "}",
+        ].join("\n"),
+      );
+      // Hold only the copied fixture's native stagger timer. The scheduler remains
+      // unchanged, and TERM also releases this fixture gate during exceptional cleanup.
+      writeFileSync(
+        path.join(fixture.harness, "scripts/lib/sleep.mjs"),
+        [
+          "import fs from 'node:fs';",
+          "export function sleep(ms) { return new Promise(resolve => setTimeout(() => {",
+          "  const keepAlive = setInterval(() => {}, 1000);",
+          "  const release = () => { clearInterval(keepAlive); process.off('SIGUSR2', release); process.off('SIGTERM', release); resolve(); };",
+          "  process.once('SIGUSR2', release); process.once('SIGTERM', release);",
+          `  fs.writeFileSync(${JSON.stringify(gatePath)}, String(process.pid));`,
+          "}, ms)); }",
+        ].join("\n"),
+      );
+      const probe = fatal
+        ? [
+            "  const kill = process.kill.bind(process);",
+            "  process.kill = (pid, signal) => {",
+            `    if (signal === 0 && fs.existsSync(${JSON.stringify(groupPath)}) && pid === -Number(fs.readFileSync(${JSON.stringify(groupPath)}, 'utf8'))) {`,
+            "      const stack = new Error().stack ?? '';",
+            "      if (!stack.includes('shellProcessGroupAlive') && !stack.includes('waitForManagedProcessGroupExit')) {",
+            `        fs.writeFileSync(${JSON.stringify(faultPath)}, 'final-verification');`,
+            "      }",
+            "      throw Object.assign(new Error('stagger cleanup probe denied'), { code: 'EPERM' });",
+            "    }",
+            "    return kill(pid, signal);",
+            "  };",
+          ].join("\n")
+        : "";
+      const owner = startOwnedScheduler(
+        fixture,
+        {
+          OPENCLAW_DOCKER_ALL_LANES: laneOrder.join(","),
+          OPENCLAW_DOCKER_ALL_PARALLELISM: "2",
+          OPENCLAW_DOCKER_ALL_WEIGHT_LIMIT: "8",
+          OPENCLAW_DOCKER_ALL_DOCKER_LIMIT: "8",
+          OPENCLAW_DOCKER_ALL_LIVE_LIMIT: "4",
+          OPENCLAW_DOCKER_ALL_LIVE_CLAUDE_LIMIT: "4",
+          OPENCLAW_DOCKER_ALL_LIVE_GEMINI_LIMIT: "4",
+          OPENCLAW_DOCKER_ALL_START_STAGGER_MS: "25",
+          OPENCLAW_DOCKER_ALL_FAIL_FAST: failFast ? "1" : "0",
+        },
+        probe,
+        [leaderPath],
+      );
+      await runQaGatewayFixture(
+        async () => {
+          const schedulerPid = await owner.ready(gatePath);
+          expect(owner.children()).toContainEqual({ owner: owner.shim.pid, pid: schedulerPid });
+          const leaderPid = await owner.ready(leaderPath);
+          const group = owner.captureGroup(leaderPid);
+          if (fatal) {
+            writeFileSync(groupPath, String(group));
+          }
+          process.kill(leaderPid, "SIGUSR1");
+          await waitForFile(path.join(owner.events, `${group}.close`), 5_000);
+          if (fatal) {
+            await waitForFixtureFile(faultPath, owner.result, "final-verification");
+          }
+          expect(owner.shim.exitCode).toBeNull();
+          expect(
+            readFileSync(fixture.marker, "utf8")
+              .trim()
+              .split("\n")
+              .map((line) => JSON.parse(line).lane),
+          ).toEqual([laneOrder[0]]);
+          // SIGUSR2 is delivered after the close/fault callback's microtasks, so the
+          // result/rejection observer runs before this already-admitted gate resumes.
+          process.kill(schedulerPid, "SIGUSR2");
+          expect(await owner.result).toEqual({ code: fatal ? 2 : 1, signal: null });
+          // Later shutdown can block the command after runLane already wrote its log.
+          // An unstarted lane must not perform that preparation either.
+          expect(existsSync(path.join(fixture.root, "logs", `${laneOrder[1]}.log`))).toBe(
+            !fatal && !failFast,
+          );
+          const started = readFileSync(fixture.marker, "utf8")
+            .trim()
+            .split("\n")
+            .map((line) => JSON.parse(line).lane);
+          expect(started).toEqual(fatal || failFast ? [laneOrder[0]] : laneOrder);
+          const summary = JSON.parse(
+            readFileSync(path.join(fixture.root, "logs/summary.json"), "utf8"),
+          );
+          expect(summary.status).toBe("failed");
+          expect(summary.selectedLanes).toEqual(laneOrder);
+          expect(
+            summary.lanes.map(({ name, status }: { name: string; status: number }) => ({
+              name,
+              status,
+            })),
+          ).toEqual(
+            fatal
+              ? []
+              : failFast
+                ? [{ name: laneOrder[0], status: 3 }]
+                : [
+                    { name: laneOrder[0], status: 3 },
+                    { name: laneOrder[1], status: 0 },
+                  ],
+          );
+          expect(
+            summary.failures.map(({ name, status }: { name: string; status: number }) => ({
+              name,
+              status,
+            })),
+          ).toEqual(fatal ? [] : [{ name: laneOrder[0], status: 3 }]);
+          if (fatal) {
+            expect(owner.stderr()).toContain("Docker lane process group did not stop");
+          }
+        },
+        () => owner.cleanup(),
+      );
+    },
+    30_000,
+  );
+  posixIt.each([
+    "unjoined cleanup",
+    "ordinary command failure",
+    "ordinary failure then unjoined cleanup",
+  ] as const)(
+    "preserves foreground admission ownership after %s in actual main",
+    async (failure) => {
+      // This process fixture releases its files only after owned children join.
+      const fixture = setupFixture("split", false, true, (prefix, root) =>
+        mkdtempSync(path.join(root!, prefix)),
+      );
+      const leaderPath = path.join(fixture.root, "foreground.pid");
+      const leafPath = path.join(fixture.root, "leaf.pid");
+      const groupPath = path.join(fixture.root, "group.pid");
+      const probePath = path.join(fixture.root, "group-probe.mjs");
+      const childrenPath = path.join(fixture.root, "owned-children.jsonl");
+      const unjoined = failure !== "ordinary command failure";
+      const priorFailure = failure === "ordinary failure then unjoined cleanup";
+      const owned: Array<{ pid: number; pgid: number }> = [];
+      let leafPid: number | undefined;
+      const leafScript = [
+        "process.on('SIGTERM', () => {});",
+        "process.on('SIGHUP', () => {});",
+        `require('node:fs').writeFileSync(${JSON.stringify(leafPath)}, String(process.pid));`,
+        "process.send('ready'); setInterval(() => {}, 1000);",
+      ].join("\n");
+      writeFileSync(
+        path.join(fixture.selectedHarness, "marker.cjs"),
+        [
+          "const fs = require('node:fs');",
+          `const phase = ${priorFailure} && process.argv[2] === 'package-image' ? process.env.OPENCLAW_DOCKER_E2E_TARGET : process.argv[2] ?? 'lane';`,
+          `fs.appendFileSync(${JSON.stringify(fixture.marker)}, JSON.stringify({ phase }) + '\\n');`,
+          ...(priorFailure ? ["if (phase === 'live-build') process.exit(3);"] : []),
+          `if (phase === ${JSON.stringify(priorFailure ? "bare" : "live-build")}) {`,
+          ...(unjoined
+            ? [
+                `fs.writeFileSync(${JSON.stringify(leaderPath)}, String(process.pid));`,
+                "process.on('SIGUSR1', () => process.exit(0));",
+                `const child = require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(leafScript)}], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });`,
+                "child.once('message', () => child.disconnect()); child.unref();",
+                "setInterval(() => {}, 1000);",
+              ]
+            : ["process.exit(3);"]),
+          "}",
+        ].join("\n"),
+      );
+      // Only the selected scheduler's probe for the captured group is faulted.
+      // TERM/KILL remain real, and the test retains exact ancestry for cleanup.
+      writeFileSync(
+        probePath,
+        [
+          "import fs from 'node:fs';",
+          "import cp from 'node:child_process';",
+          "import { syncBuiltinESMExports } from 'node:module';",
+          `if (${JSON.stringify([path.join(fixture.harness, "scripts/test-docker-all.mjs"), path.join(fixture.harness, "scripts/test-docker-all.mts")])}.includes(process.argv[1])) {`,
+          "  const spawn = cp.spawn;",
+          "  cp.spawn = (...args) => {",
+          "    const child = spawn(...args);",
+          `    if (args[2]?.detached && child.pid) fs.appendFileSync(${JSON.stringify(childrenPath)}, JSON.stringify({ owner: process.pid, pid: child.pid }) + '\\n');`,
+          "    return child;",
+          "  };",
+          "  syncBuiltinESMExports();",
+          "}",
+          `if (process.argv[1] === ${JSON.stringify(path.join(fixture.harness, "scripts/test-docker-all.mts"))}) {`,
+          "  const kill = process.kill.bind(process);",
+          `  process.kill = (pid, signal) => signal === 0 && fs.existsSync(${JSON.stringify(groupPath)}) && pid === -Number(fs.readFileSync(${JSON.stringify(groupPath)}, 'utf8')) ? true : kill(pid, signal);`,
+          "}",
+        ].join("\n"),
+      );
+      const shim = spawn(
+        process.execPath,
+        [path.join(fixture.harness, "scripts/test-docker-all.mjs")],
+        {
+          cwd: fixture.target,
+          stdio: ["ignore", "pipe", "pipe"],
+          env: {
+            ...process.env,
+            OPENCLAW_DOCKER_ALL_BUILD: "1",
+            OPENCLAW_DOCKER_ALL_PREFLIGHT: "0",
+            OPENCLAW_DOCKER_ALL_TIMINGS: "0",
+            OPENCLAW_DOCKER_ALL_LANES: (priorFailure
+              ? [...laneNames, "cli-installer-distribution"]
+              : laneNames
+            ).join(","),
+            OPENCLAW_DOCKER_ALL_LOG_DIR: path.join(fixture.root, "logs"),
+            OPENCLAW_DOCKER_ALL_PNPM_COMMAND: fixture.pinnedPnpm,
+            OPENCLAW_DOCKER_E2E_REPO_ROOT: fixture.target,
+            OPENCLAW_DOCKER_E2E_TRUSTED_HARNESS_DIR: fixture.selectedHarness,
+            OPENCLAW_DOCKER_E2E_SELECTED_SHA: fixture.selectedSha,
+            OPENCLAW_CURRENT_PACKAGE_TGZ: fixture.tarball,
+            OPENCLAW_CURRENT_PACKAGE_VERSION: "2026.8.1",
+            OPENCLAW_CURRENT_PACKAGE_SHA256: fixture.sha256,
+            OPENCLAW_PREPUBLISH_PLUGIN_REGISTRY_DIR: fixture.registry,
+            OPENCLAW_PREPUBLISH_PLUGIN_REGISTRY_CANDIDATE_VERSION: "2026.8.1",
+            OPENCLAW_PREPUBLISH_PLUGIN_REGISTRY_MANIFEST_SHA256: fixture.registrySha256,
+            NODE_OPTIONS:
+              `${process.env.NODE_OPTIONS ?? ""} --import ${pathToFileURL(probePath).href}`.trim(),
+          },
+        },
+      );
+      let didClose = false;
+      const closed = new Promise<void>((resolve) => {
+        shim.once("close", () => {
+          didClose = true;
+          resolve();
+        });
+      });
+      const exited = new Promise<void>((resolve) => {
+        shim.once("exit", () => resolve());
+        shim.once("error", () => resolve());
+      });
+      let observationTimedOut = false;
+      const observedClose = waitForChildClose(shim, 25_000).catch((error: unknown) => {
+        observationTimedOut = true;
+        throw error;
+      });
+      void observedClose.catch(() => undefined);
+      const readOwnedChildren = () => {
+        const rows: Array<{ owner: number; pid: number }> = existsSync(childrenPath)
+          ? readFileSync(childrenPath, "utf8")
+              .trim()
+              .split("\n")
+              .filter(Boolean)
+              .map((line) => JSON.parse(line))
+          : [];
+        const owners = new Set([shim.pid]);
+        for (let remaining = rows.length; remaining > 0; remaining -= 1) {
+          for (const row of rows) {
+            if (owners.has(row.owner)) {
+              owners.add(row.pid);
+            }
+          }
+        }
+        for (const row of rows) {
+          expect(Number.isSafeInteger(row.pid) && row.pid > 1 && row.pid !== process.pid).toBe(
+            true,
+          );
+          expect(owners.has(row.owner)).toBe(true);
+        }
+        return rows;
+      };
+      const stopGroups = async (pids: number[]) => {
+        for (const pid of new Set(pids)) {
+          try {
+            process.kill(-pid, "SIGKILL");
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== "ESRCH") {
+              throw error;
+            }
+          }
+        }
+        await Promise.all(pids.map((pid) => waitForDead(pid, 5_000)));
+      };
+      let stderr = "";
+      shim.stdout.resume();
+      shim.stderr.on("data", (chunk) => {
+        stderr = `${stderr}${chunk}`.slice(-8192);
+      });
+      try {
+        if (unjoined) {
+          leafPid = await waitForPidFile(leafPath, 5_000).catch((error: unknown) => {
+            throw new Error(
+              `foreground fixture readiness failed (exit=${String(shim.exitCode)}, signal=${String(shim.signalCode)}):\n${stderr}`,
+              { cause: error },
+            );
+          });
+          let pid = leafPid;
+          for (let depth = 0; depth < 8; depth += 1) {
+            const [observed, ppid, pgid] = execFileSync(
+              "ps",
+              ["-o", "pid=,ppid=,pgid=", "-p", String(pid)],
+              { encoding: "utf8" },
+            )
+              .trim()
+              .split(/\s+/u)
+              .map(Number);
+            expect(observed).toBe(pid);
+            // The shim shares the test's group; only its descendants own detached groups.
+            if (pid === shim.pid) {
+              break;
+            }
+            owned.push({ pid, pgid: pgid! });
+            pid = ppid!;
+          }
+          expect(pid).toBe(shim.pid);
+          writeFileSync(groupPath, String(owned[0]!.pgid));
+          const leader = await waitForPidFile(leaderPath, 5_000);
+          process.kill(leader, "SIGUSR1");
+        }
+        expect(await observedClose).toEqual({ code: unjoined ? 2 : 1, signal: null });
+        if (leafPid) {
+          expect(isProcessAlive(leafPid)).toBe(false);
+        }
+        const phases = readFileSync(fixture.marker, "utf8")
+          .trim()
+          .split("\n")
+          .map((line) => JSON.parse(line).phase);
+        expect(phases).toEqual(
+          priorFailure
+            ? ["live-build", "bare"]
+            : unjoined
+              ? ["live-build"]
+              : ["live-build", "package-image"],
+        );
+        expect(stderr).toContain(
+          unjoined ? "Docker lane process group did not stop" : "shared live-test image once",
+        );
+        if (priorFailure) {
+          const first = "shared live-test image once failed with status 3";
+          const second = "Docker lane process group did not stop";
+          expect(stderr).toContain(first);
+          expect(stderr.indexOf(first)).toBeLessThan(stderr.indexOf(second));
+        }
+      } finally {
+        if (!didClose) {
+          if (shim.exitCode === null && shim.signalCode === null) {
+            shim.kill("SIGTERM");
+          }
+          if (!observationTimedOut) {
+            await waitForChildClose(shim).catch(() => undefined);
+          }
+        }
+        if (shim.exitCode === null && shim.signalCode === null) {
+          shim.kill("SIGKILL");
+        }
+        await exited;
+        // Stop scheduler admission before rereading its acquired lane groups.
+        // The timeout observer above never substitutes for the actual close join.
+        await stopGroups(
+          readOwnedChildren()
+            .filter((row) => row.owner === shim.pid)
+            .map((row) => row.pid),
+        );
+        const children = readOwnedChildren();
+        await stopGroups(children.map((row) => row.pid));
+        const receiptPids = [leaderPath, leafPath]
+          .filter(existsSync)
+          .map((file) => Number(readFileSync(file, "utf8")))
+          .filter((pid) => Number.isSafeInteger(pid) && pid > 1);
+        await Promise.all(
+          [...owned.map(({ pid }) => pid), ...receiptPids].map((pid) => waitForDead(pid, 5_000)),
+        );
+        await closed;
+        rmSync(fixture.root, { recursive: true, force: true });
+      }
+    },
+    30_000,
+  );
+
   posixIt(
     "preserves prepared core dependencies without shared builds for a package-only lane",
     () => {
