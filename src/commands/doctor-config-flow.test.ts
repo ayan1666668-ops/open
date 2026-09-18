@@ -2401,6 +2401,7 @@ describe("doctor config flow", () => {
         { type: "cli", capabilities: ["audio"] },
         { type: "cli", command: "fixture-transcribe", capabilities: ["audio"] },
         { type: "cli", command: "fixture-transcribe", args: ["{{AttachmentPath}}"] },
+        { command: "fixture-transcribe", args: ["/synthetic/audio.wav"] },
       ] satisfies MediaUnderstandingModelConfig[];
       const config: OpenClawConfig = { plugins: { enabled: false }, tools: { media: { models } } };
       config.agents = { entries: { main: {} } };
@@ -2417,8 +2418,7 @@ describe("doctor config flow", () => {
       expect(warnings).toContain("tools.media.models[2].args");
       expect(warnings).toContain("{{AttachmentPath}}");
       expect(warnings).toContain("Doctor cannot choose");
-      expect(warnings).not.toContain("tools.media.models[0]");
-      expect(warnings).not.toContain("tools.media.models[3]");
+      expect(warnings).not.toMatch(/tools\.media\.models\[(?:0|3|4)\]/);
       expect(result.cfg.tools?.media).toEqual(config.tools?.media);
       expect(result.shouldWriteConfig, result.pendingChangePanels?.join("\n")).toBe(false);
     },

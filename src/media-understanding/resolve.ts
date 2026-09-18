@@ -54,19 +54,13 @@ export function resolveCliModelEntry(
     );
   }
   const args = entry.args;
-  // runExec receives no stdin here. Empty args cannot feed a wrapper the attachment.
-  // Media* remains a shipped template alias until the media-legacy-projection cutover.
-  if (
-    !Array.isArray(args) ||
-    !args.some(
-      (arg) =>
-        typeof arg === "string" && /{{\s*(?:Attachment|Media)(?:Path|Url|Dir)\s*}}/.test(arg),
-    )
-  ) {
+  // No stdin is supplied, so empty args cannot carry the attachment. Nonempty
+  // literal/custom argv is a shipped command contract; interpolation is optional.
+  if (!Array.isArray(args) || args.length === 0) {
     return err(
       new MediaCliModelUnavailableError(
         "cli-missing-attachment-arg",
-        "Set args to include {{AttachmentPath}}, {{AttachmentUrl}}, or {{AttachmentDir}}; stdin is not supplied.",
+        'Set args to pass the attachment, for example ["{{AttachmentPath}}"]. CLI stdin is not supplied.',
       ),
     );
   }

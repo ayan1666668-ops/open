@@ -115,7 +115,7 @@ Each `models[]` entry is a **provider** entry (default) or a **CLI** entry:
   </Tab>
 </Tabs>
 
-CLI entries need a nonblank `command` and `args` containing `{{AttachmentPath}}`, `{{AttachmentUrl}}`, or `{{AttachmentDir}}` (or the corresponding deprecated `Media*` alias). Empty arguments are not supported: OpenClaw does not feed attachments to CLI stdin. `openclaw doctor` reports unusable entries with the exact config path and a manual fix; it does not invent commands or rewrite these entries. At runtime, an unusable entry records a failure without launching the binary, and the next configured model is tried. If none succeeds, the attachment gets a failure outcome and a warning is logged. Config validation remains permissive for these fields so an existing config can still start the Gateway after an update.
+CLI entries need a nonblank `command` and a nonempty `args` list. Arguments remain literal strings with optional template interpolation; existing literal file paths and custom wrapper arguments are supported. Pass the attachment through a template such as `{{AttachmentPath}}` or your command's existing input contract. Empty argument lists are not supported because OpenClaw does not feed attachments to CLI stdin. `openclaw doctor` reports missing commands or args with the exact config path and a manual fix; it does not invent commands or rewrite these entries. At runtime, an incomplete entry records a failure without launching the binary, and the next configured model is tried. If none succeeds, the attachment gets a failure outcome and a warning is logged. Config validation remains permissive for these fields so an existing config can still start the Gateway after an update.
 
 ### Provider credentials
 

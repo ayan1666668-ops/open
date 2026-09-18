@@ -156,20 +156,6 @@ describe("media-understanding CLI audio entry", () => {
       entry: { command: "fixture-transcribe", args: [] },
       reason: "cli-missing-attachment-arg",
     },
-    {
-      name: "options only",
-      entry: { type: "cli", command: "fixture-transcribe", args: ["--language", "en"] },
-      reason: "cli-missing-attachment-arg",
-    },
-    {
-      name: "metadata only",
-      entry: {
-        type: "cli",
-        command: "fixture-transcribe",
-        args: ["{{AttachmentIndex}}", "{{OutputDir}}"],
-      },
-      reason: "cli-missing-attachment-arg",
-    },
   ])("reports $name as unavailable without executing it", async ({ entry, reason }) => {
     const { runCapability } = await import("./runner.js");
     await withAudioFixture("openclaw-cli-unavailable", async ({ ctx, media, cache }) => {
@@ -246,36 +232,55 @@ describe("media-understanding CLI audio entry", () => {
     });
   });
 
-  it.each([
-    "AttachmentPath",
-    "AttachmentUrl",
-    "AttachmentDir",
-    "MediaPath",
-    "MediaUrl",
-    "MediaDir",
-  ])("passes the attachment through the supported %s template", async (placeholder) => {
+  it("executes a custom CLI with a literal attachment path", async () => {
+    const actual = await vi.importActual<typeof import("../process/exec.js")>("../process/exec.js");
+    runExecMock.mockImplementationOnce(actual.runExec);
     await withAudioFixture(
-      "openclaw-cli-attachment-template",
+      "openclaw-cli-literal-input",
       async ({ ctx, media, mediaPath, cache }) => {
-        await runCliEntry({
+        const args = [
+          "-e",
+          "process.stdout.write(String(require('node:fs').readFileSync(process.argv[1]).length))",
+          mediaPath,
+        ];
+        const result = await runCliEntry({
           capability: "audio",
-          entry: { type: "cli", command: "fixture-transcribe", args: [`{{ ${placeholder} }}`] },
+          entry: { type: "cli", command: process.execPath, args },
           cfg: {},
           ctx,
           attachment: requireFirstAttachment(media),
           cache,
         });
-        const filePath = await fs.realpath(mediaPath);
+        expect(result?.text).toBe(String((await fs.stat(mediaPath)).size));
         expect(runExecMock).toHaveBeenCalledExactlyOnceWith(
-          "fixture-transcribe",
-          [
-            placeholder.endsWith("Dir")
-              ? path.dirname(filePath)
-              : placeholder.endsWith("Url")
-                ? mediaPath
-                : filePath,
-          ],
+          process.execPath,
+          args,
           expect.any(Object),
+        );
+      },
+    );
+  });
+
+  it("preserves custom arguments relative to the attachment working directory", async () => {
+    await withAudioFixture(
+      "openclaw-cli-custom-input",
+      async ({ ctx, media, mediaPath, cache }) => {
+        const args = ["describe", path.basename(mediaPath)];
+        const result = await runCliEntry({
+          capability: "audio",
+          entry: { type: "cli", command: "agy", args },
+          cfg: {},
+          ctx,
+          attachment: requireFirstAttachment(media),
+          cache,
+        });
+        expect(result?.text).toBe("cli transcript");
+        expect(runExecMock).toHaveBeenCalledExactlyOnceWith(
+          "agy",
+          args,
+          expect.objectContaining({
+            cwd: path.dirname(await fs.realpath(mediaPath)),
+          }),
         );
       },
     );
