@@ -134,6 +134,7 @@ export async function cleanupSessionLifecycleArtifactsCore(
   const resolved = captureLifecycleDatabaseScope(
     resolveSqliteReadScope({
       ...(params.agentId ? { agentId: params.agentId } : {}),
+      ...(params.env ? { env: params.env } : {}),
       storePath: params.storePath,
     }),
   );
@@ -222,7 +223,10 @@ export async function resetSessionEntryLifecycle(
   params: ResetSessionEntryLifecycleParams,
 ): Promise<ResetSessionEntryLifecycleResult> {
   const agentId = params.agentId ?? parseAgentSessionKey(params.target.canonicalKey)?.agentId;
-  const resolved = resolveSqliteStoreScope(params.storePath, { agentId });
+  const resolved = resolveSqliteStoreScope(params.storePath, {
+    agentId,
+    ...(params.env ? { env: params.env } : {}),
+  });
   if (params.resetBoundary) {
     params.commitGuard?.();
     const source = withOpenClawAgentDatabaseReadOnly(
@@ -240,7 +244,7 @@ export async function resetSessionEntryLifecycle(
     }
   }
   return await withCommittedHistoryMaintenance(
-    { agentId: resolved.agentId, storePath: params.storePath },
+    { agentId: resolved.agentId, env: resolved.env, storePath: params.storePath },
     async (recordCommit) =>
       runExclusiveSqliteSessionWrite(
         resolved,
@@ -327,7 +331,10 @@ async function deleteSqliteSessionEntryLifecycleInternal(
 ): Promise<DeleteSessionEntryLifecycleResult> {
   const agentId = params.agentId ?? parseAgentSessionKey(params.target.canonicalKey)?.agentId;
   const resolved = captureLifecycleDatabaseScope(
-    resolveSqliteStoreScope(params.storePath, { agentId }),
+    resolveSqliteStoreScope(params.storePath, {
+      agentId,
+      ...(params.env ? { env: params.env } : {}),
+    }),
   );
   return await withCommittedHistoryMaintenance(
     { ...params, env: resolved.env },
