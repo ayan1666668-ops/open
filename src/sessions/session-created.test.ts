@@ -115,7 +115,7 @@ describe("Home session creation notices", () => {
     expect(await drain("ops")).toContain("New session created");
     expect(await drain("ops")).toBeUndefined();
     recordSessionCreated(cfg, { sessionKey: "global", agentId: "ops", entry: entry() });
-    expect(peekSystemEvents("global")).toEqual([]);
+    expect(await drain("ops")).toBeUndefined();
   });
 
   it.each(["heartbeat wake", "heartbeat poll", "reason periodic"])(
