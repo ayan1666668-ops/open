@@ -322,7 +322,7 @@ class WearFullReplyTest {
       ).performClick()
     openRemote()
     capture("talk-opened")
-    assertEquals("Talk opened reader", 1, requestCount)
+    compose.runOnIdle { assertEquals("Talk opened reader", 1, requestCount) }
     reveal(label(R.string.reply_next_page))
     compose.onNodeWithText(label(R.string.reply_next_page)).performClick()
     reveal("TRAILING SENTINEL")
