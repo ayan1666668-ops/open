@@ -305,7 +305,9 @@ describe("repository workspace result ownership", () => {
           ([argv]) => argv.includes(artifactRoot) && argv.includes("fast-import"),
         ).length;
       const publicationWrites = () =>
-        writes.mock.calls.filter(([target]) => String(target).startsWith(payloadPrefix)).length;
+        writes.mock.calls.filter(
+          ([target]) => typeof target === "string" && target.startsWith(payloadPrefix),
+        ).length;
       const candidates = async () =>
         (
           await requireWorkspaceResultGit(artifactRoot, [
@@ -316,7 +318,7 @@ describe("repository workspace result ownership", () => {
         )
           .split("\n")
           .filter(Boolean);
-      const quiesce = f.tunnel.quiesceWorkspace;
+      const quiesce = f.tunnel.quiesceWorkspace.bind(f.tunnel);
       vi.spyOn(f.tunnel, "quiesceWorkspace").mockImplementation(async (...args) => {
         const held = await quiesce(...args);
         return {
@@ -466,7 +468,7 @@ describe("repository workspace result ownership", () => {
         const payloadRoots: string[] = [];
         for (const [index, [prefix]] of temporary.mock.calls.entries()) {
           const result = temporary.mock.results[index];
-          if (String(prefix).startsWith(payloadPrefix) && result?.type === "return") {
+          if (prefix.startsWith(payloadPrefix) && result?.type === "return") {
             payloadRoots.push(String(await result.value));
           }
         }
