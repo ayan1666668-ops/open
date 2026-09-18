@@ -1,11 +1,34 @@
 // Correlated CLI tool results already carry their started args; display-only
 // results must not duplicate that potentially large payload.
-import { describe, expect, it, vi } from "vitest";
-import { type AgentEventRuntimePayload, onAgentEvent } from "../../infra/agent-events.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  createCliToolSummaryTracker,
+  runCliAgentWithLifecycle,
+} from "../../auto-reply/reply/agent-runner-cli-dispatch.js";
+import type { GetReplyOptions } from "../../auto-reply/types.js";
+import { createChannelProgressDraftCompositor } from "../../channels/progress-draft-compositor.js";
+import {
+  markMcpLoopbackToolCallStarted,
+  updateMcpLoopbackToolCallCapture,
+} from "../../gateway/mcp-http.loopback-runtime.js";
+import {
+  type AgentEventRuntimePayload,
+  emitAgentEvent,
+  onAgentEvent,
+} from "../../infra/agent-events.js";
 import { createTestAdmittedRunContext } from "../admitted-run-context.test-support.js";
+import { createCliJsonlStreamingParser } from "../cli-output-stream.js";
 import { createCliEventHandlers } from "./execute-events.js";
-import type { CliToolTracking } from "./execute-tool-tracking.js";
+import { createCliToolTracking, type CliToolTracking } from "./execute-tool-tracking.js";
 import type { PreparedCliRunContext } from "./types.js";
+
+const cliDispatchState = vi.hoisted(() => ({ runCliAgentMock: vi.fn() }));
+vi.mock("../cli-runner.js", () => ({
+  runCliAgent: (...args: unknown[]) => cliDispatchState.runCliAgentMock(...args),
+}));
+afterEach(() => {
+  cliDispatchState.runCliAgentMock.mockReset();
+});
 
 function buildContext(runId: string): PreparedCliRunContext {
   const backend = {
@@ -69,8 +92,69 @@ function collectToolEvents(runId: string): {
 }
 
 describe("cli tool result events", () => {
-  it("emits complete CLI commentary as a completed preamble", () => {
-    const runId = "run-commentary-complete";
+  it.each([
+    ["poll", "kill", false],
+    ["kill", "poll", true],
+  ] as const)(
+    "uses correlated executed arguments for %s to %s without changing raw arguments",
+    (requested, executed, quiet) => {
+      const context = buildContext(`rewrite-${requested}`);
+      const tracking = createCliToolTracking(context);
+      tracking.beginGatewayCapture(context.params.runId, () => {});
+      const handlers = createCliEventHandlers({
+        context,
+        toolTracking: tracking,
+        getRunState: () => ({ failed: false, error: undefined }),
+      });
+      const events: AgentEventRuntimePayload[] = [];
+      const dispose = onAgentEvent((event) => {
+        if (event.runId === context.params.runId) {
+          events.push(event);
+        }
+      });
+      const args = { action: requested, sessionId: "job" };
+      try {
+        handlers.emitCliToolUseStart({
+          toolCallId: "call",
+          name: "mcp__openclaw__process",
+          kind: "mcp_tool_use",
+          args,
+        });
+        const capture = markMcpLoopbackToolCallStarted({
+          captureKey: context.params.runId,
+          toolName: "process",
+          args,
+        });
+        if (!capture) {
+          throw new Error("Expected loopback capture");
+        }
+        updateMcpLoopbackToolCallCapture(capture, {
+          toolName: "process",
+          args: { ...args, action: executed },
+        });
+        handlers.emitCliToolResult({
+          toolCallId: "call",
+          name: "mcp__openclaw__process",
+          isError: false,
+          result: "result",
+        });
+        const terminal = events.find(
+          (event) => event.stream === "item" && event.data.phase === "end",
+        );
+        expect(Boolean(terminal?.data.hideFromChannelProgress)).toBe(quiet);
+        expect(
+          events.find((event) => event.stream === "tool" && event.data.phase === "result")?.data
+            .args,
+        ).toEqual(args);
+      } finally {
+        dispose();
+        tracking.finalizeCapture(() => {});
+      }
+    },
+  );
+
+  it("projects parsed loopback waits once without changing raw names or display result args", () => {
+    const runId = "parsed-activity";
     const handlers = createCliEventHandlers({
       context: buildContext(runId),
       toolTracking: buildToolTracking(),
@@ -78,13 +162,18 @@ describe("cli tool result events", () => {
     });
     const events: AgentEventRuntimePayload[] = [];
     const dispose = onAgentEvent((event) => {
-      if (event.runId === runId && event.stream === "item") {
+      if (event.runId === runId) {
         events.push(event);
       }
     });
+    const parser = createCliJsonlStreamingParser({
+      providerId: "claude-cli",
+      backend: { command: "claude", output: "jsonl", jsonlDialect: "claude-stream-json" },
+      onAssistantDelta: vi.fn(),
+      onToolUseStart: handlers.emitCliDisplayToolUseStart,
+      onToolResult: handlers.emitCliDisplayToolResult,
+    });
     try {
-      // The JSONL parser has already accumulated this whole pre-tool segment.
-      // An update-only event would leave first-notification buffering waiting forever.
       handlers.emitCliCommentaryText("Let me check that for you.");
       expect(events).toMatchObject([
         {
@@ -92,11 +181,57 @@ describe("cli tool result events", () => {
           data: { kind: "preamble", phase: "end", progressText: "Let me check that for you." },
         },
       ]);
+      for (const [toolCallId, name, args, isError, quiet] of [
+        ["poll", "mcp__openclaw__process", { action: "poll", sessionId: "process-1" }, false, true],
+        ["failed", "mcp__openclaw__process", { action: "poll", sessionId: "missing" }, true, false],
+        [
+          "kill",
+          "mcp__openclaw__process",
+          { action: "kill", sessionId: "process-1" },
+          false,
+          false,
+        ],
+        ["yield", "mcp__openclaw__sessions_yield", {}, false, true],
+        ["third-party", "mcp__other__sessions_yield", {}, false, false],
+      ] as const) {
+        parser.push(
+          JSON.stringify({
+            type: "assistant",
+            message: { content: [{ type: "tool_use", id: toolCallId, name, input: args }] },
+          }) + "\n",
+        );
+        parser.push(
+          JSON.stringify({
+            type: "user",
+            message: {
+              content: [
+                {
+                  type: "tool_result",
+                  tool_use_id: toolCallId,
+                  content: "raw result",
+                  is_error: isError,
+                },
+              ],
+            },
+          }) + "\n",
+        );
+        const operation = events.filter((event) => event.data.toolCallId === toolCallId);
+        expect(operation.map((event) => [event.stream, event.data.phase])).toEqual([
+          ["item", "start"],
+          ["tool", "start"],
+          ["tool", "result"],
+          ["item", "end"],
+        ]);
+        expect(operation[2]?.data).toMatchObject({ name, result: "raw result", isError });
+        expect(operation[2]?.data.args).toBeUndefined();
+        expect(operation[2]?.data.hideFromChannelProgress).toBeUndefined();
+        expect(Boolean(operation[3]?.data.hideFromChannelProgress)).toBe(quiet);
+        expect(operation[3]?.data.name).toBe(name.replace(/^mcp__openclaw__/, ""));
+      }
     } finally {
       dispose();
     }
   });
-
   it("emits canonical CLI compaction lifecycle events", () => {
     const runId = "run-compaction-events";
     const handlers = createCliEventHandlers({
@@ -214,92 +349,319 @@ describe("cli tool result events", () => {
       dispose();
     }
   });
+});
 
-  it("emits a plan event for a successful MCP-prefixed progress_card result", () => {
-    const runId = "run-plan-event";
+describe("CLI progress-card plan projection", () => {
+  it.each([
+    "progress_card",
+    "mcp__openclaw__progress_card",
+    "update_plan",
+    "mcp__openclaw__update_plan",
+  ])("projects normalized %s input once while preserving activity order", (name) => {
+    const runId = `plan-${name}`;
+    const context = buildContext(runId);
+    context.resultContentSourceByToolName = new Map([["progress_card", "network"]]);
+    const tracking = buildToolTracking();
     const handlers = createCliEventHandlers({
-      context: buildContext(runId),
-      toolTracking: buildToolTracking(),
+      context,
+      toolTracking: tracking,
       getRunState: () => ({ failed: false, error: undefined }),
     });
     const events: AgentEventRuntimePayload[] = [];
     const dispose = onAgentEvent((event) => {
-      if (event.runId === runId && event.stream === "plan") {
+      if (event.runId === runId) {
         events.push(event);
       }
     });
-
+    const args = {
+      plan: [
+        { step: "Inspect\u200b", status: "completed" },
+        { step: "Repair", status: "in_progress" },
+      ],
+    };
     try {
-      // CLI tool calls arrive MCP-prefixed; the embedded runner never sees this prefix.
-      handlers.emitCliToolUseStart({
-        toolCallId: "call-1",
-        name: "mcp__openclaw__progress_card",
-        kind: "mcp_tool_use",
-        args: {
-          plan: [
-            { step: "one", status: "completed" },
-            { step: "two", status: "in_progress" },
+      handlers.emitCliToolUseStart({ toolCallId: "card", name, kind: "mcp_tool_use", args });
+      handlers.emitCliToolResult({ toolCallId: "card", name, isError: false, result: "updated" });
+      const plan = events.filter((event) => event.stream === "plan");
+      expect(plan).toHaveLength(1);
+      expect(plan[0]).toMatchObject({
+        runId,
+        data: {
+          phase: "update",
+          title: "Plan updated",
+          source: "openclaw",
+          explanation: "1/2 complete",
+          steps: [
+            { step: "Inspect", status: "completed" },
+            { step: "Repair", status: "in_progress" },
           ],
         },
       });
-      handlers.emitCliToolResult({
-        toolCallId: "call-1",
-        name: "mcp__openclaw__progress_card",
-        isError: false,
-        result: "Progress card updated (rev 1, 1/2 done)",
-      });
-
-      expect(events).toMatchObject([
-        {
-          stream: "plan",
-          data: {
-            phase: "update",
-            title: "Plan updated",
-            source: "openclaw",
-            explanation: "1/2 complete",
-            steps: [
-              { step: "one", status: "completed" },
-              { step: "two", status: "in_progress" },
-            ],
-          },
-        },
+      expect(
+        events
+          .filter((event) => event.stream !== "plan")
+          .map((event) => [event.stream, event.data.phase]),
+      ).toEqual([
+        ["item", "start"],
+        ["tool", "start"],
+        ["tool", "result"],
+        ["item", "end"],
       ]);
+      const result = events.find(
+        (event) => event.stream === "tool" && event.data.phase === "result",
+      );
+      expect(result?.data).toMatchObject({ name, args, result: "updated", isError: false });
+      if (name.endsWith("progress_card")) {
+        expect(result?.data.resultContentSource).toBe("network");
+      }
+      handlers.emitCliToolResult({ toolCallId: "card", name, isError: false, result: "duplicate" });
+      expect(events.filter((event) => event.stream === "plan")).toHaveLength(1);
+      expect(tracking.handleCliToolResult).toHaveBeenCalledTimes(2);
     } finally {
       dispose();
     }
   });
 
-  it("does not emit a plan event for a failed progress_card result", () => {
-    const runId = "run-plan-event-error";
-    const handlers = createCliEventHandlers({
-      context: buildContext(runId),
-      toolTracking: buildToolTracking(),
-      getRunState: () => ({ failed: false, error: undefined }),
-    });
-    const events: AgentEventRuntimePayload[] = [];
-    const dispose = onAgentEvent((event) => {
-      if (event.runId === runId && event.stream === "plan") {
-        events.push(event);
+  it.each([
+    {
+      label: "failed",
+      name: "progress_card",
+      args: { plan: [{ step: "Inspect", status: "pending" }] },
+      failed: true,
+    },
+    { label: "malformed", name: "progress_card", args: { plan: "not a plan" } },
+    {
+      label: "invalid status",
+      name: "progress_card",
+      args: { plan: [{ step: "Inspect", status: "invented" }] },
+    },
+    { label: "unrelated", name: "exec", args: { plan: [{ step: "Inspect", status: "pending" }] } },
+    {
+      label: "other MCP server",
+      name: "mcp__other__progress_card",
+      args: { plan: [{ step: "Inspect", status: "pending" }] },
+    },
+    {
+      label: "uncorrelated",
+      name: "progress_card",
+      args: { plan: [{ step: "Inspect", status: "pending" }] },
+      skipStart: true,
+    },
+    {
+      label: "side question",
+      name: "progress_card",
+      args: { plan: [{ step: "Inspect", status: "pending" }] },
+      sideQuestion: true,
+    },
+    {
+      label: "display only",
+      name: "progress_card",
+      args: { plan: [{ step: "Inspect", status: "pending" }] },
+      displayOnly: true,
+    },
+  ])(
+    "does not fabricate plan state for $label results",
+    ({ name, args, failed, skipStart, sideQuestion, displayOnly }) => {
+      const runId = "no-plan";
+      const context = buildContext(runId);
+      if (sideQuestion) {
+        context.params.executionMode = "side-question";
       }
+      const handlers = createCliEventHandlers({
+        context,
+        toolTracking: buildToolTracking(),
+        getRunState: () => ({ failed: false, error: undefined }),
+      });
+      const events: AgentEventRuntimePayload[] = [];
+      const dispose = onAgentEvent((event) => {
+        if (event.runId === runId) {
+          events.push(event);
+        }
+      });
+      try {
+        const start = { toolCallId: "card", name, kind: "mcp_tool_use" as const, args };
+        if (!skipStart) {
+          if (displayOnly) {
+            handlers.emitCliDisplayToolUseStart(start);
+          } else {
+            handlers.emitCliToolUseStart(start);
+          }
+        }
+        const result = { toolCallId: "card", name, isError: failed === true, result: "receipt" };
+        if (displayOnly) {
+          handlers.emitCliDisplayToolResult(result);
+        } else {
+          handlers.emitCliToolResult(result);
+        }
+        expect(events.filter((event) => event.stream === "plan")).toEqual([]);
+        if (sideQuestion) {
+          expect(events).toEqual([]);
+        }
+      } finally {
+        dispose();
+      }
+    },
+  );
+});
+
+describe("CLI plan channel bridge", () => {
+  it.each([
+    { name: "progress_card", suppressed: false },
+    { name: "mcp__openclaw__progress_card", suppressed: false },
+    { name: "mcp__openclaw__progress_card", suppressed: true },
+  ])(
+    "bridges actual $name results with suppression=$suppressed without completing the run",
+    async ({ name, suppressed }) => {
+      const runId = `progress-bridge-${name}`;
+      const render = vi.fn((_text: string, _options?: unknown) => true);
+      const progress = createChannelProgressDraftCompositor({
+        entry: { streaming: { mode: "progress", progress: { label: false, toolProgress: true } } },
+        mode: "progress",
+        active: true,
+        seed: runId,
+        update: render,
+      });
+      const onPlanUpdate = vi.fn(
+        async (update: Parameters<NonNullable<GetReplyOptions["onPlanUpdate"]>>[0]) => {
+          await progress.pushPlanProgress(update.steps ?? [], update);
+        },
+      );
+      const lifecycle: string[] = [];
+      const dispose = onAgentEvent((event) => {
+        if (event.runId === runId && event.stream === "lifecycle") {
+          lifecycle.push(String(event.data.phase));
+        }
+      });
+      cliDispatchState.runCliAgentMock.mockImplementationOnce(
+        async (params: PreparedCliRunContext["params"]) => {
+          const handlers = createCliEventHandlers({
+            context: { ...buildContext(runId), params },
+            toolTracking: buildToolTracking(),
+            getRunState: () => ({ failed: false, error: undefined }),
+          });
+          const parser = createCliJsonlStreamingParser({
+            providerId: "claude-cli",
+            backend: { command: "claude", output: "jsonl", jsonlDialect: "claude-stream-json" },
+            onAssistantDelta: handlers.emitCliAssistantDelta,
+            onToolUseStart: handlers.emitParsedToolUseStart,
+            onToolResult: handlers.emitParsedToolResult,
+          });
+          parser.push(
+            JSON.stringify({
+              type: "assistant",
+              message: {
+                content: [
+                  {
+                    type: "tool_use",
+                    id: "plan",
+                    name,
+                    input: {
+                      plan: [
+                        { step: "Inspect\u200b", status: "completed" },
+                        { step: "Repair", status: "completed" },
+                      ],
+                    },
+                  },
+                ],
+              },
+            }) + "\n",
+          );
+          const resultLine =
+            JSON.stringify({
+              type: "user",
+              message: {
+                content: [
+                  { type: "tool_result", tool_use_id: "plan", content: "updated", is_error: false },
+                ],
+              },
+            }) + "\n";
+          parser.push(resultLine);
+          parser.push(resultLine);
+          emitAgentEvent({
+            runId: "unrelated-run",
+            stream: "plan",
+            data: { steps: ["Do not deliver"] },
+          });
+          expect(lifecycle).not.toContain("end");
+          return { payloads: [{ text: "Final task answer" }], meta: { durationMs: 1 } };
+        },
+      );
+      try {
+        const result = await runCliAgentWithLifecycle({
+          runId,
+          provider: "claude-cli",
+          onPlanUpdate,
+          suppressAssistantBridge: suppressed,
+          runParams: buildContext(runId).params,
+        });
+        expect(onPlanUpdate).toHaveBeenCalledTimes(suppressed ? 0 : 1);
+        if (!suppressed) {
+          expect(onPlanUpdate).toHaveBeenCalledWith({
+            phase: "update",
+            title: "Plan updated",
+            explanation: "2/2 complete",
+            source: "openclaw",
+            steps: [
+              { step: "Inspect", status: "completed" },
+              { step: "Repair", status: "completed" },
+            ],
+          });
+        }
+        if (suppressed) {
+          expect(render).not.toHaveBeenCalled();
+        } else {
+          expect(render).toHaveBeenCalledWith(
+            expect.stringContaining("2/2 complete"),
+            expect.objectContaining({
+              snapshot: expect.objectContaining({
+                plan: [
+                  { step: "Inspect", status: "completed" },
+                  { step: "Repair", status: "completed" },
+                ],
+              }),
+            }),
+          );
+          const rendered = render.mock.calls.at(-1)?.[0];
+          expect(rendered).toContain("Inspect");
+          expect(rendered).toContain("Repair");
+        }
+        expect(result.payloads).toEqual([{ text: "Final task answer" }]);
+        expect(lifecycle).toEqual(["start", "end"]);
+      } finally {
+        progress.cancel();
+        dispose();
+      }
+    },
+  );
+
+  it.each([
+    "progress_card",
+    "mcp__openclaw__progress_card",
+    "update_plan",
+    "mcp__openclaw__update_plan",
+    "mcp__other__progress_card",
+  ])("retains %s failure receipts and stored-name lookup", async (name) => {
+    const deliver = vi.fn();
+    const tracker = createCliToolSummaryTracker({
+      commandDetailsVisible: false,
+      shouldEmitToolResult: () => true,
+      shouldEmitToolOutput: () => true,
+      deliver,
     });
-
-    try {
-      handlers.emitCliToolUseStart({
-        toolCallId: "call-1",
-        name: "mcp__openclaw__progress_card",
-        kind: "mcp_tool_use",
-        args: { plan: [{ step: "one", status: "in_progress" }] },
-      });
-      handlers.emitCliToolResult({
-        toolCallId: "call-1",
-        name: "mcp__openclaw__progress_card",
-        isError: true,
-        result: "boom",
-      });
-
-      expect(events).toEqual([]);
-    } finally {
-      dispose();
-    }
+    await tracker.noteToolEvent({ name, phase: "start", args: {}, toolCallId: "failed-plan" });
+    const commandBearing = await tracker.noteToolEvent({
+      name: undefined,
+      phase: "result",
+      args: undefined,
+      toolCallId: "failed-plan",
+      isError: true,
+      result: "write failed",
+    });
+    expect(commandBearing).toBe(false);
+    expect(deliver).toHaveBeenCalledTimes(1);
+    expect(deliver).toHaveBeenCalledWith({
+      text: expect.stringContaining("write failed"),
+      isError: true,
+    });
   });
 });
