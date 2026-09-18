@@ -6,6 +6,7 @@ import ai.openclaw.wear.shared.WearReplyText
 import ai.openclaw.wear.shared.WearReplyTextStatus
 import ai.openclaw.wear.shared.WearRpcMethod
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -150,6 +151,71 @@ class WearReplyTextProjectionTest {
         },
       ),
     )
+  }
+
+  @Test fun successfulFullReadRequiresUsableText() {
+    val contents =
+      listOf<JsonElement?>(
+        null,
+        JsonPrimitive(""),
+        JsonArray(emptyList()),
+        JsonPrimitive(" \n\t"),
+        buildJsonArray {
+          add(
+            buildJsonObject {
+              put("type", "text")
+              put("text", "")
+            },
+          )
+        },
+        buildJsonArray {
+          add(
+            buildJsonObject {
+              put("type", "text")
+              put("text", " \t")
+            },
+          )
+        },
+        buildJsonArray {
+          add(
+            buildJsonObject {
+              put("type", "image")
+              put("url", "fixture")
+            },
+          )
+        },
+        buildJsonArray {
+          add(
+            buildJsonObject {
+              put("type", "toolCall")
+              put("text", "not user-visible text")
+            },
+          )
+        },
+      )
+    val failures = mutableListOf<String>()
+    contents.forEachIndexed { index, content ->
+      val result =
+        buildJsonObject {
+          put("ok", true)
+          put(
+            "message",
+            buildJsonObject {
+              put("role", "assistant")
+              put("__openclaw", buildJsonObject { put("id", "canonical") })
+              content?.let { put("content", it) }
+            },
+          )
+        }
+      val page = projectWearFullReply(result, "canonical", "owner", 0, null)
+      if (page.status != WearReplyTextStatus.Failed) failures += "case=$index status=${page.status} length=${page.text.length}"
+    }
+    assertEquals("Invalid full reads must be retryable failures", emptyList<String>(), failures)
+    for (text in listOf("Hi", "  Grüße 👩🏽🚀\n")) {
+      val page = projectWearFullReply(reply(text), "canonical", "owner", 0, null)
+      assertEquals(WearReplyTextStatus.Ready, page.status)
+      assertEquals(text, page.text)
+    }
   }
 
   @Test fun tailOnlyStreamIsNotUsedAsFullReplySource() {

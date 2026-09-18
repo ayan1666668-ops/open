@@ -258,6 +258,27 @@ class WearFullReplyTest {
     compose.onNodeWithText(label(R.string.reply_unavailable)).assertIsDisplayed()
   }
 
+  @Test fun failedFullReadOffersRetryWithoutDiscardingThePreview() {
+    prepareRemote()
+    val preview = snapshot.messages.single()
+    remoteStatus = WearReplyTextStatus.Failed
+    show()
+    openRemote()
+    reveal(label(R.string.reply_failed))
+    compose.onNodeWithText(label(R.string.reply_failed)).assertIsDisplayed()
+    reveal(label(R.string.retry))
+    compose.onNodeWithText(label(R.string.retry)).assertIsDisplayed()
+    capture("failed-full-read")
+    assertEquals(preview, snapshot.messages.single())
+    assertEquals(1, requestCount)
+    remoteStatus = null
+    compose.onNodeWithText(label(R.string.retry)).performClick()
+    reveal("HEAD SENTINEL")
+    compose.onNodeWithText("HEAD SENTINEL").assertIsDisplayed()
+    assertEquals(2, requestCount)
+    capture("retried-full-read")
+  }
+
   @Test fun shortAndEmptyRepliesDoNotGainDisclosure() {
     snapshot = snapshot.copy(messages = listOf(WearChatMessage("short", "assistant", "Short reply", 1L, textTruncated = false)))
     show()

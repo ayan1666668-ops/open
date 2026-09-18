@@ -77,5 +77,7 @@ internal fun projectWearFullReply(
     return WearReplyTextPage(WearReplyTextStatus.Unavailable)
   }
   if (wearReplyIsTruncated(message, WearReplyText.MAX_TEXT_LENGTH)) return WearReplyTextPage(WearReplyTextStatus.TooLarge)
-  return WearReplyText.page(wearReplyText(message), owner, offset, revision)
+  val text = wearReplyText(message)
+  if (text.isBlank()) return WearReplyTextPage(WearReplyTextStatus.Failed)
+  return WearReplyText.page(text, owner, offset, revision)
 }
