@@ -91,6 +91,15 @@ export const databaseWorkerCoreTestFiles = [
   "src/agents/agent-tools.create-openclaw-coding-tools.test.ts",
   "src/agents/bash-tools.notify-on-exit-ack.test.ts",
   "src/agents/memory-write-provenance.test.ts",
+  "src/agents/embedded-agent-runner/model.test.ts",
+  "src/agents/embedded-agent-runner/model.forward-compat.test.ts",
+  "src/agents/embedded-agent-runner/model.generation-scope.test.ts",
+  "src/agents/embedded-agent-runner/model.skip-agent-discovery-hooks.test.ts",
+  "src/agents/embedded-agent-runner/run/model-setup.ownership.test.ts",
+  "src/agents/embedded-agent-runner/run/model-setup.selected-model.test.ts",
+  "src/agents/embedded-agent-runner/run/runtime-preparation.thinking.test.ts",
+  "src/agents/tools-effective-inventory.cold-provider.test.ts",
+  "src/tts/tts-summary.static-catalog.test.ts",
   "src/agents/prepared-model-runtime.run-resources.test.ts",
   "src/agents/sessions/sdk.auth-migration.test.ts",
   "src/agents/subagents/completion/subagent-completion-admission.store.test.ts",
@@ -146,6 +155,7 @@ const databaseWorkerCoreTestFileSet = new Set(databaseWorkerCoreTestFiles);
 
 // Preserve watch admission for consumers previously inferred into fast lanes.
 export const databaseWorkerCoreFormerFastKinds = new Map([
+  ["src/agents/embedded-agent-runner/run/model-setup.selected-model.test.ts", "unitFast"],
   ["src/infra/device-pairing.test.ts", "unitFast"],
   ["src/logging/diagnostic-stuck-session-recovery.runtime.test.ts", "unitFast"],
   ["src/flows/search-setup.test.ts", "unitFastIsolated"],
