@@ -748,8 +748,10 @@ export function prepareStateDatabaseMutationSnapshot(databasePath: string, signa
     "canonical-mutation",
     (flightSignal) => scope.snapshot!(flightSignal),
     signal,
+    {
+      trackProducer: (producer) => scope.snapshots!.push(producer),
+    },
   );
-  scope.snapshots.push(pending);
   void pending.catch(() => undefined);
   return pending;
 }

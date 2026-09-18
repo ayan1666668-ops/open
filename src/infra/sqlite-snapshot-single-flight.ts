@@ -64,14 +64,20 @@ function releaseFlight(
   flight: SnapshotFlight,
   asyncCleanup: boolean,
 ): boolean | Promise<boolean> {
-  flight.leases -= 1;
-  if (flight.leases > 0) {
+  if (flight.leases > 1) {
+    flight.leases -= 1;
     return asyncCleanup ? Promise.resolve(true) : true;
   }
-  if (snapshotFlights.get(key) === flight) {
-    snapshotFlights.delete(key);
-  }
-  return asyncCleanup ? flight.base!.cleanupAsync() : flight.base!.cleanup();
+  const finish = (cleaned: boolean) => {
+    if (cleaned) {
+      flight.leases -= 1;
+      if (snapshotFlights.get(key) === flight) {
+        snapshotFlights.delete(key);
+      }
+    }
+    return cleaned;
+  };
+  return asyncCleanup ? flight.base!.cleanupAsync().then(finish) : finish(flight.base!.cleanup());
 }
 
 function leaseFlight(
@@ -86,20 +92,28 @@ function leaseFlight(
     location: base.location,
     cleanupRoot: base.cleanupRoot,
     cleanup: () => {
-      if (!active || pending) {
-        return !active;
+      if (!active) {
+        return true;
       }
-      active = false;
-      return releaseFlight(key, flight, false);
+      if (pending) {
+        return false;
+      }
+      const cleaned = releaseFlight(key, flight, false);
+      active = !cleaned;
+      return cleaned;
     },
     cleanupAsync: () => {
       if (!active) {
         return pending ?? Promise.resolve(true);
       }
-      active = false;
-      pending = Promise.resolve(releaseFlight(key, flight, true)).finally(() => {
-        pending = undefined;
-      });
+      pending ??= releaseFlight(key, flight, true)
+        .then((cleaned) => {
+          active = !cleaned;
+          return cleaned;
+        })
+        .finally(() => {
+          pending = undefined;
+        });
       return pending;
     },
   };
@@ -110,6 +124,9 @@ export async function prepareSingleFlightSqliteSnapshot(
   operation: string,
   producer: (signal: AbortSignal) => Promise<PreparedSqliteReadOnlyLocation>,
   signal?: AbortSignal,
+  lifecycle?: {
+    trackProducer?: (producer: Promise<PreparedSqliteReadOnlyLocation>) => void;
+  },
 ): Promise<PreparedSqliteReadOnlyLocation> {
   const identity = readDatabasePathIdentitySync(databasePath);
   const key = `${identity.key}:${operation}`;
@@ -138,6 +155,7 @@ export async function prepareSingleFlightSqliteSnapshot(
       },
     );
   }
+  lifecycle?.trackProducer?.(flight.promise);
   flight.waiters += 1;
   try {
     const base = await waitForFlight(flight.promise, signal);

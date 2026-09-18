@@ -30,7 +30,7 @@ it("holds cached in-flight recovery capacity until agent.wait observes completio
       return (await terminal.promise) as T;
     },
   };
-  const capacity = createMainSessionRecoveryCapacity({ limit: 1, waitMs: 20 });
+  const capacity = createMainSessionRecoveryCapacity({ limit: 1 });
   const onSettled = vi.fn();
 
   await expect(
@@ -47,8 +47,6 @@ it("holds cached in-flight recovery capacity until agent.wait observes completio
       shouldContinue: () => true,
     }),
   ).resolves.toMatchObject({ kind: "started" });
-  await expect(capacity.acquire(() => true)).resolves.toBeUndefined();
-
   terminal.resolve({ endedAt: Date.now(), status: "ok" });
   await vi.waitFor(() => expect(onSettled).toHaveBeenCalledOnce());
   const release = await capacity.acquire(() => true);
@@ -88,7 +86,7 @@ it.each([
         return { status: "timeout" } as T;
       },
     };
-    const capacity = createMainSessionRecoveryCapacity({ limit: 1, waitMs: 20 });
+    const capacity = createMainSessionRecoveryCapacity({ limit: 1 });
     const onSettled = vi.fn();
 
     await dispatchRestartRecoveryWithinCapacity({

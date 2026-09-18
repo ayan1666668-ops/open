@@ -547,7 +547,7 @@ export async function resumeMainSession(params: {
     if (!dispatchOutcome) {
       dispatchStarted = false;
       await rollbackReservation("cancel_reservation");
-      return "failed";
+      return "skipped";
     }
     ({ dispatchAccepted, executionStarted, preStartAbortAttempted, preStartAbortConfirmed } =
       dispatchOutcome.observation);

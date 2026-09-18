@@ -35,7 +35,6 @@ import {
 
 type RecoveryCounts = { started: number; settled: number; failed: number; skipped: number };
 const STARTUP_RECOVERY_MAX_ACTIVE_RUNS = 1;
-const STARTUP_RECOVERY_CAPACITY_WAIT_MS = 1_000;
 
 async function runRecoveryRetries(params: {
   initialDelayMs: number;
@@ -288,7 +287,6 @@ export function scheduleRestartAbortedMainSessionRecovery(params: {
   const startupRecoveryCutoffMs = Date.now();
   const recoveryCapacity = createMainSessionRecoveryCapacity({
     limit: STARTUP_RECOVERY_MAX_ACTIVE_RUNS,
-    waitMs: STARTUP_RECOVERY_CAPACITY_WAIT_MS,
   });
   const startupCheckedStorePaths = params.startupCheckedStorePaths ?? new Set<string>();
   const runRecoveryAttempt = async (
