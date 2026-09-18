@@ -56,7 +56,7 @@ describe("inline image staging", () => {
       expect(stored.equals(Buffer.from(PNG_BASE64, "base64"))).toBe(true);
 
       // The model payload survives, because provider hydration reads it.
-      expect(Buffer.from(String(staged.data), "base64").equals(stored)).toBe(true);
+      expect(Buffer.from(staged.data, "base64").equals(stored)).toBe(true);
 
       // Display projection: the reference is kept, the private payload dropped, and the
       // block is not marked omitted, because omission means the media is gone rather
