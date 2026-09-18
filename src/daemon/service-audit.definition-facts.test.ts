@@ -210,7 +210,9 @@ it.each([false, true])(
           : { kind: "outdated", key: "ExitTimeOut", current: null, expected: 20 },
       ),
     ]);
-    if (custom) expect(JSON.stringify(result.definitionDrift)).not.toContain("600");
+    if (custom) {
+      expect(JSON.stringify(result.definitionDrift)).not.toContain("600");
+    }
     expect(await fs.readFile(sourcePath, "utf8")).toBe(original);
   },
 );
