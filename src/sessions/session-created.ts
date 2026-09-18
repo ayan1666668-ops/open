@@ -11,9 +11,8 @@ import { withSystemEventOwner } from "../infra/system-event-ownership.js";
 import { enqueueSystemEvent } from "../infra/system-events.js";
 import { resolveAgentIdFromSessionKey } from "../routing/session-key.js";
 import { isIncognitoSessionKey } from "../shared/incognito-session-key.js";
+import { SESSION_CREATED_NOTICE_CONTEXT_PREFIX } from "./session-state-event-kinds.js";
 import { recordSessionStateEvent } from "./session-state-events.js";
-
-export const SESSION_CREATED_NOTICE_CONTEXT_PREFIX = "session-created:";
 
 /** Notify Home of a new logical session and record its trusted creation attribution. */
 export function recordSessionCreated(
