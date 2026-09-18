@@ -6,8 +6,15 @@ import {
 } from "../../skills/runtime/env-overrides.js";
 import { resolveSkillResourceCandidates } from "../../skills/runtime/resource-candidates.js";
 import { resolveCodeModeSkills, type CodeModeSkillReader } from "../code-mode-skills.js";
+import type { SandboxEnvironmentCapabilityDiscovery } from "../sandbox/environment-capabilities.js";
+import {
+  MAX_ENVIRONMENT_SKILL_BYTES,
+  mergeSandboxEnvironmentSkillCatalog,
+  prepareSandboxEnvironmentSkills,
+} from "../sandbox/environment-skills.js";
 import type { SandboxContext } from "../sandbox/types.js";
 import { isToolExecutionAllowed } from "../tool-policy-shared.js";
+import { log } from "./logger.js";
 import type { EmbeddedRunAttemptParams } from "./run/types.js";
 import {
   createSandboxPromptEntryLoader,
@@ -20,6 +27,7 @@ export async function prepareEmbeddedSkills(params: {
   /** Prompt-only callers can skip process-wide environment overrides. */
   applySkillEnvironment?: boolean;
   assertCurrent?: () => void;
+  environmentCapabilities?: readonly SandboxEnvironmentCapabilityDiscovery[];
   attempt: Pick<
     EmbeddedRunAttemptParams,
     | "config"
@@ -28,6 +36,7 @@ export async function prepareEmbeddedSkills(params: {
     | "contextTokenBudget"
     | "toolExecutionAllow"
     | "operation"
+    | "abortSignal"
   >;
   effectiveWorkspace: string;
   sandbox: SandboxContext | null | undefined;
@@ -50,6 +59,17 @@ export async function prepareEmbeddedSkills(params: {
       codeModeSkills: [],
     };
   }
+  const environmentSkillByteLimit = Math.min(
+    MAX_ENVIRONMENT_SKILL_BYTES,
+    params.attempt.config?.skills?.limits?.maxSkillFileBytes ?? MAX_ENVIRONMENT_SKILL_BYTES,
+  );
+  const environmentEntries = await prepareSandboxEnvironmentSkills({
+    sandbox: params.sandbox,
+    discoveries: params.environmentCapabilities,
+    maxSkillFileBytes: environmentSkillByteLimit,
+    signal: params.attempt.abortSignal,
+    warn: (message) => log.warn(message),
+  });
   const {
     skillsEligibility,
     skillUsagePaths,
@@ -84,7 +104,7 @@ export async function prepareEmbeddedSkills(params: {
       skillsWorkspaceDir,
       skillsPromptWorkspaceDir,
     });
-    const skillsPrompt = await resolveSkillsPrompt({
+    const nativeSkillsPrompt = await resolveSkillsPrompt({
       assertCurrent: params.assertCurrent,
       contextTokenBudget: params.attempt.contextTokenBudget,
       skillsSnapshot,
@@ -100,6 +120,22 @@ export async function prepareEmbeddedSkills(params: {
       eligibility: skillsEligibility,
       preserveEntryOrder,
     });
+    const { skillsPrompt, candidates } = await mergeSandboxEnvironmentSkillCatalog({
+      assertCurrent: params.assertCurrent,
+      skillsPrompt: nativeSkillsPrompt,
+      candidates:
+        skillsSnapshot?.resolvedSkills ??
+        (promptSkillEntries ?? skillEntries).map((entry) => entry.skill),
+      environmentEntries,
+      config: params.attempt.config,
+      agentId: params.sessionAgentId,
+      workspaceDir: skillsPromptWorkspaceDir,
+      snapshot: params.attempt.skillsSnapshot,
+      remoteNote: skillsEligibility?.remote?.note,
+      contextTokenBudget: params.attempt.contextTokenBudget,
+      warn: (message) => log.warn(message),
+    });
+    const environmentPaths = new Set(environmentEntries.map((entry) => entry.skill.filePath));
     params.assertCurrent?.();
     // Preparation may yield to abort/revocation. Apply process-wide overrides only
     // once all filesystem work has settled and this caller can take custody.
@@ -126,6 +162,7 @@ export async function prepareEmbeddedSkills(params: {
             await bridge.readFile({
               filePath: location,
               cwd: sandbox.containerWorkdir,
+              ...(environmentPaths.has(location) ? { maxBytes: environmentSkillByteLimit } : {}),
               signal,
             })
           ).toString("utf8");
@@ -134,7 +171,7 @@ export async function prepareEmbeddedSkills(params: {
     const codeModeSkills = params.includeCodeModeSkills
       ? resolveCodeModeSkills({
           skillsPrompt,
-          candidates: skillsSnapshot?.resolvedSkills ?? skillEntries.map((entry) => entry.skill),
+          candidates,
           reader: sandboxSkillReader,
         })
       : [];

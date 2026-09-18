@@ -40,12 +40,17 @@ import {
   type OpenShellExecContext,
 } from "./cli.js";
 import { resolveOpenShellPluginConfig, type ResolvedOpenShellPluginConfig } from "./config.js";
+import { discoverOpenShellCapabilityRoots } from "./environment-capabilities.js";
 import { createOpenShellFsBridge } from "./fs-bridge.js";
 import {
   DEFAULT_OPEN_SHELL_MIRROR_EXCLUDE_DIRS,
   replaceDirectoryContents,
   stageDirectoryContents,
 } from "./mirror.js";
+import {
+  ENSURE_OPEN_SHELL_REMOTE_REAL_DIRECTORY_SCRIPT,
+  PINNED_REMOTE_PATH_MUTATION_SCRIPT,
+} from "./remote-path-scripts.js";
 import {
   isOpenShellRemotePathInside,
   orderOpenShellWorkspaceRoots,
@@ -90,155 +95,6 @@ function buildOpenShellDirectoryUploadArgs(params: {
 // holds operator data) and re-seeding would destroy remote-canonical state.
 const REMOTE_MANAGED_ROOTS_EMPTY_SCRIPT =
   'for root in "$@"; do if [ -d "$root" ] && [ -n "$(ls -A "$root")" ]; then printf "1\\n"; exit 0; fi; done; printf "0\\n"';
-const PINNED_REMOTE_PATH_MUTATION_SCRIPT = [
-  "set -eu",
-  'die() { echo "$1" >&2; exit 1; }',
-  "validate_basename() {",
-  '  case "$1" in ""|"."|".."|*/*) die "unsafe remote basename: $1" ;; esac',
-  "}",
-  "pin_dir() {",
-  '  root="$1"',
-  '  relative="$2"',
-  '  create="$3"',
-  '  case "$root" in /*) ;; *) die "remote root must be absolute: $root" ;; esac',
-  '  root="${root%/}"',
-  '  [ -n "$root" ] || root="/"',
-  '  if [ -L "$root" ]; then die "unsafe remote root symlink: $root"; fi',
-  '  mkdir -p -- "$root"',
-  '  canonical_root="$(cd "$root" && pwd -P)"',
-  '  current="$canonical_root"',
-  '  relative="${relative#/}"',
-  '  while [ -n "$relative" ]; do',
-  '    part="${relative%%/*}"',
-  '    if [ "$part" = "$relative" ]; then relative=""; else relative="${relative#*/}"; fi',
-  '    [ -n "$part" ] || continue',
-  '    case "$part" in "."|"..") die "unsafe remote directory component: $part" ;; esac',
-  '    if [ "$current" = "/" ]; then next="/$part"; else next="$current/$part"; fi',
-  '    if [ -L "$next" ]; then die "unsafe remote directory symlink: $next"; fi',
-  '    if [ -e "$next" ]; then',
-  '      if [ ! -d "$next" ]; then die "unsafe remote directory component: $next"; fi',
-  "    else",
-  '      if [ "$create" != "1" ]; then die "remote directory not found: $next"; fi',
-  '      mkdir -- "$next"',
-  "    fi",
-  '    current="$next"',
-  "  done",
-  '  printf "%s\\n" "$current"',
-  "}",
-  "pin_dir_or_missing() {",
-  '  root="$1"',
-  '  relative="$2"',
-  '  missing_ok="$3"',
-  '  case "$root" in /*) ;; *) die "remote root must be absolute: $root" ;; esac',
-  '  root="${root%/}"',
-  '  [ -n "$root" ] || root="/"',
-  '  if [ -L "$root" ]; then die "unsafe remote root symlink: $root"; fi',
-  '  if [ ! -d "$root" ]; then',
-  '    if [ -e "$root" ]; then die "unsafe remote root component: $root"; fi',
-  '    if [ "$missing_ok" = "1" ]; then printf "\\n"; return 0; fi',
-  '    die "remote directory not found: $root"',
-  "  fi",
-  '  canonical_root="$(cd "$root" && pwd -P)"',
-  '  current="$canonical_root"',
-  '  relative="${relative#/}"',
-  '  while [ -n "$relative" ]; do',
-  '    part="${relative%%/*}"',
-  '    if [ "$part" = "$relative" ]; then relative=""; else relative="${relative#*/}"; fi',
-  '    [ -n "$part" ] || continue',
-  '    case "$part" in "."|"..") die "unsafe remote directory component: $part" ;; esac',
-  '    if [ "$current" = "/" ]; then next="/$part"; else next="$current/$part"; fi',
-  '    if [ -L "$next" ]; then die "unsafe remote directory symlink: $next"; fi',
-  '    if [ -e "$next" ]; then',
-  '      if [ ! -d "$next" ]; then die "unsafe remote directory component: $next"; fi',
-  "    else",
-  '      if [ "$missing_ok" = "1" ]; then printf "\\n"; return 0; fi',
-  '      die "remote directory not found: $next"',
-  "    fi",
-  '    current="$next"',
-  "  done",
-  '  printf "%s\\n" "$current"',
-  "}",
-  'operation="$1"',
-  'case "$operation" in',
-  "  mkdirp)",
-  '    pin_dir "$2" "$3" 1 >/dev/null',
-  "    ;;",
-  "  remove)",
-  '    validate_basename "$4"',
-  '    parent="$(pin_dir_or_missing "$2" "$3" "${5:-0}")"',
-  '    [ -n "$parent" ] || exit 0',
-  '    target="$parent/$4"',
-  '    if [ -d "$target" ] && [ ! -L "$target" ]; then rm -rf -- "$target"; elif [ -e "$target" ] || [ -L "$target" ]; then rm -f -- "$target"; fi',
-  "    ;;",
-  "  removefile)",
-  '    validate_basename "$4"',
-  '    parent="$(pin_dir_or_missing "$2" "$3" "${5:-0}")"',
-  '    [ -n "$parent" ] || exit 0',
-  '    target="$parent/$4"',
-  '    if [ -d "$target" ] && [ ! -L "$target" ]; then rmdir -- "$target"; elif [ -e "$target" ] || [ -L "$target" ]; then rm -f -- "$target"; fi',
-  "    ;;",
-  "  rename)",
-  '    src_parent="$(pin_dir "$2" "$3" 0)"',
-  '    validate_basename "$4"',
-  '    dst_parent="$(pin_dir "$5" "$6" 1)"',
-  '    validate_basename "$7"',
-  '    if [ -L "$dst_parent/$7" ]; then die "unsafe remote rename target symlink: $dst_parent/$7"; fi',
-  '    if [ -d "$dst_parent/$7" ]; then die "unsafe remote rename target directory: $dst_parent/$7"; fi',
-  '    mv -- "$src_parent/$4" "$dst_parent/$7"',
-  "    ;;",
-  "  *)",
-  '    die "unknown remote path mutation: $operation"',
-  "    ;;",
-  "esac",
-].join("\n");
-const ENSURE_OPEN_SHELL_REMOTE_REAL_DIRECTORY_SCRIPT = [
-  "set -e",
-  'target="$1"',
-  'root="${2:-$1}"',
-  'replace_blocking="${3:-0}"',
-  'case "$target" in /*) ;; *) echo "remote directory must be absolute: $target" >&2; exit 1 ;; esac',
-  'case "$root" in /*) ;; *) echo "remote root must be absolute: $root" >&2; exit 1 ;; esac',
-  'target="${target%/}"',
-  'root="${root%/}"',
-  '[ -n "$target" ] || target="/"',
-  '[ -n "$root" ] || root="/"',
-  'case "$target/" in "$root"/*|"$root/") ;; *) echo "remote directory must stay under root: $target" >&2; exit 1 ;; esac',
-  'for path_to_check in "$target" "$root"; do',
-  '  relative="${path_to_check#/}"',
-  '  while [ -n "$relative" ]; do',
-  '    part="${relative%%/*}"',
-  '    if [ "$part" = "$relative" ]; then relative=""; else relative="${relative#*/}"; fi',
-  '    [ -n "$part" ] || continue',
-  '    case "$part" in "."|"..") echo "unsafe remote directory component: $part" >&2; exit 1 ;; esac',
-  "  done",
-  "done",
-  'if [ -L "$root" ]; then echo "unsafe remote root symlink: $root" >&2; exit 1; fi',
-  'mkdir -p -- "$root"',
-  'canonical_root="$(cd "$root" && pwd -P)"',
-  'relative="${target#"$root"}"',
-  'relative="${relative#/}"',
-  'current="$canonical_root"',
-  'while [ -n "$relative" ]; do',
-  '  part="${relative%%/*}"',
-  '  if [ "$part" = "$relative" ]; then relative=""; else relative="${relative#*/}"; fi',
-  '  [ -n "$part" ] || continue',
-  '  if [ "$current" = "/" ]; then next="/$part"; else next="$current/$part"; fi',
-  '  if [ -L "$next" ]; then',
-  '    if [ "$replace_blocking" != "1" ]; then echo "unsafe remote directory symlink: $next" >&2; exit 1; fi',
-  '    rm -rf -- "$next"',
-  '  elif [ -e "$next" ] && [ ! -d "$next" ]; then',
-  '    if [ "$replace_blocking" != "1" ]; then echo "unsafe remote directory component: $next" >&2; exit 1; fi',
-  '    rm -rf -- "$next"',
-  "  fi",
-  '  if [ -e "$next" ]; then',
-  '    [ -d "$next" ] || { echo "unsafe remote directory component: $next" >&2; exit 1; }',
-  "  else",
-  '    mkdir -- "$next"',
-  "  fi",
-  '  current="$next"',
-  "done",
-].join("\n");
-
 function buildOpenShellSshExecEnv(): NodeJS.ProcessEnv {
   return sanitizeEnvVars(process.env).allowed;
 }
@@ -352,6 +208,19 @@ class OpenShellSandboxBackendImpl {
       workdirValidation: "backend",
       validateWorkdir: async (workdir) => await this.validateWorkdir(workdir),
       workdirRoots: [this.params.remoteWorkspaceDir, this.params.remoteAgentWorkspaceDir],
+      // Mirror exec owns a complete upload/process/download transaction. A
+      // long-lived service would hold its lease and block every later tool.
+      capabilities:
+        this.params.execContext.config.mode === "remote"
+          ? {
+              environment: {
+                protocolVersion: 1,
+                process: true,
+                filesystem: true,
+                capabilityRootDiscovery: true,
+              },
+            }
+          : undefined,
       remoteWorkspaceDir: this.params.remoteWorkspaceDir,
       remoteAgentWorkspaceDir: this.params.remoteAgentWorkspaceDir,
       buildExecSpec: async ({ command, workdir, env, usePty }) => {
@@ -367,6 +236,19 @@ class OpenShellSandboxBackendImpl {
         await this.finalizeExec(token as PendingExec | undefined);
       },
       runShellCommand: runRemoteShellScript,
+      discoverCapabilityRoots:
+        this.params.execContext.config.mode === "remote"
+          ? async ({ roots, signal }) => {
+              for (const root of roots) {
+                this.resolveRemoteTarget(root.path);
+              }
+              return await discoverOpenShellCapabilityRoots({
+                roots,
+                signal,
+                runCommand: runRemoteShellScript,
+              });
+            }
+          : undefined,
       createFsBridge: ({ sandbox }) =>
         this.params.execContext.config.mode === "remote"
           ? createRemoteShellSandboxFsBridge({
