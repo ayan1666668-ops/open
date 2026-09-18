@@ -27,7 +27,6 @@ import {
 import { kickSessionEntryMaintenanceAfterWrite } from "./session-accessor.sqlite-maintenance-kick.js";
 import * as maintenance from "./session-accessor.sqlite-maintenance.js";
 import { applySessionStoreProjection } from "./session-accessor.sqlite-projection.js";
-import * as reclamation from "./session-accessor.sqlite-reclamation.js";
 import { applySessionEntryCanonicalReplacements } from "./session-accessor.sqlite-replacement-projection.js";
 import { resolveSqliteScope, toDatabaseOptions } from "./session-accessor.sqlite-scope.js";
 import { enforceSqliteSessionHistoryDiskBudget } from "./session-history-eviction.js";
