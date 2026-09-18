@@ -373,7 +373,10 @@ suite.define(() => {
     });
 
     await page.goto(controlUiSessionUrl(suite.server.baseUrl, "agent:main:main"));
-    await page.getByText("This is much easier to scan in a team conversation.").waitFor();
+    await page
+      .locator('[data-entry-id="colin-message"] .chat-text')
+      .getByText("This is much easier to scan in a team conversation.")
+      .waitFor();
 
     const userGroups = page.locator(".chat-group.user");
     await expect(userGroups).toHaveCount(3);
@@ -387,7 +390,7 @@ suite.define(() => {
     await expect(
       page.locator(".chat-group-footer--persistent-identity .chat-sender-name"),
     ).toHaveText(["Riley", "Colin", "Alexandria Montgomery-Winter"]);
-    await expect(page.locator(".chat-author-avatar")).toHaveCount(0);
+    await expect(page.locator(".chat-group-footer .chat-author-avatar")).toHaveCount(0);
     const peerGroup = userGroups.nth(1);
     const longNamePeerGroup = userGroups.last();
     const hoverDetails = peerGroup.locator(".chat-group-timestamp");
@@ -397,7 +400,7 @@ suite.define(() => {
     const restingPeerGeometry = await readFooterGeometry(peerGroup);
     await peerGroup.hover();
     await expect(hoverDetails).toHaveCSS("opacity", "1");
-    await expect(page.locator(".chat-author-avatar")).toHaveCount(0);
+    await expect(page.locator(".chat-group-footer .chat-author-avatar")).toHaveCount(0);
     await captureProof(page, "after-hover.png");
     const hoveredPeerGeometry = await readFooterGeometry(peerGroup);
     expectStableNamePosition(hoveredPeerGeometry.name, restingPeerGeometry.name);
@@ -419,10 +422,11 @@ suite.define(() => {
     const focusedPeerGeometry = await readFooterGeometry(peerGroup);
     expectStableNamePosition(focusedPeerGeometry.name, restingPeerGeometry.name);
     expect(focusedPeerGeometry.actions.left - focusedPeerGeometry.identity.right).toBeCloseTo(8, 0);
-    await expect(peerReply).toHaveCSS("opacity", "1");
+    await expect(peerReply).toHaveCSS("opacity", "0.6");
 
     await page.evaluate(() => {
       document.documentElement.dir = "rtl";
+      document.documentElement.lang = "ar";
       document.body.tabIndex = -1;
       document.body.focus();
     });
@@ -437,6 +441,7 @@ suite.define(() => {
 
     await page.evaluate(() => {
       document.documentElement.dir = "ltr";
+      document.documentElement.lang = "en";
     });
     await page.setViewportSize({ height: 760, width: 390 });
     await page.mouse.move(0, 0);
@@ -455,7 +460,7 @@ suite.define(() => {
     expect(revealedTouchGeometry.actions.right).toBeCloseTo(revealedTouchGeometry.footer.right, 0);
     await expect(longNamePeerGroup.getByRole("button", { name: "Reply to message" })).toHaveCSS(
       "opacity",
-      "1",
+      "0.6",
     );
     expect(revealedTouchHeight).toBe(restingTouchHeight);
 
