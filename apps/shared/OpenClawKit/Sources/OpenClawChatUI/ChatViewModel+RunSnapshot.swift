@@ -19,6 +19,9 @@ extension OpenClawChatViewModel {
                 var updated = self.sessions
                 updated[index].hasActiveRun = sessionInfo.hasActiveRun
                 updated[index].activeRunIds = sessionInfo.activeRunIds
+                if let reasoningLevel = sessionInfo.reasoningLevel {
+                    updated[index].reasoningLevel = reasoningLevel
+                }
                 self.sessions = updated
             } else {
                 self.updateActiveSessionRunIDs(sessionInfo.activeRunIds ?? [])

@@ -203,6 +203,7 @@ private func sessionEntry(
     model: String? = nil,
     modelProvider: String? = nil,
     thinkingLevel: String? = nil,
+    reasoningLevel: String? = nil,
     thinkingLevels: [OpenClawChatThinkingLevelOption]? = nil,
     thinkingOptions: [String]? = nil,
     thinkingDefault: String? = nil,
@@ -230,6 +231,7 @@ private func sessionEntry(
         systemSent: nil,
         abortedLastRun: nil,
         thinkingLevel: thinkingLevel,
+        reasoningLevel: reasoningLevel,
         verboseLevel: verboseLevel,
         inputTokens: nil,
         outputTokens: nil,
@@ -14154,5 +14156,50 @@ struct ChatViewModelSessionManagementTests {
         // Archived rows only exist server-side; offline archived mode is empty.
         let archivedRows = await vm.fetchSessionList(search: nil, archived: true)
         #expect(archivedRows.isEmpty)
+    }
+}
+
+/// The Gateway's session `reasoningLevel` (`/reasoning` directive) is the
+/// authoritative source for reasoning visibility, mirroring the Control UI.
+/// These tests pin the contract the iOS host relies on: rows render only when
+/// the current session's level is `"on"`.
+@MainActor
+struct ChatReasoningVisibilityGateTests {
+    @Test func `reasoning visibility follows the current session reasoningLevel`() async throws {
+        let (_, vm) = await makeViewModel(sessionKey: "main", historyResponses: [])
+
+        await MainActor.run {
+            vm.sessions = [sessionEntry(key: "main", updatedAt: 1, reasoningLevel: "on")]
+        }
+        #expect(await MainActor.run { vm.currentSessionReasoningVisible } == true)
+
+        await MainActor.run {
+            vm.sessions = [sessionEntry(key: "main", updatedAt: 1, reasoningLevel: "off")]
+        }
+        #expect(await MainActor.run { vm.currentSessionReasoningVisible } == false)
+
+        await MainActor.run {
+            vm.sessions = [sessionEntry(key: "main", updatedAt: 1, reasoningLevel: "stream")]
+        }
+        #expect(await MainActor.run { vm.currentSessionReasoningVisible } == false)
+
+        // Unknown/older rows (no key on the wire) also default to hidden, matching
+        // the Control UI gate `activeSession?.reasoningLevel === "on"`.
+        await MainActor.run {
+            vm.sessions = [sessionEntry(key: "main", updatedAt: 1)]
+        }
+        #expect(await MainActor.run { vm.currentSessionReasoningVisible } == false)
+    }
+
+    @Test func `current session entry key precedence picks exact over alias`() async throws {
+        let (_, vm) = await makeViewModel(sessionKey: "main", historyResponses: [])
+
+        await MainActor.run {
+            vm.sessions = [
+                sessionEntry(key: "agent:main:alias", updatedAt: 1, reasoningLevel: "off"),
+                sessionEntry(key: "main", updatedAt: 1, reasoningLevel: "on"),
+            ]
+        }
+        #expect(await MainActor.run { vm.currentSessionReasoningVisible } == true)
     }
 }

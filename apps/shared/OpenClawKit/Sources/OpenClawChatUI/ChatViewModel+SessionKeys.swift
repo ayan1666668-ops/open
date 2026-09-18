@@ -62,6 +62,14 @@ extension OpenClawChatViewModel {
             })
     }
 
+    /// The Gateway's authoritative reasoning visibility for the current session,
+    /// set by the `/reasoning` directive and echoed on session rows. Reasoning
+    /// renders only when this is `"on"`, matching the Control UI; a device-local
+    /// "show trace" preference is a secondary filter applied by hosts.
+    public var currentSessionReasoningVisible: Bool {
+        self.currentSessionEntry()?.reasoningLevel == "on"
+    }
+
     static func preferredLiveUsageRunID(
         localRunIDs: Set<String>,
         sessionActiveRunIDs: [String]) -> String?
