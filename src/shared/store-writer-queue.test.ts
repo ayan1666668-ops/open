@@ -196,10 +196,13 @@ it("keeps I/O progressing across store backlogs in separate runtime chunks", asy
   });
   const ioProgress = (async () => {
     let previous = 0;
-    while (!done) {
+    for (;;) {
       await nextTurn();
       batches.push(completed - previous);
       previous = completed;
+      if (done) {
+        break;
+      }
     }
   })();
   gate.resolve();
