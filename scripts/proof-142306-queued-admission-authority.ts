@@ -14,8 +14,8 @@
  *   - `resolveFollowupRunToolAuthorityFingerprint` / `prepareReplyToolAuthority`
  *     (src/auto-reply/reply/reply-tool-authority.ts) are the real fingerprint functions.
  *   - The observation is real production state: the follow-up queue owned by
- *     `src/auto-reply/reply/queue/state.ts`. A message admitted through `runActiveReplySteer`
- *     is parked with `steerAnchor`; a message that skipped that path is not.
+ *     `src/auto-reply/reply/queue/state.ts`. A message routed into `runActiveReplySteer` is
+ *     parked with `steerAnchor`; a message that skipped that path never gets one.
  *
  * What is stubbed, and only at the very edge:
  *   - the channel transport (typing controller callbacks, delivery) — nothing between
@@ -27,19 +27,22 @@
  *   1. fresh queued admission — an admitted turn owns a tool authority fingerprint before
  *      execution, that fingerprint is the one an identical inbound message computes, and the
  *      route bind execution performs resolves against it.
- *   2. benefit — a same-authority follow-up arriving during that window is admitted through
- *      the steer path for the in-flight turn instead of being queued as its own turn.
+ *   2. benefit — a same-authority follow-up arriving during that window is ROUTED INTO the
+ *      steer path for the in-flight turn instead of being enqueued as its own turn. SCOPE: the
+ *      harness proves the routing decision, which is what this PR changes. It deliberately
+ *      holds the admitted turn pre-execution, so no backend is attached and the parked steer
+ *      then falls back — asserted explicitly, so no completed steer is implied.
  *   3. discrimination control — a different-authority follow-up arriving in the same window
- *      is NOT steered; it is queued as its own turn. This proves scenario 2 observes a real
- *      authority comparison rather than a constant.
+ *      is NOT routed into the steer path; it is enqueued as its own turn. This proves
+ *      scenario 2 observes a real authority comparison rather than a constant.
  *   4. immutability — a later bind cannot replace the admitted turn's authority. Runs last
  *      because it deliberately attempts a mutation.
  *
  * Run: pnpm tsx scripts/proof-142306-queued-admission-authority.ts
  *
- * Against `origin/main` (execution-time binding) this harness exits 1 with six failures,
- * including the literal production error this PR fixes — "Reply operation has no active tool
- * authority snapshot" — and the same-authority follow-up being queued instead of steered.
+ * Against `origin/main` (execution-time binding) this harness exits 1, including the literal
+ * production error this PR fixes — "Reply operation has no active tool authority snapshot" —
+ * and the same-authority follow-up never reaching the steer path at all.
  */
 
 import { mkdtempSync, rmSync } from "node:fs";
@@ -241,7 +244,9 @@ async function main(): Promise<void> {
 
   // ---------------------------------------------------------------- scenario 2
   console.log("");
-  console.log("[2] a same-authority follow-up arriving in that window is steered, not queued");
+  console.log(
+    "[2] a same-authority follow-up arriving in that window is ROUTED INTO the steer path",
+  );
 
   const active = isReplyRunActiveForSessionId(SESSION_ID);
   ok("the real registry reports the session active during the window", active);
@@ -261,7 +266,10 @@ async function main(): Promise<void> {
     return undefined;
   };
 
-  const runInbound = async (run: AnyRecord): Promise<void> => {
+  type InboundOutcome = { settled: boolean; error: string };
+
+  const runInbound = async (run: AnyRecord): Promise<InboundOutcome> => {
+    const outcome: InboundOutcome = { settled: false, error: "" };
     const settled = runReplyAgent({
       commandBody: run.prompt as string,
       followupRun: run as never,
@@ -283,41 +291,70 @@ async function main(): Promise<void> {
       sessionCtx: { Provider: "cli", OriginatingChannel: "cli" } as never,
       shouldInjectGroupIntro: false,
       typingMode: "never",
-    } as never).catch(() => undefined);
-    // The steer path parks first and only then awaits its predecessor gate, so a bounded
-    // race keeps the harness deterministic on both the steer and the enqueue path.
+    } as never).then(
+      () => {
+        outcome.settled = true;
+      },
+      (error: unknown) => {
+        outcome.settled = true;
+        outcome.error = error instanceof Error ? error.message : String(error);
+      },
+    );
+    // Failures and timeouts are reported, never swallowed: the caller asserts on `settled`
+    // and `error` rather than treating a silent timeout as success.
     await Promise.race([
       settled,
       new Promise((resolve) => {
-        setTimeout(resolve, 2_000);
+        setTimeout(resolve, 5_000);
       }),
     ]);
+    return outcome;
   };
 
-  await runInbound(sameAuthorityRun);
+  const sameAuthorityOutcome = await runInbound(sameAuthorityRun);
+  ok(
+    "the same-authority inbound turn ran to completion without error",
+    sameAuthorityOutcome.settled && sameAuthorityOutcome.error === "",
+    `settled=${sameAuthorityOutcome.settled} error=${sameAuthorityOutcome.error || "(none)"}`,
+  );
   const sameAuthorityItem = await observeQueueItem("proof-msg-2");
   ok(
     "the same-authority follow-up reached the real follow-up queue",
     sameAuthorityItem !== undefined,
   );
   ok(
-    "the same-authority follow-up was admitted through the STEER path for the in-flight turn",
+    "the same-authority follow-up was ROUTED INTO the steer path for the in-flight turn",
     sameAuthorityItem?.steerAnchor === true,
-    "steerAnchor is absent, so production skipped runActiveReplySteer and queued the message as its own turn",
+    "steerAnchor is absent, so production skipped runActiveReplySteer and enqueued the message as its own turn",
+  );
+  // Bound the claim to what this harness can observe. The steer is parked and then falls
+  // back, because the admitted turn is deliberately held pre-execution with no backend
+  // attached, so `resolveCurrentMessageInjectionTarget` has nothing to inject into. The
+  // harness therefore proves the ROUTING decision this PR changes, not a completed
+  // injection; the completed injection needs an executing turn and is out of its scope.
+  ok(
+    "that steer then falls back here, because the held turn has no injectable backend",
+    sameAuthorityItem?.steerPending === undefined,
+    `steerPending=${JSON.stringify(sameAuthorityItem?.steerPending ?? null)} — the harness expects fallback and must not report a completed steer`,
   );
 
   // ---------------------------------------------------------------- scenario 3
   console.log("");
   console.log("[3] discrimination control — a different-authority follow-up is NOT steered");
 
-  await runInbound(otherAuthorityRun);
+  const otherAuthorityOutcome = await runInbound(otherAuthorityRun);
+  ok(
+    "the different-authority inbound turn ran to completion without error",
+    otherAuthorityOutcome.settled && otherAuthorityOutcome.error === "",
+    `settled=${otherAuthorityOutcome.settled} error=${otherAuthorityOutcome.error || "(none)"}`,
+  );
   const otherAuthorityItem = await observeQueueItem("proof-msg-3");
   ok(
     "the different-authority follow-up reached the real follow-up queue",
     otherAuthorityItem !== undefined,
   );
   ok(
-    "the different-authority follow-up is queued as its own turn, NOT admitted through the steer path",
+    "the different-authority follow-up is enqueued as its own turn, NOT routed into the steer path",
     otherAuthorityItem?.steerAnchor === undefined,
     "steerAnchor is present, so the observation does not discriminate on authority",
   );
