@@ -708,7 +708,10 @@ export class ChatPage extends OpenClawLightDomElement implements SessionSplitHos
       for (const pane of column.panes) {
         const ownerKey = JSON.stringify([column.id, pane.id]);
         for (const sessionKey of retainedSessions.get(pane.id) ?? []) {
-          if (sessionKey !== undefined && !readDeletedSessionStartup(this.context, sessionKey)) {
+          if (
+            sessionKey !== undefined &&
+            (!this.context || !readDeletedSessionStartup(this.context, sessionKey))
+          ) {
             nextPaneKeys.add(JSON.stringify([ownerKey, sessionKey]));
           }
         }

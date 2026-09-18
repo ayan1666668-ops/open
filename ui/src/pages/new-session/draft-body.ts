@@ -83,7 +83,7 @@ export function renderNewSessionBody(options: {
     <div
       class="new-session-page__scroll ${pendingMessage ? `chat-thread ${avatarPlacement === "footer" ? "chat-thread--direct" : ""}` : ""}"
       ?inert=${draftLocked}
-      aria-busy=${String(draftLocked)}
+      aria-busy=${String(options.submitting)}
       @mousedown=${beginNativeWindowDragFromTopInset}
     >
       ${options.error ? renderDraftError(options.error, options.errorAction) : nothing}
