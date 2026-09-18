@@ -1,4 +1,3 @@
-import { requestUrl } from "openclaw/plugin-sdk/test-env";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig, ReplyPayload } from "../runtime-api.js";
 import { createChannelMessageReplyPipeline } from "../runtime-api.js";

@@ -1,4 +1,5 @@
 // Mattermost tests cover the message read action through the plugin adapter.
+import { requestUrl } from "openclaw/plugin-sdk/test-env";
 import { describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../runtime-api.js";
 
@@ -20,7 +21,6 @@ vi.mock("openclaw/plugin-sdk/ssrf-runtime", async () => {
 import { mattermostPlugin } from "./channel.js";
 import {
   createMattermostTestConfig,
-  requestUrl,
   withMockedGlobalFetch,
 } from "./mattermost/reactions.test-helpers.js";
 
