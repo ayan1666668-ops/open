@@ -5,8 +5,7 @@ import { safeEqualSecret } from "openclaw/plugin-sdk/security-runtime";
 import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { getHeader } from "../http-headers.js";
 import type { MediaStreamHandler } from "../media-stream.js";
-import { chunkAudio } from "../telephony-audio.js";
-import type { TelephonySpeechPlan, TelephonyTtsProvider } from "../telephony-tts.js";
+import type { TelephonyTtsProvider } from "../telephony-tts.js";
 import type {
   GetCallStatusInput,
   GetCallStatusResult,
@@ -34,6 +33,7 @@ import { guardedJsonApiRequest } from "./shared/guarded-json-api.js";
 import { resolveTwilioApiBaseUrl, type TwilioRegion } from "./twilio-region.js";
 import type { TwilioProviderOptions } from "./twilio.types.js";
 import { TwilioApiError, twilioApiRequest } from "./twilio/api.js";
+import { playSegmentedTtsViaStream } from "./twilio/stream-tts-playback.js";
 import { decideTwimlResponse, readTwimlRequestView } from "./twilio/twiml-policy.js";
 import { verifyTwilioProviderWebhook } from "./twilio/webhook.js";
 export type { TwilioProviderOptions } from "./twilio.types.js";
@@ -675,170 +675,12 @@ export class TwilioProvider implements VoiceCallProvider {
     if (!this.ttsProvider || !this.mediaStreamHandler) {
       throw new Error("TTS provider and media stream handler required");
     }
-
-    // Stream audio in 20ms chunks (160 bytes at 8kHz mu-law)
-    const CHUNK_SIZE = 160;
-    const CHUNK_DELAY_MS = 20;
-    const SILENCE_CHUNK = Buffer.alloc(CHUNK_SIZE, 0xff);
-
-    const handler = this.mediaStreamHandler;
-    const ttsProvider = this.ttsProvider;
-
-    await handler.queueTts(streamSid, async (signal) => {
-      const sendKeepAlive = () => {
-        handler.sendAudio(streamSid, SILENCE_CHUNK);
-      };
-      sendKeepAlive();
-      const keepAlive = setInterval(() => {
-        if (!signal.aborted) {
-          sendKeepAlive();
-        }
-      }, CHUNK_DELAY_MS);
-
-      // Resolved once below, before any segment is played.
-      let plan: TelephonySpeechPlan | undefined;
-
-      /**
-       * Synthesize one segment and stream its frames.
-       * Returns the delivered byte count, or null when playback was aborted.
-       */
-      const playSegment = async (segment: string): Promise<number | null> => {
-        if (!plan) {
-          throw new Error("Telephony speech plan not prepared");
-        }
-        let muLawAudio: Buffer;
-        let synthTimeout: ReturnType<typeof setTimeout> | null = null;
-        let removeAbortListener = () => {};
-        const synthTimeoutMs = ttsProvider.synthesisTimeoutMs;
-        try {
-          const synthPromise = plan.synthesizeSegment(segment);
-          const timeoutPromise = new Promise<Buffer>((_, reject) => {
-            synthTimeout = setTimeout(() => {
-              reject(new Error(`Telephony TTS synthesis timed out after ${synthTimeoutMs}ms`));
-            }, synthTimeoutMs);
-          });
-          const abortPromise = new Promise<never>((_, reject) => {
-            const onAbort = () => {
-              reject(
-                signal.reason instanceof Error
-                  ? signal.reason
-                  : new Error("Telephony TTS synthesis aborted"),
-              );
-            };
-            signal.addEventListener("abort", onAbort, { once: true });
-            removeAbortListener = () => signal.removeEventListener("abort", onAbort);
-            if (signal.aborted) {
-              onAbort();
-            }
-          });
-          muLawAudio = await Promise.race([synthPromise, timeoutPromise, abortPromise]);
-        } finally {
-          if (synthTimeout) {
-            clearTimeout(synthTimeout);
-          }
-          removeAbortListener();
-        }
-
-        if (muLawAudio.length === 0) {
-          throw new Error("Telephony TTS produced no audio");
-        }
-
-        let chunkAttempts = 0;
-        let chunkDelivered = 0;
-        let nextChunkDueAt = Date.now() + CHUNK_DELAY_MS;
-        for (const chunk of chunkAudio(muLawAudio, CHUNK_SIZE)) {
-          if (signal.aborted) {
-            return null;
-          }
-          chunkAttempts += 1;
-          const chunkResult = handler.sendAudio(streamSid, chunk);
-          if (!chunkResult.sent) {
-            handler.clearAudio(streamSid);
-            throw new Error(
-              `Telephony stream playback failed: audio chunk ${chunkAttempts} not delivered`,
-            );
-          }
-          chunkDelivered += 1;
-
-          // Drift-corrected pacing: schedule against an absolute clock to avoid cumulative delay.
-          const waitMs = nextChunkDueAt - Date.now();
-          if (waitMs > 0) {
-            try {
-              await sleepWithAbort(Math.ceil(waitMs), signal);
-            } catch (error) {
-              if (!signal.aborted) {
-                throw error;
-              }
-              return null;
-            }
-          }
-          nextChunkDueAt += CHUNK_DELAY_MS;
-          if (signal.aborted) {
-            return null;
-          }
-        }
-
-        if (chunkAttempts === 0 || chunkDelivered !== chunkAttempts) {
-          throw new Error("Telephony stream playback failed: incomplete audio delivery");
-        }
-        return muLawAudio.length;
-      };
-
-      // Total audio delivered across every segment, for the single end-of-reply mark.
-      let totalAudioBytes = 0;
-      // Set once a segment's frames have been accepted, so a later failure
-      // knows there is buffered audio to clear.
-      let anyAudioBuffered = false;
-
-      try {
-        // Resolve the inline TTS directive contract over the complete reply
-        // exactly once, then split the resolved spoken text. Splitting after
-        // resolution means a long reply can never divide a directive block, and
-        // the one resolved override set applies to every segment.
-        plan = await ttsProvider.prepareSpeech(text);
-        const segments = plan.segments;
-        if (segments.length === 0) {
-          return;
-        }
-        if (segments.length > 1) {
-          // Lengths only: spoken content must never reach the log.
-          console.log(
-            `[voice-call] Telephony TTS split into ${segments.length} segments [${segments
-              .map((segment) => segment.length)
-              .join(", ")}] (streamSid=${streamSid})`,
-          );
-        }
-
-        for (const segment of segments) {
-          if (signal.aborted) {
-            break;
-          }
-          const deliveredBytes = await playSegment(segment);
-          if (deliveredBytes === null) {
-            break;
-          }
-          totalAudioBytes += deliveredBytes;
-          anyAudioBuffered = true;
-        }
-      } catch (error) {
-        // Barge-in is a cancellation, not a failure, and the queue clears its
-        // own audio on abort. Any other failure part-way through a multi-segment
-        // reply must clear what is already buffered, otherwise the caller hears
-        // a truncated answer while the turn reports failure.
-        if (!signal.aborted && anyAudioBuffered) {
-          handler.clearAudio(streamSid);
-        }
-        throw error;
-      } finally {
-        clearInterval(keepAlive);
-      }
-
-      if (signal.aborted || totalAudioBytes === 0) {
-        return;
-      }
-      // One mark for the whole reply, after every segment has been delivered.
-      const markName = `tts-${Date.now()}-${++this.playbackMarkSequence}`;
-      await handler.sendMarkAndWait(streamSid, markName, totalAudioBytes / 8, signal);
+    await playSegmentedTtsViaStream({
+      handler: this.mediaStreamHandler,
+      ttsProvider: this.ttsProvider,
+      streamSid,
+      text,
+      nextMarkName: () => `tts-${Date.now()}-${++this.playbackMarkSequence}`,
     });
   }
 
