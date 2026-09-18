@@ -28,6 +28,15 @@
  * publishes exited/timed_out. Main: with recovery, an expired registry wait
  * remains nonterminal, then the actual recovered child's completion succeeds.
  * Both runs must pass; a clock-only terminal transition fails the main run.
+ *
+ * Two harness invariants keep the scenario from decaying into a timing race.
+ * The loopback provider hands out its scripted responses in arrival order, so
+ * the Gateway's utility-model traffic (Activity recaps, titles) is disabled in
+ * the isolated config: the only provider requests here are the parent's two
+ * turns and the child's, and the proof asserts that the child received the held
+ * default rather than a scripted parent turn. The restart is then driven by the
+ * child's observed start and its observed in-flight request, not by a fixed
+ * sleep, and the proof asserts the restart landed well inside the run budget.
  */
 import assert from "node:assert/strict";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
@@ -49,8 +58,14 @@ const mockServer = path.join(repoRoot, "scripts", "e2e", "mock-openai-server.mjs
 // The whole point of the scenario: the child's model call must outlast the
 // parent's run deadline by a wide, unambiguous margin.
 const RUN_TIMEOUT_SECONDS = 30;
+// The restart must land while the child's request is in flight, so the whole
+// pre-restart phase has to fit well inside the child's own run budget. Deriving
+// the kill from the child's observed start (rather than a fixed sleep) keeps
+// this margin real on a loaded host instead of hoping a wall-clock sleep fits.
+const PRE_RESTART_BUDGET_MS = Math.floor((RUN_TIMEOUT_SECONDS * 1_000) / 3);
 const CHILD_MODEL_DELAY_MS = 150_000;
 const PARENT_SESSION_KEY = "agent:main:proof-126924-parent";
+const PARENT_PROMPT = "Delegate the long task to a subagent.";
 const CHILD_TASK_MARKER = "PROOF126924CHILDTASK";
 const CHILD_FINAL_TEXT = "PROOF126924 child finished after the parent wait had already expired.";
 // `--control` runs the same scenario without the restart, so the observed-stop
@@ -205,6 +220,29 @@ function readMockRequests(): Array<Record<string, unknown>> {
     .map((line) => JSON.parse(line) as Record<string, unknown>);
 }
 
+/**
+ * The child's own model request, told apart from the parent's turns. The task
+ * marker alone is not enough: the parent's wrap-up turn replays the
+ * `sessions_spawn` arguments, so it carries the marker too. Only the parent's
+ * turns carry the operator prompt that started them.
+ */
+function isChildProviderRequest(request: Record<string, unknown>): boolean {
+  const body = typeof request.body === "string" ? request.body : JSON.stringify(request.body ?? "");
+  return body.includes(CHILD_TASK_MARKER) && !body.includes(PARENT_PROMPT);
+}
+
+/** Compact "who consumed which scripted entry" map, for failure messages. */
+function describeScriptUsage(): string {
+  return readMockRequests()
+    .filter((request) => typeof request.scriptEntry === "object" && request.scriptEntry !== null)
+    .map((request) => {
+      const used = request.scriptEntry as { source?: string; entryIndex?: number };
+      const who = isChildProviderRequest(request) ? "child" : "parent-or-other";
+      return `${used.source}${used.entryIndex === undefined ? "" : `[${used.entryIndex}]`}=${who}`;
+    })
+    .join(" ");
+}
+
 try {
   const [gatewayPort, mockPort] = await Promise.all([freePort(), freePort()]);
 
@@ -237,9 +275,17 @@ try {
       mode: "local",
       bind: "loopback",
       auth: { mode: "none" },
-      controlUi: { enabled: false },
+      // `controlUi.enabled: false` does not stop the session-observer digests:
+      // they are produced from transcript events, not from a subscriber. Left on,
+      // the Activity-recap call races the parent's own turns for the scripted
+      // responses below, and the mock hands out its script in arrival order.
+      controlUi: { enabled: false, sessionObserver: false },
       tailscale: { mode: "off" },
     },
+    // Same reason, for every other utility-model task (titles, narration): the
+    // only provider traffic this proof may contain is the parent's turns and the
+    // child's. An empty string is the documented opt-out for utility routing.
+    agents: { defaults: { utilityModel: "" } },
     plugins: { enabled: false },
   };
   applyMockOpenAiModelConfig(config, { mockPort, modelRef: "openai/gpt-5.6-luna" });
@@ -364,7 +410,7 @@ try {
   const parentStartedAt = Date.now();
   const started = await rpc<{ runId?: string; status?: string }>("agent", {
     sessionKey: PARENT_SESSION_KEY,
-    message: "Delegate the long task to a subagent.",
+    message: PARENT_PROMPT,
     deliver: false,
     idempotencyKey: randomUUID(),
   });
@@ -391,16 +437,51 @@ try {
   // disposition, which is what makes the restarted run's disposition mean
   // something.
   if (!CONTROL_MODE) {
-    await delay(8_000);
+    // The restart's precondition is an observation, not a duration: the child's
+    // own request has reached the provider and is being held there. Waiting for
+    // that fact keeps the pre-restart phase as short as it can honestly be.
+    await waitFor(
+      "the child's own model request to reach the provider",
+      () => readMockRequests().some(isChildProviderRequest),
+      60_000,
+    );
+    // The two scripted entries belong to the parent's two turns; the child must
+    // fall through to the slow default. Anything else means a third model call
+    // consumed the script in arrival order, and every later assertion would fail
+    // for a reason that has nothing to do with the behavior under proof.
+    const scriptUsage = describeScriptUsage();
+    assert.ok(
+      !readMockRequests().some(
+        (request) =>
+          isChildProviderRequest(request) &&
+          (request.scriptEntry as { source?: string } | undefined)?.source === "responses",
+      ),
+      `the child must receive the slow default response, not a scripted parent turn (${scriptUsage})`,
+    );
+    assert.ok(
+      readMockRequests().some(
+        (request) =>
+          isChildProviderRequest(request) &&
+          (request.scriptEntry as { source?: string } | undefined)?.source === "default",
+      ),
+      `the child's request must be the one held open by the default response (${scriptUsage})`,
+    );
     const preRestartRow = readRegistryRows().find((row) => row.runId === childRunId);
     assert.equal(
       preRestartRow?.execution.endedAt,
       undefined,
       "the child's run must still be in flight when the gateway is killed",
     );
+    const childStartedAt = preRestartRow?.execution.startedAt;
+    assert.equal(
+      typeof childStartedAt,
+      "number",
+      "the registry must have recorded when the child's run started",
+    );
+    const preRestartElapsedMs = Date.now() - (childStartedAt ?? 0);
     assert.ok(
-      readMockRequests().some((request) => JSON.stringify(request).includes(CHILD_TASK_MARKER)),
-      "the child's own model request must already be in flight at the restart",
+      preRestartElapsedMs < PRE_RESTART_BUDGET_MS,
+      `the restart must land well inside the child's run budget; ${preRestartElapsedMs}ms of ${RUN_TIMEOUT_SECONDS * 1_000}ms were already spent (${scriptUsage})`,
     );
     // Future recovery requests reserve their final response, but cannot finish
     // until the proof releases the mock after observing the expired wait.
@@ -430,13 +511,12 @@ try {
     assert.equal(recovered.execution.endedAt, undefined);
     await waitFor(
       "the recovered child's actual provider request to be held in flight",
-      () =>
-        readMockRequests()
-          .slice(requestsBeforeRestart)
-          .some((request) => JSON.stringify(request).includes(CHILD_TASK_MARKER)),
+      () => readMockRequests().slice(requestsBeforeRestart).some(isChildProviderRequest),
       30_000,
     );
-    log(`[2/5] restarted Gateway recovered ${originalRunId} as ${childRunId}`);
+    log(
+      `[2/5] restarted Gateway recovered ${originalRunId} as ${childRunId} after ${preRestartElapsedMs}ms of the child's ${RUN_TIMEOUT_SECONDS}s budget`,
+    );
   } else {
     log("[2/5] control mode: no restart; this gateway keeps observing its own child run");
   }
@@ -451,7 +531,11 @@ try {
         : row?.waitExpiryObservedAt !== undefined;
     },
     (RUN_TIMEOUT_SECONDS + 60) * 1_000,
-    500,
+    // The wait deadline and the child's own hard run deadline are both derived
+    // from `runTimeoutSeconds`, separated only by the child's dispatch latency,
+    // so the nonterminal state is short-lived by construction. Poll for it at a
+    // resolution finer than that separation.
+    50,
   );
   const expiredRow = readRegistryRows().find((row) => row.runId === childRunId);
   const disposition = expiredRow?.execution.outcome?.disposition ?? "exited";
@@ -480,7 +564,14 @@ try {
     );
 
     // ---------------------------------------------------------- assertion 4
-    await delay(4_000);
+    // Hold the provisional state open, but never past the child's own hard run
+    // deadline: a dwell that outlasts the child turns a real retention check
+    // into a self-inflicted timeout, and the child's genuine stop after that is
+    // correct behavior rather than a regression. The dwell is therefore bounded
+    // by the budget the child actually has left.
+    const hardDeadlineMs = (expiredRow?.execution.startedAt ?? 0) + RUN_TIMEOUT_SECONDS * 1_000;
+    const dwellMs = Math.max(0, Math.min(4_000, hardDeadlineMs - Date.now() - 1_000));
+    await delay(dwellMs);
     const retainedRow = readRegistryRows().find((row) => row.runId === childRunId);
     assert.ok(retainedRow, "the unconfirmed row must not be retired by a clock");
     assert.equal(
@@ -494,7 +585,7 @@ try {
       "the recovered child's task must remain running while its provider response is held",
     );
     log(
-      `[4/5] fail-closed: row retained, detached task="${String(readTaskStatus(childSessionKey))}" (the control run reaches "timed_out" here)`,
+      `[4/5] fail-closed: row retained across ${dwellMs}ms, detached task="${String(readTaskStatus(childSessionKey))}" (the control run reaches "timed_out" here)`,
     );
 
     // ---------------------------------------------------------- assertion 5
