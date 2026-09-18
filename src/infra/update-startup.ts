@@ -22,6 +22,7 @@ import { writeConfigMachineState } from "../state/config-machine-state-write.js"
 import { readConfigMachineState } from "../state/config-machine-state.js";
 import { VERSION } from "../version.js";
 import { isTruthyEnvValue } from "./env.js";
+import { formatErrorMessage } from "./errors.js";
 import type { GatewayActiveWorkInspectors } from "./gateway-active-work.js";
 import {
   EXTERNAL_SUPERVISOR_UPDATE_REQUIRED_REASON,
@@ -484,6 +485,8 @@ async function runCampaignUpdate(params: {
     before: { version: VERSION },
   });
   params.onUpdateRunCreated?.();
+  const { channel, forced, tag, version } = params;
+  const attempt = { channel, forced, tag, version };
   let terminal: Parameters<typeof finishUpdateRun>[1] | undefined = {
     status: "failed",
     reason: "unexpected-error",
@@ -541,10 +544,7 @@ async function runCampaignUpdate(params: {
     }
     if (outcome.status === "handoff") {
       params.log.info("auto-update handoff started", {
-        channel: params.channel,
-        version: params.version,
-        tag: params.tag,
-        forced: params.forced,
+        ...attempt,
         ...(outcome.command ? { command: outcome.command } : {}),
         ...(outcome.logPath ? { logPath: outcome.logPath } : {}),
       });
@@ -588,10 +588,7 @@ async function runCampaignUpdate(params: {
     }
     const skipped = classifyUpdateOutcome(outcome.result) === "noop";
     params.log.info(skipped ? "auto-update attempt skipped" : "auto-update attempt failed", {
-      channel: params.channel,
-      version: params.version,
-      tag: params.tag,
-      forced: params.forced,
+      ...attempt,
       reason: outcome.result.reason,
       message: outcome.message,
       ...(triageHint ? { triage: triageHint } : {}),
@@ -605,6 +602,12 @@ async function runCampaignUpdate(params: {
       return "applied";
     }
     return "failed";
+  } catch (error) {
+    // `terminal` above already records this attempt as `unexpected-error`, but no
+    // consumer of the rejection logs: the lifecycle task only forgets it and the
+    // campaign's apply handler only clears the campaign, so the cause is reported here.
+    params.log.info(`auto-update attempt failed error=${formatErrorMessage(error)}`, attempt);
+    throw error;
   } finally {
     if (terminal) {
       finishUpdateRun(runId, terminal);
