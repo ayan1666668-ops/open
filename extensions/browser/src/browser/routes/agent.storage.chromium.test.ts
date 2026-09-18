@@ -55,8 +55,8 @@ describe.runIf(Boolean(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH))(
           "storage set route",
         );
         for (const kind of ["local", "session"] as const) {
-          await page.evaluate((kind) => {
-            const store = kind === "local" ? localStorage : sessionStorage;
+          await page.evaluate((storageKind) => {
+            const store = storageKind === "local" ? localStorage : sessionStorage;
             store.setItem("account", "original");
             store.setItem(" account ", "padded");
           }, kind);
@@ -77,8 +77,8 @@ describe.runIf(Boolean(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH))(
             write.res,
           );
           expect(write.statusCode, JSON.stringify(write.body)).toBe(200);
-          const values = await page.evaluate((kind) => {
-            const store = kind === "local" ? localStorage : sessionStorage;
+          const values = await page.evaluate((storageKind) => {
+            const store = storageKind === "local" ? localStorage : sessionStorage;
             return { plain: store.getItem("account"), padded: store.getItem(" account ") };
           }, kind);
           console.log(JSON.stringify({ kind, read: read.body, values }));
