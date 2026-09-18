@@ -207,6 +207,15 @@ export function createEmbeddedModelState(
             contextTokens: deriveSessionTotalTokens({
               lastCallUsage: normalizeUsage(message.usage),
             }),
+            // A model event is emitted for rejected, aborted and truncated
+            // responses too. Only a turn the provider actually completed with
+            // real usage counts as admitted; "length" means the prompt was
+            // accepted but the reply was cut off, which still proves admission.
+            admitted:
+              (message.stopReason === "stop" ||
+                message.stopReason === "toolUse" ||
+                message.stopReason === "length") &&
+              hasNonzeroUsage(normalizeUsage(message.usage)),
           });
       }
     },

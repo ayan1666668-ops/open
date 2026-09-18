@@ -337,53 +337,57 @@ export async function recoverEmbeddedRunOverflow(
     }
 
     if (compactResult.compacted) {
-      // A committed compaction that freed nothing cannot make the same prompt
-      // fit. Refund the attempt so the budget is only spent on compactions that
-      // actually shrank the transcript, and do not report it as a success.
-      if (isNonReducingCompaction(compactResult)) {
+      // A compaction that freed no context must not be charged to the overflow
+      // budget and must not claim success in the log. It is still a committed
+      // compaction: the context engine reassembles model messages independently,
+      // so the next prompt is not necessarily the one the provider rejected.
+      // Keep the bounded retry/reassembly path so a recoverable run continues;
+      // only budget accounting and log wording change for this case.
+      const nonReducingCompaction = isNonReducingCompaction(compactResult);
+      if (nonReducingCompaction) {
         input.state.refundOverflowCompactionAttempt();
         log.warn(
-          `auto-compaction removed nothing for ${input.modelSelection.provider}/${input.modelSelection.model} ` +
+          `auto-compaction removed no context for ${input.modelSelection.provider}/${input.modelSelection.model} ` +
             `(tokensBefore=${compactResult.result?.tokensBefore ?? "unknown"} ` +
             `tokensAfter=${compactResult.result?.tokensAfter ?? "unknown"}); ` +
             `not charging the overflow compaction budget ` +
             `(attempt ${input.state.overflowCompactionAttempts}/${MAX_OVERFLOW_COMPACTION_ATTEMPTS})`,
         );
-        failedCompactionReason = formatErrorMessage("compaction removed no context");
-      } else {
-        if (preflightRecovery?.route === "compact_then_truncate") {
-          const truncResult = await truncateToolResults();
-          if (truncResult.truncated) {
-            log.info(
-              `[context-overflow-precheck] post-compaction tool-result truncation succeeded for ${input.modelSelection.provider}/${input.modelSelection.model}; truncated ${truncResult.truncatedCount} tool result(s)`,
-            );
-          } else {
-            log.warn(
-              `[context-overflow-precheck] post-compaction tool-result truncation did not help for ${input.modelSelection.provider}/${input.modelSelection.model}: ${truncResult.reason ?? "unknown"}`,
-            );
-          }
-        }
-        input.assertRecoveryActive();
-        input.runParams.onAutoCompactionSucceeded?.(input.state.autoCompactionCount);
-        input.assertRecoveryActive();
-        input.armPostCompactionGuard();
-        if (parkedWorkBlocksContinuation) {
-          log.warn(
-            `auto-compaction succeeded for ${input.modelSelection.provider}/${input.modelSelection.model}, but parked nested tool work cannot follow the rotated session; surfacing overflow guidance`,
+      }
+      if (preflightRecovery?.route === "compact_then_truncate") {
+        const truncResult = await truncateToolResults();
+        if (truncResult.truncated) {
+          log.info(
+            `[context-overflow-precheck] post-compaction tool-result truncation succeeded for ${input.modelSelection.provider}/${input.modelSelection.model}; truncated ${truncResult.truncatedCount} tool result(s)`,
           );
         } else {
-          log.info(
-            `auto-compaction succeeded for ${input.modelSelection.provider}/${input.modelSelection.model}; retrying prompt`,
+          log.warn(
+            `[context-overflow-precheck] post-compaction tool-result truncation did not help for ${input.modelSelection.provider}/${input.modelSelection.model}: ${truncResult.reason ?? "unknown"}`,
           );
-          input.markOwnedTranscriptRetry();
-          if (requiresTranscriptContinuation) {
-            input.prepareCurrentTranscriptRetry();
-          } else {
-            await input.prepareCompactedTranscriptRetry(input.assertRecoveryActive);
-            input.assertRecoveryActive();
-          }
-          return { action: "retry" };
         }
+      }
+      input.assertRecoveryActive();
+      input.runParams.onAutoCompactionSucceeded?.(input.state.autoCompactionCount);
+      input.assertRecoveryActive();
+      input.armPostCompactionGuard();
+      if (parkedWorkBlocksContinuation) {
+        log.warn(
+          `auto-compaction succeeded for ${input.modelSelection.provider}/${input.modelSelection.model}, but parked nested tool work cannot follow the rotated session; surfacing overflow guidance`,
+        );
+      } else {
+        log.info(
+          nonReducingCompaction
+            ? `auto-compaction removed no context for ${input.modelSelection.provider}/${input.modelSelection.model}; retrying prompt`
+            : `auto-compaction succeeded for ${input.modelSelection.provider}/${input.modelSelection.model}; retrying prompt`,
+        );
+        input.markOwnedTranscriptRetry();
+        if (requiresTranscriptContinuation) {
+          input.prepareCurrentTranscriptRetry();
+        } else {
+          await input.prepareCompactedTranscriptRetry(input.assertRecoveryActive);
+          input.assertRecoveryActive();
+        }
+        return { action: "retry" };
       }
     } else {
       failedCompactionReason = formatErrorMessage(compactResult.reason ?? "nothing to compact");

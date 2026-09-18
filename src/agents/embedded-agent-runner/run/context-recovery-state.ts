@@ -28,11 +28,14 @@ export function createEmbeddedRunContextRecoveryState() {
         state.lastCompactionTokensAfter = tokens;
         return;
       }
-      // A model turn that produced usage means the prompt was admitted, so the
-      // overflow the budget was spent on is over. Without this the counter only
-      // ever grows and a long run exhausts its three attempts on unrelated
-      // overflows it already recovered from.
-      state.overflowCompactionAttempts = 0;
+      // Only a turn the provider actually admitted ends the overflow episode the
+      // budget was spent on. The producer also emits model events for rejected,
+      // aborted and overflow responses; renewing on those would let the very
+      // rejection that should be charged clear the counter instead, so the
+      // three-attempt bound could never be reached.
+      if (event.admitted === true) {
+        state.overflowCompactionAttempts = 0;
+      }
     },
     /**
      * Refunds an overflow compaction attempt that freed no context.

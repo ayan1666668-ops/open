@@ -56,8 +56,8 @@ describe("synchronous context accounting", () => {
         completedCompactionEnd(false, 18_000, 8_000),
       ],
       expected: [
-        { kind: "model", contextTokens: 90_000 },
-        { kind: "model", contextTokens: 18_000 },
+        { kind: "model", contextTokens: 90_000, admitted: true },
+        { kind: "model", contextTokens: 18_000, admitted: true },
       ],
     },
     {
@@ -74,7 +74,7 @@ describe("synchronous context accounting", () => {
           },
         }),
       ],
-      expected: [{ kind: "model", contextTokens: undefined }],
+      expected: [{ kind: "model", contextTokens: undefined, admitted: true }],
     },
     {
       name: "failed zero-usage retry without old assistant backfill",
@@ -84,9 +84,30 @@ describe("synchronous context accounting", () => {
         accountingAssistant(0, "error"),
       ],
       expected: [
-        { kind: "model", contextTokens: 90_000 },
-        { kind: "model", contextTokens: undefined },
+        { kind: "model", contextTokens: 90_000, admitted: true },
+        // Zero-usage `error` response: the provider never accepted this prompt,
+        // so it must not renew any per-episode recovery budget.
+        { kind: "model", contextTokens: undefined, admitted: false },
       ],
+    },
+    {
+      // Overflow-length: the provider accepted the prompt and billed usage but
+      // truncated the reply. Admission is proven, so the budget may renew.
+      name: "admitted overflow-length response with real usage",
+      events: [accountingAssistant(70_000, "length")],
+      expected: [{ kind: "model", contextTokens: 70_000, admitted: true }],
+    },
+    {
+      // Aborted: no completed turn, so admission cannot be claimed.
+      name: "aborted response without admission",
+      events: [accountingAssistant(0, "aborted")],
+      expected: [{ kind: "model", contextTokens: undefined, admitted: false }],
+    },
+    {
+      // A rejection that still reports usage is not an accepted turn either.
+      name: "error response carrying usage without admission",
+      events: [accountingAssistant(50_000, "error")],
+      expected: [{ kind: "model", contextTokens: 50_000, admitted: false }],
     },
   ])("records $name in producer order", ({ events, expected }) => {
     const observed: EmbeddedContextAccountingEvent[] = [];
@@ -143,8 +164,8 @@ describe("synchronous context accounting", () => {
       },
     });
     const expected: EmbeddedContextAccountingEvent[] = [
-      { kind: "model", contextTokens: 90_000 },
-      { kind: "model", contextTokens: 20_000 },
+      { kind: "model", contextTokens: 90_000, admitted: true },
+      { kind: "model", contextTokens: 20_000, admitted: true },
     ];
     try {
       const before = accountingAssistant(90_000);
