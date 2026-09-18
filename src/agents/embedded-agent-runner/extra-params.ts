@@ -449,9 +449,7 @@ function createStreamFnWithExtraParams(
       model?.baseUrl,
     );
     if (Object.keys(streamParams).length > 0 || initialCacheRetention) {
-      const debugParams = initialCacheRetention
-        ? { ...streamParams, cacheRetention: initialCacheRetention }
-        : streamParams;
+      const debugParams = { ...streamParams, cacheRetention: initialCacheRetention };
       log.debug(`creating streamFn wrapper with params: ${JSON.stringify(debugParams)}`);
     }
   }
