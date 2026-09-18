@@ -504,9 +504,15 @@ export function writeSessionEntry(
     (entry.profileInvolvement?.key === sessionKey || options.allowStoredAliases
       ? entry.profileInvolvement
       : undefined);
-  normalizedEntry.profileInvolvement = involvement
-    ? { ...involvement, key: sessionKey }
-    : undefined;
+  if (involvement) {
+    normalizedEntry = {
+      ...normalizedEntry,
+      profileInvolvement: { ...involvement, key: sessionKey },
+    };
+  } else if (normalizedEntry.profileInvolvement) {
+    const { profileInvolvement: _sourceInvolvement, ...forkEntry } = normalizedEntry;
+    normalizedEntry = forkEntry;
+  }
   const previousEntry =
     options.previousEntry === undefined
       ? canonicalPreviousEntry

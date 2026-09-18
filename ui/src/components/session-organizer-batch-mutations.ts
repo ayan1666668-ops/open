@@ -8,6 +8,7 @@ import { GatewayRequestError } from "../api/gateway.ts";
 import { formatUiError } from "../lib/format-error.ts";
 import { readSessionMethodAccess } from "../lib/session-method-access.ts";
 import { resolveUiSessionRowAgentId } from "../lib/sessions/session-key.ts";
+import { requestSessionInvolvement } from "../lib/sessions/session-requests.ts";
 import type {
   SidebarRecentSession,
   SidebarSessionMutationResult,
@@ -218,7 +219,7 @@ export async function setSessionInvolvement(
     return;
   }
   try {
-    await scope.client.request("sessions.setInvolvement", {
+    await requestSessionInvolvement(scope.client, {
       key: session.key,
       agentId,
       expectedSessionId: session.sessionId,

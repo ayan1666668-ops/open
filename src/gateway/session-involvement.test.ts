@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadSessionEntry, replaceSessionEntrySync } from "../config/sessions/session-accessor.js";
 import { projectPublicSessionEntry } from "../config/sessions/session-entry-projection.js";
+import { closeOpenClawAgentDatabasesForTest } from "../state/openclaw-agent-db.js";
+import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
 import { ensureProfileForEmail, linkEmail } from "../state/user-profiles.js";
 import {
   SESSION_KEY,
@@ -76,6 +78,60 @@ describe("personal session involvement", () => {
       const forkScope = { ...scope, sessionKey: "agent:main:fork" };
       replaceSessionEntrySync(forkScope, { ...previous, sessionId: "fork-generation" });
       expect(loadSessionEntry(forkScope)).not.toHaveProperty("profileInvolvement");
+    });
+  });
+
+  it("preserves existing metadata, personal choices and replay watermarks across cold reopen", async () => {
+    await withInbox(async (f) => {
+      const scope = { agentId: "main", sessionKey: SESSION_KEY };
+      await f.setSession({ displayName: "Existing session", label: "keep-label", pinned: true });
+      const existing = loadSessionEntry(scope)!;
+      expect(existing).not.toHaveProperty("profileInvolvement");
+      const reopen = () => {
+        f.dispose();
+        closeOpenClawAgentDatabasesForTest();
+        closeOpenClawStateDatabaseForTest();
+        return f.openInbox("cold-reopen");
+      };
+      let inbox = reopen();
+      expect(loadSessionEntry(scope)).toEqual(existing);
+      f.post("before-restart", {}, inbox);
+      const mentioned = loadSessionEntry(scope)!.profileInvolvement!.profiles[f.bob.id]!;
+      const setHidden = async (hidden: boolean) => {
+        expect(
+          (
+            await f.call("sessions.setInvolvement", {
+              key: SESSION_KEY,
+              expectedSessionId: SESSION_ID,
+              hidden,
+            })
+          ).ok,
+        ).toBe(true);
+      };
+      const check = (hidden: boolean, sequence: number) => {
+        const entry = loadSessionEntry(scope)!;
+        expect(entry).toMatchObject(existing);
+        expect(entry.profileInvolvement?.profiles[f.bob.id]).toMatchObject({
+          hidden,
+          lastMention: { generation: mentioned.lastMention?.generation, sequence },
+        });
+      };
+      await setHidden(true);
+      inbox = reopen();
+      check(true, 1);
+      f.post("before-restart", {}, inbox);
+      check(true, 1);
+      await setHidden(false);
+      inbox = reopen();
+      check(false, 1);
+      await setHidden(true);
+      inbox = reopen();
+      f.post("after-restart", {}, inbox);
+      check(false, 2);
+      const fresh = loadSessionEntry(scope)!.profileInvolvement;
+      reopen();
+      check(false, 2);
+      expect(loadSessionEntry(scope)!.profileInvolvement).toEqual(fresh);
     });
   });
 

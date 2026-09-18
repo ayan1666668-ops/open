@@ -21,6 +21,10 @@ import type {
   SessionDeleteTarget,
 } from "../../lib/sessions/session-capability.ts";
 import {
+  gatewayHelloForMethods,
+  SESSION_MUTATION_TEST_METHODS,
+} from "../../test-helpers/gateway-methods.ts";
+import {
   createContext,
   createGateway,
   createManagedSessions,
@@ -227,6 +231,59 @@ describe("sessions page lifecycle", () => {
     await menu?.updateComplete;
     expect(menu?.querySelector('[value="toggle-pin"]')).toBeNull();
   });
+
+  it.each([false, true])(
+    "uses the personal visibility RPC from the management menu (hidden: %s)",
+    async (hidden) => {
+      const request = vi.fn(async () => ({ ok: true }));
+      const mutable = createGateway({ request } as unknown as GatewayBrowserClient);
+      mutable.emit({
+        hello: gatewayHelloForMethods(
+          [...SESSION_MUTATION_TEST_METHODS, "sessions.setInvolvement"],
+          ["operator.read"],
+        ),
+      });
+      const managed = createManagedSessions();
+      const row = {
+        key: "agent:main:personal",
+        sessionId: "personal-session",
+        kind: "direct",
+        hiddenFromInvolvingMe: hidden,
+      } satisfies GatewaySessionRow;
+      const page = await createRenderedPage(
+        createContext(mutable.gateway, managed.sessions),
+        sessionsResult([row], 1),
+      );
+      page.openSessionMenu(row, { x: 10, y: 20 }, document.createElement("button"));
+      await page.updateComplete;
+      const menu = page.querySelector<TestSessionMenu>("openclaw-session-menu");
+      await menu?.updateComplete;
+      const item = menu?.querySelector('[value="toggle-involving-me"]');
+      expect(item?.textContent).toContain(
+        hidden ? "Show in Involving me" : "Hide from Involving me",
+      );
+      expect(item?.hasAttribute("disabled")).toBe(false);
+      managed.refreshList.mockClear();
+      menu?.querySelector("wa-dropdown")?.dispatchEvent(
+        new CustomEvent("wa-select", {
+          bubbles: true,
+          detail: { item: { value: "toggle-involving-me" } },
+        }),
+      );
+      await vi.waitFor(() =>
+        expect(request).toHaveBeenCalledWith(
+          "sessions.setInvolvement",
+          expect.objectContaining({
+            key: row.key,
+            expectedSessionId: row.sessionId,
+            hidden: !hidden,
+          }),
+        ),
+      );
+      await vi.waitFor(() => expect(managed.refreshList).toHaveBeenCalled());
+      expect(managed.sessions.patch).not.toHaveBeenCalled();
+    },
+  );
 
   it("disables Fork session for model-selection-locked rows", async () => {
     const row = {
