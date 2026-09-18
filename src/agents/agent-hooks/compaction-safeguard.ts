@@ -25,7 +25,6 @@ import {
   getCompactionProvider,
   type CompactionProvider,
 } from "../../plugins/compaction-provider.js";
-import { normalizeAcceptedSessionSpawnResult } from "../accepted-session-spawn.js";
 import { computeAdaptiveChunkRatioWithWorker } from "../compaction-planning-worker.js";
 import { buildHistoryPrunePlan } from "../compaction-planning.js";
 import { isRealConversationMessage } from "../compaction-real-conversation.js";
@@ -38,7 +37,6 @@ import {
   resolveContextWindowTokens,
   summarizeInStages,
 } from "../compaction.js";
-import { collectTextContentBlocks } from "../content-blocks.js";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "../copilot-dynamic-headers.js";
 import { stripRuntimeContextCustomMessages } from "../internal-runtime-context.js";
 import {
@@ -70,14 +68,16 @@ import {
   getCompactionSafeguardRuntime,
   setCompactionSafeguardCancellation,
 } from "./compaction-safeguard-runtime.js";
+import {
+  collectToolFailures,
+  formatToolFailuresSection,
+} from "./compaction-safeguard-tool-failures.js";
 
 const log = createSubsystemLogger("compaction-safeguard");
 
 // Track session managers that have already logged the missing-model warning to avoid log spam.
 const missedModelWarningSessions = new WeakSet<object>();
 const SPLIT_TURN_SECTION_HEADING = "**Turn Context (split turn):**";
-const MAX_TOOL_FAILURES = 8;
-const MAX_TOOL_FAILURE_CHARS = 240;
 const CONTEXT_TRUNCATED_MARKER = "\n\n[Earlier compaction context truncated to fit budget]\n\n";
 // Split-turn context supplements the generated summary and must not claim its
 // guaranteed half of the final artifact before common finalization runs.
@@ -280,13 +280,6 @@ function assembleSuffix(parts: {
   return { text, contextRanges };
 }
 
-type ToolFailure = {
-  toolCallId: string;
-  toolName: string;
-  summary: string;
-  meta?: string;
-};
-
 type ModelRegistryWithRequestAuthLookup = {
   getApiKeyAndHeaders?: (
     model: NonNullable<ExtensionContext["model"]>,
@@ -386,87 +379,6 @@ function resolveQualityGuardMaxRetries(value: unknown): number {
     DEFAULT_QUALITY_GUARD_MAX_RETRIES,
     MAX_QUALITY_GUARD_MAX_RETRIES,
   );
-}
-
-function formatToolFailureMeta(details: unknown): string | undefined {
-  if (!details || typeof details !== "object") {
-    return undefined;
-  }
-  const record = details as Record<string, unknown>;
-  return (
-    [
-      typeof record.status === "string" && record.status ? `status=${record.status}` : "",
-      typeof record.exitCode === "number" && Number.isFinite(record.exitCode)
-        ? `exitCode=${record.exitCode}`
-        : "",
-    ]
-      .filter(Boolean)
-      .join(" ") || undefined
-  );
-}
-
-function collectToolFailures(messages: AgentMessage[]): ToolFailure[] {
-  const failures: ToolFailure[] = [];
-  const seen = new Set<string>();
-
-  for (const message of messages) {
-    if (message.role !== "toolResult" || !message.isError) {
-      continue;
-    }
-    const toolResult = message as {
-      toolCallId?: unknown;
-      toolName?: unknown;
-      content?: unknown;
-      details?: unknown;
-      isError?: unknown;
-    };
-    // Accepted sessions_spawn launches are successes, not failures, even when a legacy
-    // transcript persisted them with isError:true. Mirror the observer's detection
-    // (toolName + accepted child-run identity, see embedded-agent-subscribe.handlers.tools)
-    // so only real failures stay in the summary and non-spawn tools are never matched by shape.
-    if (
-      typeof toolResult.toolName === "string" &&
-      toolResult.toolName.trim() === "sessions_spawn" &&
-      normalizeAcceptedSessionSpawnResult(toolResult)
-    ) {
-      continue;
-    }
-    const toolCallId = typeof toolResult.toolCallId === "string" ? toolResult.toolCallId : "";
-    if (!toolCallId || seen.has(toolCallId)) {
-      continue;
-    }
-    seen.add(toolCallId);
-
-    const toolName =
-      typeof toolResult.toolName === "string" && toolResult.toolName.trim()
-        ? toolResult.toolName
-        : "tool";
-    const meta = formatToolFailureMeta(toolResult.details);
-    const failureText =
-      collectTextContentBlocks(toolResult.content).join("\n").replace(/\s+/g, " ").trim() ||
-      (meta ? "failed" : "failed (no output)");
-    const summary =
-      failureText.length > MAX_TOOL_FAILURE_CHARS
-        ? `${truncateUtf16Safe(failureText, MAX_TOOL_FAILURE_CHARS - 3)}...`
-        : failureText;
-    failures.push({ toolCallId, toolName, summary, meta });
-  }
-
-  return failures;
-}
-
-function formatToolFailuresSection(failures: ToolFailure[]): string {
-  if (failures.length === 0) {
-    return "";
-  }
-  const lines = failures.slice(0, MAX_TOOL_FAILURES).map((failure) => {
-    const meta = failure.meta ? ` (${failure.meta})` : "";
-    return `- ${failure.toolName}${meta}: ${failure.summary}`;
-  });
-  if (failures.length > MAX_TOOL_FAILURES) {
-    lines.push(`- ...and ${failures.length - MAX_TOOL_FAILURES} more`);
-  }
-  return `\n\n## Tool Failures\n${lines.join("\n")}`;
 }
 
 function normalizeCompactionSuffix(suffix: string | CompactionSuffix): CompactionSuffix {
@@ -1496,8 +1408,6 @@ const testing = {
   setSummarizeInStagesForTest(next?: typeof summarizeInStages) {
     compactionSafeguardDeps.summarizeInStages = next ?? summarizeInStages;
   },
-  collectToolFailures,
-  formatToolFailuresSection,
   splitPreservedRecentTurns,
   buildPreservedTurnsSection,
   buildCompactionStructureInstructions,

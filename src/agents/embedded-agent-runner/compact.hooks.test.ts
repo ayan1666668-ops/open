@@ -51,6 +51,7 @@ import { createEventBus } from "../sessions/event-bus.js";
 import { createExtensionRuntime, loadExtensionFromFactory } from "../sessions/extensions/loader.js";
 import { SessionManager } from "../sessions/session-manager.js";
 import { SettingsManager } from "../sessions/settings-manager.js";
+import { createPreparedCodexCompactionPlans } from "./compact.hooks.codex-plans.test-support.js";
 import {
   acquireAgentRunPreparedModelRuntimeMock,
   attemptServerEndpointCompactionMock,
@@ -315,39 +316,6 @@ async function nativeCompactionArgs(
     agentHarnessId: overrides.agentHarnessId,
   });
   return params;
-}
-
-function createPreparedCodexCompactionPlans(modelId = "gpt-5.5") {
-  const modelRoute = {
-    provider: "openai",
-    modelId,
-    api: "openai-responses",
-    baseUrl: "https://api.openai.com/v1",
-    authRequirement: "api-key",
-    requestTransportOverrides: "none",
-    runtimePolicy: { compatibleIds: ["codex"] },
-  } as const;
-  const runtimeAuthPlan = {
-    providerForAuth: "openai",
-    modelId,
-    authProfileProviderForAuth: "openai",
-    harnessAuthProvider: "openai",
-    selectedAuthMode: "api-key",
-    modelRoute,
-  } as const;
-  return {
-    modelRoute,
-    runtimeAuthPlan,
-    runtimePlan: {
-      resolvedRef: {
-        provider: "openai",
-        modelId,
-        modelApi: "openai-responses",
-        harnessId: "codex",
-      },
-      auth: runtimeAuthPlan,
-    } as never,
-  };
 }
 
 const sessionHook = (action: string): SessionHookEvent | undefined =>
