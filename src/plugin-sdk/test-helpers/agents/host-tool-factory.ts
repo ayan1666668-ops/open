@@ -16,8 +16,8 @@ export async function setHostToolFactoryForTest(
   const spy = vi
     .spyOn(agentTools, "createOpenClawCodingToolsInternal")
     .mockImplementation((...args) => {
-      const factory = args[0]?.runId ? factories.get(args[0].runId) : undefined;
-      return (factory ?? actual)(...args);
+      const runFactory = args[0]?.runId ? factories.get(args[0].runId) : undefined;
+      return (runFactory ?? actual)(...args);
     });
   onTestFinished(() => {
     factories.clear();

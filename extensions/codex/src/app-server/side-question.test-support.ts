@@ -88,7 +88,7 @@ async function runCodexAppServerSideQuestion(
 ) {
   const runId = params.opts?.runId;
   if (runId && !getCodexTestToolFactory(params)) {
-    await setHostToolFactoryForTest({ runId }, createOpenClawCodingToolsMock);
+    await setHostToolFactoryForTest({ runId }, (options) => createOpenClawCodingToolsMock(options));
   }
   return runCodexAppServerSideQuestionImpl(params, { ...options, bindingStore });
 }

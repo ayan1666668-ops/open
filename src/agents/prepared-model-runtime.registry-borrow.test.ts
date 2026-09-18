@@ -80,7 +80,11 @@ async function acquireConfiguredRegistryBorrower(source: "owned" | "gateway" = "
   };
   if (source === "gateway") {
     bindPluginRuntimeArtifactSelection(record, {
-      runtimeEntry: resolvePluginRuntimeArtifactSelection({ ...manifest, entryKind: "runtime" }),
+      runtimeEntry: resolvePluginRuntimeArtifactSelection({
+        ...manifest,
+        entryKind: "runtime",
+        preferBuiltPluginArtifacts: false,
+      }),
     });
     setPluginRuntimeLoadContext(registry, {
       rawConfig: config,

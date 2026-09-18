@@ -23,9 +23,9 @@ describe("reserved Gateway test listeners", () => {
         reservation.start(() => createTestTransport(transport, reservation.port)),
       ).resolves.toBe(reservation.listener);
     } finally {
-      await new Promise<void>((resolve, reject) =>
-        reservation.listener.close((error) => (error ? reject(error) : resolve())),
-      );
+      await new Promise<void>((resolve, reject) => {
+        reservation.listener.close((error) => (error ? reject(error) : resolve()));
+      });
     }
   });
 
@@ -67,9 +67,9 @@ describe("reserved Gateway test listeners", () => {
         await Promise.all(
           reservations.map(
             ({ listener }) =>
-              new Promise<void>((resolve, reject) =>
-                listener.close((error) => (error ? reject(error) : resolve())),
-              ),
+              new Promise<void>((resolve, reject) => {
+                listener.close((error) => (error ? reject(error) : resolve()));
+              }),
           ),
         );
       }
