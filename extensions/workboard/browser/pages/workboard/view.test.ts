@@ -2288,8 +2288,14 @@ describe("renderWorkboard", () => {
     expect(container.querySelector<HTMLInputElement>(".workboard-draft__title")!.value).toBe(
       "Still editing",
     );
-    // Explicit dismissal still closes the dialog and resets the draft.
+    // Explicit dismissal still surfaces the discard confirmation and then resets the draft.
     dialog.dispatchEvent(new Event("cancel", { cancelable: true }));
+    expect(state.draftDiscardOpen).toBe(true);
+    expect(state.draftOpen).toBe(true);
+    expectDefined(
+      buttonByText(container.querySelector(".workboard-discard")!, "Discard"),
+      "discard draft",
+    ).click();
     expect(state.draftOpen).toBe(false);
     expect(container.querySelector(".workboard-draft")).toBeNull();
   });
