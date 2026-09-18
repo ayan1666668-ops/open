@@ -31,14 +31,11 @@ afterEach(() => {
 });
 
 function createStore(pruneAfterMs = 1_000, key = sessionKey) {
-  // This suite owns timer policy; real worker flows are covered by maintenance-worker.test.ts.
-  vi.spyOn(reclamation, "runSqliteSessionReclamation").mockImplementation(async (params) => {
-    params.assertCommitAllowed?.();
-    return reclamation.reclaimSqliteSessionInTransaction(params.plan, {
-      beforeMutation: params.assertCommitAllowed,
-      onCommit: params.assertCommitAllowed,
-    });
-  });
+  // Keep the fake clock in this process without replacing admission or commit ownership.
+  const runReclamation = reclamation.runSqliteSessionReclamation;
+  vi.spyOn(reclamation, "runSqliteSessionReclamation").mockImplementation((params) =>
+    runReclamation({ ...params, forceInProcess: true }),
+  );
   const storePath = path.join(tempDirs.make("session-maintenance-kick-"), "agent.sqlite");
   const scope = { agentId: "main", path: storePath };
   const database = openOpenClawAgentDatabase(scope);
