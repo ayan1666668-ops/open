@@ -17,9 +17,7 @@ const controlUiAssetsMocks = vi.hoisted(() => ({
   resolveControlUiRootSync: vi.fn(),
 }));
 const retentionMocks = vi.hoisted(() => ({
-  prepare: vi.fn<
-    (options?: { isCancelled?: () => boolean; signal?: AbortSignal }) => Promise<void>
-  >(async () => {}),
+  prepare: vi.fn<(options?: { signal?: AbortSignal }) => Promise<void>>(async () => {}),
   resolveAsset: vi.fn(() => null),
 }));
 
@@ -94,7 +92,6 @@ describe("createGatewayControlUiRootLifecycle", () => {
     await lifecycle.start();
 
     expect(retentionMocks.prepare).toHaveBeenCalledWith({
-      isCancelled: expect.any(Function),
       signal: expect.any(AbortSignal),
     });
   });
