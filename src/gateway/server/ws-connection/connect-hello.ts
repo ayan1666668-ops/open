@@ -33,6 +33,7 @@ import {
 import { canReadDetailedUpdateMetadata } from "../../events.js";
 import { ADMIN_SCOPE } from "../../method-scopes.js";
 import { scheduleNodeConnectionNotification } from "../../node-connection-notifications.js";
+import { resolveBrowserAuthOrigin } from "../../provider-browser-auth.js";
 import {
   MAX_BUFFERED_BYTES,
   MAX_PAYLOAD_BYTES,
@@ -153,7 +154,9 @@ export async function sendGatewayHello(
       connId,
     },
     features: {
-      methods: gatewayMethods,
+      methods: resolveBrowserAuthOrigin(context.browserOrigin, new AbortController().signal)
+        ? gatewayMethods
+        : gatewayMethods.filter((method) => method !== "mcp.authLogin"),
       events,
       capabilities: [
         GATEWAY_SERVER_CAPS.BOARD_WIDGET_PUT_CANVAS_DOC,
