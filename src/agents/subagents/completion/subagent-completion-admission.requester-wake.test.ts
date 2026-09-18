@@ -7,8 +7,13 @@ import {
   type OpenClawStateDatabase,
 } from "../../../state/openclaw-state-db.js";
 import { ensureTaskRegistryReady, getTaskById } from "../../../tasks/runtime-internal.js";
+import { getTaskFlowById } from "../../../tasks/task-flow-registry.js";
+import { upsertTaskFlowRegistryRecordToSqlite } from "../../../tasks/task-flow-registry.store.sqlite.js";
 import { publishTaskRecordAfterAtomicStore } from "../../../tasks/task-registry.js";
-import { resetTaskRegistryForTests } from "../../../tasks/task-runtime.test-helpers.js";
+import {
+  resetTaskFlowRegistryForTests,
+  resetTaskRegistryForTests,
+} from "../../../tasks/task-runtime.test-helpers.js";
 import { loadPendingFinalDeliveryPayload } from "../registry/subagent-registry-lifecycle-delivery.js";
 import { subagentRuns } from "../registry/subagent-registry-memory.js";
 import { onSubagentRegistryPersisted } from "../registry/subagent-registry-state.js";
@@ -44,6 +49,7 @@ describe("persisted subagent requester wakes", () => {
   afterEach(() => {
     subagentRuns.clear();
     resetTaskRegistryForTests({ persist: false });
+    resetTaskFlowRegistryForTests({ persist: false });
     closeOpenClawStateDatabaseForTest();
     vi.unstubAllEnvs();
   });
@@ -112,6 +118,77 @@ describe("persisted subagent requester wakes", () => {
       driver.controller.clearScheduledResumeTimers();
     }
   });
+
+  it.each([true, false])(
+    "publishes the mirrored parent flow before requester settlement observers (delivered=%s)",
+    async (delivered) => {
+      const input = armRequesterWake(records());
+      const flowId = "requester-parent-flow";
+      input.task.parentFlowId = flowId;
+      persistOwner(input);
+      upsertTaskFlowRegistryRecordToSqlite({
+        flowId,
+        syncMode: "task_mirrored",
+        ownerKey: input.task.ownerKey,
+        goal: "Unfinished parent flow",
+        revision: 4,
+        status: "running",
+        notifyPolicy: input.task.notifyPolicy,
+        createdAt: input.task.createdAt,
+        updatedAt: input.task.createdAt,
+      });
+      resetTaskFlowRegistryForTests({ persist: false });
+      database = openOpenClawStateDatabase();
+      expect(getTaskFlowById(flowId)).toMatchObject({ status: "running", revision: 4 });
+
+      const driver = requesterWakeDriver([input]);
+      driver.wake.mockImplementation(async (params) => {
+        params.completeBatch([input.subagent], 1, {
+          delivered,
+          path: "direct",
+          error: delivered ? undefined : "requester unavailable",
+        });
+        return delivered;
+      });
+      const observed = vi.fn(() => ({
+        inTransaction: database.db.isTransaction,
+        task: getTaskById(input.task.taskId),
+        flow: getTaskFlowById(flowId),
+      }));
+      const unsubscribe = onSubagentRegistryPersisted(observed);
+      const expectedTask = {
+        status: "succeeded",
+        terminalOutcome: delivered ? "succeeded" : "blocked",
+        deliveryStatus: delivered ? "delivered" : "failed",
+      };
+      const expectedFlow = {
+        flowId,
+        revision: 5,
+        status: delivered ? "succeeded" : "blocked",
+        goal: input.task.task,
+        blockedTaskId: delivered ? undefined : input.task.taskId,
+      };
+      try {
+        await driver.run();
+        expect(driver.wake).toHaveBeenCalledOnce();
+        expect(observed).toHaveBeenCalledOnce();
+        expect(observed.mock.results[0]?.value).toMatchObject({
+          inTransaction: false,
+          task: expectedTask,
+          flow: expectedFlow,
+        });
+        expect(input.subagent.requesterSettleWake).toBeUndefined();
+        resetTaskFlowRegistryForTests({ persist: false });
+        reopenOwners();
+        expect(getTaskById(input.task.taskId)).toMatchObject(expectedTask);
+        expect(getTaskFlowById(flowId)).toMatchObject(expectedFlow);
+        expect(systemEvents()).toHaveLength(delivered ? 0 : 1);
+      } finally {
+        unsubscribe();
+        driver.controller.clearScheduledResumeTimers();
+      }
+    },
+  );
 
   it.each(["second owner", "second task write", "retirement"] as const)(
     "commits the entire requester batch or nothing when %s refuses settlement",
