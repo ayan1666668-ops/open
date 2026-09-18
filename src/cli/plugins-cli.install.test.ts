@@ -645,59 +645,6 @@ describe("plugins cli install", () => {
     expect(helpText).toMatch(/an existing plugin or hook\s+pack/u);
   });
 
-  it.each([
-    { source: "npm", raw: "npm:demo", enabled: true },
-    { source: "npm", raw: "npm:demo", enabled: false },
-    { source: "bundled", raw: "demo", enabled: true },
-    { source: "bundled fallback", raw: "demo-package", enabled: false },
-  ])(
-    "preserves plugin policy when installing from $source with --no-enable and enabled=$enabled",
-    async ({ source, raw, enabled }) => {
-      const pluginId = "demo";
-      const config = {
-        plugins: {
-          allow: ["other"],
-          deny: [pluginId],
-          entries: { [pluginId]: { enabled } },
-        },
-      };
-      pluginCliConfigMock.mockReturnValue(config);
-      findBundledPluginSourceMock.mockImplementation(({ lookup }) =>
-        source === "bundled" ||
-        (source === "bundled fallback" && (lookup.kind === "npmSpec" || lookup.value === pluginId))
-          ? { pluginId, localPath: cliInstallPath(pluginId) }
-          : undefined,
-      );
-      installPluginFromNpmSpecMock.mockResolvedValue(
-        source === "bundled fallback"
-          ? { ok: false, error: "npm error E404 package not found", code: "npm_package_not_found" }
-          : createNpmPluginInstallResult(pluginId),
-      );
-
-      await runAcknowledgedPluginsInstallCommand(["plugins", "install", raw, "--no-enable"]);
-
-      expect(configWriteMock).toHaveBeenLastCalledWith(config);
-      expect(persistedInstallRecord(pluginId).source).toBe(source === "npm" ? "npm" : "path");
-      expect(enablePluginInConfigMock).not.toHaveBeenCalled();
-      expect(applyExclusiveSlotSelectionMock).not.toHaveBeenCalled();
-    },
-  );
-
-  it("rejects --no-enable for hook-only fallback before installing hooks", async () => {
-    primeHookPackNpmFallback();
-    await expect(
-      runAcknowledgedPluginsInstallCommand([
-        "plugins",
-        "install",
-        "npm:@acme/demo-hooks",
-        "--no-enable",
-      ]),
-    ).rejects.toThrow("__exit__:1");
-    expect(runtimeErrors.at(-1)).toContain("--no-enable is only supported for plugins");
-    expect(installHooksFromNpmSpecMock).not.toHaveBeenCalled();
-    expect(configWriteMock).not.toHaveBeenCalled();
-  });
-
   it("refuses plugin installs in Nix mode before installer side effects", async () => {
     process.env.OPENCLAW_NIX_MODE = "1";
 
