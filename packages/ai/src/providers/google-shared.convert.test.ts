@@ -35,7 +35,10 @@ describe("google-shared convertTools", () => {
       },
       { modelProvider: "google", modelId: "gemini-2.5-flash" },
     );
-    const converted = convertGoogleTools([{ name: "demo", description: "Demo", parameters }]);
+    const converted = expectDefined(
+      convertGoogleTools([{ name: "demo", description: "Demo", parameters }]),
+      "normalized Gemini tool declarations",
+    );
 
     expect(getFirstToolParameters(converted)).toStrictEqual({
       type: "object",
