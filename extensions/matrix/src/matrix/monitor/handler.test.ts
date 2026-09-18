@@ -3102,15 +3102,7 @@ describe("matrix monitor handler draft streaming", () => {
       steps?: Array<{ step: string; status: "pending" | "in_progress" | "completed" }>;
     }) => Promise<void>;
     onApprovalEvent?: (payload: { phase?: string; command?: string }) => Promise<void>;
-    onCommandOutput?: (payload: {
-      itemId?: string;
-      toolCallId?: string;
-      phase?: string;
-      name?: string;
-      exitCode?: number;
-      status?: string;
-      title?: string;
-    }) => Promise<void>;
+    onCommandOutput?: import("openclaw/plugin-sdk/reply-runtime").GetReplyOptions["onCommandOutput"];
     onPatchSummary?: (payload: {
       itemId?: string;
       toolCallId?: string;

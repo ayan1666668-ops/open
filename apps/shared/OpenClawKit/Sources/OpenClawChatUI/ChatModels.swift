@@ -773,7 +773,9 @@ public struct OpenClawAgentActivityItem: Codable, Hashable, Sendable {
     public let hideFromChannelProgress: Bool?
     public let suppressChannelProgress: Bool?
 
-    var isVisible: Bool { self.hideFromChannelProgress != true && self.suppressChannelProgress != true }
+    var isVisible: Bool {
+        self.hideFromChannelProgress != true && self.suppressChannelProgress != true
+    }
 }
 
 public struct OpenClawChatHistoryActivity: Codable, Sendable {

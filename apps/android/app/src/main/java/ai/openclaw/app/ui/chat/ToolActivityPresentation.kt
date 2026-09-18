@@ -37,8 +37,8 @@ internal fun completedToolGroupSummary(tools: List<ChatToolActivity>): String {
       .values
       .filter { it.isVisible }
   if (items.isEmpty()) return nativeString("Tool details")
-  return items.groupingBy { if (it.status == "failed" || it.status == "blocked") "${it.title} (${it.status})" else it.title }.eachCount().entries.joinToString(", ") { (title, count) ->
-    if (count == 1) title else "$title ×$count"
+  return items.groupingBy { if (it.status == "failed" || it.status == "blocked") nativeString("\${it.title} (\${it.status})", it.title, it.status) else it.title }.eachCount().entries.joinToString(", ") { (title, count) ->
+    if (count == 1) title else nativeString("\$title ×\$count", title, count)
   }
 }
 

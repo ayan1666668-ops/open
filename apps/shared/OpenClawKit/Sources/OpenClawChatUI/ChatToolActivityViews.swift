@@ -31,7 +31,9 @@ struct ChatToolActivityItem: Identifiable, Equatable {
     var activity: OpenClawAgentActivityItem?
     var activityPrepared = false
 
-    var isVisible: Bool { self.activity?.isVisible ?? !self.activityPrepared }
+    var isVisible: Bool {
+        self.activity?.isVisible ?? !self.activityPrepared
+    }
 
     var displayState: State {
         guard let activity = self.activity else { return self.state }

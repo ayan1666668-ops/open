@@ -1,6 +1,27 @@
 import { isShellToolDisplayName } from "../agents/tool-display.js";
 // Small progress-draft line helpers shared by streaming renderers.
-import type { ChannelProgressDraftLine } from "./streaming.js";
+export type ChannelProgressDraftLine = {
+  /** Stable line id used to update an existing progress line in place. */
+  id?: string;
+  /** Progress event family that produced this line. */
+  kind: "tool" | "item" | "plan" | "approval" | "command-output" | "patch";
+  /** Rendered line text before final draft truncation/prefix formatting. */
+  text: string;
+  /** Human-readable label for UI renderers. */
+  label: string;
+  /** Optional leading icon for rich or plain progress renderers. */
+  icon?: string;
+  /** Compact detail text separated from label/icon. */
+  detail?: string;
+  /** Optional lifecycle status, such as completed or exit code. */
+  status?: string;
+  /** Completion metadata for authored text; never rendered as a tool status. */
+  complete?: boolean;
+  /** Normalized tool name when the line represents tool work. */
+  toolName?: string;
+  /** Whether final formatting should add a bullet/line prefix. */
+  prefix?: boolean;
+};
 
 /** Progress draft state can mix legacy plain text lines with keyed structured lines. */
 type ProgressDraftLine = string | ChannelProgressDraftLine;
