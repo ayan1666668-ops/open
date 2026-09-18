@@ -24,6 +24,10 @@ import { buildInterSessionPromptContext } from "../../../sessions/input-provenan
 import { resolveAdmittedRunActiveAssertion } from "../../admitted-run-context.js";
 import { DEFAULT_CONTEXT_TOKENS } from "../../defaults.js";
 import {
+  leasePendingExecSteeringItems,
+  prependExecSteeringPrompt,
+} from "../../exec-steering-queue.js";
+import {
   buildAgentInternalEventContext,
   resolveInternalEventPromptBody,
 } from "../../internal-events.js";
@@ -87,6 +91,10 @@ type EmbeddedAttemptSteeringLease = {
   runIds: string[];
   isCurrent: () => boolean;
 };
+type EmbeddedAttemptExecSteeringLease = {
+  leaseId: string;
+  itemIds: string[];
+};
 
 type EmbeddedAttemptPromptAssembly = {
   assertHostActive?: () => void;
@@ -99,6 +107,7 @@ type EmbeddedAttemptPromptAssembly = {
   transcriptLeafId: string | null;
   heartbeatSummary?: ReturnType<typeof resolveHeartbeatSummaryForAgent>;
   leasedSteering?: EmbeddedAttemptSteeringLease;
+  leasedExecSteering?: EmbeddedAttemptExecSteeringLease;
 };
 
 export async function prepareEmbeddedAttemptPromptAssembly(input: {
@@ -117,6 +126,7 @@ export async function prepareEmbeddedAttemptPromptAssembly(input: {
   prepareSystemPrompt?: (currentSystemPrompt: string) => Promise<string>;
   setActiveSessionSystemPrompt: (systemPrompt: string) => void;
   setLeasedSteering: (lease: EmbeddedAttemptSteeringLease) => void;
+  setLeasedExecSteering: (lease: EmbeddedAttemptExecSteeringLease) => void;
 }): Promise<EmbeddedAttemptPromptAssembly> {
   const { attempt } = input;
   const isSettledTurnFinalization = attempt.operation === "settled-tool-finalization";
@@ -333,6 +343,32 @@ export async function prepareEmbeddedAttemptPromptAssembly(input: {
     }
   }
 
+  let leasedExecSteering: EmbeddedAttemptExecSteeringLease | undefined;
+  if (attempt.sessionKey && !preserveExactPrompt) {
+    const execLeaseId = `${attempt.runId}:exec-steering`;
+    const leasedExec = leasePendingExecSteeringItems({
+      requesterSessionKey: attempt.sessionKey,
+      leaseId: execLeaseId,
+    });
+    if (leasedExec) {
+      leasedExecSteering = { leaseId: execLeaseId, itemIds: leasedExec.itemIds };
+      // Transfer cleanup ownership before any prompt mutation can throw.
+      input.setLeasedExecSteering(leasedExecSteering);
+      effectivePrompt = prependExecSteeringPrompt({
+        steeringPrompt: leasedExec.prompt,
+        prompt: effectivePrompt,
+      });
+      effectiveTranscriptPrompt = prependExecSteeringPrompt({
+        steeringPrompt: leasedExec.prompt,
+        prompt: effectiveTranscriptPrompt,
+      });
+      log.debug(
+        `exec steering: injected ${leasedExec.itemIds.length} queued completion(s) into turn ` +
+          `runId=${attempt.runId} sessionKey=${attempt.sessionKey}`,
+      );
+    }
+  }
+
   const currentUserAdmission =
     !preserveExactPrompt && !attempt.skipPreparedUserTurnMessage
       ? attempt.userTurnTranscriptRecorder?.getAdmissionReceipt()
@@ -358,6 +394,7 @@ export async function prepareEmbeddedAttemptPromptAssembly(input: {
     transcriptLeafId,
     heartbeatSummary,
     leasedSteering,
+    leasedExecSteering,
   };
 }
 
