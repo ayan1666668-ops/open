@@ -34,7 +34,7 @@ import {
   outputText,
   makeUserInput,
   makeToolOutputWithCallId,
-} from "./server.test-helpers.js";
+} from "./server.test-harness.js";
 
 const { startMockServer, cleanups } = createMockServerTestHarness();
 

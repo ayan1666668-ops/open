@@ -13,7 +13,7 @@ import {
   outputToolCall,
   outputToolCallId,
   requireRecord,
-} from "./server.test-helpers.js";
+} from "./server.test-harness.js";
 
 const { startMockServer } = createMockServerTestHarness();
 
