@@ -3,6 +3,7 @@ import type { TemplateResult } from "lit";
 import { t } from "../../i18n/index.ts";
 import type { DockLayoutController } from "../dock-layout-controller.ts";
 import { renderDesktopDocumentView } from "./desktop-document-view.ts";
+import { openDesktopFocus } from "./desktop-focus-window.ts";
 import type { DesktopMobileKeyboard } from "./desktop-mobile-keyboard.ts";
 import type { DesktopPanelFullscreenController } from "./desktop-panel-fullscreen-controller.ts";
 import { renderDesktopPanelView, type DesktopSizingOptions } from "./desktop-panel-view.ts";
@@ -14,7 +15,6 @@ type DesktopPresentation = {
   content: Parameters<typeof renderDesktopPanelView>[0]["content"];
   controlling: boolean;
   desktopApps: WorkerDesktopAppId[];
-  environmentSelected: boolean;
   launchingApp: WorkerDesktopAppId | null;
   showApps: boolean;
   sizing: DesktopSizingOptions;
@@ -27,7 +27,12 @@ type DesktopPresentation = {
   onLaunch: (app: WorkerDesktopAppId) => void;
   onClose: () => void;
   onDocumentClose: () => void;
-  onOpenWindow: () => void;
+  focusTarget: () => {
+    basePath: string;
+    source: string | null;
+    control: boolean;
+    workspaceControls: boolean;
+  };
   onDisconnect: () => void;
 };
 
@@ -57,19 +62,28 @@ export function renderDesktopPresentation(view: DesktopPresentation) {
     renderResizer: () => view.dockLayout.renderResizer("bp", t("desktop.resize")),
     renderFullscreenControl: () => view.fullscreenMode.renderButton(),
     onDock: (dock) => view.dockLayout.setDock(dock),
-    onOpenWindow: view.onOpenWindow,
+    onOpenWindow: () => {
+      const target = view.focusTarget();
+      // Read the current target at click time; workspace pop-outs never take input.
+      openDesktopFocus(
+        target.basePath,
+        target.source,
+        target.workspaceControls ? false : target.control,
+      );
+    },
     onClose: view.onClose,
     content: view.content,
     connection: {
       controlling: view.controlling,
       desktopApps: view.desktopApps,
-      environmentSelected: view.environmentSelected,
+      environmentSelected: view.focusTarget().source !== null,
       launchingApp: view.launchingApp,
       showApps: view.showApps,
       sizing: view.sizing,
       pictureInPictureControl: view.pictureInPictureControl,
       onLaunch: view.onLaunch,
       onTakeControl: view.onTakeControl,
+      onControlToggle: view.onControlToggle,
       onDisconnect: view.onDisconnect,
     },
   });

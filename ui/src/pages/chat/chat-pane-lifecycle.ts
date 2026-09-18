@@ -14,6 +14,7 @@ import { BROWSER_ANNOTATION_EVENT } from "../../components/browser/browser-annot
 import {
   BROWSER_PANEL_TOGGLE_EVENT,
   DESKTOP_PANEL_TOGGLE_EVENT,
+  PORTAL_PANEL_TOGGLE_EVENT,
   TERMINAL_PANEL_DOCK_BOTTOM_EVENT,
   TERMINAL_PANEL_TOGGLE_EVENT,
 } from "../../components/panel-toggle-contract.ts";
@@ -434,6 +435,7 @@ export abstract class ChatPaneLifecycle extends ChatPaneSessionCreation {
       [TERMINAL_PANEL_TOGGLE_EVENT, "terminal", "openclaw-terminal-panel"],
       [BROWSER_PANEL_TOGGLE_EVENT, "browser", "openclaw-browser-panel"],
       [DESKTOP_PANEL_TOGGLE_EVENT, "desktop", "openclaw-desktop-panel"],
+      [PORTAL_PANEL_TOGGLE_EVENT, "portal", "openclaw-portals-page"],
     ] as const;
     const panelToggleCleanups = panelToggleEvents.map(([eventName, slot, tagName]) => {
       const listener = (event: Event) => {

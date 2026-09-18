@@ -4,6 +4,7 @@ import type { PortalListResult, PortalSummary } from "@openclaw/gateway-protocol
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GatewayBrowserClient, GatewayEventFrame } from "../../api/gateway.ts";
 import type { ApplicationContext, ApplicationGatewaySnapshot } from "../../app/context.ts";
+import { createApplicationContextProvider } from "../../test-helpers/application-context.ts";
 import { gatewayHelloForMethods } from "../../test-helpers/gateway-methods.ts";
 import { resolvePortalUrl } from "./portal-url.ts";
 
@@ -14,11 +15,6 @@ const probePortalReachable = vi.hoisted(() =>
 vi.mock("./portal-reachability.ts", () => ({ probePortalReachable }));
 
 import "./portals-page.ts";
-
-type PortalsPageTestElement = HTMLElement & {
-  context: ApplicationContext;
-  updateComplete: Promise<boolean>;
-};
 
 const portal = {
   id: "p3000",
@@ -76,10 +72,15 @@ function createContext(
   };
 }
 
-async function mountPage(context: ApplicationContext) {
-  const page = document.createElement("openclaw-portals-page") as PortalsPageTestElement;
-  page.context = context;
-  document.body.append(page);
+async function mountPage(context: ApplicationContext, portalId?: string) {
+  const page = document.createElement("openclaw-portals-page");
+  const provider = createApplicationContextProvider(context);
+  if (portalId) {
+    page.embedded = true;
+    page.requestedPortalId = portalId;
+  }
+  provider.append(page);
+  document.body.append(provider);
   await page.updateComplete;
   return page;
 }
@@ -94,6 +95,29 @@ beforeEach(() => {
 });
 
 describe("PortalsPage", () => {
+  it("opens the requested portal in the sidebar and never substitutes another app", async () => {
+    const selected = { ...portal, id: "selected-app", title: "Selected app", path: "/selected" };
+    let portals = [portal, selected];
+    const source = createContext(["portal.list", "portal.close"], async () => ({ portals }));
+    const page = await mountPage(source.context, selected.id);
+
+    await vi.waitFor(() => {
+      expect(page.querySelector("iframe")?.getAttribute("title")).toBe(
+        "Selected app portal preview",
+      );
+    });
+    expect(page.querySelector(".content-header")).toBeNull();
+    expect(page.querySelector(".portals-rail")).toBeNull();
+
+    portals = [portal];
+    source.emitPortals(portals);
+
+    await vi.waitFor(() => {
+      expect(page.querySelector("iframe")).toBeNull();
+      expect(page.textContent).toContain("This portal is no longer available.");
+    });
+  });
+
   it("renders the portal list and refetches it after replacement events", async () => {
     const source = createContext(["portal.list", "portal.close"], async (method) => {
       if (method === "portal.list") {

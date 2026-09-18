@@ -24,6 +24,8 @@ export * from "./schema/cron.js";
 export * from "./schema/cron.types.js";
 export * from "./schema/error-codes.js";
 export * from "./schema/environments.js";
+export * from "./schema/environments-session.js";
+export * from "./schema/environments-session-exec.js";
 export * from "./schema/exec-approvals.js";
 export * from "./schema/devices.js";
 export * from "./schema/desktop.js";

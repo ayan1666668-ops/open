@@ -34,6 +34,8 @@ import type { WorkerEnvironmentServiceRecord } from "../worker-environments/serv
 import type { WorkerEnvironmentState } from "../worker-environments/state.js";
 import { formatForLog } from "../ws-log.js";
 import { respondDesktopLaunch, respondDesktopObserve } from "./environments.desktop.js";
+import { environmentsSessionExecHandlers } from "./environments.session-exec.js";
+import { environmentsSessionHandlers } from "./environments.session.js";
 import { respondUnavailableOnThrow } from "./response.js";
 import type { GatewayRequestContext, GatewayRequestHandlers, RespondFn } from "./types.js";
 import { assertValidParams } from "./validation.js";
@@ -284,6 +286,8 @@ async function respondWorkerMutation(
 }
 
 export const environmentsHandlers: GatewayRequestHandlers = {
+  ...environmentsSessionHandlers,
+  ...environmentsSessionExecHandlers,
   "environments.list": async ({ params, respond, client, context }) => {
     if (!assertValidParams(params, validateEnvironmentsListParams, "environments.list", respond)) {
       return;

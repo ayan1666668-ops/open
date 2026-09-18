@@ -37,6 +37,8 @@ const enDesktop = {
     switchToViewOnly: "Switch to view only",
     viewOnly: "View only",
     control: "Control",
+    agentInputPaused:
+      "You control this desktop. Agent input is paused until you switch to view only.",
     keyboard: "Keyboard",
     keyboardInput: "Remote desktop keyboard input",
     touchControls: "Remote desktop controls",

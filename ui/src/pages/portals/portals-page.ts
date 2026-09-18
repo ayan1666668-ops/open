@@ -5,12 +5,13 @@ import type {
   PortalSummary,
 } from "@openclaw/gateway-protocol";
 import { html, nothing } from "lit";
-import { state } from "lit/decorators.js";
+import { property, state } from "lit/decorators.js";
 import { keyed } from "lit/directives/keyed.js";
 import { ref } from "lit/directives/ref.js";
 import { titleForRoute } from "../../app-navigation.ts";
 import { applicationContext, type ApplicationContext } from "../../app/context.ts";
 import { icon } from "../../components/icons.ts";
+import type { PortalPanelToggleDetail } from "../../components/panel-toggle-contract.ts";
 import { t } from "../../i18n/index.ts";
 import { registerPortalsEnglish } from "../../i18n/locales/en-portals.ts";
 import { formatUiError } from "../../lib/format-error.ts";
@@ -33,6 +34,9 @@ type PortalProbeState = {
 };
 
 class PortalsPage extends OpenClawLightDomElement {
+  @property({ type: Boolean, reflect: true }) embedded = false;
+  @property({ type: Boolean }) presented = true;
+  @property({ attribute: false }) requestedPortalId: string | null = null;
   @consume({ context: applicationContext, subscribe: true })
   private context!: ApplicationContext;
 
@@ -75,6 +79,36 @@ class PortalsPage extends OpenClawLightDomElement {
     super.disconnectedCallback();
   }
 
+  override updated(changed: Map<string, unknown>) {
+    // The Gateway lifecycle owns the initial fetch, including an initial explicit target.
+    if (changed.has("requestedPortalId") && changed.get("requestedPortalId") !== undefined) {
+      this.requestGeneration += 1;
+      this.loading = false;
+      this.portalProbeGeneration += 1;
+      this.portalProbeState = null;
+      this.applyPortalSet(this.portals);
+      void this.loadPortals();
+    } else if (
+      changed.has("presented") &&
+      changed.get("presented") !== undefined &&
+      this.presented
+    ) {
+      void this.loadPortals();
+    }
+  }
+
+  handleToggleRequest(event: Event): void {
+    // SAFETY: the shared typed panel-toggle dispatcher owns this event's detail.
+    const detail = event instanceof CustomEvent ? (event.detail as PortalPanelToggleDetail) : null;
+    if (detail?.open === false) {
+      return;
+    }
+    if (detail?.portalId) {
+      this.requestedPortalId = detail.portalId;
+    }
+    void this.loadPortals();
+  }
+
   private get portalListSupported(): boolean {
     return isGatewayMethodAdvertised(this.gateway.snapshot ?? {}, "portal.list") !== false;
   }
@@ -101,9 +135,11 @@ class PortalsPage extends OpenClawLightDomElement {
     this.portalSetRevision += 1;
     this.portals = [...portals];
     const previousPortalId = this.selectedPortalId;
-    const selectedPortalId = portals.some((portal) => portal.id === previousPortalId)
-      ? this.selectedPortalId
-      : (portals[0]?.id ?? null);
+    const selectedPortalId =
+      this.requestedPortalId ??
+      (portals.some((portal) => portal.id === previousPortalId)
+        ? this.selectedPortalId
+        : (portals[0]?.id ?? null));
     this.selectedPortalId = selectedPortalId;
     this.loaded = true;
     this.error = null;
@@ -161,7 +197,12 @@ class PortalsPage extends OpenClawLightDomElement {
   }
 
   private async loadPortals() {
-    if (!this.gateway.connected || !this.portalListSupported || this.loading) {
+    if (
+      !this.gateway.connected ||
+      !this.portalListSupported ||
+      this.loading ||
+      (this.embedded && !this.presented)
+    ) {
       return;
     }
     const client = this.gateway.client;
@@ -233,12 +274,18 @@ class PortalsPage extends OpenClawLightDomElement {
           this.loading && !this.loaded
             ? html`<div class="portals-empty__title">${t("portalsPage.loading")}</div>`
             : html`
-                <div class="portals-empty__title">${t("portalsPage.emptyHint")}</div>
-                <div class="portals-empty__prompts">
-                  <span>${t("portalsPage.promptShow")}</span>
-                  <span>${t("portalsPage.promptStart")}</span>
-                  <span>${t("portalsPage.promptMakeAvailable")}</span>
+                <div class="portals-empty__title">
+                  ${t(this.requestedPortalId ? "portalsPage.unavailable" : "portalsPage.emptyHint")}
                 </div>
+                ${
+                  this.requestedPortalId
+                    ? nothing
+                    : html`<div class="portals-empty__prompts">
+                        <span>${t("portalsPage.promptShow")}</span>
+                        <span>${t("portalsPage.promptStart")}</span>
+                        <span>${t("portalsPage.promptMakeAvailable")}</span>
+                      </div>`
+                }
               `
         }
         ${
@@ -265,6 +312,8 @@ class PortalsPage extends OpenClawLightDomElement {
       `;
     }
     const portalUrl = this.portalUrl(portal, portal.tokenQuery);
+    const displayUrl = new URL(portalUrl);
+    displayUrl.search = "";
     const frameKey = `${portal.id}\u0000${portalUrl}`;
     const probeStatus =
       this.portalProbeState?.key === frameKey ? this.portalProbeState.status : "probing";
@@ -276,9 +325,9 @@ class PortalsPage extends OpenClawLightDomElement {
             href=${portalUrl}
             target="_blank"
             rel="noopener noreferrer"
-            title=${portalUrl}
+            title=${displayUrl.href}
           >
-            <span>${portalUrl}</span>
+            <span>${displayUrl.href}</span>
             ${icon("externalLink")}
             <span class="sr-only">${t("portalsPage.openNewTab")}</span>
           </a>
@@ -317,7 +366,7 @@ class PortalsPage extends OpenClawLightDomElement {
                       href=${portalUrl}
                       target="_blank"
                       rel="noopener noreferrer"
-                      >${portalUrl}</a
+                      >${displayUrl.href}</a
                     >
                     <button
                       class="btn"
@@ -348,8 +397,14 @@ class PortalsPage extends OpenClawLightDomElement {
   }
 
   override render() {
-    const selectedPortal =
-      this.portals.find((portal) => portal.id === this.selectedPortalId) ?? this.portals[0];
+    const selectedPortal = this.portals.find(
+      (portal) => portal.id === (this.requestedPortalId ?? this.selectedPortalId),
+    );
+    if (this.embedded) {
+      return html`<div class="portals-embedded">
+        ${selectedPortal ? this.renderPortal(selectedPortal) : this.renderEmptyState()}
+      </div>`;
+    }
     return html`
       <section class="content-header content-header--page">
         <div>
@@ -395,4 +450,10 @@ class PortalsPage extends OpenClawLightDomElement {
 
 if (!customElements.get("openclaw-portals-page")) {
   customElements.define("openclaw-portals-page", PortalsPage);
+}
+
+declare global {
+  interface HTMLElementTagNameMap {
+    "openclaw-portals-page": PortalsPage;
+  }
 }

@@ -161,6 +161,22 @@ export const CORE_GATEWAY_METHOD_SPECS = [
   ["taskSuggestions.dismiss", "task-suggestions", "operator.write", "<=2026.7"],
   ["environments.list", "environments", "dynamic", "2026.7"],
   ["environments.status", "environments", "operator.read", "2026.7"],
+  ["environments.session.status", "environments", "operator.read", "2026.9"],
+  [
+    "environments.session.create",
+    "environments",
+    "operator.admin",
+    "2026.9",
+    { controlPlaneWrite: true },
+  ],
+  [
+    "environments.session.destroy",
+    "environments",
+    "operator.admin",
+    "2026.9",
+    { controlPlaneWrite: true },
+  ],
+  ["environments.session.exec", "environments", "operator.admin", "2026.9"],
   ["worktrees.list", "worktrees", "operator.read", "2026.7"],
   // Read-only git probe, but it accepts arbitrary host paths; keep it at the
   // same bar as starting worktree sessions instead of plain read scope.

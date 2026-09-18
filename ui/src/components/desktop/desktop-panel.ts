@@ -18,7 +18,6 @@ import {
 } from "../panel-toggle-contract.ts";
 import { DesktopAppLauncher } from "./desktop-app-launcher.ts";
 import * as desktopTransport from "./desktop-client.ts";
-import { openDesktopFocus } from "./desktop-focus-window.ts";
 import { DesktopMobileKeyboard } from "./desktop-mobile-keyboard.ts";
 import {
   DesktopConnectionHandoff,
@@ -632,7 +631,10 @@ class OpenClawDesktopPanel extends OpenClawLitElement {
     }
     const notice = this.pictureInPicture.renderNotice(
       this.fullscreenMode.errorText ?? this.launcher.error ?? this.errorText,
-      this.noticeText,
+      this.noticeText ??
+        (this.controlling && this.source?.kind === "environment"
+          ? t("desktop.agentInputPaused")
+          : null),
       this.sessionSource.desktopAvailability,
     );
     const picker = renderDesktopPicker({
@@ -698,7 +700,6 @@ class OpenClawDesktopPanel extends OpenClawLitElement {
       content,
       controlling: this.controlling,
       desktopApps: this.desktopApps,
-      environmentSelected: this.environmentId !== null,
       launchingApp: this.launcher.app,
       showApps: this.source?.kind === "environment",
       sizing,
@@ -711,14 +712,12 @@ class OpenClawDesktopPanel extends OpenClawLitElement {
       onLaunch: (app) => void this.launcher.launch(app),
       onClose: () => this.closePanel(),
       onDocumentClose: () => this.onDocumentClose?.(),
-      onOpenWindow: () => {
-        // A workspace pop-out starts view-only; a second window never takes input.
-        openDesktopFocus(
-          this.basePath,
-          this.environmentId,
-          this.workspaceControls ? false : this.controlling,
-        );
-      },
+      focusTarget: () => ({
+        basePath: this.basePath,
+        source: this.environmentId,
+        control: this.controlling,
+        workspaceControls: this.workspaceControls,
+      }),
       onDisconnect: () => {
         if (this.embedded && (this.sessionKey !== null || this.suppliedEnvironments !== null)) {
           this.handleDesktopDisconnect(this.environmentId, { clean: true });

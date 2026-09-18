@@ -16,6 +16,8 @@ export { formatValidationErrors, type ValidationError } from "./validation-error
 export type { ProtocolValidator } from "./protocol-validator.js";
 export * from "./schema/worker-inference.js";
 export * from "./schema/worker-computer.js";
+export * from "./schema/environments-session.js";
+export * from "./schema/environments-session-exec.js";
 export * from "./schema/computer.js";
 export * from "./schema/skill-history.js";
 export * from "./schema/skill-library.js";

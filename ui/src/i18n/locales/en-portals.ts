@@ -10,6 +10,7 @@ const enPortals = {
     previewTitle: "{title} portal preview",
     loading: "Loading portals…",
     emptyHint: "Ask the agent to start a portal:",
+    unavailable: "This portal is no longer available. Ask the agent to reopen the application.",
     promptShow: "Show me in a portal.",
     promptStart: "Start the application in a portal.",
     promptMakeAvailable: "Make the server available in a portal.",

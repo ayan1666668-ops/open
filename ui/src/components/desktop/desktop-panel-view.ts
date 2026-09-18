@@ -286,6 +286,7 @@ export function renderDesktopConnection(options: {
   onDisconnect: () => void;
   onLaunch: (app: WorkerDesktopAppId) => void;
   onTakeControl: () => void;
+  onControlToggle: () => void;
 }) {
   return html`
     <div class="desktop-toolbar desktop-toolbar--connection">
@@ -319,6 +320,15 @@ export function renderDesktopConnection(options: {
           : nothing
       }
       <span class="desktop-toolbar__spacer"></span>
+      <button
+        class="desktop-toolbar-action"
+        type="button"
+        aria-label=${t(options.controlling ? "desktop.switchToViewOnly" : "desktop.takeControl")}
+        aria-pressed=${options.controlling ? "true" : "false"}
+        @click=${options.onControlToggle}
+      >
+        ${t(options.controlling ? "desktop.control" : "desktop.viewOnly")}
+      </button>
       ${renderDesktopSizing(options.sizing)} ${options.pictureInPictureControl}
       ${options.presentationControls ?? nothing}
       <button

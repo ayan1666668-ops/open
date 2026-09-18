@@ -1,0 +1,26 @@
+export type WorkerEnvironmentSessionIdentity = {
+  sessionId: string;
+  sessionKey: string;
+  agentId: string;
+  sessionLifecycleRevision?: string;
+};
+
+/** A secondary machine owned by a conversation, independent of its execution placement. */
+export type WorkerEnvironmentAttachment = WorkerEnvironmentSessionIdentity & {
+  environmentId: string;
+  ownerEpoch: number;
+  generation: number;
+};
+
+export type WorkerEnvironmentAttachmentRecord = Omit<WorkerEnvironmentAttachment, "ownerEpoch"> & {
+  createdAtMs: number;
+  lastUsedAtMs: number;
+  closedAtMs: number | null;
+};
+
+export type WorkerEnvironmentSessionCreateRequest = WorkerEnvironmentSessionIdentity & {
+  profileId: string;
+  idempotencyKey: string;
+  machineClass?: string;
+  os?: string;
+};

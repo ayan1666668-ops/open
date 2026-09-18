@@ -1,13 +1,18 @@
 import type { UiCommandParams } from "@openclaw/gateway-protocol";
 import type { GatewayBrowserClient, GatewayEventFrame } from "../api/gateway.ts";
 import type { GatewayAgentRow } from "../api/types.ts";
+import { isSessionRouteId } from "../app-route-paths.ts";
 import type { RouteId } from "../app-routes.ts";
 import {
   BROWSER_PANEL_TOGGLE_EVENT,
+  DESKTOP_PANEL_TOGGLE_EVENT,
+  PORTAL_PANEL_TOGGLE_EVENT,
   TERMINAL_PANEL_TOGGLE_EVENT,
   UI_COMMAND_EVENT,
 } from "../components/panel-toggle-contract.ts";
+import { rememberSessionPanelToggle } from "../components/session-panel-toggle-buffer.ts";
 import { i18n, isSupportedLocale } from "../i18n/index.ts";
+import { areUiSessionKeysEquivalent } from "../lib/sessions/session-key.ts";
 import type { ShellRouteState } from "./app-host-route-state.ts";
 import type { ApplicationContext } from "./context.ts";
 import { hasOperatorWriteAccess } from "./operator-access.ts";
@@ -191,20 +196,44 @@ export class ShellGatewayOwner {
       return;
     }
     if (command.kind === "panel") {
-      window.dispatchEvent(
-        new CustomEvent(
-          command.panel === "terminal" ? TERMINAL_PANEL_TOGGLE_EVENT : BROWSER_PANEL_TOGGLE_EVENT,
-          {
-            detail: {
-              open: command.open,
-              ...(command.dock ? { dock: command.dock } : {}),
-              ...(command.panel === "terminal" && command.terminalSessionId
-                ? { terminalSessionId: command.terminalSessionId }
-                : {}),
-            },
+      const sessionKey =
+        commandParams.sessionKey ??
+        (command.panel === "portal" ? this.host.activeSessionKey : undefined);
+      if (
+        sessionKey &&
+        (!areUiSessionKeysEquivalent(sessionKey, this.host.activeSessionKey) ||
+          !isSessionRouteId(this.host.routeState.routeId))
+      ) {
+        this.host.selectChatSession(sessionKey, commandParams.agentId);
+      }
+      const event = new CustomEvent(
+        {
+          terminal: TERMINAL_PANEL_TOGGLE_EVENT,
+          browser: BROWSER_PANEL_TOGGLE_EVENT,
+          desktop: DESKTOP_PANEL_TOGGLE_EVENT,
+          portal: PORTAL_PANEL_TOGGLE_EVENT,
+        }[command.panel],
+        {
+          detail: {
+            open: command.open,
+            ...(sessionKey ? { sessionKey } : {}),
+            ...(command.dock ? { dock: command.dock } : {}),
+            ...(command.panel === "terminal" && command.terminalSessionId
+              ? { terminalSessionId: command.terminalSessionId }
+              : {}),
+            ...(command.panel === "desktop" && command.environmentId
+              ? { environmentId: command.environmentId }
+              : {}),
+            ...(command.panel === "portal" && command.portalId
+              ? { portalId: command.portalId }
+              : {}),
           },
-        ),
+        },
       );
+      if (sessionKey) {
+        rememberSessionPanelToggle(command.panel, event);
+      }
+      window.dispatchEvent(event);
       return;
     }
 
