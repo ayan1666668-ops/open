@@ -7,6 +7,7 @@ import {
 } from "../../infra/agent-events.js";
 import { getAgentRunContext } from "../../infra/agent-run-registry.js";
 import { requireActivePluginRegistry } from "../../plugins/runtime.js";
+import type { PreparedAgentRunAdmission } from "../admitted-run-context.js";
 import {
   createAssistantErrorTranscript,
   type AssistantErrorTranscript,
@@ -32,6 +33,7 @@ import type {
   ModelFallbackRouteResolution,
 } from "../model-fallback.types.js";
 import type { ModelManifestNormalizationContext } from "../model-ref-shared.js";
+import { settleFailedRequesterRun } from "../requester-run-settlement.js";
 import { resolveAgentRunAbortLifecycleFields } from "../run-termination.js";
 import {
   didEmbeddedCyberFailoverTargetCommitWork,
@@ -106,6 +108,7 @@ type EmbeddedAgentRunEntryResult<T extends EmbeddedAgentRunResult> = {
 };
 
 type EmbeddedAgentRunEntryParams<T extends EmbeddedAgentRunResult> = {
+  preparedRunAdmission?: PreparedAgentRunAdmission;
   selection: {
     cfg: OpenClawConfig;
     provider: string;
@@ -695,6 +698,15 @@ export async function runEmbeddedAgentEntry<T extends EmbeddedAgentRunResult>(
       }
     };
     return { ...settledResult, terminal, settleSessionOverride };
+  } catch (error) {
+    throw settleFailedRequesterRun(
+      {
+        ...params.identity,
+        preparedRunAdmission: params.preparedRunAdmission,
+        abortSignal: params.abortSignal,
+      },
+      error,
+    );
   } finally {
     if (unsettledContextEngineTurnAttempt) {
       discardContextEngineTurnAttemptIntent({

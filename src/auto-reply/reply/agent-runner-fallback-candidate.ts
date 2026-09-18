@@ -131,6 +131,7 @@ export async function runAgentFallbackCandidates(params: AgentFallbackCycleParam
   };
   return params.timing.measure("model_fallback", () =>
     runEmbeddedAgentEntry<EmbeddedAgentRunResult>({
+      preparedRunAdmission: params.preparedRunAdmission,
       selection: {
         cfg: selection.cfg,
         provider: selection.provider,

@@ -1,6 +1,8 @@
 /** Full-entry coverage for sessions_yield terminal projection. */
 import { expectDefined } from "@openclaw/normalization-core";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { createDeferred } from "../../../test/helpers/promise.js";
+import type { callGateway as runtimeCallGateway } from "../../gateway/call.js";
 import type { OpenClawTestState } from "../../test-utils/openclaw-test-state.js";
 import { createSubagentRunRecord } from "../subagent-test-fixtures.test-helpers.js";
 import type { SubagentRunRecord } from "../subagents/registry/subagent-registry.types.js";
@@ -50,6 +52,164 @@ describe("sessions_yield orchestration", () => {
     expect(result.meta.stopReason).toBe("end_turn");
     expect(result.meta.pendingToolCalls).toBeUndefined();
   });
+
+  it.each(["active", "revoked", "replaced"] as const)(
+    "revalidates the operational owner after asynchronous terminal cleanup (%s)",
+    async (owner) => {
+      const { prepareSystemAgentRunAdmission } = await import("../admitted-run-context.js");
+      const transcriptOwner = await import("../assistant-error-transcript.js");
+      const registry = await import("../subagents/registry/subagent-registry.test-helpers.js");
+      const { subagentRuns } = await import("../subagents/registry/subagent-registry-memory.js");
+      const { onSubagentRegistryPersisted, persistSubagentRunsToDiskOrThrow } =
+        await import("../subagents/registry/subagent-registry-state.js");
+      const { loadSubagentRegistryFromSqlite } =
+        await import("../subagents/registry/subagent-registry.store.sqlite.js");
+      const { writeSubagentSessionEntry, settleSubagentRegistryPersistenceWork } =
+        await import("../subagents/registry/subagent-registry.persistence.test-support.js");
+      const { testing: deliveryTesting } =
+        await import("../subagents/announce/subagent-announce-delivery.test-support.js");
+      const params = { ...createOverflowRunParams(state), runId: `cleanup-parent-${owner}` };
+      const admission = prepareSystemAgentRunAdmission({}, params.runId, "main", "cleanup-test");
+      const replacement = prepareSystemAgentRunAdmission({}, params.runId, "main", "replacement");
+      const cleanupEntered = createDeferred();
+      const releaseCleanup = createDeferred();
+      const gatewayCalls = vi
+        .fn<(request: Parameters<typeof runtimeCallGateway>[0]) => Promise<unknown>>()
+        .mockResolvedValue({
+          result: {
+            payloads: [{ text: "parent resumed" }],
+            meta: { durationMs: 1, finalAssistantVisibleText: "parent resumed" },
+            deliveryStatus: { status: "sent", resultCount: 1 },
+          },
+        });
+      const callGateway: typeof runtimeCallGateway = async <T>(
+        request: Parameters<typeof runtimeCallGateway>[0],
+      ): Promise<T> => (await gatewayCalls(request)) as T;
+      deliveryTesting.setDepsForTest({ callGateway });
+      registry.testing.setDepsForTest({ callGateway });
+      registry.resetSubagentRegistryForTests({ persist: false });
+      registry.initSubagentRegistry();
+      const child = createSubagentRunRecord({
+        runId: `cleanup-child-${owner}`,
+        childSessionKey: `agent:main:subagent:cleanup-${owner}`,
+        requesterSessionKey: params.sessionKey,
+        requesterAgentId: params.agentId,
+        requesterTurnRunId: params.runId,
+        expectsCompletionMessage: true,
+        execution: { status: "terminal", endedAt: Date.now(), outcome: { status: "ok" } },
+        completion: {
+          required: true,
+          terminalReply: { disposition: "visible", text: "child result" },
+        },
+        delivery: { status: "delivered" },
+        cleanupHandled: true,
+        cleanupCompletedAt: Date.now(),
+      });
+      await writeSubagentSessionEntry({
+        stateDir: state.stateDir,
+        sessionKey: params.sessionKey,
+        agentId: params.agentId,
+        defaultSessionId: params.sessionId,
+      });
+      registry.addSubagentRunForTests(child);
+      persistSubagentRunsToDiskOrThrow(subagentRuns, [child.runId]);
+      const persisted = vi.fn(() => loadSubagentRegistryFromSqlite().get(child.runId));
+      const unsubscribe = onSubagentRegistryPersisted(persisted);
+      const createTranscript = transcriptOwner.createAssistantErrorTranscript;
+      const factorySpy = vi
+        .spyOn(transcriptOwner, "createAssistantErrorTranscript")
+        .mockImplementation((input) => {
+          const transcript = createTranscript(input);
+          if (input.runId !== params.runId) {
+            return transcript;
+          }
+          return {
+            ...transcript,
+            async settle(failed: boolean) {
+              cleanupEntered.resolve();
+              await releaseCleanup.promise;
+              await transcript.settle(failed);
+            },
+          };
+        });
+      mockedRunEmbeddedAttempt.mockImplementationOnce(async () => {
+        registry.markRequesterTurnYielded({
+          requesterSessionKey: params.sessionKey,
+          requesterAgentId: params.agentId,
+          requesterTurnRunId: params.runId,
+        });
+        return makeAttemptResult({
+          yieldDetected: true,
+          assistantTexts: [],
+          acceptedSessionSpawns: [
+            {
+              runId: child.runId,
+              childSessionKey: child.childSessionKey,
+              expectsCompletionMessage: true,
+            },
+          ],
+        });
+      });
+      const run = runEmbeddedAgent({ ...params, preparedRunAdmission: admission });
+      void run.catch(() => {});
+      try {
+        await cleanupEntered.promise;
+        const before = loadSubagentRegistryFromSqlite().get(child.runId);
+        expect(before).toMatchObject({
+          requesterTurnRunId: params.runId,
+          requesterTurnYielded: true,
+        });
+        persisted.mockClear();
+        if (owner === "revoked") {
+          admission.close();
+        }
+        if (owner === "replaced") {
+          await replacement.admit("embedded");
+        }
+        releaseCleanup.resolve();
+        if (owner === "active") {
+          expect((await run).requesterContinuationSettled).toBe(true);
+          await settleSubagentRegistryPersistenceWork();
+          expect(gatewayCalls).toHaveBeenCalledWith(
+            expect.objectContaining({
+              method: "agent",
+              params: expect.objectContaining({
+                inputProvenance: expect.objectContaining({ sourceTool: "subagent_settle" }),
+              }),
+            }),
+          );
+          expect(persisted).toHaveBeenCalled();
+          expect(persisted.mock.results.map((result) => result.value)).toContainEqual(
+            expect.objectContaining({
+              requesterTurnRunId: undefined,
+              requesterTurnYielded: undefined,
+              requesterSettleWake: expect.objectContaining({
+                batchRunIds: [child.runId],
+                requesterYieldBatch: true,
+              }),
+            }),
+          );
+        } else {
+          await expect(run).rejects.toThrow();
+          await settleSubagentRegistryPersistenceWork();
+          expect(loadSubagentRegistryFromSqlite().get(child.runId)).toEqual(before);
+          expect(persisted).not.toHaveBeenCalled();
+          expect(gatewayCalls).not.toHaveBeenCalled();
+        }
+      } finally {
+        releaseCleanup.resolve();
+        await run.catch(() => {});
+        await settleSubagentRegistryPersistenceWork();
+        unsubscribe();
+        factorySpy.mockRestore();
+        admission.close();
+        replacement.close();
+        registry.resetSubagentRegistryForTests({ persist: false });
+        registry.testing.setDepsForTest();
+        deliveryTesting.setDepsForTest();
+      }
+    },
+  );
 
   it.each([
     { spawnOnRetry: false, agentHarnessId: "openclaw" },
