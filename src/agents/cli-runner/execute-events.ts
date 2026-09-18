@@ -80,9 +80,8 @@ export function createCliEventHandlers(params: {
     toolSummaryNames.push(name);
   };
   const recordToolStart = (event: CliToolUseStartDelta) => {
-    if (event.args && Object.keys(event.args).length > 0) {
-      toolArgsByCallId.set(event.toolCallId, event.args);
-    }
+    // Empty arguments are meaningful: progress-card calls use {} to clear the card.
+    toolArgsByCallId.set(event.toolCallId, event.args);
     const current = toolSummaryById.get(event.toolCallId);
     if (!current) {
       toolSummaryById.set(event.toolCallId, { name: event.name, failed: false });

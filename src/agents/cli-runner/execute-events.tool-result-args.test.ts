@@ -506,20 +506,27 @@ describe("CLI progress-card plan projection", () => {
 
 describe("CLI plan channel bridge", () => {
   it.each([
-    { name: "progress_card", suppressed: false },
-    { name: "mcp__openclaw__progress_card", suppressed: false },
-    { name: "mcp__openclaw__progress_card", suppressed: true },
+    { name: "progress_card", suppressed: false, clearCard: false },
+    { name: "mcp__openclaw__progress_card", suppressed: false, clearCard: false },
+    { name: "mcp__openclaw__progress_card", suppressed: true, clearCard: false },
+    { name: "progress_card", suppressed: false, clearCard: true },
+    { name: "mcp__openclaw__progress_card", suppressed: false, clearCard: true },
+    { name: "update_plan", suppressed: false, clearCard: true },
+    { name: "mcp__openclaw__update_plan", suppressed: false, clearCard: true },
+    { name: "mcp__openclaw__progress_card", suppressed: true, clearCard: true },
   ])(
-    "bridges actual $name results with suppression=$suppressed without completing the run",
-    async ({ name, suppressed }) => {
+    "bridges $name with suppression=$suppressed and clear=$clearCard without completing the run",
+    async ({ name, suppressed, clearCard }) => {
       const runId = `progress-bridge-${name}`;
       const render = vi.fn((_text: string, _options?: unknown) => true);
+      const deleteCurrent = vi.fn(async () => {});
       const progress = createChannelProgressDraftCompositor({
         entry: { streaming: { mode: "progress", progress: { label: false, toolProgress: true } } },
         mode: "progress",
         active: true,
         seed: runId,
         update: render,
+        deleteCurrent,
       });
       const onPlanUpdate = vi.fn(
         async (update: Parameters<NonNullable<GetReplyOptions["onPlanUpdate"]>>[0]) => {
@@ -577,6 +584,36 @@ describe("CLI plan channel bridge", () => {
             }) + "\n";
           parser.push(resultLine);
           parser.push(resultLine);
+          if (clearCard) {
+            const call = (id: string, input: Record<string, unknown>) => {
+              parser.push(
+                JSON.stringify({
+                  type: "assistant",
+                  message: { content: [{ type: "tool_use", id, name, input }] },
+                }) + "\n",
+              );
+              return (
+                JSON.stringify({
+                  type: "user",
+                  message: {
+                    content: [
+                      { type: "tool_result", tool_use_id: id, content: "updated", is_error: false },
+                    ],
+                  },
+                }) + "\n"
+              );
+            };
+            const clearResult = call("clear", {});
+            parser.push(clearResult);
+            parser.push(clearResult);
+            parser.push(
+              call("replacement", {
+                plan: [{ step: "Replacement", status: "in_progress" }],
+              }),
+            );
+            // A late duplicate clear must not retract the newer checklist.
+            parser.push(clearResult);
+          }
           emitAgentEvent({
             runId: "unrelated-run",
             stream: "plan",
@@ -594,7 +631,7 @@ describe("CLI plan channel bridge", () => {
           suppressAssistantBridge: suppressed,
           runParams: buildContext(runId).params,
         });
-        expect(onPlanUpdate).toHaveBeenCalledTimes(suppressed ? 0 : 1);
+        expect(onPlanUpdate).toHaveBeenCalledTimes(suppressed ? 0 : clearCard ? 3 : 1);
         if (!suppressed) {
           expect(onPlanUpdate).toHaveBeenCalledWith({
             phase: "update",
@@ -609,6 +646,7 @@ describe("CLI plan channel bridge", () => {
         }
         if (suppressed) {
           expect(render).not.toHaveBeenCalled();
+          expect(deleteCurrent).not.toHaveBeenCalled();
         } else {
           expect(render).toHaveBeenCalledWith(
             expect.stringContaining("2/2 complete"),
@@ -622,8 +660,27 @@ describe("CLI plan channel bridge", () => {
             }),
           );
           const rendered = render.mock.calls.at(-1)?.[0];
-          expect(rendered).toContain("Inspect");
-          expect(rendered).toContain("Repair");
+          if (clearCard) {
+            expect(onPlanUpdate).toHaveBeenNthCalledWith(2, {
+              phase: "update",
+              title: "Plan updated",
+              source: "openclaw",
+              steps: [],
+            });
+            expect(onPlanUpdate).toHaveBeenNthCalledWith(
+              3,
+              expect.objectContaining({
+                steps: [{ step: "Replacement", status: "in_progress" }],
+              }),
+            );
+            expect(deleteCurrent).toHaveBeenCalledTimes(1);
+            expect(rendered).toContain("Replacement");
+            expect(rendered).not.toContain("Inspect");
+          } else {
+            expect(deleteCurrent).not.toHaveBeenCalled();
+            expect(rendered).toContain("Inspect");
+            expect(rendered).toContain("Repair");
+          }
         }
         expect(result.payloads).toEqual([{ text: "Final task answer" }]);
         expect(lifecycle).toEqual(["start", "end"]);
