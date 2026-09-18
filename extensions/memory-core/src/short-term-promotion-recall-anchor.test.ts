@@ -182,6 +182,38 @@ describe("short-term promotion recall anchors", () => {
     expect(applied.applied).toBe(0);
   });
 
+  it("keeps eligible text beside a dreaming fence when a marker window matches exactly", async (workspaceDir) => {
+    await writeDailyMemoryNote(workspaceDir, "2026-04-01", [
+      "intro",
+      "summary",
+      "Moved backups to S3 Glacier.",
+    ]);
+    await recordMemoryRecalls(workspaceDir, "glacier", [
+      memoryRecallResult("memory/2026-04-01.md", 3, 3, 0.94, "Moved backups to S3 Glacier."),
+    ]);
+    // Dreaming markers land on the lines before the recorded one. Stripping
+    // comments turns the window that spans the closing marker and the text
+    // into an exact match closer to the recorded coordinates than the text
+    // line itself, so selection must not consider managed windows at all;
+    // otherwise the fence guard would discard the winning window and the
+    // candidate would surface as unresolved even though its complete text is
+    // still available right beside the fence.
+    await writeDailyMemoryNote(workspaceDir, "2026-04-01", [
+      "intro",
+      "<!-- openclaw:dreaming:scratch:start -->",
+      "<!-- openclaw:dreaming:scratch:end -->",
+      "Moved backups to S3 Glacier.",
+    ]);
+
+    const ranked = await rankAllCandidates(workspaceDir);
+    const applied = await applyAllCandidates(workspaceDir, ranked);
+
+    expect(applied.applied).toBe(1);
+    expect(applied.appliedCandidates[0]?.startLine).toBe(4);
+    expect(applied.appliedCandidates[0]?.endLine).toBe(4);
+    expect(applied.appliedCandidates[0]?.snippet).toBe("Moved backups to S3 Glacier.");
+  });
+
   it("does not promote replacement text through a comment-only stored anchor", async (workspaceDir) => {
     await writeDailyMemoryNote(workspaceDir, "2026-04-01", [
       "intro",

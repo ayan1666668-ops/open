@@ -174,6 +174,11 @@ function relocateCandidateRange(
     if (!fallbackSnippet) {
       return null;
     }
+    // Recorded coordinates are also managed-range trust: a comment-only anchor
+    // whose lines now sit inside a dreaming fence would promote scratchwork.
+    if (lineRangeOverlapsDreamingFence(lines, candidate.startLine, candidate.endLine)) {
+      return null;
+    }
     return {
       startLine: candidate.startLine,
       endLine: candidate.endLine,
@@ -182,7 +187,10 @@ function relocateCandidateRange(
   }
 
   const exactSnippet = normalizeRangeSnippet(lines, candidate.startLine, candidate.endLine);
-  if (exactSnippet === targetSnippet) {
+  if (
+    exactSnippet === targetSnippet &&
+    !lineRangeOverlapsDreamingFence(lines, candidate.startLine, candidate.endLine)
+  ) {
     return {
       startLine: candidate.startLine,
       endLine: candidate.endLine,
@@ -199,6 +207,14 @@ function relocateCandidateRange(
     for (let span = 1; span <= maxSpan && startIndex + span <= lines.length; span += 1) {
       const startLine = startIndex + 1;
       const endLine = startIndex + span;
+      // Managed windows are ineligible for selection. Comment stripping can
+      // turn a marker-bearing window into an exact match that outranks the
+      // eligible text beside the fence, and the apply-time fence guard would
+      // then discard that winner, silently dropping a candidate whose text is
+      // still available just outside the fence.
+      if (lineRangeOverlapsDreamingFence(lines, startLine, endLine)) {
+        continue;
+      }
       const snippet = normalizeRangeSnippet(lines, startLine, endLine);
       const comparison = compareCandidateWindow(targetSnippet, snippet);
       const listMarkerFreeSnippet = normalizeListMarkerFreeRangeSnippet(lines, startLine, endLine);
