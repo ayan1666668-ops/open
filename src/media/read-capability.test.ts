@@ -38,35 +38,31 @@ describe("resolveAgentScopedOutboundMediaAccess", () => {
     channelPluginMocks.getLoadedChannelPlugin.mockReset();
   });
 
-  it("preserves caller-provided workspaceDir from mediaAccess", () => {
+  it.each([false, true])("reads from the selected workspace (explicit=%s)", async (explicit) => {
+    const base = tempDirs.make("media-workspace-selection-");
+    const provided = path.join(base, "provided");
+    const override = path.join(base, "override");
+    for (const directory of [provided, override]) {
+      await fs.mkdir(directory);
+      await fs.writeFile(path.join(directory, "report.txt"), path.basename(directory));
+    }
     const result = resolveAgentScopedOutboundMediaAccess({
-      cfg: {} as OpenClawConfig,
-      mediaAccess: { workspaceDir: "/tmp/media-workspace" },
+      cfg: {},
+      mediaAccess: { workspaceDir: provided },
+      ...(explicit ? { workspaceDir: override } : {}),
     });
-
-    expect(Object.keys(result)).toStrictEqual(["localRoots", "readFile", "workspaceDir"]);
-    expect(result.localRoots).toStrictEqual([
-      ...getDefaultMediaLocalRoots().filter((root) => path.basename(root) !== "sandboxes"),
-      "/tmp/media-workspace",
-    ]);
-    expect(typeof result.readFile).toBe("function");
-    expect(result.workspaceDir).toBe("/tmp/media-workspace");
-  });
-
-  it("prefers explicit workspaceDir over mediaAccess.workspaceDir", () => {
-    const result = resolveAgentScopedOutboundMediaAccess({
-      cfg: {} as OpenClawConfig,
-      workspaceDir: "/tmp/explicit-workspace",
-      mediaAccess: { workspaceDir: "/tmp/media-workspace" },
-    });
-
-    expect(Object.keys(result)).toStrictEqual(["localRoots", "readFile", "workspaceDir"]);
-    expect(result.localRoots).toStrictEqual([
-      ...getDefaultMediaLocalRoots().filter((root) => path.basename(root) !== "sandboxes"),
-      "/tmp/explicit-workspace",
-    ]);
-    expect(typeof result.readFile).toBe("function");
-    expect(result.workspaceDir).toBe("/tmp/explicit-workspace");
+    expect(result.workspaceDir).toBe(explicit ? override : provided);
+    const bytes = await readOutboundMediaFile(result.readFile!, "report.txt", { maxBytes: 1024 });
+    expect(bytes.toString()).toBe(explicit ? "override" : "provided");
+    await expect(
+      readOutboundMediaFile(
+        result.readFile!,
+        path.join(explicit ? provided : override, "report.txt"),
+        {
+          maxBytes: 1024,
+        },
+      ),
+    ).rejects.toThrow(/not under an allowed directory/i);
   });
 
   it("keeps explicit workspaceDir in localRoots when agent id is unavailable", () => {

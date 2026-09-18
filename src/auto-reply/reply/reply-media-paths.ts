@@ -116,6 +116,9 @@ export function createReplyMediaPathNormalizer(params: {
   sessionKey?: string;
   agentId?: string;
   workspaceDir: string;
+  sessionWorkspaceDir?: string;
+  workspaceOnly?: boolean;
+  allowHostWorkspace?: boolean;
   messageProvider?: string;
   accountId?: string;
   groupId?: string;
@@ -193,7 +196,9 @@ export function createReplyMediaPathNormalizer(params: {
       cfg: params.cfg,
       agentId,
       workspaceDir: workspaceDir ?? params.workspaceDir,
-      ...(sessionWorkspaceDir ? { sessionWorkspaceDir } : {}),
+      sessionWorkspaceDir: sessionWorkspaceDir ?? params.sessionWorkspaceDir,
+      workspaceOnly: params.workspaceOnly,
+      allowHostWorkspace: params.allowHostWorkspace,
       mediaSources: [media],
       mediaAccess: params.mediaAccess,
       workspaceMediaAccess: params.workspaceMediaAccess,
