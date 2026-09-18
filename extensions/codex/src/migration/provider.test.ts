@@ -20,6 +20,7 @@ import { defaultCodexAppInventoryCache } from "../app-server/app-inventory-cache
 import { codexAppInventoryResponse } from "../app-server/app-inventory.test-helpers.js";
 import { CODEX_PLUGINS_MARKETPLACE_NAME } from "../app-server/config.js";
 import { buildCodexPluginAppCacheKey } from "../app-server/plugin-app-cache-key.js";
+import { pluginList, pluginSummary } from "../app-server/plugin-inventory.test-helpers.js";
 import type { CodexGetAccountResponse, v2 } from "../app-server/protocol.js";
 import type { CodexAppServerCloseResult } from "../app-server/transport.js";
 import { readCodexCliActiveApiKeyAsync } from "./cli-credentials.js";
@@ -2092,11 +2093,13 @@ describe("buildCodexMigrationProvider", () => {
     {
       state: "missing from the committed installed runtime",
       installedApp: undefined,
+      metadataAvailable: true,
       reason: "app_missing",
       expectedApp: { id: "asdk_app_readwise", name: "Readwise" },
     },
     {
       state: "disabled in the committed runtime despite authorized metadata",
+      metadataAvailable: true,
       installedApp: {
         id: "asdk_app_readwise",
         runtimeName: "Readwise",
@@ -2113,6 +2116,7 @@ describe("buildCodexMigrationProvider", () => {
     },
     {
       state: "enabled but not callable in the committed runtime",
+      metadataAvailable: true,
       installedApp: {
         id: "asdk_app_readwise",
         runtimeName: "Readwise",
@@ -2128,9 +2132,21 @@ describe("buildCodexMigrationProvider", () => {
         isCallable: false,
       },
     },
+    {
+      state: "disabled in the committed runtime with missing metadata",
+      installedApp: {
+        id: "asdk_app_readwise",
+        runtimeName: "Readwise",
+        enabled: false,
+        callable: false,
+      } satisfies v2.InstalledApp,
+      metadataAvailable: false,
+      reason: "app_disabled",
+      expectedApp: { id: "asdk_app_readwise", name: "Readwise", isEnabled: false },
+    },
   ])(
     "fails closed when an authorized source app is $state",
-    async ({ installedApp, reason, expectedApp }) => {
+    async ({ installedApp, metadataAvailable, reason, expectedApp }) => {
       const fixture = await createCodexFixture();
       appServerRequest.mockImplementation(async ({ method }: { method: string }) => {
         if (method === "plugin/installed") {
@@ -2148,9 +2164,10 @@ describe("buildCodexMigrationProvider", () => {
           return { apps: installedApp ? [installedApp] : [] } satisfies v2.AppsInstalledResponse;
         }
         if (method === "app/read") {
-          return codexAppInventoryResponse("app/read", [
-            appInfo("asdk_app_readwise", { name: "Readwise" }),
-          ]);
+          return codexAppInventoryResponse(
+            "app/read",
+            metadataAvailable ? [appInfo("asdk_app_readwise", { name: "Readwise" })] : [],
+          );
         }
         throw new Error(`unexpected request ${method}`);
       });
@@ -2873,15 +2890,6 @@ describe("buildCodexMigrationProvider", () => {
           targetPluginListCallsAtInstall = targetPluginListCalls;
           return { authPolicy: "ON_USE", appsNeedingAuth: [] } satisfies v2.PluginInstallResponse;
         }
-        if (method === "skills/list") {
-          return { data: [] } satisfies v2.SkillsListResponse;
-        }
-        if (method === "hooks/list") {
-          return { data: [] } satisfies v2.HooksListResponse;
-        }
-        if (method === "config/mcpServer/reload") {
-          return {};
-        }
         if (method === "app/installed" || method === "app/read") {
           return codexAppInventoryResponse(method, []);
         }
@@ -2967,15 +2975,6 @@ describe("buildCodexMigrationProvider", () => {
             featuredPluginIds: [],
           } satisfies v2.PluginListResponse;
         }
-        if (method === "skills/list") {
-          return { data: [] } satisfies v2.SkillsListResponse;
-        }
-        if (method === "hooks/list") {
-          return { data: [] } satisfies v2.HooksListResponse;
-        }
-        if (method === "config/mcpServer/reload") {
-          return {};
-        }
         if (method === "app/installed" || method === "app/read") {
           return codexAppInventoryResponse(method, []);
         }
@@ -3033,15 +3032,6 @@ describe("buildCodexMigrationProvider", () => {
         }
         if (method === "plugin/list" && isTarget) {
           throw new Error("codex app-server plugin/list timed out");
-        }
-        if (method === "skills/list") {
-          return { data: [] } satisfies v2.SkillsListResponse;
-        }
-        if (method === "hooks/list") {
-          return { data: [] } satisfies v2.HooksListResponse;
-        }
-        if (method === "config/mcpServer/reload") {
-          return {};
         }
         if (method === "app/installed" || method === "app/read") {
           return codexAppInventoryResponse(method, []);
@@ -3484,15 +3474,6 @@ describe("buildCodexMigrationProvider", () => {
           ],
         } satisfies v2.PluginInstallResponse;
       }
-      if (method === "skills/list") {
-        return { data: [] } satisfies v2.SkillsListResponse;
-      }
-      if (method === "hooks/list") {
-        return { data: [] } satisfies v2.HooksListResponse;
-      }
-      if (method === "config/mcpServer/reload") {
-        return {};
-      }
       if (method === "app/installed" || method === "app/read") {
         return codexAppInventoryResponse(method, []);
       }
@@ -3555,12 +3536,6 @@ describe("buildCodexMigrationProvider", () => {
       }
       if (method === "plugin/install") {
         throw new Error("install failed");
-      }
-      if (method === "skills/list") {
-        return { data: [] } satisfies v2.SkillsListResponse;
-      }
-      if (method === "hooks/list") {
-        return { data: [] } satisfies v2.HooksListResponse;
       }
       throw new Error(`unexpected request ${method}`);
     });
@@ -3629,15 +3604,6 @@ function createCalendarPluginMigrationRequest() {
     if (method === "plugin/install") {
       return { authPolicy: "ON_USE", appsNeedingAuth: [] } satisfies v2.PluginInstallResponse;
     }
-    if (method === "skills/list") {
-      return { data: [] } satisfies v2.SkillsListResponse;
-    }
-    if (method === "hooks/list") {
-      return { data: [] } satisfies v2.HooksListResponse;
-    }
-    if (method === "config/mcpServer/reload") {
-      return {};
-    }
     if (method === "app/installed" || method === "app/read") {
       return codexAppInventoryResponse(method, []);
     }
@@ -3686,21 +3652,6 @@ function pluginMetadata(
     };
   }
   return response;
-}
-
-function pluginList(plugins: v2.PluginSummary[]): v2.PluginListResponse {
-  return {
-    marketplaces: [
-      {
-        name: CODEX_PLUGINS_MARKETPLACE_NAME,
-        path: "/marketplaces/openai-curated",
-        interface: null,
-        plugins,
-      },
-    ],
-    marketplaceLoadErrors: [],
-    featuredPluginIds: [],
-  };
 }
 
 function pluginRead(pluginName: string, apps: v2.AppSummary[] = []): v2.PluginReadResponse {
@@ -3769,18 +3720,4 @@ function chatGptAccount(): CodexGetAccountResponse {
   };
 }
 
-function pluginSummary(id: string, overrides: Partial<v2.PluginSummary> = {}): v2.PluginSummary {
-  return {
-    id,
-    name: id,
-    source: { type: "remote" },
-    installed: false,
-    enabled: false,
-    installPolicy: "AVAILABLE",
-    authPolicy: "ON_USE",
-    availability: "AVAILABLE",
-    interface: null,
-    ...overrides,
-  };
-}
 /* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

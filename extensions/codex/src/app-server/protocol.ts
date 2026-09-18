@@ -17,7 +17,6 @@ import type {
   CodexConfigWriteResponse,
   CodexExperimentalFeatureListParams,
   CodexExperimentalFeatureListResponse,
-  CodexHooksListParams,
   CodexHooksListResponse,
   CodexInstalledApp,
   CodexPluginDetail,
@@ -640,8 +639,6 @@ export declare namespace v2 {
   export type AppInfo = CodexAppInfo;
   export type AppSummary = CodexAppSummary;
   export type AppsInstalledResponse = CodexAppsInstalledResponse;
-  export type HooksListParams = CodexHooksListParams;
-  export type HooksListResponse = CodexHooksListResponse;
   export type InstalledApp = CodexInstalledApp;
   export type PluginDetail = CodexPluginDetail;
   export type PluginInstalledParams = CodexPluginInstalledParams;
