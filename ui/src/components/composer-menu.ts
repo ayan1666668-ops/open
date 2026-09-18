@@ -1,4 +1,6 @@
 import { html, nothing } from "lit";
+import { AsyncDirective } from "lit/async-directive.js";
+import { directive, type ElementPart } from "lit/directive.js";
 import { scrollState } from "./scroll-state.ts";
 
 export function handleComposerMenuKeydown(
@@ -40,6 +42,7 @@ export function renderComposerMenu(options: {
   label: string;
   className?: string;
   trackScroll?: boolean;
+  activeId?: string | null;
   content: unknown;
 }) {
   return html`<div
@@ -48,7 +51,11 @@ export function renderComposerMenu(options: {
     role="listbox"
     aria-label=${options.label}
   >
-    <div class="slash-menu__scroll" ${scrollState(false, options.trackScroll)}>
+    <div
+      class="slash-menu__scroll"
+      ${scrollState(false, options.trackScroll)}
+      ${revealActiveOption(options.activeId)}
+    >
       ${options.content}
     </div>
   </div>`;
@@ -70,7 +77,9 @@ export function renderComposerMenuOption(options: {
     class="slash-menu-item ${options.active ? "slash-menu-item--active" : ""}"
     role="option"
     aria-selected=${options.active}
-    @mousedown=${options.preserveFocus === false ? nothing : (event: MouseEvent) => event.preventDefault()}
+    @mousedown=${options.preserveFocus === false
+      ? nothing
+      : (event: MouseEvent) => event.preventDefault()}
     @click=${options.select}
     @mouseenter=${options.hover}
   >
@@ -104,3 +113,24 @@ function scrollActiveOptionIntoView(activeId: string | null): void {
     }
   });
 }
+
+class RevealActiveOptionDirective extends AsyncDirective {
+  private activeId: string | null = null;
+
+  render(_activeId?: string | null) {
+    return nothing;
+  }
+
+  override update(_part: ElementPart, [activeId]: [string | null | undefined]) {
+    const nextActiveId = activeId ?? null;
+    if (nextActiveId !== this.activeId) {
+      this.activeId = nextActiveId;
+      if (nextActiveId) {
+        scrollActiveOptionIntoView(nextActiveId);
+      }
+    }
+    return nothing;
+  }
+}
+
+const revealActiveOption = directive(RevealActiveOptionDirective);

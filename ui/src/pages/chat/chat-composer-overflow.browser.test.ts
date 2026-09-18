@@ -425,4 +425,46 @@ describe("composer overflow presentation", () => {
     drawMenu(1);
     await expectEdges(element, false);
   });
+
+  it("reveals a filtered active result in a retained menu viewport", async () => {
+    const drawMenu = (activeIndex: number) =>
+      render(
+        renderComposerMenu({
+          id: "filtered-menu",
+          label: "Fixture results",
+          activeId: `filtered-result-${activeIndex}`,
+          content: Array.from(
+            { length: 20 },
+            (_, index) => html`<div
+              id=${`filtered-result-${index}`}
+              class="slash-menu-item ${index === activeIndex ? "slash-menu-item--active" : ""}"
+              role="option"
+              style="height: 40px"
+            >
+              Result ${index}
+            </div>`,
+          ),
+        }),
+        container,
+      );
+
+    drawMenu(19);
+    const element = container.querySelector<HTMLElement>(".slash-menu__scroll")!;
+    await afterLayout();
+    element.scrollTop = element.scrollHeight;
+    drawMenu(0);
+    await afterLayout();
+
+    const menuBounds = element.getBoundingClientRect();
+    const activeBounds = document
+      .querySelector<HTMLElement>(".slash-menu-item--active")!
+      .getBoundingClientRect();
+    expect(activeBounds.top).toBeGreaterThanOrEqual(menuBounds.top - 1);
+    expect(activeBounds.bottom).toBeLessThanOrEqual(menuBounds.bottom + 1);
+
+    element.scrollTop = element.scrollHeight;
+    drawMenu(0);
+    await afterLayout();
+    expect(element.scrollTop).toBeGreaterThan(0);
+  });
 });
