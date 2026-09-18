@@ -1,13 +1,13 @@
 import { afterEach, expect, it, vi } from "vitest";
 import memoryCore from "../../extensions/memory-core/index.js";
-import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { resolveCronJobEffectiveAgentId } from "../cron/agent-id.js";
-import { CronService } from "../cron/service.js";
-import { createCronStoreHarness, createNoopLogger } from "../cron/service.test-harness.js";
-import { createTestPluginApi } from "../plugin-sdk/plugin-test-api.js";
-import { createPluginRuntimeMock } from "../plugin-sdk/test-helpers/plugin-runtime-mock.js";
-import { createEmptyPluginRegistry } from "./registry.js";
-import { startPluginServices, type PluginServicesHandle } from "./services.js";
+import type { OpenClawConfig } from "../../src/config/types.openclaw.js";
+import { resolveCronJobEffectiveAgentId } from "../../src/cron/agent-id.js";
+import { CronService } from "../../src/cron/service.js";
+import { createCronStoreHarness, createNoopLogger } from "../../src/cron/service.test-harness.js";
+import { createTestPluginApi } from "../../src/plugin-sdk/plugin-test-api.js";
+import { createPluginRuntimeMock } from "../../src/plugin-sdk/test-helpers/plugin-runtime-mock.js";
+import { createEmptyPluginRegistry } from "../../src/plugins/registry.js";
+import { startPluginServices, type PluginServicesHandle } from "../../src/plugins/services.js";
 
 const { makeStorePath } = createCronStoreHarness({ prefix: "memory-dreaming-cron-" });
 const services = new Set<PluginServicesHandle>();

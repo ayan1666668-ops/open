@@ -57,16 +57,6 @@ import type {
 } from "./host-hook-turn-types.js";
 
 export type {
-  PluginHookCronChangedEvent,
-  PluginHookCronReconciledContext,
-  PluginHookCronReconciledEvent,
-  PluginHookGatewayContext,
-  PluginHookGatewayCronJob,
-  PluginHookGatewayCronService,
-  PluginHookGatewayStopEvent,
-} from "./hook-gateway.types.js";
-
-export type {
   PluginHookBeforeModelResolveAttachment,
   PluginHookBeforeModelResolveEvent,
   PluginHookBeforeModelResolveResult,
