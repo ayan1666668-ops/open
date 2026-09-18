@@ -128,6 +128,45 @@ describe("rehydratePromotionCandidate", () => {
     expect(rehydrated?.snippet).toContain("Delta fact about the release.");
   });
 
+  it("keeps the recalled text next to a managed dreaming marker", async () => {
+    const snippet = "Delta fact about the recall store.";
+    await writeNote([
+      "# Daily",
+      "Intro line.",
+      "<!-- openclaw:dreaming:light:end -->",
+      "Delta fact about the recall store.",
+      "Closing line.",
+    ]);
+
+    const rehydrated = await rehydratePromotionCandidate(
+      workspaceDir,
+      makeCandidate({ snippet, startLine: 3, endLine: 4 }),
+    );
+
+    expect(rehydrated?.startLine).toBe(4);
+    expect(rehydrated?.endLine).toBe(4);
+    expect(rehydrated?.snippet).toContain("Delta fact about the recall store.");
+  });
+
+  it("orphans the candidate when blank padding hides an equally close second copy", async () => {
+    const snippet = "Zeta fact keeps the recalled range pinned across edits.";
+    const noteLines = Array.from({ length: 80 }, () => "Unrelated line.");
+    noteLines[9] = snippet;
+    for (let index = 10; index < 30; index += 1) {
+      noteLines[index] = "";
+    }
+    noteLines[69] = snippet;
+    noteLines[39] = "Recorded range moved away.";
+    await writeNote(noteLines);
+
+    const rehydrated = await rehydratePromotionCandidate(
+      workspaceDir,
+      makeCandidate({ snippet, startLine: 40, endLine: 55 }),
+    );
+
+    expect(rehydrated).toBeNull();
+  });
+
   it("orphans the candidate when equally close copies of the recorded text are disjoint", async () => {
     const snippet = "Epsilon fact about the recall store.";
     await writeNote([
