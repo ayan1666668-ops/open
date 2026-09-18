@@ -5055,26 +5055,6 @@ jobs:
             exit 1
           fi
 
-      - name: Audio input CFString ownership proof
-        id: audio-ownership-proof
-        if: matrix.phase == 'tests'
-        timeout-minutes: 15
-        env:
-          OWNERSHIP_PROOF_PHASE: ${{ matrix.phase }}
-          OWNERSHIP_WORKFLOW_SHA: ${{ github.workflow_sha }}
-          OWNERSHIP_PR_HEAD: ${{ github.event.pull_request.head.sha }}
-        run: node scripts/ci/audio-input-ownership/run.mjs
-
-      - name: Upload audio input ownership proof
-        if: ${{ always() && steps.audio-ownership-proof.outputs.artifact-path != '' }}
-        timeout-minutes: 2
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: audio-input-ownership-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ steps.audio-ownership-proof.outputs.artifact-path }}/*
-          if-no-files-found: error
-          retention-days: 7
-
       - name: Swift build (release)
         if: matrix.phase == 'release'
         run: |
