@@ -277,26 +277,27 @@ final class AudioInputDeviceObserver: @unchecked Sendable {
     }
 
     private static func deviceUID(for deviceID: AudioObjectID) -> String? {
-        self.deviceStringProperty(kAudioDevicePropertyDeviceUID, for: deviceID)
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyDeviceUID,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var uid: Unmanaged<CFString>?
+        var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+        let status = AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &uid)
+        guard status == noErr, let uid else { return nil }
+        return uid.takeUnretainedValue() as String
     }
 
     private static func deviceName(for deviceID: AudioObjectID) -> String? {
-        self.deviceStringProperty(kAudioObjectPropertyName, for: deviceID)
-    }
-
-    private static func deviceStringProperty(
-        _ selector: AudioObjectPropertySelector,
-        for deviceID: AudioObjectID) -> String?
-    {
         var address = AudioObjectPropertyAddress(
-            mSelector: selector,
+            mSelector: kAudioObjectPropertyName,
             mScope: kAudioObjectPropertyScopeGlobal,
             mElement: kAudioObjectPropertyElementMain)
-        var value: Unmanaged<CFString>?
+        var name: Unmanaged<CFString>?
         var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
-        let status = AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &value)
-        guard status == noErr, let value else { return nil }
-        return value.takeRetainedValue() as String
+        let status = AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &name)
+        guard status == noErr, let name else { return nil }
+        return name.takeUnretainedValue() as String
     }
 
     private static func deviceIsAlive(_ deviceID: AudioObjectID) -> Bool {
