@@ -18,6 +18,24 @@ function normalizeRangeSnippet(lines: string[], startLine: number, endLine: numb
   return normalizeSnippet(lines.slice(startIndex, endIndex).join(" "));
 }
 
+const HTML_COMMENT_RE = /<!--[\s\S]*?-->/gu;
+
+/**
+ * Comparison-only normalization. Comments are invisible to a reader and any tool
+ * can add or remove one between recording and rehydration, so they must not decide
+ * whether a stored range still matches the lines it was recorded from.
+ */
+function normalizeComparableSnippet(raw: string): string {
+  return normalizeSnippet(raw.replace(HTML_COMMENT_RE, " "));
+}
+
+function lineRangesOverlap(
+  left: { startLine: number; endLine: number },
+  right: { startLine: number; endLine: number },
+): boolean {
+  return left.startLine <= right.endLine && right.startLine <= left.endLine;
+}
+
 function normalizeListMarkerFreeRangeSnippet(
   lines: string[],
   startLine: number,
@@ -150,6 +168,10 @@ function relocateCandidateRange(
   candidate: PromotionCandidate,
 ): { startLine: number; endLine: number; snippet: string } | null {
   const targetSnippet = normalizeSnippet(candidate.snippet);
+  const comparableTarget = normalizeComparableSnippet(candidate.snippet);
+  const comparisonTarget = comparableTarget || targetSnippet;
+  const toComparable = (snippet: string): string =>
+    comparableTarget ? normalizeComparableSnippet(snippet) : snippet;
   const preferredSpan = Math.max(1, candidate.endLine - candidate.startLine + 1);
   if (targetSnippet.length === 0) {
     const fallbackSnippet = normalizeRangeSnippet(lines, candidate.startLine, candidate.endLine);
@@ -164,7 +186,7 @@ function relocateCandidateRange(
   }
 
   const exactSnippet = normalizeRangeSnippet(lines, candidate.startLine, candidate.endLine);
-  if (exactSnippet === targetSnippet) {
+  if (exactSnippet === targetSnippet || toComparable(exactSnippet) === comparisonTarget) {
     return {
       startLine: candidate.startLine,
       endLine: candidate.endLine,
@@ -175,14 +197,26 @@ function relocateCandidateRange(
   const maxSpan = Math.min(lines.length, Math.max(preferredSpan + 3, 8));
   const headingLookup = buildRelocatedDailyHeadingLookup(lines);
   let bestMatch:
-    | { startLine: number; endLine: number; snippet: string; quality: number; distance: number }
+    | {
+        startLine: number;
+        endLine: number;
+        snippet: string;
+        quality: number;
+        distance: number;
+        reconstruction: boolean;
+      }
     | undefined;
+  // Top-quality matches kept for the unresolved-tie check below; bounded because a
+  // repetitive note can match in many places.
+  const MAX_TRACKED_MATCHES = 16;
+  let topQuality = 0;
+  let topMatches: Array<{ startLine: number; endLine: number; distance: number }> = [];
   for (let startIndex = 0; startIndex < lines.length; startIndex += 1) {
     for (let span = 1; span <= maxSpan && startIndex + span <= lines.length; span += 1) {
       const startLine = startIndex + 1;
       const endLine = startIndex + span;
       const snippet = normalizeRangeSnippet(lines, startLine, endLine);
-      const comparison = compareCandidateWindow(targetSnippet, snippet);
+      const comparison = compareCandidateWindow(comparisonTarget, toComparable(snippet));
       const listMarkerFreeSnippet = normalizeListMarkerFreeRangeSnippet(lines, startLine, endLine);
       const listMarkerFreeMatchSnippet = buildListMarkerFreeMatchSnippet(
         headingLookup[startLine] ?? null,
@@ -191,18 +225,21 @@ function relocateCandidateRange(
       const listMarkerFreeComparison =
         listMarkerFreeSnippet === snippet
           ? { matched: false, quality: 0 }
-          : compareCandidateWindow(targetSnippet, listMarkerFreeSnippet);
+          : compareCandidateWindow(comparisonTarget, toComparable(listMarkerFreeSnippet));
       const listMarkerFreeContextComparison =
         listMarkerFreeMatchSnippet === listMarkerFreeSnippet
           ? { matched: false, quality: 0 }
-          : compareCandidateWindow(targetSnippet, listMarkerFreeMatchSnippet);
+          : compareCandidateWindow(comparisonTarget, toComparable(listMarkerFreeMatchSnippet));
       const targetHeadingBodySnippet = extractTargetHeadingBodySnippet(
         targetSnippet,
         listMarkerFreeSnippet,
       );
       const targetHeadingBodyComparison =
         targetHeadingBodySnippet && listMarkerFreeMatchSnippet !== listMarkerFreeSnippet
-          ? compareCandidateWindow(targetHeadingBodySnippet, listMarkerFreeSnippet)
+          ? compareCandidateWindow(
+              normalizeComparableSnippet(targetHeadingBodySnippet),
+              toComparable(listMarkerFreeSnippet),
+            )
           : { matched: false, quality: 0 };
       const useTargetHeadingBodyContext =
         targetHeadingBodyComparison.matched &&
@@ -233,6 +270,16 @@ function relocateCandidateRange(
               : listMarkerFreeSnippet
             : snippet;
       const distance = Math.abs(startLine - candidate.startLine);
+      const matchRange = { startLine, endLine };
+      const reconstructionUsed =
+        useTargetHeadingBodyContext || useListMarkerFreeContext || useListMarkerFree;
+      if (bestComparison.quality > topQuality) {
+        topQuality = bestComparison.quality;
+        topMatches = [];
+      }
+      if (bestComparison.quality === topQuality && topMatches.length < MAX_TRACKED_MATCHES) {
+        topMatches.push({ ...matchRange, distance });
+      }
       if (
         !bestMatch ||
         bestComparison.quality > bestMatch.quality ||
@@ -248,12 +295,29 @@ function relocateCandidateRange(
           snippet: matchedSnippet,
           quality: bestComparison.quality,
           distance,
+          reconstruction: reconstructionUsed,
         };
       }
     }
   }
 
   if (!bestMatch) {
+    return null;
+  }
+  // A fragment of the recorded text is not the recalled text. The heading/list and
+  // capped-snippet reconstruction paths rebuild it, so they stay supported.
+  if (bestMatch.quality < 2 && !bestMatch.reconstruction) {
+    return null;
+  }
+  // Equally close matches of equal quality at disjoint places leave the stored range
+  // unresolved, so orphan the candidate instead of deciding it by span.
+  const nearestDistance = Math.min(...topMatches.map((match) => match.distance));
+  const nearestMatches = topMatches.filter((match) => match.distance === nearestDistance);
+  if (
+    nearestMatches.some((match) =>
+      nearestMatches.some((other) => other !== match && !lineRangesOverlap(match, other)),
+    )
+  ) {
     return null;
   }
   return {
