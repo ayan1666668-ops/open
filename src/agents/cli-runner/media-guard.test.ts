@@ -1,15 +1,15 @@
 /** Paired-node attachment guard behavior through the real CLI execution entry point. */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { invokeNodeClaudeCliRun } from "../gateway/node-agent-cli-runtime.js";
-import { buildPreparedCliRunContext } from "./cli-runner.test-helpers.js";
-import { executePreparedCliRun as executePreparedCliRunImpl } from "./cli-runner/execute.js";
+import type { invokeNodeClaudeCliRun } from "../../gateway/node-agent-cli-runtime.js";
+import { buildPreparedCliRunContext } from "../cli-runner.test-helpers.js";
+import { executePreparedCliRun as executePreparedCliRunImpl } from "./execute.js";
 import {
   setCliRunnerExecuteTestDeps,
   supervisorSpawnMock,
   wrapPreparedCliRunWithTestAdmission,
-} from "./cli-runner/execute.test-support.js";
+} from "./execute.test-support.js";
 
-vi.mock("./bash-tools.exec-approval-request.js", () => ({
+vi.mock("../bash-tools.exec-approval-request.js", () => ({
   registerExecApprovalRequestForHostOrThrow: vi.fn(),
   resolveRegisteredExecApprovalDecision: vi.fn(),
 }));
