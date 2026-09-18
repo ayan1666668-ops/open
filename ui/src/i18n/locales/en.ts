@@ -972,6 +972,8 @@ export const en: TranslationMap & {
     placementCompletionUnconfirmed:
       "Could not confirm whether worker setup finished. Retry to check again; your message has not been sent.",
     placementReloadBlocked: "Recovery needs a reload. Unsaved starts will be lost.",
+    placementCancelled:
+      "Session setup was interrupted and the temporary session was cleaned up. Your prompt is kept here.",
     discardUnsavedAndReload: "Discard unsaved starts and reload",
     yourDevices: "Your devices",
     autoDeviceSub: "Least-busy device",
@@ -3898,6 +3900,8 @@ export const en: TranslationMap & {
       next: "Next suggested task",
       starting: "Starting…",
       dismiss: "Dismiss {title}",
+      started: "Task started",
+      startUnconfirmed: "Couldn't confirm the task started. Retry checks the same task.",
       adminRequired: "Administrator access is required to start suggested tasks.",
     },
     pullRequests: {
