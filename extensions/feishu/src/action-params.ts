@@ -33,6 +33,9 @@ export function resolveFeishuMessageId(params: Record<string, unknown>): string 
   return readFirstString(params, ["messageId", "message_id", "replyTo", "reply_to"]);
 }
 
+// Feishu keeps the native chat id and the routable peer apart: a direct turn reports
+// `oc_<chat>` as the channel id and `user:ou_<sender>` as the messaging target, and
+// either one names the conversation the turn came from.
 function reactionTargetsCurrentConversation(ctx: FeishuReactionActionContext): boolean {
   if (
     ctx.toolContext?.currentChannelProvider &&
@@ -40,13 +43,13 @@ function reactionTargetsCurrentConversation(ctx: FeishuReactionActionContext): b
   ) {
     return false;
   }
-  const currentTarget =
-    ctx.toolContext?.currentMessagingTarget ?? ctx.toolContext?.currentChannelId;
   const target = resolveFeishuActionTarget(ctx);
-  return Boolean(
-    currentTarget &&
-    target &&
-    normalizeFeishuTarget(currentTarget) === normalizeFeishuTarget(target),
+  const normalizedTarget = target ? normalizeFeishuTarget(target) : null;
+  if (!normalizedTarget) {
+    return false;
+  }
+  return [ctx.toolContext?.currentChannelId, ctx.toolContext?.currentMessagingTarget].some(
+    (candidate) => candidate != null && normalizeFeishuTarget(candidate) === normalizedTarget,
   );
 }
 
