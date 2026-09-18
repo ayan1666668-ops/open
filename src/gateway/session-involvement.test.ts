@@ -84,7 +84,7 @@ describe("personal session involvement", () => {
   it("preserves existing metadata, personal choices and replay watermarks across cold reopen", async () => {
     await withInbox(async (f) => {
       const scope = { agentId: "main", sessionKey: SESSION_KEY };
-      await f.setSession({ displayName: "Existing session", label: "keep-label", pinned: true });
+      await f.setSession({ displayName: "Existing session", label: "keep-label", pinnedAt: 12345 });
       const existing = loadSessionEntry(scope)!;
       expect(existing).not.toHaveProperty("profileInvolvement");
       const reopen = () => {
