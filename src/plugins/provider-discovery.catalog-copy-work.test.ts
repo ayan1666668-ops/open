@@ -1,22 +1,22 @@
 import { parseModelCatalogRef } from "@openclaw/model-catalog-core/model-catalog-refs";
 import { expectDefined } from "@openclaw/normalization-core";
 import { expect, it, vi } from "vitest";
-import type { ModelDefinitionConfig, ModelProviderConfig } from "../config/types.models.js";
-import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { createPluginMetadataSnapshotFixture } from "../plugins/plugin-metadata.test-support.js";
-import {
-  prepareProviderStaticCatalog,
-  resolvePreparedProviderStaticConfigs,
-} from "../plugins/provider-discovery.js";
-import type { ProviderPlugin } from "../plugins/types.js";
-import { createStaticModelIdMatcher } from "./embedded-agent-runner/model.static-id.js";
-import { prepareImplicitProviderStaticCatalog } from "./models-config.providers.implicit.js";
+import { createStaticModelIdMatcher } from "../agents/embedded-agent-runner/model.static-id.js";
+import { prepareImplicitProviderStaticCatalog } from "../agents/models-config.providers.implicit.js";
 import {
   collectPreparedModelRuntimeConfiguredRefs,
   prepareConfiguredRuntimeModels,
-} from "./prepared-model-runtime.configured.js";
-import type { PreparedConfiguredRuntimeModel } from "./prepared-model-runtime.types.js";
-import { attachModelProviderRequestRouteFacts } from "./provider-request-config.js";
+} from "../agents/prepared-model-runtime.configured.js";
+import type { PreparedConfiguredRuntimeModel } from "../agents/prepared-model-runtime.types.js";
+import { attachModelProviderRequestRouteFacts } from "../agents/provider-request-config.js";
+import type { ModelDefinitionConfig, ModelProviderConfig } from "../config/types.models.js";
+import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { createPluginMetadataSnapshotFixture } from "./plugin-metadata.test-support.js";
+import {
+  prepareProviderStaticCatalog,
+  resolvePreparedProviderStaticConfigs,
+} from "./provider-discovery.js";
+import type { ProviderPlugin } from "./types.js";
 
 const fixture = vi.hoisted(() => ({
   providers: [] as ProviderPlugin[],
@@ -24,7 +24,7 @@ const fixture = vi.hoisted(() => ({
   idReads: 0,
 }));
 
-vi.mock("../plugins/provider-discovery.runtime.js", () => ({
+vi.mock("./provider-discovery.runtime.js", () => ({
   resolvePluginDiscoveryProvidersRuntime: () => fixture.providers,
 }));
 
