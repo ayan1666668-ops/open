@@ -187,7 +187,9 @@ export async function runAgentFallbackCandidates(params: AgentFallbackCycleParam
           hasRetryBlockedDelivery:
             turn.blockReplyPipeline?.hasRetryBlockedDelivery() === true ||
             params.directBlockDeliveries.some(hasBlockReplyDeliveryCustody),
-          hasDirectlySentBlockReply: params.directlySentBlockKeys.size > 0,
+          hasDirectlySentBlockReply: params.directBlockDeliveries.some(
+            (delivery) => delivery.terminalDeliveryConfirmed === true,
+          ),
           hasBlockReplyPipelineOutput: Boolean(
             turn.blockReplyPipeline?.hasBuffered() || turn.blockReplyPipeline?.didStream(),
           ),
