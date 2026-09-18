@@ -69,7 +69,6 @@ import {
 import { fullSuiteVitestShards } from "./vitest/vitest.test-shards.mjs";
 import { DEFAULT_VITEST_TEST_TIMEOUT_MS } from "./vitest/vitest.timeouts.ts";
 import { uiIsolatedTestFiles } from "./vitest/vitest.ui-isolated-paths.mjs";
-import { createUiWatchVitestConfig } from "./vitest/vitest.ui-watch.config.ts";
 import { createUiVitestConfig } from "./vitest/vitest.ui.config.ts";
 import { createUnitFastFakeTimersVitestConfig } from "./vitest/vitest.unit-fast-fake-timers.config.ts";
 import { createUnitFastIsolatedVitestConfig } from "./vitest/vitest.unit-fast-isolated.config.ts";
@@ -665,88 +664,6 @@ describe("projects vitest config", () => {
     expect(setupFiles).not.toContain("test/setup-openclaw-runtime.ts");
     expect(setupFiles).toContain("ui/src/test-helpers/lit-warnings.setup.ts");
     expect(requireWebOptimizer(testConfig).enabled).toBe(true);
-  });
-
-  it.each([
-    {
-      selected: ["ui/src/pages/usage/view.test.ts"],
-      shared: ["ui/src/pages/usage/view.test.ts"],
-      isolated: [],
-    },
-    {
-      selected: ["ui/src/pages/usage/usage-page-details.test.ts"],
-      shared: [],
-      isolated: ["ui/src/pages/usage/usage-page-details.test.ts"],
-    },
-    {
-      selected: [
-        "ui/src/pages/usage/view.test.ts",
-        "ui/src/pages/usage/usage-page-details.test.ts",
-      ],
-      shared: ["ui/src/pages/usage/view.test.ts"],
-      isolated: ["ui/src/pages/usage/usage-page-details.test.ts"],
-    },
-  ])("keeps inherited UI watch selection disjoint: $selected", ({ selected, shared, isolated }) => {
-    const config = createUiWatchVitestConfig({
-      OPENCLAW_VITEST_INCLUDE_FILE: patternFiles.writePatternFile("selected.json", selected),
-    });
-    const projects = requireTestConfig(config).projects;
-    assert(projects);
-    const files = projects.map((project) => {
-      assert(typeof project === "object" && project !== null && "test" in project);
-      const test = requireTestConfig(project);
-      assert(test.include && test.exclude);
-      return globSync(test.include, { cwd: repoRoot, exclude: test.exclude })
-        .map((file) => file.replaceAll("\\", "/"))
-        .toSorted();
-    });
-    expect(files).toEqual([shared, isolated]);
-  });
-
-  it("watches every usage file once while retaining each UI owner's runtime", () => {
-    const config = createUiWatchVitestConfig({
-      OPENCLAW_VITEST_INCLUDE_FILE: patternFiles.writePatternFile("usage-directory.json", [
-        "ui/src/pages/usage/**/*.test.ts",
-      ]),
-    });
-    const projects = requireTestConfig(config).projects;
-    assert(projects && projects.length === 2);
-    const selections: string[][] = [];
-    for (const project of projects) {
-      assert(typeof project === "object" && project !== null && "test" in project);
-      const test = requireTestConfig(project);
-      assert(test.include && test.exclude);
-      selections.push(
-        globSync(test.include, { cwd: repoRoot, exclude: test.exclude })
-          .map((file) => file.replaceAll("\\", "/"))
-          .toSorted(),
-      );
-      expect(normalizeConfigPaths(test.setupFiles)).toEqual([
-        "test/setup.ts",
-        "ui/src/test-helpers/lit-warnings.setup.ts",
-      ]);
-      expect(test.testTimeout).toBe(DEFAULT_VITEST_TEST_TIMEOUT_MS);
-      expect(test.hookTimeout).toBe(180_000);
-      expect(test.environment).toBe("jsdom");
-      expect(test.pool).toBe("threads");
-      expect(project.extends).toBe(false);
-      if (test.name === "ui") {
-        expect(test.isolate).toBe(false);
-        expect(normalizeConfigPath(test.runner)).toBe("test/non-isolated-runner.ts");
-      } else {
-        expect(test.name).toBe("ui-isolated");
-        expect(test.isolate).toBe(true);
-        expect(test.runner).toBeUndefined();
-      }
-    }
-    expect(selections[1]).toEqual(["ui/src/pages/usage/usage-page-details.test.ts"]);
-    const all = selections.flat();
-    expect(new Set(all).size).toBe(all.length);
-    expect(all.toSorted()).toEqual(
-      globSync("ui/src/pages/usage/**/*.test.ts", { cwd: repoRoot })
-        .map((file) => file.replaceAll("\\", "/"))
-        .toSorted(),
-    );
   });
 
   it("registers the package Chromium owner in root and full runtime runs", async () => {

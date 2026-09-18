@@ -1246,51 +1246,6 @@ describe("test-projects args", () => {
     }
   });
 
-  it.each([
-    { filters: [] },
-    { filters: ["--project", "ui", "--project=!ui-isolated"] },
-    { filters: ["query.test.ts"] },
-  ])(
-    "watches the complete usage directory through its UI owners with filters $filters",
-    ({ filters }) => {
-      expect(buildVitestRunPlans(["--watch", "ui/src/pages/usage", "--", ...filters])).toEqual([
-        {
-          config: "test/vitest/vitest.ui-watch.config.ts",
-          forwardedArgs: filters,
-          includePatterns: ["ui/src/pages/usage/**/*.test.ts"],
-          watchMode: true,
-        },
-      ]);
-    },
-  );
-
-  it.each([false, true])("preserves explicit UI watch paths (absolute: %s)", (absolute) => {
-    const files = [
-      "ui/src/pages/usage/view.test.ts",
-      "ui/src/pages/usage/usage-page-details.test.ts",
-    ].map((file) => (absolute ? path.resolve(file) : file));
-    expect(buildVitestRunPlans(["--watch", ...files])).toEqual([
-      {
-        config: "test/vitest/vitest.ui-watch.config.ts",
-        forwardedArgs: [],
-        includePatterns: files.map((file) =>
-          path.relative(process.cwd(), path.resolve(file)).replaceAll("\\", "/"),
-        ),
-        watchMode: true,
-      },
-    ]);
-  });
-
-  it.each([
-    "ui/src/pages/chat/components/chat-forwarded-disclosure.browser.test.ts",
-    "ui/src/components/markdown.progress.node.test.ts",
-    "src/config/config-misc.test.ts",
-  ])("rejects mixing UI watch owners with %s", (other) => {
-    expect(() => buildVitestRunPlans(["--watch", "ui/src/pages/usage", other])).toThrow(
-      "watch mode with mixed test suites is not supported",
-    );
-  });
-
   it("rejects watch mode when a command spans multiple suites", () => {
     expect(() =>
       buildVitestRunPlans([

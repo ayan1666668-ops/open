@@ -1,14 +1,12 @@
 // The shared UI runner reuses its module graph across fresh jsdom registries.
 // Tests in this list depend on module singletons or custom-element registration
 // matching the current registry, so they need a fresh graph in the isolated lane.
-// Heap scans should not traverse objects from unrelated test files.
 export const uiIsolatedTestFiles = [
   "ui/src/app/app-host.server-prefs.test.ts",
   "ui/src/app/bootstrap.gateway-credentials.test.ts",
   "ui/src/app/bootstrap.test.ts",
   "ui/src/app/router-outlet.test.ts",
   "ui/src/components/app-sidebar-native-gateways.test.ts",
-  "ui/src/components/desktop/desktop-mobile-keyboard.test.ts",
   "ui/src/components/github-link-title-tooltip.test.ts",
   "ui/src/components/markdown-tables.test.ts",
   "ui/src/components/mcp-app-view.test.ts",
@@ -38,13 +36,11 @@ export const uiIsolatedTestFiles = [
   "ui/src/pages/chat/components/chat-transcript-invalidation.test.ts",
   "ui/src/pages/chat/components/chat-transcript-message-reveal.test.ts",
   "ui/src/pages/chat/components/chat-transcript-render.test.ts",
-  "ui/src/pages/chat/session-snapshot-store.test.ts",
   "ui/src/pages/config/config-page.custom-theme.test.ts",
   "ui/src/pages/config/memory-mutation-owner.test.ts",
   "ui/src/pages/config/memory-page.test.ts",
   "ui/src/pages/new-session/draft-persistence.test.ts",
   "ui/src/pages/sessions/sessions-page.archived.test.ts",
-  "ui/src/pages/usage/usage-page-details.test.ts",
 ];
 
 const uiIsolatedTestFileSet = new Set(uiIsolatedTestFiles);

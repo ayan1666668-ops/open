@@ -4241,21 +4241,6 @@ export function buildVitestRunPlans(
     ? new Set(classifiedTargets.map(({ targetArg }) => classifyTarget(targetArg, cwd, true)))
     : new Set<string>();
   if (watchMode && (groupedTargets.size > 1 || previousWatchKinds.size > 1)) {
-    if (groupedTargets.size === 2 && groupedTargets.has("ui") && groupedTargets.has("uiIsolated")) {
-      const wholeUiOwner = uiTargets.some((target) =>
-        shouldUseWholeConfigTarget("ui", target, cwd),
-      );
-      return [
-        {
-          config: "test/vitest/vitest.ui-watch.config.ts",
-          forwardedArgs: nonTargetArgs,
-          includePatterns: wholeUiOwner
-            ? null
-            : uniqueOrdered(activeTargetArgs.map((target) => toScopedIncludePattern(target, cwd))),
-          watchMode: true,
-        },
-      ];
-    }
     if (impliedWatchWorkerTargets.length > 0 && previousWatchKinds.size === 1) {
       const previousKind = [...previousWatchKinds][0]!;
       const wholeOwner = classifiedTargets.some(({ targetArg }) =>

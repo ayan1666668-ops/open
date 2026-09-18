@@ -106,26 +106,6 @@ describe("intersectIncludePatterns", () => {
     ).toEqual(["ui/src/e2e/chat.e2e.test.ts", "ui/src/e2e/chat.capture.e2e.test.ts"]);
   });
 
-  it("keeps browser exclusion when narrowing a UI owner to a directory", () => {
-    const selected = intersectIncludePatterns(
-      ["ui/src/**/!(*.browser).test.ts"],
-      ["ui/src/pages/usage/**/*.test.ts"],
-      matchesVitestGlob,
-    );
-    expect(selected).toEqual(["ui/src/pages/usage/**/!(*.browser).test.ts"]);
-    for (const [file, included] of [
-      ["ui/src/pages/usage/query.test.ts", true],
-      ["ui/src/pages/usage/nested/newly-added.test.ts", true],
-      ["ui/src/pages/usage/query.browser.test.ts", false],
-      ["ui/src/pages/usage-other/query.test.ts", false],
-    ] as const) {
-      expect(
-        selected?.some((pattern) => matchesVitestGlob(file, pattern)),
-        file,
-      ).toBe(included);
-    }
-  });
-
   it("retains the ambiguity guard for glob-owned inventories", () => {
     expect(() =>
       intersectIncludePatterns(
