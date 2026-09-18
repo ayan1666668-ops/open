@@ -5,6 +5,7 @@ import {
   executeSqliteQueryTakeFirstSync,
   getNodeSqliteKysely,
 } from "../../infra/kysely-sync.js";
+import type { DB as StateDatabase } from "../../state/openclaw-state-db.generated.js";
 import type {
   WorkerEnvironmentIntentInput,
   WorkerEnvironmentRecord,
@@ -25,7 +26,9 @@ type AttachmentTable = {
   last_used_at_ms: number;
   closed_at_ms: number | null;
 };
-type AttachmentDatabase = { worker_environment_session_attachments: AttachmentTable };
+type AttachmentDatabase = Pick<StateDatabase, "worker_environments"> & {
+  worker_environment_session_attachments: AttachmentTable;
+};
 const query = (db: DatabaseSync) => getNodeSqliteKysely<AttachmentDatabase>(db);
 
 export const WORKER_ENVIRONMENT_SESSION_ATTACHMENTS_SCHEMA_SQL = `
@@ -201,6 +204,44 @@ export function createWorkerEnvironmentSessionAttachmentStore(options: {
             .where("session_id", "=", sessionId),
         );
         return get(db, sessionId);
+      });
+    },
+    cancelSessionAttachmentReservation(record: WorkerEnvironmentAttachmentRecord) {
+      write((db) => {
+        const current = get(db, record.sessionId);
+        const environment = options.getEnvironment(db, record.environmentId);
+        if (
+          !current ||
+          current.environmentId !== record.environmentId ||
+          current.generation !== record.generation ||
+          !environment ||
+          environment.state !== "requested" ||
+          environment.leaseId !== null
+        ) {
+          throw new Error("Conversation environment reservation changed before cancellation");
+        }
+        const at = now();
+        executeSqliteQuerySync(
+          db,
+          query(db)
+            .updateTable("worker_environment_session_attachments")
+            .set({ closed_at_ms: current.closedAtMs ?? at })
+            .where("session_id", "=", current.sessionId),
+        );
+        // Closing and cancelling the intent commit together: recovery must never allocate an
+        // environment whose required requester presentation was rejected before provisioning.
+        executeSqliteQuerySync(
+          db,
+          query(db)
+            .updateTable("worker_environments")
+            .set({
+              destroy_requested_at_ms: environment.destroyRequestedAtMs ?? at,
+              teardown_terminal_state: "destroyed",
+              updated_at_ms: at,
+            })
+            .where("environment_id", "=", environment.environmentId)
+            .where("state", "=", "requested"),
+        );
       });
     },
     touchSessionAttachment(record: WorkerEnvironmentAttachmentRecord, assertCurrent: () => void) {

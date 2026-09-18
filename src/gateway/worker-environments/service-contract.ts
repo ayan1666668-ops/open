@@ -24,6 +24,7 @@ import type {
   WorkerEnvironmentAttachmentRecord,
   WorkerEnvironmentSessionCreateRequest,
   WorkerEnvironmentSessionIdentity,
+  WorkerEnvironmentSessionReservationHandler,
 } from "./session-attachment.js";
 import type { WorkerEnvironmentState } from "./state.js";
 import type {
@@ -100,6 +101,7 @@ export type WorkerEnvironmentServiceContract = {
     request: WorkerEnvironmentSessionCreateRequest,
     authorize: () => void,
     signal?: AbortSignal,
+    onReserved?: WorkerEnvironmentSessionReservationHandler,
   ): Promise<{
     attachment: WorkerEnvironmentAttachmentRecord & { ownerEpoch: number };
     environment: WorkerEnvironmentServiceRecord;

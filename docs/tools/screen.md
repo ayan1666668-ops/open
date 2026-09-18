@@ -47,6 +47,12 @@ close the portal, or release the environment.
 The desktop panel and computer tools address the same environment. `screen`
 only presents it; computer tools perform clicks, typing, and screenshots.
 
+An environment can appear before provisioning finishes. Desktop shows startup
+progress and connects when that exact machine becomes available. `portal_show`
+can take `environmentId` while its application is starting; replace it with the
+application's `portalId` when ready. A pending Portal never opens another
+application from the portal list.
+
 A successful command returns `{ "ok": true }` after the Gateway sends
 the typed `ui.command` event to the requesting browser.
 

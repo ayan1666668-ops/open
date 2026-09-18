@@ -701,7 +701,7 @@ class OpenClawDesktopPanel extends OpenClawLitElement {
       controlling: this.controlling,
       desktopApps: this.desktopApps,
       launchingApp: this.launcher.app,
-      showApps: this.source?.kind === "environment",
+      startup: this.sessionSource.startupEnvironment,
       sizing,
       mobileKeyboard: this.mobileKeyboard,
       pictureInPictureControl: this.pictureInPicture.renderButton(),

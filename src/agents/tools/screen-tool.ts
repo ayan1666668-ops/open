@@ -29,7 +29,9 @@ const ScreenToolSchema = Type.Object(
   {
     action: Type.String({ enum: [...ACTIONS], description: "Action" }),
     sessionKey: Type.Optional(Type.String({ description: "Session. Default: current" })),
-    environmentId: Type.Optional(Type.String({ description: "Desktop environment or source ID" })),
+    environmentId: Type.Optional(
+      Type.String({ description: "Desktop source, or a pending portal's environment ID" }),
+    ),
     portalId: Type.Optional(Type.String({ description: "Portal ID returned by portal open/list" })),
     dock: Type.Optional(
       Type.String({ enum: ["bottom", "right"], description: "Panel dock on show" }),
@@ -97,17 +99,24 @@ function commandForAction(
     const open = action.endsWith("_show");
     const dock = open ? readDock(params) : undefined;
     if (action.startsWith("desktop_") || action.startsWith("portal_")) {
+      const environmentId = readToolStringParam(params, "environmentId");
       const target = readToolStringParam(
         params,
         action.startsWith("desktop_") ? "environmentId" : "portalId",
       );
+      if (action.startsWith("portal_") && target && environmentId) {
+        throw new ToolInputError("Choose portalId or a pending environmentId, not both");
+      }
       return {
         kind: "panel",
         open,
         ...(open ? { dock: dock ?? "right" } : {}),
         ...(action.startsWith("desktop_")
           ? { panel: "desktop", ...(target ? { environmentId: target } : {}) }
-          : { panel: "portal", ...(target ? { portalId: target } : {}) }),
+          : {
+              panel: "portal",
+              ...(target ? { portalId: target } : environmentId ? { environmentId } : {}),
+            }),
       };
     }
     return {

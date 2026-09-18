@@ -13,8 +13,10 @@ import { resolveRequestedSessionAgentId } from "../session-request-agent.js";
 import { authorizeSessionSharingTarget } from "../session-sharing.js";
 import type { WorkerEnvironmentSessionIdentity } from "../worker-environments/session-attachment.js";
 import { summarizeWorkerEnvironment } from "./environments.js";
+import { captureSessionEnvironmentToolPolicy } from "./environments.session-tool-policy.js";
 import { loadAccessorSessionEntryForGatewayTarget } from "./sessions-shared.js";
 import type { GatewayRequestHandlerOptions, GatewayRequestHandlers } from "./types.js";
+import { dispatchUiCommandToRequester } from "./ui-command.js";
 import { defineValidatedGatewayMethod } from "./validation.js";
 
 /** Binds machine effects to the authenticated conversation and its current incarnation. */
@@ -144,16 +146,54 @@ export const environmentsSessionHandlers: GatewayRequestHandlers = {
       const { params, respond, context } = options;
       try {
         const caller = resolveSessionEnvironmentCaller(options, params);
+        const { presentation, ...request } = params;
+        const assertAllowed = presentation
+          ? captureSessionEnvironmentToolPolicy(options, caller, "screen").assertAllowed
+          : caller.assertCurrent;
+        assertAllowed();
         const service = context.workerEnvironmentService;
         if (!service) {
           throw new Error("Cloud worker environments are not configured");
         }
         const result = await service.createSessionAttachment(
-          { ...params, ...caller.identity },
-          caller.assertCurrent,
+          { ...request, ...caller.identity },
+          assertAllowed,
           caller.signal,
+          presentation
+            ? async ({ environmentId }) => {
+                assertAllowed();
+                const dispatched = dispatchUiCommandToRequester({
+                  client: options.client,
+                  context,
+                  params: {
+                    sessionKey: caller.identity.sessionKey,
+                    agentId: caller.identity.agentId,
+                    command:
+                      presentation === "desktop"
+                        ? {
+                            kind: "panel",
+                            panel: "desktop",
+                            environmentId,
+                            open: true,
+                            dock: "right",
+                          }
+                        : {
+                            kind: "panel",
+                            panel: "portal",
+                            environmentId,
+                            open: true,
+                            dock: "right",
+                          },
+                  },
+                });
+                if (!dispatched.ok) {
+                  throw new Error(dispatched.error.message);
+                }
+                assertAllowed();
+              }
+            : undefined,
         );
-        caller.assertCurrent();
+        assertAllowed();
         respond(true, { ...result, environment: summarizeWorkerEnvironment(result.environment) });
       } catch (error) {
         respond(false, undefined, failure(error));

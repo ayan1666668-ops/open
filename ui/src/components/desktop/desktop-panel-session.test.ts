@@ -1,5 +1,6 @@
 /* @vitest-environment jsdom */
 
+import type { EnvironmentSummary } from "@openclaw/gateway-protocol";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../../../test/helpers/promise.js";
 import { createStorageMock } from "../../test-helpers/storage.ts";
@@ -21,7 +22,120 @@ describe("session desktop connection", () => {
 
   afterEach(() => {
     document.body.replaceChildren();
+    vi.useRealTimers();
     vi.unstubAllGlobals();
+  });
+
+  it.each([false, true])(
+    "keeps desktop pending with input disabled until ready (documentMode=%s)",
+    async (documentMode) => {
+      vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+      let environment: EnvironmentSummary = {
+        ...desktopEnvironment,
+        status: "starting",
+        desktop: false,
+      };
+      const request = vi.fn(async (method: string) =>
+        method === "environments.status"
+          ? environment
+          : { transport: "rfb", wsPath: "/desktop/observe?token=synthetic", control: false },
+      );
+      const connect = vi.fn(async (options: Parameters<DesktopClient["connect"]>[0]) => {
+        options.onConnect?.();
+        return createConnectionHandle();
+      });
+      const panel = createPanel();
+      Object.assign(panel, {
+        client: createGatewayClient(request).client,
+        available: true,
+        embedded: true,
+        documentMode,
+        presented: true,
+        sessionKey: "agent:main:preview",
+        requestedSource: desktopEnvironment.id,
+        desktopClientFactory: () => ({ connect }),
+      });
+      document.body.append(panel);
+      await waitForFast(() =>
+        expect(request).toHaveBeenCalledWith("environments.status", {
+          environmentId: desktopEnvironment.id,
+        }),
+      );
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(panel.renderRoot.querySelector("openclaw-panel-loading-skeleton")).not.toBeNull();
+      expect(panel.renderRoot.textContent).toContain("Starting your machine");
+      const takeControl = [
+        ...panel.renderRoot.querySelectorAll<HTMLButtonElement>(
+          'button[aria-label="Take control"]',
+        ),
+      ];
+      expect(takeControl.length).toBeGreaterThan(0);
+      for (const button of takeControl) {
+        expect(button.disabled).toBe(true);
+        button.click();
+      }
+      expect(connect).not.toHaveBeenCalled();
+      expect(request.mock.calls.some(([method]) => method === "desktop.observe")).toBe(false);
+
+      environment = desktopEnvironment;
+      await vi.advanceTimersByTimeAsync(2_000);
+      await waitForFast(() => expect(connect).toHaveBeenCalledOnce());
+      expect(request).toHaveBeenLastCalledWith("desktop.observe", {
+        source: { kind: "environment", environmentId: desktopEnvironment.id },
+        control: false,
+      });
+      const reads = request.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(6_000);
+      expect(request).toHaveBeenCalledTimes(reads);
+    },
+  );
+
+  it("retires startup reads when the desktop hides and ignores a previous machine's readiness", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const oldReady = createDeferred<EnvironmentSummary>();
+    const replacement = { ...desktopEnvironment, id: "replacement-desktop" };
+    let oldReads = 0;
+    const request = vi.fn(async (method: string, params?: { environmentId?: string }) => {
+      if (method === "environments.status") {
+        if (params?.environmentId === replacement.id) {
+          return replacement;
+        }
+        oldReads += 1;
+        return oldReads === 1
+          ? { ...desktopEnvironment, status: "starting", desktop: false }
+          : oldReady.promise;
+      }
+      return { transport: "rfb", wsPath: "/desktop/observe?token=synthetic", control: false };
+    });
+    const connect = vi.fn(async () => createConnectionHandle());
+    const panel = createPanel();
+    Object.assign(panel, {
+      client: createGatewayClient(request).client,
+      available: true,
+      embedded: true,
+      presented: true,
+      sessionKey: "agent:main:preview",
+      requestedSource: desktopEnvironment.id,
+      desktopClientFactory: () => ({ connect }),
+    });
+    document.body.append(panel);
+    await waitForFast(() => expect(oldReads).toBe(1));
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(oldReads).toBe(2);
+    panel.presented = false;
+    await panel.updateComplete;
+    oldReady.resolve(desktopEnvironment);
+    await vi.advanceTimersByTimeAsync(6_000);
+    expect(oldReads).toBe(2);
+    expect(connect).not.toHaveBeenCalled();
+    panel.requestedSource = replacement.id;
+    panel.presented = true;
+    await panel.updateComplete;
+    await waitForFast(() => expect(connect).toHaveBeenCalledOnce());
+    expect(request).toHaveBeenLastCalledWith("desktop.observe", {
+      source: { kind: "environment", environmentId: replacement.id },
+      control: false,
+    });
   });
 
   it("passes the worker observe password to the desktop client without an auth discriminator", async () => {

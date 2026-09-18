@@ -17,7 +17,9 @@ vi.mock("./environments.session.js", () => ({
   resolveSessionEnvironmentCaller: () => ({
     identity: { sessionId: "conversation", sessionKey: "agent:main:test", agentId: "main" },
     assertCurrent: () => {
-      if (!mocks.current) throw new Error("Run authority closed");
+      if (!mocks.current) {
+        throw new Error("Run authority closed");
+      }
     },
   }),
 }));
@@ -34,6 +36,7 @@ vi.mock("../../agents/tools/gateway-caller-context.js", () => ({
       ? {
           agentId: "main",
           sessionKey: "agent:main:test",
+          operationalRunInstance: { instanceId: "exec-test-instance", runId: "exec-test-run" },
           ...(mocks.capturedToolPolicy ? { assertToolAllowed: mocks.assertToolAllowed } : {}),
         }
       : undefined,
@@ -166,7 +169,7 @@ describe("conversation environment execution RPC", () => {
 
   it("waits for approval and rechecks live authority before dispatch", async () => {
     mocks.policy = { ...mocks.policy, security: "allowlist", ask: "on-miss" };
-    const decision = createDeferred<void>();
+    const decision = createDeferred();
     mocks.approve.mockReturnValue(decision.promise);
     const { call, execute } = fixture();
     const pending = call({ action: "start", argv: ["node", "app.js"], processId: "app" });
@@ -193,7 +196,7 @@ describe("conversation environment execution RPC", () => {
 
   it("dispatches the exact command presented for approval even if its request object changes", async () => {
     mocks.policy = { ...mocks.policy, security: "allowlist", ask: "on-miss" };
-    const decision = createDeferred<void>();
+    const decision = createDeferred();
     mocks.approve.mockReturnValue(decision.promise);
     const { call, execute } = fixture();
     const params = { argv: ["node", "approved.js"], input: "approved stdin" };

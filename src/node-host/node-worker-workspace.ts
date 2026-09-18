@@ -190,7 +190,9 @@ export class NodeWorkerWorkspaceRuntime {
     }
     let released = false;
     return () => {
-      if (released) return;
+      if (released) {
+        return;
+      }
       released = true;
       const count = this.activeWorkspaceOperations.get(generationKey) ?? 0;
       if (count <= 1) {

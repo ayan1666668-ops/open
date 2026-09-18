@@ -206,7 +206,7 @@ export class ShellGatewayOwner {
       ) {
         this.host.selectChatSession(sessionKey, commandParams.agentId);
       }
-      const event = new CustomEvent(
+      const panelEvent = new CustomEvent(
         {
           terminal: TERMINAL_PANEL_TOGGLE_EVENT,
           browser: BROWSER_PANEL_TOGGLE_EVENT,
@@ -221,19 +221,17 @@ export class ShellGatewayOwner {
             ...(command.panel === "terminal" && command.terminalSessionId
               ? { terminalSessionId: command.terminalSessionId }
               : {}),
-            ...(command.panel === "desktop" && command.environmentId
+            ...("environmentId" in command && command.environmentId
               ? { environmentId: command.environmentId }
               : {}),
-            ...(command.panel === "portal" && command.portalId
-              ? { portalId: command.portalId }
-              : {}),
+            ...("portalId" in command && command.portalId ? { portalId: command.portalId } : {}),
           },
         },
       );
       if (sessionKey) {
-        rememberSessionPanelToggle(command.panel, event);
+        rememberSessionPanelToggle(command.panel, panelEvent);
       }
-      window.dispatchEvent(event);
+      window.dispatchEvent(panelEvent);
       return;
     }
 

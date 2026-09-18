@@ -42,6 +42,11 @@ export const UiPanelCommandSchema = Type.Union([
     panel: Type.Literal("portal"),
     portalId: Type.Optional(NonEmptyString),
   }),
+  closedObject({
+    ...UiPanelCommandFields,
+    panel: Type.Literal("portal"),
+    environmentId: NonEmptyString,
+  }),
 ]);
 export const UiNavigateCommandSchema = closedObject({
   kind: Type.Literal("navigate"),

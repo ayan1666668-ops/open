@@ -1,12 +1,17 @@
-import type { WorkerDesktopAppId } from "@openclaw/gateway-protocol";
-import type { TemplateResult } from "lit";
+import type { EnvironmentSummary, WorkerDesktopAppId } from "@openclaw/gateway-protocol";
+import { html, type TemplateResult } from "lit";
 import { t } from "../../i18n/index.ts";
 import type { DockLayoutController } from "../dock-layout-controller.ts";
 import { renderDesktopDocumentView } from "./desktop-document-view.ts";
 import { openDesktopFocus } from "./desktop-focus-window.ts";
 import type { DesktopMobileKeyboard } from "./desktop-mobile-keyboard.ts";
 import type { DesktopPanelFullscreenController } from "./desktop-panel-fullscreen-controller.ts";
-import { renderDesktopPanelView, type DesktopSizingOptions } from "./desktop-panel-view.ts";
+import {
+  renderDesktopNotice,
+  renderDesktopPanelView,
+  type DesktopSizingOptions,
+} from "./desktop-panel-view.ts";
+import { desktopSourceForEnvironment } from "./desktop-source.ts";
 
 type DesktopPresentation = {
   documentMode: boolean;
@@ -16,7 +21,7 @@ type DesktopPresentation = {
   controlling: boolean;
   desktopApps: WorkerDesktopAppId[];
   launchingApp: WorkerDesktopAppId | null;
-  showApps: boolean;
+  startup: EnvironmentSummary | undefined;
   sizing: DesktopSizingOptions;
   mobileKeyboard: DesktopMobileKeyboard;
   pictureInPictureControl: TemplateResult;
@@ -38,9 +43,16 @@ type DesktopPresentation = {
 
 /** Compose the existing document and dock views without owning connection state. */
 export function renderDesktopPresentation(view: DesktopPresentation) {
+  const content = view.startup
+    ? {
+        ...view.content,
+        notice: html`${view.content.notice}${renderDesktopNotice(null, t(view.startup.worker?.state === "bootstrapping" ? "desktop.preparing" : "desktop.starting"))}`,
+      }
+    : view.content;
+  const focus = view.focusTarget();
   if (view.documentMode) {
     return renderDesktopDocumentView({
-      ...view.content,
+      ...content,
       controlling: view.controlling,
       sizing: view.sizing,
       keyboardInputValue: view.mobileKeyboard.value,
@@ -72,13 +84,15 @@ export function renderDesktopPresentation(view: DesktopPresentation) {
       );
     },
     onClose: view.onClose,
-    content: view.content,
+    content,
     connection: {
       controlling: view.controlling,
       desktopApps: view.desktopApps,
-      environmentSelected: view.focusTarget().source !== null,
+      environmentSelected: focus.source !== null,
       launchingApp: view.launchingApp,
-      showApps: view.showApps,
+      showApps:
+        focus.source !== null &&
+        desktopSourceForEnvironment({ id: focus.source }).kind === "environment",
       sizing: view.sizing,
       pictureInPictureControl: view.pictureInPictureControl,
       onLaunch: view.onLaunch,

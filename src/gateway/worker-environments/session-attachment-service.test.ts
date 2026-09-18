@@ -152,6 +152,123 @@ describe("conversation-owned temporary environments", () => {
     }
   });
 
+  it.each([
+    { presentation: "desktop", deniedBy: "captured" },
+    { presentation: "portal", deniedBy: "live" },
+    { presentation: "desktop", deniedBy: "missing" },
+  ] as const)(
+    "does not reserve or allocate a machine when $presentation presentation lacks $deniedBy screen authority",
+    async ({ presentation, deniedBy }) => {
+      const provision = vi.fn(async () => ({ leaseId: "lease-one", ssh: support.SSH_ENDPOINT }));
+      const service = support.createService(support.createProvider({ provision }));
+      if (deniedBy === "live") {
+        support.testState.config.tools = { deny: ["screen"] };
+      }
+      const respond = vi.fn();
+      const context = createDirectChatContext({
+        getRuntimeConfig: () => support.testState.config,
+        workerEnvironmentService: service,
+      });
+      await withGatewayToolCallerIdentity(
+        {
+          ...identity,
+          operationalRunInstance: { instanceId: "screen-instance", runId: "screen-run" },
+          receiptAuthority: () => true,
+          ...(deniedBy === "missing"
+            ? {}
+            : {
+                assertToolAllowed: (tool: string) => {
+                  expect(tool).toBe("screen");
+                  if (deniedBy === "captured") {
+                    throw new Error("Captured policy denies screen");
+                  }
+                },
+              }),
+        },
+        async () => {
+          await environmentsSessionHandlers["environments.session.create"]!({
+            req: { type: "req", id: "create-preview", method: "environments.session.create" },
+            params: {
+              profileId: request.profileId,
+              idempotencyKey: request.idempotencyKey,
+              presentation,
+            },
+            context,
+            client: createSyntheticPluginRuntimeClient({ pluginRuntimeOwnerId: "crabbox" }),
+            isWebchatConnect: () => false,
+            respond,
+          });
+        },
+      );
+      expect(respond).toHaveBeenCalledWith(
+        false,
+        undefined,
+        expect.objectContaining({
+          message: expect.stringMatching(/screen|captured tool authority/u),
+        }),
+      );
+      expect(support.testState.store.list()).toEqual([]);
+      expect(provision).not.toHaveBeenCalled();
+      expect(context.broadcastToConnIds).not.toHaveBeenCalled();
+    },
+  );
+
+  it("cancels its exact fresh reservation if screen policy narrows before presentation", async () => {
+    const provision = vi.fn(async () => ({ leaseId: "lease-one", ssh: support.SSH_ENDPOINT }));
+    const service = support.createService(support.createProvider({ provision }));
+    const reserve = support.testState.store.createSessionAttachmentIntent.bind(
+      support.testState.store,
+    );
+    const reserveSpy = vi
+      .spyOn(support.testState.store, "createSessionAttachmentIntent")
+      .mockImplementation((...args) => {
+        const reserved = reserve(...args);
+        support.testState.config.tools = { deny: ["screen"] };
+        return reserved;
+      });
+    const respond = vi.fn();
+    const context = createDirectChatContext({
+      getRuntimeConfig: () => support.testState.config,
+      workerEnvironmentService: service,
+    });
+    try {
+      await withGatewayToolCallerIdentity(
+        {
+          ...identity,
+          operationalRunInstance: { instanceId: "screen-instance", runId: "screen-run" },
+          receiptAuthority: () => true,
+          assertToolAllowed: () => {},
+        },
+        async () => {
+          await environmentsSessionHandlers["environments.session.create"]!({
+            req: { type: "req", id: "create-preview", method: "environments.session.create" },
+            params: {
+              profileId: request.profileId,
+              idempotencyKey: request.idempotencyKey,
+              presentation: "portal",
+            },
+            context,
+            client: createSyntheticPluginRuntimeClient({ pluginRuntimeOwnerId: "crabbox" }),
+            isWebchatConnect: () => false,
+            respond,
+          });
+        },
+      );
+    } finally {
+      reserveSpy.mockRestore();
+    }
+    expect(respond).toHaveBeenCalledWith(
+      false,
+      undefined,
+      expect.objectContaining({ message: "Conversation policy denies screen" }),
+    );
+    const result = service.getSessionAttachmentStatus(identity.sessionId)!;
+    expect(result.attachment.closedAtMs).not.toBeNull();
+    expect(result.environment.state).toBe("failed");
+    expect(provision).not.toHaveBeenCalled();
+    expect(context.broadcastToConnIds).not.toHaveBeenCalled();
+  });
+
   it("reuses concurrent and changed-key retries without moving the conversation or allowing placement adoption", async () => {
     const provision = vi.fn(async () => ({ leaseId: "lease-one", ssh: support.SSH_ENDPOINT }));
     const service = support.createService(support.createProvider({ provision }));
@@ -197,6 +314,69 @@ describe("conversation-owned temporary environments", () => {
     expect(support.testState.store.list()).toEqual([]);
   });
 
+  it("presents the actual reserved machine before allocation and keeps recovery behind required presentation", async () => {
+    const provision = vi.fn(async () => ({ leaseId: "lease-one", ssh: support.SSH_ENDPOINT }));
+    const service = support.createService(support.createProvider({ provision }));
+    const reserved = createDeferredCore<string>();
+    const presented = createDeferredCore();
+    const onReserved = vi.fn(
+      async ({ environmentId, reused }: { environmentId: string; reused: boolean }) => {
+        expect(reused).toBe(false);
+        expect(service.get(environmentId)?.state).toBe("requested");
+        expect(
+          service.getSessionAttachmentStatus(identity.sessionId)?.attachment.environmentId,
+        ).toBe(environmentId);
+        reserved.resolve(environmentId);
+        await presented.promise;
+      },
+    );
+    const creation = service.createSessionAttachment(request, authorize, undefined, onReserved);
+    const environmentId = await reserved.promise;
+    const recovery = service.reconcileOnce(environmentId);
+    await Promise.resolve();
+    expect(provision).not.toHaveBeenCalled();
+    presented.resolve();
+    const [created] = await Promise.all([creation, recovery]);
+    expect(created.attachment.environmentId).toBe(environmentId);
+    expect(provision).toHaveBeenCalledOnce();
+    const showExisting = vi.fn(async () => {});
+    await service.createSessionAttachment(
+      { ...request, idempotencyKey: "show-again" },
+      authorize,
+      undefined,
+      showExisting,
+    );
+    expect(showExisting).toHaveBeenCalledWith({ environmentId, reused: true });
+    expect(provision).toHaveBeenCalledOnce();
+  });
+
+  it.each(["presentation rejected", "requester revoked"] as const)(
+    "cancels the durable allocation intent when required presentation fails: %s",
+    async (failure) => {
+      const provision = vi.fn(async () => ({ leaseId: "lease-one", ssh: support.SSH_ENDPOINT }));
+      const service = support.createService(support.createProvider({ provision }));
+      let live = true;
+      const assertCurrent = () => {
+        if (!live) {
+          throw new Error("requester revoked");
+        }
+      };
+      await expect(
+        service.createSessionAttachment(request, assertCurrent, undefined, async () => {
+          if (failure === "presentation rejected") {
+            throw new Error(failure);
+          }
+          live = false;
+        }),
+      ).rejects.toThrow(failure);
+      const result = service.getSessionAttachmentStatus(identity.sessionId)!;
+      expect(result.attachment.closedAtMs).not.toBeNull();
+      expect(result.environment.state).toBe("failed");
+      await service.reconcileOnce(result.attachment.environmentId);
+      expect(provision).not.toHaveBeenCalled();
+    },
+  );
+
   it("preserves the attachment through reopen and rejects the old session incarnation after replacement", async () => {
     const provider = support.createProvider();
     let service = support.createService(provider);
@@ -219,7 +399,7 @@ describe("conversation-owned temporary environments", () => {
   });
 
   it("closes authorization before waiting for provider teardown and requires a fresh key for a replacement", async () => {
-    const stopped = createDeferredCore<void>();
+    const stopped = createDeferredCore();
     const destroy = vi.fn(async () => await stopped.promise);
     let allocations = 0;
     const service = support.createService(

@@ -16,8 +16,11 @@ and CUA require a desktop-enabled profile. Never silently substitute another OS
 for an application that requires a particular platform.
 
 `create` attaches the machine to this conversation without moving the agent or
-its primary workspace. Its result identifies the environment. Use `exec` for
-commands on that environment; the ordinary shell still has its existing target.
+its primary workspace. For an open-and-show request with the `screen` capability
+available, pass `presentation: "desktop"` for a native app or
+`presentation: "portal"` for a web app. This opens the right sidebar with machine
+startup progress before provisioning finishes. Its result identifies the
+environment. Use `exec` for commands on that environment; the ordinary shell still has its existing target.
 Copy or recreate the task's required files explicitly. Do not assume the local
 project was synchronized.
 

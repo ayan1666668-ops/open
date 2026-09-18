@@ -13,6 +13,7 @@ export const EnvironmentsSessionCreateParamsSchema = closedObject({
   idempotencyKey: Type.String({ minLength: 1, maxLength: 256 }),
   machineClass: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
   os: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+  presentation: Type.Optional(Type.Union([Type.Literal("desktop"), Type.Literal("portal")])),
 });
 export const EnvironmentsSessionStatusParamsSchema = closedObject({
   ...sessionTarget,

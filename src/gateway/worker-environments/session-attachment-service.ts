@@ -16,6 +16,7 @@ import type {
   WorkerEnvironmentAttachmentRecord,
   WorkerEnvironmentSessionCreateRequest,
   WorkerEnvironmentSessionIdentity,
+  WorkerEnvironmentSessionReservationHandler,
 } from "./session-attachment.js";
 import type { WorkerEnvironmentStore } from "./store.js";
 import type { WorkerWorkspaceCommand } from "./tunnel-contract.js";
@@ -166,6 +167,7 @@ export function createWorkerEnvironmentSessionAttachments(
       input: WorkerEnvironmentSessionCreateRequest,
       authorize: () => void,
       callerSignal?: AbortSignal,
+      onReserved?: WorkerEnvironmentSessionReservationHandler,
     ) {
       const sessionId = input.sessionId;
       const creation = new AbortController();
@@ -225,6 +227,8 @@ export function createWorkerEnvironmentSessionAttachments(
             const environmentId = environment.environmentId;
             await options.withLock(environmentId, async () => {
               assertCurrent();
+              await onReserved?.({ environmentId, reused: true });
+              assertCurrent();
               const current = store.get(environmentId);
               if (current) {
                 await providerLifecycle.reconcileRecord(current, signal, undefined, assertCurrent);
@@ -244,15 +248,45 @@ export function createWorkerEnvironmentSessionAttachments(
             });
             assertCurrent();
             providerLifecycle.assertPreparedIntentCurrent(request.profileId, intent);
-            const reserved = store.createSessionAttachmentIntent(
-              {
-                ...request,
-                ...deriveEnvironmentIntent(allocationKey),
-                providerId: intent.providerId,
-                profileSnapshot: intent.profileSnapshot,
-              },
-              assertCurrent,
-            );
+            const environmentIntent = deriveEnvironmentIntent(allocationKey);
+            let reservationCreated = false;
+            const reserved = await options
+              .withLock(environmentIntent.environmentId, async () => {
+                const reservation = store.createSessionAttachmentIntent(
+                  {
+                    ...request,
+                    ...environmentIntent,
+                    providerId: intent.providerId,
+                    profileSnapshot: intent.profileSnapshot,
+                  },
+                  assertCurrent,
+                );
+                reservationCreated = true;
+                try {
+                  assertCurrent();
+                  await onReserved?.({
+                    environmentId: reservation.environment.environmentId,
+                    reused: false,
+                  });
+                  assertCurrent();
+                  return reservation;
+                } catch (error) {
+                  store.cancelSessionAttachmentReservation(reservation.attachment);
+                  throw error;
+                }
+              })
+              .catch(async (error: unknown) => {
+                if (reservationCreated) {
+                  await providerLifecycle
+                    .destroy(environmentIntent.environmentId, { requireUnattached: true })
+                    .catch(() =>
+                      options.warn(
+                        "Cancelled conversation environment reservation cleanup will retry",
+                      ),
+                    );
+                }
+                throw error;
+              });
             attachment = reserved.attachment;
             environment = await providerLifecycle.createWithProfile(
               request.profileId,

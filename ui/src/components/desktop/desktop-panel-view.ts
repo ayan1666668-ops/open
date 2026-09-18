@@ -325,6 +325,7 @@ export function renderDesktopConnection(options: {
         type="button"
         aria-label=${t(options.controlling ? "desktop.switchToViewOnly" : "desktop.takeControl")}
         aria-pressed=${options.controlling ? "true" : "false"}
+        ?disabled=${options.state !== "connected"}
         @click=${options.onControlToggle}
       >
         ${t(options.controlling ? "desktop.control" : "desktop.viewOnly")}
@@ -350,6 +351,7 @@ export function renderDesktopConnection(options: {
               type="button"
               title=${t("desktop.takeControl")}
               aria-label=${t("desktop.takeControl")}
+              ?disabled=${options.state !== "connected"}
               @click=${options.onTakeControl}
             ></button>`
           : nothing

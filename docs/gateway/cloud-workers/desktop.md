@@ -13,6 +13,13 @@ The agent can attach a temporary environment to the current conversation, run
 the application there, and open its view in the chat side panel. The agent's
 primary workspace and session placement stay unchanged.
 
+For open-and-show requests, the agent passes `presentation: "desktop"` or
+`presentation: "portal"` when creating the attachment. The side panel opens
+before allocation and shows machine startup progress. A web preview waits for
+the requested application rather than displaying another portal. If the
+requesting browser cannot receive the initial presentation, a fresh reservation
+is canceled before provisioning; an existing attachment remains available.
+
 For a native Linux app, use a profile with `settings.desktop: true` and enable
 the **Cloud Worker Desktop** lab. The agent launches the application and opens
 the Desktop panel. When its model supports vision and tool policy permits

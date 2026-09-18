@@ -239,6 +239,7 @@ export function sidebarPanelDefinitions(
         embedded
         .presented=${params?.portalPresented ?? false}
         .requestedPortalId=${state.sidebarLayout.columns.flatMap((column) => column.panels).find((panel) => panel.slot === "portal")?.portalId ?? null}
+        .requestedEnvironmentId=${state.sidebarLayout.columns.flatMap((column) => column.panels).find((panel) => panel.slot === "portal")?.environmentId ?? null}
       ></openclaw-portals-page>`
     : null;
   const workspace = state ? getSessionWorkspace(state) : null;

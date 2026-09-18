@@ -33,12 +33,18 @@ describe("Crabbox conversation tool", () => {
 
   it("reuses allocation identity on a replay without accepting caller-supplied ownership", async () => {
     const { tool, request } = fixture();
-    const params = { action: "create", sessionId: "other-session", idempotencyKey: "forged" };
+    const params = {
+      action: "create",
+      presentation: "desktop",
+      sessionId: "other-session",
+      idempotencyKey: "forged",
+    };
     await tool!.execute("call-one", params);
     await tool!.execute("call-one", params);
     expect(request.mock.calls[0]).toEqual(request.mock.calls[1]);
     expect(request.mock.calls[0]?.[1]).toEqual({
       profileId: "desktop",
+      presentation: "desktop",
       idempotencyKey: expect.stringMatching(/^[a-f0-9]{64}$/u),
     });
     const second = fixture({ ...context, sessionId: "session-two" });

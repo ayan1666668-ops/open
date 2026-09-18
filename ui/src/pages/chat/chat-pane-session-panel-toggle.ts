@@ -65,6 +65,10 @@ export class ChatPaneSessionPanelToggleController {
     }
     if (panel && slot === "portal" && typeof detail?.portalId === "string") {
       panel.portalId = detail.portalId;
+      delete panel.environmentId;
+    } else if (panel && slot === "portal" && typeof detail?.environmentId === "string") {
+      panel.environmentId = detail.environmentId;
+      delete panel.portalId;
     }
     if (slot === "terminal") {
       const intent = terminalToggleIntent(event, resolveChatAgentId(owner.state));

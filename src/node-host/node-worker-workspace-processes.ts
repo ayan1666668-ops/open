@@ -179,6 +179,7 @@ export class NodeWorkerWorkspaceProcesses {
               throw new AggregateError(
                 [error, cleanupError],
                 "Workspace process startup cleanup failed",
+                { cause: cleanupError },
               );
             }
             throw error;
@@ -200,7 +201,9 @@ export class NodeWorkerWorkspaceProcesses {
       await this.joinExtinction(process);
       assertCurrent();
     }
-    if (process.cleanupError) throw process.cleanupError;
+    if (process.cleanupError) {
+      throw process.cleanupError;
+    }
     const completion = process.completion;
     return {
       workspaceDir,
@@ -261,13 +264,15 @@ export class NodeWorkerWorkspaceProcesses {
     }
     const outcomes = await Promise.allSettled(
       owners.map(async (owner) => {
-        const outcomes = await Promise.allSettled(
+        const processOutcomes = await Promise.allSettled(
           [...owner.processes.values()].map((process) => process.cleanup()),
         );
-        const errors = outcomes.flatMap((outcome) =>
+        const errors = processOutcomes.flatMap((outcome) =>
           outcome.status === "rejected" ? [outcome.reason] : [],
         );
-        if (errors.length) throw new AggregateError(errors, "Workspace process cleanup failed");
+        if (errors.length) {
+          throw new AggregateError(errors, "Workspace process cleanup failed");
+        }
         for (const process of owner.processes.values()) {
           process.releaseWorkspace();
         }

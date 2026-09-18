@@ -48,6 +48,7 @@ export type PortalPanelToggleDetail = {
   dock?: "bottom" | "right";
   open?: boolean;
   portalId?: string;
+  environmentId?: string;
 };
 
 export type PanelToggleElement = HTMLElement & {

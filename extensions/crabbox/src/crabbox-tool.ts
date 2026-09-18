@@ -29,6 +29,12 @@ const CRABBOX_TOOL_PARAMETERS = {
       type: "string",
       description: "create: a machine class advertised by the profile.",
     },
+    presentation: {
+      type: "string",
+      enum: ["desktop", "portal"],
+      description:
+        "create: for open-and-show requests, open the native Desktop or web Portal sidebar immediately with provisioning progress. Omit when no viewer was requested.",
+    },
     argv: {
       type: "array",
       items: { type: "string" },
@@ -80,7 +86,7 @@ export function createCrabboxTool({ context, gateway }: CrabboxToolOptions): Any
     name: "crabbox",
     label: "Crabbox",
     description:
-      "Create and use a temporary Crabbox attached to this conversation while keeping the agent and its main workspace in place. profiles lists configured machines and desktop capability; create reuses the current attachment; exec runs commands there, with background=true for persistent apps and servers. Inspect/stop owned processes or stop the entire box. Desktop-enabled profiles support native app viewing and computer use; web servers can be shown through a portal. Read the crabbox-apps skill for the complete open-and-show workflow.",
+      "Create and use a temporary Crabbox attached to this conversation while keeping the agent and its main workspace in place. profiles lists configured machines and desktop capability; create reuses the current attachment. For open-and-show requests, pass presentation=desktop for native apps or portal for web apps to open the sidebar during provisioning. exec runs commands there, with background=true for persistent apps and servers. Inspect/stop owned processes or stop the entire box. Desktop-enabled profiles support native app viewing and computer use. Read the crabbox-apps skill for the complete workflow.",
     parameters: CRABBOX_TOOL_PARAMETERS,
     resultContentSource: "network",
     async execute(toolCallId, rawArgs, signal) {
@@ -116,6 +122,10 @@ export function createCrabboxTool({ context, gateway }: CrabboxToolOptions): Any
         }
         const os = readStringParam(params, "os");
         const machineClass = readStringParam(params, "machineClass");
+        const presentation = readStringParam(params, "presentation");
+        if (presentation !== undefined && presentation !== "desktop" && presentation !== "portal") {
+          throw new Error("presentation must be desktop or portal");
+        }
         return jsonResult(
           await gateway.request(
             "environments.session.create",
@@ -124,6 +134,7 @@ export function createCrabboxTool({ context, gateway }: CrabboxToolOptions): Any
               idempotencyKey: operationId(sessionId, toolCallId),
               ...(os ? { os } : {}),
               ...(machineClass ? { machineClass } : {}),
+              ...(presentation ? { presentation } : {}),
             },
             { timeoutMs: 20 * 60_000, scopes: ["operator.admin"] },
           ),

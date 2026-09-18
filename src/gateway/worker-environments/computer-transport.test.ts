@@ -144,7 +144,9 @@ describe("session computer transport", () => {
       agentId: h.state.placement.agentId,
       runId: h.run.runId,
       assertCurrent: () => {
-        if (!attached) throw new Error("attachment revoked");
+        if (!attached) {
+          throw new Error("attachment revoked");
+        }
       },
     });
     expect(prepared).toBeDefined();
@@ -173,9 +175,20 @@ describe("session computer transport", () => {
     h.privateInvoke.mockImplementationOnce(async (invocation) => {
       const signal = invocation.signal!;
       dispatched.resolve(signal);
-      await new Promise<void>((_resolve, reject) =>
-        signal.addEventListener("abort", () => reject(signal.reason), { once: true }),
-      );
+      await new Promise<void>((_resolve, reject) => {
+        signal.addEventListener(
+          "abort",
+          () => {
+            const reason: unknown = signal.reason;
+            reject(
+              reason instanceof Error
+                ? reason
+                : new Error("Computer transport aborted", { cause: reason }),
+            );
+          },
+          { once: true },
+        );
+      });
       return { ok: true, payload: { ok: true } };
     });
     const input = transport.invoke(request("type"));

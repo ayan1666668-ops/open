@@ -90,8 +90,9 @@ describe("screen tool", () => {
   it.each([
     ["desktop_show", "environmentId", "desktop"],
     ["portal_show", "portalId", "portal"],
+    ["portal_show", "environmentId", "portal"],
   ] as const)(
-    "opens %s in the selected conversation's right sidebar",
+    "opens %s with %s in the selected conversation's right sidebar",
     async (action, targetKey, panel) => {
       const { callGateway, calls } = createGatewayRecorder();
       const tool = createScreenTool({ agentSessionKey: "agent:main:current", callGateway });

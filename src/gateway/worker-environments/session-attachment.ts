@@ -24,3 +24,9 @@ export type WorkerEnvironmentSessionCreateRequest = WorkerEnvironmentSessionIden
   machineClass?: string;
   os?: string;
 };
+
+/** Requester presentation must succeed before a newly reserved machine can be allocated. */
+export type WorkerEnvironmentSessionReservationHandler = (reservation: {
+  environmentId: string;
+  reused: boolean;
+}) => Promise<void>;

@@ -1,5 +1,6 @@
 import { consume } from "@lit/context";
 import type {
+  EnvironmentSummary,
   PortalCloseResult,
   PortalListResult,
   PortalSummary,
@@ -18,6 +19,7 @@ import { formatUiError } from "../../lib/format-error.ts";
 import { canCallGatewayMethod, isGatewayMethodAdvertised } from "../../lib/gateway-methods.ts";
 import { GatewayPageController } from "../../lit/gateway-page-controller.ts";
 import { OpenClawLightDomElement } from "../../lit/openclaw-element.ts";
+import { PollController } from "../../lit/poll-controller.ts";
 import { SubscriptionsController } from "../../lit/subscriptions-controller.ts";
 import { probePortalReachable, type PortalReachability } from "./portal-reachability.ts";
 import { resolvePortalUrl } from "./portal-url.ts";
@@ -37,6 +39,7 @@ class PortalsPage extends OpenClawLightDomElement {
   @property({ type: Boolean, reflect: true }) embedded = false;
   @property({ type: Boolean }) presented = true;
   @property({ attribute: false }) requestedPortalId: string | null = null;
+  @property({ attribute: false }) requestedEnvironmentId: string | null = null;
   @consume({ context: applicationContext, subscribe: true })
   private context!: ApplicationContext;
 
@@ -47,6 +50,16 @@ class PortalsPage extends OpenClawLightDomElement {
   @state() private error: string | null = null;
   @state() private closingPortalId: string | null = null;
   @state() private portalProbeState: PortalProbeState | null = null;
+  @state() private pendingEnvironment: EnvironmentSummary | null = null;
+  @state() private environmentFailure: { environmentId: string; message: string } | null = null;
+  private environmentRequestGeneration = 0;
+  private environmentLoading = false;
+  private readonly environmentPoll = new PollController(
+    this,
+    2_000,
+    () => void this.loadPendingEnvironment(),
+    false,
+  );
 
   private requestGeneration = 0;
   private portalSetRevision = 0;
@@ -55,7 +68,7 @@ class PortalsPage extends OpenClawLightDomElement {
   private readonly gateway = new GatewayPageController(this, {
     getGateway: () => this.context?.gateway,
     invalidateRequests: () => this.resetGatewayState(),
-    ensureInitialData: () => void this.loadPortals(),
+    ensureInitialData: () => void this.loadPresentation(),
   });
   private readonly subscriptions = new SubscriptionsController(this).effect(
     () => this.context?.gateway,
@@ -69,11 +82,12 @@ class PortalsPage extends OpenClawLightDomElement {
         ) {
           return;
         }
-        void this.loadPortals();
+        void this.loadPresentation();
       }),
   );
 
   override disconnectedCallback() {
+    this.environmentRequestGeneration += 1;
     this.portalProbeGeneration += 1;
     this.subscriptions.clear();
     super.disconnectedCallback();
@@ -81,19 +95,32 @@ class PortalsPage extends OpenClawLightDomElement {
 
   override updated(changed: Map<string, unknown>) {
     // The Gateway lifecycle owns the initial fetch, including an initial explicit target.
-    if (changed.has("requestedPortalId") && changed.get("requestedPortalId") !== undefined) {
+    if (
+      ["requestedPortalId", "requestedEnvironmentId"].some(
+        (key) => changed.has(key) && changed.get(key) !== undefined,
+      )
+    ) {
       this.requestGeneration += 1;
+      this.environmentRequestGeneration += 1;
+      this.environmentLoading = false;
+      this.pendingEnvironment = null;
+      this.environmentFailure = null;
+      this.environmentPoll.stop();
       this.loading = false;
       this.portalProbeGeneration += 1;
       this.portalProbeState = null;
       this.applyPortalSet(this.portals);
-      void this.loadPortals();
+      void this.loadPresentation();
     } else if (
       changed.has("presented") &&
       changed.get("presented") !== undefined &&
       this.presented
     ) {
-      void this.loadPortals();
+      void this.loadPresentation();
+    } else if (changed.has("presented") && !this.presented) {
+      this.environmentPoll.stop();
+      this.environmentRequestGeneration += 1;
+      this.environmentLoading = false;
     }
   }
 
@@ -103,10 +130,82 @@ class PortalsPage extends OpenClawLightDomElement {
     if (detail?.open === false) {
       return;
     }
-    if (detail?.portalId) {
+    if (
+      detail?.portalId &&
+      (detail.portalId !== this.requestedPortalId || this.requestedEnvironmentId !== null)
+    ) {
       this.requestedPortalId = detail.portalId;
+      this.requestedEnvironmentId = null;
+      return;
+    } else if (
+      detail?.environmentId &&
+      (detail.environmentId !== this.requestedEnvironmentId || this.requestedPortalId !== null)
+    ) {
+      this.requestedEnvironmentId = detail.environmentId;
+      this.requestedPortalId = null;
+      return;
     }
-    void this.loadPortals();
+    void this.loadPresentation();
+  }
+
+  private get pendingEnvironmentId(): string | null {
+    return this.requestedPortalId ? null : this.requestedEnvironmentId;
+  }
+
+  private async loadPresentation(): Promise<void> {
+    if (this.pendingEnvironmentId) {
+      await this.loadPendingEnvironment();
+    } else {
+      await this.loadPortals();
+    }
+  }
+
+  private async loadPendingEnvironment(): Promise<void> {
+    const environmentId = this.pendingEnvironmentId;
+    const client = this.gateway.client;
+    const scope = this.gateway.capture();
+    if (
+      !environmentId ||
+      !client ||
+      !scope ||
+      this.environmentLoading ||
+      (this.embedded && !this.presented)
+    ) {
+      return;
+    }
+    const generation = ++this.environmentRequestGeneration;
+    const isCurrent = () =>
+      this.gateway.isCurrent(scope) &&
+      generation === this.environmentRequestGeneration &&
+      this.pendingEnvironmentId === environmentId;
+    this.environmentLoading = true;
+    this.environmentFailure = null;
+    try {
+      const environment = await client.request<EnvironmentSummary>("environments.status", {
+        environmentId,
+      });
+      if (!isCurrent()) {
+        return;
+      }
+      if (environment.id !== environmentId) {
+        throw new Error("Environment status returned a different target");
+      }
+      this.pendingEnvironment = environment;
+      if (environment.status === "starting") {
+        this.environmentPoll.start();
+      } else {
+        this.environmentPoll.stop();
+      }
+    } catch (error) {
+      if (isCurrent()) {
+        this.environmentFailure = { environmentId, message: formatUiError(error) };
+        this.environmentPoll.stop();
+      }
+    } finally {
+      if (isCurrent()) {
+        this.environmentLoading = false;
+      }
+    }
   }
 
   private get portalListSupported(): boolean {
@@ -118,6 +217,11 @@ class PortalsPage extends OpenClawLightDomElement {
   }
 
   private resetGatewayState() {
+    this.environmentRequestGeneration += 1;
+    this.environmentLoading = false;
+    this.pendingEnvironment = null;
+    this.environmentFailure = null;
+    this.environmentPoll.stop();
     this.requestGeneration += 1;
     this.portalSetRevision += 1;
     this.portals = [];
@@ -135,11 +239,12 @@ class PortalsPage extends OpenClawLightDomElement {
     this.portalSetRevision += 1;
     this.portals = [...portals];
     const previousPortalId = this.selectedPortalId;
-    const selectedPortalId =
-      this.requestedPortalId ??
-      (portals.some((portal) => portal.id === previousPortalId)
-        ? this.selectedPortalId
-        : (portals[0]?.id ?? null));
+    const selectedPortalId = this.pendingEnvironmentId
+      ? null
+      : (this.requestedPortalId ??
+        (portals.some((portal) => portal.id === previousPortalId)
+          ? this.selectedPortalId
+          : (portals[0]?.id ?? null)));
     this.selectedPortalId = selectedPortalId;
     this.loaded = true;
     this.error = null;
@@ -198,6 +303,7 @@ class PortalsPage extends OpenClawLightDomElement {
 
   private async loadPortals() {
     if (
+      this.pendingEnvironmentId ||
       !this.gateway.connected ||
       !this.portalListSupported ||
       this.loading ||
@@ -397,6 +503,24 @@ class PortalsPage extends OpenClawLightDomElement {
   }
 
   override render() {
+    if (this.pendingEnvironmentId) {
+      const environment =
+        this.pendingEnvironment?.id === this.pendingEnvironmentId ? this.pendingEnvironment : null;
+      const error =
+        this.environmentFailure?.environmentId === this.pendingEnvironmentId
+          ? this.environmentFailure.message
+          : null;
+      const failed =
+        error ||
+        (environment && environment.status !== "starting" && environment.status !== "available");
+      return html`<section class="portals-empty" role="status" aria-live="polite">
+        <div class="portals-empty__title">
+          ${t(failed ? "portalsPage.environmentUnavailable" : environment?.status === "available" ? "portalsPage.waitingForApp" : "portalsPage.environmentStarting")}
+        </div>
+        ${error || environment?.worker?.error ? html`<p>${error ?? environment?.worker?.error}</p>` : nothing}
+        ${failed ? html`<button class="btn" type="button" @click=${() => void this.loadPendingEnvironment()}>${t("portalsPage.retry")}</button>` : nothing}
+      </section>`;
+    }
     const selectedPortal = this.portals.find(
       (portal) => portal.id === (this.requestedPortalId ?? this.selectedPortalId),
     );

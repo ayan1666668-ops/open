@@ -32,7 +32,9 @@ describe("gateway caller context wrapper", () => {
       {
         ...identity,
         assertToolAllowed: (name) => {
-          if (name === "exec") throw new Error("exec denied");
+          if (name === "exec") {
+            throw new Error("exec denied");
+          }
         },
       },
       () =>
@@ -40,7 +42,9 @@ describe("gateway caller context wrapper", () => {
           {
             ...identity,
             assertToolAllowed: (name) => {
-              if (name === "process") throw new Error("process denied");
+              if (name === "process") {
+                throw new Error("process denied");
+              }
             },
           },
           () =>

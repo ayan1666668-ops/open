@@ -258,7 +258,9 @@ export async function withGatewayToolCallerIdentity<T>(
   ];
   const assertToolAllowed = toolPolicyAssertions.length
     ? (toolName: string) => {
-        for (const assertion of toolPolicyAssertions) assertion(toolName);
+        for (const assertion of toolPolicyAssertions) {
+          assertion(toolName);
+        }
       }
     : undefined;
   const approvalSignals = [

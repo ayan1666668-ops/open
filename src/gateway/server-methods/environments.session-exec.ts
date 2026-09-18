@@ -3,12 +3,9 @@ import {
   errorShape,
   validateEnvironmentsSessionExecParams,
 } from "../../../packages/gateway-protocol/src/index.js";
-import { resolveConversationCapabilityProfile } from "../../agents/conversation-capability-profile.js";
-import { isConversationToolAllowed } from "../../agents/conversation-tool-policy-pipeline.js";
 import { resolveExecDefaults } from "../../agents/exec-defaults.js";
-import { isRuntimeToolAllowed, isToolAllowedByPolicyName } from "../../agents/tool-policy-match.js";
-import { getGatewayToolCallerIdentity } from "../../agents/tools/gateway-caller-context.js";
 import { approveSessionEnvironmentCommand } from "./environments.session-exec-approval.js";
+import { captureSessionEnvironmentToolPolicy } from "./environments.session-tool-policy.js";
 import { resolveSessionEnvironmentCaller } from "./environments.session.js";
 import { loadAccessorSessionEntryForGatewayTarget } from "./sessions-shared.js";
 import type { GatewayRequestHandlers } from "./types.js";
@@ -19,7 +16,7 @@ export const environmentsSessionExecHandlers: GatewayRequestHandlers = {
     "environments.session.exec",
     validateEnvironmentsSessionExecParams,
     async (options) => {
-      const { params, respond, context, client } = options;
+      const { params, respond, context } = options;
       try {
         const caller = resolveSessionEnvironmentCaller(options, params);
         const service = context.workerEnvironmentService;
@@ -38,10 +35,14 @@ export const environmentsSessionExecHandlers: GatewayRequestHandlers = {
           timeoutMs: params.timeoutMs,
           processId: params.processId,
         };
-        const ambient = getGatewayToolCallerIdentity();
+        const toolPolicy = captureSessionEnvironmentToolPolicy(
+          options,
+          caller,
+          action === "run" || action === "start" ? "exec" : "process",
+        );
         let approved = false;
         const assertCurrent = () => {
-          caller.assertCurrent();
+          toolPolicy.assertAllowed();
           service.assertSessionAttachment(binding);
           const cfg = context.getRuntimeConfig();
           const target = loadAccessorSessionEntryForGatewayTarget({
@@ -49,38 +50,6 @@ export const environmentsSessionExecHandlers: GatewayRequestHandlers = {
             key: caller.identity.sessionKey,
             agentId: caller.identity.agentId,
           });
-          const runtime = client?.internal?.agentRuntimeIdentity;
-          const capability = resolveConversationCapabilityProfile({
-            config: cfg,
-            ...caller.identity,
-            modelProvider: runtime?.sessionSpawnContext?.resolvedModel?.provider,
-            modelId: runtime?.sessionSpawnContext?.resolvedModel?.model,
-          });
-          const tool = action === "run" || action === "start" ? "exec" : "process";
-          if (ambient) {
-            if (
-              ambient.agentId !== caller.identity.agentId ||
-              ambient.sessionKey !== caller.identity.sessionKey ||
-              !ambient.assertToolAllowed
-            ) {
-              throw new Error("Environment command has no matching captured tool authority");
-            }
-            ambient.assertToolAllowed(tool);
-          } else if (
-            (runtime || client?.internal?.agentToolCaller) &&
-            !runtime?.sessionSpawnContext?.inheritedToolPolicy
-          ) {
-            throw new Error("Environment command has no captured tool authority");
-          }
-          const inheritedPolicy = runtime?.sessionSpawnContext?.inheritedToolPolicy;
-          if (
-            !isConversationToolAllowed(capability, tool) ||
-            (inheritedPolicy &&
-              (!isRuntimeToolAllowed(tool, inheritedPolicy.allow) ||
-                !isToolAllowedByPolicyName(tool, { deny: inheritedPolicy.deny })))
-          ) {
-            throw new Error(`Conversation policy denies ${tool}`);
-          }
           const defaults = resolveExecDefaults({
             cfg,
             ...caller.identity,
@@ -116,8 +85,7 @@ export const environmentsSessionExecHandlers: GatewayRequestHandlers = {
           if (
             policy.security !== "full" ||
             policy.ask === "always" ||
-            ambient?.cronExecToolTarget?.ask === "always" ||
-            client?.internal?.agentRuntimeIdentity?.cronExecToolTarget?.ask === "always"
+            toolPolicy.cronExecAskAlways
           ) {
             await approveSessionEnvironmentCommand({
               options,
@@ -149,8 +117,7 @@ export const environmentsSessionExecHandlers: GatewayRequestHandlers = {
               !approved &&
               (policy.security !== "full" ||
                 policy.ask === "always" ||
-                ambient?.cronExecToolTarget?.ask === "always" ||
-                client?.internal?.agentRuntimeIdentity?.cronExecToolTarget?.ask === "always")
+                toolPolicy.cronExecAskAlways)
             ) {
               throw new Error(
                 "Environment execution policy now requires approval; retry the command",

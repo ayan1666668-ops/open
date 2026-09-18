@@ -71,7 +71,9 @@ export function createWorkerComputerService(
       const prepared = createAttached({
         ...authority,
         assertCurrent: () => {
-          if (stopped) throw new Error("Session computer owner closed");
+          if (stopped) {
+            throw new Error("Session computer owner closed");
+          }
           authority.assertCurrent();
         },
       }).then((computer) =>
@@ -88,7 +90,9 @@ export function createWorkerComputerService(
       attachedOwners.set(prepared, authority);
       void prepared.then(
         (computer) => {
-          if (!computer) attachedOwners.delete(prepared);
+          if (!computer) {
+            attachedOwners.delete(prepared);
+          }
         },
         () => attachedOwners.delete(prepared),
       );
@@ -109,7 +113,9 @@ export function createWorkerComputerService(
       const failures = results.flatMap((result) =>
         result.status === "rejected" ? [result.reason] : [],
       );
-      if (failures.length) throw new AggregateError(failures, "Attached computer cleanup failed");
+      if (failures.length) {
+        throw new AggregateError(failures, "Attached computer cleanup failed");
+      }
     },
     prepare: (claim: WorkerSessionTurnClaim) => {
       if (stopped || !options.placements.validateTurnClaim(claim)) {

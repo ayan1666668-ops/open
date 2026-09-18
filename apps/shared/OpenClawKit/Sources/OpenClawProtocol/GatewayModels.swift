@@ -6942,6 +6942,7 @@ public struct EnvironmentsSessionCreateParams: Codable, Sendable {
     public let idempotencykey: String
     public let machineclass: String?
     public let os: String?
+    public let presentation: AnyCodable?
 
     public init(
         sessionkey: String? = nil,
@@ -6949,7 +6950,8 @@ public struct EnvironmentsSessionCreateParams: Codable, Sendable {
         profileid: String,
         idempotencykey: String,
         machineclass: String? = nil,
-        os: String? = nil)
+        os: String? = nil,
+        presentation: AnyCodable? = nil)
     {
         self.sessionkey = sessionkey
         self.agentid = agentid
@@ -6957,6 +6959,7 @@ public struct EnvironmentsSessionCreateParams: Codable, Sendable {
         self.idempotencykey = idempotencykey
         self.machineclass = machineclass
         self.os = os
+        self.presentation = presentation
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -6966,6 +6969,7 @@ public struct EnvironmentsSessionCreateParams: Codable, Sendable {
         case idempotencykey = "idempotencyKey"
         case machineclass = "machineClass"
         case os
+        case presentation
     }
 }
 
@@ -30521,337 +30525,6 @@ public enum ToolsGitHubConfigureParams: Codable, Sendable {
         switch self {
         case .managed(let value): try value.encode(to: encoder)
         case .inherit(let value): try value.encode(to: encoder)
-        }
-    }
-}
-
-public struct UiPanelCommandTerminal: Codable, Sendable {
-    public let kind: String
-    public let _open: Bool
-    public let dock: AnyCodable?
-    public let panel: String
-    public let terminalsessionid: String?
-
-    public init(
-        _open: Bool,
-        dock: AnyCodable? = nil,
-        terminalsessionid: String? = nil
-    )
-    {
-        self.kind = "panel"
-        self._open = _open
-        self.dock = dock
-        self.panel = "terminal"
-        self.terminalsessionid = terminalsessionid
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case kind
-        case _open = "open"
-        case dock
-        case panel
-        case terminalsessionid = "terminalSessionId"
-    }
-
-    public init(from decoder: Decoder) throws {
-        let rawContainer = try decoder.container(keyedBy: GatewayAnyCodingKey.self)
-        let unexpectedKeys = rawContainer.allKeys
-            .map(\.stringValue)
-            .filter { !Set(["kind", "open", "dock", "panel", "terminalSessionId"]).contains($0) }
-        if !unexpectedKeys.isEmpty {
-            throw DecodingError.dataCorrupted(
-                .init(
-                    codingPath: rawContainer.codingPath,
-                    debugDescription: "Unexpected keys for UiPanelCommandTerminal: \(unexpectedKeys.sorted().joined(separator: ", "))"
-                )
-            )
-        }
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        let decodedKind = try container.decode(String.self, forKey: .kind)
-        guard decodedKind == "panel" else {
-            throw DecodingError.dataCorruptedError(
-                forKey: .kind,
-                in: container,
-                debugDescription: "Expected kind to equal panel"
-            )
-        }
-        self.kind = "panel"
-        self._open = try container.decode(Bool.self, forKey: ._open)
-        self.dock = try container.decodeIfPresent(AnyCodable.self, forKey: .dock)
-        let decodedPanel = try container.decode(String.self, forKey: .panel)
-        guard decodedPanel == "terminal" else {
-            throw DecodingError.dataCorruptedError(
-                forKey: .panel,
-                in: container,
-                debugDescription: "Expected panel to equal terminal"
-            )
-        }
-        self.panel = "terminal"
-        self.terminalsessionid = try container.decodeIfPresent(String.self, forKey: .terminalsessionid)
-    }
-
-    public func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode("panel", forKey: .kind)
-        try container.encode(_open, forKey: ._open)
-        try container.encodeIfPresent(dock, forKey: .dock)
-        try container.encode("terminal", forKey: .panel)
-        try container.encodeIfPresent(terminalsessionid, forKey: .terminalsessionid)
-    }
-}
-
-public struct UiPanelCommandBrowser: Codable, Sendable {
-    public let kind: String
-    public let _open: Bool
-    public let dock: AnyCodable?
-    public let panel: String
-
-    public init(
-        _open: Bool,
-        dock: AnyCodable? = nil
-    )
-    {
-        self.kind = "panel"
-        self._open = _open
-        self.dock = dock
-        self.panel = "browser"
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case kind
-        case _open = "open"
-        case dock
-        case panel
-    }
-
-    public init(from decoder: Decoder) throws {
-        let rawContainer = try decoder.container(keyedBy: GatewayAnyCodingKey.self)
-        let unexpectedKeys = rawContainer.allKeys
-            .map(\.stringValue)
-            .filter { !Set(["kind", "open", "dock", "panel"]).contains($0) }
-        if !unexpectedKeys.isEmpty {
-            throw DecodingError.dataCorrupted(
-                .init(
-                    codingPath: rawContainer.codingPath,
-                    debugDescription: "Unexpected keys for UiPanelCommandBrowser: \(unexpectedKeys.sorted().joined(separator: ", "))"
-                )
-            )
-        }
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        let decodedKind = try container.decode(String.self, forKey: .kind)
-        guard decodedKind == "panel" else {
-            throw DecodingError.dataCorruptedError(
-                forKey: .kind,
-                in: container,
-                debugDescription: "Expected kind to equal panel"
-            )
-        }
-        self.kind = "panel"
-        self._open = try container.decode(Bool.self, forKey: ._open)
-        self.dock = try container.decodeIfPresent(AnyCodable.self, forKey: .dock)
-        let decodedPanel = try container.decode(String.self, forKey: .panel)
-        guard decodedPanel == "browser" else {
-            throw DecodingError.dataCorruptedError(
-                forKey: .panel,
-                in: container,
-                debugDescription: "Expected panel to equal browser"
-            )
-        }
-        self.panel = "browser"
-    }
-
-    public func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode("panel", forKey: .kind)
-        try container.encode(_open, forKey: ._open)
-        try container.encodeIfPresent(dock, forKey: .dock)
-        try container.encode("browser", forKey: .panel)
-    }
-}
-
-public struct UiPanelCommandDesktop: Codable, Sendable {
-    public let kind: String
-    public let _open: Bool
-    public let dock: AnyCodable?
-    public let panel: String
-    public let environmentid: String?
-
-    public init(
-        _open: Bool,
-        dock: AnyCodable? = nil,
-        environmentid: String? = nil
-    )
-    {
-        self.kind = "panel"
-        self._open = _open
-        self.dock = dock
-        self.panel = "desktop"
-        self.environmentid = environmentid
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case kind
-        case _open = "open"
-        case dock
-        case panel
-        case environmentid = "environmentId"
-    }
-
-    public init(from decoder: Decoder) throws {
-        let rawContainer = try decoder.container(keyedBy: GatewayAnyCodingKey.self)
-        let unexpectedKeys = rawContainer.allKeys
-            .map(\.stringValue)
-            .filter { !Set(["kind", "open", "dock", "panel", "environmentId"]).contains($0) }
-        if !unexpectedKeys.isEmpty {
-            throw DecodingError.dataCorrupted(
-                .init(
-                    codingPath: rawContainer.codingPath,
-                    debugDescription: "Unexpected keys for UiPanelCommandDesktop: \(unexpectedKeys.sorted().joined(separator: ", "))"
-                )
-            )
-        }
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        let decodedKind = try container.decode(String.self, forKey: .kind)
-        guard decodedKind == "panel" else {
-            throw DecodingError.dataCorruptedError(
-                forKey: .kind,
-                in: container,
-                debugDescription: "Expected kind to equal panel"
-            )
-        }
-        self.kind = "panel"
-        self._open = try container.decode(Bool.self, forKey: ._open)
-        self.dock = try container.decodeIfPresent(AnyCodable.self, forKey: .dock)
-        let decodedPanel = try container.decode(String.self, forKey: .panel)
-        guard decodedPanel == "desktop" else {
-            throw DecodingError.dataCorruptedError(
-                forKey: .panel,
-                in: container,
-                debugDescription: "Expected panel to equal desktop"
-            )
-        }
-        self.panel = "desktop"
-        self.environmentid = try container.decodeIfPresent(String.self, forKey: .environmentid)
-    }
-
-    public func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode("panel", forKey: .kind)
-        try container.encode(_open, forKey: ._open)
-        try container.encodeIfPresent(dock, forKey: .dock)
-        try container.encode("desktop", forKey: .panel)
-        try container.encodeIfPresent(environmentid, forKey: .environmentid)
-    }
-}
-
-public struct UiPanelCommandPortal: Codable, Sendable {
-    public let kind: String
-    public let _open: Bool
-    public let dock: AnyCodable?
-    public let panel: String
-    public let portalid: String?
-
-    public init(
-        _open: Bool,
-        dock: AnyCodable? = nil,
-        portalid: String? = nil
-    )
-    {
-        self.kind = "panel"
-        self._open = _open
-        self.dock = dock
-        self.panel = "portal"
-        self.portalid = portalid
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case kind
-        case _open = "open"
-        case dock
-        case panel
-        case portalid = "portalId"
-    }
-
-    public init(from decoder: Decoder) throws {
-        let rawContainer = try decoder.container(keyedBy: GatewayAnyCodingKey.self)
-        let unexpectedKeys = rawContainer.allKeys
-            .map(\.stringValue)
-            .filter { !Set(["kind", "open", "dock", "panel", "portalId"]).contains($0) }
-        if !unexpectedKeys.isEmpty {
-            throw DecodingError.dataCorrupted(
-                .init(
-                    codingPath: rawContainer.codingPath,
-                    debugDescription: "Unexpected keys for UiPanelCommandPortal: \(unexpectedKeys.sorted().joined(separator: ", "))"
-                )
-            )
-        }
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        let decodedKind = try container.decode(String.self, forKey: .kind)
-        guard decodedKind == "panel" else {
-            throw DecodingError.dataCorruptedError(
-                forKey: .kind,
-                in: container,
-                debugDescription: "Expected kind to equal panel"
-            )
-        }
-        self.kind = "panel"
-        self._open = try container.decode(Bool.self, forKey: ._open)
-        self.dock = try container.decodeIfPresent(AnyCodable.self, forKey: .dock)
-        let decodedPanel = try container.decode(String.self, forKey: .panel)
-        guard decodedPanel == "portal" else {
-            throw DecodingError.dataCorruptedError(
-                forKey: .panel,
-                in: container,
-                debugDescription: "Expected panel to equal portal"
-            )
-        }
-        self.panel = "portal"
-        self.portalid = try container.decodeIfPresent(String.self, forKey: .portalid)
-    }
-
-    public func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode("panel", forKey: .kind)
-        try container.encode(_open, forKey: ._open)
-        try container.encodeIfPresent(dock, forKey: .dock)
-        try container.encode("portal", forKey: .panel)
-        try container.encodeIfPresent(portalid, forKey: .portalid)
-    }
-}
-
-public enum UiPanelCommand: Codable, Sendable {
-    case terminal(UiPanelCommandTerminal)
-    case browser(UiPanelCommandBrowser)
-    case desktop(UiPanelCommandDesktop)
-    case portal(UiPanelCommandPortal)
-
-    private enum CodingKeys: String, CodingKey {
-        case discriminator = "panel"
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        let discriminator = try container.decode(String.self, forKey: .discriminator)
-        switch discriminator {
-        case "terminal": self = try .terminal(UiPanelCommandTerminal(from: decoder))
-        case "browser": self = try .browser(UiPanelCommandBrowser(from: decoder))
-        case "desktop": self = try .desktop(UiPanelCommandDesktop(from: decoder))
-        case "portal": self = try .portal(UiPanelCommandPortal(from: decoder))
-        default:
-            throw DecodingError.dataCorruptedError(
-                forKey: .discriminator,
-                in: container,
-                debugDescription: "Unknown UiPanelCommand discriminator value"
-            )
-        }
-    }
-
-    public func encode(to encoder: Encoder) throws {
-        switch self {
-        case .terminal(let value): try value.encode(to: encoder)
-        case .browser(let value): try value.encode(to: encoder)
-        case .desktop(let value): try value.encode(to: encoder)
-        case .portal(let value): try value.encode(to: encoder)
         }
     }
 }

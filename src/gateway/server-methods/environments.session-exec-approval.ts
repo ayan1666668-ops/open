@@ -21,7 +21,9 @@ export async function approveSessionEnvironmentCommand(params: {
 }): Promise<void> {
   const { options, binding, assertCurrent } = params;
   const manager = options.context.execApprovalManager;
-  if (!manager) throw new Error("Execution approval service is unavailable");
+  if (!manager) {
+    throw new Error("Execution approval service is unavailable");
+  }
   const runtime = options.client?.internal?.agentRuntimeIdentity;
   assertCurrent();
   const command = sanitizeExecApprovalDisplayTextWithStatus(
@@ -53,7 +55,9 @@ export async function approveSessionEnvironmentCommand(params: {
   bindApprovalRequesterMetadata({ record, client: options.client });
   record.approvalAuthority = assertCurrent;
   record.approvalSignals = params.signal ? [params.signal] : [];
-  if (runtime) record.agentRuntimeDelegatedAuthority = runtime.delegatedAuthority;
+  if (runtime) {
+    record.agentRuntimeDelegatedAuthority = runtime.delegatedAuthority;
+  }
   const decision = manager.register(record, DEFAULT_EXEC_APPROVAL_TIMEOUT_MS);
   void decision.catch(() => undefined);
   let approved = false;
@@ -68,7 +72,9 @@ export async function approveSessionEnvironmentCommand(params: {
     twoPhase: false,
     deliverRequest: () => runApprovalRequestDeliveries({ context: options.context, record }),
     respond: (ok, _payload, error) => {
-      if (!ok) throw new Error(error?.message ?? "Execution approval failed");
+      if (!ok) {
+        throw new Error(error?.message ?? "Execution approval failed");
+      }
     },
     afterDecision: (resolved) => {
       assertCurrent();
@@ -76,5 +82,7 @@ export async function approveSessionEnvironmentCommand(params: {
     },
   });
   assertCurrent();
-  if (!approved) throw new Error("Environment command was not approved");
+  if (!approved) {
+    throw new Error("Environment command was not approved");
+  }
 }
