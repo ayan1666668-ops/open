@@ -12,7 +12,9 @@ import { createReturnCovenantFixtureConfig } from "./runtime-config.js";
  * the original tracked bytes remain available for independent attestation.
  */
 function prepareReturnCovenantGatewayConfig(raw: unknown): OpenClawConfig {
-  const migration = applyLegacyDoctorMigrations(raw, undefined, {
+  const migration = applyLegacyDoctorMigrations(raw, {
+    // `raw` is the original tracked fixture source, never a normalized roster.
+    sourceConfigBeforeMigrations: raw,
     pluginContracts: false,
   });
   const validated = validateConfigObject(migration.next ?? raw, {

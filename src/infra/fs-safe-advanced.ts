@@ -9,6 +9,7 @@ export {
   buildRandomTempFilePath,
   probePathCaseInsensitiveSync,
   readFileHandleBounded,
+  resolvePathPrefixSync,
   type FileIdentityStat,
   sameFileIdentity,
   sanitizeUntrustedFileName,

@@ -24,6 +24,13 @@ and publishes the result. Avoid exposing a generic SQL callback to application
 code or adding an asynchronous wrapper around an existing asynchronous facade.
 The plugin KV API already has asynchronous methods over its SQLite owner.
 
+Explicit promotion notice and claim annotations execute in the shared-state
+worker. The CLI awaits their best-effort completion before reporting results;
+storage failures still do not fail a promotion claim. Notice recording retains
+its read-only preflight and atomic sorted slug union, preserving the other feed
+fields. Empty notices leave absent databases absent, and already-recorded notices
+do not open a writer. Claim upserts, stored formats, and retention are unchanged.
+
 Plugin conversation standing approvals load and upsert in the shared-state worker.
 Core publishes an always-allow grant only after durable completion, serializes cache
 fills with grant publication, and joins admitted binding operations before lifecycle
@@ -116,6 +123,13 @@ contract. Moving those writes requires preserving immediate unbind persistence
 and preventing older writes from recreating removed bindings; row comparison
 tokens alone do not identify an absent binding incarnation.
 
+Agent creation provenance displayed by the agents CLI, Gateway roster, and local
+TUI is read by the shared-state worker. JSON CLI output reads only its configured
+agent IDs; tree and Gateway output retain full ordered enumeration and enum
+validation. Cold reads retain database creation and feature schema initialization.
+Synchronous incarnation checks, provenance writes, and connection-bound deletion
+remain with their lifecycle owners; collection and retention are unchanged.
+
 Memory-host event appends and bounded journal reads execute on the shared state
 worker. The plugin-state owner allocates the sequence, rereads the cursor and
 retained tail, writes both rows, and applies retention in one synchronous write
@@ -198,22 +212,19 @@ Only pending reads coalesce; completed results are not cached. Physical integrit
 verification remains with full registry restoration and Doctor, while known
 database failures and quarantine still refuse summary reads.
 
-`sessions.list` and `sessions.describe` load complete persisted subagent metadata
-in the shared-state worker through a read-only connection. The existing cache coalesces pending fills
-and applies intervening named updates and deletions before publishing its first
-complete snapshot. Full replacement, registry ownership changes, and database
-retirement fence obsolete replies. Loaded snapshots stay current through registry
-publication instead of periodic reloads: named writes patch rows, while full
-replacement and restore replace snapshots. Retention rules remain unchanged.
-Gateway, embedded, and TUI callers merge accepted rows
-with current host memory and scheduler facts before building the full topology.
-Session reads check the shared projection budget before accepting a snapshot,
-then capture persisted rows and live ownership in one synchronous continuation.
-Each resumed caller rechecks the shared budget before admission and cache
-acceptance. Pure topology grouping uses the same budget; a single snapshot
-capture cannot yield midway.
-Synchronous readers reuse the same SQL and row decoder; runtime reads do not
-repair storage.
+Gateway, embedded, and TUI session lists use resident materialized rows and the
+subagent registry's owner-maintained memory snapshot. Each durable session store
+is hydrated when first admitted, replaced, or reintroduced; departing stores lose
+their projected rows. Committed owner publications mark affected identities dirty,
+and bounded refresh batches yield through the shared session-list work budget.
+Clean list, describe, and event snapshot reads execute no SQLite statements.
+Refreshing a dirty row may use the existing exact-key readers for its cold facts;
+requests never rebuild the combined store or reload the subagent registry.
+External workers publish committed changes through their owning bridge. After
+projection readiness, selection, authorization, and presentation use the current
+caller identity in one synchronous boundary.
+Registry replacement and restoration replace its snapshot, while named writes
+patch it. Storage repair and retention remain with their existing owners.
 
 Gateway user-preference RPCs and Talk appearance reads resolve merged profile IDs
 and access preferences in the shared-state worker. Preference writes keep profile
@@ -349,14 +360,19 @@ entries and checking each entry's current visibility. The entry accessor closes
 that connection before transcript search, including on errors; inherited async
 callbacks fall back to ordinary fresh reads. This scope preserves the same
 per-read admission and committed-row checks without caching visibility decisions.
-Other cold readers outside the history worker and extension-capable readers
-remain one-shot; incognito reads retain their existing process-local owner.
+Other cold readers outside the history worker, including
+extension-capable readers, remain one-shot; incognito reads retain their existing
+process-local owner.
 
-The history worker retains one read-only connection across requests, rechecking
+SQLite and Git worker replies transfer owned byte buffers to the caller; shared
+or partial views are copied into an exact owned buffer before transfer.
+
+The history worker retains up to 64 read-only connections across requests, rechecking
 schema, agent owner, and physical file identity before reuse. Every request keeps
-its own snapshot and current admission checks. Switching databases closes the
-previous connection. The parent retires the worker after 30 minutes without
-pending history reads; database cleanup revokes admission and joins native worker
+its own snapshot and current admission checks. Switching databases reuses their
+connections; admitting another retained connection evicts the least recently used
+one. Missing databases consume no retained slot. The parent keeps custody of all
+retained targets and retires the worker after 30 minutes without pending history reads; database cleanup revokes admission and joins native worker
 exit before closing the database. Cold restoration carries the request's same
 authority through queue waits and its native commit, so a revoked read cannot
 restore rows after database cleanup. These lifetimes change no schema or
@@ -436,15 +452,21 @@ checks still govern every removal.
 Automatic session-entry maintenance first checks the unarchived count and
 store-scoped age facts. Writes below the existing cap high-water mark skip
 candidate and protection-key reads until pruning or dashboard archiving could
-change an entry. A plan refreshes the timestamp facts; tracked entry writes
-advance them conservatively, while rollback, untracked mutations, external
-commits, and connection replacement invalidate reuse. Key-inherent protection
-does not keep an old primary or external conversation permanently due. Already-aged
-entries with dynamic protection still require fresh planning on writes.
+change an entry. A plan records the next age boundary and a 30-minute recheck
+deadline under the current age policy. Every maintenance entry point rejects
+expired facts, including inline replacement and lifecycle writes that have no
+maintenance timer. Ordinary entry writes only tighten the age boundary; entry-cache
+revision changes and unrelated external commits do not discard it. Backdated
+replacements, archive restores, imports, and Doctor rewrites invalidate it
+explicitly. Rollback and connection replacement also discard reuse. Key-inherent
+protection does not keep an old primary or external conversation permanently due.
+Already-aged entries with dynamic protection wait for the next age boundary or
+periodic recheck instead of requiring fresh planning on every write.
 
-The coalesced maintenance kick also wakes at the next age boundary, with a
-30-minute periodic recheck for released work protection and external changes.
-Its timer retires with the exact database connection. Planning still reads its
+The coalesced maintenance kick wakes at the earlier of the age boundary and the
+same periodic deadline for released work protection and external changes.
+Ordinary writes do not postpone that deadline. Its timer retires with
+the exact database connection. Planning still reads its
 protection-key inventory at most once when age or cap candidates exist, inside
 the write transaction; archives and final deletion retain their existing
 post-writer lifecycle checks. Retention rules, cap buffering, forced cleanup,

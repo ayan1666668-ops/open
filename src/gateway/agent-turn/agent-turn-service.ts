@@ -38,6 +38,7 @@ import type { AgentTurnIo, AgentTurnPrincipal } from "./types.js";
 type AgentTurnStartRequest = {
   privateCompletion?: true;
   assertAdmissionCurrent?: () => void;
+  hasCurrentClientAuthority?: () => boolean;
   preflight: AgentRequestPreflight;
   principal: AgentTurnPrincipal | null;
   io: AgentTurnIo;
@@ -51,6 +52,7 @@ export function createAgentTurnService(
   const startTurn = async ({
     privateCompletion,
     assertAdmissionCurrent,
+    hasCurrentClientAuthority,
     preflight,
     principal,
     io,
@@ -98,6 +100,7 @@ export function createAgentTurnService(
       typeof principal?.connect?.device?.id === "string" ? principal.connect.device.id : undefined;
     const dedupeLifecycle = createAgentDedupeLifecycle({
       privateCompletion,
+      inputProvenance,
       cfg,
       request,
       runId,
@@ -488,6 +491,7 @@ export function createAgentTurnService(
 
       const preparedDispatch = await prepareAgentRunDispatch({
         assertAdmissionCurrent,
+        hasCurrentClientAuthority,
         promptedAt,
         request,
         cfg,
@@ -596,9 +600,10 @@ export function createAgentTurnService(
             releaseCronContinuationClaimWithRecovery: cronContinuation.releaseWithRecovery,
           }),
         )
-        .catch((error: unknown) =>
-          context.logGateway.warn(`agent execution cleanup failed: ${String(error)}`),
-        );
+        .catch((error: unknown) => {
+          preparedDispatch.releaseCallerAuthority?.();
+          context.logGateway.warn(`agent execution cleanup failed: ${String(error)}`);
+        });
       mainRestartRecoveryOwnerLease = undefined;
     } finally {
       try {

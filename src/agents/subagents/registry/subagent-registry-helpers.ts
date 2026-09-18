@@ -23,6 +23,10 @@ import {
 } from "../../../sessions/session-run-error.js";
 import { truncateUtf8Prefix } from "../../../utils/utf8-truncate.js";
 import {
+  cleanupMaterializedSubagentAttachments,
+  cleanupMaterializedSubagentAttachmentsSync,
+} from "../subagent-attachment-cleanup.js";
+import {
   getDeliveryAttemptCount,
   getDeliveryLastError,
   hasRetainedRequiredCompletionDelivery,
@@ -214,17 +218,28 @@ export async function persistSubagentSessionTiming(
   }
 }
 
-// Attachment cleanup must stay within the recorded root even if paths were
-// symlinks. Compare real paths before removing anything recursively.
-function isResolvedChildPath(params: { childPath: string; rootPath: string }) {
-  const rootWithSep = params.rootPath.endsWith(path.sep)
-    ? params.rootPath
-    : `${params.rootPath}${path.sep}`;
-  return params.childPath.startsWith(rootWithSep);
-}
-
-/** Best-effort async removal for a subagent attachment directory. */
+/**
+ * Best-effort async removal for a subagent attachment directory.
+ *
+ * Both transports stay supported: spawns since the Gateway-owned store carry
+ * `attachmentId`, while records persisted before it still carry
+ * `attachmentsDir`/`attachmentsRootDir`. Retiring only the identity form would
+ * silently leak every legitimate legacy tree, so the confined legacy removal is
+ * preserved here exactly as the sync path preserves it.
+ */
 export async function safeRemoveAttachmentsDir(entry: SubagentRunRecord): Promise<boolean> {
+  if (entry.attachmentId) {
+    try {
+      await cleanupMaterializedSubagentAttachments({
+        childSessionKey: entry.childSessionKey,
+        attachmentId: entry.attachmentId,
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   if (!entry.attachmentsDir || !entry.attachmentsRootDir) {
     return true;
   }
@@ -251,6 +266,8 @@ export async function safeRemoveAttachmentsDir(entry: SubagentRunRecord): Promis
 
     const rootBase = rootReal ?? path.resolve(entry.attachmentsRootDir);
     const dirBase = dirReal;
+    // Compare real paths so a swapped symlink cannot redirect removal outside
+    // the recorded root; an escape refuses rather than reporting success.
     if (!isResolvedChildPath({ childPath: dirBase, rootPath: rootBase })) {
       return false;
     }
@@ -261,7 +278,30 @@ export async function safeRemoveAttachmentsDir(entry: SubagentRunRecord): Promis
   }
 }
 
+// Attachment cleanup must stay within the recorded root even if paths were
+// symlinks. Compare real paths before removing anything recursively.
+function isResolvedChildPath(params: { childPath: string; rootPath: string }) {
+  const rootWithSep = params.rootPath.endsWith(path.sep)
+    ? params.rootPath
+    : `${params.rootPath}${path.sep}`;
+  return params.childPath.startsWith(rootWithSep);
+}
+
 function safeRemoveAttachmentsDirSync(entry: SubagentRunRecord): void {
+  // Spawns since the Gateway-owned attachment store record only `attachmentId`;
+  // their tree lives outside the workspace and the legacy path fields are unset,
+  // so this must retire identity-owned storage or a pruned orphan leaks it.
+  if (entry.attachmentId) {
+    try {
+      cleanupMaterializedSubagentAttachmentsSync({
+        childSessionKey: entry.childSessionKey,
+        attachmentId: entry.attachmentId,
+      });
+    } catch {
+      // best effort
+    }
+    return;
+  }
   if (!entry.attachmentsDir || !entry.attachmentsRootDir) {
     return;
   }

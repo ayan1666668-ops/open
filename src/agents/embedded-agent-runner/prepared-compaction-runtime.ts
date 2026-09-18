@@ -21,7 +21,7 @@ import { normalizeMessageChannel } from "../../utils/message-channel.js";
 import { isReasoningTagProvider } from "../../utils/provider-utils.js";
 import { createBundleLspToolRuntime } from "../agent-bundle-lsp-runtime.js";
 import { createBundleMcpToolRuntime } from "../agent-bundle-mcp-tools.js";
-import { createOpenClawCodingTools } from "../agent-tools.js";
+import { createOpenClawCodingToolsInternal } from "../agent-tools.js";
 import { createSkillInstructionDeliveryCache } from "../agent-tools.read.js";
 import { listActiveProcessSessionReferences } from "../bash-process-references.js";
 import { resolveProcessToolScopeKey } from "../bash-process-scope.js";
@@ -166,7 +166,8 @@ export async function buildPreparedCompactionRuntime(
       includeCodeModeSkills: false,
     });
     restoreSkillEnv = preparedSkills.restoreSkillEnv;
-    const { skillsSnapshotForRun, skillUsagePaths, skillsPrompt } = preparedSkills;
+    const { skillsSnapshotForRun, skillReadResources, skillUsagePaths, skillsPrompt } =
+      preparedSkills;
 
     const sessionLabel = params.sessionKey ?? params.sessionId;
     const resolvedMessageProvider = params.messageChannel ?? params.messageProvider;
@@ -309,41 +310,44 @@ export async function buildPreparedCompactionRuntime(
     const toolsEnabled = supportsModelTools(effectiveModel);
     const skillInstructionDeliveryCache = createSkillInstructionDeliveryCache();
     const toolsRaw = toolsEnabled
-      ? createOpenClawCodingTools({
-          ...conversationContext,
-          agentId: sessionAgentId,
-          exec: {
-            ...execOverrides,
-            config: params.config,
-            elevated: params.bashElevated,
+      ? createOpenClawCodingToolsInternal(
+          {
+            ...conversationContext,
+            agentId: sessionAgentId,
+            exec: {
+              ...execOverrides,
+              config: params.config,
+              elevated: params.bashElevated,
+            },
+            sandbox,
+            sessionPermissionPolicy,
+            requireWorkspaceOnly: params.requireWorkspaceOnly,
+            clientCaps: params.clientCaps,
+            pinnedWidgetAuthoring: params.pinnedWidgetAuthoring,
+            oneShotCliRun: params.oneShotCliRun,
+            senderIsOwner: params.senderIsOwner,
+            allowGatewaySubagentBinding: params.allowGatewaySubagentBinding,
+            webSearchEnabled: params.toolOverrides?.webSearch !== false,
+            abortSignal: runAbortController.signal,
+            sourceReplyDeliveryMode: params.sourceReplyDeliveryMode,
+            modelHasVision: effectiveModel.input?.includes("image") ?? false,
+            modelCompat: extractModelCompat(effectiveModel),
+            modelApi: effectiveModel.api,
+            modelContextWindowTokens: contextTokenBudget,
+            // Compaction is nested maintenance, not an active turn owner; it cannot
+            // schedule or drain continuation work without corrupting the parent turn.
+            disableContinuationTools: true,
+            skillsSnapshot: skillsSnapshotForRun,
+            skillUsagePaths,
+            skillInstructionDeliveryCache,
+            conversationCapabilityProfile: runtimeCapabilityProfile,
+            preparedModelRuntime: params.preparedModelRuntime,
+            modelAuthMode: resolveModelAuthMode(effectiveModel.provider, params.config, undefined, {
+              workspaceDir: effectiveWorkspace,
+            }),
           },
-          sandbox,
-          sessionPermissionPolicy,
-          requireWorkspaceOnly: params.requireWorkspaceOnly,
-          clientCaps: params.clientCaps,
-          pinnedWidgetAuthoring: params.pinnedWidgetAuthoring,
-          oneShotCliRun: params.oneShotCliRun,
-          senderIsOwner: params.senderIsOwner,
-          allowGatewaySubagentBinding: params.allowGatewaySubagentBinding,
-          webSearchEnabled: params.toolOverrides?.webSearch !== false,
-          abortSignal: runAbortController.signal,
-          sourceReplyDeliveryMode: params.sourceReplyDeliveryMode,
-          modelHasVision: effectiveModel.input?.includes("image") ?? false,
-          modelCompat: extractModelCompat(effectiveModel),
-          modelApi: effectiveModel.api,
-          modelContextWindowTokens: contextTokenBudget,
-          // Compaction is nested maintenance, not an active turn owner; it cannot
-          // schedule or drain continuation work without corrupting the parent turn.
-          disableContinuationTools: true,
-          skillsSnapshot: skillsSnapshotForRun,
-          skillUsagePaths,
-          skillInstructionDeliveryCache,
-          conversationCapabilityProfile: runtimeCapabilityProfile,
-          preparedModelRuntime: params.preparedModelRuntime,
-          modelAuthMode: resolveModelAuthMode(effectiveModel.provider, params.config, undefined, {
-            workspaceDir: effectiveWorkspace,
-          }),
-        })
+          skillReadResources,
+        )
       : [];
     const runtimePlanModelContext = {
       workspaceDir: effectiveWorkspace,
@@ -546,6 +550,7 @@ export async function buildPreparedCompactionRuntime(
     const buildSystemPromptText = () => {
       const builtSystemPrompt = buildEmbeddedSystemPrompt({
         config: params.config,
+        preparedModelRuntime: params.preparedModelRuntime,
         agentId: sessionAgentId,
         workspaceDir: effectiveWorkspace,
         runtimeCwd: effectiveCwd,

@@ -300,14 +300,14 @@ export async function spawnSubagentDirect(
 
     let retainOnSessionKeep = false;
     let attachmentsReceipt: SpawnSubagentResult["attachments"];
-    let attachmentAbsDir: string | undefined;
-    let attachmentRootDir: string | undefined;
+    let attachmentId: string | undefined;
 
     const materializedAttachments = await materializeSubagentAttachments({
       assertActive,
       config: cfg,
+      childSessionKey,
       targetAgentId,
-      workspaceDir: spawnedCwd ?? spawnedWorkspaceDir,
+      sandboxed: childRuntimeSandboxed,
       attachments: params.attachments,
       mountPathHint,
       redactContinuationErrorDetails: params.drainsContinuationDelegateQueue === true,
@@ -322,8 +322,7 @@ export async function spawnSubagentDirect(
     if (materializedAttachments?.status === "ok") {
       retainOnSessionKeep = materializedAttachments.retainOnSessionKeep;
       attachmentsReceipt = materializedAttachments.receipt;
-      attachmentAbsDir = materializedAttachments.absDir;
-      attachmentRootDir = materializedAttachments.rootDir;
+      attachmentId = materializedAttachments.attachmentId;
       childSystemPrompt = `${childSystemPrompt}\n\n${materializedAttachments.systemPromptSuffix}`;
     }
 
@@ -415,7 +414,7 @@ export async function spawnSubagentDirect(
     const cleanupFailedSpawn = (waitForSessionDeletion?: boolean) =>
       cleanupFailedSpawnBeforeAgentStart({
         childSessionKey,
-        attachmentAbsDir,
+        attachmentId,
         emitLifecycleHooks: threadBindingReady,
         deleteTranscript: true,
         ...provisionalSessionIdentity,
@@ -503,7 +502,7 @@ export async function spawnSubagentDirect(
           acceptedChildRunId,
           taskRowOwnership,
           contextEnginePreparation: state?.contextEnginePreparation,
-          attachmentAbsDir,
+          attachmentId,
           ...provisionalSessionIdentity,
           emitLifecycleHooks,
           cleanupCreatedSession,
@@ -561,8 +560,7 @@ export async function spawnSubagentDirect(
           queued: params.collect === true,
           taskRowOwnership,
           ...(gatewayContextResolver ? { gatewayContextResolver } : {}),
-          attachmentsDir: attachmentAbsDir,
-          attachmentsRootDir: attachmentRootDir,
+          attachmentId,
           retainAttachmentsOnKeep: retainOnSessionKeep,
           ...(params.silentAnnounce ? { silentAnnounce: true } : {}),
           ...(params.wakeOnReturn ? { wakeOnReturn: true } : {}),

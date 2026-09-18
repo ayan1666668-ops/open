@@ -1,5 +1,5 @@
-import { promises as fs } from "node:fs";
 import type { SubagentSpawnPreparation } from "../../../context-engine/types.js";
+import { cleanupMaterializedSubagentAttachments } from "../subagent-attachment-cleanup.js";
 import { terminateAcceptedCollectorRun } from "./subagent-spawn-cleanup.js";
 import { rollbackPreparedContextEngine } from "./subagent-spawn-context.js";
 import { isSpawnSubagentAdmissionCancelledError } from "./subagent-spawn-contract.js";
@@ -12,7 +12,7 @@ export async function cleanupAcceptedSubagentSpawnFailure(params: {
   acceptedChildRunId?: string;
   taskRowOwnership: "required" | "gateway_best_effort";
   contextEnginePreparation?: SubagentSpawnPreparation;
-  attachmentAbsDir?: string;
+  attachmentId?: string;
   expectedSessionId?: string;
   expectedLifecycleRevision?: string;
   emitLifecycleHooks: boolean;
@@ -52,9 +52,12 @@ export async function cleanupAcceptedSubagentSpawnFailure(params: {
   } catch (error) {
     cleanupFailures.push(error);
   }
-  if (params.attachmentAbsDir) {
+  if (params.attachmentId) {
     try {
-      await fs.rm(params.attachmentAbsDir, { recursive: true, force: true });
+      await cleanupMaterializedSubagentAttachments({
+        childSessionKey: params.childSessionKey,
+        attachmentId: params.attachmentId,
+      });
     } catch {
       // Best-effort cleanup only.
     }

@@ -1240,7 +1240,7 @@ async function createCodexSideToolBridge(input: {
           send: async (payload: ReplyPayload) => {
             await publishSideToolResult(payload);
           },
-          ...(input.params.messageChannel ? { messageChannel: input.params.messageChannel } : {}),
+          ...(messageToolProvider ? { messageChannel: messageToolProvider } : {}),
         }
       : undefined;
     const allTools = createOpenClawCodingTools({
