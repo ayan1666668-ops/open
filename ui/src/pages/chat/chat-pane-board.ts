@@ -4,8 +4,10 @@ import { GATEWAY_SERVER_CAPS } from "../../../../packages/gateway-protocol/src/i
 import type { GatewaySessionRow } from "../../api/types.ts";
 import { hasOperatorApprovalsAccess, hasOperatorWriteAccess } from "../../app/operator-access.ts";
 import { loadSettings, patchSettings } from "../../app/settings.ts";
+import type { BoardWidgetPageMenu } from "../../components/board/board-widget-cell-render.ts";
 import { renderPanelLoadingSkeleton } from "../../components/panel-loading-skeleton.ts";
 import { t } from "../../i18n/index.ts";
+import { BOARD_GRID_COLUMNS } from "../../lib/board/grid.ts";
 import {
   acquireBoardProviderForSession,
   boardProviderCacheKey,
@@ -523,6 +525,58 @@ export abstract class ChatPaneBoard extends ChatPaneHistory {
     return board.available && Boolean(this.resolveBoardSessionKey(board.snapshot.sessionKey));
   }
 
+  private fullscreenBoardWidget(layout: SidebarLayout | undefined, board: ResolvedBoardView) {
+    if (
+      !layout ||
+      !this.state ||
+      !selectedChatSessionRow(this.state) ||
+      !this.visuallyPresented ||
+      !board.provider.hasLoadedSnapshot ||
+      !customElements.get("openclaw-board-view") ||
+      sidebarDashboardPresentation(layout) !== "expanded"
+    ) {
+      return undefined;
+    }
+    const widgets = board.snapshot.widgets.filter((widget) => widget.tabId === board.activeTabId);
+    const widget = widgets.length === 1 ? widgets[0] : undefined;
+    return widget?.sizeW === BOARD_GRID_COLUMNS ? widget : undefined;
+  }
+
+  protected fullscreenBoardWidgetMenu(
+    layout: SidebarLayout | undefined,
+    board = this.resolveBoardView(),
+  ): BoardWidgetPageMenu | undefined {
+    const widget = this.fullscreenBoardWidget(layout, board);
+    if (!widget) {
+      return undefined;
+    }
+    const session = this.resolveBoardConversation();
+    session.agentId ??= parseAgentSessionKey(board.snapshot.sessionKey)?.agentId;
+    return {
+      widget,
+      tabs: board.snapshot.tabs,
+      canMutate: board.provider.canMutate,
+      onSelect: (value) => {
+        const current = this.resolveBoardView();
+        if (
+          current.provider !== board.provider ||
+          this.fullscreenBoardWidget(this.state?.sidebarLayout, current) !== widget
+        ) {
+          return;
+        }
+        // The retained board owns actions and errors; the header only relocates its menu.
+        const view = this.querySelector("openclaw-board-view");
+        if (
+          view?.snapshot?.sessionKey === board.snapshot.sessionKey &&
+          view.session.agentId === session.agentId &&
+          view.session.sessionKey === session.sessionKey
+        ) {
+          view.selectPageWidgetMenuItem(widget.name, widget.revision, value);
+        }
+      },
+    };
+  }
+
   protected renderBoardPanel(board: ResolvedBoardView, layout: SidebarLayout) {
     const session = this.resolveBoardConversation();
     const sessionKey = this.resolveBoardSessionKey(board.snapshot.sessionKey);
@@ -550,6 +604,7 @@ export abstract class ChatPaneBoard extends ChatPaneHistory {
         session,
         snapshot: board.snapshot,
         activeTabId: board.activeTabId,
+        pageWidgetName: this.fullscreenBoardWidget(layout, board)?.name,
         canMutate: board.provider.canMutate,
         canGrant: board.provider.canGrant,
         callbacks: {

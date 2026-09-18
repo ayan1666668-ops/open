@@ -1,6 +1,11 @@
 import { html, nothing, type TemplateResult } from "lit";
 import { property, state } from "lit/decorators.js";
 import type { UiSettings } from "../../../app/settings.ts";
+import { renderBoardGrantedCapabilities } from "../../../components/board/board-widget-capabilities.ts";
+import {
+  renderBoardWidgetMenuItems,
+  type BoardWidgetPageMenu,
+} from "../../../components/board/board-widget-cell-render.ts";
 import { icons } from "../../../components/icons.ts";
 import { activateMenuShortcut } from "../../../components/menu-shortcuts.ts";
 import {
@@ -63,6 +68,7 @@ class ChatHeaderSessionMenu extends OpenClawLightDomElement {
   @property({ attribute: false }) settings: UiSettings = EMPTY_SETTINGS;
   @property({ attribute: false }) panelActions: HeaderMenuQuickAction[] = [];
   @property({ attribute: false }) layoutActions: HeaderMenuQuickAction[] = [];
+  @property({ attribute: false }) boardWidgetMenu?: BoardWidgetPageMenu;
   @property({ attribute: false }) sharing: ChatSessionSharingProps | null = null;
   @property({ attribute: false }) groups: readonly string[] = [];
   @property({ attribute: false }) currentOwner: SessionCreatedActor | null = null;
@@ -118,6 +124,10 @@ class ChatHeaderSessionMenu extends OpenClawLightDomElement {
   private readonly handleSelect = (event: MenuSelectEvent) => {
     const value = event.detail.item.value;
     if (!value) {
+      return;
+    }
+    if (value.startsWith("board-widget:")) {
+      this.boardWidgetMenu?.onSelect(value.slice("board-widget:".length));
       return;
     }
     const compactView = compactSessionMenuViewForValue(value) ?? COMPACT_MENU_VIEW_BY_VALUE[value];
@@ -321,6 +331,29 @@ class ChatHeaderSessionMenu extends OpenClawLightDomElement {
                 <span class="session-menu__text">${t("chat.openCommandPalette")}</span>
               </wa-dropdown-item>
               <div class="session-menu__separator" role="separator"></div>`
+          : nothing
+      }
+      ${
+        this.boardWidgetMenu
+          ? html`
+              <div class="board-widget__page-menu-heading">
+                <strong
+                  >${this.boardWidgetMenu.widget.title || this.boardWidgetMenu.widget.name}</strong
+                >
+              </div>
+              ${renderBoardGrantedCapabilities(this.boardWidgetMenu.widget, "details")}
+              ${
+                this.boardWidgetMenu.canMutate
+                  ? renderBoardWidgetMenuItems({
+                      widget: this.boardWidgetMenu.widget,
+                      tabs: this.boardWidgetMenu.tabs,
+                      disabled: false,
+                      prefix: "board-widget:",
+                    })
+                  : nothing
+              }
+              <div class="session-menu__separator" role="separator"></div>
+            `
           : nothing
       }
       ${this.renderQuickActions("panels", this.panelActions)}
