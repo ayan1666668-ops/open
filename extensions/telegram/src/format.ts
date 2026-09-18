@@ -26,6 +26,9 @@ export type TelegramFormattedChunk = {
 };
 
 export function escapeTelegramHtml(text: string): string {
+  if (!/[&<>]/.test(text)) {
+    return text;
+  }
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
