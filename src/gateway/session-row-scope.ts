@@ -61,8 +61,9 @@ export function selectMatchingSessionRows<T extends SessionRowScopeTarget>(
         ? byAgent.get(query.agentId)
         : rows.keys();
   const matches = createSessionRowScopeMatcher(query, scope);
+  const ids = Array.from(candidates ?? []);
   const selected: T[] = [];
-  for (const id of [...(candidates ?? [])]) {
+  for (const id of ids) {
     const row = rows.get(id);
     if (row !== undefined && matches(row)) {
       selected.push(row);
