@@ -5,11 +5,18 @@ import { once } from "node:events";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { toErrorObject } from "@openclaw/normalization-core/error-coercion";
+import { afterEach } from "vitest";
+import {
+  collectNodeDiagnosticReport,
+  NODE_DIAGNOSTIC_REPORT_GRACE_MS as REPORT_GRACE_MS,
+} from "../../scripts/lib/node-diagnostic-report.mts";
 import { resolveVitestNodeArgs } from "../../scripts/lib/vitest-process-env.mts";
+import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { DEFAULT_VITEST_TEST_TIMEOUT_MS } from "../../test/vitest/vitest.timeouts.js";
 
 const OUTPUT_TAIL_CHARS = 8_000;
 const DIAGNOSTIC_GRACE_MS = 200;
+const reportDirs = useAutoCleanupTempDirTracker(afterEach);
 const diagnosticPreload = fileURLToPath(
   new URL("./cli-process-diagnostics.test-support.cjs", import.meta.url),
 );
@@ -134,13 +141,25 @@ export async function runCliProcessChild(params: {
   const timeoutMs = params.timeoutMs ?? CLI_PROCESS_DEADLOCK_GUARD_MS;
   const executable = params.nodeExecutable ?? process.execPath;
   const supportsDiagnostics = process.platform !== "win32" && !process.versions.bun;
+  const reportDir = supportsDiagnostics ? reportDirs.make("openclaw-cli-report-") : undefined;
   // CLI children use the test runner's V8 policy without inheriting its preloads.
   const nodeArgs =
     process.versions.bun && params.nodeExecutable === undefined
       ? params.nodeArgs
       : [
           ...resolveVitestNodeArgs(params.env),
-          ...(supportsDiagnostics ? ["--require", diagnosticPreload] : []),
+          ...(reportDir
+            ? [
+                "--require",
+                diagnosticPreload,
+                "--report-on-signal",
+                "--report-signal=SIGUSR2",
+                `--report-directory=${reportDir}`,
+                "--report-filename=diagnostic.json",
+                "--report-exclude-env",
+                "--report-exclude-network",
+              ]
+            : []),
           ...params.nodeArgs,
         ];
   const child = spawn(executable, nodeArgs, {
@@ -199,7 +218,9 @@ export async function runCliProcessChild(params: {
         timedOut = true;
         const reason = `CLI process did not exit before the ${timeoutMs}ms deadlock guard (exitCode=${child.exitCode} signalCode=${child.signalCode})`;
         let diagnosticRequest = "unavailable: preload not ready or runtime unsupported";
-        const finish = () => {
+        const finish = (
+          report = "Node diagnostic report unavailable: signal was not requested.",
+        ) => {
           // Detached descendants can retain these pipes after their launcher dies.
           const cleanupFailures = releaseCliProcessChild(child);
           const diagnosticDump = stderr.match(
@@ -208,7 +229,7 @@ export async function runCliProcessChild(params: {
           reject(
             new Error(
               formatCliProcessFailure({
-                reason: `${reason}\nChild diagnostics: ${diagnosticRequest}; ${diagnosticDump ? "received" : "no response"}. SIGKILL cleanup attempted.${cleanupFailures.length ? ` Cleanup failures: ${cleanupFailures.join("; ")}` : ""}\n--- child diagnostics ---\n${diagnosticDump ?? "No child dump received before cleanup."}`,
+                reason: `${reason}\nChild diagnostics: ${diagnosticRequest}; ${diagnosticDump ? "received" : "no response"}. SIGKILL cleanup attempted.${cleanupFailures.length ? ` Cleanup failures: ${cleanupFailures.join("; ")}` : ""}\n--- Node diagnostic report ---\n${report}\n--- child diagnostics ---\n${diagnosticDump ?? "No child dump received before cleanup."}`,
                 stderr: withoutDiagnosticReadiness(stderr),
                 stdout,
               }),
@@ -216,15 +237,16 @@ export async function runCliProcessChild(params: {
           );
         };
         // An unhandled SIGUSR2 would terminate Node before we could inspect it.
-        if (
-          supportsDiagnostics &&
-          stderr.includes(`[cli-process-diagnostics] ready pid=${child.pid}\n`)
-        ) {
+        if (reportDir && stderr.includes(`[cli-process-diagnostics] ready pid=${child.pid}\n`)) {
           diagnosticRequest = "SIGUSR2 was not delivered";
           try {
             if (child.kill("SIGUSR2")) {
-              diagnosticRequest = `SIGUSR2 requested; grace=${DIAGNOSTIC_GRACE_MS}ms`;
-              guard = setTimeout(finish, DIAGNOSTIC_GRACE_MS);
+              diagnosticRequest = `SIGUSR2 requested; report grace<=${REPORT_GRACE_MS}ms`;
+              // Preserve the child's JS diagnostic and trailing pipe output grace.
+              void collectNodeDiagnosticReport(
+                path.join(reportDir, "diagnostic.json"),
+                DIAGNOSTIC_GRACE_MS,
+              ).then(finish);
               return;
             }
           } catch (error) {
