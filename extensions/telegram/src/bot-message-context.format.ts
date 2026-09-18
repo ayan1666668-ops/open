@@ -53,6 +53,8 @@ export function formatTelegramForwardedMessageBody(params: {
 
 export function formatReplyChainEntry(entry: TelegramReplyChainEntry, index: number): string {
   const mediaPath = entry.mediaPath ? resolveTelegramPromptMediaPath(entry.mediaPath) : undefined;
+  const mediaKind =
+    resolveTelegramMediaKind(entry.mediaKind) ?? resolveTelegramMediaKind(entry.mediaType);
   const labels = [
     `${index + 1}. ${entry.sender ?? "unknown sender"}`,
     entry.messageId ? `id:${entry.messageId}` : undefined,
@@ -67,11 +69,7 @@ export function formatReplyChainEntry(entry: TelegramReplyChainEntry, index: num
     }),
     entry.mediaKind || entry.mediaType
       ? formatMediaPlaceholderText([
-          entry.mediaKind
-            ? { kind: entry.mediaKind }
-            : isTelegramMediaKind(entry.mediaType ?? "")
-              ? { kind: entry.mediaType }
-              : { contentType: entry.mediaType },
+          mediaKind ? { kind: mediaKind } : { contentType: entry.mediaType },
         ])
       : undefined,
     mediaPath ? `[media_path:${mediaPath}]` : undefined,
@@ -87,6 +85,10 @@ const TELEGRAM_MEDIA_KINDS: ReadonlySet<string> = new Set([
   "sticker",
   "video",
 ]);
+
+function resolveTelegramMediaKind(value: string | undefined): TelegramMediaKind | undefined {
+  return value && isTelegramMediaKind(value) ? value : undefined;
+}
 
 export function isTelegramMediaKind(value: string): value is TelegramMediaKind {
   return TELEGRAM_MEDIA_KINDS.has(value);

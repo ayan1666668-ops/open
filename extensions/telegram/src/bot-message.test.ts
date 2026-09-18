@@ -8,7 +8,9 @@ import { configureTelegramMessageAdmissionTestMocks } from "./bot-message.admiss
 import type { TelegramMessageProcessingResult } from "./bot-processing-outcome.js";
 
 const buildTelegramMessageContext = vi.hoisted(() => vi.fn());
-const dispatchTelegramMessage = vi.hoisted(() => vi.fn());
+const dispatchTelegramMessage = vi.hoisted(() =>
+  vi.fn<typeof import("./bot-message-dispatch.js").dispatchTelegramMessage>(),
+);
 const telegramInboundInfo = vi.hoisted(() => vi.fn());
 const sleepWithAbort = vi.hoisted(() =>
   vi.fn<(delayMs: number, signal?: AbortSignal) => Promise<void>>(async () => undefined),

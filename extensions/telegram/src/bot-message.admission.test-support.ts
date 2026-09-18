@@ -1,15 +1,18 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import type { TelegramMessageProcessorTurnContext } from "./bot-handlers.types.js";
 import type { TelegramMessageProcessingResult } from "./bot-processing-outcome.js";
 
 type TelegramMessageTestMock = ReturnType<typeof vi.fn>;
+type DispatchTelegramMessageMock = Mock<
+  typeof import("./bot-message-dispatch.js").dispatchTelegramMessage
+>;
 
 let buildTelegramMessageContext: TelegramMessageTestMock;
-let dispatchTelegramMessage: TelegramMessageTestMock;
+let dispatchTelegramMessage: DispatchTelegramMessageMock;
 
 export function configureTelegramMessageAdmissionTestMocks(params: {
   buildTelegramMessageContext: TelegramMessageTestMock;
-  dispatchTelegramMessage: TelegramMessageTestMock;
+  dispatchTelegramMessage: DispatchTelegramMessageMock;
 }): void {
   buildTelegramMessageContext = params.buildTelegramMessageContext;
   dispatchTelegramMessage = params.dispatchTelegramMessage;
