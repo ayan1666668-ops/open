@@ -13,7 +13,6 @@ import {
 } from "openclaw/plugin-sdk/session-store-runtime";
 import { readVisibleSessionTranscriptMessageEntries } from "openclaw/plugin-sdk/session-transcript-runtime";
 import { resolveCodexAppServerForModelProvider } from "./app-server/app-server-policy.js";
-import { buildDisabledAppsConfigPatch } from "./app-server/app-tool-policy.js";
 import { closeCodexStartupClientBestEffort } from "./app-server/attempt-client-cleanup.js";
 import {
   isCodexAppServerNativeAuthProfile,
@@ -36,7 +35,10 @@ import {
   resolveOpenClawExecPolicyForCodexAppServer,
   resolveCodexAppServerRuntimeOptions,
 } from "./app-server/config.js";
-import { mergeCodexThreadConfigs } from "./app-server/plugin-thread-config.js";
+import {
+  buildDisabledAppsConfigPatch,
+  mergeCodexThreadConfigs,
+} from "./app-server/plugin-thread-config.js";
 import { buildCodexProjectDocThreadConfig } from "./app-server/project-doc-thread-config.js";
 import { assertCodexThreadAcceptsDirectInput } from "./app-server/protocol-validators.js";
 import type {

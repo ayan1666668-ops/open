@@ -496,17 +496,13 @@ export async function runCodexAppServerSideQuestion(
         toolOverrides: params.sessionEntry.toolOverrides,
       }),
     });
-    // Native app prompts must reach their reviewer even when the side thread's
-    // general policy is Never, matching normal plugin-backed turns.
-    const approvalPolicy =
-      Object.keys(binding.pluginAppPolicyContext?.apps ?? {}).length > 0 ||
-      hasCodexMcpToolApprovalOverrides(
-        params.cfg?.mcp?.servers,
-        Object.keys(projectedMcpServers),
-        projectedMcpServers,
-      )
-        ? withMcpElicitationsApprovalPolicy(appServer.approvalPolicy)
-        : appServer.approvalPolicy;
+    const approvalPolicy = hasCodexMcpToolApprovalOverrides(
+      params.cfg?.mcp?.servers,
+      Object.keys(projectedMcpServers),
+      projectedMcpServers,
+    )
+      ? withMcpElicitationsApprovalPolicy(appServer.approvalPolicy)
+      : appServer.approvalPolicy;
     const sandbox = appServer.sandbox;
     const nativeProviderWebSearchSupport =
       resolveCodexWebSearchPlan({
@@ -538,7 +534,10 @@ export async function runCodexAppServerSideQuestion(
       setExecutionTimeoutMs?: (timeoutMs: number) => void,
     ) => {
       const signal = AbortSignal.any([requestSignal, runAbortController.signal]);
-      if (signal.aborted || !childThreadId || !turnId) {
+      if (signal.aborted) {
+        return undefined;
+      }
+      if (!childThreadId || !turnId) {
         return undefined;
       }
       if (request.method === "mcpServer/elicitation/request") {

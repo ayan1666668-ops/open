@@ -533,15 +533,11 @@ cleanup cannot be confirmed.
 `destructive_enabled` on each app comes from the effective global or
 per-plugin `allow_destructive_actions` policy; `true`, `"auto"`, and `"ask"`
 all set `destructive_enabled: true`, and `false` sets it `false`. Codex still
-enforces destructive tool metadata from its native app tool annotations. Because
-native explicit tool enablement takes precedence over that app default, OpenClaw
-also projects a per-tool restriction from current native annotations when
-destructive actions are disabled. Saved enablement cannot reopen a tool excluded
-by that restriction; permitted tools keep their native approval settings.
+enforces destructive tool metadata from its native app tool annotations.
 `_default` is disabled with `open_world_enabled: false`; enabled plugin apps
 get `open_world_enabled: true`. OpenClaw does not expose a separate
-plugin-level open-world policy knob. The restriction uses native tool metadata,
-not a maintained list of provider-specific tool names.
+plugin-level open-world policy knob and does not maintain per-plugin
+destructive tool-name deny lists.
 
 Admitted apps retain their native Codex approval mode and reviewer, including
 app defaults and saved link or tool overrides. With no native approval setting,
@@ -560,9 +556,7 @@ plugins, while unsafe schemas and ambiguous ownership fail closed:
 - Global `allow_destructive_actions` defaults to `true`.
 - Per-plugin `allow_destructive_actions` overrides the global policy for
   that plugin.
-- `false`: OpenClaw excludes destructive hosted app tools before execution.
-  Native approval requests for permitted tools still go through OpenClaw consent.
-  Plugin-provided MCP server approval requests receive a deterministic decline.
+- `false`: OpenClaw returns a deterministic decline.
 - `true`: OpenClaw auto-accepts only safe schemas it can map to an approval
   response, such as a boolean approve field.
 - `"auto"`: OpenClaw exposes destructive plugin actions to Codex, then

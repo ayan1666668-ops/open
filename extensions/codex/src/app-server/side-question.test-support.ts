@@ -138,19 +138,6 @@ function createFakeClient(options: { completeTurn?: boolean; onTurnStart?: () =>
   return client;
 }
 
-async function handleClientRequestWhenReady(
-  client: ReturnType<typeof createFakeClient>,
-  request: Parameters<ReturnType<typeof createFakeClient>["handleRequest"]>[0],
-  assertHandled: (response: unknown) => void = (response) => expect(response).not.toBeUndefined(),
-): Promise<unknown> {
-  let response: unknown;
-  await vi.waitFor(async () => {
-    response = await client.handleRequest(request);
-    assertHandled(response);
-  });
-  return response;
-}
-
 export function sideLoopRelayParams(
   overrides: Partial<SideQuestionParams> = {},
 ): SideQuestionParams {
@@ -428,7 +415,6 @@ export {
   runCodexAppServerSideQuestion,
   runCodexAppServerSideQuestionImpl,
   createFakeClient,
-  handleClientRequestWhenReady,
   threadResult,
   turnStartResult,
   agentDelta,

@@ -1,9 +1,4 @@
-import type {
-  CodexAppServerRequestParams,
-  CodexAppServerRequestResult,
-  JsonObject,
-  v2,
-} from "./protocol.js";
+import type { CodexAppServerRequestParams, CodexAppServerRequestResult, v2 } from "./protocol.js";
 
 type CodexAppInventoryMethod = "app/installed" | "app/read";
 
@@ -47,25 +42,4 @@ export function codexAppInventoryResponse<Method extends CodexAppInventoryMethod
     })),
     missingAppIds: requestedIds?.filter((id) => !returnedIds.has(id)) ?? [],
   } as CodexAppServerRequestResult<Method>;
-}
-
-export function nativeAppToolsResponse(appId: string, tools: JsonObject) {
-  return {
-    data: [
-      {
-        name: "codex_apps",
-        tools: Object.fromEntries(
-          Object.entries(tools).map(([name, metadata]) => [
-            name,
-            {
-              name,
-              ...(metadata as JsonObject),
-              _meta: { connector_id: appId },
-            },
-          ]),
-        ),
-      },
-    ],
-    nextCursor: null,
-  };
 }
