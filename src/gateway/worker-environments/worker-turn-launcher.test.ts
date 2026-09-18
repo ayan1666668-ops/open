@@ -49,10 +49,10 @@ describe("worker turn launcher local placement", () => {
   beforeEach(setupWorkerTurnLauncherTest);
   afterEach(cleanupWorkerTurnLauncherTest);
 
-  async function seedAutomationSessions() {
+  async function seedAutomationSessions(runSuffix: string = SESSION_ID) {
     setRuntimeConfigSnapshot({ session: { store: sessionTarget.storePath } });
     const sessionKey = "agent:main:cron:automation";
-    const runKey = `${sessionKey}:run:${SESSION_ID}`;
+    const runKey = `${sessionKey}:run:${runSuffix}`;
     for (const key of [sessionKey, runKey]) {
       await upsertSessionEntryCore(
         { ...sessionTarget, sessionKey: key },
@@ -65,10 +65,12 @@ describe("worker turn launcher local placement", () => {
     return { sessionKey, runKey };
   }
 
-  it.each(["run", "base"])(
+  it.each(["run", "base", "compacted run"])(
     "admits current automation aliases after the %s key pins placement",
     async (firstKey) => {
-      const { sessionKey, runKey } = await seedAutomationSessions();
+      const { sessionKey, runKey } = await seedAutomationSessions(
+        firstKey === "compacted run" ? "original-session-before-compaction" : SESSION_ID,
+      );
       const provider = createWorkerSessionTurnPlacementProvider({
         environments: unusedEnvironments(),
         placements,
@@ -79,11 +81,11 @@ describe("worker turn launcher local placement", () => {
           { ...turn(runId), sessionKey: key },
           async () => ({ payloads: [{ text: "reply" }], meta: { durationMs: 1 } }),
         );
-      const initialKey = firstKey === "run" ? runKey : sessionKey;
+      const initialKey = firstKey === "base" ? sessionKey : runKey;
       await execute(initialKey, "first-turn");
       expect(placements.get(SESSION_ID)?.sessionKey).toBe(initialKey);
       await expect(
-        execute(firstKey === "run" ? sessionKey : runKey, "next-turn"),
+        execute(firstKey === "base" ? runKey : sessionKey, "next-turn"),
       ).resolves.toMatchObject({
         payloads: [{ text: "reply" }],
       });
@@ -100,7 +102,6 @@ describe("worker turn launcher local placement", () => {
     "missing base",
     "different job",
     "different agent",
-    "wrong run suffix",
     "ordinary key",
   ])("rejects an automation alias with %s before execution", async (scenario) => {
     const { sessionKey, runKey } = await seedAutomationSessions();
@@ -130,12 +131,6 @@ describe("worker turn launcher local placement", () => {
       suppliedKey = "agent:main:cron:other";
     } else if (scenario === "different agent") {
       suppliedKey = "agent:other:cron:automation";
-    } else if (scenario === "wrong run suffix") {
-      placedKey = `${sessionKey}:run:old-session`;
-      await upsertSessionEntryCore(
-        { ...sessionTarget, sessionKey: placedKey },
-        { sessionId: SESSION_ID, updatedAt: Date.now() },
-      );
     } else if (scenario === "ordinary key") {
       suppliedKey = SESSION_KEY;
     }

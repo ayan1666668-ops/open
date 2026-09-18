@@ -216,11 +216,10 @@ export function resolvePlacementIdentity(
     const suppliedKey = sessionKey.trim();
     const suppliedScope = parseCronRunScopeSuffix(suppliedKey);
     const placedScope = parseCronRunScopeSuffix(placement.sessionKey);
-    const runId = suppliedScope.runId ?? placedScope.runId;
     // Cron publishes a base and exact-run row for one physical session. Only their
     // current persisted relationship can authorize using the placement's claim identity.
+    // Compaction can rotate that identity without renaming the original run key.
     if (
-      runId === claim.sessionId &&
       placement.sessionId === claim.sessionId &&
       suppliedScope.baseSessionKey === placedScope.baseSessionKey &&
       Boolean(suppliedScope.runId) !== Boolean(placedScope.runId) &&
