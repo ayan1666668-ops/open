@@ -4,6 +4,7 @@ import { html, nothing } from "lit";
 import { styleMap } from "lit/directives/style-map.js";
 import { stripShellPreamble } from "../../../../../src/agents/tool-display-exec-shell.js";
 import {
+  browserRouteKey,
   browserTabKey,
   type BrowserTabSelection,
 } from "../../../components/browser/browser-target.ts";
@@ -52,27 +53,45 @@ export function renderBrowserTabPreviews(
   const cards = groups.flatMap((group) =>
     group.messages.flatMap((item) => extractToolCardsCached(item.message)),
   );
-  // One card per tab per rendered group: open/navigate/screenshot in a single
-  // turn all describe the same tab, and stacked near-identical cards are noise.
-  const lastCardForTab = new Map<string, (typeof cards)[number]>();
-  for (const card of cards) {
-    if (card.browserTab && resolveToolCardOutcome(card, false) === "succeeded") {
-      lastCardForTab.set(browserTabKey(card.browserTab), card);
-    }
-  }
-  return [...lastCardForTab.values()].map((card) => {
-    const preview = card.preview;
-    if (preview?.kind !== "browser-tab") {
-      return nothing;
-    }
-    const revision = browserTabCardRevision(card);
-    return renderToolPreview(preview, "chat_tool", {
-      browserTabRevision: revision ? JSON.stringify([options.sessionKey, revision]) : undefined,
-      browserTabLatest: Boolean(
-        revision && options.latestBrowserTabs?.get(browserTabKey(preview))?.revision === revision,
-      ),
-    });
-  });
+  // Select each tab's final state before collapsing reopened pages. A newer
+  // blank/non-web result must still retire that tab's older web preview.
+  const seenTabs = new Set<string>();
+  const seenPages = new Set<string>();
+  return cards
+    .toReversed()
+    .flatMap((card) => {
+      if (!card.browserTab || resolveToolCardOutcome(card, false) !== "succeeded") {
+        return [];
+      }
+      const tabKey = browserTabKey(card.browserTab);
+      if (seenTabs.has(tabKey)) {
+        return [];
+      }
+      seenTabs.add(tabKey);
+      const preview = card.preview;
+      if (preview?.kind !== "browser-tab") {
+        return [];
+      }
+      // Display URLs are shortened; page identity uses the full recorded URL and
+      // browser route. The newest representative keeps its real tab and revision.
+      const url = asNullableRecord(asNullableRecord(card.details)?.browserTab)?.url;
+      const pageKey = JSON.stringify([browserRouteKey(preview), url]);
+      if (seenPages.has(pageKey)) {
+        return [];
+      }
+      seenPages.add(pageKey);
+      const revision = browserTabCardRevision(card);
+      return [
+        renderToolPreview(preview, "chat_tool", {
+          browserTabRevision: revision ? JSON.stringify([options.sessionKey, revision]) : undefined,
+          browserTabLatest: Boolean(
+            revision &&
+            options.latestBrowserTabs?.get(browserTabKey(preview))?.revision === revision,
+          ),
+        }),
+      ];
+    })
+    .reverse();
 }
 
 export function shouldToggleSelectableDisclosure(event: MouseEvent): boolean {
