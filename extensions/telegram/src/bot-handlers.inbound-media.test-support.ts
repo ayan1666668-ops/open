@@ -1,6 +1,7 @@
 import type { Message } from "grammy/types";
 import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import "./bot-handlers.inbound-media-registry.test-support.js";
 import type { TelegramMediaGroupInput } from "./bot-handlers.inbound-media.types.js";
 import type { TelegramMessagePipeline } from "./bot-handlers.message-pipeline.js";
 import type { RegisterTelegramHandlerParams } from "./bot-handlers.types.js";

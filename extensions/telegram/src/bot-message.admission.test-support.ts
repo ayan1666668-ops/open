@@ -1,25 +1,19 @@
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TelegramMessageProcessorTurnContext } from "./bot-handlers.types.js";
 import type { TelegramMessageProcessingResult } from "./bot-processing-outcome.js";
 
-const buildTelegramMessageContext = vi.hoisted(() => vi.fn());
-const dispatchTelegramMessage = vi.hoisted(() => vi.fn());
+type TelegramMessageTestMock = ReturnType<typeof vi.fn>;
 
-vi.mock("openclaw/plugin-sdk/runtime-env", () => ({
-  createSubsystemLogger: () => ({ child: () => ({ info: vi.fn() }) }),
-  danger: (message: string) => message,
-  logVerbose: vi.fn(),
-  shouldLogVerbose: () => false,
-  sleepWithAbort: vi.fn(async () => undefined),
-}));
+let buildTelegramMessageContext: TelegramMessageTestMock;
+let dispatchTelegramMessage: TelegramMessageTestMock;
 
-vi.mock("./bot-message-context.js", () => ({
-  buildTelegramMessageContext,
-}));
-
-vi.mock("./bot-message-dispatch.js", () => ({
-  dispatchTelegramMessage,
-}));
+export function configureTelegramMessageAdmissionTestMocks(params: {
+  buildTelegramMessageContext: TelegramMessageTestMock;
+  dispatchTelegramMessage: TelegramMessageTestMock;
+}): void {
+  buildTelegramMessageContext = params.buildTelegramMessageContext;
+  dispatchTelegramMessage = params.dispatchTelegramMessage;
+}
 
 let createTelegramMessageProcessor: typeof import("./bot-message.js").createTelegramMessageProcessor;
 
@@ -39,6 +33,11 @@ describe("telegram bot message admission", () => {
   beforeEach(() => {
     buildTelegramMessageContext.mockClear();
     dispatchTelegramMessage.mockReset().mockResolvedValue({ kind: "completed" });
+  });
+
+  afterEach(() => {
+    buildTelegramMessageContext.mockReset();
+    dispatchTelegramMessage.mockReset();
   });
 
   const baseTurnContext = {

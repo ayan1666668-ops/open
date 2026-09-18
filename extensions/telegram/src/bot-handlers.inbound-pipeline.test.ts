@@ -1,4 +1,5 @@
 // Telegram tests cover inbound buffering identity.
+import "./bot-handlers.inbound-media.test-support.js";
 import type { Context } from "grammy";
 import type { Message } from "grammy/types";
 import { createDeferred } from "openclaw/plugin-sdk/extension-shared";

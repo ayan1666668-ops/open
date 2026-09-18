@@ -4,6 +4,7 @@ import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TelegramBotDeps } from "./bot-deps.js";
 import type { TelegramMessageProcessorTurnContext } from "./bot-handlers.types.js";
+import { configureTelegramMessageAdmissionTestMocks } from "./bot-message.admission.test-support.js";
 import type { TelegramMessageProcessingResult } from "./bot-processing-outcome.js";
 
 const buildTelegramMessageContext = vi.hoisted(() => vi.fn());
@@ -40,6 +41,11 @@ vi.mock("./bot-message-context.js", () => ({
 vi.mock("./bot-message-dispatch.js", () => ({
   dispatchTelegramMessage,
 }));
+
+configureTelegramMessageAdmissionTestMocks({
+  buildTelegramMessageContext,
+  dispatchTelegramMessage,
+});
 
 let createTelegramMessageProcessor: typeof import("./bot-message.js").createTelegramMessageProcessor;
 let createTelegramSpooledReplayDeferredParticipant: typeof import("./bot-processing-outcome.js").createTelegramSpooledReplayDeferredParticipant;

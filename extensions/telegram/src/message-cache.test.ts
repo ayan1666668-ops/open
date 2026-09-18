@@ -1,5 +1,6 @@
 import type { Message } from "grammy/types";
 import { describe, expect, it } from "vitest";
+import "./message-cache.privacy.test-support.js";
 import {
   resolveTelegramMessageCachePersistentScopeKey,
   TELEGRAM_MESSAGE_CACHE_PERSISTENT_MAX_MESSAGES,
