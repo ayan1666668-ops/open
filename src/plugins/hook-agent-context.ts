@@ -129,15 +129,29 @@ export function buildAgentHookContextChannelFields(params: {
 export function buildAgentHookContextIdentityFields(params: {
   trigger?: string | null;
   senderId?: string | null;
+  /** Host-resolved owner bit; projected only next to a resolved sender. */
+  senderIsOwner?: boolean | null;
+  /** Authenticated inbound message id; numeric provider ids are stringified. */
+  messageId?: string | number | null;
   chatId?: string | null;
   channelContext?: PluginHookChannelContext;
-}): Pick<PluginHookAgentContext, "senderId" | "chatId" | "channelContext"> {
+}): Pick<
+  PluginHookAgentContext,
+  "senderId" | "senderIsOwner" | "messageId" | "chatId" | "channelContext"
+> {
   const trigger = normalizeOptionalString(params.trigger);
   if (trigger && trigger !== "user") {
     return {};
   }
 
   const senderId = normalizeOptionalString(params.senderId);
+  const senderIsOwner =
+    senderId && typeof params.senderIsOwner === "boolean" ? params.senderIsOwner : undefined;
+  const messageId = normalizeOptionalString(
+    typeof params.messageId === "number" && Number.isFinite(params.messageId)
+      ? String(params.messageId)
+      : (params.messageId ?? undefined),
+  );
   const chatId = normalizeOptionalString(params.chatId);
   const sender = senderId
     ? { ...params.channelContext?.sender, id: senderId }
@@ -156,7 +170,31 @@ export function buildAgentHookContextIdentityFields(params: {
 
   return {
     ...(senderId ? { senderId } : {}),
+    ...(senderIsOwner !== undefined ? { senderIsOwner } : {}),
+    ...(messageId ? { messageId } : {}),
     ...(chatId ? { chatId } : {}),
     ...(channelContext ? { channelContext } : {}),
   };
+}
+
+/**
+ * Identity fields from a run or attempt parameter object. Runners carry the
+ * inbound message id as `currentMessageId`; hook contexts expose `messageId`.
+ */
+export function buildAgentHookContextIdentityFieldsForRun(run: {
+  trigger?: string | null;
+  senderId?: string | null;
+  senderIsOwner?: boolean | null;
+  currentMessageId?: string | number | null;
+  chatId?: string | null;
+  channelContext?: PluginHookChannelContext;
+}): ReturnType<typeof buildAgentHookContextIdentityFields> {
+  return buildAgentHookContextIdentityFields({
+    trigger: run.trigger,
+    senderId: run.senderId,
+    senderIsOwner: run.senderIsOwner,
+    messageId: run.currentMessageId,
+    chatId: run.chatId,
+    channelContext: run.channelContext,
+  });
 }

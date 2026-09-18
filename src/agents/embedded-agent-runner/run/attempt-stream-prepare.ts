@@ -19,7 +19,7 @@ import {
 } from "../../../logging/diagnostic-run-activity.js";
 import {
   buildAgentHookContextChannelFields,
-  buildAgentHookContextIdentityFields,
+  buildAgentHookContextIdentityFieldsForRun,
 } from "../../../plugins/hook-agent-context.js";
 import { getGlobalHookRunner } from "../../../plugins/hook-runner-global.js";
 import { getModelProviderRuntimePluginHandle } from "../../../plugins/provider-hook-runtime.js";
@@ -246,12 +246,7 @@ export function prepareEmbeddedAttemptStream(input: {
               modelId: reportedModelRef.model,
               trigger: attempt.trigger,
               ...buildAgentHookContextChannelFields(attempt),
-              ...buildAgentHookContextIdentityFields({
-                trigger: attempt.trigger,
-                senderId: attempt.senderId,
-                chatId: attempt.chatId,
-                channelContext: attempt.channelContext,
-              }),
+              ...buildAgentHookContextIdentityFieldsForRun(attempt),
             },
             hookRunner,
           });

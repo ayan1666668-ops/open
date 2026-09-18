@@ -1,6 +1,6 @@
 import {
   buildAgentHookContextChannelFields,
-  buildAgentHookContextIdentityFields,
+  buildAgentHookContextIdentityFieldsForRun,
 } from "../../../plugins/hook-agent-context.js";
 import type { runAgentEndSideEffects } from "../../harness/agent-end-side-effects.js";
 import type { EmbeddedForegroundPromptContext } from "./params.js";
@@ -132,11 +132,6 @@ export function buildEmbeddedAgentEndContext(params: {
     trigger: run.trigger,
     ...(run.config ? { config: run.config } : {}),
     ...buildAgentHookContextChannelFields(run),
-    ...buildAgentHookContextIdentityFields({
-      trigger: run.trigger,
-      senderId: run.senderId,
-      chatId: run.chatId,
-      channelContext: run.channelContext,
-    }),
+    ...buildAgentHookContextIdentityFieldsForRun(run),
   };
 }

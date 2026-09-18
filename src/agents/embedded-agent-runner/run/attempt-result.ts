@@ -5,7 +5,7 @@ import { freezeDiagnosticTraceContext } from "../../../infra/diagnostic-trace-co
 import { isTransientNetworkError } from "../../../infra/retryable-network-errors.js";
 import {
   buildAgentHookContextChannelFields,
-  buildAgentHookContextIdentityFields,
+  buildAgentHookContextIdentityFieldsForRun,
 } from "../../../plugins/hook-agent-context.js";
 import { projectAgentRunAttemptTerminal } from "../../agent-run-terminal-outcome.js";
 import { isCloudCodeAssistFormatError } from "../../embedded-agent-helpers.js";
@@ -307,12 +307,7 @@ export function completeEmbeddedAttemptResult(
           trigger: attempt.trigger,
           ...contextWindow,
           ...buildAgentHookContextChannelFields(attempt),
-          ...buildAgentHookContextIdentityFields({
-            trigger: attempt.trigger,
-            senderId: attempt.senderId,
-            chatId: attempt.chatId,
-            channelContext: attempt.channelContext,
-          }),
+          ...buildAgentHookContextIdentityFieldsForRun(attempt),
         },
       )
       .catch((err: unknown) => {
