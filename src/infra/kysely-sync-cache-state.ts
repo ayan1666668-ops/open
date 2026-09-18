@@ -31,9 +31,10 @@ type SqliteDisposeReason = "close" | "replace";
 /**
  * Error code for a destructive replacement refused while the connection holds a
  * transaction. Distinct from every `SQLITE_*` code so storage diagnostics cannot
- * mistake this deliberate refusal for a retryable busy failure.
+ * mistake this deliberate refusal for a retryable busy failure, and outside the
+ * `OPENCLAW_*` namespace because that census counts environment variable names.
  */
-export const SQLITE_DESERIALIZE_IN_TRANSACTION_CODE = "OPENCLAW_SQLITE_DESERIALIZE_IN_TRANSACTION";
+export const SQLITE_DESERIALIZE_IN_TRANSACTION_CODE = "ERR_SQLITE_DESERIALIZE_IN_TRANSACTION";
 
 type StatementCache = {
   statements: Map<string, StatementSync>;
