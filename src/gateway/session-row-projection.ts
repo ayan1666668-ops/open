@@ -453,10 +453,7 @@ export async function createSessionRowProjection(params: {
     return !disposed && (topologyDirty || catalog.needsInitialRead || dirty.size > 0);
   }
   async function drain() {
-    for (;;) {
-      if (!needsMaterialization()) {
-        return;
-      }
+    while (needsMaterialization()) {
       await refreshBatch();
       if (dirty.size || topologyDirty) {
         await yieldSessionListWork();
