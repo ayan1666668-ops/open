@@ -1,8 +1,6 @@
 // Facade runtime helpers load plugin API facades from installed plugin packages.
-import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { hasErrnoCode } from "../infra/errno.js";
 import { areBundledPluginsDisabled, resolveBundledPluginsDir } from "../plugins/bundled-dir.js";
 import { getPluginCacheRoot, getPluginCacheSource } from "../plugins/plugin-cache.js";
 import { getPluginInstance } from "../plugins/plugin-instance-scope.js";
@@ -80,8 +78,6 @@ function resolveFacadeModuleLocation(
 
 type FacadeActivationCheckRuntimeModule = typeof import("./facade-activation-check.runtime.js");
 
-const nodeRequire = createRequire(import.meta.url);
-
 function getFacadeActivationCheckRuntimeModule(): FacadeActivationCheckRuntimeModule | undefined {
   const cached =
     getPluginCacheSource(CURRENT_MODULE_PATH).variants.get("activation-runtime")?.exports?.value;
@@ -105,19 +101,14 @@ function loadFacadeActivationCheckRuntime(): FacadeActivationCheckRuntimeModule 
     return cached;
   }
   try {
-    let modulePath: string;
-    try {
-      modulePath = nodeRequire.resolve("./facade-activation-check.runtime.js");
-    } catch (error) {
-      if (!hasErrnoCode(error, "MODULE_NOT_FOUND")) {
-        throw error;
-      }
-      modulePath = nodeRequire.resolve("./facade-activation-check.runtime.ts");
-    }
+    const modulePath = fileURLToPath(
+      new URL("./facade-activation-check.runtime.js", import.meta.url),
+    );
     const loaded = getCachedPluginModuleLoader({
       modulePath,
       importerUrl: import.meta.url,
       loaderFilename: import.meta.url,
+      transformOpenClawDependencies: false,
     })(modulePath) as FacadeActivationCheckRuntimeModule;
     setFacadeActivationCheckRuntimeModule(loaded);
     return loaded;
@@ -126,9 +117,8 @@ function loadFacadeActivationCheckRuntime(): FacadeActivationCheckRuntimeModule 
   }
 }
 
-// Async twin of loadFacadeActivationCheckRuntime for async call sites: dynamic
-// import resolves the source graph under vitest where the sync createRequire/jiti
-// candidates cannot, and warms the shared memo so subsequent sync loads reuse it.
+// Dynamic import resolves the source graph under Vitest and warms the same memo
+// for subsequent synchronous calls.
 async function loadFacadeActivationCheckRuntimeAsync(): Promise<FacadeActivationCheckRuntimeModule> {
   const module =
     getFacadeActivationCheckRuntimeModule() ??
