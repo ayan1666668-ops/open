@@ -34,6 +34,7 @@ type PluginInstallActionOptions = {
   acceptCapabilities?: boolean;
   dangerouslyForceUnsafeInstall?: boolean;
   force?: boolean;
+  enable?: boolean;
   link?: boolean;
   pin?: boolean;
   marketplace?: string;
