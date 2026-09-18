@@ -319,7 +319,7 @@ export async function resolveTelegramInboundBody(params: {
 
   if (needsPreflightTranscription) {
     try {
-      const { transcribeFirstAudio } = await loadMediaUnderstandingRuntime();
+      const { resolveTelegramPreflightAudioTranscript } = await loadMediaUnderstandingRuntime();
       const tempCtx: MsgContext = {
         Provider: "telegram",
         Surface: "telegram",
@@ -329,7 +329,7 @@ export async function resolveTelegramInboundBody(params: {
         MessageThreadId: replyThreadId,
         media: materializedMedia,
       };
-      preflightTranscript = await transcribeFirstAudio({
+      preflightTranscript = await resolveTelegramPreflightAudioTranscript({
         ctx: tempCtx,
         cfg,
         agentDir: undefined,
@@ -480,6 +480,17 @@ export async function resolveTelegramInboundBody(params: {
       );
     }
     return null;
+  }
+
+  if (preflightTranscript) {
+    const { sendTelegramPreflightAudioTranscriptEcho } = await loadMediaUnderstandingRuntime();
+    await sendTelegramPreflightAudioTranscriptEcho({
+      transcript: preflightTranscript,
+      cfg,
+      accountId: accountId ?? "default",
+      originatingTo,
+      messageThreadId: replyThreadId === undefined ? undefined : String(replyThreadId),
+    });
   }
 
   return {
