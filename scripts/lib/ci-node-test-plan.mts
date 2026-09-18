@@ -47,6 +47,7 @@ import {
   resolveRuntimePlacementSeconds,
 } from "./ci-test-timings.mts";
 import { listTrackedTestFiles } from "./list-test-files.mts";
+import { isExclusiveCiTestConfig } from "./local-check-runtime.mts";
 import {
   listVitestRuntimeConsumerFiles,
   mergeVitestPretestBuildModes,
@@ -140,6 +141,28 @@ type PolicyTestWatch = {
 // this inventory covers the remaining tests that changed targeting cannot
 // discover from imports alone.
 const policyTestWatches = [
+  {
+    testFile: "test/scripts/tsgo-core-test-shards.test.ts",
+    watchGlobs: [
+      "src/{auto-reply,infra/outbound}/**/*.test.{ts,tsx}",
+      "tsconfig.json",
+      "test/tsconfig/tsconfig.test.json",
+      "test/tsconfig/tsconfig.core.test*.json",
+      "test/tsconfig/tsconfig.test.packages.json",
+    ],
+  },
+  {
+    testFile: "src/infra/fs-safe-import-boundary.test.ts",
+    watchGlobs: ["src/test-utils/**/*.ts"],
+  },
+  {
+    testFile: "test/scripts/test-projects.test.ts",
+    watchGlobs: ["test/scripts/**/*.test.ts"],
+  },
+  {
+    testFile: "test/vitest-projects-config.test.ts",
+    watchGlobs: ["extensions/codex/src/app-server/**/*.test.ts"],
+  },
   {
     testFile: "test/scripts/pr-worktree-provision.test.ts",
     ownerGlobs: ["scripts/pr-lib/wrapper-components.txt"],
@@ -2961,7 +2984,9 @@ export function createSelectedNodeTestShardBundles(
     const matches = canonicalGroups.filter(
       (group) =>
         !group.requiresDist &&
-        ((group.configs.length === 1 && group.configs[0] === configs.get(target)) ||
+        ((group.configs.includes(configs.get(target)!) &&
+          group.configs.some(isExclusiveCiTestConfig)) ||
+          (group.configs.length === 1 && group.configs[0] === configs.get(target)) ||
           (isWholeToolingPair(group) && group.configs.includes(configs.get(target)!))) &&
         group.env?.OPENCLAW_NODE_TEST_VITEST_ARGS_JSON === undefined &&
         (!group.includePatterns || group.includePatterns.includes(target)),
@@ -3463,6 +3488,20 @@ function createCompactNodeTestShardBundles(
     throw new Error(
       `compact ${options.runnerBackend ?? "blacksmith"} node test plan exceeds ${COMPACT_NODE_TEST_JOB_CAP} jobs (${compactJobs.length} planned)`,
     );
+  }
+
+  // Settle Gateway admission before runtime placement reads the recipient's policy.
+  for (const job of compactJobs) {
+    if (
+      job.planConcurrency !== 2 ||
+      !job.groups.some((group) => group.configs.some(isExclusiveCiTestConfig))
+    ) {
+      continue;
+    }
+    // Keep packed jobs and their summed time budgets; Gateway boots own the host
+    // serially. Preserve the previous two-worker ceiling inside every child.
+    job.planConcurrency = 1;
+    job.env = { ...job.env, ...PINNED_COMPACT_GROUP_ENV };
   }
 
   // Only the public complete-plan entry normalizes this option. Precise plans

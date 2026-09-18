@@ -31,7 +31,7 @@ describe("committed category patch effects", () => {
       targets: [
         {
           accessChanged: false,
-          entry: { sessionId: "saved", updatedAt: 1, category: "Travel", archived: true },
+          entry: { sessionId: "saved", updatedAt: 1, category: "Travel", archivedAt: 1 },
           target: {
             canonicalKey: "agent:main:travel",
             targetAgentId: "main",

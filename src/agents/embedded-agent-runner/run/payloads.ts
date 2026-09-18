@@ -26,14 +26,7 @@ import {
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import { hasReplyPayloadContent } from "../../../interactive/payload.js";
 import type { AssistantMessage } from "../../../llm/types.js";
-import {
-  extractAssistantTextForPhase,
-  parseAssistantTextSignature,
-} from "../../../shared/chat-message-content.js";
-import {
-  sanitizeAssistantFinalAnswerText,
-  sanitizeAssistantVisibleText,
-} from "../../../shared/text/assistant-visible-text.js";
+import { resolveRawAssistantAnswerText } from "../../../shared/assistant-answer-text.js";
 import { classifyOAuthRefreshFailure } from "../../auth-profiles/oauth-refresh-failure.js";
 import {
   formatAssistantErrorText,
@@ -57,65 +50,6 @@ import type { PreparedProviderFailoverOwner } from "../../failover/provider-patt
 import type { ToolErrorSummary } from "../../tool-error-summary.js";
 import { buildSourceReplyPayloadState } from "./source-reply-payloads.js";
 import { buildFailureWarning } from "./tool-error-warning.js";
-
-function isAssistantTextContentBlockType(value: unknown): boolean {
-  return value === "text" || value === "input_text" || value === "output_text";
-}
-function resolveRawAssistantAnswerText(lastAssistant: AssistantMessage | undefined): string {
-  if (!lastAssistant) {
-    return "";
-  }
-  const finalAnswerText = extractAssistantTextForPhase(lastAssistant, {
-    phase: "final_answer",
-    sanitizeText: sanitizeAssistantFinalAnswerText,
-  });
-  if (finalAnswerText) {
-    return normalizeOptionalString(finalAnswerText) ?? "";
-  }
-  if (Array.isArray(lastAssistant.content)) {
-    const hasExplicitPhasedTextBlock = lastAssistant.content.some((block) => {
-      if (!block || typeof block !== "object") {
-        return false;
-      }
-      const record = block as { type?: unknown; textSignature?: unknown };
-      return (
-        isAssistantTextContentBlockType(record.type) &&
-        Boolean(parseAssistantTextSignature(record)?.phase)
-      );
-    });
-    if (!hasExplicitPhasedTextBlock) {
-      const signedUnphasedParts = lastAssistant.content
-        .map((block) => {
-          if (!block || typeof block !== "object") {
-            return null;
-          }
-          const record = block as { type?: unknown; text?: unknown; textSignature?: unknown };
-          const signature = parseAssistantTextSignature(record);
-          if (
-            !isAssistantTextContentBlockType(record.type) ||
-            typeof record.text !== "string" ||
-            !signature?.id ||
-            signature.phase
-          ) {
-            return null;
-          }
-          const text = sanitizeAssistantFinalAnswerText(record.text);
-          return text.trim() ? text : null;
-        })
-        .filter((value): value is string => typeof value === "string");
-      if (signedUnphasedParts.length) {
-        return normalizeOptionalString(signedUnphasedParts.join("\n")) ?? "";
-      }
-    }
-  }
-  return (
-    normalizeOptionalString(
-      extractAssistantTextForPhase(lastAssistant, {
-        sanitizeText: sanitizeAssistantVisibleText,
-      }),
-    ) ?? ""
-  );
-}
 
 /**
  * Converts a completed embedded attempt into reply payloads for channels. This
@@ -403,12 +337,12 @@ export function buildEmbeddedRunPayloads(params: {
     assistantMessageIndex: params.assistantMessageIndex,
   });
   // A conversational NO_REPLY is an authored outcome, not a missing answer.
-  // For example, a rate-limited context read must not turn a reaction to
-  // "thank you" into a synthetic tool-error message. Keep failure reporting
-  // for missing answers, unknown/mutating actions, and scheduled work.
+  // Native shell calls are conservatively classified as mutating even when
+  // they only search files. That replay-safety classification must not replace
+  // a completed answer with a synthetic warning. Missing answers, interrupted
+  // runs, and scheduled work still retain their failure reporting.
   const respectIntentionalSilence =
     hasIntentionalSilentFinal &&
-    params.lastToolError?.mutatingAction === false &&
     !params.isCronTrigger &&
     !params.isHeartbeatTrigger &&
     !params.runAborted;
