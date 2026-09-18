@@ -6,6 +6,7 @@ import {
   codexTestTurnIds,
   createFakeCodexAppServerClient,
 } from "./codex-app-server.test-fixtures.js";
+import { dynamicToolBuildState } from "./dynamic-tool-build-state.js";
 import { isJsonObject, type CodexServerNotification, type JsonObject } from "./protocol.js";
 import {
   createCodexTestBindingStore,
@@ -15,7 +16,7 @@ import {
 const readCodexAppServerBindingMock = vi.fn();
 const isCodexAppServerNativeAuthProfileMock = vi.fn();
 const getSharedCodexAppServerClientMock = vi.fn();
-const refreshCodexAppServerAuthTokensMock = vi.fn();
+const retireSharedCodexAppServerClientIfCurrentMock = vi.fn();
 const createOpenClawCodingToolsMock = vi.fn();
 const toolExecuteMock = vi.fn();
 const handleCodexAppServerApprovalRequestMock = vi.fn();
@@ -52,15 +53,10 @@ vi.mock("./shared-client.js", () => ({
   releaseCodexAppServerClientLease: vi.fn((lease: { client?: unknown }) => {
     lease.client = undefined;
   }),
-  retireSharedCodexAppServerClientIfCurrent: vi.fn(),
+  retireSharedCodexAppServerClientIfCurrent: (...args: unknown[]) =>
+    retireSharedCodexAppServerClientIfCurrentMock(...args),
   withLeasedCodexAppServerClientStartSelectionRetry: (params: SelectionRetryParams) =>
     withLeasedCodexAppServerClientStartSelectionRetryMock(params),
-}));
-
-vi.mock("./auth-bridge.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("./auth-bridge.js")>()),
-  refreshCodexAppServerAuthTokens: (...args: unknown[]) =>
-    refreshCodexAppServerAuthTokensMock(...args),
 }));
 
 vi.mock("./approval-bridge.js", () => ({
@@ -71,10 +67,6 @@ vi.mock("./approval-bridge.js", () => ({
 vi.mock("./provider-capabilities.js", () => ({
   resolveCodexProviderWebSearchSupportForClient: (...args: unknown[]) =>
     resolveCodexProviderWebSearchSupportForClientMock(...args),
-}));
-
-vi.mock("openclaw/plugin-sdk/agent-harness", () => ({
-  createOpenClawCodingTools: (...args: unknown[]) => createOpenClawCodingToolsMock(...args),
 }));
 
 const { runCodexAppServerSideQuestion: runCodexAppServerSideQuestionImpl } =
@@ -137,6 +129,9 @@ function createFakeClient(options: { completeTurn?: boolean; onTurnStart?: () =>
     }
     if (method === "thread/unsubscribe") {
       return {};
+    }
+    if (method === "thread/backgroundTerminals/list") {
+      return { data: [] };
     }
     throw new Error(`unexpected request: ${method}`);
   });
@@ -305,8 +300,10 @@ export function useSideQuestionTestSetup() {
     readCodexAppServerBindingMock.mockReset();
     isCodexAppServerNativeAuthProfileMock.mockReset();
     getSharedCodexAppServerClientMock.mockReset();
-    refreshCodexAppServerAuthTokensMock.mockReset();
+    retireSharedCodexAppServerClientIfCurrentMock.mockReset();
     createOpenClawCodingToolsMock.mockReset();
+    dynamicToolBuildState.openClawCodingToolsFactory = (...args) =>
+      createOpenClawCodingToolsMock(...args);
     toolExecuteMock.mockReset();
     handleCodexAppServerApprovalRequestMock.mockReset();
     resolveCodexProviderWebSearchSupportForClientMock.mockReset();
@@ -353,14 +350,10 @@ export function useSideQuestionTestSetup() {
     });
     isCodexAppServerNativeAuthProfileMock.mockReturnValue(true);
     getSharedCodexAppServerClientMock.mockResolvedValue(createFakeClient());
-    refreshCodexAppServerAuthTokensMock.mockResolvedValue({
-      accessToken: "access-token",
-      chatgptAccountId: "account-1",
-      chatgptPlanType: "plus",
-    });
   });
 
   afterEach(async () => {
+    dynamicToolBuildState.openClawCodingToolsFactory = undefined;
     await nativeHookRelayTesting.clearNativeHookRelaysForTests();
     resetDiagnosticEventsForTest();
     resetGlobalHookRunner();
@@ -373,7 +366,7 @@ export {
   readCodexAppServerBindingMock,
   isCodexAppServerNativeAuthProfileMock,
   getSharedCodexAppServerClientMock,
-  refreshCodexAppServerAuthTokensMock,
+  retireSharedCodexAppServerClientIfCurrentMock,
   createOpenClawCodingToolsMock,
   toolExecuteMock,
   handleCodexAppServerApprovalRequestMock,

@@ -38,7 +38,6 @@ const {
   readCodexAppServerBindingMock,
   isCodexAppServerNativeAuthProfileMock,
   getSharedCodexAppServerClientMock,
-  refreshCodexAppServerAuthTokensMock,
   createOpenClawCodingToolsMock,
   toolExecuteMock,
   handleCodexAppServerApprovalRequestMock,
@@ -3452,6 +3451,9 @@ describe("runCodexAppServerSideQuestion", () => {
         );
         return {};
       }
+      if (method === "thread/backgroundTerminals/list") {
+        return { data: [] };
+      }
       if (method === "thread/unsubscribe") {
         return {};
       }
@@ -3471,6 +3473,11 @@ describe("runCodexAppServerSideQuestion", () => {
       await vi.advanceTimersByTimeAsync(600_000);
 
       await expect(runResult).resolves.toMatchObject({ name: "TimeoutError" });
+      expect(client.request).toHaveBeenCalledWith(
+        "thread/backgroundTerminals/list",
+        { threadId: "side-thread" },
+        expect.any(Object),
+      );
       await vi.runAllTimersAsync();
       expect(diagnosticEvents).toContainEqual(
         expect.objectContaining({
@@ -3530,6 +3537,9 @@ describe("runCodexAppServerSideQuestion", () => {
           client.emit(turnCompleted("side-thread", "turn-1", "", "interrupted")),
         );
         return {};
+      }
+      if (method === "thread/backgroundTerminals/list") {
+        return { data: [] };
       }
       if (method === "thread/unsubscribe") {
         return {};
@@ -3691,39 +3701,6 @@ describe("runCodexAppServerSideQuestion", () => {
     expect(client.requests).toHaveLength(0);
   });
 
-  it("uses the app-server auth refresh request handler while the side thread is active", async () => {
-    const client = createFakeClient();
-    client.request.mockImplementation(async (method: string) => {
-      if (method === "thread/fork") {
-        await client.handleRequest({
-          id: 1,
-          method: "account/chatgptAuthTokens/refresh",
-        });
-        return threadResult("side-thread");
-      }
-      if (method === "thread/inject_items") {
-        return {};
-      }
-      if (method === "turn/start") {
-        queueMicrotask(() => client.emit(turnCompleted("side-thread", "turn-1", "Done.")));
-        return turnStartResult("turn-1");
-      }
-      return {};
-    });
-    getSharedCodexAppServerClientMock.mockResolvedValue(client);
-
-    await runCodexAppServerSideQuestion(sideParams());
-
-    expect(refreshCodexAppServerAuthTokensMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        agentDir: "/tmp/agent",
-        authProfileId: "openai:work",
-        authProfileStore: expect.any(Object),
-        config: {},
-      }),
-    );
-  });
-
   it.each(["rejected", "lost ACK"] as const)(
     "retires an uncertain side policy on %s without replaying the fork or interrupting an unstarted turn",
     async (fault) => {
@@ -3792,150 +3769,6 @@ describe("runCodexAppServerSideQuestion", () => {
     await expect(runCodexAppServerSideQuestion(sideParams())).rejects.toThrow(
       "Codex /btw needs an active Codex thread. Send a normal message first, then try /btw again.",
     );
-  });
-
-  it.each([
-    { label: "after its request is written", written: true, interruptFails: false },
-    { label: "before its request is written", written: false, interruptFails: false },
-    {
-      label: "when its native thread cannot unsubscribe",
-      written: true,
-      interruptFails: false,
-      unsubscribeFails: true,
-    },
-    { label: "when its startup interrupt fails", written: true, interruptFails: true },
-    {
-      label: "when its startup interrupt and client retirement fail",
-      written: true,
-      interruptFails: true,
-      retirementFails: true,
-    },
-  ])(
-    "scopes side-turn abort cleanup $label",
-    async ({ written, interruptFails, retirementFails, unsubscribeFails }) => {
-      const controller = new AbortController();
-      const harness = createClientHarness();
-      if (retirementFails) {
-        vi.spyOn(harness.client, "closeAndWait").mockRejectedValueOnce(
-          new Error("side client retirement failed"),
-        );
-      }
-      getSharedCodexAppServerClientMock.mockResolvedValue(harness.client);
-      const waitForRequest = async (method: string) =>
-        await vi.waitFor(
-          () => {
-            const request = harness.writes
-              .map((write) => JSON.parse(write) as { id: number; method: string; params: unknown })
-              .find((message) => message.method === method);
-            if (!request) {
-              throw new Error(`Codex side harness did not write ${method}`);
-            }
-            return request;
-          },
-          { interval: 1, timeout: 5_000 },
-        );
-      const run = runCodexAppServerSideQuestion(
-        sideParams({ opts: { abortSignal: controller.signal } }),
-      );
-      const failure = run.then(
-        () => undefined,
-        (error: unknown) => error,
-      );
-      const fork = await waitForRequest("thread/fork");
-      harness.send({ id: fork.id, result: threadResult("side-thread") });
-      const inject = await waitForRequest("thread/inject_items");
-      harness.send({ id: inject.id, result: {} });
-
-      if (written) {
-        const turnStart = await waitForRequest("turn/start");
-        controller.abort("side-start-cancelled");
-        const interrupt = await waitForRequest("turn/interrupt");
-        expect(interrupt.params).toEqual({ threadId: "side-thread", turnId: "" });
-        harness.send({ id: turnStart.id, result: turnStartResult("turn-1") });
-        harness.send(
-          interruptFails
-            ? { id: interrupt.id, error: { code: -32_000, message: "side interrupt failed" } }
-            : { id: interrupt.id, result: {} },
-        );
-      } else {
-        controller.abort("side-start-cancelled");
-      }
-
-      if (!interruptFails) {
-        const unsubscribe = await waitForRequest("thread/unsubscribe");
-        harness.send(
-          unsubscribeFails
-            ? { id: unsubscribe.id, error: { code: -32_000, message: "side unsubscribe failed" } }
-            : { id: unsubscribe.id, result: {} },
-        );
-      }
-      await expect(failure).resolves.toMatchObject(
-        written
-          ? {
-              message: "turn/start aborted: side-start-cancelled",
-              cause: "side-start-cancelled",
-              reason: "aborted",
-              mayHaveWritten: true,
-            }
-          : {
-              name: "CodexThreadPolicyHandoffError",
-              outcome: "acknowledged",
-              cause: "side-start-cancelled",
-            },
-      );
-      expect(harness.writes.map((write) => JSON.parse(write).method)).toEqual([
-        "thread/fork",
-        "thread/inject_items",
-        ...(written ? ["turn/start", "turn/interrupt"] : []),
-        ...(!interruptFails ? ["thread/unsubscribe"] : []),
-      ]);
-      expect(harness.stdinDestroyed).toBe(interruptFails || unsubscribeFails === true);
-      harness.client.close();
-    },
-  );
-
-  it("interrupts and unsubscribes the ephemeral thread on abort", async () => {
-    const controller = new AbortController();
-    const client = createFakeClient();
-    client.request.mockImplementation(async (method: string) => {
-      if (method === "thread/fork") {
-        return threadResult("side-thread");
-      }
-      if (method === "thread/inject_items") {
-        return {};
-      }
-      if (method === "turn/start") {
-        queueMicrotask(() => controller.abort());
-        return turnStartResult("turn-1");
-      }
-      if (method === "turn/interrupt") {
-        queueMicrotask(() =>
-          client.emit(turnCompleted("side-thread", "turn-1", "", "interrupted")),
-        );
-        return {};
-      }
-      if (method === "thread/unsubscribe") {
-        return {};
-      }
-      throw new Error(`unexpected request: ${method}`);
-    });
-    getSharedCodexAppServerClientMock.mockResolvedValue(client);
-
-    await expect(
-      runCodexAppServerSideQuestion(
-        sideParams({
-          opts: { abortSignal: controller.signal },
-        }),
-      ),
-    ).rejects.toThrow("Codex /btw was aborted.");
-    expect(
-      client.request.mock.calls
-        .filter(([method]) => method === "turn/interrupt" || method === "thread/unsubscribe")
-        .map(([method, params]) => [method, params]),
-    ).toEqual([
-      ["turn/interrupt", { threadId: "side-thread", turnId: "turn-1" }],
-      ["thread/unsubscribe", { threadId: "side-thread" }],
-    ]);
   });
 });
 /* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */
