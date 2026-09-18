@@ -71,7 +71,6 @@ export async function waitForInitialWorkerPlacement(params: {
   const identity = resolvePlacementIdentity(params.turn, params.placement);
   const target = {
     ...identity,
-    sessionKey: params.turn.sessionKey ?? identity.sessionKey,
     storePath: params.turn.sessionTarget?.storePath ?? resolveSessionStorePathForScope(identity),
   };
   const original = loadSessionEntryReadOnly(target);
@@ -212,7 +211,11 @@ export function resolvePlacementIdentity(
 ) {
   const agentId = resolvePlacementIdentityField(claim.agentId, placement?.agentId, "agent id");
   let sessionKey = claim.sessionKey;
-  if (placement && sessionKey !== undefined && sessionKey.trim() !== placement.sessionKey) {
+  if (
+    placement?.state === "local" &&
+    sessionKey !== undefined &&
+    sessionKey.trim() !== placement.sessionKey
+  ) {
     const suppliedKey = sessionKey.trim();
     const suppliedScope = parseCronRunScopeSuffix(suppliedKey);
     const placedScope = parseCronRunScopeSuffix(placement.sessionKey);
@@ -324,11 +327,9 @@ export async function claimWorkerTurn(params: {
   runId: string;
   isCancellationRequested: (claim: WorkerSessionTurnClaim) => boolean;
   signal?: AbortSignal;
-  assertCurrent?: () => void;
 }): Promise<{ placement: ActiveWorkerPlacement; turnClaim: WorkerSessionTurnClaim } | null> {
-  const claim = () => {
-    params.assertCurrent?.();
-    return params.placements.claimTurn({
+  const claim = () =>
+    params.placements.claimTurn({
       ...params.identity,
       claimId: randomUUID(),
       runId: params.runId,
@@ -338,7 +339,6 @@ export async function claimWorkerTurn(params: {
         ownerEpoch: params.placement.activeOwnerEpoch,
       },
     });
-  };
   try {
     return { placement: params.placement, turnClaim: claim() };
   } catch (error) {

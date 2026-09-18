@@ -161,20 +161,13 @@ describe("worker turn launcher local placement", () => {
   });
 
   it.each(["worker-turn", "remote-exec"] as const)(
-    "revokes automation alias admission during %s workspace preparation",
+    "keeps %s automation aliases rejected before workspace access",
     async (mode) => {
       const { sessionKey, runKey } = await seedAutomationSessions();
       setWorkerTurnSessionTarget({ ...sessionTarget, sessionKey: runKey });
       seedActivePlacement(mode);
       const runLocal = vi.fn(async () => ({ meta: { durationMs: 1 } }));
-      const resolveWorkspace = vi.fn(async () => {
-        expect(placements.get(SESSION_ID)?.turnClaim).not.toBeNull();
-        await upsertSessionEntryCore(
-          { ...sessionTarget, sessionKey },
-          { sessionId: "next-run-session", updatedAt: Date.now() },
-        );
-        return { kind: "local" as const, path: root };
-      });
+      const resolveWorkspace = vi.fn(async () => ({ kind: "local" as const, path: root }));
       const provider = createWorkerSessionTurnPlacementProvider({
         environments: unusedEnvironments(),
         placements,
@@ -187,7 +180,7 @@ describe("worker turn launcher local placement", () => {
           runLocal,
         ),
       ).rejects.toThrow("Worker turn session key does not match its placement");
-      expect(resolveWorkspace).toHaveBeenCalledOnce();
+      expect(resolveWorkspace).not.toHaveBeenCalled();
       expect(runLocal).not.toHaveBeenCalled();
       expect(placements.get(SESSION_ID)).toMatchObject({
         state: "active",
