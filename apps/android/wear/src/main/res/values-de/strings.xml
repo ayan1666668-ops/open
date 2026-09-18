@@ -126,14 +126,4 @@
     <string name="pulse_phase_counts" tools:ignore="MissingTranslation,Typos,TypographyDashes,TypographyEllipsis">"In Warteschlange %1$d, In Ausführung %2$d, Abgeschlossen %3$d, Fehlgeschlagen %4$d, Ausgeblendet %5$d"</string>
     <string name="pulse_more_phases" tools:ignore="MissingTranslation,Typos,TypographyDashes,TypographyEllipsis">"Weitere Phasen nicht angezeigt"</string>
     <string name="pulse_unknown" tools:ignore="MissingTranslation,Typos,TypographyDashes,TypographyEllipsis">"Unbekannt"</string>
-    <string name="read_full_reply">Ganze Antwort lesen</string>
-    <string name="reply_stream_preview">Live-Vorschau. Die ganze Antwort ist nach Abschluss lesbar.</string>
-    <string name="reply_previous_page">Vorheriger Teil</string>
-    <string name="reply_next_page">Nächster Teil</string>
-    <string name="reply_loading">Ganze Antwort wird geladen…</string>
-    <string name="reply_unsupported">Aktualisiere die Smartphone-App und das Gateway, um ganze Antworten zu lesen.</string>
-    <string name="reply_too_large">Diese Antwort ist zu groß. Öffne sie auf deinem Smartphone.</string>
-    <string name="reply_changed">Die Antwort oder Verbindung hat sich geändert. Beginne erneut.</string>
-    <string name="reply_unavailable">Der vollständige Text ist nicht mehr verfügbar.</string>
-    <string name="reply_failed">Die ganze Antwort konnte nicht geladen werden. Versuche es erneut.</string>
 </resources>

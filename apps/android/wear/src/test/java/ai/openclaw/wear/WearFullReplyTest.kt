@@ -144,12 +144,28 @@ class WearFullReplyTest {
   @Config(qualifiers = "de-rDE-w192dp-h192dp-round-mdpi")
   fun smallGermanRemoteReplyLargeText() {
     fontScale = 1.3f
+    assertGermanLocaleAndRecordResolvedLabels()
     remoteFlow()
   }
 
   @Test
   @Config(qualifiers = "de-rDE-w227dp-h227dp-round-mdpi")
-  fun normalGermanRemoteReply() = remoteFlow()
+  fun normalGermanRemoteReply() {
+    assertGermanLocaleAndRecordResolvedLabels()
+    remoteFlow()
+  }
+
+  private fun assertGermanLocaleAndRecordResolvedLabels() {
+    assertEquals(
+      "de",
+      RuntimeEnvironment
+        .getApplication()
+        .resources.configuration.locales[0]
+        .language,
+    )
+    assertTrue(remoteText.contains("Grüße"))
+    println("WEAR_REPLY_LOCALE de read=${label(R.string.read_full_reply)} next=${label(R.string.reply_next_page)} previous=${label(R.string.reply_previous_page)} close=${label(R.string.close)}")
+  }
 
   @Test fun smallEnglishRemoteReplyLargeText() {
     fontScale = 1.3f
