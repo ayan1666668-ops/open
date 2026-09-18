@@ -230,6 +230,15 @@ an approved minimum host version guarantees both methods. Available worker failu
 never fall back. Modern domain validation errors surface
 directly, while older hosts retain their native callback error wrapping.
 
+Gateway client device-token reads, writes, and clearing run in the shared-state
+worker, including origin-bound tokens. Callers capture the state environment,
+input, and admission before waiting. The token owner keeps its existing codecs,
+comparison fences, and transactions. Read-only clients retain artifact-preserving
+reads and never create missing state. Reconnect waits for accepted persistence,
+and client shutdown drains it before returning; supplied cancellation and owner
+guards are checked again at worker admission. Device identity creation and the
+compound pairing recovery transaction retain their existing owners.
+
 Use Kysely for ordinary queries and mutations. The current
 `getNodeSqliteKysely` facade compiles queries; `executeSqliteQuerySync` runs them
 on the supplied `node:sqlite` connection. Calling Kysely's asynchronous

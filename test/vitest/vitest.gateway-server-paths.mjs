@@ -20,6 +20,7 @@ export const gatewayDatabaseWorkerTestFiles = [
   "src/gateway/managed-image-attachments.test.ts",
   "src/gateway/managed-image-record-store.test.ts",
   "src/gateway/managed-outgoing-gc-availability.test.ts",
+  "src/gateway/probe.device-auth-scope.test.ts",
   "src/gateway/server-methods/agent.create-event.test.ts",
   "src/gateway/server-methods/chat-send-commentary-media.test.ts",
   "src/gateway/server-methods/chat-send-synthetic-repair.integration.test.ts",
@@ -79,6 +80,7 @@ export const gatewayDatabaseWorkerTestFiles = [
   "src/gateway/setup-inference.first-signin.integration.test.ts",
   "src/gateway/tool-resolution.cron-capture.test.ts",
   "src/gateway/worker-environments/provider-crabbox-runtime-preflight.test.ts",
+  "src/gateway/startup-local-cli-pairing.test.ts",
 ];
 
 // Canonical file ownership for the non-isolated Gateway server Vitest project.

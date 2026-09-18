@@ -507,11 +507,11 @@ export function resolveDeviceIdentityForGatewayCall(
   }
 }
 
-function loadStoredOperatorDeviceAuthToken(
+async function loadStoredOperatorDeviceAuthToken(
   deviceIdentity: DeviceIdentity | null,
   deviceAuthScope?: string,
   sharedStateMode?: "read-only",
-): DeviceAuthEntry | null {
+): Promise<DeviceAuthEntry | null> {
   if (!deviceIdentity) {
     return null;
   }
@@ -519,7 +519,7 @@ function loadStoredOperatorDeviceAuthToken(
     if (deviceAuthScope) {
       const loadToken =
         sharedStateMode === "read-only" ? loadOriginDeviceTokenReadOnly : loadOriginDeviceToken;
-      return loadToken({
+      return await loadToken({
         gatewayScope: deviceAuthScope,
         deviceId: deviceIdentity.deviceId,
         role: "operator",
@@ -528,7 +528,7 @@ function loadStoredOperatorDeviceAuthToken(
     }
     const loadToken =
       sharedStateMode === "read-only" ? loadDeviceAuthTokenReadOnly : loadDeviceAuthToken;
-    return loadToken({
+    return await loadToken({
       deviceId: deviceIdentity.deviceId,
       role: "operator",
       env: process.env,
@@ -546,7 +546,7 @@ function resolveGatewayCallAuth(config: OpenClawConfig) {
   });
 }
 
-function ensureGatewayCallCanAuthenticate(params: {
+async function ensureGatewayCallCanAuthenticate(params: {
   opts: CallGatewayBaseOptions;
   context: ResolvedGatewayCallContext;
   token?: string;
@@ -554,7 +554,7 @@ function ensureGatewayCallCanAuthenticate(params: {
   deviceIdentity: DeviceIdentity | null;
   deviceAuthScope?: string;
   storedAuth?: DeviceAuthEntry | null;
-}): void {
+}): Promise<void> {
   const resolvedAuth = resolveGatewayCallAuth(params.context.config);
   const authMode = resolvedAuth.mode;
   if (authMode !== "token" && authMode !== "password") {
@@ -566,17 +566,15 @@ function ensureGatewayCallCanAuthenticate(params: {
   if (resolvedAuth.allowTailscale) {
     return;
   }
-  const hasStoredAuth =
-    params.storedAuth !== undefined
-      ? Boolean(params.storedAuth?.token)
-      : Boolean(
-          loadStoredOperatorDeviceAuthToken(
-            params.deviceIdentity,
-            params.deviceAuthScope,
-            params.opts.sharedStateMode,
-          )?.token,
-        );
-  if (hasStoredAuth) {
+  const storedAuth =
+    params.storedAuth === undefined
+      ? await loadStoredOperatorDeviceAuthToken(
+          params.deviceIdentity,
+          params.deviceAuthScope,
+          params.opts.sharedStateMode,
+        )
+      : params.storedAuth;
+  if (storedAuth?.token) {
     return;
   }
   throw new GatewayCredentialsRequiredError({
@@ -1187,7 +1185,7 @@ async function callGatewayWithScopes<T = Record<string, unknown>>(
       : opts.deviceIdentity;
   let storedAuth: DeviceAuthEntry | null | undefined;
   if (useStoredDeviceAuth) {
-    storedAuth = loadStoredOperatorDeviceAuthToken(
+    storedAuth = await loadStoredOperatorDeviceAuthToken(
       deviceIdentity,
       deviceAuthScope,
       opts.sharedStateMode,
@@ -1231,7 +1229,7 @@ async function callGatewayWithScopes<T = Record<string, unknown>>(
       );
     }
   }
-  ensureGatewayCallCanAuthenticate({
+  await ensureGatewayCallCanAuthenticate({
     opts,
     context,
     token,

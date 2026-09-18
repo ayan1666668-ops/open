@@ -105,13 +105,13 @@ function createOpenClawGatewayClientHostDeps(
     "loadDeviceAuthToken" | "storeDeviceAuthToken" | "clearDeviceAuthToken"
   > = deviceAuthScope
     ? {
-        loadDeviceAuthToken: (params) => {
+        loadDeviceAuthToken: async (params) => {
           if (readOnly) {
             return suppressStoredDeviceAuth
               ? null
               : loadOriginDeviceTokenReadOnly({ ...params, gatewayScope: deviceAuthScope });
           }
-          const load = loadOriginDeviceToken({
+          const load = await loadOriginDeviceToken({
             ...params,
             gatewayScope: deviceAuthScope,
             onSnapshot: observe(params),
