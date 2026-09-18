@@ -36,6 +36,19 @@ function lineRangesOverlap(
   return left.startLine <= right.endLine && right.startLine <= left.endLine;
 }
 
+/** Returns the index of the tracked group farthest from the stored range. */
+function findFarthestGroupIndex(groups: Array<{ distance: number }>): number {
+  let farthestIndex = 0;
+  for (let index = 1; index < groups.length; index += 1) {
+    const group = groups[index];
+    const farthest = groups[farthestIndex];
+    if (group && farthest && group.distance > farthest.distance) {
+      farthestIndex = index;
+    }
+  }
+  return farthestIndex;
+}
+
 function normalizeListMarkerFreeRangeSnippet(
   lines: string[],
   startLine: number,
@@ -305,8 +318,8 @@ function relocateCandidateRange(
       }
       if (bestComparison.quality === topQuality) {
         const groupIndex = topGroups.findIndex((group) => lineRangesOverlap(group, matchRange));
-        if (groupIndex >= 0) {
-          const group = topGroups[groupIndex];
+        const group = groupIndex >= 0 ? topGroups[groupIndex] : undefined;
+        if (group) {
           const groupStart = Math.min(group.startLine, startLine);
           topGroups[groupIndex] = {
             startLine: groupStart,
@@ -316,12 +329,9 @@ function relocateCandidateRange(
         } else if (topGroups.length < MAX_TRACKED_MATCHES) {
           topGroups.push({ ...matchRange, distance });
         } else {
-          const farthestIndex = topGroups.reduce(
-            (worstIndex, group, index) =>
-              group.distance > topGroups[worstIndex].distance ? index : worstIndex,
-            0,
-          );
-          if (distance < topGroups[farthestIndex].distance) {
+          const farthestIndex = findFarthestGroupIndex(topGroups);
+          const farthestGroup = topGroups[farthestIndex];
+          if (farthestGroup && distance < farthestGroup.distance) {
             topGroups.splice(farthestIndex, 1, { ...matchRange, distance });
           }
         }
