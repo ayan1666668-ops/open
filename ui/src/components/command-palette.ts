@@ -1,6 +1,7 @@
 // Control UI component renders the command palette.
 import { consume } from "@lit/context";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
+import type { PropertyValues } from "lit";
 import { property, state } from "lit/decorators.js";
 import type { RouteId } from "../app-route-paths.ts";
 import { applicationContext, type ApplicationContext } from "../app/context.ts";
@@ -59,6 +60,16 @@ export class CommandPalette extends OpenClawLightDomContentsElement {
   @state() private sessionSearchPartial = false;
   @state() private archivedTranscriptsExcluded = 0;
   @state() private sessionSearchIncomplete = false;
+
+  private keyboardSelection = false;
+  private renderedActiveId: string | undefined;
+  private renderedOptionId: string | undefined;
+  private resultsElement: HTMLElement | null = null;
+  private resultsHeight = 0;
+  private readonly resultsObserver =
+    typeof ResizeObserver === "undefined"
+      ? undefined
+      : new ResizeObserver(() => this.handleResultsResize());
 
   private readonly subscriptions = new SubscriptionsController(this);
   @state() private sessionSearchTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
@@ -121,12 +132,71 @@ export class CommandPalette extends OpenClawLightDomContentsElement {
 
   override disconnectedCallback() {
     document.removeEventListener("keydown", this.handleGlobalKeydown);
+    this.resultsObserver?.disconnect();
+    this.resultsElement = null;
+    this.resultsHeight = 0;
     this.open = false;
     this.query = "";
     this.activeId = null;
     this.clearSessionSearch();
     this.clearCatalogSearch();
     super.disconnectedCallback();
+  }
+
+  override updated(changed: PropertyValues) {
+    const results = this.querySelector<HTMLElement>(".cmd-palette__results");
+    if (results !== this.resultsElement) {
+      this.resultsObserver?.disconnect();
+      this.resultsElement = results;
+      this.resultsHeight = 0;
+      if (results && this.isConnected) {
+        this.resultsObserver?.observe(results);
+      }
+    }
+    const active = this.querySelector<HTMLElement>('.cmd-palette__item[aria-selected="true"]');
+    const activeId = active?.dataset.commandId;
+    // Result changes can replace or move the rendered selection without changing
+    // activeId. Preserve manual scrolling on updates that leave that choice in place.
+    const selectionMoved =
+      activeId !== this.renderedActiveId || active?.id !== this.renderedOptionId;
+    if (
+      this.keyboardSelection ||
+      changed.has("query") ||
+      (!changed.has("activeId") && selectionMoved)
+    ) {
+      this.revealActiveOption(active);
+    }
+    this.keyboardSelection = false;
+    this.renderedActiveId = activeId;
+    this.renderedOptionId = active?.id;
+  }
+
+  private revealActiveOption(active: HTMLElement | null) {
+    active?.scrollIntoView({ block: "nearest" });
+  }
+
+  private handleResultsResize() {
+    const results = this.resultsElement;
+    if (!results?.isConnected) {
+      return;
+    }
+    const height = results.clientHeight;
+    const previousHeight = this.resultsHeight;
+    this.resultsHeight = height;
+    if (height >= previousHeight || height === 0) {
+      return;
+    }
+    const active = results.querySelector<HTMLElement>('[aria-selected="true"]');
+    if (!active) {
+      return;
+    }
+    const bounds = results.getBoundingClientRect();
+    const option = active.getBoundingClientRect();
+    // Preserve a visible choice when its viewport shrinks, but leave deliberate
+    // scrolling away from it alone. Native scroll positions can round by a pixel.
+    if (option.top >= bounds.top - 1 && option.bottom <= bounds.top + previousHeight + 1) {
+      this.revealActiveOption(active);
+    }
   }
 
   openPalette() {
@@ -435,8 +505,12 @@ export class CommandPalette extends OpenClawLightDomContentsElement {
         this.activeId = null;
         this.scheduleSessionSearch(query);
       },
-      onActiveIdChange: (id) => {
+      onActiveIdChange: (id, keyboard = false) => {
+        this.keyboardSelection = keyboard;
         this.activeId = id;
+        if (keyboard) {
+          this.requestUpdate();
+        }
       },
       onNavigate: this.onNavigate,
       onSelectSession: this.onSelectSession,

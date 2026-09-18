@@ -45,7 +45,7 @@ type CommandPaletteProps = {
   archivedTranscriptsExcluded: number;
   onToggle: () => void;
   onQueryChange: (query: string) => void;
-  onActiveIdChange: (id: string) => void;
+  onActiveIdChange: (id: string, keyboard?: boolean) => void;
   onNavigate?: ApplicationContext<RouteId>["navigate"];
   onSelectSession?: (sessionKey: string) => void;
   onSlashCommand?: (command: string) => void;
@@ -97,13 +97,6 @@ function closePalette(props: CommandPaletteProps) {
   props.onToggle();
 }
 
-function scrollActiveIntoView() {
-  requestAnimationFrame(() => {
-    const el = document.querySelector(".cmd-palette__item--active");
-    el?.scrollIntoView({ block: "nearest" });
-  });
-}
-
 function handleKeydown(
   e: KeyboardEvent,
   props: CommandPaletteProps,
@@ -125,13 +118,11 @@ function handleKeydown(
   switch (e.key) {
     case "ArrowDown":
       e.preventDefault();
-      props.onActiveIdChange(items[(activeIndex + 1) % items.length]!.id);
-      scrollActiveIntoView();
+      props.onActiveIdChange(items[(activeIndex + 1) % items.length]!.id, true);
       break;
     case "ArrowUp":
       e.preventDefault();
-      props.onActiveIdChange(items[(activeIndex - 1 + items.length) % items.length]!.id);
-      scrollActiveIntoView();
+      props.onActiveIdChange(items[(activeIndex - 1 + items.length) % items.length]!.id, true);
       break;
     case "Enter":
       e.preventDefault();
@@ -304,6 +295,7 @@ export function renderCommandPalette(props: CommandPaletteProps) {
                       return html`
                         <div
                           id=${getOptionId(globalIndex)}
+                          data-command-id=${item.id}
                           class="cmd-palette__item ${item.session ? "cmd-palette__item--session" : ""} ${isActive ? "cmd-palette__item--active" : ""}"
                           role="option"
                           aria-selected=${isActive ? "true" : "false"}
