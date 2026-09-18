@@ -687,6 +687,62 @@ describe("Scheduled Task stop/restart cleanup", () => {
     });
   });
 
+  it("allows forced taskkill process teardown to settle beyond five seconds", async () => {
+    await withPreparedGatewayTask(async ({ env }) => {
+      vi.spyOn(process, "platform", "get").mockReturnValue("win32");
+      let forced = false;
+      let tasklistCallsAfterForce = 0;
+      readGatewayOwnerLease.mockReturnValue(GATEWAY_OWNER);
+      spawnSync.mockImplementation((command, args) => {
+        const executable = command.toLowerCase();
+        if (executable.endsWith("taskkill.exe")) {
+          forced = args?.includes("/F") ?? false;
+          return {
+            pid: 0,
+            output: [null, "", ""],
+            stdout: "",
+            stderr: "",
+            status: 0,
+            signal: null,
+          };
+        }
+        if (executable.endsWith("tasklist.exe")) {
+          if (forced) {
+            tasklistCallsAfterForce += 1;
+          }
+          const output =
+            forced && tasklistCallsAfterForce > 75
+              ? "No tasks"
+              : '"node.exe","4242","Console","1","1 K"';
+          return {
+            pid: 0,
+            output: [null, output, ""],
+            stdout: output,
+            stderr: "",
+            status: 0,
+            signal: null,
+          };
+        }
+        const output = JSON.stringify([
+          { ProcessId: 4242, CommandLine: INSTALLED_GATEWAY_COMMAND_LINE },
+        ]);
+        return {
+          pid: 0,
+          output: [null, output, ""],
+          stdout: output,
+          stderr: "",
+          status: 0,
+          signal: null,
+        };
+      });
+
+      await expect(terminateScheduledTaskGatewayListeners(env)).resolves.toEqual([4242]);
+
+      expect(taskkillPids()).toEqual([4242, 4242]);
+      expect(tasklistCallsAfterForce).toBe(76);
+    });
+  });
+
   it.each(["gateway", "task-supervisor", "gateway-with-supervisor"])(
     "stops the exact installed Windows %s even before its port is bound",
     async (owner) => {

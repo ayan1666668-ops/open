@@ -35,6 +35,8 @@ type WindowsProcessSnapshotEntry = {
   CommandLine?: string | null;
 };
 
+const WINDOWS_FORCED_PROCESS_EXIT_TIMEOUT_MS = 15_000;
+
 export function resolveScheduledTaskCommandPort(
   env: GatewayServiceEnv,
   command?: {
@@ -594,7 +596,11 @@ export async function terminateGatewayProcessTree(
   }
   // Verify the forced result through the same direct PID boundary.
   if (
-    !(await waitForProcessExit(pid, 5_000, probeWindowsTasklistProcessState)) &&
+    !(await waitForProcessExit(
+      pid,
+      WINDOWS_FORCED_PROCESS_EXIT_TIMEOUT_MS,
+      probeWindowsTasklistProcessState,
+    )) &&
     probeWindowsTasklistProcessState(pid) === "alive"
   ) {
     throw new Error(`gateway process ${pid} is still running after taskkill`);
