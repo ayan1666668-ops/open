@@ -63,8 +63,6 @@ export const uiE2eRealGatewayTestFiles = [
 // These files own their server instead of leasing the global production bundle.
 // Keep any shared source-module optimizer cache under one worker.
 export const uiE2ePrivateServerTestFiles = [
-  "ui/src/e2e/session-completion-notices.real-gateway.e2e.test.ts",
-  "ui/src/e2e/session-completion-notices.e2e.test.ts",
   "ui/src/e2e/agent-file-lifecycle.real-gateway.e2e.test.ts",
   "ui/src/e2e/agent-switch-roster.e2e.test.ts",
   "ui/src/e2e/approval-bootstrap.e2e.test.ts",
@@ -106,6 +104,8 @@ export const uiE2ePrivateServerTestFiles = [
   "ui/src/e2e/new-session-page.cloud-startup.runtime-load.e2e.test.ts",
   "ui/src/e2e/provider-browser-login.real-gateway.e2e.test.ts",
   "ui/src/e2e/quota-reset-status.real-gateway.e2e.test.ts",
+  "ui/src/e2e/session-completion-notices.e2e.test.ts",
+  "ui/src/e2e/session-completion-notices.real-gateway.e2e.test.ts",
   "ui/src/e2e/session-management.delete.e2e.test.ts",
   "ui/src/e2e/settings-loading-skeletons.e2e.test.ts",
   "ui/src/e2e/sidebar-account-footer.e2e.test.ts",
