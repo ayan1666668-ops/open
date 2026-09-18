@@ -421,6 +421,28 @@ it("selects bounded online fallback for opted-in synchronous snapshots", () => {
   expect(vi.mocked(spawnSync).mock.calls[0]?.[1]).toContain("sync-fallback");
 });
 
+it("uses online backup instead of raw WAL copying for synchronous fallback", () => {
+  const source = createDatabase(0);
+  const writer = new (requireNodeSqlite().DatabaseSync)(source);
+  const stagingRoot = tempDirs.make("openclaw-snapshot-fallback-live-");
+  try {
+    writer.exec(
+      "PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0; CREATE TABLE live(value TEXT); INSERT INTO live VALUES ('committed');",
+    );
+    const location = runSqliteReadOnlyWorkerSync(source, stagingRoot, "sync-fallback");
+    const snapshot = new (requireNodeSqlite().DatabaseSync)(location, { readOnly: true });
+    try {
+      expect(snapshot.prepare("SELECT value FROM live").get()).toEqual({ value: "committed" });
+      expect(fs.existsSync(`${location}-wal`)).toBe(false);
+      expect(fs.existsSync(`${location}-shm`)).toBe(false);
+    } finally {
+      snapshot.close();
+    }
+  } finally {
+    writer.close();
+  }
+});
+
 describe.each(["async", "sync"] as const)("SQLite read-only snapshot worker (%s)", (mode) => {
   async function run(source: string): Promise<string> {
     const stagingRoot = tempDirs.make("openclaw-snapshot-budget-staging-");

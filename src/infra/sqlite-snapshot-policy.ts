@@ -121,27 +121,6 @@ export async function waitForSnapshotRetry(attempt: number, signal?: AbortSignal
   await sleepForSnapshot(delayMs, signal);
 }
 
-export async function runSnapshotWithBoundedOnlineFallback<T>(
-  pathname: string,
-  rawCopy: () => T,
-  onlineBackup: () => Promise<T>,
-  isSourceChanged: (error: unknown) => boolean,
-  signal?: AbortSignal,
-): Promise<T> {
-  const admission = await waitForSnapshotQuiescence(pathname, signal);
-  if (!admission.stabilized) {
-    return onlineBackup();
-  }
-  try {
-    return rawCopy();
-  } catch (error) {
-    if (!isSourceChanged(error)) {
-      throw error;
-    }
-    return onlineBackup();
-  }
-}
-
 export function createSnapshotAttemptReporter(
   admission: SnapshotAdmission,
   attempt: number,

@@ -24,7 +24,6 @@ import {
 import {
   createSnapshotAttemptReporter,
   MAX_SNAPSHOT_ATTEMPTS,
-  runSnapshotWithBoundedOnlineFallback,
   waitForSnapshotQuiescence,
   waitForSnapshotRetry,
 } from "./sqlite-snapshot-policy.js";
@@ -709,17 +708,7 @@ export async function prepareSqliteReadOnlyLocationSyncFallbackInProcess(
   stagingRoot?: string,
   signal?: AbortSignal,
 ) {
-  const canonicalPath = fs.realpathSync.native(pathname);
-  return runSnapshotWithBoundedOnlineFallback(
-    canonicalPath,
-    () =>
-      withSqliteSourceHandle(canonicalPath, () =>
-        prepareReadOnlySourceSyncInProcess(canonicalPath, stagingRoot, 1),
-      ),
-    () => prepareSqliteReadOnlyLocationInProcess(canonicalPath, stagingRoot, signal),
-    (error) => error instanceof SqliteSourceChangedError,
-    signal,
-  );
+  return prepareSqliteReadOnlyLocationInProcess(pathname, stagingRoot, signal);
 }
 
 /** Snapshot the lifecycle owner's already-open native connection. Opening or
