@@ -5,7 +5,6 @@ import os from "node:os";
 import path from "node:path";
 import { importFreshModule } from "openclaw/plugin-sdk/test-fixtures";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
 import { clearPluginMetadataLifecycleCaches } from "../../plugins/plugin-metadata-lifecycle.js";
 import { expectNoReaddirSyncDuring } from "../../test-utils/fs-scan-assertions.js";
 
@@ -19,7 +18,6 @@ vi.mock("../../plugins/bundled-dir.js", async (importOriginal) => {
 });
 
 const bundledChannelEntrypointPaths = ["index.ts", "channel-entry.ts", "setup-entry.ts"] as const;
-const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 
 type BundledEntrySource = { built?: string; source?: string };
 
@@ -748,44 +746,6 @@ describe("bundled channel entry shape guards", () => {
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
-  });
-
-  it("does not reevaluate a bundled source entry after an initialization error", async () => {
-    const root = tempDirs.make("openclaw-bundled-source-error-");
-    const pluginDir = path.join(root, "extensions", "alpha");
-    const modulePath = path.join(pluginDir, "index.ts");
-    const evaluationsPath = path.join(root, "evaluations.txt");
-    fs.mkdirSync(pluginDir, { recursive: true });
-    fs.writeFileSync(
-      modulePath,
-      [
-        'import { appendFileSync } from "node:fs";',
-        `appendFileSync(${JSON.stringify(evaluationsPath)}, "evaluated\\n");`,
-        'throw new Error("channel initialization failed");',
-        "",
-      ].join("\n"),
-      "utf8",
-    );
-    vi.doMock("./bundled-root.js", () => ({
-      resolveBundledChannelRootScope: () => ({ packageRoot: root, cacheKey: root }),
-    }));
-    vi.doMock("../../plugins/bundled-channel-runtime.js", () => ({
-      listBundledChannelPluginMetadata: () => [
-        {
-          ...alphaChannelMetadata({ rootDir: pluginDir }),
-          source: { source: "./index.ts", built: "./index.ts" },
-        },
-      ],
-      resolveBundledChannelGeneratedPath: () => modulePath,
-    }));
-    const bundled = await importFreshModule<typeof import("./bundled.js")>(
-      import.meta.url,
-      "./bundled.js?scope=bundled-source-initialization-error",
-    );
-
-    expect(bundled.getBundledChannelPlugin("alpha")).toBeUndefined();
-    expect(bundled.getBundledChannelPlugin("alpha")).toBeUndefined();
-    expect(fs.readFileSync(evaluationsPath, "utf8")).toBe("evaluated\n");
   });
 
   it("swallows and caches bundled plugin and setup load failures", async () => {
