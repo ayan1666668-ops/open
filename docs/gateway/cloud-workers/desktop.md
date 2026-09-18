@@ -49,6 +49,12 @@ machine is disposable: save required outputs before stopping it. Attaching a
 machine does not automatically synchronize the primary workspace; the agent
 must copy the required files or prepare the project on the machine.
 
+Stop attached machines before downgrading to a build without conversation
+attachments. Older builds can read the database, but they treat these machines
+as ordinary unassigned environments and do not maintain conversation activity
+or cleanup. See [conversation environment storage](/reference/database-schemas/layout#conversation-environments)
+for the backup, retention, and re-upgrade contract.
+
 ## Desktop (interactive)
 
 Cloud Worker Desktop lets an administrator watch or control a capable worker from the Control UI without exposing its cloud node as an ordinary paired node. Enable the **Cloud Worker Desktop** lab, then set `settings.desktop: true` on a Linux Crabbox profile. Desktop setup is Linux only. Desktop capability is fixed at warm time: changing the setting affects newly provisioned workers, while an existing non-desktop lease must be stopped and reprovisioned.

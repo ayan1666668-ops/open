@@ -55,7 +55,11 @@ transport; never expose arbitrary application scripts on the Gateway origin.
 ## Follow-ups and cleanup
 
 Reopen the current environment or portal for "show me again". A viewer reconnect
-must not allocate another machine. Use `process_status` to inspect a launched
+must not allocate another machine. Before showing a remembered portal, confirm
+it still exists with `portal list`; portal IDs can expire across Gateway restarts.
+If it is gone, open a replacement for the same environment and running app port,
+then show and verify that new portal. Refresh the app's `PUBLIC_URL` if it relies
+on that URL for links or redirects. Use `process_status` to inspect a launched
 app and `process_stop` to stop just that process. `stop` releases the entire
 temporary environment. Closing the side panel only hides the view.
 

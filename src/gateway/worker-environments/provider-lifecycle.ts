@@ -7,6 +7,7 @@ import {
   type WorkerLease,
   type WorkerNodeRuntimeIdentity,
   type WorkerProvider,
+  type WorkerProviderProvisionOptionsV2,
 } from "../../plugins/types.js";
 import { verifyWorkerAdmissionHandshake } from "./admission.js";
 import type { WorkerInstallationArtifact } from "./bundle.js";
@@ -247,8 +248,21 @@ export function createWorkerProviderLifecycle(options: WorkerProviderLifecycleOp
           signal: cancellation?.signal,
         });
       }
+      const assertCurrent = () => {
+        cancellation?.assertActive();
+        if (!attemptOpen || options.isStopping()) {
+          throw new Error("Worker provisioning operation is closed");
+        }
+        beforeProvision?.();
+        const current = expirePrepared(requireCurrentOwner(record));
+        if (current.destroyRequestedAtMs !== null) {
+          throw new Error("Worker provisioning operation is closed");
+        }
+        return current;
+      };
       const provisionOptions = {
         profileId: record.profileId,
+        assertCurrent,
         ...(machineClass ? { machineClass } : {}),
         ...(os ? { os } : {}),
         ...(executionMode ? { executionMode } : {}),
@@ -261,21 +275,9 @@ export function createWorkerProviderLifecycle(options: WorkerProviderLifecycleOp
           : {}),
         ...(cancellation ? { signal: cancellation.signal } : {}),
         ...(projectOperation ? { project: projectOperation.project } : {}),
-      };
+      } satisfies WorkerProviderProvisionOptionsV2;
       cancellation?.assertActive();
       const provision = async () => {
-        const assertCurrent = () => {
-          cancellation?.assertActive();
-          if (!attemptOpen || options.isStopping()) {
-            throw new Error("Worker provisioning operation is closed");
-          }
-          beforeProvision?.();
-          const current = expirePrepared(requireCurrentOwner(record));
-          if (current.destroyRequestedAtMs !== null) {
-            throw new Error("Worker provisioning operation is closed");
-          }
-          return current;
-        };
         assertCurrent();
         const preparedProvision = await provider.prepareProvision?.(
           profile,
