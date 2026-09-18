@@ -87,6 +87,7 @@ type CompactionOutcome = { cancel?: boolean; compaction?: { summary?: string } }
 async function runCompaction(params: {
   qualityGuardEnabled: boolean;
   messageText: string;
+  tokenBudget?: number;
 }): Promise<{ result: CompactionOutcome; sessionManager: ExtensionContext["sessionManager"] }> {
   let compactionHandler: CompactionHandler | undefined;
   const mockApi = {
@@ -118,7 +119,7 @@ async function runCompaction(params: {
       fileOps: { read: [], edited: [], written: [] },
       settings: { reserveTokens: 4_000 },
       isSplitTurn: false,
-      summaryTokenBudget: TOKEN_BUDGET,
+      summaryTokenBudget: params.tokenBudget ?? TOKEN_BUDGET,
     },
     customInstructions: "",
     signal: new AbortController().signal,
@@ -167,6 +168,36 @@ describe("compaction-safeguard mixed-script summary budget", () => {
     expect(summary).toContain(DENSE_CJK);
     expect(estimateStringChars(summary)).toBeLessThanOrEqual(
       TOKEN_BUDGET * CHARS_PER_TOKEN_ESTIMATE,
+    );
+  });
+
+  it("still cancels when the required facts alone overrun the budget", async () => {
+    mockSummarizeInStages.mockResolvedValue(
+      [
+        "## Decisions",
+        DENSE_CJK.repeat(2_000),
+        "## Open TODOs",
+        "None.",
+        "## Constraints/Rules",
+        "Follow rules.",
+        "## Pending user asks",
+        "None.",
+        "## Exact identifiers",
+        "None.",
+      ].join("\n"),
+    );
+
+    // 400 tokens buy 1,600 estimated chars, less than the ask context alone: no
+    // candidate may drop it to fit, so the fit fails and history is preserved.
+    const { result, sessionManager } = await runCompaction({
+      qualityGuardEnabled: true,
+      messageText: REQUIRED_ASK,
+      tokenBudget: 400,
+    });
+
+    expect(result.cancel).toBe(true);
+    expect(consumeCompactionSafeguardCancellation(sessionManager)?.reason).toContain(
+      "cannot fit beside the foreground prompt",
     );
   });
 
