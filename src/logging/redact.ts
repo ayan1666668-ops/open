@@ -1482,7 +1482,7 @@ type LogRecordRedactionOptions = {
 function redactLogRecord<Result>(
   record: Record<string, unknown>,
   options: LogRecordRedactionOptions,
-  finish: (redacted: string, serialized: string) => Result,
+  finish: (redacted: string, canonical: string | undefined) => Result,
 ): Result {
   const finishMeasurement = startRedactionMeasurement("log-record");
   let outcome: "ok" | "error" = "error";
@@ -1599,7 +1599,8 @@ function redactLogRecord<Result>(
             !couldMatchDefaultFullContextPatterns(currentValue)),
         message,
       ),
-      serialized,
+      // Native conversion can preserve proxy key order; only the materialized tree is canonical.
+      message ? serialized : undefined,
     );
     outcome = "ok";
     return result;
@@ -1619,9 +1620,9 @@ export function serializeRedactedFileLogRecord(
   record: Record<string, unknown>,
   options: Omit<LogRecordRedactionOptions, "format"> = {},
 ): string {
-  return redactLogRecord(record, options, (redacted, serialized) =>
+  return redactLogRecord(record, options, (redacted, canonical) =>
     // Key edits can collide or reorder integer keys; edited UTF-16 may need escaping.
-    redacted === serialized ? serialized : JSON.stringify(JSON.parse(redacted)),
+    redacted === canonical ? redacted : JSON.stringify(JSON.parse(redacted)),
   );
 }
 

@@ -296,6 +296,30 @@ it.each([
   expect(result.records[0]["1"]).toEqual(JSON.parse(fixture.expected));
 });
 
+it.each([
+  { patterns: [], one: "one" },
+  { patterns: ['/"1":"(one)","0":"zero"/g'], one: "***" },
+])(
+  "registered plugin logger preserves canonical metadata-only native values: $patterns",
+  async ({ patterns, one }) => {
+    let conversions = 0;
+    class NativeValue {
+      toJSON() {
+        conversions += 1;
+        return new Proxy({ 0: "zero", 1: "one" }, { ownKeys: () => ["1", "0"] });
+      }
+    }
+    const result = await logFromPlugin("", undefined, patterns, (logger) => {
+      logger.info({ value: new NativeValue() });
+    });
+    expect(conversions).toBe(1);
+    expect(result.records).toHaveLength(1);
+    expect(result.records[0].message).toBeUndefined();
+    expect(result.records[0]["1"].value).toEqual({ 0: "zero", 1: one });
+    expect(result.lines[0]).toContain(`"value":{"0":"zero","1":"${one}"}`);
+  },
+);
+
 it("registered plugin service logger protects a credential-header receiver before one file conversion", async () => {
   let conversions = 0;
   const receiver = {
