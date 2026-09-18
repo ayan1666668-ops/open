@@ -272,7 +272,7 @@ function resolveManifestRuntimeAuthFacts(
 }
 
 /** Resolves provider auth env-var candidates from core fallbacks and plugin metadata. */
-export function resolveProviderAuthEnvVarCandidates(
+export function resolveProviderAuthEnvVarCandidatesCore(
   params?: ProviderEnvVarLookupParams,
 ): Record<string, readonly string[]> {
   const snapshot = resolveProviderMetadataSnapshot(params);
@@ -368,16 +368,16 @@ function createLazyReadonlyRecord(
  * overrides where generic onboarding wants a different preferred env var.
  */
 const PROVIDER_ENV_VARS = createLazyReadonlyRecord(() =>
-  withSetupEnvOverrides(resolveProviderAuthEnvVarCandidates()),
+  withSetupEnvOverrides(resolveProviderAuthEnvVarCandidatesCore()),
 );
 
 /** Returns known env var candidates for a provider id or alias. */
-export function getProviderEnvVars(
+export function getProviderEnvVarsCore(
   providerId: string,
   params?: ProviderEnvVarLookupParams,
 ): string[] {
   const providerEnvVars = params
-    ? withSetupEnvOverrides(resolveProviderAuthEnvVarCandidates(params))
+    ? withSetupEnvOverrides(resolveProviderAuthEnvVarCandidatesCore(params))
     : PROVIDER_ENV_VARS;
   const envVars = Object.hasOwn(providerEnvVars, providerId)
     ? providerEnvVars[providerId]
@@ -388,8 +388,10 @@ export function getProviderEnvVars(
 // OPENCLAW_API_KEY authenticates the local OpenClaw bridge itself and must
 // remain available to child bridge/runtime processes.
 /** Lists known provider auth env vars without bridge-only env vars. */
-export function listKnownProviderAuthEnvVarNames(params?: ProviderEnvVarLookupParams): string[] {
-  const authCandidates = resolveProviderAuthEnvVarCandidates(params);
+export function listKnownProviderAuthEnvVarNamesCore(
+  params?: ProviderEnvVarLookupParams,
+): string[] {
+  const authCandidates = resolveProviderAuthEnvVarCandidatesCore(params);
   // Keep auth-only candidates before setup overrides, then append usage-only hints.
   return uniqueStrings([
     ...Object.values(authCandidates).flat(),
@@ -403,7 +405,7 @@ export async function listKnownProviderAuthEnvVarNamesAsync(
   params?: ProviderEnvVarLookupParams,
 ): Promise<string[]> {
   if (params?.metadataSnapshot) {
-    return listKnownProviderAuthEnvVarNames(params);
+    return listKnownProviderAuthEnvVarNamesCore(params);
   }
   const env = cloneEnvWithPlatformSemantics(params?.env ?? process.env);
   const lookup = { ...params, env };
@@ -419,7 +421,7 @@ export async function listKnownProviderAuthEnvVarNamesAsync(
         activate();
         metadataSnapshot = resolveProviderMetadataSnapshot(lookup);
       }
-      return listKnownProviderAuthEnvVarNames({ ...lookup, metadataSnapshot });
+      return listKnownProviderAuthEnvVarNamesCore({ ...lookup, metadataSnapshot });
     });
   } finally {
     release();
@@ -431,7 +433,7 @@ export function listKnownSecretEnvVarNames(params?: ProviderEnvVarLookupParams):
   return uniqueStrings([
     "GH_TOKEN",
     "GITHUB_TOKEN",
-    ...Object.values(withSetupEnvOverrides(resolveProviderAuthEnvVarCandidates(params))).flat(),
+    ...Object.values(withSetupEnvOverrides(resolveProviderAuthEnvVarCandidatesCore(params))).flat(),
     ...resolveManifestProviderUsageAuthEnvVarNames(params),
   ]);
 }

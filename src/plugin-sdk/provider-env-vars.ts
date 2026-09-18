@@ -2,9 +2,9 @@
 import { buildPluginMetadataProviderFacts } from "../plugins/plugin-metadata-provider-facts.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
 import {
-  getProviderEnvVars as getProviderEnvVarsCore,
-  listKnownProviderAuthEnvVarNames as listKnownProviderAuthEnvVarNamesCore,
-  resolveProviderAuthEnvVarCandidates as resolveProviderAuthEnvVarCandidatesCore,
+  getProviderEnvVarsCore,
+  listKnownProviderAuthEnvVarNamesCore,
+  resolveProviderAuthEnvVarCandidatesCore,
   type ProviderEnvVarLookupParams as CoreLookupParams,
 } from "../secrets/provider-env-vars.js";
 

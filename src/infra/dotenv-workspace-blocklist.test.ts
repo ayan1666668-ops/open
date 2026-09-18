@@ -13,7 +13,7 @@ import { clearPluginMetadataLifecycleCaches } from "../plugins/plugin-metadata-l
 import { buildPluginMetadataProviderFacts } from "../plugins/plugin-metadata-provider-facts.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
 import { buildDeclaredProviderOwnerIndex } from "../plugins/provider-owner-index.js";
-import { listKnownProviderAuthEnvVarNames } from "../secrets/provider-env-vars.js";
+import { listKnownProviderAuthEnvVarNamesCore } from "../secrets/provider-env-vars.js";
 import { captureFullEnv, deleteTestEnvValue, setTestEnvValue } from "../test-utils/env.js";
 import { loadDotEnv, loadWorkspaceDotEnvFile } from "./dotenv.js";
 
@@ -144,7 +144,7 @@ describe("workspace .env blocklist completeness", () => {
   it("keeps registered provider auth vars from trusted global dotenv", async () => {
     await withIsolatedEnvAndCwd(async () => {
       await withDotEnvFixture(async ({ cwdDir, stateDir }) => {
-        const providerAuthKeys = listKnownProviderAuthEnvVarNames().toSorted();
+        const providerAuthKeys = listKnownProviderAuthEnvVarNamesCore().toSorted();
         await writeEnvFile(
           path.join(cwdDir, ".env"),
           `${providerAuthKeys.map((key) => `${key}=workspace-${key}`).join("\n")}\n`,
