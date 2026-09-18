@@ -60,7 +60,9 @@ export function startUpdateRunWatcher(params: {
     if (work.isClosing) {
       return;
     }
-    if (timer) clearTimeout(timer);
+    if (timer) {
+      clearTimeout(timer);
+    }
     timer = undefined;
     try {
       if (reconcile) {
@@ -128,7 +130,9 @@ export function startUpdateRunWatcher(params: {
     }
   };
   const poll = () => {
-    if (work.isClosing) return;
+    if (work.isClosing) {
+      return;
+    }
     if (polling) {
       pollAgain = true;
       return;
@@ -141,9 +145,13 @@ export function startUpdateRunWatcher(params: {
     void work
       .track(async () => {
         const settled = await reconcileInterruptedUpdateRuns({ signal: work.signal });
-        if (work.isClosing) return;
+        if (work.isClosing) {
+          return;
+        }
         reconciled.push(...settled.filter((run) => run.runId !== watched?.runId));
-        if (settled.length || watched || pollAgain) scan();
+        if (settled.length || watched || pollAgain) {
+          scan();
+        }
       })
       .catch((error: unknown) => {
         if (!work.isClosing) {
@@ -155,7 +163,9 @@ export function startUpdateRunWatcher(params: {
         polling = false;
         if (pollAgain) {
           pollAgain = false;
-          if (!timer) poll();
+          if (!timer) {
+            poll();
+          }
         }
       });
   };

@@ -25,7 +25,9 @@ export async function observeInterruptedUpdateGateway(
     argv1: process.argv[1],
     moduleUrl: import.meta.url,
   });
-  if (!root) return undefined;
+  if (!root) {
+    return undefined;
+  }
   const installedMatches = async () => {
     const [version, buildId] = await Promise.all([
       readPackageVersion(root),
@@ -33,7 +35,9 @@ export async function observeInterruptedUpdateGateway(
     ]);
     return version === candidate.version && buildId === candidate.buildId;
   };
-  if (!(await installedMatches())) return undefined;
+  if (!(await installedMatches())) {
+    return undefined;
+  }
   const context = await resolveGatewayRestartProbeContext(env);
   const port = resolveGatewayPort(context.config, env);
   const service = resolveGatewayService();
@@ -62,7 +66,9 @@ export async function observeInterruptedUpdateGateway(
     requireRunningService: true,
     settle: { probes: 12 },
   });
-  if (!servingMatches(before)) return undefined;
+  if (!servingMatches(before)) {
+    return undefined;
+  }
   const http = await waitForGatewayHttpReadiness({
     config: context.config,
     port,
@@ -82,8 +88,9 @@ export async function observeInterruptedUpdateGateway(
     !isSameGatewayRestartGeneration(before, inspected) ||
     !isSameGatewayRestartGeneration(inspected, after) ||
     !(await installedMatches())
-  )
+  ) {
     return undefined;
+  }
   input.signal?.throwIfAborted();
   return {
     booted: true,

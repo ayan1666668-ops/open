@@ -32,7 +32,9 @@ export function readInstalledUpdateCandidate(
   const receipt = run.steps.find(
     (step) => step.step === CANDIDATE_STEP && step.status === "completed",
   );
-  if (!receipt?.detail) return undefined;
+  if (!receipt?.detail) {
+    return undefined;
+  }
   try {
     const parsed = candidateSchema.safeParse(JSON.parse(receipt.detail));
     return parsed.success ? parsed.data : undefined;
@@ -85,8 +87,9 @@ export function recordPostCoreUpdateEvidence(
 
 function canSettleInterruptedUpdate(run: UpdateRunRecord): boolean {
   const abandoned = run.status === "failed" && run.reason === "abandoned";
-  if (!(run.status === "running" && run.phase === "verifying" && !run.reason) && !abandoned)
+  if (!(run.status === "running" && run.phase === "verifying" && !run.reason) && !abandoned) {
     return false;
+  }
   const drivers = recordedUpdateRunDrivers(run);
   return (
     drivers.length > 0 &&
@@ -126,11 +129,15 @@ export async function reconcileInterruptedUpdateRuns(
     return run && !hasStoredUpdateRecovery(db, run.runId) ? run : undefined;
   }, options);
   const candidate = expected ? readInstalledUpdateCandidate(expected) : undefined;
-  if (!expected || !candidate || !canSettleInterruptedUpdate(expected)) return [];
+  if (!expected || !candidate || !canSettleInterruptedUpdate(expected)) {
+    return [];
+  }
   const { observeInterruptedUpdateGateway } = await import("./update-run-interruption-health.js");
   const verification = await observeInterruptedUpdateGateway(candidate, { ...input, env });
   input.signal?.throwIfAborted();
-  if (!verification) return [];
+  if (!verification) {
+    return [];
+  }
   return runExistingOpenClawStateWriteTransaction(
     ({ db }) => {
       input.signal?.throwIfAborted();
@@ -142,14 +149,17 @@ export async function reconcileInterruptedUpdateRuns(
         !canSettleInterruptedUpdate(current) ||
         (active && active.runId !== current.runId) ||
         hasStoredUpdateRecovery(db, current.runId)
-      )
+      ) {
         return [];
+      }
       if (current.status === "failed") {
         current.status = "running";
         current.phase = "verifying";
         current.finishedAtMs = null;
         for (const step of current.steps) {
-          if (step.step === "reconcile:abandoned") step.status = "completed";
+          if (step.step === "reconcile:abandoned") {
+            step.status = "completed";
+          }
         }
       }
       recordUpdateRunVerificationRecord(current, verification);

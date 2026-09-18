@@ -161,11 +161,18 @@ it.each([
   "unsettled",
 ])("preserves interrupted evidence when %s does not permit settlement", async (boundary) => {
   const runId = interruptedRun();
-  if (boundary === "installed") observation.installedBuild = "another-build";
-  if (boundary === "serving") observation.servingBuild = "another-build";
-  if (boundary === "alive" || boundary === "unknown") observation.driver = boundary;
-  if (boundary === "failure")
+  if (boundary === "installed") {
+    observation.installedBuild = "another-build";
+  }
+  if (boundary === "serving") {
+    observation.servingBuild = "another-build";
+  }
+  if (boundary === "alive" || boundary === "unknown") {
+    observation.driver = boundary;
+  }
+  if (boundary === "failure") {
     finishUpdateRun(runId, { status: "failed", reason: "post-update-failed" });
+  }
   if (boundary === "previous-driver") {
     recordUpdateRunPhase(runId, "verifying", {
       origin: {
@@ -187,8 +194,9 @@ it.each([
       )
       .run(`update.recovery.${runId}`, "{}", now);
   }
-  if (boundary === "unsettled")
+  if (boundary === "unsettled") {
     observation.settle.mockResolvedValue({ ...health(), healthy: false });
+  }
   watcher = startUpdateRunWatcher({ broadcast: vi.fn(), log: { warn: vi.fn() } });
   await vi.advanceTimersByTimeAsync(0);
   await watcher.stop();
@@ -238,12 +246,14 @@ it.each([false, true])("Doctor respects read-only preflight: %s", async (readOnl
   reconcileAbandonedUpdateRuns();
   await noteStaleUpdateRuns({ migrateState: !readOnly });
   expect(getUpdateRun(runId)?.status).toBe(readOnly ? "failed" : "succeeded");
-  if (readOnly) expect(observation.settle).not.toHaveBeenCalled();
-  else
+  if (readOnly) {
+    expect(observation.settle).not.toHaveBeenCalled();
+  } else {
     expect(note).toHaveBeenCalledWith(
       expect.stringContaining("recorded succeeded"),
       "Update history",
     );
+  }
 });
 
 it.each(["repair", "acknowledgement"])(
