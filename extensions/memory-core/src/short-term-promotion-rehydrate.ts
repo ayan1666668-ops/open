@@ -277,8 +277,21 @@ function relocateCandidateRange(
         topQuality = bestComparison.quality;
         topMatches = [];
       }
-      if (bestComparison.quality === topQuality && topMatches.length < MAX_TRACKED_MATCHES) {
-        topMatches.push({ ...matchRange, distance });
+      if (bestComparison.quality === topQuality) {
+        // Keep the nearest matches, not the first encountered: a repetitive note can
+        // produce many window variants for one occurrence, and a scan-order cap would
+        // hide the matches closest to the stored range from the tie check below.
+        const farthestKept =
+          topMatches.length < MAX_TRACKED_MATCHES
+            ? Number.POSITIVE_INFINITY
+            : Math.max(...topMatches.map((match) => match.distance));
+        if (distance <= farthestKept) {
+          topMatches.push({ ...matchRange, distance });
+          if (topMatches.length > MAX_TRACKED_MATCHES) {
+            topMatches.sort((left, right) => left.distance - right.distance);
+            topMatches.length = MAX_TRACKED_MATCHES;
+          }
+        }
       }
       if (
         !bestMatch ||
