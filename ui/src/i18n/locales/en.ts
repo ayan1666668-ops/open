@@ -2139,6 +2139,7 @@ export const en: TranslationMap & {
     settingsGroupAgents: "Agents & Tools",
     settingsGroupSecurity: "Privacy & Security",
     settingsGroupSystem: "System",
+    settingsGroupCommunity: "Community",
     settingsSearchLabel: "Search settings",
     settingsSearchPlaceholder: "Search settings…",
     settingsSearchNoResults: "No matching settings.",

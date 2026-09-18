@@ -306,6 +306,7 @@ export function renderApplicationShell(host: ShellViewHost) {
       ? renderLazySettingsSidebar(host, {
           presentation: nativeEmbed ? (embedSettingsRoot ? "embed-list" : "embed-page") : "sidebar",
           basePath: context.basePath,
+          communityInvite: config.communityInvite,
           activeRouteId: activeRoute,
           agents: context.agents.state.agentsList?.agents ?? [],
           agentIdentity: context.agentIdentity,

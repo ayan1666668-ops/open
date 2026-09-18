@@ -28,6 +28,7 @@ import { t } from "../i18n/index.ts";
 import { listSelectableAgents, normalizeAgentLabel } from "../lib/agents/display.ts";
 import type { AgentIdentityCapability } from "../lib/agents/identity.ts";
 import { redactLoginFailureError } from "../lib/connection-hints.ts";
+import { buildExternalLinkRel, EXTERNAL_LINK_TARGET } from "../lib/external-link.ts";
 import { shouldHandleNavigationClick } from "../lib/navigation-click.ts";
 import { normalizeAgentId } from "../lib/sessions/session-key.ts";
 import { findSettingsSearchBlocks } from "../pages/config/settings-search.ts";
@@ -42,11 +43,18 @@ import "./settings-save-indicator.ts";
 import "../styles/settings.css";
 import "./sidebar-build-chip.ts";
 
+const communityLinks = [
+  { name: "X", href: "https://x.com/openclaw", icon: "brandX" },
+  { name: "Discord", href: "https://discord.com/invite/clawd", icon: "discord" },
+  { name: "Reddit", href: "https://www.reddit.com/r/openclaw/", icon: "reddit" },
+] as const;
+
 type AgentRosterRow = AgentsListResult["agents"][number];
 
 type SettingsSidebarProps = {
   presentation?: "sidebar" | "embed-list" | "embed-page";
   basePath: string;
+  communityInvite: boolean;
   activeRouteId: RouteId;
   agents: readonly AgentRosterRow[];
   agentIdentity: AgentIdentityCapability;
@@ -409,6 +417,27 @@ export function renderSettingsSidebar(props: SettingsSidebarProps) {
               </div>
             `,
           )
+    }
+    ${
+      props.communityInvite
+        ? html`<div class="settings-sidebar__group">
+            <div class="settings-sidebar__group-label">${t("nav.settingsGroupCommunity")}</div>
+            ${communityLinks.map(
+              (link) => html`<a
+                class="settings-sidebar__item"
+                href=${link.href}
+                target=${EXTERNAL_LINK_TARGET}
+                rel=${buildExternalLinkRel()}
+                aria-label=${link.name}
+              >
+                <span class="settings-sidebar__item-icon" aria-hidden="true"
+                  >${icons[link.icon]}</span
+                >
+                <span class="settings-sidebar__item-label">${link.name}</span>
+              </a>`,
+            )}
+          </div>`
+        : nothing
     }
   </nav>`;
   if (props.presentation === "embed-list") {

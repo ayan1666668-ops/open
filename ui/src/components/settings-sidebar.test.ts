@@ -23,6 +23,7 @@ const saveIndicator = () => ({
 });
 
 const sidebarAgentProps = () => ({
+  communityInvite: false,
   agents: [
     { id: "main", name: "Main" },
     { id: "research", name: "Research" },
