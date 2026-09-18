@@ -2728,6 +2728,56 @@ describe("deliverSubagentAnnouncement completion delivery", () => {
     });
   });
 
+  // A wait-expiry publication describes the waiter, not the run. It is
+  // provisional and owes no terminal visible result, so an intentionally silent
+  // requester turn settles it; the announce owner used to map the missing reply
+  // to `retryable` and the wait manager scheduled another attempt.
+  it.each([
+    {
+      name: "a terminal completion still owes a visible reply",
+      disposition: "exited" as const,
+      expected: {
+        delivered: false,
+        path: "direct",
+        reason: "visible_reply_missing",
+        error: "completion agent did not produce a visible reply",
+      },
+    },
+    {
+      name: "a provisional still-running expiry notification settles silently",
+      disposition: "still-running" as const,
+      expected: { delivered: true, path: "direct" },
+    },
+  ])("%s", async ({ disposition, expected }) => {
+    const dispatchGatewayMethodInProcess = createInProcessGatewayMock({
+      result: { payloads: [{ text: "NO_REPLY" }] },
+    });
+    testing.setDepsForTest({
+      dispatchGatewayMethodInProcess,
+      getRequesterSessionActivity: () => ({
+        sessionId: "requester-session-local",
+        isActive: false,
+      }),
+      getRuntimeConfig: () => ({}) as never,
+    });
+
+    const result = await deliverSubagentAnnouncement({
+      requesterSessionKey: "agent:main:local-session",
+      targetRequesterSessionKey: "agent:main:local-session",
+      triggerMessage: "child done",
+      steerMessage: "child done",
+      requesterIsSubagent: false,
+      expectsCompletionMessage: true,
+      bestEffortDeliver: true,
+      directIdempotencyKey: `announce-local-subagent-silent-${disposition}`,
+      sourceTool: "subagent_announce",
+      sourceSessionKey: "agent:worker:subagent:child",
+      internalEvents: taskCompletionEvents({ disposition, noVisibleResult: true }),
+    });
+
+    expectRecordFields(result, expected);
+  });
+
   it.each([
     {
       name: "accepted session spawn",

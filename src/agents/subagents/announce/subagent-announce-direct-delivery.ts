@@ -32,11 +32,7 @@ import {
   hasVisibleAgentPayload,
 } from "../../embedded-agent-runner/message-visibility.js";
 import type { EmbeddedAgentQueueMessageOptions } from "../../embedded-agent-runner/run-state.js";
-import {
-  AGENT_INTERNAL_EVENT_TYPE_TASK_COMPLETION,
-  hasFailedSubagentNoOutputCompletion,
-  hasVisibleCompletionResult,
-} from "../../internal-event-contract.js";
+import { AGENT_INTERNAL_EVENT_TYPE_TASK_COMPLETION } from "../../internal-event-contract.js";
 import type { AgentInternalEvent } from "../../internal-events.js";
 import {
   formatActiveWakeFailure,
@@ -50,6 +46,8 @@ import {
   isDirectMessageDeliveryTarget,
   isFailedTerminalSubagentCompletion,
   isGatewayAgentRunPending,
+  isStillRunningSubagentCompletion,
+  requiresSubagentNoOutputCompletionReply,
   runAnnounceAgentCall,
 } from "./subagent-announce-completion-delivery.js";
 import {
@@ -162,9 +160,7 @@ export async function sendSubagentAnnounceDirectly(params: {
     const hasRequiredSubagentNoOutputCompletion =
       params.expectsCompletionMessage &&
       isSubagentCompletion &&
-      ((trustedCompletionEvent !== undefined &&
-        !hasVisibleCompletionResult(trustedCompletionEvent)) ||
-        hasFailedSubagentNoOutputCompletion(params.internalEvents));
+      requiresSubagentNoOutputCompletionReply(trustedCompletionEvent, params.internalEvents);
     const hasSuccessfulTrustedSubagentNoOutputCompletion =
       hasRequiredSubagentNoOutputCompletion && trustedCompletionEvent?.status === "ok";
     const textCompletionDirectDeliveryKind = hasFailedTrustedSubagentCompletion
@@ -678,8 +674,12 @@ export async function sendSubagentAnnounceDirectly(params: {
               ? normalizeMessageChannel(origin.channel) === INTERNAL_MESSAGE_CHANNEL
               : !origin?.to,
           )));
+    // A subagent completion owes a visible result, but a still-running
+    // observation of one does not, so an intentionally silent requester turn
+    // settles it instead of being retried forever.
     const acceptsIntentionalSilentCompletion =
-      hasIntentionalSilentCompletionReply && !isSubagentCompletion;
+      hasIntentionalSilentCompletionReply &&
+      (!isSubagentCompletion || isStillRunningSubagentCompletion(trustedCompletionEvent));
     if (
       !hasVisibleCompletionReply &&
       (params.requireVisibleReply ||
