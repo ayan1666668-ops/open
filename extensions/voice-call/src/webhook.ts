@@ -1117,16 +1117,33 @@ export class VoiceCallWebhookServer {
     }
 
     const response = this.manager.createAutoResponseGuard(call);
+    // Text already delivered to speech within this auto-response run. A long
+    // reply keeps playback in flight long enough that a second delivery event
+    // (run completion, or a later flush) can request the identical text again,
+    // so the caller would hear the same reply twice back to back.
+    //
+    // Committed only after delivery succeeds: a failed early attempt must leave
+    // the final path free to speak the same text, otherwise a failure to play
+    // early would silently become "already said that" and the caller would hear
+    // nothing at all.
+    let deliveredText: string | null = null;
     const speakResponse = async (text: string): Promise<boolean> => {
       if (!response.isCurrent()) {
         this.logger.info(`Discarding superseded automatic reply ${callId}`);
         return false;
+      }
+      if (deliveredText === text) {
+        this.logger.info(`Skipping duplicate automatic reply ${callId} chars=${text.length}`);
+        return true;
       }
       this.logger.info(`AI response queued ${callId} chars=${text.length}`);
       const result = await this.manager.speak(callId, text, {
         listenAfterPlayback: true,
         isCurrent: response.isCurrent,
       });
+      if (result.success) {
+        deliveredText = text;
+      }
       return result.success;
     };
     try {
