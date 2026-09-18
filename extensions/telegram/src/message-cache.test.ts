@@ -1,16 +1,18 @@
 import type { Message } from "grammy/types";
 import { describe, expect, it } from "vitest";
 import {
+  hasProviderObservedTelegramThreadBinding,
+  resolveProviderObservedTelegramThreadSpec,
+} from "./message-cache-codec.js";
+import {
   resolveTelegramMessageCachePersistentScopeKey,
   TELEGRAM_MESSAGE_CACHE_PERSISTENT_MAX_MESSAGES,
-  type TelegramResolvedMedia,
+  type PersistedTelegramMessageCacheValue,
 } from "./message-cache-persistence.js";
 import {
   buildTelegramConversationContext,
   buildTelegramReplyChain,
   createTelegramMessageCache,
-  hasProviderObservedTelegramThreadBinding,
-  resolveProviderObservedTelegramThreadSpec,
 } from "./message-cache.js";
 import { resetTelegramMessageCacheForTest as resetCache } from "./runtime.test-support.js";
 
@@ -19,17 +21,8 @@ type PersistentStore = NonNullable<
 >;
 type Cache = ReturnType<typeof createTelegramMessageCache>;
 type ReplyChain = Awaited<ReturnType<typeof replyChain>>;
-type PersistedValue = {
-  version: 1;
-  sourceMessage: Message;
-  botUserId?: number;
+type PersistedValue = Omit<PersistedTelegramMessageCacheValue, "promptContextProjection"> & {
   promptContextProjection?: unknown;
-  resolvedMedia?: TelegramResolvedMedia;
-  threadBinding?: {
-    kind: "provider-observed-v1";
-    threadSpec: { scope: "direct-messages" | "dm" | "forum"; id: number };
-  };
-  threadId?: string;
 };
 
 let persistentStoreId = 0;
@@ -315,6 +308,32 @@ describe("telegram message cache", () => {
 
     const node = await get(cache, "903", { chatId: -1001 });
     expect(resolveProviderObservedTelegramThreadSpec(node)).toBeUndefined();
+  });
+
+  it("resolves external reply references only from the same chat without inventing message bodies", async () => {
+    const { bucketKey, store } = createMemoryStore();
+    const cache = cacheFor(bucketKey, store);
+    const chat = { id: -1001, type: "supergroup", title: "Local group" };
+    await record(cache, message(9, "Ada", { chat, text: "Local body" }), { chatId: chat.id });
+    const reference = (peerId: number, messageId: number) =>
+      message(11, "Ada", {
+        chat,
+        external_reply: {
+          origin: {
+            type: "chat",
+            date: 1_736_371_609,
+            sender_chat: { ...chat, id: peerId },
+          },
+          chat: { ...chat, id: peerId },
+          message_id: messageId,
+        },
+      });
+
+    expect(await replyChain(cache, reference(-1002, 9), chat.id)).toEqual([]);
+    expect(await replyChain(cache, reference(chat.id, 8), chat.id)).toEqual([]);
+    expect(await replyChain(cache, reference(chat.id, 9), chat.id)).toMatchObject([
+      { messageId: "9", body: "Local body" },
+    ]);
   });
 
   it("hydrates reply chains from persisted cached messages", async () => {

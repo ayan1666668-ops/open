@@ -35,7 +35,7 @@ import type { TelegramBotOptions } from "./bot.types.js";
 import { buildTelegramThreadParams, resolveTelegramStreamMode } from "./bot/helpers.js";
 import type { TelegramContext } from "./bot/types.js";
 import { resolveTelegramDmHistoryLimit } from "./dm-history.js";
-import type { TelegramReplyChainEntry } from "./message-cache.js";
+import type { TelegramReplyChainEntry } from "./message-cache-codec.js";
 import { TELEGRAM_TEXT_CHUNK_LIMIT } from "./outbound-adapter.js";
 import { TELEGRAM_RICH_TEXT_LIMIT } from "./rich-message.js";
 import { resolveSpooledUpdatePersistenceRetryDelayMs } from "./telegram-ingress-spool.js";
@@ -125,7 +125,6 @@ export const createTelegramMessageProcessor = (deps: TelegramMessageProcessorDep
   const {
     bot,
     account,
-    groupHistories,
     logger,
     resolveGroupActivation,
     resolveGroupRequireMention,
@@ -210,7 +209,6 @@ export const createTelegramMessageProcessor = (deps: TelegramMessageProcessorDep
       ownerAgentId: opts.ownerAgentId,
       historyLimit: turnSettings.historyLimit,
       dmHistoryLimit: turnSettings.dmHistoryLimit,
-      groupHistories,
       dmPolicy: turnSettings.dmPolicy,
       allowFrom: turnSettings.allowFrom,
       groupAllowFrom: turnSettings.groupAllowFrom,

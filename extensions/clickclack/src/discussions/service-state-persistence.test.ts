@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import type { PluginRuntime } from "openclaw/plugin-sdk/core";
 import type {
+  OpenAsyncKeyedStoreOptions,
   OpenKeyedStoreOptions,
   PluginStateSyncKeyedStore,
 } from "openclaw/plugin-sdk/plugin-state-runtime";
@@ -51,7 +52,7 @@ describe("ClickClack discussion state persistence", () => {
 
     try {
       const harness = createHarness({ label: "Persisted legacy title" }, { openSyncKeyedStore });
-      harness.runtime.state.openKeyedStore = <T>(options: OpenKeyedStoreOptions) =>
+      harness.runtime.state.openKeyedStore = <T>(options: OpenAsyncKeyedStoreOptions) =>
         createPluginStateKeyedStoreForTests<T>("clickclack", { ...options, env });
       const service = new ClickClackDiscussionService(harness.runtime, {
         clientFactory: () => harness.client,

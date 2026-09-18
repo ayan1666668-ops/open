@@ -2,28 +2,23 @@
 import type { DatabaseSync } from "node:sqlite";
 import { err, ok, type Result } from "@openclaw/normalization-core/result";
 import { executeSqliteQuerySync } from "../infra/kysely-sync.js";
-import { requireNodeSqlite } from "../infra/node-sqlite.js";
 import { isSqliteCorruptionError } from "../infra/sqlite-error-diagnostics.js";
-import { isTerminalSqliteIntegrityError } from "../infra/sqlite-integrity.js";
 import { normalizeSqliteNumber } from "../infra/sqlite-number.js";
 import { runSqliteImmediateTransactionSync } from "../infra/sqlite-transaction.js";
-import { isSqliteSchemaVersionError } from "../infra/sqlite-user-version.js";
-import { resolveDatabasePath } from "../state/openclaw-state-db-maintenance.js";
-import {
-  hasOpenClawStateTablesBeyondStartupCheckpoint,
-  withExistingOpenClawStateDatabaseReadOnly,
-} from "../state/openclaw-state-db-readonly.js";
 import {
   closeOpenClawStateDatabase,
   closeOpenClawStateDatabaseAsync,
-  isOpenClawStateDatabaseOpen,
-  openOpenClawStateDatabase,
   type OpenClawStateDatabaseOptions,
-  runOpenClawStateWriteTransaction,
 } from "../state/openclaw-state-db.js";
 import { resolveOpenClawStateSqlitePath } from "../state/openclaw-state-db.paths.js";
 import {
-  createPluginStateError,
+  openPluginStateDatabase,
+  probePluginStateStore,
+  runWriteTransaction,
+  withPluginStateDatabaseReadOnly,
+  wrapPluginStateError,
+} from "./plugin-state-store.database.js";
+import {
   resolvePluginStateExpiresAtMs,
   parseStoredJson,
   getPluginStateKysely,
@@ -33,15 +28,8 @@ import {
   selectPluginStateEntriesInKeyRange,
   deletePluginStateEntry,
   deleteExpiredPluginStateEntries,
-  countLivePluginStateEntries,
   countLivePluginStateNamespaceEntries,
-  readPluginStateRetention,
-  enforcePostRegisterLimits,
-  assertCanInsertPluginStateEntry,
-  registerPluginStateEntry,
   lookupPluginStateEntry,
-  type PluginStateDatabase,
-  type PluginStateRegisterEntryParams,
   type PluginStateReadRow,
 } from "./plugin-state-store.kernel.js";
 import {
@@ -56,13 +44,18 @@ import {
   type PluginStateKeyRangeParams,
 } from "./plugin-state-store.reads.js";
 import {
+  assertCanInsertPluginStateEntry,
+  countLiveBoundedPluginStateEntries,
+  countLivePluginStateEntries,
+  enforcePostRegisterLimits,
+  readPluginStateRetention,
+  registerPluginStateEntry,
+  type PluginStateRegisterEntryParams,
+} from "./plugin-state-store.retention.js";
+import {
   PluginStateStoreError,
   type PluginStateEntry,
   type PluginStateOverflowPolicy,
-  type PluginStateStoreErrorCode,
-  type PluginStateStoreOperation,
-  type PluginStateStoreProbeResult,
-  type PluginStateStoreProbeStep,
 } from "./plugin-state-store.types.js";
 
 // Plugin-wide fuse only; namespace maxEntries still owns normal cache eviction.
@@ -87,117 +80,8 @@ type PluginStateSeedEntryForTests = {
   expiresAt?: number | null;
 };
 
-export function wrapPluginStateError(
-  error: unknown,
-  operation: PluginStateStoreOperation,
-  fallbackCode: PluginStateStoreErrorCode,
-  message: string,
-  pathname = resolveOpenClawStateSqlitePath(process.env),
-): PluginStateStoreError {
-  if (error instanceof PluginStateStoreError) {
-    return error;
-  }
-  let publicMessage = message;
-  // Only owner-classified failures get public hints. Cause messages can contain
-  // database paths, SQL, or stored values and must stay out of this message.
-  if (fallbackCode === "PLUGIN_STATE_OPEN_FAILED") {
-    if (isSqliteSchemaVersionError(error)) {
-      publicMessage +=
-        "\nThe state database uses a newer schema. Run an OpenClaw build that supports it.";
-    } else if (error instanceof Error && isTerminalSqliteIntegrityError(error)) {
-      publicMessage +=
-        "\nDatabase integrity verification failed. Restore or repair the state database, then run openclaw doctor --fix.";
-    }
-  }
-  return createPluginStateError({
-    code: fallbackCode,
-    operation,
-    message: publicMessage,
-    path: pathname,
-    cause: error,
-  });
-}
-
-function openPluginStateDatabase(
-  operation: PluginStateStoreOperation = "open",
-  options: OpenClawStateDatabaseOptions = {},
-): PluginStateDatabase {
-  const env = options.env ?? process.env;
-  const pathname = resolveOpenClawStateSqlitePath(env);
-  try {
-    return openOpenClawStateDatabase(options);
-  } catch (error) {
-    throw wrapPluginStateError(
-      error,
-      operation,
-      "PLUGIN_STATE_OPEN_FAILED",
-      "Failed to open the plugin state database.",
-      pathname,
-    );
-  }
-}
-
-function isMissingPluginStateTableError(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    (error as NodeJS.ErrnoException).code === "ERR_SQLITE_ERROR" &&
-    error.message === "no such table: plugin_state_entries"
-  );
-}
-
-/** Read plugin state without joining the shared writable database lifecycle. */
-export function withPluginStateDatabaseReadOnly<T>(
-  operationName: PluginStateStoreOperation,
-  operation: (store: PluginStateDatabase) => T,
-  options: OpenClawStateDatabaseOptions = {},
-): T | undefined {
-  const pathname = resolveDatabasePath(options);
-  let operationStarted = false;
-  try {
-    return withExistingOpenClawStateDatabaseReadOnly(({ db, path }) => {
-      operationStarted = true;
-      try {
-        return operation({ db, path });
-      } catch (error) {
-        if (isMissingPluginStateTableError(error)) {
-          // The lease bootstrap creates exactly schema_meta + state_leases before the first write;
-          // any other table means the missing plugin-state table is damage, not fresh state.
-          if (!hasOpenClawStateTablesBeyondStartupCheckpoint(db)) {
-            return undefined;
-          }
-        }
-        throw error;
-      }
-    }, options);
-  } catch (error) {
-    if (!operationStarted) {
-      throw wrapPluginStateError(
-        error,
-        operationName,
-        "PLUGIN_STATE_OPEN_FAILED",
-        "Failed to open the plugin state database.",
-        pathname,
-      );
-    }
-    throw error;
-  }
-}
-
 function envOptions(env?: NodeJS.ProcessEnv): OpenClawStateDatabaseOptions {
   return env ? { env } : {};
-}
-
-function runWriteTransaction<T>(
-  operation: PluginStateStoreOperation,
-  write: (store: PluginStateDatabase) => T,
-  options: OpenClawStateDatabaseOptions = {},
-): T {
-  // Only cold acquisition failures are open errors. A held owner's ownership or
-  // transaction failure must remain a write error, with its callback supplying the handle.
-  if (!isOpenClawStateDatabaseOpen(resolveOpenClawStateSqlitePath(options.env ?? process.env))) {
-    openPluginStateDatabase(operation, options);
-  }
-  return runOpenClawStateWriteTransaction(write, options);
 }
 
 export function resolveMaxPluginStateEntriesPerPlugin(): number {
@@ -288,7 +172,7 @@ export function pluginStateRegisterIfAbsent(params: {
   namespace: string;
   key: string;
   valueJson: string;
-  maxEntries: number;
+  maxEntries: number | undefined;
   overflowPolicy: PluginStateOverflowPolicy;
   ttlMs?: number;
   env?: NodeJS.ProcessEnv;
@@ -314,7 +198,7 @@ export function pluginStateUpdate(params: {
   pluginId: string;
   namespace: string;
   key: string;
-  maxEntries: number;
+  maxEntries: number | undefined;
   overflowPolicy: PluginStateOverflowPolicy;
   updateValueJson: (current: unknown) => { valueJson: string; ttlMs?: number } | undefined;
   env?: NodeJS.ProcessEnv;
@@ -353,6 +237,7 @@ export function pluginStateUpdate(params: {
         }
         const expiresAt = resolvePluginStateExpiresAtMs({
           ttlMs: next.ttlMs,
+          namespace: params.namespace,
           now,
           operation: "register",
           path: store.path,
@@ -782,10 +667,26 @@ export function getPluginStateCapacity(
   pluginId: string,
   env?: NodeJS.ProcessEnv,
 ): { liveEntries: number; maxEntries: number } {
-  return {
-    liveEntries: countPluginStateLiveEntries(pluginId, env),
-    maxEntries: resolveMaxPluginStateEntriesPerPlugin(),
-  };
+  const pathname = resolveOpenClawStateSqlitePath(env ?? process.env);
+  try {
+    return {
+      liveEntries:
+        withPluginStateDatabaseReadOnly(
+          "count",
+          ({ db }) => countLiveBoundedPluginStateEntries(db, { pluginId, now: Date.now() }),
+          envOptions(env),
+        ) ?? 0,
+      maxEntries: resolveMaxPluginStateEntriesPerPlugin(),
+    };
+  } catch (error) {
+    throw wrapPluginStateError(
+      error,
+      "count",
+      "PLUGIN_STATE_READ_FAILED",
+      "Failed to count bounded plugin state entries.",
+      pathname,
+    );
+  }
 }
 
 function seedPluginStateDatabaseEntriesForTests(
@@ -813,92 +714,6 @@ function seedPluginStateDatabaseEntriesForTests(
   });
 }
 
-function probePluginStateStore(): PluginStateStoreProbeResult {
-  const databasePath = resolveOpenClawStateSqlitePath(process.env);
-  const steps: PluginStateStoreProbeStep[] = [];
-  const stateWasOpen = isOpenClawStateDatabaseOpen();
-
-  const pushOk = (name: string) => steps.push({ name, ok: true });
-  const pushFailure = (name: string, error: unknown) => {
-    const wrapped =
-      error instanceof PluginStateStoreError
-        ? error
-        : createPluginStateError({
-            code: "PLUGIN_STATE_OPEN_FAILED",
-            operation: "probe",
-            message: error instanceof Error ? error.message : String(error),
-            path: databasePath,
-            cause: error,
-          });
-    steps.push({ name, ok: false, code: wrapped.code, message: wrapped.message });
-  };
-
-  try {
-    requireNodeSqlite();
-    pushOk("load-sqlite");
-  } catch (error) {
-    pushFailure(
-      "load-sqlite",
-      createPluginStateError({
-        code: "PLUGIN_STATE_SQLITE_UNAVAILABLE",
-        operation: "load-sqlite",
-        message: "SQLite support is unavailable for plugin state storage.",
-        path: databasePath,
-        cause: error,
-      }),
-    );
-    return { ok: false, databasePath, steps };
-  }
-
-  try {
-    openPluginStateDatabase("probe");
-    pushOk("open");
-    pushOk("schema");
-    runWriteTransaction("probe", ({ db }) => {
-      const now = Date.now();
-      const expiresAt = resolvePluginStateExpiresAtMs({
-        ttlMs: 60_000,
-        now,
-        operation: "probe",
-        path: databasePath,
-      });
-      upsertPluginStateEntry(
-        db,
-        bindPluginStateEntry({
-          pluginId: "core:plugin-state-probe",
-          namespace: "diagnostics",
-          key: "probe",
-          valueJson: JSON.stringify({ ok: true }),
-          createdAt: now,
-          expiresAt,
-        }),
-      );
-      selectPluginStateEntry(db, {
-        pluginId: "core:plugin-state-probe",
-        namespace: "diagnostics",
-        key: "probe",
-        now,
-      });
-      deletePluginStateEntry(db, {
-        pluginId: "core:plugin-state-probe",
-        namespace: "diagnostics",
-        key: "probe",
-      });
-    });
-    pushOk("write-read-delete");
-    openOpenClawStateDatabase().walMaintenance.checkpoint();
-    pushOk("checkpoint");
-  } catch (error) {
-    pushFailure("probe", error);
-  } finally {
-    if (!stateWasOpen) {
-      closePluginStateDatabase();
-    }
-  }
-
-  return { ok: steps.every((step) => step.ok), databasePath, steps };
-}
-
 export function closePluginStateDatabase(): void {
   closeOpenClawStateDatabase();
 }
@@ -914,4 +729,3 @@ if (process.env.VITEST || process.env.NODE_ENV === "test") {
     setMaxPluginStateEntriesPerPluginForTests,
   };
 }
-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

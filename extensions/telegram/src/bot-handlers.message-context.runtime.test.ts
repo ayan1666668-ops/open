@@ -25,7 +25,7 @@ function createRuntime() {
     cfg,
     accountId: "default",
     ownerAgentId: "main",
-    opts: { token: "test" },
+    opts: {},
     telegramCfg: {},
     telegramDeps: {
       resolveStorePath: () => `/tmp/openclaw-telegram-thread-recovery-${storeScopeId}/store.json`,
@@ -65,7 +65,7 @@ describe("resolveCachedMessageThreadSpec", () => {
       cfg,
       accountId: "primary",
       ownerAgentId: "main",
-      opts: { token: "test" },
+      opts: {},
       telegramCfg: {},
       telegramDeps: {
         resolveStorePath,
