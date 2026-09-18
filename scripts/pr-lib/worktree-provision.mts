@@ -11,7 +11,6 @@ import {
 } from "../../src/agents/worktrees/capacity.js";
 import { addManagedWorktree } from "../../src/agents/worktrees/checkout.js";
 import { WORKTREE_CHECKOUT_TIMEOUT_MS } from "../../src/agents/worktrees/git.js";
-import { resolveStateDir } from "../../src/config/paths.js";
 import {
   executeGitCommand,
   executeGitCommandBuffered,
@@ -133,6 +132,9 @@ async function provisionPrWorktree(params: ProvisionParams): Promise<void> {
   }
   const env = { ...process.env };
   const root = await fs.realpath(params.root);
+  const stateDir = path.join(root, ".local", "pr-state");
+  // Wrapper leases and template records must never open the operator's Gateway database.
+  const storageEnv = { ...env, OPENCLAW_STATE_DIR: stateDir };
   const lockOwner = fileURLToPath(new URL("./operation-lock.sh", import.meta.url));
   const assertPrAuthority = () => {
     params.signal?.throwIfAborted();
@@ -164,7 +166,7 @@ async function provisionPrWorktree(params: ProvisionParams): Promise<void> {
   };
   assertPrAuthority();
   await withWorktreeAllocationLease(
-    { env, signal: params.signal, commitGuard: assertPrAuthority },
+    { env: storageEnv, signal: params.signal, commitGuard: assertPrAuthority },
     async (guard) => {
       const assertCurrent = () => {
         guard.signal?.throwIfAborted();
@@ -239,7 +241,7 @@ async function provisionPrWorktree(params: ProvisionParams): Promise<void> {
             { path: destination, bytes: cloneBytes ?? 2 * gitBytes },
             { path: commonDir, bytes: 0 },
             { path: root, bytes: 0 },
-            { path: resolveStateDir(env), bytes: 0 },
+            { path: stateDir, bytes: 0 },
           ],
           "worktree allocation",
         );
@@ -265,13 +267,13 @@ async function provisionPrWorktree(params: ProvisionParams): Promise<void> {
       } else {
         // Native Git does not consume acceleration policy; keep config startup
         // out of that entry path, including hook and sparse-checkout fallbacks.
-        const { getRuntimeConfig } = await import("../../src/config/config.js");
+        const { createConfigIO } = await import("../../src/config/config.js");
         assertCurrent();
         const added = await addManagedWorktree({
           ...guard,
-          env,
+          env: storageEnv,
           now: Date.now,
-          enabled: getRuntimeConfig().worktreeAcceleration !== false,
+          enabled: createConfigIO({ env: storageEnv }).loadConfig().worktreeAcceleration !== false,
           repoRoot: root,
           commonDir,
           worktreeRoot,
