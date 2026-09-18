@@ -5,7 +5,7 @@ import { readChannelContextGatewayContextResolver } from "../../channels/message
 import { settleProgressVisibilityCallbackResult } from "../../channels/progress-visibility.js";
 import { isRestartRecoveryTerminalDeliveryFailClosed } from "../../config/sessions/restart-recovery-receipt.js";
 import { hasRestartRecoverySourceClaim } from "../../config/sessions/restart-recovery-state.js";
-import { loadSessionEntry, updateSessionEntry } from "../../config/sessions/session-accessor.js";
+import { loadSessionEntry } from "../../config/sessions/session-accessor.js";
 import { logVerbose } from "../../globals.js";
 import { measureDiagnosticsTimelineSpan } from "../../infra/diagnostics-timeline.js";
 import { createStructuredOutboundPayloadPlan } from "../../infra/outbound/payloads.js";
@@ -36,6 +36,11 @@ import {
   isAudioPayload,
 } from "./agent-runner-helpers.js";
 import { runReplyQuestionInput } from "./agent-runner-question-input.js";
+import {
+  bindQueueCapDispositionAdmission,
+  resolveVisibleReplyDeliveryOutcome,
+  touchSessionEntryUpdatedAt,
+} from "./agent-runner-run-session.js";
 import { resetReplyRunSession } from "./agent-runner-session-reset.js";
 import { runActiveReplySteer } from "./agent-runner-steer-adoption.js";
 import { resolveQueuedReplyExecutionConfig } from "./agent-runner-utils.js";
@@ -51,6 +56,7 @@ import { REPLY_RUN_STILL_SHUTTING_DOWN_TEXT } from "./get-reply-run-queue.js";
 import { resolveOriginMessageProvider } from "./origin-routing.js";
 import { resolveActiveRunQueueAction } from "./queue-policy.js";
 import { enqueueFollowupRun, scheduleFollowupDrain } from "./queue.js";
+import { claimRestoredHeartbeatFollowupDrain } from "./queue/restored-drain.js";
 import { resolveFollowupAbortSignal } from "./queue/types.js";
 import { REPLY_ADMISSION_TICKET } from "./reply-admission-ticket.js";
 import { createReplyMediaContext } from "./reply-media-paths.js";
@@ -287,33 +293,28 @@ export async function runReplyAgent(
 
   const pendingToolTasks = new Set<Promise<void>>();
   const blockReplyTimeoutMs = opts?.blockReplyTimeoutMs ?? BLOCK_REPLY_SEND_TIMEOUT_MS;
-  const touchActiveSessionEntry = async () => {
-    if (!activeSessionEntry || !activeSessionStore || !sessionKey) {
-      return;
-    }
-    // Keep the in-memory snapshot aligned with the pending-reset write boundary.
-    const updatedAt = activeSessionEntry.updatedAt === 0 ? 0 : Date.now();
-    activeSessionEntry.updatedAt = updatedAt;
-    activeSessionStore[sessionKey] = activeSessionEntry;
-    if (storePath) {
-      await updateSessionEntry({ storePath, sessionKey }, () => ({ updatedAt }), {
-        skipMaintenance: true,
-        takeCacheOwnership: true,
-      });
-    }
-  };
+  const touchActiveSessionEntry = () =>
+    touchSessionEntryUpdatedAt({
+      sessionEntry: activeSessionEntry,
+      sessionStore: activeSessionStore,
+      sessionKey,
+      storePath,
+    });
 
-  const queuedRunFollowupTurn = createFollowupRunner({
-    resolveGatewayContext,
-    opts,
+  const followupRunnerArgs = {
     typing,
     typingMode,
     sessionEntry: activeSessionEntry,
     sessionStore: activeSessionStore,
-    sessionKey,
     storePath,
     defaultModel,
     toolProgressDetail,
+  };
+  const queuedRunFollowupTurn = createFollowupRunner({
+    ...followupRunnerArgs,
+    resolveGatewayContext,
+    opts,
+    sessionKey,
   });
 
   if (messageInjectionDisposition === "accepted") {
@@ -325,15 +326,32 @@ export async function runReplyAgent(
     return undefined;
   }
 
-  const bindQueueDisposition = () => {
-    const observe = followupRun.onQueueDisposition;
-    followupRun.onQueueDisposition = (disposition) => {
-      observe?.(disposition);
-      if (replyOperationRunState && disposition !== "queue-cap-old") {
-        replyOperationRunState.admission = { status: "skipped", reason: "queue-cap" };
+  const bindQueueDisposition = () =>
+    bindQueueCapDispositionAdmission({ followupRun, replyOperationRunState });
+
+  // Restored follow-up queues cannot drain through ordinary heartbeat admission:
+  // nonempty restored queues make resolveActiveRunQueueAction drop heartbeats,
+  // and isolated heartbeat sessions use `<base>:heartbeat` instead of the
+  // durable queue key. Explicitly register a non-heartbeat drain callback for
+  // the original restored key and idle-kick (or wait for the active owner).
+  if (isHeartbeat) {
+    const restoredQueueKey = claimRestoredHeartbeatFollowupDrain({
+      candidates: [queueKey, sessionKey, activeSessionEntry?.heartbeatIsolatedBaseSessionKey],
+      runnerArgs: followupRunnerArgs,
+      createFollowupRunner,
+      getActiveReplyOperation: (key) => replyRunRegistry.get(key),
+      scheduleAfterClear: scheduleFollowupDrainAfterReplyOperationClear,
+      scheduleNow: scheduleFollowupDrain,
+    });
+    if (restoredQueueKey) {
+      if (replyOperationRunState) {
+        replyOperationRunState.admission = { status: "accepted", mode: "followup" };
       }
-    };
-  };
+      releaseAdmissionTicket();
+      typing.cleanup();
+      return undefined;
+    }
+  }
 
   if (
     effectiveShouldSteer &&
@@ -509,17 +527,11 @@ export async function runReplyAgent(
           buffer: createAudioAsVoiceBuffer({ isAudioPayload }),
         })
       : null;
-  const resolveVisibleReplyDelivery = async () => {
-    // Settle accepted or in-flight blocks before deciding whether a terminal failure may stay silent.
-    try {
-      await blockReplyPipeline?.flush({ force: true });
-    } catch (flushError) {
-      logVerbose(
-        `failed to flush streamed reply blocks before surfacing run failure: ${String(flushError)}`,
-      );
-    }
-    return didDeliverVisiblePartialReply || blockReplyPipeline?.didStream() === true;
-  };
+  const resolveVisibleReplyDelivery = () =>
+    resolveVisibleReplyDeliveryOutcome({
+      blockReplyPipeline,
+      didDeliverVisiblePartialReply: () => didDeliverVisiblePartialReply,
+    });
   const replySessionKey = sessionKey ?? followupRun.run.sessionKey;
   const replyRouteThreadId = resolveRoutedDeliveryThreadId({
     ctx: sessionCtx,

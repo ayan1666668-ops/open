@@ -17,6 +17,8 @@ export type QueuedChatTurnEntry = {
   /** False once collect-mode transfers cancellation to the aggregate owner. */
   abortable?: boolean;
   abortListener?: () => void;
+  /** Persists the queue tombstone before an operator cancellation is acknowledged. */
+  onCancellationRequested?: () => void;
   agentId?: string;
   ownerConnId?: string;
   ownerDeviceId?: string;
@@ -35,6 +37,7 @@ type RegisterQueuedChatTurnParams = {
   ownerDeviceId?: string;
   /** Record cancellation while the exact queued entry is still current. */
   onAborted?: () => void;
+  onCancellationRequested?: () => void;
 };
 
 function resolveExactRunId(runId: string): string | undefined {
@@ -96,6 +99,7 @@ export function registerQueuedChatTurn(params: RegisterQueuedChatTurnParams): bo
     agentId: normalizeOptionalString(params.agentId)?.toLowerCase(),
     ownerConnId: normalizeOptionalString(params.ownerConnId),
     ownerDeviceId: normalizeOptionalString(params.ownerDeviceId),
+    onCancellationRequested: params.onCancellationRequested,
   };
   params.chatQueuedTurns.set(runId, entry);
   entry.abortListener = () => {
@@ -172,6 +176,9 @@ export function abortQueuedChatTurnById(
   if (!params.allowSessionMismatch && entry.sessionKey !== sessionKey) {
     return { aborted: false };
   }
+  if (params.stopReason !== "restart") {
+    entry.onCancellationRequested?.();
+  }
   if (!entry.controller.signal.aborted) {
     entry.controller.abort(createQueuedChatAbortSignalReason(params.stopReason));
   }
@@ -246,6 +253,9 @@ export function abortQueuedChatTurns(
   for (const { runId, entry } of matches) {
     if (chatQueuedTurns.get(runId) !== entry) {
       continue;
+    }
+    if (stopReason !== "restart") {
+      entry.onCancellationRequested?.();
     }
     if (!entry.controller.signal.aborted) {
       entry.controller.abort(createQueuedChatAbortSignalReason(stopReason));
