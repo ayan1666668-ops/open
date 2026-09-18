@@ -11,13 +11,13 @@ import {
 
 export const MAX_UNTRUSTED_TRANSCRIPT_FIELD_CHARS = 500;
 
-export const HEAD_TAIL_OMISSION_MARKER = "…[omitted]…";
+const HEAD_TAIL_OMISSION_MARKER = "…[omitted]…";
 
-export const HEAD_TAIL_MARKER_LENGTH = HEAD_TAIL_OMISSION_MARKER.length;
+const HEAD_TAIL_MARKER_LENGTH = HEAD_TAIL_OMISSION_MARKER.length;
 
-export const MIN_HEAD_TAIL_CHARS = 20;
+const MIN_HEAD_TAIL_CHARS = 20;
 
-export function stripNullBytes(value: string): string {
+function stripNullBytes(value: string): string {
   return value.replaceAll("\u0000", "");
 }
 
@@ -75,7 +75,7 @@ export function truncateBodyHeadTail(
   return `${head}${HEAD_TAIL_OMISSION_MARKER}${tail}`;
 }
 
-export function truncateUntrustedTranscriptField(value: string): string {
+function truncateUntrustedTranscriptField(value: string): string {
   if (value.length <= MAX_UNTRUSTED_TRANSCRIPT_FIELD_CHARS) {
     return value;
   }
