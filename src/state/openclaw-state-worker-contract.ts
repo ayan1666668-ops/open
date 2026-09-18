@@ -35,6 +35,7 @@ import type {
   SessionStateEventInput,
   SessionStateNotice,
 } from "../sessions/session-state-events.kernel.js";
+import type { SessionUpstreamLink } from "../sessions/session-upstream-links.kernel.js";
 import type { TaskRegistryWorkerOperations } from "../tasks/task-registry.worker-contract.js";
 import type { AgentProvenance } from "./agent-provenance.types.js";
 import type { PreparedBackupRunRecord } from "./backup-run-records.kernel.js";
@@ -74,6 +75,7 @@ export type OpenClawStateWorkerOperations = WebPushWorkerOperations &
       input: undefined;
       output: ReturnType<typeof readSqliteDatabaseBloat>;
     };
+    "sessionUpstream.listWatched": { input: undefined; output: SessionUpstreamLink[] };
     "backup.recordOutcome": { input: PreparedBackupRunRecord; output: void };
     "projects.findRoot": { input: { repoRoot: string }; output: string | undefined };
     "projects.list": { input: undefined; output: ProjectRegistryRecord[] };

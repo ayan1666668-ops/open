@@ -63,6 +63,7 @@ import {
   pruneSessionStateEventsInDatabase,
   recordSessionStateEventInDatabase,
 } from "../sessions/session-state-events.kernel.js";
+import { listWatchedSessionUpstreamLinksInDatabase } from "../sessions/session-upstream-links.kernel.js";
 import { isTaskRegistryWorkerCommand } from "../tasks/task-registry.worker-contract.js";
 import { executeTaskRegistryCommand } from "../tasks/task-registry.worker.js";
 import {
@@ -327,6 +328,9 @@ function createSharedStateWorkerBackend(
           path: context.databasePath,
           env: getSqliteWorkerStateContext().environment,
         });
+      }
+      if (command.type === "sessionUpstream.listWatched") {
+        return listWatchedSessionUpstreamLinksInDatabase(database.db);
       }
       if (command.type === "cron.loadMutable") {
         return loadMutableCronStoreInWorker(database, command.input.storeKey);
