@@ -214,6 +214,42 @@ describe("short-term promotion recall anchors", () => {
     expect(applied.appliedCandidates[0]?.snippet).toBe("Moved backups to S3 Glacier.");
   });
 
+  it("scans a large fence-free note in linear time for an unresolved passage", async (workspaceDir) => {
+    await writeDailyMemoryNote(workspaceDir, "2026-04-01", [
+      "intro",
+      "summary",
+      "Moved backups to S3 Glacier.",
+      "Keep cold storage retention at 365 days.",
+    ]);
+    await recordMemoryRecalls(workspaceDir, "glacier", [
+      memoryRecallResult(
+        "memory/2026-04-01.md",
+        3,
+        4,
+        0.94,
+        "Moved backups to S3 Glacier. Keep cold storage retention at 365 days.",
+      ),
+    ]);
+    const fillerLines = Array.from(
+      { length: 4000 },
+      (_, index) => `Unrelated filler line ${index + 1} about daily notes.`,
+    );
+    await writeDailyMemoryNote(workspaceDir, "2026-04-01", fillerLines);
+
+    const startedAt = performance.now();
+    const ranked = await rankAllCandidates(workspaceDir);
+    const applied = await applyAllCandidates(workspaceDir, ranked);
+    const elapsedMs = performance.now() - startedAt;
+
+    // The recorded passage is gone, so every candidate window is compared and
+    // the candidate surfaces as unresolved. Managed-range eligibility must not
+    // rescan the note from the top per window; the ceiling sits far above the
+    // linear cost even on a contended runner, while per-window rescans of a
+    // 4000-line note take an order of magnitude longer.
+    expect(applied.applied).toBe(0);
+    expect(elapsedMs).toBeLessThan(4000);
+  });
+
   it("does not promote replacement text through a comment-only stored anchor", async (workspaceDir) => {
     await writeDailyMemoryNote(workspaceDir, "2026-04-01", [
       "intro",
