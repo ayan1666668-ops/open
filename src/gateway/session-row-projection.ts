@@ -318,6 +318,14 @@ export async function createSessionRowProjection(params: {
         dirty.add(records.identity(row));
         backfill.enqueue(records.identity(row), change);
       }
+    } else if (change.scope === "automation") {
+      // Binding membership changes only this logical row's flag, not its
+      // stored entry, relatives, or transcript backfill. Missing rows stay absent.
+      for (const row of matching({ key: change.sessionKey, agentId: change.agentId })) {
+        if (!change.agentId || row.agentId === change.agentId) {
+          dirty.add(records.identity(row));
+        }
+      }
     } else {
       const query = { ...change, key: change.sessionKey };
       const exact = matching(query);
