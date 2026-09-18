@@ -492,7 +492,19 @@ export async function createSessionRowProjection(params: {
     retainUserProfileCatalog(),
     sessionChanges.subscribe(mark),
     onSessionLifecycleEvent(mark),
-    registerPreparedModelRuntimePublicationListener(() => mark({ all: true, scope: "catalog" })),
+    registerPreparedModelRuntimePublicationListener((event) => {
+      // An incomplete catalog read still needs the next publication to recover its rows.
+      if (
+        (event.phase === "catalog-published" || event.phase === "catalog-failed") &&
+        event.modelFactsChanged === false &&
+        modelCatalog !== undefined &&
+        (!(modelCatalog instanceof Map) ||
+          [...modelCatalog.values()].every((catalog) => catalog !== undefined))
+      ) {
+        return;
+      }
+      mark({ all: true, scope: "catalog" });
+    }),
     onSessionIdentityMutation((mutation) => {
       for (const key of mutation.previous.sessionKeys) {
         for (const row of matching({ key, agentId: mutation.agentId })) {
