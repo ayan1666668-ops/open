@@ -59,7 +59,7 @@ function resolveRestartOptions(cmdOpts: DaemonLifecycleOptions, command?: Comman
   return {
     ...cmdOpts,
     force,
-    safe: Boolean(cmdOpts.safe || safeFromGateway),
+    safe: cmdOpts.safe || safeFromGateway,
   };
 }
 
