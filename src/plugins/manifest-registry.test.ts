@@ -916,48 +916,58 @@ describe("loadPluginManifestRegistry", () => {
     expect(warning?.message).toContain(path.join(configDir, "index.ts"));
   });
 
-  it("deduplicates compatibility diagnostics when a config plugin replaces a global candidate", () => {
-    const globalDir = makeTempDir();
-    const configDir = makeTempDir();
-    const manifest = {
-      id: "external-chat",
-      channels: ["external-chat"],
-      configSchema: { type: "object" },
-    };
-    writeManifest(globalDir, manifest);
-    writeManifest(configDir, manifest);
+  it.each([false, true])(
+    "reports only selected plugin compatibility diagnostics (channel configs: %s)",
+    (hasChannelConfigs) => {
+      const globalDir = makeTempDir();
+      const configDir = makeTempDir();
+      const manifest = {
+        id: "external-chat",
+        channels: ["external-chat"],
+        configSchema: { type: "object" },
+      };
+      writeManifest(globalDir, manifest);
+      writeManifest(configDir, {
+        ...manifest,
+        ...(hasChannelConfigs
+          ? { channelConfigs: { "external-chat": { schema: { type: "object" } } } }
+          : {}),
+      });
 
-    const registry = loadPluginManifestRegistryCore({
-      candidates: [
-        createPluginCandidate({
-          idHint: "external-chat",
-          rootDir: globalDir,
-          origin: "global",
-        }),
-        createPluginCandidate({
-          idHint: "external-chat",
-          rootDir: configDir,
-          origin: "config",
-        }),
-      ],
-      diagnostics: [globalDir, configDir, globalDir].map((source) => ({
-        level: "warn" as const,
-        pluginId: "external-chat",
-        source,
-        message: "extension entry unreadable (I/O error): ./index.js",
-      })),
-    });
+      const registry = loadPluginManifestRegistryCore({
+        candidates: [
+          createPluginCandidate({
+            idHint: "external-chat",
+            rootDir: globalDir,
+            origin: "global",
+          }),
+          createPluginCandidate({
+            idHint: "external-chat",
+            rootDir: configDir,
+            origin: "config",
+          }),
+        ],
+        diagnostics: [globalDir, configDir, globalDir].map((source) => ({
+          level: "warn" as const,
+          pluginId: "external-chat",
+          source,
+          message: "extension entry unreadable (I/O error): ./index.js",
+        })),
+      });
 
-    expect(
-      registry.diagnostics
-        .filter((diagnostic) => diagnostic.message.includes("extension entry unreadable"))
-        .map((diagnostic) => diagnostic.source),
-    ).toEqual([globalDir, configDir]);
-    const channelConfigWarnings = registry.diagnostics.filter((diagnostic) =>
-      diagnostic.message.includes("without channelConfigs metadata"),
-    );
-    expect(channelConfigWarnings).toHaveLength(1);
-  });
+      expect(registry.plugins.map((plugin) => plugin.rootDir)).toEqual([configDir]);
+      expect(
+        registry.diagnostics
+          .filter((diagnostic) => diagnostic.message.includes("extension entry unreadable"))
+          .map((diagnostic) => diagnostic.source),
+      ).toEqual([globalDir, configDir]);
+      expect(
+        registry.diagnostics
+          .filter((diagnostic) => diagnostic.message.includes("without channelConfigs metadata"))
+          .map((diagnostic) => diagnostic.source),
+      ).toEqual(hasChannelConfigs ? [] : [path.join(configDir, "openclaw.plugin.json")]);
+    },
+  );
 
   it("suppresses missing channel config diagnostics for inactive external channel plugins", () => {
     const dir = makeTempDir();
