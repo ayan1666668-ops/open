@@ -314,15 +314,27 @@ try {
   retain("baseline.swift", source);
   retain("candidate.swift", owner);
 
-  const tool = async (name, args) =>
-    fs.realpathSync((await command(name, "/usr/bin/xcrun", args)).toString().trim());
-  const sdk = await tool("sdk-path", ["--sdk", "macosx", "--show-sdk-path"]);
-  const clang = await tool("clang-path", ["--sdk", "macosx", "--find", "clang"]);
-  const swiftc = await tool("swiftc-path", ["--sdk", "macosx", "--find", "swiftc"]);
-  for (const resolved of [sdk, clang, swiftc]) {
-    assert(!resolved.startsWith(repo + "/") && !resolved.startsWith(namespace + "/"));
-  }
-  result.tools = { sdk, clang, swiftc, node: process.version };
+  const tool = async (name, args) => {
+    const invocation = (await command(name, "/usr/bin/xcrun", args)).toString().trim();
+    assert(path.isAbsolute(invocation), `${name} must be absolute`);
+    const canonical = fs.realpathSync(invocation);
+    for (const resolved of [invocation, canonical]) {
+      assert(!resolved.startsWith(repo + "/") && !resolved.startsWith(namespace + "/"));
+    }
+    return { invocation, canonical };
+  };
+  const sdkPath = await tool("sdk-path", ["--sdk", "macosx", "--show-sdk-path"]);
+  const clangPath = await tool("clang-path", ["--sdk", "macosx", "--find", "clang"]);
+  const swiftcPath = await tool("swiftc-path", ["--sdk", "macosx", "--find", "swiftc"]);
+  const sdk = sdkPath.canonical;
+  // Preserve the driver name: resolving swiftc can select swift-frontend instead.
+  const clang = clangPath.invocation;
+  const swiftc = swiftcPath.invocation;
+  result.tools = {
+    sdk, clang, swiftc,
+    canonical: { sdk: sdkPath.canonical, clang: clangPath.canonical, swiftc: swiftcPath.canonical },
+    node: process.version,
+  };
   await command("clang-version", clang, ["--version"]);
   await command("swift-version", swiftc, ["--version"]);
   const header = fs.readFileSync(path.join(
