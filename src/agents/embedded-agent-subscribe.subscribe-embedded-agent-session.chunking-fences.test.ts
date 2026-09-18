@@ -3,7 +3,10 @@ import { describe, expect, it, vi } from "vitest";
 import { createBlockReplyPipeline } from "../auto-reply/reply/block-reply-pipeline.js";
 import {
   createParagraphChunkedBlockReplyHarness,
+  createTextEndBlockReplyHarness,
+  emitAssistantTextDelta,
   emitAssistantTextDeltaAndEnd,
+  emitAssistantTextEnd,
   expectFencedChunks,
   extractTextPayloads,
 } from "./embedded-agent-subscribe.e2e-harness.js";
@@ -60,6 +63,49 @@ describe("paragraph and whole-fence chunking", () => {
 });
 
 describe("oversized fenced block chunking", () => {
+  it.each([
+    {
+      name: "a long fence",
+      text: `\`\`\`txt\n${"code\n\n".repeat(600)}\`\`\`\n\nAfter`,
+      expectedContent: `${"code".repeat(600)}After`,
+    },
+    {
+      name: "two fences before hidden reasoning",
+      text: "```txt\n<final>literal</final>\n```\n\n```txt\nsecond\n```\n\n<think>private</think>After",
+      expectedContent: "<final>literal</final>secondAfter",
+    },
+  ])("preserves fenced code and final prose when streaming $name", ({ text, expectedContent }) => {
+    const onBlockReply = vi.fn();
+    const { emit, subscription } = createTextEndBlockReplyHarness({
+      onBlockReply,
+      blockReplyChunking: {
+        minChars: 1,
+        maxChars: 1_200,
+        breakPreference: "newline",
+        flushOnParagraph: true,
+      },
+    });
+    try {
+      emitAssistantTextDelta({ emit, delta: text });
+      expect(onBlockReply.mock.calls.length).toBeGreaterThan(1);
+      emitAssistantTextEnd({ emit, content: text });
+      const chunks = extractTextPayloads(onBlockReply.mock.calls);
+      expect(chunks.at(-1)).toBe("After");
+      expect(chunks.every((chunk) => chunk.length <= 1_200)).toBe(true);
+      for (const chunk of chunks.slice(0, -1)) {
+        expect(chunk.startsWith("```txt\n")).toBe(true);
+        expect(chunk.trimEnd().endsWith("```")).toBe(true);
+      }
+      const rendered = chunks
+        .flatMap((chunk) => chunk.split("\n").filter((line) => !line.startsWith("```")))
+        .join("")
+        .replace(/\s/g, "");
+      expect(rendered).toBe(expectedContent);
+    } finally {
+      subscription.unsubscribe();
+    }
+  });
+
   it("acknowledges the original fenced answer after delivering its wrapped chunks", async () => {
     const delivered: string[] = [];
     const pipeline = createBlockReplyPipeline({

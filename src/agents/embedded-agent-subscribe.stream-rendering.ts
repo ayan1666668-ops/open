@@ -149,7 +149,10 @@ export function createStreamRendering({
     }
 
     const inlineStateStart = stateLocal.inlineCode ?? createInlineCodeState();
-    const fenceStateStart = stateLocal.fence;
+    // Completed output chunks each begin at a new Markdown message boundary.
+    const fenceStateStart = options?.completeMarkdownChunk
+      ? { ...stateLocal.fence, atLineStart: true }
+      : stateLocal.fence;
     const initialCodeSpans = buildCodeSpanIndex(fenceInput, inlineStateStart, fenceStateStart);
     const { text: scanText, pendingTagFragment } = options?.final
       ? { text: fenceInput, pendingTagFragment: undefined }
