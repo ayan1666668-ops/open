@@ -18,7 +18,6 @@ import { createDeferredEmbeddedRunLifecycleManager } from "../../agents/embedded
 import type { FastModeAutoProgressState } from "../../agents/fast-mode.js";
 import { runAgentHarnessBeforeMessageWriteHook } from "../../agents/harness/hook-helpers.js";
 import { findModelInCatalog, modelSupportsInput } from "../../agents/model-catalog-lookup.js";
-import type { ModelCatalogEntry } from "../../agents/model-catalog.types.js";
 import { resolveCliRuntimeExecutionProvider } from "../../agents/model-runtime-aliases.js";
 import { resolveConfiguredThinkingDefault } from "../../agents/model-thinking-default.js";
 import { rootedAgentRunParams } from "../../agents/rooted-run-params.js";
@@ -26,24 +25,16 @@ import { resolveScheduledToolPolicyContext } from "../../agents/scheduled-tool-p
 import { withLocalSessionPlacementTurnSettlement } from "../../agents/session-placement-admission.js";
 import { resolveSessionRuntimeOverrideForProvider } from "../../agents/session-runtime-compat.js";
 import { needsThinkHydration } from "../../agents/thinking-runtime.js";
-import {
-  resolveAgentLifecycleTerminalMetadata,
-  type AgentLifecycleTerminalBackstop,
-} from "../../auto-reply/reply/agent-lifecycle-terminal.js";
-import type { ThinkLevel, VerboseLevel } from "../../auto-reply/thinking.js";
+import { resolveAgentLifecycleTerminalMetadata } from "../../auto-reply/reply/agent-lifecycle-terminal.js";
+import type { VerboseLevel } from "../../auto-reply/thinking.js";
 import type { CliSessionBinding } from "../../config/sessions.js";
-import type { AgentDefaultsConfig } from "../../config/types.agent-defaults.js";
-import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { buildGenericCliContextEngineHostSupport } from "../../context-engine/host-compat.js";
 import { registerCronRunExecSource } from "../../infra/cron-run-exec-source.js";
-import type { SourceDeliveryPlan } from "../../infra/outbound/source-delivery-plan.js";
-import type { InputProvenance } from "../../sessions/input-provenance.js";
 import {
   createUserTurnTranscriptRecorder,
   type UserTurnTranscriptRecorder,
 } from "../../sessions/user-turn-transcript.js";
 import { createLazyImportLoader } from "../../shared/lazy-promise.js";
-import type { SkillSnapshot } from "../../skills/types.js";
 import {
   getGeneratedMediaTaskIdsForSessionKey,
   hasNewGeneratedMediaTaskForSessionKey,
@@ -52,7 +43,7 @@ import { resolveCronJobConfigRevision } from "../config-revision.js";
 import { assertCronExecutionRootRuntime } from "../execution-root-runtime.js";
 import { resolveCronScheduledToolPolicy } from "../scheduled-tool-policy.js";
 import { resolveCronAuthenticatedChannelRequester } from "../tools-allow-provenance.js";
-import type { CronAgentExecutionPhaseUpdate, CronJob, CronStoredJob } from "../types.js";
+import type { CronAgentExecutionPhaseUpdate, CronJob } from "../types.js";
 import {
   resolveCronChannelOutputPolicy,
   resolveCurrentChannelTarget,
@@ -80,28 +71,22 @@ import {
 } from "./run-execution.runtime.js";
 import { resolveCronFallbacksOverride } from "./run-fallback-policy.js";
 import {
-  type CronLiveSelection,
-  type MutableCronSession,
-  type PersistCronSessionEntry,
-  type CronRunContinuationSession,
   setCronSessionAgentHarnessId,
   setCronSessionRuntimeModel,
   syncCronSessionLiveSelection,
 } from "./run-session-state.js";
 import { resolveEffectiveAgentRuntime, resolveThinkingSelection } from "./run.runtime.js";
+import type {
+  AgentTurnPayload,
+  CronCompletedPromptRun,
+  CronExecutionResult,
+  CronRunExecutionParams,
+  CronRunnerStartedInfo,
+} from "./run.types.js";
 import { isLikelyInterimCronMessage } from "./subagent-followup-hints.js";
 
-type AgentTurnPayload = Extract<CronJob["payload"], { kind: "agentTurn" }> | null;
-
-type CronPromptRunResult = Awaited<ReturnType<typeof runCliAgent>>;
 type CronEmbeddedRuntime = typeof import("./run-embedded.runtime.js");
 type CronSubagentRegistryRuntime = typeof import("./run-subagent-registry.runtime.js");
-type CronRunnerStartedInfo = {
-  lifecycleGeneration?: string;
-  isFallback?: boolean;
-  provider?: string;
-  model?: string;
-};
 
 const cronEmbeddedRuntimeLoader = createLazyImportLoader<CronEmbeddedRuntime>(
   () => import("./run-embedded.runtime.js"),
@@ -160,81 +145,6 @@ function resolveCronBootstrapContextMode(
   }
   return isCommandStyleCronMessage(payload?.message ?? "") ? "lightweight" : undefined;
 }
-
-export type CronCompletedPromptRun = {
-  runResult: CronPromptRunResult;
-  fallbackProvider: string;
-  fallbackModel: string;
-  runStartedAt: number;
-  runEndedAt: number;
-};
-
-/** Result envelope returned after an isolated cron prompt completes. */
-export type CronExecutionResult = CronCompletedPromptRun & {
-  completedPromptRuns: readonly CronCompletedPromptRun[];
-};
-
-type CronRunExecutionParams = {
-  runId: string;
-  cfg: OpenClawConfig;
-  cfgWithAgentDefaults: OpenClawConfig;
-  job: CronStoredJob;
-  agentId: string;
-  agentDir: string;
-  agentSessionKey: string;
-  runSessionKey: string;
-  usesDetachedRunSession?: boolean;
-  workspaceDir: string;
-  executionRoot?: string;
-  lane?: string;
-  agentVerboseDefault: AgentDefaultsConfig["verboseDefault"];
-  immutableThinkLevel: ThinkLevel | undefined;
-  thinkingCatalog?: ModelCatalogEntry[];
-  loadThinkingCatalog: (
-    provider: string,
-    model: string,
-    agentRuntime: string,
-  ) => Promise<ModelCatalogEntry[]>;
-  timeoutMs: number;
-  /** Set when the cron payload's `timeoutSeconds` was explicitly configured. */
-  runTimeoutOverrideMs?: number;
-  suppressExecNotifyOnExit: boolean;
-  resolvedDelivery: {
-    channel?: string;
-    accountId?: string;
-    to?: string;
-    threadId?: string | number;
-    ok?: boolean;
-  };
-  resolvedDeliveryOk: boolean;
-  deliveryRequested?: boolean;
-  sourceDelivery: SourceDeliveryPlan;
-  skillsSnapshot: SkillSnapshot;
-  agentPayload: AgentTurnPayload;
-  useSubagentFallbacks: boolean;
-  inheritDefaultFallbacksForAgentStringModel?: boolean;
-  modelFallbacksOverride?: string[];
-  liveSelection: CronLiveSelection;
-  cronSession: MutableCronSession;
-  commandBody: string;
-  inputProvenance?: InputProvenance;
-  persistSessionEntry: PersistCronSessionEntry;
-  persistRunContinuationSession?: CronRunContinuationSession["sync"];
-  setRunContinuationCliExecutionProvider?: (provider?: string) => Promise<void>;
-  abortSignal?: AbortSignal;
-  abortReason: () => string;
-  isAborted: () => boolean;
-  lifecycle: Omit<AgentLifecycleTerminalBackstop, "emit">;
-  onExecutionStarted?: (info?: CronRunnerStartedInfo) => void;
-  onExecutionPhase?: (
-    info: Pick<CronAgentExecutionPhaseUpdate, "phase"> &
-      Partial<Omit<CronAgentExecutionPhaseUpdate, "jobId" | "phase">>,
-  ) => void;
-  onLaneWait?: (info?: { waiting?: boolean }) => void;
-  onPromptCompleted?: (runs: readonly CronCompletedPromptRun[]) => void;
-  executionIdentity?: import("../service/state.js").CronExecutionIdentityAdmission;
-  runStartedAt?: number;
-};
 
 /** Creates the model-fallback executor for one isolated cron prompt run. */
 function createCronPromptExecutor(
