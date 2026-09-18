@@ -351,6 +351,9 @@ export function installEmbeddedAttemptContextGuards(input: {
     ...midTurnPrecheckOptions,
   });
 
+  const privacyBlockMedia =
+    attempt.config?.privacy?.enabled === true &&
+    attempt.config.privacy.media?.blockAttachments === true;
   const removeHistoryImagePruneContextTransform = installHistoryImagePruneContextTransform(
     activeSession.agent,
     {
@@ -368,6 +371,7 @@ export function installEmbeddedAttemptContextGuards(input: {
           : undefined,
       onCurrentTurnImageFailure: input.onCurrentTurnImageFailure,
     },
+    privacyBlockMedia ? { blockAllMedia: true } : undefined,
   );
   const previousComputerFrameTransform = activeSession.agent.transformContext;
   activeSession.agent.transformContext = async (messages, signal) => {

@@ -45,6 +45,7 @@ import {
   bindGatewayContextResolver,
   getPluginRuntimeGatewayRequestScope,
 } from "../../plugins/runtime/gateway-request-scope.js";
+import { redactPiiText } from "../../privacy/payload-redact.js";
 import { isInternalMessageChannel } from "../../utils/message-channel.js";
 import {
   clearRecoveredAutoFallbackPrimaryProbeSelection,
@@ -139,6 +140,23 @@ async function executeAgentTurnInternalLoop(
     params.followupRun.run = runnableRun;
   }
   const runtimeConfig = resolveQueuedReplyRuntimeConfig(runnableRun.config);
+
+  // Privacy: redact PII in user messages when enabled.
+  if (runtimeConfig?.privacy?.pii?.userMessages && runtimeConfig.privacy.enabled) {
+    params = {
+      ...params,
+      commandBody: redactPiiText(params.commandBody, runtimeConfig.privacy),
+      ...(params.transcriptCommandBody
+        ? {
+            transcriptCommandBody: redactPiiText(
+              params.transcriptCommandBody,
+              runtimeConfig.privacy,
+            ),
+          }
+        : {}),
+    };
+  }
+
   const effectiveRun =
     runtimeConfig === runnableRun.config
       ? runnableRun

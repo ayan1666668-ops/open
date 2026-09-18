@@ -312,9 +312,14 @@ export function buildCodexRuntimeThreadConfig(
     nativeCodeModeEnabled?: boolean;
     nativeCodeModeOnlyEnabled?: boolean;
     directOnlyToolNamespaces?: readonly string[];
+    privacySuppressContextFiles?: boolean;
+    privacyPiiEnabled?: boolean;
   } = {},
 ): JsonObject {
-  const configured = buildCodexProjectDocThreadConfig(config);
+  const configured = buildCodexProjectDocThreadConfig(config, undefined, {
+    privacySuppressContextFiles: options.privacySuppressContextFiles,
+    privacyPiiEnabled: options.privacyPiiEnabled,
+  });
   // Native goal RPCs remain available through app-server, but the Codex goals
   // feature also starts autonomous turns. Keep it disabled until a run owner exists.
   const codeModeConfig: JsonObject = {
@@ -442,7 +447,19 @@ export function buildCodexRuntimeThreadConfigForRun(
   }).threadConfig;
   const baseConfig = buildCodexRuntimeThreadConfig(
     mergeCodexThreadConfigs(config, webSearchConfig),
-    options,
+    {
+      ...options,
+      privacySuppressContextFiles:
+        params.config?.privacy?.enabled === true &&
+        params.config.privacy.systemPrompt?.suppressContextFiles === true,
+      // Only suppress native docs for PII when system-prompt redaction is
+      // active. Operators who set pii.systemPrompt=false opt out of
+      // system-prompt filtering and should keep their AGENTS.md guidance.
+      privacyPiiEnabled:
+        params.config?.privacy?.enabled === true &&
+        params.config.privacy.pii?.enabled !== false &&
+        params.config.privacy.pii?.systemPrompt !== false,
+    },
   );
   const runtimeConfig =
     mergeCodexThreadConfigs(

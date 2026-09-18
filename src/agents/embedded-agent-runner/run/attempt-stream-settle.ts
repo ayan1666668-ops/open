@@ -12,6 +12,7 @@ import type { AssistantMessage } from "../../../llm/types.js";
 import { getAgentScopedMediaLocalRoots } from "../../../media/local-roots.js";
 import type { ProviderRuntimePluginHandle } from "../../../plugins/provider-hook-runtime.js";
 import { resolveProviderTextTransforms } from "../../../plugins/provider-runtime.js";
+import { redactPiiText } from "../../../privacy/payload-redact.js";
 import type { NestedToolActivity } from "../../../sessions/nested-tool-activity.js";
 import { resolveAdmittedRunActiveAssertion } from "../../admitted-run-context.js";
 import type { AgentRunAttemptFailureSource } from "../../agent-run-terminal-outcome.js";
@@ -505,6 +506,9 @@ export async function prepareEmbeddedAttemptTransport(input: {
               input.sandbox?.enabled && input.sandbox.fsBridge
                 ? { root: input.sandbox.workspaceDir, bridge: input.sandbox.fsBridge }
                 : undefined,
+            blockAllMedia:
+              attempt.config?.privacy?.enabled === true &&
+              attempt.config.privacy.media?.blockAttachments === true,
           });
           assertRunCurrent?.();
           return prepared;
@@ -530,6 +534,82 @@ export async function prepareEmbeddedAttemptTransport(input: {
     assertCurrent: assertRunCurrent,
   });
   session.agent.streamFn = streamFn;
+  // Privacy: wrap the *selected* stream (not just the provider stream) so
+  // all transports get privacy filtering — user message PII redaction and
+  // media blocking apply regardless of which stream was chosen.
+  const privacyCfg = attempt.config?.privacy;
+  if (privacyCfg?.enabled) {
+    const redactUserMessages =
+      privacyCfg.pii?.enabled !== false && privacyCfg.pii?.userMessages === true;
+    const blockMedia = privacyCfg.media?.blockAttachments === true;
+    if (redactUserMessages || blockMedia) {
+      const mediaFactsSymbol = Symbol.for("openclaw.runtimePromptMediaFacts");
+      const selectedStreamFn = session.agent.streamFn;
+      session.agent.streamFn = wrapStreamFnWithMessageTransform(selectedStreamFn, (messages) =>
+        messages.map((msg) => {
+          let result = msg;
+          const content = (msg as { content?: unknown }).content;
+
+          // Media blocking: strip image blocks from all messages.
+          if (blockMedia && Array.isArray(content)) {
+            const filtered = content.filter(
+              (block: unknown) =>
+                !(
+                  block &&
+                  typeof block === "object" &&
+                  (block as { type?: string }).type === "image"
+                ),
+            );
+            if (filtered.length !== content.length) {
+              result = { ...result, content: filtered } as typeof msg;
+            }
+          }
+
+          // PII redaction: redact user message text.
+          if (redactUserMessages && result.role === "user") {
+            const userContent = (result as { content?: unknown }).content;
+            if (typeof userContent === "string") {
+              const redacted = redactPiiText(userContent, privacyCfg);
+              if (redacted !== userContent) {
+                result = { ...result, content: redacted } as typeof msg;
+              }
+            } else if (Array.isArray(userContent)) {
+              let changed = false;
+              const redactedContent = userContent.map((block: unknown) => {
+                if (
+                  block &&
+                  typeof block === "object" &&
+                  (block as { type?: string }).type === "text" &&
+                  typeof (block as { text?: unknown }).text === "string"
+                ) {
+                  const text = (block as { text: string }).text;
+                  const redacted = redactPiiText(text, privacyCfg);
+                  if (redacted !== text) {
+                    changed = true;
+                    return { ...block, text: redacted };
+                  }
+                }
+                return block;
+              }) as typeof userContent;
+              if (changed) {
+                result = { ...result, content: redactedContent } as typeof msg;
+              }
+            }
+          }
+
+          // Preserve non-enumerable runtime media facts symbol on cloned messages.
+          if (result !== msg && mediaFactsSymbol in msg) {
+            Object.defineProperty(result, mediaFactsSymbol, {
+              configurable: true,
+              value: (msg as Record<PropertyKey, unknown>)[mediaFactsSymbol],
+            });
+          }
+
+          return result;
+        }),
+      );
+    }
+  }
   // Install inside provider/config wrappers so their full onPayload chain runs
   // before admission hashes the request body that the built-in transport sends.
   session.agent.streamFn = wrapStreamFnWithProviderPromptState({

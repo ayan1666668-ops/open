@@ -10,6 +10,7 @@ import {
   finishCapabilityOperation,
 } from "../plugins/capability-provider-acquisition.js";
 import type { SpeechProviderPlugin } from "../plugins/types.js";
+import { redactPiiText } from "../privacy/payload-redact.js";
 import {
   createSpeechProviderRegistry,
   normalizeSpeechProviderId,
@@ -443,6 +444,13 @@ export async function executeTtsProviderAttempts<TSynthesis, TResult>(params: {
   buildSuccess: (params: TtsProviderSuccess<TSynthesis>) => TResult;
 }): Promise<TResult | ReturnType<typeof buildTtsFailureResult>> {
   const { cfg, config, persona, providers } = params;
+  // Privacy: redact PII at the shared speech boundary so all entrypoints
+  // (buffered, streaming, telephony) are covered before provider dispatch.
+  const ttsPrivacy = cfg.privacy;
+  const synthesisText =
+    ttsPrivacy?.enabled && ttsPrivacy.pii?.enabled !== false
+      ? redactPiiText(params.synthesisText, ttsPrivacy)
+      : params.synthesisText;
   const errors: string[] = [];
   const attemptedProviders: string[] = [];
   const attempts: TtsProviderAttempt[] = [];
@@ -510,7 +518,7 @@ export async function executeTtsProviderAttempts<TSynthesis, TResult>(params: {
       });
       const prepared = await prepareSpeechSynthesis({
         provider: resolvedProvider.provider,
-        text: params.synthesisText,
+        text: synthesisText,
         cfg,
         providerConfig: resolvedProvider.providerConfig,
         providerOverrides: params.providerOverrides?.[resolvedProvider.provider.id],

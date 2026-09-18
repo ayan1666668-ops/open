@@ -498,9 +498,26 @@ export async function prepareAndDispatchEmbeddedRunAttempt(input: {
       ...selection,
       path: remapSkillReferencePaths(selection.path, skillReferencePaths),
     })),
-    images: promptMedia.images,
-    imageOrder: promptMedia.imageOrder,
-    media: promptMedia.media,
+    images: (() => {
+      if (params.config?.privacy?.enabled && params.config.privacy.media?.blockAttachments) {
+        const count = (promptMedia.images?.length ?? 0) + (promptMedia.media?.length ?? 0);
+        if (count > 0 && params.config.privacy.media.warnOnBlock !== false) {
+          process.stderr.write(
+            `[privacy] blocked ${count} media attachment(s) due to media.blockAttachments policy\n`,
+          );
+        }
+        return undefined;
+      }
+      return promptMedia.images;
+    })(),
+    imageOrder:
+      params.config?.privacy?.enabled && params.config.privacy.media?.blockAttachments
+        ? undefined
+        : promptMedia.imageOrder,
+    media:
+      params.config?.privacy?.enabled && params.config.privacy.media?.blockAttachments
+        ? undefined
+        : promptMedia.media,
     clientTools: params.clientTools,
     disableTools: params.disableTools,
     provider,

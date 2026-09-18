@@ -111,6 +111,7 @@
   "plugin-test-contracts",
   "plugin-test-runtime",
   "poll-runtime",
+  "privacy-runtime",
   "process-runtime",
   "provider-auth-aliases",
   "provider-auth-api-key",

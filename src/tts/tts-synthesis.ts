@@ -230,6 +230,8 @@ export async function synthesizeTalkSpeech(
   return synthesizeSpeechInternal(params);
 }
 
+// Privacy: PII redaction is applied at the shared executeTtsProviderAttempts
+// boundary so all speech entrypoints (buffered, streaming, telephony) are covered.
 async function synthesizeSpeechInternal(
   params: SpeechSynthesisParams,
 ): Promise<TtsSynthesisResult> {

@@ -30,6 +30,7 @@ import {
   runOutsidePluginRuntimeGenerationScope,
   withPluginRuntimeGenerationScope,
 } from "../../plugins/runtime/generation-scope.js";
+import { redactPiiText } from "../../privacy/payload-redact.js";
 import {
   AsyncWorkScope,
   captureAsyncWorkTracker,
@@ -117,6 +118,14 @@ export function runEmbeddedAgent(
   const lifecycleGeneration =
     internalParamsInput.lifecycleGeneration ??
     captureAgentRunLifecycleGeneration(internalParamsInput.runId);
+  // Privacy: redact PII in user messages at the embedded runner boundary
+  // so all callers (auto-reply, direct CLI, subagent) are covered.
+  const effectivePrompt =
+    config?.privacy?.enabled &&
+    config.privacy.pii?.enabled !== false &&
+    config.privacy.pii?.userMessages === true
+      ? redactPiiText(internalParamsInput.prompt, config.privacy)
+      : internalParamsInput.prompt;
   // Isolated probes acquire their own read-only runtime snapshot. Carrying the caller's
   // ambient generation makes the admission guard reject that independent snapshot.
   const pluginGeneration =
@@ -127,6 +136,7 @@ export function runEmbeddedAgent(
   return withAgentRunLifecycleGeneration(lifecycleGeneration, () =>
     runEmbeddedAgentInternal({
       ...internalParamsInput,
+      prompt: effectivePrompt,
       config,
       lifecycleGeneration,
       ...(pluginGeneration ? { pluginGeneration } : {}),

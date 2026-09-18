@@ -6,12 +6,25 @@ const CODEX_NATIVE_PROJECT_DOC_MAX_BYTES = 128 * 1024;
 export function buildCodexProjectDocThreadConfig(
   config?: JsonObject,
   effectiveNativeConfig?: CodexConfigReadResponse,
+  options?: {
+    /** Suppress native project doc when context files are suppressed. */
+    privacySuppressContextFiles?: boolean;
+    /** Suppress native project doc when system-prompt PII redaction is active
+     *  (native Codex reads AGENTS.md directly and cannot apply PII filtering). */
+    privacyPiiEnabled?: boolean;
+  },
 ): JsonObject {
   const authoredMaxBytes = resolveCodexNativeProjectDocMaxBytes(effectiveNativeConfig);
   const defaults: JsonObject = {
     project_doc_max_bytes: authoredMaxBytes ?? CODEX_NATIVE_PROJECT_DOC_MAX_BYTES,
   };
-  return mergeCodexThreadConfigs(defaults, config) ?? defaults;
+  const merged = mergeCodexThreadConfigs(defaults, config) ?? defaults;
+  // Privacy: enforce zero budget AFTER config merge so explicit thread
+  // config overrides cannot defeat the suppression policy.
+  if (options?.privacySuppressContextFiles || options?.privacyPiiEnabled) {
+    return { ...merged, project_doc_max_bytes: 0 };
+  }
+  return merged;
 }
 
 function resolveCodexNativeProjectDocMaxBytes(

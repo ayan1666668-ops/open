@@ -13,6 +13,7 @@ import {
 import { compareValidSemver } from "../../infra/semver.js";
 import { getAgentScopedMediaLocalRoots } from "../../media/local-roots.js";
 import type { CliBackendThinkingLevel } from "../../plugins/cli-backend.types.js";
+import { redactPiiText } from "../../privacy/payload-redact.js";
 import { applySkillEnvOverridesFromSnapshot } from "../../skills/runtime/env-overrides.js";
 import {
   fingerprintCliRuntimeArtifact,
@@ -176,9 +177,18 @@ export async function executePreparedCliRun(
       : undefined;
   const nodeSystemPrompt = nodePlacement && shouldSendSystemPrompt ? systemPromptArg : undefined;
 
-  const basePrompt = cliSessionIdToUse
-    ? params.prompt
-    : (context.openClawHistoryPrompt ?? params.prompt);
+  // Privacy: redact PII in the history prompt when user-message redaction
+  // is enabled, so reseeded historical text doesn't leak to the provider.
+  const effectiveHistoryPrompt = (() => {
+    const raw = context.openClawHistoryPrompt;
+    if (!raw) return undefined;
+    const p = params.config?.privacy;
+    if (p?.enabled && p.pii?.enabled !== false && p.pii?.userMessages === true) {
+      return redactPiiText(raw, p);
+    }
+    return raw;
+  })();
+  const basePrompt = cliSessionIdToUse ? params.prompt : (effectiveHistoryPrompt ?? params.prompt);
   let prompt =
     params.controlOperation !== undefined
       ? basePrompt
@@ -213,23 +223,30 @@ export async function executePreparedCliRun(
   ) {
     throw new Error("paired-node Claude CLI sessions do not support attachments or images");
   }
+  // Privacy: skip image hydration entirely when blockAttachments is enabled.
+  // Clearing individual params is insufficient because prepareCliPromptImagePayload
+  // falls back to scanning the prompt text for image references.
+  const privacyBlockMedia =
+    params.config?.privacy?.enabled === true &&
+    params.config.privacy.media?.blockAttachments === true;
   const imageTurnEntryId = isClaudeCliBackendId(context.backendResolved.id)
     ? params.userTurnTranscriptRecorder?.getAdmissionReceipt()?.entryId
     : undefined;
-  const imagePayload = nodePlacement
-    ? { prompt, imagePaths: [] as string[], cleanupImages: async () => {} }
-    : await prepareCliPromptImagePayload({
-        backend,
-        prompt,
-        imagePrompt: params.imagePrompt,
-        workspaceDir: context.workspaceDir,
-        localRoots: getAgentScopedMediaLocalRoots(params.config ?? {}, params.agentId),
-        images: params.images,
-        imageOrder: params.imageOrder,
-        mediaImageLayout: params.mediaImageLayout,
-        media: params.media,
-        ...(imageTurnEntryId ? { imageTurnKey: hashCliImageTurnEntryId(imageTurnEntryId) } : {}),
-      });
+  const imagePayload =
+    nodePlacement || privacyBlockMedia
+      ? { prompt, imagePaths: [] as string[], cleanupImages: async () => {} }
+      : await prepareCliPromptImagePayload({
+          backend,
+          prompt,
+          imagePrompt: params.imagePrompt,
+          workspaceDir: context.workspaceDir,
+          localRoots: getAgentScopedMediaLocalRoots(params.config ?? {}, params.agentId),
+          images: params.images,
+          imageOrder: params.imageOrder,
+          mediaImageLayout: params.mediaImageLayout,
+          media: params.media,
+          ...(imageTurnEntryId ? { imageTurnKey: hashCliImageTurnEntryId(imageTurnEntryId) } : {}),
+        });
   prompt = imagePayload.prompt;
   const promptInputBackend =
     params.controlOperation === "compact" && context.backendResolved.manualCompaction

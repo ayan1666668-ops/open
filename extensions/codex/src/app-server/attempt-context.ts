@@ -21,6 +21,7 @@ import {
   prepareMemorySystemPromptAddition,
 } from "openclaw/plugin-sdk/core";
 import { MESSAGE_TOOL_DELIVERY_HINTS } from "openclaw/plugin-sdk/message-tool-delivery-hints";
+import { redactContextFileContent } from "openclaw/plugin-sdk/privacy-runtime";
 import type {
   SessionTranscriptTargetParams,
   TranscriptTurnAdmission,
@@ -293,29 +294,48 @@ export async function buildCodexWorkspaceBootstrapContext(params: {
     const turnScopedDeveloperInstructionFiles = injectOpenClawContext
       ? selectCodexWorkspaceTurnScopedDeveloperInstructionFiles(contextFiles)
       : [];
+
+    // Privacy: redact PII from context file contents before rendering into
+    // Codex instructions. Suppression also applies — empty content signals
+    // the file should be skipped entirely.
+    const privacyConfig = params.params.config?.privacy;
+    const applyPrivacy = <T extends { path: string; content: string }>(files: T[]): T[] => {
+      if (!privacyConfig?.enabled) return files;
+      return files
+        .map((file) => ({
+          ...file,
+          content: redactContextFileContent(file.path, file.content, privacyConfig),
+        }))
+        .filter((file) => file.content !== "" || !privacyConfig.systemPrompt?.suppressContextFiles);
+    };
+    const redactedPromptContextFiles = applyPrivacy(promptContextFiles);
+    const redactedThreadDevInstructionFiles = applyPrivacy(threadDeveloperInstructionFiles);
+    const redactedTurnScopedDevInstructionFiles = applyPrivacy(turnScopedDeveloperInstructionFiles);
+    const redactedMemoryReferenceFiles = applyPrivacy(memoryReferenceFiles);
+
     return {
       bootstrapFiles,
       contextFiles,
       inheritsAgentWorkspace,
-      promptContextFiles,
-      threadDeveloperInstructionFiles,
-      turnScopedDeveloperInstructionFiles,
-      memoryReferenceFiles,
+      promptContextFiles: redactedPromptContextFiles,
+      threadDeveloperInstructionFiles: redactedThreadDevInstructionFiles,
+      turnScopedDeveloperInstructionFiles: redactedTurnScopedDevInstructionFiles,
+      memoryReferenceFiles: redactedMemoryReferenceFiles,
       memoryToolRoutedBootstrapFiles,
       memoryToolNames: [...params.memoryToolNames],
       memoryToolRouted: memoryToolsAvailable,
-      promptContext: renderCodexWorkspaceBootstrapPromptContext(promptContextFiles),
+      promptContext: renderCodexWorkspaceBootstrapPromptContext(redactedPromptContextFiles),
       threadDeveloperInstructions: renderCodexWorkspaceDeveloperInstructions({
-        files: threadDeveloperInstructionFiles,
+        files: redactedThreadDevInstructionFiles,
         header: "## OpenClaw Agent Workspace Instructions",
         preamble: "OpenClaw loaded this bounded snapshot from the configured agent workspace.",
       }),
       turnScopedDeveloperInstructions: renderCodexWorkspaceCollaborationDeveloperInstructions(
-        turnScopedDeveloperInstructionFiles,
+        redactedTurnScopedDevInstructionFiles,
       ),
       memoryCollaborationInstructions: shouldInjectCodexOpenClawPromptContext(params.params)
         ? await renderCodexWorkspaceMemoryCollaborationInstructions({
-            files: memoryReferenceFiles,
+            files: redactedMemoryReferenceFiles,
             toolNames: params.memoryToolNames,
             memoryToolRouted: memoryToolsAvailable,
             citationsMode: params.params.config?.memory?.citations,

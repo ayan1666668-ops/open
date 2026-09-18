@@ -37,6 +37,8 @@ import {
   type PreparedMemoryPromptSection,
 } from "../plugins/memory-state.js";
 import type { AgentPromptSurfaceKind } from "../plugins/types.js";
+import { applyRuntimeLineMasking, redactContextFileContent } from "../privacy/payload-redact.js";
+import type { PrivacyConfig } from "../privacy/types.js";
 import { parseCronRunScopeSuffix } from "../sessions/session-key-utils.js";
 import { listDeliverableMessageChannels } from "../utils/message-channel.js";
 import { truncateUtf8Prefix } from "../utils/utf8-truncate.js";
@@ -208,7 +210,10 @@ function prepareContextFilesForPrompt(contextFiles: EmbeddedContextFile[]) {
   );
 }
 
-function buildProjectContextSection(files: ReturnType<typeof prepareContextFilesForPrompt>) {
+function buildProjectContextSection(
+  files: ReturnType<typeof prepareContextFilesForPrompt>,
+  privacyConfig?: PrivacyConfig,
+) {
   if (files.length === 0) {
     return [];
   }
@@ -232,7 +237,11 @@ function buildProjectContextSection(files: ReturnType<typeof prepareContextFiles
   }
   lines.push("");
   for (const { file } of files) {
-    lines.push(`## ${file.path}`, "", sanitizeContextFileContentForPrompt(file.content), "");
+    const content = redactContextFileContent(file.path, file.content, privacyConfig);
+    if (!content) {
+      continue;
+    }
+    lines.push(`## ${file.path}`, "", sanitizeContextFileContentForPrompt(content), "");
   }
   return lines;
 }
@@ -734,6 +743,8 @@ export function buildAgentSystemPrompt(params: {
   /** Prepared repository identities used to filter curated raw context fail-closed. */
   activeProjectKeys?: readonly string[];
   promptContribution?: ProviderSystemPromptContribution;
+  /** Privacy config for PII redaction, runtime line masking, and context file filtering. */
+  privacyConfig?: PrivacyConfig;
 }) {
   const promptMode = params.promptMode ?? "full";
   const runtimeInfo = params.runtimeInfo;
@@ -1081,6 +1092,17 @@ export function buildAgentSystemPrompt(params: {
     memorySection,
     acpEnabled,
     stableContextFiles: contextFiles,
+    // Privacy config affects redaction/masking of context files and runtime
+    // line, so toggling it must invalidate the cached stable prefix.
+    privacyEnabled: params.privacyConfig?.enabled,
+    privacyPiiEnabled: params.privacyConfig?.pii?.enabled,
+    privacyPiiSystemPrompt: params.privacyConfig?.pii?.systemPrompt,
+    privacyPiiCategories: params.privacyConfig?.pii?.categories,
+    privacySuppressContextFiles: params.privacyConfig?.systemPrompt?.suppressContextFiles,
+    privacyMaskHostname: params.privacyConfig?.systemPrompt?.maskHostname,
+    privacyMaskOs: params.privacyConfig?.systemPrompt?.maskOs,
+    privacyMaskShell: params.privacyConfig?.systemPrompt?.maskShell,
+    privacyMaskRepoPath: params.privacyConfig?.systemPrompt?.maskRepoPath,
   });
   const stablePrefix = cacheStablePromptPrefix(stablePrefixCacheKey, () => {
     const lines = [
@@ -1311,7 +1333,7 @@ export function buildAgentSystemPrompt(params: {
       lines.push("## Reasoning Format", reasoningHint, "");
     }
 
-    lines.push(...buildProjectContextSection(preparedContextFiles));
+    lines.push(...buildProjectContextSection(preparedContextFiles, params.privacyConfig));
 
     lines.push(SYSTEM_PROMPT_CACHE_BOUNDARY);
     return lines.filter(Boolean).join("\n");
@@ -1461,7 +1483,7 @@ export function buildAgentSystemPrompt(params: {
     // Only Runtime facts may move behind tools. Close the region before callers
     // append hook instructions or permission notices that must retain their role.
     SYSTEM_PROMPT_RELOCATABLE_BOUNDARY,
-    `${buildRuntimeLine(runtimeInfo, runtimeChannel, runtimeCapabilities)}${SYSTEM_PROMPT_RELOCATABLE_BOUNDARY_END}`,
+    `${applyRuntimeLineMasking(buildRuntimeLine(runtimeInfo, runtimeChannel, runtimeCapabilities), params.privacyConfig)}${SYSTEM_PROMPT_RELOCATABLE_BOUNDARY_END}`,
   );
 
   return lines.filter(Boolean).join("\n");

@@ -3157,6 +3157,7 @@
                   },
                   "reference/transcript-hygiene",
                   "reference/memory-config",
+                  "reference/privacy-config",
                   "reference/database-schemas",
                   {
                     "group": "Database schemas",

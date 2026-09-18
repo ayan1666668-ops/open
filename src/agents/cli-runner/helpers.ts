@@ -179,6 +179,7 @@ export function buildCliAgentSystemPrompt(params: {
     userDate,
     contextFiles: params.contextFiles,
     bootstrapMode: params.bootstrapMode,
+    privacyConfig: params.config?.privacy,
     bootstrapTruncationNotice: params.bootstrapTruncationNotice,
   });
 }
