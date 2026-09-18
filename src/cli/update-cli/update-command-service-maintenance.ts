@@ -9,6 +9,7 @@ import {
   ServiceInspectionError,
   findServiceOwnershipRefusal,
 } from "../../daemon/service-inspection-error.js";
+import { resolveManagedServiceNodeRunner } from "../../daemon/service-layout.js";
 import { withGatewayServiceOperationLock } from "../../daemon/service-operation-lock.js";
 import {
   resolveManagedGatewayServiceCommand,
@@ -40,7 +41,6 @@ import {
   inspectManagedGatewayServiceBeforeUpdate,
   observedSystemdManagerUid,
   resolveGatewayServiceManagementBlockMessageForUpdate,
-  resolveManagedServiceNodeRunner,
 } from "./update-command-service-plan.js";
 import { isManagedGatewayServiceOffline } from "./update-command-service-publication.js";
 import {
