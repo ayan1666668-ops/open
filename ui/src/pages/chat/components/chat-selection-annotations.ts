@@ -8,7 +8,7 @@ import "../../../styles/chat/selection-annotations.css";
 
 registerChatMessageMetadataEnglish();
 
-/** The existing transcript owner handles edits from either preview or source marker. */
+/** The persistent comment owner handles edits from either preview or source marker. */
 export function renderChatSelectionAnnotations(props: ChatAttachmentControlsProps) {
   const comments = props.attachments?.filter((attachment) => attachment.selectionAnnotation) ?? [];
   const request = (event: Event, id: string, action: "edit" | "delete") => {
@@ -23,7 +23,7 @@ export function renderChatSelectionAnnotations(props: ChatAttachmentControlsProp
   return comments.length
     ? renderCommentPreviewChip(
         comments.length,
-        html`<ol class="chat-comment-preview__list">
+        html`<ol class="chat-comment-preview__list" role="list">
           ${comments.map((attachment, index) =>
             renderCommentPreviewRow(
               attachment.selectionAnnotation!,
