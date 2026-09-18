@@ -242,9 +242,9 @@ suite.define(() => {
     });
     await desktop.getByRole("button", { name: "Switch to view only", exact: true }).click();
     await expect.poll(rfb.events).toContain("authenticated:3");
-    expect((await requester.gateway.getRequests("desktop.observe")).at(-1)?.params.control).toBe(
-      false,
-    );
+    expect((await requester.gateway.getRequests("desktop.observe")).at(-1)).toMatchObject({
+      params: { control: false },
+    });
 
     await screen.execute("prepare-web", {
       action: "portal_show",
