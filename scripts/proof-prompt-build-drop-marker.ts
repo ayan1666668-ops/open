@@ -1,7 +1,10 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createTestAdmittedRunContext } from "../src/agents/admitted-run-context.test-support.js";
+import {
+  createTestAdmittedRunContext,
+  withTestRunAdmission,
+} from "../src/agents/admitted-run-context.test-support.js";
 import { buildDefaultTestCliBackend } from "../src/agents/cli-runner.test-helpers.js";
 import { prepareCliRunContext } from "../src/agents/cli-runner/prepare.js";
 import { resolvePromptBuildHookResult } from "../src/agents/embedded-agent-runner/run/attempt-prompt-helpers.js";
@@ -46,6 +49,11 @@ import { resolvePromptBuildHookResult } from "../src/agents/embedded-agent-runne
  *     `setActivePluginRegistry` (src/plugins/runtime.ts) — the real registry
  *     factory and the real activation seam the CLI backend resolver reads
  *     (`resolveRuntimeCliBackends` -> `getActiveRuntimePluginRegistry`).
+ *   - `withTestRunAdmission` (src/agents/admitted-run-context.test-support.ts)
+ *     for the CLI scenarios — real `prepareSystemAgentRunAdmission` admission
+ *     holding a live delegated-authority lease, so the CLI preparation path's
+ *     own `assertCurrent()` authority checks run for real rather than being
+ *     bypassed by a bare no-audit carrier.
  *
  * WHAT IS CONSTRUCTED RATHER THAN LOADED:
  *   - The plugin registrations. Loading a real npm plugin off disk would exercise
@@ -285,6 +293,12 @@ async function runCliPromptBuild(
   initializeGlobalHookRunner(buildRegistry(specs));
 
   const runId = `proof-cli-${specs.length}${options.failBeforeDispatch ? "-predispatch" : ""}`;
+  // The CLI preparation path asserts live run authority before it resolves the
+  // skills prompt (cli-runner/prepare.ts -> resolveCliSkillsPrompt), so this
+  // scenario has to hold a real delegated-authority lease rather than the bare
+  // no-audit carrier. withTestRunAdmission owns real admission for the duration
+  // of the prepare call and releases it afterwards.
+  const admittedRunContext = createTestAdmittedRunContext(runId);
   const runParams: Record<string, unknown> = {
     sessionId: "proof-session",
     sessionFile,
@@ -294,7 +308,7 @@ async function runCliPromptBuild(
     model: "test-model",
     timeoutMs: 1_000,
     runId,
-    admittedRunContext: createTestAdmittedRunContext(runId),
+    admittedRunContext,
     config: {},
   };
   if (options.failBeforeDispatch) {
@@ -313,9 +327,15 @@ async function runCliPromptBuild(
     };
     runParams.sessionManager = manager;
   }
-  const prepared = await prepareCliRunContext(runParams as never);
+  const prompt = await withTestRunAdmission({ admittedRunContext, runId }, async (context) => {
+    const prepared = await prepareCliRunContext({
+      ...runParams,
+      admittedRunContext: context,
+    } as never);
+    return prepared.params.prompt;
+  });
   fs.rmSync(dir, { recursive: true, force: true });
-  return prepared.params.prompt;
+  return prompt;
 }
 
 async function main(): Promise<void> {
