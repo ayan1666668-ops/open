@@ -11,6 +11,8 @@ import {
 } from "../infra/sqlite-coordinator.js";
 import { removeTemporaryArtifacts } from "../infra/temp-artifact-cleanup.js";
 import { resolveGlobalSingleton } from "../shared/global-singleton.js";
+import { runInPluginSourceCaptureContext } from "./plugin-source-capture-context.js";
+import { PLUGIN_SOURCE_CAPTURE_PREFIX } from "./plugin-source-capture-path.js";
 
 const CAPTURE_GRACE_MS = 60 * 60 * 1_000;
 const LEASE_FILE = "owner.sqlite";
@@ -19,14 +21,16 @@ type Instance = {
   closing?: boolean;
   timer: ReturnType<typeof setInterval>;
   root?: string;
+  managedRoot?: string;
   lease?: SqliteCoordinatorLease;
 };
-const { instances, ownedRoots, sweeps } = resolveGlobalSingleton(
+const { instances, ownedRoots, sweeps, warningBackoff } = resolveGlobalSingleton(
   Symbol.for("openclaw.pluginSourceCaptureInstances"),
   () => ({
     instances: new Map<string, Instance>(),
     ownedRoots: new Set<string>(),
     sweeps: new Map<string, Promise<void>>(),
+    warningBackoff: new Map<string, { next: number; delay: number }>(),
   }),
 );
 
@@ -38,7 +42,10 @@ function warn(error: unknown) {
   process.emitWarning(`Plugin source capture cleanup: ${String(error)}`);
 }
 
-async function reclaimInstances(root: string): Promise<void> {
+async function reclaimInstances(
+  root: string,
+  recordFailure: (error: unknown) => void,
+): Promise<void> {
   let entries: fs.Dirent[];
   try {
     entries = await fsPromises.readdir(root, { withFileTypes: true });
@@ -68,11 +75,17 @@ async function reclaimInstances(root: string): Promise<void> {
       const leasePath = path.join(canonical, LEASE_FILE);
       const leaseStat = await fsPromises.lstat(leasePath);
       const captures = path.join(canonical, "captures");
-      const captureStat = await fsPromises.lstat(captures);
+      const captureStat = await fsPromises.lstat(captures).catch((error: unknown) => {
+        if (!hasErrnoCode(error, "ENOENT")) {
+          throw error;
+        }
+        // A prior pass may have removed the payload before instance removal failed.
+        return undefined;
+      });
       if (
         !leaseStat.isFile() ||
         leaseStat.nlink !== 1 ||
-        !captureStat.isDirectory() ||
+        (captureStat && !captureStat.isDirectory()) ||
         ownedRoots.has(canonical)
       ) {
         continue;
@@ -84,26 +97,17 @@ async function reclaimInstances(root: string): Promise<void> {
       ownedRoots.add(canonical);
       try {
         // The native lock proves released custody even across PID namespaces.
-        await removeTemporaryArtifacts(captures, "Plugin source instance");
-        try {
-          await fsPromises.lstat(captures);
-          // Advisory removal may retain payload. Keep its coordinator for a later retry.
-          continue;
-        } catch (error) {
-          if (!hasErrnoCode(error, "ENOENT")) {
-            throw error;
-          }
-        }
+        await fsPromises.rm(captures, { recursive: true, force: true });
         lease.release();
         lease = null;
         // Instance IDs are never reused. Close the lease before removing its file on Windows.
-        await removeTemporaryArtifacts(canonical, "Plugin source instance");
+        await fsPromises.rm(canonical, { recursive: true, force: true });
       } finally {
         ownedRoots.delete(canonical);
       }
     } catch (error) {
       if (!hasErrnoCode(error, "ENOENT")) {
-        warn(error);
+        recordFailure(error);
       }
     } finally {
       lease?.release();
@@ -111,52 +115,121 @@ async function reclaimInstances(root: string): Promise<void> {
   }
 }
 
-/** Coalesce only active scans; long-lived metadata owners also retry hourly. */
+/** Coalesce active scans, but throttle diagnostics independently of cleanup retries. */
 export function sweepPluginSourceCaptureDirectories(stateDir = resolveStateDir()): Promise<void> {
   const root = path.resolve(instanceDirectory(stateDir));
   let sweep = sweeps.get(root);
   if (!sweep) {
-    sweep = reclaimInstances(root)
-      .catch(warn)
+    let failures = 0;
+    let firstFailure: unknown;
+    const recordFailure = (error: unknown) => {
+      if (failures++ === 0) {
+        firstFailure = error;
+      }
+    };
+    sweep = reclaimInstances(root, recordFailure)
+      .catch(recordFailure)
+      .then(() => {
+        if (failures === 0) {
+          warningBackoff.delete(root);
+          return;
+        }
+        const now = Date.now();
+        const previous = warningBackoff.get(root);
+        if (previous && now < previous.next) {
+          return;
+        }
+        const delay = Math.min(
+          (previous?.delay ?? CAPTURE_GRACE_MS / 2) * 2,
+          24 * CAPTURE_GRACE_MS,
+        );
+        // Bound diagnostics for processes that inspect many independent profiles.
+        if (!previous && warningBackoff.size >= 32) {
+          const oldest = warningBackoff.keys().next().value;
+          if (oldest !== undefined) {
+            warningBackoff.delete(oldest);
+          }
+        }
+        warningBackoff.set(root, { next: now + delay, delay });
+        warn(
+          `${failures} cleanup failure(s) in ${root}; will retry. First: ${String(firstFailure)}`,
+        );
+      })
       .finally(() => sweeps.delete(root));
     sweeps.set(root, sweep);
   }
   return sweep;
 }
 
-function prepareInstance(instance: Instance, stateDir: string): string {
+function createCaptureDirectory(instance: Instance, stateDir: string): string {
   if (instance.root) {
-    return path.join(instance.root, "captures");
+    return fs.mkdtempSync(path.join(instance.root, "captures", PLUGIN_SOURCE_CAPTURE_PREFIX));
   }
-  let directory: string;
+  const prepare = (fallback: boolean): string => {
+    let directory: string | undefined;
+    let lease: SqliteCoordinatorLease | null = null;
+    try {
+      if (fallback) {
+        directory = fs.mkdtempSync(path.join(tmpdir(), "openclaw-plugin-captures-"));
+      } else {
+        const parent = instanceDirectory(stateDir);
+        fs.mkdirSync(parent, { recursive: true, mode: 0o700 });
+        instance.managedRoot = fs.realpathSync(parent);
+        const candidate = path.join(instance.managedRoot, randomUUID());
+        fs.mkdirSync(candidate, { mode: 0o700 });
+        directory = candidate;
+      }
+      const canonical = fs.realpathSync(directory);
+      lease = tryAcquireExclusiveSqliteCoordinator(path.join(canonical, LEASE_FILE));
+      if (!lease) {
+        throw new Error("Could not acquire new plugin source instance");
+      }
+      const captures = path.join(canonical, "captures");
+      fs.mkdirSync(captures, { mode: 0o700 });
+      const capture = fs.mkdtempSync(path.join(captures, PLUGIN_SOURCE_CAPTURE_PREFIX));
+      instance.root = canonical;
+      instance.lease = lease;
+      ownedRoots.add(canonical);
+      return capture;
+    } catch (error) {
+      try {
+        lease?.release();
+      } catch (releaseError) {
+        // Retain custody for release() to retry; never unlink a still-open coordinator.
+        instance.root = directory;
+        instance.lease = lease ?? undefined;
+        instance.closing = true;
+        if (directory) {
+          ownedRoots.add(directory);
+        }
+        throw new AggregateError(
+          [error, releaseError],
+          "Plugin source preparation cleanup failed",
+          {
+            cause: releaseError,
+          },
+        );
+      }
+      if (directory) {
+        try {
+          fs.rmSync(directory, { recursive: true, force: true });
+        } catch (cleanupError) {
+          warn(cleanupError);
+        }
+      }
+      throw error;
+    }
+  };
   try {
-    const parent = instanceDirectory(stateDir);
-    fs.mkdirSync(parent, { recursive: true, mode: 0o700 });
-    directory = path.join(parent, randomUUID());
-    fs.mkdirSync(directory, { mode: 0o700 });
+    return prepare(false);
   } catch (error) {
-    // A read-only state directory must not prevent an otherwise working plugin load.
+    if (instance.closing) {
+      throw error;
+    }
+    // The fallback covers the whole allocation, including SQLite and the first capture.
     // Fallback instances have ordinary disposal, but no cross-instance automatic sweep.
     warn(error);
-    directory = fs.mkdtempSync(path.join(tmpdir(), "openclaw-plugin-captures-"));
-  }
-  let lease: SqliteCoordinatorLease | null = null;
-  try {
-    const canonical = fs.realpathSync(directory);
-    lease = tryAcquireExclusiveSqliteCoordinator(path.join(canonical, LEASE_FILE));
-    if (!lease) {
-      throw new Error("Could not acquire new plugin source instance");
-    }
-    const captures = path.join(canonical, "captures");
-    fs.mkdirSync(captures, { mode: 0o700 });
-    instance.root = canonical;
-    instance.lease = lease;
-    ownedRoots.add(canonical);
-    return captures;
-  } catch (error) {
-    lease?.release();
-    fs.rmSync(directory, { recursive: true, force: true });
-    throw error;
+    return prepare(true);
   }
 }
 
@@ -170,9 +243,8 @@ export function retainPluginSourceCaptureInstance(stateDir = resolveStateDir()) 
     );
   }
   if (!instance) {
-    const timer = setInterval(
-      () => void sweepPluginSourceCaptureDirectories(key),
-      CAPTURE_GRACE_MS,
+    const timer = runInPluginSourceCaptureContext(() =>
+      setInterval(() => void sweepPluginSourceCaptureDirectories(key), CAPTURE_GRACE_MS),
     );
     timer.unref();
     instance = { references: 0, timer };
@@ -204,11 +276,14 @@ export function retainPluginSourceCaptureInstance(stateDir = resolveStateDir()) 
     return retained.root;
   };
   return {
+    get managedRoot() {
+      return retained.managedRoot;
+    },
     createDirectory() {
       if (released || retained.closing) {
         throw new Error("Plugin source instance has been released");
       }
-      return fs.mkdtempSync(path.join(prepareInstance(retained, key), "capture-"));
+      return createCaptureDirectory(retained, key);
     },
     release() {
       const root = retire();

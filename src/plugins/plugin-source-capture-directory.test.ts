@@ -166,7 +166,7 @@ it("metadata boot reclaims old abandoned artifacts and preserves recent and lega
   age(old.instanceRoot);
   const legacy = path.join(temp.make("plugin-capture-legacy-"), "openclaw-plugin-build-legacy");
   fs.mkdirSync(legacy);
-  fs.writeFileSync(path.join(legacy, "sentinel"), "legacy files need explicit Doctor repair");
+  fs.writeFileSync(path.join(legacy, "sentinel"), "legacy files have no custody token");
   age(legacy);
   vi.stubEnv("TMPDIR", path.dirname(legacy));
 
@@ -178,7 +178,7 @@ it("metadata boot reclaims old abandoned artifacts and preserves recent and lega
     );
     expect(fs.readFileSync(recent.capturedFile, "utf8")).toBe(capturedSource);
     expect(fs.readFileSync(path.join(legacy, "sentinel"), "utf8")).toBe(
-      "legacy files need explicit Doctor repair",
+      "legacy files have no custody token",
     );
   } finally {
     await metadata.close();
@@ -210,34 +210,38 @@ it("preserves an old live CLI capture, then reclaims it on a later scan after pr
   }
 }, 30_000);
 
-it("retries an abandoned instance after a partial removal failure is resolved", async () => {
-  const stateDir = temp.make("plugin-capture-partial-removal-");
-  const orphan = abandonCapture(stateDir, createSource());
-  age(orphan.instanceRoot);
-  const captures = path.dirname(orphan.boundaryRoot);
-  const remove = fsPromises.rm.bind(fsPromises);
-  const failure = Object.assign(new Error("Fixture payload cannot be removed"), { code: "EACCES" });
-  const fault = vi.spyOn(fsPromises, "rm").mockImplementation(async (target, options) => {
-    if (target === captures) {
-      throw failure;
+it.each(["payload", "instance"])(
+  "retries an abandoned instance after a partial %s removal failure is resolved",
+  async (stage) => {
+    const stateDir = temp.make("plugin-capture-partial-removal-");
+    const orphan = abandonCapture(stateDir, createSource());
+    age(orphan.instanceRoot);
+    const captures = path.dirname(orphan.boundaryRoot);
+    const remove = fsPromises.rm.bind(fsPromises);
+    const failure = Object.assign(new Error("Fixture cleanup cannot finish"), { code: "EACCES" });
+    const fault = vi.spyOn(fsPromises, "rm").mockImplementation(async (target, options) => {
+      if (target === (stage === "payload" ? captures : orphan.instanceRoot)) {
+        throw failure;
+      }
+      await remove(target, options);
+    });
+    try {
+      await sweepPluginSourceCaptureDirectories(stateDir);
+      expect(fs.existsSync(path.join(orphan.instanceRoot, "owner.sqlite"))).toBe(true);
+      if (stage === "payload") {
+        expect(fs.readFileSync(orphan.capturedFile, "utf8")).toBe(capturedSource);
+      } else {
+        expect(fs.existsSync(captures)).toBe(false);
+      }
+    } finally {
+      fault.mockRestore();
     }
-    if (target === orphan.instanceRoot) {
-      // Recursive removal can unlink siblings before a nested payload failure.
-      await remove(path.join(orphan.instanceRoot, "owner.sqlite"), { force: true });
-      throw failure;
-    }
-    await remove(target, options);
-  });
-  try {
+    age(orphan.instanceRoot);
     await sweepPluginSourceCaptureDirectories(stateDir);
-    expect(fs.readFileSync(orphan.capturedFile, "utf8")).toBe(capturedSource);
-  } finally {
-    fault.mockRestore();
-  }
-  age(orphan.instanceRoot);
-  await sweepPluginSourceCaptureDirectories(stateDir);
-  expect(fs.existsSync(orphan.instanceRoot)).toBe(false);
-}, 30_000);
+    expect(fs.existsSync(orphan.instanceRoot)).toBe(false);
+  },
+  30_000,
+);
 
 it("retries reclamation when a long-lived metadata owner's hourly scan reaches the grace period", async () => {
   const stateDir = temp.make("plugin-capture-periodic-");
@@ -256,6 +260,74 @@ it("retries reclamation when a long-lived metadata owner's hourly scan reaches t
     vi.useRealTimers();
   }
 }, 30_000);
+
+it.each(["before command", "inside command"])(
+  "does not retain the first CLI context when the capture loader is imported %s",
+  (importOrder) => {
+    const stateDir = temp.make("plugin-capture-context-");
+    const source = createSource();
+    const cleanupModule = new URL("../cli/runtime-cleanup-scope.ts", import.meta.url).href;
+    const result = execFileSync(
+      process.execPath,
+      [
+        "--import",
+        loader,
+        "--input-type=module",
+        "--eval",
+        `
+        import { AsyncLocalStorage, createHook } from "node:async_hooks";
+        import fs from "node:fs";
+        import path from "node:path";
+        import {
+          getCliPluginInvocationResources, withCliCommandCleanup, withCliProcessScope,
+        } from ${JSON.stringify(cleanupModule)};
+        const load = () => import(${JSON.stringify(artifactModule)});
+        if (process.argv[2] === "before command") await load();
+        const request = new AsyncLocalStorage();
+        const observed = [];
+        const hook = createHook({ init(id, type, trigger, resource) {
+          if (type === "Timeout") observed.push({
+            resource, context: request.getStore() ?? null,
+            cli: Boolean(getCliPluginInvocationResources()),
+          });
+        }});
+        const { artifact: first, cleanup } = await request.run("first-command", () =>
+          withCliProcessScope(() => withCliCommandCleanup(false, async (cleanup) => {
+            const { capturePluginGenerationArtifact } = await load();
+            hook.enable();
+            try {
+              return { artifact: capturePluginGenerationArtifact(process.argv[1]), cleanup };
+            } finally {
+              hook.disable();
+            }
+          })),
+        );
+        const { capturePluginGenerationArtifact } = await load();
+        const survivor = capturePluginGenerationArtifact(process.argv[1]);
+        first.dispose();
+        await cleanup.pluginResources.release();
+        try {
+          process.stdout.write(JSON.stringify({
+            timers: observed.map(({ resource, context, cli }) => ({
+              context, cli, referenced: resource.hasRef(),
+            })),
+            source: fs.readFileSync(survivor.resolve(path.join(process.argv[1], "index.cjs")), "utf8"),
+          }));
+        } finally {
+          survivor.dispose();
+        }
+        `,
+        source,
+        importOrder,
+      ],
+      { env: { ...process.env, OPENCLAW_STATE_DIR: stateDir }, encoding: "utf8", timeout: 15_000 },
+    );
+    expect(JSON.parse(result)).toEqual({
+      timers: [{ context: null, cli: false, referenced: false }],
+      source: capturedSource,
+    });
+  },
+);
 
 it("retains live capture bytes until both metadata owners and the artifact release custody", async () => {
   const stateDir = temp.make("plugin-capture-shared-");
@@ -355,4 +427,86 @@ it("keeps metadata boot and source capture usable when the state directory canno
   }
   expect(instanceRoot).toBeDefined();
   expect(fs.existsSync(instanceRoot!)).toBe(false);
+});
+
+// Failure injection sits at the filesystem boundary; captures still exercise the real allocator.
+it.each(["captures", "first capture"])(
+  "falls back when ENOSPC interrupts allocation of the %s directory",
+  async (stage) => {
+    const stateDir = temp.make("plugin-capture-full-state-");
+    vi.stubEnv("OPENCLAW_STATE_DIR", stateDir);
+    vi.spyOn(process, "emitWarning").mockImplementation(() => {});
+    const mkdir = fs.mkdirSync.bind(fs);
+    const mkdtemp = fs.mkdtempSync.bind(fs);
+    const failure = Object.assign(new Error("Fixture state filesystem is full"), {
+      code: "ENOSPC",
+    });
+    if (stage === "captures") {
+      vi.spyOn(fs, "mkdirSync").mockImplementation((target, options) => {
+        if (
+          String(target).startsWith(stateDir + path.sep) &&
+          path.basename(String(target)) === "captures"
+        ) {
+          throw failure;
+        }
+        return mkdir(target, options);
+      });
+    } else {
+      vi.spyOn(fs, "mkdtempSync").mockImplementation((prefix, options) => {
+        if (prefix.startsWith(stateDir + path.sep)) {
+          throw failure;
+        }
+        return mkdtemp(prefix, options);
+      });
+    }
+    const source = createSource();
+    const artifact = capturePluginGenerationArtifact(source);
+    try {
+      expect(fs.readFileSync(artifact.resolve(path.join(source, "index.cjs")), "utf8")).toBe(
+        capturedSource,
+      );
+      expect(artifact.boundaryRoot.startsWith(stateDir + path.sep)).toBe(false);
+      expect(fs.readdirSync(path.join(stateDir, "tmp", "plugin-captures"))).toEqual([]);
+    } finally {
+      await artifact.disposeAsync();
+    }
+    expect(fs.existsSync(artifact.boundaryRoot)).toBe(false);
+  },
+);
+
+it("summarizes inaccessible coordinators with backoff while continuing cleanup retries", async () => {
+  const stateDir = temp.make("plugin-capture-warning-backoff-");
+  const root = path.join(stateDir, "tmp", "plugin-captures");
+  for (let index = 0; index < 100; index++) {
+    const directory = path.join(root, String(index));
+    fs.mkdirSync(path.join(directory, "captures"), { recursive: true });
+    fs.writeFileSync(path.join(directory, "owner.sqlite"), "");
+    age(directory);
+  }
+  vi.useFakeTimers({ toFake: ["Date"] });
+  const warning = vi.spyOn(process, "emitWarning").mockImplementation(() => {});
+  const lstat = fsPromises.lstat.bind(fsPromises);
+  const fault = vi.spyOn(fsPromises, "lstat").mockImplementation(async (target, options) => {
+    if (
+      String(target).startsWith(root + path.sep) &&
+      path.basename(String(target)) === "owner.sqlite"
+    ) {
+      throw Object.assign(new Error("Fixture coordinator is inaccessible"), { code: "EACCES" });
+    }
+    return lstat(target, options);
+  });
+  await sweepPluginSourceCaptureDirectories(stateDir);
+  expect(warning).toHaveBeenCalledTimes(1);
+  expect(String(warning.mock.calls[0]?.[0])).toContain("100 cleanup failure(s)");
+  await sweepPluginSourceCaptureDirectories(stateDir);
+  expect(warning).toHaveBeenCalledTimes(1);
+  vi.setSystemTime(Date.now() + hour);
+  await sweepPluginSourceCaptureDirectories(stateDir);
+  expect(warning).toHaveBeenCalledTimes(2);
+  vi.setSystemTime(Date.now() + hour);
+  await sweepPluginSourceCaptureDirectories(stateDir);
+  expect(warning).toHaveBeenCalledTimes(2);
+  fault.mockRestore();
+  await sweepPluginSourceCaptureDirectories(stateDir);
+  expect(fs.readdirSync(root)).toEqual([]);
 });

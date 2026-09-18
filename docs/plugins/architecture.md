@@ -233,6 +233,10 @@ and an empty SQLite coordinator held for that instance's lifetime. Gateway
 metadata and its source captures retain the same process-local instance; a
 concurrent CLI process owns a separate instance. Releasing one capture cannot
 retire another capture or a still-running metadata owner.
+The shared cleanup timer does not retain the first command's invocation context.
+The managed `tmp/plugin-captures` subtree is excluded from source snapshots when
+the state directory is inside a plugin's source directory. Recovery can still
+load a preserved source package from within that subtree.
 
 This follows the native lifetime-token pattern used for
 [interrupted SQLite snapshots](/reference/database-schemas/integrity-and-recovery).
@@ -248,7 +252,7 @@ also acquire its native coordinator, proving that no producer retains custody.
 Process exit releases the native lock even after a forced termination. PID
 names, process probes, and PID-reuse guesses are not used; a numeric PID cannot
 identify a producer across containers sharing a temporary directory. Contention,
-unreadable entries, symlinks, and incomplete instance creation preserve files.
+unreadable entries, symlinks, and entries without a coordinator preserve files.
 Removal remains asynchronous and advisory. This subtree is excluded from state
 backups because its captured package bytes are reconstructible.
 
@@ -259,14 +263,12 @@ that instance; automatic cleanup does not scan unrelated system-temporary roots.
 There is no total disk quota, and an active instance may legitimately exceed the
 one-hour cleanup grace period.
 
-Older `openclaw-plugin-build-*` directories are never removed by startup or
-ordinary Doctor repair. After stopping **all Gateways, CLI processes, and workers
-sharing the temporary directory**, explicitly run
-`openclaw doctor --cleanup-legacy-plugin-captures` to remove matching directories
-older than 24 hours. The command also refuses active ownership of the selected
-state directory, but that guard cannot establish quiescence for other profiles
-or containers. The operator must ensure that global precondition. No legacy
-files are moved or adopted by the new runtime.
+Older `openclaw-plugin-build-*` directories in the system temporary directory
+have no coordinator proving whether their producer is still alive. Startup,
+Doctor (including `--fix`), and update finalization preserve them. Neither age
+nor a lock for one state directory establishes ownership of captures from other
+profiles or containers sharing that temporary directory. No legacy files are
+moved or adopted by the new runtime.
 
 Configured Gateway agents share one model-catalog worker per plugin-inventory
 lifetime. Agent and authentication facts belong to each task; plugin registrations

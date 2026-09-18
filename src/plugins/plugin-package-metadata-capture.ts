@@ -10,6 +10,7 @@ import { openRootFileSync } from "../infra/boundary-file-read.js";
 import { isPathInside } from "../infra/path-guards.js";
 import { escapeRegExp } from "../shared/regexp.js";
 import { retainPluginSourceCaptureInstance } from "./plugin-source-capture-directory.js";
+import { PLUGIN_SOURCE_CAPTURE_PREFIX } from "./plugin-source-capture-path.js";
 
 export function createPluginSourceLinkCapture() {
   const links = new Set<string>();
@@ -658,7 +659,7 @@ export function createPluginSourceCapture(execute?: <T>(run: () => T) => T) {
   try {
     created =
       override !== undefined
-        ? fs.mkdtempSync(path.join(override, "openclaw-plugin-build-"))
+        ? fs.mkdtempSync(path.join(override, PLUGIN_SOURCE_CAPTURE_PREFIX))
         : instance!.createDirectory();
     directory = fs.realpathSync(created);
     fs.chmodSync(directory, 0o700);
@@ -722,6 +723,7 @@ export function createPluginSourceCapture(execute?: <T>(run: () => T) => T) {
     capture: captureAdmitted,
     assertModuleAvailable,
     directory,
+    outputRoot: instance?.managedRoot,
     linkHost: (hostRoot: string) => {
       const modules = path.join(directory, "node_modules");
       fs.mkdirSync(modules, { recursive: true, mode: 0o700 });

@@ -457,12 +457,6 @@ describe("command-path-policy", () => {
         commandPath: ["doctor"],
       }),
     ).toBe("bypass");
-    expect(
-      doctorPolicy.networkProxy({
-        argv: ["node", "openclaw", "doctor", "--cleanup-legacy-plugin-captures"],
-        commandPath: ["doctor"],
-      }),
-    ).toBe("bypass");
     expectResolvedPolicy(["config", "validate"], {
       configGuard: "skip",
       loadPlugins: "never",
