@@ -138,6 +138,46 @@ function createFakeClient(options: { completeTurn?: boolean; onTurnStart?: () =>
   return client;
 }
 
+export function sideLoopRelayParams(
+  overrides: Partial<SideQuestionParams> = {},
+): SideQuestionParams {
+  return sideParams({
+    cfg: { tools: { loopDetection: { enabled: true } } } as never,
+    sessionKey: "agent:main:session-1",
+    ...overrides,
+  });
+}
+
+export function extractRelayIdFromThreadConfig(config: unknown): string {
+  const record = config as Record<string, unknown> | undefined;
+  let command: string | undefined;
+  for (const key of [
+    "hooks.PreToolUse",
+    "hooks.PostToolUse",
+    "hooks.PermissionRequest",
+    "hooks.Stop",
+  ]) {
+    const entries = record?.[key];
+    if (!Array.isArray(entries)) {
+      continue;
+    }
+    for (const entry of entries as Array<{ hooks?: Array<{ command?: string }> }>) {
+      command = entry.hooks?.find((hook) => typeof hook.command === "string")?.command;
+      if (command) {
+        break;
+      }
+    }
+    if (command) {
+      break;
+    }
+  }
+  const match = command?.match(/--relay-id ([^ ]+)/);
+  if (!match?.[1]) {
+    throw new Error(`relay id missing from command: ${command}`);
+  }
+  return match[1];
+}
+
 function threadResult(threadId: string) {
   return {
     thread: {

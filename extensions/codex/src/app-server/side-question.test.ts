@@ -54,9 +54,10 @@ const {
   sideParams,
   TEST_HOST_CAPABILITIES,
   useSideQuestionTestSetup,
+  extractRelayIdFromThreadConfig,
+  sideLoopRelayParams,
 } = await import("./side-question.test-support.js");
 
-type SideQuestionParams = Parameters<typeof runCodexAppServerSideQuestion>[0];
 type SelectionRetryParams = import("./side-question.test-support.js").SelectionRetryParams;
 
 function supervisionConnectionFingerprint(): string {
@@ -133,36 +134,6 @@ function activeDiagnosticToolKeys(events: DiagnosticEventPayload[]): Set<string>
   return active;
 }
 
-function extractRelayIdFromThreadConfig(config: unknown): string {
-  const record = config as Record<string, unknown> | undefined;
-  let command: string | undefined;
-  for (const key of [
-    "hooks.PreToolUse",
-    "hooks.PostToolUse",
-    "hooks.PermissionRequest",
-    "hooks.Stop",
-  ]) {
-    const entries = record?.[key];
-    if (!Array.isArray(entries)) {
-      continue;
-    }
-    for (const entry of entries as Array<{ hooks?: Array<{ command?: string }> }>) {
-      command = entry.hooks?.find((hook) => typeof hook.command === "string")?.command;
-      if (command) {
-        break;
-      }
-    }
-    if (command) {
-      break;
-    }
-  }
-  const match = command?.match(/--relay-id ([^ ]+)/);
-  if (!match?.[1]) {
-    throw new Error(`relay id missing from command: ${command}`);
-  }
-  return match[1];
-}
-
 function codexHookCommand(config: unknown, key: string) {
   const entries = (config as Record<string, unknown> | undefined)?.[key];
   if (!Array.isArray(entries)) {
@@ -200,14 +171,6 @@ function nativeCommandItem(
     exitCode: status === "completed" ? 0 : null,
     durationMs,
   };
-}
-
-function sideLoopRelayParams(overrides: Partial<SideQuestionParams> = {}): SideQuestionParams {
-  return sideParams({
-    cfg: { tools: { loopDetection: { enabled: true } } } as never,
-    sessionKey: "agent:main:session-1",
-    ...overrides,
-  });
 }
 
 function platformPreparedRuntimeAuth(resolvedApiKey?: string) {
@@ -327,6 +290,11 @@ describe("runCodexAppServerSideQuestion", () => {
           ),
         { timeout: 200 },
       );
+      expect(outcome).toBeInstanceOf(AggregateError);
+      expect(outcome).toMatchObject({
+        message: expect.stringContaining("cleanup could not confirm the side turn stopped"),
+        cause: { message: expect.stringContaining("closed") },
+      });
     } finally {
       controller.abort("test cleanup");
       await run;
@@ -1832,13 +1800,28 @@ describe("runCodexAppServerSideQuestion", () => {
           }),
         ).rejects.toThrow("native hook relay not found");
         if (outcome === "caller cancellation") {
+          client.request.mockRejectedValue(new Error("app-server client is closed"));
           controller.abort("caller stopped while draining");
           await vi.waitFor(
             () =>
               expect(runError).toEqual(
-                expect.objectContaining({ message: "Codex /btw was aborted." }),
+                expect.objectContaining({
+                  message: expect.stringMatching(
+                    /^Codex \/btw was aborted\..*background-terminal cleanup failed/,
+                  ),
+                  cause: expect.objectContaining({ message: "Codex /btw was aborted." }),
+                }),
               ),
             { timeout: 200 },
+          );
+          expect(runError).toBeInstanceOf(AggregateError);
+          expect(client.request.mock.calls.some(([method]) => method === "turn/interrupt")).toBe(
+            false,
+          );
+          expect(client.request).toHaveBeenCalledWith(
+            "thread/backgroundTerminals/list",
+            { threadId: "side-thread" },
+            expect.any(Object),
           );
         } else {
           finishProjection.resolve();
@@ -2005,6 +1988,7 @@ describe("runCodexAppServerSideQuestion", () => {
   });
 
   it("forwards side-thread command approvals through the active native hook relay", async () => {
+    const turnStarted = createDeferred<void>();
     const client = createFakeClient();
     let relayIdDuringFork: string | undefined;
     handleCodexAppServerApprovalRequestMock.mockResolvedValueOnce({ decision: "decline" });
@@ -2018,6 +2002,7 @@ describe("runCodexAppServerSideQuestion", () => {
         return {};
       }
       if (method === "turn/start") {
+        turnStarted.resolve();
         return turnStartResult("turn-1");
       }
       if (method === "thread/unsubscribe" || method === "turn/interrupt") {
@@ -2042,53 +2027,64 @@ describe("runCodexAppServerSideQuestion", () => {
       }),
       { nativeHookRelay: { enabled: true } },
     );
-    const approvalResponse = await handleClientRequestWhenReady(client, {
-      id: 42,
-      method: "item/commandExecution/requestApproval",
-      params: {
-        ...codexTestTurnIds("side-thread"),
-        itemId: "cmd-side",
-        command: "/bin/bash -lc 'node -v'",
-        cwd: "/tmp/workspace",
-      },
-    });
-    client.emit(turnCompleted("side-thread", "turn-1", "Side answer."));
-    await expect(run).resolves.toEqual({ text: "Side answer." });
+    try {
+      await Promise.race([
+        turnStarted.promise,
+        run.then(() => {
+          throw new Error("Side question ended before accepting its turn");
+        }),
+      ]);
+      const approvalResponse = await client.handleRequest({
+        id: 42,
+        method: "item/commandExecution/requestApproval",
+        params: {
+          ...codexTestTurnIds("side-thread"),
+          itemId: "cmd-side",
+          command: "/bin/bash -lc 'node -v'",
+          cwd: "/tmp/workspace",
+        },
+      });
+      client.emit(turnCompleted("side-thread", "turn-1", "Side answer."));
+      await expect(run).resolves.toEqual({ text: "Side answer." });
 
-    expect(approvalResponse).toEqual({ decision: "decline" });
-    expect(handleCodexAppServerApprovalRequestMock).toHaveBeenCalledTimes(1);
-    const approvalArgs = handleCodexAppServerApprovalRequestMock.mock.calls[0]?.[0] as
-      | {
-          method?: string;
-          requestParams?: Record<string, unknown>;
-          threadId?: string;
-          turnId?: string;
-          paramsForRun?: { messageChannel?: string; messageProvider?: string };
-          nativeHookRelay?: { relayId?: string; allowedEvents?: readonly string[] };
-        }
-      | undefined;
-    expect(approvalArgs).toMatchObject({
-      method: "item/commandExecution/requestApproval",
-      requestParams: {
+      expect(approvalResponse).toEqual({ decision: "decline" });
+      expect(handleCodexAppServerApprovalRequestMock).toHaveBeenCalledTimes(1);
+      const approvalArgs = handleCodexAppServerApprovalRequestMock.mock.calls[0]?.[0] as
+        | {
+            method?: string;
+            requestParams?: Record<string, unknown>;
+            threadId?: string;
+            turnId?: string;
+            paramsForRun?: { messageChannel?: string; messageProvider?: string };
+            nativeHookRelay?: { relayId?: string; allowedEvents?: readonly string[] };
+          }
+        | undefined;
+      expect(approvalArgs).toMatchObject({
+        method: "item/commandExecution/requestApproval",
+        requestParams: {
+          ...codexTestTurnIds("side-thread"),
+          itemId: "cmd-side",
+          command: "/bin/bash -lc 'node -v'",
+          cwd: "/tmp/workspace",
+        },
         ...codexTestTurnIds("side-thread"),
-        itemId: "cmd-side",
-        command: "/bin/bash -lc 'node -v'",
-        cwd: "/tmp/workspace",
-      },
-      ...codexTestTurnIds("side-thread"),
-      autoApprove: false,
-      paramsForRun: {
-        messageChannel: "discord",
-        messageProvider: "discord-voice",
-      },
-    });
-    expect(approvalArgs?.nativeHookRelay).toMatchObject({
-      relayId: relayIdDuringFork,
-      allowedEvents: expect.arrayContaining(["pre_tool_use"]),
-    });
-    expect(
-      nativeHookRelayTesting.getNativeHookRelayRegistrationForTests(relayIdDuringFork!),
-    ).toBeUndefined();
+        autoApprove: false,
+        paramsForRun: {
+          messageChannel: "discord",
+          messageProvider: "discord-voice",
+        },
+      });
+      expect(approvalArgs?.nativeHookRelay).toMatchObject({
+        relayId: relayIdDuringFork,
+        allowedEvents: expect.arrayContaining(["pre_tool_use"]),
+      });
+      expect(
+        nativeHookRelayTesting.getNativeHookRelayRegistrationForTests(relayIdDuringFork!),
+      ).toBeUndefined();
+    } finally {
+      client.emit(turnCompleted("side-thread", "turn-1", "Side answer."));
+      await run.catch(() => {});
+    }
   });
 
   it("unregisters the native hook relay when side thread fork fails", async () => {

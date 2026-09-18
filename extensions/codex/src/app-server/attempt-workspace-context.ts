@@ -220,7 +220,7 @@ export async function buildCodexWorkspaceBootstrapContext(params: {
       contextFiles: [],
       inheritsAgentWorkspace,
       threadDeveloperInstructions: includeAgentWorkspaceInstructions
-        ? (params.agentWorkspaceDeveloperInstructions ?? "")
+        ? params.agentWorkspaceDeveloperInstructions
         : undefined,
     };
   }
@@ -434,6 +434,9 @@ async function renderCodexMemoryRecallInstructions(params: {
     agentId: params.agentId,
     agentSessionKey: params.agentSessionKey,
     sandboxed: params.sandboxed,
+  }).catch((error: unknown) => {
+    embeddedAgentLog.warn("failed to prepare codex memory recall instructions", { error });
+    return undefined;
   });
   if (!memoryPrompt) {
     // Memory recall policy belongs to the active memory plugin.

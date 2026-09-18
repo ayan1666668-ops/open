@@ -2,8 +2,11 @@ import "./side-question.test-support.js";
 import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import { createAdmittedHostCapabilityTestFixture } from "openclaw/plugin-sdk/plugin-test-runtime";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import * as clientCleanup from "./attempt-client-cleanup.js";
 import { codexTestTurnIds } from "./codex-app-server.test-fixtures.js";
 import { dynamicToolBuildState } from "./dynamic-tool-build-state.js";
+import { CodexEphemeralTurn } from "./ephemeral-turn.js";
+import { CodexNativeToolLifecycleProjector } from "./event-projector-native-tool-lifecycle.js";
 import {
   createClientHarness,
   createCodexTestModel,
@@ -135,6 +138,7 @@ describe("runCodexAppServerSideQuestion", () => {
     async ({ written, interruptFails, retirementFails, unsubscribeFails, peerRetained }) => {
       const controller = new AbortController();
       const harness = createClientHarness();
+      const requests = vi.spyOn(harness.client, "request");
       if (peerRetained) {
         retireSharedCodexAppServerClientIfCurrentMock.mockReturnValueOnce({
           activeLeases: 2,
@@ -200,25 +204,46 @@ describe("runCodexAppServerSideQuestion", () => {
             : { id: unsubscribe.id, result: {} },
         );
       }
-      await expect(failure).resolves.toMatchObject(
-        interruptFails
-          ? {
-              message:
-                "Codex /btw cleanup could not confirm the side turn stopped; background terminals may still be running.",
-            }
-          : written
-            ? {
-                message: "turn/start aborted: side-start-cancelled",
-                cause: "side-start-cancelled",
-                reason: "aborted",
-                mayHaveWritten: true,
-              }
-            : {
-                name: "CodexThreadPolicyHandoffError",
-                outcome: "acknowledged",
-                cause: "side-start-cancelled",
-              },
-      );
+      const error = await failure;
+      if (written) {
+        const turnStart =
+          requests.mock.results[
+            requests.mock.calls.findIndex(([method]) => method === "turn/start")
+          ];
+        if (turnStart?.type !== "return") {
+          throw new Error("Expected the native turn/start request promise");
+        }
+        const primaryError = await turnStart.value.catch((reason: unknown) => reason);
+        expect(primaryError).toMatchObject({
+          message: "turn/start aborted: side-start-cancelled",
+          cause: "side-start-cancelled",
+          reason: "aborted",
+          mayHaveWritten: true,
+        });
+        if (interruptFails) {
+          expect(error).toBeInstanceOf(AggregateError);
+          if (!(error instanceof AggregateError)) {
+            throw new Error("Expected cancellation and native cleanup failures", { cause: error });
+          }
+          expect(error.cause).toBe(primaryError);
+          expect(error.errors).toHaveLength(2);
+          expect(error.errors[0]).toBe(primaryError);
+          expect(error.errors[1]).toMatchObject({
+            message:
+              "Codex /btw cleanup could not confirm the side turn stopped; background terminals may still be running.",
+          });
+          expect(error.message).toContain("turn/start aborted: side-start-cancelled");
+          expect(error.message).toContain("could not confirm the side turn stopped");
+        } else {
+          expect(error).toBe(primaryError);
+        }
+      } else {
+        expect(error).toMatchObject({
+          name: "CodexThreadPolicyHandoffError",
+          outcome: "acknowledged",
+          cause: "side-start-cancelled",
+        });
+      }
       expect(harness.writes.map((write) => JSON.parse(write).method)).toEqual([
         "thread/fork",
         "thread/inject_items",
@@ -238,12 +263,25 @@ describe("runCodexAppServerSideQuestion", () => {
     },
   );
 
-  it.each([false, true])(
-    "settles side background-terminal cleanup before cancellation returns (failure: %s)",
-    async (terminationFails) => {
+  it.each([
+    { terminationFails: false, projectorFails: false },
+    { terminationFails: true, projectorFails: false },
+    { terminationFails: true, projectorFails: true },
+  ])(
+    "settles side background-terminal cleanup before cancellation returns (terminal failure: $terminationFails, projector failure: $projectorFails)",
+    async ({ terminationFails, projectorFails }) => {
       const controller = new AbortController();
       const client = createFakeClient({ completeTurn: false });
       const request = client.request.getMockImplementation()!;
+      const waits = vi.spyOn(CodexEphemeralTurn.prototype, "wait");
+      const terminalCleanup = vi.spyOn(clientCleanup, "terminateCodexBackgroundTerminals");
+      const finalize = vi.spyOn(CodexNativeToolLifecycleProjector.prototype, "finalizeActive");
+      const projectorError = new Error("side projector finalization failed");
+      if (projectorFails) {
+        finalize.mockImplementationOnce(() => {
+          throw projectorError;
+        });
+      }
       const releaseTermination = createDeferred<void>();
       const terminals = new Map([
         ["parent-thread", new Set([10])],
@@ -290,11 +328,42 @@ describe("runCodexAppServerSideQuestion", () => {
           false,
         );
         releaseTermination.resolve();
-        await expect(run).resolves.toMatchObject({
-          message: terminationFails
-            ? expect.stringContaining("background-terminal cleanup failed")
-            : "Codex /btw was aborted.",
-        });
+        const error = await run;
+        const wait = waits.mock.results[0];
+        if (wait?.type !== "return") {
+          throw new Error("Expected the native side-turn completion promise");
+        }
+        const primaryError = await wait.value.catch((reason: unknown) => reason);
+        expect(primaryError).toMatchObject({ message: "Codex /btw was aborted." });
+        if (terminationFails) {
+          const cleanup = terminalCleanup.mock.results[0];
+          if (cleanup?.type !== "return") {
+            throw new Error("Expected the native terminal cleanup promise");
+          }
+          const cleanupError = await cleanup.value.catch((reason: unknown) => reason);
+          expect(cleanupError).toMatchObject({
+            message: expect.stringContaining("background-terminal cleanup failed"),
+          });
+          expect(error).toBeInstanceOf(AggregateError);
+          if (!(error instanceof AggregateError)) {
+            throw new Error("Expected cancellation and terminal cleanup failures", {
+              cause: error,
+            });
+          }
+          expect(error.cause).toBe(primaryError);
+          expect(error.errors).toHaveLength(projectorFails ? 3 : 2);
+          expect(error.errors[0]).toBe(primaryError);
+          expect(error.errors[1]).toBe(cleanupError);
+          expect(error.message).toContain("Codex /btw was aborted.");
+          expect(error.message).toContain("background-terminal cleanup failed");
+          if (projectorFails) {
+            expect(error.errors[2]).toBe(projectorError);
+            expect(error.message).toContain(projectorError.message);
+          }
+        } else {
+          expect(error).toBe(primaryError);
+        }
+        expect(finalize).toHaveBeenCalledOnce();
         expect(terminals.get("parent-thread")).toEqual(new Set([10]));
         expect(terminals.get("side-thread")).toEqual(new Set(terminationFails ? [20] : []));
         expect(client.request.mock.calls.some(([method]) => method === "thread/unsubscribe")).toBe(
@@ -304,6 +373,9 @@ describe("runCodexAppServerSideQuestion", () => {
         releaseTermination.resolve();
         controller.abort();
         await run;
+        waits.mockRestore();
+        terminalCleanup.mockRestore();
+        finalize.mockRestore();
       }
     },
   );

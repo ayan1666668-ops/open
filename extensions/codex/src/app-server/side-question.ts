@@ -24,12 +24,7 @@ import type { PluginRuntime } from "openclaw/plugin-sdk/plugin-runtime";
 import { readStringField as readString } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { resolveCodexAppServerForModelProvider } from "./app-server-policy.js";
 import { handleCodexAppServerApprovalRequest } from "./approval-bridge.js";
-import {
-  interruptCodexTurnAndWaitBestEffort,
-  retireUnsafeCodexTurnClientBestEffort,
-  terminateCodexBackgroundTerminals,
-  unsubscribeCodexThreadBestEffort,
-} from "./attempt-client-cleanup.js";
+import { retireUnsafeCodexTurnClientBestEffort } from "./attempt-client-cleanup.js";
 import { resolveCodexAppServerPreparedAuthHandoff } from "./auth-bridge.js";
 import {
   requireCodexSupervisionModelSelection,
@@ -133,6 +128,7 @@ import {
   type CodexAppServerClientLease,
   type CodexAppServerClientOptions,
 } from "./shared-client.js";
+import { cleanupCodexSideQuestion } from "./side-question-cleanup.js";
 import { SIDE_DEVELOPER_INSTRUCTIONS } from "./side-question-instructions.js";
 import {
   buildCodexRuntimeThreadConfig,
@@ -451,6 +447,7 @@ export async function runCodexAppServerSideQuestion(
   let sandboxEnvironmentClient: CodexAppServerClient | undefined;
   let nativeHookRelay: ReturnType<typeof registerNativeHookRelayForBundledRuntime> | undefined;
   const activeDynamicToolCalls = new Set<Promise<unknown>>();
+  let primaryFailure: { error: unknown } | undefined;
   const releaseSandboxEnvironment = async () => {
     if (!sandboxEnvironment) {
       return;
@@ -963,60 +960,50 @@ export async function runCodexAppServerSideQuestion(
       throw new Error("Codex /btw completed without an answer.");
     }
     return { text: result.text, usage: result.usage };
+  } catch (error) {
+    primaryFailure = { error };
+    throw error;
   } finally {
-    try {
-      // Cleanup aborts are ownership teardown, not a terminal run outcome.
-      // Snapshot the real state while late app-server notifications can still drain.
-      nativeToolRunWasAbortedBeforeCleanup = runAbortController.signal.aborted;
-      params.opts?.abortSignal?.removeEventListener("abort", abortFromUpstream);
-      // Stop dispatched side tools before cleanup waits on the app server;
-      // otherwise a stuck tool can outlive the side turn that owns it.
-      if (!runAbortController.signal.aborted) {
-        runAbortController.abort("codex_side_question_finished");
-      }
-      // Request handlers can still be finishing after the terminal turn event.
-      // Drain their abort races before unsubscribe so late diagnostics cannot leak
-      // into the next side run.
-      await Promise.allSettled(activeDynamicToolCalls);
-      try {
-        await cleanupCodexSideThread(childClient ?? client, {
-          threadId: childThreadId,
-          turnId,
-          interrupt: !collector?.completed,
-          terminateBackgroundTerminals: nativeToolRunWasAbortedBeforeCleanup,
-          timeoutMs: appServer.requestTimeoutMs,
-        });
-      } finally {
-        if (policyWriteUncertain && childClient) {
-          await retireUnsafeCodexTurnClientBestEffort(childClient, "side policy handoff");
-        }
-        collector?.route.release();
-        try {
-          nativeToolLifecycleProjector?.finalizeActive(nativeToolRunWasAbortedBeforeCleanup);
-        } finally {
-          // Keep cleanup-time relay failures with their active projected item.
-          // Direct emission owns only failures that arrive after projector retirement.
-          activateNativePreToolUseFailureFallback();
-        }
-      }
-    } finally {
-      flushPendingNativePreToolUseFailures();
-      try {
-        await releaseSandboxEnvironment();
-      } finally {
-        releaseCodexAppServerClientLease(clientLease);
-        nativeHookRelay?.unregister();
-        await runAgentCleanupStep({
-          runId: sideRunParams.runId,
-          sessionId: sideRunParams.sessionId,
-          step: "codex-side-native-hook-relay-release",
-          log: embeddedAgentLog,
-          cleanup: async () => {
-            await nativeHookRelay?.drain();
-          },
-        });
-      }
+    // Cleanup aborts are ownership teardown, not a terminal run outcome.
+    nativeToolRunWasAbortedBeforeCleanup = runAbortController.signal.aborted;
+    params.opts?.abortSignal?.removeEventListener("abort", abortFromUpstream);
+    if (!runAbortController.signal.aborted) {
+      runAbortController.abort("codex_side_question_finished");
     }
+    // Join dispatched side tools before releasing their native subscription.
+    await Promise.allSettled(activeDynamicToolCalls);
+    await cleanupCodexSideQuestion(childClient ?? client, {
+      threadId: childThreadId,
+      turnId,
+      interrupt: !(collector?.completed || collector?.route.completed),
+      terminateBackgroundTerminals: nativeToolRunWasAbortedBeforeCleanup,
+      timeoutMs: appServer.requestTimeoutMs,
+      failure: primaryFailure,
+      afterThreadCleanup: [
+        async () => {
+          if (policyWriteUncertain && childClient) {
+            await retireUnsafeCodexTurnClientBestEffort(childClient, "side policy handoff");
+          }
+        },
+        () => collector?.route.release(),
+        () => nativeToolLifecycleProjector?.finalizeActive(nativeToolRunWasAbortedBeforeCleanup),
+        activateNativePreToolUseFailureFallback,
+        flushPendingNativePreToolUseFailures,
+        releaseSandboxEnvironment,
+        () => releaseCodexAppServerClientLease(clientLease),
+        () => nativeHookRelay?.unregister(),
+        () =>
+          runAgentCleanupStep({
+            runId: sideRunParams.runId,
+            sessionId: sideRunParams.sessionId,
+            step: "codex-side-native-hook-relay-release",
+            log: embeddedAgentLog,
+            cleanup: async () => {
+              await nativeHookRelay?.drain();
+            },
+          }),
+      ],
+    });
   }
 }
 
@@ -1286,51 +1273,6 @@ function isMissingCodexParentThreadError(error: unknown): boolean {
     message.includes("no rollout found for thread id") ||
     message.includes("includeTurns is unavailable before first user message")
   );
-}
-
-async function cleanupCodexSideThread(
-  client: CodexAppServerClient,
-  params: {
-    threadId?: string;
-    turnId?: string;
-    interrupt: boolean;
-    terminateBackgroundTerminals: boolean;
-    timeoutMs: number;
-  },
-): Promise<void> {
-  if (!params.threadId) {
-    return;
-  }
-  if (params.interrupt && params.turnId !== undefined) {
-    const confirmed = await interruptCodexTurnAndWaitBestEffort(client, {
-      threadId: params.threadId,
-      turnId: params.turnId,
-      timeoutMs: params.timeoutMs,
-    });
-    if (!confirmed) {
-      await retireUnsafeCodexTurnClientBestEffort(client, "side turn interrupt");
-      // An unconfirmed native turn must never lose its only visible subscription.
-      throw new Error(
-        "Codex /btw cleanup could not confirm the side turn stopped; background terminals may still be running.",
-      );
-    }
-  }
-  if (params.terminateBackgroundTerminals && params.turnId !== undefined) {
-    try {
-      await terminateCodexBackgroundTerminals(client, params.threadId);
-    } catch (error) {
-      await retireUnsafeCodexTurnClientBestEffort(client, "side background terminals");
-      throw error;
-    }
-  }
-  if (
-    !(await unsubscribeCodexThreadBestEffort(client, {
-      threadId: params.threadId,
-      timeoutMs: params.timeoutMs,
-    }))
-  ) {
-    await retireUnsafeCodexTurnClientBestEffort(client, "side thread unsubscribe");
-  }
 }
 
 function formatCodexErrorMessage(params: JsonObject, rateLimits: JsonValue | undefined): Error {

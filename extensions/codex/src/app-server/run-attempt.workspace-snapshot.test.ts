@@ -2,13 +2,24 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
 import * as agentHarnessRuntime from "openclaw/plugin-sdk/agent-harness-runtime";
+import { withPluginRuntimeRegistryScope } from "openclaw/plugin-sdk/channel-test-helpers";
+import {
+  createPluginRecord,
+  createPluginRegistry,
+  createPluginRuntimeMock,
+  disposePluginRegistryInstances,
+} from "openclaw/plugin-sdk/plugin-test-runtime";
 import { describe, expect, it, vi } from "vitest";
 import { readAttemptTerminal } from "./attempt-terminal.test-helper.js";
+import { dynamicToolBuildState } from "./dynamic-tool-build-state.js";
 import {
+  createCodexRuntimePlanFixture,
   createParams,
   createResumeHarness,
+  createRuntimeDynamicTool,
   createStartedThreadHarness,
   runCodexAppServerAttempt,
+  setCodexTestModelSupportsTools,
   setupRunAttemptTestHooks,
   tempDir,
 } from "./run-attempt-test-harness.js";
@@ -21,8 +32,83 @@ import {
 setupRunAttemptTestHooks();
 
 describe("Codex workspace instruction snapshots", () => {
+  it.each(["async preparation", "synchronous supplement"] as const)(
+    "keeps loaded workspace instructions when optional memory %s fails",
+    async (contributionKind) => {
+      const sessionFile = path.join(tempDir, "session.jsonl");
+      const executionDir = path.join(tempDir, "workspace");
+      const agentWorkspaceDir = path.join(tempDir, "agent-workspace");
+      const initialGuidance = "Keep these successfully loaded workspace instructions.";
+      const updatedGuidance = "Later workspace changes wait for a new session.";
+      await fs.mkdir(agentWorkspaceDir, { recursive: true });
+      await fs.writeFile(path.join(agentWorkspaceDir, "AGENTS.md"), initialGuidance);
+      dynamicToolBuildState.openClawCodingToolsFactory = () => [
+        createRuntimeDynamicTool("memory_get"),
+      ];
+      const params = createParams(sessionFile, executionDir);
+      params.disableTools = false;
+      params.runtimePlan = createCodexRuntimePlanFixture();
+      params.bootstrapWorkspaceDir = agentWorkspaceDir;
+      setCodexTestModelSupportsTools(params, true);
+      setAgentWorkspaceForTest(params, agentWorkspaceDir);
+      const registration = createPluginRegistry({
+        runtime: createPluginRuntimeMock(),
+        logger: { info() {}, warn() {}, error() {}, debug() {} },
+        activateGlobalSideEffects: false,
+      });
+      const record = createPluginRecord({ id: "workspace-memory-failure" });
+      registration.registry.plugins.push(record);
+      const api = registration.createApi(record, { config: params.config ?? {} });
+      const memoryContribution = vi.fn((_context: unknown): string[] => []);
+      memoryContribution.mockImplementationOnce(() => {
+        throw new Error("optional memory contribution unavailable");
+      });
+      if (contributionKind === "async preparation") {
+        api.registerMemoryPromptPreparation(async (context) => memoryContribution(context));
+      } else {
+        api.registerMemoryPromptSupplement(memoryContribution);
+      }
+      try {
+        await withPluginRuntimeRegistryScope(registration.registry, async () => {
+          const harness = createStartedThreadHarness(undefined, { persistedThreads: [] });
+          const run = runCodexAppServerAttempt(params);
+          await Promise.race([run, harness.waitForMethod("turn/start")]);
+          await harness.completeTurn({ threadId: "thread-1", turnId: "turn-1" });
+          expect(readAttemptTerminal(await run).promptError).toBeNull();
+          expect(memoryContribution).toHaveBeenCalledWith(
+            expect.objectContaining({ availableTools: new Set(["memory_get"]) }),
+          );
+          const started = harness.requests.find(({ method }) => method === "thread/start");
+          assert(started);
+          expect(
+            (started.params as { developerInstructions?: string }).developerInstructions,
+          ).toContain(initialGuidance);
+          expect(await readCodexAppServerBinding(sessionFile)).toMatchObject({
+            agentWorkspaceDeveloperInstructions: expect.stringContaining(initialGuidance),
+          });
+
+          await fs.writeFile(path.join(agentWorkspaceDir, "AGENTS.md"), updatedGuidance);
+          harness.close();
+          const resumeHarness = createResumeHarness("thread-1");
+          const resumedRun = runCodexAppServerAttempt(params);
+          await Promise.race([resumedRun, resumeHarness.waitForMethod("turn/start")]);
+          await resumeHarness.completeTurn({ threadId: "thread-1", turnId: "turn-1" });
+          expect(readAttemptTerminal(await resumedRun).promptError).toBeNull();
+          const resumed = resumeHarness.requests.find(({ method }) => method === "thread/resume");
+          assert(resumed);
+          const instructions =
+            (resumed.params as { developerInstructions?: string }).developerInstructions ?? "";
+          expect(instructions).toContain(initialGuidance);
+          expect(instructions).not.toContain(updatedGuidance);
+        });
+      } finally {
+        await disposePluginRegistryInstances(registration.registry);
+      }
+    },
+  );
+
   it.each(["initial", "resume"] as const)(
-    "preserves the workspace snapshot after %s bootstrap loading fails",
+    "retains the first successful workspace capture after %s bootstrap loading fails",
     async (failureAt) => {
       const sessionFile = path.join(tempDir, "session.jsonl");
       const executionDir = path.join(tempDir, "workspace");
@@ -44,6 +130,11 @@ describe("Codex workspace instruction snapshots", () => {
       await harness.completeTurn({ threadId: "thread-1", turnId: "turn-1" });
       const initialResult = await run;
       expect(readAttemptTerminal(initialResult).promptError).toBeNull();
+      if (failureAt === "initial") {
+        expect(
+          (await readCodexAppServerBinding(sessionFile))?.agentWorkspaceDeveloperInstructions,
+        ).toBeUndefined();
+      }
 
       await fs.writeFile(path.join(agentWorkspaceDir, "AGENTS.md"), updatedGuidance);
       harness.close();
@@ -65,11 +156,12 @@ describe("Codex workspace instruction snapshots", () => {
       assert(threadResume);
       const instructions =
         (threadResume.params as { developerInstructions?: string }).developerInstructions ?? "";
-      expect(instructions).not.toContain(updatedGuidance);
       if (failureAt === "resume") {
         expect(instructions).toContain(initialGuidance);
+        expect(instructions).not.toContain(updatedGuidance);
       } else {
         expect(instructions).not.toContain(initialGuidance);
+        expect(instructions).toContain(updatedGuidance);
       }
     },
   );
