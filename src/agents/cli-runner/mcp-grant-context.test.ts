@@ -8,8 +8,12 @@ import type { RunCliAgentParams } from "./types.js";
 
 function buildGrant(
   overrides: Partial<RunCliAgentParams> = {},
-  delegationCapability?: "full" | "report_only",
+  grantOverrides: {
+    modelContextWindowTokens?: number;
+    delegationCapability?: "full" | "report_only";
+  } = {},
 ) {
+  const { delegationCapability, ...grantParams } = grantOverrides;
   const run = {
     sessionKey: "agent:main:telegram:group:chat123",
     workspaceDir: "/workspace",
@@ -32,6 +36,7 @@ function buildGrant(
     agentId: "main",
     modelProvider: "openai",
     modelId: "gpt-5.6-luna",
+    ...grantParams,
   });
 }
 
@@ -54,17 +59,23 @@ describe("buildCliMcpGrantContext source-reply authority", () => {
     expect(buildGrant({ modelHasVision: true }).modelHasVision).toBe(true);
   });
 
-  it("carries the run owner's effective context budget into the loopback grant", () => {
-    // The session cap wins over the native window, exactly like the embedded
-    // runner's `contextTokenBudget ?? model.contextWindow`.
+  it("carries preparation's finalized context budget into the loopback grant", () => {
+    // The grant relays the prepared number verbatim; the raw catalog inputs on
+    // the run never size it (a 200k session on a 1M model must stay 200k).
     expect(
-      buildGrant({ modelContextWindow: 1_000_000, modelContextTokens: 272_000 })
-        .modelContextWindowTokens,
-    ).toBe(272_000);
-    expect(buildGrant({ modelContextWindow: 200_000 }).modelContextWindowTokens).toBe(200_000);
-    // Nothing resolved: the grant carries no guess, so tools keep their default.
-    expect(buildGrant().modelContextWindowTokens).toBeUndefined();
-    expect(buildGrant({ modelContextWindow: 0 }).modelContextWindowTokens).toBeUndefined();
+      buildGrant(
+        { modelContextWindow: 1_000_000, modelContextTokens: 1_000_000 },
+        { modelContextWindowTokens: 200_000 },
+      ).modelContextWindowTokens,
+    ).toBe(200_000);
+    expect(buildGrant({ modelContextWindow: 1_000_000 }).modelContextWindowTokens).toBeUndefined();
+    // Nothing usable resolved: the grant carries no guess, so tools keep their default.
+    expect(
+      buildGrant({}, { modelContextWindowTokens: 0 }).modelContextWindowTokens,
+    ).toBeUndefined();
+    expect(
+      buildGrant({}, { modelContextWindowTokens: Number.NaN }).modelContextWindowTokens,
+    ).toBeUndefined();
   });
 
   it("snapshots only the resolved logical model into the loopback grant", () => {
@@ -197,7 +208,7 @@ describe("buildCliMcpGrantContext source-reply authority", () => {
 
 describe("buildCliMcpGrantContext delegationCapability", () => {
   it("stamps a report-only capability into the minted grant", () => {
-    expect(buildGrant({}, "report_only")).toMatchObject({
+    expect(buildGrant({}, { delegationCapability: "report_only" })).toMatchObject({
       delegationCapability: "report_only",
     });
   });
@@ -206,6 +217,8 @@ describe("buildCliMcpGrantContext delegationCapability", () => {
     // Primary attempts must produce byte-identical grant contexts, so the key
     // is absent rather than explicitly "full".
     expect(buildGrant()).not.toHaveProperty("delegationCapability");
-    expect(buildGrant({}, "full")).not.toHaveProperty("delegationCapability");
+    expect(buildGrant({}, { delegationCapability: "full" })).not.toHaveProperty(
+      "delegationCapability",
+    );
   });
 });

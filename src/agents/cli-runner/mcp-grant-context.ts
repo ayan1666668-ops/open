@@ -108,16 +108,13 @@ function buildCliMcpBashElevated(
 
 /**
  * The context budget the loopback tool surface sizes its model-facing projections
- * by — the same value the embedded runner passes as `modelContextWindowTokens`
- * (`contextTokenBudget ?? model.contextWindow`): the session's effective context
- * cap when the run owner resolved one, else the model's native window. Absent
- * when the run owner resolved neither, so the tools keep their conservative
- * default instead of a guessed window.
+ * by. Preparation owns the finalized value (`contextWindowInfo.tokens`: per-model
+ * minimum, the session-selected catalog option, configured limits and the
+ * alias-aware upper bound); the grant only carries it, never recomputes it from
+ * the raw catalog inputs. Absent when preparation resolved nothing usable, so the
+ * tools keep their conservative default instead of a guessed window.
  */
-function resolveGrantModelContextWindowTokens(
-  run: Pick<RunCliAgentParams, "modelContextTokens" | "modelContextWindow">,
-): number | undefined {
-  const candidate = run.modelContextTokens ?? run.modelContextWindow;
+function normalizeGrantModelContextWindowTokens(candidate: number | undefined): number | undefined {
   return typeof candidate === "number" && Number.isFinite(candidate) && candidate > 0
     ? Math.floor(candidate)
     : undefined;
@@ -161,6 +158,8 @@ export function buildCliMcpGrantContext(params: {
   runtimePolicyAgentId?: string;
   modelProvider: string;
   modelId: string;
+  /** Preparation's finalized context budget (`contextWindowInfo.tokens`). */
+  modelContextWindowTokens?: number;
   toolsAllow?: string[];
 }): McpLoopbackRequestContext {
   const sessionKey = resolveCliMcpSessionKey(params.run, params.config, params.agentId);
@@ -173,7 +172,9 @@ export function buildCliMcpGrantContext(params: {
   const execSession = buildCliMcpExecSession(params.run.sessionEntry, params.run.execOverrides);
   const execOverrides = buildCliMcpExecOverrides(params.run.execOverrides);
   const bashElevated = buildCliMcpBashElevated(params.run.bashElevated);
-  const modelContextWindowTokens = resolveGrantModelContextWindowTokens(params.run);
+  const modelContextWindowTokens = normalizeGrantModelContextWindowTokens(
+    params.modelContextWindowTokens,
+  );
   const channelContext = buildCliMcpChannelContext(params.run.channelContext, params.run.senderId);
   const senderName = normalizeOptionalMcpContextValue(params.run.senderName ?? undefined);
   const senderUsername = normalizeOptionalMcpContextValue(params.run.senderUsername ?? undefined);

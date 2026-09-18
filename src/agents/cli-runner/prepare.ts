@@ -1283,6 +1283,10 @@ async function prepareCliRunContextWithinReadFence(
           runtimePolicyAgentId: params.runtimePolicySessionKey ? policyAgentId : undefined,
           modelProvider,
           modelId,
+          // The finalized budget (session-selected option, configured limits,
+          // alias bound), not the raw catalog inputs on params: the loopback
+          // tools size their projections by the same number the run compacts on.
+          modelContextWindowTokens: contextWindowInfo.tokens,
         })
       : undefined;
   const mcpToolAuthAgentDir = mcpContextBase

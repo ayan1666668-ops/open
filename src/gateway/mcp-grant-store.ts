@@ -42,10 +42,11 @@ export type McpLoopbackRequestContext = {
   requesterModel?: ProviderModelRef;
   modelHasVision?: boolean;
   /**
-   * Effective context budget (tokens) resolved by the run owner from its prepared
-   * model catalog: the session's context cap when one applies, else the native
-   * window. Sizes model-facing tool projections (read budgets, result caps) on the
-   * loopback surface the same way the embedded runner sizes them.
+   * The run's finalized context budget (tokens) as CLI preparation resolved it
+   * (`contextWindowInfo.tokens`): session-selected catalog option, configured
+   * limits and alias bound already applied. Sizes model-facing tool projections
+   * (read budgets, result caps) on the loopback surface the same way the embedded
+   * runner sizes them.
    */
   modelContextWindowTokens?: number;
   messageProvider?: string;
