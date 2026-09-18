@@ -92,94 +92,95 @@
   "uiHints": {
     "enabled": {
       "label": "Active Memory Recall",
-      "help": "Globally enable or pause Active Memory recall while keeping the plugin command available."
+      "help": "Master switch. Turn Active Memory on or off for normal use without removing the plugin or its command."
     },
     "agents": {
       "label": "Target Agents",
-      "help": "Explicit agent ids that may use active memory."
+      "help": "Which agents are allowed to use Active Memory. If an agent is not listed here, it will never run recall."
     },
     "model": {
       "label": "Memory Model",
-      "help": "Provider/model used for the blocking memory sub-agent."
+      "help": "The model used for the memory lookup itself. Leave blank to let Active Memory use the normal chat model."
     },
     "modelFallback": {
       "label": "Fallback Memory Model",
-      "help": "Optional provider/model to use if no explicit plugin model, session model, or agent primary model resolves."
+      "help": "Backup model to use only when Active Memory cannot figure out any normal model to run on."
     },
     "modelFallbackPolicy": {
       "label": "Model Fallback Policy",
-      "help": "Deprecated compatibility field. modelFallback is only the chain-resolution last resort when no explicit plugin model, session model, or agent primary model resolves; it is not runtime failover."
+      "help": "Legacy compatibility setting. This does not create live failover between models; it only controls last-resort model selection."
     },
     "allowedChatTypes": {
       "label": "Allowed Chat Types",
-      "help": "Choose which session types may run Active Memory. Defaults to direct-message style sessions only, but explicit portal/webchat sessions can also be enabled."
+      "help": "Choose where Active Memory is allowed to run, like direct chats, groups, or channels."
     },
     "allowedChatIds": {
       "label": "Allowed Chat IDs",
-      "help": "Optional explicit allowlist of chat/user IDs (e.g. Feishu chat_id oc_xxx, open_id ou_xxx, Telegram chat id, Slack channel id). When non-empty, Active Memory only runs for sessions whose conversation id is in the list, across **every** chat type at once (direct, group, channel). Setting this narrows every allowed chat type simultaneously — if you want 'all directs + only specific groups', use allowedChatTypes: ['group'] + allowedChatIds: [<group ids>] and rely on direct chats being matched via the direct session id (e.g. the user's open_id) instead. Leave empty to fall back to allowedChatTypes alone."
+      "help": "Optional shortlist of exact chats or users where Active Memory may run. If you fill this in, anything not on the list is skipped."
     },
     "deniedChatIds": {
       "label": "Denied Chat IDs",
-      "help": "Optional explicit denylist of chat/user IDs. Sessions whose resolved conversation id matches the list are skipped even when the chat type is allowed. Applied after allowedChatIds."
+      "help": "Optional blocklist of exact chats or users where Active Memory must stay off, even if they would normally be allowed."
     },
     "timeoutMs": {
-      "label": "Timeout (ms)"
+      "label": "Timeout (ms)",
+      "help": "How long Active Memory is allowed to spend looking for something useful before it gives up and lets the reply continue without it."
     },
     "setupGraceTimeoutMs": {
       "label": "Setup Grace Timeout (ms)",
-      "help": "Advanced: extra blocking budget for cold embedded-run setup before the recall timeout is considered exhausted. Defaults to 0 so timeoutMs remains the main-lane hook budget unless you opt in."
+      "help": "Extra startup time for cold runs. This helps when the memory lookup needs a moment to spin up, without eating the whole main timeout immediately."
     },
     "queryMode": {
       "label": "Query Mode",
-      "help": "Choose whether the blocking memory sub-agent sees only the latest user message, a small recent tail, or the full conversation."
+      "help": "How much of the chat Active Memory looks at when deciding what to search for: just the latest message, the recent back-and-forth, or the whole conversation."
     },
     "promptStyle": {
       "label": "Prompt Style",
-      "help": "Choose how eager or strict the blocking memory sub-agent should be when deciding whether to return memory."
+      "help": "How picky Active Memory should be. Safer modes return memory less often; more eager modes are more willing to surface a possibly useful reminder."
     },
     "toolsAllow": {
       "label": "Allowed Memory Tools",
-      "help": "Advanced: tool names the blocking memory sub-agent may use. Defaults to memory_search and memory_get, or memory_recall when plugins.slots.memory selects memory-lancedb; configure this for other non-core memory providers. Wildcards, group entries, and core agent tools are ignored."
+      "help": "Which memory lookup tools Active Memory is allowed to use under the hood. Most setups should leave this alone."
     },
     "thinking": {
       "label": "Thinking Override",
-      "help": "Advanced: optional thinking level for the blocking memory sub-agent. Defaults to off for speed."
+      "help": "Optional override for how hard the memory lookup model should think. More thinking may help edge cases, but it usually makes recall slower."
     },
     "promptOverride": {
       "label": "Prompt Override",
-      "help": "Advanced: replace the default Active Memory sub-agent instructions. Conversation context is still appended."
+      "help": "Replace Active Memory's built-in instructions entirely. Use this only if you want to take full control of its behavior."
     },
     "promptAppend": {
       "label": "Prompt Append",
-      "help": "Advanced: append extra operator instructions after the default Active Memory sub-agent instructions."
+      "help": "Add extra guidance to Active Memory without replacing the default behavior."
     },
     "maxSummaryChars": {
       "label": "Max Summary Characters",
-      "help": "Maximum total characters allowed in the active-memory summary."
+      "help": "Caps how much recalled memory Active Memory may pass into the reply as extra context."
     },
     "logging": {
       "label": "Enable Logging",
-      "help": "Emit active memory timing and result logs."
+      "help": "Write debug logs showing whether Active Memory ran, how long it took, and whether it found anything."
     },
     "circuitBreakerMaxTimeouts": {
       "label": "Circuit Breaker Max Timeouts",
-      "help": "Skip recall after this many consecutive timeouts for the same agent/model. Resets on a successful recall or after the cooldown expires. Default: 3."
+      "help": "How many timeouts in a row Active Memory will tolerate before it temporarily stops trying, to avoid dragging the whole system down."
     },
     "circuitBreakerCooldownMs": {
       "label": "Circuit Breaker Cooldown (ms)",
-      "help": "How long to skip recall after the circuit breaker trips, in milliseconds. Default: 60000 (1 minute)."
+      "help": "How long Active Memory stays paused after too many back-to-back timeouts."
     },
     "persistTranscripts": {
       "label": "Persist Transcripts",
-      "help": "Keep blocking memory sub-agent session transcripts on disk in a separate plugin-owned directory."
+      "help": "Keep the memory lookup transcripts on disk for debugging instead of discarding them after each run."
     },
     "transcriptDir": {
       "label": "Transcript Directory",
-      "help": "Relative directory under the agent sessions folder used when transcript persistence is enabled."
+      "help": "Folder name to use for saved Active Memory transcripts when transcript saving is turned on."
     },
     "qmd.searchMode": {
       "label": "QMD Search Mode",
-      "help": "Override the QMD search mode used by the blocking memory sub-agent. Defaults to fast lexical search; use inherit to match the main memory backend setting."
+      "help": "Advanced search mode for the memory backend. Leave this alone unless you are tuning search quality or debugging backend behavior."
     }
   }
 }
