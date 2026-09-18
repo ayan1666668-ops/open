@@ -253,7 +253,14 @@ export async function rotateAnswerLaneAfterToolProgress(turn: Turn): Promise<boo
   if (!turn.activeAnswerDraftIsToolProgressOnly) {
     return false;
   }
-  repositionLaneForNewMessage(turn, turn.answerLane);
+  if (turn.answerLane.finalized) {
+    // The tool-progress draft was finalized in place into a durable message, such
+    // as a native question with its controls. Rotate without the deferred delete.
+    turn.answerLane.stream?.forceNewMessage();
+    resetLaneState(turn, turn.answerLane);
+  } else {
+    repositionLaneForNewMessage(turn, turn.answerLane);
+  }
   turn.progressCompositor.resetActivity({ suppressed: true });
   turn.rotateAnswerLaneWhenQueuedBlocksSettle = false;
   return true;

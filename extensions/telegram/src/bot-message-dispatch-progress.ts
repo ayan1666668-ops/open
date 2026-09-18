@@ -113,9 +113,13 @@ export function createProgressState(
       }
     },
     deleteCurrent: async () => {
+      // A finalized preview is a durable message, such as a native question with
+      // its controls; retire the stream identity without deleting it. Otherwise
       // clear waits for in-flight sends and stops the stream. Reopen only after
       // that stop so a cleared card cannot consume the next progress update.
-      await draftState.answerLane.stream?.clear();
+      if (!draftState.answerLane.finalized) {
+        await draftState.answerLane.stream?.clear();
+      }
       draftState.answerLane.stream?.forceNewMessage();
       draftState.answerLane.lastPartialText = "";
       draftState.answerLane.hasStreamedMessage = false;
@@ -209,7 +213,12 @@ export async function teardownProgressWindow(turn: Turn): Promise<void> {
     await rotateAnswerLaneAfterToolProgress(turn);
     return;
   }
-  await turn.answerLane.stream?.clear();
+  // A finalized preview is a durable message; only an unfinalized draft is deleted.
+  if (turn.answerLane.finalized) {
+    turn.answerLane.stream?.forceNewMessage();
+  } else {
+    await turn.answerLane.stream?.clear();
+  }
   resetLaneState(turn, turn.answerLane);
 }
 
