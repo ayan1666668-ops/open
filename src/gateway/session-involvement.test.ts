@@ -122,7 +122,7 @@ describe("personal session involvement", () => {
       f.post("before-restart", {}, inbox);
       check(true, 1);
       await setHidden(false);
-      inbox = reopen();
+      reopen();
       check(false, 1);
       await setHidden(true);
       inbox = reopen();
