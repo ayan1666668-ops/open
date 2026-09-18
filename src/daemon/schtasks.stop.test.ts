@@ -468,7 +468,7 @@ describe("Scheduled Task stop/restart cleanup", () => {
       vi.spyOn(process, "platform", "get").mockReturnValue("win32");
       let leaseRemoved = false;
       let forced = false;
-      readGatewayOwnerLease.mockImplementation(() => (leaseRemoved ? null : GATEWAY_OWNER));
+      readGatewayOwnerLease.mockImplementation(() => (leaseRemoved ? undefined : GATEWAY_OWNER));
       readWindowsProcessStartTimeSync.mockReturnValue(GATEWAY_OWNER.startedAt);
       spawnSync.mockImplementation((command, args) => {
         const executable = command.toLowerCase();
@@ -485,7 +485,7 @@ describe("Scheduled Task stop/restart cleanup", () => {
           };
         }
         if (executable.endsWith("tasklist.exe")) {
-          const output = forced ? "No tasks" : '\"node.exe\",\"4242\",\"Console\",\"1\",\"1 K\"';
+          const output = forced ? "No tasks" : '"node.exe","4242","Console","1","1 K"';
           return {
             pid: 0,
             output: [null, output, ""],
