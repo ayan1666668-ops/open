@@ -656,6 +656,9 @@ describe("config schema", () => {
     expect(progressPropsFor("discord")).toHaveProperty("commentary");
     expect(progressPropsFor("slack")).toHaveProperty("commentary");
     expect(progressPropsFor("telegram")).toHaveProperty("commentary");
+    expect(progressPropsFor("telegram")).toHaveProperty("previewWithHooks");
+    expect(progressPropsFor("discord")).not.toHaveProperty("previewWithHooks");
+    expect(progressPropsFor("slack")).not.toHaveProperty("previewWithHooks");
     expect(res.uiHints["channels.matrix"]?.label).toBe("Matrix");
     expect(res.uiHints["channels.matrix"]?.help).toBe("Matrix channel help");
     expect(res.uiHints["channels.matrix.accessToken"]).toMatchObject({
@@ -679,6 +682,9 @@ describe("config schema", () => {
     );
     expect(res.uiHints["channels.telegram.streaming.progress.commentary"]?.label).toBe(
       "Telegram Progress Commentary",
+    );
+    expect(res.uiHints["channels.telegram.streaming.progress.previewWithHooks"]?.label).toBe(
+      "Telegram Progress Draft With Hooks",
     );
     expect(res.uiHints["channels.mattermost.streaming.progress.label"]?.label).toBe(
       "Mattermost Progress Label",

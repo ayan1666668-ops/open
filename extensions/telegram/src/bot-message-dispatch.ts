@@ -46,6 +46,7 @@ import {
   buildTelegramNativeQuoteCandidate,
   type TelegramNativeQuoteCandidateByMessageId,
 } from "./bot/native-quote.js";
+import { resolveTelegramProgressDraftWithHooks } from "./preview-streaming.js";
 import { cacheSticker, describeStickerImage } from "./sticker-cache.js";
 
 const EMPTY_RESPONSE_FALLBACK = "No response generated. Please try again.";
@@ -313,13 +314,19 @@ export const dispatchTelegramMessage = async (
   const quote = resolveTelegramQuoteContext({ context: dispatchContext, replyToMode });
   // Draft messages are provider-visible before final modifiers run. Suppress them when a hook
   // can rewrite or cancel, or the original payload can flash before the normal delivery gate.
+  // Operators may explicitly waive this gate for the progress draft (previewWithHooks).
   const hookRunner = getGlobalHookRunner();
+  const modifyingHooksRegistered =
+    (hookRunner?.hasHooks("reply_payload_sending") ?? false) ||
+    (hookRunner?.hasHooks("message_sending") ?? false);
   const allowProviderPreview =
     !dispatchContext.ctxPayload.GroupThread &&
-    !(
-      (hookRunner?.hasHooks("reply_payload_sending") ?? false) ||
-      (hookRunner?.hasHooks("message_sending") ?? false)
-    );
+    (!modifyingHooksRegistered ||
+      resolveTelegramProgressDraftWithHooks({
+        streaming: telegramCfg.streaming,
+        streamMode: dispatchParams.streamMode,
+        reasoningLevel: resolvedReasoningLevel,
+      }));
   const isDispatchSuperseded = () => turnAdoptionLifecycle?.abortSignal?.aborted === true;
   const turnConfig = {
     ...dispatchParams,
