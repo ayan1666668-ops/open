@@ -151,7 +151,9 @@ describe("outbound preparation metadata", () => {
       const result = normalizeEmptyPayloadForDelivery(input);
       if (media) {
         expect(result).toEqual({ text: "", mediaUrl: "https://example.test/image.png" });
-        if (!result) throw new Error("Expected accepted media payload");
+        if (!result) {
+          throw new Error("Expected accepted media payload");
+        }
         expect(getReplyPayloadMetadata(result)).toEqual(metadata);
       } else {
         expect(result).toBeNull();
