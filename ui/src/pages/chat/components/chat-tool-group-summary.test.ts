@@ -48,7 +48,7 @@ describe("tool group disclosures", () => {
 
     render(
       html`${renderWorkGroupSummary(work, { expanded: true, onToggle })}
-      ${renderActivityGroup([group], { showToolCalls: true })}`,
+      ${renderActivityGroup([group], { showReasoning: false, showToolCalls: true })}`,
       container,
     );
     const labels = [...container.querySelectorAll(".chat-activity-group__label")];
