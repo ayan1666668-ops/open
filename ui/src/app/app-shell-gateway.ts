@@ -174,25 +174,6 @@ export class ShellGatewayOwner {
       }
       return;
     }
-    if (event.event === "session.observer") {
-      const context = this.host.context;
-      if (context) {
-        // Recovery digests share the tracker so stale critical notices can announce again.
-        this.host.criticalNoticeRuntime ??=
-          import("../pages/chat/critical-observer-notice.runtime.ts");
-        const payload = event.payload;
-        void this.host.criticalNoticeRuntime.then((runtime) =>
-          runtime.handleCriticalObserverDigest({
-            payload,
-            selectedSessionKey: this.host.activeSessionKey,
-            sessionHost: this.host.storedOutboxScopeHost(context),
-            sessions: context.sessions.state.result?.sessions ?? [],
-            onOpen: (sessionKey, agentId) => this.host.selectChatSession(sessionKey, agentId),
-          }),
-        );
-      }
-      return;
-    }
     if (event.event === "config.changed") {
       // A local settings draft owns config conflicts; external snapshots must not overwrite it.
       const runtimeConfig = this.host.context?.runtimeConfig;
