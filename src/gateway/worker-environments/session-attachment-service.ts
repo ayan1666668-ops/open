@@ -262,17 +262,58 @@ export function createWorkerEnvironmentSessionAttachments(
                   assertCurrent,
                 );
                 reservationCreated = true;
+                const cancelReservation = () => {
+                  const current = store.get(reservation.environment.environmentId);
+                  if (current?.state === "requested") {
+                    store.cancelSessionAttachmentReservation(reservation.attachment);
+                  } else {
+                    store.closeSessionAttachment(request.sessionId, () => {
+                      const currentAttachment = store.getSessionAttachmentRecord(request.sessionId);
+                      if (
+                        currentAttachment?.environmentId !== reservation.attachment.environmentId ||
+                        currentAttachment.generation !== reservation.attachment.generation
+                      ) {
+                        throw new Error(
+                          "Conversation environment reservation changed before cleanup",
+                        );
+                      }
+                    });
+                  }
+                };
+                let authorityFailure: { error: unknown } | undefined;
+                const assertProvisionCurrent = () => {
+                  try {
+                    assertCurrent();
+                    providerLifecycle.assertPreparedIntentCurrent(request.profileId, intent);
+                  } catch (error) {
+                    authorityFailure ??= { error };
+                    cancelReservation();
+                    throw error;
+                  }
+                };
                 try {
-                  assertCurrent();
+                  assertProvisionCurrent();
                   await onReserved?.({
                     environmentId: reservation.environment.environmentId,
                     reused: false,
                   });
-                  assertCurrent();
+                  assertProvisionCurrent();
+                  // Retain this lock through allocation so queued recovery cannot bypass the
+                  // requester's final-effect guard after reservation or presentation.
+                  await providerLifecycle.reconcileRecord(
+                    reservation.environment,
+                    signal,
+                    undefined,
+                    assertProvisionCurrent,
+                  );
+                  if (authorityFailure) {
+                    throw authorityFailure.error;
+                  }
+                  assertProvisionCurrent();
                   return reservation;
                 } catch (error) {
-                  store.cancelSessionAttachmentReservation(reservation.attachment);
-                  throw error;
+                  cancelReservation();
+                  throw authorityFailure ? authorityFailure.error : error;
                 }
               })
               .catch(async (error: unknown) => {
@@ -288,16 +329,6 @@ export function createWorkerEnvironmentSessionAttachments(
                 throw error;
               });
             attachment = reserved.attachment;
-            environment = await providerLifecycle.createWithProfile(
-              request.profileId,
-              allocationKey,
-              {
-                machineClass: request.machineClass,
-                os: request.os,
-                signal,
-              },
-              intent,
-            );
           }
           assertCurrent();
           const current = store.getSessionAttachmentRecord(request.sessionId);

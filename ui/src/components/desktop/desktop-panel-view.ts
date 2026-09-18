@@ -320,16 +320,21 @@ export function renderDesktopConnection(options: {
           : nothing
       }
       <span class="desktop-toolbar__spacer"></span>
-      <button
-        class="desktop-toolbar-action"
-        type="button"
-        aria-label=${t(options.controlling ? "desktop.switchToViewOnly" : "desktop.takeControl")}
-        aria-pressed=${options.controlling ? "true" : "false"}
-        ?disabled=${options.state !== "connected"}
-        @click=${options.onControlToggle}
-      >
-        ${t(options.controlling ? "desktop.control" : "desktop.viewOnly")}
-      </button>
+      ${
+        options.controlling
+          ? html`<button
+              class="desktop-toolbar-action"
+              type="button"
+              aria-label=${t("desktop.switchToViewOnly")}
+              ?disabled=${options.state !== "connected"}
+              @click=${options.onControlToggle}
+            >
+              ${t("desktop.control")}
+            </button>`
+          : options.state === "connected"
+            ? html`<span class="desktop-toolbar-mode" role="status">${t("desktop.viewOnly")}</span>`
+            : nothing
+      }
       ${renderDesktopSizing(options.sizing)} ${options.pictureInPictureControl}
       ${options.presentationControls ?? nothing}
       <button

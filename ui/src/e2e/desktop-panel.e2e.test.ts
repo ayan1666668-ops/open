@@ -728,7 +728,8 @@ suite.define(() => {
       await gateway.waitForRequest("environments.list");
       await panel.getByText("worker-desktop-1", { exact: true }).waitFor();
       await panel.getByText("agent:main:desktop", { exact: true }).waitFor();
-      await installDesktopClientFake(panel);
+      const rfb = await installScriptedRfbServer(page);
+      await gateway.deferNext("desktop.observe");
 
       await panel.getByRole("button", { name: "Connect", exact: true }).click();
       const viewRequest = await gateway.waitForRequest("desktop.observe");
@@ -779,6 +780,11 @@ suite.define(() => {
         );
       });
       expect(overlayCoversStage).toBe(true);
+      expect(await takeControl.isEnabled()).toBe(false);
+      await gateway.resolveDeferred("desktop.observe");
+      await expect.poll(rfb.events).toContain("authenticated:1");
+      await expect.poll(() => takeControl.isEnabled()).toBe(true);
+      expect(await panel.getByText("View only", { exact: true }).count()).toBe(1);
       for (const outcome of ["success", "failure"] as const) {
         const launchesBefore = (await gateway.getRequests("desktop.launch")).length;
         await gateway.deferNext("desktop.launch");
@@ -794,7 +800,7 @@ suite.define(() => {
         expect(await terminalButton.isEnabled()).toBe(true);
 
         const observationsBefore = (await gateway.getRequests("desktop.observe")).length;
-        const connectionsBefore = Number(await panel.getAttribute("data-connect-count"));
+        const connectionsBefore = await rfb.connectionCount();
         await gateway.deferNext("desktop.observe");
         await takeControl.click();
         const controlRequest = await gateway.waitForRequest("desktop.observe", {
@@ -826,9 +832,7 @@ suite.define(() => {
           expect(await panel.getByRole("alert").count()).toBe(0);
         }
         await gateway.resolveDeferred("desktop.observe");
-        await expect
-          .poll(async () => Number(await panel.getAttribute("data-connect-count")))
-          .toBe(connectionsBefore + 1);
+        await expect.poll(rfb.connectionCount).toBe(connectionsBefore + 1);
         expect(await takeControl.count()).toBe(0);
 
         await panel.getByRole("button", { name: "Disconnect", exact: true }).click();
@@ -866,7 +870,11 @@ suite.define(() => {
 
       await panel.getByRole("button", { name: "Disconnect", exact: true }).click();
       await panel.getByText("Desktop sources", { exact: true }).waitFor();
-      expect(Number((await panel.getAttribute("data-disconnect-count")) ?? "0")).toBeGreaterThan(0);
+      await expect
+        .poll(
+          async () => (await rfb.events()).filter((event) => event.startsWith("closed:")).length,
+        )
+        .toBe(await rfb.connectionCount());
     });
   });
 

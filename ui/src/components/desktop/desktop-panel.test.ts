@@ -484,6 +484,7 @@ describe("embedded desktop panel presentation", () => {
     );
     clickPanelButton(panel);
     await waitForFast(() => expect(connect).toHaveBeenCalledTimes(2));
+    expect(panel.renderRoot.querySelectorAll('button[aria-label="Take control"]')).toHaveLength(1);
     clickPanelButton(panel, 'button[aria-label="Take control"]');
     await waitForFast(() => expect(connect).toHaveBeenCalledTimes(3));
     const selectedConnection = connect.mock.calls.at(-1)?.[0];

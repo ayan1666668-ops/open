@@ -1,12 +1,11 @@
+import { getGatewayToolCallerIdentity } from "../../agents/tools/gateway-caller-context.js";
+import { lookupCronRunExecSource } from "../../infra/cron-run-exec-source.js";
 import { sanitizeExecApprovalDisplayTextWithStatus } from "../../infra/exec-approval-text-sanitize.js";
 import { DEFAULT_EXEC_APPROVAL_TIMEOUT_MS } from "../../infra/exec-approvals.js";
+import { createAgentRuntimeIdentity } from "../agent-runtime-identity-token.js";
 import type { WorkerEnvironmentAttachment } from "../worker-environments/session-attachment.js";
-import { runApprovalRequestDeliveries } from "./approval-request-delivery.js";
-import {
-  bindApprovalRequesterMetadata,
-  buildRequestedApprovalEvent,
-  handlePendingApprovalRequest,
-} from "./approval-shared.js";
+import { bindApprovalRequesterMetadata } from "./approval-shared.js";
+import { handlePendingExecApprovalRequest } from "./exec-approval-request-delivery.js";
 import type { GatewayRequestHandlerOptions } from "./types.js";
 
 /** Reuses operator approval custody; a decision authorizes this exact admitted invocation only. */
@@ -24,8 +23,22 @@ export async function approveSessionEnvironmentCommand(params: {
   if (!manager) {
     throw new Error("Execution approval service is unavailable");
   }
-  const runtime = options.client?.internal?.agentRuntimeIdentity;
   assertCurrent();
+  const ambient = options.client?.internal?.syntheticClient
+    ? getGatewayToolCallerIdentity()
+    : undefined;
+  const runtime =
+    options.client?.internal?.agentRuntimeIdentity ??
+    (ambient?.operationalRunInstance
+      ? await createAgentRuntimeIdentity({
+          ...ambient,
+          operationalRunInstance: ambient.operationalRunInstance,
+        })
+      : undefined);
+  assertCurrent();
+  if (ambient && !runtime) {
+    throw new Error("Environment command approval requires the current admitted run");
+  }
   const command = sanitizeExecApprovalDisplayTextWithStatus(
     JSON.stringify({
       argv: params.argv,
@@ -58,19 +71,22 @@ export async function approveSessionEnvironmentCommand(params: {
   if (runtime) {
     record.agentRuntimeDelegatedAuthority = runtime.delegatedAuthority;
   }
+  if (runtime?.executionIdentity) {
+    record.executionIdentityToken = runtime.executionIdentity;
+  }
   const decision = manager.register(record, DEFAULT_EXEC_APPROVAL_TIMEOUT_MS);
   void decision.catch(() => undefined);
   let approved = false;
-  await handlePendingApprovalRequest({
+  await handlePendingExecApprovalRequest({
     manager,
     record,
     context: options.context,
     clientConnId: options.client?.connId,
-    requestEventName: "exec.approval.requested",
-    requestEvent: buildRequestedApprovalEvent(record, "exec"),
-    approvalKind: "exec",
     twoPhase: false,
-    deliverRequest: () => runApprovalRequestDeliveries({ context: options.context, record }),
+    deliverToApprovalClientsOnly:
+      lookupCronRunExecSource(runtime?.operationalRunInstance.runId)?.agentId === binding.agentId,
+    forwardRequest: options.context.forwardExecApprovalRequest,
+    getIosPushDelivery: () => options.context.execApprovalIosPushDelivery,
     respond: (ok, _payload, error) => {
       if (!ok) {
         throw new Error(error?.message ?? "Execution approval failed");
@@ -80,6 +96,7 @@ export async function approveSessionEnvironmentCommand(params: {
       assertCurrent();
       approved = resolved === "allow-once" && manager.consumeAllowOnce(record.id);
     },
+    afterDecisionErrorLabel: "environment exec approvals: approval follow-up failed",
   });
   assertCurrent();
   if (!approved) {

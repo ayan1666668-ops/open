@@ -60,7 +60,12 @@ export class ChatPaneSessionPanelToggleController {
     const panel = layout.columns
       .flatMap((column) => column.panels)
       .find((entry) => entry.slot === slot);
-    if (panel && slot === "desktop" && typeof detail?.environmentId === "string") {
+    if (
+      panel &&
+      slot === "desktop" &&
+      requestedSession &&
+      typeof detail?.environmentId === "string"
+    ) {
       panel.environmentId = detail.environmentId;
     }
     if (panel && slot === "portal" && typeof detail?.portalId === "string") {

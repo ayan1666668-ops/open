@@ -1,5 +1,9 @@
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  GATEWAY_CLIENT_CAPS,
+  GATEWAY_CLIENT_IDS,
+} from "../../../packages/gateway-protocol/src/client-info.js";
 import { withGatewayToolCallerIdentity } from "../../agents/tools/gateway-caller-context.js";
 import {
   ensureSessionEntrySync,
@@ -14,7 +18,7 @@ import {
   resolveSessionEnvironmentCaller,
 } from "../server-methods/environments.session.js";
 import { portalHandlers } from "../server-methods/portals.js";
-import type { GatewayRequestHandlerOptions } from "../server-methods/types.js";
+import type { GatewayClient, GatewayRequestHandlerOptions } from "../server-methods/types.js";
 import { createSyntheticPluginRuntimeClient } from "../server-plugin-runtime-client.js";
 import * as support from "./service.test-support.js";
 
@@ -313,6 +317,128 @@ describe("conversation-owned temporary environments", () => {
     expect(provision).not.toHaveBeenCalled();
     expect(support.testState.store.list()).toEqual([]);
   });
+
+  it.each([
+    { phase: "installation", authority: "allowed" },
+    { phase: "installation", authority: "run-revoked" },
+    { phase: "installation", authority: "screen-revoked" },
+    { phase: "provider", authority: "allowed" },
+    { phase: "provider", authority: "run-revoked" },
+    { phase: "provider", authority: "screen-revoked" },
+  ] as const)(
+    "checks $authority after deferred $phase preparation before allocation without an abort",
+    async ({ phase, authority }) => {
+      const entered = createDeferredCore();
+      const released = createDeferredCore();
+      const signalOwner = new AbortController();
+      const allocate = vi.fn(async () => ({
+        leaseId: "lease-authorized",
+        ssh: support.SSH_ENDPOINT,
+      }));
+      if (phase === "installation") {
+        support.testState.prepareInstallation = async () => {
+          entered.resolve();
+          await released.promise;
+          return support.BUNDLE_ARTIFACT;
+        };
+      }
+      const service = support.createService(
+        support.createProvider({
+          prepareProvision: async () => {
+            if (phase === "provider") {
+              entered.resolve();
+              await released.promise;
+            }
+            return allocate;
+          },
+        }),
+      );
+      const requester: GatewayClient = {
+        connId: "requesting-preview-ui",
+        connect: {
+          minProtocol: 1,
+          maxProtocol: 1,
+          client: {
+            id: GATEWAY_CLIENT_IDS.CONTROL_UI,
+            version: "test",
+            platform: "web",
+            mode: "ui",
+          },
+          caps: [GATEWAY_CLIENT_CAPS.UI_COMMANDS],
+        },
+      };
+      const context = createDirectChatContext({
+        getRuntimeConfig: () => support.testState.config,
+        workerEnvironmentService: service,
+        getClientConnIds: (filter) =>
+          new Set(!filter || filter(requester) ? [requester.connId!] : []),
+      });
+      const respond = vi.fn();
+      const options: GatewayRequestHandlerOptions = {
+        req: { type: "req", id: "create-preview", method: "environments.session.create" },
+        params: {
+          profileId: request.profileId,
+          idempotencyKey: request.idempotencyKey,
+          presentation: "desktop",
+        },
+        client: createSyntheticPluginRuntimeClient({ pluginRuntimeOwnerId: "crabbox" }),
+        context,
+        isWebchatConnect: () => false,
+        respond,
+      };
+      let runCurrent = true;
+      await withGatewayToolCallerIdentity(
+        {
+          ...identity,
+          operationalRunInstance: { instanceId: "allocation-instance", runId: "allocation-run" },
+          receiptAuthority: () => runCurrent,
+          assertToolAllowed: () => {},
+          approvalSignals: [signalOwner.signal],
+          gatewayUiCommandTarget: { connId: requester.connId! },
+        },
+        async () => {
+          const foreignRespond = vi.fn();
+          await environmentsSessionHandlers["environments.session.create"]!({
+            ...options,
+            params: { ...options.params, sessionKey: "agent:main:foreign" },
+            respond: foreignRespond,
+          });
+          expect(foreignRespond.mock.calls[0]?.[0]).toBe(false);
+          expect(support.testState.store.list()).toEqual([]);
+          const creation = environmentsSessionHandlers["environments.session.create"]!(options);
+          await Promise.race([
+            entered.promise,
+            Promise.resolve(creation).then(() => {
+              throw new Error(
+                `Creation ended before provider preparation: ${JSON.stringify(respond.mock.calls[0])}`,
+              );
+            }),
+          ]);
+          expect(allocate).not.toHaveBeenCalled();
+          const reserved = service.getSessionAttachmentStatus(identity.sessionId)!;
+          const queuedRecovery = service.reconcileOnce(reserved.attachment.environmentId);
+          if (authority === "run-revoked") {
+            runCurrent = false;
+          }
+          if (authority === "screen-revoked") {
+            support.testState.config.tools = { deny: ["screen"] };
+          }
+          released.resolve();
+          await Promise.all([creation, queuedRecovery]);
+        },
+      );
+      expect(signalOwner.signal.aborted).toBe(false);
+      expect(respond.mock.calls[0]?.[0]).toBe(authority === "allowed");
+      expect(allocate).toHaveBeenCalledTimes(authority === "allowed" ? 1 : 0);
+      const result = service.getSessionAttachmentStatus(identity.sessionId)!;
+      if (authority !== "allowed") {
+        expect(result.attachment.closedAtMs).not.toBeNull();
+        expect(result.environment.state).toBe("failed");
+      }
+      await service.reconcileOnce(result.attachment.environmentId);
+      expect(allocate).toHaveBeenCalledTimes(authority === "allowed" ? 1 : 0);
+    },
+  );
 
   it("presents the actual reserved machine before allocation and keeps recovery behind required presentation", async () => {
     const provision = vi.fn(async () => ({ leaseId: "lease-one", ssh: support.SSH_ENDPOINT }));
