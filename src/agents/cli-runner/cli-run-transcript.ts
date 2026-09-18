@@ -27,7 +27,10 @@ import { buildGenericCliContextEngineHostSupport } from "../../context-engine/ho
 import { formatErrorMessage } from "../../infra/errors.js";
 import type { StopReason } from "../../llm/types.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
-import { buildHandledBeforeAgentReplyPayloads } from "../../plugins/before-agent-reply.js";
+import {
+  buildHandledBeforeAgentReplyPayloads,
+  resolveHandledBeforeAgentReplyTranscriptText,
+} from "../../plugins/before-agent-reply.js";
 import { parseAgentSessionKey } from "../../routing/session-key.js";
 import { withOpenClawAgentDatabaseWrite } from "../../state/openclaw-agent-db-write.js";
 import { resolveSessionAgentId } from "../agent-scope.js";
@@ -271,7 +274,7 @@ export async function prepareCliHandledBeforeAgentReply(params: {
   const finalText = params.reply?.text ?? SILENT_REPLY_TOKEN;
   const transcript = await persistCliAssistantTranscript({
     runParams: params.runParams,
-    text: finalText,
+    text: resolveHandledBeforeAgentReplyTranscriptText(params.reply),
     modelId: params.runParams.model ?? "",
     stopReason: "stop",
   });

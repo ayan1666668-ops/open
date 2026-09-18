@@ -6,7 +6,10 @@ import {
   type SessionTranscriptAppendResult,
 } from "../../../config/sessions/transcript.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
-import { buildHandledBeforeAgentReplyPayloads } from "../../../plugins/before-agent-reply.js";
+import {
+  buildHandledBeforeAgentReplyPayloads,
+  resolveHandledBeforeAgentReplyTranscriptText,
+} from "../../../plugins/before-agent-reply.js";
 import { runAgentHarnessBeforeMessageWriteHook } from "../../harness/hook-helpers.js";
 import type { AgentRunSessionTarget } from "../../run-session-target.js";
 import { buildAssistantMessage, buildUsageWithNoCost } from "../../stream-message-shared.js";
@@ -82,7 +85,10 @@ export async function prepareEmbeddedHandledBeforeAgentReply(
   if (!params.persist) {
     return { finalText, payloads };
   }
-  const transcript = await persistHandledBeforeAgentReplyTranscript({ ...params, text: finalText });
+  const transcript = await persistHandledBeforeAgentReplyTranscript({
+    ...params,
+    text: resolveHandledBeforeAgentReplyTranscriptText(params.reply),
+  });
   if (transcript.ok || transcript.code === "blocked" || transcript.code === "session-rebound") {
     for (const payload of payloads) {
       setReplyPayloadMetadata(payload, {
