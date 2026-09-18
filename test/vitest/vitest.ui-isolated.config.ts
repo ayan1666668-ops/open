@@ -18,6 +18,7 @@ export function createUiIsolatedVitestConfig(
     env,
     excludeUnitFastTests: false,
     includeOpenClawRuntimeSetup: false,
+    intersectIncludeFile: true,
     isolate: true,
     name: "ui-isolated",
     setupFiles: ["ui/src/test-helpers/lit-warnings.setup.ts"],

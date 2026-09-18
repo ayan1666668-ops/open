@@ -105,6 +105,14 @@ function intersectDirectoryTestPattern(
   const result: string[] = [];
   let hasAmbiguousOverlap = false;
   for (const includePattern of includePatterns) {
+    const nonBrowserSuffix = "/**/!(*.browser).test.ts";
+    if (includePattern.endsWith(nonBrowserSuffix)) {
+      const ownerRoot = includePattern.slice(0, -nonBrowserSuffix.length);
+      if (isPlainRepoRelativePath(ownerRoot) && isAtOrUnder(candidateRoot, ownerRoot)) {
+        result.push(`${candidateRoot}${nonBrowserSuffix}`);
+        continue;
+      }
+    }
     const includeRoot = directoryTestPatternRoot(includePattern);
     if (includeRoot !== null && isAtOrUnder(candidateRoot, includeRoot)) {
       return [candidatePattern];
