@@ -1,20 +1,20 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import crabboxPlugin from "../../../extensions/crabbox/index.js";
-import { ensureSessionEntrySync } from "../../config/sessions/session-accessor.js";
-import type { OpenKeyedStoreOptions } from "../../plugin-sdk/plugin-state-runtime.js";
+import crabboxPlugin from "../../extensions/crabbox/index.js";
+import { ensureSessionEntrySync } from "../../src/config/sessions/session-accessor.js";
+import * as support from "../../src/gateway/worker-environments/service.test-support.js";
+import type { OpenKeyedStoreOptions } from "../../src/plugin-sdk/plugin-state-runtime.js";
 import {
   createPluginStateKeyedStoreForTests,
   resetPluginStateStoreForTests,
-} from "../../plugin-sdk/plugin-state-test-runtime.js";
-import { createTestPluginApi } from "../../plugin-sdk/plugin-test-api.js";
-import * as processRuntime from "../../plugin-sdk/process-runtime.js";
-import { createPluginRuntimeMock } from "../../plugin-sdk/test-helpers/plugin-runtime-mock.js";
-import type { OpenClawPluginService, WorkerProvider } from "../../plugins/types.js";
-import { createDeferredCore } from "../../shared/deferred.js";
-import { closeOpenClawAgentDatabases } from "../../state/openclaw-agent-db.js";
-import * as support from "./service.test-support.js";
+} from "../../src/plugin-sdk/plugin-state-test-runtime.js";
+import { createTestPluginApi } from "../../src/plugin-sdk/plugin-test-api.js";
+import * as processRuntime from "../../src/plugin-sdk/process-runtime.js";
+import { createPluginRuntimeMock } from "../../src/plugin-sdk/test-helpers/plugin-runtime-mock.js";
+import type { OpenClawPluginService, WorkerProvider } from "../../src/plugins/types.js";
+import { createDeferredCore } from "../../src/shared/deferred.js";
+import { closeOpenClawAgentDatabases } from "../../src/state/openclaw-agent-db.js";
 
 describe("Crabbox allocation through Gateway ownership", () => {
   support.setupWorkerEnvironmentServiceSuite();
@@ -150,7 +150,7 @@ describe("Crabbox allocation through Gateway ownership", () => {
       const api = createTestPluginApi({
         id: "crabbox",
         runtime,
-        rootDir: fileURLToPath(new URL("../../../extensions/crabbox/", import.meta.url)),
+        rootDir: fileURLToPath(new URL("../../extensions/crabbox/", import.meta.url)),
         registerWorkerProvider: (provider) => providers.push(provider),
         registerService: (service) => services.push(service),
       });
