@@ -758,7 +758,13 @@ public struct OpenClawChatSessionInfo: Codable, Sendable {
     public let reasoningLevel: String?
 
     // periphery:ignore - package tests construct history fixtures; app consumers decode this payload.
-    public init(hasActiveRun: Bool?, activeRunIds: [String]? = nil, key: String? = nil, agentId: String? = nil, reasoningLevel: String? = nil) {
+    public init(
+        hasActiveRun: Bool?,
+        activeRunIds: [String]? = nil,
+        key: String? = nil,
+        agentId: String? = nil,
+        reasoningLevel: String? = nil)
+    {
         self.key = key
         self.agentId = agentId
         self.hasActiveRun = hasActiveRun

@@ -48,6 +48,7 @@ struct ChatProTab: View {
         }
         return options
     }
+
     private var viewModel: OpenClawChatViewModel? {
         self.appModel.chatPresentation.viewModel
     }
