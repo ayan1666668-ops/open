@@ -4,16 +4,18 @@
  */
 import { randomUUID } from "node:crypto";
 import { createInterface, type Interface as ReadlineInterface } from "node:readline";
-import { embeddedAgentLog, OPENCLAW_VERSION } from "openclaw/plugin-sdk/agent-harness-runtime";
+import { embeddedAgentLog } from "openclaw/plugin-sdk/agent-harness-runtime";
 import { coerceErrorMessage, toStringifiedError } from "openclaw/plugin-sdk/error-runtime";
-import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { sliceUtf16Safe, truncateUtf16Safe } from "openclaw/plugin-sdk/text-utility-runtime";
-import { parse as parseSemver } from "semver";
 import type { CodexCatalogPreviewCache } from "../session-catalog-native-projection.js";
 import {
   closeCodexCatalogClientSource,
   codexCatalogSourceForClient,
 } from "../session-catalog-source.js";
+import {
+  CodexAppServerVersionError,
+  requestCodexAppServerInitialize,
+} from "./client-initialize.js";
 import { CodexAppServerMessageDecoder } from "./client-message-decoder.js";
 import { dispatchCodexAppServerResponse } from "./client-response.js";
 import type { CodexAppServerStartOptions } from "./config-contracts.js";
@@ -22,8 +24,6 @@ import {
   type CodexAppServerRequestMethod,
   type CodexAppServerRequestParams,
   type CodexAppServerRequestResult,
-  type CodexInitializeParams,
-  type CodexInitializeResponse,
   isJsonObject,
   isRpcResponse,
   type CodexServerNotification,
@@ -45,7 +45,6 @@ import {
   type CodexAppServerCloseResult,
   type CodexAppServerTransport,
 } from "./transport.js";
-import { CODEX_APP_SERVER_VERSION, MIN_SUPPORTED_CODEX_APP_SERVER_VERSION } from "./version.js";
 
 const CODEX_APP_SERVER_PARSE_LOG_MAX = 500;
 const CODEX_APP_SERVER_STDERR_TAIL_MAX = 2_000;
@@ -232,7 +231,6 @@ export class CodexAppServerClient {
   private transportExited = false;
   private nativeExecutionObserved = false;
   private closeError: Error | undefined;
-  private serverVersion: string | undefined;
   private runtimeIdentity: CodexAppServerRuntimeIdentity | undefined;
   private threadSessionRequestGuard:
     | ((options: {
@@ -334,34 +332,14 @@ export class CodexAppServerClient {
     if (this.initialized) {
       return;
     }
-    // The handshake identifies the exact app-server process we will keep using,
-    // which matters when callers override the binary or app-server args.
-    const response = await this.request("initialize", {
-      clientInfo: {
-        name: "openclaw",
-        title: "OpenClaw",
-        version: OPENCLAW_VERSION,
-      },
-      capabilities: {
-        experimentalApi: true,
-        extensions: {
-          "openai/standard-form-input": {},
-          "openai/form": {},
-          "io.modelcontextprotocol/ui": {
-            mimeTypes: ["text/html;profile=mcp-app"],
-          },
-        },
-      },
-    } satisfies CodexInitializeParams);
-    this.serverVersion = assertSupportedCodexAppServerVersion(response);
-    this.runtimeIdentity = buildCodexAppServerRuntimeIdentity(response, this.serverVersion);
+    this.runtimeIdentity = await requestCodexAppServerInitialize(this);
     this.notify("initialized");
     this.initialized = true;
   }
 
   /** Returns the version detected during initialize. */
   getServerVersion(): string | undefined {
-    return this.serverVersion;
+    return this.runtimeIdentity?.serverVersion;
   }
 
   /** Returns runtime metadata detected during initialize. */
@@ -1011,73 +989,8 @@ function stringifyCodexAppServerMessage(message: RpcRequest | RpcResponse): stri
   );
 }
 
-/** Raised when the initialize handshake detects an unsupported app-server version. */
-class CodexAppServerVersionError extends Error {
-  readonly detectedVersion?: string;
-
-  constructor(detectedVersion: string | undefined) {
-    const detected = detectedVersion
-      ? `detected ${detectedVersion}`
-      : "OpenClaw could not determine the running Codex version";
-    super(
-      `Codex app-server ${MIN_SUPPORTED_CODEX_APP_SERVER_VERSION} or newer is required, but ${detected}. Update the configured Codex app-server binary, or remove custom command overrides to use the managed binary.`,
-    );
-    this.name = "CodexAppServerVersionError";
-    this.detectedVersion = detectedVersion;
-  }
-}
-
-function assertSupportedCodexAppServerVersion(response: CodexInitializeResponse): string {
-  const detectedVersion = readCodexVersionFromUserAgent(response.userAgent);
-  if (!detectedVersion) {
-    throw new CodexAppServerVersionError(detectedVersion);
-  }
-  const detected = parseSemver(detectedVersion);
-  if (!detected || detected.compare(MIN_SUPPORTED_CODEX_APP_SERVER_VERSION) < 0) {
-    throw new CodexAppServerVersionError(detectedVersion);
-  }
-  if (detected.compare(CODEX_APP_SERVER_VERSION) > 0) {
-    embeddedAgentLog.warn(
-      "codex app-server is newer than OpenClaw's managed runtime; continuing with normal startup validation",
-      {
-        detectedVersion,
-        validatedVersion: CODEX_APP_SERVER_VERSION,
-      },
-    );
-  }
-  return detectedVersion;
-}
-
 export function isUnsupportedCodexAppServerVersionError(error: unknown): boolean {
   return error instanceof CodexAppServerVersionError;
-}
-
-function buildCodexAppServerRuntimeIdentity(
-  response: CodexInitializeResponse,
-  serverVersion: string,
-): CodexAppServerRuntimeIdentity {
-  const userAgent = normalizeOptionalString(response.userAgent);
-  const codexHome = normalizeOptionalString(response.codexHome);
-  const platformFamily = normalizeOptionalString(response.platformFamily);
-  const platformOs = normalizeOptionalString(response.platformOs);
-  return {
-    serverVersion,
-    ...(userAgent ? { userAgent } : {}),
-    ...(codexHome ? { codexHome } : {}),
-    ...(platformFamily ? { platformFamily } : {}),
-    ...(platformOs ? { platformOs } : {}),
-  };
-}
-
-/** Extracts the Codex version from the app-server initialize user-agent field. */
-function readCodexVersionFromUserAgent(userAgent: string | undefined): string | undefined {
-  // Codex returns `<originator>/<codex-version> ...`; the originator can be
-  // OpenClaw, Codex Desktop, or an env override, so only the slash-delimited
-  // version in the leading product field is stable.
-  const match = userAgent?.match(
-    /^[^/]+\/(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)(?:[\s(]|$)/,
-  );
-  return match?.[1];
 }
 
 function redactCodexAppServerLinePreview(value: string): string {

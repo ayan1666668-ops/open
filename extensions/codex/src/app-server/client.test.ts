@@ -380,6 +380,42 @@ describe("CodexAppServerClient", () => {
         },
         capabilities: {
           experimentalApi: true,
+          optOutNotificationMethods: [
+            "account/login/completed",
+            "app/list/updated",
+            "command/exec/outputDelta",
+            "deprecationNotice",
+            "externalAgentConfig/import/completed",
+            "externalAgentConfig/import/progress",
+            "fs/changed",
+            "fuzzyFileSearch/sessionCompleted",
+            "fuzzyFileSearch/sessionUpdated",
+            "mcpServer/event/stream/notification",
+            "mcpServer/oauthLogin/completed",
+            "mcpServer/startupStatus/updated",
+            "process/exited",
+            "process/outputDelta",
+            "project/changed",
+            "remoteControl/status/changed",
+            "thread/environment/connected",
+            "thread/environment/disconnected",
+            "thread/goal/cleared",
+            "thread/project/updated",
+            "thread/queue/changed",
+            "thread/realtime/closed",
+            "thread/realtime/error",
+            "thread/realtime/item/completed",
+            "thread/realtime/item/started",
+            "thread/realtime/item/transcript/delta",
+            "thread/realtime/itemAdded",
+            "thread/realtime/outputAudio/delta",
+            "thread/realtime/sdp",
+            "thread/realtime/started",
+            "thread/realtime/transcript/delta",
+            "thread/realtime/transcript/done",
+            "windows/worldWritableWarning",
+            "windowsSandbox/setupCompleted",
+          ],
           extensions: {
             "openai/standard-form-input": {},
             "openai/form": {},
@@ -392,6 +428,34 @@ describe("CodexAppServerClient", () => {
     });
     expect(outbound.params?.clientInfo?.version).not.toBe("");
     expect(JSON.parse(harness.writes[1] ?? "{}")).toEqual({ method: "initialized" });
+  });
+
+  it("keeps streaming and requests working when the server ignores notification opt-outs", async () => {
+    const { harness, initializing, outbound } = startInitialize();
+    const receiveNotification = vi.fn();
+    harness.client.addNotificationHandler(receiveNotification);
+    harness.send({
+      id: outbound.id,
+      result: { userAgent: `openclaw/${MIN_SUPPORTED_CODEX_APP_SERVER_VERSION}` },
+    });
+    await initializing;
+
+    const ignoredOptOut = {
+      method: "remoteControl/status/changed",
+      params: { status: "disabled" },
+    };
+    const assistantDelta = {
+      method: "item/agentMessage/delta",
+      params: { threadId: "thread-1", turnId: "turn-1", itemId: "item-1", delta: "hello" },
+    };
+    harness.send(ignoredOptOut);
+    harness.send(assistantDelta);
+    const request = harness.client.request("model/list", {});
+    const sent = JSON.parse(await harness.waitForWrite(2));
+    harness.send({ id: sent.id, result: { data: [] } });
+
+    expect(receiveNotification.mock.calls).toEqual([[ignoredOptOut], [assistantDelta]]);
+    await expect(request).resolves.toEqual({ data: [] });
   });
 
   it("blocks unsupported app-server versions during initialize", async () => {

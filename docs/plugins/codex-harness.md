@@ -14,6 +14,16 @@ native compaction, and app-server execution. OpenClaw still owns chat
 channels, session files, model selection, OpenClaw dynamic tools, approvals,
 media delivery, and the visible transcript mirror.
 
+At connection initialization, OpenClaw sends `optOutNotificationMethods` to
+suppress app-server notifications that have no Gateway consumer, such as native
+realtime, remote-control, and discovery updates. The audited list lives beside
+the client's initialize call; adding a consumer requires removing its opt-out.
+Assistant, reasoning, command output, usage, approval, session, and native
+subagent receipt notifications remain enabled, including events used only for
+turn liveness. This is per-connection negotiation with stock Codex, with no
+configuration, update-path, schema, or stored-state change. A server that ignores
+the capability still works through the normal notification dispatcher.
+
 The native session catalog keeps one resident index per Codex home, shared across
 agents, working-directory filters, searches, and pages. Lists normally filter and page
 bounded display rows in memory. They do not expire or restart native discovery
