@@ -876,7 +876,10 @@ export class NodeRegistry {
     if (invalidatedPresence) {
       this.publishActiveNodeContext();
     }
-    return node.client.invalidated === true ? "retire" : "preserve";
+    // Read the client again after the call above: it is the owner that marks the client
+    // invalidated, so the pre-call check must not be reused here.
+    const clientAfterRetirement = node.client;
+    return clientAfterRetirement.invalidated === true ? "retire" : "preserve";
   }
 
   /** Revalidates that one inbound node connection still owns its persisted pairing state. */
