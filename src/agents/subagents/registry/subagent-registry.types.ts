@@ -233,6 +233,10 @@ export type SubagentRunRecord = {
   retireAfterRequesterTurn?: boolean;
   childSessionKey: string;
   controllerSessionKey?: string;
+  /** Canonical task/cancellation owner (for example `plugin:<id>:acp`) when it differs from
+      the completion requester. Absent on session-spawned and legacy rows, where the
+      requester owns the task; resolve through `resolveSubagentTaskOwnerKey`. */
+  taskOwnerKey?: string;
   requesterSessionKey: string;
   requesterOrigin?: DeliveryContext;
   /** Durable source locator for transport-neutral progress presentation. */

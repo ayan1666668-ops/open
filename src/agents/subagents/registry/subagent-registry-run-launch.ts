@@ -19,6 +19,7 @@ import type { DeliveryContext } from "../../../utils/delivery-context.types.js";
 import { resolveSubagentRequesterAgentId } from "../../subagent-requester-owner.js";
 import { updateSwarmCollectorCompletion } from "../swarm/swarm-collector.js";
 import { bindSwarmRunReservation } from "../swarm/swarm-scheduler.js";
+import { resolveSubagentTaskOwnerKey } from "./subagent-control-scope.js";
 import { normalizeSubagentRunState } from "./subagent-delivery-state.js";
 import { SUBAGENT_ENDED_REASON_ERROR } from "./subagent-lifecycle-events.js";
 import { subagentRuns } from "./subagent-registry-memory.js";
@@ -115,6 +116,7 @@ export class SubagentLaunchManager extends SubagentRecoveryManager {
     const requesterSessionKey = registerParams.requesterSessionKey.trim();
     const requesterTurnRunId = registerParams.requesterTurnRunId?.trim();
     const controllerSessionKey = registerParams.controllerSessionKey?.trim() || requesterSessionKey;
+    const taskOwnerKey = registerParams.taskOwnerKey?.trim() || undefined;
     if (!runId || !childSessionKey || !requesterSessionKey) {
       return;
     }
@@ -135,6 +137,7 @@ export class SubagentLaunchManager extends SubagentRecoveryManager {
       ...(requesterTurnRunId ? { requesterTurnRunId } : {}),
       childSessionKey,
       controllerSessionKey,
+      taskOwnerKey,
       requesterSessionKey,
       requesterOrigin,
       progressOrigin: registerParams.progressOrigin,
@@ -233,11 +236,11 @@ export class SubagentLaunchManager extends SubagentRecoveryManager {
     }
     if (registerParams.taskRowOwnership !== "gateway_best_effort") {
       try {
-        const taskOwnerKey = registerParams.taskOwnerKey?.trim();
         const taskParams = {
           runtime: "subagent",
           sourceId: runId,
-          ownerKey: taskOwnerKey || requesterSessionKey,
+          // Task cancellation later compares this row owner against the registry record.
+          ownerKey: resolveSubagentTaskOwnerKey(entry),
           scopeKind: "session",
           // Detached task runtimes are plugin-replaceable. Isolate their input so
           // mutation cannot change the already-persisted registry record.

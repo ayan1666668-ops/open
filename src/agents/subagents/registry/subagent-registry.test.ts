@@ -5792,6 +5792,7 @@ describe("subagent registry seam flow", () => {
 
     expect(findRequesterRun(runId)).toMatchObject({
       controllerSessionKey: pluginOwnerKey,
+      taskOwnerKey: pluginOwnerKey,
       requesterSessionKey: "agent:main:main",
       requesterOrigin,
       requesterAgentId: "main",
