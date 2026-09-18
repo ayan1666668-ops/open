@@ -1783,10 +1783,10 @@ jobs:
           fetch-depth: 1
 
       - name: Set up baseline probe Node runtime
-        shell: bash
-        run: |
-          source .github/actions/setup-pnpm-store-cache/ensure-node.sh
-          openclaw_ensure_node "$NODE_VERSION"
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
 
       - name: Build targeted Docker lane groups
         id: groups
