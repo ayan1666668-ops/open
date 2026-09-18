@@ -620,10 +620,6 @@ enum class GatewayMethod(
   TaskSuggestionsDismiss("taskSuggestions.dismiss"),
   EnvironmentsList("environments.list"),
   EnvironmentsStatus("environments.status"),
-  EnvironmentsSessionStatus("environments.session.status"),
-  EnvironmentsSessionCreate("environments.session.create"),
-  EnvironmentsSessionDestroy("environments.session.destroy"),
-  EnvironmentsSessionExec("environments.session.exec"),
   WorktreesList("worktrees.list"),
   WorktreesBranches("worktrees.branches"),
   FsListDir("fs.listDir"),
@@ -961,6 +957,10 @@ enum class GatewayMethod(
   DiagnosticsHeapProfile("diagnostics.heapProfile"),
   DesktopRelease("desktop.release"),
   McpAuthLogin("mcp.authLogin"),
+  EnvironmentsSessionStatus("environments.session.status"),
+  EnvironmentsSessionCreate("environments.session.create"),
+  EnvironmentsSessionDestroy("environments.session.destroy"),
+  EnvironmentsSessionExec("environments.session.exec"),
 }
 
 enum class GatewayEvent(

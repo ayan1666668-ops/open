@@ -208,8 +208,8 @@ managers or prevent concurrent manager acquisition.
 
 ## Worker provider allocation authority
 
-Worker providers receive `WorkerProviderProvisionOptionsV2` from the Gateway for
-`provision` and `prepareProvision`. Its required `assertCurrent()` callback binds
+The Gateway supplies `assertCurrent()` in the options passed to worker providers'
+`provision` and `prepareProvision` methods. This required runtime callback binds
 the operation to the live environment owner and any requesting run. Invoke it
 after awaited preparation and immediately before an allocation, checkpoint fork,
 or adoption. A non-aborted `signal` does not prove that the caller still has
@@ -224,7 +224,7 @@ lease when the requesting run has ended.
 
 The legacy optional parameter shape remains source-compatible until the next
 declared breaking Plugin SDK revision. It is not a capability-free runtime path:
-current hosts supply the V2 assertion, and bundled providers reject missing
+current hosts supply this assertion, and bundled providers reject missing
 allocation authority before performing work. An older host must be updated to
 use these providers.
 

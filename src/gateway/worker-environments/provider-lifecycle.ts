@@ -7,7 +7,6 @@ import {
   type WorkerLease,
   type WorkerNodeRuntimeIdentity,
   type WorkerProvider,
-  type WorkerProviderProvisionOptionsV2,
 } from "../../plugins/types.js";
 import { verifyWorkerAdmissionHandshake } from "./admission.js";
 import type { WorkerInstallationArtifact } from "./bundle.js";
@@ -275,7 +274,9 @@ export function createWorkerProviderLifecycle(options: WorkerProviderLifecycleOp
           : {}),
         ...(cancellation ? { signal: cancellation.signal } : {}),
         ...(projectOperation ? { project: projectOperation.project } : {}),
-      } satisfies WorkerProviderProvisionOptionsV2;
+      } satisfies NonNullable<Parameters<WorkerProvider["provision"]>[2]> & {
+        assertCurrent: () => void;
+      };
       cancellation?.assertActive();
       const provision = async () => {
         assertCurrent();

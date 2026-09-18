@@ -321,7 +321,7 @@ export type WorkerProvider = {
       profileId?: string;
       /** Cancel this attempt; settle its active commands before rejecting. Cleanup proves release separately. */
       signal?: AbortSignal;
-      /** Modern hosts supply V2 authority; legacy optionality is source compatibility only. */
+      /** Modern hosts supply authority; legacy optionality is source compatibility only. */
       assertCurrent?: () => void;
       executionMode?: WorkerExecutionMode;
       machineClass?: string;
@@ -409,13 +409,6 @@ export type WorkerProvider = {
   destroy: (lease: { leaseId: string; profile: WorkerProfile }) => Promise<void>;
   /** Maximum core wait for teardown, including provider-owned checkpointing and cleanup. */
   resolveDestroyTimeoutMs?: (profile: WorkerProfile) => number;
-};
-
-/** Required call-scoped authority for provisioning; never persist it in prepared intent. */
-export type WorkerProviderProvisionOptionsV2 = NonNullable<
-  Parameters<WorkerProvider["provision"]>[2]
-> & {
-  assertCurrent: () => void;
 };
 
 /** Speech capability registered by a plugin. */
