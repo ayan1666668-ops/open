@@ -421,7 +421,7 @@ export async function sanitizeImageBlocks(
  * store) keep the block's current shape, so it degrades to today's placeholder
  * rather than pointing at a file that was never written.
  */
-export async function stageInlineImageBlocks(
+async function stageInlineImageBlocks(
   blocks: readonly ToolContentBlock[],
 ): Promise<ToolContentBlock[]> {
   const staged: ToolContentBlock[] = [];
