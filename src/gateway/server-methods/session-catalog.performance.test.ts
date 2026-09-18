@@ -8,6 +8,34 @@ import type { SessionsCatalogListParams } from "../../../packages/gateway-protoc
 import { withOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
 import { createComposedCatalogFixture } from "./session-catalog.performance.test-support.js";
 
+function measureHostCpuReference(): number {
+  const bytes = Uint8Array.from({ length: 65_536 }, (_, index) => index & 255);
+  const hash = () => {
+    let checksum = 0x811c9dc5;
+    for (let pass = 0; pass < 8; pass++) {
+      for (const byte of bytes) {
+        checksum = Math.imul(checksum ^ byte, 0x01000193) >>> 0;
+      }
+    }
+    return checksum;
+  };
+  const durations: number[] = [];
+  for (let sample = 0; sample < 26; sample++) {
+    const started = performance.now();
+    const checksum = hash();
+    const duration = performance.now() - started;
+    expect(checksum).toBe(2_398_395_845);
+    if (sample >= 5) {
+      durations.push(duration);
+    }
+  }
+  const median = durations.toSorted((a, b) => a - b)[10];
+  if (median === undefined || median <= 0) {
+    throw new Error("Expected a positive host CPU reference median");
+  }
+  return median;
+}
+
 function allocatedBytes(node: HeapProfiler.SamplingHeapProfileNode): number {
   return node.selfSize + node.children.reduce((total, child) => total + allocatedBytes(child), 0);
 }
@@ -94,21 +122,15 @@ it("measures 100 composed catalog lists against real session and plugin stores",
             limitPerHost: 32,
           },
         ];
-        const warmupDurations: number[] = [];
         for (const query of variants) {
           for (let warm = 0; warm < 3; warm++) {
-            const started = performance.now();
             await fixture.list(query);
-            warmupDurations.push(performance.now() - started);
           }
-        }
-        const warmupP50Ms = warmupDurations.toSorted((a, b) => a - b)[5];
-        if (warmupP50Ms === undefined) {
-          throw new Error("Expected warm-up catalog measurements");
         }
         do {
           await fixture.projection.ensureMaterialized();
         } while (fixture.projection.needsMaterialization);
+        const cpuReferenceP50Ms = measureHostCpuReference();
         counters.begin();
         const durations: number[] = [];
         const workPerList = [];
@@ -166,7 +188,7 @@ it("measures 100 composed catalog lists against real session and plugin stores",
             adoptedRows: 3,
             lists: 100,
             p50Ms: durations[49],
-            warmupP50Ms,
+            cpuReferenceP50Ms,
             p95Ms: durations[94],
             threadCpuMsPerList: (cpu.user + cpu.system) / 100_000,
             sampledInstrumentedAllocationBytesPerList: sampledAllocationBytes / 100,
@@ -199,8 +221,11 @@ it("measures 100 composed catalog lists against real session and plugin stores",
             pluginStateWorkerOperations: 0,
           });
         }
-        // Counts enforce the work budget; timing only guards runaway growth on this host.
-        expect(durations[49]).toBeLessThan(warmupP50Ms * 10);
+        // Two-CPU reference 1.568–1.615 ms gives 31.36–32.30 ms: >3x the prior 9.43 ms
+        // main median, below 10x the fastest 3.479 ms list. CPU-scaling the 23.95 ms
+        // hosted sighting predicts ~79.7 ms. Without an independent bound, uniform
+        // composition CPU growth leaves exact SQL budgets green.
+        expect(durations[49]).toBeLessThan(cpuReferenceP50Ms * 20);
       } finally {
         try {
           await fixture?.close();
