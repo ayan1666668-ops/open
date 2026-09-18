@@ -79,7 +79,8 @@ type Scenario = {
 };
 
 async function startProvider(scenario: Scenario) {
-  const requests: Array<{ model: string; child: boolean; authorization?: string }> = [];
+  const requests: Array<{ model: string; child: boolean; title: boolean; authorization?: string }> =
+    [];
   const errors: unknown[] = [];
   let spawn: Receipt | undefined;
   let spawnRequested = false;
@@ -100,6 +101,7 @@ async function startProvider(scenario: Scenario) {
       requests.push({
         model: body.model,
         child: child && !title,
+        title,
         authorization: request.headers.authorization,
       });
       if (child && !title && body.model === "primary" && primaryRateLimited) {
@@ -730,12 +732,34 @@ describe("CLI model inheritance through MCP", () => {
               );
               expect(terminal.status).toBe("ok");
               const childRequests = providerRequests.filter((request) => request.child);
-              expect(childRequests.length).toBeGreaterThan(0);
-              expect(childRequests.every((request) => request.model === "primary")).toBe(true);
               const child = loadSessionEntryReadOnly({
                 agentId: "main",
                 sessionKey: spawn.childSessionKey,
               });
+              // Record routing facts before assertions can hide the failing request.
+              // Never include request content or authorization headers in this evidence.
+              console.info(
+                JSON.stringify({
+                  proof: "CLI model inheritance through MCP",
+                  ...scenario,
+                  savedParent: BACKUP,
+                  activeLogicalModel: PRIMARY,
+                  requests: providerRequests.map(({ model, child, title }) => ({
+                    model,
+                    child,
+                    title,
+                  })),
+                  childModels: childRequests.map((request) => request.model),
+                  storedChild: {
+                    provider: child?.providerOverride,
+                    model: child?.modelOverride,
+                    source: child?.modelOverrideSource,
+                  },
+                  terminal: terminal.status,
+                }),
+              );
+              expect(childRequests.length).toBeGreaterThan(0);
+              expect(childRequests.every((request) => request.model === "primary")).toBe(true);
               expect(child).toMatchObject({
                 providerOverride: "proof-primary",
                 modelOverride: "primary",
@@ -759,16 +783,6 @@ describe("CLI model inheritance through MCP", () => {
                   .filter((message) => message.role === "assistant")
                   .map((message) => extractTextFromChatContent(message.content)),
               ).toContain(INITIAL_SUCCESS);
-              console.info(
-                JSON.stringify({
-                  proof: "CLI model inheritance through MCP",
-                  ...scenario,
-                  savedParent: BACKUP,
-                  activeLogicalModel: PRIMARY,
-                  childModels: childRequests.map((request) => request.model),
-                  terminal: terminal.status,
-                }),
-              );
             },
           );
           expect(provider.errors).toEqual([]);
