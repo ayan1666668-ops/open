@@ -1,7 +1,6 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
 import { resolveTestNodeExecPath } from "../../src/test-utils/node-process.js";
@@ -46,7 +45,7 @@ describe("repository Telegram E2E skill", () => {
   });
 
   it.each(["pending", "exited"])("settles a %s triage fixture after readiness fails", (mode) => {
-    const preload = pathToFileURL(path.resolve("test/fixtures/triage-fixture-startup.mjs"));
+    const preload = new URL("../fixtures/triage-fixture-startup.mjs", import.meta.url);
     preload.searchParams.set("mode", mode);
     const result = spawnSync(
       testNodeExecPath,
