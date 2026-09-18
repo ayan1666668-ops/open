@@ -1161,7 +1161,6 @@ extensions/telegram/src/bot-handlers.message-context.ts	1
 extensions/telegram/src/bot-info-cache.ts	2
 extensions/telegram/src/bot-info.ts	1
 extensions/telegram/src/bot-message-context.body.ts	1
-extensions/telegram/src/bot-message-context.session.ts	2
 extensions/telegram/src/bot-message-context.ts	3
 extensions/telegram/src/bot-message-dispatch-draft.ts	5
 extensions/telegram/src/bot-message-dispatch-reply.ts	2
@@ -1186,7 +1185,6 @@ extensions/telegram/src/group-history-window.ts	1
 extensions/telegram/src/inline-buttons.ts	1
 extensions/telegram/src/interactive-fallback.ts	1
 extensions/telegram/src/lane-delivery-text-deliverer.ts	1
-extensions/telegram/src/message-cache.ts	10
 extensions/telegram/src/miniapp/command.ts	1
 extensions/telegram/src/miniapp/init-data.ts	1
 extensions/telegram/src/miniapp/routes.ts	1

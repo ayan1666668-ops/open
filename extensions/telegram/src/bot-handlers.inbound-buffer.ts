@@ -11,95 +11,45 @@ import {
   buildTelegramInboundDebounceConversationKey,
   buildTelegramInboundDebounceKey,
 } from "./bot-handlers.debounce-key.js";
+import { createTelegramBufferedDispatchAdmission } from "./bot-handlers.inbound-buffer-admission.js";
+import { createTelegramBufferedMessageTracker } from "./bot-handlers.inbound-buffer.tracking.js";
+import type {
+  TelegramDebounceEntry,
+  TelegramDebounceLane,
+  TelegramInboundBuffers,
+  TelegramTextFragmentInput,
+  TextFragmentEntry,
+  TextFragmentMessage,
+} from "./bot-handlers.inbound-buffer.types.js";
 import type { TelegramMessagePipeline } from "./bot-handlers.message-pipeline.js";
 import type {
   RegisterTelegramHandlerParams,
   TelegramPendingInboundTarget,
 } from "./bot-handlers.types.js";
-import type { TelegramMediaRef } from "./bot-message-context.js";
 import type {
-  TelegramAmbientTranscriptWatermark,
-  TelegramChannelIngressResolver,
-} from "./bot-message-context.types.js";
-import type { TelegramSpooledReplayDeferredParticipant } from "./bot-processing-outcome.js";
+  TelegramMessageProcessingResult,
+  TelegramSpooledReplayDeferredParticipant,
+} from "./bot-processing-outcome.js";
 import {
   buildTelegramThreadParams,
   getTelegramTextParts,
   joinTelegramTextParts,
   type TelegramThreadSpec,
 } from "./bot/helpers.js";
-import type { TelegramContext } from "./bot/types.js";
-import type { TelegramMessageDispatchReplayClaim } from "./message-dispatch-dedupe.js";
 
-type TelegramDebounceLane = "default" | "forward";
-
-export type TelegramDebounceEntry = {
-  ctx: TelegramContext;
-  msg: Message;
-  allMedia: TelegramMediaRef[];
-  storeAllowFrom: string[];
-  receivedAtMs: number;
-  debounceKey: string | null;
-  debounceLane: TelegramDebounceLane;
-  botUsername?: string;
-  threadSpec: TelegramThreadSpec;
-  promptContextMinTimestampMs?: number;
-  promptContextAmbientWatermark?: TelegramAmbientTranscriptWatermark;
-  dispatchDedupeClaims: TelegramMessageDispatchReplayClaim[];
-  spooledReplayParticipant?: TelegramSpooledReplayDeferredParticipant;
-  channelIngressResolvers: readonly TelegramChannelIngressResolver[];
-  textFragment?: TextFragmentEntry;
-};
-
-type TextFragmentEntry = {
-  key: string;
-  storeAllowFrom: string[];
-  messages: Array<{ msg: Message; ctx: TelegramContext; receivedAtMs: number }>;
-  threadSpec: TelegramThreadSpec;
-  promptContextMinTimestampMs?: number;
-  promptContextAmbientWatermark?: TelegramAmbientTranscriptWatermark;
-  dispatchDedupeClaims: TelegramMessageDispatchReplayClaim[];
-  spooledReplayParticipants: TelegramSpooledReplayDeferredParticipant[];
-  channelIngressResolvers: TelegramChannelIngressResolver[];
-  timer: ReturnType<typeof setTimeout> | null;
-  ready: Promise<void>;
-  releaseReady: () => void;
-  completion: Promise<void>;
-  canceled: boolean;
-};
-
-type TelegramTextFragmentInput = {
-  ctx: TelegramContext;
-  msg: Message;
-  chatId: number;
-  threadSpec: TelegramThreadSpec;
-  storeAllowFrom: string[];
-  isAbortControlMessage: boolean;
-  promptContextMinTimestampMs?: number;
-  promptContextAmbientWatermark?: TelegramAmbientTranscriptWatermark;
-  dispatchDedupeClaims: TelegramMessageDispatchReplayClaim[];
-  channelIngressResolver: TelegramChannelIngressResolver;
-};
-
-interface TelegramInboundBuffers {
-  cancelPending: (target: TelegramPendingInboundTarget) => void;
-  inboundDebouncer: {
-    enqueue: (entry: TelegramDebounceEntry) => Promise<void>;
-    flushKey: (key: string) => Promise<void>;
-    cancelKey: (key: string) => boolean;
-    drain: () => Promise<void>;
-  };
-  resolveTelegramDebounceEntryMs: (entry: TelegramDebounceEntry) => number;
-  shouldDebounceTelegramEntry: (entry: TelegramDebounceEntry) => boolean;
-  resolveTelegramDebounceLane: (msg: Message) => TelegramDebounceLane;
-  handleTextFragment: (params: TelegramTextFragmentInput) => Promise<boolean>;
-}
+export type {
+  PendingBufferedMessageIgnore,
+  TelegramDebounceEntry,
+} from "./bot-handlers.inbound-buffer.types.js";
 
 export function createTelegramInboundBuffers({
-  params: { cfg, accountId, bot, runtime, opts },
+  params: { cfg, accountId, bot, runtime, opts, removeMessageFromGroupHistory },
   message,
 }: {
-  params: Pick<RegisterTelegramHandlerParams, "cfg" | "accountId" | "bot" | "runtime" | "opts">;
+  params: Pick<
+    RegisterTelegramHandlerParams,
+    "cfg" | "accountId" | "bot" | "runtime" | "opts" | "removeMessageFromGroupHistory"
+  >;
   message: TelegramMessagePipeline;
 }): TelegramInboundBuffers {
   const {
@@ -116,6 +66,7 @@ export function createTelegramInboundBuffers({
     buildSyntheticContext,
     formatTelegramAmbientTranscriptBody,
     processMessageWithReplyChain,
+    removeMessageFromReplyChain,
   } = message;
   const readConfig = createRuntimeConfigReader(cfg);
   const resolveDebounceMs = () =>
@@ -153,14 +104,50 @@ export function createTelegramInboundBuffers({
       ? "forward"
       : "default";
   };
+  const {
+    registerDebounceEntry,
+    forgetDebounceEntry,
+    registerTextFragment,
+    forgetTextFragment,
+    waitForPendingIgnore,
+    beginPendingBufferedMessageIgnore,
+  } = createTelegramBufferedMessageTracker();
+  const purgeIgnoredBufferedMessages = async (
+    entries: readonly { msg: Message; threadSpec: TelegramThreadSpec }[],
+  ) => {
+    await Promise.all(
+      entries.map(async (entry) => {
+        // Context construction records rolling history before final dispatch admission. Repeat the
+        // privacy purge here so a late context write cannot race an authorized edited /ignore.
+        removeMessageFromGroupHistory(entry.msg, entry.threadSpec);
+        try {
+          await removeMessageFromReplyChain(entry.msg);
+        } catch (error) {
+          runtime.error?.(
+            danger(`telegram buffered ignore privacy purge failed: ${String(error)}`),
+          );
+        }
+      }),
+    );
+  };
+  const settleCancelledDebounceEntries = async (entries: readonly TelegramDebounceEntry[]) => {
+    for (const entry of entries) {
+      releaseDispatchDedupeClaims(entry.dispatchDedupeClaims);
+      if (entry.spooledReplayParticipant) {
+        settleSpooledReplayParticipants([entry.spooledReplayParticipant], { kind: "skipped" });
+      }
+      forgetDebounceEntry(entry);
+    }
+    await purgeIgnoredBufferedMessages(entries);
+  };
   const inboundDebouncer = createInboundDebouncer<TelegramDebounceEntry>({
     debounceMs: resolveDebounceMs(),
     serializeImmediate: true,
     resolveDebounceMs: resolveTelegramDebounceEntryMs,
     buildKey: (entry) => entry.debounceKey,
     shouldDebounce: shouldDebounceTelegramEntry,
-    onFlush: (entries) => {
-      const fragment = entries[0]?.textFragment;
+    onFlush: (queuedEntries) => {
+      const fragment = queuedEntries[0]?.textFragment;
       if (fragment) {
         const completion = (async () => {
           await fragment.ready;
@@ -170,7 +157,11 @@ export function createTelegramInboundBuffers({
         })();
         return { admission: completion, completion };
       }
-      const completion = (async () => {
+      const processEntries = async (candidateEntries: TelegramDebounceEntry[]): Promise<void> => {
+        await Promise.all(candidateEntries.map(waitForPendingIgnore));
+        const cancelledEntries = candidateEntries.filter((entry) => entry.cancelled);
+        await settleCancelledDebounceEntries(cancelledEntries);
+        const entries = candidateEntries.filter((entry) => !entry.cancelled);
         const participants = entries
           .map((entry) => entry.spooledReplayParticipant)
           .filter(
@@ -181,9 +172,11 @@ export function createTelegramInboundBuffers({
         if (!last) {
           return;
         }
+        const bufferedDispatch = createTelegramBufferedDispatchAdmission(entries);
+        let result: TelegramMessageProcessingResult;
         try {
           if (entries.length === 1) {
-            const result = await processMessageWithReplyChain({
+            result = await processMessageWithReplyChain({
               ctx: last.ctx,
               msg: last.msg,
               allMedia: last.allMedia,
@@ -201,69 +194,109 @@ export function createTelegramInboundBuffers({
               },
               dispatchDedupeClaims: last.dispatchDedupeClaims,
               spooledReplayParticipants: participants,
+              shouldSkipBeforeDispatch: async () => {
+                await waitForPendingIgnore(last);
+                return last.cancelled;
+              },
+              deferCancelledBeforeDispatchSettlement: true,
+              dispatchAdmission: bufferedDispatch.admission,
             });
-            settleSpooledReplayParticipants(participants, result);
-            return;
-          }
-          const combinedTextParts = joinTelegramTextParts(
-            entries.map((entry) => entry.msg),
-            "\n",
-          );
-          const combinedText = combinedTextParts.text;
-          const combinedMedia = entries.flatMap((entry) => entry.allMedia);
-          if (!combinedText.trim() && combinedMedia.length === 0) {
-            releaseDispatchDedupeClaims(
-              mergeDispatchDedupeClaims(...entries.map((entry) => entry.dispatchDedupeClaims)),
+          } else {
+            const combinedTextParts = joinTelegramTextParts(
+              entries.map((entry) => entry.msg),
+              "\n",
             );
-            settleSpooledReplayParticipants(participants, { kind: "skipped" });
+            const combinedText = combinedTextParts.text;
+            const combinedMedia = entries.flatMap((entry) => entry.allMedia);
+            if (!combinedText.trim() && combinedMedia.length === 0) {
+              releaseDispatchDedupeClaims(
+                mergeDispatchDedupeClaims(...entries.map((entry) => entry.dispatchDedupeClaims)),
+              );
+              settleSpooledReplayParticipants(participants, { kind: "skipped" });
+              for (const entry of entries) {
+                forgetDebounceEntry(entry);
+              }
+              return;
+            }
+            const first = expectDefined(entries.at(0), "multi-entry Telegram debounce batch");
+            const syntheticMessage = {
+              ...buildSyntheticTextMessage({
+                base: first.msg,
+                text: combinedText,
+                entities: combinedTextParts.entities,
+                date: last.msg.date ?? first.msg.date,
+              }),
+              forward_origin: undefined,
+            };
+            result = await processMessageWithReplyChain({
+              ctx: buildSyntheticContext(first.ctx, syntheticMessage),
+              msg: syntheticMessage,
+              allMedia: combinedMedia,
+              storeAllowFrom: first.storeAllowFrom,
+              options: {
+                ...(last.msg.message_id ? { messageIdOverride: String(last.msg.message_id) } : {}),
+                ambientTranscriptBody: formatTelegramAmbientTranscriptBody(
+                  entries.map((entry) => entry.msg),
+                ),
+                receivedAtMs: first.receivedAtMs,
+                ingressBuffer: "inbound-debounce",
+                threadSpec: first.threadSpec,
+                bufferedMessages: entries.map((entry) => entry.msg),
+                ...promptContextBoundaryOptions(
+                  latestPromptContextMinTimestampMs(
+                    ...entries.map((entry) => entry.promptContextMinTimestampMs),
+                  ),
+                  latestPromptContextAmbientWatermark(
+                    ...entries.map((entry) => entry.promptContextAmbientWatermark),
+                  ),
+                ),
+                ...spooledReplayOptions(participants),
+                channelIngressResolvers: entries.flatMap((entry) => entry.channelIngressResolvers),
+              },
+              dispatchDedupeClaims: mergeDispatchDedupeClaims(
+                ...entries.map((entry) => entry.dispatchDedupeClaims),
+              ),
+              spooledReplayParticipants: participants,
+              shouldSkipBeforeDispatch: async () => {
+                await Promise.all(entries.map(waitForPendingIgnore));
+                return entries.some((entry) => entry.cancelled);
+              },
+              deferCancelledBeforeDispatchSettlement: true,
+              dispatchAdmission: bufferedDispatch.admission,
+            });
+          }
+        } catch (error) {
+          await purgeIgnoredBufferedMessages(entries.filter((entry) => entry.cancelled));
+          settleSpooledReplayParticipants(participants, buildFailedProcessingResult(error));
+          for (const entry of entries) {
+            forgetDebounceEntry(entry);
+          }
+          throw error;
+        } finally {
+          bufferedDispatch.release();
+        }
+        if (result.kind === "skipped" && result.reason === "cancelled-before-dispatch") {
+          await Promise.all(entries.map(waitForPendingIgnore));
+          if (
+            entries.some((entry) => entry.cancelled) ||
+            bufferedDispatch.wasPausedForPendingIgnore()
+          ) {
+            try {
+              await processEntries(entries);
+            } finally {
+              for (const entry of entries) {
+                forgetDebounceEntry(entry);
+              }
+            }
             return;
           }
-          const first = expectDefined(entries.at(0), "multi-entry Telegram debounce batch");
-          const syntheticMessage = {
-            ...buildSyntheticTextMessage({
-              base: first.msg,
-              text: combinedText,
-              entities: combinedTextParts.entities,
-              date: last.msg.date ?? first.msg.date,
-            }),
-            forward_origin: undefined,
-          };
-          const result = await processMessageWithReplyChain({
-            ctx: buildSyntheticContext(first.ctx, syntheticMessage),
-            msg: syntheticMessage,
-            allMedia: combinedMedia,
-            storeAllowFrom: first.storeAllowFrom,
-            options: {
-              ...(last.msg.message_id ? { messageIdOverride: String(last.msg.message_id) } : {}),
-              ambientTranscriptBody: formatTelegramAmbientTranscriptBody(
-                entries.map((entry) => entry.msg),
-              ),
-              receivedAtMs: first.receivedAtMs,
-              ingressBuffer: "inbound-debounce",
-              threadSpec: first.threadSpec,
-              bufferedMessages: entries.map((entry) => entry.msg),
-              ...promptContextBoundaryOptions(
-                latestPromptContextMinTimestampMs(
-                  ...entries.map((entry) => entry.promptContextMinTimestampMs),
-                ),
-                latestPromptContextAmbientWatermark(
-                  ...entries.map((entry) => entry.promptContextAmbientWatermark),
-                ),
-              ),
-              ...spooledReplayOptions(participants),
-              channelIngressResolvers: entries.flatMap((entry) => entry.channelIngressResolvers),
-            },
-            dispatchDedupeClaims: mergeDispatchDedupeClaims(
-              ...entries.map((entry) => entry.dispatchDedupeClaims),
-            ),
-            spooledReplayParticipants: participants,
-          });
-          settleSpooledReplayParticipants(participants, result);
-        } catch (error) {
-          settleSpooledReplayParticipants(participants, buildFailedProcessingResult(error));
-          throw error;
         }
-      })();
+        settleSpooledReplayParticipants(participants, result);
+        for (const entry of entries) {
+          forgetDebounceEntry(entry);
+        }
+      };
+      const completion = processEntries(queuedEntries);
       // Spooled Telegram processing already returns at durable turn adoption;
       // its participant owns the remaining agent-turn lifecycle.
       return { admission: completion, completion };
@@ -317,8 +350,20 @@ export function createTelegramInboundBuffers({
           ),
         { kind: "skipped" },
       );
+      for (const item of items) {
+        forgetDebounceEntry(item);
+      }
     },
   });
+  const enqueueDebounceEntry = async (entry: TelegramDebounceEntry) => {
+    registerDebounceEntry(entry);
+    try {
+      await inboundDebouncer.enqueue(entry);
+    } catch (error) {
+      forgetDebounceEntry(entry);
+      throw error;
+    }
+  };
 
   const maxGapMs =
     typeof opts.testTimings?.textFragmentGapMs === "number" &&
@@ -353,38 +398,104 @@ export function createTelegramInboundBuffers({
     entry.canceled = true;
     untrackTextFragments(entry);
     releaseTextFragments(entry);
-    releaseDispatchDedupeClaims(entry.dispatchDedupeClaims);
-    settleSpooledReplayParticipants(entry.spooledReplayParticipants, { kind: "skipped" });
+    for (const fragment of entry.messages) {
+      releaseDispatchDedupeClaims(fragment.dispatchDedupeClaims);
+      if (fragment.spooledReplayParticipant) {
+        settleSpooledReplayParticipants([fragment.spooledReplayParticipant], { kind: "skipped" });
+      }
+      forgetTextFragment(fragment);
+    }
   };
   const failTextFragments = (entry: TextFragmentEntry, error: unknown) => {
     untrackTextFragments(entry);
     releaseTextFragments(entry);
-    releaseDispatchDedupeClaims(entry.dispatchDedupeClaims, error);
-    settleSpooledReplayParticipants(
-      entry.spooledReplayParticipants,
-      buildFailedProcessingResult(error),
-    );
+    for (const fragment of entry.messages) {
+      releaseDispatchDedupeClaims(fragment.dispatchDedupeClaims, error);
+      if (fragment.spooledReplayParticipant) {
+        settleSpooledReplayParticipants(
+          [fragment.spooledReplayParticipant],
+          buildFailedProcessingResult(error),
+        );
+      }
+      forgetTextFragment(fragment);
+    }
     runtime.error?.(danger(`text fragment handler failed: ${String(error)}`));
   };
 
-  const flushTextFragments = async (entry: TextFragmentEntry) => {
+  const textFragmentParticipants = (messages: readonly TextFragmentMessage[]) =>
+    messages.flatMap((fragment) =>
+      fragment.spooledReplayParticipant ? [fragment.spooledReplayParticipant] : [],
+    );
+  const settleTextFragments = (messages: readonly TextFragmentMessage[]) => {
+    for (const fragment of messages) {
+      releaseDispatchDedupeClaims(fragment.dispatchDedupeClaims);
+      if (fragment.spooledReplayParticipant) {
+        settleSpooledReplayParticipants([fragment.spooledReplayParticipant], { kind: "skipped" });
+      }
+      forgetTextFragment(fragment);
+    }
+  };
+  const createTextFragmentMessage = (
+    params: TelegramTextFragmentInput,
+    key: string,
+    receivedAtMs: number,
+  ): TextFragmentMessage => {
+    const fragment: TextFragmentMessage = {
+      msg: params.msg,
+      ctx: params.ctx,
+      receivedAtMs,
+      ...promptContextBoundaryOptions(
+        params.promptContextMinTimestampMs,
+        params.promptContextAmbientWatermark,
+      ),
+      dispatchDedupeClaims: params.dispatchDedupeClaims,
+      spooledReplayParticipant: createSpooledReplayParticipantForBufferedWork(
+        `text-fragment:${key}:${params.msg.message_id}`,
+      ),
+      channelIngressResolver: params.channelIngressResolver,
+      cancelled: false,
+      dispatchAdmission: "pending",
+      dispatchAbortControllers: new Set(),
+      pendingIgnoreSettlements: new Set(),
+    };
+    registerTextFragment(fragment);
+    return fragment;
+  };
+
+  const flushTextFragments = async (
+    entry: TextFragmentEntry,
+    candidateMessages: TextFragmentMessage[] = entry.messages,
+  ): Promise<void> => {
     // Timer expiry seals collection; only processing releases cancellation ownership.
     untrackTextFragments(entry);
+    await Promise.all(candidateMessages.map(waitForPendingIgnore));
+    const cancelledMessages = candidateMessages.filter((fragment) => fragment.cancelled);
+    settleTextFragments(cancelledMessages);
+    await purgeIgnoredBufferedMessages(
+      cancelledMessages.map((fragment) => ({ msg: fragment.msg, threadSpec: entry.threadSpec })),
+    );
+    const messages = candidateMessages.filter((fragment) => !fragment.cancelled);
+    const dispatchDedupeClaims = mergeDispatchDedupeClaims(
+      ...messages.map((fragment) => fragment.dispatchDedupeClaims),
+    );
+    const spooledReplayParticipants = textFragmentParticipants(messages);
+    const bufferedDispatch = createTelegramBufferedDispatchAdmission(messages);
     try {
-      entry.messages.sort((a, b) => a.msg.message_id - b.msg.message_id);
-      const bufferedMessages = entry.messages.map((bufferedMessage) => bufferedMessage.msg);
-      const first = entry.messages[0];
-      const last = entry.messages.at(-1);
+      messages.sort((a, b) => a.msg.message_id - b.msg.message_id);
+      const bufferedMessages = messages.map((bufferedMessage) => bufferedMessage.msg);
+      const first = messages[0];
+      const last = messages.at(-1);
       if (!first || !last) {
-        releaseDispatchDedupeClaims(entry.dispatchDedupeClaims);
-        settleSpooledReplayParticipants(entry.spooledReplayParticipants, { kind: "skipped" });
         return;
       }
       const combinedTextParts = joinTelegramTextParts(bufferedMessages, "");
       const combinedText = combinedTextParts.text;
       if (!combinedText.trim()) {
-        releaseDispatchDedupeClaims(entry.dispatchDedupeClaims);
-        settleSpooledReplayParticipants(entry.spooledReplayParticipants, { kind: "skipped" });
+        releaseDispatchDedupeClaims(dispatchDedupeClaims);
+        settleSpooledReplayParticipants(spooledReplayParticipants, { kind: "skipped" });
+        for (const fragment of messages) {
+          forgetTextFragment(fragment);
+        }
         return;
       }
       const syntheticMessage = buildSyntheticTextMessage({
@@ -406,18 +517,62 @@ export function createTelegramInboundBuffers({
           threadSpec: entry.threadSpec,
           bufferedMessages,
           ...promptContextBoundaryOptions(
-            entry.promptContextMinTimestampMs,
-            entry.promptContextAmbientWatermark,
+            latestPromptContextMinTimestampMs(
+              ...messages.map((fragment) => fragment.promptContextMinTimestampMs),
+            ),
+            latestPromptContextAmbientWatermark(
+              ...messages.map((fragment) => fragment.promptContextAmbientWatermark),
+            ),
           ),
-          ...spooledReplayOptions(entry.spooledReplayParticipants),
-          channelIngressResolvers: entry.channelIngressResolvers,
+          ...spooledReplayOptions(spooledReplayParticipants),
+          channelIngressResolvers: messages.map((fragment) => fragment.channelIngressResolver),
         },
-        dispatchDedupeClaims: entry.dispatchDedupeClaims,
-        spooledReplayParticipants: entry.spooledReplayParticipants,
+        dispatchDedupeClaims,
+        spooledReplayParticipants,
+        shouldSkipBeforeDispatch: async () => {
+          await Promise.all(messages.map(waitForPendingIgnore));
+          return messages.some((fragment) => fragment.cancelled);
+        },
+        deferCancelledBeforeDispatchSettlement: true,
+        dispatchAdmission: bufferedDispatch.admission,
       });
-      settleSpooledReplayParticipants(entry.spooledReplayParticipants, result);
+      if (result.kind === "skipped" && result.reason === "cancelled-before-dispatch") {
+        await Promise.all(messages.map(waitForPendingIgnore));
+        if (
+          messages.some((fragment) => fragment.cancelled) ||
+          bufferedDispatch.wasPausedForPendingIgnore()
+        ) {
+          try {
+            await flushTextFragments(entry, messages);
+          } finally {
+            for (const fragment of messages) {
+              forgetTextFragment(fragment);
+            }
+          }
+          return;
+        }
+      }
+      settleSpooledReplayParticipants(spooledReplayParticipants, result);
+      for (const fragment of messages) {
+        forgetTextFragment(fragment);
+      }
     } catch (error) {
-      failTextFragments(entry, error);
+      await purgeIgnoredBufferedMessages(
+        messages
+          .filter((fragment) => fragment.cancelled)
+          .map((fragment) => ({ msg: fragment.msg, threadSpec: entry.threadSpec })),
+      );
+      releaseDispatchDedupeClaims(dispatchDedupeClaims, error);
+      settleSpooledReplayParticipants(
+        spooledReplayParticipants,
+        buildFailedProcessingResult(error),
+      );
+      runtime.error?.(danger(`text fragment handler failed: ${String(error)}`));
+      for (const fragment of messages) {
+        forgetTextFragment(fragment);
+      }
+    } finally {
+      bufferedDispatch.release();
     }
   };
   const scheduleTextFlush = (entry: TextFragmentEntry) => {
@@ -462,26 +617,7 @@ export function createTelegramInboundBuffers({
             0,
           ) + text.length;
         if (canAppend && existing.messages.length < 12 && nextTotalChars <= 50_000) {
-          const participant = createSpooledReplayParticipantForBufferedWork(
-            `text-fragment:${key}:${params.msg.message_id}`,
-          );
-          if (participant) {
-            existing.spooledReplayParticipants.push(participant);
-          }
-          existing.messages.push({ msg: params.msg, ctx: params.ctx, receivedAtMs: nowMs });
-          existing.promptContextMinTimestampMs = latestPromptContextMinTimestampMs(
-            existing.promptContextMinTimestampMs,
-            params.promptContextMinTimestampMs,
-          );
-          existing.promptContextAmbientWatermark = latestPromptContextAmbientWatermark(
-            existing.promptContextAmbientWatermark,
-            params.promptContextAmbientWatermark,
-          );
-          existing.dispatchDedupeClaims = mergeDispatchDedupeClaims(
-            existing.dispatchDedupeClaims,
-            params.dispatchDedupeClaims,
-          );
-          existing.channelIngressResolvers.push(params.channelIngressResolver);
+          existing.messages.push(createTextFragmentMessage(params, key, nowMs));
           scheduleTextFlush(existing);
           return true;
         }
@@ -489,9 +625,6 @@ export function createTelegramInboundBuffers({
         await existing.completion;
       }
       if (text.length >= 4000) {
-        const participant = createSpooledReplayParticipantForBufferedWork(
-          `text-fragment:${key}:${params.msg.message_id}`,
-        );
         let releaseReady!: () => void;
         const ready = new Promise<void>((resolve) => {
           releaseReady = resolve;
@@ -504,14 +637,7 @@ export function createTelegramInboundBuffers({
           key,
           storeAllowFrom: params.storeAllowFrom,
           threadSpec: params.threadSpec,
-          messages: [{ msg: params.msg, ctx: params.ctx, receivedAtMs: nowMs }],
-          dispatchDedupeClaims: params.dispatchDedupeClaims,
-          spooledReplayParticipants: participant ? [participant] : [],
-          channelIngressResolvers: [params.channelIngressResolver],
-          ...promptContextBoundaryOptions(
-            params.promptContextMinTimestampMs,
-            params.promptContextAmbientWatermark,
-          ),
+          messages: [createTextFragmentMessage(params, key, nowMs)],
           timer: null,
           ready,
           releaseReady,
@@ -544,6 +670,10 @@ export function createTelegramInboundBuffers({
             dispatchDedupeClaims: params.dispatchDedupeClaims,
             channelIngressResolvers: [params.channelIngressResolver],
             textFragment: entry,
+            cancelled: false,
+            dispatchAdmission: "pending",
+            dispatchAbortControllers: new Set(),
+            pendingIgnoreSettlements: new Set(),
           })
           .then(resolveCompletion, (error: unknown) => {
             failTextFragments(entry, error);
@@ -554,13 +684,13 @@ export function createTelegramInboundBuffers({
     }
     return false;
   };
-
   return {
     cancelPending,
-    inboundDebouncer,
+    inboundDebouncer: { ...inboundDebouncer, enqueue: enqueueDebounceEntry },
     resolveTelegramDebounceEntryMs,
     shouldDebounceTelegramEntry,
     resolveTelegramDebounceLane,
     handleTextFragment,
+    beginPendingBufferedMessageIgnore,
   };
 }

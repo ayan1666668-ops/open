@@ -32,6 +32,7 @@ import {
 import type { TelegramUpdateKeyContext } from "./bot-updates.js";
 import type { TelegramBotOptions } from "./bot.types.js";
 import {
+  hasTelegramCustomCommand,
   normalizeTelegramCommandName,
   resolveTelegramCustomCommands,
   TELEGRAM_COMMAND_NAME_PATTERN,
@@ -75,6 +76,12 @@ type RegisterTelegramNativeCommandsParams = {
   >;
 };
 
+export type TelegramNativeCommandRegistration = {
+  nativeCommandNames: ReadonlyMap<string, string>;
+  nativeCommandCallbackDispatcher?: TelegramNativeCommandCallbackDispatcher;
+  pluginNativeCommandNames: ReadonlySet<string>;
+};
+
 export const registerTelegramNativeCommands = ({
   bot,
   cfg,
@@ -89,10 +96,7 @@ export const registerTelegramNativeCommands = ({
   shouldSkipUpdate,
   telegramDeps = defaultTelegramNativeCommandDeps,
   opts,
-}: RegisterTelegramNativeCommandsParams): {
-  nativeCommandNames: ReadonlyMap<string, string>;
-  nativeCommandCallbackDispatcher?: TelegramNativeCommandCallbackDispatcher;
-} => {
+}: RegisterTelegramNativeCommandsParams): TelegramNativeCommandRegistration => {
   const boundRoute =
     nativeEnabled && nativeSkillsEnabled
       ? resolveAgentRoute({ cfg, channel: "telegram", accountId })
@@ -126,17 +130,28 @@ export const registerTelegramNativeCommands = ({
   for (const command of skillCommands) {
     reservedCommands.add(normalizeTelegramCommandName(command.name));
   }
+  const customReservedCommands = new Set(reservedCommands);
+  if (
+    hasTelegramCustomCommand({
+      commands: telegramCfg.customCommands,
+      command: "ignore",
+    })
+  ) {
+    customReservedCommands.delete("ignore");
+  }
   const customResolution = resolveTelegramCustomCommands({
     commands: telegramCfg.customCommands,
-    reservedCommands,
+    reservedCommands: customReservedCommands,
   });
   for (const issue of customResolution.issues) {
     runtime.error?.(danger(issue.message));
   }
   const customCommands = customResolution.commands;
+  const pluginReservedCommands = new Set(reservedCommands);
+  pluginReservedCommands.delete("ignore");
   const pluginCatalog = buildPluginTelegramMenuCommands({
     specs: pluginCommandSpecs,
-    existingCommands: new Set(reservedCommands),
+    existingCommands: pluginReservedCommands,
   });
   for (const issue of pluginCatalog.issues) {
     runtime.error?.(danger(issue));
@@ -170,10 +185,18 @@ export const registerTelegramNativeCommands = ({
     })
     .filter((command) => command !== null);
   const customCommandNames = new Set(customCommands.map((command) => command.command));
+  const pluginNativeCommandNames = new Set(
+    pluginCatalog.selectedCommands.map((command) => command.command),
+  );
   const fullCommandCatalog = buildCappedTelegramMenuCommands({
     allCommands: [
       ...customCommands,
-      ...nativeMenuCommands.filter((command) => !command.isAlias),
+      ...nativeMenuCommands.filter(
+        (command) =>
+          !command.isAlias &&
+          !customCommandNames.has(command.command) &&
+          !pluginNativeCommandNames.has(command.command),
+      ),
       ...(nativeEnabled
         ? pluginCatalog.commands.filter((command) => !customCommandNames.has(command.command))
         : []),
@@ -268,6 +291,9 @@ export const registerTelegramNativeCommands = ({
     | undefined;
   for (const command of nativeCommandsToHandle) {
     const normalizedCommandName = normalizeTelegramCommandName(command.name);
+    if (normalizedCommandName === "ignore") {
+      continue;
+    }
     const handleNativeCommand = async (
       botUser: Context["me"],
       msg: NonNullable<Context["message"]>,
@@ -325,7 +351,7 @@ export const registerTelegramNativeCommands = ({
   }
 
   if (!handleLoginCallback) {
-    return { nativeCommandNames };
+    return { nativeCommandNames, pluginNativeCommandNames };
   }
   const nativeCommandCallbackDispatcher: TelegramNativeCommandCallbackDispatcher = async ({
     botUser,
@@ -363,5 +389,5 @@ export const registerTelegramNativeCommands = ({
     );
     return { handled: true, clearButtons: result === "handled-clear-buttons" };
   };
-  return { nativeCommandNames, nativeCommandCallbackDispatcher };
+  return { nativeCommandNames, nativeCommandCallbackDispatcher, pluginNativeCommandNames };
 };

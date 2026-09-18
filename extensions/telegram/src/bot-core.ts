@@ -68,6 +68,7 @@ import { resolveTelegramTransport } from "./fetch.js";
 import { resolveTelegramScopedGroupConfig } from "./group-config-helpers.js";
 import {
   buildTelegramSelfSenderName,
+  removeTelegramGroupHistoryEntry,
   recordTelegramGroupHistoryEntry,
 } from "./group-history-window.js";
 import { registerTelegramOutboundGroupHistoryRecorder } from "./outbound-message-context.js";
@@ -396,24 +397,25 @@ export function createTelegramBotCore(
     return resolveTelegramScopedGroupConfig(turnTelegramCfg, chatId, messageThreadId);
   };
 
-  const { nativeCommandNames, nativeCommandCallbackDispatcher } = registerTelegramNativeCommands({
-    bot,
-    cfg,
-    runtime,
-    accountId: account.accountId,
-    telegramCfg,
-    mediaMaxBytes,
-    nativeEnabled,
-    nativeSkillsEnabled,
-    resolveGroupPolicy,
-    resolveTelegramGroupConfig,
-    shouldSkipUpdate,
-    opts: runtimeOpts,
-    telegramDeps: {
-      ...telegramDeps,
-      sendMessageTelegram: defaultTelegramNativeCommandDeps.sendMessageTelegram,
-    },
-  });
+  const { nativeCommandNames, nativeCommandCallbackDispatcher, pluginNativeCommandNames } =
+    registerTelegramNativeCommands({
+      bot,
+      cfg,
+      runtime,
+      accountId: account.accountId,
+      telegramCfg,
+      mediaMaxBytes,
+      nativeEnabled,
+      nativeSkillsEnabled,
+      resolveGroupPolicy,
+      resolveTelegramGroupConfig,
+      shouldSkipUpdate,
+      opts: runtimeOpts,
+      telegramDeps: {
+        ...telegramDeps,
+        sendMessageTelegram: defaultTelegramNativeCommandDeps.sendMessageTelegram,
+      },
+    });
 
   const processMessage = createTelegramMessageProcessor({
     nativeCommandNames,
@@ -433,6 +435,7 @@ export function createTelegramBotCore(
 
   const handlers = createTelegramHandlers({
     nativeCommandNames,
+    pluginNativeCommandNames,
     cfg,
     accountId: account.accountId,
     ownerAgentId,
@@ -447,6 +450,12 @@ export function createTelegramBotCore(
     resolveGroupRequireMention,
     resolveTelegramGroupConfig,
     shouldSkipUpdate,
+    removeMessageFromGroupHistory: (msg, threadSpec) =>
+      removeTelegramGroupHistoryEntry({
+        historyMap: groupHistories,
+        historyKey: buildTelegramGroupPeerId(msg.chat.id, threadSpec),
+        messageId: String(msg.message_id),
+      }),
     processMessage: async ({
       ctx,
       allMedia,

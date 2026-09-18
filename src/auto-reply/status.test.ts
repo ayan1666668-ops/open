@@ -18,7 +18,7 @@ import {
 } from "../status/status-message.test-support.js";
 import { normalizeSessionDeliveryState } from "../utils/delivery-context.shared.js";
 import { createSuccessfulImageMediaDecision } from "./media-understanding.test-fixtures.js";
-import { buildCommandsMessage, buildCommandsMessagePaginated, buildHelpMessage } from "./status.js";
+import { buildCommandsMessage, buildHelpMessage } from "./status.js";
 
 const buildStatusMessage: typeof BuildStatusMessage = (args) =>
   buildStatusMessageRaw({
@@ -29,7 +29,13 @@ const buildStatusMessage: typeof BuildStatusMessage = (args) =>
 
 const { listPluginCommands } = vi.hoisted(() => ({
   listPluginCommands: vi.fn(
-    (): Array<{ name: string; description: string; pluginId: string }> => [],
+    (_options?: {
+      channel?: string;
+    }): Array<{
+      name: string;
+      description: string;
+      pluginId: string;
+    }> => [],
   ),
 }));
 
@@ -2604,48 +2610,4 @@ describe("buildHelpMessage", () => {
   });
 });
 
-describe("buildCommandsMessagePaginated", () => {
-  it("formats telegram output with pages", () => {
-    const result = buildCommandsMessagePaginated(
-      {
-        commands: { config: false, debug: false },
-      } as unknown as OpenClawConfig,
-      undefined,
-      { surface: "telegram", page: 1, forcePaginatedList: true },
-    );
-    expect(result.text).toContain("ℹ️ Commands (1/");
-    expect(result.text).toContain("Session");
-    expect(result.text).toContain("/stop - Stop the current run.");
-  });
-
-  it("includes plugin commands in the paginated list", async () => {
-    const pluginCommands = [
-      { name: "plugin_cmd", description: "Plugin command", pluginId: "demo-plugin" },
-    ];
-    listPluginCommands.mockImplementation(() => pluginCommands);
-    expect(listPluginCommands()).toEqual(pluginCommands);
-    const firstPage = buildCommandsMessagePaginated(
-      {
-        commands: { config: false, debug: false },
-      } as unknown as OpenClawConfig,
-      undefined,
-      { surface: "telegram", page: 1, forcePaginatedList: true },
-    );
-    const pages = Array.from({ length: firstPage.totalPages }, (_, index) =>
-      buildCommandsMessagePaginated(
-        {
-          commands: { config: false, debug: false },
-        } as unknown as OpenClawConfig,
-        undefined,
-        { surface: "telegram", page: index + 1, forcePaginatedList: true },
-      ),
-    );
-    const pluginPage = pages.find((page) => page.text.includes("/plugin_cmd (demo-plugin)"));
-    if (!pluginPage) {
-      throw new Error("expected plugin command page");
-    }
-    expect(pluginPage.text).toContain("Plugins");
-    expect(pluginPage.text).toContain("/plugin_cmd (demo-plugin) - Plugin command");
-  });
-});
 /* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

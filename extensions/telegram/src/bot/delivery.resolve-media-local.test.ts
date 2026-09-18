@@ -14,6 +14,7 @@ import {
 import type { TelegramContext } from "./types.js";
 
 const saveMediaBuffer = vi.fn();
+const unlinkIfExists = vi.fn(async (_filePath: string | null | undefined) => undefined);
 const readRemoteMediaBuffer = vi.fn();
 const saveRemoteMedia = vi.fn(async (...args: unknown[]) => {
   const fetched = (await readRemoteMediaBuffer(...args)) as {
@@ -71,6 +72,7 @@ vi.mock("./delivery.resolve-media.runtime.js", () => {
     saveMediaBuffer: (...args: unknown[]) => saveMediaBuffer(...args),
     saveRemoteMedia: (...args: unknown[]) => saveRemoteMedia(...args),
     shouldRetryTelegramTransportFallback: vi.fn(() => false),
+    unlinkIfExists: (filePath: string | null | undefined) => unlinkIfExists(filePath),
   };
 });
 
@@ -85,6 +87,22 @@ vi.mock("../sticker-cache.js", () => ({
 
 const MAX_MEDIA_BYTES = 10_000_000;
 const FIXTURE = "fixture-token";
+const TRUSTED_LOCAL_ABORT_SCENARIOS = [
+  {
+    kind: "direct",
+    filePath: "/var/lib/telegram-bot-api/file.pdf",
+    rootDir: "/var/lib/telegram-bot-api",
+    realPath: "/var/lib/telegram-bot-api/file.pdf",
+    savedPath: "/tmp/inbound/file.pdf",
+  },
+  {
+    kind: "mapped",
+    filePath: "/var/lib/telegram-bot-api/documents/file.pdf",
+    rootDir: "/srv/telegram-bot-api",
+    realPath: "/srv/telegram-bot-api/documents/file.pdf",
+    savedPath: "/tmp/inbound/mapped-file.pdf",
+  },
+] as const;
 
 function setupTransientGetFileRetry() {
   const getFile = vi
@@ -207,6 +225,7 @@ describe("resolveMedia getFile retry", () => {
     saveMediaBuffer.mockReset();
     saveRemoteMedia.mockClear();
     rootRead.mockReset();
+    unlinkIfExists.mockClear();
   });
 
   afterEach(() => {
@@ -699,6 +718,148 @@ describe("resolveMedia getFile retry", () => {
       contentType: "application/pdf",
       kind: "document",
     });
+  });
+
+  it("preserves a direct trusted local read cancellation as the typed error cause", async () => {
+    const getFile = vi.fn().mockResolvedValue({ file_path: "/var/lib/telegram-bot-api/file.pdf" });
+    const shutdown = new AbortController();
+    const abortReason = new Error("album cancelled");
+    const diskError = new Error("disk read failed");
+    rootRead.mockImplementationOnce(async () => {
+      shutdown.abort(abortReason);
+      throw diskError;
+    });
+
+    await expectMediaFetchError(
+      resolveMediaWithDefaults(makeCtx("document", getFile, { mime_type: "application/pdf" }), {
+        trustedLocalFileRoots: ["/var/lib/telegram-bot-api"],
+        abortSignal: shutdown.signal,
+      }),
+      {
+        code: "fetch_failed",
+        messageIncludes: "album cancelled",
+        cause: abortReason,
+      },
+    );
+
+    expect(rootRead).toHaveBeenCalledTimes(1);
+    expect(readRemoteMediaBuffer).not.toHaveBeenCalled();
+    expect(saveMediaBuffer).not.toHaveBeenCalled();
+  });
+
+  it("does not treat a mapped trusted local cancellation as a missing candidate", async () => {
+    const getFile = vi
+      .fn()
+      .mockResolvedValue({ file_path: "/var/lib/telegram-bot-api/documents/file.pdf" });
+    const shutdown = new AbortController();
+    const abortReason = new Error("album cancelled");
+    const missingError = Object.assign(new Error("missing"), { code: "ENOENT" });
+    rootRead.mockImplementationOnce(async () => {
+      shutdown.abort(abortReason);
+      throw missingError;
+    });
+
+    await expectMediaFetchError(
+      resolveMediaWithDefaults(makeCtx("document", getFile, { mime_type: "application/pdf" }), {
+        trustedLocalFileRoots: ["/srv/telegram-bot-api"],
+        abortSignal: shutdown.signal,
+      }),
+      {
+        code: "fetch_failed",
+        messageIncludes: "album cancelled",
+        cause: abortReason,
+      },
+    );
+
+    expect(rootRead).toHaveBeenCalledExactlyOnceWith({
+      rootDir: "/srv/telegram-bot-api",
+      relativePath: "documents/file.pdf",
+      maxBytes: MAX_MEDIA_BYTES,
+    });
+    expect(readRemoteMediaBuffer).not.toHaveBeenCalled();
+    expect(saveMediaBuffer).not.toHaveBeenCalled();
+  });
+
+  it.each(TRUSTED_LOCAL_ABORT_SCENARIOS)(
+    "stops a $kind trusted local file when cancellation wins after a successful read",
+    async ({ filePath, rootDir, realPath }) => {
+      const getFile = vi.fn().mockResolvedValue({ file_path: filePath });
+      const shutdown = new AbortController();
+      const abortReason = new Error("album cancelled after read");
+      rootRead.mockImplementationOnce(async () => {
+        shutdown.abort(abortReason);
+        return { buffer: Buffer.from("pdf-data"), realPath, stat: { size: 8 } };
+      });
+
+      await expectMediaFetchError(
+        resolveMediaWithDefaults(makeCtx("document", getFile, { mime_type: "application/pdf" }), {
+          trustedLocalFileRoots: [rootDir],
+          abortSignal: shutdown.signal,
+        }),
+        { code: "fetch_failed", messageIncludes: "album cancelled after read", cause: abortReason },
+      );
+
+      expect(rootRead).toHaveBeenCalledTimes(1);
+      expect(saveMediaBuffer).not.toHaveBeenCalled();
+      expect(unlinkIfExists).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(TRUSTED_LOCAL_ABORT_SCENARIOS)(
+    "removes a $kind trusted local save when cancellation wins during persistence",
+    async ({ filePath, rootDir, realPath, savedPath }) => {
+      const getFile = vi.fn().mockResolvedValue({ file_path: filePath });
+      const shutdown = new AbortController();
+      const abortReason = new Error("album cancelled during save");
+      rootRead.mockResolvedValueOnce({
+        buffer: Buffer.from("pdf-data"),
+        realPath,
+        stat: { size: 8 },
+      });
+      saveMediaBuffer.mockImplementationOnce(async () => {
+        shutdown.abort(abortReason);
+        return { path: savedPath, contentType: "application/pdf" };
+      });
+
+      await expectMediaFetchError(
+        resolveMediaWithDefaults(makeCtx("document", getFile, { mime_type: "application/pdf" }), {
+          trustedLocalFileRoots: [rootDir],
+          abortSignal: shutdown.signal,
+        }),
+        {
+          code: "fetch_failed",
+          messageIncludes: "album cancelled during save",
+          cause: abortReason,
+        },
+      );
+
+      expect(saveMediaBuffer).toHaveBeenCalledTimes(1);
+      expect(unlinkIfExists).toHaveBeenCalledExactlyOnceWith(savedPath);
+    },
+  );
+
+  it("does not read or save a trusted local file for a pre-aborted request", async () => {
+    const getFile = vi.fn().mockResolvedValue({ file_path: "/var/lib/telegram-bot-api/file.pdf" });
+    const shutdown = new AbortController();
+    const abortReason = new Error("album already cancelled");
+    shutdown.abort(abortReason);
+
+    await expectMediaFetchError(
+      resolveMediaWithDefaults(makeCtx("document", getFile, { mime_type: "application/pdf" }), {
+        trustedLocalFileRoots: ["/var/lib/telegram-bot-api"],
+        abortSignal: shutdown.signal,
+      }),
+      {
+        code: "fetch_failed",
+        messageIncludes: "album already cancelled",
+        cause: abortReason,
+      },
+    );
+
+    expect(getFile).toHaveBeenCalledTimes(1);
+    expect(rootRead).not.toHaveBeenCalled();
+    expect(saveMediaBuffer).not.toHaveBeenCalled();
+    expect(unlinkIfExists).not.toHaveBeenCalled();
   });
 
   it("copies trusted local file paths whose names start with dots", async () => {

@@ -25,6 +25,7 @@ describe("createTelegramHandlers", () => {
       resolveGroupRequireMention: () => false,
       resolveTelegramGroupConfig: () => ({}),
       shouldSkipUpdate: () => false,
+      removeMessageFromGroupHistory: vi.fn(),
       processMessage: vi.fn<RegisterTelegramHandlerParams["processMessage"]>(),
       logger: getChildLogger({ module: "telegram/handler-registration-test" }),
     };

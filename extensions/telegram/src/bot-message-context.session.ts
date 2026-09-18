@@ -20,7 +20,6 @@ import type {
   TelegramTopicConfig,
 } from "openclaw/plugin-sdk/config-contracts";
 import { resolveChannelContextVisibilityMode } from "openclaw/plugin-sdk/context-visibility-runtime";
-import { timestampMsToIsoString } from "openclaw/plugin-sdk/number-runtime";
 import { createChannelHistoryWindow, type HistoryEntry } from "openclaw/plugin-sdk/reply-history";
 import type { ResolvedAgentRoute } from "openclaw/plugin-sdk/routing";
 import { logVerbose, shouldLogVerbose } from "openclaw/plugin-sdk/runtime-env";
@@ -29,6 +28,13 @@ import { normalizeOptionalLowercaseString } from "openclaw/plugin-sdk/string-coe
 import { truncateUtf16Safe } from "openclaw/plugin-sdk/text-utility-runtime";
 import type { NormalizedAllowFrom } from "./bot-access.js";
 import { isSenderAllowed, normalizeAllowFrom } from "./bot-access.js";
+import {
+  formatReplyChainEntry,
+  formatTelegramForwardedMessageBody,
+  isTelegramMediaKind,
+  replyTargetToChainEntry,
+  stripReplyChainForwarded,
+} from "./bot-message-context.format.js";
 import type {
   TelegramMediaRef,
   TelegramMessageContextOptions,
@@ -46,7 +52,6 @@ import {
   getTelegramTextParts,
   normalizeForwardedContext,
   resolveTelegramPrimaryMedia,
-  type TelegramMediaKind,
   type TelegramReplyTarget,
   type TelegramThreadSpec,
 } from "./bot/helpers.js";
@@ -62,11 +67,11 @@ import {
   isTelegramChatWindowPromptContext,
   mergeTelegramGroupHistoryPromptContext,
   recordTelegramGroupHistoryEntry,
+  resolveTelegramGroupHistorySourceMessageIds,
   retainTelegramGroupHistoryPromptContext,
   selectTelegramGroupHistoryAfterLastSelf,
 } from "./group-history-window.js";
 import { TELEGRAM_REPLY_CHAIN_MAX_DEPTH, type TelegramReplyChainEntry } from "./message-cache.js";
-import { resolveTelegramPromptMediaPath } from "./prompt-media-path.js";
 import { buildTelegramConversationId } from "./topic-conversation.js";
 
 type TelegramMentionFacts = NonNullable<
@@ -128,94 +133,6 @@ export async function resolveTelegramMessageContextStorePath(params: {
   return sessionRuntime.resolveStorePath(params.cfg.session?.store, {
     agentId: params.agentId,
   });
-}
-
-function replyTargetToChainEntry(replyTarget: TelegramReplyTarget): TelegramReplyChainEntry {
-  return {
-    ...(replyTarget.id ? { messageId: replyTarget.id } : {}),
-    sender: replyTarget.sender,
-    ...(replyTarget.senderId ? { senderId: replyTarget.senderId } : {}),
-    ...(replyTarget.senderUsername ? { senderUsername: replyTarget.senderUsername } : {}),
-    ...(replyTarget.body ? { body: replyTarget.body } : {}),
-    ...(replyTarget.mediaType
-      ? { mediaKind: replyTarget.mediaType, mediaType: replyTarget.mediaType }
-      : {}),
-    ...(replyTarget.kind === "quote" ? { isQuote: true } : {}),
-    ...(replyTarget.forwardedFrom?.from ? { forwardedFrom: replyTarget.forwardedFrom.from } : {}),
-    ...(replyTarget.forwardedFrom?.fromId
-      ? { forwardedFromId: replyTarget.forwardedFrom.fromId }
-      : {}),
-    ...(replyTarget.forwardedFrom?.fromUsername
-      ? { forwardedFromUsername: replyTarget.forwardedFrom.fromUsername }
-      : {}),
-    ...(replyTarget.forwardedFrom?.date
-      ? { forwardedDate: replyTarget.forwardedFrom.date * 1000 }
-      : {}),
-  };
-}
-
-function stripReplyChainForwarded(entry: TelegramReplyChainEntry): TelegramReplyChainEntry {
-  const {
-    forwardedFrom: _forwardedFrom,
-    forwardedFromId: _forwardedFromId,
-    forwardedFromUsername: _forwardedFromUsername,
-    forwardedDate: _forwardedDate,
-    ...withoutForwarded
-  } = entry;
-  return withoutForwarded;
-}
-
-function formatTelegramForwardedMessageBody(params: {
-  body: string;
-  forwardedFrom?: string;
-  forwardedDate?: number;
-}): string {
-  const forwardedAt = timestampMsToIsoString(params.forwardedDate);
-  const forwardPrefix = params.forwardedFrom
-    ? `[Forwarded from ${params.forwardedFrom}${forwardedAt ? ` at ${forwardedAt}` : ""}]`
-    : undefined;
-  return [forwardPrefix, params.body].filter(Boolean).join("\n");
-}
-
-function formatReplyChainEntry(entry: TelegramReplyChainEntry, index: number): string {
-  const mediaPath = entry.mediaPath ? resolveTelegramPromptMediaPath(entry.mediaPath) : undefined;
-  const labels = [
-    `${index + 1}. ${entry.sender ?? "unknown sender"}`,
-    entry.messageId ? `id:${entry.messageId}` : undefined,
-    entry.replyToId ? `reply_to:${entry.replyToId}` : undefined,
-    entry.timestamp ? timestampMsToIsoString(entry.timestamp) : undefined,
-  ].filter(Boolean);
-  const bodyLines = [
-    formatTelegramForwardedMessageBody({
-      body: entry.isQuote && entry.body ? `"${entry.body}"` : (entry.body ?? ""),
-      forwardedFrom: entry.forwardedFrom,
-      forwardedDate: entry.forwardedDate,
-    }),
-    entry.mediaKind || entry.mediaType
-      ? formatMediaPlaceholderText([
-          entry.mediaKind
-            ? { kind: entry.mediaKind }
-            : isTelegramMediaKind(entry.mediaType ?? "")
-              ? { kind: entry.mediaType as TelegramMediaKind }
-              : { contentType: entry.mediaType },
-        ])
-      : undefined,
-    mediaPath ? `[media_path:${mediaPath}]` : undefined,
-    entry.mediaRef ? `[media_ref:${entry.mediaRef}]` : undefined,
-  ].filter(Boolean);
-  return `[${labels.join(" ")}]\n${bodyLines.join("\n")}`;
-}
-
-const TELEGRAM_MEDIA_KINDS = new Set<TelegramMediaKind>([
-  "audio",
-  "document",
-  "image",
-  "sticker",
-  "video",
-]);
-
-function isTelegramMediaKind(value: string): value is TelegramMediaKind {
-  return TELEGRAM_MEDIA_KINDS.has(value as TelegramMediaKind);
 }
 
 export async function buildTelegramInboundContextPayload(params: {
@@ -879,6 +796,10 @@ export async function buildTelegramInboundContextPayload(params: {
         timestamp: msg.date ? msg.date * 1000 : undefined,
         messageId: typeof msg.message_id === "number" ? String(msg.message_id) : undefined,
       },
+      sourceMessageIds: resolveTelegramGroupHistorySourceMessageIds({
+        bufferedMessages: options?.bufferedMessages,
+        media: allMedia,
+      }),
     });
   }
 

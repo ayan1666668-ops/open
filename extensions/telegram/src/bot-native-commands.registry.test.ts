@@ -3,6 +3,7 @@ import {
   resetPluginRuntimeStateForTest,
   setActivePluginRegistry,
 } from "openclaw/plugin-sdk/channel-test-helpers";
+import "./ignore-command.test-support.js";
 // Telegram tests cover bot native commands.registry plugin behavior.
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { clearPluginCommands, registerPluginCommand } from "openclaw/plugin-sdk/plugin-runtime";
@@ -151,6 +152,41 @@ describe("registerTelegramNativeCommands real plugin registry", () => {
     await handler(createPrivateCommandContext({ match: "now" }));
 
     expectLastDeliveredReplyText("paired:now");
+    expect(sendMessage).not.toHaveBeenCalledWith(123, "Command not found.");
+  });
+
+  it("preserves a registered plugin command that owns /ignore", async () => {
+    const pluginHandler = vi.fn(async ({ args }: { args?: string }) => ({
+      text: `plugin-ignore:${args ?? ""}`,
+    }));
+    expect(
+      registerPluginCommand("ignore-owner", {
+        name: "ignore",
+        description: "Plugin ignore workflow",
+        channels: ["telegram"],
+        acceptsArgs: true,
+        requireAuth: false,
+        handler: pluginHandler,
+      }),
+    ).toEqual({ ok: true });
+    const { bot, commandHandlers, sendMessage, setMyCommands } = createCommandBot();
+
+    const registration = registerTelegramNativeCommands({
+      ...createNativeCommandTestParams({}),
+      bot,
+    });
+    const registeredCommands = await waitForRegisteredCommands(setMyCommands);
+
+    expect(registration.pluginNativeCommandNames).toContain("ignore");
+    expect(registeredCommands.filter((command) => command.command === "ignore")).toEqual([
+      { command: "ignore", description: "Plugin ignore workflow" },
+    ]);
+    await requireCommandHandler(
+      commandHandlers,
+      "ignore",
+    )(createPrivateCommandContext({ match: "plugin input" }));
+    expect(pluginHandler).toHaveBeenCalledOnce();
+    expectLastDeliveredReplyText("plugin-ignore:plugin input");
     expect(sendMessage).not.toHaveBeenCalledWith(123, "Command not found.");
   });
 

@@ -31,6 +31,10 @@ import {
   createConfiguredAcpTopicBinding,
   createConfiguredBindingRoute,
 } from "./bot-native-command-dispatch.test-support.js";
+import { registerTelegramDeliveryAndDedupeTests } from "./bot.create-telegram-bot.delivery-dedupe.test-support.js";
+import { registerTelegramIgnoreAlbumRaceTests } from "./bot.create-telegram-bot.ignore-album-races.test-support.js";
+import { registerTelegramIgnoreCommandAndAlbumTests } from "./bot.create-telegram-bot.ignore-command-albums.test-support.js";
+import { registerTelegramIgnoreEditTests } from "./bot.create-telegram-bot.ignore-edits.test-support.js";
 import { telegramBotInfoForTest } from "./bot.create-telegram-bot.test-support.js";
 import {
   createTelegramCallbackContext,
@@ -49,6 +53,7 @@ import type { TelegramPollRegistryEntry } from "./poll-registry.js";
 import type { TelegramRuntime } from "./runtime.types.js";
 
 vi.mock("openclaw/plugin-sdk/conversation-runtime", { spy: true });
+vi.mock("openclaw/plugin-sdk/security-runtime", { spy: true });
 
 const harness = await import("./bot.create-telegram-bot.test-harness.js");
 const pluginStateTestRuntime = await import("openclaw/plugin-sdk/plugin-state-test-runtime");
@@ -56,6 +61,10 @@ const configMutation = await import("openclaw/plugin-sdk/config-mutation");
 const modelSessionRuntime = await import("openclaw/plugin-sdk/model-session-runtime");
 const conversationRuntime = await import("openclaw/plugin-sdk/conversation-runtime");
 const telegramMediaResolver = await import("./bot/delivery.resolve-media.js");
+const securityRuntime = await import("openclaw/plugin-sdk/security-runtime");
+const securityRuntimeActual = await vi.importActual<
+  typeof import("openclaw/plugin-sdk/security-runtime")
+>("openclaw/plugin-sdk/security-runtime");
 const EYES_EMOJI = "\u{1F440}";
 const tempStateDirs: string[] = [];
 let previousStateDir: string | undefined;
@@ -81,7 +90,6 @@ const {
   replySpy,
   resolveExecApprovalSpy,
   sendAnimationSpy,
-  sendChatActionSpy,
   sendMessageSpy,
   sendPhotoSpy,
   sequentializeSpy,
@@ -479,6 +487,7 @@ describe("createTelegramBot", () => {
   });
   afterEach(async () => {
     await closeOpenClawStateDatabaseAsync();
+    clearTelegramRuntimeForTest();
     pluginStateTestRuntime.resetPluginStateStoreForTests();
     clearPluginInteractiveHandlers();
     if (previousStateDir === undefined) {
@@ -495,6 +504,9 @@ describe("createTelegramBot", () => {
     process.env.OPENCLAW_STATE_DIR = createTelegramBotTestStateDir();
     clearPluginInteractiveHandlers();
     resetTelegramAccountThrottlersForTest();
+    vi.mocked(securityRuntime.expandAllowFromWithAccessGroups).mockImplementation(
+      securityRuntimeActual.expandAllowFromWithAccessGroups,
+    );
     throttlerSpy.mockReset();
     createTelegramBot = (opts) =>
       createTelegramBotBase({
@@ -3644,6 +3656,7 @@ describe("createTelegramBot", () => {
     expect(sendMessageSpy).not.toHaveBeenCalled();
   });
 
+  registerTelegramIgnoreEditTests();
   it("does not cache blocked group-sender edits into authorized prompt context", async () => {
     loadConfig.mockReturnValue({
       channels: {
@@ -3855,143 +3868,9 @@ describe("createTelegramBot", () => {
       fetchSpy.mockRestore();
     }
   });
-  it("triggers typing cue via onReplyStart", async () => {
-    dispatchReplyWithBufferedBlockDispatcher.mockImplementationOnce(
-      async ({ dispatcherOptions }) => {
-        await dispatcherOptions.typingCallbacks?.onReplyStart?.();
-        return { queuedFinal: false, counts: { block: 0, final: 0, tool: 0 } };
-      },
-    );
-    createTelegramBot({ token: "tok" });
-    const handler = getOnHandler("message") as (ctx: Record<string, unknown>) => Promise<void>;
-    await handler({
-      message: {
-        chat: { id: 42, type: "private" },
-        from: { id: 999, username: "random" },
-        text: "hi",
-      },
-      me: { username: "openclaw_bot" },
-      getFile: async () => ({ download: async () => new Uint8Array() }),
-    });
-    expect(sendChatActionSpy).toHaveBeenCalledWith(42, "typing", undefined);
-  });
-
-  it("dedupes duplicate updates for callback_query, message, and channel_post", async () => {
-    loadConfig.mockReturnValue({
-      channels: {
-        telegram: {
-          dmPolicy: "open",
-          allowFrom: ["*"],
-          groupPolicy: "open",
-          groups: {
-            "-100777111222": {
-              enabled: true,
-              requireMention: false,
-            },
-          },
-        },
-      },
-    });
-
-    createTelegramBot({ token: "tok" });
-    const callbackHandler = getOnHandler("callback_query") as (
-      ctx: Record<string, unknown>,
-    ) => Promise<void>;
-    const messageHandler = getOnHandler("message") as (
-      ctx: Record<string, unknown>,
-    ) => Promise<void>;
-    const channelPostHandler = getOnHandler("channel_post") as (
-      ctx: Record<string, unknown>,
-    ) => Promise<void>;
-
-    await callbackHandler({
-      update: { update_id: 222 },
-      callbackQuery: {
-        id: "cb-1",
-        data: "ping",
-        from: { id: 789, username: "testuser" },
-        message: {
-          chat: { id: 123, type: "private" },
-          date: 1736380800,
-          message_id: 9001,
-        },
-      },
-      me: { username: "openclaw_bot" },
-      getFile: async () => ({}),
-    });
-    await callbackHandler({
-      update: { update_id: 222 },
-      callbackQuery: {
-        id: "cb-question-duplicate",
-        data: "tgq1:ask_0123456789abcdef0123456789abcdef:1",
-        from: { id: 789, username: "testuser" },
-        message: {
-          chat: { id: 123, type: "private" },
-          date: 1736380800,
-          message_id: 9001,
-        },
-      },
-      me: { username: "openclaw_bot" },
-      getFile: async () => ({}),
-    });
-    expect(replySpy).toHaveBeenCalledTimes(1);
-    expect(answerCallbackQuerySpy).toHaveBeenCalledWith("cb-question-duplicate");
-
-    replySpy.mockClear();
-
-    await messageHandler({
-      update: { update_id: 111 },
-      message: {
-        chat: { id: 123, type: "private" },
-        from: { id: 456, username: "testuser" },
-        text: "hello",
-        date: 1736380800,
-        message_id: 42,
-      },
-      me: { username: "openclaw_bot" },
-      getFile: async () => ({ download: async () => new Uint8Array() }),
-    });
-    await messageHandler({
-      update: { update_id: 111 },
-      message: {
-        chat: { id: 123, type: "private" },
-        from: { id: 456, username: "testuser" },
-        text: "hello",
-        date: 1736380800,
-        message_id: 42,
-      },
-      me: { username: "openclaw_bot" },
-      getFile: async () => ({ download: async () => new Uint8Array() }),
-    });
-    expect(replySpy).toHaveBeenCalledTimes(1);
-
-    replySpy.mockClear();
-
-    await channelPostHandler({
-      channelPost: {
-        chat: { id: -100777111222, type: "channel", title: "Wake Channel" },
-        from: { id: 98765, is_bot: true, first_name: "wakebot", username: "wake_bot" },
-        message_id: 777,
-        text: "wake check",
-        date: 1736380800,
-      },
-      me: { username: "openclaw_bot" },
-      getFile: async () => ({}),
-    });
-    await channelPostHandler({
-      channelPost: {
-        chat: { id: -100777111222, type: "channel", title: "Wake Channel" },
-        from: { id: 98765, is_bot: true, first_name: "wakebot", username: "wake_bot" },
-        message_id: 777,
-        text: "wake check",
-        date: 1736380800,
-      },
-      me: { username: "openclaw_bot" },
-      getFile: async () => ({}),
-    });
-    expect(replySpy).toHaveBeenCalledTimes(1);
-  });
-
+  registerTelegramIgnoreCommandAndAlbumTests();
+  registerTelegramIgnoreAlbumRaceTests();
+  registerTelegramDeliveryAndDedupeTests();
   it("dedupes a replayed Telegram message after handler recreation", async () => {
     configureOpenDm();
 
@@ -6225,6 +6104,49 @@ describe("createTelegramBot", () => {
     expect(editMessageTextSpy).toHaveBeenCalledTimes(2);
     expect(editMessageTextSpy.mock.calls.at(-1)?.[2]).toContain("Commands (2/");
   });
+
+  it.each([
+    { root: true, account: false, expected: false },
+    { root: false, account: true, expected: true },
+  ])(
+    "uses the Telegram account native override for command pagination ($root -> $account)",
+    async ({ root, account, expected }) => {
+      loadConfig.mockReturnValue({
+        channels: {
+          telegram: {
+            dmPolicy: "open",
+            allowFrom: ["*"],
+            commands: { native: root },
+            accounts: {
+              work: {
+                commands: { native: account },
+              },
+            },
+          },
+        },
+      });
+      createTelegramBot({ token: "tok", accountId: "work" });
+      const callbackHandler = getOnHandler("callback_query");
+
+      for (let page = 1; page <= 8; page += 1) {
+        await runTelegramTestMiddlewareChain(
+          middlewareUseSpy,
+          makeCallbackRetryContext({
+            updateId: 780 + page,
+            id: `cbq-account-commands-${root}-${page}`,
+            data: `commands_page_${page}:main`,
+            messageId: 30 + page,
+          }),
+          callbackHandler,
+        );
+      }
+
+      const text = editMessageTextSpy.mock.calls.map((call) => String(call[2])).join("\n");
+      expect(text.includes("/ignore - Keep one Telegram message out of the bot context.")).toBe(
+        expected,
+      );
+    },
+  );
 
   it("treats permanent command pagination edit failures as completed updates", async () => {
     sequentializeSpy.mockImplementationOnce(

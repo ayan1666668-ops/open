@@ -4,10 +4,13 @@ import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TelegramBotDeps } from "./bot-deps.js";
 import type { TelegramMessageProcessorTurnContext } from "./bot-handlers.types.js";
+import { configureTelegramMessageAdmissionTestMocks } from "./bot-message.admission.test-support.js";
 import type { TelegramMessageProcessingResult } from "./bot-processing-outcome.js";
 
 const buildTelegramMessageContext = vi.hoisted(() => vi.fn());
-const dispatchTelegramMessage = vi.hoisted(() => vi.fn());
+const dispatchTelegramMessage = vi.hoisted(() =>
+  vi.fn<typeof import("./bot-message-dispatch.js").dispatchTelegramMessage>(),
+);
 const telegramInboundInfo = vi.hoisted(() => vi.fn());
 const sleepWithAbort = vi.hoisted(() =>
   vi.fn<(delayMs: number, signal?: AbortSignal) => Promise<void>>(async () => undefined),
@@ -40,6 +43,11 @@ vi.mock("./bot-message-context.js", () => ({
 vi.mock("./bot-message-dispatch.js", () => ({
   dispatchTelegramMessage,
 }));
+
+configureTelegramMessageAdmissionTestMocks({
+  buildTelegramMessageContext,
+  dispatchTelegramMessage,
+});
 
 let createTelegramMessageProcessor: typeof import("./bot-message.js").createTelegramMessageProcessor;
 let createTelegramSpooledReplayDeferredParticipant: typeof import("./bot-processing-outcome.js").createTelegramSpooledReplayDeferredParticipant;
@@ -436,6 +444,89 @@ describe("telegram bot message processor", () => {
     );
   });
 
+  it("starts buffered spooled feedback only after final adoption succeeds", async () => {
+    const events: string[] = [];
+    const startInitialFeedback = vi.fn(() => events.push("feedback"));
+    const tryAdmit = vi.fn(() => {
+      events.push("admit");
+      return true;
+    });
+    const onAdmitted = vi.fn(async () => {
+      events.push("warning");
+    });
+    const finalizeSpooledReplayResult = vi.fn(
+      async (result: TelegramMessageProcessingResult): Promise<TelegramMessageProcessingResult> => {
+        events.push("finalize");
+        return result;
+      },
+    );
+    buildTelegramMessageContext.mockResolvedValue(createMessageContext({ startInitialFeedback }));
+    dispatchTelegramMessage.mockImplementationOnce(async ({ turnAdoptionLifecycle }) => {
+      expect(startInitialFeedback).not.toHaveBeenCalled();
+      await turnAdoptionLifecycle?.onAdopted();
+      return { kind: "completed" };
+    });
+    const processMessage = createTelegramMessageProcessor(baseDeps);
+
+    await expect(
+      processSampleMessage(
+        processMessage,
+        {
+          dispatchAdmission: {
+            abortSignal: new AbortController().signal,
+            tryAdmit,
+            onAdmitted,
+          },
+          finalizeSpooledReplayResult,
+        },
+        {},
+        { spooledReplay: true, isolateSpooledReplaySettlement: true },
+      ),
+    ).resolves.toEqual({ kind: "completed" });
+
+    expect(buildTelegramMessageContext).toHaveBeenCalledWith(
+      expect.objectContaining({ deferInitialFeedback: true }),
+    );
+    expect(startInitialFeedback).toHaveBeenCalledOnce();
+    expect(onAdmitted).toHaveBeenCalledOnce();
+    expect(events).toEqual(["admit", "finalize", "warning", "feedback"]);
+  });
+
+  it("defers spooled feedback when only the final skip guard is present", async () => {
+    const events: string[] = [];
+    const shouldSkipBeforeDispatch = vi.fn(async () => false);
+    const startInitialFeedback = vi.fn(() => events.push("feedback"));
+    const finalizeSpooledReplayResult = vi.fn(
+      async (result: TelegramMessageProcessingResult): Promise<TelegramMessageProcessingResult> => {
+        events.push("finalize");
+        return result;
+      },
+    );
+    buildTelegramMessageContext.mockResolvedValue(createMessageContext({ startInitialFeedback }));
+    dispatchTelegramMessage.mockImplementationOnce(async ({ turnAdoptionLifecycle }) => {
+      expect(startInitialFeedback).not.toHaveBeenCalled();
+      await turnAdoptionLifecycle?.onAdopted();
+      return { kind: "completed" };
+    });
+    const processMessage = createTelegramMessageProcessor(baseDeps);
+
+    await expect(
+      processSampleMessage(
+        processMessage,
+        { shouldSkipBeforeDispatch, finalizeSpooledReplayResult },
+        {},
+        { spooledReplay: true, isolateSpooledReplaySettlement: true },
+      ),
+    ).resolves.toEqual({ kind: "completed" });
+
+    expect(shouldSkipBeforeDispatch).toHaveBeenCalledOnce();
+    expect(buildTelegramMessageContext).toHaveBeenCalledWith(
+      expect.objectContaining({ deferInitialFeedback: true }),
+    );
+    expect(startInitialFeedback).toHaveBeenCalledOnce();
+    expect(events).toEqual(["finalize", "feedback"]);
+  });
+
   it("finalizes spooled adoption before settling the ingress participant", async () => {
     buildTelegramMessageContext.mockResolvedValue(createMessageContext());
     const events: string[] = [];
@@ -534,7 +625,10 @@ describe("telegram bot message processor", () => {
   });
 
   it("retries durable replay protection after an active steer already committed", async () => {
-    buildTelegramMessageContext.mockResolvedValue(createMessageContext());
+    const startInitialFeedback = vi.fn();
+    const onAdmitted = vi.fn(async () => undefined);
+    const tryAdmit = vi.fn(() => true);
+    buildTelegramMessageContext.mockResolvedValue(createMessageContext({ startInitialFeedback }));
     const finalizerError = new Error("dedupe commit failed");
     const finalizeSpooledReplayResult = vi
       .fn(
@@ -549,6 +643,8 @@ describe("telegram bot message processor", () => {
     );
     dispatchTelegramMessage.mockImplementationOnce(async ({ turnAdoptionLifecycle }) => {
       await expect(turnAdoptionLifecycle?.onAdopted()).rejects.toBe(finalizerError);
+      expect(onAdmitted).not.toHaveBeenCalled();
+      expect(startInitialFeedback).not.toHaveBeenCalled();
       return { kind: "completed" };
     });
     const processMessage = createTelegramMessageProcessor(baseDeps);
@@ -558,6 +654,11 @@ describe("telegram bot message processor", () => {
       processSampleMessage(
         processMessage,
         {
+          dispatchAdmission: {
+            abortSignal: new AbortController().signal,
+            tryAdmit,
+            onAdmitted,
+          },
           finalizeSpooledReplayResult,
           completeSpooledReplayAfterIrrevocableAdoption,
         },
@@ -569,6 +670,9 @@ describe("telegram bot message processor", () => {
     await expect(replay.deferredWork?.task).resolves.toEqual({ kind: "completed" });
     expect(finalizeSpooledReplayResult).toHaveBeenCalledTimes(2);
     expect(completeSpooledReplayAfterIrrevocableAdoption).toHaveBeenCalledWith(finalizerError);
+    expect(tryAdmit).toHaveBeenCalledOnce();
+    expect(onAdmitted).toHaveBeenCalledOnce();
+    expect(startInitialFeedback).toHaveBeenCalledOnce();
   });
 
   it("retries active-steer durable replay protection through multiple transient failures", async () => {
@@ -657,7 +761,9 @@ describe("telegram bot message processor", () => {
   });
 
   it("retries deferred adoption after finalization rejects without settling ingress", async () => {
-    buildTelegramMessageContext.mockResolvedValue(createMessageContext());
+    const startInitialFeedback = vi.fn();
+    const onAdmitted = vi.fn(async () => undefined);
+    buildTelegramMessageContext.mockResolvedValue(createMessageContext({ startInitialFeedback }));
     const finalizerError = new Error("dedupe commit failed");
     const finalizeSpooledReplayResult = vi
       .fn(
@@ -677,12 +783,16 @@ describe("telegram bot message processor", () => {
       } catch (error) {
         firstAdmissionError = error;
       }
+      expect(startInitialFeedback).not.toHaveBeenCalled();
+      expect(onAdmitted).not.toHaveBeenCalled();
       settledAfterFirstAdmission = participantSettles > 0;
       try {
         await turnAdoptionLifecycle?.onAdopted();
       } catch (error) {
         secondAdmissionError = error;
       }
+      expect(startInitialFeedback).toHaveBeenCalledOnce();
+      expect(onAdmitted).toHaveBeenCalledOnce();
       try {
         await turnAdoptionLifecycle?.onAdopted();
       } catch (error) {
@@ -707,7 +817,14 @@ describe("telegram bot message processor", () => {
       };
       return await processSampleMessage(
         processMessage,
-        { finalizeSpooledReplayResult },
+        {
+          dispatchAdmission: {
+            abortSignal: new AbortController().signal,
+            tryAdmit: () => true,
+            onAdmitted,
+          },
+          finalizeSpooledReplayResult,
+        },
         { update },
       );
     });
@@ -716,6 +833,8 @@ describe("telegram bot message processor", () => {
     expect(settledAfterFirstAdmission).toBe(false);
     expect(secondAdmissionError).toBeUndefined();
     expect(thirdAdmissionError).toBeUndefined();
+    expect(startInitialFeedback).toHaveBeenCalledOnce();
+    expect(onAdmitted).toHaveBeenCalledOnce();
     expect(finalizeSpooledReplayResult).toHaveBeenCalledTimes(2);
     expect(participantSettles).toBe(1);
     expect(replay.value).toEqual({ kind: "completed" });

@@ -100,7 +100,11 @@ type BuiltinCommandArgumentOptions = Omit<
 type BuiltinCommandOptions = Omit<
   ChatCommandDefinition,
   "key" | "description" | "category" | "tier" | "nativeName" | "textAliases" | "scope"
-> & { nativeName?: string | false; textAliases?: string[] };
+> & {
+  nativeName?: string | false;
+  scope?: ChatCommandDefinition["scope"];
+  textAliases?: string[];
+};
 
 function defineCommandArgument(
   name: string,
@@ -119,6 +123,7 @@ function defineBuiltinCommand(
   options: BuiltinCommandOptions = {},
 ): ChatCommandDefinition {
   const { nativeName = key } = options;
+  const scope = options.scope ?? (nativeName === false ? "text" : "both");
   return {
     key,
     nativeName: nativeName === false ? undefined : nativeName,
@@ -137,8 +142,10 @@ function defineBuiltinCommand(
     argsParsing: options.argsParsing ?? (options.args?.length ? "positional" : "none"),
     formatArgs: options.formatArgs,
     argsMenu: options.argsMenu,
-    textAliases: (options.textAliases ?? [`/${key}`]).map((alias) => alias.trim()).filter(Boolean),
-    scope: nativeName === false ? "text" : "both",
+    textAliases: (options.textAliases ?? (scope === "native" ? [] : [`/${key}`]))
+      .map((alias) => alias.trim())
+      .filter(Boolean),
+    scope,
     category,
     tier,
     activeRunSafe: options.activeRunSafe,
@@ -307,6 +314,17 @@ export function buildBuiltinChatCommands(
         nativeAliases: ["side"],
         textAliases: ["/btw", "/side"],
         acceptsArgs: true,
+      },
+    ),
+    defineBuiltinCommand(
+      "ignore",
+      "Keep one Telegram message out of the bot context.",
+      "tools",
+      "standard",
+      {
+        acceptsArgs: true,
+        nativeProviders: ["telegram"],
+        scope: "native",
       },
     ),
     defineBuiltinCommand(

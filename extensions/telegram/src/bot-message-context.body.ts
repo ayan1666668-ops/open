@@ -64,7 +64,10 @@ import type { TelegramContext } from "./bot/types.js";
 import { resolveTelegramDirectPeerId } from "./dm-session-key.js";
 import { isTelegramForumServiceMessage } from "./forum-service-message.js";
 import { resolveTelegramGroupIngestEnabled } from "./group-config-helpers.js";
-import { recordTelegramGroupHistoryEntry } from "./group-history-window.js";
+import {
+  recordTelegramGroupHistoryEntry,
+  resolveTelegramGroupHistorySourceMessageIds,
+} from "./group-history-window.js";
 import {
   resolveTelegramCommandIngressAuthorization,
   resolveTelegramNativeCommandBody,
@@ -440,6 +443,10 @@ export async function resolveTelegramInboundBody(params: {
         timestamp: msg.date ? msg.date * 1000 : undefined,
         messageId: typeof msg.message_id === "number" ? String(msg.message_id) : undefined,
       },
+      sourceMessageIds: resolveTelegramGroupHistorySourceMessageIds({
+        bufferedMessages: options?.bufferedMessages,
+        media: allMedia,
+      }),
     });
     if (sessionKey && resolveTelegramGroupIngestEnabled({ cfg, chatId, accountId, topicConfig })) {
       fireAndForgetHook(
