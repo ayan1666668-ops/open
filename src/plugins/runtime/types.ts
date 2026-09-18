@@ -9,7 +9,6 @@ import type { PluginRuntimeAcp } from "./types-acp.js";
 import type { PluginRuntimeCore, RuntimeLogger } from "./types-core.js";
 
 export type { RuntimeLogger };
-export type { PluginRuntimeAcp };
 
 type PluginRuntimeChannel = import("./types-channel.js").PluginRuntimeChannel;
 

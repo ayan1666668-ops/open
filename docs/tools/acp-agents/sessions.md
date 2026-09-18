@@ -13,7 +13,8 @@ Two ways to start an ACP session from chat or an agent turn. Plugin code that
 needs its own one-shot harness run uses
 [`api.runtime.acp`](/plugins/sdk-runtime/background-work#api-runtime-acp)
 instead; those runs reuse the same ACP policy and admission but are owned by the
-plugin, carry no chat binding or parent session, and never announce completion.
+plugin, carry no chat binding or parent session, and announce completion only
+when a requester-bound hook opts in with `completionDelivery: "current-requester"`.
 
 <Tabs>
   <Tab title="From sessions_spawn">

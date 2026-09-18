@@ -93,6 +93,11 @@ export type RegisterSubagentRunParams = {
   /** Required when direct dispatch suppresses Gateway tracking. Out-of-process launches keep
       Gateway's existing best-effort CLI policy; other callers create a best-effort row here. */
   taskRowOwnership?: "required" | "gateway_best_effort";
+  /** Non-session task owner (for example `plugin:<id>:acp`) that keeps the task row while
+      completion still announces to `requesterSessionKey`. The row has no owner session to
+      receive task-registry terminal notices, so its delivery stays `not_applicable`; the
+      registry row owns requester delivery. Defaults to `requesterSessionKey`. */
+  taskOwnerKey?: string;
   gatewayContextResolver?: GatewayContextResolver;
 };
 
@@ -228,10 +233,11 @@ export class SubagentLaunchManager extends SubagentRecoveryManager {
     }
     if (registerParams.taskRowOwnership !== "gateway_best_effort") {
       try {
+        const taskOwnerKey = registerParams.taskOwnerKey?.trim();
         const taskParams = {
           runtime: "subagent",
           sourceId: runId,
-          ownerKey: requesterSessionKey,
+          ownerKey: taskOwnerKey || requesterSessionKey,
           scopeKind: "session",
           // Detached task runtimes are plugin-replaceable. Isolate their input so
           // mutation cannot change the already-persisted registry record.
@@ -243,7 +249,9 @@ export class SubagentLaunchManager extends SubagentRecoveryManager {
           agentId: registerParams.agentId,
           requesterAgentId: resolveSubagentRequesterAgentId(cfg, registerParams),
           deliveryStatus:
-            registerParams.expectsCompletionMessage === false ? "not_applicable" : "pending",
+            registerParams.expectsCompletionMessage === false || taskOwnerKey
+              ? "not_applicable"
+              : "pending",
           detail: createSubagentTaskBackingDetail(generation),
         } as const;
         const task = queued

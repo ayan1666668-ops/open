@@ -22,6 +22,7 @@ const OWNER_KEY = resolvePluginAcpOwnerKey(PLUGIN_ID);
 const hoisted = vi.hoisted(() => ({
   spawnAcpForPluginMock: vi.fn(),
   listTasksForOwnerKeyMock: vi.fn(),
+  getTaskByIdMock: vi.fn(),
   cancelDetachedTaskRunByIdMock: vi.fn(),
   loadSessionEntryMock: vi.fn(),
   readAcpSessionMetaMock: vi.fn(),
@@ -33,6 +34,7 @@ vi.mock("../agents/subagents/spawn/acp-spawn-plugin.js", () => ({
 vi.mock(import("../tasks/task-registry-query.js"), async (importOriginal) => ({
   ...(await importOriginal()),
   listTasksForOwnerKey: hoisted.listTasksForOwnerKeyMock,
+  getTaskById: hoisted.getTaskByIdMock,
 }));
 vi.mock(import("../tasks/task-executor.js"), async (importOriginal) => ({
   ...(await importOriginal()),
@@ -134,6 +136,9 @@ beforeEach(() => {
   hoisted.listTasksForOwnerKeyMock
     .mockReset()
     .mockImplementation((ownerKey: string) => tasks.filter((entry) => entry.ownerKey === ownerKey));
+  hoisted.getTaskByIdMock
+    .mockReset()
+    .mockImplementation((taskId: string) => tasks.find((entry) => entry.taskId === taskId));
   hoisted.spawnAcpForPluginMock.mockReset().mockResolvedValue(acceptedSpawn());
   hoisted.cancelDetachedTaskRunByIdMock.mockReset();
   hoisted.loadSessionEntryMock.mockReset().mockReturnValue(undefined);
@@ -247,6 +252,7 @@ describe("plugin ACP spawn authority", () => {
     for (const call of hoisted.spawnAcpForPluginMock.mock.calls) {
       expect(call[1]).toMatchObject({ pluginId: PLUGIN_ID, ownerKey: OWNER_KEY });
       expect(call[1]).not.toHaveProperty("requesterSessionKey");
+      expect(call[1]).not.toHaveProperty("completionRequester");
       expect(call[0]).not.toHaveProperty("requesterSessionKey");
       expect(call[0]).not.toHaveProperty("completionDelivery");
     }
@@ -261,6 +267,116 @@ describe("plugin ACP spawn authority", () => {
   });
 });
 
+describe("plugin ACP requester-bound completion delivery", () => {
+  const requester = {
+    sessionKey: "agent:main:telegram:group:42",
+    origin: { channel: "telegram", to: "telegram:42", accountId: "acct-1", threadId: "7" },
+  } as const;
+
+  it("passes only the host-captured requester to the plugin spawn owner", async () => {
+    config.plugins = {};
+    const runtime = createRuntime();
+    hoisted.spawnAcpForPluginMock.mockResolvedValue(
+      acceptedSpawn({ expectsCompletionMessage: true }),
+    );
+    const result = await withPluginSubagentRequesterContext(requester, () =>
+      scoped(() => runtime.spawn({ task: "Report back", completionDelivery: "current-requester" })),
+    );
+    expect(result.runId).toBe("run-1");
+    const [input, principal] = hoisted.spawnAcpForPluginMock.mock.calls[0] ?? [];
+    expect(input).toEqual({ task: "Report back" });
+    expect(principal).toMatchObject({
+      pluginId: PLUGIN_ID,
+      ownerKey: OWNER_KEY,
+      completionRequester: requester,
+    });
+    expect(principal.completionRequester).toEqual(requester);
+  });
+
+  it("fails closed for detached and request-scoped calls without a live requester", async () => {
+    const runtime = createRuntime();
+    const detached = await expectAcpError(
+      scoped(() => runtime.spawn({ task: "x", completionDelivery: "current-requester" })),
+      "ACP_PLUGIN_INVALID_INPUT",
+    );
+    expect(detached.detailCode).toBe("completionDelivery");
+    expect(detached.message).toContain("requester-bound plugin hook invocation");
+    await expectAcpError(
+      scoped(() => runtime.spawn({ task: "x", completionDelivery: "current-requester" }), {
+        client: requestClient,
+      }),
+      "ACP_PLUGIN_INVALID_INPUT",
+    );
+    // Authority captured by an earlier hook does not survive the end of that invocation.
+    const spawnLater = await withPluginSubagentRequesterContext(
+      requester,
+      async () => () =>
+        scoped(() => runtime.spawn({ task: "x", completionDelivery: "current-requester" })),
+    );
+    await expectAcpError(spawnLater(), "ACP_PLUGIN_INVALID_INPUT");
+    expect(hoisted.spawnAcpForPluginMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects caller-provided requester routes and unknown delivery modes", async () => {
+    const runtime = createRuntime();
+    const invalid = await expectAcpError(
+      withPluginSubagentRequesterContext(requester, () =>
+        scoped(() =>
+          runtime.spawn({
+            task: "x",
+            completionDelivery: "session" as unknown as "current-requester",
+          }),
+        ),
+      ),
+      "ACP_PLUGIN_INVALID_INPUT",
+    );
+    expect(invalid.detailCode).toBe("completionDelivery");
+    for (const option of ["requesterSessionKey", "parentSessionKey", "spawnedBy"]) {
+      const error = await expectAcpError(
+        withPluginSubagentRequesterContext(requester, () =>
+          scoped(() =>
+            runtime.spawn({
+              task: "x",
+              completionDelivery: "current-requester",
+              [option]: "agent:other:main",
+            } as Parameters<PluginRuntime["acp"]["spawn"]>[0]),
+          ),
+        ),
+        "ACP_PLUGIN_UNSUPPORTED_OPTION",
+      );
+      expect(error.detailCode).toBe(option);
+    }
+    expect(hoisted.spawnAcpForPluginMock).not.toHaveBeenCalled();
+  });
+
+  it("never replays one requester's run to another requester under the same key", async () => {
+    config.plugins = {};
+    const runtime = createRuntime();
+    hoisted.spawnAcpForPluginMock
+      .mockResolvedValueOnce(acceptedSpawn({ runId: "run-a", expectsCompletionMessage: true }))
+      .mockResolvedValueOnce(acceptedSpawn({ runId: "run-b", expectsCompletionMessage: true }));
+    const spawn = () =>
+      scoped(() =>
+        runtime.spawn({
+          task: "same",
+          idempotencyKey: "k-req",
+          completionDelivery: "current-requester",
+        }),
+      );
+    const first = await withPluginSubagentRequesterContext(requester, spawn);
+    const replay = await withPluginSubagentRequesterContext(requester, spawn);
+    const other = await withPluginSubagentRequesterContext(
+      { sessionKey: "agent:main:telegram:dm:9", origin: { channel: "telegram", to: "telegram:9" } },
+      spawn,
+    );
+    expect(first.runId).toBe("run-a");
+    expect(replay).toEqual({ ...first, replayed: true });
+    expect(other.runId).toBe("run-b");
+    expect(other.replayed).toBeUndefined();
+    expect(hoisted.spawnAcpForPluginMock).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe("plugin ACP spawn input", () => {
   it.each([
     ["mode", "session"],
@@ -268,7 +384,7 @@ describe("plugin ACP spawn input", () => {
     ["streamTo", "parent"],
     ["resumeSessionId", "abc"],
     ["sandbox", "require"],
-    ["completionDelivery", "current-requester"],
+    ["expectsCompletionMessage", true],
     ["steer", "x"],
     ["setMode", "plan"],
   ])("rejects unsupported option %s", async (option, value) => {
@@ -527,8 +643,21 @@ describe("plugin ACP run inspection", () => {
 });
 
 describe("plugin ACP cancellation", () => {
-  it("rereads ownership and cancels through the canonical task owner", async () => {
-    tasks.push(task({ taskId: "mine", runId: "run-mine" }));
+  const MINE = task({ taskId: "mine", runId: "run-mine" });
+  const notFound = { found: false, cancelled: false, reason: "Task not found." };
+
+  function ownedEntry(pluginOwnerId: string | undefined): SessionEntry {
+    return { sessionId: "s-mine", updatedAt: 1, pluginOwnerId } as SessionEntry;
+  }
+
+  beforeEach(() => {
+    tasks.push({ ...MINE });
+    hoisted.loadSessionEntryMock.mockImplementation((scope: { sessionKey: string }) =>
+      scope.sessionKey === MINE.childSessionKey ? ownedEntry(PLUGIN_ID) : undefined,
+    );
+  });
+
+  it("rereads session ownership and the task binding, then cancels through the canonical task owner", async () => {
     hoisted.cancelDetachedTaskRunByIdMock.mockResolvedValue({
       found: true,
       cancelled: true,
@@ -538,12 +667,56 @@ describe("plugin ACP cancellation", () => {
     await expect(
       scoped(() => runtime.cancel({ runId: "run-mine", reason: "operator stop" })),
     ).resolves.toMatchObject({ found: true, cancelled: true, task: { id: "mine" } });
+    expect(hoisted.loadSessionEntryMock).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionKey: MINE.childSessionKey, agentId: "codex" }),
+    );
+    expect(hoisted.getTaskByIdMock).toHaveBeenCalledWith("mine");
     expect(hoisted.cancelDetachedTaskRunByIdMock).toHaveBeenCalledWith({
       cfg: config,
       taskId: "mine",
       reason: "operator stop",
     });
   });
+
+  it.each([
+    ["re-owned by another plugin", () => ownedEntry(OTHER_PLUGIN_ID)],
+    ["released from plugin ownership", () => ownedEntry(undefined)],
+    ["deleted", () => undefined],
+  ])(
+    "reports not found without cancelling when the child session is %s after the task lookup",
+    async (_label, replacement) => {
+      // The owner-scoped lookup still returns the task; only the final session reread sees
+      // the replacement, which is the window the reread exists for.
+      hoisted.listTasksForOwnerKeyMock.mockImplementation((ownerKey: string) => {
+        hoisted.loadSessionEntryMock.mockImplementation(() => replacement());
+        return tasks.filter((entry) => entry.ownerKey === ownerKey);
+      });
+      const runtime = createRuntime();
+      await expect(scoped(() => runtime.cancel({ runId: "run-mine" }))).resolves.toEqual(notFound);
+      expect(hoisted.loadSessionEntryMock).toHaveBeenCalledTimes(1);
+      expect(hoisted.cancelDetachedTaskRunByIdMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ["re-owned", { ownerKey: resolvePluginAcpOwnerKey(OTHER_PLUGIN_ID) }],
+    ["rebound to another run", { runId: "run-mine-replacement" }],
+    ["rebound to another child session", { childSessionKey: "agent:codex:acp:plugin:x:other" }],
+    ["removed", undefined],
+  ])(
+    "reports not found without cancelling when the task row is %s after the lookup",
+    async (_label, patch) => {
+      hoisted.listTasksForOwnerKeyMock.mockImplementation((ownerKey: string) => {
+        hoisted.getTaskByIdMock.mockImplementation(() =>
+          patch ? { ...MINE, ...patch } : undefined,
+        );
+        return tasks.filter((entry) => entry.ownerKey === ownerKey);
+      });
+      const runtime = createRuntime();
+      await expect(scoped(() => runtime.cancel({ runId: "run-mine" }))).resolves.toEqual(notFound);
+      expect(hoisted.cancelDetachedTaskRunByIdMock).not.toHaveBeenCalled();
+    },
+  );
 
   it("reports foreign runs as not found without touching the task owner", async () => {
     tasks.push(

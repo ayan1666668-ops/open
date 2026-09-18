@@ -6,6 +6,7 @@ import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import { setActivePluginRegistry } from "../../../plugins/runtime.js";
 import { parseAgentSessionKey, isAcpSessionKey } from "../../../routing/session-key.js";
 import { createTestRegistry } from "../../../test-utils/channel-plugins.js";
+import type { PluginAcpSpawnPrincipal } from "./acp-spawn-plugin.js";
 
 const PLUGIN_ID = "factory-adapter";
 
@@ -81,13 +82,12 @@ vi.mock("../../../tasks/runtime-internal.js", () => ({
   listTasksForOwnerKey: hoisted.listTasksForOwnerKeyMock,
 }));
 
-const { spawnAcpForPlugin, resolvePluginAcpLabel, PLUGIN_ACP_LABEL_MAX_LENGTH } =
-  await import("./acp-spawn-plugin.js");
+const { spawnAcpForPlugin } = await import("./acp-spawn-plugin.js");
 const { resolvePluginAcpOwnerKey } = await import("../../../plugins/runtime/types-acp.js");
 
 type PluginSpawnResult = Awaited<ReturnType<typeof spawnAcpForPlugin>>;
 
-function principal(overrides?: { assertActive?: () => void }) {
+function principal(overrides?: Omit<PluginAcpSpawnPrincipal, "pluginId" | "ownerKey">) {
   return {
     pluginId: PLUGIN_ID,
     ownerKey: resolvePluginAcpOwnerKey(PLUGIN_ID),
@@ -210,6 +210,7 @@ describe("spawnAcpForPlugin", () => {
       runId: "run-plugin-1",
       childSessionKey: result.childSessionKey,
       controllerSessionKey: ownerKey,
+      taskOwnerKey: ownerKey,
       requesterSessionKey: ownerKey,
       requesterDisplayKey: `plugin:${PLUGIN_ID}`,
       agentId: "codex",
@@ -239,12 +240,69 @@ describe("spawnAcpForPlugin", () => {
     });
   });
 
-  it("bounds plugin-attributed labels", () => {
-    expect(resolvePluginAcpLabel(PLUGIN_ID)).toBe(`plugin:${PLUGIN_ID}`);
-    expect(resolvePluginAcpLabel(PLUGIN_ID, "   ")).toBe(`plugin:${PLUGIN_ID}`);
-    const long = resolvePluginAcpLabel(PLUGIN_ID, "x".repeat(500));
-    expect(long).toHaveLength(PLUGIN_ACP_LABEL_MAX_LENGTH);
-    expect(long.startsWith(`plugin:${PLUGIN_ID} xxx`)).toBe(true);
+  it("routes only the completion announcement to a host-captured requester", async () => {
+    const completionRequester = {
+      sessionKey: "agent:main:telegram:group:42",
+      origin: { channel: "telegram", to: "telegram:42", accountId: "acct-1", threadId: "7" },
+    } as const;
+    const result = expectAccepted(
+      await spawnAcpForPlugin({ task: "Report back" }, principal({ completionRequester })),
+    );
+    expect(result.expectsCompletionMessage).toBe(true);
+    expect(result.childSessionKey).toMatch(new RegExp(`^agent:codex:acp:plugin:${PLUGIN_ID}:`));
+
+    // Provenance is unchanged: the requester never reaches the child session entry.
+    const entry = createdEntryPatch();
+    expect(entry.createdVia).toBe("plugin");
+    expect(entry.createdActor).toEqual({ type: "system", id: PLUGIN_ID });
+    expect(entry.pluginOwnerId).toBe(PLUGIN_ID);
+    expect(entry).not.toHaveProperty("spawnedBy");
+    expect(entry).not.toHaveProperty("parentSessionKey");
+    expect(entry).not.toHaveProperty("deliveryContext");
+    expect(entry).not.toHaveProperty("lastChannel");
+    expect(entry).not.toHaveProperty("lastTo");
+
+    // Control, admission, and the task row stay plugin-owned; the registry row carries the
+    // requester session/origin so the canonical announce owner delivers the completion.
+    const ownerKey = resolvePluginAcpOwnerKey(PLUGIN_ID);
+    expect(registration()).toEqual({
+      runId: "run-plugin-1",
+      childSessionKey: result.childSessionKey,
+      controllerSessionKey: ownerKey,
+      taskOwnerKey: ownerKey,
+      requesterSessionKey: completionRequester.sessionKey,
+      requesterOrigin: completionRequester.origin,
+      requesterDisplayKey: `plugin:${PLUGIN_ID}`,
+      task: "Report back",
+      agentId: "codex",
+      cleanup: "keep",
+      label: `plugin:${PLUGIN_ID}`,
+      runTimeoutSeconds: expect.any(Number),
+      expectsCompletionMessage: true,
+      spawnMode: "run",
+    });
+    expect(hoisted.countActiveRunsForSessionMock).toHaveBeenCalledWith(ownerKey, expect.anything());
+    expect(hoisted.countActiveRunsForSessionMock).not.toHaveBeenCalledWith(
+      completionRequester.sessionKey,
+      expect.anything(),
+    );
+    const params = agentGatewayParams();
+    expect(params).toMatchObject({ sessionKey: result.childSessionKey, deliver: false });
+    expect(params).not.toHaveProperty("channel");
+    expect(params).not.toHaveProperty("to");
+  });
+
+  it("bounds plugin-attributed labels", async () => {
+    expectAccepted(await spawnAcpForPlugin({ task: "x", label: "   " }, principal()));
+    expect(registration().label).toBe(`plugin:${PLUGIN_ID}`);
+
+    hoisted.registerSubagentRunMock.mockClear();
+    expectAccepted(await spawnAcpForPlugin({ task: "x", label: "x".repeat(500) }, principal()));
+    const long = registration().label;
+    expect(typeof long).toBe("string");
+    expect(long).toHaveLength(80);
+    expect((long as string).startsWith(`plugin:${PLUGIN_ID} xxx`)).toBe(true);
+    expect((long as string).endsWith("…")).toBe(true);
   });
 
   it("fails closed when ACP is disabled by policy", async () => {

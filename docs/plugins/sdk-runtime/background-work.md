@@ -167,6 +167,7 @@ Start agent work in the background: hook-dispatched turns for external content, 
       runTimeoutSeconds: 900, // optional
       cleanup: "keep", // optional "keep" | "delete"
       idempotencyKey: "nightly:2026-09-17", // optional replay window
+      completionDelivery: "current-requester", // optional, requester-bound hooks only
     });
 
     const unsubscribe = await api.runtime.acp.observe(
@@ -198,22 +199,44 @@ Start agent work in the background: hook-dispatched turns for external content, 
     **Ownership.** The child session key is
     `agent:<targetAgentId>:acp:plugin:<pluginId>:<uuid>`, created with
     `createdVia: "plugin"`, a system actor of the plugin id, and
-    `pluginOwnerId`; it carries no `spawnedBy` or parent lineage, so no
-    completion message is announced anywhere. The task registry owner key is
-    `plugin:<pluginId>:acp`, never an agent main session, and every `getRun`,
-    `listRuns`, `getSession`, `waitForRun`, `observe`, and `cancel` call is
-    scoped to that owner. Another plugin's runs, operator sessions, and
-    `sessions_spawn` children look identical to missing ones. `cancel` rereads
-    ownership immediately before the canonical task cancellation runs.
+    `pluginOwnerId`; it carries no `spawnedBy` or parent lineage. The task
+    registry owner key is `plugin:<pluginId>:acp`, never an agent main session,
+    and every `getRun`, `listRuns`, `getSession`, `waitForRun`, `observe`, and
+    `cancel` call is scoped to that owner. Another plugin's runs, operator
+    sessions, and `sessions_spawn` children look identical to missing ones.
+    `cancel` rereads the child session entry (`pluginOwnerId`) and the live task
+    binding immediately before the canonical task cancellation runs; a session
+    that was replaced or re-owned in between is reported as not found and never
+    cancelled.
+
+    **Completion delivery.** By default nothing is announced anywhere; plugins
+    poll `getRun`, `waitForRun`, or `observe`. Inside a requester-bound
+    `before_dispatch` hook for an authenticated inbound request, pass
+    `completionDelivery: "current-requester"` and OpenClaw announces the
+    completion to that requester with the same host capture and announce path as
+    `api.runtime.subagent.run`. The host captures the requester session and
+    delivery route itself; the plugin cannot name a session, route, or scope,
+    and the run, its child session, and its task row stay plugin-owned (only the
+    announcement is routed to the requester). Outside a live requester-bound hook
+    (detached timers, operator requests, tool calls) the option fails with
+    `ACP_PLUGIN_INVALID_INPUT` and `detailCode: "completionDelivery"`. A plugin
+    `cancel` ends the run silently toward the requester.
 
     **One-shot only.** `spawn` rejects `mode`, `thread`, `streamTo`,
-    `resumeSessionId`, `sandbox`, `completionDelivery`, and any requester or
-    lineage field with `ACP_PLUGIN_UNSUPPORTED_OPTION`. There is no plugin-facing
-    steer, set-mode, resume, or raw session control; an active run interrupted by
-    a Gateway restart follows the normal restart-abort and finalization path.
-    `idempotencyKey` replays the accepted result for the same canonical input
-    within a bounded window and marks it `replayed: true`; changed input under
-    the same key is a new spawn, and failed spawns never replay.
+    `resumeSessionId`, `sandbox`, and any requester or lineage field with
+    `ACP_PLUGIN_UNSUPPORTED_OPTION`. There is no plugin-facing steer, set-mode,
+    resume, or raw session control; an active run interrupted by a Gateway
+    restart follows the normal restart-abort and finalization path.
+    `idempotencyKey` replays the accepted (or still in-flight) result for the
+    same canonical input, including the captured requester, within a bounded
+    window and marks it `replayed: true`, so a retry after an accepted launch
+    never starts a duplicate run; changed input under the same key is a new
+    spawn, and failed spawns never replay. The registry writes the run's
+    plugin-owned task row synchronously during registration, so an accepted
+    result normally carries `taskId`; it is absent only when that best-effort
+    task write failed (the Gateway logs a warning), and such a run is not
+    reachable through the task-scoped `getRun`, `waitForRun`, `cancel`, or
+    `observe`. `getRun` accepts either `runId` or `taskId`.
 
     `observe` delivers `lifecycle`, `acp`, `tool`, and `error` events for the
     run in order and unsubscribes on the terminal lifecycle event, on the

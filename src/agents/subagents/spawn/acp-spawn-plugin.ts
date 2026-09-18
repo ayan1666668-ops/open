@@ -15,6 +15,7 @@ import { buildSessionCreationStamp } from "../../../config/sessions/session-entr
 import type { SessionEntry } from "../../../config/sessions/types.js";
 import { formatErrorMessage } from "../../../infra/errors.js";
 import { getGlobalHookRunner } from "../../../plugins/hook-runner-global.js";
+import type { PluginSubagentRequesterContext } from "../../../plugins/runtime/subagent-requester-context.js";
 import { normalizeOptionalAgentId } from "../../../routing/session-key.js";
 import { recordSessionCreated } from "../../../sessions/session-state-events.js";
 import { reserveChildAdmissionSlot } from "../../child-admission.js";
@@ -47,12 +48,18 @@ import {
 import { callSubagentGateway, readGatewayRunId } from "./subagent-spawn-gateway.js";
 import { resolveConfiguredSubagentRunTimeoutSeconds } from "./subagent-spawn-plan.js";
 
-export const PLUGIN_ACP_LABEL_MAX_LENGTH = 80;
+const PLUGIN_ACP_LABEL_MAX_LENGTH = 80;
 
 export type PluginAcpSpawnPrincipal = {
   pluginId: string;
   /** Registry and task owner key; never an agent session. */
   ownerKey: string;
+  /**
+   * Host-captured requester for `completionDelivery: "current-requester"`. Only the
+   * completion announcement is routed to it; task ownership, control, admission, and
+   * child-session provenance stay with the plugin.
+   */
+  completionRequester?: PluginSubagentRequesterContext;
   assertActive?: () => void;
 };
 
@@ -73,7 +80,7 @@ export type SpawnAcpForPluginResult =
   | (SpawnAcpFailure & { targetAgentId?: string });
 
 /** Bounded, plugin-attributed display label for registry rows and task views. */
-export function resolvePluginAcpLabel(pluginId: string, label?: string): string {
+function resolvePluginAcpLabel(pluginId: string, label?: string): string {
   const base = `plugin:${pluginId}`;
   const custom = normalizeOptionalString(label);
   const combined = custom ? `${base} ${custom}` : base;
@@ -132,7 +139,8 @@ export async function spawnAcpForPlugin(
     cfg,
     runTimeoutSeconds: params.runTimeoutSeconds,
   });
-  const { ownerKey, pluginId } = principal;
+  const { ownerKey, pluginId, completionRequester } = principal;
+  const expectsCompletionMessage = completionRequester !== undefined;
   // The plugin has no agent identity; admission counts and caps apply to its owner key
   // under the target agent's subagent policy, so N+1 launches still fail closed.
   const resolveAdmission = (pendingChildren = 0, pendingChildSessionKeys?: ReadonlySet<string>) =>
@@ -293,17 +301,23 @@ export async function spawnAcpForPlugin(
     buildRegistration: (_state, runId) => ({
       runId,
       childSessionKey: sessionKey,
+      // Control and the task row stay with the plugin in both modes. With a host-captured
+      // requester, only the announce target moves to that requester: the registry row's
+      // requester session/origin feed the canonical completion delivery owner, and the
+      // requester agent derives from that captured session key rather than the ACP target.
       controllerSessionKey: ownerKey,
-      requesterSessionKey: ownerKey,
+      taskOwnerKey: ownerKey,
+      requesterSessionKey: completionRequester?.sessionKey ?? ownerKey,
+      ...(completionRequester ? { requesterOrigin: completionRequester.origin } : {}),
       requesterDisplayKey: `plugin:${pluginId}`,
       task: params.task,
       agentId: targetAgentId,
-      requesterAgentId: targetAgentId,
+      ...(completionRequester ? {} : { requesterAgentId: targetAgentId }),
       cleanup: params.cleanup === "delete" ? "delete" : "keep",
       label,
       runTimeoutSeconds,
-      // Plugins poll or observe their runs; nothing announces into a requester session.
-      expectsCompletionMessage: false,
+      // Without a captured requester, plugins poll or observe; nothing announces anywhere.
+      expectsCompletionMessage,
       spawnMode: "run",
     }),
   });
@@ -346,7 +360,7 @@ export async function spawnAcpForPlugin(
     runId: pipelineResult.runId,
     mode: "run",
     runTimeoutSeconds,
-    expectsCompletionMessage: false,
+    expectsCompletionMessage,
     targetAgentId,
   };
 }

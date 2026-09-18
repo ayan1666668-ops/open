@@ -38,11 +38,11 @@ export function resolvePluginAcpOwnerKey(pluginId: string): string {
 
 export type PluginAcpAuthorityMode = "request" | "detached";
 
-export type PluginAcpAvailability =
+type PluginAcpAvailability =
   | { ok: true; mode: PluginAcpAuthorityMode }
   | { ok: false; code: PluginAcpErrorCode; reason: string };
 
-export type PluginAcpImageAttachment = {
+type PluginAcpImageAttachment = {
   mediaType: string;
   /** Base64 image payload; the same shape `sessions_spawn(runtime="acp")` admits. */
   data: string;
@@ -60,13 +60,28 @@ export type PluginAcpSpawnParams = {
   thinking?: string;
   runTimeoutSeconds?: number;
   cleanup?: "delete" | "keep";
-  /** Same key + same canonical input replays the accepted result for a bounded window. */
+  /**
+   * Same key + same canonical input (including the captured requester, when any) replays the
+   * accepted or in-flight result for a bounded window instead of launching a second run.
+   */
   idempotencyKey?: string;
+  /**
+   * Announce the completion to the requester of the live hook invocation, with
+   * `api.runtime.subagent.run` semantics. Valid only inside a requester-bound plugin hook;
+   * detached or otherwise unbound calls fail with `ACP_PLUGIN_INVALID_INPUT`. The host
+   * captures the requester itself; the run, its session, and its task stay plugin-owned.
+   * Omitted (the default) announces nothing.
+   */
+  completionDelivery?: "current-requester";
   attachments?: PluginAcpImageAttachment[];
 };
 
 export type PluginAcpSpawnResult = {
   runId: string;
+  /**
+   * Plugin-owned task row id, written synchronously at registration. Absent only when that
+   * best-effort write failed; the task-scoped runtime methods then cannot see the run.
+   */
   taskId?: string;
   sessionKey: string;
   agentId: string;
@@ -75,11 +90,11 @@ export type PluginAcpSpawnResult = {
   replayed?: boolean;
 };
 
-export type PluginAcpRunDetail = TaskRunDetail;
-export type PluginAcpRunView = TaskRunView;
-export type PluginAcpCancelResult = TaskRunCancelResult;
+type PluginAcpRunDetail = TaskRunDetail;
+type PluginAcpRunView = TaskRunView;
+type PluginAcpCancelResult = TaskRunCancelResult;
 
-export type PluginAcpSessionDetail = {
+type PluginAcpSessionDetail = {
   sessionKey: string;
   agentId: string;
   backend?: string;
@@ -103,7 +118,7 @@ export type PluginAcpObserveEvent = {
   truncated?: boolean;
 };
 
-export type PluginAcpObserveParams = {
+type PluginAcpObserveParams = {
   runId: string;
   /** Maximum events delivered before the observer unsubscribes (default 500, capped by the host). */
   maxEvents?: number;

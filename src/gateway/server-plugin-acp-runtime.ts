@@ -11,6 +11,7 @@ import { normalizeOptionalString } from "@openclaw/normalization-core/string-coe
 import type { SpawnAcpForPluginResult } from "../agents/subagents/spawn/acp-spawn-plugin.js";
 import { resolveSessionStorePathCore } from "../config/sessions/paths.js";
 import { loadSessionEntry } from "../config/sessions/session-accessor.js";
+import type { SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { type AgentEventStream, onAgentEventForRun } from "../infra/agent-events.js";
 import { normalizePluginsConfig } from "../plugins/config-state.js";
@@ -20,7 +21,11 @@ import {
   withPluginRuntimeGatewayContextResolver,
 } from "../plugins/runtime/gateway-request-scope.js";
 import { mapCancelledTaskResult } from "../plugins/runtime/runtime-tasks.js";
-import { hasActivePluginSubagentRequesterContext } from "../plugins/runtime/subagent-requester-context.js";
+import {
+  hasActivePluginSubagentRequesterContext,
+  type PluginSubagentRequesterContext,
+  resolvePluginSubagentCompletionRequester,
+} from "../plugins/runtime/subagent-requester-context.js";
 import {
   type PluginAcpAuthorityMode,
   type PluginAcpErrorCode,
@@ -36,7 +41,7 @@ import { mapTaskRunDetail, mapTaskRunView } from "../tasks/task-domain-views.js"
 import { isTerminalTaskStatus } from "../tasks/task-executor-policy.js";
 import { cancelDetachedTaskRunById } from "../tasks/task-executor.js";
 import { isActiveTaskStatus } from "../tasks/task-registry-common.js";
-import { listTasksForOwnerKey } from "../tasks/task-registry-query.js";
+import { getTaskById, listTasksForOwnerKey } from "../tasks/task-registry-query.js";
 import type { TaskRecord } from "../tasks/task-registry.types.js";
 import type { GatewayContextResolver, GatewayRequestContext } from "./server-methods/types.js";
 import { getInProcessGatewayRequestContext } from "./server-plugin-in-process-dispatch.js";
@@ -71,7 +76,6 @@ const PLUGIN_ACP_UNSUPPORTED_SPAWN_OPTIONS = [
   "streamTo",
   "resumeSessionId",
   "sandbox",
-  "completionDelivery",
   "expectsCompletionMessage",
   "requesterSessionKey",
   "parentSessionKey",
@@ -102,7 +106,7 @@ function invalidInput(message: string, option?: string): PluginAcpRuntimeError {
   return new PluginAcpRuntimeError("ACP_PLUGIN_INVALID_INPUT", message, option);
 }
 
-function readOptionalString(
+function requireOptionalStringOption(
   value: unknown,
   option: string,
   { allowEmpty = false }: { allowEmpty?: boolean } = {},
@@ -130,6 +134,7 @@ type CanonicalSpawnInput = {
   runTimeoutSeconds?: number;
   cleanup?: "delete" | "keep";
   idempotencyKey?: string;
+  completionDelivery?: "current-requester";
   attachments?: Array<{ mediaType: string; data: string }>;
 };
 
@@ -154,7 +159,7 @@ function normalizeSpawnParams(raw: unknown): CanonicalSpawnInput {
   if (task.length > PLUGIN_ACP_TASK_MAX_LENGTH) {
     throw invalidInput(`"task" exceeds ${PLUGIN_ACP_TASK_MAX_LENGTH} characters.`, "task");
   }
-  const cwd = readOptionalString(params.cwd, "cwd");
+  const cwd = requireOptionalStringOption(params.cwd, "cwd");
   if (cwd !== undefined && !path.isAbsolute(cwd)) {
     throw invalidInput('"cwd" must be an absolute path.', "cwd");
   }
@@ -176,6 +181,16 @@ function normalizeSpawnParams(raw: unknown): CanonicalSpawnInput {
     }
     cleanup = params.cleanup;
   }
+  let completionDelivery: CanonicalSpawnInput["completionDelivery"];
+  if (params.completionDelivery !== undefined) {
+    if (params.completionDelivery !== "current-requester") {
+      throw invalidInput(
+        '"completionDelivery" must be "current-requester" or omitted.',
+        "completionDelivery",
+      );
+    }
+    completionDelivery = params.completionDelivery;
+  }
   let attachments: CanonicalSpawnInput["attachments"];
   if (params.attachments !== undefined) {
     if (!Array.isArray(params.attachments)) {
@@ -196,22 +211,49 @@ function normalizeSpawnParams(raw: unknown): CanonicalSpawnInput {
   }
   return {
     task,
-    label: readOptionalString(params.label, "label", { allowEmpty: true }),
-    agentId: readOptionalString(params.agentId, "agentId"),
+    label: requireOptionalStringOption(params.label, "label", { allowEmpty: true }),
+    agentId: requireOptionalStringOption(params.agentId, "agentId"),
     cwd,
-    model: readOptionalString(params.model, "model"),
-    thinking: readOptionalString(params.thinking, "thinking"),
+    model: requireOptionalStringOption(params.model, "model"),
+    thinking: requireOptionalStringOption(params.thinking, "thinking"),
     runTimeoutSeconds,
     cleanup,
-    idempotencyKey: readOptionalString(params.idempotencyKey, "idempotencyKey"),
+    idempotencyKey: requireOptionalStringOption(params.idempotencyKey, "idempotencyKey"),
+    completionDelivery,
     attachments,
   };
 }
 
-function fingerprintSpawnInput(input: CanonicalSpawnInput): string {
+/**
+ * Requester-bound completion delivery is only honored through the host's own capture of the
+ * live hook requester; the plugin never names a session, route, or scope. Outside such an
+ * invocation (detached timers, operator requests, tool calls) the option fails closed.
+ */
+function resolveCompletionRequester(
+  input: CanonicalSpawnInput,
+): PluginSubagentRequesterContext | undefined {
+  try {
+    return resolvePluginSubagentCompletionRequester(input.completionDelivery);
+  } catch (error) {
+    throw invalidInput(
+      error instanceof Error ? error.message : String(error),
+      "completionDelivery",
+    );
+  }
+}
+
+function fingerprintSpawnInput(
+  input: CanonicalSpawnInput,
+  requester: PluginSubagentRequesterContext | undefined,
+): string {
   const { idempotencyKey: _idempotencyKey, ...rest } = input;
   const ordered = Object.fromEntries(
-    Object.entries(rest)
+    Object.entries({
+      ...rest,
+      // The same key from a different requester is a different run; a replay must never
+      // route one requester's completion to another.
+      ...(requester ? { requesterSessionKey: requester.sessionKey } : {}),
+    })
       .filter(([, value]) => value !== undefined)
       .toSorted(([left], [right]) => left.localeCompare(right)),
   );
@@ -258,6 +300,43 @@ function resolveOwnedRun(
 
 function isTrackedPluginAcpTask(task: TaskRecord): boolean {
   return task.runtime === "subagent" && isAcpSessionKey(task.childSessionKey);
+}
+
+type OwnedChildSession = { agentId: string; entry: SessionEntry };
+
+/**
+ * Rereads the exact child session entry and requires live plugin ownership. Ownership lives
+ * on the entry, so foreign, replaced, and missing sessions all resolve to `undefined`.
+ */
+function loadOwnedChildSession(
+  principal: Pick<ResolvedPluginAcpPrincipal, "pluginId" | "cfg">,
+  sessionKey: string | undefined,
+): OwnedChildSession | undefined {
+  const agentId = sessionKey ? parseAgentSessionKey(sessionKey)?.agentId : undefined;
+  if (!sessionKey || !agentId || !isAcpSessionKey(sessionKey)) {
+    return undefined;
+  }
+  const entry = loadSessionEntry({
+    storePath: resolveSessionStorePathCore(principal.cfg.session?.store, { agentId }),
+    sessionKey,
+    agentId,
+    clone: false,
+  });
+  return entry && entry.pluginOwnerId === principal.pluginId ? { agentId, entry } : undefined;
+}
+
+/** The live task row must still be the same run, child session, and plugin owner. */
+function isSameOwnedTaskBinding(
+  ownerKey: string,
+  task: Pick<TaskRecord, "taskId" | "runId" | "childSessionKey">,
+): boolean {
+  const current = getTaskById(task.taskId);
+  return (
+    current !== undefined &&
+    current.ownerKey === ownerKey &&
+    current.runId === task.runId &&
+    current.childSessionKey === task.childSessionKey
+  );
 }
 
 export function createGatewayAcpRuntime(
@@ -334,6 +413,7 @@ export function createGatewayAcpRuntime(
   const runSpawn = async (
     principal: ResolvedPluginAcpPrincipal,
     input: CanonicalSpawnInput,
+    completionRequester: PluginSubagentRequesterContext | undefined,
   ): Promise<PluginAcpSpawnResult> => {
     // The ACP control plane stays off the plugin setup path until a plugin actually spawns.
     const { spawnAcpForPlugin } = await import("../agents/subagents/spawn/acp-spawn-plugin.js");
@@ -352,7 +432,12 @@ export function createGatewayAcpRuntime(
           cleanup: input.cleanup,
           attachments: input.attachments,
         },
-        { pluginId: principal.pluginId, ownerKey: principal.ownerKey, assertActive },
+        {
+          pluginId: principal.pluginId,
+          ownerKey: principal.ownerKey,
+          ...(completionRequester ? { completionRequester } : {}),
+          assertActive,
+        },
       );
     const result: SpawnAcpForPluginResult = resolveGatewayContext
       ? await withPluginRuntimeGatewayContextResolver(resolveGatewayContext, run)
@@ -377,10 +462,11 @@ export function createGatewayAcpRuntime(
   const spawnWithIdempotency = async (
     principal: ResolvedPluginAcpPrincipal,
     input: CanonicalSpawnInput,
+    completionRequester: PluginSubagentRequesterContext | undefined,
   ): Promise<PluginAcpSpawnResult> => {
     const key = input.idempotencyKey;
     if (!key) {
-      return await runSpawn(principal, input);
+      return await runSpawn(principal, input, completionRequester);
     }
     const now = Date.now();
     const entries =
@@ -391,9 +477,11 @@ export function createGatewayAcpRuntime(
         entries.delete(existingKey);
       }
     }
-    const fingerprint = fingerprintSpawnInput(input);
+    const fingerprint = fingerprintSpawnInput(input, completionRequester);
     const existing = entries.get(key);
     // Same key with different input is a distinct request, never an alias of the old run.
+    // A matching in-flight or accepted spawn replays instead of launching a duplicate; only
+    // a failed spawn (evicted below) lets the same key run again.
     if (existing && existing.fingerprint === fingerprint) {
       const replay = existing.result ?? (await existing.pending);
       if (replay) {
@@ -412,7 +500,7 @@ export function createGatewayAcpRuntime(
       fingerprint,
       expiresAt: now + PLUGIN_ACP_IDEMPOTENCY_TTL_MS,
     };
-    entry.pending = runSpawn(principal, input).then(
+    entry.pending = runSpawn(principal, input, completionRequester).then(
       (result) => {
         entry.result = result;
         entry.pending = undefined;
@@ -461,8 +549,9 @@ export function createGatewayAcpRuntime(
     async spawn(params: PluginAcpSpawnParams) {
       const principal = resolvePrincipal();
       const input = normalizeSpawnParams(params);
+      const completionRequester = resolveCompletionRequester(input);
       assertSpawnAuthority(principal);
-      return await spawnWithIdempotency(principal, input);
+      return await spawnWithIdempotency(principal, input, completionRequester);
     },
     async getRun(params) {
       const principal = resolvePrincipal();
@@ -491,20 +580,11 @@ export function createGatewayAcpRuntime(
       if (!sessionKey) {
         throw invalidInput('"sessionKey" is required.', "sessionKey");
       }
-      const agentId = parseAgentSessionKey(sessionKey)?.agentId;
-      if (!agentId || !isAcpSessionKey(sessionKey)) {
+      const owned = loadOwnedChildSession(principal, sessionKey);
+      if (!owned) {
         return undefined;
       }
-      const entry = loadSessionEntry({
-        storePath: resolveSessionStorePathCore(principal.cfg.session?.store, { agentId }),
-        sessionKey,
-        agentId,
-        clone: false,
-      });
-      // Ownership lives on the session entry; foreign or missing sessions look identical.
-      if (!entry || entry.pluginOwnerId !== principal.pluginId) {
-        return undefined;
-      }
+      const { agentId, entry } = owned;
       const { readAcpSessionMeta } = await import("../acp/runtime/session-meta.js");
       const meta = readAcpSessionMeta({ sessionKey, agentId, cfg: principal.cfg });
       return {
@@ -544,12 +624,21 @@ export function createGatewayAcpRuntime(
       if (!runId) {
         throw invalidInput('"runId" is required.', "runId");
       }
+      const notFound = { found: false, cancelled: false, reason: "Task not found." };
       const task = resolveOwnedRun(principal.ownerKey, { runId });
       if (!task) {
-        return { found: false, cancelled: false, reason: "Task not found." };
+        return notFound;
       }
-      // The task owner rechecks `ownerKey` against the live registry row right before the
-      // kill, so a run re-registered under another owner in between is reported not found.
+      // Final reread immediately before the canonical cancel: the child session entry must
+      // still name this plugin as owner and the live task row must still bind the same run
+      // and session to this owner. A session replaced, released, or re-owned after the
+      // lookup above is indistinguishable from a missing run, and cancellation never starts.
+      if (
+        !loadOwnedChildSession(principal, task.childSessionKey) ||
+        !isSameOwnedTaskBinding(principal.ownerKey, task)
+      ) {
+        return notFound;
+      }
       return mapCancelledTaskResult(
         await cancelDetachedTaskRunById({
           cfg: principal.cfg,
