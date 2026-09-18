@@ -156,6 +156,20 @@ export async function repairUpdateService(params: {
       if (validation.ok && validation.pluginWarnings?.length) {
         result = appendPluginUpdateWarnings(result, validation.pluginWarnings);
       }
+      if (result.recovery?.serviceRestartSafe && result.recovery.packageRollbackVerified) {
+        result = {
+          ...result,
+          recovery: {
+            ...result.recovery,
+            service: validation.ok
+              ? "healthy"
+              : validation.stopReason || validation.summary === "timeout"
+                ? undefined
+                : "failed",
+            reason: validation.ok ? undefined : (validation.stopReason ?? validation.summary),
+          },
+        };
+      }
       return validation;
     },
   });
@@ -178,7 +192,9 @@ export async function repairUpdateService(params: {
                 ...(result.after.buildId ? { buildId: result.after.buildId } : {}),
                 service: "healthy",
               }
-            : undefined,
+            : result.recovery?.packageRollbackVerified
+              ? result.recovery
+              : undefined,
       }
     : result;
 }

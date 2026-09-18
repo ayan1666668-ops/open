@@ -421,6 +421,7 @@ export async function rollbackFailedUpdate(params: {
       serviceRestartSafe: true,
       packageRollbackVerified: true,
       version: result.before.version,
+      reason: "gateway-verification-incomplete",
       ...(result.before.buildId ? { buildId: result.before.buildId } : {}),
     };
     assertCurrent();
@@ -436,7 +437,7 @@ export async function rollbackFailedUpdate(params: {
       );
     }
     failureReason = "restart-unhealthy";
-    result.recovery.service = "failed";
+    let verificationFailure: string | undefined;
     let verifiedAtMs: number | undefined;
     const restartOutcome = await maybeRestartService({
       shouldRestart: true,
@@ -457,6 +458,9 @@ export async function rollbackFailedUpdate(params: {
       onVerified: (at) => {
         verifiedAtMs = at;
       },
+      onVerificationFailure: (reason) => {
+        verificationFailure = reason;
+      },
     });
     assertCurrent();
     const healthy = restartOutcome === "ok";
@@ -467,9 +471,19 @@ export async function rollbackFailedUpdate(params: {
           ...result.recovery,
           service: healthy
             ? "healthy"
-            : restartOutcome === "readiness-pending"
+            : restartOutcome === "readiness-pending" || verificationFailure === "timeout"
               ? undefined
-              : "failed",
+              : verificationFailure || restartOutcome === "restart-health-failed"
+                ? "failed"
+                : undefined,
+          reason: healthy
+            ? undefined
+            : (verificationFailure ??
+              (restartOutcome === "readiness-pending"
+                ? "gateway-readiness-pending"
+                : restartOutcome === "failed"
+                  ? "restart-failed"
+                  : "restart-unhealthy")),
         },
       },
       rolledBack: healthy,

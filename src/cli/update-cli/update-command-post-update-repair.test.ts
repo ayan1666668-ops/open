@@ -553,6 +553,7 @@ describe("post-activation repair after rollback refusal or failure", () => {
             packageRollbackVerified: true,
             version: "2026.9.1",
             service: repaired ? "healthy" : "failed",
+            ...(!repaired ? { reason: "readyz-unhealthy" } : {}),
           },
         });
         expect(completeRecovery).toHaveBeenCalled();

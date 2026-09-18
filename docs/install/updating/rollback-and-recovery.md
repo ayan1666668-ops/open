@@ -153,10 +153,11 @@ rejected version into a successful update.
 Recovery reports distinguish restored package files from a healthy Gateway.
 A verified rollback names the version serving after recovery, including when
 an additional repair was needed. If the restored service fails its health check,
-the result records `recovery.service: "failed"`; the report says health is
-unverified and directs you to `openclaw gateway status --deep` to check the
-serving version and readiness. Rollback uses the same startup allowance as the
-update's activation check.
+the result records `recovery.service: "failed"`; the report says health failed
+and includes the recorded recovery reason. Health is reported as unverified only
+when verification could not run or complete, such as a readiness timeout. Both
+outcomes direct you to `openclaw gateway status --deep` to check the serving version
+and readiness. Rollback uses the same startup allowance as the update's activation check.
 
 Use `openclaw update status` for the recorded reason and `openclaw triage` to
 diagnose a failed check. Recovery guidance reports whether the Gateway is running
