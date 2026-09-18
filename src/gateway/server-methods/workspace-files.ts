@@ -91,9 +91,11 @@ function toDisplayPath(root: string, resolved: string): string {
  *
  * Only scheme-qualified transport sources are excluded. A bare colon is not a scheme here:
  * POSIX filenames such as `report:2026.txt` are ordinary workspace files, and file URLs and
- * Windows drive paths resolve like any other path.
+ * Windows drive paths resolve like any other path. A data URL always carries a comma before
+ * its payload, so a filename such as `data:2026.txt` is unaffected.
  */
-const NON_WORKSPACE_REFERENCE_RE = /^(?:[a-z][a-z0-9+.-]*:\/\/|data:)/i;
+const NON_WORKSPACE_REFERENCE_RE = /^[a-z][a-z0-9+.-]*:\/\//i;
+const DATA_URL_RE = /^data:[^,]*,/i;
 const FILE_URL_RE = /^file:/i;
 
 function isWorkspaceFileReference(filePath: string): boolean {
@@ -101,7 +103,7 @@ function isWorkspaceFileReference(filePath: string): boolean {
   if (FILE_URL_RE.test(source)) {
     return true;
   }
-  return !NON_WORKSPACE_REFERENCE_RE.test(source);
+  return !NON_WORKSPACE_REFERENCE_RE.test(source) && !DATA_URL_RE.test(source);
 }
 
 function resolveTouchedFilePath(params: {
