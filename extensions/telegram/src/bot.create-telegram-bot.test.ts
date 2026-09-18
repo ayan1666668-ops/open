@@ -463,7 +463,8 @@ describe("createTelegramBot", () => {
     createTelegramBot({ token: "other" });
 
     expect(throttlerSpy).toHaveBeenCalledTimes(2);
-    expect(useSpy).toHaveBeenCalledTimes(3);
+    // Each bot installs the upload-size transformer and its account throttler.
+    expect(useSpy).toHaveBeenCalledTimes(6);
   });
 
   it("logs middleware errors through grammY catch without rethrowing", () => {

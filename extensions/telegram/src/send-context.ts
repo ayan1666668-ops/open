@@ -21,6 +21,7 @@ import {
   bindTelegramRequestAuthority,
   findTelegramRequestAuthorityError,
 } from "./request-authority.js";
+import { telegramUploadTimeoutTransformer } from "./request-timeouts.js";
 import { TELEGRAM_OUTBOUND_RETRY_AFTER_CAP_MS } from "./retry-after.js";
 import type { TelegramRichMessageContextParams } from "./rich-message.js";
 import { requireRuntimeConfig, type OpenClawConfig } from "./send.runtime.js";
@@ -397,6 +398,7 @@ function resolveTelegramApiContext(opts: {
           }
         : client.clientOptions;
     const bot = new Bot(token, clientOptions ? { client: clientOptions } : undefined);
+    bot.api.config.use(telegramUploadTimeoutTransformer);
     if (opts.signal || opts.assertPlatformSendAuthorized) {
       // grammY wraps later transformers around earlier ones. Check authority
       // after the account queue drains, immediately before its HTTP client runs.
