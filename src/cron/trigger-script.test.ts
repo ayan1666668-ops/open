@@ -224,7 +224,7 @@ describe("cron trigger script evaluator", () => {
     },
   );
 
-  it("keeps an uncanonicalized alias-name cap fail-closed for exec", async () => {
+  it("reports an uncanonicalized alias-name cap fail-closed with an actionable scope error", async () => {
     const workspaceDir = tempDirs.make("openclaw-cron-alias-collision-");
     const evaluate = createCronScriptRuntime({
       config: {
@@ -241,8 +241,36 @@ describe("cron trigger script evaluator", () => {
       scheduledToolPolicy: { version: 1, mode: "trusted" },
     });
 
-    expect(result).toMatchObject({ kind: "error", code: "internal_error" });
-    expect(result.kind === "error" ? result.error : "").toContain("exec is not defined");
+    expect(result).toMatchObject({ kind: "error", code: "invalid_input" });
+    const error = result.kind === "error" ? result.error : "";
+    // The retired alias never installs the canonical tool, so the gate stays
+    // fail-closed; the operator gets the cap, the missing name, and the fix.
+    expect(error).toContain("cron trigger script referenced");
+    expect(error).toContain("`exec`");
+    expect(error).toContain("toolsAllow cap (gateway_exec)");
+    expect(error).toContain("openclaw automations edit job-colliding-gateway-exec --tools");
+    // The raw guest failure stays visible for history and log correlation.
+    expect(error).toContain("exec is not defined");
+  });
+
+  it("names the trigger namespace when a gate script reads a bare state", async () => {
+    const workspaceDir = tempDirs.make("openclaw-cron-bare-state-");
+    const evaluate = createCronScriptRuntime({
+      config: { agents: { defaults: { workspace: workspaceDir } } } as OpenClawConfig,
+    }).evaluateTrigger;
+
+    const result = await evaluate({
+      jobId: "job-bare-state",
+      script: "return { fire: state === null };",
+      state: null,
+    });
+
+    expect(result).toMatchObject({ kind: "error", code: "invalid_input" });
+    const error = result.kind === "error" ? result.error : "";
+    expect(error).toContain("cron trigger script referenced");
+    expect(error).toContain("`state`");
+    expect(error).toContain("trigger.state");
+    expect(error).toContain("state is not defined");
   });
 
   it("prefers a valid returned value and injects trigger state", async () => {
