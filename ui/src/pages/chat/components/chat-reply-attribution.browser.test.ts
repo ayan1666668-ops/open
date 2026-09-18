@@ -1,6 +1,6 @@
 import { render } from "lit";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { page } from "vitest/browser";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { page, userEvent } from "vitest/browser";
 import { THEME_TYPEFACES, syncTypefaceStylesheets } from "../../../app/typography.ts";
 import type { MessageGroup } from "../../../lib/chat/chat-types.ts";
 import { renderMessageGroup } from "./chat-message-group.ts";
@@ -36,7 +36,7 @@ afterEach(async () => {
   await page.viewport(1280, 720);
 });
 
-async function draw(name: string, excerpt: string | null) {
+async function draw(name: string, excerpt: string | null, onOpenReply = vi.fn()) {
   const group: MessageGroup = {
     kind: "group",
     key: "answer",
@@ -47,7 +47,8 @@ async function draw(name: string, excerpt: string | null) {
     replyToSender: { id: "casey", name },
     replyToMessage: {
       key: "prompt",
-      message: excerpt === null ? null : { role: "user", content: excerpt },
+      message:
+        excerpt === null ? null : { role: "user", content: excerpt, __openclaw: { id: "prompt" } },
     },
     messages: [
       {
@@ -62,6 +63,15 @@ async function draw(name: string, excerpt: string | null) {
       showReasoning: false,
       showToolCalls: false,
       avatarPlacement: "gutter",
+      onOpenReply,
+      resolveReplyPreview: () => ({
+        messageId: "prompt",
+        sourceMessageId: "prompt",
+        senderLabel: name,
+        sender: { id: "casey", name },
+        text: excerpt ?? "",
+        isLoaded: true,
+      }),
     }),
     host,
   );
@@ -137,7 +147,7 @@ describe.each(cells)("reply attribution ($theme, $width px)", ({ theme, width })
         expect(Math.abs(rowBounds.left - bounds.left)).toBeLessThanOrEqual(1);
         expect(Math.abs(rowBounds.right - bounds.right)).toBeLessThanOrEqual(1);
         const content = group.querySelector(".chat-bubble")!.getBoundingClientRect();
-        expect(content.top - rowBounds.bottom).toBeCloseTo(6, 1);
+        expect(content.top - rowBounds.bottom).toBeCloseTo(8, 1);
         return;
       }
       expect(icon.getBoundingClientRect().width).toBe(0);
@@ -176,7 +186,11 @@ describe.each(cells)("reply attribution ($theme, $width px)", ({ theme, width })
     expectSingleLine(long.row);
     expect(long.name.scrollWidth - long.name.clientWidth).toBeLessThanOrEqual(1);
     expect(Math.abs(long.name.getBoundingClientRect().width - nameWidth)).toBeLessThanOrEqual(1);
-    expect(long.excerpt!.scrollWidth).toBeGreaterThan(long.excerpt!.clientWidth);
+    if (width < 768) {
+      expect(long.excerpt).toBeNull();
+    } else {
+      expect(long.excerpt!.scrollWidth).toBeGreaterThan(long.excerpt!.clientWidth);
+    }
   });
 
   it("keeps long text, unbroken URLs, emoji, RTL and unavailable sources on one line", async () => {
@@ -189,14 +203,48 @@ describe.each(cells)("reply attribution ($theme, $width px)", ({ theme, width })
     ] as const) {
       const result = await draw(name, excerpt);
       expectSingleLine(result.row);
+      if (width < 768) {
+        expect(
+          result.row.querySelector(
+            ".chat-reply-attribution__excerpt, .chat-reply-attribution__unavailable",
+          ),
+        ).toBeNull();
+      }
     }
   });
 
-  it("keeps the reply excerpt visible when a name cannot fit", async () => {
+  it("keeps the name usable and the desktop excerpt visible when a name cannot fit", async () => {
     const result = await draw("Casey Morgan ".repeat(80), "Original question ".repeat(40));
     expectSingleLine(result.row);
     expect(result.name.scrollWidth).toBeGreaterThan(result.name.clientWidth);
     expect(result.name.clientWidth).toBeGreaterThan(0);
-    expect(result.excerpt!.getBoundingClientRect().width).toBeGreaterThan(0);
+    if (width < 768) {
+      expect(result.excerpt).toBeNull();
+    } else {
+      expect(result.excerpt!.getBoundingClientRect().width).toBeGreaterThan(0);
+    }
   });
+});
+
+it("updates a mounted reply across the mobile breakpoint without losing navigation", async () => {
+  await page.viewport(1440, 800);
+  const onOpenReply = vi.fn();
+  const { row } = await draw("Casey Morgan", "Original question", onOpenReply);
+  expect(row.querySelector(".chat-reply-attribution__excerpt-text")?.textContent).toBe(
+    "Original question",
+  );
+  for (const width of [390, 360, 1440]) {
+    await page.viewport(width, 800);
+    await expect
+      .poll(() => Boolean(host.querySelector(".chat-reply-attribution__excerpt-text")))
+      .toBe(width === 1440);
+    const target = page.getByRole("button", { name: "Replying to Casey Morgan", exact: true });
+    await target.click();
+    expect(onOpenReply).toHaveBeenLastCalledWith("prompt");
+    const button = host.querySelector<HTMLButtonElement>(".chat-reply-attribution button")!;
+    button.focus();
+    await userEvent.keyboard("{Enter}");
+    expect(onOpenReply).toHaveBeenLastCalledWith("prompt");
+  }
+  expect(onOpenReply).toHaveBeenCalledTimes(6);
 });

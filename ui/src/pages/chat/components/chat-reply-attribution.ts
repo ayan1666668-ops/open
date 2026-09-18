@@ -1,4 +1,5 @@
 import { html, nothing } from "lit";
+import { AsyncDirective, directive } from "lit/async-directive.js";
 import { ref } from "lit/directives/ref.js";
 import { stripMarkdown } from "../../../../../src/shared/text/strip-markdown.js";
 import { resolveLocalUserName } from "../../../app/user-identity.ts";
@@ -191,19 +192,64 @@ function inlineReplyTargetRef(onResolve: (element?: Element) => void) {
   };
 }
 
+type ReplyAttributionOptions = {
+  variant?: "inline";
+  navigationLoading?: boolean;
+  navigateToUnloaded?: boolean;
+};
+
+class ReplyAttributionLayoutDirective extends AsyncDirective {
+  private readonly media = globalThis.matchMedia?.(
+    "(max-width: 768px), (max-width: 932px) and (max-height: 500px) and (orientation: landscape)",
+  );
+  private content: (mobile: boolean) => unknown = () => nothing;
+  private readonly updateLayout = () => {
+    this.setValue(this.content(this.media?.matches ?? false));
+  };
+
+  render(content: (mobile: boolean) => unknown) {
+    this.content = content;
+    if (this.isConnected) {
+      this.media?.addEventListener("change", this.updateLayout);
+    }
+    return content(this.media?.matches ?? false);
+  }
+
+  protected override disconnected() {
+    this.media?.removeEventListener("change", this.updateLayout);
+  }
+
+  protected override reconnected() {
+    this.media?.addEventListener("change", this.updateLayout);
+    this.updateLayout();
+  }
+}
+
+const replyAttributionLayout = directive(ReplyAttributionLayoutDirective);
+
 export function renderReplyAttribution(
   attribution: ReplyAttribution | undefined,
   onOpenReply?: (id: string) => void,
   onResolveReply?: (id: string) => void,
-  options: {
-    variant?: "inline";
-    navigationLoading?: boolean;
-    navigateToUnloaded?: boolean;
-  } = {},
+  options: ReplyAttributionOptions = {},
 ) {
   if (!attribution) {
     return nothing;
   }
+  return options.variant === "inline"
+    ? renderReplyAttributionContent(attribution, onOpenReply, onResolveReply, options, false)
+    : replyAttributionLayout((mobile) =>
+        renderReplyAttributionContent(attribution, onOpenReply, onResolveReply, options, mobile),
+      );
+}
+
+function renderReplyAttributionContent(
+  attribution: ReplyAttribution,
+  onOpenReply: ((id: string) => void) | undefined,
+  onResolveReply: ((id: string) => void) | undefined,
+  options: ReplyAttributionOptions,
+  mobile: boolean,
+) {
   const inline = options.variant === "inline";
   const excerpt = replyAttributionExcerpt(attribution.text);
   // Human quotes retain navigation to originals outside the loaded history.
@@ -216,30 +262,44 @@ export function renderReplyAttribution(
       class="chat-reply-attribution__excerpt-text"
       >${excerpt}</span
     >`;
+  const person = html`
+    ${renderChatAuthorAvatar(attribution.sender, "chat-author-avatar", attribution.agentAvatar)}
+    <span class="chat-reply-attribution__name" title=${attribution.name}>${attribution.name}</span>
+  `;
   const reference = html`
-    <span class="chat-reply-attribution__person">
-      ${renderChatAuthorAvatar(attribution.sender, "chat-author-avatar", attribution.agentAvatar)}
-      <span class="chat-reply-attribution__name" title=${attribution.name}
-        >${attribution.name}</span
-      >
-    </span>
     ${
-      excerpt
-        ? !inline && sourceId && onOpenReply
-          ? html`<button
-              class="chat-reply-attribution__excerpt"
-              type="button"
-              aria-label=${accessibleName}
-              ?disabled=${options.navigationLoading}
-              aria-busy=${options.navigationLoading ? "true" : "false"}
-              @click=${() => onOpenReply(sourceId)}
-            >
-              ${contents}
-            </button>`
-          : html`<span class="chat-reply-attribution__excerpt">${contents}</span>`
-        : html`<span class="chat-reply-attribution__unavailable"
-            >${t("chat.messages.replyOriginalUnavailable")}</span
-          >`
+      mobile && sourceId && onOpenReply
+        ? html`<button
+            class="chat-reply-attribution__person chat-reply-attribution__mobile-target"
+            type="button"
+            aria-label=${accessibleName}
+            ?disabled=${options.navigationLoading}
+            aria-busy=${options.navigationLoading ? "true" : "false"}
+            @click=${() => onOpenReply(sourceId)}
+          >
+            ${person}
+          </button>`
+        : html`<span class="chat-reply-attribution__person">${person}</span>`
+    }
+    ${
+      mobile
+        ? nothing
+        : excerpt
+          ? !inline && sourceId && onOpenReply
+            ? html`<button
+                class="chat-reply-attribution__excerpt"
+                type="button"
+                aria-label=${accessibleName}
+                ?disabled=${options.navigationLoading}
+                aria-busy=${options.navigationLoading ? "true" : "false"}
+                @click=${() => onOpenReply(sourceId)}
+              >
+                ${contents}
+              </button>`
+            : html`<span class="chat-reply-attribution__excerpt">${contents}</span>`
+          : html`<span class="chat-reply-attribution__unavailable"
+              >${t("chat.messages.replyOriginalUnavailable")}</span
+            >`
     }
   `;
   const className = `chat-reply-attribution ${inline ? "chat-reply-attribution--inline" : "chat-reply-attribution--reply"}${excerpt ? "" : " chat-reply-attribution--unavailable"}`;

@@ -169,9 +169,13 @@ suite.define(() => {
             expect(Math.abs(firstAvatar.offset)).toBeLessThanOrEqual(1);
           }
           const excerptText = firstGroup.locator(".chat-reply-attribution__excerpt-text");
-          expect(await excerptText.textContent()).toBe(
-            "Please review the release checklist and the remaining tasks.",
-          );
+          if (width < 768) {
+            expect(await excerptText.count()).toBe(0);
+          } else {
+            expect(await excerptText.textContent()).toBe(
+              "Please review the release checklist and the remaining tasks.",
+            );
+          }
           expect(
             await firstGroup.locator(".chat-reply-attribution--reply").textContent(),
           ).not.toMatch(/[“”·…]/);
@@ -211,23 +215,44 @@ suite.define(() => {
           const unavailable = page.locator(
             '.chat-group:has([data-entry-id="unavailable-answer"]) .chat-reply-attribution--reply',
           );
-          expect(await unavailable.textContent()).toContain("Earlier release question");
+          if (width < 768) {
+            expect(await unavailable.locator(".chat-reply-attribution__excerpt").count()).toBe(0);
+          } else {
+            expect(await unavailable.textContent()).toContain("Earlier release question");
+          }
           expect(await unavailable.locator("button, a").count()).toBe(0);
           const missing = page.locator(
             '.chat-group:has([data-entry-id="missing-answer"]) .chat-reply-attribution--reply',
           );
           expect(await missing.textContent()).toContain("Jordan Lee");
-          expect(await missing.locator(".chat-reply-attribution__unavailable").textContent()).toBe(
-            "Original message unavailable",
-          );
+          if (width < 768) {
+            expect(await missing.locator(".chat-reply-attribution__unavailable").count()).toBe(0);
+          } else {
+            expect(
+              await missing.locator(".chat-reply-attribution__unavailable").textContent(),
+            ).toBe("Original message unavailable");
+          }
           expect(await missing.locator("button, a").count()).toBe(0);
           const documentRow = page.locator(
             '.chat-group:has([data-entry-id="document-answer"]) .chat-reply-attribution--reply',
           );
-          expect(await documentRow.locator(".chat-reply-attribution__file svg").count()).toBe(1);
-          expect((await documentRow.locator("button").textContent())?.trim()).toBe(
-            "release-plan.pdf",
-          );
+          if (width < 768) {
+            expect(
+              await documentRow
+                .locator(".chat-reply-attribution__file, .chat-reply-attribution__excerpt-text")
+                .count(),
+            ).toBe(0);
+            expect(
+              await documentRow
+                .getByRole("button", { name: "Replying to Alice Chen", exact: true })
+                .count(),
+            ).toBe(1);
+          } else {
+            expect(await documentRow.locator(".chat-reply-attribution__file svg").count()).toBe(1);
+            expect((await documentRow.locator("button").textContent())?.trim()).toBe(
+              "release-plan.pdf",
+            );
+          }
           await row.scrollIntoViewIfNeeded();
           const geometry = await row.evaluate((el) => {
             const avatar = el.querySelector(".chat-author-avatar")!.getBoundingClientRect();
@@ -274,7 +299,7 @@ suite.define(() => {
             expect(mobile.connectorWidth).toBe(0);
             expect(mobile.iconWidth).toBe(14);
             expect(mobile.start).toBeCloseTo(0, 1);
-            expect(mobile.gap).toBeCloseTo(6, 1);
+            expect(mobile.gap).toBeCloseTo(8, 1);
           } else {
             const replyGroup = row.locator("..").locator("..");
             const connector = replyGroup.locator(".chat-reply-connector path");
@@ -681,7 +706,10 @@ suite.define(() => {
                   element.closest(".chat-group")!.getBoundingClientRect().left,
               };
             });
-            expect(placement.gap).toBeCloseTo(6, 1);
+            expect(placement.gap).toBeCloseTo(width < 768 ? 8 : 6, 1);
+            expect(
+              await bubble.locator("..").locator(".chat-reply-attribution__excerpt-text").count(),
+            ).toBe(width < 768 ? 0 : 1);
             expect(placement.sourceAvatarWidth).toBe(16);
             if (width < 768) {
               expect(placement.avatarWidth).toBe(0);
