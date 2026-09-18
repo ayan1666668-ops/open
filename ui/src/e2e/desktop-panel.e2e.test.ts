@@ -198,6 +198,10 @@ suite.define(() => {
           control: false,
         });
 
+        const password = panel.getByLabel("VNC password", { exact: true });
+        await password.fill("synthetic-unsent-password");
+        const passwordInput = await password.elementHandle();
+        const inventoryReads = await gateway.getRequests("environments.status");
         await gateway.setMethodResponse("environments.status", {
           __mockError: {
             code: "UNAVAILABLE",
@@ -206,6 +210,18 @@ suite.define(() => {
         });
         await openPalette(page);
         await page.getByRole("option", { name: "Desktop", exact: true }).click();
+        await page
+          .getByRole("combobox", { name: "Search chats and commands…" })
+          .waitFor({ state: "hidden" });
+        expect(await passwordInput?.evaluate((element) => element.isConnected)).toBe(true);
+        expect(await password.inputValue()).toBe("synthetic-unsent-password");
+        expect(await gateway.getRequests("environments.status")).toEqual(inventoryReads);
+
+        await activateChatHeaderPanelAction(page, "Desktop");
+        await panel.waitFor({ state: "detached" });
+        await openPalette(page);
+        await page.getByRole("option", { name: "Desktop", exact: true }).click();
+        await gateway.waitForRequest("environments.status", { after: inventoryReads.length });
         await panel.getByRole("alert").filter({ hasText: "inventory" }).waitFor();
         await gateway.setMethodResponse(
           "environments.status",
