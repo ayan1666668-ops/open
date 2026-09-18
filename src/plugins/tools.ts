@@ -398,6 +398,7 @@ export async function acquirePluginToolInspectionRegistry(params: {
       throw new AggregateError(
         [error, cleanupError],
         "Plugin tool inspection setup and cleanup failed",
+        { cause: cleanupError },
       );
     }
     throw error;
