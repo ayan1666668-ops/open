@@ -2050,6 +2050,71 @@ describe("short-term promotion", () => {
     expect(memoryText).toContain("memory/2026-04-01.md:3-3");
   });
 
+  it("rehydrates snippets whose live range gained an HTML comment", async (workspaceDir) => {
+    await writeDailyMemoryNote(workspaceDir, "2026-04-01", [
+      "intro",
+      "summary",
+      "Moved backups to S3 Glacier.",
+      "Keep cold storage retention at 365 days.",
+    ]);
+    await recordMemoryRecalls(workspaceDir, "glacier", [
+      memoryRecallResult(
+        "memory/2026-04-01.md",
+        3,
+        4,
+        0.94,
+        "Moved backups to S3 Glacier. Keep cold storage retention at 365 days.",
+      ),
+    ]);
+    // A later tool adds an HTML comment inside the recorded range; the snippet
+    // text itself is unchanged, so the same normalization must apply on both
+    // sides of the comparison.
+    await writeDailyMemoryNote(workspaceDir, "2026-04-01", [
+      "intro",
+      "summary",
+      "Moved backups to S3 Glacier.",
+      "<!-- updated during review -->",
+      "Keep cold storage retention at 365 days.",
+    ]);
+
+    const ranked = await rankAllCandidates(workspaceDir);
+    const applied = await applyAllCandidates(workspaceDir, ranked);
+
+    expect(applied.applied).toBe(1);
+    expect(applied.appliedCandidates[0]?.startLine).toBe(3);
+    expect(applied.appliedCandidates[0]?.endLine).toBe(5);
+    expect(applied.appliedCandidates[0]?.snippet).toBe(
+      "Moved backups to S3 Glacier. Keep cold storage retention at 365 days.",
+    );
+  });
+
+  it("does not anchor promotion on a fragment when the live range lost content", async (workspaceDir) => {
+    await writeDailyMemoryNote(workspaceDir, "2026-04-01", [
+      "intro",
+      "summary",
+      "Moved backups to S3 Glacier.",
+      "",
+    ]);
+    await recordMemoryRecalls(workspaceDir, "glacier", [
+      memoryRecallResult(
+        "memory/2026-04-01.md",
+        3,
+        4,
+        0.94,
+        "Moved backups to S3 Glacier. Keep cold storage retention at 365 days.",
+      ),
+    ]);
+
+    const ranked = await rankAllCandidates(workspaceDir);
+    const applied = await applyAllCandidates(workspaceDir, ranked);
+
+    // The stored two-line snippet only survives as its first line, so the
+    // scan can only offer a fragment of the recorded content. Promoting that
+    // fragment would silently carry the wrong lines into MEMORY.md; the
+    // candidate must surface as unresolved instead.
+    expect(applied.applied).toBe(0);
+  });
+
   it("rehydrates daily-ingested heading-prefixed list snippets from the live note", async (workspaceDir) => {
     await writeDailyMemoryNote(workspaceDir, "2026-05-28", [
       "# 2026-05-28",

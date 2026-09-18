@@ -8,6 +8,15 @@ const GENERIC_DAY_HEADING_RE =
   /^(?:(?:mon|monday|tue|tues|tuesday|wed|wednesday|thu|thur|thurs|thursday|fri|friday|sat|saturday|sun|sunday)(?:,\s+)?)?(?:(?:jan|january|feb|february|mar|march|apr|april|may|jun|june|jul|july|aug|august|sep|sept|september|oct|october|nov|november|dec|december)\s+\d{1,2}(?:st|nd|rd|th)?(?:,\s*\d{4})?|\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?|\d{4}[/-]\d{2}[/-]\d{2})$/i;
 const PROMOTION_LIST_MARKER_RE = /^(?:\d+\.\s+|[-*+]\s+)/;
 const MANAGED_DREAMING_HEADINGS = new Set(["light sleep", "rem sleep"]);
+const HTML_COMMENT_RE = /<!--[\s\S]*?-->/g;
+
+// The stored snippet and the live range must pass through the same
+// normalization before comparison. Notes routinely gain HTML comments after a
+// candidate is recorded; leaving those comments in only the live copy breaks
+// exact containment and degrades the match to a fragment anchor.
+function normalizeRecallSnippet(raw: string): string {
+  return normalizeSnippet(raw.replace(HTML_COMMENT_RE, " "));
+}
 
 function normalizeRangeSnippet(lines: string[], startLine: number, endLine: number): string {
   const startIndex = Math.max(0, startLine - 1);
@@ -15,7 +24,7 @@ function normalizeRangeSnippet(lines: string[], startLine: number, endLine: numb
   if (startIndex >= endIndex) {
     return "";
   }
-  return normalizeSnippet(lines.slice(startIndex, endIndex).join(" "));
+  return normalizeRecallSnippet(lines.slice(startIndex, endIndex).join(" "));
 }
 
 function normalizeListMarkerFreeRangeSnippet(
@@ -35,7 +44,7 @@ function normalizeListMarkerFreeRangeSnippet(
   });
   const joiner =
     strippedLines.length > 1 && strippedLines.every((line) => line.hadListMarker) ? "; " : " ";
-  return normalizeSnippet(strippedLines.map((line) => line.text).join(joiner));
+  return normalizeRecallSnippet(strippedLines.map((line) => line.text).join(joiner));
 }
 
 function normalizeDailyHeadingForPromotion(line: string): string | null {
@@ -149,7 +158,7 @@ function relocateCandidateRange(
   lines: string[],
   candidate: PromotionCandidate,
 ): { startLine: number; endLine: number; snippet: string } | null {
-  const targetSnippet = normalizeSnippet(candidate.snippet);
+  const targetSnippet = normalizeRecallSnippet(candidate.snippet);
   const preferredSpan = Math.max(1, candidate.endLine - candidate.startLine + 1);
   if (targetSnippet.length === 0) {
     const fallbackSnippet = normalizeRangeSnippet(lines, candidate.startLine, candidate.endLine);
@@ -253,7 +262,10 @@ function relocateCandidateRange(
     }
   }
 
-  if (!bestMatch) {
+  if (!bestMatch || bestMatch.quality === 1) {
+    // Quality 1 means the window is only a fragment of the recorded snippet.
+    // Anchoring on it would silently promote the wrong lines of the right
+    // file, so the candidate is reported as lost instead.
     return null;
   }
   return {
