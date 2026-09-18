@@ -35,7 +35,11 @@ suite.define(() => {
     const gateway = await installMockGateway(page, {
       historyMessages: [
         { role: "assistant", content: "Earlier completed reply.", timestamp: Date.now() - 60_000 },
-        { role: "assistant", content: "Earlier final summary.", timestamp: Date.now() - 59_000 },
+        {
+          role: "assistant",
+          content: "Earlier final summary.\n\n[Source](https://example.com)",
+          timestamp: Date.now() - 59_000,
+        },
       ],
     });
 
@@ -162,7 +166,10 @@ suite.define(() => {
       }
       expect(await activeGroup.locator(".chat-group-footer").count()).toBe(0);
 
-      await gateway.emitChatFinal({ runId, text: "The turn is complete." });
+      await gateway.emitChatFinal({
+        runId,
+        text: "The turn is complete.\n\n[Source](https://example.com)",
+      });
       await activeGroup.getByText("The turn is complete.", { exact: true }).waitFor();
       if (heldTouch) {
         await heldTouch.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
@@ -226,21 +233,45 @@ suite.define(() => {
         );
         await page.mouse.move(0, 0);
         const actions = group.locator(".chat-group-footer-actions button");
+        const focusedActionOpacities = mobile ? ["1", "1"] : ["0.6", "0.6"];
         await actions.first().focus();
+        await page.keyboard.press("Shift+Tab");
+        await expect
+          .poll(() =>
+            group
+              .getByRole("link", { name: "Source", exact: true })
+              .evaluate((link) => link.matches(":focus-visible")),
+          )
+          .toBe(true);
+        await expect.poll(() => actionOpacities(group)).toEqual(focusedActionOpacities);
+        await expect
+          .poll(() => footerPresentation(group))
+          .toEqual({ opacity: "1", pointerEvents: "auto" });
+        if (group === earlierAssistant) {
+          await expect
+            .poll(() =>
+              group
+                .locator(".chat-message-actions-row button")
+                .evaluateAll((buttons) =>
+                  buttons.map((button) => getComputedStyle(button).opacity),
+                ),
+            )
+            .toEqual(focusedActionOpacities);
+        }
         await page.keyboard.press("Tab");
+        await expect
+          .poll(() => actions.first().evaluate((button) => button.matches(":focus-visible")))
+          .toBe(true);
+        await actions.nth(1).focus();
         await expect
           .poll(() => actions.nth(1).evaluate((button) => button.matches(":focus-visible")))
           .toBe(true);
-        await expect
-          .poll(() => actions.nth(1).evaluate((button) => getComputedStyle(button).opacity))
-          .toBe(mobile ? "1" : "0.6");
+        await expect.poll(() => actionOpacities(group)).toEqual(focusedActionOpacities);
         await page.keyboard.press("Shift+Tab");
         await expect
           .poll(() => actions.first().evaluate((button) => button.matches(":focus-visible")))
           .toBe(true);
-        await expect
-          .poll(() => actions.first().evaluate((button) => getComputedStyle(button).opacity))
-          .toBe(mobile ? "1" : "0.6");
+        await expect.poll(() => actionOpacities(group)).toEqual(focusedActionOpacities);
         await expect
           .poll(() => footerPresentation(group))
           .toEqual({ opacity: "1", pointerEvents: "auto" });

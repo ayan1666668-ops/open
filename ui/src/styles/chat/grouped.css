@@ -362,7 +362,8 @@
 }
 
 @media (hover: hover) {
-  .chat-group-footer-actions button:focus-visible {
+  .chat-group:focus-within .chat-group-footer-actions button,
+  .chat-group:focus-within .chat-message-actions-row button {
     opacity: 0.6;
     pointer-events: auto;
   }
