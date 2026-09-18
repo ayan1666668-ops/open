@@ -55,4 +55,49 @@ describe("buildInboundUserContextPrefix — Telegram current-message carrier", (
     expect(text).toContain('Current message:\n[Replying to: "selected quote"]\n#34974:');
     expect(text.trimEnd().endsWith("#34974:")).toBe(true);
   });
+
+  it("states the current body without a header when the Telegram turn has no message id", () => {
+    // Before the carrier fix this block rendered as quote-only: no header line and
+    // no body. The body now stands where the header would be, so a turn without a
+    // message id is still self-contained rather than silently bodyless.
+    const text = buildInboundUserContextPrefix(
+      {
+        Provider: "telegram",
+        Surface: "telegram",
+        OriginatingChannel: "telegram",
+        ChatType: "group",
+        ReplyToId: "34971",
+        ReplyToQuoteText: " selected quote\n",
+        SenderName: "obviyus",
+        Body: "ship it",
+      } as TemplateContext,
+      { timezone: "utc" },
+    );
+
+    expect(text).toContain('Current message:\n[Replying to: "selected quote"]\nship it');
+    expect(text).not.toMatch(/#\S*:/);
+  });
+
+  it("prefers agentText and collapses whitespace for the Telegram current-message body", () => {
+    const text = buildInboundUserContextPrefix(
+      {
+        Provider: "telegram",
+        Surface: "telegram",
+        OriginatingChannel: "telegram",
+        ChatType: "group",
+        MessageSid: "34974",
+        ReplyToId: "34971",
+        ReplyToQuoteText: " selected quote\n",
+        SenderName: "obviyus",
+        agentText: "agent\n\n  text",
+        BodyForAgent: "body for agent",
+        Body: "raw body",
+      } as TemplateContext,
+      { timezone: "utc" },
+    );
+
+    expect(text).toContain('Current message:\n[Replying to: "selected quote"]\n#34974: agent text');
+    expect(text).not.toContain("body for agent");
+    expect(text).not.toContain("raw body");
+  });
 });
