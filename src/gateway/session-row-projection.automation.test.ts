@@ -47,7 +47,9 @@ it("rebuilds only changed automation bindings and preserves complete unrelated r
       expect(projection.materializedCount - count).toBe(1);
       const bound = snapshot();
       expect(bound).toEqual(
-        before.map((row) => (row.key === keys[0] ? { ...row, hasAutomation: true } : row)),
+        before.map((row) =>
+          row.key === keys[0] ? Object.assign({}, row, { hasAutomation: true }) : row,
+        ),
       );
 
       count = projection.materializedCount;
@@ -56,7 +58,9 @@ it("rebuilds only changed automation bindings and preserves complete unrelated r
       await projection.ensureMaterialized();
       expect(projection.materializedCount - count).toBe(2);
       expect(snapshot()).toEqual(
-        before.map((row) => (row.key === keys[1] ? { ...row, hasAutomation: true } : row)),
+        before.map((row) =>
+          row.key === keys[1] ? Object.assign({}, row, { hasAutomation: true }) : row,
+        ),
       );
 
       // A real store publication still rebuilds its resident rows.
