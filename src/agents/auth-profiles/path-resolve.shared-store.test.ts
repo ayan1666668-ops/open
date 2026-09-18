@@ -2,7 +2,10 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
-import { writeConfigMachineState } from "../../state/config-machine-state-write.js";
+import {
+  deleteConfigMachineState,
+  writeConfigMachineState,
+} from "../../state/config-machine-state-write.js";
 import { closeOpenClawStateDatabaseForTest } from "../../state/openclaw-state-db.js";
 import { resolveOpenClawStateSqlitePath } from "../../state/openclaw-state-db.paths.js";
 import { withEnv } from "../../test-utils/env.js";
@@ -45,23 +48,28 @@ describe("shared auth store path resolution", () => {
     closeOpenClawStateDatabaseForTest();
   });
 
-  it("keeps the absent ownership record pinned to the shipped legacy-main path", async () => {
+  it("resolves an absent ownership record to legacy-main and observes out-of-process relocation", async () => {
     const env = makeStateEnv();
-    const { resolveSharedAuthStorePath } = await import("./path-resolve.js");
+    const { resolveSharedAuthStoreOwnership, resolveSharedAuthStorePath } =
+      await import("./path-resolve.js");
     const { resolveSharedMainAuthAgentDir } = await import("./shared-main-dir.js");
     const legacyDir = resolveSharedMainAuthAgentDir(env);
-
-    expect(resolveSharedAuthStorePath(env)).toBe(path.join(legacyDir, "openclaw-agent.sqlite"));
-
-    writeConfigMachineState("auth.sharedStore", { location: "state-db" }, { env });
+    const legacyPath = path.join(legacyDir, "openclaw-agent.sqlite");
     const aliasEnv = {
       ...env,
       OPENCLAW_STATE_DIR: path.join(env.OPENCLAW_STATE_DIR ?? "", "."),
     };
 
-    expect(resolveSharedAuthStorePath(aliasEnv)).toBe(
-      path.join(legacyDir, "openclaw-agent.sqlite"),
-    );
+    expect(resolveSharedAuthStoreOwnership(env)).toEqual({ location: "legacy-main" });
+    expect(resolveSharedAuthStorePath(env)).toBe(legacyPath);
+    expect(resolveSharedAuthStorePath(aliasEnv)).toBe(legacyPath);
+
+    // A sibling process relocates the shared store while this one keeps running.
+    writeConfigMachineState("auth.sharedStore", { location: "state-db" }, { env });
+
+    expect(resolveSharedAuthStoreOwnership(env)).toEqual({ location: "state-db" });
+    expect(resolveSharedAuthStorePath(env)).toBe(resolveOpenClawStateSqlitePath(env));
+    expect(resolveSharedAuthStorePath(aliasEnv)).toBe(resolveOpenClawStateSqlitePath(env));
 
     withEnv({ OPENCLAW_STATE_DIR: env.OPENCLAW_STATE_DIR, OPENCLAW_AGENT_DIR: undefined }, () => {
       writePersistedAuthProfileStoreRaw(persistedStore, legacyDir);
@@ -76,7 +84,7 @@ describe("shared auth store path resolution", () => {
     });
   });
 
-  it("reloads ownership after an explicit out-of-process auth mutation", async () => {
+  it("observes ownership relocated by an out-of-process auth mutation", async () => {
     const env = makeStateEnv();
     const {
       reloadSharedAuthStoreOwnership,
@@ -86,10 +94,32 @@ describe("shared auth store path resolution", () => {
 
     expect(resolveSharedAuthStoreOwnership(env)).toEqual({ location: "legacy-main" });
     writeConfigMachineState("auth.sharedStore", { location: "state-db" }, { env });
-    expect(resolveSharedAuthStoreOwnership(env)).toEqual({ location: "legacy-main" });
+    expect(resolveSharedAuthStoreOwnership(env)).toEqual({ location: "state-db" });
 
     expect(reloadSharedAuthStoreOwnership(env)).toEqual({ location: "state-db" });
     expect(resolveSharedAuthStorePath(env)).toBe(resolveOpenClawStateSqlitePath(env));
+  });
+
+  it("keeps a resolved state-db owner pinned after the ownership row disappears", async () => {
+    const env = makeStateEnv();
+    const { resolveSharedAuthStoreOwnership, resolveSharedAuthStorePath } =
+      await import("./path-resolve.js");
+    writeConfigMachineState("auth.sharedStore", { location: "state-db" }, { env });
+    expect(resolveSharedAuthStoreOwnership(env)).toEqual({ location: "state-db" });
+
+    deleteConfigMachineState("auth.sharedStore", { env });
+    expect(resolveSharedAuthStoreOwnership(env)).toEqual({ location: "state-db" });
+    expect(resolveSharedAuthStorePath(env)).toBe(resolveOpenClawStateSqlitePath(env));
+  });
+
+  it("returns the same ownership object while a root stays legacy-main", async () => {
+    const env = makeStateEnv();
+    const { resolveSharedAuthStoreOwnership } = await import("./path-resolve.js");
+
+    const first = resolveSharedAuthStoreOwnership(env);
+    expect(first).toEqual({ location: "legacy-main" });
+    // Downstream legacy inspection memoizes on this object's identity.
+    expect(resolveSharedAuthStoreOwnership(env)).toBe(first);
   });
 
   it("resolves the relocated store to the canonical shared state database", async () => {

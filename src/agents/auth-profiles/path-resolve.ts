@@ -30,7 +30,10 @@ export function captureAuthProfileOwnerScope(
 }
 
 // Explicit env callers can address another state root in the same process.
-// Pin each root once so later row changes require an owner-controlled restart.
+// `state-db` is a one-way terminal state, so it stays pinned for the life of the
+// process. `legacy-main` (including an absent row) is not terminal: another
+// process can relocate the shared store while this one runs, so re-read the row
+// and self-heal instead of requiring a process restart.
 const sharedAuthStoreOwnershipByDatabasePath = new Map<string, SharedAuthStoreOwnership>();
 
 class InvalidSharedAuthStoreOwnershipError extends Error {
@@ -60,16 +63,20 @@ function parseSharedAuthStoreOwnership(value: unknown): SharedAuthStoreOwnership
   throw new InvalidSharedAuthStoreOwnershipError(value);
 }
 
-/** Resolve the process-stable owner of the shared auth store. */
+/** Resolve the owner of the shared auth store, self-healing non-terminal legacy roots. */
 export function resolveSharedAuthStoreOwnership(
   env: NodeJS.ProcessEnv = process.env,
 ): SharedAuthStoreOwnership {
   const databasePath = path.resolve(resolveOpenClawStateSqlitePath(env));
   const cached = sharedAuthStoreOwnershipByDatabasePath.get(databasePath);
-  if (cached) {
+  // `state-db` never returns to `legacy-main`; only a fresh process may re-pin it.
+  if (cached?.location === "state-db") {
     return cached;
   }
-  if (sharedAuthStoreOwnershipByDatabasePath.size >= SHARED_AUTH_STORE_OWNERSHIP_CACHE_LIMIT) {
+  if (
+    !cached &&
+    sharedAuthStoreOwnershipByDatabasePath.size >= SHARED_AUTH_STORE_OWNERSHIP_CACHE_LIMIT
+  ) {
     throw new Error(
       "Shared auth store ownership cache exceeded its process root limit; restart OpenClaw.",
     );
@@ -77,6 +84,11 @@ export function resolveSharedAuthStoreOwnership(
   const ownership = parseSharedAuthStoreOwnership(
     readConfigMachineState<unknown>(SHARED_AUTH_STORE_STATE_KEY, { env, path: databasePath }),
   );
+  // Keep the process-stable object while the non-terminal legacy owner is
+  // unchanged; legacy inspection memoizes on this object's identity.
+  if (cached && ownership.location === "legacy-main") {
+    return cached;
+  }
   sharedAuthStoreOwnershipByDatabasePath.set(databasePath, ownership);
   return ownership;
 }
