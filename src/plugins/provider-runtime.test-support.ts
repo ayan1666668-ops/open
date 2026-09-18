@@ -1,5 +1,5 @@
 // Provides shared assertions for provider plugin runtime tests.
-import { expect } from "vitest";
+import { expect, vi, type Mock } from "vitest";
 
 const openaiCodexCatalogEntries = [
   { provider: "openai", id: "gpt-5.5", name: "gpt-5.5" },
@@ -74,4 +74,14 @@ export async function expectAugmentedCodexCatalog(
   for (const entry of expectedEntries) {
     expect(result).toContainEqual(expect.objectContaining(entry));
   }
+}
+
+export function createProviderRuntimeLogger(warn: Mock) {
+  return {
+    isEnabled: () => false,
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn,
+    error: vi.fn(),
+  };
 }
