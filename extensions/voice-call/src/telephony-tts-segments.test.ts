@@ -62,7 +62,7 @@ describe("prepareSpeech", () => {
     const spoken = longReply();
     // A reply whose directive header would land inside the first segment if the
     // raw string were split before the directive contract was applied.
-    const raw = `[[tts: voice=alloy]]\n${spoken}`;
+    const raw = `[[tts: provider=openai]]\n${spoken}`;
     const synthesized: string[] = [];
 
     const provider = await createTelephonyTtsProvider({
@@ -74,14 +74,14 @@ describe("prepareSpeech", () => {
             cleanedText: text.replace(/^\[\[tts:[^\]]*\]\]\s*/, ""),
             ttsText: text.replace(/^\[\[tts:[^\]]*\]\]\s*/, ""),
             hasDirective: true,
-            overrides: { voice: "alloy" },
+            overrides: { provider: "openai" },
             warnings: [],
           },
         }),
         textToSpeechTelephony: async ({ text, overrides }) => {
           synthesized.push(text);
           // The one resolved override set reaches every segment.
-          expect(overrides).toEqual({ voice: "alloy" });
+          expect(overrides).toEqual({ provider: "openai" });
           return okSynthesis();
         },
       },
