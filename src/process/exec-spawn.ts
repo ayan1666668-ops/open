@@ -88,6 +88,7 @@ export async function withCommandProcessScope<T>(
   run: (stop: () => void) => Promise<T>,
   signal?: AbortSignal,
 ): Promise<T> {
+  const parent = commandProcessScope.getStore();
   const controller = new AbortController();
   const inherited = resolveCommandProcessSignal(signal);
   const scope: CommandProcessScope = {
@@ -105,13 +106,9 @@ export async function withCommandProcessScope<T>(
       }
     }
   };
-  const completion = commandProcessScope.run(scope, async () => {
-    let outcome: { result: T } | { error: unknown };
-    try {
-      outcome = { result: await run(stop) };
-    } catch (error) {
-      outcome = { error };
-    }
+  let settlement: Promise<void> | undefined;
+  const settle = () => (settlement ??= settleCommands());
+  async function settleCommands() {
     stop();
     await Promise.all(
       [...scope.children].map(async (child) => {
@@ -125,6 +122,30 @@ export async function withCommandProcessScope<T>(
     while (scope.cleanups.size > 0) {
       await Promise.all(scope.cleanups);
     }
+  }
+  const nested: ScopedCommand = {
+    stop,
+    async settle() {
+      await settle();
+      if (scope.failure) {
+        throw new CommandProcessCleanupError({ cause: scope.failure.error });
+      }
+    },
+  };
+  // Parent settlement follows admitted commands and declared cleanup even when
+  // the callback ignores cancellation. Closed scopes refuse new commands.
+  parent?.children.add(nested);
+  const completion = commandProcessScope.run(scope, async () => {
+    let outcome: { result: T } | { error: unknown };
+    try {
+      outcome = { result: await run(stop) };
+    } catch (error) {
+      outcome = { error };
+      if (parent && hasCommandProcessCleanupError(error)) {
+        parent.failure ??= { error };
+      }
+    }
+    await settle();
     if (scope.failure) {
       const cause =
         "error" in outcome
@@ -143,20 +164,15 @@ export async function withCommandProcessScope<T>(
     }
     return outcome.result;
   });
-  // A caller can return before an admitted nested scope. Its original ancestor
-  // still joins that scope; inherited cancellation alone cannot retain custody.
-  if (commandProcessScope.getStore()) {
-    retainCommandProcessCleanup(
-      completion.then(
-        () => undefined,
-        (error: unknown) => {
-          if (hasCommandProcessCleanupError(error)) {
-            throw error;
-          }
-        },
-      ),
-    );
-  }
+  void completion.then(
+    () => parent?.children.delete(nested),
+    (error: unknown) => {
+      if (parent && hasCommandProcessCleanupError(error)) {
+        parent.failure ??= { error };
+      }
+      parent?.children.delete(nested);
+    },
+  );
   return await completion;
 }
 

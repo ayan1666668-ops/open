@@ -15,7 +15,7 @@ import { isCurrentManagedServiceUpdateHandoffProcess } from "../../infra/update-
 import type { UpdateRecoveryFence } from "../../infra/update-run-recovery.js";
 import { hasCommandProcessCleanupError } from "../../process/exec-result.js";
 import { withCommandProcessScope } from "../../process/exec-spawn.js";
-import { createUpdateActivationDeadline } from "./update-command-activation.js";
+import { UpdateActivationTimeoutError } from "./update-command-activation.js";
 import {
   childLineageDigest,
   createChildOwner,
@@ -24,6 +24,7 @@ import {
 } from "./update-command-executor-children.js";
 import { createUpdateIdentityWarningReporter } from "./update-command-identity-warning.js";
 import { UpdateCommandRecoveryPendingError } from "./update-command-recovery.js";
+import { createUpdateOperationDeadline } from "./update-operation-deadline.js";
 
 /** A live invocation, never a serialized claim, PID or recovered history row. */
 export type UpdateCommandExecutor = {
@@ -88,7 +89,7 @@ export async function withDelegatedUpdateCommandExecutor<T>(
   operation: (fence: UpdateRecoveryFence) => Promise<T>,
   options?: { activationTimeoutMs: number },
 ): Promise<T> {
-  const activation = createUpdateActivationDeadline();
+  const activation = createUpdateOperationDeadline();
   return await activation.run(() =>
     withCommandProcessScope(async () => {
       const original = grant.originalParent ?? grant.parent;
@@ -183,7 +184,9 @@ export async function withDelegatedUpdateCommandExecutor<T>(
         );
       }
       const assertBase = () => {
-        activation.assertCurrent();
+        if (active || activation.failure) {
+          activation.assertCurrent();
+        }
         if (
           !active ||
           !store.current(original) ||
@@ -239,7 +242,10 @@ export async function withDelegatedUpdateCommandExecutor<T>(
               );
             }
             if (options) {
-              activation.start(root, options.activationTimeoutMs);
+              activation.start(
+                new UpdateActivationTimeoutError(root, options.activationTimeoutMs),
+                options.activationTimeoutMs,
+              );
             }
             outcome = { result: await operation(fence) };
           } catch (error) {
@@ -294,7 +300,7 @@ export async function withUpdateCommandExecutor<T>(
         legacyManagedParent: { runId: string; handoffId: string; root: string };
       },
 ): Promise<T> {
-  const activation = createUpdateActivationDeadline();
+  const activation = createUpdateOperationDeadline();
   return await activation.run(() =>
     withCommandProcessScope(async () => {
       let active = true;
@@ -306,7 +312,9 @@ export async function withUpdateCommandExecutor<T>(
       let legacyChild: ManagedHandoffLease | undefined;
       const identityWarnings = createUpdateIdentityWarningReporter(runId);
       const assertBase = () => {
-        activation.assertCurrent();
+        if (active || activation.failure) {
+          activation.assertCurrent();
+        }
         if (
           !active ||
           !store ||
@@ -359,7 +367,10 @@ export async function withUpdateCommandExecutor<T>(
       });
       const executor: UpdateCommandExecutor = {
         async enter(root, enterOptions) {
-          activation.assertCurrent();
+          // Executor closure owns its recovery error unless a deadline already failed.
+          if (active || activation.failure) {
+            activation.assertCurrent();
+          }
           if (!active || entering) {
             throw new UpdateCommandRecoveryPendingError(
               "Update executor admission is closed or busy.",
@@ -381,7 +392,10 @@ export async function withUpdateCommandExecutor<T>(
               preflightReleases.delete(fence);
             }
             if (enterOptions?.activationTimeoutMs !== undefined) {
-              activation.start(key, enterOptions.activationTimeoutMs);
+              activation.start(
+                new UpdateActivationTimeoutError(key, enterOptions.activationTimeoutMs),
+                enterOptions.activationTimeoutMs,
+              );
             }
             return fence;
           }
@@ -506,7 +520,10 @@ export async function withUpdateCommandExecutor<T>(
               });
             }
             if (enterOptions?.activationTimeoutMs !== undefined) {
-              activation.start(key, enterOptions.activationTimeoutMs);
+              activation.start(
+                new UpdateActivationTimeoutError(key, enterOptions.activationTimeoutMs),
+                enterOptions.activationTimeoutMs,
+              );
             }
             return fence;
           } finally {

@@ -5,6 +5,7 @@ import { collectNestedErrorCandidates } from "../../infra/error-graph-internal.j
 import * as updateCheck from "../../infra/update-check.js";
 import { UpdateDoctorError } from "../../infra/update-doctor-result.js";
 import { createUpdateRun, listUpdateRuns } from "../../infra/update-run-ledger.js";
+import { hasCommandProcessCleanupError } from "../../process/exec-result.js";
 import {
   resolveCommandProcessSignal,
   retainCommandProcessCleanup,
@@ -22,6 +23,8 @@ const mocks = vi.hoisted(() => ({
   readConfig: vi.fn(),
   doctorWarnings: [] as string[],
   triage: vi.fn(),
+  maintenance:
+    vi.fn<typeof import("../../commands/doctor-maintenance.js").beginDoctorMaintenance>(),
   interactive: false,
 }));
 
@@ -69,6 +72,10 @@ vi.mock("../../config/config.js", async (importOriginal) => ({
 
 vi.mock("../../infra/update-triage.js", () => ({
   prepareUpdateFailureTriage: vi.fn(async () => mocks.triage),
+}));
+
+vi.mock("../../commands/doctor-maintenance.js", () => ({
+  beginDoctorMaintenance: mocks.maintenance,
 }));
 
 vi.mock("../terminal-interactivity.js", async (importOriginal) => ({
@@ -243,6 +250,7 @@ describe("update plugin lifecycle lease boundaries", () => {
     mocks.doctorWarnings = [];
     mocks.interactive = false;
     mocks.triage.mockReset().mockResolvedValue({ status: "completed", hint: "fixture" });
+    mocks.maintenance.mockReset().mockResolvedValue(undefined);
     vi.mocked(readPackageVersion).mockResolvedValue(VERSION);
     vi.mocked(continuePostCoreUpdateInFreshProcess).mockImplementation(async () => {
       record("target-convergence");
@@ -678,6 +686,139 @@ describe("update plugin lifecycle lease boundaries", () => {
           expect.objectContaining({ status: "ok", mode: "finalize" }),
         );
         expect(listUpdateRuns()[0]?.status).toBe("succeeded");
+      }
+    },
+  );
+
+  it.each(
+    (["doctor", "convergence", "restoration"] as const).flatMap((phase) =>
+      (["forced", "uncertain"] as const).map((cleanup) => ({ phase, cleanup })),
+    ),
+  )(
+    "settles repair custody before restoration and publication ($phase, $cleanup)",
+    async ({ phase, cleanup }) => {
+      const physicalCleanup = createDeferredCore<"forced" | "uncertain">();
+      const joining = createDeferredCore();
+      const originalError = new Error("Repair Doctor failed");
+      const retainCleanup = () => {
+        retainCommandProcessCleanup(physicalCleanup.promise);
+        const signal = resolveCommandProcessSignal();
+        if (!signal) {
+          throw new Error("Repair custody lost its command scope");
+        }
+        signal.addEventListener("abort", () => joining.resolve(), { once: true });
+      };
+      type Maintenance = NonNullable<
+        Awaited<
+          ReturnType<typeof import("../../commands/doctor-maintenance.js").beginDoctorMaintenance>
+        >
+      >;
+      const finish = vi.fn<Maintenance["finish"]>().mockImplementation(async () => {
+        if (phase === "restoration") {
+          retainCleanup();
+        }
+      });
+      const release = vi.fn<Maintenance["release"]>().mockResolvedValue(undefined);
+      const releaseState = vi.fn<Maintenance["releaseState"]>().mockResolvedValue(undefined);
+      mocks.maintenance.mockResolvedValue({
+        run: <T>(operation: () => T): T => operation(),
+        finish,
+        release,
+        releaseState,
+      });
+      vi.spyOn(updateCheck, "resolveUpdateInstallKind").mockResolvedValue("package");
+      // Observe reconciliation of the selected old run without inventing a live
+      // recovery record; the finalizer's own invocation still uses the real ledger.
+      const ledger = await import("../../infra/update-run-ledger.js");
+      const reconcile = vi.spyOn(ledger, "reconcileAbandonedUpdateRuns").mockReturnValue([]);
+      const acknowledge = vi
+        .spyOn(ledger, "acknowledgeAbandonedUpdateRun")
+        .mockImplementation(() => {});
+      if (phase === "convergence") {
+        vi.mocked(completePostCorePluginUpdate).mockImplementationOnce(async () => {
+          retainCleanup();
+          return { pluginUpdate: successfulPluginUpdate, configSnapshot: validConfigSnapshot };
+        });
+      } else {
+        vi.mocked(runUpdateFinalizationDoctorInFreshProcess).mockImplementationOnce(async () => {
+          if (phase === "doctor") {
+            retainCleanup();
+          }
+          throw originalError;
+        });
+      }
+      let finished = false;
+      // The explicit phase budget avoids native database-size inspection.
+      const command = updateFinalizeCommand(
+        { json: true, yes: true, timeout: "5", deferCompletionCache: true },
+        ["synthetic-retained-run"],
+      ).then(
+        () => {
+          finished = true;
+          return { error: undefined };
+        },
+        (error: unknown) => {
+          finished = true;
+          return { error };
+        },
+      );
+      try {
+        await Promise.race([
+          joining.promise,
+          command.then(() => {
+            throw new Error("Repair finalization returned before physical settlement");
+          }),
+        ]);
+        expect(finished).toBe(false);
+        expect(finish).toHaveBeenCalledTimes(phase === "restoration" ? 1 : 0);
+        expect(release).not.toHaveBeenCalled();
+        expect(reconcile).not.toHaveBeenCalled();
+        expect(acknowledge).not.toHaveBeenCalled();
+        expect(defaultRuntime.writeJson).not.toHaveBeenCalled();
+        expect(mocks.triage).not.toHaveBeenCalled();
+        expect(listUpdateRuns()[0]?.status).toBe("running");
+      } finally {
+        physicalCleanup.resolve(cleanup);
+        await command;
+      }
+      const { error } = await command;
+      expect(releaseState).toHaveBeenCalledOnce();
+      if (cleanup === "uncertain") {
+        expect(hasCommandProcessCleanupError(error)).toBe(true);
+        if (phase !== "convergence") {
+          expect(collectNestedErrorCandidates(error)).toContain(originalError);
+        }
+        expect(finish).toHaveBeenCalledTimes(phase === "restoration" ? 1 : 0);
+        expect(release).not.toHaveBeenCalled();
+        expect(reconcile).not.toHaveBeenCalled();
+        expect(acknowledge).not.toHaveBeenCalled();
+        expect(defaultRuntime.writeJson).not.toHaveBeenCalled();
+        expect(mocks.triage).not.toHaveBeenCalled();
+        expect(listUpdateRuns()[0]?.status).not.toBe("succeeded");
+      } else {
+        expect(finish).toHaveBeenCalledOnce();
+        expect(finish).toHaveBeenCalledWith(validConfigSnapshot.config);
+        if (phase === "convergence") {
+          expect(error).toBeUndefined();
+          expect(release).not.toHaveBeenCalled();
+          expect(reconcile).toHaveBeenCalledWith({
+            explicit: true,
+            runIds: ["synthetic-retained-run"],
+          });
+          expect(acknowledge).toHaveBeenCalledWith("synthetic-retained-run");
+          expect(defaultRuntime.writeJson).toHaveBeenCalledWith(
+            expect.objectContaining({ status: "ok", mode: "finalize" }),
+          );
+          expect(listUpdateRuns()[0]?.status).toBe("succeeded");
+        } else {
+          expect(error).toBe(originalError);
+          expect(release).toHaveBeenCalledOnce();
+          expect(reconcile).not.toHaveBeenCalled();
+          expect(acknowledge).not.toHaveBeenCalled();
+          expect(defaultRuntime.writeJson).not.toHaveBeenCalled();
+          expect(mocks.triage).toHaveBeenCalledOnce();
+          expect(listUpdateRuns()[0]?.status).toBe("failed");
+        }
       }
     },
   );

@@ -264,6 +264,7 @@ it.each(["forced", "uncertain"] as const)(
   async (cleanupResult) => {
     const fixture = commandFixture();
     const logical = createDeferredCore();
+    const finishLogical = createDeferredCore();
     const original = new Error("nested operation cancelled");
     let outerFinished = false;
     const outer = ownScope(async () => {
@@ -276,6 +277,7 @@ it.each(["forced", "uncertain"] as const)(
         controller.abort();
         await command;
         logical.resolve();
+        await finishLogical.promise;
         throw original;
       }).catch(() => {});
       return "parent finished its callback";
@@ -283,22 +285,54 @@ it.each(["forced", "uncertain"] as const)(
       outerFinished = true;
     });
     const outcome = outer.catch((error: unknown) => error);
-    await logical.promise;
-    await setImmediate();
-    expect(outerFinished).toBe(false);
-    fixture.open();
-    fixture.finish();
-    await setImmediate();
-    expect(outerFinished).toBe(false);
-    fixture.cleanup.resolve(cleanupResult);
-    const result = await outcome;
-    if (cleanupResult === "uncertain") {
-      expect(hasCommandProcessCleanupError(result)).toBe(true);
-    } else {
-      expect(result).toBe("parent finished its callback");
+    try {
+      await logical.promise;
+      await setImmediate();
+      expect(outerFinished).toBe(false);
+      fixture.open();
+      fixture.finish();
+      await setImmediate();
+      expect(outerFinished).toBe(false);
+      fixture.cleanup.resolve(cleanupResult);
+      await setImmediate();
+      expect(outerFinished).toBe(true);
+      const result = await outcome;
+      if (cleanupResult === "uncertain") {
+        expect(hasCommandProcessCleanupError(result)).toBe(true);
+      } else {
+        expect(result).toBe("parent finished its callback");
+      }
+    } finally {
+      finishLogical.resolve();
+      await outcome;
     }
   },
 );
+
+it("closes nested native admission without waiting for its logical callback", async () => {
+  const finishLogical = createDeferredCore();
+  let nested: Promise<unknown> | undefined;
+  let outerFinished = false;
+  const outer = ownScope(async () => {
+    nested = ownScope(async () => {
+      await finishLogical.promise;
+      return await spawnCommand(["fixture"]);
+    }).catch((error: unknown) => error);
+    return "parent finished";
+  }).finally(() => {
+    outerFinished = true;
+  });
+  try {
+    await setImmediate();
+    expect(outerFinished).toBe(true);
+    expect(await outer).toBe("parent finished");
+  } finally {
+    finishLogical.resolve();
+    await Promise.allSettled([outer, nested]);
+  }
+  expect(await nested).toMatchObject({ message: "Command process scope is closed" });
+  expect(transport.spawn).not.toHaveBeenCalled();
+});
 
 it("recognizes canonical cleanup through aggregates without trusting copied code fields", async () => {
   const original = new CommandProcessCleanupError();

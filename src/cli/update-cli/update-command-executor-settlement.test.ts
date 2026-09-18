@@ -1,5 +1,6 @@
 import { setImmediate } from "node:timers/promises";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { collectNestedErrorCandidates } from "../../infra/error-graph-internal.js";
 import type { ManagedHandoffLease } from "../../infra/update-managed-service-handoff-lease.js";
 import type { UpdateRecoveryFence } from "../../infra/update-run-recovery.js";
 import {
@@ -11,10 +12,7 @@ import {
   retainCommandProcessCleanup,
 } from "../../process/exec-spawn.js";
 import { createDeferredCore } from "../../shared/deferred.js";
-import {
-  createUpdateActivationDeadline,
-  UpdateActivationTimeoutError,
-} from "./update-command-activation.js";
+import { UpdateActivationTimeoutError } from "./update-command-activation.js";
 import {
   captureUpdateCommandExecutorAuthority,
   releaseUpdateCommandPreflightForHandoff,
@@ -24,6 +22,7 @@ import {
   type UpdateCommandExecutor,
 } from "./update-command-executor.js";
 import { resolvePackageRuntimePreflight } from "./update-command-service-plan.js";
+import { createUpdateOperationDeadline } from "./update-operation-deadline.js";
 
 const boundaries = vi.hoisted(() => ({ store: vi.fn(), runtime: vi.fn() }));
 vi.mock("../../daemon/runtime-paths.js", async (importOriginal) => ({
@@ -211,12 +210,20 @@ it.each([
       expect(signal?.reason).toBeInstanceOf(UpdateActivationTimeoutError);
       expect(ended).toBe(false);
       expect(rows.size).toBe(kind === "direct" ? 2 : 3);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(ended).toBe(false);
+      expect(rows.size).toBe(kind === "direct" ? 2 : 3);
     } finally {
       cleanup.resolve(cleanupResult);
       await Promise.allSettled([work, child]);
+      await setImmediate();
     }
     const error = await work;
-    expect(error).toBeInstanceOf(UpdateActivationTimeoutError);
+    const timeout = collectNestedErrorCandidates(error).find(
+      (candidate) => candidate instanceof UpdateActivationTimeoutError,
+    );
+    expect(timeout).toBe(signal!.reason);
+    expect(timeout).toMatchObject({ root, timeoutMs: 1000, reason: "update-activation-timeout" });
     expect(hasCommandProcessCleanupError(error)).toBe(cleanupResult === "uncertain");
     if (cleanupResult === "forced") {
       expect(error).toBe(signal!.reason);
@@ -230,6 +237,44 @@ afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
 });
+
+it.each(["direct", "delegated"] as const)(
+  "delivers a bounded %s timeout while its callback remains pending",
+  async (kind) => {
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    const admitted = createDeferredCore();
+    const finish = createDeferredCore();
+    let signal: AbortSignal | undefined;
+    let ended = false;
+    const work = runWithExecutorFence(
+      kind,
+      async () => {
+        signal = resolveCommandProcessSignal();
+        admitted.resolve();
+        await finish.promise;
+        signal!.throwIfAborted();
+      },
+      1000,
+    )
+      .catch((error: unknown) => error)
+      .finally(() => {
+        ended = true;
+      });
+    try {
+      await admitted.promise;
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(ended).toBe(true);
+      expect(await work).toBe(signal!.reason);
+      expect(await work).toBeInstanceOf(UpdateActivationTimeoutError);
+      expect(rows.size).toBe(kind === "direct" ? 1 : 2);
+    } finally {
+      finish.resolve();
+      await work;
+      await setImmediate();
+    }
+    expect(rows.size).toBe(kind === "direct" ? 0 : 2);
+  },
+);
 
 it.each(["forced", "uncertain"] as const)(
   "retains the direct lease until command cleanup reports %s",
@@ -402,12 +447,12 @@ it.each([false, true])(
   "preserves activation timeout provenance without a cause cycle (uncertain: %s)",
   async (uncertain) => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
-    const deadline = createUpdateActivationDeadline();
+    const deadline = createUpdateOperationDeadline();
     const admitted = createDeferredCore();
     const cancelled = createDeferredCore();
     const work = deadline
       .run(async () => {
-        deadline.start(root, 1000);
+        deadline.start(new UpdateActivationTimeoutError(root, 1000), 1000);
         admitted.resolve();
         await cancelled.promise;
         if (uncertain) {
@@ -424,17 +469,20 @@ it.each([false, true])(
       await work;
     }
     const result = await work;
-    expect(result).toBeInstanceOf(UpdateActivationTimeoutError);
-    expect(result).toMatchObject({ root, timeoutMs: 1000, reason: "update-activation-timeout" });
+    const timeout = collectNestedErrorCandidates(result).find(
+      (error) => error instanceof UpdateActivationTimeoutError,
+    );
+    expect(timeout).toBe(deadline.signal.reason);
+    expect(timeout).toMatchObject({ root, timeoutMs: 1000, reason: "update-activation-timeout" });
     if (!uncertain) {
       expect(result).toBe(deadline.signal.reason);
       return;
     }
     expect(result).not.toBe(deadline.signal.reason);
     expect(hasCommandProcessCleanupError(result)).toBe(true);
-    expect(result).toMatchObject({
-      cause: { errors: [deadline.signal.reason, { cause: deadline.signal.reason }] },
-    });
+    expect(collectNestedErrorCandidates(result)).toEqual(
+      expect.arrayContaining([deadline.signal.reason, expect.any(CommandProcessCleanupError)]),
+    );
     const visit = (error: unknown, ancestors = new Set<unknown>()) => {
       if (!(error instanceof Error)) {
         return;
