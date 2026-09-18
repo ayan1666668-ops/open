@@ -279,6 +279,7 @@ internal fun OpenClawWearScreens(
   var realtimeElapsedSeconds by remember { mutableLongStateOf(0L) }
   LaunchedEffect(navigationRequest?.id) {
     val request = navigationRequest ?: return@LaunchedEffect
+    openReply = null
     val destination = wearLaunchPage(request.target, realtimeActive)
     val destinationIndex = homePages.indexOf(destination).takeIf { it >= 0 } ?: 0
     pagerState.scrollToPage(destinationIndex)

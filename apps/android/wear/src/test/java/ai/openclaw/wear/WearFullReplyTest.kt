@@ -11,6 +11,7 @@ import ai.openclaw.wear.shared.WearReplyTextPage
 import ai.openclaw.wear.shared.WearReplyTextStatus
 import ai.openclaw.wear.shared.WearRpcMethod
 import android.app.Application
+import android.content.Intent
 import android.graphics.Bitmap
 import android.provider.Settings
 import androidx.activity.ComponentActivity
@@ -37,6 +38,7 @@ import androidx.compose.ui.test.swipeRight
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.Density
 import androidx.wear.compose.material3.AppScaffold
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.int
@@ -74,6 +76,9 @@ class WearFullReplyTest {
   private val busy = false
   private var fontScale by mutableStateOf(1f)
   private var initialPage = WearHomePage.Chat
+  private var launchState by mutableStateOf(WearLaunchState())
+  private var canceledReads = 0
+  private var talkActions = 0
   private var remoteText = "HEAD SENTINEL\n" + (1..180).joinToString("\n") { "Line $it: Grüße 👩🏽‍🚀" } + "\nTRAILING SENTINEL"
   private var responseGate: CompletableDeferred<Unit>? = null
   private var remoteStatus: WearReplyTextStatus? = null
@@ -91,7 +96,12 @@ class WearFullReplyTest {
           assertEquals("phone", expectedNodeId)
           assertTrue(requirePreferredNode)
           requestCount++
-          responseGate?.await()
+          try {
+            responseGate?.await()
+          } catch (error: CancellationException) {
+            canceledReads++
+            throw error
+          }
           val page = remoteStatus?.let { WearReplyTextPage(it) } ?: WearReplyText.page(remoteText, "owner", params.getValue("offset").jsonPrimitive.int, params["revision"]?.jsonPrimitive?.content)
           val encoded = WearProtocolCodec.encode(WearMessage.Response(requestId = "page", ok = true, result = WearReplyText.encode(page)))
           val response = (WearProtocolCodec.decode(encoded) as WearDecodeResult.Success).message as WearMessage.Response
@@ -401,6 +411,78 @@ class WearFullReplyTest {
     reveal(label(R.string.read_full_reply))
   }
 
+  private fun warmLaunch(target: WearLaunchTarget) {
+    compose.runOnIdle { launchState = launchState.next(Intent().putExtra(extraWearLaunchTarget, target.rawValue)) }
+    compose.waitForIdle()
+  }
+
+  private fun openLocalTail() {
+    openRemote()
+    reveal("TRAILING SENTINEL")
+    compose.onNodeWithText("TRAILING SENTINEL").assertIsDisplayed()
+  }
+
+  @Test
+  fun warmVoiceAndRepeatedChatLaunchesDismissStoredReply() {
+    show()
+    openLocalTail()
+    warmLaunch(WearLaunchTarget.Voice)
+    capture("warm-voice-after-launch")
+    compose.onNodeWithText("TRAILING SENTINEL").assertDoesNotExist()
+    compose.onNodeWithText(label(R.string.dictate)).assertIsDisplayed()
+    warmLaunch(WearLaunchTarget.Chat)
+    repeat(2) {
+      openLocalTail()
+      warmLaunch(WearLaunchTarget.Chat)
+      compose.onNodeWithText("TRAILING SENTINEL").assertDoesNotExist()
+      reveal(label(R.string.read_full_reply))
+    }
+    compose.runOnIdle {
+      assertEquals(4, launchState.nextRequestId)
+      assertEquals(null, launchState.navigationRequest)
+      assertEquals(0, requestCount)
+    }
+  }
+
+  @Test
+  fun warmLaunchCancelsLoadingPageAndReaderCanReopen() {
+    prepareRemote()
+    val gate = CompletableDeferred<Unit>()
+    responseGate = gate
+    show()
+    openRemote()
+    reveal(label(R.string.reply_loading))
+    compose.runOnIdle { assertEquals(1, requestCount) }
+    warmLaunch(WearLaunchTarget.Voice)
+    compose.onNodeWithText(label(R.string.reply_loading)).assertDoesNotExist()
+    compose.onNodeWithText(label(R.string.dictate)).assertIsDisplayed()
+    compose.runOnIdle { assertEquals(1, canceledReads) }
+    gate.complete(Unit)
+    compose.waitForIdle()
+    compose.onNodeWithText("HEAD SENTINEL").assertDoesNotExist()
+    warmLaunch(WearLaunchTarget.Chat)
+    openRemote()
+    reveal("HEAD SENTINEL")
+    compose.onNodeWithText("HEAD SENTINEL").assertIsDisplayed()
+    compose.runOnIdle { assertEquals(2, requestCount) }
+  }
+
+  @Test
+  fun explicitChatLaunchDismissesReaderWithoutStoppingActiveTalk() {
+    val talk = WearRealtimeTalkSnapshot(attemptId = "active-attempt", active = true, listening = true)
+    snapshot = snapshot.copy(realtimeTalk = talk)
+    show()
+    openLocalTail()
+    warmLaunch(WearLaunchTarget.Chat)
+    compose.onNodeWithText("TRAILING SENTINEL").assertDoesNotExist()
+    compose.onNodeWithText(label(R.string.dictate)).assertIsDisplayed()
+    compose.runOnIdle {
+      assertEquals(talk, snapshot.realtimeTalk)
+      assertEquals(0, talkActions)
+      assertEquals(null, launchState.navigationRequest)
+    }
+  }
+
   private fun show(theme: WearThemeMode = WearThemeMode.Dark) {
     val activity = Robolectric.buildActivity(ComponentActivity::class.java).setup().visible()
     controller = activity
@@ -411,6 +493,8 @@ class WearFullReplyTest {
             OpenClawWearScreens(
               snapshot = snapshot,
               initialPage = initialPage,
+              navigationRequest = launchState.navigationRequest,
+              onNavigationRequestHandled = { launchState = launchState.handled(it) },
               readReply = repository::replyText,
               failure = null,
               loading = false,
@@ -430,7 +514,7 @@ class WearFullReplyTest {
               voiceSwipeHintEnabled = false,
               onTalk = {},
               onType = {},
-              onRealtimeTalk = {},
+              onRealtimeTalk = { talkActions++ },
               onAbort = {},
               onSelectAgent = {},
               onSelectSession = {},
