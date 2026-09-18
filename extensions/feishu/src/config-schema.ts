@@ -130,14 +130,28 @@ const BlockStreamingCoalesceSchema = z
   .optional();
 
 // Streaming config: `mode` gates Feishu Card Kit streaming-card replies
-// ("partial" = streaming cards, default; "off" = single final message);
-// `chunkMode`/`block` are the shared delivery controls. Legacy boolean
-// `streaming` and flat chunkMode/blockStreaming/blockStreamingCoalesce keys
-// migrate via `openclaw doctor --fix`.
+// ("partial" = stream the final answer into one card, default; "progress" =
+// coalesce the work timeline (tools/narration/plan) into one live draft card
+// that is repainted in place to the final answer; "off" = single final
+// message). `chunkMode`/`block` are the shared delivery controls. Legacy
+// boolean `streaming` and flat chunkMode/blockStreaming/blockStreamingCoalesce
+// keys migrate via `openclaw doctor --fix`.
 const FeishuStreamingSchema = z
   .object({
-    mode: z.enum(["off", "partial"]).optional(),
+    mode: z.enum(["off", "partial", "progress"]).optional(),
     chunkMode: z.enum(["length", "newline"]).optional(),
+    progress: z
+      .object({
+        toolProgress: z.boolean().optional(),
+        commentary: z.boolean().optional(),
+        narration: z.boolean().optional(),
+        commandText: z.enum(["raw", "status"]).optional(),
+        label: z.union([z.string(), z.literal(false)]).optional(),
+        maxLines: z.number().int().positive().optional(),
+        maxLineChars: z.number().int().positive().optional(),
+      })
+      .strict()
+      .optional(),
     block: z
       .object({
         enabled: z.boolean().optional(),

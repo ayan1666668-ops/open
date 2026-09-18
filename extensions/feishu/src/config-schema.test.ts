@@ -418,6 +418,43 @@ describe("FeishuConfigSchema optimization flags", () => {
     });
   });
 
+  it("accepts streaming.mode 'progress' and the nested progress block", () => {
+    const result = FeishuConfigSchema.parse({
+      streaming: {
+        mode: "progress",
+        progress: {
+          toolProgress: true,
+          commentary: false,
+          narration: true,
+          commandText: "raw",
+          label: "Working",
+          maxLines: 6,
+          maxLineChars: 120,
+        },
+      },
+      accounts: {
+        main: { streaming: { mode: "progress", progress: { commentary: false } } },
+      },
+    });
+
+    expect(result.streaming?.mode).toBe("progress");
+    expect(result.streaming?.progress?.toolProgress).toBe(true);
+    expect(result.streaming?.progress?.commentary).toBe(false);
+    expect(result.streaming?.progress?.label).toBe("Working");
+    expect(result.accounts?.main?.streaming).toEqual({
+      mode: "progress",
+      progress: { commentary: false },
+    });
+  });
+
+  it("rejects unknown keys in the strict streaming.progress block", () => {
+    expect(
+      FeishuConfigSchema.safeParse({
+        streaming: { mode: "progress", progress: { bogus: true } },
+      }).success,
+    ).toBe(false);
+  });
+
   it.each([
     ["boolean streaming", { streaming: true }],
     ["flat blockStreaming", { blockStreaming: true }],
