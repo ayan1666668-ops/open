@@ -498,8 +498,7 @@ export async function createSessionRowProjection(params: {
         (event.phase === "catalog-published" || event.phase === "catalog-failed") &&
         event.modelFactsChanged === false &&
         modelCatalog !== undefined &&
-        (!(modelCatalog instanceof Map) ||
-          [...modelCatalog.values()].every((catalog) => catalog !== undefined))
+        (!(modelCatalog instanceof Map) || ![...modelCatalog.values()].includes(undefined))
       ) {
         return;
       }
