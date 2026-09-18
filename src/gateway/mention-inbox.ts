@@ -427,13 +427,9 @@ export function createMentionInbox(params: {
   });
   const stopSessions = onSessionIdentityMutation(() => invalidate());
 
-  function readOperation<T>(operation: () => Result<T, ErrorShape>): Result<T, ErrorShape> {
-    if (active) {
-      try {
-        return operation();
-      } catch {
-        log.warn("The mention Inbox could not read or save its current state. Reconnect to retry.");
-      }
+  function unavailable(warn = false): Result<never, ErrorShape> {
+    if (warn) {
+      log.warn("The mention Inbox could not read or save its current state. Reconnect to retry.");
     }
     return err(
       errorShape(ErrorCodes.UNAVAILABLE, "The mention Inbox is unavailable. Reconnect to retry.", {
@@ -442,11 +438,31 @@ export function createMentionInbox(params: {
     );
   }
 
+  function readOperation<T>(operation: () => Result<T, ErrorShape>): Result<T, ErrorShape> {
+    if (active) {
+      try {
+        return operation();
+      } catch {
+        return unavailable(true);
+      }
+    }
+    return unavailable();
+  }
+
   refresh();
 
   return {
-    mentionable: (...args: Parameters<typeof policy.mentionable>) =>
-      readOperation(() => policy.mentionable(...args)),
+    async mentionable(...args: Parameters<typeof policy.mentionable>) {
+      try {
+        // A committed profile change can invalidate preparation before this continuation runs.
+        while (policy.needsDirectoryPreparation()) {
+          await policy.prepareDirectory();
+        }
+      } catch {
+        return unavailable(true);
+      }
+      return readOperation(() => policy.mentionable(...args));
+    },
     validateRecipients: (...args: Parameters<typeof policy.validateRecipients>) =>
       readOperation(() => policy.validateRecipients(...args)),
     list(client: GatewayClient | null): Result<MentionsListResult, ErrorShape> {

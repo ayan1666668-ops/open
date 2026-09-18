@@ -88,6 +88,27 @@ export function listProfiles(options: OpenClawStateDatabaseOptions = {}) {
   );
 }
 
+/** Disclosure scopes need current aliases, never the resident display catalog. */
+export function readCurrentUserProfileAliases(
+  profileId: string,
+  options: OpenClawStateDatabaseOptions = {},
+): ReadonlySet<string> {
+  ensureUserProfilesSchema(options);
+  const database = openOpenClawStateDatabase(options);
+  return runSqliteDeferredTransactionSync(database.db, () => {
+    const canonicalId =
+      selectResolvedUserProfileMetadataById(database.db, profileId)?.id ?? profileId;
+    const aliases = executeSqliteQuerySync(
+      database.db,
+      userProfilesDb(database.db)
+        .selectFrom("user_profiles")
+        .select("id")
+        .where("merged_into", "=", canonicalId),
+    ).rows;
+    return new Set([canonicalId, ...aliases.map((row) => row.id)]);
+  });
+}
+
 /** True when session-sharing policy can distinguish at least two durable people. */
 export function hasMultipleSessionSharingIdentities(
   options: OpenClawStateDatabaseOptions = {},

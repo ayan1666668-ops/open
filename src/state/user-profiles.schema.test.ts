@@ -7,13 +7,16 @@ import {
   openOpenClawStateDatabase,
   runOpenClawStateWriteTransaction,
 } from "./openclaw-state-db.js";
-import { readUserProfileIdentity, retainUserProfileCatalog } from "./user-profile-list.js";
+import {
+  listProfiles,
+  readUserProfileIdentity,
+  retainUserProfileCatalog,
+} from "./user-profile-list.js";
 import {
   ensureProfileForEmail,
   getUserProfileDisplay,
   getUserProfileListItem,
   getUserProfileRole,
-  listProfiles,
   resolveUserProfileId,
   setUserProfileRole,
 } from "./user-profiles.js";

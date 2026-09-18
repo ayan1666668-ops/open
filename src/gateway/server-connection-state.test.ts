@@ -72,8 +72,8 @@ describe("gateway connection state", () => {
         };
         state.clients.add(peer.client);
       }
-      const recipientOnline = () => {
-        const result = state.mentionInbox.mentionable(requester.client, {
+      const recipientOnline = async () => {
+        const result = await state.mentionInbox.mentionable(requester.client, {
           agentId: "main",
           visibility: "shared",
         });
@@ -85,15 +85,15 @@ describe("gateway connection state", () => {
         )?.online;
       };
 
-      expect(recipientOnline()).toBe(true);
+      expect(await recipientOnline()).toBe(true);
       recipient.socket.readyState = WebSocket.CLOSING;
-      expect(recipientOnline()).toBe(false);
+      expect(await recipientOnline()).toBe(false);
       recipient.socket.readyState = WebSocket.OPEN;
       recipient.client.connect.role = "node";
-      expect(recipientOnline()).toBe(false);
+      expect(await recipientOnline()).toBe(false);
       recipient.client.connect.role = "operator";
       recipient.client.invalidated = true;
-      expect(recipientOnline()).toBe(false);
+      expect(await recipientOnline()).toBe(false);
     });
   });
 

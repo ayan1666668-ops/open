@@ -7,11 +7,11 @@ import {
   closeOpenClawStateDatabaseForTest,
   openOpenClawStateDatabase,
 } from "./openclaw-state-db.js";
+import { listProfiles } from "./user-profile-list.js";
 import {
   adoptTailscaleProfileAvatar,
   ensureProfileForEmail,
   getProfileAvatar,
-  listProfiles,
   setDisplayName,
 } from "./user-profiles.js";
 

@@ -7,6 +7,7 @@ import {
   runOpenClawStateWriteTransaction,
 } from "./openclaw-state-db.js";
 import { readUserProfileVersion } from "./user-profile-events.js";
+import { listProfiles } from "./user-profile-list.js";
 import { mergeOwnerIntoPerson, profileState } from "./user-profiles-owner.test-support.js";
 import { UserProfileOwnerError } from "./user-profiles-schema.js";
 import {
@@ -14,7 +15,6 @@ import {
   ensureProfileForEmail,
   ensureProfileForTailscaleIdentity,
   linkEmail,
-  listProfiles,
   setDisplayName,
   setUserProfileRole,
   syncGitHubIdentity,

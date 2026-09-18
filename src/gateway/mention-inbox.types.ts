@@ -23,7 +23,7 @@ export type MentionInbox = {
   mentionable: (
     client: GatewayClient | null,
     input: UsersMentionableParams,
-  ) => Result<UsersMentionableResult, ErrorShape>;
+  ) => Promise<Result<UsersMentionableResult, ErrorShape>>;
   validateRecipients: (
     client: GatewayClient | null,
     input: UsersMentionableParams,

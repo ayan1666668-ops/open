@@ -14,10 +14,10 @@ import {
   readUserProfileAliasRevision,
   readUserProfileVersion,
 } from "./user-profile-events.js";
+import { listProfiles } from "./user-profile-list.js";
 import {
   ensureProfileForEmail,
   linkEmail,
-  listProfiles,
   readUserProfileAliases,
   resolveUserProfileId,
   setAvatar,

@@ -43,6 +43,7 @@ import type { AgentProvenance } from "./agent-provenance.types.js";
 import type { PreparedBackupRunRecord } from "./backup-run-records.kernel.js";
 import type { OpenClawStateLeaseIdentity } from "./openclaw-state-lease-store.js";
 import type { UserPreferenceWorkerOperations } from "./user-preferences.types.js";
+import type { UserProfileReadWorkerOperations } from "./user-profiles.worker.js";
 
 /** Commands share one physical shared-state actor; bindings belong to commands, not open input. */
 export type OpenClawStateWorkerOperations = WebPushWorkerOperations &
@@ -51,6 +52,7 @@ export type OpenClawStateWorkerOperations = WebPushWorkerOperations &
   HostedCatalogSnapshotWorkerOperations &
   PluginStateWorkerOperations &
   UserPreferenceWorkerOperations &
+  UserProfileReadWorkerOperations &
   CronStoreWorkerOperations &
   CronStoreSaveWorkerOperations &
   SessionDeliveryWorkerOperations &

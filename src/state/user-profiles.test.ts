@@ -12,6 +12,7 @@ import {
 } from "./openclaw-state-db.js";
 import { getUserPreferences, setUserPreferences } from "./user-preferences.js";
 import { onUserProfilesChanged, readUserProfileVersion } from "./user-profile-events.js";
+import { listProfiles } from "./user-profile-list.js";
 import { migrateLegacyTailscaleProfileIdentities } from "./user-profiles-tailscale-migration.js";
 import {
   adoptTailscaleProfileAvatar,
@@ -23,7 +24,6 @@ import {
   getUserProfileListItem,
   getUserProfileRole,
   linkEmail,
-  listProfiles,
   setAvatar,
   setDisplayName,
   setUserProfileRole,

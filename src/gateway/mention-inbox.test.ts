@@ -3,13 +3,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   validateMentionsListResult,
   validateUsersMentionableResult,
-  type ErrorShape,
 } from "../../packages/gateway-protocol/src/index.js";
-import type { SessionEntry } from "../config/sessions.js";
-import { upsertSessionEntryCore } from "../config/sessions/session-accessor.js";
+import { createDeferred } from "../../test/helpers/promise.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { emitSessionIdentityMutation } from "../sessions/session-lifecycle-events.js";
 import { openOpenClawStateDatabase } from "../state/openclaw-state-db.js";
+import * as userProfileReads from "../state/user-profile-reads.js";
 import {
   ensureGatewayOwnerProfile,
   ensureProfileForEmail,
@@ -18,143 +17,34 @@ import {
   setUserProfileRole,
   syncGitHubIdentity,
 } from "../state/user-profiles.js";
-import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import { createMentionInbox } from "./mention-inbox.js";
-import type { MentionCommittedInput, MentionInbox } from "./mention-inbox.types.js";
+import { read, SESSION_ID, SESSION_KEY, withInbox } from "./mention-inbox.test-support.js";
 import { invalidateOperatorRolePolicy } from "./operator-role-policy.js";
-import { mentionHandlers } from "./server-methods/mentions.js";
 import { identifiedClient, soloClient } from "./server-methods/sessions-sharing.test-support.js";
-import type { GatewayClient, GatewayRequestContext } from "./server-methods/types.js";
-import { usersMentionableHandlers } from "./server-methods/users-mentionable.js";
-
-const SESSION_KEY = "agent:main:dashboard:mention-test";
-const SESSION_ID = "mention-test-session";
-const handlers = { ...mentionHandlers, ...usersMentionableHandlers };
-type InboxFixtureOptions = { notifications?: boolean; beforeInbox?: () => void };
 
 afterEach(() => vi.useRealTimers());
 
-async function withInbox(
-  run: (fixture: Awaited<ReturnType<typeof createFixture>>) => Promise<void>,
-  cfg: OpenClawConfig = {},
-  options: InboxFixtureOptions = {},
-) {
-  await withOpenClawTestState({ scenario: "minimal" }, async () => {
-    const fixture = await createFixture(cfg, options);
-    try {
-      await run(fixture);
-    } finally {
-      fixture.dispose();
-      vi.useRealTimers();
-    }
-  });
-}
-
-async function createFixture(cfg: OpenClawConfig, options: InboxFixtureOptions) {
-  const alice = ensureProfileForEmail("alice@mentions.example.test");
-  const bob = ensureProfileForEmail("bob@mentions.example.test");
-  const carol = ensureProfileForEmail("carol@mentions.example.test");
-  setDisplayName(alice.id, "Alice");
-  setDisplayName(bob.id, "Bob");
-  setDisplayName(carol.id, "Carol");
-  const aliceClient = { ...identifiedClient(alice.id, "Alice"), connId: "alice" };
-  const bobClient = { ...identifiedClient(bob.id, "Bob"), connId: "bob-one" };
-  const bobSecond = { ...identifiedClient(bob.id, "Bob"), connId: "bob-two" };
-  const carolClient = { ...identifiedClient(carol.id, "Carol"), connId: "carol" };
-  const clients: GatewayClient[] = [aliceClient, bobClient, bobSecond, carolClient];
-  const broadcast = vi.fn();
-  const push = vi.fn<NonNullable<Parameters<typeof createMentionInbox>[0]["onMentionCreated"]>>();
-  const setSession = (entry: Partial<SessionEntry>, sessionKey = SESSION_KEY) =>
-    upsertSessionEntryCore(
-      { agentId: "main", sessionKey },
-      {
-        sessionId: SESSION_ID,
-        updatedAt: Date.now(),
-        visibility: "shared",
-        createdActor: { type: "human", source: "profile", id: alice.id },
-        ...entry,
-      },
-    );
-  await setSession({ displayName: "Design review" });
-  const inboxes = new Set<MentionInbox>();
-  const openInbox = (gatewayInstanceId = "mention-gateway") => {
-    const inbox = createMentionInbox({
-      gatewayInstanceId,
-      getRuntimeConfig: () => cfg,
-      getClients: () => clients,
-      broadcastToConnIds: broadcast,
-      onMentionCreated: options.notifications === false ? undefined : push,
+function holdDirectoryRead() {
+  const readDirectory = userProfileReads.readUserProfileDirectory;
+  const ready = createDeferred();
+  const release = createDeferred();
+  const spy = vi
+    .spyOn(userProfileReads, "readUserProfileDirectory")
+    .mockImplementationOnce(async (...args) => {
+      const result = await readDirectory(...args).then(
+        (directory) => {
+          ready.resolve();
+          return directory;
+        },
+        (error: unknown) => {
+          ready.reject(error);
+          throw error;
+        },
+      );
+      await release.promise;
+      return result;
     });
-    inboxes.add(inbox);
-    return inbox;
-  };
-  options.beforeInbox?.();
-  const inbox = openInbox();
-  const context = { mentionInbox: inbox } as GatewayRequestContext;
-  async function call(method: string, params: Record<string, unknown>, client = bobClient) {
-    let response: { ok: boolean; payload?: unknown; error?: ErrorShape } | undefined;
-    const handler = handlers[method];
-    if (!handler) {
-      throw new Error(`Missing test method ${method}`);
-    }
-    await handler({
-      req: { type: "req", id: "mention-test", method, params },
-      client,
-      params,
-      context,
-      isWebchatConnect: () => true,
-      respond: (ok, payload, error) => {
-        response = { ok, payload, error };
-      },
-    });
-    if (!response) {
-      throw new Error(`${method} did not respond`);
-    }
-    return response;
-  }
-  return {
-    alice,
-    bob,
-    carol,
-    aliceClient,
-    bobClient,
-    bobSecond,
-    carolClient,
-    clients,
-    inbox,
-    call,
-    broadcast,
-    push,
-    setSession,
-    openInbox,
-    dispose() {
-      for (const instance of inboxes) {
-        instance.dispose();
-      }
-    },
-    post(sourceId = "source-one", overrides: Partial<MentionCommittedInput> = {}, target = inbox) {
-      target.recordCommittedInput({
-        sourceId,
-        sessionKey: SESSION_KEY,
-        agentId: "main",
-        sessionId: SESSION_ID,
-        messageId: `message-${sourceId}`,
-        senderProfileId: alice.id,
-        recipientProfileIds: [bob.id],
-        excerpt: "@Bob review **this change**",
-        ...overrides,
-      });
-    },
-  };
-}
-
-function read(inbox: MentionInbox, client: GatewayClient) {
-  const result = inbox.list(client);
-  if (!result.ok) {
-    throw new Error(result.error.message);
-  }
-  expect(validateMentionsListResult(result.value)).toBe(true);
-  return result.value;
+  return { ready: ready.promise, release: release.resolve, restore: () => spy.mockRestore() };
 }
 
 describe("temporary human mention Inbox", () => {
@@ -477,7 +367,7 @@ describe("temporary human mention Inbox", () => {
         ok: false,
         error: { code: "UNAVAILABLE" },
       });
-      expect(f.inbox.mentionable(f.aliceClient, { sessionKey: SESSION_KEY })).toMatchObject({
+      expect(await f.inbox.mentionable(f.aliceClient, { sessionKey: SESSION_KEY })).toMatchObject({
         ok: false,
         error: { code: "UNAVAILABLE" },
       });
@@ -621,7 +511,7 @@ describe("temporary human mention Inbox", () => {
       client.connect.scopes = [admin ? "operator.admin" : "operator.read"];
       f.post("owner", { recipientProfileIds: [owner.id] });
       expect(read(f.inbox, client).items).toHaveLength(visible ? 1 : 0);
-      expect(f.inbox.mentionable(client, { sessionKey: SESSION_KEY }).ok).toBe(visible);
+      expect((await f.inbox.mentionable(client, { sessionKey: SESSION_KEY })).ok).toBe(visible);
     }, cfg);
   });
 
@@ -764,6 +654,76 @@ describe("temporary human mention Inbox", () => {
 });
 
 describe("human mention directory", () => {
+  it("discards a completed directory read when a linked handle changes before selection", async () => {
+    await withInbox(async (f) => {
+      const syncLogin = (login: string) =>
+        syncGitHubIdentity({
+          identity: { accountId: 42, login },
+          authenticationAlias: { kind: "email", email: "bob@mentions.example.test" },
+        });
+      syncLogin("bob-before");
+      const held = holdDirectoryRead();
+      const pending = f.call(
+        "users.mentionable",
+        { sessionKey: SESSION_KEY, query: "bob-after" },
+        f.aliceClient,
+      );
+      try {
+        await held.ready;
+        syncLogin("bob-after");
+        setDisplayName(f.bob.id, "Robert Updated");
+        held.release();
+        const response = await pending;
+        expect(response.error).toBeUndefined();
+        expect(response).toMatchObject({
+          ok: true,
+          payload: { users: [{ profileId: f.bob.id, displayName: "Robert Updated" }] },
+        });
+        expect(
+          await f.inbox.mentionable(f.aliceClient, {
+            sessionKey: SESSION_KEY,
+            query: "bob-before",
+          }),
+        ).toMatchObject({ ok: true, value: { users: [] } });
+      } finally {
+        held.release();
+        await pending;
+        held.restore();
+      }
+    });
+  });
+
+  it.each([
+    { change: "requester invalidation", code: "FORBIDDEN" },
+    { change: "session visibility", code: "INVALID_REQUEST" },
+    { change: "disposal", code: "UNAVAILABLE" },
+  ] as const)("rechecks $change after directory preparation", async ({ change, code }) => {
+    await withInbox(async (f) => {
+      const held = holdDirectoryRead();
+      const pending = f.call(
+        "users.mentionable",
+        { sessionKey: SESSION_KEY, query: "Alice" },
+        f.bobClient,
+      );
+      try {
+        await held.ready;
+        if (change === "requester invalidation") {
+          Object.assign(f.bobClient, { invalidated: true });
+        } else if (change === "session visibility") {
+          await f.setSession({ visibility: "draft" });
+        } else {
+          f.inbox.dispose();
+        }
+        held.release();
+        expect(await pending).toMatchObject({ ok: false, error: { code } });
+      } finally {
+        held.release();
+        await pending;
+        held.restore();
+      }
+    });
+  });
+
   it("resolves verified handles and full names to the same recipient without exposing account data", async () => {
     await withInbox(async (f) => {
       syncGitHubIdentity({
@@ -803,10 +763,10 @@ describe("human mention directory", () => {
         authenticationAlias: { kind: "email", email: "bob@mentions.example.test" },
       });
       expect(
-        f.inbox.mentionable(f.aliceClient, { sessionKey: SESSION_KEY, query: "bobby" }),
+        await f.inbox.mentionable(f.aliceClient, { sessionKey: SESSION_KEY, query: "bobby" }),
       ).toMatchObject({ ok: true, value: { users: [] } });
       expect(
-        f.inbox.mentionable(f.aliceClient, { sessionKey: SESSION_KEY, query: "robert-new" }),
+        await f.inbox.mentionable(f.aliceClient, { sessionKey: SESSION_KEY, query: "robert-new" }),
       ).toMatchObject({ ok: true, value: { users: [{ profileId: f.bob.id }] } });
     });
   });
@@ -840,7 +800,7 @@ describe("human mention directory", () => {
         ]);
       }
       setDisplayName(offline.id, "Dana");
-      const renamed = f.inbox.mentionable(f.aliceClient, {
+      const renamed = await f.inbox.mentionable(f.aliceClient, {
         sessionKey: SESSION_KEY,
         query: "Dana",
       });
@@ -917,7 +877,7 @@ describe("human mention directory", () => {
         f.clients.length = 0;
         const sessionId = sessionKey === SESSION_KEY ? SESSION_ID : "incognito-policy-session";
         await f.setSession({ sessionId, ...entry }, sessionKey);
-        const directory = f.inbox.mentionable(f.aliceClient, { sessionKey, query: "Bob" });
+        const directory = await f.inbox.mentionable(f.aliceClient, { sessionKey, query: "Bob" });
         const admission = f.inbox.validateRecipients(f.aliceClient, { sessionKey }, [f.bob.id]);
         f.post("policy-source", { sessionKey, sessionId });
         expect({
@@ -945,7 +905,7 @@ describe("human mention directory", () => {
     await withInbox(
       async (f) => {
         const draft = { agentId: "ops", query: "Bob" };
-        expect(f.inbox.mentionable(f.aliceClient, draft)).toMatchObject({
+        expect(await f.inbox.mentionable(f.aliceClient, draft)).toMatchObject({
           ok: true,
           value: { users: [{ profileId: f.bob.id, displayName: "Bob" }] },
         });
@@ -968,14 +928,14 @@ describe("human mention directory", () => {
 
   it("applies creation and current visibility policy without accepting unavailable recipients", async () => {
     await withInbox(async (f) => {
-      expect(f.inbox.mentionable(f.aliceClient, { agentId: "main" })).toMatchObject({
+      expect(await f.inbox.mentionable(f.aliceClient, { agentId: "main" })).toMatchObject({
         ok: true,
         value: { truncated: false },
       });
       expect(
-        f.inbox.mentionable(f.aliceClient, { agentId: "main", visibility: "draft" }),
+        await f.inbox.mentionable(f.aliceClient, { agentId: "main", visibility: "draft" }),
       ).toMatchObject({ ok: true, value: { users: [] } });
-      expect(f.inbox.mentionable(f.aliceClient, { agentId: "missing" }).ok).toBe(false);
+      expect((await f.inbox.mentionable(f.aliceClient, { agentId: "missing" })).ok).toBe(false);
       expect(
         f.inbox.validateRecipients(f.aliceClient, { sessionKey: SESSION_KEY }, [f.alice.id]).ok,
       ).toBe(false);
@@ -984,7 +944,7 @@ describe("human mention directory", () => {
           .ok,
       ).toBe(false);
       await f.setSession({ visibility: "draft" });
-      const hidden = f.inbox.mentionable(f.bobClient, { sessionKey: SESSION_KEY });
+      const hidden = await f.inbox.mentionable(f.bobClient, { sessionKey: SESSION_KEY });
       expect(hidden).toMatchObject({
         ok: false,
         error: { code: "INVALID_REQUEST", message: "Session was not found." },
@@ -1001,14 +961,17 @@ describe("human mention directory", () => {
         const profile = ensureProfileForEmail(`teammate-${index}@mentions.example.test`);
         setDisplayName(profile.id, `Teammate ${index}`);
       }
-      const result = f.inbox.mentionable(f.aliceClient, {
+      const result = await f.inbox.mentionable(f.aliceClient, {
         sessionKey: SESSION_KEY,
         query: "Teammate",
       });
       expect(result.ok && result.value.truncated).toBe(true);
       expect(result.ok && result.value.users.length).toBe(100);
       expect(
-        f.inbox.mentionable(f.aliceClient, { sessionKey: SESSION_KEY, query: "Teammate 104" }),
+        await f.inbox.mentionable(f.aliceClient, {
+          sessionKey: SESSION_KEY,
+          query: "Teammate 104",
+        }),
       ).toMatchObject({
         ok: true,
         value: { users: [{ displayName: "Teammate 104", online: false }], truncated: false },
