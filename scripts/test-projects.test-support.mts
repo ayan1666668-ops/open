@@ -2747,6 +2747,14 @@ const SEMANTIC_TOOLING_TARGET_PATTERNS: Array<[RegExp, string[]]> = [
     ["auth-monitor"],
   ],
   [/^scripts\/native-app-i18n\.ts$/u, ["native-app-i18n", workflowGuards]],
+  [
+    /^scripts\/github\/(?:dependency-guard|guard-shared)\.mjs$/u,
+    ["dependency-guard-script", "dependency-guard-workflow"],
+  ],
+  [
+    /^scripts\/github\/(?:security-sensitive-guard|guard-shared)\.mjs$/u,
+    ["security-sensitive-guard-script", "security-sensitive-guard-workflow"],
+  ],
   [/^scripts\/plugin-clawhub-release-check\.ts$/u, ["release-wrapper-scripts"]],
   [
     /^scripts\/generate-runtime-sidecar-paths-baseline\.ts$/u,

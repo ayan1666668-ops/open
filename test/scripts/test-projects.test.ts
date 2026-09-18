@@ -1508,6 +1508,16 @@ describe("scripts/test-projects changed-target routing", () => {
     );
   });
 
+  it("keeps security-sensitive guard workflow edits on guard workflow tests", () => {
+    expectChangedTargets(
+      [".github/workflows/security-sensitive-guard.yml"],
+      [
+        "test/scripts/security-sensitive-guard-workflow.test.ts",
+        "test/scripts/ci-workflow-guards.test.ts",
+      ],
+    );
+  });
+
   it("keeps Crabbox and Testbox workflow edits on workflow regression tests", () => {
     const workflowTargets = new Map([
       [
@@ -1728,8 +1738,34 @@ describe("scripts/test-projects changed-target routing", () => {
     );
 
     expectChangedTargets(
+      ["scripts/github/dependency-guard.mjs"],
+      [
+        "test/scripts/dependency-guard-script.test.ts",
+        "test/scripts/dependency-guard-workflow.test.ts",
+      ],
+    );
+
+    expectChangedTargets(
+      ["scripts/github/guard-shared.mjs"],
+      [
+        "test/scripts/dependency-guard-script.test.ts",
+        "test/scripts/dependency-guard-workflow.test.ts",
+        "test/scripts/security-sensitive-guard-script.test.ts",
+        "test/scripts/security-sensitive-guard-workflow.test.ts",
+      ],
+    );
+
+    expectChangedTargets(
       ["scripts/github/run-openclaw-cross-os-release-checks.sh"],
       ["test/scripts/openclaw-cross-os-release-workflow.test.ts"],
+    );
+
+    expectChangedTargets(
+      ["scripts/github/security-sensitive-guard.mjs"],
+      [
+        "test/scripts/security-sensitive-guard-script.test.ts",
+        "test/scripts/security-sensitive-guard-workflow.test.ts",
+      ],
     );
 
     expectChangedTargets(
