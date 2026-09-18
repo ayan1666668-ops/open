@@ -3933,15 +3933,6 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
       const before = getCommittedCompactPlan(options.compactMode, runnerBackend);
       const after = createNodeTestShardBundles(changedOptions);
       const groups = after.flatMap((shard) => shard.groups);
-      expect(groups.filter((group) => group.shard_name === "agentic-plugins")).toEqual([
-        {
-          shard_name: "agentic-plugins",
-          configs: ["test/vitest/vitest.plugins.config.ts"],
-          includePatterns: ["src/plugins/tools.optional.test.ts"],
-          requiresDist: false,
-          runner: expect.stringMatching(/^blacksmith-(?:4|8)vcpu-ubuntu-2404$/u),
-        },
-      ]);
       type Group = (typeof groups)[number];
       const isRepartitionableTooling = (group: Group) =>
         runnerBackend === "github" &&
@@ -4017,6 +4008,23 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
         }
         return group.env;
       };
+      expect(
+        groups
+          .filter((group) => group.shard_name === "agentic-plugins")
+          .map((group) =>
+            Object.assign({}, group, {
+              env: declarationEnv(group, after, afterInherited),
+            }),
+          ),
+      ).toEqual([
+        {
+          shard_name: "agentic-plugins",
+          configs: ["test/vitest/vitest.plugins.config.ts"],
+          includePatterns: ["src/plugins/tools.optional.test.ts"],
+          requiresDist: false,
+          runner: expect.stringMatching(/^blacksmith-(?:4|8)vcpu-ubuntu-2404$/u),
+        },
+      ]);
       const expectedTimingKeys = (
         parent: string,
         family: Array<{ group: Group; part: number }>,
