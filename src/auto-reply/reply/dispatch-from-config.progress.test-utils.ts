@@ -9,7 +9,6 @@ import {
   createDispatcher,
   emptyConfig,
   hookMocks,
-  replyMediaPathMocks,
   sessionStoreMocks,
   ttsMocks,
 } from "./dispatch-from-config.shared.test-harness.js";
