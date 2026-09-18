@@ -51,7 +51,7 @@ interface SidebarMenusControllerState {
   identityMenuPosition: { x: number; bottom: number; width: number } | null;
 }
 
-export type SidebarFilterMenuView = "root" | "filters" | "view" | "specific-owner";
+export type SidebarFilterMenuView = "root" | "specific-owner";
 
 type SidebarMenusRenderer = typeof import("./sidebar-menus-render.ts");
 
@@ -356,7 +356,6 @@ export class SidebarMenusController implements ReactiveController, SidebarMenusC
     const rect = trigger.getBoundingClientRect();
     this.dismissTransientMenus();
     this.sessionSortMenuTrigger = trigger;
-    this.filterMenuView = "root";
     this.updateState("sessionSortMenuPosition", {
       x: Math.max(8, Math.min(rect.right, window.innerWidth - menuWidth - 8)),
       y: Math.max(8, Math.min(rect.bottom + 4, window.innerHeight - menuMaxHeight - 8)),
@@ -387,7 +386,7 @@ export class SidebarMenusController implements ReactiveController, SidebarMenusC
   }
 
   setFilterMenuView(view: SidebarFilterMenuView) {
-    if (!this.sessionSortMenuPosition && !this.catalogViewMenuPosition) {
+    if (!this.catalogViewMenuPosition) {
       return;
     }
     this.filterMenuView = view;
