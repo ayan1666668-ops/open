@@ -17,6 +17,7 @@ import {
 } from "../plugins/loader.test-fixtures.js";
 import { loadPluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.js";
 import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
+import type { PluginRegistry } from "../plugins/registry-types.js";
 import { getActivePluginRegistry } from "../plugins/runtime.js";
 import { withPluginRuntimeGenerationScope } from "../plugins/runtime/generation-scope.js";
 import { resolvePluginTools } from "../plugins/tools.js";
@@ -108,9 +109,17 @@ it.each(["fresh", "discovery reuse", "tool discovery reuse", "acquired"] as cons
       basePluginIds: [plugin.id],
       reusableRegistry,
     };
-    const acquired =
-      kind === "acquired" ? await acquireAgentRuntimePluginRegistry(params) : undefined;
-    const registry = acquired?.registry ?? loadAgentRuntimePluginRegistryHandle(params);
+    let registry: PluginRegistry;
+    let releaseRegistry: (() => Promise<void>) | undefined;
+    if (kind === "acquired") {
+      const acquired = await acquireAgentRuntimePluginRegistry(params);
+      registry = acquired.registry;
+      if ("releaseRegistry" in acquired) {
+        releaseRegistry = acquired.releaseRegistry;
+      }
+    } else {
+      registry = loadAgentRuntimePluginRegistryHandle(params);
+    }
     try {
       expect(registry.diagnostics.filter((entry) => entry.level === "error")).toEqual([]);
       expect(registry.channels.map((entry) => entry.plugin.id)).toContain(plugin.id);
@@ -146,7 +155,7 @@ it.each(["fresh", "discovery reuse", "tool discovery reuse", "acquired"] as cons
         },
       );
     } finally {
-      if (acquired && "releaseRegistry" in acquired) await acquired.releaseRegistry();
+      await releaseRegistry?.();
     }
   },
 );
