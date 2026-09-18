@@ -230,7 +230,7 @@ describe("resolveSystemRunApprovalRuntimeContext", () => {
         commandText: "jq --version",
         commandPreview: null,
         agentId: "main",
-        sessionKey: null,
+        sessionKey: "agent:main:dashboard:abc123",
       },
       argv: ["jq", "--version"],
       cwd: "/tmp",
