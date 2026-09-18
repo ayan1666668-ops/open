@@ -23,6 +23,7 @@ import {
   deleteMaterializedSessionStatePlans,
   planSessionStateDeleteIfUnreferenced,
   readReferencedSessionIds,
+  withBatchedSessionReferenceAnalysis,
 } from "./session-accessor.sqlite-lifecycle-state.js";
 import { deleteSessionNodeArtifacts } from "./session-accessor.sqlite-node-artifacts.js";
 import {
@@ -45,6 +46,15 @@ export type SessionTombstoneSweepResult = {
   sweptTranscriptStates: number;
   olderThanMs: number;
 };
+
+/**
+ * Candidates whose reference analysis shares one pass over the store.
+ *
+ * Bounded so the narrowed predicate stays small and so the memo it fills holds
+ * at most this many ids; a larger batch buys progressively less because the pass
+ * is already amortized away from the per-candidate cost.
+ */
+const TOMBSTONE_REFERENCE_BATCH_SIZE = 32;
 
 type TombstoneCandidate = {
   currentSessionId: string;
@@ -169,9 +179,10 @@ function sameCandidate(left: TombstoneCandidate, right: TombstoneCandidate | und
  * Both consumers only ask about those generations —
  * `planSessionStateDeleteIfUnreferenced` tests `plan.sessionId`, and
  * `deleteMaterializedSessionStatePlans` tests the same ids — so restricting the
- * set cannot change a decision, and it lets every read be bounded. The reference
- * scan runs once per generation because its single-id form pushes an `instr`
- * predicate into SQLite; the admission probe uses its candidate-scoped form.
+ * set cannot change a decision, and it lets every read be bounded. One read
+ * covers every generation the placeholder owns: the narrowed reference predicate
+ * takes an id set, so a multi-generation placeholder no longer costs one pass per
+ * generation. The admission probe uses its candidate-scoped form.
  */
 function readProtectedSessionIds(params: {
   candidate: TombstoneCandidate;
@@ -179,14 +190,9 @@ function readProtectedSessionIds(params: {
   storePath: string;
 }): Set<string> {
   const excludedSessionKeys = new Set([params.candidate.sessionKey]);
-  const protectedSessionIds = new Set<string>();
-  for (const sessionId of params.candidate.generationIds) {
-    for (const referenced of readReferencedSessionIds(params.database, excludedSessionKeys, [
-      sessionId,
-    ])) {
-      protectedSessionIds.add(referenced);
-    }
-  }
+  const protectedSessionIds = new Set(
+    readReferencedSessionIds(params.database, excludedSessionKeys, params.candidate.generationIds),
+  );
   for (const sessionId of collectAdmissionProtectedCandidateSessionIds({
     candidateSessionIds: params.candidate.generationIds,
     candidateSessionKey: params.candidate.sessionKey,
@@ -236,7 +242,7 @@ async function sweepTombstonedCronRunRemnants(params: {
 
   let removedNodes = 0;
   let sweptTranscriptStates = 0;
-  for (const candidate of candidates) {
+  const reclaim = async (candidate: TombstoneCandidate): Promise<void> => {
     const result = await runExclusiveSessionLifecycleMutation({
       scope: params.storePath,
       identities: [candidate.sessionKey, ...candidate.generationIds],
@@ -349,7 +355,7 @@ async function sweepTombstonedCronRunRemnants(params: {
         ),
     });
     if (!result) {
-      continue;
+      return;
     }
     // The lifecycle and SQLite writer lanes are released before file I/O;
     // publication reacquires the writer only for its short status commit.
@@ -357,6 +363,26 @@ async function sweepTombstonedCronRunRemnants(params: {
     removedNodes += 1;
     sweptTranscriptStates += result.sweptTranscriptStates;
     emitArchivedTranscriptUpdates(publishedArchives);
+  };
+
+  // Reference analysis is the only unindexable part of a reclaim, so it is
+  // amortized across bounded batches: one pass over the store answers every
+  // boundary for a whole batch while a connection-local token proves nothing was
+  // inserted or updated since. Each candidate keeps its own lifecycle admission
+  // and its own write transaction, so a batch never widens the exclusion held
+  // over unrelated sessions and a busy placeholder still only skips itself.
+  const batchDatabase = openOpenClawAgentDatabase(toDatabaseOptions(scope));
+  for (let offset = 0; offset < candidates.length; offset += TOMBSTONE_REFERENCE_BATCH_SIZE) {
+    const batch = candidates.slice(offset, offset + TOMBSTONE_REFERENCE_BATCH_SIZE);
+    await withBatchedSessionReferenceAnalysis(
+      batchDatabase,
+      batch.flatMap((candidate) => candidate.generationIds),
+      async () => {
+        for (const candidate of batch) {
+          await reclaim(candidate);
+        }
+      },
+    );
   }
   return {
     candidates: candidates.length,

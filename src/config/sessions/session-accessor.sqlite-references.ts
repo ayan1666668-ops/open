@@ -47,6 +47,8 @@ export function addRetainedWindowSessionReferences(
   excludedSessionKeys: ReadonlySet<string>,
   candidateSessionIds?: readonly string[],
   diskBudget?: { preserveRecentMs?: number | null },
+  /** Reports the retained owner protecting each id, for callers batching reference analysis. */
+  onReference?: (sessionId: string, ownerSessionKey: string) => void,
 ): void {
   const db = getSessionKysely(database.db);
   // Explicit reset/delete excludes its target owner. Automatic deletion rechecks
@@ -90,6 +92,7 @@ export function addRetainedWindowSessionReferences(
       continue;
     }
     sessionIds.add(row.session_id);
+    onReference?.(row.session_id, row.session_key);
   }
 }
 

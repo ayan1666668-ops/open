@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { StatementSync } from "node:sqlite";
+import { DatabaseSync, StatementSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
 import { executeSqliteQuerySync } from "../../infra/kysely-sync.js";
@@ -97,6 +97,126 @@ async function measureSessionStoreReads<T>(
   } finally {
     prototype.all = originalAll;
     prototype.iterate = originalIterate;
+  }
+}
+
+/**
+ * Every reference query carries this JSON path, in both the narrowed and the
+ * unnarrowed form, so it identifies the statement across revisions of the
+ * predicate itself.
+ */
+const REFERENCE_QUERY_MARKER = "$.previousSessionId";
+
+type ReferenceScanMetrics = {
+  /** Reference statements SQLite actually executed. */
+  scans: number;
+  /** Rows SQLite examined and mostly rejected inside those statements. */
+  rowsExamined: number;
+};
+
+/**
+ * Counts the work SQLite performs inside the reference query rather than the
+ * rows it hands back.
+ *
+ * `json_valid` is evaluated once per row the reference predicate examines and
+ * cannot match on the narrowed id, so replacing it with a counting
+ * implementation turns "rows examined and rejected inside SQLite" into a
+ * number. The verdict is delegated to a separate connection that does not carry
+ * the override, so the production predicate keeps its exact semantics; only the
+ * count is added. Calls are attributed to the statement currently stepping, so
+ * `json_valid` in unrelated projections cannot inflate the measurement.
+ */
+async function measureReferenceScanWork<T>(
+  run: () => Promise<T>,
+): Promise<{ result: T; metrics: ReferenceScanMetrics }> {
+  const metrics: ReferenceScanMetrics = { scans: 0, rowsExamined: 0 };
+  const steppingSql: string[] = [];
+  const statementPrototype = StatementSync.prototype as unknown as InstrumentedStatement;
+  const databasePrototype = DatabaseSync.prototype as unknown as {
+    prepare: (...parameters: never[]) => StatementSync;
+    function: (
+      name: string,
+      options: { deterministic: boolean },
+      implementation: (...parameters: never[]) => unknown,
+    ) => void;
+  };
+  const originalAll = statementPrototype.all;
+  const originalIterate = statementPrototype.iterate;
+  const originalPrepare = databasePrototype.prepare;
+  const oracle = new DatabaseSync(":memory:");
+  const oracleVerdict = oracle.prepare("SELECT json_valid(?) AS valid");
+  const instrumented = new WeakSet<object>();
+  const isReferenceQuery = (statement: InstrumentedStatement) =>
+    (statement.sourceSQL ?? "").includes(REFERENCE_QUERY_MARKER);
+  const countJsonValid = (value: unknown) => {
+    if (steppingSql.at(-1)?.includes(REFERENCE_QUERY_MARKER)) {
+      metrics.rowsExamined += 1;
+    }
+    return ((oracleVerdict.get(value as never) as { valid?: unknown } | undefined)?.valid ??
+      0) as number;
+  };
+  databasePrototype.prepare = function prepare(this: object, ...parameters: never[]) {
+    if (!instrumented.has(this)) {
+      instrumented.add(this);
+      (this as unknown as typeof databasePrototype).function(
+        "json_valid",
+        { deterministic: true },
+        countJsonValid as (...parameters: never[]) => unknown,
+      );
+    }
+    return originalPrepare.apply(this as never, parameters);
+  };
+  statementPrototype.all = function all(this: InstrumentedStatement, ...parameters: never[]) {
+    if (!isReferenceQuery(this)) {
+      return originalAll.apply(this, parameters);
+    }
+    metrics.scans += 1;
+    steppingSql.push(this.sourceSQL ?? "");
+    try {
+      return originalAll.apply(this, parameters);
+    } finally {
+      steppingSql.pop();
+    }
+  };
+  statementPrototype.iterate = function iterate(
+    this: InstrumentedStatement,
+    ...parameters: never[]
+  ) {
+    const iterator = originalIterate.apply(this, parameters);
+    if (!isReferenceQuery(this)) {
+      return iterator;
+    }
+    metrics.scans += 1;
+    const sourceSQL = this.sourceSQL ?? "";
+    // Attribute per step, not per statement: the driver only runs the predicate
+    // inside next(), and unrelated queries can interleave between yields.
+    const stepped: IterableIterator<unknown> = {
+      [Symbol.iterator]: () => stepped,
+      next: () => {
+        steppingSql.push(sourceSQL);
+        try {
+          return iterator.next();
+        } finally {
+          steppingSql.pop();
+        }
+      },
+      return: (value?: unknown) => iterator.return?.(value) ?? { done: true, value },
+      throw: (error?: unknown) => {
+        if (iterator.throw) {
+          return iterator.throw(error);
+        }
+        throw error;
+      },
+    };
+    return stepped;
+  };
+  try {
+    return { result: await run(), metrics };
+  } finally {
+    statementPrototype.all = originalAll;
+    statementPrototype.iterate = originalIterate;
+    databasePrototype.prepare = originalPrepare;
+    oracle.close();
   }
 }
 
@@ -603,6 +723,104 @@ describe("sweepTombstonedCronRunRemnants", () => {
     // Quadratic revalidation put the 12-placeholder store far above the
     // 3-placeholder per-candidate cost; bounded queries keep the ratio ~1.
     expect(largeBacklog).toBeLessThanOrEqual(smallBacklog * 1.5);
+  });
+
+  /**
+   * A backlog next to an equal number of live non-cron sessions.
+   *
+   * The live rows are what makes the scan cost visible: they can never match a
+   * candidate id, so the reference predicate has to examine and reject each of
+   * them on every pass. A store made only of candidates would let the narrowed
+   * id match short-circuit and report almost no work either way.
+   */
+  async function seedMixedBacklog(placeholders: number, label: string): Promise<void> {
+    await seedBacklog(placeholders, label);
+    for (let index = 0; index < placeholders; index += 1) {
+      await replaceSessionEntry(
+        { sessionKey: `agent:main:live-${index}`, storePath },
+        { sessionId: `live-session-${index}`, updatedAt: NOW_MS },
+      );
+    }
+  }
+
+  it("keeps the reference work SQLite performs flat as the backlog grows", async () => {
+    // The returned-row measurement above cannot see this cost: narrowing the
+    // projection still left every reference boundary examining the whole node
+    // table, once per generation, three times per candidate. Measure the work
+    // SQLite performs inside the reference statements and require the
+    // per-candidate cost to stay flat as the store grows.
+    const measure = async (placeholders: number, label: string) => {
+      await seedMixedBacklog(placeholders, label);
+      const { result, metrics } = await measureReferenceScanWork(() => sweep({ dryRun: false }));
+      expect(result).toMatchObject({
+        candidates: placeholders,
+        removedNodes: placeholders,
+        sweptTranscriptStates: placeholders,
+      });
+      return metrics;
+    };
+
+    const smallBacklog = await measure(3, "scan-small");
+    const largeBacklog = await measure(12, "scan-large");
+
+    // Guard the measurement itself: a run that stopped issuing the reference
+    // statement, or stopped reaching `json_valid`, would pass vacuously.
+    expect(smallBacklog.scans).toBeGreaterThan(0);
+    expect(smallBacklog.rowsExamined).toBeGreaterThan(0);
+    expect(largeBacklog.rowsExamined).toBeGreaterThan(0);
+    // Reference analysis is amortized across bounded batches, so the number of
+    // reference statements a sweep issues no longer scales with its candidates.
+    expect(largeBacklog.scans).toBeLessThanOrEqual(3);
+    expect(largeBacklog.rowsExamined / 12).toBeLessThanOrEqual(
+      (smallBacklog.rowsExamined / 3) * 1.5,
+    );
+    // Absolute bound: one sweep may examine the 24-row store a small constant
+    // number of times, never candidate-count times.
+    expect(largeBacklog.rowsExamined).toBeLessThanOrEqual(24 * 3);
+  });
+
+  it("re-reads references for a later candidate when a late owner appears mid-batch", async () => {
+    // Batched analysis must never authorize a stale delete. A reference created
+    // after the batch's single pass has to be found by the owning candidate's
+    // own in-transaction check rather than answered from a memo taken before it
+    // existed, whichever position that candidate holds in the batch.
+    storePath = path.join(tempDir, "batch-freshness.sqlite");
+    const sessionIds: string[] = [];
+    for (let index = 0; index < 3; index += 1) {
+      sessionIds.push(
+        await seedCanonicalPlaceholder({
+          key: `agent:main:cron:job-${index}:run:run-${index}`,
+          sessionId: `cron-session-${index}`,
+        }),
+      );
+    }
+    const lateReferenced = sessionIds[2] ?? "";
+    materializedHook.run = () => {
+      // Only the first reclaim in the batch injects it, so the reference lands
+      // after the batch pass and before the candidate that owns it is reached.
+      materializedHook.run = undefined;
+      const database = openDatabase();
+      const db = getSessionKysely(database.db);
+      executeSqliteQuerySync(
+        database.db,
+        db.insertInto("session_nodes").values({
+          session_key: "agent:main:direct:late-batch-reference",
+          current_session_id: lateReferenced,
+          entry_json: "{}",
+          updated_at: NOW_MS,
+        }),
+      );
+    };
+
+    await expect(sweep({ dryRun: false })).resolves.toMatchObject({
+      candidates: 3,
+      removedNodes: 2,
+      sweptTranscriptStates: 2,
+    });
+    expect(countRows("session_nodes", "session_key", "agent:main:cron:job-2:run:run-2")).toBe(1);
+    expect(countRows("session_windows", "session_key", "agent:main:cron:job-2:run:run-2")).toBe(1);
+    expect(countRows("transcript_events", "session_id", lateReferenced)).toBe(1);
+    expect(archiveNames(lateReferenced)).toEqual([]);
   });
 
   it("keeps a placeholder whose own key holds a work admission", async () => {
