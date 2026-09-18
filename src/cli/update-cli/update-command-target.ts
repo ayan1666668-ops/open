@@ -135,7 +135,8 @@ export async function resolveUpdateCommandTarget(
         const report = {
           root,
           installKind: updateInstallKind,
-          mode: await resolveMode(),
+          // Invalid config refuses before manager probes; retain the known install kind.
+          mode: reason === "invalid-config" ? packageManager : await resolveMode(),
           reason,
           message,
           failureFacts,
