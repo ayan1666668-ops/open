@@ -53,15 +53,27 @@ export function normalRuntimeApi() { return process.pid; }
   const currentEntry = path.join(dist, "current-consumer.mjs");
   await fs.writeFile(
     currentEntry,
-    'export { createConfigIO, normalRuntimeApi } from "./io.runtime-Candidate.mjs";\n',
+    'export { createConfigIO } from "./io.runtime-Candidate.mjs";\n',
   );
   rewriteRootRuntimeImportsToStableAliases({ rootDir: root });
   writeStableRootRuntimeAliases({ rootDir: root });
+  await fs.writeFile(
+    path.join(dist, "previous-runtime.mjs"),
+    `import { generation } from "handoff-dependency/advanced";
+     export function createConfigIO() {
+       return { readBestEffortConfig: async () => ({ generation }) };
+     }
+     export async function readConfigFileSnapshot() { return { generation }; }`,
+  );
 
   const script = `
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 const dependency = ${JSON.stringify(pathToFileURL(dependencyFile).href)};
+const aliasPath = ${JSON.stringify(path.join(dist, "io.runtime.js"))};
+const candidatePath = ${JSON.stringify(path.join(dist, "io.runtime-Candidate.mjs"))};
+const aliasBytes = await fs.readFile(aliasPath);
+const candidateBytes = await fs.readFile(candidatePath);
 const driverDependency = await import(dependency);
 assert.equal(driverDependency.generation, 1);
 await fs.writeFile(new URL(dependency), "export const generation = 2; export function probePathCaseInsensitiveSync() { return generation; }\\n");
@@ -84,7 +96,15 @@ const fallback = await io.readBestEffortConfig().catch(error => {
   return {};
 });
 assert.deepEqual(fallback, {});
+await fs.writeFile(new URL(dependency), "export const generation = 1;\\n");
+await fs.writeFile(aliasPath, 'export * from "./previous-runtime.mjs";');
+await fs.unlink(candidatePath);
+assert.equal((await io.readBestEffortConfig()).generation, 1);
+assert.equal((await runtime.readConfigFileSnapshot()).generation, 1);
+await fs.writeFile(candidatePath, candidateBytes);
+await fs.writeFile(aliasPath, aliasBytes);
 await fs.writeFile(new URL(dependency), "export function probePathCaseInsensitiveSync() { return 2; }\\n");
+assert.equal((await io.readBestEffortConfig()).generation, 2);
 `;
   const result = spawnSync(node, ["--input-type=module", "--eval", script], {
     cwd: path.dirname(root),
@@ -106,8 +126,14 @@ await fs.writeFile(new URL(dependency), "export function probePathCaseInsensitiv
         "--eval",
         `import assert from "node:assert/strict";
        const runtime = await import(${JSON.stringify(pathToFileURL(entry).href)});
-       assert.equal(runtime.normalRuntimeApi(), process.pid);
-       assert.equal((await runtime.createConfigIO().readBestEffortConfig()).pid, process.pid);`,
+       const result = await runtime.createConfigIO().readBestEffortConfig();
+       assert.equal(result.generation, 2);
+       if (${JSON.stringify(marker)} === "0") {
+         assert.equal(runtime.normalRuntimeApi(), process.pid);
+         assert.equal(result.pid, process.pid);
+       } else {
+         assert.notEqual(result.pid, process.pid);
+       }`,
       ],
       {
         encoding: "utf8",

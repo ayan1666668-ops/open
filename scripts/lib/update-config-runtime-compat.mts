@@ -61,9 +61,11 @@ const fs = require("node:fs");
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 const target = new URL(${target}, import.meta.url).href;
+const readerEntry = new URL(import.meta.url);
+readerEntry.searchParams.set("openclaw-config-read", "1");
 const root = fileURLToPath(new URL("../", import.meta.url));
 const worker = ${JSON.stringify(worker)};
-const updating = process.env.OPENCLAW_UPDATE_IN_PROGRESS === "1";
+const updating = process.env.OPENCLAW_UPDATE_IN_PROGRESS === "1" && new URL(import.meta.url).searchParams.get("openclaw-config-read") !== "1";
 const runtime = updating ? undefined : await import(target);
 const spawnOptions = {
     cwd: root,
@@ -78,7 +80,8 @@ function childEnv(operation, args, options) {
   return { ...selected, NODE_DISABLE_COMPILE_CACHE: "1" };
 }
 function input(operation, args, options, factory) {
-  return JSON.stringify({ target, operation, args, factory, options: options ? { ...options, logger: undefined } : undefined, captureLogs: Boolean(options?.logger) });
+  // A rollback replaces the alias too; never retain the removed candidate's hashed target.
+  return JSON.stringify({ target: readerEntry.href, operation, args, factory, options: options ? { ...options, logger: undefined } : undefined, captureLogs: Boolean(options?.logger) });
 }
 function finish(code, output, logger) {
   let result;

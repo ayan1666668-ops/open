@@ -36,7 +36,8 @@ After package replacement, compatibility config reads from older updaters run
 in a fresh process using the updated package and its dependencies. This also
 applies to updates driven by 2026.9.4. If an optional read fails, the updater
 prints `candidate-config-read-failed` and leaves the service definition unchanged.
-Inspect the reported problem with the updated CLI after the update.
+Reads follow the restored package after a rollback. Inspect the reported problem
+with the updated CLI after the update.
 
 The installed 2026.9.4 updater can refuse with `managed-service-preflight` before
 the target code runs. To reach a release containing this repair, use the

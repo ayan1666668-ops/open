@@ -134,10 +134,7 @@ const LEGACY_ROOT_RUNTIME_COMPAT_ALIASES: Array<readonly [string, string]> = [
   ["text-transforms.runtime-D9-SpAmI.js", "text-transforms.runtime.js"],
   ["text-transforms.runtime-sEqsN4pN.js", "text-transforms.runtime.js"],
 ];
-const ROOT_RUNTIME_STABLE_IMPORT_SKIP_ALIASES = new Set([
-  "text-transforms.runtime.js",
-  "io.runtime.js",
-]);
+const ROOT_RUNTIME_STABLE_IMPORT_SKIP_ALIASES = new Set(["text-transforms.runtime.js"]);
 const LEGACY_PLUGIN_INSTALL_RUNTIME_MARKERS = [
   "scanPackageInstallSource",
   "scanFileInstallSource",
