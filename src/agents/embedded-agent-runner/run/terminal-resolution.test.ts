@@ -335,7 +335,9 @@ describe("terminal resolution", () => {
 
     expect(resolved).toMatchObject({
       result: {
-        payloads: [{ text: "I’m continuing this work and will send the result when it is ready." }],
+        payloads: undefined,
+        meta: { continuationPending: true },
+        acceptedSessionSpawns: attempt.acceptedSessionSpawns,
       },
     });
   });
@@ -606,7 +608,7 @@ describe("terminal resolution", () => {
   ])(
     "keeps reply-optional subagent $label distinct at the terminal producer",
     async ({ rawText, expectedKind }) => {
-      const assistant = emptyAssistant();
+      const assistant = emptyAssistant({ content: [{ type: "text", text: rawText ?? "" }] });
       const attempt = makeEmbeddedRunnerAttempt({
         assistantTexts: rawText ? [rawText] : [],
         toolMetas: [{ toolName: "write", replaySafe: false }],
@@ -689,6 +691,49 @@ describe("terminal resolution", () => {
       fallbackSafe: true,
       terminalPresentation: true,
     });
+  });
+
+  it("settles a heartbeat reasoning-only stop from the prepared silence contract", async () => {
+    const assistant = buildEmbeddedRunnerAssistant({
+      content: [
+        {
+          type: "thinking",
+          thinking: "internal reasoning",
+          thinkingSignature: JSON.stringify({ id: "rs_heartbeat", type: "reasoning" }),
+        },
+      ],
+    });
+    const attempt = makeEmbeddedRunnerAttempt({
+      assistantTexts: [],
+      lastAssistant: assistant,
+      currentAttemptAssistant: assistant,
+      currentAttemptReplayMetadata: { hadPotentialSideEffects: false, replaySafe: true },
+    });
+
+    const prepared = makeTerminalInput({
+      attempt,
+      attemptAssistant: assistant,
+      runParams: {
+        trigger: "heartbeat",
+        allowEmptyAssistantReplyAsSilent: true,
+        terminalReplyExpectation: "optional",
+      },
+    });
+    const settled = await resolveEmbeddedRunTerminal(prepared);
+    expect(settled).toMatchObject({
+      action: "complete",
+      result: { payloads: [{ text: SILENT_REPLY_TOKEN }] },
+    });
+    if (settled.action === "complete") {
+      expect(settled.result.meta.error).toBeUndefined();
+    }
+
+    const undeclared = makeTerminalInput({
+      attempt,
+      attemptAssistant: assistant,
+      runParams: { trigger: "heartbeat", allowEmptyAssistantReplyAsSilent: false },
+    });
+    await expect(resolveEmbeddedRunTerminal(undeclared)).resolves.toEqual({ action: "retry" });
   });
 
   it("does not surface a read-only presentation after a sibling side effect", async () => {

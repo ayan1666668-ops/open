@@ -1,18 +1,17 @@
 import type { UsersMentionableParams, UsersMentionableResult } from "@openclaw/gateway-protocol";
 import { html, nothing } from "lit";
-import { ref } from "lit/directives/ref.js";
 import type { GatewayBrowserClient } from "../../../api/gateway.ts";
-import { icons } from "../../../components/icons.ts";
+import {
+  handleComposerMenuKeydown,
+  renderComposerMenu,
+  renderComposerMenuOption,
+} from "../../../components/composer-menu.ts";
 import { t } from "../../../i18n/index.ts";
 import type { HumanMention } from "../../../lib/chat/chat-types.ts";
 import { MAX_HUMAN_MENTIONS, updateHumanMentions } from "../../../lib/chat/human-mentions.ts";
-import "../../../styles/chat/reply-preview.css";
+import "../../../styles/chat/mention-menu.css";
 import { renderChatAuthorAvatar } from "./chat-author-avatar.ts";
-import {
-  paneDomId,
-  scrollActiveMenuOptionIntoView,
-  syncComposerMenuScroll,
-} from "./chat-composer-dom.ts";
+import { paneDomId } from "./chat-composer-dom.ts";
 
 export type HumanMentionDirectory = {
   client: GatewayBrowserClient;
@@ -48,13 +47,15 @@ function findMentionTarget(value: string, caret: number): MentionTarget | null {
   ) {
     return null;
   }
-  const match = /(?:^|[\s([{])@([\p{L}\p{N}\p{M}_.-]{0,64})$/u.exec(beforeCaret);
+  // Spaces belong to a typed full-name query, but never continue it onto another line.
+  const match = /(?:^|[\s([{])@([\p{L}\p{N}\p{M}_. -]{0,128})$/u.exec(beforeCaret);
   if (!match) {
     return null;
   }
   const query = match[1] ?? "";
   const start = caret - query.length - 1;
   let end = caret;
+  // Replace the rest of the current word, not later words that may be ordinary prose.
   while (end < value.length && /[\p{L}\p{N}\p{M}_.-]/u.test(value[end] ?? "")) {
     end += 1;
   }
@@ -69,6 +70,7 @@ export class HumanMentionMenu {
   private target: MentionTarget | null = null;
   private search: MentionSearch | null = null;
   private index = 0;
+  private results = new Map<string, UsersMentionableResult>();
 
   get open(): boolean {
     return this.target !== null;
@@ -88,13 +90,18 @@ export class HumanMentionMenu {
     this.directory = directory;
   }
 
-  close() {
+  private cancelSearch() {
     this.generation += 1;
     clearTimeout(this.timer);
     this.timer = undefined;
+    this.index = 0;
+  }
+
+  close() {
+    this.cancelSearch();
+    this.results.clear();
     this.target = null;
     this.search = null;
-    this.index = 0;
   }
 
   dispose() {
@@ -114,8 +121,20 @@ export class HumanMentionMenu {
     if (this.target?.start === target.start && this.target.query === target.query) {
       return;
     }
-    this.close();
+    if (this.target?.start !== target.start) {
+      this.results.clear();
+    }
+    this.cancelSearch();
     this.target = target;
+    const query = target.query;
+    // Only the Gateway knows every searchable identity field and its matching rules.
+    // Reuse exact snapshots; display-name filtering would lose verified-login matches.
+    const cached = this.results.get(query);
+    if (cached) {
+      this.search = { kind: "ready", result: cached };
+      requestUpdate();
+      return;
+    }
     this.search = { kind: "loading" };
     const directory = this.directory;
     if (!directory) {
@@ -132,6 +151,10 @@ export class HumanMentionMenu {
         .then(
           (result) => {
             if (generation === this.generation) {
+              if (this.results.size === 16) {
+                this.results.delete(this.results.keys().next().value!);
+              }
+              this.results.set(query, result);
               this.search = { kind: "ready", result };
               requestUpdate();
             }
@@ -163,28 +186,22 @@ export class HumanMentionMenu {
     if (!this.open || event.defaultPrevented || event.isComposing || event.keyCode === 229) {
       return false;
     }
-    if (event.key === "Escape") {
-      event.preventDefault();
-      this.close();
-      requestUpdate();
-      return true;
-    }
-    if (!["ArrowDown", "ArrowUp", "Enter", "Tab"].includes(event.key)) {
-      return false;
-    }
-    event.preventDefault();
     const users = this.search?.kind === "ready" ? this.search.result.users : [];
-    if (users.length > 0) {
-      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-        this.index =
-          (this.index + (event.key === "ArrowDown" ? 1 : users.length - 1)) % users.length;
+    return handleComposerMenuKeydown(event, {
+      count: users.length,
+      index: this.index,
+      consumeEmpty: true,
+      close: () => {
+        this.close();
         requestUpdate();
-        scrollActiveMenuOptionIntoView(this.activeId(host.paneId));
-      } else {
-        this.select(users[this.index]!, host, requestUpdate);
-      }
-    }
-    return true;
+      },
+      move: (index) => {
+        this.index = index;
+        requestUpdate();
+        return this.activeId(host.paneId);
+      },
+      select: () => this.select(users[this.index]!, host, requestUpdate),
+    });
   }
 
   private select(
@@ -229,90 +246,60 @@ export class HumanMentionMenu {
     }
     const result = this.search?.kind === "ready" ? this.search.result : undefined;
     const limited = host.getMentions().length >= MAX_HUMAN_MENTIONS;
+    const loading = this.search?.kind === "loading";
     const message = limited
       ? t("chat.mentions.limit")
       : this.search?.kind === "error"
         ? t("chat.mentions.unavailable")
-        : this.search?.kind === "loading"
-          ? t("chat.mentions.loading")
-          : !result?.users.length
-            ? t("chat.mentions.empty")
-            : null;
-    return html`<div
-      id=${paneDomId(host.paneId, "mention-menu-listbox")}
-      class="slash-menu mention-menu"
-      role="listbox"
-      aria-label=${t("chat.mentions.menu")}
-    >
-      <div class="slash-menu__scroll" ${ref(syncComposerMenuScroll)}>
-        <div class="slash-menu-group">
-          <div class="slash-menu-group__label" role="status">
-            ${message ?? t("chat.mentions.menu")}
-          </div>
-          ${
-            message
-              ? nothing
-              : result?.users.map(
-                  (person, index) => html`<div
-                    id=${paneDomId(host.paneId, `mention-option-${index}`)}
-                    class="slash-menu-item ${index === this.index ? "slash-menu-item--active" : ""}"
-                    role="option"
-                    aria-selected=${index === this.index}
-                    @mousedown=${(event: MouseEvent) => event.preventDefault()}
-                    @click=${() => this.select(person, host, requestUpdate)}
-                    @mouseenter=${() => {
+        : !loading && !result?.users.length
+          ? t("chat.mentions.empty")
+          : null;
+    return renderComposerMenu({
+      id: paneDomId(host.paneId, "mention-menu-listbox"),
+      className: "mention-menu",
+      label: t("chat.mentions.menu"),
+      trackScroll: false,
+      content: html` <div class="slash-menu-group" aria-busy=${loading}>
+        <div class="slash-menu-group__label" role="status">
+          ${message ?? t("chat.mentions.menu")}
+        </div>
+        ${
+          message
+            ? nothing
+            : loading
+              ? html`<div class="slash-menu-item mention-menu__loading" aria-hidden="true">
+                  <span class="slash-menu-icon"
+                    ><span class="skeleton mention-menu__avatar"></span
+                  ></span>
+                  <span class="skeleton skeleton-line skeleton-line--medium"></span>
+                </div>`
+              : result?.users.map((person, index) =>
+                  renderComposerMenuOption({
+                    id: paneDomId(host.paneId, `mention-option-${index}`),
+                    active: index === this.index,
+                    select: () => this.select(person, host, requestUpdate),
+                    hover: () => {
                       this.index = index;
                       requestUpdate();
-                    }}
-                  >
-                    <span class="slash-menu-icon" aria-hidden="true"
-                      >${renderChatAuthorAvatar({
-                        id: person.profileId,
-                        name: person.displayName,
-                        identity: { type: "profile", id: person.profileId },
-                        profileAvatarUrl: person.avatarUrl,
-                      })}</span
-                    >
-                    <span class="slash-menu-copy">
-                      <span class="slash-menu-name">${person.displayName}</span>
-                      <span class="slash-menu-desc"
-                        >${person.online ? t("chat.mentions.online") : t("chat.mentions.offline")} ·
-                        ${person.profileId.slice(-8)}</span
-                      >
-                    </span>
-                  </div>`,
+                    },
+                    icon: renderChatAuthorAvatar({
+                      id: person.profileId,
+                      name: person.displayName,
+                      identity: { type: "profile", id: person.profileId },
+                      profileAvatarUrl: person.avatarUrl,
+                    }),
+                    iconHidden: true,
+                    name: person.displayName,
+                    description: person.online ? t("chat.mentions.online") : nothing,
+                  }),
                 )
-          }
-          ${
-            result?.truncated
-              ? html`<div class="slash-menu-group__label">${t("chat.mentions.truncated")}</div>`
-              : nothing
-          }
-        </div>
-      </div>
-    </div>`;
+        }
+        ${
+          result?.truncated
+            ? html`<div class="slash-menu-group__label">${t("chat.mentions.truncated")}</div>`
+            : nothing
+        }
+      </div>`,
+    });
   }
-}
-
-export function renderSelectedHumanMentions(
-  text: string,
-  mentions: readonly HumanMention[] | undefined,
-  onRemove: () => void,
-) {
-  if (!mentions?.length) {
-    return nothing;
-  }
-  const names = mentions.map((mention) => text.slice(mention.start, mention.end)).join(", ");
-  return html`<div class="chat-reply-preview" role="status">
-    <span class="chat-reply-preview__icon" aria-hidden="true">${icons.users}</span>
-    <span class="chat-reply-preview__text">${t("chat.mentions.selected", { names })}</span>
-    <button
-      type="button"
-      class="chat-reply-preview__dismiss"
-      aria-label=${t("chat.mentions.remove")}
-      @click=${onRemove}
-    >
-      ${icons.x}
-    </button>
-  </div>`;
 }

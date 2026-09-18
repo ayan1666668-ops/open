@@ -23,7 +23,7 @@ import {
   type MediaFetchRetryOptions,
   MediaFetchError,
 } from "../media/fetch.js";
-import { getDefaultMediaLocalRoots } from "../media/local-roots.js";
+import { getSessionSafeDefaultMediaLocalRoots } from "../media/local-roots.js";
 import {
   classifyMediaReferenceSource,
   normalizeMediaReferenceSource,
@@ -93,8 +93,9 @@ function concreteMime(mime: string | undefined): string | undefined {
 
 function getDefaultLocalPathRoots(): readonly string[] {
   // Default local roots are process-stable inbound attachment locations; merge
-  // once and reuse for cache instances.
-  defaultLocalPathRoots ??= mergeInboundPathRoots(getDefaultMediaLocalRoots());
+  // once and reuse for cache instances. Shared isolation parents (the shared
+  // sandboxes tree) are excluded so sibling sandboxes stay unreadable.
+  defaultLocalPathRoots ??= mergeInboundPathRoots(getSessionSafeDefaultMediaLocalRoots());
   return defaultLocalPathRoots;
 }
 
@@ -448,6 +449,14 @@ export class MediaAttachmentCache {
       }
     }
     await Promise.all(cleanups);
+  }
+
+  /** Drops this cache's bytes after terminal file processing; earlier borrowers keep ownership. */
+  releaseBuffer(attachmentIndex: number): void {
+    const entry = this.entries.get(attachmentIndex);
+    if (entry) {
+      entry.bufferResult = undefined;
+    }
   }
 
   private async ensureEntry(attachmentIndex: number): Promise<AttachmentCacheEntry> {
